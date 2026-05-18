@@ -4,6 +4,7 @@ import {
   getGcpGpuTypeOptions,
   getHostDisplayedPrice,
   getHostPriceEstimate,
+  getHostPricingModeEstimates,
   getGcpMachineTypeOptions,
   getNebiusRegionOptions,
   getProviderPriceEstimate,
@@ -950,6 +951,63 @@ describe("catalog-backed pricing labels", () => {
     expect(display?.current_state).toBe("stopped");
     expect(display?.current_estimate?.usd_per_hour).toBeCloseTo(0.006, 9);
     expect(display?.running_estimate?.usd_per_hour).toBeCloseTo(0.371, 9);
+  });
+
+  it("returns all host pricing modes and highlights the effective pricing mode", () => {
+    const gcpCatalog = testCatalog([
+      {
+        kind: "machine_types",
+        scope: "zone/us-west1-a",
+        payload: [{ name: "n2d-standard-4", guestCpus: 4, memoryMb: 16384 }],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: {
+          fetched_at: "2026-05-09T00:00:00.000Z",
+          service_id: "compute",
+          families: {
+            n2d: {
+              cpu: { "us-west1": 0.05 },
+              ram: { "us-west1": 0.01 },
+              spot_cpu: { "us-west1": 0.02 },
+              spot_ram: { "us-west1": 0.004 },
+            },
+          },
+          gpus: {},
+          disks: {
+            "pd-standard": { "us-west1": 0.00006 },
+          },
+        },
+      },
+    ]);
+
+    const host = {
+      id: "host-spot",
+      name: "Spot GCP Host",
+      owner: "acct",
+      region: "us-west1",
+      size: "n2d-standard-4",
+      gpu: false,
+      status: "running",
+      machine: {
+        cloud: "gcp",
+        zone: "us-west1-a",
+        machine_type: "n2d-standard-4",
+        storage_mode: "persistent",
+        disk_type: "standard",
+        disk_gb: 100,
+      },
+      pricing_model: "spot",
+      effective_pricing_model: "spot",
+    } as Host;
+
+    const estimates = getHostPricingModeEstimates(host, { gcp: gcpCatalog });
+
+    expect(estimates?.current_mode).toBe("spot");
+    expect(estimates?.standard_estimate?.usd_per_hour).toBeCloseTo(0.371, 9);
+    expect(estimates?.spot_estimate?.usd_per_hour).toBeCloseTo(0.1525, 9);
+    expect(estimates?.stopped_estimate?.usd_per_hour).toBeCloseTo(0.006, 9);
   });
 
   it("shows zero current pricing for deprovisioned hosts and preserves the reprovision estimate", () => {

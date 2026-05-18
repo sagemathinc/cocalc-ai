@@ -470,6 +470,91 @@ function pathSizeBytes(target: string, seen = new Set<string>()): number {
   return total;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeRootPath(root: string): string {
+  return `${root ?? ""}`.replace(/\/+$/, "");
+}
+
+function isArtifactVersionName(name: string): boolean {
+  return (
+    !!name &&
+    name !== "current" &&
+    name !== "downloads" &&
+    !name.startsWith(".")
+  );
+}
+
+function extractMountedArtifactVersionsFromMountinfo(
+  mountinfo: string,
+  root: string,
+): string[] {
+  const normalizedRoot = normalizeRootPath(root);
+  if (!normalizedRoot) return [];
+  const versions = new Set<string>();
+  const pattern = new RegExp(
+    `${escapeRegExp(normalizedRoot)}/([^/\\s]+)(?:/|\\s|$)`,
+    "g",
+  );
+  for (const line of `${mountinfo ?? ""}`.split("\n")) {
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(line)) != null) {
+      const version = match[1];
+      if (isArtifactVersionName(version)) {
+        versions.add(version);
+      }
+    }
+  }
+  return [...versions].sort();
+}
+
+async function listLiveMountedArtifactVersions(
+  root: string,
+  procRoot = "/proc",
+): Promise<string[]> {
+  const roots = new Set([normalizeRootPath(root)]);
+  try {
+    roots.add(normalizeRootPath(await fs.promises.realpath(root)));
+  } catch {
+    // keep the configured root; it may not exist in tests or during bootstrap
+  }
+  roots.delete("");
+  if (roots.size === 0) return [];
+
+  let procEntries: fs.Dirent[];
+  try {
+    procEntries = await fs.promises.readdir(procRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const versions = new Set<string>();
+  for (const entry of procEntries) {
+    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
+    let mountinfo: string;
+    try {
+      mountinfo = await fs.promises.readFile(
+        path.join(procRoot, entry.name, "mountinfo"),
+        "utf8",
+      );
+    } catch {
+      continue;
+    }
+    for (const candidateRoot of roots) {
+      for (const version of extractMountedArtifactVersionsFromMountinfo(
+        mountinfo,
+        candidateRoot,
+      )) {
+        versions.add(version);
+      }
+    }
+  }
+  return [...versions].sort();
+}
+
 async function pruneVersionDirs(opts: {
   root: string;
   currentLink: string;
@@ -568,13 +653,15 @@ async function pruneVersionDirs(opts: {
   }
 }
 
-function protectedArtifactVersions({
+async function protectedArtifactVersions({
   artifact,
   desiredVersion,
+  root,
 }: {
   artifact: CanonicalArtifact;
   desiredVersion: string;
-}): string[] {
+  root: string;
+}): Promise<string[]> {
   const versions = new Set<string>();
   const desired = `${desiredVersion ?? ""}`.trim();
   if (desired) {
@@ -599,6 +686,20 @@ function protectedArtifactVersions({
     for (const reference of artifactReferences) {
       const version = `${reference.version ?? ""}`.trim();
       if (version) {
+        versions.add(version);
+      }
+    }
+    const liveMountedVersions = await listLiveMountedArtifactVersions(root);
+    if (liveMountedVersions.length > 0) {
+      logger.info(
+        "upgrade: protecting live-mounted runtime artifact versions",
+        {
+          artifact,
+          root,
+          versions: liveMountedVersions,
+        },
+      );
+      for (const version of liveMountedVersions) {
         versions.add(version);
       }
     }
@@ -783,9 +884,10 @@ async function downloadAndInstall(
     root: resolved.root,
     currentLink: resolved.currentLink,
     desiredDir: resolved.versionDir,
-    protectedVersions: protectedArtifactVersions({
+    protectedVersions: await protectedArtifactVersions({
       artifact: resolved.canonicalArtifact,
       desiredVersion: resolved.version,
+      root: resolved.root,
     }),
     keep: retentionPolicy.keep_count,
     maxBytes: retentionPolicy.max_bytes,
@@ -914,7 +1016,10 @@ export async function upgradeSoftware(
 export const __test__ = {
   curlTimeoutArgs,
   downloadAndInstall,
+  extractMountedArtifactVersionsFromMountinfo,
+  listLiveMountedArtifactVersions,
   pruneVersionDirs,
+  protectedArtifactVersions,
   runCommandCapture,
   scheduledProjectHostReconcileCommand,
 };

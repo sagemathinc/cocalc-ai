@@ -333,12 +333,13 @@ async function updateHostRow(id: string, updates: Record<string, any>) {
   const keys = Object.keys(updates).filter((key) => updates[key] !== undefined);
   if (!keys.length) return;
   if (updates.status !== undefined) {
-    const stack = new Error().stack;
     logger.debug("status update", {
       host_id: id,
       status: updates.status,
       source: "host-work",
-      stack,
+      ...(process.env.COCALC_CLOUD_HOST_WORK_DEBUG_STACKS === "1"
+        ? { stack: new Error().stack }
+        : {}),
     });
   }
   const sets = keys.map((key, idx) => `${key}=$${idx + 2}`);

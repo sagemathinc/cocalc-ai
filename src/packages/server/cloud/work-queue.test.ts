@@ -3,6 +3,7 @@ import {
   claimCloudVmWork,
   markCloudVmWorkDone,
   markCloudVmWorkFailed,
+  requeueStaleCloudVmWork,
 } from "@cocalc/server/cloud";
 import { before, after, getPool } from "@cocalc/server/test";
 
@@ -101,5 +102,45 @@ describe("cloud vm work queue", () => {
       { vm_id: "vm-future", state: "queued" },
       { vm_id: "vm-now", state: "in_progress" },
     ]);
+  });
+
+  it("requeues stale in-progress work", async () => {
+    const id = await enqueueCloudVmWork({
+      vm_id: "vm-stale",
+      action: "probe_spot",
+    });
+    await claimCloudVmWork({ worker_id: "worker-a", limit: 1 });
+    await getPool().query(
+      `
+        UPDATE cloud_vm_work
+        SET locked_at=NOW() - interval '2 hours'
+        WHERE id=$1
+      `,
+      [id],
+    );
+
+    const requeued = await requeueStaleCloudVmWork({
+      older_than_ms: 60 * 60 * 1000,
+    });
+
+    expect(requeued).toBe(1);
+    const { rows } = await getPool().query(
+      "SELECT state, locked_by, locked_at, attempt, error FROM cloud_vm_work WHERE id=$1",
+      [id],
+    );
+    expect(rows[0]).toEqual({
+      state: "queued",
+      locked_by: null,
+      locked_at: null,
+      attempt: 1,
+      error: "requeued stale in-progress cloud work",
+    });
+
+    const batch = await claimCloudVmWork({
+      worker_id: "worker-b",
+      limit: 1,
+    });
+    expect(batch).toHaveLength(1);
+    expect(batch[0].id).toBe(id);
   });
 });

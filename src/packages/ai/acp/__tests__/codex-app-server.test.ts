@@ -451,6 +451,47 @@ describe("CodexAppServerAgent", () => {
     expect(error?.error).not.toContain("unrelated stderr");
   });
 
+  it("includes stderr tail when the app-server process exits during startup", async () => {
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      if (message.method !== "initialize") return;
+      fake.stderr.write("/opt/cocalc/bin2/codex: not found\n");
+      fake.exitCode = 127;
+      setImmediate(() => fake.emit("exit", 127, null));
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "say hello",
+      stream: async (payload) => {
+        if (payload) {
+          streamPayloads.push(payload);
+        }
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    const error = streamPayloads.find((payload) => payload.type === "error");
+    expect(error?.error).toContain("codex app-server exited unexpectedly: 127");
+    expect(error?.error).toContain("/opt/cocalc/bin2/codex: not found");
+  });
+
   it("summarizes missing API authentication failures", async () => {
     const proc = new FakeCodexAppServerProc((fake, message) => {
       switch (message.method) {

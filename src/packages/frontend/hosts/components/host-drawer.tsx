@@ -1252,6 +1252,111 @@ const describeSpecChange = (
   return { summary, details };
 };
 
+type HostLogDisplay = {
+  title: string;
+  status: string;
+  statusColor?: string;
+  description?: string;
+};
+
+const HOST_LOG_STATUS_LABELS: Record<
+  string,
+  { label: string; color?: string }
+> = {
+  success: { label: "done", color: "green" },
+  failure: { label: "failed", color: "red" },
+  skipped: { label: "skipped", color: "default" },
+};
+
+const HOST_LOG_ACTIONS: Record<
+  string,
+  (entry: HostLogEntry) => HostLogDisplay
+> = {
+  spot_probe_started: () => ({
+    title: "Checking whether spot capacity is available",
+    status: "checking",
+    statusColor: "processing",
+    description:
+      "CoCalc is probing the cloud provider before trying to move this fallback host back to spot.",
+  }),
+  spot_probe_failed: () => ({
+    title: "Spot capacity probe: unavailable",
+    status: "unavailable",
+    statusColor: "orange",
+    description:
+      "CoCalc kept the host on standard fallback and scheduled another spot capacity probe.",
+  }),
+  spot_probe_succeeded: () => ({
+    title: "Spot capacity probe: available",
+    status: "available",
+    statusColor: "green",
+    description:
+      "CoCalc found spot capacity and queued a restart so the host can return to spot pricing.",
+  }),
+  spot_return_started: () => ({
+    title: "Restarting as a spot instance",
+    status: "started",
+    statusColor: "processing",
+    description:
+      "CoCalc is stopping the standard fallback VM, switching it back to spot, and starting it again.",
+  }),
+  spot_return_failed: () => ({
+    title: "Restart as spot failed",
+    status: "failed",
+    statusColor: "red",
+    description:
+      "The cloud provider did not complete the return to spot. CoCalc keeps or restarts the host on standard fallback and will probe again later.",
+  }),
+  spot_return_succeeded: () => ({
+    title: "Returned to spot pricing",
+    status: "done",
+    statusColor: "green",
+    description: "The host is running as a spot instance again.",
+  }),
+  spot_restore_fallback_standard: () => ({
+    title: "Running as standard fallback",
+    status: "standard",
+    statusColor: "red",
+    description:
+      "Spot was not usable, so CoCalc started the host as a standard on-demand VM to keep it available.",
+  }),
+  spot_restore_retry_scheduled: () => ({
+    title: "Scheduled another spot start attempt",
+    status: "scheduled",
+    statusColor: "processing",
+    description:
+      "Spot startup failed during the retry window, so CoCalc scheduled another attempt before falling back to standard.",
+  }),
+  spot_restore_retry_failed: () => ({
+    title: "Spot start attempt failed",
+    status: "failed",
+    statusColor: "red",
+    description:
+      "The provider rejected or could not satisfy a spot start request.",
+  }),
+};
+
+function prettifyHostLogAction(action: string): string {
+  return action
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function describeHostLogEntry(entry: HostLogEntry): HostLogDisplay {
+  const formatter = HOST_LOG_ACTIONS[entry.action];
+  if (formatter) return formatter(entry);
+  const status = HOST_LOG_STATUS_LABELS[entry.status] ?? {
+    label: entry.status,
+  };
+  return {
+    title: prettifyHostLogAction(entry.action),
+    status: status.label,
+    statusColor: status.color,
+  };
+}
+
 export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   const [drawerWidth, setDrawerWidth] = React.useState<number | undefined>(
     readDrawerWidth,
@@ -1806,7 +1911,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           </Typography.Text>
           {latestLogEntry && (
             <Typography.Text type="secondary">
-              Latest log: {latestLogEntry.action} — {latestLogEntry.status}
+              Latest log: {describeHostLogEntry(latestLogEntry).title}
               {latestLogEntry.ts
                 ? ` · ${new Date(latestLogEntry.ts).toLocaleString()}`
                 : ""}
@@ -1906,36 +2011,61 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                     </>
                   );
                 })()}
-                <div style={{ display: "flex", flexDirection: "column" }}>
-                  <div style={{ fontWeight: 600 }}>
-                    {entry.action} — {entry.status}
-                  </div>
-                  {entry.provider && (
-                    <div style={{ color: "#666", fontSize: 12 }}>
-                      Provider: {entry.provider}
+                {(() => {
+                  const logDisplay = describeHostLogEntry(entry);
+                  return (
+                    <div style={{ display: "flex", flexDirection: "column" }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <span style={{ fontWeight: 600 }}>
+                          {logDisplay.title}
+                        </span>
+                        <Tag color={logDisplay.statusColor}>
+                          {logDisplay.status}
+                        </Tag>
+                      </div>
+                      {logDisplay.description && (
+                        <Typography.Text
+                          type="secondary"
+                          style={{ fontSize: 12 }}
+                        >
+                          {logDisplay.description}
+                        </Typography.Text>
+                      )}
+                      {entry.provider && (
+                        <div style={{ color: COLORS.GRAY, fontSize: 12 }}>
+                          Provider: {entry.provider}
+                        </div>
+                      )}
+                      <div style={{ color: COLORS.GRAY, fontSize: 12 }}>
+                        {entry.ts
+                          ? new Date(entry.ts).toLocaleString()
+                          : "unknown time"}
+                      </div>
+                      {entry.error && (
+                        <div
+                          style={{
+                            maxHeight: "4.8em",
+                            overflowY: "auto",
+                            color: "#c00",
+                            fontSize: 12,
+                            lineHeight: 1.2,
+                            whiteSpace: "pre-wrap",
+                            paddingRight: 4,
+                          }}
+                        >
+                          {entry.error}
+                        </div>
+                      )}
                     </div>
-                  )}
-                  <div style={{ color: "#888", fontSize: 12 }}>
-                    {entry.ts
-                      ? new Date(entry.ts).toLocaleString()
-                      : "unknown time"}
-                  </div>
-                  {entry.error && (
-                    <div
-                      style={{
-                        maxHeight: "4.8em",
-                        overflowY: "auto",
-                        color: "#c00",
-                        fontSize: 12,
-                        lineHeight: 1.2,
-                        whiteSpace: "pre-wrap",
-                        paddingRight: 4,
-                      }}
-                    >
-                      {entry.error}
-                    </div>
-                  )}
-                </div>
+                  );
+                })()}
               </Card>
             ))}
           </Space>
