@@ -2,14 +2,18 @@ import { Alert, Popover, Tag } from "antd";
 import type {
   Host,
   HostCatalog,
+  HostInterruptionRestorePolicy,
   HostPricingModel,
+  HostSpotRecoveryPolicy,
   HostSpotRecoveryPhase,
+  HostSpotRecoveryState,
 } from "@cocalc/conat/hub/api/hosts";
 import type { DedicatedHostSurchargeSettings } from "@cocalc/util/project-host-pricing";
 import {
   getHostDisplayedPrice,
   type HostPriceCatalogSource,
 } from "./providers/registry";
+import { activeSpotRecoveryPolicy } from "./utils/spot-recovery-policy";
 
 type HostLike =
   | Pick<
@@ -17,6 +21,8 @@ type HostLike =
       | "pricing_model"
       | "desired_pricing_model"
       | "effective_pricing_model"
+      | "interruption_restore_policy"
+      | "spot_recovery_policy"
       | "recovery_phase"
       | "spot_recovery_state"
     >
@@ -24,8 +30,12 @@ type HostLike =
       pricing_model?: HostPricingModel | string;
       desired_pricing_model?: HostPricingModel | string;
       effective_pricing_model?: HostPricingModel | string;
+      interruption_restore_policy?: HostInterruptionRestorePolicy | string;
+      spot_recovery_policy?: HostSpotRecoveryPolicy;
       recovery_phase?: HostSpotRecoveryPhase | string;
-      spot_recovery_state?: { phase?: HostSpotRecoveryPhase | string };
+      spot_recovery_state?: HostSpotRecoveryState & {
+        phase?: HostSpotRecoveryPhase | string;
+      };
     };
 
 function desiredPricingModel(host?: HostLike | null): string | undefined {
@@ -47,6 +57,69 @@ export function isSpotStandardFallbackHost(host?: HostLike | null): boolean {
     effectivePricingModel(host) === "on_demand" ||
     phase === "running_standard_fallback" ||
     phase === "probing_spot"
+  );
+}
+
+function formatProbeTime(value: string | number | undefined): string {
+  if (!value) return "unknown";
+  const ms = typeof value === "number" ? value : Date.parse(value);
+  if (!Number.isFinite(ms)) return "unknown";
+  return new Date(ms).toLocaleString();
+}
+
+function formatExpectedProbeTime(ms: number | undefined): string | undefined {
+  if (!Number.isFinite(ms)) return undefined;
+  const now = Date.now();
+  if ((ms as number) <= now) return "due now";
+  const minutes = Math.max(1, Math.round(((ms as number) - now) / 60_000));
+  return `${new Date(ms as number).toLocaleString()} (about ${minutes} min)`;
+}
+
+function spotRecoveryProbeDetails(host?: HostLike | null) {
+  if (!host || !isSpotStandardFallbackHost(host)) return null;
+  const state = host.spot_recovery_state;
+  const policy = activeSpotRecoveryPolicy({
+    pricingModel: desiredPricingModel(host) as HostPricingModel | undefined,
+    interruptionRestorePolicy: host.interruption_restore_policy as
+      | HostInterruptionRestorePolicy
+      | undefined,
+    spotRecoveryPolicy: host.spot_recovery_policy,
+  });
+  const result =
+    state?.last_probe_result === "success"
+      ? "available"
+      : state?.last_probe_result === "failure"
+        ? "unavailable"
+        : "not checked yet";
+  const lastProbe =
+    state?.last_probe_at != null
+      ? `${formatProbeTime(state.last_probe_at)} (${result})`
+      : result;
+  let expectedNextMs: number | undefined;
+  if (policy) {
+    if (state?.last_probe_at) {
+      const lastProbeMs = Date.parse(state.last_probe_at);
+      if (Number.isFinite(lastProbeMs)) {
+        expectedNextMs =
+          lastProbeMs + policy.spot_probe_interval_minutes * 60_000;
+      }
+    } else if (state?.fallback_started_at) {
+      const fallbackMs = Date.parse(state.fallback_started_at);
+      if (Number.isFinite(fallbackMs)) {
+        expectedNextMs =
+          fallbackMs + policy.standard_fallback_min_minutes * 60_000;
+      }
+    }
+  }
+  const expectedNext = formatExpectedProbeTime(expectedNextMs);
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div>Last spot probe: {lastProbe}</div>
+      {expectedNext ? <div>Expected next probe: {expectedNext}</div> : null}
+      {state?.last_probe_error ? (
+        <div>Last probe error: {state.last_probe_error}</div>
+      ) : null}
+    </div>
   );
 }
 
@@ -82,6 +155,7 @@ function spotDescription({
             {display.running_estimate.monthly_label}
           </div>
         ) : null}
+        {spotRecoveryProbeDetails(host)}
       </div>
     );
   }
