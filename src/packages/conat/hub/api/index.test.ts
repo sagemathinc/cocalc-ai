@@ -91,4 +91,46 @@ describe("hub API argument transforms", () => {
       }),
     ).rejects.toThrow("user must be signed in");
   });
+
+  it("requires account auth for name and local UI helpers without reshaping args", async () => {
+    const cases = [
+      {
+        name: "system.getNames",
+        args: [["account-1"]],
+      },
+      {
+        name: "ssh.listSessionsUI",
+        args: [{ withStatus: true }],
+      },
+      {
+        name: "reflect.listSessionsUI",
+        args: [{ selectors: ["active"] }],
+      },
+    ];
+
+    for (const testCase of cases) {
+      const accountArgs = await transformArgs({
+        name: testCase.name,
+        args: structuredClone(testCase.args),
+        account_id: "caller-account",
+      });
+      expect(accountArgs).toEqual(testCase.args);
+
+      await expect(async () =>
+        transformArgs({
+          name: testCase.name,
+          args: structuredClone(testCase.args),
+          project_id: "project-1",
+        }),
+      ).rejects.toThrow("user must be signed in with an account");
+
+      await expect(async () =>
+        transformArgs({
+          name: testCase.name,
+          args: structuredClone(testCase.args),
+          host_id: "host-1",
+        }),
+      ).rejects.toThrow("user must be signed in with an account");
+    }
+  });
 });

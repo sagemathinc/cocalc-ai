@@ -3,7 +3,7 @@ import {
   authFirst,
   authFirstRequireAccount,
   authFirstRequireProject,
-  requireSignedIn,
+  requireAccount,
 } from "./util";
 import type { Customize } from "@cocalc/util/db-schema/server-settings";
 import type {
@@ -83,7 +83,7 @@ export const system = {
   manageApiKeys: authFirst,
   createImpersonationGrant: authFirst,
   userSearch: authFirst,
-  getNames: requireSignedIn,
+  getNames: requireAccount,
   adminCreateUser: authFirst,
   deleteAccount: authFirst,
   rehomeAccount: authFirstRequireAccount,

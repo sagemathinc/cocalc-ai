@@ -1,16 +1,16 @@
-import { requireSignedIn } from "./util";
+import { requireAccount } from "./util";
 
 export const ssh = {
-  listSessionsUI: requireSignedIn,
-  connectSessionUI: requireSignedIn,
-  addSessionUI: requireSignedIn,
-  setSessionStarredUI: requireSignedIn,
-  deleteSessionUI: requireSignedIn,
-  stopSessionUI: requireSignedIn,
-  upgradeSessionUI: requireSignedIn,
-  upgradeLocalUI: requireSignedIn,
-  statusSessionUI: requireSignedIn,
-  getUpgradeInfoUI: requireSignedIn,
+  listSessionsUI: requireAccount,
+  connectSessionUI: requireAccount,
+  addSessionUI: requireAccount,
+  setSessionStarredUI: requireAccount,
+  deleteSessionUI: requireAccount,
+  stopSessionUI: requireAccount,
+  upgradeSessionUI: requireAccount,
+  upgradeLocalUI: requireAccount,
+  statusSessionUI: requireAccount,
+  getUpgradeInfoUI: requireAccount,
 };
 
 export type SshSessionRow = {

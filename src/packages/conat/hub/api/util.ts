@@ -31,13 +31,6 @@ export const requireAccount = ({ args, account_id }) => {
   return args;
 };
 
-export const requireSignedIn = ({ args, account_id, project_id, host_id }) => {
-  if (!account_id && !project_id && !host_id) {
-    throw Error("must be signed in as account or project or host");
-  }
-  return args;
-};
-
 export const authFirstRequireAccount = async ({
   args,
   account_id,

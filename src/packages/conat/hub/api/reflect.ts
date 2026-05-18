@@ -1,18 +1,18 @@
-import { requireSignedIn } from "./util";
+import { requireAccount } from "./util";
 
 export const reflect = {
-  listSessionsUI: requireSignedIn,
-  getSessionStatusUI: requireSignedIn,
-  listForwardsUI: requireSignedIn,
-  createSessionUI: requireSignedIn,
-  createForwardUI: requireSignedIn,
-  terminateSessionUI: requireSignedIn,
-  startSessionUI: requireSignedIn,
-  stopSessionUI: requireSignedIn,
-  editSessionUI: requireSignedIn,
-  terminateForwardUI: requireSignedIn,
-  listSessionLogsUI: requireSignedIn,
-  listDaemonLogsUI: requireSignedIn,
+  listSessionsUI: requireAccount,
+  getSessionStatusUI: requireAccount,
+  listForwardsUI: requireAccount,
+  createSessionUI: requireAccount,
+  createForwardUI: requireAccount,
+  terminateSessionUI: requireAccount,
+  startSessionUI: requireAccount,
+  stopSessionUI: requireAccount,
+  editSessionUI: requireAccount,
+  terminateForwardUI: requireAccount,
+  listSessionLogsUI: requireAccount,
+  listDaemonLogsUI: requireAccount,
 };
 
 export type ReflectSessionRow = {
