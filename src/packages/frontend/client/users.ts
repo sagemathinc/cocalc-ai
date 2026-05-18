@@ -11,6 +11,7 @@ import type { WebappClient } from "./client";
 import type { AccountEntitlementOverride } from "@cocalc/conat/hub/api/purchases";
 
 const nameCache = new TTL({ ttl: 60 * 1000 });
+const MAX_GET_NAMES_BATCH = 250;
 
 export class UsersClient {
   private client: WebappClient;
@@ -178,11 +179,14 @@ export class UsersClient {
       }
     }
     if (v.length > 0) {
-      const names = await this.client.conat_client.hub.system.getNames(v);
-      for (const account_id of v) {
-        // iterate over v to record accounts that don't exist too
-        x[account_id] = names[account_id];
-        nameCache.set(account_id, names[account_id]);
+      for (let i = 0; i < v.length; i += MAX_GET_NAMES_BATCH) {
+        const batch = v.slice(i, i + MAX_GET_NAMES_BATCH);
+        const names = await this.client.conat_client.hub.system.getNames(batch);
+        for (const account_id of batch) {
+          // iterate over batch to record accounts that don't exist too
+          x[account_id] = names[account_id];
+          nameCache.set(account_id, names[account_id]);
+        }
       }
     }
     return x;

@@ -10,7 +10,10 @@ There is about 30s of caching if you call this with the same input twice.
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
-import { getNames } from "@cocalc/server/accounts/get-name";
+import {
+  getNames,
+  validateGetNamesAccountIds,
+} from "@cocalc/server/accounts/get-name";
 
 export default async function handle(req, res) {
   const account_id = await getAccountId(req);
@@ -19,9 +22,8 @@ export default async function handle(req, res) {
     return;
   }
 
-  let { account_ids } = getParams(req);
-
   try {
+    const account_ids = validateGetNamesAccountIds(getParams(req).account_ids);
     const names = await getNames(account_ids);
     res.json({ names });
   } catch (err) {

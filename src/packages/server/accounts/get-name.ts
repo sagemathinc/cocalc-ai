@@ -7,6 +7,9 @@ import {
   getClusterAccountById,
   getClusterAccountsByIds,
 } from "@cocalc/server/inter-bay/accounts";
+import { isValidUUID } from "@cocalc/util/misc";
+
+export const MAX_GET_NAMES_ACCOUNT_IDS = 250;
 
 export default async function getName(
   account_id: string,
@@ -47,6 +50,30 @@ type Names = {
   [account_id: string]: { first_name: string; last_name: string; profile? };
 };
 
+export function validateGetNamesAccountIds(account_ids: unknown): string[] {
+  if (!Array.isArray(account_ids)) {
+    throw Error("account_ids must be an array");
+  }
+  if (account_ids.length > MAX_GET_NAMES_ACCOUNT_IDS) {
+    throw Error(
+      `at most ${MAX_GET_NAMES_ACCOUNT_IDS} account_ids may be requested`,
+    );
+  }
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < account_ids.length; i += 1) {
+    const account_id = `${account_ids[i] ?? ""}`.trim();
+    if (!isValidUUID(account_id)) {
+      throw Error(`account_ids[${i}] must be a valid uuid`);
+    }
+    if (!seen.has(account_id)) {
+      normalized.push(account_id);
+      seen.add(account_id);
+    }
+  }
+  return normalized;
+}
+
 function canonicalName(row) {
   // some accounts have these null for some reason sometimes, but it is nice if client code can assume not null.
   let { first_name = "", last_name = "", profile } = row;
@@ -81,6 +108,10 @@ function rowsToNames(rows, account_ids): Names {
 // This also includes the user's profile info, e.g., color or gravatar or image
 
 export async function getNames(account_ids: string[]): Promise<Names> {
+  account_ids = validateGetNamesAccountIds(account_ids);
+  if (account_ids.length === 0) {
+    return {};
+  }
   const cluster = await getClusterAccountsByIds(account_ids);
   if (cluster.length > 0) {
     return rowsToNames(cluster, account_ids);
