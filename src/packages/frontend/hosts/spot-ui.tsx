@@ -67,10 +67,10 @@ function formatProbeTime(value: string | number | undefined): string {
   return new Date(ms).toLocaleString();
 }
 
-function formatExpectedProbeTime(ms: number | undefined): string | undefined {
+function formatTargetProbeTime(ms: number | undefined): string | undefined {
   if (!Number.isFinite(ms)) return undefined;
   const now = Date.now();
-  if ((ms as number) <= now) return "due now";
+  if ((ms as number) <= now) return "waiting for cloud worker";
   const minutes = Math.max(1, Math.round(((ms as number) - now) / 60_000));
   return `${new Date(ms as number).toLocaleString()} (about ${minutes} min)`;
 }
@@ -95,27 +95,32 @@ function spotRecoveryProbeDetails(host?: HostLike | null) {
     state?.last_probe_at != null
       ? `${formatProbeTime(state.last_probe_at)} (${result})`
       : result;
-  let expectedNextMs: number | undefined;
+  const targetTimes: number[] = [];
   if (policy) {
     if (state?.last_probe_at) {
       const lastProbeMs = Date.parse(state.last_probe_at);
       if (Number.isFinite(lastProbeMs)) {
-        expectedNextMs =
-          lastProbeMs + policy.spot_probe_interval_minutes * 60_000;
+        targetTimes.push(
+          lastProbeMs + policy.spot_probe_interval_minutes * 60_000,
+        );
       }
-    } else if (state?.fallback_started_at) {
+    }
+    if (state?.fallback_started_at) {
       const fallbackMs = Date.parse(state.fallback_started_at);
       if (Number.isFinite(fallbackMs)) {
-        expectedNextMs =
-          fallbackMs + policy.standard_fallback_min_minutes * 60_000;
+        targetTimes.push(
+          fallbackMs + policy.standard_fallback_min_minutes * 60_000,
+        );
       }
     }
   }
-  const expectedNext = formatExpectedProbeTime(expectedNextMs);
+  const targetNext =
+    targetTimes.length > 0 ? Math.max(...targetTimes) : undefined;
+  const expectedNext = formatTargetProbeTime(targetNext);
   return (
     <div style={{ marginTop: 8 }}>
       <div>Last spot probe: {lastProbe}</div>
-      {expectedNext ? <div>Expected next probe: {expectedNext}</div> : null}
+      {expectedNext ? <div>Target next probe: {expectedNext}</div> : null}
       {state?.last_probe_error ? (
         <div>Last probe error: {state.last_probe_error}</div>
       ) : null}
