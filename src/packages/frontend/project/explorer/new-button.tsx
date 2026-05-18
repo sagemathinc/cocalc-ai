@@ -9,15 +9,12 @@ import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { DropdownMenu, Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import {
-  LAUNCHER_SITE_REMOVE_QUICK_KEY,
   LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   LAUNCHER_SETTINGS_KEY,
-  getProjectLauncherDefaults,
+  getAccountLauncherPrefs,
+  getEffectiveLauncher,
   getSiteLauncherDefaults,
-  getUserLauncherLayers,
-  mergeLauncherSettings,
 } from "@cocalc/frontend/project/new/launcher-preferences";
-import { useProjectLauncher } from "@cocalc/frontend/project/use-project-launcher";
 import { ProjectActions } from "@cocalc/frontend/project_store";
 import { COLORS } from "@cocalc/util/theme";
 import { EXTs as ALL_FILE_BUTTON_TYPES } from "./file-listing/utils";
@@ -36,7 +33,6 @@ interface Props {
 }
 
 export const NewButton: React.FC<Props> = ({
-  project_id,
   file_search = "",
   actions,
   create_folder,
@@ -50,24 +46,13 @@ export const NewButton: React.FC<Props> = ({
     "customize",
     LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   );
-  const site_remove_quick = useTypedRedux(
-    "customize",
-    LAUNCHER_SITE_REMOVE_QUICK_KEY,
-  );
-  const { launcher: project_launcher } = useProjectLauncher(project_id);
-  const siteLauncherDefaults = getSiteLauncherDefaults({
-    quickCreate: site_launcher_quick,
-    hiddenQuickCreate: site_remove_quick,
-  });
-  const userLauncherLayers = getUserLauncherLayers(
+  const siteLauncherDefaults = getSiteLauncherDefaults(site_launcher_quick);
+  const accountLauncherPrefs = getAccountLauncherPrefs(
     other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
-    project_id,
   );
-  const mergedLauncher = mergeLauncherSettings({
-    globalDefaults: siteLauncherDefaults,
-    projectDefaults: getProjectLauncherDefaults(project_launcher),
-    accountUserPrefs: userLauncherLayers.account,
-    projectUserPrefs: userLauncherLayers.project,
+  const mergedLauncher = getEffectiveLauncher({
+    accountPrefs: accountLauncherPrefs,
+    siteDefaults: siteLauncherDefaults,
   });
 
   function new_file_button_types() {

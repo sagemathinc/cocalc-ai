@@ -12,7 +12,6 @@ import {
   ProjectActions,
   redux,
   useActions,
-  useRedux,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import {
@@ -45,18 +44,14 @@ import { NewFileButton } from "./new-file-button";
 import { QUICK_CREATE_MAP } from "./launcher-catalog";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import {
-  LAUNCHER_GLOBAL_DEFAULTS,
-  LAUNCHER_SITE_REMOVE_QUICK_KEY,
   LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   LAUNCHER_SETTINGS_KEY,
-  getProjectLauncherDefaults,
+  getAccountLauncherPrefs,
+  getEffectiveLauncher,
   getSiteLauncherDefaults,
-  getUserLauncherLayers,
-  mergeLauncherSettings,
-  updateUserLauncherPrefs,
+  updateAccountLauncherPrefs,
 } from "./launcher-preferences";
 import { LauncherCustomizeModal } from "./launcher-customize-modal";
-import { useProjectLauncher } from "../use-project-launcher";
 
 const CREATE_MSG = defineMessage({
   id: "project.new.new-file-page.create.title",
@@ -90,27 +85,10 @@ export default function NewFilePage(props: Props) {
   const actions = useActions({ project_id });
   const availableFeatures = useAvailableFeatures(project_id);
   const other_settings = useTypedRedux("account", "other_settings");
-  const account_id = useTypedRedux("account", "account_id");
-  const is_admin = useTypedRedux("account", "is_admin");
   const site_launcher_quick = useTypedRedux(
     "customize",
     LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   );
-  const site_remove_quick = useTypedRedux(
-    "customize",
-    LAUNCHER_SITE_REMOVE_QUICK_KEY,
-  );
-  const { launcher: project_launcher, setLauncher: setProjectLauncher } =
-    useProjectLauncher(project_id);
-  const user_group = useRedux([
-    "projects",
-    "project_map",
-    project_id,
-    "users",
-    account_id,
-    "group",
-  ]);
-  const can_edit_project_defaults = !!is_admin || user_group === "owner";
   const [extensionWarning, setExtensionWarning] = useState<boolean>(false);
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
   const effective_current_path = current_path_abs ?? "/";
@@ -132,28 +110,13 @@ export default function NewFilePage(props: Props) {
     "file_creation_error",
   );
 
-  const projectLauncherDefaults = getProjectLauncherDefaults(project_launcher);
-  const siteLauncherDefaults = getSiteLauncherDefaults({
-    quickCreate: site_launcher_quick,
-    hiddenQuickCreate: site_remove_quick,
-  });
-  const userLauncherLayers = getUserLauncherLayers(
+  const siteLauncherDefaults = getSiteLauncherDefaults(site_launcher_quick);
+  const accountLauncherPrefs = getAccountLauncherPrefs(
     other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
-    project_id,
   );
-  const inheritedForProjectUser = mergeLauncherSettings({
-    globalDefaults: siteLauncherDefaults,
-    projectDefaults: projectLauncherDefaults,
-    accountUserPrefs: userLauncherLayers.account,
-  });
-  const inheritedForProjectDefaults = mergeLauncherSettings({
-    globalDefaults: siteLauncherDefaults,
-  });
-  const mergedLauncher = mergeLauncherSettings({
-    globalDefaults: siteLauncherDefaults,
-    projectDefaults: projectLauncherDefaults,
-    accountUserPrefs: userLauncherLayers.account,
-    projectUserPrefs: userLauncherLayers.project,
+  const mergedLauncher = getEffectiveLauncher({
+    accountPrefs: accountLauncherPrefs,
+    siteDefaults: siteLauncherDefaults,
   });
 
   function isQuickCreateAvailable(id: string): boolean {
@@ -223,17 +186,11 @@ export default function NewFilePage(props: Props) {
   }
 
   function saveUserLauncherPrefs(prefs: any | null) {
-    const next = updateUserLauncherPrefs(
+    const next = updateAccountLauncherPrefs(
       other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
-      project_id,
       prefs,
     );
     redux.getActions("account").set_other_settings(LAUNCHER_SETTINGS_KEY, next);
-  }
-
-  async function saveProjectLauncherDefaults(prefs: any) {
-    await redux.getActions("projects").set_project_launcher(project_id, prefs);
-    setProjectLauncher(prefs);
   }
 
   const [creatingFile, setCreatingFile] = useState<string>("");
@@ -589,42 +546,7 @@ export default function NewFilePage(props: Props) {
         open={showCustomizeModal}
         onClose={() => setShowCustomizeModal(false)}
         initialQuickCreate={mergedLauncher.quickCreate}
-        userBaseQuickCreate={inheritedForProjectUser.quickCreate}
-        projectBaseQuickCreate={inheritedForProjectDefaults.quickCreate}
-        onSaveUser={saveUserLauncherPrefs}
-        onSaveProject={saveProjectLauncherDefaults}
-        canEditProjectDefaults={can_edit_project_defaults}
-        contributions={[
-          {
-            key: "built-in",
-            title: "Built-in defaults",
-            quickCreateAdd: LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
-          },
-          {
-            key: "site",
-            title: "Site defaults",
-            quickCreateAdd: siteLauncherDefaults.quickCreate,
-            quickCreateRemove: siteLauncherDefaults.hiddenQuickCreate,
-          },
-          {
-            key: "project",
-            title: "Project defaults",
-            quickCreateAdd: projectLauncherDefaults.quickCreate,
-            quickCreateRemove: projectLauncherDefaults.hiddenQuickCreate,
-          },
-          {
-            key: "account",
-            title: "Your account overrides",
-            quickCreateAdd: userLauncherLayers.account.quickCreate,
-            quickCreateRemove: userLauncherLayers.account.hiddenQuickCreate,
-          },
-          {
-            key: "project-user",
-            title: "This project overrides",
-            quickCreateAdd: userLauncherLayers.project.quickCreate,
-            quickCreateRemove: userLauncherLayers.project.hiddenQuickCreate,
-          },
-        ]}
+        onSave={saveUserLauncherPrefs}
       />
       <Modal
         open={showUploadModal}

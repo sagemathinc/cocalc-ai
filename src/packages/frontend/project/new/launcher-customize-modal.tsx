@@ -1,6 +1,6 @@
 /*
  *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
- *  License: MS-RSL – see LICENSE.md for details
+ *  License: MS-RSL - see LICENSE.md for details
  */
 
 import {
@@ -10,10 +10,9 @@ import {
   Modal,
   Select,
   Space,
-  Tag,
   Typography,
 } from "antd";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import {
   DragHandle,
@@ -24,10 +23,7 @@ import { file_associations } from "@cocalc/frontend/file-associations";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import { capitalize, keys } from "@cocalc/util/misc";
 import { QUICK_CREATE_CATALOG, QUICK_CREATE_MAP } from "./launcher-catalog";
-import {
-  LauncherProjectDefaults,
-  LauncherUserPrefs,
-} from "./launcher-preferences";
+import type { LauncherPrefs } from "./launcher-preferences";
 
 function move<T>(list: T[], index: number, delta: number): T[] {
   const next = list.slice();
@@ -50,44 +46,29 @@ interface Props {
   open: boolean;
   onClose: () => void;
   initialQuickCreate: string[];
-  userBaseQuickCreate?: string[];
-  projectBaseQuickCreate?: string[];
-  onSaveUser?: (prefs: LauncherUserPrefs | null) => void;
-  onSaveProject?: (prefs: LauncherProjectDefaults) => void;
-  canEditProjectDefaults?: boolean;
-  saveMode?: "user" | "project";
-  contributions?: LauncherContributionLayer[];
-}
-
-export interface LauncherContributionLayer {
-  key: string;
-  title: string;
-  quickCreateAdd?: string[];
-  quickCreateRemove?: string[];
+  inheritedQuickCreate?: string[];
+  onSave?: (prefs: LauncherPrefs | null) => void;
+  resetLabel?: string;
+  title?: string;
 }
 
 export function LauncherCustomizeModal({
   open,
   onClose,
   initialQuickCreate,
-  userBaseQuickCreate,
-  projectBaseQuickCreate,
-  onSaveUser,
-  onSaveProject,
-  canEditProjectDefaults = false,
-  saveMode = "user",
-  contributions = [],
+  onSave,
+  resetLabel = "Reset to inherited default",
+  title = "Customize Launcher",
 }: Props) {
   const [quickCreate, setQuickCreate] = useState<string[]>([]);
-  const [showMergeDetails, setShowMergeDetails] = useState<boolean>(false);
-  const userBaseQuick = userBaseQuickCreate ?? initialQuickCreate;
-  const projectBaseQuick = projectBaseQuickCreate ?? userBaseQuick;
+  const wasOpenRef = useRef<boolean>(false);
 
   useEffect(() => {
-    if (!open) return;
-    setQuickCreate(initialQuickCreate);
-    setShowMergeDetails(false);
-  }, [open, initialQuickCreate]);
+    if (open && !wasOpenRef.current) {
+      setQuickCreate(initialQuickCreate);
+    }
+    wasOpenRef.current = open;
+  }, [initialQuickCreate, open]);
 
   function toggleQuickCreate(id: string, checked: boolean) {
     if (checked) {
@@ -99,53 +80,16 @@ export function LauncherCustomizeModal({
     }
   }
 
-  function saveUser() {
-    if (!onSaveUser) {
-      onClose();
-      return;
-    }
-    const addQuick = quickCreate.filter((id) => !userBaseQuick.includes(id));
-    const removeQuick = userBaseQuick.filter((id) => !quickCreate.includes(id));
-    onSaveUser({
-      quickCreate: addQuick,
-      hiddenQuickCreate: removeQuick,
-      quickCreateOrder: quickCreate,
-    });
+  function save() {
+    const prefs = { quickCreate };
+    onSave?.(prefs);
     onClose();
   }
 
-  function resetUser() {
-    if (!onSaveUser) {
-      onClose();
-      return;
-    }
-    onSaveUser(null);
+  function reset() {
+    onSave?.(null);
     onClose();
   }
-
-  function saveProjectDefaults() {
-    const addQuick = quickCreate.filter((id) => !projectBaseQuick.includes(id));
-    const removeQuick = projectBaseQuick.filter(
-      (id) => !quickCreate.includes(id),
-    );
-    onSaveProject?.({
-      quickCreate: addQuick,
-      hiddenQuickCreate: removeQuick,
-      quickCreateOrder: quickCreate,
-    });
-    onClose();
-  }
-
-  function discardChanges() {
-    onClose();
-  }
-
-  function resetProjectDefaults() {
-    onSaveProject?.({});
-    onClose();
-  }
-
-  const isProjectMode = saveMode === "project";
 
   const hiddenQuick = QUICK_CREATE_CATALOG.filter(
     (spec) => !quickCreate.includes(spec.id),
@@ -169,11 +113,11 @@ export function LauncherCustomizeModal({
     return (
       <div
         style={{
-          display: "flex",
           alignItems: "center",
+          cursor: clickable ? "pointer" : undefined,
+          display: "flex",
           justifyContent: "space-between",
           padding: "4px 0",
-          cursor: clickable ? "pointer" : undefined,
         }}
         onClick={
           clickable
@@ -187,7 +131,7 @@ export function LauncherCustomizeModal({
           {draggable ? (
             <DragHandle id={id} />
           ) : (
-            <span style={{ width: "18px", display: "inline-block" }} />
+            <span style={{ display: "inline-block", width: 18 }} />
           )}
           <Icon name={spec.icon} />
           <span>{spec.label}</span>
@@ -200,67 +144,18 @@ export function LauncherCustomizeModal({
     );
   }
 
-  function quickLabel(id: string): string {
-    const spec = QUICK_CREATE_MAP[id];
-    if (spec) return spec.label;
-    const data = file_options(`x.${id}`);
-    return launcherLabel(data.name ?? id);
-  }
-
-  function renderTags(
-    ids: string[] | undefined,
-    color: string,
-    label: (id: string) => string,
-    prefix: string,
-  ) {
-    if (!ids?.length) {
-      return <Typography.Text type="secondary">none</Typography.Text>;
-    }
-    return (
-      <Space size={[6, 6]} wrap>
-        {ids.map((id) => (
-          <Tag
-            key={`${prefix}-${id}`}
-            color={color}
-            style={{ marginInlineEnd: 0 }}
-          >
-            {label(id)} <span style={{ opacity: 0.65 }}>({id})</span>
-          </Tag>
-        ))}
-      </Space>
-    );
-  }
-
   return (
     <Modal
-      title="Customize Launcher"
+      title={title}
       open={open}
-      onCancel={isProjectMode ? saveProjectDefaults : saveUser}
-      onOk={isProjectMode ? saveProjectDefaults : saveUser}
-      okText="Save"
-      cancelText="Save"
+      onCancel={onClose}
+      onOk={save}
       footer={
-        <Space style={{ width: "100%", justifyContent: "space-between" }}>
+        <Space style={{ justifyContent: "space-between", width: "100%" }}>
+          <Button onClick={reset}>{resetLabel}</Button>
           <Space>
-            {isProjectMode ? (
-              <Button onClick={resetProjectDefaults}>Reset to defaults</Button>
-            ) : (
-              <Button onClick={resetUser}>Reset to defaults</Button>
-            )}
-            {!isProjectMode && canEditProjectDefaults && onSaveProject && (
-              <Button onClick={saveProjectDefaults} type="default">
-                Save as project defaults
-              </Button>
-            )}
-          </Space>
-          <Space>
-            <Button danger onClick={discardChanges}>
-              Discard changes
-            </Button>
-            <Button
-              type="primary"
-              onClick={isProjectMode ? saveProjectDefaults : saveUser}
-            >
+            <Button onClick={onClose}>Cancel</Button>
+            <Button type="primary" onClick={save}>
               Save
             </Button>
           </Space>
@@ -268,97 +163,19 @@ export function LauncherCustomizeModal({
       }
       width={860}
     >
-      <div style={{ marginBottom: "8px" }}>
-        <Button
-          size="small"
-          type="default"
-          onClick={() => setShowMergeDetails(!showMergeDetails)}
-        >
-          <Icon name={showMergeDetails ? "caret-down" : "caret-right"} /> How
-          this merges
-        </Button>
-      </div>
-      {showMergeDetails && (
-        <div style={{ marginBottom: "14px" }}>
-          <Typography.Paragraph style={{ marginBottom: "6px" }}>
-            Quick Create entries are merged additively in this order: built-in
-            defaults, site defaults, project defaults, account defaults, then
-            project-user overrides.
-          </Typography.Paragraph>
-          <Typography.Paragraph style={{ marginBottom: "10px" }}>
-            Each layer can add items and explicitly remove inherited items.
-          </Typography.Paragraph>
-          <Typography.Text strong>Current contributions</Typography.Text>
-          <div
-            style={{
-              marginTop: "6px",
-              display: "grid",
-              gridTemplateColumns: "1fr",
-              gap: "8px",
-              maxHeight: "220px",
-              overflowY: "auto",
-              border: "1px solid #f0f0f0",
-              borderRadius: "8px",
-              padding: "10px",
-            }}
-          >
-            {contributions.map((layer) => (
-              <div
-                key={layer.key}
-                style={{
-                  borderBottom: "1px dashed #f0f0f0",
-                  paddingBottom: "8px",
-                }}
-              >
-                <Typography.Text strong>{layer.title}</Typography.Text>
-                <div style={{ marginTop: "4px" }}>
-                  <Typography.Text type="secondary">Quick + </Typography.Text>
-                  {renderTags(
-                    layer.quickCreateAdd,
-                    "blue",
-                    quickLabel,
-                    `${layer.key}-qadd`,
-                  )}
-                </div>
-                <div style={{ marginTop: "4px" }}>
-                  <Typography.Text type="secondary">Quick - </Typography.Text>
-                  {renderTags(
-                    layer.quickCreateRemove,
-                    "volcano",
-                    quickLabel,
-                    `${layer.key}-qremove`,
-                  )}
-                </div>
-              </div>
-            ))}
-            <div>
-              <Typography.Text strong>
-                Effective quick create state
-              </Typography.Text>
-              <div style={{ marginTop: "4px" }}>
-                <Typography.Text type="secondary">
-                  Quick Create:{" "}
-                </Typography.Text>
-                {renderTags(
-                  quickCreate,
-                  "processing",
-                  quickLabel,
-                  "effective-quick",
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+        Choose the exact Quick Create buttons to show, then drag them into the
+        order you want.
+      </Typography.Paragraph>
       <div
         style={{
           display: "grid",
+          gap: 24,
           gridTemplateColumns: "1fr 1fr",
-          gap: "24px",
         }}
       >
         <div>
-          <Typography.Title level={5} style={{ marginBottom: "6px" }}>
+          <Typography.Title level={5} style={{ marginBottom: 6 }}>
             Quick Create
           </Typography.Title>
           <SortableList
@@ -378,17 +195,17 @@ export function LauncherCustomizeModal({
           </SortableList>
         </div>
         <div>
-          <Typography.Title level={5} style={{ marginBottom: "6px" }}>
+          <Typography.Title level={5} style={{ marginBottom: 6 }}>
             Available
           </Typography.Title>
           <Typography.Text type="secondary">
-            Search more available launchers
+            Search additional launchers by file type.
           </Typography.Text>
           <Select<string>
             showSearch
             allowClear
             placeholder="Search more launchers..."
-            style={{ width: "100%", marginTop: "6px" }}
+            style={{ marginTop: 6, width: "100%" }}
             value={undefined}
             options={(() => {
               const list = keys(file_associations).sort();

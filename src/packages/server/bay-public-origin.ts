@@ -106,7 +106,7 @@ export async function getConfiguredSiteDnsHostname(): Promise<
   return normalizeHostname(settings.dns);
 }
 
-function deriveBrowserCookieDomain(
+export function deriveBrowserCookieDomain(
   site: string | undefined,
 ): string | undefined {
   if (!site || site === "localhost" || looksLikeIp(site)) {
@@ -124,6 +124,19 @@ function deriveBrowserCookieDomain(
     }
   }
   return parts.slice(-2).join(".");
+}
+
+export function deriveBrowserCookieName({
+  name,
+  site_hostname,
+}: {
+  name: string;
+  site_hostname?: string;
+}): string {
+  const site = normalizeHostname(site_hostname);
+  if (!site) return name;
+  const prefix = site.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return prefix ? `${prefix}_${name}` : name;
 }
 
 export function deriveBayHostnameFromSiteDns({
@@ -353,7 +366,7 @@ export function detectRequestOrigin(req: Request): string | undefined {
   return normalizeOrigin(`${proto}://${withPort}`);
 }
 
-function deriveSiteHostnameFromRequestOrigin(opts: {
+export function deriveSiteHostnameFromRequestOrigin(opts: {
   request_origin?: string;
   current_bay_id: string;
 }): string | undefined {
@@ -369,6 +382,35 @@ function deriveSiteHostnameFromRequestOrigin(opts: {
     return hostname.slice(prefix.length);
   }
   return hostname;
+}
+
+export async function getBrowserCookieSiteHostnameForRequest(
+  req?: Request,
+): Promise<string | undefined> {
+  const configured = await getConfiguredValueWithTimeout(
+    "browser-cookie-site-hostname",
+    () => getConfiguredSiteDnsHostname(),
+  );
+  if (configured) return configured;
+  if (!req) return;
+  const request_origin = detectRequestOrigin(req);
+  return deriveSiteHostnameFromRequestOrigin({
+    request_origin,
+    current_bay_id: getConfiguredBayId(),
+  });
+}
+
+export async function getBrowserCookieNameForRequest({
+  name,
+  req,
+}: {
+  name: string;
+  req?: Request;
+}): Promise<string> {
+  return deriveBrowserCookieName({
+    name,
+    site_hostname: await getBrowserCookieSiteHostnameForRequest(req),
+  });
 }
 
 export async function getCurrentBayPublicOriginForRequest(

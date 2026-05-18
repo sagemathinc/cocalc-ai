@@ -87,7 +87,7 @@ describe("publishProjectDetailInvalidationBestEffort", () => {
 
     await publishProjectDetailInvalidationBestEffort({
       project_id: "proj-1",
-      fields: ["launcher"],
+      fields: ["env"],
     });
 
     expect(queryMock).not.toHaveBeenCalled();

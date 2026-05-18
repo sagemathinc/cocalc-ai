@@ -9,6 +9,7 @@ import {
   QUICK_CREATE_CATALOG,
   QUICK_CREATE_MAP,
 } from "@cocalc/frontend/project/new/launcher-catalog";
+import { normalizeQuickCreate } from "@cocalc/frontend/project/new/launcher-preferences";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { Icon } from "@cocalc/frontend/components";
@@ -30,7 +31,7 @@ function parseCsv(input: string | undefined): string[] {
 }
 
 function unique(values: string[]): string[] {
-  return [...new Set(values.map((v) => v.trim()).filter(Boolean))];
+  return normalizeQuickCreate(values);
 }
 
 function toCsv(values: string[]): string {
@@ -66,21 +67,18 @@ export default function LauncherDefaultsWizard({
   data,
   onApply,
 }: WizardProps) {
-  const [addQuick, setAddQuick] = useState<string[]>([]);
-  const [removeQuick, setRemoveQuick] = useState<string[]>([]);
+  const [quickCreate, setQuickCreate] = useState<string[]>([]);
 
   useEffect(() => {
     if (!open) return;
-    setAddQuick(parseCsv(data.launcher_default_quick_create));
-    setRemoveQuick(parseCsv(data.launcher_remove_quick_create));
+    setQuickCreate(parseCsv(data.launcher_default_quick_create));
   }, [open, data]);
 
   const quickOptions = useMemo(extensionOptions, []);
 
   async function apply() {
     await onApply({
-      launcher_default_quick_create: toCsv(addQuick),
-      launcher_remove_quick_create: toCsv(removeQuick),
+      launcher_default_quick_create: toCsv(quickCreate),
     });
     onClose();
   }
@@ -98,31 +96,19 @@ export default function LauncherDefaultsWizard({
         <Alert
           type="info"
           showIcon
-          title="Quick Create defaults are additive."
-          description="Layers are merged in order: built-in, site, project, account, project-user. Add lists append; remove lists explicitly hide inherited entries."
+          title="Quick Create defaults are an exact list."
+          description="Choose the site-wide default Quick Create buttons. Users can override this list in their account settings."
         />
         <div>
-          <Typography.Text strong>Quick Create: add</Typography.Text>
+          <Typography.Text strong>Site Quick Create buttons</Typography.Text>
           <Select
             mode="tags"
             style={{ width: "100%", marginTop: "6px" }}
-            value={addQuick}
-            onChange={(values) => setAddQuick(unique(values))}
+            value={quickCreate}
+            onChange={(values) => setQuickCreate(unique(values))}
             options={quickOptions}
             tokenSeparators={[",", " "]}
-            placeholder="Add quick-create ids/extensions (e.g. course,codex)"
-          />
-        </div>
-        <div>
-          <Typography.Text strong>Quick Create: remove</Typography.Text>
-          <Select
-            mode="tags"
-            style={{ width: "100%", marginTop: "6px" }}
-            value={removeQuick}
-            onChange={(values) => setRemoveQuick(unique(values))}
-            options={quickOptions}
-            tokenSeparators={[",", " "]}
-            placeholder="Remove inherited quick-create ids/extensions"
+            placeholder="Quick-create ids/extensions (e.g. chat,ipynb,md,tex,term)"
           />
         </div>
       </Space>

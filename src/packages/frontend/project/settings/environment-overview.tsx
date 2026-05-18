@@ -5,11 +5,10 @@
 
 import { Button, Card, Collapse, Space, Typography } from "antd";
 import type { CSSProperties, ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
-import { lite } from "@cocalc/frontend/lite";
 import { useProjectEnv } from "@cocalc/frontend/project/use-project-env";
 import { useProjectRootfs } from "@cocalc/frontend/project/use-project-rootfs";
 import { useProjectSecrets } from "@cocalc/frontend/project/use-project-secrets";
@@ -20,13 +19,10 @@ import {
 import { PROJECT_CAPABILITY_SPECS } from "@cocalc/util/project-capabilities";
 import { COLORS } from "@cocalc/util/theme";
 
+import { EnvironmentConfigurationSummary } from "./environment-configuration-summary";
 import { EnvironmentFeatureGroups } from "./environment-feature-groups";
-import { Environment as CustomEnvironmentVariables } from "./environment";
-import { LauncherDefaults } from "./launcher-defaults";
 import { ProjectCapabilities } from "./project-capabilites";
-import RootFilesystemImage from "./root-filesystem-image";
-import { useRunQuota } from "./run-quota/hooks";
-import { ProjectSecrets } from "./secrets";
+import { RootFilesystemImageModal } from "./root-filesystem-image";
 import type { Project } from "./types";
 
 type Mode = "project" | "flyout";
@@ -121,7 +117,11 @@ function SummaryCard({
   return (
     <Card
       size="small"
-      style={{ borderColor: COLORS.GRAY_LL, height: "100%" }}
+      style={{
+        borderColor: COLORS.GRAY_LL,
+        height: "100%",
+        position: "relative",
+      }}
       styles={{ body: CARD_BODY_STYLE }}
     >
       <div
@@ -148,7 +148,14 @@ function SummaryCard({
           <Icon name={icon as any} />
         </div>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          <Typography.Text
+            type="secondary"
+            style={{
+              display: "block",
+              fontSize: 12,
+              marginRight: action == null ? undefined : 52,
+            }}
+          >
             {title}
           </Typography.Text>
           <div
@@ -166,8 +173,10 @@ function SummaryCard({
             <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>{subtitle}</div>
           ) : undefined}
         </div>
-        {action != null ? <div>{action}</div> : undefined}
       </div>
+      {action != null ? (
+        <div style={{ position: "absolute", right: 8, top: 6 }}>{action}</div>
+      ) : undefined}
     </Card>
   );
 }
@@ -236,49 +245,169 @@ export function EnvironmentOverview({
 }: Props) {
   const isFlyout = mode === "flyout";
   const [activeKeys, setActiveKeys] = useState<string[]>([]);
+  const [activeDetailKeys, setActiveDetailKeys] = useState<string[]>([]);
+  const [featureDetailsOpen, setFeatureDetailsOpen] = useState(false);
+  const [runtimeImageOpen, setRuntimeImageOpen] = useState(false);
+  const collapseHeaderRefs = useRef<Record<string, HTMLSpanElement | null>>({});
+  const featureDetailsRef = useRef<HTMLDivElement | null>(null);
   const { env } = useProjectEnv(project_id);
   const { secrets } = useProjectSecrets(project_id);
   const { rootfs } = useProjectRootfs(project_id);
   const { images: rootfsImages } = useRootfsImages([managedRootfsCatalogUrl()]);
-  const runQuota = useRunQuota(project_id, null);
   const availableFeatures = useTypedRedux({ project_id }, "available_features");
   const configurationLoading = useTypedRedux(
     { project_id },
     "configuration_loading",
   );
-  const hostId = `${project.get("host_id") ?? ""}`;
-
   const avail = availableFeatures?.toJS?.();
   const features = useMemo(() => featureSummary(avail), [avail]);
   const envCount = countConfiguredEnv(env);
   const secretCount = secrets?.length ?? 0;
   const runtimeImage = rootfsLabel(rootfs, rootfsImages);
-  const networkSummary = runQuota?.network ? "Internet enabled" : "Restricted";
-  const memberHost = runQuota?.member_host ? "member host" : undefined;
 
-  function expand(key: string): void {
-    setActiveKeys((keys) => (keys.includes(key) ? keys : [...keys, key]));
+  function scrollToElement(element: HTMLElement | null): void {
+    if (element == null) return;
+    const scroll = () =>
+      element.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => requestAnimationFrame(scroll));
+    } else {
+      setTimeout(scroll, 0);
+    }
+  }
+
+  function addActiveKey(
+    setter: (fn: (keys: string[]) => string[]) => void,
+    key: string,
+  ): void {
+    setter((keys) => (keys.includes(key) ? keys : [...keys, key]));
+  }
+
+  function openDetail(key: string): void {
+    if (isFlyout) {
+      addActiveKey(setActiveKeys, "more");
+      addActiveKey(setActiveDetailKeys, key);
+      scrollToElement(collapseHeaderRefs.current.more);
+      return;
+    }
+    addActiveKey(setActiveKeys, key);
+    scrollToElement(collapseHeaderRefs.current[key]);
+  }
+
+  function collapseLabel(key: string, label: ReactNode): ReactNode {
+    return (
+      <span
+        ref={(node) => {
+          collapseHeaderRefs.current[key] = node;
+        }}
+      >
+        {label}
+      </span>
+    );
   }
 
   function renderAction(key: string, label = "Details") {
     return (
-      <Button size="small" type="link" onClick={() => expand(key)}>
+      <Button size="small" type="link" onClick={() => openDetail(key)}>
         {label}
       </Button>
     );
   }
 
-  const summaryColumns = isFlyout ? "1fr" : "repeat(3, minmax(0, 1fr))";
+  function renderFeatureAction() {
+    return (
+      <Button
+        size="small"
+        type="link"
+        onClick={() => {
+          setFeatureDetailsOpen(true);
+          scrollToElement(featureDetailsRef.current);
+        }}
+      >
+        Details
+      </Button>
+    );
+  }
+
+  const summaryColumns = isFlyout
+    ? "1fr"
+    : "repeat(auto-fit, minmax(220px, 1fr))";
 
   const detailMode: Mode = "flyout";
   const SummaryComponent = isFlyout ? SummaryRow : SummaryCard;
+  const detailItems = [
+    {
+      key: "configuration",
+      label: isFlyout
+        ? "Configuration"
+        : collapseLabel("configuration", "Configuration"),
+      children: (
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Typography.Text type="secondary">
+            Launcher defaults, process environment, and mounted secrets.
+          </Typography.Text>
+          <EnvironmentConfigurationSummary
+            mode={mode}
+            project_id={project_id}
+          />
+        </Space>
+      ),
+    },
+    {
+      key: "diagnostics",
+      label: isFlyout
+        ? "Technical Details"
+        : collapseLabel("diagnostics", "Technical Details"),
+      children: (
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Typography.Text type="secondary">
+            Full feature probe output and formatter details for debugging or
+            support.
+          </Typography.Text>
+          <ProjectCapabilities
+            project={project}
+            project_id={project_id}
+            mode={detailMode}
+          />
+        </Space>
+      ),
+    },
+  ];
+  const collapseItems = isFlyout
+    ? [
+        {
+          key: "more",
+          label: collapseLabel("more", "More environment details"),
+          children: (
+            <Collapse
+              activeKey={activeDetailKeys}
+              onChange={(keys) =>
+                setActiveDetailKeys(
+                  Array.isArray(keys) ? keys.map(String) : [String(keys)],
+                )
+              }
+              items={detailItems}
+              size="small"
+            />
+          ),
+        },
+      ]
+    : detailItems;
   const summaryItems: SummaryCardProps[] = [
     {
       icon: "disk-drive",
       title: "Runtime Image",
       value: runtimeImage,
       subtitle: "Base software environment",
-      action: renderAction("rootfs"),
+      action: (
+        <Button
+          size="small"
+          type="link"
+          onClick={() => setRuntimeImageOpen(true)}
+        >
+          Details
+        </Button>
+      ),
     },
     {
       icon: "clipboard-check",
@@ -289,33 +418,21 @@ export function EnvironmentOverview({
       subtitle: features.formatterCount
         ? `${features.formatterCount} formatter${features.formatterCount === 1 ? "" : "s"}`
         : "Feature probe",
-      action: renderAction("features"),
+      action: renderFeatureAction(),
     },
     {
       icon: "bars",
       title: "Environment Variables",
       value: `${envCount} configured`,
       subtitle: "Custom process environment",
-      action: renderAction("env"),
+      action: renderAction("configuration", "Configure"),
     },
     {
       icon: "key",
       title: "Project Secrets",
       value: `${secretCount} secret${secretCount === 1 ? "" : "s"}`,
       subtitle: "Mounted encrypted files",
-      action: renderAction("secrets"),
-    },
-    {
-      icon: "network",
-      title: "Network",
-      value: networkSummary,
-      subtitle: memberHost ?? "Project access",
-    },
-    {
-      icon: "terminal",
-      title: "SSH",
-      value: lite ? "Unavailable" : "Available",
-      subtitle: hostId ? `Host ${hostId.slice(0, 8)}` : "Remote access",
+      action: renderAction("configuration", "Configure"),
     },
   ];
 
@@ -349,57 +466,26 @@ export function EnvironmentOverview({
         ))}
       </div>
 
-      <EnvironmentFeatureGroups
-        mode={mode}
-        onDetails={() => expand("features")}
-        project_id={project_id}
-      />
+      <div ref={featureDetailsRef}>
+        <EnvironmentFeatureGroups
+          expanded={featureDetailsOpen}
+          mode={mode}
+          onDetails={() => openDetail("diagnostics")}
+          onExpandedChange={setFeatureDetailsOpen}
+          project_id={project_id}
+        />
+      </div>
 
       <Collapse
         activeKey={activeKeys}
         onChange={(keys) =>
           setActiveKeys(Array.isArray(keys) ? keys.map(String) : [String(keys)])
         }
-        items={[
-          {
-            key: "launcher",
-            label: "Launcher Defaults",
-            children: <LauncherDefaults project_id={project_id} />,
-          },
-          {
-            key: "env",
-            label: "Custom Environment Variables",
-            children: (
-              <CustomEnvironmentVariables
-                project_id={project_id}
-                mode={detailMode}
-              />
-            ),
-          },
-          {
-            key: "secrets",
-            label: "Project Secrets",
-            children: (
-              <ProjectSecrets project_id={project_id} mode={detailMode} />
-            ),
-          },
-          {
-            key: "features",
-            label: "Available Features and Formatters",
-            children: (
-              <ProjectCapabilities
-                project={project}
-                project_id={project_id}
-                mode={detailMode}
-              />
-            ),
-          },
-          {
-            key: "rootfs",
-            label: "Root Filesystem Image",
-            children: <RootFilesystemImage />,
-          },
-        ]}
+        items={collapseItems}
+      />
+      <RootFilesystemImageModal
+        open={runtimeImageOpen}
+        onClose={() => setRuntimeImageOpen(false)}
       />
     </Space>
   );

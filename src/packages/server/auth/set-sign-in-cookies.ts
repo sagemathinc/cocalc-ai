@@ -7,9 +7,13 @@ import type { AuthSessionFactorLevel } from "@cocalc/server/auth/auth-sessions";
 import { recordNewAuthSession } from "@cocalc/server/auth/auth-sessions";
 import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { getBrowserCookieDomainForRequest } from "@cocalc/server/bay-public-origin";
+import {
+  getBrowserCookieDomainForRequest,
+  getBrowserCookieNameForRequest,
+} from "@cocalc/server/bay-public-origin";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { clearLegacySharedAuthCookies } from "./clear-auth-cookies";
 import Cookies from "cookies";
 
 // 6 months by default, but sometimes (e.g., impersonate) is MUCH shorter.
@@ -35,6 +39,7 @@ export default async function setSignInCookies({
     metadata?: Record<string, unknown>;
   };
 }) {
+  await clearLegacySharedAuthCookies({ req, res });
   const opts = { req, res, account_id, maxAge, session };
   const [rememberMe] = await Promise.all([
     setRememberMeCookie(opts),
@@ -44,15 +49,24 @@ export default async function setSignInCookies({
   return rememberMe;
 }
 
-function cookieOptionVariants<T extends Record<string, any>>(
-  opts: T,
-): Array<T | Omit<T, "domain">> {
-  const variants: Array<T | Omit<T, "domain">> = [opts];
-  if (opts.domain) {
-    const { domain: _domain, ...hostOnly } = opts;
-    variants.push(hostOnly);
+async function cookieTargets({
+  req,
+  name,
+}: {
+  req;
+  name: string;
+}): Promise<{ name: string; domain?: string }[]> {
+  if (name !== REMEMBER_ME_COOKIE_NAME) {
+    return [{ name }];
   }
-  return variants;
+  const domain = await getBrowserCookieDomainForRequest(req);
+  if (!domain) {
+    return [{ name }];
+  }
+  const sharedName = await getBrowserCookieNameForRequest({ name, req });
+  return sharedName === name
+    ? [{ name }]
+    : [{ name }, { name: sharedName, domain }];
 }
 
 async function setRememberMeCookie({ req, res, account_id, maxAge, session }) {
@@ -75,14 +89,16 @@ async function setRememberMeCookie({ req, res, account_id, maxAge, session }) {
   const cookies = new Cookies(req, res);
   const { samesite_remember_me } = await getServerSettings();
   const sameSite = samesite_remember_me;
-  const domain = await getBrowserCookieDomainForRequest(req);
-  for (const opts of cookieOptionVariants({
-    ...(domain ? { domain } : {}),
-    maxAge,
-    sameSite,
-    secure: req.protocol === "https",
+  for (const target of await cookieTargets({
+    req,
+    name: REMEMBER_ME_COOKIE_NAME,
   })) {
-    cookies.set(REMEMBER_ME_COOKIE_NAME, value, opts);
+    cookies.set(target.name, value, {
+      ...(target.domain ? { domain: target.domain } : {}),
+      maxAge,
+      sameSite,
+      secure: req.protocol === "https",
+    });
   }
   return { value, hash, expire };
 }
@@ -92,29 +108,33 @@ async function setAccountIdCookie({ req, res, account_id, maxAge }) {
   // from browser.  It's not for telling the server the account_id, but
   // for telling the user their own account_id.
   const cookies = new Cookies(req, res, { secure: false, httpOnly: false });
-  const domain = await getBrowserCookieDomainForRequest(req);
-  for (const opts of cookieOptionVariants({
-    ...(domain ? { domain } : {}),
-    maxAge,
-    httpOnly: false,
+  for (const target of await cookieTargets({
+    req,
+    name: ACCOUNT_ID_COOKIE_NAME,
   })) {
-    cookies.set(ACCOUNT_ID_COOKIE_NAME, account_id, opts);
+    cookies.set(target.name, account_id, {
+      ...(target.domain ? { domain: target.domain } : {}),
+      maxAge,
+      httpOnly: false,
+    });
   }
 }
 
 async function setHomeBayCookie({ req, res, account_id, maxAge }) {
   const cookies = new Cookies(req, res);
-  const domain = await getBrowserCookieDomainForRequest(req);
   const account = await getClusterAccountById(account_id);
   const home_bay_id =
     `${account?.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
-  for (const opts of cookieOptionVariants({
-    ...(domain ? { domain } : {}),
-    maxAge,
-    sameSite: "lax",
-    secure: req.protocol === "https",
-    httpOnly: true,
+  for (const target of await cookieTargets({
+    req,
+    name: HOME_BAY_ID_COOKIE_NAME,
   })) {
-    cookies.set(HOME_BAY_ID_COOKIE_NAME, home_bay_id, opts);
+    cookies.set(target.name, home_bay_id, {
+      ...(target.domain ? { domain: target.domain } : {}),
+      maxAge,
+      sameSite: "lax",
+      secure: req.protocol === "https",
+      httpOnly: true,
+    });
   }
 }

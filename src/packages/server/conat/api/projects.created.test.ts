@@ -37,7 +37,6 @@ describe("getProjectCreated", () => {
     queryMock = jest.fn(async () => ({
       rows: [
         {
-          launcher: null,
           region: null,
           created: CREATED,
           env: null,

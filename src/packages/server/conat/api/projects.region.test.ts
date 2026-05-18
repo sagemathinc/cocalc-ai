@@ -36,7 +36,6 @@ describe("getProjectRegion", () => {
     queryMock = jest.fn(async () => ({
       rows: [
         {
-          launcher: null,
           region: "wnam",
           created: null,
           env: null,

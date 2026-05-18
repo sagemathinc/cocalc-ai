@@ -43,7 +43,6 @@ describe("lite hub project detail getters", () => {
       project_id: PROJECT_ID,
       title: "Lite Project",
       created: "2026-04-09T00:00:00.000Z",
-      launcher: { quick_create: ["terminal"] },
       run_quota: { member_host: true },
       course: { project_id: PROJECT_ID, path: ".course" },
       region: "wnam",
@@ -57,12 +56,6 @@ describe("lite hub project detail getters", () => {
 
     const { hubApi } = await import("../../api");
 
-    await expect(
-      hubApi.projects.getProjectLauncher({
-        account_id: ACCOUNT_ID,
-        project_id: PROJECT_ID,
-      }),
-    ).resolves.toEqual({ quick_create: ["terminal"] });
     await expect(
       hubApi.projects.getProjectCreated({
         account_id: ACCOUNT_ID,

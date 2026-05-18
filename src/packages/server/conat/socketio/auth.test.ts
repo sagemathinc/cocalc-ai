@@ -25,12 +25,24 @@ jest.mock("@cocalc/server/auth/get-account", () => ({
 
 jest.mock("@cocalc/server/auth/remember-me", () => ({
   __esModule: true,
+  getRememberMeCookieNamesForRequest: jest.fn(() => [
+    "remember_me",
+    "alpha_cocalc_ai_remember_me",
+  ]),
   getRememberMeCookieValuesFromHeader: jest.fn((header?: string) =>
     `${header ?? ""}`
       .split(";")
       .map((part) => part.trim())
-      .filter((part) => part.startsWith("remember_me="))
-      .map((part) => part.slice("remember_me=".length)),
+      .map((part) => {
+        const i = part.indexOf("=");
+        return i < 0 ? undefined : [part.slice(0, i), part.slice(i + 1)];
+      })
+      .filter(
+        (part): part is [string, string] =>
+          Array.isArray(part) &&
+          ["remember_me", "alpha_cocalc_ai_remember_me"].includes(part[0]),
+      )
+      .map((part) => part[1]),
   ),
   getRememberMeHashFromCookieValue: jest.fn(),
 }));
