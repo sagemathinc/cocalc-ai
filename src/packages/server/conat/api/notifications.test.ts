@@ -26,6 +26,7 @@ const ACTOR_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
 const TARGET_ACCOUNT_ID = "33333333-3333-4333-8333-333333333333";
 const OTHER_TARGET_ACCOUNT_ID = "44444444-4444-4444-8444-444444444444";
 const ADMIN_ACCOUNT_ID = "55555555-5555-4555-8555-555555555555";
+const NON_COLLABORATOR_ACCOUNT_ID = "88888888-8888-4888-8888-888888888888";
 
 describe("conat notifications api", () => {
   beforeAll(async () => {
@@ -56,13 +57,15 @@ describe("conat notifications api", () => {
          ($1, 'Actor', 'User', NOW(), 'actor@example.com', $5, ARRAY[]::TEXT[]),
          ($2, 'Target', 'One', NOW(), 'target1@example.com', $5, ARRAY[]::TEXT[]),
          ($3, 'Target', 'Two', NOW(), 'target2@example.com', 'bay-1', ARRAY[]::TEXT[]),
-         ($4, 'Admin', 'User', NOW(), 'admin@example.com', $5, ARRAY['admin']::TEXT[])`,
+         ($4, 'Admin', 'User', NOW(), 'admin@example.com', $5, ARRAY['admin']::TEXT[]),
+         ($6, 'Not', 'Collaborator', NOW(), 'noncollab@example.com', $5, ARRAY[]::TEXT[])`,
       [
         ACTOR_ACCOUNT_ID,
         TARGET_ACCOUNT_ID,
         OTHER_TARGET_ACCOUNT_ID,
         ADMIN_ACCOUNT_ID,
         LOCAL_BAY_ID,
+        NON_COLLABORATOR_ACCOUNT_ID,
       ],
     );
     await getPool().query(
@@ -95,6 +98,7 @@ describe("conat notifications api", () => {
         description: "Harald mentioned you in chat",
         priority: "high",
         stable_source_id: "chat-message-1",
+        actor_account_id: ADMIN_ACCOUNT_ID,
       }),
     ).resolves.toMatchObject({
       kind: "mention",
@@ -132,6 +136,22 @@ describe("conat notifications api", () => {
         },
       },
     ]);
+  });
+
+  it("rejects mention targets outside the source project collaborators", async () => {
+    await seedMentionContext();
+
+    await expect(
+      createMention({
+        account_id: ACTOR_ACCOUNT_ID,
+        source_project_id: PROJECT_ID,
+        source_path: "work/chat.chat",
+        target_account_ids: [NON_COLLABORATOR_ACCOUNT_ID],
+        description: "Harald mentioned you in chat",
+      }),
+    ).rejects.toThrow(
+      "mention targets must be collaborators on the source project",
+    );
   });
 
   it("requires admin for account notices", async () => {
@@ -405,5 +425,27 @@ describe("conat notifications api", () => {
         },
       },
     });
+  });
+
+  it("caps notification list limits and state update batches", async () => {
+    await seedMentionContext();
+
+    await expect(
+      list({
+        account_id: ACTOR_ACCOUNT_ID,
+        limit: 201,
+      }),
+    ).rejects.toThrow("limit must be at most 200");
+
+    const notification_ids = Array.from(
+      { length: 201 },
+      (_, i) => `99999999-9999-4999-8999-${`${i}`.padStart(12, "0")}`,
+    );
+    await expect(
+      markRead({
+        account_id: ACTOR_ACCOUNT_ID,
+        notification_ids,
+      }),
+    ).rejects.toThrow("at most 200 notification ids are allowed");
   });
 });

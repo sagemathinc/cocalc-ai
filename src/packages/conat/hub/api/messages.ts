@@ -32,7 +32,7 @@ export interface Messages {
 }
 
 export const messages = {
-  send: authFirst,
+  send: authFirstRequireAccount,
   sendSystemNotice: authFirstRequireAccount,
   get: authFirst,
 };

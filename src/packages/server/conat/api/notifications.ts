@@ -37,12 +37,72 @@ import type {
 import { isValidUUID } from "@cocalc/util/misc";
 import { publishProjectedNotificationFeedUpdatesBestEffort } from "@cocalc/server/notifications/feed";
 
+const MAX_MENTION_TARGETS = 25;
+const MENTION_RATE_LIMIT_WINDOW_MINUTES = 60;
+const MAX_MENTIONS_PER_WINDOW = 120;
+const PROJECT_COLLABORATOR_GROUPS = new Set(["owner", "collaborator"]);
+
 function requireAccountId(account_id?: string): string {
   const normalized = `${account_id ?? ""}`.trim();
   if (!normalized) {
     throw Error("user must be signed in");
   }
   return normalized;
+}
+
+function normalizeTargetAccountIds({
+  target_account_ids,
+  max,
+}: {
+  target_account_ids: string[];
+  max: number;
+}): string[] {
+  const normalized = Array.from(
+    new Set(
+      (Array.isArray(target_account_ids) ? target_account_ids : []).map((id) =>
+        requireUuid(id, "target account id"),
+      ),
+    ),
+  );
+  if (normalized.length === 0) {
+    throw Error("at least one target account is required");
+  }
+  if (normalized.length > max) {
+    throw Error(`at most ${max} target accounts are allowed`);
+  }
+  return normalized;
+}
+
+function assertTargetAccountsAreProjectCollaborators({
+  users,
+  target_account_ids,
+}: {
+  users: Record<string, { group?: string }>;
+  target_account_ids: string[];
+}) {
+  const unauthorized = target_account_ids.filter((account_id) => {
+    const group = users?.[account_id]?.group;
+    return typeof group !== "string" || !PROJECT_COLLABORATOR_GROUPS.has(group);
+  });
+  if (unauthorized.length > 0) {
+    throw Error("mention targets must be collaborators on the source project");
+  }
+}
+
+async function assertMentionRateLimit(actor_account_id: string): Promise<void> {
+  const { rows } = await getPool().query<{ count: string }>(
+    `
+      SELECT COUNT(*)::TEXT AS count
+        FROM notification_events
+       WHERE kind = 'mention'
+         AND actor_account_id = $1::UUID
+         AND created_at >= NOW() - ($2::TEXT || ' minutes')::INTERVAL
+    `,
+    [actor_account_id, MENTION_RATE_LIMIT_WINDOW_MINUTES],
+  );
+  if (Number(rows[0]?.count ?? 0) >= MAX_MENTIONS_PER_WINDOW) {
+    throw Error("mention rate limit exceeded");
+  }
 }
 
 function requireUuid(value: string | undefined, label: string): string {
@@ -102,22 +162,6 @@ async function assertHostCodexTurnNoticeAccess(opts: {
   }
 }
 
-async function authorizeActor(opts: {
-  account_id: string;
-  actor_account_id?: string;
-}): Promise<string> {
-  const actor_account_id = opts.actor_account_id
-    ? requireUuid(opts.actor_account_id, "actor account id")
-    : opts.account_id;
-  if (actor_account_id === opts.account_id) {
-    return actor_account_id;
-  }
-  if (!(await isAdmin(opts.account_id))) {
-    throw Error("only admin may act as another account");
-  }
-  return actor_account_id;
-}
-
 async function createNotificationResult(opts: {
   kind: NotificationKind;
   source_bay_id: string;
@@ -161,25 +205,23 @@ export async function createMention(
     opts.source_project_id,
     "source project id",
   );
-  await assertProjectCollaboratorAccessAllowRemote({
+  const projectReference = await assertProjectCollaboratorAccessAllowRemote({
     account_id,
     project_id: source_project_id,
   });
   const source_path = requireNonEmptyString(opts.source_path, "source_path");
   const description = requireNonEmptyString(opts.description, "description");
   const priority = normalizePriority(opts.priority);
-  const actor_account_id = await authorizeActor({
-    account_id,
-    actor_account_id: opts.actor_account_id,
+  const actor_account_id = account_id;
+  const target_account_ids = normalizeTargetAccountIds({
+    target_account_ids: opts.target_account_ids,
+    max: MAX_MENTION_TARGETS,
   });
-  const target_account_ids = Array.from(
-    new Set(
-      opts.target_account_ids.map((id) => requireUuid(id, "target account id")),
-    ),
-  );
-  if (target_account_ids.length === 0) {
-    throw Error("at least one target account is required");
-  }
+  assertTargetAccountsAreProjectCollaborators({
+    users: projectReference.users ?? {},
+    target_account_ids,
+  });
+  await assertMentionRateLimit(actor_account_id);
   const source_bay_id = getConfiguredBayId();
   const source_fragment_id =
     opts.source_fragment_id == null ||

@@ -1693,7 +1693,7 @@ export async function _user_set_query_mention_change_after(
   this: UserQueryContext,
   old_val: AnyRecord,
   new_val: AnyRecord,
-  _account_id: string,
+  account_id: string,
   cb: CB,
 ) {
   const dbg = this._dbg(
@@ -1706,6 +1706,7 @@ export async function _user_set_query_mention_change_after(
     time: new_val?.time ?? old_val?.time,
     project_id: `${new_val?.project_id ?? old_val?.project_id ?? ""}`.trim(),
     path: `${new_val?.path ?? old_val?.path ?? ""}`,
+    source: `${new_val?.source ?? old_val?.source ?? account_id ?? ""}`.trim(),
     target: `${new_val?.target ?? old_val?.target ?? ""}`.trim(),
   };
   if (
@@ -1735,7 +1736,32 @@ export async function _user_set_query_mention_change_after(
     return cb();
   }
   try {
-    await appendMentionNotificationOutboxEvent(mention);
+    if (mention.source !== account_id) {
+      return cb(Error("mention source must be the signed-in account"));
+    }
+    const { rows } = await callback2<any>(this._query.bind(this), {
+      query: "SELECT users FROM projects",
+      where: {
+        "project_id = $::UUID": mention.project_id,
+        "COALESCE(deleted, FALSE) IS NOT TRUE": [],
+      },
+    });
+    const users = rows?.[0]?.users ?? {};
+    const collaboratorGroups = new Set(["owner", "collaborator"]);
+    if (
+      !collaboratorGroups.has(users?.[mention.source]?.group) ||
+      !collaboratorGroups.has(users?.[mention.target]?.group)
+    ) {
+      return cb(
+        Error("mention source and target must be project collaborators"),
+      );
+    }
+    await appendMentionNotificationOutboxEvent({
+      time: mention.time,
+      project_id: mention.project_id,
+      path: mention.path,
+      target: mention.target,
+    });
     return cb();
   } catch (err) {
     return cb(err as any);

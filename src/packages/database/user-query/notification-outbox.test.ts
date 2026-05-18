@@ -14,6 +14,20 @@ jest.mock("@cocalc/database/postgres/notification-events-outbox", () => ({
 describe("mention user-query outbox hooks", () => {
   const ctx = {
     _dbg: jest.fn(() => () => {}),
+    _query: jest.fn((opts) =>
+      opts.cb(undefined, {
+        rows: [
+          {
+            users: {
+              "11111111-1111-4111-8111-111111111111": { group: "owner" },
+              "22222222-2222-4222-8222-222222222222": {
+                group: "collaborator",
+              },
+            },
+          },
+        ],
+      }),
+    ),
   } as any;
 
   beforeEach(() => {

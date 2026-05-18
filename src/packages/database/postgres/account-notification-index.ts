@@ -58,6 +58,9 @@ type Queryable = {
   ) => Promise<{ rows: any[]; rowCount?: number | null }>;
 };
 
+export const MAX_NOTIFICATION_LIST_LIMIT = 200;
+export const MAX_NOTIFICATION_ID_BATCH = 200;
+
 function normalizeBayId(raw?: string): string {
   const bay_id = `${raw ?? ""}`.trim();
   if (!bay_id) {
@@ -83,7 +86,32 @@ function normalizeLimit(raw?: number): number {
   if (!Number.isInteger(limit) || limit <= 0) {
     throw Error("limit must be a positive integer");
   }
+  if (limit > MAX_NOTIFICATION_LIST_LIMIT) {
+    throw Error(`limit must be at most ${MAX_NOTIFICATION_LIST_LIMIT}`);
+  }
   return limit;
+}
+
+function normalizeNotificationIds(
+  raw: unknown,
+  opts: { allowEmpty?: boolean } = {},
+): string[] {
+  const notification_ids = Array.from(
+    new Set(
+      (Array.isArray(raw) ? raw : []).map((notification_id) =>
+        normalizeUuid(notification_id, "notification id"),
+      ),
+    ),
+  );
+  if (notification_ids.length === 0 && !opts.allowEmpty) {
+    throw Error("at least one notification id is required");
+  }
+  if (notification_ids.length > MAX_NOTIFICATION_ID_BATCH) {
+    throw Error(
+      `at most ${MAX_NOTIFICATION_ID_BATCH} notification ids are allowed`,
+    );
+  }
+  return notification_ids;
 }
 
 function normalizeNotificationInboxState(raw?: string): NotificationInboxState {
@@ -172,13 +200,9 @@ export async function listProjectedNotificationsByIdsForAccount(opts: {
   notification_ids: string[];
 }): Promise<AccountNotificationIndexRow[]> {
   const account_id = normalizeAccountId(opts.account_id);
-  const notification_ids = Array.from(
-    new Set(
-      (Array.isArray(opts.notification_ids) ? opts.notification_ids : []).map(
-        (notification_id) => normalizeUuid(notification_id, "notification id"),
-      ),
-    ),
-  );
+  const notification_ids = normalizeNotificationIds(opts.notification_ids, {
+    allowEmpty: true,
+  });
   if (notification_ids.length === 0) {
     return [];
   }
@@ -260,19 +284,7 @@ export async function setProjectedNotificationReadState(opts: {
   read: boolean;
 }): Promise<{ updated_count: number; notification_ids: string[] }> {
   const account_id = normalizeAccountId(opts.account_id);
-  const rawIds = Array.isArray(opts.notification_ids)
-    ? opts.notification_ids
-    : [];
-  const notification_ids = Array.from(
-    new Set(
-      rawIds.map((notification_id) =>
-        normalizeUuid(notification_id, "notification id"),
-      ),
-    ),
-  );
-  if (notification_ids.length === 0) {
-    throw Error("at least one notification id is required");
-  }
+  const notification_ids = normalizeNotificationIds(opts.notification_ids);
   return await patchProjectedNotificationReadState({
     account_id,
     notification_ids,
@@ -288,16 +300,7 @@ export async function setProjectedNotificationSavedState(opts: {
   saved: boolean;
 }): Promise<{ updated_count: number; notification_ids: string[] }> {
   const account_id = normalizeAccountId(opts.account_id);
-  const notification_ids = Array.from(
-    new Set(
-      (Array.isArray(opts.notification_ids) ? opts.notification_ids : []).map(
-        (notification_id) => normalizeUuid(notification_id, "notification id"),
-      ),
-    ),
-  );
-  if (notification_ids.length === 0) {
-    throw Error("at least one notification id is required");
-  }
+  const notification_ids = normalizeNotificationIds(opts.notification_ids);
   return await patchProjectedNotificationReadState({
     account_id,
     notification_ids,
@@ -313,16 +316,7 @@ export async function setProjectedNotificationArchivedState(opts: {
   archived: boolean;
 }): Promise<{ updated_count: number; notification_ids: string[] }> {
   const account_id = normalizeAccountId(opts.account_id);
-  const notification_ids = Array.from(
-    new Set(
-      (Array.isArray(opts.notification_ids) ? opts.notification_ids : []).map(
-        (notification_id) => normalizeUuid(notification_id, "notification id"),
-      ),
-    ),
-  );
-  if (notification_ids.length === 0) {
-    throw Error("at least one notification id is required");
-  }
+  const notification_ids = normalizeNotificationIds(opts.notification_ids);
   return await patchProjectedNotificationReadState({
     account_id,
     notification_ids,
