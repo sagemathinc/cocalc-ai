@@ -12,7 +12,11 @@ export default async function handle(req, res) {
   let url;
   try {
     const account_id = await getAccountId(req);
-    url = await createSupportTicket({ ...options, account_id });
+    url = await createSupportTicket({
+      ...(options ?? {}),
+      account_id,
+      ip_address: req.ip ?? req.socket?.remoteAddress,
+    });
   } catch (err) {
     res.json({ error: `${err.message}` });
     return;

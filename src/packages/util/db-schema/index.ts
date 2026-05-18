@@ -93,6 +93,7 @@ import "./sso";
 import "./statements";
 import "./stats";
 import "./subscriptions";
+import "./support-ticket-attempts";
 import "./syncstring-schema";
 import "./tracking";
 import "./usage-info";
