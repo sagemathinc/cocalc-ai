@@ -317,6 +317,81 @@ describe("project host upgrade installer", () => {
     }
   });
 
+  it("extracts runtime artifact versions from live mountinfo, including deleted mounts", () => {
+    const mountinfo = [
+      "757 766 8:1 /opt/cocalc/tools/1778766667334//deleted /opt/cocalc/bin2 ro,relatime - ext4 /dev/root rw",
+      "758 766 8:1 /opt/cocalc/project-bundles/1778766568480//deleted /opt/cocalc/project-bundle ro,relatime - ext4 /dev/root rw",
+      "759 766 8:1 /opt/cocalc/tools/current /not-a-runtime-version ro,relatime - ext4 /dev/root rw",
+      "760 766 8:1 /opt/cocalc/tools/.download /ignored ro,relatime - ext4 /dev/root rw",
+    ].join("\n");
+
+    expect(
+      __test__.extractMountedArtifactVersionsFromMountinfo(
+        mountinfo,
+        "/opt/cocalc/tools",
+      ),
+    ).toEqual(["1778766667334"]);
+    expect(
+      __test__.extractMountedArtifactVersionsFromMountinfo(
+        mountinfo,
+        "/opt/cocalc/project-bundles",
+      ),
+    ).toEqual(["1778766568480"]);
+  });
+
+  it("preserves live-mounted runtime artifact versions when sqlite references are stale", async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-upgrade-test-"));
+    try {
+      const toolsRoot = path.join(base, "tools");
+      const procRoot = path.join(base, "proc");
+      fs.mkdirSync(toolsRoot, { recursive: true });
+      for (const version of ["tools-1", "tools-2", "tools-3", "tools-4"]) {
+        const dir = path.join(toolsRoot, version);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, "payload.bin"), Buffer.alloc(1024));
+      }
+      const currentLink = path.join(toolsRoot, "current");
+      fs.symlinkSync(path.join(toolsRoot, "tools-4"), currentLink);
+      const desiredDir = path.join(toolsRoot, "tools-5");
+      fs.mkdirSync(desiredDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(desiredDir, "payload.bin"),
+        Buffer.alloc(1024),
+      );
+
+      const pidDir = path.join(procRoot, "1234");
+      fs.mkdirSync(pidDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(pidDir, "mountinfo"),
+        `757 766 8:1 ${toolsRoot}/tools-1//deleted /opt/cocalc/bin2 ro,relatime - ext4 /dev/root rw\n`,
+      );
+
+      const protectedVersions = await __test__.listLiveMountedArtifactVersions(
+        toolsRoot,
+        procRoot,
+      );
+      expect(protectedVersions).toEqual(["tools-1"]);
+
+      await __test__.pruneVersionDirs({
+        root: toolsRoot,
+        currentLink,
+        desiredDir,
+        keep: 2,
+        maxBytes: 2048,
+        protectedVersions,
+      });
+
+      const retained = fs
+        .readdirSync(toolsRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort();
+      expect(retained).toEqual(["tools-1", "tools-4", "tools-5"]);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
   it("preserves referenced project bundle versions when pruning", async () => {
     const base = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-upgrade-test-"));
     const archivePath = createArchive(base);

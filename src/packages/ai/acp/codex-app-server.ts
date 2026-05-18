@@ -428,9 +428,13 @@ class AppServerClient {
     proc.on("exit", (code, signal) => {
       this.exited = true;
       this.exitDetail = signal ? `signal:${signal}` : `${code ?? "?"}`;
+      const stderrTail = this.getStderrTail();
+      const stderrDetail =
+        stderrTail.length > 0 ? `; stderr tail: ${stderrTail.join("\n")}` : "";
       const err = new Error(
-        `codex app-server exited unexpectedly: ${this.exitDetail}`,
-      );
+        `codex app-server exited unexpectedly: ${this.exitDetail}${stderrDetail}`,
+      ) as Error & { stderrTail?: string[] };
+      err.stderrTail = stderrTail;
       for (const [, pending] of this.pendingRequests) {
         if (pending.timer) clearTimeout(pending.timer);
         pending.reject(err);
