@@ -15,6 +15,7 @@ import {
   Alert,
   Button,
   Checkbox,
+  Collapse,
   Input,
   Modal,
   Radio,
@@ -106,6 +107,7 @@ export default function RootFilesystemImage({
   const [saving, setSaving] = useState<boolean>(false);
   const [publishing, setPublishing] = useState<boolean>(false);
   const [scanningLiveRootfs, setScanningLiveRootfs] = useState<boolean>(false);
+  const [restartQueuedAt, setRestartQueuedAt] = useState<string>("");
   const [liveRootfsScan, setLiveRootfsScan] =
     useState<RootfsProjectPreflightScanResult>();
   const [help, setHelp] = useState<boolean>(false);
@@ -538,7 +540,10 @@ export default function RootFilesystemImage({
       setValue(currentState?.image ?? image);
       setImageId(currentState?.image_id ?? image_id ?? "");
       if (project.getIn(["state", "state"]) == "running") {
+        setRestartQueuedAt(new Date().toISOString());
         redux.getActions("projects").restart_project(project.get("project_id"));
+      } else {
+        setRestartQueuedAt("");
       }
     } catch (err) {
       setError(`${err}`);
@@ -725,7 +730,6 @@ export default function RootFilesystemImage({
     <div
       style={isModal ? undefined : { marginTop: "-4px", marginLeft: "-10px" }}
     >
-      <RootfsPublishOps project_id={project_id} />
       <div style={isModal ? undefined : { marginLeft: "15px" }}>
         <Space direction="vertical" size={16} style={{ width: "100%" }}>
           <div
@@ -759,20 +763,6 @@ export default function RootFilesystemImage({
                 <Paragraph type="secondary" style={{ marginBottom: 8 }}>
                   {activeDescription}
                 </Paragraph>
-                <div
-                  style={{
-                    background: "rgba(255, 255, 255, 0.72)",
-                    border: `1px solid ${COLORS.GRAY_LL}`,
-                    borderRadius: 8,
-                    color: COLORS.GRAY_D,
-                    fontFamily: "monospace",
-                    fontSize: 11,
-                    overflowWrap: "anywhere",
-                    padding: "6px 8px",
-                  }}
-                >
-                  {activeImage}
-                </div>
               </div>
             </div>
           </div>
@@ -922,11 +912,10 @@ export default function RootFilesystemImage({
                 <LifecycleRow
                   label="Current"
                   value={activeLabel}
-                  detail={
-                    currentProjectRootfsState?.set_by_name
-                      ? `Set by ${currentProjectRootfsState.set_by_name}`
-                      : "Active project image"
-                  }
+                  detail={renderRootfsStateLifecycleDetail({
+                    state: currentProjectRootfsState,
+                    fallback: "Active project image",
+                  })}
                 />
                 <LifecycleRow
                   label="Rollback"
@@ -938,11 +927,12 @@ export default function RootFilesystemImage({
                         )
                       : "Not available yet"
                   }
-                  detail={
-                    previousProjectRootfsState
+                  detail={renderRootfsStateLifecycleDetail({
+                    state: previousProjectRootfsState,
+                    fallback: previousProjectRootfsState
                       ? "One previous image can be restored."
-                      : "After an image switch, the previous image becomes available here."
-                  }
+                      : "After an image switch, the previous image becomes available here.",
+                  })}
                   action={
                     previousProjectRootfsState ? (
                       <Button
@@ -957,12 +947,20 @@ export default function RootFilesystemImage({
                 <LifecycleRow
                   label="Restart"
                   value={
-                    projectIsRunning ? "Project is running" : "Not running"
+                    restartQueuedAt
+                      ? "Restart queued"
+                      : projectIsRunning
+                        ? "Will restart on change"
+                        : "No restart needed"
                   }
                   detail={
-                    projectIsRunning
-                      ? "Changing the image queues a project restart."
-                      : "The next start uses the selected image."
+                    restartQueuedAt
+                      ? `Queued ${formatRootfsDateTime(
+                          restartQueuedAt,
+                        )}; the running project will restart into the selected image.`
+                      : projectIsRunning
+                        ? "Changing the image queues a project restart automatically."
+                        : "The project is stopped; the next start uses the selected image."
                   }
                 />
                 <Paragraph type="secondary" style={{ marginBottom: 0 }}>
@@ -972,6 +970,15 @@ export default function RootFilesystemImage({
               </Space>
             </RuntimePanel>
           </div>
+          <RootfsTechnicalDetails
+            activeEntry={activeDisplayEntry}
+            activeImage={activeImage}
+            currentState={currentProjectRootfsState}
+            liveRootfsScan={liveRootfsScan}
+            previousEntry={previousProjectRootfsEntry}
+            previousState={previousProjectRootfsState}
+            project_id={project_id}
+          />
         </Space>
       </div>
       {upgradeOpen && suggestedUpgradeEntry && currentDisplayEntry && (
@@ -1912,6 +1919,32 @@ function displayRootfsUpgradeLabel(
   return `${label} ${version}`;
 }
 
+function renderRootfsStateLifecycleDetail({
+  fallback,
+  state,
+}: {
+  fallback: ReactNode;
+  state?: ProjectRootfsStateEntry;
+}): ReactNode {
+  if (!state) return fallback;
+  const updated = formatRootfsDateTime(state.updated_at);
+  const setBy = state.set_by_name || state.set_by_account_id;
+  return (
+    <span>
+      {setBy ? `Set by ${setBy}. ` : ""}
+      {updated ? `Updated ${updated}. ` : ""}
+      <code>{state.image}</code>
+    </span>
+  );
+}
+
+function formatRootfsDateTime(value?: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return value;
+  return date.toLocaleString();
+}
+
 function isRelatedRootfsVersion(
   current: RootfsImageEntry | undefined,
   next: RootfsImageEntry | undefined,
@@ -2318,6 +2351,229 @@ function LifecycleRow({
         <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>{detail}</div>
       </div>
       {action}
+    </div>
+  );
+}
+
+function RootfsTechnicalDetails({
+  activeEntry,
+  activeImage,
+  currentState,
+  liveRootfsScan,
+  previousEntry,
+  previousState,
+  project_id,
+}: {
+  activeEntry?: RootfsImageEntry;
+  activeImage: string;
+  currentState?: ProjectRootfsStateEntry;
+  liveRootfsScan?: RootfsProjectPreflightScanResult;
+  previousEntry?: RootfsImageEntry;
+  previousState?: ProjectRootfsStateEntry;
+  project_id: string;
+}): React.JSX.Element {
+  const currentImageId = currentState?.image_id ?? activeEntry?.id;
+  const scanStatus = [
+    activeEntry?.scan?.status ? `catalog: ${activeEntry.scan.status}` : "",
+    liveRootfsScan?.summary.status
+      ? `live preflight: ${liveRootfsScan.summary.status}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" • ");
+
+  return (
+    <Collapse
+      size="small"
+      items={[
+        {
+          key: "technical",
+          label: "Technical Details",
+          children: (
+            <Space direction="vertical" size={12} style={{ width: "100%" }}>
+              <TechnicalGroup title="Current RootFS state">
+                <TechnicalRow
+                  label="Catalog label"
+                  value={displayRootfsLabel(activeEntry, activeImage)}
+                />
+                <TechnicalRow
+                  label="OCI image string"
+                  value={<code>{currentState?.image ?? activeImage}</code>}
+                />
+                <TechnicalRow
+                  label="Image id"
+                  value={
+                    currentImageId ? <code>{currentImageId}</code> : "none"
+                  }
+                />
+                <TechnicalRow
+                  label="Release id"
+                  value={
+                    currentState?.release_id ? (
+                      <code>{currentState.release_id}</code>
+                    ) : (
+                      "none"
+                    )
+                  }
+                />
+                <TechnicalRow
+                  label="State role"
+                  value={currentState?.state_role ?? "unknown"}
+                />
+                <TechnicalRow
+                  label="Set by"
+                  value={
+                    currentState?.set_by_name ||
+                    currentState?.set_by_account_id ||
+                    "unknown"
+                  }
+                />
+                <TechnicalRow
+                  label="Updated"
+                  value={
+                    formatRootfsDateTime(currentState?.updated_at) || "unknown"
+                  }
+                />
+              </TechnicalGroup>
+              <TechnicalGroup title="Previous rollback state">
+                <TechnicalRow
+                  label="Catalog label"
+                  value={
+                    previousState
+                      ? displayRootfsLabel(previousEntry, previousState.image)
+                      : "none"
+                  }
+                />
+                <TechnicalRow
+                  label="OCI image string"
+                  value={
+                    previousState?.image ? (
+                      <code>{previousState.image}</code>
+                    ) : (
+                      "none"
+                    )
+                  }
+                />
+                <TechnicalRow
+                  label="Image id"
+                  value={
+                    previousState?.image_id ? (
+                      <code>{previousState.image_id}</code>
+                    ) : (
+                      "none"
+                    )
+                  }
+                />
+                <TechnicalRow
+                  label="Release id"
+                  value={
+                    previousState?.release_id ? (
+                      <code>{previousState.release_id}</code>
+                    ) : (
+                      "none"
+                    )
+                  }
+                />
+                <TechnicalRow
+                  label="State role"
+                  value={previousState?.state_role ?? "unknown"}
+                />
+                <TechnicalRow
+                  label="Set by"
+                  value={
+                    previousState?.set_by_name ||
+                    previousState?.set_by_account_id ||
+                    "unknown"
+                  }
+                />
+                <TechnicalRow
+                  label="Updated"
+                  value={
+                    formatRootfsDateTime(previousState?.updated_at) || "unknown"
+                  }
+                />
+              </TechnicalGroup>
+              <TechnicalGroup title="Scan and publish operations">
+                <TechnicalRow
+                  label="Scan status"
+                  value={scanStatus || "No scan metadata"}
+                />
+                {liveRootfsScan ? (
+                  <TechnicalRow
+                    label="Live preflight host"
+                    value={<code>{liveRootfsScan.host_id}</code>}
+                  />
+                ) : null}
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <RootfsPublishOps project_id={project_id} />
+                </div>
+              </TechnicalGroup>
+            </Space>
+          ),
+        },
+      ]}
+    />
+  );
+}
+
+function TechnicalGroup({
+  children,
+  title,
+}: {
+  children: ReactNode;
+  title: ReactNode;
+}): React.JSX.Element {
+  return (
+    <div
+      style={{
+        border: `1px solid ${COLORS.GRAY_LL}`,
+        borderRadius: 10,
+        padding: "10px 12px",
+      }}
+    >
+      <div style={{ fontWeight: 700, marginBottom: 8 }}>{title}</div>
+      <div
+        style={{
+          display: "grid",
+          gap: 8,
+          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function TechnicalRow({
+  label,
+  value,
+}: {
+  label: ReactNode;
+  value: ReactNode;
+}): React.JSX.Element {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div
+        style={{
+          color: COLORS.GRAY_M,
+          fontSize: 11,
+          fontWeight: 600,
+          textTransform: "uppercase",
+        }}
+      >
+        {label}
+      </div>
+      <div
+        style={{
+          color: COLORS.GRAY_D,
+          fontSize: 12,
+          minWidth: 0,
+          overflowWrap: "anywhere",
+        }}
+      >
+        {value}
+      </div>
     </div>
   );
 }
