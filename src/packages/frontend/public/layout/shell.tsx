@@ -118,6 +118,13 @@ const PUBLIC_PAGE_CSS = `
     .cocalc-public-policy-article {
       max-width: none !important;
     }
+
+    .cocalc-public-policy-article h1,
+    .cocalc-public-policy-article h2,
+    .cocalc-public-policy-article h3 {
+      break-after: avoid;
+      page-break-after: avoid;
+    }
   }
 `;
 
