@@ -39,7 +39,6 @@ import {
 import { isSpotStandardFallbackHost } from "../spot-ui";
 import type { HostLroState } from "../hooks/use-host-ops";
 import { HostBillingEnforcementStatus } from "./host-billing-enforcement";
-import { HostBootstrapLifecycle } from "./host-bootstrap-lifecycle";
 import { HostBootstrapProgress } from "./host-bootstrap-progress";
 import {
   getHostOpLabel,
@@ -51,6 +50,9 @@ import {
   hostRuntimeExceptionDescription,
   hostRuntimeExceptionLabel,
 } from "../utils/runtime-exceptions";
+
+const COCALC_CLI_DOWNLOAD_URL =
+  "https://software.cocalc.ai/software/cocalc/index.html";
 
 const CARD_STYLE: CSSProperties = {
   minWidth: 280,
@@ -238,6 +240,47 @@ function placementSummary(host: Host): { value: string; tone: Tone } {
   return { value: "Normal", tone: "green" };
 }
 
+function formatPlacementZone(zone?: string): string {
+  switch (zone) {
+    case "emergency":
+      return "Emergency";
+    case "pressure":
+      return "Pressure";
+    case "observe":
+      return "Observe";
+    case "normal":
+    case undefined:
+      return "Normal";
+    default:
+      return humanizeReason(zone);
+  }
+}
+
+function humanizeReason(reason?: string | null): string {
+  if (!reason) return "Normal placement candidate";
+  const normalized = reason.trim().toLowerCase();
+  switch (normalized) {
+    case "memory_ok":
+      return "Memory is within placement limits";
+    case "cpu_ok":
+      return "CPU is within placement limits";
+    case "disk_ok":
+      return "Disk is within placement limits";
+    case "pressure_ok":
+      return "Placement pressure is normal";
+    default:
+      return reason
+        .split(/[_\s-]+/)
+        .filter(Boolean)
+        .map((part) =>
+          part.toLowerCase() === "ok"
+            ? "OK"
+            : part.charAt(0).toUpperCase() + part.slice(1).toLowerCase(),
+        )
+        .join(" ");
+  }
+}
+
 function softwareSummary(host: Host): { value: string; tone: Tone } {
   const lifecycle = host.bootstrap_lifecycle;
   if (!lifecycle) return { value: "Unknown", tone: "gray" };
@@ -404,11 +447,11 @@ function ActiveOperation({
   );
 }
 
-function formatDateTime(value?: string): string {
-  if (!value) return "n/a";
-  const ts = Date.parse(value);
-  if (Number.isNaN(ts)) return "invalid";
-  return new Date(ts).toLocaleString();
+function TimeAgoOrNA({ date }: { date?: string }) {
+  if (!date) return <>n/a</>;
+  const ts = Date.parse(date);
+  if (Number.isNaN(ts)) return <>invalid</>;
+  return <TimeAgo date={date} />;
 }
 
 function detailValueColor(tone?: Tone): string | undefined {
@@ -651,6 +694,74 @@ function daemonTags(host: Host) {
   );
 }
 
+function SoftwareLifecycleDetails({ host }: { host: Host }) {
+  const lifecycle = host.bootstrap_lifecycle;
+  if (!lifecycle) {
+    return (
+      <Typography.Text type="secondary">
+        No software lifecycle report yet.
+      </Typography.Text>
+    );
+  }
+  const interestingItems = lifecycle.items.filter(
+    (item) => item.status === "drift" || item.status === "missing",
+  );
+  const items = interestingItems.length
+    ? interestingItems
+    : lifecycle.items.slice(0, 6);
+  return (
+    <Space orientation="vertical" size={8} style={{ width: "100%" }}>
+      <Typography.Text type="secondary">
+        {lifecycle.summary_message ||
+          "Software lifecycle state reported by the host."}
+      </Typography.Text>
+      {items.map((item) => {
+        const tone: Tone =
+          item.status === "drift"
+            ? "orange"
+            : item.status === "missing"
+              ? "red"
+              : "green";
+        return (
+          <div
+            key={item.key}
+            style={{
+              border: `1px solid ${TONE_COLORS[tone].border}`,
+              background: TONE_COLORS[tone].background,
+              borderRadius: 8,
+              padding: 8,
+            }}
+          >
+            <Space orientation="vertical" size={2} style={{ width: "100%" }}>
+              <Space size={8} wrap>
+                <StatusDot tone={tone} />
+                <Typography.Text strong>{item.label}</Typography.Text>
+                <Typography.Text type="secondary">
+                  {humanizeReason(item.status)}
+                </Typography.Text>
+              </Space>
+              <Typography.Text style={{ fontSize: 12 }}>
+                Desired <code>{String(item.desired ?? "n/a")}</code> · installed{" "}
+                <code>{String(item.installed ?? "n/a")}</code>
+              </Typography.Text>
+              {item.message ? (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {item.message}
+                </Typography.Text>
+              ) : null}
+            </Space>
+          </div>
+        );
+      })}
+      {!interestingItems.length && lifecycle.items.length > items.length ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Showing the first {items.length} lifecycle checks.
+        </Typography.Text>
+      ) : null}
+    </Space>
+  );
+}
+
 function cliCommands(host: Host): string[] {
   return [
     `cocalc host deploy status ${host.id}`,
@@ -668,6 +779,15 @@ function CliPopover({ host }: { host: Host }) {
         <div style={{ maxWidth: 560 }}>
           <Typography.Paragraph style={{ marginBottom: 8 }}>
             Use these commands from a shell with the hub environment loaded.
+            Install the{" "}
+            <Typography.Link
+              href={COCALC_CLI_DOWNLOAD_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              CoCalc CLI
+            </Typography.Link>{" "}
+            if the <code>cocalc</code> command is not available.
           </Typography.Paragraph>
           {cliCommands(host).map((command) => (
             <Typography.Paragraph
@@ -703,6 +823,7 @@ function DetailsPopover({
   displayDeadlineAt?: string;
   onDetails?: (host: Host) => void;
 }) {
+  const [open, setOpen] = React.useState(false);
   const placement = placementSummary(host);
   const software = softwareSummary(host);
   const backups = backupSummary(host);
@@ -714,6 +835,8 @@ function DetailsPopover({
   return (
     <Popover
       trigger="click"
+      open={open}
+      onOpenChange={setOpen}
       title={
         <Space size={8}>
           <SyncOutlined />
@@ -747,7 +870,10 @@ function DetailsPopover({
               <Button
                 size="small"
                 type="primary"
-                onClick={() => onDetails(host)}
+                onClick={() => {
+                  setOpen(false);
+                  onDetails(host);
+                }}
               >
                 Open full host details
               </Button>
@@ -774,12 +900,12 @@ function DetailsPopover({
               <DetailRow
                 icon={<ClockCircleOutlined />}
                 label="Last heartbeat"
-                value={formatDateTime(host.last_seen)}
+                value={<TimeAgoOrNA date={host.last_seen} />}
               />
               <DetailRow
                 icon={<CloudOutlined />}
                 label="Cloud check"
-                value={formatDateTime(host.provider_observed_at)}
+                value={<TimeAgoOrNA date={host.provider_observed_at} />}
               />
             </DetailSection>
             <DetailSection
@@ -847,16 +973,16 @@ function DetailsPopover({
               <DetailRow
                 icon={<CloudOutlined />}
                 label="Pressure"
-                value={host.pressure?.zone ?? "normal"}
+                value={formatPlacementZone(host.pressure?.zone)}
                 tone={placement.tone}
               />
               <DetailRow
                 icon={<InfoCircleOutlined />}
                 label="Reason"
                 value={
-                  host.reason_unavailable ??
-                  host.pressure?.reason ??
-                  "Normal placement candidate"
+                  host.reason_unavailable
+                    ? humanizeReason(host.reason_unavailable)
+                    : humanizeReason(host.pressure?.reason)
                 }
               />
             </DetailSection>
@@ -870,7 +996,7 @@ function DetailsPopover({
                     title="Software lifecycle detail"
                     content={
                       <div style={{ maxWidth: 600 }}>
-                        <HostBootstrapLifecycle host={host} compact detailed />
+                        <SoftwareLifecycleDetails host={host} />
                       </div>
                     }
                     trigger="click"
@@ -898,9 +1024,11 @@ function DetailsPopover({
                 icon={<ClockCircleOutlined />}
                 label="Last reconcile"
                 value={
-                  lifecycle?.last_reconcile_finished_at
-                    ? formatDateTime(lifecycle.last_reconcile_finished_at)
-                    : "n/a"
+                  lifecycle?.last_reconcile_finished_at ? (
+                    <TimeAgoOrNA date={lifecycle.last_reconcile_finished_at} />
+                  ) : (
+                    "n/a"
+                  )
                 }
               />
               <HostBootstrapProgress host={host} compact />
@@ -923,7 +1051,7 @@ function DetailsPopover({
               />
               <DetailRow
                 icon={<InfoCircleOutlined />}
-                label="Needs backup"
+                label="Needs final backup"
                 value={
                   (backupStatus?.provisioned_needs_backup ?? 0) +
                   (backupStatus?.running ?? 0)
@@ -936,6 +1064,10 @@ function DetailsPopover({
                     : "green"
                 }
               />
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Running projects count here until a final backup completes;
+                unprovisioned stopped projects are not backup candidates.
+              </Typography.Text>
             </DetailSection>
             <DetailSection
               title="Daemon health"
@@ -959,6 +1091,13 @@ function DetailsPopover({
             >
               <Space size={12} wrap>
                 <CliPopover host={host} />
+                <Button
+                  size="small"
+                  href={COCALC_CLI_DOWNLOAD_URL}
+                  target="_blank"
+                >
+                  Install CoCalc CLI
+                </Button>
                 <Typography.Text type="secondary" style={{ fontSize: 13 }}>
                   Use the CLI for deeper daemon status, logs, and deployment
                   diagnostics.
