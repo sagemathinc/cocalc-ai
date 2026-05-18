@@ -14,7 +14,11 @@ jest.mock("@cocalc/database/postgres/notification-events-outbox", () => ({
 describe("mention user-query outbox hooks", () => {
   const ctx = {
     _dbg: jest.fn(() => () => {}),
-    _query: jest.fn((opts) =>
+    _query: jest.fn((opts) => {
+      if (`${opts.query}`.includes("COUNT(*)")) {
+        opts.cb(undefined, { rows: [{ count: "0" }] });
+        return;
+      }
       opts.cb(undefined, {
         rows: [
           {
@@ -26,8 +30,8 @@ describe("mention user-query outbox hooks", () => {
             },
           },
         ],
-      }),
-    ),
+      });
+    }),
   } as any;
 
   beforeEach(() => {
@@ -118,6 +122,40 @@ describe("mention user-query outbox hooks", () => {
         },
       },
     );
+    expect(appendMentionNotificationOutboxEvent).not.toHaveBeenCalled();
+  });
+
+  it("rejects legacy mentions when the mention rate limit is exceeded", async () => {
+    ctx._query.mockImplementationOnce((opts) =>
+      opts.cb(undefined, { rows: [{ count: "120" }] }),
+    );
+
+    await expect(
+      runHook(
+        {},
+        {
+          time: new Date("2026-04-03T23:00:00.000Z"),
+          project_id: "11111111-1111-4111-8111-111111111111",
+          path: "chat/a.md",
+          target: "22222222-2222-4222-8222-222222222222",
+        },
+      ),
+    ).rejects.toThrow("mention rate limit exceeded");
+    expect(appendMentionNotificationOutboxEvent).not.toHaveBeenCalled();
+  });
+
+  it("rejects legacy mentions with non-account targets", async () => {
+    await expect(
+      runHook(
+        {},
+        {
+          time: new Date("2026-04-03T23:00:00.000Z"),
+          project_id: "11111111-1111-4111-8111-111111111111",
+          path: "chat/a.md",
+          target: "not-a-uuid",
+        },
+      ),
+    ).rejects.toThrow("invalid mention target");
     expect(appendMentionNotificationOutboxEvent).not.toHaveBeenCalled();
   });
 });

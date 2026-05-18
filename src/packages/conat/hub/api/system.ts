@@ -2259,6 +2259,7 @@ export interface System {
   }>;
 
   resolveManagedProjectSshKeyAccount: (opts: {
+    account_id?: string;
     project_id: string;
     fingerprint: string;
   }) => Promise<{ account_id?: string }>;

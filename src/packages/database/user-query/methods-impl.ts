@@ -41,6 +41,8 @@ import { queryIsCmp, userGetQueryFilter } from "./user-get-query";
 
 // Reject all patches that have timestamp that is more than 3 minutes in the future.
 const MAX_PATCH_FUTURE_MS = 1000 * 60 * 3;
+const MENTION_RATE_LIMIT_WINDOW_MINUTES = 60;
+const MAX_MENTIONS_PER_WINDOW = 120;
 type AnyRecord = Record<string, any>;
 type QueryOption = Record<string, any>;
 
@@ -117,6 +119,37 @@ type ParsedGetQueryOptions = AnyRecord & {
 type ChangefeedLocals = {
   result?: any;
 };
+
+async function assertLegacyMentionRateLimit(
+  context: UserQueryContext,
+  actor_account_id: string,
+): Promise<void> {
+  const [notificationEvents, legacyMentions] = await Promise.all([
+    callback2<any>(context._query.bind(context), {
+      query: "SELECT COUNT(*) FROM notification_events",
+      where: {
+        "kind = $::TEXT": "mention",
+        "actor_account_id = $::UUID": actor_account_id,
+        [`created_at >= NOW() - interval '${MENTION_RATE_LIMIT_WINDOW_MINUTES} minutes'`]:
+          [],
+      },
+    }),
+    callback2<any>(context._query.bind(context), {
+      query: "SELECT COUNT(*) FROM mentions",
+      where: {
+        "source = $::UUID": actor_account_id,
+        [`time >= NOW() - interval '${MENTION_RATE_LIMIT_WINDOW_MINUTES} minutes'`]:
+          [],
+      },
+    }),
+  ]);
+  const count =
+    Number(notificationEvents.rows?.[0]?.count ?? 0) +
+    Number(legacyMentions.rows?.[0]?.count ?? 0);
+  if (count >= MAX_MENTIONS_PER_WINDOW) {
+    throw Error("mention rate limit exceeded");
+  }
+}
 
 function getProjectListReadMode(): ProjectListReadMode {
   const raw =
@@ -1739,6 +1772,16 @@ export async function _user_set_query_mention_change_after(
     if (mention.source !== account_id) {
       return cb(Error("mention source must be the signed-in account"));
     }
+    if (!misc.is_valid_uuid_string(mention.project_id)) {
+      return cb(Error("invalid mention project_id"));
+    }
+    if (!misc.is_valid_uuid_string(mention.source)) {
+      return cb(Error("invalid mention source"));
+    }
+    if (!misc.is_valid_uuid_string(mention.target)) {
+      return cb(Error("invalid mention target"));
+    }
+    await assertLegacyMentionRateLimit(this, mention.source);
     const { rows } = await callback2<any>(this._query.bind(this), {
       query: "SELECT users FROM projects",
       where: {

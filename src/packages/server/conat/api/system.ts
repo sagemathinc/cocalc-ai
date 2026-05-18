@@ -4407,15 +4407,18 @@ export async function getManagedProjectEgressPolicy({
 }
 
 export async function resolveManagedProjectSshKeyAccount({
+  account_id,
   project_id,
   fingerprint,
 }: {
+  account_id?: string;
   project_id: string;
   fingerprint: string;
 }): Promise<{ account_id?: string }> {
+  await assertProjectCollaboratorAccessAllowRemote({ account_id, project_id });
   const keys = await sshKeys(project_id);
-  const account_id = keys[fingerprint]?.account_id;
-  return account_id ? { account_id } : {};
+  const resolved_account_id = keys[fingerprint]?.account_id;
+  return resolved_account_id ? { account_id: resolved_account_id } : {};
 }
 
 export async function getPublicSiteUrl({
