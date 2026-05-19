@@ -7,7 +7,6 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
 import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
@@ -18,26 +17,10 @@ import type {
   HostProvider,
   HostStopOptions,
 } from "../types";
-import {
-  STATUS_COLOR,
-  getHostOnlineTooltip,
-  getHostStatusTooltip,
-  isHostOnline,
-  isHostTransitioning,
-} from "../constants";
 import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import { useHostPricingSettings } from "../hooks/use-host-pricing-settings";
 import { isHostOpActive, type HostLroState } from "../hooks/use-host-ops";
-import {
-  describeBlockedHostActions,
-  getHostOpPhase,
-  HostOpProgress,
-} from "./host-op-progress";
-import { HostBackupStatus } from "./host-backup-status";
-import { HostBootstrapProgress } from "./host-bootstrap-progress";
-import { HostBootstrapLifecycle } from "./host-bootstrap-lifecycle";
-import { HostDaemonHealthSummary } from "./host-daemon-health-summary";
-import { HostProjectStatus } from "./host-project-status";
+import { describeBlockedHostActions, getHostOpPhase } from "./host-op-progress";
 import {
   confirmHostDeprovision,
   confirmHostDrain,
@@ -47,24 +30,14 @@ import { COLORS } from "@cocalc/util/theme";
 import { getHostSizeDisplay } from "../utils/format";
 import { canManageHostLifecycle } from "../utils/access";
 import { HostCurrentMetrics } from "./host-current-metrics";
-import { HostPlacementSummary, HostPressureTag } from "../pressure-ui";
+import { hostBillingEnforcementBlocksStart } from "./host-billing-enforcement";
 import {
-  HostBillingEnforcementStatus,
-  hostBillingEnforcementBlocksStart,
-} from "./host-billing-enforcement";
-import {
-  currentProjectHostAutomaticRollback,
   currentProjectHostRolloutPhase,
-  projectHostRollbackReasonLabel,
   shouldSuppressProjectHostFailedOp,
 } from "@cocalc/conat/project-host/rollout";
-import {
-  currentHostRuntimeExceptionSummary,
-  hostRuntimeExceptionDescription,
-  hostRuntimeExceptionLabel,
-} from "../utils/runtime-exceptions";
 import { isSpotHost, SpotHostTag } from "../spot-ui";
 import { HostPricingSummary } from "./host-pricing-summary";
+import { HostStatusSummary } from "./host-status-summary";
 
 type HostCardProps = {
   host: Host;
@@ -118,18 +91,8 @@ export const HostCard: React.FC<HostCardProps> = ({
     !selfHost?.isConnectorOnline ||
     selfHost.isConnectorOnline(host.region);
   const showConnectorSetup = isSelfHost && !isDeleted;
-  const hostOnline = isHostOnline(host.last_seen);
-  const showOnlineTag = host.status === "running" && hostOnline;
-  const showStaleTag = host.status === "running" && !hostOnline;
-  const showSpinner = isHostTransitioning(host.status);
-  const statusLabel = host.deleted ? "deleted" : host.status;
   const size = getHostSizeDisplay(host);
   const projectHostObservation = host.observed_host_agent?.project_host;
-  const projectHostRollback = currentProjectHostAutomaticRollback({
-    observation: projectHostObservation,
-    currentVersion: host.version,
-  });
-  const runtimeExceptionSummary = currentHostRuntimeExceptionSummary(host);
   const displayHostOp = shouldSuppressProjectHostFailedOp({
     op: hostOp,
     currentVersion: host.version,
@@ -377,45 +340,6 @@ export const HostCard: React.FC<HostCardProps> = ({
               <Icon name={host.starred ? "star-filled" : "star"} />
             </span>
           </Tooltip>
-          <Tooltip
-            title={getHostStatusTooltip(
-              host.status,
-              Boolean(host.deleted),
-              host.provider_observed_at,
-            )}
-            placement="top"
-          >
-            <Tag color={host.deleted ? "default" : STATUS_COLOR[host.status]}>
-              {showSpinner ? (
-                <Space size={4}>
-                  <SyncOutlined spin />
-                  <span>{statusLabel}</span>
-                </Space>
-              ) : (
-                statusLabel
-              )}
-            </Tag>
-          </Tooltip>
-          {showOnlineTag && (
-            <Tooltip title={getHostOnlineTooltip(host.last_seen)}>
-              <Tag color="green">online</Tag>
-            </Tooltip>
-          )}
-          {showStaleTag && (
-            <Tooltip title={getHostOnlineTooltip(host.last_seen)}>
-              <Tag color="orange">offline</Tag>
-            </Tooltip>
-          )}
-          {runtimeExceptionSummary && (
-            <Tooltip
-              title={hostRuntimeExceptionDescription(runtimeExceptionSummary)}
-            >
-              <Tag color="blue">
-                {hostRuntimeExceptionLabel(runtimeExceptionSummary)}
-              </Tag>
-            </Tooltip>
-          )}
-          <HostPressureTag pressure={host.pressure} />
         </Space>
       }
     >
@@ -425,35 +349,11 @@ export const HostCard: React.FC<HostCardProps> = ({
             <Tag color="orange">Reprovision on next start</Tag>
           </Tooltip>
         )}
-        <HostBillingEnforcementStatus host={host} />
-        <HostOpProgress
+        <HostStatusSummary
+          host={host}
           op={displayHostOp}
-          compact
-          displayPhaseLabel={projectHostRolloutPhase?.label}
-          displayPhaseOwner={projectHostRolloutPhase?.owner}
-          displayDeadlineAt={projectHostRolloutPhase?.deadlineAt}
+          onDetails={onDetails}
         />
-        {projectHostRollback && (
-          <Tooltip
-            title={`Project-host rollout to ${projectHostRollback.target_version} was rolled back to ${projectHostRollback.rollback_version}${
-              projectHostRollback.finished_at
-                ? ` on ${new Date(projectHostRollback.finished_at).toLocaleString()}`
-                : ""
-            } because ${projectHostRollbackReasonLabel(
-              projectHostRollback.reason,
-            )}.`}
-          >
-            <Typography.Text type="warning" style={{ fontSize: 12 }}>
-              Project-host auto-rolled back to{" "}
-              <code>{projectHostRollback.rollback_version}</code>
-            </Typography.Text>
-          </Tooltip>
-        )}
-        <HostBootstrapProgress host={host} />
-        <HostBootstrapLifecycle host={host} />
-        <HostProjectStatus host={host} fontSize={14} />
-        <HostBackupStatus host={host} />
-        <HostDaemonHealthSummary host={host} />
         <Typography.Text>
           Provider:{" "}
           {host.machine?.cloud
@@ -475,7 +375,6 @@ export const HostCard: React.FC<HostCardProps> = ({
           pricingSettings={pricingSettings}
         />
         <HostCurrentMetrics host={host} compact />
-        <HostPlacementSummary host={host} showNormal />
         <Typography.Text>GPU: {host.gpu ? "Yes" : "No"}</Typography.Text>
         {host.last_action && (
           <Typography.Text type="secondary">

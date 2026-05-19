@@ -7,6 +7,9 @@ import type {
   ManagedComponentKind,
 } from "@cocalc/conat/project-host/api";
 
+const COCALC_CLI_DOWNLOAD_URL =
+  "https://software.cocalc.ai/software/cocalc/index.html";
+
 const DAEMON_COMPONENTS: Array<{
   component: ManagedComponentKind;
   shortLabel: string;
@@ -111,7 +114,15 @@ export function HostDaemonHealthSummary({
           <div style={{ maxWidth: 540 }}>
             <Typography.Paragraph style={{ marginBottom: 8 }}>
               Use the deploy status command to inspect the same daemon/runtime
-              state from the CLI.
+              state from the CLI. Install the{" "}
+              <Typography.Link
+                href={COCALC_CLI_DOWNLOAD_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                CoCalc CLI
+              </Typography.Link>{" "}
+              if the <code>cocalc</code> command is not available.
             </Typography.Paragraph>
             {cliCommands(host).map((command) => (
               <Typography.Paragraph
