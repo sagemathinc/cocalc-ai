@@ -19,6 +19,7 @@ import {
   type NotificationCategory,
   type NotificationEmailMode,
 } from "@cocalc/util/notification-preferences";
+import { CookieConsentSettings } from "./cookie-consent-settings";
 
 const { Text, Paragraph } = Typography;
 
@@ -168,6 +169,7 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
       <div style={{ marginTop: 16 }} />
       {render_global_banner()}
       {render_no_free_warnings()}
+      <CookieConsentSettings />
     </Panel>
   );
 }

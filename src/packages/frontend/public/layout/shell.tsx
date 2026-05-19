@@ -7,6 +7,7 @@ import {
   Children,
   isValidElement,
   type CSSProperties,
+  type MouseEvent,
   type ReactNode,
   useState,
 } from "react";
@@ -118,6 +119,7 @@ const PAGE_BAND_STYLE = {
 interface FooterLinkSpec {
   href: string;
   label: string;
+  onClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
   rel?: string;
   target?: HTMLAnchorElement["target"];
 }
@@ -154,6 +156,25 @@ function getFooterColumns(config?: PublicConfig) {
   const policiesLink = getPoliciesFooterLink(config);
   if (policiesLink) {
     companyLinks.push(policiesLink);
+  }
+  if (config?.cookie_banner_enabled) {
+    companyLinks.push({
+      href: "#cookie-preferences",
+      label: "Cookie preferences",
+      onClick: (event) => {
+        event.preventDefault();
+        void Promise.all([
+          import("@cocalc/frontend/cookie-consent/init"),
+          import("@cocalc/frontend/cookie-consent"),
+        ]).then(([{ initCookieConsent }, { showPreferences }]) => {
+          initCookieConsent({
+            enabled: true,
+            textMarkdown: config.cookie_banner_text,
+          });
+          showPreferences();
+        });
+      },
+    });
   }
 
   return [
@@ -273,6 +294,7 @@ function FooterLink({ link }: { link: FooterLinkSpec }) {
         textDecoration: "none",
       }}
       target={link.target}
+      onClick={link.onClick}
     >
       {link.label}
     </a>

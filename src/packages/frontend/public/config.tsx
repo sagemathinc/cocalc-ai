@@ -14,6 +14,8 @@ export interface PublicConfig {
   account_display_name?: string;
   account_email_address?: string;
   account_id?: string;
+  cookie_banner_enabled?: boolean;
+  cookie_banner_text?: string;
   help_email?: string;
   imprint?: string;
   is_admin?: boolean;
