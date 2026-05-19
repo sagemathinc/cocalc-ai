@@ -812,10 +812,10 @@ export async function createCollabInvite({
   const pool = getPool();
   const includeEmail = await isAdmin(account_id);
   await expirePendingCollabInvites(pool);
-  const trimmedMessage = `${message ?? ""}`.trim();
-  const normalizedMessage = trimmedMessage
-    ? trimmedMessage.slice(0, 512)
-    : null;
+  const normalizedMessage = await normalizeInviteMessageForAccount({
+    account_id,
+    message,
+  });
 
   const inviteeAccount = await getClusterAccountById(invitee_account_id);
   if (!inviteeAccount?.account_id) {
@@ -1564,6 +1564,28 @@ async function getInviteEmailResendCutoff(account_id: string): Promise<Date> {
   return new Date(Date.now() - Math.max(0, minutes) * 60_000);
 }
 
+async function normalizeInviteMessageForAccount({
+  account_id,
+  message,
+}: {
+  account_id: string;
+  message?: string;
+}): Promise<string | null> {
+  const trimmed = `${message ?? ""}`.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const resolution = await resolveMembershipForAccount(account_id);
+  const limits = getEffectiveMembershipUsageLimits(resolution);
+  const maxChars = limits.invite_email_custom_message_max_chars ?? 512;
+  if (maxChars >= 0 && trimmed.length > maxChars) {
+    throw new Error(
+      `invite message is too long (${trimmed.length}/${maxChars}); shorten it or upgrade membership`,
+    );
+  }
+  return trimmed;
+}
+
 async function assertEmailInviteCreationLimits({
   account_id,
   project_id,
@@ -1667,7 +1689,10 @@ async function createEmailProjectInvite({
 }> {
   await ensureProjectCollabInviteEmailTokenSchema();
   const normalizedEmail = normalizeInviteEmail(email_address);
-  const normalizedMessage = `${message ?? ""}`.trim().slice(0, 512);
+  const normalizedMessage = await normalizeInviteMessageForAccount({
+    account_id,
+    message,
+  });
   const email_hash = await hashInviteEmail(normalizedEmail);
   const pool = getPool();
 
