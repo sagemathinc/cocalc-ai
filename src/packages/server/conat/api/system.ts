@@ -38,6 +38,7 @@ export { manageApiKeys };
 import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import getName from "@cocalc/server/accounts/get-name";
+import { filterAccountSearchResultsToRelated } from "@cocalc/server/accounts/search-policy";
 import type { AccountEntitlementOverride } from "@cocalc/conat/hub/api/purchases";
 import {
   clearAccountEntitlementOverrideLocal,
@@ -3010,6 +3011,7 @@ export async function userSearch({
   if (!account_id) {
     throw Error("You must be signed in to search for users.");
   }
+  const adminSearch = !!admin;
   if (admin) {
     if (!(await isAdmin(account_id))) {
       throw Error("Must be an admin to do admin search.");
@@ -3020,11 +3022,18 @@ export async function userSearch({
       limit = 50;
     }
   }
-  return await searchClusterAccounts({
+  const rows = await searchClusterAccounts({
     query,
     limit,
-    admin,
+    admin: adminSearch,
     only_email,
+  });
+  if (adminSearch) {
+    return rows;
+  }
+  return await filterAccountSearchResultsToRelated({
+    account_id,
+    rows,
   });
 }
 
