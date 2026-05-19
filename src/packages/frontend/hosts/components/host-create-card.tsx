@@ -14,6 +14,11 @@ import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import {
+  applyPreset,
+  getAvailablePresets,
+  type HostCreateDraftContext,
+} from "../create/host-create-draft";
+import {
   getProviderPriceEstimate,
   type HostFieldId,
   type ProviderSelection,
@@ -48,6 +53,25 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
   } = catalogRefresh;
   const hasExternalProviders = refreshProviders.some(
     (entry) => entry.value !== "self-host",
+  );
+  const draftContext = React.useMemo<HostCreateDraftContext>(
+    () => ({
+      enabledProviders: provider.providerOptions.map((option) => option.value),
+      catalogByProvider: provider.catalog
+        ? { [provider.selectedProvider]: provider.catalog }
+        : {},
+      billing: {
+        fundingModeOptions: billing.fundingModeOptions,
+        defaultFundingMode: billing.defaultFundingMode,
+      },
+    }),
+    [
+      billing.defaultFundingMode,
+      billing.fundingModeOptions,
+      provider.catalog,
+      provider.providerOptions,
+      provider.selectedProvider,
+    ],
   );
   const onProviderChange = React.useCallback(
     (value: string) => {
@@ -91,6 +115,56 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
   const watchedPricingModel = Form.useWatch("pricing_model", formInstance);
   const watchedPriceDisplay = Form.useWatch("price_display", formInstance);
   const watchedFundingMode = Form.useWatch("funding_mode", formInstance);
+  const currentDraftValues = React.useMemo(
+    () => ({
+      ...formInstance.getFieldsValue(true),
+      provider: provider.selectedProvider,
+      region: watchedRegion,
+      zone: watchedZone,
+      machine_type: watchedMachineType,
+      gpu_type: watchedGpuType,
+      pricing_model: watchedPricingModel,
+      storage_mode: watchedStorageMode,
+      disk_type: watchedDiskType,
+      disk_gb: watchedDiskGb,
+      disk: watchedDisk,
+      funding_mode: watchedFundingMode,
+      price_display: watchedPriceDisplay === "monthly" ? "monthly" : "hourly",
+    }),
+    [
+      formInstance,
+      provider.selectedProvider,
+      watchedDisk,
+      watchedDiskGb,
+      watchedDiskType,
+      watchedFundingMode,
+      watchedGpuType,
+      watchedMachineType,
+      watchedPriceDisplay,
+      watchedPricingModel,
+      watchedRegion,
+      watchedStorageMode,
+      watchedZone,
+    ],
+  );
+  const presets = React.useMemo(
+    () => getAvailablePresets(currentDraftValues, draftContext),
+    [currentDraftValues, draftContext],
+  );
+  const applyCreatePreset = React.useCallback(
+    (presetId: (typeof presets)[number]["id"]) => {
+      const next = applyPreset(
+        presetId,
+        {
+          ...formInstance.getFieldsValue(true),
+          provider: provider.selectedProvider,
+        },
+        draftContext,
+      );
+      formInstance.setFieldsValue(next);
+    },
+    [draftContext, formInstance, provider.selectedProvider],
+  );
   const selectedDiskGb =
     typeof watchedDiskGb === "number" && Number.isFinite(watchedDiskGb)
       ? watchedDiskGb
@@ -344,6 +418,28 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
             billing={billing}
             onProviderChange={onProviderChange}
           />
+          {provider.selectedProvider !== "none" &&
+            provider.selectedProvider !== "self-host" && (
+              <>
+                <Divider style={{ margin: "4px 0 8px" }} />
+                <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                  <Typography.Text type="secondary">Presets</Typography.Text>
+                  <Space size="small" wrap>
+                    {presets.map((preset) => (
+                      <Button
+                        key={preset.id}
+                        size="small"
+                        disabled={preset.disabled}
+                        title={preset.disabledReason ?? preset.description}
+                        onClick={() => applyCreatePreset(preset.id)}
+                      >
+                        {preset.label}
+                      </Button>
+                    ))}
+                  </Space>
+                </Space>
+              </>
+            )}
           {noFundingModes && (
             <Alert
               type="warning"
