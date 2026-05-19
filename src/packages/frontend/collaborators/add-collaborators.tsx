@@ -79,7 +79,13 @@ interface Props {
   mode?: "project" | "flyout";
 }
 
-type State = "input" | "searching" | "searched" | "invited" | "invited_errors";
+type State =
+  | "input"
+  | "searching"
+  | "searched"
+  | "invited"
+  | "invited_manual"
+  | "invited_errors";
 
 export const AddCollaborators: React.FC<Props> = ({
   autoFocus,
@@ -333,15 +339,26 @@ export const AddCollaborators: React.FC<Props> = ({
     );
   }
 
-  function add_selected(): void {
-    let errors = "";
+  async function add_selected(): Promise<void> {
+    const errors: string[] = [];
+    const manualDeliveryMessages: string[] = [];
     const number_selected = selected_entries.length;
     for (const x of selected_entries) {
       try {
         if (is_valid_email_address(x)) {
-          invite_noncloud_collaborator(x);
+          const result = await invite_noncloud_collaborator(x, true);
+          const inviteLinks = (result?.invites ?? [])
+            .map((invite) => invite.invite_url)
+            .filter((url) => !!url);
+          if (result?.manual_delivery_required && inviteLinks.length > 0) {
+            const prefix =
+              result.email_blocked_reason === "email_not_configured"
+                ? `Email is not configured for this site. To add ${x}, send them this invite link:`
+                : `To add ${x}, send them this invite link:`;
+            manualDeliveryMessages.push(`${prefix}\n${inviteLinks.join("\n")}`);
+          }
         } else if (is_valid_uuid_string(x)) {
-          invite_collaborator(x);
+          await invite_collaborator(x);
         } else {
           // skip
           throw Error(
@@ -349,16 +366,19 @@ export const AddCollaborators: React.FC<Props> = ({
           );
         }
       } catch (err) {
-        errors += `\nError - ${err}`;
+        errors.push(`Error - ${err}`);
       }
     }
     reset();
-    if (errors) {
-      set_invite_result(errors);
+    if (errors.length > 0) {
+      set_invite_result(errors.join("\n"));
       set_state("invited_errors");
+    } else if (manualDeliveryMessages.length > 0) {
+      set_invite_result(manualDeliveryMessages.join("\n\n"));
+      set_state("invited_manual");
     } else {
       set_invite_result(
-        `${number_selected} ${plural(number_selected, "invitation")} sent.`,
+        `${number_selected} ${plural(number_selected, "invitation")} created.`,
       );
       set_state("invited");
     }
@@ -393,19 +413,22 @@ export const AddCollaborators: React.FC<Props> = ({
     return { subject, replyto, replyto_name };
   }
 
-  async function invite_noncloud_collaborator(email_address): Promise<void> {
+  async function invite_noncloud_collaborator(
+    email_address,
+    silent = false,
+  ): Promise<any> {
     if (project == null) return;
     const { subject, replyto, replyto_name } = sender_info();
-    await project_actions.invite_collaborators_by_email(
+    const result = await project_actions.invite_collaborators_by_email(
       project_id,
       email_address,
       email_body,
       subject,
-      false,
+      silent,
       replyto,
       replyto_name,
     );
-    if (!allow_urls) {
+    if (!silent && !allow_urls) {
       // Show a message that they might have to email that person
       // and tell them to make a cocalc account, and when they do
       // then they will get added as collaborator to this project....
@@ -414,6 +437,7 @@ export const AddCollaborators: React.FC<Props> = ({
         message: `If email delivery is unreliable, copy the pending invite link and send it to ${email_address} through a trusted channel.`,
       });
     }
+    return result;
   }
 
   function send_email_invite(): void {
@@ -710,10 +734,20 @@ export const AddCollaborators: React.FC<Props> = ({
       disabled = true;
     }
     return (
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          marginTop: customize_email && selected_entries.length > 0 ? 18 : 0,
+        }}
+      >
         <Button onClick={reset}>Cancel</Button>
         <Gap />
-        <Button disabled={disabled} onClick={add_selected} type="primary">
+        <Button
+          disabled={disabled}
+          onClick={() => void add_selected()}
+          type="primary"
+        >
           <Icon name="user-plus" /> {label}
         </Button>
       </div>
@@ -721,7 +755,11 @@ export const AddCollaborators: React.FC<Props> = ({
   }
 
   function render_invite_result(): React.JSX.Element | undefined {
-    if (state != "invited" && state != "invited_errors") {
+    if (
+      state != "invited" &&
+      state != "invited_manual" &&
+      state != "invited_errors"
+    ) {
       return;
     }
     return (
@@ -730,8 +768,25 @@ export const AddCollaborators: React.FC<Props> = ({
         showIcon
         closable
         onClose={reset}
-        type={state == "invited_errors" ? "error" : "success"}
-        message={invite_result}
+        type={
+          state == "invited_errors"
+            ? "error"
+            : state == "invited_manual"
+              ? "warning"
+              : "success"
+        }
+        message={
+          state == "invited_manual"
+            ? "Invitation link created"
+            : state == "invited_errors"
+              ? "Invitation failed"
+              : "Invitation created"
+        }
+        description={
+          <div style={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}>
+            {invite_result}
+          </div>
+        }
       />
     );
   }

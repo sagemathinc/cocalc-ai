@@ -2287,7 +2287,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     replyto_name: string | undefined,
     invite_context?: Record<string, unknown>,
     invite_scope?: string,
-  ): Promise<void> {
+  ): Promise<any> {
     await this.redux.getProjectActions(project_id).async_log({
       event: "invite_nonuser",
       invitee_email: to,
@@ -2340,11 +2340,13 @@ export class ProjectsActions extends Actions<ProjectsState> {
           message,
         });
       }
+      return result;
     } catch (err) {
       if (!silent) {
         const message = `Error inviting collaborator ${to} from ${project_id} -- ${err}`;
         alert_message({ type: "error", message, timeout: 60 });
       }
+      throw err;
     }
   }
 
