@@ -429,6 +429,134 @@ describe("PublicAuthApp", () => {
     ).not.toBeNull();
   });
 
+  it("previews project invite links without accepting them immediately", async () => {
+    mockedApi.mockResolvedValueOnce({
+      invite: {
+        invite_id: "77777777-7777-4777-8777-777777777777",
+        inviter_name: "Ada Lovelace",
+        message: "Please join",
+        project_id: "22222222-2222-4222-8222-222222222222",
+        project_title: "Research Project",
+        status: "pending",
+      },
+    } as any);
+
+    render(
+      <PublicAuthApp
+        config={config({ is_authenticated: true })}
+        initialRoute={{
+          inviteId: "77777777-7777-4777-8777-777777777777",
+          kind: "project-invite",
+          projectId: "22222222-2222-4222-8222-222222222222",
+          token: "secret",
+        }}
+      />,
+    );
+
+    expect(await screen.findByText("Confirm project invite")).not.toBeNull();
+    expect(screen.getByText("Research Project")).not.toBeNull();
+    expect(screen.getByText("Ada Lovelace")).not.toBeNull();
+    expect(screen.getByText("Please join")).not.toBeNull();
+    expect(mockedApi).toHaveBeenCalledTimes(1);
+    expect(mockedApi).toHaveBeenCalledWith("projects/preview-email-invite", {
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      project_id: "22222222-2222-4222-8222-222222222222",
+      token: "secret",
+    });
+  });
+
+  it("accepts project invite links only after clicking Accept", async () => {
+    mockedApi
+      .mockResolvedValueOnce({
+        invite: {
+          invite_id: "77777777-7777-4777-8777-777777777777",
+          project_id: "22222222-2222-4222-8222-222222222222",
+          project_title: "Research Project",
+          status: "pending",
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        invite: {
+          invite_id: "77777777-7777-4777-8777-777777777777",
+          project_id: "22222222-2222-4222-8222-222222222222",
+          project_title: "Research Project",
+          status: "accepted",
+        },
+      } as any);
+
+    render(
+      <PublicAuthApp
+        config={config({ is_authenticated: true })}
+        initialRoute={{
+          inviteId: "77777777-7777-4777-8777-777777777777",
+          kind: "project-invite",
+          projectId: "22222222-2222-4222-8222-222222222222",
+          token: "secret",
+        }}
+      />,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Accept invite" }),
+    );
+
+    expect(await screen.findByText("Project invite accepted")).not.toBeNull();
+    expect(mockedApi).toHaveBeenLastCalledWith(
+      "projects/respond-email-invite",
+      {
+        action: "accept",
+        invite_id: "77777777-7777-4777-8777-777777777777",
+        project_id: "22222222-2222-4222-8222-222222222222",
+        token: "secret",
+      },
+    );
+  });
+
+  it("declines project invite links without accepting them", async () => {
+    mockedApi
+      .mockResolvedValueOnce({
+        invite: {
+          invite_id: "77777777-7777-4777-8777-777777777777",
+          project_id: "22222222-2222-4222-8222-222222222222",
+          project_title: "Research Project",
+          status: "pending",
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        invite: {
+          invite_id: "77777777-7777-4777-8777-777777777777",
+          project_id: "22222222-2222-4222-8222-222222222222",
+          project_title: "Research Project",
+          status: "declined",
+        },
+      } as any);
+
+    render(
+      <PublicAuthApp
+        config={config({ is_authenticated: true })}
+        initialRoute={{
+          inviteId: "77777777-7777-4777-8777-777777777777",
+          kind: "project-invite",
+          projectId: "22222222-2222-4222-8222-222222222222",
+          token: "secret",
+        }}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Decline" }));
+
+    expect(await screen.findByText("Project invite declined")).not.toBeNull();
+    expect(mockedApi).toHaveBeenLastCalledWith(
+      "projects/respond-email-invite",
+      {
+        action: "decline",
+        invite_id: "77777777-7777-4777-8777-777777777777",
+        project_id: "22222222-2222-4222-8222-222222222222",
+        token: "secret",
+      },
+    );
+  });
+
   it("shows a clear wrong-account warning for CLI login approvals", async () => {
     mockedPostAuthApi.mockResolvedValueOnce({
       challenge_id: "challenge-1",

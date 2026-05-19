@@ -1054,6 +1054,21 @@ export interface ProjectCollabInviteRedeemEmailRequest {
   project_id?: string;
 }
 
+export interface ProjectCollabInvitePreviewEmailRequest {
+  account_id: string;
+  invite_id: string;
+  token: string;
+  project_id?: string;
+}
+
+export interface ProjectCollabInviteRespondEmailRequest {
+  account_id: string;
+  action: ProjectCollabInviteAction;
+  invite_id: string;
+  token: string;
+  project_id?: string;
+}
+
 export interface ProjectCollabInviteListRequest {
   account_id: string;
   project_id?: string;
@@ -1271,6 +1286,8 @@ export type ProjectCollabInviteMethod =
   | "invite-without-account"
   | "copy-email-link"
   | "redeem-email"
+  | "preview-email"
+  | "respond-email"
   | "respond";
 export type ProjectSecretsMethod =
   | "list"
@@ -2105,6 +2122,12 @@ export interface InterBayProjectCollabInviteApi {
   ) => Promise<ProjectCollabInviteEmailLinkWire>;
   redeemEmail: (
     opts: ProjectCollabInviteRedeemEmailRequest,
+  ) => Promise<ProjectCollabInviteWire>;
+  previewEmail: (
+    opts: ProjectCollabInvitePreviewEmailRequest,
+  ) => Promise<ProjectCollabInviteWire>;
+  respondEmail: (
+    opts: ProjectCollabInviteRespondEmailRequest,
   ) => Promise<ProjectCollabInviteWire>;
   respond: (
     opts: ProjectCollabInviteRespondRequest,
@@ -4465,6 +4488,18 @@ export function createInterBayProjectCollabInviteClient({
     ...serviceClientOptions({ client, timeout }),
     subject: projectCollabInviteSubject({ dest_bay, method: "redeem-email" }),
   });
+  const previewEmailClient = createServiceClient<
+    Pick<InterBayProjectCollabInviteApi, "previewEmail">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({ dest_bay, method: "preview-email" }),
+  });
+  const respondEmailClient = createServiceClient<
+    Pick<InterBayProjectCollabInviteApi, "respondEmail">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({ dest_bay, method: "respond-email" }),
+  });
   const listClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "list">
   >({
@@ -4509,6 +4544,8 @@ export function createInterBayProjectCollabInviteClient({
     copyEmailLink: async (opts) =>
       await copyEmailLinkClient.copyEmailLink(opts),
     redeemEmail: async (opts) => await redeemEmailClient.redeemEmail(opts),
+    previewEmail: async (opts) => await previewEmailClient.previewEmail(opts),
+    respondEmail: async (opts) => await respondEmailClient.respondEmail(opts),
     respond: async (opts) => await respondClient.respond(opts),
   };
 }
@@ -4618,6 +4655,28 @@ export function createInterBayProjectCollabInviteHandlers({
       }),
       impl: {
         redeemEmail: async (opts) => await impl.redeemEmail(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayProjectCollabInviteApi, "previewEmail">>({
+      ...options,
+      service: "inter-bay-project-collab-invite",
+      subject: projectCollabInviteSubject({
+        dest_bay: bay_id,
+        method: "preview-email",
+      }),
+      impl: {
+        previewEmail: async (opts) => await impl.previewEmail(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayProjectCollabInviteApi, "respondEmail">>({
+      ...options,
+      service: "inter-bay-project-collab-invite",
+      subject: projectCollabInviteSubject({
+        dest_bay: bay_id,
+        method: "respond-email",
+      }),
+      impl: {
+        respondEmail: async (opts) => await impl.respondEmail(opts),
       },
     }),
     createServiceHandler<Pick<InterBayProjectCollabInviteApi, "list">>({

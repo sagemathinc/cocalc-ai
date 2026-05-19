@@ -251,9 +251,11 @@ import {
   createCollabInvite,
   inviteCollaboratorWithoutAccount,
   listCollabInvites,
+  previewEmailProjectInvite,
   redeemEmailProjectInvite,
   removeCollaborator,
   respondCollabInviteCanonical,
+  respondEmailProjectInvite,
 } from "@cocalc/server/projects/collaborators";
 import { leaveOrDeleteProjectsForAccount } from "@cocalc/server/projects/ownership";
 import {
@@ -948,6 +950,10 @@ async function startProjectCollabInviteService(): Promise<void> {
     },
     redeemEmail: async (opts) =>
       collabInviteToWire(await redeemEmailProjectInvite(opts)),
+    previewEmail: async (opts) =>
+      collabInviteToWire(await previewEmailProjectInvite(opts)),
+    respondEmail: async (opts) =>
+      collabInviteToWire(await respondEmailProjectInvite(opts)),
     list: async (opts) =>
       (await listCollabInvites(opts)).map((invite) =>
         collabInviteToWire(invite),

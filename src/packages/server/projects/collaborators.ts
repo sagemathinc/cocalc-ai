@@ -1013,6 +1013,58 @@ async function getCanonicalCollabInvite(
   return rows[0];
 }
 
+async function getPendingEmailCollabInviteForToken({
+  invite_id,
+  project_id,
+  token,
+}: {
+  invite_id: string;
+  project_id?: string;
+  token: string;
+}): Promise<{
+  invite_id: string;
+  project_id: string;
+  inviter_account_id: string;
+  scope?: string | null;
+}> {
+  ensureUuid(invite_id, "invite_id");
+  if (project_id) {
+    ensureUuid(project_id, "project_id");
+  }
+  await ensureProjectCollabInviteEmailTokenSchema();
+  const pool = getPool();
+  await expirePendingCollabInvites(pool);
+  const { rows } = await pool.query<{
+    invite_id: string;
+    project_id: string;
+    inviter_account_id: string;
+    status: string;
+    token_hash: string | null;
+    scope?: string | null;
+  }>(
+    `SELECT invite_id, project_id, inviter_account_id, status, token_hash, scope
+       FROM project_collab_invites
+      WHERE invite_id=$1
+        AND invite_source IN ('email', 'course_email')
+      LIMIT 1`,
+    [invite_id],
+  );
+  const invite = rows[0];
+  if (!invite || !invite.token_hash) {
+    throw new Error(`invite '${invite_id}' not found`);
+  }
+  if (project_id && invite.project_id !== project_id) {
+    throw new Error("project invite link is invalid for this project");
+  }
+  if (invite.status !== "pending") {
+    throw new Error(`invite is not pending (status=${invite.status})`);
+  }
+  if (!timingSafeStringEqual(invite.token_hash, await hashInviteToken(token))) {
+    throw new Error("invalid invite token");
+  }
+  return invite;
+}
+
 export async function respondCollabInviteCanonical({
   account_id,
   invite_id,
@@ -1691,6 +1743,7 @@ export async function redeemEmailProjectInvite({
   account_id,
   invite_id,
   token,
+  project_id,
 }: {
   account_id?: string;
   invite_id: string;
@@ -1705,32 +1758,12 @@ export async function redeemEmailProjectInvite({
     account_id,
     "accept collaboration invites",
   );
-  await ensureProjectCollabInviteEmailTokenSchema();
   const pool = getPool();
-  await expirePendingCollabInvites(pool);
-  const { rows } = await pool.query<{
-    invite_id: string;
-    project_id: string;
-    status: string;
-    token_hash: string | null;
-  }>(
-    `SELECT invite_id, project_id, status, token_hash
-       FROM project_collab_invites
-      WHERE invite_id=$1
-        AND invite_source IN ('email', 'course_email')
-      LIMIT 1`,
-    [invite_id],
-  );
-  const invite = rows[0];
-  if (!invite || !invite.token_hash) {
-    throw new Error(`invite '${invite_id}' not found`);
-  }
-  if (invite.status !== "pending") {
-    throw new Error(`invite is not pending (status=${invite.status})`);
-  }
-  if (!timingSafeStringEqual(invite.token_hash, await hashInviteToken(token))) {
-    throw new Error("invalid invite token");
-  }
+  const invite = await getPendingEmailCollabInviteForToken({
+    invite_id,
+    project_id,
+    token,
+  });
   const { rows: collabRows } = await pool.query<{ already: boolean }>(
     `SELECT EXISTS(
        SELECT 1
@@ -1780,6 +1813,88 @@ export async function redeemEmailProjectInvite({
     project_id: invite.project_id,
   });
   const updated = await fetchInviteById(invite_id, await isAdmin(account_id));
+  if (!updated) {
+    throw new Error("failed to load invite response");
+  }
+  return updated;
+}
+
+export async function previewEmailProjectInvite({
+  account_id,
+  invite_id,
+  token,
+  project_id,
+}: {
+  account_id?: string;
+  invite_id: string;
+  token: string;
+  project_id?: string;
+}): Promise<ProjectCollabInviteRow> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  await getPendingEmailCollabInviteForToken({ invite_id, project_id, token });
+  const updated = await fetchInviteById(invite_id, false);
+  if (!updated) {
+    throw new Error("failed to load invite");
+  }
+  return updated;
+}
+
+export async function respondEmailProjectInvite({
+  account_id,
+  action,
+  invite_id,
+  token,
+  project_id,
+}: {
+  account_id?: string;
+  action: ProjectCollabInviteAction;
+  invite_id: string;
+  token: string;
+  project_id?: string;
+}): Promise<ProjectCollabInviteRow> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  const normalizedAction = normalizeInviteAction(action);
+  if (normalizedAction === "accept") {
+    return await redeemEmailProjectInvite({
+      account_id,
+      invite_id,
+      token,
+      project_id,
+    });
+  }
+  if (normalizedAction === "revoke") {
+    throw new Error("invite links cannot be revoked by recipients");
+  }
+  const invite = await getPendingEmailCollabInviteForToken({
+    invite_id,
+    project_id,
+    token,
+  });
+  const nextStatus: ProjectCollabInviteStatus =
+    normalizedAction === "block" ? "blocked" : "declined";
+  const pool = getPool();
+  if (normalizedAction === "block") {
+    await pool.query(
+      `INSERT INTO project_collab_invite_blocks
+        (blocker_account_id, blocked_account_id, created, updated)
+       VALUES
+        ($1, $2, NOW(), NOW())
+       ON CONFLICT (blocker_account_id, blocked_account_id)
+       DO UPDATE SET updated=EXCLUDED.updated`,
+      [account_id, invite.inviter_account_id],
+    );
+  }
+  await pool.query(
+    `UPDATE project_collab_invites
+        SET status=$2, responder_action=$3, responded=NOW(), updated=NOW()
+      WHERE invite_id=$1`,
+    [invite_id, nextStatus, normalizedAction],
+  );
+  const updated = await fetchInviteById(invite_id, false);
   if (!updated) {
     throw new Error("failed to load invite response");
   }

@@ -8,6 +8,8 @@ let projectReferenceGetMock: jest.Mock;
 let inviteWithoutAccountMock: jest.Mock;
 let copyEmailLinkMock: jest.Mock;
 let redeemEmailMock: jest.Mock;
+let previewEmailMock: jest.Mock;
+let respondEmailMock: jest.Mock;
 let loadProjectReadDetailsDirectMock: jest.Mock;
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
@@ -42,6 +44,8 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
         inviteWithoutAccountMock(...args),
       copyEmailLink: (...args: any[]) => copyEmailLinkMock(...args),
       redeemEmail: (...args: any[]) => redeemEmailMock(...args),
+      previewEmail: (...args: any[]) => previewEmailMock(...args),
+      respondEmail: (...args: any[]) => respondEmailMock(...args),
     })),
   })),
 }));
@@ -122,6 +126,30 @@ describe("remote project detail reads", () => {
       updated: "2026-05-18T00:00:00.000Z",
       responded: "2026-05-18T01:00:00.000Z",
     }));
+    previewEmailMock = jest.fn(async () => ({
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      project_id: PROJECT_ID,
+      project_title: "Remote Project",
+      inviter_account_id: "33333333-3333-4333-8333-333333333333",
+      invitee_account_id: null,
+      invite_source: "email",
+      status: "pending",
+      message: "Please join",
+      created: "2026-05-18T00:00:00.000Z",
+      updated: "2026-05-18T00:00:00.000Z",
+    }));
+    respondEmailMock = jest.fn(async () => ({
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      project_id: PROJECT_ID,
+      inviter_account_id: "33333333-3333-4333-8333-333333333333",
+      invitee_account_id: null,
+      invite_source: "email",
+      status: "declined",
+      responder_action: "decline",
+      created: "2026-05-18T00:00:00.000Z",
+      updated: "2026-05-18T00:00:00.000Z",
+      responded: "2026-05-18T01:00:00.000Z",
+    }));
     loadProjectReadDetailsDirectMock = jest.fn();
   });
 
@@ -198,5 +226,45 @@ describe("remote project detail reads", () => {
       token: "token-1",
     });
     expect(result.responded).toEqual(new Date("2026-05-18T01:00:00.000Z"));
+  });
+
+  it("routes email invite preview through the owning bay", async () => {
+    const { previewEmailProjectInvite } = await import("./projects");
+    const result = await previewEmailProjectInvite({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      token: "token-1",
+    });
+
+    expect(previewEmailMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      token: "token-1",
+    });
+    expect(result.created).toEqual(new Date("2026-05-18T00:00:00.000Z"));
+    expect(result.message).toBe("Please join");
+  });
+
+  it("routes email invite decline/block responses through the owning bay", async () => {
+    const { respondEmailProjectInvite } = await import("./projects");
+    const result = await respondEmailProjectInvite({
+      account_id: ACCOUNT_ID,
+      action: "decline",
+      project_id: PROJECT_ID,
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      token: "token-1",
+    });
+
+    expect(respondEmailMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      action: "decline",
+      project_id: PROJECT_ID,
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      token: "token-1",
+    });
+    expect(result.responded).toEqual(new Date("2026-05-18T01:00:00.000Z"));
+    expect(result.status).toBe("declined");
   });
 });

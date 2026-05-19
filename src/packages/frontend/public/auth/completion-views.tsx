@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 
 import { Alert, Button, Flex, Input, Spin, Typography } from "antd";
 
+import type { ProjectCollabInviteRow } from "@cocalc/conat/hub/api/projects";
 import api from "@cocalc/frontend/client/api";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
@@ -231,13 +232,19 @@ export function PublicRedeemProjectInviteView({
 }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(isAuthenticated);
+  const [invite, setInvite] = useState<ProjectCollabInviteRow | null>(null);
   const [projectTitle, setProjectTitle] = useState<string | undefined>();
-  const [success, setSuccess] = useState(false);
+  const [state, setState] = useState<
+    "preview" | "accepted" | "declined" | "blocked"
+  >("preview");
+  const [submitting, setSubmitting] = useState<
+    "" | "accept" | "decline" | "block"
+  >("");
 
   useEffect(() => {
     let cancelled = false;
 
-    async function redeem(): Promise<void> {
+    async function preview(): Promise<void> {
       if (!isAuthenticated) {
         setLoading(false);
         return;
@@ -250,14 +257,15 @@ export function PublicRedeemProjectInviteView({
       setLoading(true);
       setError("");
       try {
-        const result = await api("projects/redeem-email-invite", {
+        const result = await api("projects/preview-email-invite", {
           project_id: projectId,
           invite_id: inviteId,
           token,
         });
         if (!cancelled) {
           setProjectTitle(result?.invite?.project_title ?? undefined);
-          setSuccess(true);
+          setInvite(result?.invite ?? null);
+          setState("preview");
         }
       } catch (err) {
         if (!cancelled) {
@@ -270,11 +278,41 @@ export function PublicRedeemProjectInviteView({
       }
     }
 
-    void redeem();
+    void preview();
     return () => {
       cancelled = true;
     };
   }, [inviteId, isAuthenticated, projectId, token]);
+
+  async function respond(action: "accept" | "decline" | "block") {
+    if (!projectId || !inviteId || !token) {
+      setError("This project invite link is incomplete or invalid.");
+      return;
+    }
+    setSubmitting(action);
+    setError("");
+    try {
+      const result = await api("projects/respond-email-invite", {
+        action,
+        project_id: projectId,
+        invite_id: inviteId,
+        token,
+      });
+      setProjectTitle(result?.invite?.project_title ?? projectTitle);
+      setInvite(result?.invite ?? invite);
+      setState(
+        action === "accept"
+          ? "accepted"
+          : action === "block"
+            ? "blocked"
+            : "declined",
+      );
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSubmitting("");
+    }
+  }
 
   if (!isAuthenticated) {
     return (
@@ -294,9 +332,9 @@ export function PublicRedeemProjectInviteView({
       {loading ? (
         <Flex align="center" gap={12}>
           <Spin />
-          <Text>Accepting project invite...</Text>
+          <Text>Loading project invite...</Text>
         </Flex>
-      ) : success ? (
+      ) : state === "accepted" ? (
         <Alert
           title="Project invite accepted"
           description={
@@ -307,6 +345,53 @@ export function PublicRedeemProjectInviteView({
           showIcon
           type="success"
         />
+      ) : state === "declined" ? (
+        <Alert
+          title="Project invite declined"
+          description="You were not added to this project."
+          showIcon
+          type="info"
+        />
+      ) : state === "blocked" ? (
+        <Alert
+          title="Project invite blocked"
+          description="You were not added to this project, and this inviter is blocked from sending you account-based project invites."
+          showIcon
+          type="warning"
+        />
+      ) : !error ? (
+        <Flex vertical gap={12}>
+          <Alert
+            title="Confirm project invite"
+            description="Only accept this invite if you trust the person who sent it. You can accept with this signed-in CoCalc account even if the email address that received the link is different."
+            showIcon
+            type="info"
+          />
+          <div>
+            <Text type="secondary">Project</Text>
+            <Paragraph style={{ marginBottom: 0 }}>
+              <Text strong>
+                {projectTitle || invite?.project_title || "Invited project"}
+              </Text>
+            </Paragraph>
+          </div>
+          {invite?.inviter_name ? (
+            <div>
+              <Text type="secondary">Invited by</Text>
+              <Paragraph style={{ marginBottom: 0 }}>
+                {invite.inviter_name}
+              </Paragraph>
+            </div>
+          ) : null}
+          {invite?.message ? (
+            <div>
+              <Text type="secondary">Message</Text>
+              <Paragraph style={{ whiteSpace: "pre-wrap", marginBottom: 0 }}>
+                {invite.message}
+              </Paragraph>
+            </div>
+          ) : null}
+        </Flex>
       ) : (
         <Alert
           title="Could not accept project invite"
@@ -316,7 +401,35 @@ export function PublicRedeemProjectInviteView({
         />
       )}
       <Flex wrap gap={12}>
-        {success ? (
+        {state === "preview" && !loading && !error ? (
+          <>
+            <Button
+              disabled={!!submitting}
+              loading={submitting === "accept"}
+              size="large"
+              type="primary"
+              onClick={() => void respond("accept")}
+            >
+              Accept invite
+            </Button>
+            <Button
+              disabled={!!submitting}
+              size="large"
+              onClick={() => void respond("decline")}
+            >
+              Decline
+            </Button>
+            <Button
+              danger
+              disabled={!!submitting}
+              size="large"
+              onClick={() => void respond("block")}
+            >
+              Block inviter
+            </Button>
+          </>
+        ) : null}
+        {state === "accepted" ? (
           <Button
             href={joinUrlPath(appBasePath, "projects", projectId)}
             type="primary"

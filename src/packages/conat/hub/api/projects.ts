@@ -545,6 +545,8 @@ export const projects = {
   inviteCollaboratorWithoutAccount: authFirstRequireAccount,
   copyEmailProjectInviteLink: authFirstRequireAccount,
   redeemEmailProjectInvite: authFirstRequireAccount,
+  previewEmailProjectInvite: authFirstRequireAccount,
+  respondEmailProjectInvite: authFirstRequireAccount,
   setQuotas: authFirstRequireAccount,
 
   exec: authFirstRequireAccount,
@@ -890,6 +892,21 @@ export interface Projects {
 
   redeemEmailProjectInvite: (opts: {
     account_id?: string;
+    invite_id: string;
+    token: string;
+    project_id?: string;
+  }) => Promise<ProjectCollabInviteRow>;
+
+  previewEmailProjectInvite: (opts: {
+    account_id?: string;
+    invite_id: string;
+    token: string;
+    project_id?: string;
+  }) => Promise<ProjectCollabInviteRow>;
+
+  respondEmailProjectInvite: (opts: {
+    account_id?: string;
+    action: ProjectCollabInviteAction;
     invite_id: string;
     token: string;
     project_id?: string;
