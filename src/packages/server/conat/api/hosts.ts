@@ -4413,6 +4413,7 @@ export async function createHost({
   pricing_model,
   interruption_restore_policy,
   spot_recovery_policy,
+  start_after_create = true,
   machine,
 }: {
   account_id?: string;
@@ -4426,6 +4427,7 @@ export async function createHost({
   pricing_model?: HostPricingModel;
   interruption_restore_policy?: HostInterruptionRestorePolicy;
   spot_recovery_policy?: HostSpotRecoveryPolicy;
+  start_after_create?: boolean;
   machine?: Host["machine"];
 }): Promise<Host> {
   const owner = requireAccount(account_id);
@@ -4460,6 +4462,7 @@ export async function createHost({
     pricing_model,
     interruption_restore_policy,
     spot_recovery_policy,
+    start_after_create,
     machine,
     normalizeHostPricingModel,
     normalizeHostInterruptionRestorePolicy,
