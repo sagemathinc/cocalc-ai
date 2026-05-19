@@ -654,6 +654,61 @@ describe("project collaborators local bay access", () => {
     );
   });
 
+  it("creates email-only invites when the email backend is unavailable", async () => {
+    const emailModule = jest.requireMock("@cocalc/server/hub/email");
+    emailModule.send_invite_email.mockImplementationOnce(
+      async () => "no email sent, because email_backend is 'none'",
+    );
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_collab_invites i")) {
+        return {
+          rows: [
+            {
+              invite_id: "77777777-7777-4777-8777-777777777777",
+              project_id: PROJECT_ID,
+              project_title: "Test Project",
+              inviter_account_id: ACCOUNT_ID,
+              invitee_account_id: null,
+              invite_source: "email",
+              status: "pending",
+              message: "Please join",
+              created: new Date("2026-04-01T00:00:00Z"),
+              updated: new Date("2026-04-01T00:00:00Z"),
+              responded: null,
+              expires: new Date("2026-04-15T00:00:00Z"),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const { inviteCollaboratorWithoutAccount } =
+      await import("./collaborators");
+    await expect(
+      inviteCollaboratorWithoutAccount({
+        account_id: ACCOUNT_ID,
+        opts: {
+          project_id: PROJECT_ID,
+          title: "Test Project",
+          link2proj: "https://example.com/project",
+          to: "nobody@example.com",
+          email: "<p>Hello</p>",
+          message: "Please join",
+        },
+      }),
+    ).resolves.toMatchObject({
+      email_sent: false,
+      email_available: false,
+      manual_delivery_required: true,
+      email_blocked_reason: "email_not_configured",
+      invites: [
+        expect.objectContaining({
+          invite_url: expect.stringContaining("/invites/project/"),
+        }),
+      ],
+    });
+  });
+
   it("binds accepted course email invites to the student project course field", async () => {
     const inviteId = "77777777-7777-4777-8777-777777777777";
     const token = "course-invite-token";

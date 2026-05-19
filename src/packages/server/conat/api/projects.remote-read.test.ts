@@ -88,6 +88,9 @@ describe("remote project detail reads", () => {
     }));
     inviteWithoutAccountMock = jest.fn(async () => ({
       email_sent: false,
+      email_available: true,
+      manual_delivery_required: true,
+      email_blocked_reason: "send_disabled_by_request",
       invites: [
         {
           invite_id: "77777777-7777-4777-8777-777777777777",

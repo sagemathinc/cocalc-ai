@@ -122,6 +122,7 @@ import type {
   ProjectCollabInviteAction,
   ProjectCollabInviteDirection,
   ProjectCollabInviteStatus,
+  ProjectInviteEmailBlockedReason,
   ProjectRunQuota,
   WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
@@ -1549,6 +1550,10 @@ export async function inviteCollaboratorWithoutAccount({
     });
   return {
     email_sent: result.email_sent,
+    email_available: result.email_available,
+    manual_delivery_required: result.manual_delivery_required,
+    email_blocked_reason:
+      result.email_blocked_reason as ProjectInviteEmailBlockedReason | null,
     invites: result.invites.map((invite) => collabInviteFromWire(invite)),
   };
 }

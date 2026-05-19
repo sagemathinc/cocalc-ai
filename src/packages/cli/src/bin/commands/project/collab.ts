@@ -236,6 +236,9 @@ export function registerProjectCollabCommands(
             project_id: project.project_id,
             project_title: project.title,
             email_sent: result.email_sent,
+            email_available: result.email_available,
+            manual_delivery_required: result.manual_delivery_required,
+            email_blocked_reason: result.email_blocked_reason ?? null,
             invites: (result.invites ?? []).map((row) => ({
               ...serializeInviteRow(row),
               invite_url: row.invite_url ?? null,

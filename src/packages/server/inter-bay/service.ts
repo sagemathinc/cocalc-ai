@@ -932,6 +932,9 @@ async function startProjectCollabInviteService(): Promise<void> {
       const result = await inviteCollaboratorWithoutAccount(opts);
       return {
         email_sent: result.email_sent,
+        email_available: result.email_available,
+        manual_delivery_required: result.manual_delivery_required,
+        email_blocked_reason: result.email_blocked_reason,
         invites: result.invites.map((invite) => collabInviteToWire(invite)),
       };
     },
