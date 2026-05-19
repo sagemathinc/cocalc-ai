@@ -69,7 +69,7 @@ export interface PublicPolicy extends PolicyTitle {
   content: ReactNode;
   description: string;
   slug: string;
-  updated?: string;
+  updated: string;
 }
 
 export interface PolicyHeadingProps extends PolicyTitle {
@@ -244,10 +244,7 @@ export function PolicyDocument({
   policy: PublicPolicy;
   siteName: string;
 }) {
-  const metadata =
-    policy.updated == null
-      ? siteName
-      : `${siteName} · Last Updated: ${policy.updated}`;
+  const metadata = `${siteName} · Last Updated: ${policy.updated}`;
 
   return (
     <>

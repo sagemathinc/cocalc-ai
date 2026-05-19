@@ -5,6 +5,7 @@ export const accessibilityPolicy: PublicPolicy = {
   navLabel: "Accessibility",
   slug: "accessibility",
   title: "Accessibility Statement",
+  updated: "December 3, 2025",
   content: (
     <>
       <p>

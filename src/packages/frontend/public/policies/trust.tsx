@@ -35,6 +35,7 @@ export const trustPolicy: PublicPolicy = {
   navLabel: "Trust",
   slug: "trust",
   title: "Trust and Compliance",
+  updated: "March 12, 2025",
   content: (
     <>
       <PolicySection title="GDPR">
