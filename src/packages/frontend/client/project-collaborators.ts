@@ -112,6 +112,23 @@ export class ProjectCollaborators {
     return await this.conat.hub.projects.redeemEmailProjectInvite(opts);
   }
 
+  public async preview_email_invite(opts: {
+    invite_id: string;
+    token: string;
+    project_id?: string;
+  }): Promise<ProjectCollabInviteRow> {
+    return await this.conat.hub.projects.previewEmailProjectInvite(opts);
+  }
+
+  public async respond_email_invite(opts: {
+    action: ProjectCollabInviteAction;
+    invite_id: string;
+    token: string;
+    project_id?: string;
+  }): Promise<ProjectCollabInviteRow> {
+    return await this.conat.hub.projects.respondEmailProjectInvite(opts);
+  }
+
   public async list_invite_blocks(opts?: {
     limit?: number;
   }): Promise<ProjectCollabInviteBlockRow[]> {

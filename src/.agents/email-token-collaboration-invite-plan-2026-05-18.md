@@ -2,8 +2,9 @@
 
 Date: 2026-05-18
 
-Status: partially implemented. Project email-token invites work end-to-end as
-of 2026-05-19; remaining work is listed below.
+Status: partially implemented. Project email-token invites, including
+side-effect-free preview and Accept/Decline/Block confirmation, work end-to-end
+as of 2026-05-19; remaining work is listed below.
 
 ## Problem
 
@@ -542,6 +543,10 @@ Implemented:
 - Public `/invites/*` routing reaches the public shell.
 - Email token redemption routes the project collaborator write through the
   project-owning bay.
+- Opening a token link while signed in previews the invite without adding a
+  collaborator, then requires explicit Accept, Decline, or Block.
+- Decline and Block are implemented for email token invites; neither adds a
+  collaborator.
 - Course-scoped project invite redemption can bind the accepting account id
   through the student-project course metadata path.
 - `cocalc-cli` has project invite commands for create, copy-link, redeem, list,
@@ -549,20 +554,9 @@ Implemented:
 
 Remaining before this plan is fully finished:
 
-- Add the explicit side-effect-free invite confirmation flow. A signed-in user
-  who opens a token link must see invite details and choose Accept, Decline, or
-  Block before any membership write happens.
-- Add a token-preview API/path that validates the invite enough to render safe
-  details without accepting it. The existing final redemption action should be
-  called only from Accept.
-- Implement Decline and Block semantics for email token invites. Block should
-  align with the existing internal invite block behavior where possible.
 - Polish the manual-delivery UI so invite creation with no email backend looks
   like a successful info state, includes a copy button, and does not look like a
   warning/error.
-- Validate `cocalc-cli` invite commands against a freshly rebuilt/restarted
-  hub. The source commands and unit tests exist, but a stale running hub can
-  still reject the newer RPC names.
 - Complete full course-invite UI and end-to-end tests, including accepting with
   an account whose primary email differs from the roster email.
 - Add site-license student/instructor pool support and delegated instructor
@@ -571,8 +565,8 @@ Remaining before this plan is fully finished:
   current multibay route is stable.
 - Add abuse/admin observability for invite creation, email sends, copied links,
   accepts, revokes, expirations, and rate-limit denials.
-- Run the full validation matrix below, including browser tests on a no-email
-  Launchpad/Lite site and a site with email configured.
+- Run the remaining validation matrix below, especially a site with email
+  configured and full course workflows.
 
 ## Open Questions
 

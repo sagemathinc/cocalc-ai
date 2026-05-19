@@ -15,8 +15,10 @@ import {
   createCollabInvite as createCollabInviteLocal,
   copyEmailProjectInviteLink as copyEmailProjectInviteLinkLocal,
   inviteCollaboratorWithoutAccount as inviteCollaboratorWithoutAccountLocal,
+  previewEmailProjectInvite as previewEmailProjectInviteLocal,
   listCollabInvites as listCollabInvitesLocal,
   redeemEmailProjectInvite as redeemEmailProjectInviteLocal,
+  respondEmailProjectInvite as respondEmailProjectInviteLocal,
   removeCollaborator as removeCollaboratorLocal,
   respondCollabInvite as respondCollabInviteLocal,
 } from "@cocalc/server/projects/collaborators";
@@ -1737,6 +1739,93 @@ export async function redeemEmailProjectInvite({
     .projectCollabInvite(ownership.bay_id)
     .redeemEmail({
       account_id,
+      invite_id,
+      token,
+      project_id,
+    });
+  return collabInviteFromWire(result);
+}
+
+export async function previewEmailProjectInvite({
+  account_id,
+  invite_id,
+  token,
+  project_id,
+}: {
+  account_id?: string;
+  invite_id: string;
+  token: string;
+  project_id?: string;
+}) {
+  if (!project_id) {
+    return await previewEmailProjectInviteLocal({
+      account_id,
+      invite_id,
+      token,
+    });
+  }
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
+    return await previewEmailProjectInviteLocal({
+      account_id,
+      invite_id,
+      token,
+      project_id,
+    });
+  }
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  const result = await getInterBayBridge()
+    .projectCollabInvite(ownership.bay_id)
+    .previewEmail({
+      account_id,
+      invite_id,
+      token,
+      project_id,
+    });
+  return collabInviteFromWire(result);
+}
+
+export async function respondEmailProjectInvite({
+  account_id,
+  action,
+  invite_id,
+  token,
+  project_id,
+}: {
+  account_id?: string;
+  action: ProjectCollabInviteAction;
+  invite_id: string;
+  token: string;
+  project_id?: string;
+}) {
+  if (!project_id) {
+    return await respondEmailProjectInviteLocal({
+      account_id,
+      action,
+      invite_id,
+      token,
+    });
+  }
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
+    return await respondEmailProjectInviteLocal({
+      account_id,
+      action,
+      invite_id,
+      token,
+      project_id,
+    });
+  }
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  const result = await getInterBayBridge()
+    .projectCollabInvite(ownership.bay_id)
+    .respondEmail({
+      account_id,
+      action,
       invite_id,
       token,
       project_id,

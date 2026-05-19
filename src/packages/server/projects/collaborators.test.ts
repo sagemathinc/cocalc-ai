@@ -629,12 +629,17 @@ describe("project collaborators local bay access", () => {
       ) {
         return { rows: [] };
       }
-      if (sql.includes("SELECT invite_id, project_id, status, token_hash")) {
+      if (
+        sql.includes(
+          "SELECT invite_id, project_id, inviter_account_id, status, token_hash",
+        )
+      ) {
         return {
           rows: [
             {
               invite_id: inviteId,
               project_id: PROJECT_ID,
+              inviter_account_id: TARGET_ACCOUNT_ID,
               status: "pending",
               token_hash: inviteTokenHash(token),
             },
@@ -709,6 +714,198 @@ describe("project collaborators local bay access", () => {
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining("jsonb_set"),
       [PROJECT_ID, ACCOUNT_ID],
+    );
+  });
+
+  it("previews email token invites without adding a collaborator", async () => {
+    const inviteId = "77777777-7777-4777-8777-777777777777";
+    const token = "preview-invite-token";
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "SELECT invite_id, project_id, inviter_account_id, status, token_hash",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              status: "pending",
+              token_hash: inviteTokenHash(token),
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM project_collab_invites i")) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              project_title: "Test Project",
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              inviter_name: "Inviter",
+              invitee_account_id: null,
+              invite_source: "email",
+              status: "pending",
+              message: "Please join",
+              created: new Date("2026-04-01T00:00:00Z"),
+              updated: new Date("2026-04-01T00:00:00Z"),
+              responded: null,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { previewEmailProjectInvite } = await import("./collaborators");
+    await expect(
+      previewEmailProjectInvite({
+        account_id: ACCOUNT_ID,
+        invite_id: inviteId,
+        project_id: PROJECT_ID,
+        token,
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        invite_id: inviteId,
+        message: "Please join",
+        status: "pending",
+      }),
+    );
+    expect(addUserToProject).not.toHaveBeenCalled();
+  });
+
+  it("declines email token invites without adding a collaborator", async () => {
+    const inviteId = "77777777-7777-4777-8777-777777777777";
+    const token = "decline-invite-token";
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "SELECT invite_id, project_id, inviter_account_id, status, token_hash",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              status: "pending",
+              token_hash: inviteTokenHash(token),
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM project_collab_invites i")) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              invitee_account_id: null,
+              invite_source: "email",
+              status: "declined",
+              responder_action: "decline",
+              created: new Date("2026-04-01T00:00:00Z"),
+              updated: new Date("2026-04-01T00:01:00Z"),
+              responded: new Date("2026-04-01T00:01:00Z"),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { respondEmailProjectInvite } = await import("./collaborators");
+    await expect(
+      respondEmailProjectInvite({
+        account_id: ACCOUNT_ID,
+        action: "decline",
+        invite_id: inviteId,
+        project_id: PROJECT_ID,
+        token,
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        invite_id: inviteId,
+        responder_action: "decline",
+        status: "declined",
+      }),
+    );
+    expect(addUserToProject).not.toHaveBeenCalled();
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("SET status=$2, responder_action=$3"),
+      [inviteId, "declined", "decline"],
+    );
+  });
+
+  it("blocks email token inviters without adding a collaborator", async () => {
+    const inviteId = "77777777-7777-4777-8777-777777777777";
+    const token = "block-invite-token";
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "SELECT invite_id, project_id, inviter_account_id, status, token_hash",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              status: "pending",
+              token_hash: inviteTokenHash(token),
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM project_collab_invites i")) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              invitee_account_id: null,
+              invite_source: "email",
+              status: "blocked",
+              responder_action: "block",
+              created: new Date("2026-04-01T00:00:00Z"),
+              updated: new Date("2026-04-01T00:01:00Z"),
+              responded: new Date("2026-04-01T00:01:00Z"),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { respondEmailProjectInvite } = await import("./collaborators");
+    await expect(
+      respondEmailProjectInvite({
+        account_id: ACCOUNT_ID,
+        action: "block",
+        invite_id: inviteId,
+        project_id: PROJECT_ID,
+        token,
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        invite_id: inviteId,
+        responder_action: "block",
+        status: "blocked",
+      }),
+    );
+    expect(addUserToProject).not.toHaveBeenCalled();
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("project_collab_invite_blocks"),
+      [ACCOUNT_ID, TARGET_ACCOUNT_ID],
     );
   });
 
