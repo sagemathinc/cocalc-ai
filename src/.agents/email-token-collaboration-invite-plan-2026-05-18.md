@@ -2,7 +2,8 @@
 
 Date: 2026-05-18
 
-Status: design plan for review, not yet implemented.
+Status: partially implemented. Project email-token invites work end-to-end as
+of 2026-05-19; remaining work is listed below.
 
 ## Problem
 
@@ -53,6 +54,8 @@ course enrollment.
 - The token recipient may accept with any signed-in CoCalc account.
 - The token is a bearer capability. Whoever has it can redeem it until it
   expires or is revoked.
+- Opening an invite link must be side-effect-free. A signed-in recipient must
+  explicitly click Accept before the server adds them to a project or course.
 - Invite links must be visible to the inviter so they can be copied into Canvas,
   Slack, LMS announcements, or other channels when email delivery fails.
 - Email content must be constrained for low-trust users because this feature
@@ -152,6 +155,18 @@ capability, the UI must label it clearly:
 Anyone with this link can accept the invite until it expires or is revoked.
 ```
 
+The current implementation uses:
+
+```text
+/invites/project/<project_id>/<invite_id>?token=<secret>
+```
+
+The project id is intentionally included for now because it helps route the
+request correctly in the multibay architecture. A shorter shape such as
+`/invites/<opaque-token>` is desirable after the rest of the flow is stable, but
+that requires either a global token lookup path or an opaque token format that
+contains enough non-secret routing information.
+
 ## Account Search Policy
 
 Remove the public HTTP account search route. There is no valid unauthenticated
@@ -188,13 +203,21 @@ Accepting an email token project invite:
 
 - If the browser is not signed in, show sign-in/create-account first, then
   resume redemption.
+- If the browser is signed in, show a confirmation page with safe invite
+  details, the inviter message, and Accept, Decline, and Block actions. Merely
+  viewing the link must not add the user to the project.
+- Accept calls the redemption action.
 - Server validates `invite_id`, token, status, expiry, and revocation.
 - Server resolves the project owning bay and performs the collaborator write on
   the owning bay.
-- Server adds the accepting account as a collaborator.
+- Server adds the accepting account as a collaborator only after Accept.
 - Server stores `accepted_account_id`, `responded`, and status `accepted`.
 - Server projects invite state back to the inviter and accepting account home
   bays as needed.
+- Decline records a declined response without adding the account.
+- Block should behave like the internal invite block flow where possible; at
+  minimum it must prevent this invite from being accepted by the current
+  account.
 
 Revoking an invite:
 
@@ -500,6 +523,54 @@ Phase 6: LMS readiness.
 - Add inert context fields for future LMS identifiers if needed.
 - Document Canvas/LTI binding expectations before implementing LMS import.
 
+## Implementation Status and Remaining Work (2026-05-19)
+
+Implemented:
+
+- Public unauthenticated account search has been removed from the HTTP API.
+- Authenticated account-name resolution has input validation and a shared batch
+  cap.
+- Membership limits now include collaborator-plus-pending-invite caps and
+  invite email/link quota fields.
+- A built-in `instructor` membership tier template exists.
+- Project email token invite creation supports normalized email dedupe, token
+  hashing, encrypted token recovery, expiry, status tracking, and authorized
+  link copy.
+- Project invites handle the Launchpad/no-email-backend case by creating a
+  manual-delivery invite link instead of failing or claiming email was sent.
+- Pending project invites can be listed and revoked from the collaborator UI.
+- Public `/invites/*` routing reaches the public shell.
+- Email token redemption routes the project collaborator write through the
+  project-owning bay.
+- Course-scoped project invite redemption can bind the accepting account id
+  through the student-project course metadata path.
+
+Remaining before this plan is fully finished:
+
+- Add the explicit side-effect-free invite confirmation flow. A signed-in user
+  who opens a token link must see invite details and choose Accept, Decline, or
+  Block before any membership write happens.
+- Add a token-preview API/path that validates the invite enough to render safe
+  details without accepting it. The existing final redemption action should be
+  called only from Accept.
+- Implement Decline and Block semantics for email token invites. Block should
+  align with the existing internal invite block behavior where possible.
+- Polish the manual-delivery UI so invite creation with no email backend looks
+  like a successful info state, includes a copy button, and does not look like a
+  warning/error.
+- Finish `cocalc-cli` commands for creating, printing, optionally sending, and
+  revoking project invite links.
+- Complete full course-invite UI and end-to-end tests, including accepting with
+  an account whose primary email differs from the roster email.
+- Add site-license student/instructor pool support and delegated instructor
+  approval.
+- Decide and implement the shorter `/invites/<opaque-token>` URL after the
+  current multibay route is stable.
+- Add abuse/admin observability for invite creation, email sends, copied links,
+  accepts, revokes, expirations, and rate-limit denials.
+- Run the full validation matrix below, including browser tests on a no-email
+  Launchpad/Lite site and a site with email configured.
+
 ## Open Questions
 
 - Should token links be included in ordinary invite list responses for inviters,
@@ -588,7 +659,7 @@ Suggested starting values:
 - `course_store_visible`: false
 - `priority`: between member and pro
 - `price_monthly`: around 49
-- `price_yearly`: around 49 * 9
+- `price_yearly`: around 49 \* 9
 - `project_defaults.disk_quota`: 50000 MB
 - `project_defaults.memory`: 8000 MB
 - `project_defaults.cores`: 2
@@ -680,9 +751,14 @@ Implement redemption:
 - Public route accepts `invite_id` and token.
 - If the user is not signed in, redirect through sign-in/create-account and
   resume redemption.
+- If the user is signed in, show an invite preview/confirmation page first. This
+  page validates enough state to display safe details but must not mutate
+  membership.
+- Provide Accept, Decline, and Block actions. Accept calls the final redemption
+  action; Decline and Block must not add a collaborator.
 - Validate status, expiry, hash, project ownership, and revocation.
 - Route membership write to the project owning bay.
-- Add the accepting account as collaborator.
+- Add the accepting account as collaborator only after Accept.
 - Store `accepted_account_id`, `responded`, and status `accepted`.
 - Project the resulting invite state to relevant home bays.
 
@@ -799,6 +875,12 @@ Required tests before release:
 - Member user can send allowed volume of constrained emails.
 - Instructor user can bulk-create hundreds of course invites within limits.
 - Project owner can revoke a pending copied invite link.
+- Visiting a valid token link while signed in shows a confirmation page and
+  does not add the account until Accept is clicked.
+- Declining a valid token link does not add the account and prevents accidental
+  acceptance through that response path.
+- Blocking a token invite does not add the account and suppresses future invite
+  prompts from the blocked source according to the internal invite-block model.
 - Redeeming with a different account email succeeds.
 - Redeeming an expired, revoked, or rotated token fails.
 - Public account search is gone.
