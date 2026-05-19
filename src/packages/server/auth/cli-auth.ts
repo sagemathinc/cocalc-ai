@@ -21,10 +21,6 @@ import {
 import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
 import { recordNewAuthSession } from "@cocalc/server/auth/auth-sessions";
 import { DEFAULT_MAX_AGE_MS } from "@cocalc/server/auth/set-sign-in-cookies";
-import {
-  issueHomeBayRetryToken,
-  verifyHomeBayRetryToken,
-} from "@cocalc/server/auth/home-bay-retry-token";
 import { verifyFreshAuthCredentials } from "@cocalc/server/auth/two-factor";
 import {
   finishFreshAuthPasskeyAuthentication,
@@ -32,13 +28,13 @@ import {
   type PasskeyFreshAuthStart,
 } from "@cocalc/server/auth/passkeys";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
-import {
-  getClusterAccountByEmail,
-  getClusterAccountById,
-} from "@cocalc/server/inter-bay/accounts";
+import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import { isValidUUID } from "@cocalc/util/misc";
 
 const CHALLENGE_TTL_MS = 10 * 60_000;
+const PENDING_CLI_LOGIN_ACCOUNT_ID = "00000000-0000-0000-0000-000000000000";
+const CLI_LOGIN_START_IP_LIMIT_10M = 20;
+const CLI_LOGIN_START_IP_LIMIT_DAY = 100;
 
 export type CliAuthChallengeKind = "login" | "elevate";
 export type CliAuthChallengeStatus =
@@ -126,27 +122,41 @@ function isChallengeExpired(row: CliAuthChallengeRow): boolean {
   return new Date(row.expire).valueOf() <= Date.now();
 }
 
-async function getLocalAccountByEmail(email: string): Promise<{
-  account_id: string;
-  email_address: string;
-  banned: boolean;
-} | null> {
-  const row = (
-    await getPool().query<{
-      account_id: string;
-      email_address: string;
-      banned: boolean;
+function getRequestIpKey(req: any): string {
+  return `${req?.ip ?? req?.socket?.remoteAddress ?? "unknown"}`.trim();
+}
+
+async function assertCliLoginStartRateLimit({
+  db,
+  ipKey,
+}: {
+  db: Queryable;
+  ipKey: string;
+}): Promise<void> {
+  const key = ipKey || "unknown";
+  const recent = (
+    await db.query<{
+      count_10m: number;
+      count_day: number;
     }>(
       `
-        SELECT account_id, email_address, banned
-          FROM accounts
-         WHERE email_address = $1
-         LIMIT 1
+        SELECT
+          COUNT(*) FILTER (WHERE created >= NOW() - INTERVAL '10 minutes')::INT AS count_10m,
+          COUNT(*) FILTER (WHERE created >= NOW() - INTERVAL '1 day')::INT AS count_day
+          FROM account_cli_auth_challenges
+         WHERE kind = 'login'
+           AND created >= NOW() - INTERVAL '1 day'
+           AND metadata->>'ip_key' = $1
       `,
-      [email],
+      [key],
     )
   ).rows[0];
-  return row ?? null;
+  if (
+    (recent?.count_10m ?? 0) >= CLI_LOGIN_START_IP_LIMIT_10M ||
+    (recent?.count_day ?? 0) >= CLI_LOGIN_START_IP_LIMIT_DAY
+  ) {
+    throw new Error("too many cli login attempts recently; try again later");
+  }
 }
 
 async function getAccountLabel(account_id: string): Promise<{
@@ -259,11 +269,13 @@ async function updateChallengeApprovalWithDb({
   row,
   metadataPatch,
   redeem_token,
+  account_id,
 }: {
   db: Queryable;
   row: CliAuthChallengeRow;
   metadataPatch?: Record<string, unknown>;
   redeem_token?: string;
+  account_id?: string;
 }): Promise<void> {
   const metadata = {
     ...(row.metadata ?? {}),
@@ -279,10 +291,11 @@ async function updateChallengeApprovalWithDb({
          SET status = 'approved'::VARCHAR(32),
              approved_at = COALESCE(approved_at, NOW()),
              redeem_token_hash = $2::CHAR(64),
-             metadata = $3::JSONB
+             metadata = $3::JSONB,
+             account_id = COALESCE($4::UUID, account_id)
        WHERE id = $1::UUID
     `,
-    [row.id, redeem_token_hash, JSON.stringify(metadata)],
+    [row.id, redeem_token_hash, JSON.stringify(metadata), account_id ?? null],
   );
 }
 
@@ -357,82 +370,32 @@ async function ensureChallengeOwnedByAccount({
 export async function startCliLoginChallenge({
   req,
   email,
-  retry_token,
 }: {
   req: any;
-  email: string;
-  retry_token?: string;
-}): Promise<
-  | {
-      wrong_bay: true;
-      home_bay_id: string;
-      home_bay_url?: string;
-      retry_token: string;
-    }
-  | {
-      challenge_id: string;
-      poll_token: string;
-      approval_url: string;
-      expires_at: Date;
-      home_bay_id: string;
-      home_bay_url?: string;
-    }
-> {
-  const normalizedEmail = cleanEmail(email);
-  if (!normalizedEmail) {
-    throw new Error("email is required");
-  }
-
-  const global = await getClusterAccountByEmail(normalizedEmail);
-  if (retry_token) {
-    verifyHomeBayRetryToken({
-      token: retry_token,
-      home_bay_id: getConfiguredBayId(),
-      email: normalizedEmail,
-      purpose: "cli-login",
-    });
-  } else if (
-    global?.home_bay_id &&
-    `${global.home_bay_id}`.trim() !== getConfiguredBayId()
-  ) {
-    const home_bay_id = `${global.home_bay_id}`.trim();
-    const retry = issueHomeBayRetryToken({
-      email: normalizedEmail,
-      home_bay_id,
-      purpose: "cli-login",
-    });
-    return {
-      wrong_bay: true,
-      home_bay_id,
-      home_bay_url:
-        (await getBayPublicOriginForRequest(req, home_bay_id)) ?? undefined,
-      retry_token: retry.token,
-    };
-  }
-
-  const local = await getLocalAccountByEmail(normalizedEmail);
-  if (!local) {
-    throw new Error("no account with that email address");
-  }
-  if (local.banned) {
-    throw new Error("this account is not allowed to sign in");
-  }
-
+  email?: string;
+}): Promise<{
+  challenge_id: string;
+  poll_token: string;
+  approval_url: string;
+  expires_at: Date;
+  home_bay_id: string;
+  home_bay_url?: string;
+}> {
+  const emailHint = cleanEmail(`${email ?? ""}`);
+  const ipKey = getRequestIpKey(req);
   const poll_token = createOpaqueToken();
-  const inserted = await withAccountRehomeWriteFence({
-    account_id: local.account_id,
-    action: "create cli auth login challenge",
-    fn: async (db) =>
-      await insertChallengeWithDb({
-        db,
-        account_id: local.account_id,
-        kind: "login",
-        poll_token,
-        metadata: {
-          email_address: normalizedEmail,
-          auth_client: "cli",
-        },
-      }),
+  const db = getPool();
+  await assertCliLoginStartRateLimit({ db, ipKey });
+  const inserted = await insertChallengeWithDb({
+    db,
+    account_id: PENDING_CLI_LOGIN_ACCOUNT_ID,
+    kind: "login",
+    poll_token,
+    metadata: {
+      ...(emailHint ? { email_hint: emailHint } : undefined),
+      auth_client: "cli",
+      ip_key: ipKey || "unknown",
+    },
   });
 
   return {
@@ -670,9 +633,10 @@ export async function getCliAuthApprovalInfo({
 }): Promise<{
   challenge_id: string;
   kind: CliAuthChallengeKind;
-  account_id: string;
+  account_id: string | null;
   email_address?: string | null;
   display_name?: string | null;
+  email_hint?: string | null;
   requested_duration?: FreshAuthDuration | null;
   state: CliAuthChallengeStatus;
   expires_at: Date;
@@ -681,15 +645,21 @@ export async function getCliAuthApprovalInfo({
   if (!row) {
     throw new Error("unknown cli auth challenge");
   }
-  const label = await getAccountLabel(row.account_id);
+  const isPendingLogin =
+    row.kind === "login" && row.account_id === PENDING_CLI_LOGIN_ACCOUNT_ID;
+  const label = isPendingLogin ? {} : await getAccountLabel(row.account_id);
   const display_name =
     `${label.first_name ?? ""} ${label.last_name ?? ""}`.trim();
   return {
     challenge_id: row.id,
     kind: row.kind,
-    account_id: row.account_id,
+    account_id: isPendingLogin ? null : row.account_id,
     email_address: label.email_address ?? null,
     display_name: display_name || null,
+    email_hint:
+      typeof row.metadata?.email_hint === "string"
+        ? `${row.metadata.email_hint}`
+        : null,
     requested_duration: row.requested_duration ?? null,
     state: row.status,
     expires_at: new Date(row.expire),
@@ -703,13 +673,19 @@ export async function approveCliLoginChallenge({
   challenge_id: string;
   account_id: string;
 }): Promise<{ approved: true }> {
-  const row = await ensureChallengeOwnedByAccount({
-    challenge_id,
-    account_id,
-    expected_kind: "login",
-  });
+  const row = await getChallengeRow(cleanChallengeId(challenge_id));
+  if (!row || row.kind !== "login") {
+    throw new Error("unknown cli auth challenge");
+  }
+  if (isChallengeExpired(row)) {
+    throw new Error("cli auth challenge expired");
+  }
   if (row.status === "redeemed") {
     throw new Error("cli auth challenge has already been redeemed");
+  }
+  const isPendingLogin = row.account_id === PENDING_CLI_LOGIN_ACCOUNT_ID;
+  if (!isPendingLogin && row.account_id !== account_id) {
+    throw new Error("cli auth challenge account mismatch");
   }
   await withAccountRehomeWriteFence({
     account_id,
@@ -729,6 +705,7 @@ export async function approveCliLoginChallenge({
         row,
         metadataPatch: metadata,
         redeem_token,
+        account_id: isPendingLogin ? account_id : undefined,
       });
     },
   });

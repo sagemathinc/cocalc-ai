@@ -29,7 +29,9 @@ export default async function cliChallengeInfo(req, res) {
       current_matches_account:
         current_account_id == null
           ? null
-          : current_account_id === info.account_id,
+          : info.account_id == null
+            ? info.kind === "login"
+            : current_account_id === info.account_id,
     });
   } catch (err) {
     res.json({

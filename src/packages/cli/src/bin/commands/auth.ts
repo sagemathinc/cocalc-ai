@@ -1,4 +1,3 @@
-import { createInterface } from "node:readline/promises";
 import { Command } from "commander";
 import { describeProjectScopedAuth } from "../../core/auth-cookies";
 
@@ -111,21 +110,6 @@ export function registerAuthCommand(
     return json;
   }
 
-  async function promptForEmail(): Promise<string> {
-    if (!process.stdin.isTTY || !process.stderr.isTTY) {
-      throw new Error("email is required when stdin is not interactive");
-    }
-    const rl = createInterface({
-      input: process.stdin,
-      output: process.stderr,
-    });
-    try {
-      return (await rl.question("Email address: ")).trim();
-    } finally {
-      rl.close();
-    }
-  }
-
   async function waitForCliChallenge({
     apiBaseUrl,
     endpoint,
@@ -173,13 +157,6 @@ export function registerAuthCommand(
     return `${cookieHeader ?? ""}`
       .split(";")
       .some((part) => part.trim().startsWith("remember_me="));
-  }
-
-  async function resolveBrowserLoginEmail(
-    explicitEmail: string | undefined,
-  ): Promise<string> {
-    const email = `${explicitEmail ?? ""}`.trim();
-    return email || (await promptForEmail());
   }
 
   function hasLegacyStoredCredentials(globals: any): boolean {
@@ -529,27 +506,15 @@ export function registerAuthCommand(
     opts: { email?: string; pollMs?: string; setCurrent?: boolean },
   ): Promise<Record<string, unknown>> {
     const effective = resolveEffectiveGlobals(globals);
-    const email = await resolveBrowserLoginEmail(opts.email);
-    let apiBaseUrl = effective.api
+    const emailHint = `${opts.email ?? ""}`.trim();
+    const apiBaseUrl = effective.api
       ? normalizeUrl(effective.api)
       : defaultApiBaseUrl();
-    let start = await postCliAuthApi<CliChallengeStart | any>({
+    const start = await postCliAuthApi<CliChallengeStart>({
       apiBaseUrl,
       endpoint: "auth/cli/login/start",
-      body: { email },
+      body: emailHint ? { email: emailHint } : {},
     });
-    if (start?.wrong_bay === true) {
-      const homeBayUrl = `${start.home_bay_url ?? ""}`.trim();
-      if (!homeBayUrl) {
-        throw new Error("missing home bay url for CLI login");
-      }
-      apiBaseUrl = normalizeUrl(homeBayUrl);
-      start = await postCliAuthApi<CliChallengeStart>({
-        apiBaseUrl,
-        endpoint: "auth/cli/login/start",
-        body: { email, retry_token: start.retry_token },
-      });
-    }
 
     process.stderr.write(
       `Open this URL in your browser to approve CLI login:\n${start.approval_url}\n`,
@@ -589,8 +554,7 @@ export function registerAuthCommand(
       ...(config.profiles[profileName] ?? {}),
       api: apiBaseUrl,
       account_id: redeemed.account_id,
-      email_address:
-        `${redeemed.email_address ?? ""}`.trim() || `${email}`.trim() || null,
+      email_address: `${redeemed.email_address ?? ""}`.trim() || null,
       first_name: `${redeemed.first_name ?? ""}`.trim() || null,
       last_name: `${redeemed.last_name ?? ""}`.trim() || null,
       cookie: buildRememberMeCookieHeader(apiBaseUrl, redeemed.remember_me),
@@ -619,14 +583,14 @@ export function registerAuthCommand(
   auth
     .command("login")
     .description("sign in via browser approval or store explicit credentials")
-    .option("--email <email>", "account email address for browser login")
+    .option("--email <email>", "optional email hint shown during browser login")
     .option("--poll-ms <duration>", "poll interval while waiting", "1500ms")
     .option("--no-set-current", "do not set this profile as current")
     .addHelpText(
       "after",
       `
 Examples:
-  cocalc --profile alice --api https://lite4b.cocalc.ai auth login --email alice@example.com
+  cocalc --profile alice --api https://lite4b.cocalc.ai auth login
   cocalc --profile bella --api https://lite4b.cocalc.ai auth login --email bella@example.com
 `,
     )
@@ -647,14 +611,14 @@ Examples:
   auth
     .command("setup")
     .description("alias for auth login")
-    .option("--email <email>", "account email address for browser login")
+    .option("--email <email>", "optional email hint shown during browser login")
     .option("--poll-ms <duration>", "poll interval while waiting", "1500ms")
     .option("--no-set-current", "do not set this profile as current")
     .addHelpText(
       "after",
       `
 Examples:
-  cocalc --profile alice --api https://lite4b.cocalc.ai auth setup --email alice@example.com
+  cocalc --profile alice --api https://lite4b.cocalc.ai auth setup
 `,
     )
     .action(
