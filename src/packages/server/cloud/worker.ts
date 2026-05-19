@@ -9,6 +9,7 @@ import {
   claimCloudVmWork,
   markCloudVmWorkDone,
   markCloudVmWorkFailed,
+  refreshCloudVmWorkLease,
   requeueStaleCloudVmWork,
   type CloudVmWorkRow,
 } from "./db";
@@ -25,6 +26,7 @@ const pool = () => getPool();
 
 const DEFAULT_MAX_CONCURRENCY = 10;
 const DEFAULT_PER_PROVIDER = 10;
+const DEFAULT_LEASE_REFRESH_MS = 60_000;
 
 export type CloudVmWorkHandler = (row: CloudVmWorkRow) => Promise<void>;
 
@@ -38,6 +40,7 @@ export async function processCloudVmWorkOnce(opts: {
   max_per_provider?: number;
   max_per_provider_by_provider?: Map<string, number>;
   stale_in_progress_ms?: number;
+  lease_refresh_ms?: number;
 }) {
   const maxConcurrency = opts.max_concurrency ?? DEFAULT_MAX_CONCURRENCY;
   const maxPerProvider = opts.max_per_provider ?? DEFAULT_PER_PROVIDER;
@@ -46,6 +49,7 @@ export async function processCloudVmWorkOnce(opts: {
   const pending: CloudVmWorkRow[] = [];
   const inFlight = new Set<Promise<void>>();
   const providerCounts = new Map<string, number>();
+  const leaseRefreshMs = opts.lease_refresh_ms ?? DEFAULT_LEASE_REFRESH_MS;
   const providerLimitFor = (provider: string) =>
     opts.max_per_provider_by_provider?.get(provider) ?? maxPerProvider;
 
@@ -55,6 +59,21 @@ export async function processCloudVmWorkOnce(opts: {
       await markCloudVmWorkFailed(row.id, `no handler for ${row.action}`);
       return;
     }
+    const leaseTimer =
+      leaseRefreshMs > 0
+        ? setInterval(() => {
+            void refreshCloudVmWorkLease({
+              id: row.id,
+              worker_id: opts.worker_id,
+            }).catch((err) => {
+              logger.warn("cloud work lease refresh failed", {
+                id: row.id,
+                action: row.action,
+                err,
+              });
+            });
+          }, leaseRefreshMs)
+        : undefined;
     try {
       await handler(row);
       await markCloudVmWorkDone(row.id);
@@ -76,6 +95,8 @@ export async function processCloudVmWorkOnce(opts: {
           err: logErr,
         });
       }
+    } finally {
+      if (leaseTimer) clearInterval(leaseTimer);
     }
   };
 

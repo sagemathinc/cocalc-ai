@@ -489,7 +489,6 @@ describe("cloud host start failures", () => {
         pricing_model: "spot",
         desired_pricing_model: "spot",
         effective_pricing_model: "spot",
-        desired_state: "running",
         interruption_restore_policy: "immediate",
         machine: {
           cloud: "nebius",
@@ -542,6 +541,7 @@ describe("cloud host start failures", () => {
     });
     expect(hostRows.rows[0].metadata.runtime.provider_status).toBe("missing");
     expect(hostRows.rows[0].metadata.runtime.public_ip).toBeNull();
+    expect(hostRows.rows[0].metadata.desired_state).toBe("running");
     expect(hostRows.rows[0].metadata.spot_recovery_state).toMatchObject({
       phase: "retrying_spot",
       attempt: 1,

@@ -4,6 +4,25 @@ import getPool from "@cocalc/database/pool";
 const pool = () => getPool();
 
 const DEFAULT_STALE_IN_PROGRESS_MS = 30 * 60 * 1000;
+const FAST_LIFECYCLE_STALE_IN_PROGRESS_MS = 3 * 60 * 1000;
+const NORMAL_LIFECYCLE_STALE_IN_PROGRESS_MS = 5 * 60 * 1000;
+const SPOT_PROBE_STALE_IN_PROGRESS_MS = 12 * 60 * 1000;
+
+export const CLOUD_VM_WORK_STALE_IN_PROGRESS_MS_BY_ACTION: Record<
+  string,
+  number
+> = {
+  start: FAST_LIFECYCLE_STALE_IN_PROGRESS_MS,
+  verify_host_ready: FAST_LIFECYCLE_STALE_IN_PROGRESS_MS,
+  refresh_runtime: FAST_LIFECYCLE_STALE_IN_PROGRESS_MS,
+  stop: NORMAL_LIFECYCLE_STALE_IN_PROGRESS_MS,
+  restart: NORMAL_LIFECYCLE_STALE_IN_PROGRESS_MS,
+  hard_restart: NORMAL_LIFECYCLE_STALE_IN_PROGRESS_MS,
+  probe_spot: SPOT_PROBE_STALE_IN_PROGRESS_MS,
+  provision: DEFAULT_STALE_IN_PROGRESS_MS,
+  delete: DEFAULT_STALE_IN_PROGRESS_MS,
+  bootstrap: DEFAULT_STALE_IN_PROGRESS_MS,
+};
 
 export type CloudVmLogEvent = {
   vm_id: string;
@@ -45,14 +64,36 @@ function normalizeNotBefore(value?: Date | string): Date | null {
   return parsed;
 }
 
-export function getCloudVmWorkStaleInProgressMs(): number {
+export function getCloudVmWorkStaleInProgressMs(action?: string): number {
   const raw = process.env.COCALC_CLOUD_VM_WORK_STALE_IN_PROGRESS_MS;
-  if (!raw) return DEFAULT_STALE_IN_PROGRESS_MS;
+  if (!raw) {
+    return (
+      CLOUD_VM_WORK_STALE_IN_PROGRESS_MS_BY_ACTION[action ?? ""] ??
+      DEFAULT_STALE_IN_PROGRESS_MS
+    );
+  }
   const value = Number(raw);
   if (!Number.isFinite(value) || value <= 0) {
-    return DEFAULT_STALE_IN_PROGRESS_MS;
+    return (
+      CLOUD_VM_WORK_STALE_IN_PROGRESS_MS_BY_ACTION[action ?? ""] ??
+      DEFAULT_STALE_IN_PROGRESS_MS
+    );
   }
   return value;
+}
+
+function buildActionStaleMsCase(params: any[]): string {
+  const cases = Object.entries(CLOUD_VM_WORK_STALE_IN_PROGRESS_MS_BY_ACTION)
+    .map(([action, ms]) => {
+      params.push(action, ms);
+      return `WHEN $${params.length - 1} THEN $${params.length}::double precision`;
+    })
+    .join("\n");
+  params.push(DEFAULT_STALE_IN_PROGRESS_MS);
+  return `(CASE action
+            ${cases}
+            ELSE $${params.length}::double precision
+          END)`;
 }
 
 export async function logCloudVmEvent(event: CloudVmLogEvent): Promise<void> {
@@ -179,10 +220,26 @@ export async function requeueStaleCloudVmWork(
     limit?: number;
   } = {},
 ): Promise<number> {
-  const olderThanMs = opts.older_than_ms ?? getCloudVmWorkStaleInProgressMs();
   const limit = opts.limit ?? 100;
-  if (olderThanMs <= 0 || limit <= 0) return 0;
-  const cutoff = new Date(Date.now() - olderThanMs);
+  if (limit <= 0) return 0;
+  const olderThanMs = opts.older_than_ms;
+  if (olderThanMs !== undefined && olderThanMs <= 0) return 0;
+  const envOverride = process.env.COCALC_CLOUD_VM_WORK_STALE_IN_PROGRESS_MS;
+  const uniformOlderThanMs =
+    olderThanMs ??
+    (envOverride ? getCloudVmWorkStaleInProgressMs() : undefined);
+
+  const params: any[] = [];
+  let stalePredicate: string;
+  if (uniformOlderThanMs !== undefined) {
+    params.push(new Date(Date.now() - uniformOlderThanMs));
+    stalePredicate = `locked_at < $${params.length}`;
+  } else {
+    const actionMsCase = buildActionStaleMsCase(params);
+    stalePredicate = `locked_at < NOW() - (${actionMsCase} * interval '1 millisecond')`;
+  }
+  params.push(limit);
+  const limitIndex = params.length;
   const { rowCount } = await pool().query(
     `
       WITH stale AS (
@@ -190,9 +247,9 @@ export async function requeueStaleCloudVmWork(
         FROM cloud_vm_work
         WHERE state='in_progress'
           AND locked_at IS NOT NULL
-          AND locked_at < $1
+          AND ${stalePredicate}
         ORDER BY locked_at ASC
-        LIMIT $2
+        LIMIT $${limitIndex}
         FOR UPDATE SKIP LOCKED
       )
       UPDATE cloud_vm_work AS work
@@ -205,7 +262,7 @@ export async function requeueStaleCloudVmWork(
       FROM stale
       WHERE work.id=stale.id
     `,
-    [cutoff, limit],
+    params,
   );
   return rowCount ?? 0;
 }
@@ -251,6 +308,24 @@ export async function claimCloudVmWork(opts: {
   } finally {
     client.release();
   }
+}
+
+export async function refreshCloudVmWorkLease(opts: {
+  id: string;
+  worker_id: string;
+}): Promise<boolean> {
+  const { rowCount } = await pool().query(
+    `
+      UPDATE cloud_vm_work
+      SET locked_at=NOW(),
+          updated_at=NOW()
+      WHERE id=$1
+        AND state='in_progress'
+        AND locked_by=$2
+    `,
+    [opts.id, opts.worker_id],
+  );
+  return !!rowCount;
 }
 
 export async function markCloudVmWorkDone(

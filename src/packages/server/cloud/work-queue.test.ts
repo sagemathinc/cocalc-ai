@@ -3,6 +3,7 @@ import {
   claimCloudVmWork,
   markCloudVmWorkDone,
   markCloudVmWorkFailed,
+  refreshCloudVmWorkLease,
   requeueStaleCloudVmWork,
 } from "@cocalc/server/cloud";
 import { before, after, getPool } from "@cocalc/server/test";
@@ -142,5 +143,95 @@ describe("cloud vm work queue", () => {
     });
     expect(batch).toHaveLength(1);
     expect(batch[0].id).toBe(id);
+  });
+
+  it("uses action-specific stale thresholds by default", async () => {
+    const previousEnv = process.env.COCALC_CLOUD_VM_WORK_STALE_IN_PROGRESS_MS;
+    delete process.env.COCALC_CLOUD_VM_WORK_STALE_IN_PROGRESS_MS;
+    try {
+      const startId = await enqueueCloudVmWork({
+        vm_id: "vm-start",
+        action: "start",
+      });
+      const probeId = await enqueueCloudVmWork({
+        vm_id: "vm-probe",
+        action: "probe_spot",
+      });
+      const provisionId = await enqueueCloudVmWork({
+        vm_id: "vm-provision",
+        action: "provision",
+      });
+      await claimCloudVmWork({ worker_id: "worker-a", limit: 3 });
+      await getPool().query(
+        `
+          UPDATE cloud_vm_work
+          SET locked_at = CASE
+            WHEN id=$1 THEN NOW() - interval '4 minutes'
+            WHEN id=$2 THEN NOW() - interval '4 minutes'
+            WHEN id=$3 THEN NOW() - interval '20 minutes'
+            ELSE locked_at
+          END
+          WHERE id IN ($1,$2,$3)
+        `,
+        [startId, probeId, provisionId],
+      );
+
+      const requeued = await requeueStaleCloudVmWork();
+
+      expect(requeued).toBe(1);
+      const { rows } = await getPool().query(
+        "SELECT id, state FROM cloud_vm_work WHERE id=ANY($1) ORDER BY id",
+        [[startId, probeId, provisionId]],
+      );
+      expect(
+        Object.fromEntries(rows.map((row) => [row.id, row.state])),
+      ).toEqual({
+        [startId]: "queued",
+        [probeId]: "in_progress",
+        [provisionId]: "in_progress",
+      });
+    } finally {
+      if (previousEnv === undefined) {
+        delete process.env.COCALC_CLOUD_VM_WORK_STALE_IN_PROGRESS_MS;
+      } else {
+        process.env.COCALC_CLOUD_VM_WORK_STALE_IN_PROGRESS_MS = previousEnv;
+      }
+    }
+  });
+
+  it("refreshes an in-progress work lease for the owning worker", async () => {
+    const id = await enqueueCloudVmWork({
+      vm_id: "vm-refresh-lease",
+      action: "start",
+    });
+    await claimCloudVmWork({ worker_id: "worker-a", limit: 1 });
+    await getPool().query(
+      `
+        UPDATE cloud_vm_work
+        SET locked_at=NOW() - interval '2 minutes'
+        WHERE id=$1
+      `,
+      [id],
+    );
+
+    await expect(
+      refreshCloudVmWorkLease({ id, worker_id: "worker-b" }),
+    ).resolves.toBe(false);
+    await expect(
+      refreshCloudVmWorkLease({ id, worker_id: "worker-a" }),
+    ).resolves.toBe(true);
+
+    const { rows } = await getPool().query(
+      `
+        SELECT locked_by, locked_at > NOW() - interval '10 seconds' AS fresh
+        FROM cloud_vm_work
+        WHERE id=$1
+      `,
+      [id],
+    );
+    expect(rows[0]).toEqual({
+      locked_by: "worker-a",
+      fresh: true,
+    });
   });
 });

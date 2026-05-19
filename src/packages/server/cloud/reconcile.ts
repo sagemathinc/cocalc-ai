@@ -467,6 +467,7 @@ async function updateHost(
   updates: {
     status?: string;
     runtime?: Record<string, any> | null;
+    desired_state?: "running" | "stopped";
     public_url?: string | null;
     internal_url?: string | null;
   },
@@ -488,12 +489,17 @@ async function updateHost(
     sets.push(`status=$${idx++}`);
     params.push(updates.status);
   }
+  let metadataExpression = "COALESCE(metadata,'{}'::jsonb)";
   if (updates.runtime !== undefined) {
-    // Merge runtime into metadata safely.
-    sets.push(
-      `metadata = jsonb_set(COALESCE(metadata,'{}'::jsonb), '{runtime}', $${idx++}::jsonb, true)`,
-    );
+    metadataExpression = `jsonb_set(${metadataExpression}, '{runtime}', $${idx++}::jsonb, true)`;
     params.push(JSON.stringify(updates.runtime));
+  }
+  if (updates.desired_state !== undefined) {
+    metadataExpression = `jsonb_set(${metadataExpression}, '{desired_state}', to_jsonb($${idx++}::text), true)`;
+    params.push(updates.desired_state);
+  }
+  if (updates.runtime !== undefined || updates.desired_state !== undefined) {
+    sets.push(`metadata = ${metadataExpression}`);
   }
   if (updates.public_url !== undefined) {
     sets.push(`public_url=$${idx++}`);
@@ -535,6 +541,7 @@ async function enqueueSpotRestore(
   const reconcileMetadata = runtimeMetadata.reconcile ?? {};
   await updateHost(row, {
     status: "starting",
+    desired_state: "running",
     runtime: {
       ...nextRuntime,
       public_ip: undefined,
