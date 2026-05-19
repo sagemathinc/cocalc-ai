@@ -297,12 +297,12 @@ describe("MembershipPackageManager", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByPlaceholderText("Search by name or exact email address"),
+        screen.getByPlaceholderText("Search by name or enter an email address"),
       ).toBeTruthy();
     });
 
     fireEvent.change(
-      screen.getByPlaceholderText("Search by name or exact email address"),
+      screen.getByPlaceholderText("Search by name or enter an email address"),
       { target: { value: "ada@example.com" } },
     );
     fireEvent.click(screen.getByText("Search"));
@@ -351,7 +351,7 @@ describe("MembershipPackageManager", () => {
 
     fireEvent.click(screen.getAllByText("Assign seat")[0]);
     fireEvent.change(
-      screen.getByPlaceholderText("Search by name or exact email address"),
+      screen.getByPlaceholderText("Search by name or enter an email address"),
       { target: { value: "newuser@example.com" } },
     );
     fireEvent.click(screen.getByText("Search"));

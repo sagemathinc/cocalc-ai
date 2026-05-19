@@ -61,6 +61,7 @@ export function getPublicRouteFromPath(
 
   if (
     routeParts[0] === "auth" ||
+    routeParts[0] === "invites" ||
     routeParts[0] === "sso" ||
     routeParts[0] === "redeem"
   ) {
@@ -113,7 +114,7 @@ export function isPublicTarget(target?: string | null): target is string {
   ) {
     return true;
   }
-  return /\/(about|auth|sso|redeem|features|lang|news|policies|pricing|products|support|[a-z]{2}(-[A-Z]{2})?)(\/|$|\?|#)/.test(
+  return /\/(about|auth|invites|sso|redeem|features|lang|news|policies|pricing|products|support|[a-z]{2}(-[A-Z]{2})?)(\/|$|\?|#)/.test(
     target,
   );
 }

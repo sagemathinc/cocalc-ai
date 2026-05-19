@@ -217,3 +217,115 @@ export function PublicVerifyEmailView({
     </Flex>
   );
 }
+
+export function PublicRedeemProjectInviteView({
+  inviteId,
+  isAuthenticated = false,
+  projectId,
+  token,
+}: {
+  inviteId: string;
+  isAuthenticated?: boolean;
+  projectId: string;
+  token: string;
+}) {
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(isAuthenticated);
+  const [projectTitle, setProjectTitle] = useState<string | undefined>();
+  const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function redeem(): Promise<void> {
+      if (!isAuthenticated) {
+        setLoading(false);
+        return;
+      }
+      if (!projectId || !inviteId || !token) {
+        setError("This project invite link is incomplete or invalid.");
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      setError("");
+      try {
+        const result = await api("projects/redeem-email-invite", {
+          project_id: projectId,
+          invite_id: inviteId,
+          token,
+        });
+        if (!cancelled) {
+          setProjectTitle(result?.invite?.project_title ?? undefined);
+          setSuccess(true);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(`${err}`);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void redeem();
+    return () => {
+      cancelled = true;
+    };
+  }, [inviteId, isAuthenticated, projectId, token]);
+
+  if (!isAuthenticated) {
+    return (
+      <Flex vertical gap={16}>
+        <Alert
+          title="Sign in to accept this project invite"
+          description="You can accept this invite using whichever CoCalc account you actually use. The account email does not have to match the address where the invite was sent."
+          showIcon
+          type="info"
+        />
+      </Flex>
+    );
+  }
+
+  return (
+    <Flex vertical gap={16}>
+      {loading ? (
+        <Flex align="center" gap={12}>
+          <Spin />
+          <Text>Accepting project invite...</Text>
+        </Flex>
+      ) : success ? (
+        <Alert
+          title="Project invite accepted"
+          description={
+            projectTitle
+              ? `You now have access to ${projectTitle}.`
+              : "You now have access to the invited project."
+          }
+          showIcon
+          type="success"
+        />
+      ) : (
+        <Alert
+          title="Could not accept project invite"
+          description={error || "This invite link is invalid or expired."}
+          showIcon
+          type="error"
+        />
+      )}
+      <Flex wrap gap={12}>
+        {success ? (
+          <Button
+            href={joinUrlPath(appBasePath, "projects", projectId)}
+            type="primary"
+          >
+            Open project
+          </Button>
+        ) : null}
+        <Button href={joinUrlPath(appBasePath, "projects")}>Projects</Button>
+      </Flex>
+    </Flex>
+  );
+}

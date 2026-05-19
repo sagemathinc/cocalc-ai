@@ -32,6 +32,53 @@ Table({
       type: "uuid",
       desc: "Account receiving the invite.",
     },
+    invite_source: {
+      type: "string",
+      pg_type: "varchar(24)",
+      desc: "Invite source: account, email, or course_email.",
+    },
+    accepted_account_id: {
+      type: "uuid",
+      desc: "Account that accepted an email-token invite.",
+    },
+    email_hash: {
+      type: "string",
+      desc: "HMAC of normalized target email for email-token invites.",
+    },
+    email_ciphertext: {
+      type: "string",
+      desc: "Encrypted target email for authorized resend/copy UI.",
+    },
+    token_hash: {
+      type: "string",
+      desc: "Hash of redemption token for email-token invites.",
+    },
+    token_ciphertext: {
+      type: "string",
+      desc: "Encrypted redemption token for authorized resend/copy UI.",
+    },
+    token_hint: {
+      type: "string",
+      pg_type: "varchar(16)",
+      desc: "Short non-secret token suffix for support/debugging.",
+    },
+    last_sent: {
+      type: "timestamp",
+      desc: "When an email-token invite was last sent.",
+    },
+    resend_count: {
+      type: "integer",
+      desc: "Number of send attempts for an email-token invite.",
+    },
+    scope: {
+      type: "string",
+      pg_type: "varchar(48)",
+      desc: "Invite scope such as project_collab or course_student.",
+    },
+    context: {
+      type: "map",
+      desc: "Structured context for scoped invites.",
+    },
     status: {
       type: "string",
       pg_type: "varchar(24)",
@@ -65,6 +112,8 @@ Table({
       "project_id",
       "inviter_account_id",
       "invitee_account_id",
+      "invite_source",
+      "email_hash",
       "status",
       "created",
     ],

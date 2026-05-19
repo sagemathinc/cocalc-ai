@@ -37,6 +37,8 @@ describe("account_notification_index rebuild", () => {
   });
 
   async function seedBaseRows(home_bay_id = LOCAL_BAY_ID): Promise<void> {
+    const unreadTime = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const savedTime = new Date(Date.now() - 60 * 60 * 1000);
     await getPool().query(
       `INSERT INTO accounts
          (account_id, first_name, last_name, created, email_address, home_bay_id)
@@ -77,14 +79,14 @@ describe("account_notification_index rebuild", () => {
          ($6, $7, 'chat/b.md', $2, $4, 'saved mention', 'chat=true,id=b', 2,
           $8::JSONB)`,
       [
-        new Date("2026-04-03T22:00:00.000Z"),
+        unreadTime,
         SOURCE_ACCOUNT_ID,
         PROJECT_A,
         ACCOUNT_ID,
         JSON.stringify({
           [ACCOUNT_ID]: { read: false, saved: false },
         }),
-        new Date("2026-04-03T23:00:00.000Z"),
+        savedTime,
         PROJECT_B,
         JSON.stringify({
           [ACCOUNT_ID]: { read: true, saved: true },
@@ -252,8 +254,10 @@ describe("account_notification_index rebuild", () => {
       }),
     ).resolves.toEqual({
       updated_count: 2,
-      notification_ids: [allRows[0].notification_id, allRows[1].notification_id]
-        .sort(),
+      notification_ids: [
+        allRows[0].notification_id,
+        allRows[1].notification_id,
+      ].sort(),
     });
 
     await expect(

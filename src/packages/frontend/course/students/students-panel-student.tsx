@@ -2,7 +2,17 @@
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
-import { Button, Card, Col, Input, Popconfirm, Row, Space, Tag } from "antd";
+import {
+  Button,
+  Card,
+  Col,
+  Input,
+  message as antdMessage,
+  Popconfirm,
+  Row,
+  Space,
+  Tag,
+} from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
@@ -110,6 +120,9 @@ export function Student({
   );
   const [seatLoading, setSeatLoading] = useState<boolean>(false);
   const [seatError, setSeatError] = useState<string>("");
+  const [copyInviteLoading, setCopyInviteLoading] = useState<boolean>(false);
+  const [revokeInviteLoading, setRevokeInviteLoading] =
+    useState<boolean>(false);
 
   const size = useButtonSize();
 
@@ -490,25 +503,77 @@ export function Student({
           ).toLocaleString()}`
         : "never";
 
+    async function copyInviteLink() {
+      setCopyInviteLoading(true);
+      try {
+        const inviteUrl =
+          await actions.student_projects.copy_pending_student_invite_link({
+            student_id,
+          });
+        await navigator.clipboard.writeText(inviteUrl);
+        void antdMessage.success("Invite link copied.");
+      } catch (err) {
+        void antdMessage.error(`${err}`);
+      } finally {
+        setCopyInviteLoading(false);
+      }
+    }
+
+    async function revokeInviteLink() {
+      setRevokeInviteLoading(true);
+      try {
+        await actions.student_projects.revoke_pending_student_invite_link({
+          student_id,
+        });
+        void antdMessage.success("Invite link revoked.");
+      } catch (err) {
+        void antdMessage.error(`${err}`);
+      } finally {
+        setRevokeInviteLoading(false);
+      }
+    }
+
     return (
-      <Tooltip placement="bottom" title={when}>
-        <Button
-          size={size}
-          onClick={() => {
-            const email = student.get("email_address");
-            if (email) {
-              actions.student_projects.invite_student_to_project({
-                student: email, // we use email address to trigger sending an actual email!
-                student_project_id: student.get("project_id"),
-                student_id: student.get("student_id"),
-              });
-            }
-          }}
-          disabled={!allowResending}
-        >
-          <Icon name="mail" /> {msg}
-        </Button>
-      </Tooltip>
+      <Space direction="vertical" size={4}>
+        <Tooltip placement="bottom" title={when}>
+          <Button
+            size={size}
+            onClick={() => {
+              const email = student.get("email_address");
+              if (email) {
+                actions.student_projects.invite_student_to_project({
+                  student: email, // we use email address to trigger sending an actual email!
+                  student_project_id: student.get("project_id"),
+                  student_id: student.get("student_id"),
+                });
+              }
+            }}
+            disabled={!allowResending}
+          >
+            <Icon name="mail" /> {msg}
+          </Button>
+        </Tooltip>
+        {last_email_invite != null && (
+          <Space size={4} wrap>
+            <Button
+              size={size}
+              loading={copyInviteLoading}
+              onClick={() => void copyInviteLink()}
+            >
+              <Icon name="copy" /> Copy invite link
+            </Button>
+            <Popconfirm
+              title="Revoke this pending course invite link?"
+              description="Anyone with the old link will no longer be able to use it."
+              onConfirm={() => void revokeInviteLink()}
+            >
+              <Button size={size} loading={revokeInviteLoading}>
+                Revoke link
+              </Button>
+            </Popconfirm>
+          </Space>
+        )}
+      </Space>
     );
   }
 
@@ -736,9 +801,7 @@ export function Student({
           <Col md={4}>{render_project_access()}</Col>
           <Col md={4}>{render_edit_student()}</Col>
           <Col md={4}>{render_search_assignment()}</Col>
-          <Col md={2} offset={3}>
-            {render_resend_invitation()}
-          </Col>
+          <Col md={5}>{render_resend_invitation()}</Col>
           <Col md={4} offset={3}>
             {render_delete_button()}
           </Col>

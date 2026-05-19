@@ -1009,6 +1009,48 @@ export interface ProjectCollabInviteCreateResultWire {
   invite: ProjectCollabInviteWire;
 }
 
+export interface ProjectCollabInviteWithoutAccountRequest {
+  account_id: string;
+  opts: {
+    project_id: string;
+    title: string;
+    link2proj: string;
+    replyto?: string;
+    replyto_name?: string;
+    to: string;
+    email: string;
+    subject?: string;
+    message?: string;
+    send_email?: boolean;
+    invite_context?: Record<string, unknown>;
+    invite_scope?: string;
+  };
+}
+
+export interface ProjectCollabInviteWithoutAccountResultWire {
+  invites: ProjectCollabInviteWire[];
+  email_sent: boolean;
+}
+
+export interface ProjectCollabInviteCopyEmailLinkRequest {
+  account_id: string;
+  invite_id: string;
+  project_id?: string;
+}
+
+export interface ProjectCollabInviteEmailLinkWire {
+  invite_id: string;
+  invite_url: string;
+  expires?: string | null;
+}
+
+export interface ProjectCollabInviteRedeemEmailRequest {
+  account_id: string;
+  invite_id: string;
+  token: string;
+  project_id?: string;
+}
+
 export interface ProjectCollabInviteListRequest {
   account_id: string;
   project_id?: string;
@@ -1223,6 +1265,9 @@ export type ProjectCollabInviteMethod =
   | "remove-collaborator"
   | "leave-or-delete-projects"
   | "create"
+  | "invite-without-account"
+  | "copy-email-link"
+  | "redeem-email"
   | "respond";
 export type ProjectSecretsMethod =
   | "list"
@@ -2049,6 +2094,15 @@ export interface InterBayProjectCollabInviteApi {
   create: (
     opts: ProjectCollabInviteCreateRequest,
   ) => Promise<ProjectCollabInviteCreateResultWire>;
+  inviteWithoutAccount: (
+    opts: ProjectCollabInviteWithoutAccountRequest,
+  ) => Promise<ProjectCollabInviteWithoutAccountResultWire>;
+  copyEmailLink: (
+    opts: ProjectCollabInviteCopyEmailLinkRequest,
+  ) => Promise<ProjectCollabInviteEmailLinkWire>;
+  redeemEmail: (
+    opts: ProjectCollabInviteRedeemEmailRequest,
+  ) => Promise<ProjectCollabInviteWire>;
   respond: (
     opts: ProjectCollabInviteRespondRequest,
   ) => Promise<ProjectCollabInviteWire>;
@@ -4384,6 +4438,30 @@ export function createInterBayProjectCollabInviteClient({
     ...serviceClientOptions({ client, timeout }),
     subject: projectCollabInviteSubject({ dest_bay, method: "create" }),
   });
+  const inviteWithoutAccountClient = createServiceClient<
+    Pick<InterBayProjectCollabInviteApi, "inviteWithoutAccount">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({
+      dest_bay,
+      method: "invite-without-account",
+    }),
+  });
+  const copyEmailLinkClient = createServiceClient<
+    Pick<InterBayProjectCollabInviteApi, "copyEmailLink">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({
+      dest_bay,
+      method: "copy-email-link",
+    }),
+  });
+  const redeemEmailClient = createServiceClient<
+    Pick<InterBayProjectCollabInviteApi, "redeemEmail">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({ dest_bay, method: "redeem-email" }),
+  });
   const listClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "list">
   >({
@@ -4423,6 +4501,11 @@ export function createInterBayProjectCollabInviteClient({
     leaveOrDeleteProjects: async (opts) =>
       await leaveOrDeleteProjectsClient.leaveOrDeleteProjects(opts),
     create: async (opts) => await createClient.create(opts),
+    inviteWithoutAccount: async (opts) =>
+      await inviteWithoutAccountClient.inviteWithoutAccount(opts),
+    copyEmailLink: async (opts) =>
+      await copyEmailLinkClient.copyEmailLink(opts),
+    redeemEmail: async (opts) => await redeemEmailClient.redeemEmail(opts),
     respond: async (opts) => await respondClient.respond(opts),
   };
 }
@@ -4494,6 +4577,44 @@ export function createInterBayProjectCollabInviteHandlers({
       }),
       impl: {
         create: async (opts) => await impl.create(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayProjectCollabInviteApi, "inviteWithoutAccount">
+    >({
+      ...options,
+      service: "inter-bay-project-collab-invite",
+      subject: projectCollabInviteSubject({
+        dest_bay: bay_id,
+        method: "invite-without-account",
+      }),
+      impl: {
+        inviteWithoutAccount: async (opts) =>
+          await impl.inviteWithoutAccount(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayProjectCollabInviteApi, "copyEmailLink">>(
+      {
+        ...options,
+        service: "inter-bay-project-collab-invite",
+        subject: projectCollabInviteSubject({
+          dest_bay: bay_id,
+          method: "copy-email-link",
+        }),
+        impl: {
+          copyEmailLink: async (opts) => await impl.copyEmailLink(opts),
+        },
+      },
+    ),
+    createServiceHandler<Pick<InterBayProjectCollabInviteApi, "redeemEmail">>({
+      ...options,
+      service: "inter-bay-project-collab-invite",
+      subject: projectCollabInviteSubject({
+        dest_bay: bay_id,
+        method: "redeem-email",
+      }),
+      impl: {
+        redeemEmail: async (opts) => await impl.redeemEmail(opts),
       },
     }),
     createServiceHandler<Pick<InterBayProjectCollabInviteApi, "list">>({

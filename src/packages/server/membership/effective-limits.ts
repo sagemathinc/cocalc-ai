@@ -106,6 +106,48 @@ export function normalizeMembershipEffectiveLimits(
     notification_email_send_limit_7d: normalizeNonNegativeInteger(
       usageLimits?.notification_email_send_limit_7d,
     ),
+    invite_email_send_enabled: normalizeBoolean(
+      usageLimits?.invite_email_send_enabled,
+    ),
+    invite_email_daily_count: normalizeNonNegativeInteger(
+      usageLimits?.invite_email_daily_count,
+    ),
+    invite_email_hourly_count: normalizeNonNegativeInteger(
+      usageLimits?.invite_email_hourly_count,
+    ),
+    invite_email_recipients_per_batch: normalizeNonNegativeInteger(
+      usageLimits?.invite_email_recipients_per_batch,
+    ),
+    invite_email_pending_per_project: normalizeNonNegativeInteger(
+      usageLimits?.invite_email_pending_per_project,
+    ),
+    invite_email_pending_per_course: normalizeNonNegativeInteger(
+      usageLimits?.invite_email_pending_per_course,
+    ),
+    invite_email_resend_cooldown_minutes: normalizeNonNegativeInteger(
+      usageLimits?.invite_email_resend_cooldown_minutes,
+    ),
+    invite_email_custom_message_max_chars: normalizeNonNegativeInteger(
+      usageLimits?.invite_email_custom_message_max_chars,
+    ),
+    invite_email_allow_project_title: normalizeBoolean(
+      usageLimits?.invite_email_allow_project_title,
+    ),
+    invite_email_allow_course_title: normalizeBoolean(
+      usageLimits?.invite_email_allow_course_title,
+    ),
+    invite_email_allow_urls: normalizeBoolean(
+      usageLimits?.invite_email_allow_urls,
+    ),
+    invite_email_link_copy_enabled: normalizeBoolean(
+      usageLimits?.invite_email_link_copy_enabled,
+    ),
+    project_max_collaborators_and_pending_invites: normalizeNonNegativeInteger(
+      usageLimits?.project_max_collaborators_and_pending_invites,
+    ),
+    course_max_students_and_pending_invites: normalizeNonNegativeInteger(
+      usageLimits?.course_max_students_and_pending_invites,
+    ),
     acp_max_queued_per_account: normalizeNonNegativeInteger(
       usageLimits?.acp_max_queued_per_account,
     ),

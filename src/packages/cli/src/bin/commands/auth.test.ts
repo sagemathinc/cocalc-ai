@@ -253,14 +253,7 @@ test("auth login stores a dedicated browser-approved CLI session", async () => {
         },
       }),
     );
-    await program.parseAsync([
-      "node",
-      "test",
-      "auth",
-      "login",
-      "--email",
-      "user@example.com",
-    ]);
+    await program.parseAsync(["node", "test", "auth", "login"]);
     assert.equal(capture.data.profile, "default");
     assert.equal(capture.data.account_id, "acct-123");
     assert.equal(capture.data.email_address, "user@example.com");
@@ -278,6 +271,7 @@ test("auth login stores a dedicated browser-approved CLI session", async () => {
       /remember_me=remember-cookie-1/,
     );
     assert.equal(fetchCalls.length, 3);
+    assert.deepEqual(JSON.parse(fetchCalls[0].init.body), {});
     assert.deepEqual(
       fetchCalls.map((call) => call.url.replace(/^https?:\/\/[^/]+/, "")),
       [

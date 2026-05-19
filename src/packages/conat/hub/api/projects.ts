@@ -251,6 +251,7 @@ export type ProjectCollabInviteAction =
   | "revoke";
 
 export type ProjectCollabInviteDirection = "inbound" | "outbound" | "all";
+export type ProjectCollabInviteSource = "account" | "email" | "course_email";
 
 export interface ProjectCollabInviteRow {
   invite_id: string;
@@ -267,7 +268,15 @@ export interface ProjectCollabInviteRow {
   invitee_first_name?: string | null;
   invitee_last_name?: string | null;
   invitee_email_address?: string | null;
-  invite_source?: "account" | "email";
+  invite_source?: ProjectCollabInviteSource | null;
+  accepted_account_id?: string | null;
+  target_email?: string | null;
+  token_hint?: string | null;
+  last_sent?: Date | null;
+  resend_count?: number | null;
+  scope?: string | null;
+  context?: Record<string, unknown> | null;
+  invite_url?: string | null;
   status: ProjectCollabInviteStatus;
   message?: string | null;
   responder_action?: ProjectCollabInviteAction | null;
@@ -529,6 +538,8 @@ export const projects = {
   getProjectRunQuota: authFirstRequireAccount,
   inviteCollaborator: authFirstRequireAccount,
   inviteCollaboratorWithoutAccount: authFirstRequireAccount,
+  copyEmailProjectInviteLink: authFirstRequireAccount,
+  redeemEmailProjectInvite: authFirstRequireAccount,
   setQuotas: authFirstRequireAccount,
 
   exec: authFirstRequireAccount,
@@ -850,8 +861,31 @@ export interface Projects {
       email: string; // body in HTML format
       subject?: string;
       message?: string;
+      send_email?: boolean;
+      invite_context?: Record<string, unknown>;
+      invite_scope?: string;
     };
-  }) => Promise<void>;
+  }) => Promise<{
+    invites: ProjectCollabInviteRow[];
+    email_sent: boolean;
+  }>;
+
+  copyEmailProjectInviteLink: (opts: {
+    account_id?: string;
+    invite_id: string;
+    project_id?: string;
+  }) => Promise<{
+    invite_id: string;
+    invite_url: string;
+    expires?: Date | null;
+  }>;
+
+  redeemEmailProjectInvite: (opts: {
+    account_id?: string;
+    invite_id: string;
+    token: string;
+    project_id?: string;
+  }) => Promise<ProjectCollabInviteRow>;
 
   // for admins only!
   setQuotas: (opts: {

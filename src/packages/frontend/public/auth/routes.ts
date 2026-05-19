@@ -14,6 +14,12 @@ export type PublicAuthRoute =
   | { kind: "auth-password-reset-done" }
   | { kind: "auth-password-reset-redeem"; passwordResetId: string }
   | { email?: string; kind: "auth-verify-email"; token: string }
+  | {
+      inviteId: string;
+      kind: "project-invite";
+      projectId: string;
+      token: string;
+    }
   | { code?: string; kind: "redeem" }
   | { kind: "sso-detail"; id: string }
   | { kind: "sso-index" };
@@ -22,6 +28,7 @@ function getRouteParts(pathname: string): string[] {
   const parts = pathname.split("/").filter(Boolean);
   const explicitIndex = Math.max(
     parts.indexOf("auth"),
+    parts.indexOf("invites"),
     parts.indexOf("sso"),
     parts.indexOf("redeem"),
   );
@@ -195,6 +202,20 @@ export function getPublicAuthRouteFromPath(
     return {
       code: routeParts[1] ?? undefined,
       kind: "redeem",
+    };
+  }
+
+  if (
+    routeParts[0] === "invites" &&
+    routeParts[1] === "project" &&
+    routeParts[2] &&
+    routeParts[3]
+  ) {
+    return {
+      inviteId: routeParts[3],
+      kind: "project-invite",
+      projectId: routeParts[2],
+      token: url.searchParams.get("token") ?? "",
     };
   }
 

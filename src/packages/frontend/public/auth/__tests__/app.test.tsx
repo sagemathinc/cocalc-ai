@@ -94,6 +94,17 @@ describe("getPublicAuthRouteFromPath", () => {
       kind: "redeem",
     });
     expect(
+      getPublicAuthRouteFromPath(
+        "/base/invites/project/22222222-2222-4222-8222-222222222222/77777777-7777-4777-8777-777777777777",
+        "?token=secret",
+      ),
+    ).toEqual({
+      inviteId: "77777777-7777-4777-8777-777777777777",
+      kind: "project-invite",
+      projectId: "22222222-2222-4222-8222-222222222222",
+      token: "secret",
+    });
+    expect(
       getPublicAuthRouteFromPath("/base/auth/cli-login/challenge-1"),
     ).toEqual({
       challengeId: "challenge-1",
@@ -472,5 +483,49 @@ describe("PublicAuthApp", () => {
       }),
     );
     consoleError.mockRestore();
+  });
+
+  it("lets the current browser account approve an unbound CLI login challenge", async () => {
+    mockedPostAuthApi.mockResolvedValueOnce({
+      challenge_id: "challenge-1",
+      kind: "login",
+      account_id: null,
+      email_address: null,
+      display_name: null,
+      email_hint: "hint@example.com",
+      current_account_id: "acct-viewer",
+      current_email_address: "alice@example.com",
+      current_display_name: "Alice Example",
+      current_matches_account: true,
+      state: "pending",
+      expires_at: "2026-05-08T18:00:00.000Z",
+    } as any);
+    mockedPostAuthApi.mockResolvedValueOnce({ approved: true } as any);
+
+    render(
+      <PublicAuthApp
+        config={config({ is_authenticated: true })}
+        initialRoute={{ challengeId: "challenge-1", kind: "auth-cli-login" }}
+      />,
+    );
+
+    expect(
+      await screen.findByText(
+        /Approve a CLI sign-in for alice@example.com \(Alice Example\)\./,
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        /The CLI was started with email hint hint@example.com\./,
+      ),
+    ).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve CLI Login" }));
+    await waitFor(() =>
+      expect(mockedPostAuthApi).toHaveBeenCalledWith({
+        endpoint: "auth/cli/login/approve",
+        body: { challenge_id: "challenge-1" },
+      }),
+    );
   });
 });

@@ -75,9 +75,10 @@ const ACTION_LINK_STYLE: CSSProperties = {
 type ChallengeInfo = {
   challenge_id: string;
   kind: "login" | "elevate";
-  account_id: string;
+  account_id: string | null;
   email_address?: string | null;
   display_name?: string | null;
+  email_hint?: string | null;
   current_account_id?: string | null;
   current_email_address?: string | null;
   current_display_name?: string | null;
@@ -184,11 +185,24 @@ function requestedAccountLabel(info: ChallengeInfo | null): string {
   });
 }
 
+function loginHintLabel(info: ChallengeInfo | null): string {
+  const emailHint = `${info?.email_hint ?? ""}`.trim();
+  return emailHint ? ` The CLI was started with email hint ${emailHint}.` : "";
+}
+
 function currentAccountLabel(info: ChallengeInfo | null): string {
   return formatAccountIdentity({
     email_address: info?.current_email_address,
     display_name: info?.current_display_name,
     fallback: "another account",
+  });
+}
+
+function currentCliLoginAccountLabel(info: ChallengeInfo | null): string {
+  return formatAccountIdentity({
+    email_address: info?.current_email_address,
+    display_name: info?.current_display_name,
+    fallback: "this browser account",
   });
 }
 
@@ -287,8 +301,8 @@ export function PublicCliLoginApprovalView({
     return (
       <div style={STACK_STYLE}>
         <Alert kind="info">
-          Sign in as {requestedAccountLabel(info)} in this browser, then approve
-          the CLI login request.
+          Sign in with the CoCalc account you want this CLI to use, then approve
+          the CLI login request.{loginHintLabel(info)}
         </Alert>
       </div>
     );
@@ -324,8 +338,10 @@ export function PublicCliLoginApprovalView({
         </Alert>
       ) : (
         <Alert kind="info">
-          Approve a CLI sign-in for {requestedAccountLabel(info)}. This creates
-          a separate CLI session and does not reuse your browser session.
+          Approve a CLI sign-in for {currentCliLoginAccountLabel(info)}. This
+          creates a separate CLI session and does not reuse your browser
+          session.
+          {loginHintLabel(info)}
         </Alert>
       )}
       {!approved ? (

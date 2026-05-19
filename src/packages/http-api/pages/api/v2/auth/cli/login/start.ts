@@ -8,12 +8,11 @@ import { startCliLoginChallenge } from "@cocalc/server/auth/cli-auth";
 
 export default async function cliLoginStart(req, res) {
   try {
-    const { email, retry_token } = getParams(req);
+    const { email } = getParams(req);
     res.json(
       await startCliLoginChallenge({
         req,
-        email: `${email ?? ""}`,
-        retry_token: `${retry_token ?? ""}`.trim() || undefined,
+        email: `${email ?? ""}`.trim() || undefined,
       }),
     );
   } catch (err) {

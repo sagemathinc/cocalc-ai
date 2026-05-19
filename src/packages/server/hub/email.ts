@@ -90,6 +90,23 @@ function fallback(val: string | undefined, alt: string) {
   }
 }
 
+function escapeHtmlText(value: string | undefined): string {
+  return `${value ?? ""}`
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function baseUrlFromInviteLink(link: string | undefined): string {
+  try {
+    return link ? new URL(link).origin : "https://cocalc.com";
+  } catch {
+    return "https://cocalc.com";
+  }
+}
+
 // global state
 let sendgrid_server: any | undefined = undefined;
 let sendgrid_server_disabled = false;
@@ -289,24 +306,22 @@ async function send_via_sendgrid(opts, dbg): Promise<void> {
 // constructs the email body for INVITES! (collaborator and student course)
 // this includes sign up instructions pointing to the given project
 // it might throw an error!
-function create_email_body(
+export function create_email_body(
   subject,
   body,
-  email_address,
+  _email_address,
   project_title,
   link2proj,
   allow_urls_in_emails,
 ): string {
   let direct_link: string;
-  let base_url: string;
+  const base_url = baseUrlFromInviteLink(link2proj);
   if (link2proj != null) {
-    const base_url_segments = link2proj.split("/");
-    base_url = `${base_url_segments[0]}//${base_url_segments[2]}`;
-    direct_link = `Open <a href='${link2proj}'>the project '${project_title}'</a>.`;
+    const title = escapeHtmlText(project_title).trim();
+    direct_link = `Open <a href="${escapeHtmlText(link2proj)}">this CoCalc invite link</a>${title ? ` for ${title}` : ""}.`;
   } else {
     // no link2proj provided -- show something useful:
     direct_link = "";
-    base_url = "https://cocalc.com";
   }
 
   let email_body = "";
@@ -324,13 +339,12 @@ function create_email_body(
 <br/><br/>
 <b>To accept the invitation:
 <ol>
-<li>Open <a href="${base_url}/app">CoCalc</a></li>
-<li>Sign up/in using <i>exactly</i> your email address <code>${email_address}</code></li>
-<li>${direct_link}</li>
+<li>${direct_link || `Open <a href="${base_url}/app">CoCalc</a>`}</li>
+<li>Sign in or create an account using the CoCalc account you want to use for this project.</li>
+<li>If you already have more than one CoCalc account, use your preferred account before accepting.</li>
 </ol></b>
 <br/><br />
-(If you're already signed in via <i>another</i> email address,
- you have to sign out and sign up/in using the mentioned email address.)
+If this message was forwarded to the wrong person, ask the project owner to revoke the invite link.
 `;
 
   return email_body;

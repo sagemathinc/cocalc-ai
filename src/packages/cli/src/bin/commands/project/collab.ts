@@ -199,6 +199,106 @@ export function registerProjectCollabCommands(
     .description("manage project collaboration invites");
 
   invite
+    .command("create")
+    .description("create an email invite link for a project")
+    .requiredOption("-w, --project <project>", "project id or name")
+    .requiredOption("--email <email>", "recipient email address")
+    .option("--message <message>", "optional invite message")
+    .option("--send-email", "also send the invite email when allowed")
+    .action(
+      async (
+        opts: {
+          project: string;
+          email: string;
+          message?: string;
+          sendEmail?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project invite create", async (ctx) => {
+          const project = await resolveProjectFromArgOrContext(
+            ctx,
+            opts.project,
+          );
+          const result =
+            await ctx.hub.projects.inviteCollaboratorWithoutAccount({
+              opts: {
+                project_id: project.project_id,
+                title: project.title ?? "",
+                link2proj: "",
+                to: opts.email,
+                email: opts.message ?? "",
+                message: opts.message,
+                send_email: !!opts.sendEmail,
+              },
+            });
+          return {
+            project_id: project.project_id,
+            project_title: project.title,
+            email_sent: result.email_sent,
+            invites: (result.invites ?? []).map((row) => ({
+              ...serializeInviteRow(row),
+              invite_url: row.invite_url ?? null,
+              target_email: row.target_email ?? null,
+            })),
+          };
+        });
+      },
+    );
+
+  invite
+    .command("copy-link <inviteId>")
+    .description("print the copyable link for an email invite")
+    .option("-w, --project <project>", "project id or name")
+    .action(
+      async (
+        inviteId: string,
+        opts: {
+          project?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project invite copy-link", async (ctx) => {
+          const project = opts.project
+            ? await resolveProjectFromArgOrContext(ctx, opts.project)
+            : null;
+          return await ctx.hub.projects.copyEmailProjectInviteLink({
+            invite_id: inviteId,
+            project_id: project?.project_id,
+          });
+        });
+      },
+    );
+
+  invite
+    .command("redeem <inviteId>")
+    .description("redeem an email invite token")
+    .requiredOption("--token <token>", "redemption token from the invite URL")
+    .option("-w, --project <project>", "project id or name")
+    .action(
+      async (
+        inviteId: string,
+        opts: {
+          token: string;
+          project?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project invite redeem", async (ctx) => {
+          const project = opts.project
+            ? await resolveProjectFromArgOrContext(ctx, opts.project)
+            : null;
+          const row = (await ctx.hub.projects.redeemEmailProjectInvite({
+            invite_id: inviteId,
+            token: opts.token,
+            project_id: project?.project_id,
+          })) as ProjectCollabInviteRow;
+          return serializeInviteRow(row);
+        });
+      },
+    );
+
+  invite
     .command("list")
     .description("list collaboration invites")
     .option("-w, --project <project>", "project id or name")
