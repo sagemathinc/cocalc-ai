@@ -17,8 +17,19 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { SyncOutlined } from "@ant-design/icons";
+import {
+  DeleteOutlined,
+  EditOutlined,
+  MoreOutlined,
+  PlayCircleOutlined,
+  PoweroffOutlined,
+  ReloadOutlined,
+  StopOutlined,
+  SyncOutlined,
+  ToolOutlined,
+} from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type {
   Host,
@@ -943,32 +954,73 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
           displayPhaseLabel: projectHostRolloutPhase?.label,
         });
 
-        const actions = [
-          <Button
-            key="start"
-            size="small"
-            type="link"
-            disabled={startDisabled}
-            onClick={() => onStart(host.id)}
+        const actionButtonStyle = {
+          justifyContent: "flex-start",
+          height: 30,
+          paddingInline: 8,
+        } as const;
+        const sectionTitle = (label: string) => (
+          <Typography.Text
+            type="secondary"
+            style={{
+              display: "block",
+              fontSize: 11,
+              fontWeight: 600,
+              letterSpacing: 0.4,
+              textTransform: "uppercase",
+              margin: "2px 0 4px",
+            }}
           >
-            {startLabel}
-          </Button>,
-          showConnectorSetup && selfHost ? (
+            {label}
+          </Typography.Text>
+        );
+        const primaryAction =
+          !startDisabled || !allowStop
+            ? {
+                label: startLabel,
+                icon: <PlayCircleOutlined />,
+                disabled: startDisabled,
+                type: "primary" as const,
+                onClick: () => onStart(host.id),
+              }
+            : allowStop
+              ? {
+                  label: stopLabel,
+                  icon: <PoweroffOutlined />,
+                  disabled: false,
+                  type: "default" as const,
+                  onClick: () =>
+                    confirmHostStop({
+                      host,
+                      onConfirm: (opts) => onStop(host.id, opts),
+                    }),
+                }
+              : {
+                  label: "Restart",
+                  icon: <ReloadOutlined />,
+                  disabled: !allowRestart,
+                  type: "default" as const,
+                  onClick: () => setRestartTarget(host),
+                };
+        const lifecycleActions = (
+          <Space direction="vertical" size={2} style={{ width: "100%" }}>
+            {sectionTitle("Lifecycle")}
             <Button
-              key="setup"
-              size="small"
-              type="link"
-              disabled={hostOpActive}
-              onClick={() => selfHost.onSetup(host)}
+              block
+              type="text"
+              disabled={startDisabled}
+              icon={<PlayCircleOutlined />}
+              style={actionButtonStyle}
+              onClick={() => onStart(host.id)}
             >
-              Setup / reconnect
+              {startLabel}
             </Button>
-          ) : null,
-          allowStop ? (
             <Button
-              key="stop"
-              size="small"
-              type="link"
+              block
+              type="text"
+              disabled={!allowStop}
+              icon={<PoweroffOutlined />}
+              style={actionButtonStyle}
               onClick={() =>
                 confirmHostStop({
                   host,
@@ -978,31 +1030,39 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             >
               {stopLabel}
             </Button>
-          ) : (
-            <Button key="stop" size="small" type="link" disabled>
-              {stopLabel}
-            </Button>
-          ),
-          allowRestart ? (
             <Button
-              key="restart"
-              size="small"
-              type="link"
+              block
+              type="text"
+              disabled={!allowRestart}
+              icon={<ReloadOutlined />}
+              style={actionButtonStyle}
               onClick={() => setRestartTarget(host)}
             >
               Restart
             </Button>
-          ) : (
-            <Button key="restart" size="small" type="link" disabled>
-              Restart
-            </Button>
-          ),
-          canManageLifecycle ? (
+            {showConnectorSetup && selfHost ? (
+              <Button
+                block
+                type="text"
+                disabled={hostOpActive}
+                icon={<ToolOutlined />}
+                style={actionButtonStyle}
+                onClick={() => selfHost.onSetup(host)}
+              >
+                Setup / reconnect
+              </Button>
+            ) : null}
+          </Space>
+        );
+        const maintenanceActions = canManageLifecycle ? (
+          <Space direction="vertical" size={2} style={{ width: "100%" }}>
+            {sectionTitle("Maintenance")}
             <Button
-              key="drain"
-              size="small"
-              type="link"
+              block
+              type="text"
               disabled={isDeleted || hostOpActive}
+              icon={<StopOutlined />}
+              style={actionButtonStyle}
               onClick={() =>
                 confirmHostDrain({
                   host,
@@ -1012,73 +1072,130 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             >
               Drain
             </Button>
-          ) : null,
-          canCancelBackups && onCancelOp ? (
-            <Popconfirm
-              key="cancel"
-              title="Cancel backups for this host?"
-              okText="Cancel backups"
-              cancelText="Keep running"
-              onConfirm={() => onCancelOp(op!.op_id)}
-            >
-              <Button size="small" type="link">
-                Cancel
-              </Button>
-            </Popconfirm>
-          ) : null,
-          canManageLifecycle ? (
-            <Button
-              key="edit"
-              size="small"
-              type="link"
-              disabled={isDeleted}
-              onClick={() => onEdit(host)}
-            >
-              Edit
-            </Button>
-          ) : null,
-          canManageLifecycle && isDeprovisioned ? (
-            <Popconfirm
-              key="delete"
-              title={deleteTitle}
-              okText={deleteOkText}
-              cancelText="Cancel"
-              okButtonProps={{ danger: true }}
-              onConfirm={() => onDelete(host.id)}
-              disabled={isDeleted || hostOpActive}
-            >
+            {canCancelBackups && onCancelOp ? (
+              <Popconfirm
+                title="Cancel backups for this host?"
+                okText="Cancel backups"
+                cancelText="Keep running"
+                onConfirm={() => onCancelOp(op!.op_id)}
+              >
+                <Button
+                  block
+                  type="text"
+                  icon={<StopOutlined />}
+                  style={actionButtonStyle}
+                >
+                  Cancel backups
+                </Button>
+              </Popconfirm>
+            ) : null}
+          </Space>
+        ) : null;
+        const dangerActions = canManageLifecycle ? (
+          <Space direction="vertical" size={2} style={{ width: "100%" }}>
+            {sectionTitle("Danger")}
+            {isDeprovisioned ? (
+              <Popconfirm
+                title={deleteTitle}
+                okText={deleteOkText}
+                cancelText="Cancel"
+                okButtonProps={{ danger: true }}
+                onConfirm={() => onDelete(host.id)}
+                disabled={isDeleted || hostOpActive}
+              >
+                <Button
+                  block
+                  type="text"
+                  danger
+                  disabled={isDeleted || hostOpActive}
+                  icon={<DeleteOutlined />}
+                  style={actionButtonStyle}
+                >
+                  {deleteLabel}
+                </Button>
+              </Popconfirm>
+            ) : (
               <Button
-                size="small"
-                type="link"
+                block
+                type="text"
                 danger
                 disabled={isDeleted || hostOpActive}
+                icon={<DeleteOutlined />}
+                style={actionButtonStyle}
+                onClick={() =>
+                  confirmHostDeprovision({
+                    host,
+                    onConfirm: (opts) => onDelete(host.id, opts),
+                  })
+                }
               >
                 {deleteLabel}
               </Button>
-            </Popconfirm>
-          ) : canManageLifecycle ? (
-            <Button
-              key="delete"
-              size="small"
-              type="link"
-              danger
-              disabled={isDeleted || hostOpActive}
-              onClick={() =>
-                confirmHostDeprovision({
-                  host,
-                  onConfirm: (opts) => onDelete(host.id, opts),
-                })
-              }
-            >
-              {deleteLabel}
-            </Button>
-          ) : null,
-        ];
+            )}
+          </Space>
+        ) : null;
+        const moreActions = (
+          <div style={{ width: 210 }}>
+            <Space direction="vertical" size={8} style={{ width: "100%" }}>
+              {lifecycleActions}
+              <Space direction="vertical" size={2} style={{ width: "100%" }}>
+                {sectionTitle("Operations")}
+                <Button
+                  block
+                  type="text"
+                  icon={<EditOutlined />}
+                  disabled={!canManageLifecycle || isDeleted}
+                  style={actionButtonStyle}
+                  onClick={() => onEdit(host)}
+                >
+                  Edit settings
+                </Button>
+              </Space>
+              {maintenanceActions}
+              {dangerActions}
+            </Space>
+          </div>
+        );
 
         return (
-          <Space direction="vertical" size={2} style={{ maxWidth: 220 }}>
-            <Space size={[8, 0]} wrap style={{ maxWidth: 220 }}>
-              {actions.filter(Boolean) as React.ReactNode[]}
+          <Space direction="vertical" size={6} style={{ maxWidth: 220 }}>
+            <Space size={6} wrap style={{ maxWidth: 220 }}>
+              <Button
+                size="small"
+                type={primaryAction.type}
+                disabled={primaryAction.disabled}
+                icon={primaryAction.icon}
+                onClick={primaryAction.onClick}
+                style={{ minWidth: 94 }}
+              >
+                {primaryAction.label}
+              </Button>
+              <Tooltip title="Restart">
+                <Button
+                  size="small"
+                  disabled={!allowRestart}
+                  icon={<ReloadOutlined />}
+                  onClick={() => setRestartTarget(host)}
+                />
+              </Tooltip>
+              {canManageLifecycle ? (
+                <Tooltip title="Edit settings">
+                  <Button
+                    size="small"
+                    disabled={isDeleted}
+                    icon={<EditOutlined />}
+                    onClick={() => onEdit(host)}
+                  />
+                </Tooltip>
+              ) : null}
+              <Popover
+                trigger="click"
+                placement="bottomRight"
+                content={moreActions}
+                overlayInnerStyle={{ padding: 10 }}
+              >
+                <Button size="small" icon={<MoreOutlined />} />
+              </Popover>
             </Space>
             {blockedActionsReason ? (
               <Typography.Text
