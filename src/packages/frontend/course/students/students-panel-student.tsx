@@ -2,7 +2,17 @@
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
-import { Button, Card, Col, Input, Popconfirm, Row, Space, Tag } from "antd";
+import {
+  Button,
+  Card,
+  Col,
+  Input,
+  message as antdMessage,
+  Popconfirm,
+  Row,
+  Space,
+  Tag,
+} from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
@@ -110,6 +120,7 @@ export function Student({
   );
   const [seatLoading, setSeatLoading] = useState<boolean>(false);
   const [seatError, setSeatError] = useState<string>("");
+  const [copyInviteLoading, setCopyInviteLoading] = useState<boolean>(false);
 
   const size = useButtonSize();
 
@@ -490,25 +501,90 @@ export function Student({
           ).toLocaleString()}`
         : "never";
 
+    async function copyInviteLink() {
+      const student_project_id = student.get("project_id");
+      if (!student_project_id) {
+        return;
+      }
+      setCopyInviteLoading(true);
+      try {
+        const rows = await webapp_client.project_collaborators.list_invites({
+          project_id: student_project_id,
+          direction: "outbound",
+          status: "pending",
+          limit: 100,
+        });
+        const email = `${student.get("email_address") ?? ""}`
+          .trim()
+          .toLowerCase();
+        const invite =
+          rows.find(
+            (row) =>
+              row.invite_source === "email" &&
+              row.scope === "course_student" &&
+              row.context?.student_id === student_id,
+          ) ??
+          rows.find(
+            (row) =>
+              row.invite_source === "email" &&
+              row.scope === "course_student" &&
+              row.context?.student_project_id === student_project_id,
+          ) ??
+          rows.find(
+            (row) =>
+              row.invite_source === "email" &&
+              row.scope === "course_student" &&
+              `${row.target_email ?? ""}`.trim().toLowerCase() === email,
+          );
+        if (!invite) {
+          throw new Error(
+            "No pending course invite link was found. Send an invitation first.",
+          );
+        }
+        const result =
+          await webapp_client.project_collaborators.copy_email_invite_link({
+            invite_id: invite.invite_id,
+            project_id: student_project_id,
+          });
+        await navigator.clipboard.writeText(result.invite_url);
+        void antdMessage.success("Invite link copied.");
+      } catch (err) {
+        void antdMessage.error(`${err}`);
+      } finally {
+        setCopyInviteLoading(false);
+      }
+    }
+
     return (
-      <Tooltip placement="bottom" title={when}>
-        <Button
-          size={size}
-          onClick={() => {
-            const email = student.get("email_address");
-            if (email) {
-              actions.student_projects.invite_student_to_project({
-                student: email, // we use email address to trigger sending an actual email!
-                student_project_id: student.get("project_id"),
-                student_id: student.get("student_id"),
-              });
-            }
-          }}
-          disabled={!allowResending}
-        >
-          <Icon name="mail" /> {msg}
-        </Button>
-      </Tooltip>
+      <Space direction="vertical" size={4}>
+        <Tooltip placement="bottom" title={when}>
+          <Button
+            size={size}
+            onClick={() => {
+              const email = student.get("email_address");
+              if (email) {
+                actions.student_projects.invite_student_to_project({
+                  student: email, // we use email address to trigger sending an actual email!
+                  student_project_id: student.get("project_id"),
+                  student_id: student.get("student_id"),
+                });
+              }
+            }}
+            disabled={!allowResending}
+          >
+            <Icon name="mail" /> {msg}
+          </Button>
+        </Tooltip>
+        {last_email_invite != null && (
+          <Button
+            size={size}
+            loading={copyInviteLoading}
+            onClick={() => void copyInviteLink()}
+          >
+            <Icon name="copy" /> Copy invite link
+          </Button>
+        )}
+      </Space>
     );
   }
 
@@ -736,9 +812,7 @@ export function Student({
           <Col md={4}>{render_project_access()}</Col>
           <Col md={4}>{render_edit_student()}</Col>
           <Col md={4}>{render_search_assignment()}</Col>
-          <Col md={2} offset={3}>
-            {render_resend_invitation()}
-          </Col>
+          <Col md={5}>{render_resend_invitation()}</Col>
           <Col md={4} offset={3}>
             {render_delete_button()}
           </Col>
