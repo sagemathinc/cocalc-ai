@@ -59,7 +59,9 @@ function modeLabel(mode: PriceMode, host: Host): string {
     case "stopped":
       return "Stopped";
     case "deprovisioned":
-      return "Deprovisioned";
+      return host.status === "deprovisioned"
+        ? "Deprovisioned"
+        : "Not provisioned";
   }
 }
 

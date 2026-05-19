@@ -657,7 +657,7 @@ const estimateNebiusSelectionBreakdown = (
 const MONTHLY_HOURS = 730;
 
 const ceilUsdDisplayAmount = (value: number) =>
-  Math.ceil((value + Number.EPSILON) * 100) / 100;
+  value <= 0 ? 0 : Math.ceil((value - Number.EPSILON) * 100) / 100;
 
 const formatUsdAmount = (value: number) =>
   new Intl.NumberFormat("en-US", {
@@ -855,6 +855,10 @@ function stoppedHostPriceEstimate(
   );
 }
 
+function hostHasProvisionedProviderResources(host: Host): boolean {
+  return host.status !== "deprovisioned" && !!host.provider_instance_id;
+}
+
 export const getHostPriceEstimate = (
   host: Host,
   catalog: HostPriceCatalogSource,
@@ -886,7 +890,10 @@ export const getHostDisplayedPrice = (
     surchargeSettings,
   );
   const stopped_estimate = stoppedHostPriceEstimate(running_estimate);
-  if (host.status === "deprovisioned") {
+  if (
+    host.status === "deprovisioned" ||
+    (host.status === "off" && !hostHasProvisionedProviderResources(host))
+  ) {
     return {
       current_state: "deprovisioned",
       current_estimate: zeroProviderPriceEstimate(
@@ -952,7 +959,8 @@ export const getHostPricingModeEstimates = (
     host.pricing_model ??
     host.desired_pricing_model;
   const current_mode =
-    host.status === "deprovisioned"
+    host.status === "deprovisioned" ||
+    (host.status === "off" && !hostHasProvisionedProviderResources(host))
       ? "deprovisioned"
       : host.status === "off"
         ? "stopped"

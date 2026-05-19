@@ -935,6 +935,7 @@ describe("catalog-backed pricing labels", () => {
       size: "n2d-standard-4",
       gpu: false,
       status: "off",
+      provider_instance_id: "gcp-instance-1",
       machine: {
         cloud: "gcp",
         zone: "us-west1-a",
@@ -951,6 +952,64 @@ describe("catalog-backed pricing labels", () => {
     expect(display?.current_state).toBe("stopped");
     expect(display?.current_estimate?.usd_per_hour).toBeCloseTo(0.006, 9);
     expect(display?.running_estimate?.usd_per_hour).toBeCloseTo(0.371, 9);
+  });
+
+  it("shows zero current pricing for off hosts that have not been provisioned", () => {
+    const gcpCatalog = testCatalog([
+      {
+        kind: "machine_types",
+        scope: "zone/us-west1-a",
+        payload: [{ name: "n2d-standard-4", guestCpus: 4, memoryMb: 16384 }],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: {
+          fetched_at: "2026-05-09T00:00:00.000Z",
+          service_id: "compute",
+          families: {
+            n2d: {
+              cpu: { "us-west1": 0.05 },
+              ram: { "us-west1": 0.01 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+          },
+          gpus: {},
+          disks: {
+            "pd-standard": { "us-west1": 0.00006 },
+          },
+        },
+      },
+    ]);
+
+    const host = {
+      id: "host-not-provisioned",
+      name: "Configured GCP Host",
+      owner: "acct",
+      region: "us-west1",
+      size: "n2d-standard-4",
+      gpu: false,
+      status: "off",
+      machine: {
+        cloud: "gcp",
+        zone: "us-west1-a",
+        machine_type: "n2d-standard-4",
+        storage_mode: "persistent",
+        disk_type: "standard",
+        disk_gb: 100,
+      },
+      pricing_model: "on_demand",
+    } as Host;
+
+    const display = getHostDisplayedPrice(host, { gcp: gcpCatalog });
+    const modes = getHostPricingModeEstimates(host, { gcp: gcpCatalog });
+
+    expect(display?.current_state).toBe("deprovisioned");
+    expect(display?.current_estimate?.usd_per_hour).toBe(0);
+    expect(display?.current_estimate?.hourly_label).toBe("$0.00/hr");
+    expect(modes?.current_mode).toBe("deprovisioned");
+    expect(modes?.deprovisioned_estimate?.monthly_label).toBe("$0.00/mo");
   });
 
   it("returns all host pricing modes and highlights the effective pricing mode", () => {
