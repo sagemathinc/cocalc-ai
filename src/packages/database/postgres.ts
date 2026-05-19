@@ -75,12 +75,6 @@ import {
 
 import { setProjectStatus } from "./postgres/project/status";
 
-import {
-  accountCreationActions,
-  accountCreationActionsSuccess,
-  doAccountCreationActions,
-} from "./postgres/account/creation";
-
 import { accountIsInOrganization } from "./postgres/account/account-is-in-organization";
 import { createSsoAccount } from "./postgres/account/create-sso-account";
 import { deleteAccount, markAccountDeleted } from "./postgres/account/deletion";
@@ -1186,28 +1180,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
 
   async account_exists(opts: PgMethodOpts<"account_exists">) {
     return runWithCbResultValue(opts.cb, () => account_exists(this, opts));
-  }
-
-  // set an account creation action, or return all of them for the given email address
-  async account_creation_actions(
-    opts: PgMethodOpts<"account_creation_actions">,
-  ) {
-    return runWithCbResultValue(opts.cb, () =>
-      accountCreationActions(this, opts),
-    );
-  }
-
-  async account_creation_actions_success(
-    opts: PgMethodOpts<"account_creation_actions_success">,
-  ) {
-    return runWithCb(opts.cb, () => accountCreationActionsSuccess(this, opts));
-  }
-
-  // DEPRECATED: use import accountCreationActions from "@cocalc/server/accounts/account-creation-actions"; instead!!!!
-  async do_account_creation_actions(
-    opts: PgMethodOpts<"do_account_creation_actions">,
-  ) {
-    return runWithCb(opts.cb, () => doAccountCreationActions(this, opts));
   }
 
   async verify_email_create_token(

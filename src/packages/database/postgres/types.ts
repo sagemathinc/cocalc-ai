@@ -454,21 +454,6 @@ export interface PostgreSQLMethods extends EventEmitter {
     cb?: CB<boolean>;
   }): Promise<boolean | undefined>;
 
-  account_creation_actions(opts: {
-    email_address: string;
-    action?: any;
-    ttl?: number;
-    cb: (err, actions?: any[]) => void;
-  }): void;
-
-  account_creation_actions_success(opts: { account_id: string; cb: CB }): void;
-
-  do_account_creation_actions(opts: {
-    email_address: string;
-    account_id: string;
-    cb: CB;
-  }): void;
-
   accountIsInOrganization(opts: {
     organization_id: string;
     account_id: string;
@@ -515,12 +500,6 @@ export interface PostgreSQLMethods extends EventEmitter {
     project_id: string,
     cb: CB<unknown | undefined>,
   );
-
-  do_account_creation_actions(opts: {
-    email_address: string;
-    account_id: string;
-    cb: CB;
-  }): void;
 
   mark_account_deleted(opts: {
     email_address: string;
@@ -775,13 +754,6 @@ export interface PostgreSQLMethods extends EventEmitter {
     to: string;
     error?: string;
     cb?: CB;
-  });
-
-  account_creation_actions(opts: {
-    email_address: string;
-    action?: any;
-    ttl?: number;
-    cb: CB;
   });
 
   log_client_error(opts: {

@@ -261,7 +261,6 @@ export async function getProjectCollaboratorsAndPendingInviteCount(
   const { rows } = await pool.query<{
     collaborators: string | number;
     pending_invites: string | number;
-    pending_email_actions: string | number;
   }>(
     `
       WITH project_row AS (
@@ -283,23 +282,12 @@ export async function getProjectCollaboratorsAndPendingInviteCount(
           FROM project_collab_invites
           WHERE project_id = $1
             AND status = 'pending'
-        ), 0) AS pending_invites,
-        COALESCE((
-          SELECT COUNT(*)
-          FROM account_creation_actions
-          WHERE expire > NOW()
-            AND action ->> 'action' = 'add_to_project'
-            AND action ->> 'project_id' = $1::text
-        ), 0) AS pending_email_actions
+        ), 0) AS pending_invites
     `,
     [project_id],
   );
   const row = rows[0];
-  return (
-    Number(row?.collaborators ?? 0) +
-    Number(row?.pending_invites ?? 0) +
-    Number(row?.pending_email_actions ?? 0)
-  );
+  return Number(row?.collaborators ?? 0) + Number(row?.pending_invites ?? 0);
 }
 
 export async function assertProjectCollaboratorInviteLimit({
