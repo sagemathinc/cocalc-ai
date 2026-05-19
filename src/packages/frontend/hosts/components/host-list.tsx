@@ -16,14 +16,7 @@ import {
   Tag,
   Typography,
 } from "antd";
-import {
-  CloudOutlined,
-  CloudServerOutlined,
-  EnvironmentOutlined,
-  HddOutlined,
-  SyncOutlined,
-  ThunderboltOutlined,
-} from "@ant-design/icons";
+import { CloudServerOutlined, SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type {
@@ -52,7 +45,6 @@ import {
   hostBillingEnforcementBlocksStart,
   hostBillingEnforcementSearchText,
 } from "./host-billing-enforcement";
-import { isSpotHost, SpotHostTag } from "../spot-ui";
 import { HostPricingSummary } from "./host-pricing-summary";
 import { HostStatusSummary } from "./host-status-summary";
 import { search_match, search_split } from "@cocalc/util/misc";
@@ -65,12 +57,7 @@ import type {
   HostDeleteOptions,
   HostDrainOptions,
 } from "../types";
-import {
-  formatBinaryBytes,
-  getHostCpuCount,
-  getHostRamGiB,
-  getHostSizeDisplay,
-} from "../utils/format";
+import { getHostSizeDisplay } from "../utils/format";
 import { canManageHostLifecycle } from "../utils/access";
 import {
   currentProjectHostAutomaticRollback,
@@ -78,6 +65,7 @@ import {
 } from "@cocalc/conat/project-host/rollout";
 import { currentHostRuntimeExceptionSummary } from "../utils/runtime-exceptions";
 import { HostActionsPanel } from "./host-actions-panel";
+import { HostConfigurationCell } from "./host-configuration-cell";
 
 const STATUS_ORDER = [
   "running",
@@ -182,7 +170,7 @@ function renderHostPrice(
 }
 
 function shortHostId(host: Host): string {
-  return host.provider_instance_id || host.id.slice(0, 8);
+  return host.id.slice(0, 8);
 }
 
 function statusDotColor(host: Host): string {
@@ -201,91 +189,15 @@ function statusDotColor(host: Host): string {
   return COLORS.GRAY_M;
 }
 
-function HostConfigChip({
-  icon,
-  label,
-  detail,
-  tone = "default",
-}: {
-  icon: React.ReactNode;
-  label: React.ReactNode;
-  detail?: React.ReactNode;
-  tone?: "default" | "blue" | "amber" | "muted";
-}) {
-  const colors =
-    tone === "blue"
-      ? {
-          border: COLORS.BLUE_LL,
-          background: COLORS.BLUE_LLLL,
-          text: COLORS.ANTD_LINK_BLUE,
-        }
-      : tone === "amber"
-        ? {
-            border: COLORS.YELL_LL,
-            background: COLORS.YELL_LLL,
-            text: COLORS.YELL_D,
-          }
-        : tone === "muted"
-          ? {
-              border: COLORS.GRAY_LL,
-              background: COLORS.GRAY_LLL,
-              text: COLORS.GRAY_M,
-            }
-          : {
-              border: COLORS.GRAY_LL,
-              background: "white",
-              text: COLORS.GRAY_D,
-            };
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 7,
-        border: `1px solid ${colors.border}`,
-        borderRadius: 10,
-        background: colors.background,
-        padding: "5px 8px",
-        minHeight: 30,
-        lineHeight: 1.1,
-      }}
-    >
-      <span style={{ color: colors.text, fontSize: 15, lineHeight: 1 }}>
-        {icon}
-      </span>
-      <span>
-        <Typography.Text strong style={{ color: colors.text, fontSize: 12 }}>
-          {label}
-        </Typography.Text>
-        {detail ? (
-          <Typography.Text
-            type="secondary"
-            style={{ display: "block", fontSize: 11 }}
-          >
-            {detail}
-          </Typography.Text>
-        ) : null}
-      </span>
-    </span>
-  );
-}
-
 function HostIdentityCell({
   host,
   onDetails,
-  catalog,
-  pricingSettings,
 }: {
   host: Host;
   onDetails: (host: Host) => void;
-  catalog:
-    | HostCatalog
-    | Partial<Record<HostProvider, HostCatalog | undefined>>
-    | undefined;
-  pricingSettings: DedicatedHostSurchargeSettings;
 }) {
   return (
-    <Space size={10} align="start" style={{ minWidth: 210 }}>
+    <Space size={10} align="start" style={{ minWidth: 180 }}>
       <span
         style={{
           width: 34,
@@ -326,13 +238,6 @@ function HostIdentityCell({
           >
             {host.name}
           </Button>
-          {isSpotHost(host) ? (
-            <SpotHostTag
-              host={host}
-              catalog={catalog}
-              pricingSettings={pricingSettings}
-            />
-          ) : null}
         </Space>
         <Typography.Text
           type="secondary"
@@ -358,63 +263,6 @@ function HostIdentityCell({
           </Popover>
         ) : null}
       </Space>
-    </Space>
-  );
-}
-
-function HostConfigurationCell({ host }: { host: Host }) {
-  const providerLabel = getProviderLabel(host);
-  const selfHostDetail = getSelfHostDetail(host);
-  const size = getHostSizeDisplay(host);
-  const cpu = getHostCpuCount(host);
-  const ramGiB = getHostRamGiB(host);
-  const disk =
-    host.machine?.disk_gb != null && Number.isFinite(host.machine.disk_gb)
-      ? `${host.machine.disk_gb} GB disk`
-      : formatBinaryBytes(host.metrics?.current?.disk_device_total_bytes, {
-          compact: true,
-        });
-  const gpuCount = host.machine?.gpu_count ?? (host.gpu ? 1 : 0);
-  const gpuLabel = host.gpu
-    ? `${gpuCount > 0 ? `${gpuCount}x ` : ""}${host.machine?.gpu_type ?? "GPU"}`
-    : "No GPU";
-  return (
-    <Space
-      size={[6, 6]}
-      wrap
-      style={{
-        maxWidth: 430,
-      }}
-    >
-      <HostConfigChip
-        icon={<CloudOutlined />}
-        label={providerLabel}
-        detail={selfHostDetail}
-        tone="blue"
-      />
-      <HostConfigChip
-        icon={<EnvironmentOutlined />}
-        label={host.machine?.cloud === "self-host" ? "Connector" : host.region}
-        detail={host.machine?.cloud === "self-host" ? host.region : undefined}
-        tone="blue"
-      />
-      <HostConfigChip
-        icon={<HddOutlined />}
-        label={size.secondary ?? size.primary}
-        detail={size.secondary ? size.primary : undefined}
-      />
-      {cpu != null ? (
-        <HostConfigChip icon={<CloudServerOutlined />} label={`${cpu} vCPU`} />
-      ) : null}
-      {ramGiB != null ? (
-        <HostConfigChip icon={<HddOutlined />} label={`${ramGiB} GiB RAM`} />
-      ) : null}
-      {disk ? <HostConfigChip icon={<HddOutlined />} label={disk} /> : null}
-      <HostConfigChip
-        icon={<ThunderboltOutlined />}
-        label={gpuLabel}
-        tone={host.gpu ? "amber" : "muted"}
-      />
     </Space>
   );
 }
@@ -949,7 +797,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       title: "Host",
       dataIndex: "name",
       key: "name",
-      width: 260,
+      width: 220,
       sorter: true,
       sortDirections: ["ascend", "descend"],
       sortOrder:
@@ -959,12 +807,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             : "descend"
           : undefined,
       render: (_: string, host: Host) => (
-        <HostIdentityCell
-          host={host}
-          onDetails={onDetails}
-          catalog={pricingCatalogs ?? catalog}
-          pricingSettings={pricingSettings}
-        />
+        <HostIdentityCell host={host} onDetails={onDetails} />
       ),
     },
     {
@@ -1013,7 +856,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     {
       title: "Actions",
       key: "actions",
-      width: 220,
+      width: 260,
       render: (_: string, host: Host) => {
         const op = hostOps?.[host.id];
         const projectHostRolloutPhase = currentProjectHostRolloutPhase({

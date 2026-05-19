@@ -410,7 +410,7 @@ export function HostActionsPanel({
     <Space
       direction="vertical"
       size={6}
-      style={{ maxWidth: mode === "card" ? undefined : 220, width: "100%" }}
+      style={{ maxWidth: mode === "card" ? undefined : 260, width: "100%" }}
     >
       <Space size={6} wrap style={{ width: "100%" }}>
         <Button

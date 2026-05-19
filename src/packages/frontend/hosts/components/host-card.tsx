@@ -9,21 +9,19 @@ import type {
   HostProvider,
   HostStopOptions,
 } from "../types";
-import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import { useHostPricingSettings } from "../hooks/use-host-pricing-settings";
 import type { HostLroState } from "../hooks/use-host-ops";
 import { describeBlockedHostActions } from "./host-op-progress";
 import { COLORS } from "@cocalc/util/theme";
-import { getHostSizeDisplay } from "../utils/format";
 import { HostCurrentMetrics } from "./host-current-metrics";
 import {
   currentProjectHostRolloutPhase,
   shouldSuppressProjectHostFailedOp,
 } from "@cocalc/conat/project-host/rollout";
-import { isSpotHost, SpotHostTag } from "../spot-ui";
 import { HostPricingSummary } from "./host-pricing-summary";
 import { HostStatusSummary } from "./host-status-summary";
 import { HostActionsPanel } from "./host-actions-panel";
+import { HostConfigurationCell } from "./host-configuration-cell";
 
 type HostCardProps = {
   host: Host;
@@ -66,8 +64,6 @@ export const HostCard: React.FC<HostCardProps> = ({
   selfHost,
 }) => {
   const pricingSettings = useHostPricingSettings();
-  const isSelfHost = host.machine?.cloud === "self-host";
-  const size = getHostSizeDisplay(host);
   const projectHostObservation = host.observed_host_agent?.project_host;
   const displayHostOp = shouldSuppressProjectHostFailedOp({
     op: hostOp,
@@ -96,13 +92,6 @@ export const HostCard: React.FC<HostCardProps> = ({
           >
             {host.name}
           </Button>
-          {isSpotHost(host) && (
-            <SpotHostTag
-              host={host}
-              catalog={pricingCatalogs ?? catalog}
-              pricingSettings={pricingSettings}
-            />
-          )}
         </Space>
       }
       extra={
@@ -136,28 +125,13 @@ export const HostCard: React.FC<HostCardProps> = ({
           op={displayHostOp}
           onDetails={onDetails}
         />
-        <Typography.Text>
-          Provider:{" "}
-          {host.machine?.cloud
-            ? isKnownProvider(host.machine.cloud)
-              ? getProviderDescriptor(host.machine.cloud).label
-              : host.machine.cloud
-            : "n/a"}
-        </Typography.Text>
-        <Typography.Text>
-          {isSelfHost ? "Connector" : "Region"}: {host.region}
-        </Typography.Text>
-        <Typography.Text>
-          Size: {size.primary}
-          {size.secondary ? ` · ${size.secondary}` : ""}
-        </Typography.Text>
+        <HostConfigurationCell host={host} maxWidth="100%" />
         <HostPricingSummary
           host={host}
           catalog={pricingCatalogs ?? catalog}
           pricingSettings={pricingSettings}
         />
         <HostCurrentMetrics host={host} compact />
-        <Typography.Text>GPU: {host.gpu ? "Yes" : "No"}</Typography.Text>
         {host.last_action && (
           <Typography.Text type="secondary">
             Last action: {host.last_action}
