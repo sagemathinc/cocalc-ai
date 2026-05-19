@@ -699,7 +699,10 @@ export class NebiusProvider implements CloudProvider {
     const machineType =
       resources?.size?.$case === "preset" ? resources.size.preset : undefined;
     const platform = resources?.platform || undefined;
-    const preemptible = !!instance.spec?.preemptible;
+    const preemptibleSpec = instance.spec?.preemptible;
+    const preemptible =
+      preemptibleSpec?.onPreemption === PreemptibleSpec_PreemptionPolicy.STOP ||
+      Number(preemptibleSpec?.priority ?? 0) > 0;
     return {
       instance_id: runtime.instance_id,
       name: instance.metadata?.name,

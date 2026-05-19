@@ -175,6 +175,55 @@ describe("NebiusProvider", () => {
     });
   });
 
+  it("does not classify default empty preemptible specs as spot", async () => {
+    const provider = new NebiusProvider();
+    instancesGetMock.mockResolvedValue({
+      metadata: {
+        id: "instance-1",
+        name: "host-1",
+      },
+      spec: {
+        resources: {
+          platform: "standard-platform",
+          size: {
+            $case: "preset",
+            preset: "standard-machine",
+          },
+        },
+        preemptible: {
+          onPreemption: PreemptibleSpec_PreemptionPolicy.UNSPECIFIED,
+          priority: 0,
+        },
+      },
+      status: {
+        state: {
+          name: "STOPPED",
+        },
+      },
+    });
+
+    const instance = await provider.getInstance(
+      {
+        provider: "nebius",
+        instance_id: "instance-1",
+        ssh_user: "ubuntu",
+      },
+      {
+        parentId: "project-1",
+        serviceAccountId: "svc-1",
+        publicKeyId: "pub-1",
+        privateKeyPem: "key",
+        sshPublicKey: "ssh-ed25519 AAAA",
+        subnetId: "subnet-1",
+      },
+    );
+
+    expect(instance?.metadata).toMatchObject({
+      pricing_model: "on_demand",
+      preemptible: false,
+    });
+  });
+
   it("waits for disks to detach before deleting a deprovisioned host", async () => {
     jest.useFakeTimers();
     const provider = new NebiusProvider();
