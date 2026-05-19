@@ -695,11 +695,22 @@ export class NebiusProvider implements CloudProvider {
     const publicIp = normalizeIp(
       instance.status?.networkInterfaces?.[0]?.publicIpAddress?.address,
     );
+    const resources = instance.spec?.resources;
+    const machineType =
+      resources?.size?.$case === "preset" ? resources.size.preset : undefined;
+    const platform = resources?.platform || undefined;
+    const preemptible = !!instance.spec?.preemptible;
     return {
       instance_id: runtime.instance_id,
       name: instance.metadata?.name,
       status,
       public_ip: publicIp,
+      metadata: {
+        ...(machineType ? { machine_type: machineType } : {}),
+        ...(platform ? { platform } : {}),
+        pricing_model: preemptible ? "spot" : "on_demand",
+        preemptible,
+      },
     };
   }
 

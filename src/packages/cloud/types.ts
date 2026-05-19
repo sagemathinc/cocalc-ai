@@ -55,6 +55,7 @@ export type RemoteInstance = {
   public_ip?: string;
   private_ip?: string;
   internal_hostname?: string;
+  metadata?: Record<string, any>;
 };
 
 export interface CloudProvider {

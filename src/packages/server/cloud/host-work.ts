@@ -368,7 +368,7 @@ function metadataForNebiusRecreateFallback(opts: {
   runtime: any;
   desiredPricing: HostPricingModel;
   effectivePricing: HostPricingModel;
-  state: HostSpotRecoveryState;
+  state?: HostSpotRecoveryState;
 }) {
   const nextMetadata = withPricingAndRecoveryMetadata(
     setRuntimeObservedAt(opts.metadata ?? {}, new Date()),
@@ -390,6 +390,41 @@ function metadataForNebiusRecreateFallback(opts: {
   delete nextMetadata.dns;
   delete nextMetadata.cloudflare_tunnel;
   return nextMetadata;
+}
+
+function nebiusRuntimeMismatch(opts: {
+  desiredMachineType?: string;
+  desiredPlatform?: string;
+  desiredPricing: HostPricingModel;
+  remote?: { metadata?: Record<string, any> } | null;
+}): string | undefined {
+  const remote = opts.remote?.metadata ?? {};
+  if (
+    remote.machine_type &&
+    opts.desiredMachineType &&
+    remote.machine_type !== opts.desiredMachineType
+  ) {
+    return `machine type is ${remote.machine_type}, expected ${opts.desiredMachineType}`;
+  }
+  if (
+    remote.platform &&
+    opts.desiredPlatform &&
+    remote.platform !== opts.desiredPlatform
+  ) {
+    return `platform is ${remote.platform}, expected ${opts.desiredPlatform}`;
+  }
+  if (remote.pricing_model && remote.pricing_model !== opts.desiredPricing) {
+    return `pricing model is ${remote.pricing_model}, expected ${opts.desiredPricing}`;
+  }
+  if (
+    typeof remote.preemptible === "boolean" &&
+    remote.preemptible !== (opts.desiredPricing === "spot")
+  ) {
+    return `preemptible is ${remote.preemptible}, expected ${
+      opts.desiredPricing === "spot"
+    }`;
+  }
+  return undefined;
 }
 
 async function updateHostRow(id: string, updates: Record<string, any>) {
@@ -1342,6 +1377,76 @@ async function handleStart(row: any) {
           (await promoteToStandardFallback("retry-window-exhausted")) ===
           "recreated"
         ) {
+          return;
+        }
+      }
+
+      if (providerId === "nebius" && entry.provider.getInstance) {
+        const desiredStartMetadata = withPricingAndRecoveryMetadata(
+          row.metadata ?? {},
+          {
+            desired_pricing_model: desiredPricing,
+            effective_pricing_model: effectivePricingForStart,
+            spot_recovery_state: nextRecoveryState,
+          },
+        );
+        const remote = await entry.provider.getInstance(runtimeForStart, creds);
+        const desiredMachine = desiredStartMetadata.machine ?? {};
+        const mismatch = nebiusRuntimeMismatch({
+          desiredMachineType: desiredMachine.machine_type,
+          desiredPlatform: desiredMachine.metadata?.platform,
+          desiredPricing: effectivePricingForStart,
+          remote,
+        });
+        if (mismatch) {
+          if (
+            row.metadata?.machine?.storage_mode === "persistent" &&
+            !runtimeForStart?.metadata?.diskIds?.data
+          ) {
+            throw new Error(
+              `Nebius runtime does not match host configuration (${mismatch}), and recreate is not safe without a preserved data disk`,
+            );
+          }
+          logger.info("handleStart: recreating stale Nebius runtime", {
+            host_id: row.id,
+            instance_id: runtimeForStart?.instance_id,
+            mismatch,
+          });
+          await entry.provider.deleteHost(runtimeForStart, creds, {
+            preserveDataDisk: true,
+          });
+          const nextMetadata = metadataForNebiusRecreateFallback({
+            metadata: desiredStartMetadata,
+            runtime: runtimeForStart,
+            desiredPricing,
+            effectivePricing: effectivePricingForStart,
+            state: nextRecoveryState,
+          });
+          row.metadata = nextMetadata;
+          await updateHostRow(row.id, {
+            status: "starting",
+            last_seen: null,
+            public_url: null,
+            internal_url: null,
+            metadata: nextMetadata,
+          });
+          await logCloudVmEvent({
+            vm_id: row.id,
+            action: "start",
+            status: "success",
+            provider: providerId,
+            runtime: {
+              reason: "nebius_runtime_mismatch",
+              mismatch,
+            },
+          });
+          await handleProvision({
+            ...row,
+            metadata: nextMetadata,
+            status: "starting",
+            public_url: null,
+            internal_url: null,
+          });
           return;
         }
       }
