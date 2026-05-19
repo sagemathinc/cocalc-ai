@@ -31,7 +31,6 @@ type MetricBarProps = {
   percent?: number;
   detail?: string;
   compact?: boolean;
-  dense?: boolean;
   historyPoints?: SparklinePoint[];
   color?: string;
   icon?: React.ReactNode;
@@ -668,12 +667,73 @@ function Sparkline({
   );
 }
 
+function CompactMetricLine({
+  label,
+  percent,
+  detail,
+  color,
+}: {
+  label: string;
+  percent?: number;
+  detail?: string;
+  color?: string;
+}) {
+  const displayPercent = normalizePercent(percent);
+  const toneColors = RESOURCE_TONES[percentTone(displayPercent)];
+  const display =
+    displayPercent != null ? Math.round(displayPercent) : undefined;
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "36px 42px minmax(64px, 1fr) auto",
+        gap: 7,
+        alignItems: "center",
+        minHeight: 22,
+        padding: "2px 0",
+      }}
+    >
+      <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+        {label}
+      </Typography.Text>
+      <Typography.Text
+        strong
+        style={{
+          color: toneColors.text,
+          fontSize: 12,
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {display != null ? `${display}%` : "n/a"}
+      </Typography.Text>
+      <Progress
+        percent={display ?? 0}
+        size="small"
+        status={progressStatus(displayPercent)}
+        showInfo={false}
+        strokeColor={color ?? toneColors.text}
+      />
+      {detail ? (
+        <Typography.Text
+          type="secondary"
+          style={{
+            fontSize: 11,
+            fontVariantNumeric: "tabular-nums",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {detail}
+        </Typography.Text>
+      ) : null}
+    </div>
+  );
+}
+
 function MetricBar({
   label,
   percent,
   detail,
   compact,
-  dense,
   historyPoints,
   color,
   icon,
@@ -684,53 +744,6 @@ function MetricBar({
   const toneColors = RESOURCE_TONES[tone];
   const display =
     displayPercent != null ? Math.round(displayPercent) : undefined;
-  if (compact && dense) {
-    return (
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "24px minmax(62px, 1fr) 78px",
-          gap: 8,
-          alignItems: "center",
-          width: "100%",
-          padding: "6px 0",
-          borderTop: `1px solid ${COLORS.GRAY_LL}`,
-        }}
-      >
-        <span style={{ color: color ?? COLORS.BLUE_D, fontSize: 17 }}>
-          {icon}
-        </span>
-        <span>
-          <Typography.Text strong style={{ fontSize: 12 }}>
-            {label} {display != null ? `${display}%` : "n/a"}
-          </Typography.Text>
-          {detail ? (
-            <Typography.Text
-              type="secondary"
-              style={{ display: "block", fontSize: 11, lineHeight: 1.1 }}
-            >
-              {detail}
-            </Typography.Text>
-          ) : null}
-        </span>
-        <div
-          style={{
-            width: "100%",
-          }}
-        >
-          <Sparkline points={trendPoints} color={color} compact />
-          <Progress
-            percent={display ?? 0}
-            size="small"
-            status={progressStatus(displayPercent)}
-            showInfo={false}
-            strokeColor={toneColors.text}
-          />
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div
       style={{
@@ -840,8 +853,12 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
   const diskTotal = compact
     ? formatBytesCompact(metrics.disk_device_total_bytes)
     : formatBytes(metrics.disk_device_total_bytes);
-  const metadataUsed = formatBytes(metrics.btrfs_metadata_used_bytes);
-  const metadataTotal = formatBytes(metrics.btrfs_metadata_total_bytes);
+  const metadataUsed = compact
+    ? formatBytesCompact(metrics.btrfs_metadata_used_bytes)
+    : formatBytes(metrics.btrfs_metadata_used_bytes);
+  const metadataTotal = compact
+    ? formatBytesCompact(metrics.btrfs_metadata_total_bytes)
+    : formatBytes(metrics.btrfs_metadata_total_bytes);
   const cpuHistory = buildHistoryPoints(
     history?.points,
     (point) => normalizePercent(point.cpu_percent),
@@ -960,6 +977,110 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
       : undefined;
 
   if (compact) {
+    if (dense) {
+      const metadataCritical =
+        derived?.metadata.level === "critical" ||
+        percentTone(metadataPercent) === "red";
+      const healthTagColor =
+        health.tone === "red"
+          ? "red"
+          : health.tone === "orange"
+            ? "orange"
+            : health.tone === "green"
+              ? "green"
+              : undefined;
+      return (
+        <div
+          style={{
+            minWidth: 220,
+            border: `1px solid ${COLORS.GRAY_LL}`,
+            borderRadius: 10,
+            background: "white",
+            padding: "6px 9px",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 8,
+              alignItems: "center",
+              marginBottom: riskTags ? 3 : 5,
+            }}
+          >
+            <Tag color={healthTagColor} style={{ marginInlineEnd: 0 }}>
+              {health.label}
+            </Tag>
+            {staleMetricsTag}
+          </div>
+          {riskTags ? (
+            <div style={{ marginBottom: 4, lineHeight: 1 }}>{riskTags}</div>
+          ) : null}
+          <CompactMetricLine
+            label="CPU"
+            percent={cpuPercent}
+            detail={load ? `load ${load.split(" / ")[0]}` : undefined}
+            color={COLORS.BLUE_D}
+          />
+          <CompactMetricLine
+            label="RAM"
+            percent={memoryPercent}
+            detail={
+              memoryUsed && memoryTotal
+                ? `${memoryUsed} / ${memoryTotal}`
+                : undefined
+            }
+            color={COLORS.ANTD_GREEN_D}
+          />
+          <CompactMetricLine
+            label="Disk"
+            percent={diskPercent}
+            detail={
+              diskUsed && diskTotal ? `${diskUsed} / ${diskTotal}` : diskTotal
+            }
+            color={COLORS.ANTD_ORANGE}
+          />
+          {metadataCritical ? (
+            <CompactMetricLine
+              label="Meta"
+              percent={metadataPercent}
+              detail={
+                metadataUsed && metadataTotal
+                  ? `${metadataUsed} / ${metadataTotal}`
+                  : undefined
+              }
+              color={COLORS.ANTD_RED}
+            />
+          ) : null}
+          <div
+            style={{
+              borderTop: `1px solid ${COLORS.GRAY_LL}`,
+              paddingTop: 5,
+              marginTop: 4,
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 8,
+              alignItems: "center",
+              fontSize: 11,
+            }}
+          >
+            <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+              <TeamOutlined /> {metrics.running_project_count ?? 0} running /{" "}
+              {metrics.assigned_project_count ?? 0} assigned
+            </Typography.Text>
+            {metrics.collected_at ? (
+              <Typography.Text
+                type="secondary"
+                style={{ fontSize: 11, whiteSpace: "nowrap" }}
+              >
+                <ClockCircleOutlined /> <TimeAgo date={metrics.collected_at} />
+              </Typography.Text>
+            ) : null}
+          </div>
+        </div>
+      );
+    }
+
     const body = (
       <>
         <MetricBar
@@ -967,7 +1088,6 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           percent={cpuPercent}
           detail={load ? load : undefined}
           compact
-          dense={dense}
           historyPoints={cpuHistory}
           color={COLORS.BLUE_D}
           icon={<CloudServerOutlined />}
@@ -981,7 +1101,6 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
               : undefined
           }
           compact
-          dense={dense}
           historyPoints={memoryHistory}
           color={COLORS.ANTD_GREEN_D}
           icon={<HddOutlined />}
@@ -993,7 +1112,6 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
             diskUsed && diskTotal ? `${diskUsed} / ${diskTotal}` : diskTotal
           }
           compact
-          dense={dense}
           historyPoints={diskHistory}
           color={COLORS.ANTD_ORANGE}
           icon={<DatabaseOutlined />}
@@ -1007,73 +1125,12 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
               : undefined
           }
           compact
-          dense={dense}
           historyPoints={metadataHistory}
           color={COLORS.ANTD_RED}
           icon={<DatabaseOutlined />}
         />
       </>
     );
-    if (dense) {
-      return (
-        <div
-          style={{
-            minWidth: 220,
-            border: `1px solid ${COLORS.GRAY_LL}`,
-            borderRadius: 10,
-            background: "white",
-            padding: "8px 10px",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              gap: 8,
-              alignItems: "center",
-              marginBottom: 4,
-            }}
-          >
-            <HealthBadge
-              label={health.label}
-              detail={health.detail}
-              tone={health.tone}
-            />
-            {staleMetricsTag}
-          </div>
-          {riskTags}
-          {body}
-          <div
-            style={{
-              borderTop: `1px solid ${COLORS.GRAY_LL}`,
-              paddingTop: 7,
-              marginTop: 3,
-              display: "flex",
-              justifyContent: "space-between",
-              gap: 8,
-              alignItems: "center",
-            }}
-          >
-            <Space size={6}>
-              <TeamOutlined style={{ color: COLORS.ANTD_LINK_BLUE }} />
-              <Typography.Text style={{ fontSize: 12 }}>
-                Projects
-              </Typography.Text>
-            </Space>
-            <Typography.Text style={{ fontSize: 12 }}>
-              {metrics.running_project_count ?? 0} running /{" "}
-              {metrics.assigned_project_count ?? 0} assigned
-            </Typography.Text>
-          </div>
-          {metrics.collected_at ? (
-            <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-              <ClockCircleOutlined /> Sampled{" "}
-              <TimeAgo date={metrics.collected_at} />
-            </Typography.Text>
-          ) : null}
-        </div>
-      );
-    }
     return (
       <div
         style={{
