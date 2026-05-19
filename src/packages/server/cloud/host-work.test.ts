@@ -725,7 +725,7 @@ describe("cloud host start failures", () => {
       id: hostId,
       name: "Stopped Nebius fallback host",
       region: "eu-north1",
-      status: "off",
+      status: "starting",
       metadata: {
         owner: "acct-owner",
         pricing_model: "spot",
@@ -747,6 +747,7 @@ describe("cloud host start failures", () => {
           provider: "nebius",
           instance_id: "standard-instance",
           ssh_user: "ubuntu",
+          provider_status: "STOPPED",
           metadata: {
             diskIds: {
               data: "data-disk",
