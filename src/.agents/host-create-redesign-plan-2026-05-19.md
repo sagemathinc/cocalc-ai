@@ -25,6 +25,8 @@ as another timing patch.
 - Include a small number of hardcoded minimal presets that are valid, useful,
   and visually natural in the modal. This should be deliberately simple, not a
   flexible template system.
+- Support creating a host without starting it. The modal should make it easy to
+  choose either "Create" or "Create and Start".
 - Avoid infinite normalization loops.
 - Improve the UI enough that users can understand the form without scrolling
   through a cramped side panel.
@@ -78,6 +80,7 @@ Core types:
 type HostCreateDraft = {
   name: string;
   provider: HostProvider;
+  start_after_create: boolean;
   funding_mode?: HostFundingMode;
   region_preference: "balanced" | "closest" | "cheapest";
   price_display: "hourly" | "monthly";
@@ -201,6 +204,41 @@ UI placement:
 This deliberately avoids the failure mode of a large flexible template system
 with too many choices.
 
+## Create Versus Create And Start
+
+The new flow must support two explicit submit actions:
+
+- `Create`: create/provision the host record and cloud resources as needed, but
+  do not start the VM/project-host runtime.
+- `Create and Start`: create the host and then start it.
+
+The exact button labels can be refined during visual design, but the semantics
+must be clear. Users need an easy way to configure hosts ahead of time without
+immediately incurring running-VM costs.
+
+Draft and payload implications:
+
+- `HostCreateDraft` should include `start_after_create: boolean`.
+- The default can be `true` if that matches current behavior, but the modal must
+  expose both actions visibly.
+- The primary button can be `Create and Start`, with a secondary `Create`
+  button, or the reverse if product testing shows that non-starting creation is
+  more common.
+- Backend/API support must be verified. If the current create RPC always starts
+  the host, add an explicit create option such as `start_after_create` or
+  `initial_desired_state`.
+- Audit/logging should record whether the user created only or created and
+  started.
+- Price summary should make this distinction obvious: "Stopped after create"
+  versus "Starts immediately".
+
+Validation implications:
+
+- Test `Create` produces a stopped/not-running host when backend support exists.
+- Test `Create and Start` preserves current behavior.
+- Test both actions for GCP, Nebius, Lambda, and Hyperstack.
+- Test create-similar can also be created without starting.
+
 ## Draft Reducer
 
 Add:
@@ -212,6 +250,7 @@ Reducer actions:
 - `init_default`
 - `init_similar`
 - `apply_preset`
+- `set_start_after_create`
 - `set_provider`
 - `set_basic_field`
 - `set_region_preference`
@@ -293,7 +332,7 @@ Recommended modal layout:
 - Header: "Create host" or "Create similar host".
 - Left/main column: form sections.
 - Right sticky column: price estimate, selected provider, risk/warning badges,
-  and Create button.
+  and Create/Create and Start actions.
 - Mobile: full-screen modal or drawer with the same sections stacked.
 
 Sections:
@@ -328,12 +367,13 @@ Sections:
    - Price estimate
    - Availability warnings
    - Catalog status
+   - Create and Start button
    - Create button
 
 The summary panel is not an admin approval step. It is simply a compact
 "review before create" area for the user who is creating the host. It should
 make cost, provider, location, machine, disk, and spot/recovery choices easy to
-verify before clicking Create.
+verify before clicking either Create action.
 
 The first implementation does not need a strict multi-step wizard. A single
 modal with section cards and a sticky summary is likely better because users
@@ -357,6 +397,8 @@ Prompt ingredients:
 - Include a compact presets row with only a few choices: Balanced CPU,
   Low-cost spot, and GPU workstation.
 - Ask for visible warnings and price summary, but avoid alarmist visuals.
+- Include two clear footer/sidebar actions: Create and Start, and Create without
+  starting.
 
 Evaluate imagegen2 output before implementation:
 
@@ -364,6 +406,7 @@ Evaluate imagegen2 output before implementation:
 - Do the presets look like helpful shortcuts rather than a complicated template
   system?
 - Is the price summary always visible?
+- Is the difference between creating stopped and creating started clear?
 - Are advanced/recovery options discoverable without dominating the form?
 - Does the layout handle long machine type names?
 - Does it work at 900 px wide and mobile full-screen?
@@ -407,6 +450,8 @@ Tests must cover:
 - disk type defaults;
 - spot pricing default restore policy;
 - standard pricing restore policy;
+- start-after-create true;
+- start-after-create false;
 - available presets for GCP;
 - available presets for Nebius;
 - available presets for Lambda;
@@ -455,7 +500,8 @@ Behavior:
 - "Create similar" opens modal with `buildSimilarDraft`.
 - Presets are visible in the modal when they are valid for the selected
   provider/catalog.
-- Successful create closes modal.
+- Successful Create closes modal and leaves the host stopped/not running.
+- Successful Create and Start closes modal and starts the host.
 - Cancel closes modal without mutating the host list.
 - The host list no longer needs layout width hacks for the create panel.
 
@@ -497,12 +543,17 @@ Move payload creation behind draft conversion:
 
 ```ts
 const payload = buildCreateHostPayload(draft, context);
-await onCreate(payload);
+await onCreate(payload, { start: draft.start_after_create });
 ```
 
 Keep backend validation authoritative. Frontend validation should prevent
 obvious impossible choices, but backend must still reject invalid provider
 combinations.
+
+This phase must verify whether the backend already supports create-without-start.
+If not, add the smallest explicit option needed by the create API. Avoid
+encoding this behavior indirectly through status strings or client-only followup
+actions.
 
 ### Phase 7: Remove Old Create Form State
 
@@ -532,6 +583,8 @@ Component tests:
 - Open create-similar while modal is already open.
 - Apply each visible preset and verify the resulting fields are non-blank and
   valid for the selected provider.
+- Click Create and verify the resulting host is not started.
+- Click Create and Start and verify the resulting host starts.
 - Switch provider repeatedly and verify no blank required fields.
 - Simulate catalog arriving after modal opens.
 - Verify Nebius GPU create-similar preserves provider, machine type, disk, spot
@@ -557,6 +610,8 @@ Manual smoke tests:
 - Admin and non-admin billing modes.
 - Admin catalog refresh from inside the modal, including last-refresh timestamp
   if the backend exposes it.
+- Create without starting, then manually start later.
+- Create and Start.
 - Mobile width.
 
 ## Rollback Strategy
@@ -576,15 +631,10 @@ driven by draft state, correctness should improve even before the modal lands.
 
 ## Open Questions
 
-- What exact hardcoded preset values should we start with for each provider?
-  Initial implementation can choose the first valid modest option from catalog
-  rather than committing to product-level names in advance.
-- Does the backend expose provider catalog last-refresh timestamps in the data
-  already available to the frontend? If yes, show them in the admin refresh
-  affordance. If not, this is optional.
-- Should Lambda-specific partnership language appear in product UI? Not for
-  this implementation; keep it provider-neutral until there is a concrete
-  partnership.
+- What should the final product labels be for the two submit actions? Working
+  labels are `Create` and `Create and Start`.
+- Does the backend create API already support create-without-start? If not, add
+  an explicit option.
 
 Resolved decisions:
 
@@ -597,6 +647,15 @@ Resolved decisions:
 - Admin catalog refresh may appear inside the modal, visible only to admins,
   with explanatory text that it is mainly needed for onboarding and normally
   refreshes automatically afterward.
+- Presets should start as minimally useful hardcoded choices. The initial
+  implementation can choose the first valid modest option from catalog; after
+  manual testing and creating a few real hosts, refine the hardcoded choices.
+- Provider catalog last-refresh timestamp should be shown in the admin refresh
+  affordance if it is present in the catalog payload. It is expected to be cheap
+  compared to the catalog data already being sent.
+- Do not include Lambda partnership language in product UI until there is a
+  concrete partnership.
+- The create modal must support both create-without-start and create-and-start.
 
 ## Recommended First Commit
 
