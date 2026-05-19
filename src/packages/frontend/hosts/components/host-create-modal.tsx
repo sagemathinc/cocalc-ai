@@ -1,5 +1,6 @@
 import { Modal } from "antd";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
+import type { Host } from "@cocalc/conat/hub/api/hosts";
 import type { HostCreateDraft } from "../create/host-create-draft";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import { HostCreateCard } from "./host-create-card";
@@ -9,6 +10,7 @@ type HostCreateModalProps = {
   onClose: () => void;
   vm: HostCreateViewModel;
   initialDraft?: HostCreateDraft | null;
+  sourceHost?: Pick<Host, "id" | "name"> | null;
   onInitialDraftConsumed?: () => void;
 };
 
@@ -17,6 +19,7 @@ export function HostCreateModal({
   onClose,
   vm,
   initialDraft,
+  sourceHost,
   onInitialDraftConsumed,
 }: HostCreateModalProps) {
   return (
@@ -39,6 +42,7 @@ export function HostCreateModal({
       <HostCreateCard
         vm={vm}
         initialDraft={initialDraft}
+        sourceHost={sourceHost}
         onInitialDraftConsumed={onInitialDraftConsumed}
       />
     </Modal>

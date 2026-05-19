@@ -27,6 +27,10 @@ export const HostsPage: React.FC = () => {
   const [createModalOpen, setCreateModalOpen] = React.useState(false);
   const [initialCreateDraft, setInitialCreateDraft] =
     React.useState<HostCreateDraft | null>(null);
+  const [similarSourceHost, setSimilarSourceHost] = React.useState<Pick<
+    Host,
+    "id" | "name"
+  > | null>(null);
   const closeHostDrawer = hostDrawerVm.onClose;
   const openCreateSimilar = React.useCallback(
     (host: Host) => {
@@ -46,6 +50,7 @@ export const HostsPage: React.FC = () => {
       });
       closeHostDrawer();
       setInitialCreateDraft(nextValues);
+      setSimilarSourceHost({ id: host.id, name: host.name });
       setCreateModalOpen(true);
     },
     [
@@ -82,11 +87,14 @@ export const HostsPage: React.FC = () => {
   );
 
   const openCreateModal = React.useCallback(() => {
+    clearInitialCreateDraft();
+    setSimilarSourceHost(null);
     setCreateModalOpen(true);
-  }, []);
+  }, [clearInitialCreateDraft]);
   const closeCreateModal = React.useCallback(() => {
     setCreateModalOpen(false);
     clearInitialCreateDraft();
+    setSimilarSourceHost(null);
   }, [clearInitialCreateDraft]);
 
   return (
@@ -113,6 +121,7 @@ export const HostsPage: React.FC = () => {
         onClose={closeCreateModal}
         vm={createVmWithCloseOnCreate}
         initialDraft={initialCreateDraft}
+        sourceHost={similarSourceHost}
         onInitialDraftConsumed={clearInitialCreateDraft}
       />
       <HostDrawer vm={hostDrawerVmWithCreateSimilar} />
