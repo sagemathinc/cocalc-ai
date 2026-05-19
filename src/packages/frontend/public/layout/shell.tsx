@@ -388,9 +388,6 @@ export function PublicPage({
               style={{
                 ...PAGE_BAND_STYLE,
                 background: PUBLIC_COLORS.brandTint,
-                height: "auto",
-                lineHeight: "normal",
-                paddingBlock: token.paddingXS,
                 position: "sticky",
                 top: 0,
                 zIndex: token.zIndexPopupBase,

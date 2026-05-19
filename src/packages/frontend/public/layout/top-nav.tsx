@@ -5,10 +5,10 @@
 
 import { useState } from "react";
 
-import { CloseOutlined, MenuOutlined } from "@ant-design/icons";
+import { MenuOutlined } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 
-import { Button, Flex, Grid, Menu, theme } from "antd";
+import { Button, Drawer, Flex, Grid, Menu, Space, theme } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   arePublicPoliciesVisible,
@@ -104,7 +104,7 @@ export default function PublicTopNav({
   const config = usePublicConfig();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isAuthenticated = !!config?.is_authenticated;
-  const isCompact = !screens.md;
+  const isCompact = !screens.sm;
   const logoSquare = getLogoSquare(config);
   const showPolicies = arePublicPoliciesVisible(config);
   const siteName = getSiteName(config);
@@ -162,58 +162,7 @@ export default function PublicTopNav({
 
   if (isCompact) {
     return (
-      <Flex vertical gap="small">
-        <Flex align="center" justify="space-between">
-          <HomeLogoLink
-            active={active}
-            config={config}
-            isCompact={isCompact}
-            logoSquare={logoSquare}
-            siteName={siteName}
-          />
-          <Flex align="center" gap="small">
-            {authActions}
-            <Button
-              aria-label={
-                mobileMenuOpen
-                  ? "Close navigation menu"
-                  : "Open navigation menu"
-              }
-              aria-expanded={mobileMenuOpen}
-              aria-haspopup="menu"
-              icon={mobileMenuOpen ? <CloseOutlined /> : <MenuOutlined />}
-              onClick={() => setMobileMenuOpen((open) => !open)}
-            />
-          </Flex>
-        </Flex>
-        {mobileMenuOpen ? (
-          <Menu
-            aria-label="Public pages"
-            items={menuItems}
-            mode="vertical"
-            onClick={() => setMobileMenuOpen(false)}
-            selectedKeys={selectedKeys}
-            style={{
-              background: "transparent",
-              border: 0,
-            }}
-          />
-        ) : null}
-      </Flex>
-    );
-  }
-
-  return (
-    <Flex align="center" gap="middle" justify="space-between" wrap>
-      <Flex
-        align="center"
-        gap="middle"
-        style={{
-          flex: "1 1 640px",
-          minWidth: 280,
-        }}
-        wrap
-      >
+      <Flex align="center" justify="space-between">
         <HomeLogoLink
           active={active}
           config={config}
@@ -221,23 +170,52 @@ export default function PublicTopNav({
           logoSquare={logoSquare}
           siteName={siteName}
         />
-        <Menu
-          aria-label="Public pages"
-          disabledOverflow
-          items={menuItems}
-          mode="horizontal"
-          selectedKeys={selectedKeys}
-          style={{
-            background: "transparent",
-            borderBottom: 0,
-            flex: "1 1 auto",
-            minWidth: 0,
-          }}
+        <Space>{authActions}</Space>
+        <Button
+          aria-label="Open navigation menu"
+          aria-haspopup="menu"
+          icon={<MenuOutlined />}
+          onClick={() => setMobileMenuOpen(true)}
         />
+        <Drawer
+          onClose={() => setMobileMenuOpen(false)}
+          open={mobileMenuOpen}
+          placement="right"
+          size={280}
+          title="Navigation"
+        >
+          <Menu
+            items={menuItems}
+            mode="vertical"
+            onClick={() => setMobileMenuOpen(false)}
+            selectedKeys={selectedKeys}
+          />
+        </Drawer>
       </Flex>
-      <Flex gap="small" wrap>
-        {authActions}
-      </Flex>
+    );
+  }
+
+  return (
+    <Flex>
+      <HomeLogoLink
+        active={active}
+        config={config}
+        isCompact={isCompact}
+        logoSquare={logoSquare}
+        siteName={siteName}
+      />
+      <Menu
+        aria-label="Public pages"
+        items={menuItems}
+        mode="horizontal"
+        selectedKeys={selectedKeys}
+        style={{
+          background: "transparent",
+          borderBottom: 0,
+          flex: "1 1 auto",
+        }}
+      />
+      <Space>{authActions}</Space>
     </Flex>
   );
 }
