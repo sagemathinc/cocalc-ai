@@ -15,10 +15,12 @@ import {
   Table,
   Tag,
   Typography,
+  message,
 } from "antd";
 import { CloudServerOutlined, SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { copyTextToClipboard } from "@cocalc/frontend/components/copy-button";
 import type {
   Host,
   HostCatalog,
@@ -173,6 +175,15 @@ function shortHostId(host: Host): string {
   return host.id.slice(0, 8);
 }
 
+async function copyHostId(host: Host) {
+  const ok = await copyTextToClipboard({ text: host.id });
+  if (ok) {
+    message.success("Copied host id.");
+  } else {
+    message.error("Unable to copy host id.");
+  }
+}
+
 function statusDotColor(host: Host): string {
   if (host.deleted) return COLORS.GRAY_M;
   if (host.status === "error") return COLORS.FG_RED;
@@ -241,7 +252,16 @@ function HostIdentityCell({
         </Space>
         <Typography.Text
           type="secondary"
-          style={{ fontSize: 12, fontFamily: "monospace" }}
+          title={`Copy host id: ${host.id}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            void copyHostId(host);
+          }}
+          style={{
+            fontSize: 12,
+            fontFamily: "monospace",
+            cursor: "copy",
+          }}
         >
           {shortHostId(host)}
         </Typography.Text>
