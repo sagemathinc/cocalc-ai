@@ -31,6 +31,8 @@ export class ProjectCollaborators {
     subject?: string;
     message?: string;
     send_email?: boolean;
+    invite_context?: Record<string, unknown>;
+    invite_scope?: string;
   }): Promise<any> {
     return await this.conat.hub.projects.inviteCollaboratorWithoutAccount({
       opts,

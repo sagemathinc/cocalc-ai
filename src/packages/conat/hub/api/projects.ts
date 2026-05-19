@@ -862,6 +862,8 @@ export interface Projects {
       subject?: string;
       message?: string;
       send_email?: boolean;
+      invite_context?: Record<string, unknown>;
+      invite_scope?: string;
     };
   }) => Promise<{
     invites: ProjectCollabInviteRow[];

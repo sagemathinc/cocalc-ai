@@ -1,4 +1,4 @@
-export {};
+import { createHmac } from "node:crypto";
 
 let assertLocalProjectCollaboratorMock: jest.Mock;
 let assertProjectCollaboratorAccessAllowRemoteMock: jest.Mock;
@@ -128,17 +128,38 @@ jest.mock("@cocalc/server/project-host/control", () => ({
   syncProjectUsersOnHost: jest.fn(async () => undefined),
 }));
 
+jest.mock("@cocalc/server/account/project-feed", () => ({
+  __esModule: true,
+  publishProjectAccountFeedEventsBestEffort: jest.fn(async () => undefined),
+}));
+
+jest.mock("@cocalc/database/postgres/project-events-outbox", () => ({
+  __esModule: true,
+  appendProjectOutboxEventForProject: jest.fn(async () => undefined),
+}));
+
 describe("project collaborators local bay access", () => {
   const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
   const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
   const TARGET_ACCOUNT_ID = "33333333-3333-4333-8333-333333333333";
   const EMAIL_ACTION_ID = "44444444-4444-4444-8444-444444444444";
   const removeCollaboratorFromProject = jest.fn(async () => undefined);
+  const addCollaboratorToProject = jest.fn(async () => undefined);
   const accountCreationActions = jest.fn(async () => undefined);
   const whenSentProjectInvite = jest.fn(async () => 0);
   const getServerSettingsCached = jest.fn(async () => ({
     organization_email: "help@example.com",
   }));
+
+  function inviteTokenHash(token: string): string {
+    const aad = "project_collab_invites.email-token:v1";
+    const digest = createHmac("sha256", Buffer.alloc(32, 1))
+      .update(aad)
+      .update("\0")
+      .update(token)
+      .digest("base64url");
+    return `${aad}:${digest}`;
+  }
 
   beforeEach(() => {
     jest.resetModules();
@@ -173,11 +194,13 @@ describe("project collaborators local bay access", () => {
     deleteProjectedInboundCollabInviteMock = jest.fn(async () => undefined);
     assertAccountTrustedForProductAccessMock = jest.fn(async () => undefined);
     removeCollaboratorFromProject.mockClear();
+    addCollaboratorToProject.mockClear();
     accountCreationActions.mockClear();
     whenSentProjectInvite.mockClear();
     getServerSettingsCached.mockClear();
     dbMock = jest.fn(() => ({
       remove_collaborator_from_project: removeCollaboratorFromProject,
+      add_collaborator_to_project: addCollaboratorToProject,
       account_creation_actions: accountCreationActions,
       when_sent_project_invite: whenSentProjectInvite,
       sent_project_invite: jest.fn(async () => undefined),
@@ -628,6 +651,98 @@ describe("project collaborators local bay access", () => {
     expect(assertAccountTrustedForProductAccessMock).toHaveBeenCalledWith(
       ACCOUNT_ID,
       "invite collaborators",
+    );
+  });
+
+  it("binds accepted course email invites to the student project course field", async () => {
+    const inviteId = "77777777-7777-4777-8777-777777777777";
+    const token = "course-invite-token";
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("UPDATE project_collab_invites") &&
+        sql.includes("RETURNING")
+      ) {
+        return { rows: [] };
+      }
+      if (sql.includes("SELECT invite_id, project_id, status, token_hash")) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              status: "pending",
+              token_hash: inviteTokenHash(token),
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT EXISTS(")) {
+        return { rows: [{ already: false }] };
+      }
+      if (
+        sql.includes(
+          "SELECT invite_id, project_id, inviter_account_id, invitee_account_id",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              invitee_account_id: null,
+              invite_source: "email",
+              scope: "course_student",
+              status: "pending",
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM project_collab_invites i")) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              invitee_account_id: null,
+              invite_source: "email",
+              scope: "course_student",
+              accepted_account_id: ACCOUNT_ID,
+              status: "accepted",
+              created: new Date("2026-04-01T00:00:00Z"),
+              updated: new Date("2026-04-01T00:00:00Z"),
+              responded: new Date("2026-04-01T00:00:00Z"),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { redeemEmailProjectInvite } = await import("./collaborators");
+    await expect(
+      redeemEmailProjectInvite({
+        account_id: ACCOUNT_ID,
+        invite_id: inviteId,
+        token,
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        accepted_account_id: ACCOUNT_ID,
+        scope: "course_student",
+        status: "accepted",
+      }),
+    );
+    expect(addCollaboratorToProject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("jsonb_set"),
+      [PROJECT_ID, ACCOUNT_ID],
     );
   });
 

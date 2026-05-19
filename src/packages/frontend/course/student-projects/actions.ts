@@ -155,17 +155,22 @@ export class StudentProjectsActions {
       let body = store.get_email_invite();
       body = body.replace(/{title}/g, title).replace(/{name}/g, name);
       body = markdown_to_html(body);
-      await redux
-        .getActions("projects")
-        .invite_collaborators_by_email(
+      await redux.getActions("projects").invite_collaborators_by_email(
+        student_project_id,
+        student,
+        body,
+        subject,
+        true,
+        replyto,
+        name,
+        {
+          course_path: store.get("course_filename"),
+          course_project_id: store.get("course_project_id"),
+          student_id,
           student_project_id,
-          student,
-          body,
-          subject,
-          true,
-          replyto,
-          name,
-        );
+        },
+        "course_student",
+      );
       this.course_actions.set({
         table: "students",
         student_id,

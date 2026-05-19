@@ -74,6 +74,7 @@ const EMAIL_INVITE_EMAIL_AAD = "project_collab_invites.email";
 const EMAIL_INVITE_HASH_AAD = "project_collab_invites.email-token:v1";
 const EMAIL_INVITE_SOURCE = "email";
 const EMAIL_INVITE_SCOPE = "project_collab";
+const COURSE_EMAIL_INVITE_SCOPE = "course_student";
 const INVITE_STATUS_SET = new Set<string>([
   "pending",
   "accepted",
@@ -1110,6 +1111,7 @@ async function getCanonicalCollabInvite(
       invitee_account_id: string | null;
       accepted_account_id?: string | null;
       invite_source?: string | null;
+      scope?: string | null;
       token_hash?: string | null;
       token_ciphertext?: string | null;
       status: string;
@@ -1124,12 +1126,13 @@ async function getCanonicalCollabInvite(
     invitee_account_id: string | null;
     accepted_account_id?: string | null;
     invite_source?: string | null;
+    scope?: string | null;
     token_hash?: string | null;
     token_ciphertext?: string | null;
     status: string;
   }>(
     `SELECT invite_id, project_id, inviter_account_id, invitee_account_id,
-            accepted_account_id, invite_source, token_hash, token_ciphertext, status
+            accepted_account_id, invite_source, scope, token_hash, token_ciphertext, status
      FROM project_collab_invites
      WHERE invite_id=$1
      LIMIT 1`,
@@ -1631,14 +1634,18 @@ function normalizeInviteEmail(email: string): string {
 
 async function createEmailProjectInvite({
   account_id,
+  context,
   project_id,
   email_address,
   message,
+  scope = EMAIL_INVITE_SCOPE,
 }: {
   account_id: string;
+  context?: Record<string, unknown>;
   project_id: string;
   email_address: string;
   message?: string;
+  scope?: string;
 }): Promise<{
   created: boolean;
   invite: ProjectCollabInviteRow;
@@ -1661,9 +1668,10 @@ async function createEmailProjectInvite({
         AND email_hash=$3
         AND status='pending'
         AND invite_source=$4
+        AND scope=$5
       ORDER BY created DESC
       LIMIT 1`,
-    [project_id, account_id, email_hash, EMAIL_INVITE_SOURCE],
+    [project_id, account_id, email_hash, EMAIL_INVITE_SOURCE, scope],
   );
   const existing = existingRows[0];
   if (existing) {
@@ -1710,7 +1718,7 @@ async function createEmailProjectInvite({
        invite_source, email_hash, email_ciphertext, token_hash, token_ciphertext,
        token_hint, status, message, scope, context, created, updated)
      VALUES
-      ($1, $2, $3, NULL, $4, $5, $6, $7, $8, $9, 'pending', $10, $11, '{}'::jsonb, NOW(), NOW())`,
+      ($1, $2, $3, NULL, $4, $5, $6, $7, $8, $9, 'pending', $10, $11, $12::jsonb, NOW(), NOW())`,
     [
       invite_id,
       project_id,
@@ -1722,7 +1730,8 @@ async function createEmailProjectInvite({
       token_ciphertext,
       token_hint,
       normalizedMessage || null,
-      EMAIL_INVITE_SCOPE,
+      scope,
+      JSON.stringify(context ?? {}),
     ],
   );
   const invite = await fetchInviteById(invite_id, false);
@@ -1862,6 +1871,20 @@ export async function redeemEmailProjectInvite({
     await syncProjectUsersOnHostBestEffort(
       invite.project_id,
       "accept email token invite",
+    );
+  }
+  const loaded = await getCanonicalCollabInvite(pool, invite_id);
+  if (loaded?.scope === COURSE_EMAIL_INVITE_SCOPE) {
+    await pool.query(
+      `UPDATE projects
+          SET course=jsonb_set(
+                COALESCE(course, '{}'::jsonb),
+                '{account_id}',
+                to_jsonb($2::text),
+                true
+              )
+        WHERE project_id=$1`,
+      [invite.project_id, account_id],
     );
   }
   await pool.query(
@@ -2004,6 +2027,8 @@ export async function inviteCollaboratorWithoutAccount({
     subject?: string;
     message?: string;
     send_email?: boolean;
+    invite_context?: Record<string, unknown>;
+    invite_scope?: string;
   };
 }): Promise<{ invites: ProjectCollabInviteRow[]; email_sent: boolean }> {
   await assertLocalProjectCollaborator({
@@ -2048,9 +2073,11 @@ export async function inviteCollaboratorWithoutAccount({
 
     const created = await createEmailProjectInvite({
       account_id,
+      context: opts.invite_context,
       project_id: opts.project_id,
       email_address,
       message: opts.message,
+      scope: opts.invite_scope,
     });
 
     // 3. Has email been sent recently?

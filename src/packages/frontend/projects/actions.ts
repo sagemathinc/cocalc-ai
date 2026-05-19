@@ -2285,6 +2285,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
     silent: boolean,
     replyto: string | undefined,
     replyto_name: string | undefined,
+    invite_context?: Record<string, unknown>,
+    invite_scope?: string,
   ): Promise<void> {
     await this.redux.getProjectActions(project_id).async_log({
       event: "invite_nonuser",
@@ -2310,6 +2312,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
         email,
         subject,
         message: body,
+        invite_context,
+        invite_scope,
       });
       notifyCollabInvitesChanged(project_id);
       if (!silent) {
