@@ -14,6 +14,7 @@ export * from "@cocalc/server/projects/collaborators";
 import {
   createCollabInvite as createCollabInviteLocal,
   copyEmailProjectInviteLink as copyEmailProjectInviteLinkLocal,
+  inviteCollaboratorWithoutAccount as inviteCollaboratorWithoutAccountLocal,
   listCollabInvites as listCollabInvitesLocal,
   redeemEmailProjectInvite as redeemEmailProjectInviteLocal,
   removeCollaborator as removeCollaboratorLocal,
@@ -1506,6 +1507,52 @@ export async function createCollabInvite({
   };
 }
 
+export async function inviteCollaboratorWithoutAccount({
+  account_id,
+  opts,
+}: {
+  account_id?: string;
+  opts: {
+    project_id: string;
+    title: string;
+    link2proj: string;
+    replyto?: string;
+    replyto_name?: string;
+    to: string;
+    email: string;
+    subject?: string;
+    message?: string;
+    send_email?: boolean;
+    invite_context?: Record<string, unknown>;
+    invite_scope?: string;
+  };
+}) {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  await assertCollabAllowRemoteProjectAccess({
+    account_id,
+    project_id: opts.project_id,
+  });
+  const ownership = await resolveProjectBay(opts.project_id);
+  if (ownership == null) {
+    throw new Error(`project ${opts.project_id} not found`);
+  }
+  if (ownership.bay_id === getConfiguredBayId()) {
+    return await inviteCollaboratorWithoutAccountLocal({ account_id, opts });
+  }
+  const result = await getInterBayBridge()
+    .projectCollabInvite(ownership.bay_id)
+    .inviteWithoutAccount({
+      account_id,
+      opts,
+    });
+  return {
+    email_sent: result.email_sent,
+    invites: result.invites.map((invite) => collabInviteFromWire(invite)),
+  };
+}
+
 export async function listCollabInvites({
   account_id,
   project_id,
@@ -1634,7 +1681,21 @@ export async function copyEmailProjectInviteLink({
       project_id,
     });
   }
-  throw new Error("copying remote email invite links is not implemented yet");
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  const result = await getInterBayBridge()
+    .projectCollabInvite(ownership.bay_id)
+    .copyEmailLink({
+      account_id,
+      invite_id,
+      project_id,
+    });
+  return {
+    invite_id: result.invite_id,
+    invite_url: result.invite_url,
+    expires: result.expires ? new Date(result.expires) : null,
+  };
 }
 
 export async function redeemEmailProjectInvite({
@@ -1664,7 +1725,18 @@ export async function redeemEmailProjectInvite({
       project_id,
     });
   }
-  throw new Error("redeeming remote email invite links is not implemented yet");
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  const result = await getInterBayBridge()
+    .projectCollabInvite(ownership.bay_id)
+    .redeemEmail({
+      account_id,
+      invite_id,
+      token,
+      project_id,
+    });
+  return collabInviteFromWire(result);
 }
 
 export async function exec({

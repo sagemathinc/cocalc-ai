@@ -247,8 +247,11 @@ import {
   upsertProjectedCollabInviteDirect,
 } from "@cocalc/server/projects/collab-invite-inbox";
 import {
+  copyEmailProjectInviteLink,
   createCollabInvite,
+  inviteCollaboratorWithoutAccount,
   listCollabInvites,
+  redeemEmailProjectInvite,
   removeCollaborator,
   respondCollabInviteCanonical,
 } from "@cocalc/server/projects/collaborators";
@@ -925,6 +928,23 @@ async function startProjectCollabInviteService(): Promise<void> {
         invite: collabInviteToWire(result.invite),
       };
     },
+    inviteWithoutAccount: async (opts) => {
+      const result = await inviteCollaboratorWithoutAccount(opts);
+      return {
+        email_sent: result.email_sent,
+        invites: result.invites.map((invite) => collabInviteToWire(invite)),
+      };
+    },
+    copyEmailLink: async (opts) => {
+      const result = await copyEmailProjectInviteLink(opts);
+      return {
+        invite_id: result.invite_id,
+        invite_url: result.invite_url,
+        expires: result.expires ? new Date(result.expires).toISOString() : null,
+      };
+    },
+    redeemEmail: async (opts) =>
+      collabInviteToWire(await redeemEmailProjectInvite(opts)),
     list: async (opts) =>
       (await listCollabInvites(opts)).map((invite) =>
         collabInviteToWire(invite),
