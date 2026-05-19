@@ -1,12 +1,4 @@
-import {
-  Button,
-  Card,
-  Divider,
-  Popconfirm,
-  Space,
-  Tag,
-  Typography,
-} from "antd";
+import { Button, Card, Space, Tag, Typography } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
@@ -19,18 +11,11 @@ import type {
 } from "../types";
 import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import { useHostPricingSettings } from "../hooks/use-host-pricing-settings";
-import { isHostOpActive, type HostLroState } from "../hooks/use-host-ops";
-import { describeBlockedHostActions, getHostOpPhase } from "./host-op-progress";
-import {
-  confirmHostDeprovision,
-  confirmHostDrain,
-  confirmHostStop,
-} from "./host-confirm";
+import type { HostLroState } from "../hooks/use-host-ops";
+import { describeBlockedHostActions } from "./host-op-progress";
 import { COLORS } from "@cocalc/util/theme";
 import { getHostSizeDisplay } from "../utils/format";
-import { canManageHostLifecycle } from "../utils/access";
 import { HostCurrentMetrics } from "./host-current-metrics";
-import { hostBillingEnforcementBlocksStart } from "./host-billing-enforcement";
 import {
   currentProjectHostRolloutPhase,
   shouldSuppressProjectHostFailedOp,
@@ -38,6 +23,7 @@ import {
 import { isSpotHost, SpotHostTag } from "../spot-ui";
 import { HostPricingSummary } from "./host-pricing-summary";
 import { HostStatusSummary } from "./host-status-summary";
+import { HostActionsPanel } from "./host-actions-panel";
 
 type HostCardProps = {
   host: Host;
@@ -80,17 +66,7 @@ export const HostCard: React.FC<HostCardProps> = ({
   selfHost,
 }) => {
   const pricingSettings = useHostPricingSettings();
-  const isDeleted = !!host.deleted;
   const isSelfHost = host.machine?.cloud === "self-host";
-  const hasSshTarget = !!String(
-    host.machine?.metadata?.self_host_ssh_target ?? "",
-  ).trim();
-  const autoSetup = isSelfHost && hasSshTarget;
-  const connectorOnline =
-    !isSelfHost ||
-    !selfHost?.isConnectorOnline ||
-    selfHost.isConnectorOnline(host.region);
-  const showConnectorSetup = isSelfHost && !isDeleted;
   const size = getHostSizeDisplay(host);
   const projectHostObservation = host.observed_host_agent?.project_host;
   const displayHostOp = shouldSuppressProjectHostFailedOp({
@@ -100,208 +76,14 @@ export const HostCard: React.FC<HostCardProps> = ({
   })
     ? undefined
     : hostOp;
-  const hostOpActive = isHostOpActive(displayHostOp);
   const projectHostRolloutPhase = currentProjectHostRolloutPhase({
     op: displayHostOp,
     currentVersion: host.version,
     observation: projectHostObservation,
   });
-  const startDisabled =
-    isDeleted ||
-    !host.can_start ||
-    host.status === "running" ||
-    host.status === "starting" ||
-    host.status === "restarting" ||
-    hostBillingEnforcementBlocksStart(host) ||
-    (!connectorOnline && !autoSetup) ||
-    hostOpActive;
-  const startLabel =
-    host.status === "starting"
-      ? "Starting"
-      : host.status === "restarting"
-        ? "Restarting"
-        : "Start";
-  const stopLabel = host.status === "stopping" ? "Stopping" : "Stop";
-  const providerId = host.machine?.cloud;
-  const caps = providerId ? providerCapabilities?.[providerId] : undefined;
-  const allowStop =
-    !isDeleted &&
-    host.can_start &&
-    (host.status === "running" || host.status === "error") &&
-    caps?.supportsStop !== false &&
-    host.machine?.storage_mode !== "ephemeral" &&
-    !hostOpActive;
-  const supportsRestart = caps?.supportsRestart ?? true;
-  const supportsHardRestart = caps?.supportsHardRestart ?? false;
-  const allowRestart =
-    !isDeleted &&
-    host.can_start &&
-    connectorOnline &&
-    (host.status === "running" || host.status === "error") &&
-    (supportsRestart || supportsHardRestart) &&
-    !hostOpActive;
-  const canManageLifecycle = canManageHostLifecycle(host);
-  const deleteLabel = isDeleted
-    ? "Deleted"
-    : host.status === "deprovisioned"
-      ? "Delete"
-      : "Deprovision";
-  const deleteTitle =
-    host.status === "deprovisioned"
-      ? "Delete this host?"
-      : "Deprovision this host?";
-  const deleteOkText =
-    host.status === "deprovisioned" ? "Delete" : "Deprovision";
-  const isDeprovisioned = host.status === "deprovisioned";
-  const canRefreshCloudStatus =
-    !isDeleted &&
-    !!onRefreshCloudStatus &&
-    !!host.machine?.cloud &&
-    host.machine.cloud !== "self-host" &&
-    host.machine.cloud !== "local" &&
-    !hostOpActive;
-  const opPhase = getHostOpPhase(displayHostOp);
-  const canCancelBackups =
-    !!displayHostOp?.op_id &&
-    hostOpActive &&
-    opPhase === "backups" &&
-    !!onCancelOp;
   const blockedActionsReason = describeBlockedHostActions(displayHostOp, {
     displayPhaseLabel: projectHostRolloutPhase?.label,
   });
-  const actions = [
-    <Button
-      key="start"
-      type="link"
-      disabled={startDisabled}
-      onClick={() => onStart(host.id)}
-    >
-      {startLabel}
-    </Button>,
-    showConnectorSetup && selfHost ? (
-      <Button
-        key="setup"
-        type="link"
-        disabled={hostOpActive}
-        onClick={() => selfHost.onSetup(host)}
-      >
-        Setup / reconnect
-      </Button>
-    ) : null,
-    allowStop ? (
-      <Button
-        key="stop"
-        type="link"
-        onClick={() =>
-          confirmHostStop({
-            host,
-            onConfirm: (opts) => onStop(host.id, opts),
-          })
-        }
-      >
-        {stopLabel}
-      </Button>
-    ) : (
-      <Button key="stop" type="link" disabled>
-        {stopLabel}
-      </Button>
-    ),
-    allowRestart ? (
-      <Button
-        key="restart"
-        type="link"
-        onClick={() => onRestart(host.id, "reboot")}
-      >
-        Restart
-      </Button>
-    ) : (
-      <Button key="restart" type="link" disabled>
-        Restart
-      </Button>
-    ),
-    canManageLifecycle ? (
-      <Button
-        key="drain"
-        type="link"
-        disabled={isDeleted || hostOpActive}
-        onClick={() =>
-          confirmHostDrain({
-            host,
-            onConfirm: (opts) => onDrain(host.id, opts),
-          })
-        }
-      >
-        Drain
-      </Button>
-    ) : null,
-    canCancelBackups && displayHostOp ? (
-      <Popconfirm
-        key="cancel"
-        title="Cancel backups for this host?"
-        okText="Cancel backups"
-        cancelText="Keep running"
-        onConfirm={() => onCancelOp?.(displayHostOp.op_id)}
-      >
-        <Button type="link">Cancel</Button>
-      </Popconfirm>
-    ) : null,
-    canManageLifecycle ? (
-      <Button
-        key="edit"
-        type="link"
-        disabled={isDeleted}
-        onClick={() => onEdit(host)}
-      >
-        Edit
-      </Button>
-    ) : null,
-    canRefreshCloudStatus ? (
-      <Popconfirm
-        key="refresh-cloud"
-        title="Refresh cloud/provider status for this host?"
-        description="This forces an immediate cloud reconcile for this host's provider and updates the host row if reality drifted."
-        okText="Refresh"
-        cancelText="Cancel"
-        onConfirm={() => onRefreshCloudStatus?.(host)}
-      >
-        <Button type="link">Refresh cloud status</Button>
-      </Popconfirm>
-    ) : null,
-    <Button key="details" type="link" onClick={() => onDetails(host)}>
-      Details
-    </Button>,
-    canManageLifecycle && isDeprovisioned ? (
-      <Popconfirm
-        key="delete"
-        title={deleteTitle}
-        okText={deleteOkText}
-        cancelText="Cancel"
-        okButtonProps={{ danger: true }}
-        onConfirm={() => onDelete(host.id)}
-        disabled={isDeleted || hostOpActive}
-      >
-        <Button type="link" danger disabled={isDeleted || hostOpActive}>
-          {deleteLabel}
-        </Button>
-      </Popconfirm>
-    ) : canManageLifecycle ? (
-      <Button
-        key="delete"
-        type="link"
-        danger
-        disabled={isDeleted || hostOpActive}
-        onClick={() =>
-          confirmHostDeprovision({
-            host,
-            onConfirm: (opts) => onDelete(host.id, opts),
-          })
-        }
-      >
-        {deleteLabel}
-      </Button>
-    ) : null,
-  ];
-  const visibleActions = actions.filter(Boolean) as React.ReactNode[];
 
   return (
     <Card
@@ -400,20 +182,25 @@ export const HostCard: React.FC<HostCardProps> = ({
             {host.last_error}
           </div>
         )}
-        <Divider style={{ margin: "4px 0" }} />
-        <Space
-          size={[0, 4]}
-          wrap
-          style={{ width: "100%" }}
-          styles={{ item: { marginInlineEnd: 0 } }}
-        >
-          {visibleActions}
-        </Space>
-        {blockedActionsReason ? (
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {blockedActionsReason}
-          </Typography.Text>
-        ) : null}
+        <HostActionsPanel
+          host={host}
+          hostOp={displayHostOp}
+          providerCapabilities={providerCapabilities}
+          blockedActionsReason={blockedActionsReason}
+          mode="card"
+          selfHost={selfHost}
+          onStart={() => onStart(host.id)}
+          onStop={(opts) => onStop(host.id, opts)}
+          onRestart={() => onRestart(host.id, "reboot")}
+          onDrain={(opts) => onDrain(host.id, opts)}
+          onDelete={(opts) => onDelete(host.id, opts)}
+          onCancelOp={onCancelOp}
+          onEdit={() => onEdit(host)}
+          onDetails={() => onDetails(host)}
+          onRefreshCloudStatus={
+            onRefreshCloudStatus ? () => onRefreshCloudStatus(host) : undefined
+          }
+        />
       </Space>
     </Card>
   );

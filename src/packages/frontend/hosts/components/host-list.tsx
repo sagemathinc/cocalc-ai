@@ -5,7 +5,6 @@ import {
   Col,
   Input,
   Modal,
-  Popconfirm,
   Popover,
   Radio,
   Row,
@@ -17,19 +16,8 @@ import {
   Tag,
   Typography,
 } from "antd";
-import {
-  DeleteOutlined,
-  EditOutlined,
-  MoreOutlined,
-  PlayCircleOutlined,
-  PoweroffOutlined,
-  ReloadOutlined,
-  StopOutlined,
-  SyncOutlined,
-  ToolOutlined,
-} from "@ant-design/icons";
+import { SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
-import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type {
   Host,
@@ -45,14 +33,9 @@ import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import { useHostPricingSettings } from "../hooks/use-host-pricing-settings";
 import type { DedicatedHostSurchargeSettings } from "@cocalc/util/project-host-pricing";
 import type { HostLroState } from "../hooks/use-host-ops";
-import { describeBlockedHostActions, getHostOpPhase } from "./host-op-progress";
+import { describeBlockedHostActions } from "./host-op-progress";
 import { HostErrorDetails } from "./host-error-details";
-import {
-  confirmBulkHostDeprovision,
-  confirmHostDeprovision,
-  confirmHostDrain,
-  confirmHostStop,
-} from "./host-confirm";
+import { confirmBulkHostDeprovision } from "./host-confirm";
 import { isHostOpActive } from "../hooks/use-host-ops";
 import { UpgradeConfirmContent } from "./upgrade-confirmation";
 import { HostParallelOpsSummary } from "./host-parallel-ops-summary";
@@ -82,6 +65,7 @@ import {
   currentProjectHostRolloutPhase,
 } from "@cocalc/conat/project-host/rollout";
 import { currentHostRuntimeExceptionSummary } from "../utils/runtime-exceptions";
+import { HostActionsPanel } from "./host-actions-panel";
 
 const STATUS_ORDER = [
   "running",
@@ -879,72 +863,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       key: "actions",
       width: 220,
       render: (_: string, host: Host) => {
-        const isDeleted = !!host.deleted;
         const op = hostOps?.[host.id];
-        const hostOpActive = isHostOpActive(op);
-        const isSelfHost = host.machine?.cloud === "self-host";
-        const hasSshTarget = !!String(
-          host.machine?.metadata?.self_host_ssh_target ?? "",
-        ).trim();
-        const autoSetup = isSelfHost && hasSshTarget;
-        const connectorOnline =
-          !isSelfHost ||
-          !selfHost?.isConnectorOnline ||
-          selfHost.isConnectorOnline(host.region);
-        const showConnectorSetup = isSelfHost && selfHost && !isDeleted;
-        const startDisabled =
-          isDeleted ||
-          !host.can_start ||
-          host.status === "running" ||
-          host.status === "starting" ||
-          host.status === "restarting" ||
-          hostBillingEnforcementBlocksStart(host) ||
-          (!connectorOnline && !autoSetup) ||
-          hostOpActive;
-        const startLabel =
-          host.status === "starting"
-            ? "Starting"
-            : host.status === "restarting"
-              ? "Restarting"
-              : "Start";
-        const stopLabel = host.status === "stopping" ? "Stopping" : "Stop";
-        const statusValue = host.status;
-        const providerId = host.machine?.cloud;
-        const caps = providerId
-          ? providerCapabilities?.[providerId]
-          : undefined;
-        const allowStop =
-          !isDeleted &&
-          host.can_start &&
-          (statusValue === "running" || statusValue === "error") &&
-          caps?.supportsStop !== false &&
-          host.machine?.storage_mode !== "ephemeral" &&
-          !hostOpActive;
-        const supportsRestart = caps?.supportsRestart ?? true;
-        const supportsHardRestart = caps?.supportsHardRestart ?? false;
-        const allowRestart =
-          !isDeleted &&
-          host.can_start &&
-          connectorOnline &&
-          (statusValue === "running" || statusValue === "error") &&
-          (supportsRestart || supportsHardRestart) &&
-          !hostOpActive;
-        const canManageLifecycle = canManageHostLifecycle(host);
-        const deleteLabel = isDeleted
-          ? "Deleted"
-          : host.status === "deprovisioned"
-            ? "Delete"
-            : "Deprovision";
-        const deleteTitle =
-          host.status === "deprovisioned"
-            ? "Delete this host?"
-            : "Deprovision this host?";
-        const deleteOkText =
-          host.status === "deprovisioned" ? "Delete" : "Deprovision";
-        const isDeprovisioned = host.status === "deprovisioned";
-        const opPhase = getHostOpPhase(op);
-        const canCancelBackups =
-          !!op?.op_id && hostOpActive && opPhase === "backups";
         const projectHostRolloutPhase = currentProjectHostRolloutPhase({
           op,
           currentVersion: host.version,
@@ -953,259 +872,22 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         const blockedActionsReason = describeBlockedHostActions(op, {
           displayPhaseLabel: projectHostRolloutPhase?.label,
         });
-
-        const actionButtonStyle = {
-          justifyContent: "flex-start",
-          height: 30,
-          paddingInline: 8,
-        } as const;
-        const sectionTitle = (label: string) => (
-          <Typography.Text
-            type="secondary"
-            style={{
-              display: "block",
-              fontSize: 11,
-              fontWeight: 600,
-              letterSpacing: 0.4,
-              textTransform: "uppercase",
-              margin: "2px 0 4px",
-            }}
-          >
-            {label}
-          </Typography.Text>
-        );
-        const primaryAction =
-          !startDisabled || !allowStop
-            ? {
-                label: startLabel,
-                icon: <PlayCircleOutlined />,
-                disabled: startDisabled,
-                type: "primary" as const,
-                onClick: () => onStart(host.id),
-              }
-            : allowStop
-              ? {
-                  label: stopLabel,
-                  icon: <PoweroffOutlined />,
-                  disabled: false,
-                  type: "default" as const,
-                  onClick: () =>
-                    confirmHostStop({
-                      host,
-                      onConfirm: (opts) => onStop(host.id, opts),
-                    }),
-                }
-              : {
-                  label: "Restart",
-                  icon: <ReloadOutlined />,
-                  disabled: !allowRestart,
-                  type: "default" as const,
-                  onClick: () => setRestartTarget(host),
-                };
-        const lifecycleActions = (
-          <Space direction="vertical" size={2} style={{ width: "100%" }}>
-            {sectionTitle("Lifecycle")}
-            <Button
-              block
-              type="text"
-              disabled={startDisabled}
-              icon={<PlayCircleOutlined />}
-              style={actionButtonStyle}
-              onClick={() => onStart(host.id)}
-            >
-              {startLabel}
-            </Button>
-            <Button
-              block
-              type="text"
-              disabled={!allowStop}
-              icon={<PoweroffOutlined />}
-              style={actionButtonStyle}
-              onClick={() =>
-                confirmHostStop({
-                  host,
-                  onConfirm: (opts) => onStop(host.id, opts),
-                })
-              }
-            >
-              {stopLabel}
-            </Button>
-            <Button
-              block
-              type="text"
-              disabled={!allowRestart}
-              icon={<ReloadOutlined />}
-              style={actionButtonStyle}
-              onClick={() => setRestartTarget(host)}
-            >
-              Restart
-            </Button>
-            {showConnectorSetup && selfHost ? (
-              <Button
-                block
-                type="text"
-                disabled={hostOpActive}
-                icon={<ToolOutlined />}
-                style={actionButtonStyle}
-                onClick={() => selfHost.onSetup(host)}
-              >
-                Setup / reconnect
-              </Button>
-            ) : null}
-          </Space>
-        );
-        const maintenanceActions = canManageLifecycle ? (
-          <Space direction="vertical" size={2} style={{ width: "100%" }}>
-            {sectionTitle("Maintenance")}
-            <Button
-              block
-              type="text"
-              disabled={isDeleted || hostOpActive}
-              icon={<StopOutlined />}
-              style={actionButtonStyle}
-              onClick={() =>
-                confirmHostDrain({
-                  host,
-                  onConfirm: (opts) => onDrain(host.id, opts),
-                })
-              }
-            >
-              Drain
-            </Button>
-            {canCancelBackups && onCancelOp ? (
-              <Popconfirm
-                title="Cancel backups for this host?"
-                okText="Cancel backups"
-                cancelText="Keep running"
-                onConfirm={() => onCancelOp(op!.op_id)}
-              >
-                <Button
-                  block
-                  type="text"
-                  icon={<StopOutlined />}
-                  style={actionButtonStyle}
-                >
-                  Cancel backups
-                </Button>
-              </Popconfirm>
-            ) : null}
-          </Space>
-        ) : null;
-        const dangerActions = canManageLifecycle ? (
-          <Space direction="vertical" size={2} style={{ width: "100%" }}>
-            {sectionTitle("Danger")}
-            {isDeprovisioned ? (
-              <Popconfirm
-                title={deleteTitle}
-                okText={deleteOkText}
-                cancelText="Cancel"
-                okButtonProps={{ danger: true }}
-                onConfirm={() => onDelete(host.id)}
-                disabled={isDeleted || hostOpActive}
-              >
-                <Button
-                  block
-                  type="text"
-                  danger
-                  disabled={isDeleted || hostOpActive}
-                  icon={<DeleteOutlined />}
-                  style={actionButtonStyle}
-                >
-                  {deleteLabel}
-                </Button>
-              </Popconfirm>
-            ) : (
-              <Button
-                block
-                type="text"
-                danger
-                disabled={isDeleted || hostOpActive}
-                icon={<DeleteOutlined />}
-                style={actionButtonStyle}
-                onClick={() =>
-                  confirmHostDeprovision({
-                    host,
-                    onConfirm: (opts) => onDelete(host.id, opts),
-                  })
-                }
-              >
-                {deleteLabel}
-              </Button>
-            )}
-          </Space>
-        ) : null;
-        const moreActions = (
-          <div style={{ width: 210 }}>
-            <Space direction="vertical" size={8} style={{ width: "100%" }}>
-              {lifecycleActions}
-              <Space direction="vertical" size={2} style={{ width: "100%" }}>
-                {sectionTitle("Operations")}
-                <Button
-                  block
-                  type="text"
-                  icon={<EditOutlined />}
-                  disabled={!canManageLifecycle || isDeleted}
-                  style={actionButtonStyle}
-                  onClick={() => onEdit(host)}
-                >
-                  Edit settings
-                </Button>
-              </Space>
-              {maintenanceActions}
-              {dangerActions}
-            </Space>
-          </div>
-        );
-
         return (
-          <Space direction="vertical" size={6} style={{ maxWidth: 220 }}>
-            <Space size={6} wrap style={{ maxWidth: 220 }}>
-              <Button
-                size="small"
-                type={primaryAction.type}
-                disabled={primaryAction.disabled}
-                icon={primaryAction.icon}
-                onClick={primaryAction.onClick}
-                style={{ minWidth: 94 }}
-              >
-                {primaryAction.label}
-              </Button>
-              <Tooltip title="Restart">
-                <Button
-                  size="small"
-                  disabled={!allowRestart}
-                  icon={<ReloadOutlined />}
-                  onClick={() => setRestartTarget(host)}
-                />
-              </Tooltip>
-              {canManageLifecycle ? (
-                <Tooltip title="Edit settings">
-                  <Button
-                    size="small"
-                    disabled={isDeleted}
-                    icon={<EditOutlined />}
-                    onClick={() => onEdit(host)}
-                  />
-                </Tooltip>
-              ) : null}
-              <Popover
-                trigger="click"
-                placement="bottomRight"
-                content={moreActions}
-                overlayInnerStyle={{ padding: 10 }}
-              >
-                <Button size="small" icon={<MoreOutlined />} />
-              </Popover>
-            </Space>
-            {blockedActionsReason ? (
-              <Typography.Text
-                type="secondary"
-                style={{ fontSize: 12, lineHeight: 1.3 }}
-              >
-                {blockedActionsReason}
-              </Typography.Text>
-            ) : null}
-          </Space>
+          <HostActionsPanel
+            host={host}
+            hostOp={op}
+            providerCapabilities={providerCapabilities}
+            blockedActionsReason={blockedActionsReason}
+            selfHost={selfHost}
+            onStart={() => onStart(host.id)}
+            onStop={(opts) => onStop(host.id, opts)}
+            onRestart={() => setRestartTarget(host)}
+            onDrain={(opts) => onDrain(host.id, opts)}
+            onDelete={(opts) => onDelete(host.id, opts)}
+            onCancelOp={onCancelOp}
+            onEdit={() => onEdit(host)}
+            onDetails={() => onDetails(host)}
+          />
         );
       },
     },
