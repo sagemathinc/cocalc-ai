@@ -565,6 +565,9 @@ describe("cloud host start failures", () => {
           deleteHost,
           startHost,
           getStatus,
+          setPricingModel: jest.fn(async () => {
+            throw new Error("Nebius should recreate instead");
+          }),
         },
       },
       creds: {},

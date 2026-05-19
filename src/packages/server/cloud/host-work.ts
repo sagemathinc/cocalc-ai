@@ -1153,7 +1153,7 @@ async function handleStart(row: any) {
       };
       nextRecoveryState =
         clearVerificationFields(fallbackState) ?? fallbackState;
-      if (!entry.provider.setPricingModel && providerId === "nebius") {
+      if (providerId === "nebius") {
         if (
           row.metadata?.machine?.storage_mode === "persistent" &&
           !runtime?.metadata?.diskIds?.data
