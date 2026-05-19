@@ -17,6 +17,8 @@ type HostCreateFormProps = {
   wrapForm?: boolean;
   showOnlyProviderSelect?: boolean;
   autoSelectFundingMode?: boolean;
+  onValuesChange?: (changedValues: any, allValues: any) => void;
+  draftManaged?: boolean;
 };
 
 export const HostCreateForm: React.FC<HostCreateFormProps> = ({
@@ -28,6 +30,8 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
   wrapForm = true,
   showOnlyProviderSelect = false,
   autoSelectFundingMode = true,
+  onValuesChange,
+  draftManaged = false,
 }) => {
   const isSelfHost = provider.selectedProvider === "self-host";
   const hideAdvanced = isSelfHost;
@@ -55,30 +59,46 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
   const previousPricingModelRef = React.useRef<"on_demand" | "spot">(
     "on_demand",
   );
+  const updateDraftManagedFields = React.useCallback(
+    (patch: Record<string, any>) => {
+      onValuesChange?.(patch, { ...form.getFieldsValue(true), ...patch });
+    },
+    [form, onValuesChange],
+  );
+  const setFormFields = React.useCallback(
+    (patch: Record<string, any>) => {
+      form.setFieldsValue(patch);
+      if (draftManaged) {
+        updateDraftManagedFields(patch);
+      }
+    },
+    [draftManaged, form, updateDraftManagedFields],
+  );
   React.useEffect(() => {
     if (!simpleSelfHost) return;
     if (form.getFieldValue("provider") !== "self-host") {
-      form.setFieldsValue({ provider: "self-host" });
+      setFormFields({ provider: "self-host" });
     }
     if (form.getFieldValue("self_host_kind") !== "direct") {
-      form.setFieldsValue({ self_host_kind: "direct" });
+      setFormFields({ self_host_kind: "direct" });
     }
     if (form.getFieldValue("self_host_mode") !== "local") {
-      form.setFieldsValue({ self_host_mode: "local" });
+      setFormFields({ self_host_mode: "local" });
     }
     if (form.getFieldValue("disk") == null) {
-      form.setFieldsValue({ disk: 100, disk_gb: 100 });
+      setFormFields({ disk: 100, disk_gb: 100 });
     }
-  }, [form, simpleSelfHost]);
+  }, [form, setFormFields, simpleSelfHost]);
   React.useEffect(() => {
     if (!simpleSelfHost) return;
     const nextName = (watchedSshTarget ?? "").trim();
     if (!nextName) return;
     if (form.getFieldValue("name") !== nextName) {
-      form.setFieldsValue({ name: nextName });
+      setFormFields({ name: nextName });
     }
-  }, [form, simpleSelfHost, watchedSshTarget]);
+  }, [form, setFormFields, simpleSelfHost, watchedSshTarget]);
   React.useEffect(() => {
+    if (draftManaged) return;
     if (!showSpotFields) return;
     const nextPricingModel =
       watchedPricingModel === "spot" ? "spot" : "on_demand";
@@ -96,8 +116,9 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
       form.setFieldsValue({ interruption_restore_policy: nextDefault });
     }
     previousPricingModelRef.current = nextPricingModel;
-  }, [form, showSpotFields, watchedPricingModel]);
+  }, [draftManaged, form, showSpotFields, watchedPricingModel]);
   React.useEffect(() => {
+    if (draftManaged) return;
     if (provider.selectedProvider !== "nebius") return;
     if (nebiusSpotSupported) return;
     if (watchedPricingModel !== "spot") return;
@@ -110,8 +131,10 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
     nebiusSpotSupported,
     provider.selectedProvider,
     watchedPricingModel,
+    draftManaged,
   ]);
   React.useEffect(() => {
+    if (draftManaged) return;
     if (!autoSelectFundingMode || !showSpotFields) {
       return;
     }
@@ -133,12 +156,17 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
     form,
     showSpotFields,
     watchedFundingMode,
+    draftManaged,
   ]);
   const providerField = (
     <Form.Item
       name="provider"
       label="Provider"
-      initialValue={provider.providerOptions[0]?.value ?? "none"}
+      initialValue={
+        draftManaged
+          ? undefined
+          : (provider.providerOptions[0]?.value ?? "none")
+      }
     >
       <Select options={provider.providerOptions} onChange={onProviderChange} />
     </Form.Item>
@@ -181,7 +209,11 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
             </>
           ) : (
             <>
-              <Form.Item name="name" label="Name" initialValue="My host">
+              <Form.Item
+                name="name"
+                label="Name"
+                initialValue={draftManaged ? undefined : "My host"}
+              >
                 <Input placeholder="My host" />
               </Form.Item>
               {showSpotFields && (
@@ -202,6 +234,8 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
                 provider={provider}
                 onProviderChange={onProviderChange}
                 hideProviderSelect
+                draftManaged={draftManaged}
+                onDraftPatch={updateDraftManagedFields}
               />
             </>
           )}
@@ -219,6 +253,8 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
                       provider={provider}
                       showSpotFields={showSpotFields}
                       nebiusSpotSupported={nebiusSpotSupported}
+                      draftManaged={draftManaged}
+                      onDraftPatch={updateDraftManagedFields}
                     />
                   ),
                 },
@@ -231,7 +267,12 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
   );
   if (!wrapForm) return content;
   return (
-    <Form layout="vertical" disabled={!canCreateHosts} form={form}>
+    <Form
+      layout="vertical"
+      disabled={!canCreateHosts}
+      form={form}
+      onValuesChange={onValuesChange}
+    >
       {content}
     </Form>
   );

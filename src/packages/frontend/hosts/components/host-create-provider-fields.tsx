@@ -38,16 +38,33 @@ type HostCreateProviderFieldsProps = {
   provider: HostCreateViewModel["provider"];
   onProviderChange?: (value: string) => void;
   hideProviderSelect?: boolean;
+  draftManaged?: boolean;
+  onDraftPatch?: (patch: Record<string, any>) => void;
 };
 
 export const HostCreateProviderFields: React.FC<
   HostCreateProviderFieldsProps
-> = ({ provider, onProviderChange, hideProviderSelect = false }) => {
+> = ({
+  provider,
+  onProviderChange,
+  hideProviderSelect = false,
+  draftManaged = false,
+  onDraftPatch,
+}) => {
   const { providerOptions, selectedProvider, fields, catalogError, storage } =
     provider;
   const { schema, options, labels, tooltips } = fields;
   const { persistentGrowable, showDiskFields } = storage;
   const form = Form.useFormInstance();
+  const setFormFields = React.useCallback(
+    (patch: Record<string, any>) => {
+      form.setFieldsValue(patch);
+      if (draftManaged) {
+        onDraftPatch?.(patch);
+      }
+    },
+    [draftManaged, form, onDraftPatch],
+  );
   const watchedRegion = Form.useWatch("region", form);
   const watchedZone = Form.useWatch("zone", form);
   const watchedMachineType = Form.useWatch("machine_type", form);
@@ -103,22 +120,25 @@ export const HostCreateProviderFields: React.FC<
   const diskTypeOptions = getDiskTypeOptions(selectedProvider);
   const defaultDiskType = diskTypeOptions[0]?.value;
   React.useEffect(() => {
+    if (draftManaged) return;
     if (!showDiskFields || !diskTypeOptions.length) return;
     if (!watchedDiskType) {
-      form.setFieldsValue({ disk_type: defaultDiskType });
+      setFormFields({ disk_type: defaultDiskType });
     }
   }, [
     defaultDiskType,
     diskTypeOptions.length,
-    form,
+    setFormFields,
     showDiskFields,
     watchedDiskType,
+    draftManaged,
   ]);
   React.useEffect(() => {
+    if (draftManaged) return;
     if (selectedProvider !== "gcp") return;
     if (watchedStorageMode === "persistent") return;
-    form.setFieldsValue({ storage_mode: "persistent" });
-  }, [form, selectedProvider, watchedStorageMode]);
+    setFormFields({ storage_mode: "persistent" });
+  }, [draftManaged, selectedProvider, setFormFields, watchedStorageMode]);
   const effectiveDiskType = watchedDiskType ?? defaultDiskType;
   const isNebiusIoM3 =
     selectedProvider === "nebius" && effectiveDiskType === "ssd_io_m3";
@@ -141,13 +161,21 @@ export const HostCreateProviderFields: React.FC<
     [diskMin, isNebiusIoM3],
   );
   React.useEffect(() => {
+    if (draftManaged) return;
     if (!isNebiusIoM3) return;
     const normalized = normalizeDiskValue(diskValue);
     if (normalized !== diskValue) {
-      form.setFieldsValue({ disk: normalized, disk_gb: normalized });
+      setFormFields({ disk: normalized, disk_gb: normalized });
     }
-  }, [diskValue, form, isNebiusIoM3, normalizeDiskValue]);
+  }, [
+    diskValue,
+    draftManaged,
+    isNebiusIoM3,
+    normalizeDiskValue,
+    setFormFields,
+  ]);
   React.useEffect(() => {
+    if (draftManaged) return;
     if (!showDiskFields) return;
     if (
       (typeof watchedDisk === "number" && Number.isFinite(watchedDisk)) ||
@@ -155,8 +183,15 @@ export const HostCreateProviderFields: React.FC<
     ) {
       return;
     }
-    form.setFieldsValue({ disk: diskMin, disk_gb: diskMin });
-  }, [diskMin, form, showDiskFields, watchedDisk, watchedDiskGb]);
+    setFormFields({ disk: diskMin, disk_gb: diskMin });
+  }, [
+    diskMin,
+    draftManaged,
+    setFormFields,
+    showDiskFields,
+    watchedDisk,
+    watchedDiskGb,
+  ]);
   const gcpCompatibilityWarning = React.useMemo(() => {
     if (selectedProvider !== "gcp") return null;
     const machineType =
@@ -210,39 +245,46 @@ export const HostCreateProviderFields: React.FC<
       const fieldOptions = displayOptions[field] ?? [];
       if (!fieldOptions.length) return;
       if (!current || !fieldOptions.some((opt) => opt.value === current)) {
-        form.setFieldsValue({ [field]: fieldOptions[0]?.value });
+        setFormFields({ [field]: fieldOptions[0]?.value });
       }
     },
-    [displayOptions, form],
+    [displayOptions, setFormFields],
   );
 
   React.useEffect(() => {
+    if (draftManaged) return;
     ensureFieldValue("region", watchedRegion);
-  }, [ensureFieldValue, watchedRegion]);
+  }, [draftManaged, ensureFieldValue, watchedRegion]);
 
   React.useEffect(() => {
+    if (draftManaged) return;
     ensureFieldValue("zone", watchedZone);
-  }, [ensureFieldValue, watchedZone]);
+  }, [draftManaged, ensureFieldValue, watchedZone]);
 
   React.useEffect(() => {
+    if (draftManaged) return;
     ensureFieldValue("machine_type", watchedMachineType);
-  }, [ensureFieldValue, watchedMachineType]);
+  }, [draftManaged, ensureFieldValue, watchedMachineType]);
 
   React.useEffect(() => {
+    if (draftManaged) return;
     ensureFieldValue("size", watchedSize);
-  }, [ensureFieldValue, watchedSize]);
+  }, [draftManaged, ensureFieldValue, watchedSize]);
 
   React.useEffect(() => {
+    if (draftManaged) return;
     ensureFieldValue("gpu_type", watchedGpuType);
-  }, [ensureFieldValue, watchedGpuType]);
+  }, [draftManaged, ensureFieldValue, watchedGpuType]);
 
   React.useEffect(() => {
+    if (draftManaged) return;
     ensureFieldValue("self_host_kind", form.getFieldValue("self_host_kind"));
-  }, [ensureFieldValue, form]);
+  }, [draftManaged, ensureFieldValue, form]);
 
   React.useEffect(() => {
+    if (draftManaged) return;
     ensureFieldValue("self_host_mode", form.getFieldValue("self_host_mode"));
-  }, [ensureFieldValue, form]);
+  }, [draftManaged, ensureFieldValue, form]);
   const requireSshTarget =
     selectedProvider === "self-host" && !selfHostAlphaEnabled;
   const showSelfHostSshWarning =
@@ -304,7 +346,7 @@ export const HostCreateProviderFields: React.FC<
         name={field}
         label={itemLabel}
         tooltip={tooltip}
-        initialValue={fieldOptions[0]?.value}
+        initialValue={draftManaged ? undefined : fieldOptions[0]?.value}
       >
         <HostOptionsSelect
           options={fieldOptions}
@@ -336,7 +378,9 @@ export const HostCreateProviderFields: React.FC<
         <Form.Item
           name="provider"
           label="Provider"
-          initialValue={providerOptions[0]?.value ?? "none"}
+          initialValue={
+            draftManaged ? undefined : (providerOptions[0]?.value ?? "none")
+          }
         >
           <Select options={providerOptions} onChange={onProviderChange} />
         </Form.Item>
@@ -345,7 +389,7 @@ export const HostCreateProviderFields: React.FC<
         <Form.Item
           name="region_preference"
           label="Region preference"
-          initialValue="balanced"
+          initialValue={draftManaged ? undefined : "balanced"}
           extra="Sort regions using your approximate location and the current machine pricing."
         >
           <Select
@@ -361,7 +405,7 @@ export const HostCreateProviderFields: React.FC<
         <Form.Item
           name="price_display"
           label="Show prices as"
-          initialValue="hourly"
+          initialValue={draftManaged ? undefined : "hourly"}
         >
           <Select
             options={[
@@ -400,7 +444,7 @@ export const HostCreateProviderFields: React.FC<
                   const meta = (regionOption?.meta ?? {}) as {
                     compatibleZone?: string;
                   };
-                  form.setFieldsValue({
+                  setFormFields({
                     region: value,
                     zone: meta.compatibleZone ?? undefined,
                   });
@@ -430,7 +474,7 @@ export const HostCreateProviderFields: React.FC<
                       (opt) => opt.value === value,
                     );
                   const meta = (zoneOption?.meta ?? {}) as { region?: string };
-                  form.setFieldsValue({
+                  setFormFields({
                     zone: value,
                     region: meta.region ?? undefined,
                   });
@@ -491,7 +535,7 @@ export const HostCreateProviderFields: React.FC<
                     return;
                   }
                   const normalized = normalizeDiskValue(value);
-                  form.setFieldsValue({
+                  setFormFields({
                     disk: normalized,
                     disk_gb: normalized,
                   });
@@ -499,7 +543,11 @@ export const HostCreateProviderFields: React.FC<
               />
             </Col>
             <Col flex="120px">
-              <Form.Item name="disk" initialValue={INITIAL_DISK_SIZE} noStyle>
+              <Form.Item
+                name="disk"
+                initialValue={draftManaged ? undefined : INITIAL_DISK_SIZE}
+                noStyle
+              >
                 <InputNumber
                   min={diskMin}
                   max={MAX_DISK_SIZE}
@@ -511,7 +559,7 @@ export const HostCreateProviderFields: React.FC<
                       return;
                     }
                     const normalized = normalizeDiskValue(value);
-                    form.setFieldsValue({
+                    setFormFields({
                       disk: normalized,
                       disk_gb: normalized,
                     });
@@ -528,7 +576,7 @@ export const HostCreateProviderFields: React.FC<
             name="cpu"
             label="vCPU"
             tooltip="Number of virtual CPUs for this VM."
-            initialValue={2}
+            initialValue={draftManaged ? undefined : 2}
           >
             <InputNumber min={1} max={128} style={{ width: "100%" }} />
           </Form.Item>
@@ -536,7 +584,7 @@ export const HostCreateProviderFields: React.FC<
             name="ram_gb"
             label="Memory (GB)"
             tooltip="RAM to allocate to this VM."
-            initialValue={8}
+            initialValue={draftManaged ? undefined : 8}
           >
             <InputNumber min={1} max={512} style={{ width: "100%" }} />
           </Form.Item>

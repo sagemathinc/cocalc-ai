@@ -14,10 +14,11 @@ import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import {
-  applyPreset,
   getAvailablePresets,
+  type HostCreateDraft,
   type HostCreateDraftContext,
 } from "../create/host-create-draft";
+import { useHostCreateDraft } from "../create/use-host-create-draft";
 import {
   getProviderPriceEstimate,
   type HostFieldId,
@@ -31,9 +32,15 @@ import { HostPriceBreakdown } from "./host-price-breakdown";
 
 type HostCreateCardProps = {
   vm: HostCreateViewModel;
+  initialDraft?: HostCreateDraft | null;
+  onInitialDraftConsumed?: () => void;
 };
 
-export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
+export const HostCreateCard: React.FC<HostCreateCardProps> = ({
+  vm,
+  initialDraft,
+  onInitialDraftConsumed,
+}) => {
   const { permissions, form, provider, billing, catalogRefresh } = vm;
   const pricingSettings = useHostPricingSettings();
   const { isAdmin, canCreateHosts } = permissions;
@@ -73,15 +80,21 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
       provider.selectedProvider,
     ],
   );
+  const draftState = useHostCreateDraft({
+    form: formInstance,
+    context: draftContext,
+    initialDraft,
+    onInitialDraftConsumed,
+  });
   const onProviderChange = React.useCallback(
     (value: string) => {
       const nextProvider = value as HostProvider;
-      formInstance.setFieldsValue({ provider: nextProvider });
+      draftState.setProvider(nextProvider);
       if (refreshProviders.some((entry) => entry.value === nextProvider)) {
         setRefreshProvider(nextProvider);
       }
     },
-    [formInstance, refreshProviders, setRefreshProvider],
+    [draftState, refreshProviders, setRefreshProvider],
   );
   const refreshCatalogAndNotify = async () => {
     await refreshCatalog(provider.selectedProvider);
@@ -92,7 +105,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
       const runCreate = async () => {
         const created = await onCreate(vals, { start });
         if (!created) return;
-        formInstance.resetFields();
+        draftState.resetDefault();
         onCreated?.();
       };
       if (runFreshAuthAction) {
@@ -115,55 +128,15 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
   const watchedPricingModel = Form.useWatch("pricing_model", formInstance);
   const watchedPriceDisplay = Form.useWatch("price_display", formInstance);
   const watchedFundingMode = Form.useWatch("funding_mode", formInstance);
-  const currentDraftValues = React.useMemo(
-    () => ({
-      ...formInstance.getFieldsValue(true),
-      provider: provider.selectedProvider,
-      region: watchedRegion,
-      zone: watchedZone,
-      machine_type: watchedMachineType,
-      gpu_type: watchedGpuType,
-      pricing_model: watchedPricingModel,
-      storage_mode: watchedStorageMode,
-      disk_type: watchedDiskType,
-      disk_gb: watchedDiskGb,
-      disk: watchedDisk,
-      funding_mode: watchedFundingMode,
-      price_display: watchedPriceDisplay === "monthly" ? "monthly" : "hourly",
-    }),
-    [
-      formInstance,
-      provider.selectedProvider,
-      watchedDisk,
-      watchedDiskGb,
-      watchedDiskType,
-      watchedFundingMode,
-      watchedGpuType,
-      watchedMachineType,
-      watchedPriceDisplay,
-      watchedPricingModel,
-      watchedRegion,
-      watchedStorageMode,
-      watchedZone,
-    ],
-  );
   const presets = React.useMemo(
-    () => getAvailablePresets(currentDraftValues, draftContext),
-    [currentDraftValues, draftContext],
+    () => getAvailablePresets(draftState.draft, draftContext),
+    [draftContext, draftState.draft],
   );
   const applyCreatePreset = React.useCallback(
     (presetId: (typeof presets)[number]["id"]) => {
-      const next = applyPreset(
-        presetId,
-        {
-          ...formInstance.getFieldsValue(true),
-          provider: provider.selectedProvider,
-        },
-        draftContext,
-      );
-      formInstance.setFieldsValue(next);
+      draftState.applyPreset(presetId);
     },
-    [draftContext, formInstance, provider.selectedProvider],
+    [draftState],
   );
   const selectedDiskGb =
     typeof watchedDiskGb === "number" && Number.isFinite(watchedDiskGb)
@@ -363,6 +336,8 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
             provider={provider}
             billing={billing}
             onProviderChange={onProviderChange}
+            onValuesChange={draftState.onValuesChange}
+            draftManaged
             showOnlyProviderSelect
           />
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -380,6 +355,8 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
             provider={provider}
             billing={billing}
             onProviderChange={onProviderChange}
+            onValuesChange={draftState.onValuesChange}
+            draftManaged
             showOnlyProviderSelect
           />
           <Alert
@@ -417,6 +394,8 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
             provider={provider}
             billing={billing}
             onProviderChange={onProviderChange}
+            onValuesChange={draftState.onValuesChange}
+            draftManaged
           />
           {provider.selectedProvider !== "none" &&
             provider.selectedProvider !== "self-host" && (

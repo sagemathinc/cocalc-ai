@@ -32,11 +32,15 @@ import { HostSpotRecoveryDiagram } from "./host-spot-recovery-diagram";
 type HostSpotRecoveryFieldsProps = {
   visible: boolean;
   host?: Host;
+  draftManaged?: boolean;
+  onDraftPatch?: (patch: Record<string, any>) => void;
 };
 
 export const HostSpotRecoveryFields: React.FC<HostSpotRecoveryFieldsProps> = ({
   visible,
   host,
+  draftManaged = false,
+  onDraftPatch,
 }) => {
   const form = Form.useFormInstance();
   const [open, setOpen] = React.useState(false);
@@ -65,10 +69,14 @@ export const HostSpotRecoveryFields: React.FC<HostSpotRecoveryFieldsProps> = ({
   React.useEffect(() => {
     if (!visible || !policyActive) return;
     if (form.getFieldValue("spot_recovery_policy") != null) return;
-    form.setFieldsValue({
+    const patch = {
       spot_recovery_policy: { ...DEFAULT_SPOT_RECOVERY_POLICY },
-    });
-  }, [form, policyActive, visible]);
+    };
+    form.setFieldsValue(patch);
+    if (draftManaged) {
+      onDraftPatch?.(patch);
+    }
+  }, [draftManaged, form, onDraftPatch, policyActive, visible]);
 
   React.useEffect(() => {
     if (!visible || pricingModel !== "spot") {
@@ -133,7 +141,9 @@ export const HostSpotRecoveryFields: React.FC<HostSpotRecoveryFieldsProps> = ({
                   label="Spot retry window (minutes)"
                   tooltip="How long to keep retrying the interrupted spot VM before falling back to standard."
                   initialValue={
-                    DEFAULT_SPOT_RECOVERY_POLICY.spot_restore_retry_window_minutes
+                    draftManaged
+                      ? undefined
+                      : DEFAULT_SPOT_RECOVERY_POLICY.spot_restore_retry_window_minutes
                   }
                 >
                   <InputNumber min={1} style={{ width: "100%" }} />
@@ -148,7 +158,9 @@ export const HostSpotRecoveryFields: React.FC<HostSpotRecoveryFieldsProps> = ({
                   label="Retry backoff (seconds)"
                   tooltip="Base delay between spot restore attempts. The worker adds exponential backoff up to a cap."
                   initialValue={
-                    DEFAULT_SPOT_RECOVERY_POLICY.spot_restore_backoff_seconds
+                    draftManaged
+                      ? undefined
+                      : DEFAULT_SPOT_RECOVERY_POLICY.spot_restore_backoff_seconds
                   }
                 >
                   <InputNumber min={1} style={{ width: "100%" }} />
@@ -164,7 +176,9 @@ export const HostSpotRecoveryFields: React.FC<HostSpotRecoveryFieldsProps> = ({
                   tooltip="Set this to 0 to rely only on the retry window."
                   extra="0 means retry until the spot retry window expires."
                   initialValue={
-                    DEFAULT_SPOT_RECOVERY_POLICY.max_restore_attempts_before_fallback
+                    draftManaged
+                      ? undefined
+                      : DEFAULT_SPOT_RECOVERY_POLICY.max_restore_attempts_before_fallback
                   }
                 >
                   <InputNumber min={0} style={{ width: "100%" }} />
@@ -176,7 +190,9 @@ export const HostSpotRecoveryFields: React.FC<HostSpotRecoveryFieldsProps> = ({
                   label="Allow standard fallback"
                   tooltip="If spot retries fail, temporarily switch this host to a standard VM to restore service."
                   initialValue={
-                    DEFAULT_SPOT_RECOVERY_POLICY.standard_fallback_enabled
+                    draftManaged
+                      ? undefined
+                      : DEFAULT_SPOT_RECOVERY_POLICY.standard_fallback_enabled
                   }
                   valuePropName="checked"
                 >
@@ -194,7 +210,9 @@ export const HostSpotRecoveryFields: React.FC<HostSpotRecoveryFieldsProps> = ({
                       label="Minimum standard runtime (minutes)"
                       tooltip="After falling back to standard, wait at least this long before probing to return to spot."
                       initialValue={
-                        DEFAULT_SPOT_RECOVERY_POLICY.standard_fallback_min_minutes
+                        draftManaged
+                          ? undefined
+                          : DEFAULT_SPOT_RECOVERY_POLICY.standard_fallback_min_minutes
                       }
                     >
                       <InputNumber min={1} style={{ width: "100%" }} />
@@ -209,7 +227,9 @@ export const HostSpotRecoveryFields: React.FC<HostSpotRecoveryFieldsProps> = ({
                       label="Spot probe interval (minutes)"
                       tooltip="How often to probe the same zone and machine type for spot availability while the host is on standard."
                       initialValue={
-                        DEFAULT_SPOT_RECOVERY_POLICY.spot_probe_interval_minutes
+                        draftManaged
+                          ? undefined
+                          : DEFAULT_SPOT_RECOVERY_POLICY.spot_probe_interval_minutes
                       }
                     >
                       <InputNumber min={1} style={{ width: "100%" }} />
@@ -224,7 +244,9 @@ export const HostSpotRecoveryFields: React.FC<HostSpotRecoveryFieldsProps> = ({
                       label="Require successful probe before returning to spot"
                       tooltip="If enabled, CoCalc only switches a standard fallback host back to spot after a matching probe VM starts successfully."
                       initialValue={
-                        DEFAULT_SPOT_RECOVERY_POLICY.spot_return_requires_probe
+                        draftManaged
+                          ? undefined
+                          : DEFAULT_SPOT_RECOVERY_POLICY.spot_return_requires_probe
                       }
                       valuePropName="checked"
                     >

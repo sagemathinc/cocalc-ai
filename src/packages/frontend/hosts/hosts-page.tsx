@@ -87,7 +87,7 @@ export const HostsPage: React.FC = () => {
     React.useState(readCreatePanelWidth);
   const [createPanelOpen, setCreatePanelOpen] =
     React.useState(readCreatePanelOpen);
-  const [pendingCreateValues, setPendingCreateValues] =
+  const [initialCreateDraft, setInitialCreateDraft] =
     React.useState<HostCreateDraft | null>(null);
   React.useEffect(() => {
     persistCreatePanelWidth(createPanelWidth);
@@ -95,13 +95,6 @@ export const HostsPage: React.FC = () => {
   React.useEffect(() => {
     persistCreatePanelOpen(createPanelOpen);
   }, [createPanelOpen]);
-  React.useEffect(() => {
-    if (!createPanelOpen || !pendingCreateValues) return;
-    const form = createVm.form.form;
-    form.resetFields();
-    form.setFieldsValue(pendingCreateValues);
-    setPendingCreateValues(null);
-  }, [createPanelOpen, createVm.form.form, pendingCreateValues]);
   const closeHostDrawer = hostDrawerVm.onClose;
   const openCreateSimilar = React.useCallback(
     (host: Host) => {
@@ -120,7 +113,7 @@ export const HostsPage: React.FC = () => {
         },
       });
       closeHostDrawer();
-      setPendingCreateValues(nextValues);
+      setInitialCreateDraft(nextValues);
       setCreatePanelOpen(true);
     },
     [
@@ -151,6 +144,10 @@ export const HostsPage: React.FC = () => {
     }),
     [createVm],
   );
+  const clearInitialCreateDraft = React.useCallback(
+    () => setInitialCreateDraft(null),
+    [],
+  );
 
   const toggleCreatePanel = React.useCallback(() => {
     setCreatePanelOpen((prev) => !prev);
@@ -160,7 +157,11 @@ export const HostsPage: React.FC = () => {
   if (IS_MOBILE) {
     return (
       <div className="smc-vfill" style={WRAP_STYLE}>
-        <HostCreateCard vm={createVmWithCloseOnCreate} />
+        <HostCreateCard
+          vm={createVmWithCloseOnCreate}
+          initialDraft={initialCreateDraft}
+          onInitialDraftConsumed={clearInitialCreateDraft}
+        />
         <div style={{ marginTop: 16 }}>
           <HostList
             vm={{
@@ -197,7 +198,11 @@ export const HostsPage: React.FC = () => {
             setWidth={setCreatePanelWidth}
             onHide={toggleCreatePanel}
           >
-            <HostCreateCard vm={createVmWithCloseOnCreate} />
+            <HostCreateCard
+              vm={createVmWithCloseOnCreate}
+              initialDraft={initialCreateDraft}
+              onInitialDraftConsumed={clearInitialCreateDraft}
+            />
           </HostCreatePanel>
         )}
         <Layout.Content
