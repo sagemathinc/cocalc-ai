@@ -331,7 +331,7 @@ Table({
     },
     unlisted: {
       type: "boolean",
-      desc: "If true then exclude user for full name searches (but not exact email address searches).",
+      desc: "If true then exclude user from ordinary full name searches outside existing collaboration/admin contexts.",
       render: {
         type: "boolean",
         editable: true,

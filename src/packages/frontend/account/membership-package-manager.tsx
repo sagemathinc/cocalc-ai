@@ -1471,7 +1471,7 @@ function AssignMembershipSeatModal({
   async function runSearch() {
     const trimmed = query.trim();
     if (!trimmed) {
-      setSearchError("Enter a name or exact email address to search.");
+      setSearchError("Enter a name to search or an email address to reserve.");
       setResults([]);
       return;
     }
@@ -1556,7 +1556,7 @@ function AssignMembershipSeatModal({
       <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
         {membershipPackage ? (
           <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            Search for an existing account or enter an exact email address to
+            Search related existing accounts or enter an email address to
             reserve a seat from the{" "}
             {getPackageKindLabel(membershipPackage.kind).toLowerCase()}.
             Reserved email seats appear as claimable memberships once that user
@@ -1572,7 +1572,7 @@ function AssignMembershipSeatModal({
           />
         ) : null}
         <Input.Search
-          placeholder="Search by name or exact email address"
+          placeholder="Search by name or enter an email address"
           value={query}
           enterButton="Search"
           loading={searching}
@@ -1643,7 +1643,7 @@ function AssignMembershipSeatModal({
             description={
               isValidEmailAddress(query.trim().toLowerCase())
                 ? "You can still reserve the seat by email above."
-                : "Search by name or exact email address."
+                : "Search by name or enter an email address."
             }
           />
         ) : null}

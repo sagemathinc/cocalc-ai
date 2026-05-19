@@ -556,7 +556,7 @@ will no longer work (automatic redirects are not implemented), so change with ca
         <FormattedMessage
           id="account.settings.unlisted.label"
           defaultMessage={
-            "Unlisted: you can only be found by an exact email address match"
+            "Unlisted: you are hidden from name searches outside existing collaboration contexts"
           }
         />
       </Checkbox>
