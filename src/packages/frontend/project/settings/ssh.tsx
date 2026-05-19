@@ -14,14 +14,14 @@ import { CopyToClipboard } from "react-copy-to-clipboard";
 import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
+import {
+  COCALC_CLI_DOWNLOAD_URL,
+  COCALC_CLI_INSTALL_COMMAND,
+} from "@cocalc/util/consts/ui";
 import { Project } from "./types";
 import { lite } from "@cocalc/frontend/lite";
 
 const { Text, Paragraph } = Typography;
-const COCALC_CLI_DOWNLOAD_URL =
-  "https://software.cocalc.ai/software/cocalc/index.html";
-const COCALC_CLI_INSTALL_COMMAND =
-  "curl -fsSL https://software.cocalc.ai/software/cocalc/install.sh | bash";
 const SETUP_KEY_EXPIRE_MS = 60 * 60 * 1000;
 const COPYABLE_PROPS = {
   inputWidth: "100%",

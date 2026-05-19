@@ -29,6 +29,7 @@ import {
 import { Tooltip } from "@cocalc/frontend/components";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { React } from "@cocalc/frontend/app-framework";
+import { COCALC_CLI_DOWNLOAD_URL } from "@cocalc/util/consts/ui";
 import { COLORS } from "@cocalc/util/theme";
 import {
   getHostOnlineTooltip,
@@ -50,9 +51,6 @@ import {
   hostRuntimeExceptionDescription,
   hostRuntimeExceptionLabel,
 } from "../utils/runtime-exceptions";
-
-const COCALC_CLI_DOWNLOAD_URL =
-  "https://software.cocalc.ai/software/cocalc/index.html";
 
 const CARD_STYLE: CSSProperties = {
   minWidth: 280,
