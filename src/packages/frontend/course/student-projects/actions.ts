@@ -729,6 +729,68 @@ export class StudentProjectsActions {
     return lines.join("\n");
   };
 
+  copy_pending_student_invite_link = async ({
+    student_id,
+  }: {
+    student_id: string;
+  }): Promise<string> => {
+    const store = this.get_store();
+    const student = store.get_student(student_id);
+    const student_project_id = store.get_student_project_id(student_id);
+    if (student == null || !student_project_id) {
+      throw new Error("Student project has not been created yet.");
+    }
+    const invite = await this.get_pending_course_invite({
+      student_id,
+      student_project_id,
+      email_address: student.get("email_address"),
+    });
+    if (invite == null) {
+      throw new Error(
+        "No pending course invite link was found. Send an invitation first.",
+      );
+    }
+    const result =
+      await webapp_client.project_collaborators.copy_email_invite_link({
+        invite_id: invite.invite_id,
+        project_id: student_project_id,
+      });
+    return result.invite_url;
+  };
+
+  revoke_pending_student_invite_link = async ({
+    student_id,
+  }: {
+    student_id: string;
+  }): Promise<void> => {
+    const store = this.get_store();
+    const student = store.get_student(student_id);
+    const student_project_id = store.get_student_project_id(student_id);
+    if (student == null || !student_project_id) {
+      throw new Error("Student project has not been created yet.");
+    }
+    const invite = await this.get_pending_course_invite({
+      student_id,
+      student_project_id,
+      email_address: student.get("email_address"),
+    });
+    if (invite == null) {
+      throw new Error(
+        "No pending course invite link was found. Send an invitation first.",
+      );
+    }
+    await webapp_client.project_collaborators.respond_invite({
+      invite_id: invite.invite_id,
+      project_id: student_project_id,
+      action: "revoke",
+    });
+    this.course_actions.set({
+      table: "students",
+      student_id,
+      last_email_invite: undefined,
+    });
+  };
+
   private get_pending_course_invite = async ({
     student_id,
     student_project_id,
