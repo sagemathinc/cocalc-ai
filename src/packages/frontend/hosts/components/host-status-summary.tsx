@@ -610,6 +610,22 @@ function operationStatus(op?: HostLroState): {
   };
 }
 
+function shouldDisplayHostOperation(op?: HostLroState): boolean {
+  if (!op) return false;
+  const status = op.summary?.status;
+  if (status === "queued" || status === "running" || status === "failed") {
+    return true;
+  }
+  if (status) {
+    return false;
+  }
+  const phase = getHostOpPhase(op)?.trim().toLowerCase();
+  if (phase?.includes("done") || phase?.includes("complete")) {
+    return false;
+  }
+  return true;
+}
+
 function projectCounts(host: Host): {
   assigned: number;
   provisioned: number;
@@ -1125,13 +1141,15 @@ export function HostStatusSummary({
   op?: HostLroState;
   onDetails?: (host: Host) => void;
 }) {
-  const displayOp = shouldSuppressProjectHostFailedOp({
-    op,
-    currentVersion: host.version,
-    observation: host.observed_host_agent?.project_host,
-  })
-    ? undefined
-    : op;
+  const displayOp =
+    shouldDisplayHostOperation(op) &&
+    !shouldSuppressProjectHostFailedOp({
+      op,
+      currentVersion: host.version,
+      observation: host.observed_host_agent?.project_host,
+    })
+      ? op
+      : undefined;
   const projectHostRolloutPhase = currentProjectHostRolloutPhase({
     op: displayOp,
     currentVersion: host.version,
