@@ -124,6 +124,7 @@ export const HostCard: React.FC<HostCardProps> = ({
           host={host}
           op={displayHostOp}
           onDetails={onDetails}
+          fullWidth
         />
         <HostConfigurationCell host={host} maxWidth="100%" />
         <HostPricingSummary

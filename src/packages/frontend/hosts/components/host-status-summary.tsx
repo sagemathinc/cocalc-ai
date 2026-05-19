@@ -1136,10 +1136,12 @@ export function HostStatusSummary({
   host,
   op,
   onDetails,
+  fullWidth = false,
 }: {
   host: Host;
   op?: HostLroState;
   onDetails?: (host: Host) => void;
+  fullWidth?: boolean;
 }) {
   const displayOp =
     shouldDisplayHostOperation(op) &&
@@ -1166,7 +1168,13 @@ export function HostStatusSummary({
   const daemons = daemonSummary(host);
 
   return (
-    <div style={CARD_STYLE}>
+    <div
+      style={
+        fullWidth
+          ? { ...CARD_STYLE, width: "100%", maxWidth: "100%" }
+          : CARD_STYLE
+      }
+    >
       <div style={HEADER_STYLE}>
         <StatusHero host={host} />
         {connection ? (
