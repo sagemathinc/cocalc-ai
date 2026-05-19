@@ -418,9 +418,8 @@ export function StudentsPanel({
             <div>
               <FormattedMessage
                 id="course.students-panel.no_students.descr"
-                defaultMessage={`<A>Add some students</A> to your course
-                  by entering their email addresses in the box in the upper right,
-                  then click on Search.`}
+                defaultMessage={`<A>Add some students</A> by pasting their email addresses or roster.
+                    CoCalc will create student projects and secure invite links.`}
                 values={{
                   A: (c) => (
                     <a onClick={() => frameActions.setModal("add-students")}>

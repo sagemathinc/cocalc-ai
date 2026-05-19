@@ -42,7 +42,12 @@ export class StudentsActions {
   }
 
   public async add_students(
-    students: { account_id?: string; email_address?: string }[],
+    students: {
+      account_id?: string;
+      email_address?: string;
+      first_name?: string;
+      last_name?: string;
+    }[],
   ): Promise<void> {
     // students = array of objects that may have an account_id or email_address field set
     // New student_id's will be constructed randomly for each student

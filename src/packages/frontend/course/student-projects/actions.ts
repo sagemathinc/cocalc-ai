@@ -158,32 +158,36 @@ export class StudentProjectsActions {
       const subject = `${site_name} Invitation to Course ${title}`;
       let body = store.get_email_invite();
       body = body.replace(/{title}/g, title).replace(/{name}/g, name);
-      body = markdown_to_html(body);
-      await redux.getActions("projects").invite_collaborators_by_email(
-        student_project_id,
-        student,
-        body,
-        subject,
-        true,
+      const message = body;
+      const email = markdown_to_html(body);
+      await webapp_client.project_collaborators.invite_noncloud({
+        project_id: student_project_id,
+        title,
+        link2proj: "",
         replyto,
-        name,
-        {
+        replyto_name: name,
+        to: student,
+        email,
+        subject,
+        message,
+        invite_context: {
           course_path: store.get("course_filename"),
           course_project_id: store.get("course_project_id"),
           student_id,
           student_project_id,
         },
-        "course_student",
-      );
+        invite_scope: "course_student",
+      });
       this.course_actions.set({
         table: "students",
         student_id,
         last_email_invite: webapp_client.server_time(),
       });
     } else {
-      await redux
-        .getActions("projects")
-        .invite_collaborator(student_project_id, student);
+      await webapp_client.project_collaborators.invite({
+        project_id: student_project_id,
+        account_id: student,
+      });
     }
   };
 
@@ -250,9 +254,10 @@ export class StudentProjectsActions {
     }
     for (const account_id of course_collaborators.keys()) {
       if (!users.has(account_id)) {
-        await redux
-          .getActions("projects")
-          .invite_collaborator(student_project_id, account_id);
+        await webapp_client.project_collaborators.invite({
+          project_id: student_project_id,
+          account_id,
+        });
       }
     }
 
@@ -273,9 +278,10 @@ export class StudentProjectsActions {
           !course_collaborators.has(account_id) &&
           account_id !== student_account_id
         ) {
-          await redux
-            .getActions("projects")
-            .remove_collaborator(student_project_id, account_id);
+          await webapp_client.project_collaborators.remove({
+            project_id: student_project_id,
+            account_id,
+          });
         }
       }
     }
@@ -291,23 +297,16 @@ export class StudentProjectsActions {
       // e.g., not defined in admin view mode
       return;
     }
-    // Make project not visible to any collaborator on the course project.
-    const store = this.get_store();
-    if (store == null) return;
-    const users = redux
-      .getStore("projects")
-      .get_users(store.get("course_project_id"));
-    if (users == null) {
-      // TODO: should really wait until users is defined, which is a supported thing to do on stores!
+    const account_id = webapp_client.account_id;
+    if (!account_id) {
       return;
     }
-    for (const account_id of users.keys()) {
-      const x = users_of_student_project.get(account_id);
-      if (x != null && !x.get("hide")) {
-        await redux
-          .getActions("projects")
-          .set_project_hide(account_id, student_project_id, true);
-      }
+    const x = users_of_student_project.get(account_id);
+    if (x != null && !x.get("hide")) {
+      await webapp_client.conat_client.hub.projects.setProjectHidden({
+        project_id: student_project_id,
+        hide: true,
+      });
     }
   };
 
@@ -322,9 +321,7 @@ export class StudentProjectsActions {
     const title = `${store.get_student_name(student_id)} - ${store
       .get("settings")
       .get("title")}`;
-    await redux
-      .getActions("projects")
-      .set_project_title(student_project_id, title);
+    await this.set_project_fields(student_project_id, { title });
   };
 
   // start or stop projects of all (non-deleted) students running
@@ -428,7 +425,6 @@ export class StudentProjectsActions {
   };
 
   set_all_student_project_titles = async (title: string): Promise<void> => {
-    const actions = redux.getActions("projects");
     const store = this.get_store();
     for (const student of store.get_students().valueSeq().toArray()) {
       const student_project_id = student.get("project_id");
@@ -436,7 +432,9 @@ export class StudentProjectsActions {
         student.get("student_id"),
       )} - ${title}`;
       if (student_project_id != null) {
-        await actions.set_project_title(student_project_id, project_title);
+        await this.set_project_fields(student_project_id, {
+          title: project_title,
+        });
         if (this.course_actions.is_closed()) return;
       }
     }
@@ -446,23 +444,30 @@ export class StudentProjectsActions {
     student_project_id: string,
   ): Promise<void> => {
     const store = this.get_store();
-    await redux
-      .getActions("projects")
-      .set_project_description(
-        student_project_id,
-        store.getIn(["settings", "description"]),
-      );
+    await this.set_project_fields(student_project_id, {
+      description: store.getIn(["settings", "description"]),
+    });
+  };
+
+  private set_project_fields = async (
+    project_id: string,
+    fields: { title?: string; description?: string },
+  ): Promise<void> => {
+    await webapp_client.async_query({
+      query: {
+        projects: { project_id, ...fields },
+      },
+    });
   };
 
   set_all_student_project_descriptions = async (
     description: string,
   ): Promise<void> => {
     const store = this.get_store();
-    const actions = redux.getActions("projects");
     for (const student of store.get_students().valueSeq().toArray()) {
       const student_project_id = student.get("project_id");
       if (student_project_id != null) {
-        await actions.set_project_description(student_project_id, description);
+        await this.set_project_fields(student_project_id, { description });
         if (this.course_actions.is_closed()) return;
       }
     }
@@ -553,7 +558,6 @@ export class StudentProjectsActions {
         this.configure_project_title(student_project_id, student_id),
         this.configure_project_description(student_project_id),
         this.configure_project_envvars(student_project_id),
-        this.configure_project_envvars(student_project_id),
       ]);
     }
   };
@@ -569,8 +573,12 @@ export class StudentProjectsActions {
       (await webapp_client.conat_client.hub.projects.getProjectEnv({
         project_id: store.get("course_project_id"),
       })) ?? {};
-    const actions = redux.getProjectActions(student_project_id);
-    await actions.set_environment(env);
+    await webapp_client.conat_client.hub.projects.setProjectEnv({
+      project_id: student_project_id,
+      env: Object.fromEntries(
+        Object.entries(env).map(([key, value]) => [key, `${value}`]),
+      ),
+    });
   };
 
   set_all_student_project_rootfs = async (): Promise<void> => {
