@@ -989,6 +989,8 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
             : health.tone === "green"
               ? "green"
               : undefined;
+      const denseStaleMetricsTag =
+        health.label === "Metrics stale" ? null : staleMetricsTag;
       return (
         <div
           style={{
@@ -1011,7 +1013,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
             <Tag color={healthTagColor} style={{ marginInlineEnd: 0 }}>
               {health.label}
             </Tag>
-            {staleMetricsTag}
+            {denseStaleMetricsTag}
           </div>
           {riskTags ? (
             <div style={{ marginBottom: 4, lineHeight: 1 }}>{riskTags}</div>
