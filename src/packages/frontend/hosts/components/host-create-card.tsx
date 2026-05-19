@@ -10,8 +10,9 @@ import {
   Spin,
   Typography,
 } from "antd";
-import { React } from "@cocalc/frontend/app-framework";
+import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { mapCountryRegionToR2Region } from "@cocalc/util/consts";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import {
   getAvailablePresets,
@@ -61,12 +62,22 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
   const hasExternalProviders = refreshProviders.some(
     (entry) => entry.value !== "self-host",
   );
+  const cloudflareCountry = useTypedRedux("customize", "country");
+  const cloudflareRegionCode = useTypedRedux(
+    "customize",
+    "cloudflare_region_code",
+  );
+  const preferredRegion = React.useMemo(
+    () => mapCountryRegionToR2Region(cloudflareCountry, cloudflareRegionCode),
+    [cloudflareCountry, cloudflareRegionCode],
+  );
   const draftContext = React.useMemo<HostCreateDraftContext>(
     () => ({
       enabledProviders: provider.providerOptions.map((option) => option.value),
       catalogByProvider: provider.catalog
         ? { [provider.selectedProvider]: provider.catalog }
         : {},
+      preferredRegion,
       billing: {
         fundingModeOptions: billing.fundingModeOptions,
         defaultFundingMode: billing.defaultFundingMode,
@@ -78,6 +89,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
       provider.catalog,
       provider.providerOptions,
       provider.selectedProvider,
+      preferredRegion,
     ],
   );
   const draftState = useHostCreateDraft({

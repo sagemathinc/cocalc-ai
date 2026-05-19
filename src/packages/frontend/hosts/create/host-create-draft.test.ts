@@ -255,6 +255,53 @@ describe("host-create-draft", () => {
     });
   });
 
+  it("uses the preferred region when choosing default GCP placement", () => {
+    const context: HostCreateDraftContext = {
+      enabledProviders: ["gcp"],
+      preferredRegion: "wnam",
+      billing,
+      catalogByProvider: {
+        gcp: catalog("gcp", [
+          {
+            kind: "regions",
+            scope: "global",
+            payload: [
+              { name: "africa-south1", zones: ["africa-south1-a"] },
+              { name: "us-west1", zones: ["us-west1-a"] },
+            ],
+          },
+          {
+            kind: "zones",
+            scope: "global",
+            payload: [
+              { name: "africa-south1-a", region: "africa-south1" },
+              { name: "us-west1-a", region: "us-west1" },
+            ],
+          },
+          {
+            kind: "machine_types",
+            scope: "zone/us-west1-a",
+            payload: [
+              { name: "n2d-standard-4", guestCpus: 4, memoryMb: 16384 },
+            ],
+          },
+          {
+            kind: "machine_types",
+            scope: "zone/africa-south1-a",
+            payload: [
+              { name: "n2d-standard-4", guestCpus: 4, memoryMb: 16384 },
+            ],
+          },
+        ]),
+      },
+    };
+
+    expect(buildDefaultDraft(context)).toMatchObject({
+      region: "us-west1",
+      zone: "us-west1-a",
+    });
+  });
+
   it("normalizes a similar Nebius draft and blocks unsupported spot choices", () => {
     const context: HostCreateDraftContext = {
       enabledProviders: ["nebius"],
