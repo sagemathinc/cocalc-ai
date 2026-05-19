@@ -11,6 +11,7 @@ import {
 } from "antd";
 import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { mapCountryRegionToR2Region } from "@cocalc/util/consts";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
@@ -525,20 +526,20 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
       )}
       <div
         style={{
-          display: "flex",
+          display: "grid",
+          gridTemplateColumns: IS_MOBILE ? "1fr" : "minmax(0, 1fr) 300px",
           alignItems: "flex-start",
           gap: 16,
-          flexWrap: "wrap",
         }}
       >
         <Space
           orientation="vertical"
           size="middle"
-          style={{ flex: "1 1 560px", minWidth: 0 }}
+          style={{ minWidth: 0, width: "100%" }}
         >
           {main}
         </Space>
-        <div style={{ flex: "0 0 300px", minWidth: 280 }}>{summary}</div>
+        <div style={{ minWidth: 0 }}>{summary}</div>
       </div>
     </Card>
   );
