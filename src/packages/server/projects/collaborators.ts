@@ -1738,8 +1738,8 @@ export async function redeemEmailProjectInvite({
     [invite.project_id, account_id],
   );
   if (!collabRows[0]?.already) {
-    // @ts-ignore
-    await callback2(db().add_collaborator_to_project, {
+    const database = db();
+    await callback2(database.add_user_to_project, {
       project_id: invite.project_id,
       account_id,
       group: "collaborator",

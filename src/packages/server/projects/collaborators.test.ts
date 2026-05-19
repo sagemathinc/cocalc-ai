@@ -143,7 +143,7 @@ describe("project collaborators local bay access", () => {
   const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
   const TARGET_ACCOUNT_ID = "33333333-3333-4333-8333-333333333333";
   const removeCollaboratorFromProject = jest.fn(async () => undefined);
-  const addCollaboratorToProject = jest.fn(async () => undefined);
+  const addUserToProject = jest.fn(async () => undefined);
   const whenSentProjectInvite = jest.fn(async () => 0);
   const getServerSettingsCached = jest.fn(async () => ({
     organization_email: "help@example.com",
@@ -192,12 +192,12 @@ describe("project collaborators local bay access", () => {
     deleteProjectedInboundCollabInviteMock = jest.fn(async () => undefined);
     assertAccountTrustedForProductAccessMock = jest.fn(async () => undefined);
     removeCollaboratorFromProject.mockClear();
-    addCollaboratorToProject.mockClear();
+    addUserToProject.mockClear();
     whenSentProjectInvite.mockClear();
     getServerSettingsCached.mockClear();
     dbMock = jest.fn(() => ({
       remove_collaborator_from_project: removeCollaboratorFromProject,
-      add_collaborator_to_project: addCollaboratorToProject,
+      add_user_to_project: addUserToProject,
       when_sent_project_invite: whenSentProjectInvite,
       sent_project_invite: jest.fn(async () => undefined),
       get_server_settings_cached: getServerSettingsCached,
@@ -699,9 +699,10 @@ describe("project collaborators local bay access", () => {
         status: "accepted",
       }),
     );
-    expect(addCollaboratorToProject).toHaveBeenCalledWith(
+    expect(addUserToProject).toHaveBeenCalledWith(
       expect.objectContaining({
         account_id: ACCOUNT_ID,
+        group: "collaborator",
         project_id: PROJECT_ID,
       }),
     );
