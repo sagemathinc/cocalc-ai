@@ -48,6 +48,7 @@ import {
 } from "@cocalc/frontend/project/home-directory";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { displayPath } from "@cocalc/util/path-model";
+import { COCALC_CLI_DOWNLOAD_URL } from "@cocalc/util/consts/ui";
 import { COLORS } from "@cocalc/util/theme";
 import {
   appServerPresetsFromCatalogEntries,
@@ -130,9 +131,6 @@ const APP_SECURITY_MARKDOWN = `
 
 More detail: \`docs/security/private-app-trust-model.md\`
 `;
-
-const COCALC_CLI_DOWNLOAD_URL =
-  "https://software.cocalc.ai/software/cocalc/index.html";
 
 function getPresetTheme(preset: AppServerPreset): {
   accent: string;

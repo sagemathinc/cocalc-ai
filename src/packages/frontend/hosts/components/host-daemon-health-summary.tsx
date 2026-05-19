@@ -6,9 +6,7 @@ import type {
   HostManagedComponentStatus,
   ManagedComponentKind,
 } from "@cocalc/conat/project-host/api";
-
-const COCALC_CLI_DOWNLOAD_URL =
-  "https://software.cocalc.ai/software/cocalc/index.html";
+import { COCALC_CLI_DOWNLOAD_URL } from "@cocalc/util/consts/ui";
 
 const DAEMON_COMPONENTS: Array<{
   component: ManagedComponentKind;

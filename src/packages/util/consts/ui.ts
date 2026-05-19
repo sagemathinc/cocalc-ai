@@ -23,6 +23,11 @@ export const SHARE_FLAGS = {
 // documentation pages
 export const DOC_AI = "https://doc.cocalc.com/ai.html";
 
+export const COCALC_CLI_DOWNLOAD_URL =
+  "https://software.cocalc.ai/software/cocalc/index.html";
+export const COCALC_CLI_INSTALL_COMMAND =
+  "curl -fsSL https://software.cocalc.ai/software/cocalc/install.sh | bash";
+
 export const R_IDE = "RStudio";
 
 // Default font size for account settings and UI elements

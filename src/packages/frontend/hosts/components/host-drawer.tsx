@@ -1861,7 +1861,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
         <HostDaemonHealthSummary host={host} />
       </Card>
       <Card size="small" title="Current metrics">
-        <HostCurrentMetrics host={host} compact dense />
+        <HostCurrentMetrics host={host} />
       </Card>
       <Card size="small" title="Placement">
         <HostPlacementSummary host={host} showNormal />
