@@ -310,19 +310,14 @@ export function create_email_body(
   subject,
   body,
   _email_address,
-  project_title,
+  _project_title,
   link2proj,
   allow_urls_in_emails,
 ): string {
-  let direct_link: string;
   const base_url = baseUrlFromInviteLink(link2proj);
-  if (link2proj != null) {
-    const title = escapeHtmlText(project_title).trim();
-    direct_link = `Open <a href="${escapeHtmlText(link2proj)}">this CoCalc invite link</a>${title ? ` for ${title}` : ""}.`;
-  } else {
-    // no link2proj provided -- show something useful:
-    direct_link = "";
-  }
+  const accept_or_reject = link2proj
+    ? `<a href="${escapeHtmlText(link2proj)}">Accept or reject this invitation.</a>`
+    : `<a href="${base_url}/app">Open CoCalc to accept or reject this invitation.</a>`;
 
   let email_body = "";
   if (body) {
@@ -337,12 +332,7 @@ export function create_email_body(
 
   email_body += `
 <br/><br/>
-<b>To accept the invitation:
-<ol>
-<li>${direct_link || `Open <a href="${base_url}/app">CoCalc</a>`}</li>
-<li>Sign in or create an account using the CoCalc account you want to use for this project.</li>
-<li>If you already have more than one CoCalc account, use your preferred account before accepting.</li>
-</ol></b>
+<p style="font-size:16px; font-weight:bold;">${accept_or_reject}</p>
 <br/><br />
 If this message was forwarded to the wrong person, ask the project owner to revoke the invite link.
 `;

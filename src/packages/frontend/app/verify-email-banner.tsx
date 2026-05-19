@@ -3,11 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Modal, Space } from "antd";
+import { Button, Modal, Space } from "antd";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { emailVerificationMsg } from "@cocalc/frontend/account/settings/email-verification";
-import { Button } from "@cocalc/frontend/antd-bootstrap";
 import {
   useActions,
   useState,
@@ -106,16 +105,17 @@ function VerifyEmailModal({
             </Paragraph>
             <Paragraph type="secondary">
               <FormattedMessage
-                id="app.verify-email-banner.edit"
-                defaultMessage="If the email address is wrong, please <E>edit</E> it in the account settings."
-                values={{
-                  E: (text) => (
-                    <Button onClick={edit} bsSize="xsmall">
-                      <Icon name="pencil" /> {text}
-                    </Button>
-                  ),
-                }}
-              />
+                id="app.verify-email-banner.edit.prefix"
+                defaultMessage="If the email address is wrong,"
+              />{" "}
+              <Button size="small" type="link" onClick={edit}>
+                <Icon name="pencil" />{" "}
+                <FormattedMessage
+                  id="app.verify-email-banner.edit.button"
+                  defaultMessage="edit it in account settings"
+                />
+              </Button>
+              .
             </Paragraph>
           </>
         ) : null}
@@ -126,7 +126,7 @@ function VerifyEmailModal({
   function renderFooter() {
     if (sent) {
       return (
-        <Button onClick={() => doDismiss()} bsStyle="success">
+        <Button onClick={() => doDismiss()} type="primary">
           {intl.formatMessage(labels.close)}
         </Button>
       );
@@ -139,12 +139,12 @@ function VerifyEmailModal({
         </Button>
         <Button
           onClick={verify}
-          bsStyle="success"
-          active={!sent && sending}
+          type="primary"
+          loading={sending}
           disabled={sent || sending}
         >
           {intl.formatMessage(emailVerificationMsg, {
-            disabled_button: sent,
+            state: sending ? "sending" : sent ? "sent" : "idle",
           })}
         </Button>
       </Space>

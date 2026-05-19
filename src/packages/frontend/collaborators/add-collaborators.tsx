@@ -463,7 +463,7 @@ export const AddCollaborators: React.FC<Props> = ({
     const SiteName = redux.getStore("customize").get("site_name") ?? SITE_NAME;
     let subject;
     if (replyto_name != null) {
-      subject = `${replyto_name} added you to project ${project?.get("title")}`;
+      subject = `${replyto_name} invited you to project ${project?.get("title")}`;
     } else {
       subject = `${SiteName} Invitation to project ${project?.get("title")}`;
     }
