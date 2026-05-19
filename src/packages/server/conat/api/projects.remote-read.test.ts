@@ -4,6 +4,10 @@ let getLocalProjectCollaboratorAccessStatusMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
 let projectDetailsGetMock: jest.Mock;
+let projectReferenceGetMock: jest.Mock;
+let inviteWithoutAccountMock: jest.Mock;
+let copyEmailLinkMock: jest.Mock;
+let redeemEmailMock: jest.Mock;
 let loadProjectReadDetailsDirectMock: jest.Mock;
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
@@ -29,6 +33,15 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   getInterBayBridge: jest.fn(() => ({
     projectDetails: jest.fn(() => ({
       get: (...args: any[]) => projectDetailsGetMock(...args),
+    })),
+    projectReference: jest.fn(() => ({
+      get: (...args: any[]) => projectReferenceGetMock(...args),
+    })),
+    projectCollabInvite: jest.fn(() => ({
+      inviteWithoutAccount: (...args: any[]) =>
+        inviteWithoutAccountMock(...args),
+      copyEmailLink: (...args: any[]) => copyEmailLinkMock(...args),
+      redeemEmail: (...args: any[]) => redeemEmailMock(...args),
     })),
   })),
 }));
@@ -64,6 +77,48 @@ describe("remote project detail reads", () => {
       settings: { mintime: 3600 },
       course: null,
     }));
+    projectReferenceGetMock = jest.fn(async () => ({
+      project_id: PROJECT_ID,
+      title: "Remote Project",
+      host_id: null,
+      owning_bay_id: "bay-7",
+      users: {
+        [ACCOUNT_ID]: { group: "collaborator" },
+      },
+    }));
+    inviteWithoutAccountMock = jest.fn(async () => ({
+      email_sent: false,
+      invites: [
+        {
+          invite_id: "77777777-7777-4777-8777-777777777777",
+          project_id: PROJECT_ID,
+          inviter_account_id: ACCOUNT_ID,
+          invitee_account_id: null,
+          invite_source: "email",
+          status: "pending",
+          created: "2026-05-18T00:00:00.000Z",
+          updated: "2026-05-18T00:00:00.000Z",
+        },
+      ],
+    }));
+    copyEmailLinkMock = jest.fn(async () => ({
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      invite_url:
+        "https://example.com/invites/project/22222222-2222-4222-8222-222222222222/77777777-7777-4777-8777-777777777777?token=t",
+      expires: "2026-06-01T00:00:00.000Z",
+    }));
+    redeemEmailMock = jest.fn(async () => ({
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      project_id: PROJECT_ID,
+      inviter_account_id: "33333333-3333-4333-8333-333333333333",
+      invitee_account_id: null,
+      accepted_account_id: ACCOUNT_ID,
+      invite_source: "email",
+      status: "accepted",
+      created: "2026-05-18T00:00:00.000Z",
+      updated: "2026-05-18T00:00:00.000Z",
+      responded: "2026-05-18T01:00:00.000Z",
+    }));
     loadProjectReadDetailsDirectMock = jest.fn();
   });
 
@@ -81,5 +136,64 @@ describe("remote project detail reads", () => {
       project_id: PROJECT_ID,
     });
     expect(loadProjectReadDetailsDirectMock).not.toHaveBeenCalled();
+  });
+
+  it("routes email-token invite creation through the owning bay", async () => {
+    const { inviteCollaboratorWithoutAccount } = await import("./projects");
+    const opts = {
+      project_id: PROJECT_ID,
+      title: "Remote Project",
+      link2proj: "",
+      to: "student@example.com",
+      email: "",
+      send_email: false,
+    };
+    const result = await inviteCollaboratorWithoutAccount({
+      account_id: ACCOUNT_ID,
+      opts,
+    });
+
+    expect(inviteWithoutAccountMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      opts,
+    });
+    expect(result.email_sent).toBe(false);
+    expect(result.invites[0].created).toEqual(
+      new Date("2026-05-18T00:00:00.000Z"),
+    );
+  });
+
+  it("routes email invite copy-link through the owning bay", async () => {
+    const { copyEmailProjectInviteLink } = await import("./projects");
+    const result = await copyEmailProjectInviteLink({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      invite_id: "77777777-7777-4777-8777-777777777777",
+    });
+
+    expect(copyEmailLinkMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      invite_id: "77777777-7777-4777-8777-777777777777",
+    });
+    expect(result.expires).toEqual(new Date("2026-06-01T00:00:00.000Z"));
+  });
+
+  it("routes email invite redemption through the owning bay", async () => {
+    const { redeemEmailProjectInvite } = await import("./projects");
+    const result = await redeemEmailProjectInvite({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      token: "token-1",
+    });
+
+    expect(redeemEmailMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      token: "token-1",
+    });
+    expect(result.responded).toEqual(new Date("2026-05-18T01:00:00.000Z"));
   });
 });
