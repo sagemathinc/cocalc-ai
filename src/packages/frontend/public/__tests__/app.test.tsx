@@ -2,6 +2,7 @@
 
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 
+import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import type { NewsItem } from "@cocalc/util/types/news";
 import PublicApp from "../app";
 import type { PublicAboutRoute } from "../about/routes";
@@ -17,6 +18,7 @@ import { getProductsRouteFromPath } from "../products/routes";
 const originalFetch = global.fetch;
 
 beforeEach(() => {
+  window.localStorage.clear();
   global.fetch = jest.fn(
     () => new Promise<Response>(() => undefined),
   ) as typeof fetch;
@@ -37,6 +39,7 @@ afterEach(async () => {
     await Promise.resolve();
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
+  window.localStorage.clear();
   global.fetch = originalFetch;
 });
 
@@ -216,6 +219,78 @@ describe("PublicApp", () => {
 
     expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
     expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
+  });
+
+  it("uses the stored home-bay origin for public auth bootstrap", async () => {
+    setStoredControlPlaneOrigin("https://bay-1-lite.example.com");
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: any) => {
+      const url = `${input}`;
+      if (url === "https://bay-1-lite.example.com/api/v2/auth/bootstrap") {
+        expect(init?.credentials).toBe("include");
+        return {
+          json: async () => ({
+            account_id: "36cf8f5c-0a76-4eda-80fa-db38ef282756",
+            home_bay_id: "bay-1",
+            signed_in: true,
+          }),
+        } as Response;
+      }
+      if (url === "/api/v2/news/list") {
+        return { json: async () => [] } as Response;
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }) as typeof fetch;
+
+    await renderPublicApp(
+      <PublicApp
+        config={{ is_authenticated: false, site_name: "Launchpad" }}
+        initialRoute={{ section: "home" }}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("link", { name: "Open projects" }),
+    ).not.toBeNull();
+  });
+
+  it("falls back to same-origin auth bootstrap when stored home bay is stale", async () => {
+    setStoredControlPlaneOrigin("https://bay-1-lite.example.com");
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: any) => {
+      const url = `${input}`;
+      if (url === "https://bay-1-lite.example.com/api/v2/auth/bootstrap") {
+        expect(init?.credentials).toBe("include");
+        return {
+          json: async () => ({
+            signed_in: false,
+          }),
+        } as Response;
+      }
+      if (url === "/api/v2/auth/bootstrap") {
+        expect(init?.credentials).toBe("same-origin");
+        return {
+          json: async () => ({
+            account_id: "36cf8f5c-0a76-4eda-80fa-db38ef282756",
+            home_bay_id: "bay-0",
+            signed_in: true,
+          }),
+        } as Response;
+      }
+      if (url === "/api/v2/news/list") {
+        return { json: async () => [] } as Response;
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }) as typeof fetch;
+
+    await renderPublicApp(
+      <PublicApp
+        config={{ is_authenticated: false, site_name: "Launchpad" }}
+        initialRoute={{ section: "home" }}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("link", { name: "Open projects" }),
+    ).not.toBeNull();
   });
 
   it("renders the pricing page from live membership tier data", async () => {

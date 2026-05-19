@@ -57,6 +57,7 @@ export function UserResult({
   created,
   last_active,
   account_id,
+  home_bay_id,
   banned,
 }: User) {
   const [details, setDetails] = useState<boolean>(false);
@@ -143,6 +144,7 @@ export function UserResult({
             ) : (
               "NO Email"
             )}
+            {home_bay_id && <Tag>Home bay: {home_bay_id}</Tag>}
           </Space>
         </div>
       }
