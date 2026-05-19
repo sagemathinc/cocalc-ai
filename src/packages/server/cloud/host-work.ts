@@ -1164,7 +1164,8 @@ async function handleStart(row: any) {
         provider: providerId,
       });
     }
-    let effectivePricingForStart = currentEffectivePricing;
+    let effectivePricingForStart: HostPricingModel =
+      startMode === "standard" ? "on_demand" : desiredPricing;
     const updateRecoveryRecord = async (state: HostSpotRecoveryState) => {
       const observedAt = new Date();
       const nextMetadata = withPricingAndRecoveryMetadata(
