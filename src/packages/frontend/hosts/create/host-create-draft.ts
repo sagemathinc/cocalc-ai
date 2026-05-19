@@ -172,10 +172,10 @@ const readAutoGrow = (host: Host) => {
   };
 };
 
-export const buildDefaultDraft = (
+export function buildDefaultDraft(
   context: HostCreateDraftContext,
-): HostCreateDraft =>
-  normalizeDraft(
+): HostCreateDraft {
+  return normalizeDraft(
     {
       name: DEFAULT_NAME,
       provider: firstEnabledProvider(context),
@@ -190,11 +190,12 @@ export const buildDefaultDraft = (
     },
     context,
   ).draft;
+}
 
-export const buildSimilarDraft = (
+export function buildSimilarDraft(
   host: Host,
   context: HostCreateDraftContext,
-): HostCreateDraft => {
+): HostCreateDraft {
   const hostProvider = host.machine?.cloud as HostProvider | undefined;
   const provider = isEnabledProvider(hostProvider, context)
     ? hostProvider
@@ -239,12 +240,12 @@ export const buildSimilarDraft = (
     },
     context,
   ).draft;
-};
+}
 
-export const normalizeDraft = (
+export function normalizeDraft(
   input: Partial<HostCreateDraft>,
   context: HostCreateDraftContext,
-): NormalizedHostCreateDraft => {
+): NormalizedHostCreateDraft {
   const provider = isEnabledProvider(input.provider, context)
     ? input.provider!
     : firstEnabledProvider(context);
@@ -294,6 +295,11 @@ export const normalizeDraft = (
     ),
   };
 
+  // Provider options are dependent: for example region can determine zones,
+  // zone can determine machine types, and GPU choice can filter machines.
+  // Recompute after each batch of fallback selections so those dependencies
+  // converge without React effects or timeouts. In practice this stabilizes in
+  // one or two passes; the third pass is a guard against longer chains.
   for (let i = 0; i < 3; i++) {
     const options = getFieldOptions(provider, draft, context);
     const updates: Partial<HostCreateDraft> = {};
@@ -374,7 +380,7 @@ export const normalizeDraft = (
   }
 
   return { draft, fieldOptions, activeFields };
-};
+}
 
 const optionLooksGpu = (option: HostFieldOption) => {
   const meta = (option.meta ?? {}) as Record<string, any>;
@@ -419,11 +425,11 @@ const setPrimaryComputeOption = (
   if (selected) draft[field] = selected;
 };
 
-export const applyPreset = (
+export function applyPreset(
   presetId: HostCreatePresetId,
   current: HostCreateDraft,
   context: HostCreateDraftContext,
-): HostCreateDraft => {
+): HostCreateDraft {
   let { draft, fieldOptions } = normalizeDraft(current, context);
   if (presetId === "balanced-cpu") {
     draft.pricing_model = "on_demand";
@@ -439,12 +445,12 @@ export const applyPreset = (
     setPrimaryComputeOption(draft, fieldOptions, "gpu");
   }
   return normalizeDraft(draft, context).draft;
-};
+}
 
-export const getAvailablePresets = (
+export function getAvailablePresets(
   current: HostCreateDraft,
   context: HostCreateDraftContext,
-): HostCreatePreset[] => {
+): HostCreatePreset[] {
   const { draft, fieldOptions } = normalizeDraft(current, context);
   const hasGpuOption =
     draft.provider === "gcp"
@@ -488,12 +494,12 @@ export const getAvailablePresets = (
         : "No GPU shape is available in the loaded catalog.",
     },
   ];
-};
+}
 
-export const buildCreateHostPayloadFromDraft = (
+export function buildCreateHostPayloadFromDraft(
   current: HostCreateDraft,
   context: HostCreateDraftContext,
-) => {
+) {
   const { draft, fieldOptions } = normalizeDraft(current, context);
   return {
     ...buildCreateHostPayload(draft, {
@@ -502,4 +508,4 @@ export const buildCreateHostPayloadFromDraft = (
     }),
     start_after_create: draft.start_after_create,
   };
-};
+}
