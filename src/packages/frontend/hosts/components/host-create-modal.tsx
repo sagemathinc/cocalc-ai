@@ -29,6 +29,7 @@ export function HostCreateModal({
       styles={{
         body: {
           maxHeight: IS_MOBILE ? "calc(100vh - 32px)" : "calc(100vh - 96px)",
+          marginRight: 10,
           overflowY: "auto",
           padding: 0,
         },
