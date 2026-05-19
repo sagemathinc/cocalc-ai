@@ -5,7 +5,7 @@
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
-import { redeemEmailProjectInvite } from "@cocalc/server/projects/collaborators";
+import { redeemEmailProjectInvite } from "@cocalc/server/conat/api/projects";
 
 export default async function handle(req, res) {
   try {

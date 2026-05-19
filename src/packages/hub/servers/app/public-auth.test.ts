@@ -46,4 +46,17 @@ describe("public auth routes", () => {
       "/auth/cli-elevate/challenge-456",
     );
   });
+
+  it("redirects project invite routes into the public auth shell", async () => {
+    const response = await request(
+      "/invites/project/937f48ab-c8ce-4877-bb02-5ff43da8e787/f5888c36-fb55-47e7-9cb7-99d3c5d1b231?token=secret",
+    );
+    expect(response.status).toBe(302);
+    const location = response.headers.get("location");
+    expect(location).toContain("/static/public.html?target=");
+    const redirected = new URL(`http://host${location}`);
+    expect(redirected.searchParams.get("target")).toBe(
+      "/invites/project/937f48ab-c8ce-4877-bb02-5ff43da8e787/f5888c36-fb55-47e7-9cb7-99d3c5d1b231?token=secret",
+    );
+  });
 });
