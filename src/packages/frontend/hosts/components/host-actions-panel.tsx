@@ -77,6 +77,16 @@ const STOPPABLE_HOST_STATUSES = new Set([
   "error",
 ]);
 
+function hostCanBeDeletedWithoutDeprovision(host: Host): boolean {
+  const provider = host.machine?.cloud;
+  const managedCloud =
+    provider && provider !== "self-host" && provider !== "local";
+  return (
+    host.status === "deprovisioned" ||
+    (!!managedCloud && !host.provider_instance_id)
+  );
+}
+
 export function HostActionsPanel({
   host,
   hostOp,
@@ -161,18 +171,16 @@ export function HostActionsPanel({
     (supportsRestart || supportsHardRestart) &&
     !hostOpActive;
   const canManageLifecycle = canManageHostLifecycle(host);
+  const deleteWithoutDeprovision = hostCanBeDeletedWithoutDeprovision(host);
   const deleteLabel = isDeleted
     ? "Deleted"
-    : host.status === "deprovisioned"
+    : deleteWithoutDeprovision
       ? "Delete"
       : "Deprovision";
-  const deleteTitle =
-    host.status === "deprovisioned"
-      ? "Delete this host?"
-      : "Deprovision this host?";
-  const deleteOkText =
-    host.status === "deprovisioned" ? "Delete" : "Deprovision";
-  const isDeprovisioned = host.status === "deprovisioned";
+  const deleteTitle = deleteWithoutDeprovision
+    ? "Delete this host?"
+    : "Deprovision this host?";
+  const deleteOkText = deleteWithoutDeprovision ? "Delete" : "Deprovision";
   const opPhase = getHostOpPhase(hostOp);
   const canCancelBackups =
     !!hostOp?.op_id && hostOpActive && opPhase === "backups" && !!onCancelOp;
@@ -378,7 +386,7 @@ export function HostActionsPanel({
   const dangerActions = canManageLifecycle ? (
     <Space direction="vertical" size={2} style={{ width: "100%" }}>
       <SectionTitle>Danger</SectionTitle>
-      {isDeprovisioned ? (
+      {deleteWithoutDeprovision ? (
         <Popconfirm
           title={deleteTitle}
           okText={deleteOkText}

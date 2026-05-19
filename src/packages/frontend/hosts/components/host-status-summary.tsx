@@ -108,6 +108,9 @@ const TONE_COLORS: Record<
 
 function statusLabel(host: Host): string {
   if (host.deleted) return "deleted";
+  if (host.status === "off" && !host.provider_instance_id) {
+    return "not provisioned";
+  }
   return host.status ?? "unknown";
 }
 

@@ -71,4 +71,31 @@ describe("hosts teardown helpers", () => {
       host_id: "f55ca72e-2d0a-4a93-a1a7-080ebcc7abcb",
     });
   });
+
+  it("deletes not-provisioned cloud hosts without enqueueing cloud teardown", async () => {
+    const markHostDeleted = jest.fn(async () => undefined);
+    const enqueueCloudVmWork = jest.fn(async () => undefined);
+
+    await deleteHostInternalHelper({
+      id: "f55ca72e-2d0a-4a93-a1a7-080ebcc7abcb",
+      loadOwnedHost: async () => ({
+        id: "f55ca72e-2d0a-4a93-a1a7-080ebcc7abcb",
+        status: "off",
+        metadata: { machine: { cloud: "gcp" } },
+      }),
+      normalizeProviderId: (provider) => provider,
+      setHostDesiredStateInternal: jest.fn(async () => undefined),
+      enqueueCloudVmWork,
+      logStatusUpdate: jest.fn(),
+      markHostDeleted,
+      markHostDeprovisioning: jest.fn(async () => undefined),
+      markHostStoppedDeprovisioned: jest.fn(async () => undefined),
+      clearHostRuntimeDeployments: jest.fn(async () => undefined),
+    });
+
+    expect(markHostDeleted).toHaveBeenCalledWith(
+      "f55ca72e-2d0a-4a93-a1a7-080ebcc7abcb",
+    );
+    expect(enqueueCloudVmWork).not.toHaveBeenCalled();
+  });
 });

@@ -237,7 +237,11 @@ export async function deleteHostInternalHelper({
 }): Promise<void> {
   const row = await loadOwnedHost(id, account_id);
   const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
-  if (row.status === "deprovisioned") {
+  const managedCloud =
+    machineCloud && machineCloud !== "self-host" && machineCloud !== "local";
+  const hasProviderRuntime =
+    !!`${row.metadata?.runtime?.instance_id ?? ""}`.trim();
+  if (row.status === "deprovisioned" || (managedCloud && !hasProviderRuntime)) {
     await setHostDesiredStateInternal({ id, desiredState: "stopped" });
     await markHostDeleted(id);
     return;
