@@ -1553,14 +1553,6 @@ export const useHostsPageViewModel = () => {
     enabledProviders,
   });
 
-  const { creating, onCreate } = useHostCreate({
-    hub,
-    refresh,
-    fieldOptions,
-    catalog,
-    onHostOp: trackHostOp,
-    browser_id,
-  });
   const fundingModeOptions = React.useMemo(
     () => getHostFundingModeOptions({ isAdmin, membership }),
     [isAdmin, membership],
@@ -1569,6 +1561,18 @@ export const useHostsPageViewModel = () => {
     () => defaultHostFundingMode({ options: fundingModeOptions }),
     [fundingModeOptions],
   );
+  const { creating, onCreate } = useHostCreate({
+    hub,
+    refresh,
+    catalog,
+    enabledProviders,
+    billing: {
+      fundingModeOptions,
+      defaultFundingMode,
+    },
+    onHostOp: trackHostOp,
+    browser_id,
+  });
 
   const createVm = useHostCreateViewModel({
     permissions: { isAdmin, canCreateHosts },

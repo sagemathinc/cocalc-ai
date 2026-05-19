@@ -499,7 +499,7 @@ export function getAvailablePresets(
 export function buildCreateHostPayloadFromDraft(
   current: HostCreateDraft,
   context: HostCreateDraftContext,
-) {
+): Record<string, any> & { start_after_create: boolean } {
   const { draft, fieldOptions } = normalizeDraft(current, context);
   return {
     ...buildCreateHostPayload(draft, {
