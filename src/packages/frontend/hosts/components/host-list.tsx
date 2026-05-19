@@ -817,9 +817,9 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       title: "Host",
       dataIndex: "name",
       key: "name",
-      width: 210,
+      width: 190,
       onCell: () => ({
-        style: { minWidth: 210, maxWidth: 210 },
+        style: { minWidth: 190, maxWidth: 190 },
       }),
       sorter: true,
       sortDirections: ["ascend", "descend"],
@@ -836,11 +836,13 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     {
       title: "Configuration",
       key: "configuration",
-      width: 500,
+      width: 360,
       onCell: () => ({
-        style: { minWidth: 500 },
+        style: { minWidth: 360, maxWidth: 360 },
       }),
-      render: (_: string, host: Host) => <HostConfigurationCell host={host} />,
+      render: (_: string, host: Host) => (
+        <HostConfigurationCell host={host} maxWidth={330} />
+      ),
     },
     {
       title: "Price",
@@ -852,6 +854,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     {
       title: "Resources",
       key: "resources",
+      width: 250,
       render: (_: string, host: Host) =>
         host.deleted || host.status === "deprovisioned" ? (
           <Typography.Text type="secondary">-</Typography.Text>
@@ -862,7 +865,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     {
       title: "Status",
       key: "status",
-      width: 280,
+      width: 340,
       sorter: true,
       sortDirections: ["ascend", "descend"],
       sortOrder:
@@ -882,7 +885,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     {
       title: "Actions",
       key: "actions",
-      width: 260,
+      width: 300,
       render: (_: string, host: Host) => {
         const op = hostOps?.[host.id];
         const projectHostRolloutPhase = currentProjectHostRolloutPhase({
@@ -1330,7 +1333,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
           dataSource={sortedHosts}
           pagination={false}
           tableLayout="fixed"
-          scroll={{ x: 2050 }}
+          scroll={{ x: 1760 }}
           rowSelection={{
             selectedRowKeys,
             onChange: (keys) => setSelectedRowKeys(keys as string[]),
