@@ -2960,21 +2960,32 @@ export async function createImpersonationGrant({
       cli_session_hash: cleanedSessionHash || undefined,
     },
   };
-  const grant =
-    subject_home_bay_id === getConfiguredBayId()
-      ? await (async () => {
-          const localGrant = await createImpersonationGrantLocal(createOpts);
-          return {
-            grant_id: localGrant.id,
-            subject_account_id: subjectAccountId,
-            subject_home_bay_id,
-            expires_at: localGrant.expire,
-          };
-        })()
-      : await createInterBayAccountLocalClient({
-          client: getInterBayFabricClient(),
-          dest_bay: subject_home_bay_id,
-        }).createImpersonationGrant(createOpts);
+  let grant;
+  try {
+    grant =
+      subject_home_bay_id === getConfiguredBayId()
+        ? await (async () => {
+            const localGrant = await createImpersonationGrantLocal(createOpts);
+            return {
+              grant_id: localGrant.id,
+              subject_account_id: subjectAccountId,
+              subject_home_bay_id,
+              expires_at: localGrant.expire,
+            };
+          })()
+        : await createInterBayAccountLocalClient({
+            client: getInterBayFabricClient(),
+            dest_bay: subject_home_bay_id,
+          }).createImpersonationGrant(createOpts);
+  } catch (err) {
+    const mesg = err instanceof Error ? err.message : `${err}`;
+    if (mesg.includes("account") && mesg.includes("not found")) {
+      throw new Error(
+        `cannot create impersonation grant for account ${subjectAccountId}; account directory resolved home bay '${subject_home_bay_id}', but that bay has no active local account row. The account may be deleted, not fully provisioned, or the account directory may be stale. Original error: ${mesg}`,
+      );
+    }
+    throw err;
+  }
   const home_bay_url = await getBayPublicOrigin(subject_home_bay_id);
   const target = new URL(
     basePath === "/" ? "/auth/impersonate" : `${basePath}/auth/impersonate`,

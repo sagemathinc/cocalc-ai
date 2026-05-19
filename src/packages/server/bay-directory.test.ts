@@ -250,7 +250,34 @@ describe("bay-directory", () => {
     });
   });
 
-  it("prefers the cluster account directory over stale local account rows", async () => {
+  it("ignores the cluster account directory in standalone mode", async () => {
+    getClusterAccountByIdMock = jest.fn(async () => ({
+      account_id: OTHER_ACCOUNT_ID,
+      email_address: "remote@example.com",
+      first_name: "Remote",
+      last_name: "Directory",
+      name: "Remote Directory",
+      home_bay_id: "bay-2",
+    }));
+    isAdminMock = jest.fn(async () => true);
+    const { resolveAccountHomeBay } = await import("./bay-directory");
+
+    await expect(
+      resolveAccountHomeBay({
+        account_id: ACCOUNT_ID,
+        user_account_id: OTHER_ACCOUNT_ID,
+      }),
+    ).resolves.toMatchObject({
+      account_id: OTHER_ACCOUNT_ID,
+      email_address: "user@example.com",
+      home_bay_id: "bay-0",
+      source: "single-bay-default",
+    });
+    expect(getClusterAccountByIdMock).not.toHaveBeenCalled();
+  });
+
+  it("prefers the cluster account directory over stale local account rows in multi-bay mode", async () => {
+    process.env.COCALC_CLUSTER_ROLE = "seed";
     getClusterAccountByIdMock = jest.fn(async () => ({
       account_id: OTHER_ACCOUNT_ID,
       email_address: "remote@example.com",
