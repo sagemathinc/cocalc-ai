@@ -1,15 +1,14 @@
 import { useState } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { isFreshAuthRequiredError } from "@cocalc/frontend/auth/fresh-auth";
-import {
-  buildCreateHostPayload,
-  type FieldOptionsMap,
-} from "../providers/registry";
+import { buildCreateHostPayloadFromDraft } from "../create/host-create-draft";
 import type {
   Host,
   HostCatalog,
+  HostFundingMode,
   HostLroResponse,
 } from "@cocalc/conat/hub/api/hosts";
+import type { HostProvider } from "../types";
 
 type HubClient = {
   hosts: {
@@ -24,8 +23,12 @@ type HubClient = {
 type UseHostCreateOptions = {
   hub: HubClient;
   refresh: () => Promise<unknown>;
-  fieldOptions: FieldOptionsMap;
   catalog?: HostCatalog;
+  enabledProviders: HostProvider[];
+  billing?: {
+    fundingModeOptions?: Array<{ value: HostFundingMode }>;
+    defaultFundingMode?: HostFundingMode;
+  };
   onHostOp?: (host_id: string, op: HostLroResponse) => void;
   browser_id?: string;
 };
@@ -33,8 +36,9 @@ type UseHostCreateOptions = {
 export const useHostCreate = ({
   hub,
   refresh,
-  fieldOptions,
   catalog,
+  enabledProviders,
+  billing,
   onHostOp,
   browser_id,
 }: UseHostCreateOptions) => {
@@ -44,11 +48,22 @@ export const useHostCreate = ({
     if (creating) return false;
     setCreating(true);
     try {
-      const payload = buildCreateHostPayload(vals, { fieldOptions, catalog });
       const startAfterCreate = opts?.start !== false;
+      const provider = vals?.provider as HostProvider | undefined;
+      const payload = buildCreateHostPayloadFromDraft(
+        { ...vals, start_after_create: startAfterCreate },
+        {
+          enabledProviders:
+            enabledProviders.length > 0
+              ? enabledProviders
+              : [provider ?? "none"],
+          catalogByProvider:
+            provider && catalog ? { [provider]: catalog } : undefined,
+          billing,
+        },
+      );
       const created = await hub.hosts.createHost({
         ...payload,
-        start_after_create: startAfterCreate,
         browser_id,
       });
       const selfHostKind = payload?.machine?.metadata?.self_host_kind;

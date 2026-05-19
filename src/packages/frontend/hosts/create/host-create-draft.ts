@@ -427,7 +427,7 @@ const setPrimaryComputeOption = (
 
 export function applyPreset(
   presetId: HostCreatePresetId,
-  current: HostCreateDraft,
+  current: Partial<HostCreateDraft>,
   context: HostCreateDraftContext,
 ): HostCreateDraft {
   let { draft, fieldOptions } = normalizeDraft(current, context);
@@ -448,7 +448,7 @@ export function applyPreset(
 }
 
 export function getAvailablePresets(
-  current: HostCreateDraft,
+  current: Partial<HostCreateDraft>,
   context: HostCreateDraftContext,
 ): HostCreatePreset[] {
   const { draft, fieldOptions } = normalizeDraft(current, context);
@@ -499,7 +499,7 @@ export function getAvailablePresets(
 export function buildCreateHostPayloadFromDraft(
   current: HostCreateDraft,
   context: HostCreateDraftContext,
-) {
+): Record<string, any> & { start_after_create: boolean } {
   const { draft, fieldOptions } = normalizeDraft(current, context);
   return {
     ...buildCreateHostPayload(draft, {

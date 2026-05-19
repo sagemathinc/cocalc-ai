@@ -11,8 +11,11 @@ import { HostList } from "./components/host-list";
 import { SelfHostRemoveModal } from "./components/self-host-remove-modal";
 import { SelfHostSetupModal } from "./components/self-host-setup-modal";
 import { WRAP_STYLE } from "./constants";
+import {
+  buildSimilarDraft,
+  type HostCreateDraft,
+} from "./create/host-create-draft";
 import { useHostsPageViewModel } from "./hooks/use-hosts-page-view-model";
-import { buildCreateSimilarHostFormValues } from "./utils/create-similar";
 
 const CREATE_PANEL_WIDTH_STORAGE_KEY = "cocalc:hosts:createPanelWidth";
 const CREATE_PANEL_OPEN_STORAGE_KEY = "cocalc:hosts:createPanelOpen";
@@ -84,29 +87,50 @@ export const HostsPage: React.FC = () => {
     React.useState(readCreatePanelWidth);
   const [createPanelOpen, setCreatePanelOpen] =
     React.useState(readCreatePanelOpen);
+  const [pendingCreateValues, setPendingCreateValues] =
+    React.useState<HostCreateDraft | null>(null);
   React.useEffect(() => {
     persistCreatePanelWidth(createPanelWidth);
   }, [createPanelWidth]);
   React.useEffect(() => {
     persistCreatePanelOpen(createPanelOpen);
   }, [createPanelOpen]);
+  React.useEffect(() => {
+    if (!createPanelOpen || !pendingCreateValues) return;
+    const form = createVm.form.form;
+    form.resetFields();
+    form.setFieldsValue(pendingCreateValues);
+    setPendingCreateValues(null);
+  }, [createPanelOpen, createVm.form.form, pendingCreateValues]);
   const closeHostDrawer = hostDrawerVm.onClose;
   const openCreateSimilar = React.useCallback(
     (host: Host) => {
-      const form = createVm.form.form;
-      const providerOptions = createVm.provider.providerOptions.map(
+      const enabledProviders = createVm.provider.providerOptions.map(
         (option) => option.value,
       );
-      const nextValues = buildCreateSimilarHostFormValues(
-        host,
-        providerOptions,
-      );
+      const catalogByProvider = createVm.provider.catalog
+        ? { [createVm.provider.selectedProvider]: createVm.provider.catalog }
+        : {};
+      const nextValues = buildSimilarDraft(host, {
+        enabledProviders,
+        catalogByProvider,
+        billing: {
+          fundingModeOptions: createVm.billing.fundingModeOptions,
+          defaultFundingMode: createVm.billing.defaultFundingMode,
+        },
+      });
       closeHostDrawer();
+      setPendingCreateValues(nextValues);
       setCreatePanelOpen(true);
-      form.resetFields();
-      form.setFieldsValue(nextValues);
     },
-    [closeHostDrawer, createVm.form.form, createVm.provider.providerOptions],
+    [
+      closeHostDrawer,
+      createVm.billing.defaultFundingMode,
+      createVm.billing.fundingModeOptions,
+      createVm.provider.catalog,
+      createVm.provider.providerOptions,
+      createVm.provider.selectedProvider,
+    ],
   );
   const hostDrawerVmWithCreateSimilar = React.useMemo(
     () => ({
