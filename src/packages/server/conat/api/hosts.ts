@@ -6814,8 +6814,13 @@ export async function deleteHost({
       });
   }
   const row = await loadOwnedHost(id, account_id);
+  const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
+  const managedCloud =
+    machineCloud && machineCloud !== "self-host" && machineCloud !== "local";
+  const hasProviderRuntime =
+    !!`${row.metadata?.runtime?.instance_id ?? ""}`.trim();
   const kind =
-    row.status === "deprovisioned"
+    row.status === "deprovisioned" || (managedCloud && !hasProviderRuntime)
       ? HOST_DELETE_LRO_KIND
       : HOST_DEPROVISION_LRO_KIND;
   await cancelHostOpsPreemptedByDestructiveAction(row.id);

@@ -1742,18 +1742,21 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
       </Drawer>
     );
   }
+  const deleteWithoutDeprovision =
+    host.status === "deprovisioned" ||
+    (!!host.machine?.cloud &&
+      host.machine.cloud !== "self-host" &&
+      host.machine.cloud !== "local" &&
+      !host.provider_instance_id);
   const deleteLabel = host.deleted
     ? "Deleted"
-    : host.status === "deprovisioned"
+    : deleteWithoutDeprovision
       ? "Delete"
       : "Deprovision";
-  const deleteTitle =
-    host.status === "deprovisioned"
-      ? "Delete this host?"
-      : "Deprovision this host?";
-  const deleteOkText =
-    host.status === "deprovisioned" ? "Delete" : "Deprovision";
-  const isDeprovisioned = host.status === "deprovisioned";
+  const deleteTitle = deleteWithoutDeprovision
+    ? "Delete this host?"
+    : "Deprovision this host?";
+  const deleteOkText = deleteWithoutDeprovision ? "Delete" : "Deprovision";
   const overviewContent = host ? (
     <Space orientation="vertical" style={{ width: "100%" }} size="middle">
       {!showUpgradeProgress && (
@@ -2362,11 +2365,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               style={{ width: "100%" }}
             >
               <Typography.Text type="secondary">
-                Deprovisioning removes the host from service. Permanently
-                deleting is only available after the host is already
-                deprovisioned.
+                Deprovisioning removes provider resources. Permanently deleting
+                is available after deprovisioning, or before provisioning has
+                created any provider resources.
               </Typography.Text>
-              {isDeprovisioned ? (
+              {deleteWithoutDeprovision ? (
                 <Popconfirm
                   title={deleteTitle}
                   okText={deleteOkText}

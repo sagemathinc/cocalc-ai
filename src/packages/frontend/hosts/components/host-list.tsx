@@ -17,7 +17,7 @@ import {
   Typography,
   message,
 } from "antd";
-import { CloudServerOutlined, SyncOutlined } from "@ant-design/icons";
+import { SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { copyTextToClipboard } from "@cocalc/frontend/components/copy-button";
@@ -184,20 +184,14 @@ async function copyHostId(host: Host) {
   }
 }
 
-function statusDotColor(host: Host): string {
-  if (host.deleted) return COLORS.GRAY_M;
-  if (host.status === "error") return COLORS.FG_RED;
-  if (host.status === "running") return COLORS.ANTD_GREEN_D;
-  if (
-    host.status === "starting" ||
-    host.status === "restarting" ||
-    host.status === "stopping" ||
-    host.status === "draining" ||
-    host.status === "deprovisioning"
-  ) {
-    return COLORS.ANTD_ORANGE;
-  }
-  return COLORS.GRAY_M;
+function hostCanBeDeletedWithoutDeprovision(host: Host): boolean {
+  const provider = host.machine?.cloud;
+  const managedCloud =
+    provider && provider !== "self-host" && provider !== "local";
+  return (
+    host.status === "deprovisioned" ||
+    (!!managedCloud && !host.provider_instance_id)
+  );
 }
 
 function HostIdentityCell({
@@ -208,81 +202,51 @@ function HostIdentityCell({
   onDetails: (host: Host) => void;
 }) {
   return (
-    <Space size={10} align="start" style={{ minWidth: 180 }}>
-      <span
+    <Space size={2} direction="vertical" style={{ minWidth: 130 }}>
+      <Button
+        type="link"
+        onClick={() => onDetails(host)}
         style={{
-          width: 34,
-          height: 34,
-          borderRadius: 10,
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: COLORS.BLUE_LLLL,
-          color: COLORS.ANTD_LINK_BLUE,
-          border: `1px solid ${COLORS.BLUE_LL}`,
-          fontSize: 18,
-          flex: "0 0 auto",
+          padding: 0,
+          height: "auto",
+          fontWeight: 600,
+          fontSize: 15,
         }}
       >
-        <CloudServerOutlined />
-      </span>
-      <Space orientation="vertical" size={2}>
-        <Space size={7} wrap>
-          <span
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: 4,
-              background: statusDotColor(host),
-              display: "inline-block",
-            }}
-          />
-          <Button
-            type="link"
-            onClick={() => onDetails(host)}
-            style={{
-              padding: 0,
-              height: "auto",
-              fontWeight: 600,
-              fontSize: 15,
-            }}
-          >
-            {host.name}
-          </Button>
-        </Space>
-        <Typography.Text
-          type="secondary"
-          title={`Copy host id: ${host.id}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            void copyHostId(host);
-          }}
-          style={{
-            fontSize: 12,
-            fontFamily: "monospace",
-            cursor: "copy",
-          }}
+        {host.name}
+      </Button>
+      <Typography.Text
+        type="secondary"
+        title={`Copy host id: ${host.id}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          void copyHostId(host);
+        }}
+        style={{
+          fontSize: 12,
+          fontFamily: "monospace",
+          cursor: "copy",
+        }}
+      >
+        {shortHostId(host)}
+      </Typography.Text>
+      {host.status === "error" && host.last_error ? (
+        <Popover
+          title="Error"
+          content={
+            <HostErrorDetails message={host.last_error} maxHeight={240} />
+          }
         >
-          {shortHostId(host)}
-        </Typography.Text>
-        {host.status === "error" && host.last_error ? (
-          <Popover
-            title="Error"
-            content={
-              <HostErrorDetails message={host.last_error} maxHeight={240} />
-            }
+          <Button
+            size="small"
+            type="link"
+            danger
+            style={{ padding: 0, height: "auto" }}
           >
-            <Button
-              size="small"
-              type="link"
-              danger
-              style={{ padding: 0, height: "auto" }}
-            >
-              Error
-            </Button>
-          </Popover>
-        ) : null}
-      </Space>
+            Error
+          </Button>
+        </Popover>
+      ) : null}
     </Space>
   );
 }
@@ -703,7 +667,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         (host) =>
           canManageHostLifecycle(host) &&
           !host.deleted &&
-          host.status !== "deprovisioned",
+          !hostCanBeDeletedWithoutDeprovision(host),
       ),
     [selectedHosts],
   );
@@ -713,7 +677,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         (host) =>
           canManageHostLifecycle(host) &&
           !host.deleted &&
-          host.status === "deprovisioned",
+          hostCanBeDeletedWithoutDeprovision(host),
       ),
     [selectedHosts],
   );
