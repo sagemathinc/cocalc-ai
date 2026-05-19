@@ -1,6 +1,16 @@
+import {
+  CheckCircleFilled,
+  ClockCircleOutlined,
+  CloudServerOutlined,
+  DatabaseOutlined,
+  ExclamationCircleFilled,
+  HddOutlined,
+  TeamOutlined,
+} from "@ant-design/icons";
 import { Progress, Space, Tag, Typography } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { Tooltip } from "@cocalc/frontend/components";
+import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import type {
   Host,
   HostMetricsDerived,
@@ -24,6 +34,7 @@ type MetricBarProps = {
   dense?: boolean;
   historyPoints?: SparklinePoint[];
   color?: string;
+  icon?: React.ReactNode;
 };
 
 type SparklinePoint = {
@@ -101,6 +112,46 @@ function progressStatus(percent?: number): "normal" | "active" | "exception" {
   if (percent >= 90) return "exception";
   if (percent >= 75) return "active";
   return "normal";
+}
+
+type ResourceTone = "green" | "blue" | "orange" | "red" | "gray";
+
+const RESOURCE_TONES: Record<
+  ResourceTone,
+  { text: string; background: string; border: string }
+> = {
+  green: {
+    text: COLORS.ANTD_GREEN_D,
+    background: COLORS.BS_GREEN_LL,
+    border: COLORS.ANTD_GREEN,
+  },
+  blue: {
+    text: COLORS.ANTD_LINK_BLUE,
+    background: COLORS.BLUE_LLLL,
+    border: COLORS.BLUE_LLL,
+  },
+  orange: {
+    text: COLORS.YELL_D,
+    background: COLORS.YELL_LLL,
+    border: COLORS.YELL_LL,
+  },
+  red: {
+    text: COLORS.FG_RED,
+    background: COLORS.ANTD_BG_RED_L,
+    border: COLORS.ANTD_BG_RED_M,
+  },
+  gray: {
+    text: COLORS.GRAY_M,
+    background: COLORS.GRAY_LLL,
+    border: COLORS.GRAY_L0,
+  },
+};
+
+function percentTone(percent?: number): ResourceTone {
+  if (percent == null || !Number.isFinite(percent)) return "gray";
+  if (percent >= 90) return "red";
+  if (percent >= 75) return "orange";
+  return "green";
 }
 
 type DiskUsageSource = {
@@ -355,6 +406,108 @@ function renderDerivedRiskTags(
   );
 }
 
+function resourceHealth({
+  derived,
+  diskPercent,
+  metadataPercent,
+  stale,
+}: {
+  derived?: HostMetricsDerived;
+  diskPercent?: number;
+  metadataPercent?: number;
+  stale?: boolean;
+}): { label: string; tone: ResourceTone; detail: string } {
+  if (
+    derived?.disk.level === "critical" ||
+    derived?.metadata.level === "critical" ||
+    derived?.admission_allowed === false ||
+    percentTone(diskPercent) === "red" ||
+    percentTone(metadataPercent) === "red"
+  ) {
+    return { label: "Critical", tone: "red", detail: "Resource pressure" };
+  }
+  if (
+    derived?.disk.level === "warning" ||
+    derived?.metadata.level === "warning" ||
+    derived?.auto_grow_recommended ||
+    percentTone(diskPercent) === "orange" ||
+    percentTone(metadataPercent) === "orange"
+  ) {
+    return { label: "Watch disk", tone: "orange", detail: "Overall health" };
+  }
+  if (stale) {
+    return {
+      label: "Metrics stale",
+      tone: "orange",
+      detail: "Refresh pending",
+    };
+  }
+  return { label: "Healthy", tone: "green", detail: "Overall health" };
+}
+
+function HealthBadge({
+  label,
+  detail,
+  tone,
+}: {
+  label: string;
+  detail?: string;
+  tone: ResourceTone;
+}) {
+  const colors = RESOURCE_TONES[tone];
+  const icon =
+    tone === "green" ? <CheckCircleFilled /> : <ExclamationCircleFilled />;
+  return (
+    <Space size={8}>
+      <span
+        style={{
+          width: 30,
+          height: 30,
+          borderRadius: 15,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: colors.text,
+          background: colors.background,
+          border: `1px solid ${colors.border}`,
+        }}
+      >
+        {icon}
+      </span>
+      <span>
+        <Typography.Text strong style={{ color: colors.text }}>
+          {label}
+        </Typography.Text>
+        {detail ? (
+          <Typography.Text
+            type="secondary"
+            style={{ display: "block", fontSize: 12 }}
+          >
+            {detail}
+          </Typography.Text>
+        ) : null}
+      </span>
+    </Space>
+  );
+}
+
+function StaleMetricsTag({
+  stale,
+  message,
+}: {
+  stale: boolean;
+  message?: string;
+}) {
+  if (!stale) return null;
+  return (
+    <Tooltip title={message} placement="top">
+      <Tag color="orange" style={{ marginInlineEnd: 0 }}>
+        metrics stale
+      </Tag>
+    </Tooltip>
+  );
+}
+
 function tooltipContent(
   title: string,
   point: HostMetricsHistoryPoint,
@@ -523,98 +676,133 @@ function MetricBar({
   dense,
   historyPoints,
   color,
+  icon,
 }: MetricBarProps) {
   const displayPercent = normalizePercent(percent);
   const trendPoints = historyPoints ?? [];
+  const tone = percentTone(displayPercent);
+  const toneColors = RESOURCE_TONES[tone];
+  const display =
+    displayPercent != null ? Math.round(displayPercent) : undefined;
   if (compact && dense) {
     return (
-      <Space orientation="vertical" size={2} style={{ width: "100%" }}>
-        <Space
-          size={8}
-          style={{
-            justifyContent: "space-between",
-            width: "100%",
-          }}
-        >
-          <Typography.Text style={{ fontSize: 12 }}>
-            {label}
-            {displayPercent != null ? ` ${Math.round(displayPercent)}%` : ""}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "24px minmax(62px, 1fr) 78px",
+          gap: 8,
+          alignItems: "center",
+          width: "100%",
+          padding: "6px 0",
+          borderTop: `1px solid ${COLORS.GRAY_LL}`,
+        }}
+      >
+        <span style={{ color: color ?? COLORS.BLUE_D, fontSize: 17 }}>
+          {icon}
+        </span>
+        <span>
+          <Typography.Text strong style={{ fontSize: 12 }}>
+            {label} {display != null ? `${display}%` : "n/a"}
           </Typography.Text>
-          {detail && (
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {detail ? (
+            <Typography.Text
+              type="secondary"
+              style={{ display: "block", fontSize: 11, lineHeight: 1.1 }}
+            >
               {detail}
             </Typography.Text>
-          )}
-        </Space>
+          ) : null}
+        </span>
         <div
           style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
             width: "100%",
           }}
         >
-          <div style={{ flex: "0 0 30%" }}>
-            {displayPercent != null ? (
-              <Progress
-                percent={Math.round(displayPercent)}
-                size="small"
-                status={progressStatus(displayPercent)}
-                showInfo={false}
-              />
-            ) : (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                n/a
-              </Typography.Text>
-            )}
-          </div>
-          <div style={{ flex: 1 }}>
-            <Sparkline points={trendPoints} color={color} compact />
-          </div>
+          <Sparkline points={trendPoints} color={color} compact />
+          <Progress
+            percent={display ?? 0}
+            size="small"
+            status={progressStatus(displayPercent)}
+            showInfo={false}
+            strokeColor={toneColors.text}
+          />
         </div>
-      </Space>
+      </div>
     );
   }
 
   return (
-    <Space orientation="vertical" size={2} style={{ width: "100%" }}>
-      <Space
-        size={8}
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: compact
+          ? "34px minmax(95px, 0.8fr) minmax(120px, 1fr)"
+          : "42px minmax(120px, 0.7fr) minmax(180px, 1fr) minmax(160px, 1fr)",
+        gap: compact ? 10 : 16,
+        alignItems: "center",
+        width: "100%",
+        padding: compact ? "8px 0" : "12px 0",
+        borderTop: `1px solid ${COLORS.GRAY_LL}`,
+      }}
+    >
+      <span
         style={{
-          justifyContent: "space-between",
-          width: "100%",
+          width: compact ? 30 : 38,
+          height: compact ? 30 : 38,
+          borderRadius: 10,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: color ?? COLORS.BLUE_D,
+          background: COLORS.GRAY_LLL,
+          fontSize: compact ? 17 : 20,
         }}
       >
-        <Typography.Text style={{ fontSize: compact ? 12 : undefined }}>
+        {icon}
+      </span>
+      <span>
+        <Typography.Text strong style={{ display: "block" }}>
           {label}
-          {displayPercent != null ? ` ${Math.round(displayPercent)}%` : ""}
         </Typography.Text>
-        {detail && (
+        <Typography.Text
+          strong
+          style={{ color: toneColors.text, fontSize: compact ? 16 : 18 }}
+        >
+          {display != null ? `${display}%` : "n/a"}
+        </Typography.Text>
+        {detail ? (
           <Typography.Text
             type="secondary"
-            style={{ fontSize: compact ? 12 : undefined }}
+            style={{ display: "block", fontSize: 12 }}
           >
             {detail}
           </Typography.Text>
-        )}
-      </Space>
-      {displayPercent != null ? (
+        ) : null}
+      </span>
+      <Sparkline points={trendPoints} color={color} compact={compact} />
+      <div>
         <Progress
-          percent={Math.round(displayPercent)}
+          percent={display ?? 0}
           size="small"
           status={progressStatus(displayPercent)}
           showInfo={false}
+          strokeColor={toneColors.text}
         />
-      ) : (
-        <Typography.Text
-          type="secondary"
-          style={{ fontSize: compact ? 12 : undefined }}
-        >
-          n/a
-        </Typography.Text>
-      )}
-      <Sparkline points={trendPoints} color={color} compact={compact} />
-    </Space>
+        {!compact ? (
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-around",
+              color: COLORS.GRAY_M,
+              fontSize: 11,
+            }}
+          >
+            <span>75%</span>
+            <span>90%</span>
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -745,11 +933,18 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
   const derived = history?.derived;
   const riskTags = renderDerivedRiskTags(derived);
   const metricsStaleness = getMetricsStaleness(host);
-  const staleMetricsTag = metricsStaleness.stale ? (
-    <Tooltip title={metricsStaleness.message} placement="top">
-      <Tag color="orange">metrics stale</Tag>
-    </Tooltip>
-  ) : null;
+  const health = resourceHealth({
+    derived,
+    diskPercent,
+    metadataPercent,
+    stale: metricsStaleness.stale,
+  });
+  const staleMetricsTag = (
+    <StaleMetricsTag
+      stale={metricsStaleness.stale}
+      message={metricsStaleness.message}
+    />
+  );
   const riskSummary = derived
     ? `Risk: disk ${derived.disk.level}, metadata ${derived.metadata.level} · ${
         derived.admission_allowed ? "admission allowed" : "admission blocked"
@@ -765,18 +960,17 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
       : undefined;
 
   if (compact) {
-    return (
-      <Space orientation="vertical" size={4} style={{ width: "100%" }}>
-        {staleMetricsTag}
-        {riskTags}
+    const body = (
+      <>
         <MetricBar
           label="CPU"
           percent={cpuPercent}
-          detail={load ? `load ${load}` : undefined}
+          detail={load ? load : undefined}
           compact
           dense={dense}
           historyPoints={cpuHistory}
           color={COLORS.BLUE_D}
+          icon={<CloudServerOutlined />}
         />
         <MetricBar
           label="RAM"
@@ -790,6 +984,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           dense={dense}
           historyPoints={memoryHistory}
           color={COLORS.ANTD_GREEN_D}
+          icon={<HddOutlined />}
         />
         <MetricBar
           label="Disk"
@@ -801,81 +996,253 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           dense={dense}
           historyPoints={diskHistory}
           color={COLORS.ANTD_ORANGE}
+          icon={<DatabaseOutlined />}
         />
-        <Tag>
-          Projects {metrics.running_project_count ?? 0}/
-          {metrics.assigned_project_count ?? 0} running
-        </Tag>
-      </Space>
+        <MetricBar
+          label="Metadata"
+          percent={metadataPercent}
+          detail={
+            metadataUsed && metadataTotal
+              ? `${metadataUsed} / ${metadataTotal}`
+              : undefined
+          }
+          compact
+          dense={dense}
+          historyPoints={metadataHistory}
+          color={COLORS.ANTD_RED}
+          icon={<DatabaseOutlined />}
+        />
+      </>
+    );
+    if (dense) {
+      return (
+        <div
+          style={{
+            minWidth: 220,
+            border: `1px solid ${COLORS.GRAY_LL}`,
+            borderRadius: 10,
+            background: "white",
+            padding: "8px 10px",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 8,
+              alignItems: "center",
+              marginBottom: 4,
+            }}
+          >
+            <HealthBadge
+              label={health.label}
+              detail={health.detail}
+              tone={health.tone}
+            />
+            {staleMetricsTag}
+          </div>
+          {riskTags}
+          {body}
+          <div
+            style={{
+              borderTop: `1px solid ${COLORS.GRAY_LL}`,
+              paddingTop: 7,
+              marginTop: 3,
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 8,
+              alignItems: "center",
+            }}
+          >
+            <Space size={6}>
+              <TeamOutlined style={{ color: COLORS.ANTD_LINK_BLUE }} />
+              <Typography.Text style={{ fontSize: 12 }}>
+                Projects
+              </Typography.Text>
+            </Space>
+            <Typography.Text style={{ fontSize: 12 }}>
+              {metrics.running_project_count ?? 0} running /{" "}
+              {metrics.assigned_project_count ?? 0} assigned
+            </Typography.Text>
+          </div>
+          {metrics.collected_at ? (
+            <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+              <ClockCircleOutlined /> Sampled{" "}
+              <TimeAgo date={metrics.collected_at} />
+            </Typography.Text>
+          ) : null}
+        </div>
+      );
+    }
+    return (
+      <div
+        style={{
+          border: `1px solid ${COLORS.GRAY_LL}`,
+          borderRadius: 10,
+          background: "white",
+          padding: 10,
+          width: "100%",
+        }}
+      >
+        <Space orientation="vertical" size={6} style={{ width: "100%" }}>
+          <Space size={[8, 6]} wrap>
+            <HealthBadge
+              label={health.label}
+              detail={health.detail}
+              tone={health.tone}
+            />
+            {staleMetricsTag}
+            {riskTags}
+          </Space>
+          {body}
+          <Space size={[12, 6]} wrap>
+            <Tag icon={<TeamOutlined />}>
+              Projects {metrics.running_project_count ?? 0} running /{" "}
+              {metrics.assigned_project_count ?? 0} assigned
+            </Tag>
+            {metrics.collected_at ? (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                <ClockCircleOutlined /> Sampled{" "}
+                <TimeAgo date={metrics.collected_at} />
+              </Typography.Text>
+            ) : null}
+          </Space>
+        </Space>
+      </div>
     );
   }
 
   return (
-    <Space orientation="vertical" size={6} style={{ width: "100%" }}>
-      {staleMetricsTag}
-      <MetricBar
-        label="CPU"
-        percent={cpuPercent}
-        detail={load ? `load ${load}` : undefined}
-        historyPoints={cpuHistory}
-        color={COLORS.BLUE_D}
-      />
-      <MetricBar
-        label="Memory"
-        percent={memoryPercent}
-        detail={
-          memoryUsed && memoryTotal
-            ? `${memoryUsed} / ${memoryTotal}`
-            : undefined
-        }
-        historyPoints={memoryHistory}
-        color={COLORS.ANTD_GREEN_D}
-      />
-      <MetricBar
-        label="Disk"
-        percent={diskPercent}
-        detail={
-          diskUsed && diskTotal ? `${diskUsed} / ${diskTotal}` : diskTotal
-        }
-        historyPoints={diskHistory}
-        color={COLORS.ANTD_ORANGE}
-      />
-      <MetricBar
-        label="Metadata"
-        percent={metadataPercent}
-        detail={
-          metadataUsed && metadataTotal
-            ? `${metadataUsed} / ${metadataTotal}`
-            : undefined
-        }
-        historyPoints={metadataHistory}
-        color={COLORS.ANTD_RED}
-      />
-      {riskTags}
-      {(diskTrend || metadataTrend) && (
-        <Typography.Text type="secondary">
-          {diskTrend ? `Disk trend ${diskTrend}` : ""}
-          {diskTrend && metadataTrend ? " · " : ""}
-          {metadataTrend ? `Metadata trend ${metadataTrend}` : ""}
-          {history?.window_minutes
-            ? ` over last ${history.window_minutes}m`
-            : ""}
-        </Typography.Text>
-      )}
-      {riskSummary && (
-        <Typography.Text type="secondary">{riskSummary}</Typography.Text>
-      )}
-      <Typography.Text>
-        Projects: {metrics.running_project_count ?? 0} running,{" "}
-        {metrics.starting_project_count ?? 0} starting,{" "}
-        {metrics.stopping_project_count ?? 0} stopping,{" "}
-        {metrics.assigned_project_count ?? 0} assigned
-      </Typography.Text>
-      {metrics.collected_at && (
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          Sampled {new Date(metrics.collected_at).toLocaleString()}
-        </Typography.Text>
-      )}
-    </Space>
+    <div
+      style={{
+        border: `1px solid ${COLORS.GRAY_LL}`,
+        borderRadius: 12,
+        background: "white",
+        width: "100%",
+        overflow: "hidden",
+      }}
+    >
+      <div style={{ padding: "12px 14px" }}>
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          Resources
+        </Typography.Title>
+      </div>
+      <div
+        style={{
+          borderTop: `1px solid ${COLORS.GRAY_LL}`,
+          borderBottom: `1px solid ${COLORS.GRAY_LL}`,
+          padding: "12px 14px",
+          display: "grid",
+          gridTemplateColumns:
+            "minmax(160px, 1fr) minmax(140px, auto) minmax(140px, auto) auto",
+          gap: 16,
+          alignItems: "center",
+        }}
+      >
+        <HealthBadge
+          label={health.label}
+          detail={health.detail}
+          tone={health.tone}
+        />
+        <Space size={8}>
+          <TeamOutlined
+            style={{ color: COLORS.ANTD_LINK_BLUE, fontSize: 20 }}
+          />
+          <Typography.Text>
+            <strong>{metrics.running_project_count ?? 0}</strong> running
+            <br />
+            <strong>{metrics.assigned_project_count ?? 0}</strong> assigned
+          </Typography.Text>
+        </Space>
+        {metrics.collected_at ? (
+          <Space size={8}>
+            <ClockCircleOutlined
+              style={{ color: COLORS.GRAY_M, fontSize: 20 }}
+            />
+            <Typography.Text>
+              Sampled
+              <br />
+              <TimeAgo date={metrics.collected_at} />
+            </Typography.Text>
+          </Space>
+        ) : null}
+        {staleMetricsTag}
+      </div>
+      <div style={{ padding: "0 14px" }}>
+        <MetricBar
+          label="CPU"
+          percent={cpuPercent}
+          detail={load ? `load ${load}` : undefined}
+          historyPoints={cpuHistory}
+          color={COLORS.BLUE_D}
+          icon={<CloudServerOutlined />}
+        />
+        <MetricBar
+          label="Memory"
+          percent={memoryPercent}
+          detail={
+            memoryUsed && memoryTotal
+              ? `${memoryUsed} / ${memoryTotal}`
+              : undefined
+          }
+          historyPoints={memoryHistory}
+          color={COLORS.ANTD_GREEN_D}
+          icon={<HddOutlined />}
+        />
+        <MetricBar
+          label="Disk"
+          percent={diskPercent}
+          detail={
+            diskUsed && diskTotal ? `${diskUsed} / ${diskTotal}` : diskTotal
+          }
+          historyPoints={diskHistory}
+          color={COLORS.ANTD_ORANGE}
+          icon={<DatabaseOutlined />}
+        />
+        <MetricBar
+          label="Metadata"
+          percent={metadataPercent}
+          detail={
+            metadataUsed && metadataTotal
+              ? `${metadataUsed} / ${metadataTotal}`
+              : undefined
+          }
+          historyPoints={metadataHistory}
+          color={COLORS.ANTD_RED}
+          icon={<DatabaseOutlined />}
+        />
+      </div>
+      <div
+        style={{
+          borderTop: `1px solid ${COLORS.GRAY_LL}`,
+          padding: "10px 14px",
+        }}
+      >
+        <Space size={[12, 8]} wrap>
+          <Tag icon={<TeamOutlined />}>
+            {metrics.running_project_count ?? 0} running
+          </Tag>
+          <Tag>{metrics.starting_project_count ?? 0} starting</Tag>
+          <Tag>{metrics.stopping_project_count ?? 0} stopping</Tag>
+          <Tag>{metrics.assigned_project_count ?? 0} assigned</Tag>
+          {riskTags}
+          {diskTrend ? <Tag color="orange">Disk trend {diskTrend}</Tag> : null}
+          {metadataTrend ? (
+            <Tag color="blue">Metadata trend {metadataTrend}</Tag>
+          ) : null}
+        </Space>
+        {riskSummary && (
+          <Typography.Text
+            type="secondary"
+            style={{ display: "block", marginTop: 8 }}
+          >
+            {riskSummary}
+            {history?.window_minutes
+              ? ` over last ${history.window_minutes}m`
+              : ""}
+          </Typography.Text>
+        )}
+      </div>
+    </div>
   );
 };
