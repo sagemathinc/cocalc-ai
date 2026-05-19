@@ -418,7 +418,9 @@ export async function initHostRegistryService() {
         const currentStatus = await loadCurrentStatus(info.id);
         if (
           currentStatus &&
-          !["running", "active"].includes(String(currentStatus))
+          !["running", "active", "starting", "restarting"].includes(
+            String(currentStatus),
+          )
         ) {
           logger.debug("register ignored (status)", {
             id: info.id,

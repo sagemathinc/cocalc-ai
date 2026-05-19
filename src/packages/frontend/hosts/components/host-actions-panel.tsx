@@ -69,6 +69,14 @@ function SectionTitle({ children }: { children: string }) {
   );
 }
 
+const START_LIKE_HOST_OP_KINDS = new Set(["host-start", "host-restart"]);
+const STOPPABLE_HOST_STATUSES = new Set([
+  "running",
+  "starting",
+  "restarting",
+  "error",
+]);
+
 export function HostActionsPanel({
   host,
   hostOp,
@@ -115,18 +123,34 @@ export function HostActionsPanel({
       : host.status === "restarting"
         ? "Restarting"
         : "Start";
-  const stopLabel = host.status === "stopping" ? "Stopping" : "Stop";
   const providerId = host.machine?.cloud;
   const caps = providerId
     ? providerCapabilities?.[providerId as HostProvider]
     : undefined;
+  const hostOpKind = hostOp?.kind ?? hostOp?.summary?.kind;
+  const activeStartLikeOperation =
+    hostOpActive &&
+    (START_LIKE_HOST_OP_KINDS.has(String(hostOpKind ?? "")) ||
+      host.status === "starting" ||
+      host.status === "restarting");
+  const allowEmergencyStop =
+    activeStartLikeOperation &&
+    STOPPABLE_HOST_STATUSES.has(String(host.status)) &&
+    caps?.supportsStop !== false &&
+    host.machine?.storage_mode !== "ephemeral";
+  const stopLabel =
+    host.status === "stopping"
+      ? "Stopping"
+      : allowEmergencyStop
+        ? "Emergency stop"
+        : "Stop";
   const allowStop =
     !isDeleted &&
     host.can_start &&
-    (host.status === "running" || host.status === "error") &&
+    STOPPABLE_HOST_STATUSES.has(String(host.status)) &&
     caps?.supportsStop !== false &&
     host.machine?.storage_mode !== "ephemeral" &&
-    !hostOpActive;
+    (!hostOpActive || allowEmergencyStop);
   const supportsRestart = caps?.supportsRestart ?? true;
   const supportsHardRestart = caps?.supportsHardRestart ?? false;
   const allowRestart =
@@ -465,6 +489,7 @@ export function HostActionsPanel({
           style={{ fontSize: 12, lineHeight: 1.3 }}
         >
           {blockedActionsReason}
+          {allowEmergencyStop ? " Emergency stop is still available." : ""}
         </Typography.Text>
       ) : null}
       {mode === "card" && hostOpActive ? (
