@@ -412,7 +412,14 @@ export function HostActionsPanel({
       size={6}
       style={{ maxWidth: mode === "card" ? undefined : 260, width: "100%" }}
     >
-      <Space size={6} wrap style={{ width: "100%" }}>
+      <Space
+        size={6}
+        wrap={mode === "card"}
+        style={{
+          width: "100%",
+          flexWrap: mode === "card" ? undefined : "nowrap",
+        }}
+      >
         <Button
           size="small"
           type={primaryAction.type}
