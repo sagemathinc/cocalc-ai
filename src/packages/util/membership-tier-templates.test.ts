@@ -38,6 +38,10 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(
       (tier.usage_limits as Record<string, unknown>)?.rootfs_oci_images,
     ).toBe(true);
+    expect(
+      (tier.usage_limits as Record<string, unknown>)
+        ?.project_max_collaborators_and_pending_invites,
+    ).toBe(500);
   });
 
   it("preserves explicit entitlements instead of overwriting them", () => {
@@ -74,6 +78,9 @@ describe("applyMembershipTierTemplateFallbacks", () => {
         rootfs_total_storage_gb: 25,
         rootfs_max_storage_gb: 10,
         rootfs_oci_images: false,
+        invite_email_send_enabled: true,
+        invite_email_daily_count: 50,
+        project_max_collaborators_and_pending_invites: 50,
       }),
     );
   });
@@ -91,5 +98,28 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(tier.course_price).toBe(25);
     expect(tier.course_duration_days).toBe(122);
     expect(tier.course_grace_days).toBe(14);
+  });
+
+  it("defines an instructor tier with course-scale invite limits", () => {
+    const tier = applyMembershipTierTemplateFallbacks({
+      id: "instructor",
+    });
+
+    expect(tier.label).toBe("Instructor");
+    expect(tier.store_visible).toBe(true);
+    expect(tier.course_store_visible).toBe(false);
+    expect((tier.project_defaults as Record<string, unknown>).disk_quota).toBe(
+      50000,
+    );
+    expect((tier.usage_limits as Record<string, unknown>).max_projects).toBe(
+      250,
+    );
+    expect(
+      (tier.usage_limits as Record<string, unknown>).invite_email_daily_count,
+    ).toBe(500);
+    expect(
+      (tier.usage_limits as Record<string, unknown>)
+        .course_max_students_and_pending_invites,
+    ).toBe(500);
   });
 });

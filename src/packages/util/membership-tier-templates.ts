@@ -4,6 +4,7 @@ export const TEMPLATE_PRIORITY = {
   free: 0,
   student: 10,
   member: 20,
+  instructor: 25,
   pro: 30,
 } as const;
 
@@ -93,6 +94,56 @@ function blobUsageLimits({
   };
 }
 
+function inviteUsageLimits({
+  sendEnabled,
+  dailyCount,
+  hourlyCount,
+  recipientsPerBatch,
+  pendingPerProject,
+  pendingPerCourse,
+  resendCooldownMinutes,
+  customMessageMaxChars,
+  allowProjectTitle,
+  allowCourseTitle,
+  allowUrls,
+  linkCopyEnabled = true,
+  projectCollaboratorsAndPendingInvites,
+  courseStudentsAndPendingInvites,
+}: {
+  sendEnabled: boolean;
+  dailyCount: number;
+  hourlyCount: number;
+  recipientsPerBatch: number;
+  pendingPerProject: number;
+  pendingPerCourse: number;
+  resendCooldownMinutes: number;
+  customMessageMaxChars: number;
+  allowProjectTitle: boolean;
+  allowCourseTitle: boolean;
+  allowUrls: boolean;
+  linkCopyEnabled?: boolean;
+  projectCollaboratorsAndPendingInvites: number;
+  courseStudentsAndPendingInvites: number;
+}) {
+  return {
+    invite_email_send_enabled: sendEnabled,
+    invite_email_daily_count: dailyCount,
+    invite_email_hourly_count: hourlyCount,
+    invite_email_recipients_per_batch: recipientsPerBatch,
+    invite_email_pending_per_project: pendingPerProject,
+    invite_email_pending_per_course: pendingPerCourse,
+    invite_email_resend_cooldown_minutes: resendCooldownMinutes,
+    invite_email_custom_message_max_chars: customMessageMaxChars,
+    invite_email_allow_project_title: allowProjectTitle,
+    invite_email_allow_course_title: allowCourseTitle,
+    invite_email_allow_urls: allowUrls,
+    invite_email_link_copy_enabled: linkCopyEnabled,
+    project_max_collaborators_and_pending_invites:
+      projectCollaboratorsAndPendingInvites,
+    course_max_students_and_pending_invites: courseStudentsAndPendingInvites,
+  };
+}
+
 function aiLimitsFromYearly(price_yearly: number, monthlyOverride?: number) {
   const monthlyCost = monthlyOverride ?? price_yearly / 12;
   const monthlyBudget = monthlyCost * 0.5;
@@ -150,6 +201,21 @@ export const TIER_TEMPLATES = {
         projectStorageGb: 0.25,
         projectCount: 100,
       }),
+      ...inviteUsageLimits({
+        sendEnabled: false,
+        dailyCount: 10,
+        hourlyCount: 5,
+        recipientsPerBatch: 5,
+        pendingPerProject: 10,
+        pendingPerCourse: 10,
+        resendCooldownMinutes: 15,
+        customMessageMaxChars: 300,
+        allowProjectTitle: false,
+        allowCourseTitle: false,
+        allowUrls: false,
+        projectCollaboratorsAndPendingInvites: 10,
+        courseStudentsAndPendingInvites: 10,
+      }),
     }),
   },
   student: {
@@ -198,6 +264,21 @@ export const TIER_TEMPLATES = {
         accountCount: 1000,
         projectStorageGb: 0.5,
         projectCount: 500,
+      }),
+      ...inviteUsageLimits({
+        sendEnabled: false,
+        dailyCount: 20,
+        hourlyCount: 10,
+        recipientsPerBatch: 10,
+        pendingPerProject: 25,
+        pendingPerCourse: 50,
+        resendCooldownMinutes: 15,
+        customMessageMaxChars: 300,
+        allowProjectTitle: false,
+        allowCourseTitle: false,
+        allowUrls: false,
+        projectCollaboratorsAndPendingInvites: 25,
+        courseStudentsAndPendingInvites: 50,
       }),
     }),
   },
@@ -250,6 +331,89 @@ export const TIER_TEMPLATES = {
         accountCount: 5000,
         projectStorageGb: 1,
         projectCount: 1000,
+      }),
+      ...inviteUsageLimits({
+        sendEnabled: true,
+        dailyCount: 50,
+        hourlyCount: 20,
+        recipientsPerBatch: 25,
+        pendingPerProject: 50,
+        pendingPerCourse: 100,
+        resendCooldownMinutes: 15,
+        customMessageMaxChars: 600,
+        allowProjectTitle: true,
+        allowCourseTitle: true,
+        allowUrls: false,
+        projectCollaboratorsAndPendingInvites: 50,
+        courseStudentsAndPendingInvites: 100,
+      }),
+    }),
+  },
+  instructor: {
+    id: "instructor",
+    label: "Instructor",
+    store_visible: true,
+    course_store_visible: false,
+    priority: TEMPLATE_PRIORITY.instructor,
+    price_monthly: 75,
+    price_yearly: 75 * 9,
+    course_price: undefined,
+    course_duration_days: undefined,
+    course_grace_days: undefined,
+    project_defaults: quotaTemplate({
+      network: 1,
+      member_host: 1,
+      disk_quota: 50000,
+      memory: 8000,
+      cores: 2,
+      mintime: 8 * 3600,
+    }),
+    ai_limits: aiLimitsFromYearly(75 * 9),
+    features: {
+      create_hosts: true,
+      project_host_tier: 1,
+    },
+    usage_limits: usageLimitsTemplate(3, 10, {
+      max_projects: 250,
+      notification_email_send_limit_5h: 500,
+      notification_email_send_limit_7d: 2500,
+      prepaid_host_usage_limit_5h_usd: 500,
+      prepaid_host_usage_limit_7d_usd: 2000,
+      ...acpUsageLimits({
+        queuedPerAccount: 250,
+        queuedPerThread: 50,
+        created5hPerAccount: 250,
+        created7dPerAccount: 1000,
+        runningPerAccount: 25,
+        runningPerProject: 10,
+        activeAutomationsPerProject: 10,
+      }),
+      ...rootfsUsageLimits({
+        count: 50,
+        totalStorageGb: 75,
+        maxStorageGb: 20,
+        ociImages: false,
+      }),
+      ...blobUsageLimits({
+        accountStorageGb: 15,
+        accountCount: 20000,
+        projectStorageGb: 2,
+        projectCount: 2000,
+      }),
+      ...inviteUsageLimits({
+        sendEnabled: true,
+        dailyCount: 500,
+        hourlyCount: 200,
+        recipientsPerBatch: 200,
+        pendingPerProject: 250,
+        pendingPerCourse: 500,
+        resendCooldownMinutes: 15,
+        customMessageMaxChars: 600,
+        allowProjectTitle: true,
+        allowCourseTitle: true,
+        allowUrls: false,
+        projectCollaboratorsAndPendingInvites: 250,
+        courseStudentsAndPendingInvites: 500,
       }),
     }),
   },
@@ -305,6 +469,21 @@ export const TIER_TEMPLATES = {
         projectStorageGb: 5,
         projectCount: 5000,
       }),
+      ...inviteUsageLimits({
+        sendEnabled: true,
+        dailyCount: 1000,
+        hourlyCount: 500,
+        recipientsPerBatch: 500,
+        pendingPerProject: 500,
+        pendingPerCourse: 1000,
+        resendCooldownMinutes: 15,
+        customMessageMaxChars: 1000,
+        allowProjectTitle: true,
+        allowCourseTitle: true,
+        allowUrls: false,
+        projectCollaboratorsAndPendingInvites: 500,
+        courseStudentsAndPendingInvites: 1000,
+      }),
     }),
   },
 } as const;
@@ -315,10 +494,15 @@ export function getTierTemplate(id: keyof typeof TIER_TEMPLATES) {
 
 type TierTemplateFields = {
   id?: string;
+  label?: string;
+  store_visible?: boolean;
   course_store_visible?: boolean;
   course_price?: number;
   course_duration_days?: number;
   course_grace_days?: number;
+  priority?: number;
+  price_monthly?: number;
+  price_yearly?: number;
   project_defaults?: Record<string, unknown>;
   ai_limits?: Record<string, unknown>;
   features?: Record<string, unknown>;
@@ -332,12 +516,17 @@ export function applyMembershipTierTemplateFallbacks<
   if (template == null) return tier;
   return {
     ...tier,
+    label: tier.label ?? template.label,
+    store_visible: tier.store_visible ?? template.store_visible,
     course_store_visible:
       tier.course_store_visible ?? template.course_store_visible,
     course_price: tier.course_price ?? template.course_price,
     course_duration_days:
       tier.course_duration_days ?? template.course_duration_days,
     course_grace_days: tier.course_grace_days ?? template.course_grace_days,
+    priority: tier.priority ?? template.priority,
+    price_monthly: tier.price_monthly ?? template.price_monthly,
+    price_yearly: tier.price_yearly ?? template.price_yearly,
     project_defaults: tier.project_defaults ?? template.project_defaults,
     ai_limits: tier.ai_limits ?? template.ai_limits,
     features: tier.features ?? template.features,

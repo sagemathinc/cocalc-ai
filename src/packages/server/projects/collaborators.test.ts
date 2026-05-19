@@ -32,6 +32,16 @@ jest.mock("@cocalc/database/pool", () => ({
   default: jest.fn(() => ({ query: queryMock })),
 }));
 
+jest.mock("@cocalc/database/settings/site-url", () => ({
+  __esModule: true,
+  default: jest.fn(async () => "https://example.com"),
+}));
+
+jest.mock("@cocalc/database/settings/secret-settings", () => ({
+  __esModule: true,
+  getSecretSettingsKey: jest.fn(async () => Buffer.alloc(32, 1)),
+}));
+
 jest.mock("@cocalc/database/postgres/account-collaborator-index", () => ({
   __esModule: true,
   listProjectedMyCollaboratorsForAccount: (...args: any[]) =>
@@ -363,6 +373,9 @@ describe("project collaborators local bay access", () => {
       .fn()
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
         rows: [
           {
@@ -550,9 +563,32 @@ describe("project collaborators local bay access", () => {
   });
 
   it("stores inviter metadata for email-only invites", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_collab_invites i")) {
+        return {
+          rows: [
+            {
+              invite_id: "77777777-7777-4777-8777-777777777777",
+              project_id: PROJECT_ID,
+              project_title: "Test Project",
+              inviter_account_id: ACCOUNT_ID,
+              invitee_account_id: null,
+              invite_source: "email",
+              status: "pending",
+              message: "Please join",
+              created: new Date("2026-04-01T00:00:00Z"),
+              updated: new Date("2026-04-01T00:00:00Z"),
+              responded: null,
+              expires: new Date("2026-04-15T00:00:00Z"),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
     const { inviteCollaboratorWithoutAccount } =
       await import("./collaborators");
-    await inviteCollaboratorWithoutAccount({
+    const result = await inviteCollaboratorWithoutAccount({
       account_id: ACCOUNT_ID,
       opts: {
         project_id: PROJECT_ID,
@@ -563,17 +599,31 @@ describe("project collaborators local bay access", () => {
         message: "Please join",
       },
     });
-    expect(accountCreationActions).toHaveBeenCalledWith(
+    expect(result.invites).toEqual([
       expect.objectContaining({
-        email_address: "nobody@example.com",
-        action: expect.objectContaining({
-          action: "add_to_project",
-          group: "collaborator",
-          project_id: PROJECT_ID,
-          inviter_account_id: ACCOUNT_ID,
-          message: "Please join",
-        }),
+        invite_id: "77777777-7777-4777-8777-777777777777",
+        invite_source: "email",
+        target_email: "nobody@example.com",
+        invite_url: expect.stringContaining("/invites/project/"),
       }),
+    ]);
+    expect(accountCreationActions).not.toHaveBeenCalled();
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO project_collab_invites"),
+      expect.arrayContaining([
+        expect.any(String),
+        PROJECT_ID,
+        ACCOUNT_ID,
+        "email",
+        expect.any(String),
+        expect.any(String),
+        expect.any(String),
+        expect.any(String),
+        expect.any(String),
+        expect.any(String),
+        "Please join",
+        "project_collab",
+      ]),
     );
     expect(assertAccountTrustedForProductAccessMock).toHaveBeenCalledWith(
       ACCOUNT_ID,

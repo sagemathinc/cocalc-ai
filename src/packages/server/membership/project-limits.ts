@@ -176,6 +176,13 @@ function extractMaxBackupsPerProject(
   return getEffectiveMembershipUsageLimits(resolution).max_backups_per_project;
 }
 
+function extractProjectCollaboratorInviteLimit(
+  resolution: MembershipResolution,
+): number | undefined {
+  return getEffectiveMembershipUsageLimits(resolution)
+    .project_max_collaborators_and_pending_invites;
+}
+
 async function getProjectOwnerLimit({
   project_id,
   resolution,
@@ -243,6 +250,82 @@ export async function assertCanOwnAdditionalProject({
   if (owned >= max_projects) {
     throw new Error(
       `project limit reached (${owned}/${max_projects}); delete a project or upgrade membership`,
+    );
+  }
+}
+
+export async function getProjectCollaboratorsAndPendingInviteCount(
+  project_id: string,
+): Promise<number> {
+  const pool = getPool("medium");
+  const { rows } = await pool.query<{
+    collaborators: string | number;
+    pending_invites: string | number;
+    pending_email_actions: string | number;
+  }>(
+    `
+      WITH project_row AS (
+        SELECT COALESCE(users, '{}'::jsonb) AS users
+        FROM projects
+        WHERE project_id = $1
+          AND deleted IS NULL
+        LIMIT 1
+      )
+      SELECT
+        COALESCE((
+          SELECT COUNT(*)
+          FROM project_row p,
+               jsonb_each(p.users) AS entry(account_id, value)
+          WHERE entry.value ->> 'group' IN ('owner', 'collaborator')
+        ), 0) AS collaborators,
+        COALESCE((
+          SELECT COUNT(*)
+          FROM project_collab_invites
+          WHERE project_id = $1
+            AND status = 'pending'
+        ), 0) AS pending_invites,
+        COALESCE((
+          SELECT COUNT(*)
+          FROM account_creation_actions
+          WHERE expire > NOW()
+            AND action ->> 'action' = 'add_to_project'
+            AND action ->> 'project_id' = $1::text
+        ), 0) AS pending_email_actions
+    `,
+    [project_id],
+  );
+  const row = rows[0];
+  return (
+    Number(row?.collaborators ?? 0) +
+    Number(row?.pending_invites ?? 0) +
+    Number(row?.pending_email_actions ?? 0)
+  );
+}
+
+export async function assertProjectCollaboratorInviteLimit({
+  project_id,
+  resolution,
+  additional = 1,
+}: {
+  project_id: string;
+  resolution?: MembershipResolution;
+  additional?: number;
+}): Promise<void> {
+  const account_id = await getProjectUsageAccountId(project_id);
+  if (!account_id) {
+    return;
+  }
+  const effectiveResolution =
+    resolution ?? (await resolveMembershipForAccount(account_id));
+  const limit = extractProjectCollaboratorInviteLimit(effectiveResolution);
+  if (limit == null) {
+    return;
+  }
+  const current =
+    await getProjectCollaboratorsAndPendingInviteCount(project_id);
+  if (current + additional > limit) {
+    throw new Error(
+      `project collaborator limit reached (${current}/${limit}); revoke a pending invite, remove a collaborator, or upgrade membership`,
     );
   }
 }

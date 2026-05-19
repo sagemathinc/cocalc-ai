@@ -30,6 +30,7 @@ export class ProjectCollaborators {
     email: string; // body in HTML format
     subject?: string;
     message?: string;
+    send_email?: boolean;
   }): Promise<any> {
     return await this.conat.hub.projects.inviteCollaboratorWithoutAccount({
       opts,
@@ -88,6 +89,25 @@ export class ProjectCollaborators {
     action: ProjectCollabInviteAction;
   }): Promise<ProjectCollabInviteRow> {
     return await this.conat.hub.projects.respondCollabInvite(opts);
+  }
+
+  public async copy_email_invite_link(opts: {
+    invite_id: string;
+    project_id?: string;
+  }): Promise<{
+    invite_id: string;
+    invite_url: string;
+    expires?: Date | null;
+  }> {
+    return await this.conat.hub.projects.copyEmailProjectInviteLink(opts);
+  }
+
+  public async redeem_email_invite(opts: {
+    invite_id: string;
+    token: string;
+    project_id?: string;
+  }): Promise<ProjectCollabInviteRow> {
+    return await this.conat.hub.projects.redeemEmailProjectInvite(opts);
   }
 
   public async list_invite_blocks(opts?: {

@@ -13,7 +13,9 @@ import isAdmin from "@cocalc/server/accounts/is-admin";
 export * from "@cocalc/server/projects/collaborators";
 import {
   createCollabInvite as createCollabInviteLocal,
+  copyEmailProjectInviteLink as copyEmailProjectInviteLinkLocal,
   listCollabInvites as listCollabInvitesLocal,
+  redeemEmailProjectInvite as redeemEmailProjectInviteLocal,
   removeCollaborator as removeCollaboratorLocal,
   respondCollabInvite as respondCollabInviteLocal,
 } from "@cocalc/server/projects/collaborators";
@@ -1610,6 +1612,59 @@ export async function respondCollabInvite({
       });
     return collabInviteFromWire(result);
   }
+}
+
+export async function copyEmailProjectInviteLink({
+  account_id,
+  invite_id,
+  project_id,
+}: {
+  account_id?: string;
+  invite_id: string;
+  project_id?: string;
+}) {
+  if (!project_id) {
+    return await copyEmailProjectInviteLinkLocal({ account_id, invite_id });
+  }
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
+    return await copyEmailProjectInviteLinkLocal({
+      account_id,
+      invite_id,
+      project_id,
+    });
+  }
+  throw new Error("copying remote email invite links is not implemented yet");
+}
+
+export async function redeemEmailProjectInvite({
+  account_id,
+  invite_id,
+  token,
+  project_id,
+}: {
+  account_id?: string;
+  invite_id: string;
+  token: string;
+  project_id?: string;
+}) {
+  if (!project_id) {
+    return await redeemEmailProjectInviteLocal({
+      account_id,
+      invite_id,
+      token,
+    });
+  }
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
+    return await redeemEmailProjectInviteLocal({
+      account_id,
+      invite_id,
+      token,
+      project_id,
+    });
+  }
+  throw new Error("redeeming remote email invite links is not implemented yet");
 }
 
 export async function exec({

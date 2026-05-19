@@ -2,9 +2,12 @@
 Add, remove and invite collaborators on projects.
 */
 
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+
 import { db } from "@cocalc/database";
 import { listProjectedMyCollaboratorsForAccount } from "@cocalc/database/postgres/account-collaborator-index";
 import getPool from "@cocalc/database/pool";
+import siteURL from "@cocalc/database/settings/site-url";
 import { callback2 } from "@cocalc/util/async-utils";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
@@ -49,6 +52,14 @@ import {
   syncProjectedInboundCollabInvite,
 } from "@cocalc/server/projects/collab-invite-inbox";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
+import { assertProjectCollaboratorInviteLimit } from "@cocalc/server/membership/project-limits";
+import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
+import { getSecretSettingsKey } from "@cocalc/database/settings/secret-settings";
+import {
+  decryptSecretSettingValue,
+  encryptSecretSettingValue,
+} from "@cocalc/util/secret-settings-crypto";
 
 const logger = getLogger("project:collaborators");
 const COLLAB_GROUPS = ["owner", "collaborator"] as const;
@@ -56,8 +67,13 @@ const COLLAB_GROUP_SET = new Set<string>(COLLAB_GROUPS);
 const COLLAB_INVITE_EXPIRES_DAYS = 30;
 const COLLAB_INVITE_EXPIRES_INTERVAL = `${COLLAB_INVITE_EXPIRES_DAYS} days`;
 const EMAIL_ONLY_INVITE_TTL_DAYS = 14;
-const EMAIL_ONLY_INVITE_TTL_SECONDS = EMAIL_ONLY_INVITE_TTL_DAYS * 24 * 60 * 60;
 const EMAIL_ONLY_INVITE_PREFIX = "email-action:";
+const EMAIL_INVITE_EXPIRES_INTERVAL = `${EMAIL_ONLY_INVITE_TTL_DAYS} days`;
+const EMAIL_INVITE_TOKEN_AAD = "project_collab_invites.token";
+const EMAIL_INVITE_EMAIL_AAD = "project_collab_invites.email";
+const EMAIL_INVITE_HASH_AAD = "project_collab_invites.email-token:v1";
+const EMAIL_INVITE_SOURCE = "email";
+const EMAIL_INVITE_SCOPE = "project_collab";
 const INVITE_STATUS_SET = new Set<string>([
   "pending",
   "accepted",
@@ -66,6 +82,7 @@ const INVITE_STATUS_SET = new Set<string>([
   "expired",
   "canceled",
 ]);
+let projectCollabInviteEmailTokenSchemaReady: Promise<void> | undefined;
 
 type CollaboratorReadMode = "off" | "prefer" | "only";
 
@@ -140,6 +157,87 @@ function ensureUuid(value: string, label: string): void {
   }
 }
 
+async function ensureProjectCollabInviteEmailTokenSchema(): Promise<void> {
+  if (projectCollabInviteEmailTokenSchemaReady) {
+    return await projectCollabInviteEmailTokenSchemaReady;
+  }
+  projectCollabInviteEmailTokenSchemaReady =
+    ensureProjectCollabInviteEmailTokenSchemaUncached();
+  return await projectCollabInviteEmailTokenSchemaReady;
+}
+
+async function ensureProjectCollabInviteEmailTokenSchemaUncached(): Promise<void> {
+  const pool = getPool();
+  await pool.query(`
+    ALTER TABLE project_collab_invites
+      ADD COLUMN IF NOT EXISTS invite_source VARCHAR(24),
+      ADD COLUMN IF NOT EXISTS accepted_account_id UUID,
+      ADD COLUMN IF NOT EXISTS email_hash TEXT,
+      ADD COLUMN IF NOT EXISTS email_ciphertext TEXT,
+      ADD COLUMN IF NOT EXISTS token_hash TEXT,
+      ADD COLUMN IF NOT EXISTS token_ciphertext TEXT,
+      ADD COLUMN IF NOT EXISTS token_hint VARCHAR(16),
+      ADD COLUMN IF NOT EXISTS last_sent TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS resend_count INTEGER,
+      ADD COLUMN IF NOT EXISTS scope VARCHAR(48),
+      ADD COLUMN IF NOT EXISTS context JSONB
+  `);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS project_collab_invites_email_pending_idx
+       ON project_collab_invites (project_id, inviter_account_id, email_hash, status)
+       WHERE invite_source IN ('email', 'course_email')`,
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS project_collab_invites_email_expire_idx
+       ON project_collab_invites (status, created)
+       WHERE invite_source IN ('email', 'course_email')`,
+  );
+}
+
+async function inviteSecretKey(): Promise<Buffer> {
+  return await getSecretSettingsKey();
+}
+
+async function hmacInviteValue(aad: string, value: string): Promise<string> {
+  const digest = createHmac("sha256", await inviteSecretKey())
+    .update(aad)
+    .update("\0")
+    .update(value)
+    .digest("base64url");
+  return `${aad}:${digest}`;
+}
+
+async function hashInviteToken(token: string): Promise<string> {
+  return await hmacInviteValue(EMAIL_INVITE_HASH_AAD, token);
+}
+
+async function hashInviteEmail(email: string): Promise<string> {
+  return await hmacInviteValue(EMAIL_INVITE_EMAIL_AAD, email);
+}
+
+async function encryptInviteValue(aad: string, value: string): Promise<string> {
+  return encryptSecretSettingValue(aad, value, await inviteSecretKey());
+}
+
+async function decryptInviteValue(aad: string, value: string): Promise<string> {
+  return decryptSecretSettingValue(aad, value, await inviteSecretKey());
+}
+
+function timingSafeStringEqual(a: string, b: string): boolean {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+function generateInviteToken(): string {
+  return randomBytes(24).toString("base64url");
+}
+
+async function inviteUrl(invite_id: string, token: string): Promise<string> {
+  const base = (await siteURL()).replace(/\/+$/, "");
+  return `${base}/invites/project/${invite_id}?token=${encodeURIComponent(token)}`;
+}
+
 function isEmailOnlyInviteId(invite_id: string): boolean {
   return invite_id.startsWith(EMAIL_ONLY_INVITE_PREFIX);
 }
@@ -179,6 +277,7 @@ async function syncProjectUsersOnHostBestEffort(
 }
 
 async function expirePendingCollabInvites(pool: ReturnType<typeof getPool>) {
+  await ensureProjectCollabInviteEmailTokenSchema();
   const { rows } = await pool.query<{
     invite_id: string;
     invitee_account_id: string | null;
@@ -186,7 +285,11 @@ async function expirePendingCollabInvites(pool: ReturnType<typeof getPool>) {
     `UPDATE project_collab_invites
        SET status='expired', responded=COALESCE(responded, NOW()), updated=NOW()
      WHERE status='pending'
-       AND created < NOW() - INTERVAL '${COLLAB_INVITE_EXPIRES_INTERVAL}'
+       AND created < NOW() - CASE
+         WHEN invite_source IN ('email', 'course_email')
+         THEN INTERVAL '${EMAIL_INVITE_EXPIRES_INTERVAL}'
+         ELSE INTERVAL '${COLLAB_INVITE_EXPIRES_INTERVAL}'
+       END
      RETURNING invite_id, invitee_account_id`,
   );
   await Promise.all(
@@ -203,6 +306,7 @@ async function fetchInviteById(
   invite_id: string,
   includeEmail: boolean,
 ): Promise<ProjectCollabInviteRow | undefined> {
+  await ensureProjectCollabInviteEmailTokenSchema();
   const pool = getPool();
   const { rows } = await pool.query<ProjectCollabInviteRow>(
     `SELECT
@@ -220,13 +324,28 @@ async function fetchInviteById(
        invitee.first_name AS invitee_first_name,
        invitee.last_name AS invitee_last_name,
        CASE WHEN $2::boolean THEN invitee.email_address ELSE NULL END AS invitee_email_address,
+       i.invite_source,
+       i.accepted_account_id,
+       CASE
+         WHEN $2::boolean THEN i.email_ciphertext
+         ELSE NULL
+       END AS email_ciphertext,
+       i.token_hint,
+       i.last_sent,
+       i.resend_count,
+       i.scope,
+       i.context,
        i.status,
        i.message,
        i.responder_action,
        i.created,
        i.updated,
        i.responded,
-       i.created + INTERVAL '${COLLAB_INVITE_EXPIRES_INTERVAL}' AS expires
+       i.created + CASE
+         WHEN i.invite_source IN ('email', 'course_email')
+         THEN INTERVAL '${EMAIL_INVITE_EXPIRES_INTERVAL}'
+         ELSE INTERVAL '${COLLAB_INVITE_EXPIRES_INTERVAL}'
+       END AS expires
      FROM project_collab_invites i
      LEFT JOIN projects p ON p.project_id=i.project_id
      LEFT JOIN accounts inviter ON inviter.account_id=i.inviter_account_id
@@ -267,40 +386,57 @@ async function hydrateInviteRows(
   }
   const entries = await getClusterAccountsByIds([...accountIds]);
   const byId = new Map(entries.map((entry) => [entry.account_id, entry]));
-  return rows.map((row) => {
-    const inviter = {
-      name: row.inviter_name,
-      first_name: row.inviter_first_name,
-      last_name: row.inviter_last_name,
-      email_address: row.inviter_email_address,
-    };
-    fillNameParts(inviter, byId.get(row.inviter_account_id));
-    const invitee = {
-      name: row.invitee_name,
-      first_name: row.invitee_first_name,
-      last_name: row.invitee_last_name,
-      email_address: row.invitee_email_address,
-    };
-    fillNameParts(
-      invitee,
-      row.invitee_account_id ? byId.get(row.invitee_account_id) : undefined,
-    );
-    return {
-      ...row,
-      inviter_name: inviter.name,
-      inviter_first_name: inviter.first_name,
-      inviter_last_name: inviter.last_name,
-      inviter_email_address: includeEmail
-        ? (inviter.email_address ?? null)
-        : (row.inviter_email_address ?? null),
-      invitee_name: invitee.name,
-      invitee_first_name: invitee.first_name,
-      invitee_last_name: invitee.last_name,
-      invitee_email_address: includeEmail
-        ? (invitee.email_address ?? null)
-        : (row.invitee_email_address ?? null),
-    };
-  });
+  return await Promise.all(
+    rows.map(async (row) => {
+      const inviter = {
+        name: row.inviter_name,
+        first_name: row.inviter_first_name,
+        last_name: row.inviter_last_name,
+        email_address: row.inviter_email_address,
+      };
+      fillNameParts(inviter, byId.get(row.inviter_account_id));
+      const invitee = {
+        name: row.invitee_name,
+        first_name: row.invitee_first_name,
+        last_name: row.invitee_last_name,
+        email_address: row.invitee_email_address,
+      };
+      fillNameParts(
+        invitee,
+        row.invitee_account_id ? byId.get(row.invitee_account_id) : undefined,
+      );
+      let target_email: string | null = null;
+      const emailCiphertext = (row as any).email_ciphertext;
+      if (includeEmail && emailCiphertext) {
+        try {
+          target_email = await decryptInviteValue(
+            EMAIL_INVITE_EMAIL_AAD,
+            emailCiphertext,
+          );
+        } catch {
+          target_email = null;
+        }
+      }
+      const hydrated = {
+        ...row,
+        inviter_name: inviter.name,
+        inviter_first_name: inviter.first_name,
+        inviter_last_name: inviter.last_name,
+        inviter_email_address: includeEmail
+          ? (inviter.email_address ?? null)
+          : (row.inviter_email_address ?? null),
+        invitee_name: invitee.name,
+        invitee_first_name: invitee.first_name,
+        invitee_last_name: invitee.last_name,
+        invitee_email_address: includeEmail
+          ? (invitee.email_address ?? null)
+          : (row.invitee_email_address ?? null),
+        target_email,
+      };
+      delete (hydrated as any).email_ciphertext;
+      return hydrated;
+    }),
+  );
 }
 
 function fillLastActive(target: any, entry?: any): void {
@@ -691,6 +827,8 @@ export async function createCollabInvite({
     throw new Error("target account is already a collaborator");
   }
 
+  await assertProjectCollaboratorInviteLimit({ project_id });
+
   const { rows: blockedRows } = await pool.query<{ blocked: boolean }>(
     `SELECT EXISTS(
        SELECT 1
@@ -860,13 +998,28 @@ export async function listCollabInvites({
       invitee.first_name AS invitee_first_name,
       invitee.last_name AS invitee_last_name,
       CASE WHEN $1::boolean THEN invitee.email_address ELSE NULL END AS invitee_email_address,
+      i.invite_source,
+      i.accepted_account_id,
+      CASE
+        WHEN $1::boolean THEN i.email_ciphertext
+        ELSE NULL
+      END AS email_ciphertext,
+      i.token_hint,
+      i.last_sent,
+      i.resend_count,
+      i.scope,
+      i.context,
       i.status,
       i.message,
       i.responder_action,
       i.created,
       i.updated,
       i.responded,
-      i.created + INTERVAL '${COLLAB_INVITE_EXPIRES_INTERVAL}' AS expires,
+      i.created + CASE
+        WHEN i.invite_source IN ('email', 'course_email')
+        THEN INTERVAL '${EMAIL_INVITE_EXPIRES_INTERVAL}'
+        ELSE INTERVAL '${COLLAB_INVITE_EXPIRES_INTERVAL}'
+      END AS expires,
       (
         SELECT COUNT(*)::int
         FROM project_collab_invites h
@@ -946,19 +1099,29 @@ async function getCanonicalCollabInvite(
       invite_id: string;
       project_id: string;
       inviter_account_id: string;
-      invitee_account_id: string;
+      invitee_account_id: string | null;
+      accepted_account_id?: string | null;
+      invite_source?: string | null;
+      token_hash?: string | null;
+      token_ciphertext?: string | null;
       status: string;
     }
   | undefined
 > {
+  await ensureProjectCollabInviteEmailTokenSchema();
   const { rows } = await pool.query<{
     invite_id: string;
     project_id: string;
     inviter_account_id: string;
-    invitee_account_id: string;
+    invitee_account_id: string | null;
+    accepted_account_id?: string | null;
+    invite_source?: string | null;
+    token_hash?: string | null;
+    token_ciphertext?: string | null;
     status: string;
   }>(
-    `SELECT invite_id, project_id, inviter_account_id, invitee_account_id, status
+    `SELECT invite_id, project_id, inviter_account_id, invitee_account_id,
+            accepted_account_id, invite_source, token_hash, token_ciphertext, status
      FROM project_collab_invites
      WHERE invite_id=$1
      LIMIT 1`,
@@ -991,6 +1154,8 @@ export async function respondCollabInviteCanonical({
     throw new Error(`invite is not pending (status=${invite.status})`);
   }
   const admin = includeEmail;
+  const emailTokenInvite =
+    invite.invite_source === "email" || invite.invite_source === "course_email";
 
   if (normalizedAction === "revoke") {
     if (invite.inviter_account_id !== account_id && !admin) {
@@ -1011,6 +1176,12 @@ export async function respondCollabInviteCanonical({
       throw new Error("failed to load invite response");
     }
     return updated;
+  }
+
+  if (emailTokenInvite) {
+    throw new Error(
+      "email invite links must be accepted using the invite token",
+    );
   }
 
   if (invite.invitee_account_id !== account_id) {
@@ -1351,10 +1522,350 @@ async function allowUrlsInEmails({
   project_id: string;
   account_id: string;
 }) {
+  const resolution = await resolveMembershipForAccount(account_id);
+  const limits = getEffectiveMembershipUsageLimits(resolution);
+  if (limits.invite_email_allow_urls != null) {
+    return limits.invite_email_allow_urls;
+  }
   return (
     (await is_paying_customer(db(), account_id)) ||
     (await project_has_network_access(db(), project_id))
   );
+}
+
+async function canSendInviteEmail(account_id: string): Promise<boolean> {
+  const resolution = await resolveMembershipForAccount(account_id);
+  const limits = getEffectiveMembershipUsageLimits(resolution);
+  return limits.invite_email_send_enabled !== false;
+}
+
+async function assertEmailInviteCreationLimits({
+  account_id,
+  project_id,
+  recipientCount,
+}: {
+  account_id: string;
+  project_id: string;
+  recipientCount: number;
+}): Promise<void> {
+  const resolution = await resolveMembershipForAccount(account_id);
+  const limits = getEffectiveMembershipUsageLimits(resolution);
+  const batchLimit = limits.invite_email_recipients_per_batch;
+  if (batchLimit != null && recipientCount > batchLimit) {
+    throw new Error(
+      `too many invite recipients (${recipientCount}/${batchLimit}); send a smaller batch or upgrade membership`,
+    );
+  }
+  const pendingLimit = limits.invite_email_pending_per_project;
+  if (pendingLimit != null) {
+    await ensureProjectCollabInviteEmailTokenSchema();
+    const { rows } = await getPool().query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count
+         FROM project_collab_invites
+        WHERE project_id=$1
+          AND status='pending'
+          AND invite_source IN ('email', 'course_email')`,
+      [project_id],
+    );
+    const current = rows[0]?.count ?? 0;
+    if (current + recipientCount > pendingLimit) {
+      throw new Error(
+        `project pending email invite limit reached (${current}/${pendingLimit}); revoke pending invites or upgrade membership`,
+      );
+    }
+  }
+  const hourlyLimit = limits.invite_email_hourly_count;
+  if (hourlyLimit != null) {
+    const { rows } = await getPool().query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count
+         FROM project_collab_invites
+        WHERE inviter_account_id=$1
+          AND invite_source IN ('email', 'course_email')
+          AND created > NOW() - INTERVAL '1 hour'`,
+      [account_id],
+    );
+    const current = rows[0]?.count ?? 0;
+    if (current + recipientCount > hourlyLimit) {
+      throw new Error(
+        `hourly email invite limit reached (${current}/${hourlyLimit}); try again later or upgrade membership`,
+      );
+    }
+  }
+  const dailyLimit = limits.invite_email_daily_count;
+  if (dailyLimit != null) {
+    const { rows } = await getPool().query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count
+         FROM project_collab_invites
+        WHERE inviter_account_id=$1
+          AND invite_source IN ('email', 'course_email')
+          AND created > NOW() - INTERVAL '1 day'`,
+      [account_id],
+    );
+    const current = rows[0]?.count ?? 0;
+    if (current + recipientCount > dailyLimit) {
+      throw new Error(
+        `daily email invite limit reached (${current}/${dailyLimit}); try again later or upgrade membership`,
+      );
+    }
+  }
+}
+
+function normalizeInviteEmail(email: string): string {
+  if (!is_valid_email_address(email)) {
+    throw Error(`invalid email address '${email}'`);
+  }
+  const normalized = lower_email_address(email);
+  if (normalized.length >= 128) {
+    throw Error(`email address must be at most 128 characters: '${email}'`);
+  }
+  return normalized;
+}
+
+async function createEmailProjectInvite({
+  account_id,
+  project_id,
+  email_address,
+  message,
+}: {
+  account_id: string;
+  project_id: string;
+  email_address: string;
+  message?: string;
+}): Promise<{
+  created: boolean;
+  invite: ProjectCollabInviteRow;
+  invite_url: string;
+}> {
+  await ensureProjectCollabInviteEmailTokenSchema();
+  const normalizedEmail = normalizeInviteEmail(email_address);
+  const normalizedMessage = `${message ?? ""}`.trim().slice(0, 512);
+  const email_hash = await hashInviteEmail(normalizedEmail);
+  const pool = getPool();
+
+  const { rows: existingRows } = await pool.query<{
+    invite_id: string;
+    token_ciphertext: string;
+  }>(
+    `SELECT invite_id, token_ciphertext
+       FROM project_collab_invites
+      WHERE project_id=$1
+        AND inviter_account_id=$2
+        AND email_hash=$3
+        AND status='pending'
+        AND invite_source=$4
+      ORDER BY created DESC
+      LIMIT 1`,
+    [project_id, account_id, email_hash, EMAIL_INVITE_SOURCE],
+  );
+  const existing = existingRows[0];
+  if (existing) {
+    const token = await decryptInviteValue(
+      EMAIL_INVITE_TOKEN_AAD,
+      existing.token_ciphertext,
+    );
+    const invite = await fetchInviteById(existing.invite_id, false);
+    if (!invite) {
+      throw new Error("failed to load existing email invite");
+    }
+    const url = await inviteUrl(existing.invite_id, token);
+    return {
+      created: false,
+      invite: {
+        ...invite,
+        target_email: normalizedEmail,
+        invite_url: url,
+      },
+      invite_url: url,
+    };
+  }
+
+  await assertProjectCollaboratorInviteLimit({ project_id });
+  const token = generateInviteToken();
+  const invite_id = uuid();
+  const token_hash = await hashInviteToken(token);
+  const token_ciphertext = await encryptInviteValue(
+    EMAIL_INVITE_TOKEN_AAD,
+    token,
+  );
+  const email_ciphertext = await encryptInviteValue(
+    EMAIL_INVITE_EMAIL_AAD,
+    normalizedEmail,
+  );
+  const token_hint = token.slice(-6);
+  await pool.query(
+    `INSERT INTO project_collab_invites
+      (invite_id, project_id, inviter_account_id, invitee_account_id,
+       invite_source, email_hash, email_ciphertext, token_hash, token_ciphertext,
+       token_hint, status, message, scope, context, created, updated)
+     VALUES
+      ($1, $2, $3, NULL, $4, $5, $6, $7, $8, $9, 'pending', $10, $11, '{}'::jsonb, NOW(), NOW())`,
+    [
+      invite_id,
+      project_id,
+      account_id,
+      EMAIL_INVITE_SOURCE,
+      email_hash,
+      email_ciphertext,
+      token_hash,
+      token_ciphertext,
+      token_hint,
+      normalizedMessage || null,
+      EMAIL_INVITE_SCOPE,
+    ],
+  );
+  const invite = await fetchInviteById(invite_id, false);
+  if (!invite) {
+    throw new Error("failed to load created email invite");
+  }
+  const url = await inviteUrl(invite_id, token);
+  return {
+    created: true,
+    invite: {
+      ...invite,
+      target_email: normalizedEmail,
+      invite_url: url,
+    },
+    invite_url: url,
+  };
+}
+
+export async function copyEmailProjectInviteLink({
+  account_id,
+  invite_id,
+}: {
+  account_id?: string;
+  invite_id: string;
+  project_id?: string;
+}): Promise<{ invite_id: string; invite_url: string; expires?: Date | null }> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  ensureUuid(invite_id, "invite_id");
+  await ensureProjectCollabInviteEmailTokenSchema();
+  const { rows } = await getPool().query<{
+    project_id: string;
+    inviter_account_id: string;
+    token_ciphertext: string | null;
+    status: string;
+    created: Date;
+  }>(
+    `SELECT project_id, inviter_account_id, token_ciphertext, status, created
+       FROM project_collab_invites
+      WHERE invite_id=$1
+        AND invite_source IN ('email', 'course_email')
+      LIMIT 1`,
+    [invite_id],
+  );
+  const row = rows[0];
+  if (!row || !row.token_ciphertext) {
+    throw new Error(`invite '${invite_id}' not found`);
+  }
+  if (row.inviter_account_id !== account_id) {
+    await assertLocalProjectCollaborator({
+      account_id,
+      project_id: row.project_id,
+    });
+  }
+  if (row.status !== "pending") {
+    throw new Error(`invite is not pending (status=${row.status})`);
+  }
+  const token = await decryptInviteValue(
+    EMAIL_INVITE_TOKEN_AAD,
+    row.token_ciphertext,
+  );
+  return {
+    invite_id,
+    invite_url: await inviteUrl(invite_id, token),
+    expires: new Date(
+      new Date(row.created).valueOf() +
+        EMAIL_ONLY_INVITE_TTL_DAYS * 24 * 60 * 60 * 1000,
+    ),
+  };
+}
+
+export async function redeemEmailProjectInvite({
+  account_id,
+  invite_id,
+  token,
+}: {
+  account_id?: string;
+  invite_id: string;
+  token: string;
+  project_id?: string;
+}): Promise<ProjectCollabInviteRow> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  ensureUuid(invite_id, "invite_id");
+  await assertAccountTrustedForProductAccess(
+    account_id,
+    "accept collaboration invites",
+  );
+  await ensureProjectCollabInviteEmailTokenSchema();
+  const pool = getPool();
+  await expirePendingCollabInvites(pool);
+  const { rows } = await pool.query<{
+    invite_id: string;
+    project_id: string;
+    status: string;
+    token_hash: string | null;
+  }>(
+    `SELECT invite_id, project_id, status, token_hash
+       FROM project_collab_invites
+      WHERE invite_id=$1
+        AND invite_source IN ('email', 'course_email')
+      LIMIT 1`,
+    [invite_id],
+  );
+  const invite = rows[0];
+  if (!invite || !invite.token_hash) {
+    throw new Error(`invite '${invite_id}' not found`);
+  }
+  if (invite.status !== "pending") {
+    throw new Error(`invite is not pending (status=${invite.status})`);
+  }
+  if (!timingSafeStringEqual(invite.token_hash, await hashInviteToken(token))) {
+    throw new Error("invalid invite token");
+  }
+  const { rows: collabRows } = await pool.query<{ already: boolean }>(
+    `SELECT EXISTS(
+       SELECT 1
+       FROM projects
+       WHERE project_id=$1
+         AND (users -> $2::text ->> 'group') IN ('owner','collaborator')
+     ) AS already`,
+    [invite.project_id, account_id],
+  );
+  if (!collabRows[0]?.already) {
+    // @ts-ignore
+    await callback2(db().add_collaborator_to_project, {
+      project_id: invite.project_id,
+      account_id,
+      group: "collaborator",
+    });
+    await syncProjectUsersOnHostBestEffort(
+      invite.project_id,
+      "accept email token invite",
+    );
+  }
+  await pool.query(
+    `UPDATE project_collab_invites
+        SET status='accepted',
+            responder_action='accept',
+            accepted_account_id=$2,
+            responded=NOW(),
+            updated=NOW()
+      WHERE invite_id=$1`,
+    [invite_id, account_id],
+  );
+  await publishProjectAccountFeedEventsBestEffort({
+    project_id: invite.project_id,
+  });
+  const updated = await fetchInviteById(invite_id, await isAdmin(account_id));
+  if (!updated) {
+    throw new Error("failed to load invite response");
+  }
+  return updated;
 }
 
 export async function inviteCollaborator({
@@ -1397,6 +1908,9 @@ export async function inviteCollaborator({
   // Everything else in this big function is about notifying the user that they
   // were added.
   if (!opts.email) {
+    return;
+  }
+  if (!(await canSendInviteEmail(account_id))) {
     return;
   }
 
@@ -1473,8 +1987,9 @@ export async function inviteCollaboratorWithoutAccount({
     email: string; // body in HTML format
     subject?: string;
     message?: string;
+    send_email?: boolean;
   };
-}): Promise<void> {
+}): Promise<{ invites: ProjectCollabInviteRow[]; email_sent: boolean }> {
   await assertLocalProjectCollaborator({
     account_id,
     project_id: opts.project_id,
@@ -1486,7 +2001,6 @@ export async function inviteCollaboratorWithoutAccount({
   const dbg = (...args) =>
     logger.debug("inviteCollaboratorWithoutAccount", ...args);
   const database = db();
-  const normalizedMessage = `${opts.message ?? ""}`.trim().slice(0, 512);
 
   if (opts.to.length > 1024) {
     throw Error(
@@ -1500,72 +2014,47 @@ export async function inviteCollaboratorWithoutAccount({
     .replace(/;/g, ",")
     .split(",")
     .filter((x) => x);
+  await assertProjectCollaboratorInviteLimit({
+    project_id: opts.project_id,
+    additional: to.length,
+  });
+  await assertEmailInviteCreationLimits({
+    account_id,
+    project_id: opts.project_id,
+    recipientCount: to.length,
+  });
 
   // Helper for inviting one user by email
+  let email_sent = false;
   const invite_user = async (email_address: string) => {
     dbg(`inviting ${email_address}`);
-    if (!is_valid_email_address(email_address)) {
-      throw Error(`invalid email address '${email_address}'`);
-    }
-    email_address = lower_email_address(email_address);
-    if (email_address.length >= 128) {
-      throw Error(
-        `email address must be at most 128 characters: '${email_address}'`,
-      );
-    }
+    email_address = normalizeInviteEmail(email_address);
 
-    // 1. Already have an account?
-    const to_account_id = await callback2(database.account_exists, {
+    const created = await createEmailProjectInvite({
+      account_id,
+      project_id: opts.project_id,
       email_address,
+      message: opts.message,
     });
 
-    // 2. If user exists, add to project; otherwise, trigger later add
-    if (to_account_id) {
-      dbg(`user ${email_address} already has an account -- create invite`);
-      try {
-        await createCollabInvite({
-          account_id,
-          project_id: opts.project_id,
-          invitee_account_id: to_account_id,
-          message: opts.message,
-        });
-      } catch (err) {
-        if (isAlreadyCollaboratorError(err)) {
-          return;
-        }
-        throw err;
-      }
-    } else {
-      dbg(
-        `user ${email_address} doesn't have an account yet -- may send email (if we haven't recently)`,
-      );
-      await callback2(database.account_creation_actions, {
-        email_address,
-        action: {
-          action: "add_to_project",
-          group: "collaborator",
-          project_id: opts.project_id,
-          inviter_account_id: account_id,
-          ...(normalizedMessage ? { message: normalizedMessage } : {}),
-        },
-        ttl: EMAIL_ONLY_INVITE_TTL_SECONDS,
-      });
+    // 3. Has email been sent recently?
+    if (opts.send_email === false || !(await canSendInviteEmail(account_id))) {
+      return created.invite;
     }
 
-    // 3. Has email been sent recently?
     const when_sent = await callback2(database.when_sent_project_invite, {
       project_id: opts.project_id,
       to: email_address,
     });
     if (when_sent && when_sent >= days_ago(RESEND_INVITE_INTERVAL_DAYS)) {
       // recent email -- nothing more to do
-      return;
+      return created.invite;
     }
 
     // 4. Get settings
     const settings = await callback2(database.get_server_settings_cached);
     if (!settings) {
-      return;
+      return created.invite;
     }
 
     // 5. Send email
@@ -1587,9 +2076,16 @@ export async function inviteCollaboratorWithoutAccount({
         }),
         replyto: opts.replyto ?? settings.organization_email,
         replyto_name: opts.replyto_name,
-        link2proj: opts.link2proj,
+        link2proj: created.invite_url,
         settings,
       });
+      await getPool().query(
+        `UPDATE project_collab_invites
+            SET last_sent=NOW(), resend_count=COALESCE(resend_count, 0) + 1, updated=NOW()
+          WHERE invite_id=$1`,
+        [created.invite.invite_id],
+      );
+      email_sent = true;
     } catch (err) {
       dbg(`FAILED to send email to ${email_address}  -- err=${err}`);
       await callback2(database.sent_project_invite, {
@@ -1605,8 +2101,10 @@ export async function inviteCollaboratorWithoutAccount({
       to: email_address,
       error: undefined,
     });
+    return created.invite;
   };
 
   // If any invite_user throws, its an error
-  await Promise.all(to.map((email) => invite_user(email)));
+  const invites = await Promise.all(to.map((email) => invite_user(email)));
+  return { invites, email_sent };
 }
