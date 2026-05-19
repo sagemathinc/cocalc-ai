@@ -345,6 +345,37 @@ Additional global abuse controls:
 
 The inviter must be able to copy the redemption link.
 
+The UI must treat email sending and invite creation as separate outcomes.
+Creating the token invite should work even when the site cannot send email. The
+backend response should include explicit delivery status so the frontend can
+avoid misleading "email sent" messages.
+
+Recommended response fields:
+
+- `email_sent`: true only when the system actually accepted an outgoing email
+  for delivery.
+- `email_available`: false when the site has no configured/enabled email
+  backend.
+- `email_blocked_reason`: machine-readable reason such as
+  `email_not_configured`, `tier_disallows_email`, `rate_limited`, or
+  `cooldown`.
+- `invite_url`: present whenever the caller is authorized to copy the link.
+- `manual_delivery_required`: true when the invite exists but the inviter must
+  send the link through another channel.
+
+Launchpad special case:
+
+- Launchpad deployments may intentionally have no email backend configured,
+  especially during early onboarding for individuals and small work groups.
+- In that case, project/course invite creation should still succeed and return a
+  copyable invite link.
+- The frontend should say something like: "Email is not configured for this
+  site. To add this person, send them this invite link."
+- This should not be treated as an error unless the caller explicitly requested
+  "send email only" semantics.
+- The same pattern applies to free-tier users when system-sent invite email is
+  disabled by membership policy.
+
 Project collaborator UI:
 
 - Make "Invite by email" prominent.
@@ -556,8 +587,8 @@ Suggested starting values:
 - `store_visible`: true
 - `course_store_visible`: false
 - `priority`: between member and pro
-- `price_monthly`: around 75
-- `price_yearly`: around 75 * 9
+- `price_monthly`: around 49
+- `price_yearly`: around 49 * 9
 - `project_defaults.disk_quota`: 50000 MB
 - `project_defaults.memory`: 8000 MB
 - `project_defaults.cores`: 2
@@ -638,6 +669,9 @@ Implement project email token invite creation:
 - Return the invite row and invite link to authorized inviters.
 - If the tier does not allow system-sent email, return the link with a clear
   message that the inviter must send it externally.
+- If no site email backend is configured or enabled, return the link with
+  `email_available=false` and `manual_delivery_required=true`; do not fail
+  invite creation.
 - If the tier allows email, enqueue a constrained email and still return the
   link for fallback.
 

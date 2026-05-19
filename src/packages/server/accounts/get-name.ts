@@ -8,8 +8,8 @@ import {
   getClusterAccountsByIds,
 } from "@cocalc/server/inter-bay/accounts";
 import { isValidUUID } from "@cocalc/util/misc";
-
-export const MAX_GET_NAMES_ACCOUNT_IDS = 250;
+import { MAX_GET_NAMES_ACCOUNT_IDS } from "@cocalc/util/security-limits";
+export { MAX_GET_NAMES_ACCOUNT_IDS };
 
 export default async function getName(
   account_id: string,

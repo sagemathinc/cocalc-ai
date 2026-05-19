@@ -3,6 +3,7 @@ import { Map as ImmutableMap } from "immutable";
 
 import { accountFeedStreamName } from "../../../conat/hub/api/account-feed";
 import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream";
+import { MAX_NOTIFICATION_INBOX_LIST_LIMIT } from "@cocalc/util/security-limits";
 
 jest.mock("@cocalc/frontend/conat/account-dstream", () => ({
   getSharedAccountDStream: jest.fn(),
@@ -130,6 +131,9 @@ describe("MentionsActions realtime feed", () => {
     expect(
       mockedWebappClient.conat_client.hub.notifications.list,
     ).toHaveBeenCalledTimes(1);
+    expect(
+      mockedWebappClient.conat_client.hub.notifications.list,
+    ).toHaveBeenCalledWith({ limit: MAX_NOTIFICATION_INBOX_LIST_LIMIT });
 
     const feed = await getSharedAccountDStreamMock.mock.results[0].value;
     feed.emit("change", {

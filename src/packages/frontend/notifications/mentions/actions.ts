@@ -23,9 +23,9 @@ import {
 } from "./types";
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import { lite, remote_sync } from "@cocalc/frontend/lite";
+import { MAX_NOTIFICATION_INBOX_LIST_LIMIT } from "@cocalc/util/security-limits";
 import { showCodexTurnCompletionToastBestEffort } from "../codex-turn-toast";
 
-const DEFAULT_INBOX_LIMIT = 500;
 const REFRESH_RETRY_INITIAL_MS = 5_000;
 const REFRESH_RETRY_MAX_MS = 60_000;
 const REFRESH_ON_RESUME_STALE_MS = 60_000;
@@ -255,7 +255,7 @@ export class MentionsActions extends Actions<MentionsState> {
     this.setState({ loading: true });
     try {
       const [rows, counts] = await Promise.all([
-        notifications.list({ limit: DEFAULT_INBOX_LIMIT }),
+        notifications.list({ limit: MAX_NOTIFICATION_INBOX_LIST_LIMIT }),
         notifications.counts({}),
       ]);
       this.setState({

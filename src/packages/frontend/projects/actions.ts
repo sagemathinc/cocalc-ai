@@ -2320,10 +2320,24 @@ export class ProjectsActions extends Actions<ProjectsState> {
         const firstLink = result?.invites?.find(
           (invite) => invite.invite_url,
         )?.invite_url;
+        let message: string;
+        if (firstLink && result?.manual_delivery_required) {
+          if (result.email_blocked_reason === "email_not_configured") {
+            message = `Created invite for ${to}. Email is not configured for this site. To add this person, send them this invite link: ${firstLink}`;
+          } else if (result.email_blocked_reason === "cooldown") {
+            message = `Created invite for ${to}. A recent email invite was already sent; copy this link if you need to send it another way: ${firstLink}`;
+          } else {
+            message = `Created invite for ${to}. Send this invite link to the person you want to add: ${firstLink}`;
+          }
+        } else if (firstLink) {
+          message = result?.email_sent
+            ? `Created invite for ${to}. Email sent; if delivery is unreliable, copy the invite link from Pending invitations.`
+            : `Created invite for ${to}. If email delivery is unreliable, copy the invite link from Pending invitations.`;
+        } else {
+          message = `Invited ${to} to collaborate on project.`;
+        }
         alert_message({
-          message: firstLink
-            ? `Created invite for ${to}. If email delivery is unreliable, copy the invite link from Pending invitations.`
-            : `Invited ${to} to collaborate on project.`,
+          message,
         });
       }
     } catch (err) {

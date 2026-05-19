@@ -26,6 +26,9 @@ test("project invite create creates a copyable email-token invite", async () => 
               captured = opts;
               return {
                 email_sent: false,
+                email_available: true,
+                manual_delivery_required: true,
+                email_blocked_reason: "send_disabled_by_request",
                 invites: [
                   {
                     invite_id: "invite-1",
@@ -82,6 +85,8 @@ test("project invite create creates a copyable email-token invite", async () => 
     },
   });
   assert.equal(result.email_sent, false);
+  assert.equal(result.manual_delivery_required, true);
+  assert.equal(result.email_blocked_reason, "send_disabled_by_request");
   assert.equal(result.invites[0].invite_url.includes("token=t"), true);
   assert.equal(result.invites[0].target_email, "student@example.com");
 });

@@ -1030,6 +1030,9 @@ export interface ProjectCollabInviteWithoutAccountRequest {
 export interface ProjectCollabInviteWithoutAccountResultWire {
   invites: ProjectCollabInviteWire[];
   email_sent: boolean;
+  email_available: boolean;
+  manual_delivery_required: boolean;
+  email_blocked_reason?: string | null;
 }
 
 export interface ProjectCollabInviteCopyEmailLinkRequest {

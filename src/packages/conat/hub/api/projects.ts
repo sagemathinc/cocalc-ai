@@ -252,6 +252,11 @@ export type ProjectCollabInviteAction =
 
 export type ProjectCollabInviteDirection = "inbound" | "outbound" | "all";
 export type ProjectCollabInviteSource = "account" | "email" | "course_email";
+export type ProjectInviteEmailBlockedReason =
+  | "email_not_configured"
+  | "tier_disallows_email"
+  | "cooldown"
+  | "send_disabled_by_request";
 
 export interface ProjectCollabInviteRow {
   invite_id: string;
@@ -868,6 +873,9 @@ export interface Projects {
   }) => Promise<{
     invites: ProjectCollabInviteRow[];
     email_sent: boolean;
+    email_available: boolean;
+    manual_delivery_required: boolean;
+    email_blocked_reason?: ProjectInviteEmailBlockedReason | null;
   }>;
 
   copyEmailProjectInviteLink: (opts: {

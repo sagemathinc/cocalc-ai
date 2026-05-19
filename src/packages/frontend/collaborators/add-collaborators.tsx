@@ -259,7 +259,7 @@ export const AddCollaborators: React.FC<Props> = ({
           extra.push(`Created ${new Date(r.created).toLocaleDateString()}`);
         }
         if (r.account_id == null) {
-          extra.push(`No account`);
+          extra.push("Invite by email");
         } else {
           if (r.email_address) {
             if (r.email_address_verified?.[r.email_address]) {

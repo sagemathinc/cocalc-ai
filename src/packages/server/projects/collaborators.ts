@@ -85,6 +85,18 @@ const INVITE_STATUS_SET = new Set<string>([
 let projectCollabInviteEmailTokenSchemaReady: Promise<void> | undefined;
 
 type CollaboratorReadMode = "off" | "prefer" | "only";
+type InviteEmailBlockedReason =
+  | "email_not_configured"
+  | "tier_disallows_email"
+  | "cooldown"
+  | "send_disabled_by_request";
+
+export interface InviteEmailDeliveryStatus {
+  email_sent: boolean;
+  email_available: boolean;
+  manual_delivery_required: boolean;
+  email_blocked_reason?: InviteEmailBlockedReason | null;
+}
 
 function getCollaboratorReadMode(): CollaboratorReadMode {
   const value =
@@ -131,6 +143,16 @@ function normalizeInviteStatus(
   }
   throw new Error(
     `invalid status '${value}' (expected pending, accepted, declined, blocked, expired, or canceled)`,
+  );
+}
+
+function emailUnavailableFromSendMessage(message: string | undefined): boolean {
+  const value = `${message ?? ""}`.toLowerCase();
+  return (
+    value.includes("no actual message sent") ||
+    value.includes("no email sent") ||
+    value.includes("emails is disabled") ||
+    value.includes("email is disabled")
   );
 }
 
@@ -2075,7 +2097,7 @@ export async function inviteCollaboratorWithoutAccount({
     invite_context?: Record<string, unknown>;
     invite_scope?: string;
   };
-}): Promise<{ invites: ProjectCollabInviteRow[]; email_sent: boolean }> {
+}): Promise<{ invites: ProjectCollabInviteRow[] } & InviteEmailDeliveryStatus> {
   await assertLocalProjectCollaborator({
     account_id,
     project_id: opts.project_id,
@@ -2112,6 +2134,22 @@ export async function inviteCollaboratorWithoutAccount({
 
   // Helper for inviting one user by email
   let email_sent = false;
+  let email_available = true;
+  let manual_delivery_required = false;
+  let email_blocked_reason: InviteEmailBlockedReason | null = null;
+  const blockEmail = ({
+    reason,
+    available = true,
+  }: {
+    reason: InviteEmailBlockedReason;
+    available?: boolean;
+  }) => {
+    manual_delivery_required = true;
+    if (!available) {
+      email_available = false;
+    }
+    email_blocked_reason ??= reason;
+  };
   const invite_user = async (email_address: string) => {
     dbg(`inviting ${email_address}`);
     email_address = normalizeInviteEmail(email_address);
@@ -2126,7 +2164,12 @@ export async function inviteCollaboratorWithoutAccount({
     });
 
     // 3. Has email been sent recently?
-    if (opts.send_email === false || !(await canSendInviteEmail(account_id))) {
+    if (opts.send_email === false) {
+      blockEmail({ reason: "send_disabled_by_request" });
+      return created.invite;
+    }
+    if (!(await canSendInviteEmail(account_id))) {
+      blockEmail({ reason: "tier_disallows_email" });
       return created.invite;
     }
 
@@ -2139,12 +2182,14 @@ export async function inviteCollaboratorWithoutAccount({
       when_sent >= (await getInviteEmailResendCutoff(account_id))
     ) {
       // recent email -- nothing more to do
+      blockEmail({ reason: "cooldown" });
       return created.invite;
     }
 
     // 4. Get settings
     const settings = await callback2(database.get_server_settings_cached);
     if (!settings) {
+      blockEmail({ reason: "email_not_configured", available: false });
       return created.invite;
     }
 
@@ -2155,21 +2200,33 @@ export async function inviteCollaboratorWithoutAccount({
 
     dbg(`send_email invite to ${email_address}`);
     try {
-      await callback2(send_invite_email, {
-        to: email_address,
-        subject,
-        email: opts.email,
-        email_address,
-        title: opts.title,
-        allow_urls: await allowUrlsInEmails({
-          account_id,
-          project_id: opts.project_id,
-        }),
-        replyto: opts.replyto ?? settings.organization_email,
-        replyto_name: opts.replyto_name,
-        link2proj: created.invite_url,
-        settings,
-      });
+      const sendMessage = await callback2<string | undefined>(
+        send_invite_email,
+        {
+          to: email_address,
+          subject,
+          email: opts.email,
+          email_address,
+          title: opts.title,
+          allow_urls: await allowUrlsInEmails({
+            account_id,
+            project_id: opts.project_id,
+          }),
+          replyto: opts.replyto ?? settings.organization_email,
+          replyto_name: opts.replyto_name,
+          link2proj: created.invite_url,
+          settings,
+        },
+      );
+      if (`${sendMessage ?? ""}`.trim()) {
+        blockEmail({
+          reason: emailUnavailableFromSendMessage(sendMessage)
+            ? "email_not_configured"
+            : "tier_disallows_email",
+          available: !emailUnavailableFromSendMessage(sendMessage),
+        });
+        return created.invite;
+      }
       await getPool().query(
         `UPDATE project_collab_invites
             SET last_sent=NOW(), resend_count=COALESCE(resend_count, 0) + 1, updated=NOW()
@@ -2197,5 +2254,11 @@ export async function inviteCollaboratorWithoutAccount({
 
   // If any invite_user throws, its an error
   const invites = await Promise.all(to.map((email) => invite_user(email)));
-  return { invites, email_sent };
+  return {
+    invites,
+    email_sent,
+    email_available,
+    manual_delivery_required,
+    email_blocked_reason,
+  };
 }
