@@ -561,13 +561,21 @@ export function HostOpProgress({
 
   if (compact) {
     return (
-      <Space size={4} align="center" wrap>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          minWidth: 0,
+          width: "100%",
+        }}
+      >
         <Typography.Text
           type="secondary"
           style={{
             fontSize: 11,
             display: "inline-block",
-            width: "22ch",
+            flex: "0 1 22ch",
             maxWidth: "22ch",
             whiteSpace: "nowrap",
             overflow: "hidden",
@@ -592,7 +600,7 @@ export function HostOpProgress({
           displayPhaseOwner={displayPhaseOwner}
           displayDeadlineAt={displayDeadlineAt}
         />
-      </Space>
+      </div>
     );
   }
 

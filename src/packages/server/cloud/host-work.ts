@@ -1080,8 +1080,15 @@ async function handleStart(row: any) {
     const { entry, creds } = await getProviderContext(providerId, {
       region: row.region,
     });
+    const stoppedFallbackShouldReturnToSpot =
+      managedSpotRecovery &&
+      desiredPricing === "spot" &&
+      currentEffectivePricing === "on_demand" &&
+      (row.status === "off" || row.status === "stopped");
     const startMode =
-      managedSpotRecovery && currentRecoveryState?.phase === "returning_to_spot"
+      stoppedFallbackShouldReturnToSpot ||
+      (managedSpotRecovery &&
+        currentRecoveryState?.phase === "returning_to_spot")
         ? "return_to_spot"
         : managedSpotRecovery && currentEffectivePricing === "on_demand"
           ? "standard"
@@ -1255,17 +1262,56 @@ async function handleStart(row: any) {
     }
     try {
       if (managedSpotRecovery && startMode === "return_to_spot") {
+        if (providerId === "nebius") {
+          if (
+            row.metadata?.machine?.storage_mode === "persistent" &&
+            !runtime?.metadata?.diskIds?.data
+          ) {
+            throw new Error(
+              "spot return recreate is not safe for Nebius host without a preserved data disk",
+            );
+          }
+          await entry.provider.deleteHost(runtime, creds, {
+            preserveDataDisk: true,
+          });
+          effectivePricingForStart = "spot";
+          nextRecoveryState = {
+            ...(nextRecoveryState ?? { phase: "returning_to_spot" }),
+            phase: "returning_to_spot",
+            outage_started_at:
+              nextRecoveryState?.outage_started_at ?? new Date().toISOString(),
+          };
+          const nextMetadata = metadataForNebiusRecreateFallback({
+            metadata: row.metadata ?? {},
+            runtime,
+            desiredPricing,
+            effectivePricing: effectivePricingForStart,
+            state: nextRecoveryState,
+          });
+          row.metadata = nextMetadata;
+          await updateHostRow(row.id, {
+            status: "starting",
+            last_seen: null,
+            public_url: null,
+            internal_url: null,
+            metadata: nextMetadata,
+          });
+          await handleProvision({
+            ...row,
+            metadata: nextMetadata,
+            status: "starting",
+            public_url: null,
+            internal_url: null,
+          });
+          return;
+        }
         if (!entry.provider.setPricingModel) {
           throw new Error(
             `spot return is not supported for provider '${providerId}'`,
           );
         }
         await entry.provider.stopHost(runtimeForStart, creds);
-        if (
-          providerId === "gcp" ||
-          providerId === "nebius" ||
-          providerId === "hyperstack"
-        ) {
+        if (providerId === "gcp" || providerId === "hyperstack") {
           await waitForProviderStatus({
             entry,
             creds,

@@ -675,6 +675,129 @@ describe("cloud host start failures", () => {
     );
   });
 
+  it("returns stopped Nebius standard fallback hosts to spot on manual start", async () => {
+    const hostId = "6be1c093-31f0-4d1a-8b27-8333cbe0ed68";
+    const deleteHost = jest.fn(async () => undefined);
+    const startHost = jest.fn(async () => undefined);
+    const getStatus = jest.fn(async () => "running");
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          deleteHost,
+          startHost,
+          getStatus,
+          setPricingModel: jest.fn(async () => {
+            throw new Error("Nebius should recreate instead");
+          }),
+        },
+      },
+      creds: {},
+    });
+    provisionIfNeededMock.mockImplementation(async (row) => ({
+      ...row,
+      status: "running",
+      metadata: {
+        ...row.metadata,
+        runtime: {
+          provider: "nebius",
+          instance_id: "spot-instance-new",
+          ssh_user: "ubuntu",
+          metadata: {
+            diskIds: {
+              data: "data-disk",
+              boot: "new-boot-disk",
+            },
+          },
+        },
+      },
+    }));
+
+    await upsertProjectHost({
+      id: hostId,
+      name: "Stopped Nebius fallback host",
+      region: "eu-north1",
+      status: "off",
+      metadata: {
+        owner: "acct-owner",
+        pricing_model: "spot",
+        desired_pricing_model: "spot",
+        effective_pricing_model: "on_demand",
+        interruption_restore_policy: "immediate",
+        machine: {
+          cloud: "nebius",
+          machine_type: "gpu-h100",
+          platform: "gpu-h100",
+          disk_gb: 200,
+          disk_type: "ssd",
+          storage_mode: "persistent",
+          metadata: {
+            source_image: "image-1",
+          },
+        },
+        runtime: {
+          provider: "nebius",
+          instance_id: "standard-instance",
+          ssh_user: "ubuntu",
+          metadata: {
+            diskIds: {
+              data: "data-disk",
+              boot: "standard-boot-disk",
+            },
+          },
+        },
+        spot_recovery_policy: {
+          max_restore_attempts_before_fallback: 1,
+        },
+        spot_recovery_state: {
+          phase: "running_standard_fallback",
+          outage_started_at: "2026-05-04T03:00:00.000Z",
+          fallback_started_at: "2026-05-04T03:05:00.000Z",
+        },
+      },
+    });
+
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.start({
+      id: "start-nebius-return-to-spot-1",
+      vm_id: hostId,
+      action: "start",
+      payload: { provider: "nebius" },
+    } as any);
+
+    expect(deleteHost).toHaveBeenCalledWith(
+      expect.objectContaining({ instance_id: "standard-instance" }),
+      {},
+      { preserveDataDisk: true },
+    );
+    expect(startHost).not.toHaveBeenCalled();
+    const provisionRow = provisionIfNeededMock.mock.calls[0][0];
+    expect(provisionRow.metadata).toMatchObject({
+      desired_pricing_model: "spot",
+      effective_pricing_model: "spot",
+      machine: {
+        metadata: {
+          data_disk_id: "data-disk",
+        },
+      },
+      spot_recovery_state: {
+        phase: "returning_to_spot",
+      },
+    });
+
+    const hostRows = await getPool().query(
+      "SELECT status, metadata FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(hostRows.rows[0].status).toBe("starting");
+    expect(hostRows.rows[0].metadata.effective_pricing_model).toBe("spot");
+    expect(hostRows.rows[0].metadata.runtime.instance_id).toBe(
+      "spot-instance-new",
+    );
+    expect(hostRows.rows[0].metadata.spot_recovery_state.phase).toBe(
+      "returning_to_spot",
+    );
+  }, 10000);
+
   it("marks failed starts off when the provider reports the VM stopped", async () => {
     const hostId = "2a4389a8-8134-44f2-b8d6-4cddc4efab11";
     const startHost = jest.fn(async () => {

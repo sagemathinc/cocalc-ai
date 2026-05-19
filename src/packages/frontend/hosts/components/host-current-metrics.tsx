@@ -686,11 +686,12 @@ function CompactMetricLine({
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "36px 42px minmax(64px, 1fr) auto",
-        gap: 7,
+        gridTemplateColumns: "32px 38px minmax(40px, 1fr) minmax(0, 70px)",
+        gap: 5,
         alignItems: "center",
         minHeight: 22,
         padding: "2px 0",
+        minWidth: 0,
       }}
     >
       <Typography.Text type="secondary" style={{ fontSize: 11 }}>
@@ -720,7 +721,11 @@ function CompactMetricLine({
             fontSize: 11,
             fontVariantNumeric: "tabular-nums",
             whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            minWidth: 0,
           }}
+          title={detail}
         >
           {detail}
         </Typography.Text>
@@ -994,11 +999,14 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
       return (
         <div
           style={{
-            minWidth: 220,
+            minWidth: 0,
+            width: "100%",
+            maxWidth: 236,
             border: `1px solid ${COLORS.GRAY_LL}`,
             borderRadius: 10,
             background: "white",
             padding: "6px 9px",
+            overflow: "hidden",
           }}
         >
           <div
