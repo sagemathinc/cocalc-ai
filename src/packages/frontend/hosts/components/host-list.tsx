@@ -817,7 +817,10 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       title: "Host",
       dataIndex: "name",
       key: "name",
-      width: 220,
+      width: 210,
+      onCell: () => ({
+        style: { minWidth: 210, maxWidth: 210 },
+      }),
       sorter: true,
       sortDirections: ["ascend", "descend"],
       sortOrder:
@@ -833,7 +836,10 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     {
       title: "Configuration",
       key: "configuration",
-      width: 440,
+      width: 500,
+      onCell: () => ({
+        style: { minWidth: 500 },
+      }),
       render: (_: string, host: Host) => <HostConfigurationCell host={host} />,
     },
     {
@@ -1323,6 +1329,8 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
           columns={columns}
           dataSource={sortedHosts}
           pagination={false}
+          tableLayout="fixed"
+          scroll={{ x: 2050 }}
           rowSelection={{
             selectedRowKeys,
             onChange: (keys) => setSelectedRowKeys(keys as string[]),
