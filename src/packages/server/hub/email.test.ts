@@ -26,7 +26,7 @@ describe("escape_email_body", () => {
 });
 
 describe("create_email_body", () => {
-  it("uses account-agnostic token invite instructions", () => {
+  it("uses a short token invite call to action", () => {
     const body = create_email_body(
       "Course invite",
       "<p>Please join</p>",
@@ -36,12 +36,10 @@ describe("create_email_body", () => {
       false,
     );
 
-    expect(body).toContain("this CoCalc invite link");
-    expect(body).toContain(
-      "Sign in or create an account using the CoCalc account you want to use",
-    );
+    expect(body).toContain("Accept or reject this invitation.");
+    expect(body).not.toContain("To accept the invitation");
+    expect(body).not.toContain("Sign in or create an account");
     expect(body).not.toContain("exactly");
     expect(body).not.toContain("<script>");
-    expect(body).toContain("Course &lt;script&gt;alert(1)&lt;/script&gt;");
   });
 });

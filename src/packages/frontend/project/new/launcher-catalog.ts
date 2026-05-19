@@ -16,29 +16,35 @@ export interface QuickCreateSpec {
 }
 
 export const QUICK_CREATE_CATALOG: QuickCreateSpec[] = [
-  { id: "chat", ext: "chat", label: "Chat", icon: NEW_FILETYPE_ICONS.chat },
+  { id: "chat", ext: "chat", label: "Agent Chat", icon: NEW_FILETYPE_ICONS.chat },
   {
     id: "ipynb",
     ext: "ipynb",
     label: "Notebook",
     icon: NEW_FILETYPE_ICONS.ipynb,
   },
-  { id: "md", ext: "md", label: "Markdown", icon: NEW_FILETYPE_ICONS.md },
-  { id: "tex", ext: "tex", label: "LaTeX", icon: NEW_FILETYPE_ICONS.tex },
-  { id: "qmd", ext: "qmd", label: "Quarto", icon: NEW_FILETYPE_ICONS.qmd },
-  { id: "rmd", ext: "rmd", label: "R Markdown", icon: NEW_FILETYPE_ICONS.rmd },
-  { id: "py", ext: "py", label: "Python", icon: NEW_FILETYPE_ICONS.py },
-  { id: "jl", ext: "jl", label: "Julia", icon: NEW_FILETYPE_ICONS.jl },
-  { id: "r", ext: "r", label: "R", icon: NEW_FILETYPE_ICONS.r },
   { id: "term", ext: "term", label: "Terminal", icon: NEW_FILETYPE_ICONS.term },
+  {
+    id: "course",
+    ext: "course",
+    label: "Course",
+    icon: NEW_FILETYPE_ICONS.course,
+  },
+  { id: "tex", ext: "tex", label: "LaTeX", icon: NEW_FILETYPE_ICONS.tex },
+  { id: "py", ext: "py", label: "Python", icon: NEW_FILETYPE_ICONS.py },
+  { id: "md", ext: "md", label: "Markdown", icon: NEW_FILETYPE_ICONS.md },
   {
     id: "slides",
     ext: "slides",
     label: "Slides",
     icon: NEW_FILETYPE_ICONS.slides,
   },
-  { id: "tasks", ext: "tasks", label: "Tasks", icon: NEW_FILETYPE_ICONS.tasks },
   { id: "board", ext: "board", label: "Board", icon: NEW_FILETYPE_ICONS.board },
+  { id: "tasks", ext: "tasks", label: "Tasks", icon: NEW_FILETYPE_ICONS.tasks },
+  { id: "jl", ext: "jl", label: "Julia", icon: NEW_FILETYPE_ICONS.jl },
+  { id: "r", ext: "r", label: "R", icon: NEW_FILETYPE_ICONS.r },
+  { id: "qmd", ext: "qmd", label: "Quarto", icon: NEW_FILETYPE_ICONS.qmd },
+  { id: "rmd", ext: "rmd", label: "R Markdown", icon: NEW_FILETYPE_ICONS.rmd },
 ];
 
 export const QUICK_CREATE_MAP: Record<string, QuickCreateSpec> =

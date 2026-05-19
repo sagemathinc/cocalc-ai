@@ -85,6 +85,26 @@ describe("bay-public-origin", () => {
     );
   });
 
+  it("uses the registry public origin for the seed bay from an attached bay with local-only settings", async () => {
+    process.env.COCALC_BAY_ID = "bay-1";
+    process.env.COCALC_CLUSTER_ROLE = "attached";
+    process.env.COCALC_BAY_PUBLIC_URL = "http://localhost:13114";
+    getServerSettingsMock = jest.fn(async () => ({
+      dns: "localhost",
+    }));
+    listClusterBayRegistryMock = jest.fn(async () => [
+      {
+        bay_id: "bay-0",
+        public_origin: "https://lite4b.cocalc.ai",
+        dns_hostname: "bay-0-lite4b.cocalc.ai",
+      },
+    ]);
+    const { getBayPublicOrigin } = await import("./bay-public-origin");
+    await expect(getBayPublicOrigin("bay-0")).resolves.toBe(
+      "https://lite4b.cocalc.ai",
+    );
+  });
+
   it("allows browser origins discovered through the bay registry when env bay ids are incomplete", async () => {
     process.env.COCALC_BAY_ID = "bay-2";
     process.env.COCALC_CLUSTER_ROLE = "attached";

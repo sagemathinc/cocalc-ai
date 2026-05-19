@@ -55,7 +55,12 @@ import { basename, dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
-import { createGunzip, createGzip } from "node:zlib";
+import {
+  createGunzip,
+  createGzip,
+  createZstdCompress,
+  createZstdDecompress,
+} from "node:zlib";
 import {
   data,
   secrets,
@@ -238,6 +243,7 @@ type BayRusticRepoConfig = {
 type WalArchiveFile = {
   name: string;
   path: string;
+  bytes: number;
   mtime_iso: string | null;
 };
 
@@ -279,7 +285,10 @@ let walMaintenanceRunning = false;
 let backupMaintenanceTimer: NodeJS.Timeout | undefined;
 let backupMaintenanceRunning = false;
 
-const DEFAULT_WAL_ARCHIVE_INTERVAL_MS = 60 * 1000;
+const DEFAULT_WAL_ARCHIVE_INTERVAL_MS = 60 * 60 * 1000;
+const DEFAULT_WAL_ARCHIVE_MAX_UPLOAD_SEGMENTS = 32;
+const DEFAULT_WAL_ARCHIVE_MAX_UPLOAD_BYTES = 512 * 1024 * 1024;
+const REMOTE_WAL_COMPRESSION_SUFFIX = ".zst";
 const DEFAULT_BAY_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_BAY_BACKUP_RETRY_INTERVAL_MS = 15 * 60 * 1000;
 const DEFAULT_BAY_BACKUP_RETENTION_COUNT = 14;
@@ -295,6 +304,22 @@ function getWalArchiveIntervalMs(): number {
     10,
   );
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_WAL_ARCHIVE_INTERVAL_MS;
+}
+
+function getWalArchiveMaxUploadSegments(): number {
+  return parsePositiveIntEnv({
+    name: "COCALC_BAY_WAL_ARCHIVE_MAX_UPLOAD_SEGMENTS",
+    defaultValue: DEFAULT_WAL_ARCHIVE_MAX_UPLOAD_SEGMENTS,
+    allowZero: true,
+  });
+}
+
+function getWalArchiveMaxUploadBytes(): number {
+  return parsePositiveIntEnv({
+    name: "COCALC_BAY_WAL_ARCHIVE_MAX_UPLOAD_BYTES",
+    defaultValue: DEFAULT_WAL_ARCHIVE_MAX_UPLOAD_BYTES,
+    allowZero: true,
+  });
 }
 
 function parsePositiveIntEnv({
@@ -918,6 +943,24 @@ async function gunzipFile(from: string, to: string): Promise<void> {
   await pipeline(createReadStream(from), createGunzip(), createWriteStream(to));
 }
 
+async function zstdCompressFile(from: string, to: string): Promise<void> {
+  await ensureDir(dirname(to));
+  await pipeline(
+    createReadStream(from),
+    createZstdCompress(),
+    createWriteStream(to),
+  );
+}
+
+async function zstdDecompressFile(from: string, to: string): Promise<void> {
+  await ensureDir(dirname(to));
+  await pipeline(
+    createReadStream(from),
+    createZstdDecompress(),
+    createWriteStream(to),
+  );
+}
+
 function shellQuote(arg: string): string {
   return `'${arg.replace(/'/g, `'\"'\"'`)}'`;
 }
@@ -985,11 +1028,17 @@ async function refreshBundledWalSegmentsFromArchive({
       continue;
     }
     if (!wal_object_prefix || !remote_wal_keys) continue;
-    const object_key = `${wal_object_prefix}/${name}`;
-    if (!remote_wal_keys.includes(object_key)) continue;
-    await downloadObjectToFileFromR2({
+    if (
+      !remoteWalObjectKeys({ wal_object_prefix, name }).some((key) =>
+        remote_wal_keys.includes(key),
+      )
+    ) {
+      continue;
+    }
+    await downloadRemoteWalToFileFromR2({
       target: r2,
-      key: object_key,
+      wal_object_prefix,
+      name,
       destinationPath,
     });
   }
@@ -1365,6 +1414,48 @@ async function snapshotSyncTree({
       const info = await stat(sourcePath);
       await chmod(destinationPath, info.mode);
     }
+  }
+}
+
+async function treeContainsSqliteDatabase(sourceDir: string): Promise<boolean> {
+  const entries = await readdir(sourceDir, { withFileTypes: true }).catch(
+    (err) => {
+      if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+        return [];
+      }
+      throw err;
+    },
+  );
+  for (const entry of entries) {
+    const sourcePath = join(sourceDir, entry.name);
+    if (entry.isDirectory()) {
+      if (await treeContainsSqliteDatabase(sourcePath)) {
+        return true;
+      }
+      continue;
+    }
+    if (entry.isFile() && entry.name.endsWith(".db")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function requireBinary(binary: string): Promise<void> {
+  const path = await which(binary);
+  if (!path) {
+    throw new Error(`required binary '${binary}' was not found in PATH`);
+  }
+}
+
+async function assertControlPlaneBackupToolsAvailable(): Promise<void> {
+  const needsSyncArchive = await exists(syncFiles.local);
+  const needsSecretsArchive = await exists(secrets);
+  if (needsSyncArchive || needsSecretsArchive) {
+    await requireBinary("tar");
+  }
+  if (needsSyncArchive && (await treeContainsSqliteDatabase(syncFiles.local))) {
+    await requireBinary("sqlite3");
   }
 }
 
@@ -1803,8 +1894,8 @@ async function pruneRemoteWalObjects({
   }
   const keysToDelete: string[] = [];
   for (const key of remote_object_keys) {
-    if (!key.startsWith(`${wal_object_prefix}/`)) continue;
-    const name = key.slice(wal_object_prefix.length + 1);
+    const name = remoteWalNameFromObjectKey({ wal_object_prefix, key });
+    if (!name) continue;
     if (name.endsWith(".history")) continue;
     if (!WAL_SEGMENT_NAME_RE.test(name)) continue;
     if (name >= keep_from_segment) continue;
@@ -2044,6 +2135,45 @@ async function downloadObjectToFileFromR2({
   );
 }
 
+async function downloadRemoteWalToFileFromR2({
+  target,
+  wal_object_prefix,
+  name,
+  destinationPath,
+}: {
+  target: R2Target;
+  wal_object_prefix: string;
+  name: string;
+  destinationPath: string;
+}): Promise<void> {
+  const compressedKey = compressedRemoteWalObjectKey({
+    wal_object_prefix,
+    name,
+  });
+  const compressedPath = `${destinationPath}${REMOTE_WAL_COMPRESSION_SUFFIX}`;
+  try {
+    await downloadObjectToFileFromR2({
+      target,
+      key: compressedKey,
+      destinationPath: compressedPath,
+    });
+    await zstdDecompressFile(compressedPath, destinationPath);
+    await rm(compressedPath, { force: true });
+    return;
+  } catch (err) {
+    await rm(compressedPath, { force: true });
+    const message = String(err ?? "");
+    if (!message.includes("R2 GET failed (404)")) {
+      throw err;
+    }
+  }
+  await downloadObjectToFileFromR2({
+    target,
+    key: rawRemoteWalObjectKey({ wal_object_prefix, name }),
+    destinationPath,
+  });
+}
+
 async function resolveBackupManifest({
   paths,
   bay_id,
@@ -2242,6 +2372,53 @@ function walObjectPrefix(root: string | null): string | null {
   return root ? `${root}/wal` : null;
 }
 
+function compressedRemoteWalObjectKey({
+  wal_object_prefix,
+  name,
+}: {
+  wal_object_prefix: string;
+  name: string;
+}): string {
+  return `${wal_object_prefix}/${name}${REMOTE_WAL_COMPRESSION_SUFFIX}`;
+}
+
+function rawRemoteWalObjectKey({
+  wal_object_prefix,
+  name,
+}: {
+  wal_object_prefix: string;
+  name: string;
+}): string {
+  return `${wal_object_prefix}/${name}`;
+}
+
+function remoteWalObjectKeys({
+  wal_object_prefix,
+  name,
+}: {
+  wal_object_prefix: string;
+  name: string;
+}): string[] {
+  return [
+    compressedRemoteWalObjectKey({ wal_object_prefix, name }),
+    rawRemoteWalObjectKey({ wal_object_prefix, name }),
+  ];
+}
+
+function remoteWalNameFromObjectKey({
+  wal_object_prefix,
+  key,
+}: {
+  wal_object_prefix: string;
+  key: string;
+}): string | null {
+  if (!key.startsWith(`${wal_object_prefix}/`)) return null;
+  const name = key.slice(wal_object_prefix.length + 1);
+  return name.endsWith(REMOTE_WAL_COMPRESSION_SUFFIX)
+    ? name.slice(0, -REMOTE_WAL_COMPRESSION_SUFFIX.length)
+    : name;
+}
+
 async function listRemoteWalObjectKeys({
   r2,
   wal_object_prefix,
@@ -2293,22 +2470,21 @@ async function writeRemoteWalRestoreHelper({
     "const { dirname } = require('node:path');",
     "const { Readable } = require('node:stream');",
     "const { pipeline } = require('node:stream/promises');",
+    "const { createZstdDecompress } = require('node:zlib');",
     `const ENDPOINT = ${JSON.stringify(r2.bucket_endpoint)};`,
     `const ACCESS_KEY = ${JSON.stringify(r2.access_key)};`,
     `const SECRET_KEY = ${JSON.stringify(r2.secret_key)};`,
     `const BUCKET = ${JSON.stringify(r2.bucket_name)};`,
     `const PREFIX = ${JSON.stringify(wal_object_prefix)};`,
     `const REQUEST_LOG = ${JSON.stringify(requestLogPath)};`,
+    `const ZSTD_SUFFIX = ${JSON.stringify(REMOTE_WAL_COMPRESSION_SUFFIX)};`,
     "function hashHex(data) { return createHash('sha256').update(data).digest('hex'); }",
     "function hmac(key, data, encoding) { const hash = createHmac('sha256', key).update(data, 'utf8'); return encoding ? hash.digest(encoding) : hash.digest(); }",
     "function getSignatureKey(secret, dateStamp) { const kDate = hmac(`AWS4${secret}`, dateStamp); const kRegion = hmac(kDate, 'auto'); const kService = hmac(kRegion, 's3'); return hmac(kService, 'aws4_request'); }",
     "function toAmzDate(now) { return now.toISOString().replace(/[:-]|\\.\\d{3}/g, ''); }",
     "function encodeRfc3986(str) { return encodeURIComponent(str).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`); }",
     "function canonicalizeObjectPath(bucket, key) { const parts = [bucket, ...`${key ?? ''}`.split('/').filter(Boolean)]; return `/${parts.map(encodeRfc3986).join('/')}`; }",
-    "async function main() {",
-    "  const [segment, destPath] = process.argv.slice(2);",
-    "  if (!segment || !destPath) process.exit(1);",
-    "  const key = `${PREFIX}/${segment}`;",
+    "async function fetchObject(key) {",
     "  const parsed = new URL(ENDPOINT);",
     "  const canonicalUri = canonicalizeObjectPath(BUCKET, key);",
     "  const now = new Date();",
@@ -2330,13 +2506,30 @@ async function writeRemoteWalRestoreHelper({
     "  const signature = hmac(signingKey, stringToSign, 'hex');",
     "  headers.authorization = `AWS4-HMAC-SHA256 Credential=${ACCESS_KEY}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;",
     "  const { host: _host, ...requestHeaders } = headers;",
-    "  const response = await fetch(`${parsed.origin}${canonicalUri}`, { headers: requestHeaders });",
+    "  return await fetch(`${parsed.origin}${canonicalUri}`, { headers: requestHeaders });",
+    "}",
+    "async function main() {",
+    "  const [segment, destPath] = process.argv.slice(2);",
+    "  if (!segment || !destPath) process.exit(1);",
+    "  const compressedKey = `${PREFIX}/${segment}${ZSTD_SUFFIX}`;",
+    "  const rawKey = `${PREFIX}/${segment}`;",
+    "  let response = await fetchObject(compressedKey);",
+    "  let compressed = true;",
+    "  if (response.status === 404) {",
+    "    response = await fetchObject(rawKey);",
+    "    compressed = false;",
+    "  }",
     "  if (!response.ok || !response.body) {",
     "    if (response.status === 404) process.exit(1);",
     "    throw new Error(`R2 GET failed (${response.status}): ${response.statusText || 'unknown error'}`);",
     "  }",
     "  mkdirSync(dirname(destPath), { recursive: true });",
-    "  await pipeline(Readable.fromWeb(response.body), createWriteStream(destPath));",
+    "  const input = Readable.fromWeb(response.body);",
+    "  if (compressed) {",
+    "    await pipeline(input, createZstdDecompress(), createWriteStream(destPath));",
+    "  } else {",
+    "    await pipeline(input, createWriteStream(destPath));",
+    "  }",
     "  appendFileSync(REQUEST_LOG, `${segment}\\n`);",
     "}",
     "main().catch((err) => { console.error(err?.message ?? String(err)); process.exit(1); });",
@@ -2359,6 +2552,7 @@ async function listArchivedWalFiles(
       files.push({
         name,
         path,
+        bytes: info.size,
         mtime_iso: new Date(info.mtimeMs).toISOString(),
       });
     }
@@ -2383,7 +2577,9 @@ function isWalPendingUpload({
   last_uploaded_wal_segment: string | null;
 }): boolean {
   if (wal_object_prefix && remote_object_keys) {
-    return !remote_object_keys.has(`${wal_object_prefix}/${name}`);
+    return !remoteWalObjectKeys({ wal_object_prefix, name }).some((key) =>
+      remote_object_keys.has(key),
+    );
   }
   return !last_uploaded_wal_segment || name > last_uploaded_wal_segment;
 }
@@ -2418,6 +2614,34 @@ async function getWalArchiveSnapshot({
     last_archived_wal_segment: last?.name ?? null,
     last_archived_wal_at: last?.mtime_iso ?? null,
   };
+}
+
+function limitWalFilesForUpload(files: WalArchiveFile[]): WalArchiveFile[] {
+  const maxSegments = getWalArchiveMaxUploadSegments();
+  const maxBytes = getWalArchiveMaxUploadBytes();
+  if (maxSegments <= 0 && maxBytes <= 0) {
+    return files;
+  }
+  const selected: WalArchiveFile[] = [];
+  let selectedBytes = 0;
+  for (const file of files) {
+    if (maxSegments > 0 && selected.length >= maxSegments) {
+      break;
+    }
+    if (
+      maxBytes > 0 &&
+      selected.length > 0 &&
+      selectedBytes + file.bytes > maxBytes
+    ) {
+      break;
+    }
+    selected.push(file);
+    selectedBytes += file.bytes;
+    if (maxBytes > 0 && selectedBytes >= maxBytes) {
+      break;
+    }
+  }
+  return selected;
 }
 
 async function waitForWalArchiveAdvance({
@@ -2576,7 +2800,8 @@ async function syncBayWalArchive({
   };
 
   try {
-    if (canUploadRemote && snapshot.pending_files.length > 0) {
+    const pendingFilesToUpload = limitWalFilesForUpload(snapshot.pending_files);
+    if (canUploadRemote && pendingFilesToUpload.length > 0) {
       const bucket_endpoint = r2.bucket_endpoint!;
       const access_key = r2.access_key!;
       const secret_key = r2.secret_key!;
@@ -2589,20 +2814,33 @@ async function syncBayWalArchive({
         throw new Error("missing WAL object prefix");
       }
       let last_uploaded_wal_segment = state.last_uploaded_wal_segment;
-      for (const file of snapshot.pending_files) {
-        const object_key = `${object_prefix}/${file.name}`;
-        const { sha256, bytes } = await hashFile(file.path);
-        await uploadObjectFromFile({
-          endpoint: bucket_endpoint,
-          accessKey: access_key,
-          secretKey: secret_key,
-          bucket: bucket_name,
-          key: object_key,
-          filePath: file.path,
-          artifactSha256: sha256,
-          artifactBytes: bytes,
-          contentType: "application/octet-stream",
+      for (const file of pendingFilesToUpload) {
+        const object_key = compressedRemoteWalObjectKey({
+          wal_object_prefix: object_prefix,
+          name: file.name,
         });
+        const tempDir = await mkdtemp(join(tmpdir(), "cocalc-wal-zstd-"));
+        const compressedPath = join(
+          tempDir,
+          `${file.name}${REMOTE_WAL_COMPRESSION_SUFFIX}`,
+        );
+        try {
+          await zstdCompressFile(file.path, compressedPath);
+          const { sha256, bytes } = await hashFile(compressedPath);
+          await uploadObjectFromFile({
+            endpoint: bucket_endpoint,
+            accessKey: access_key,
+            secretKey: secret_key,
+            bucket: bucket_name,
+            key: object_key,
+            filePath: compressedPath,
+            artifactSha256: sha256,
+            artifactBytes: bytes,
+            contentType: "application/zstd",
+          });
+        } finally {
+          await rm(tempDir, { recursive: true, force: true });
+        }
         last_uploaded_wal_segment = file.name;
         remote_object_keys?.add(object_key);
       }
@@ -3218,6 +3456,7 @@ export async function runBayBackup({
         strategy: postgres.preferred_strategy,
         current_storage_backend,
       });
+      await assertControlPlaneBackupToolsAvailable();
       const actual_strategy = await runBackupCommand({
         strategy: postgres.preferred_strategy,
         staging_dir,

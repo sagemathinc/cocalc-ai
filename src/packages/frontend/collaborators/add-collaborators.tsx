@@ -446,7 +446,7 @@ export const AddCollaborators: React.FC<Props> = ({
 
     const name = redux.getStore("account").get_fullname();
     const title = project.get("title");
-    const target = `project '${title}'`;
+    const target = `'${title}'`;
     const SiteName = redux.getStore("customize").get("site_name") ?? SITE_NAME;
     const body = `Hello!\n\nPlease collaborate with me using ${SiteName} on ${target}.\n\nBest wishes,\n\n${name}`;
     set_email_to(search);
@@ -463,9 +463,9 @@ export const AddCollaborators: React.FC<Props> = ({
     const SiteName = redux.getStore("customize").get("site_name") ?? SITE_NAME;
     let subject;
     if (replyto_name != null) {
-      subject = `${replyto_name} added you to project ${project?.get("title")}`;
+      subject = `${replyto_name} invited you to '${project?.get("title")}'`;
     } else {
-      subject = `${SiteName} Invitation to project ${project?.get("title")}`;
+      subject = `${SiteName} Invitation to '${project?.get("title")}'`;
     }
     return { subject, replyto, replyto_name };
   }
