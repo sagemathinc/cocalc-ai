@@ -811,6 +811,9 @@ export const AddCollaborators: React.FC<Props> = ({
     ) {
       return;
     }
+    if (state === "invited_manual" && manual_invite_links.length > 0) {
+      return render_manual_invite_result();
+    }
     return (
       <Alert
         style={{ margin: "8px 0" }}
@@ -836,65 +839,144 @@ export const AddCollaborators: React.FC<Props> = ({
     );
   }
 
-  function render_invite_result_description(): React.JSX.Element {
-    if (state === "invited_manual" && manual_invite_links.length > 0) {
-      return (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <div>
-            Email was not sent automatically. Send the invite link through
-            email, Canvas, Slack, chat, or another trusted channel.
+  function render_manual_invite_result(): React.JSX.Element {
+    return (
+      <div
+        style={{
+          background: `linear-gradient(135deg, ${COLORS.BLUE_LLLL}, ${COLORS.GRAY_LLL})`,
+          border: `1px solid ${COLORS.BLUE_LLL}`,
+          borderRadius: 12,
+          margin: "10px 0",
+          padding: 16,
+        }}
+      >
+        <div
+          style={{
+            alignItems: "flex-start",
+            display: "flex",
+            gap: 12,
+          }}
+        >
+          <div
+            style={{
+              alignItems: "center",
+              background: COLORS.BLUE_D,
+              borderRadius: "50%",
+              color: COLORS.GRAY_LLL,
+              display: "flex",
+              flex: "0 0 34px",
+              height: 34,
+              justifyContent: "center",
+              width: 34,
+            }}
+          >
+            <Icon name="link" />
           </div>
-          {manual_invite_links.map((entry, index) => (
+          <div style={{ minWidth: 0, width: "100%" }}>
             <div
-              key={`${entry.email_address}:${index}`}
               style={{
-                background: "rgba(255,255,255,0.75)",
-                border: `1px solid ${COLORS.GRAY_LL}`,
-                borderRadius: 8,
-                padding: 10,
+                color: COLORS.BLUE_DDD,
+                fontSize: 16,
+                fontWeight: 700,
+                marginBottom: 4,
               }}
             >
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>
-                {entry.email_address}
-              </div>
-              {entry.reason === "email_not_configured" && (
-                <div style={{ color: COLORS.GRAY_M, marginBottom: 8 }}>
-                  Email is not configured for this site.
-                </div>
-              )}
-              {entry.invite_urls.map((url) => (
-                <div
-                  key={url}
-                  style={{
-                    alignItems: "center",
-                    display: "flex",
-                    gap: 8,
-                    minWidth: 0,
-                  }}
-                >
-                  <Input readOnly value={url} />
-                  <Button
-                    onClick={() => {
-                      void navigator.clipboard.writeText(url);
-                      alert_message({
-                        type: "success",
-                        message: "Invite link copied.",
-                      });
+              Invitation link created
+            </div>
+            <div style={{ color: COLORS.GRAY_D, marginBottom: 14 }}>
+              Send this link through email, Canvas, Slack, chat, or another
+              trusted channel.
+            </div>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 12,
+              }}
+            >
+              {manual_invite_links.map((entry, index) => (
+                <div key={`${entry.email_address}:${index}`}>
+                  <div
+                    style={{
+                      color: COLORS.GRAY_DD,
+                      fontWeight: 600,
+                      marginBottom: 6,
                     }}
                   >
-                    Copy link
-                  </Button>
+                    {entry.email_address}
+                  </div>
+                  {entry.invite_urls.map((url) => (
+                    <div
+                      key={url}
+                      style={{
+                        alignItems: "center",
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 8,
+                        minWidth: 0,
+                      }}
+                    >
+                      <Input
+                        readOnly
+                        style={{
+                          flex: "1 1 320px",
+                          fontFamily:
+                            "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                          minWidth: 0,
+                        }}
+                        value={url}
+                      />
+                      <Button
+                        onClick={() => {
+                          void navigator.clipboard.writeText(url);
+                          alert_message({
+                            type: "success",
+                            message: "Invite link copied.",
+                          });
+                        }}
+                        type="primary"
+                      >
+                        <Icon name="copy" /> Copy
+                      </Button>
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
-          ))}
-          <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
-            Anyone with an invite link can accept it until it expires or is
-            revoked. You can revoke pending invitations below.
+            <div
+              style={{
+                alignItems: "flex-start",
+                background: COLORS.BLUE_LLLL,
+                borderRadius: 8,
+                color: COLORS.BLUE_DDD,
+                display: "flex",
+                gap: 8,
+                marginTop: 14,
+                padding: "10px 12px",
+              }}
+            >
+              <Icon name="lock" style={{ marginTop: 2 }} />
+              <div>
+                <b>Security note:</b> anyone with this invite link can accept it
+                until it expires or is revoked. You can revoke pending
+                invitations below.
+              </div>
+            </div>
           </div>
+          <Button
+            onClick={reset}
+            style={{ flex: "0 0 auto" }}
+            title="Dismiss"
+            type="text"
+          >
+            <Icon name="times" />
+          </Button>
         </div>
-      );
-    }
+      </div>
+    );
+  }
+
+  function render_invite_result_description(): React.JSX.Element {
     return (
       <div style={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}>
         {invite_result}
