@@ -16,7 +16,14 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { SyncOutlined } from "@ant-design/icons";
+import {
+  CloudOutlined,
+  CloudServerOutlined,
+  EnvironmentOutlined,
+  HddOutlined,
+  SyncOutlined,
+  ThunderboltOutlined,
+} from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type {
@@ -58,7 +65,12 @@ import type {
   HostDeleteOptions,
   HostDrainOptions,
 } from "../types";
-import { getHostSizeDisplay } from "../utils/format";
+import {
+  formatBinaryBytes,
+  getHostCpuCount,
+  getHostRamGiB,
+  getHostSizeDisplay,
+} from "../utils/format";
 import { canManageHostLifecycle } from "../utils/access";
 import {
   currentProjectHostAutomaticRollback,
@@ -166,6 +178,244 @@ function renderHostPrice(
       pricingSettings={pricingSettings}
       compact
     />
+  );
+}
+
+function shortHostId(host: Host): string {
+  return host.provider_instance_id || host.id.slice(0, 8);
+}
+
+function statusDotColor(host: Host): string {
+  if (host.deleted) return COLORS.GRAY_M;
+  if (host.status === "error") return COLORS.FG_RED;
+  if (host.status === "running") return COLORS.ANTD_GREEN_D;
+  if (
+    host.status === "starting" ||
+    host.status === "restarting" ||
+    host.status === "stopping" ||
+    host.status === "draining" ||
+    host.status === "deprovisioning"
+  ) {
+    return COLORS.ANTD_ORANGE;
+  }
+  return COLORS.GRAY_M;
+}
+
+function HostConfigChip({
+  icon,
+  label,
+  detail,
+  tone = "default",
+}: {
+  icon: React.ReactNode;
+  label: React.ReactNode;
+  detail?: React.ReactNode;
+  tone?: "default" | "blue" | "amber" | "muted";
+}) {
+  const colors =
+    tone === "blue"
+      ? {
+          border: COLORS.BLUE_LL,
+          background: COLORS.BLUE_LLLL,
+          text: COLORS.ANTD_LINK_BLUE,
+        }
+      : tone === "amber"
+        ? {
+            border: COLORS.YELL_LL,
+            background: COLORS.YELL_LLL,
+            text: COLORS.YELL_D,
+          }
+        : tone === "muted"
+          ? {
+              border: COLORS.GRAY_LL,
+              background: COLORS.GRAY_LLL,
+              text: COLORS.GRAY_M,
+            }
+          : {
+              border: COLORS.GRAY_LL,
+              background: "white",
+              text: COLORS.GRAY_D,
+            };
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 7,
+        border: `1px solid ${colors.border}`,
+        borderRadius: 10,
+        background: colors.background,
+        padding: "5px 8px",
+        minHeight: 30,
+        lineHeight: 1.1,
+      }}
+    >
+      <span style={{ color: colors.text, fontSize: 15, lineHeight: 1 }}>
+        {icon}
+      </span>
+      <span>
+        <Typography.Text strong style={{ color: colors.text, fontSize: 12 }}>
+          {label}
+        </Typography.Text>
+        {detail ? (
+          <Typography.Text
+            type="secondary"
+            style={{ display: "block", fontSize: 11 }}
+          >
+            {detail}
+          </Typography.Text>
+        ) : null}
+      </span>
+    </span>
+  );
+}
+
+function HostIdentityCell({
+  host,
+  onDetails,
+  catalog,
+  pricingSettings,
+}: {
+  host: Host;
+  onDetails: (host: Host) => void;
+  catalog:
+    | HostCatalog
+    | Partial<Record<HostProvider, HostCatalog | undefined>>
+    | undefined;
+  pricingSettings: DedicatedHostSurchargeSettings;
+}) {
+  return (
+    <Space size={10} align="start" style={{ minWidth: 210 }}>
+      <span
+        style={{
+          width: 34,
+          height: 34,
+          borderRadius: 10,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: COLORS.BLUE_LLLL,
+          color: COLORS.ANTD_LINK_BLUE,
+          border: `1px solid ${COLORS.BLUE_LL}`,
+          fontSize: 18,
+          flex: "0 0 auto",
+        }}
+      >
+        <CloudServerOutlined />
+      </span>
+      <Space orientation="vertical" size={2}>
+        <Space size={7} wrap>
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: 4,
+              background: statusDotColor(host),
+              display: "inline-block",
+            }}
+          />
+          <Button
+            type="link"
+            onClick={() => onDetails(host)}
+            style={{
+              padding: 0,
+              height: "auto",
+              fontWeight: 600,
+              fontSize: 15,
+            }}
+          >
+            {host.name}
+          </Button>
+          {isSpotHost(host) ? (
+            <SpotHostTag
+              host={host}
+              catalog={catalog}
+              pricingSettings={pricingSettings}
+            />
+          ) : null}
+        </Space>
+        <Typography.Text
+          type="secondary"
+          style={{ fontSize: 12, fontFamily: "monospace" }}
+        >
+          {shortHostId(host)}
+        </Typography.Text>
+        {host.status === "error" && host.last_error ? (
+          <Popover
+            title="Error"
+            content={
+              <HostErrorDetails message={host.last_error} maxHeight={240} />
+            }
+          >
+            <Button
+              size="small"
+              type="link"
+              danger
+              style={{ padding: 0, height: "auto" }}
+            >
+              Error
+            </Button>
+          </Popover>
+        ) : null}
+      </Space>
+    </Space>
+  );
+}
+
+function HostConfigurationCell({ host }: { host: Host }) {
+  const providerLabel = getProviderLabel(host);
+  const selfHostDetail = getSelfHostDetail(host);
+  const size = getHostSizeDisplay(host);
+  const cpu = getHostCpuCount(host);
+  const ramGiB = getHostRamGiB(host);
+  const disk =
+    host.machine?.disk_gb != null && Number.isFinite(host.machine.disk_gb)
+      ? `${host.machine.disk_gb} GB disk`
+      : formatBinaryBytes(host.metrics?.current?.disk_device_total_bytes, {
+          compact: true,
+        });
+  const gpuCount = host.machine?.gpu_count ?? (host.gpu ? 1 : 0);
+  const gpuLabel = host.gpu
+    ? `${gpuCount > 0 ? `${gpuCount}x ` : ""}${host.machine?.gpu_type ?? "GPU"}`
+    : "No GPU";
+  return (
+    <Space
+      size={[6, 6]}
+      wrap
+      style={{
+        maxWidth: 430,
+      }}
+    >
+      <HostConfigChip
+        icon={<CloudOutlined />}
+        label={providerLabel}
+        detail={selfHostDetail}
+        tone="blue"
+      />
+      <HostConfigChip
+        icon={<EnvironmentOutlined />}
+        label={host.machine?.cloud === "self-host" ? "Connector" : host.region}
+        detail={host.machine?.cloud === "self-host" ? host.region : undefined}
+        tone="blue"
+      />
+      <HostConfigChip
+        icon={<HddOutlined />}
+        label={size.secondary ?? size.primary}
+        detail={size.secondary ? size.primary : undefined}
+      />
+      {cpu != null ? (
+        <HostConfigChip icon={<CloudServerOutlined />} label={`${cpu} vCPU`} />
+      ) : null}
+      {ramGiB != null ? (
+        <HostConfigChip icon={<HddOutlined />} label={`${ramGiB} GiB RAM`} />
+      ) : null}
+      {disk ? <HostConfigChip icon={<HddOutlined />} label={disk} /> : null}
+      <HostConfigChip
+        icon={<ThunderboltOutlined />}
+        label={gpuLabel}
+        tone={host.gpu ? "amber" : "muted"}
+      />
+    </Space>
   );
 }
 
@@ -696,9 +946,10 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       ),
     },
     {
-      title: "Name",
+      title: "Host",
       dataIndex: "name",
       key: "name",
+      width: 260,
       sorter: true,
       sortDirections: ["ascend", "descend"],
       sortOrder:
@@ -708,118 +959,19 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             : "descend"
           : undefined,
       render: (_: string, host: Host) => (
-        <Space orientation="vertical" size={0}>
-          <Space size="small" wrap>
-            <Button type="link" onClick={() => onDetails(host)}>
-              {host.name}
-            </Button>
-            {isSpotHost(host) && (
-              <SpotHostTag
-                host={host}
-                catalog={pricingCatalogs ?? catalog}
-                pricingSettings={pricingSettings}
-              />
-            )}
-          </Space>
-          {host.status === "error" && host.last_error && (
-            <Popover
-              title="Error"
-              content={
-                <HostErrorDetails message={host.last_error} maxHeight={240} />
-              }
-            >
-              <Button
-                size="small"
-                type="link"
-                danger
-                style={{ padding: 0, height: "auto" }}
-              >
-                Error
-              </Button>
-            </Popover>
-          )}
-        </Space>
+        <HostIdentityCell
+          host={host}
+          onDetails={onDetails}
+          catalog={pricingCatalogs ?? catalog}
+          pricingSettings={pricingSettings}
+        />
       ),
     },
     {
-      title: "Provider",
-      key: "provider",
-      sorter: true,
-      sortDirections: ["ascend", "descend"],
-      sortOrder:
-        sortField === "provider"
-          ? sortDirection === "asc"
-            ? "ascend"
-            : "descend"
-          : undefined,
-      render: (_: string, host: Host) => {
-        const baseLabel = getProviderLabel(host);
-        const detail = getSelfHostDetail(host);
-        if (!detail && !isSpotHost(host)) return baseLabel;
-        return (
-          <Space orientation="vertical" size={0}>
-            <Space size="small" wrap>
-              <span>{baseLabel}</span>
-              {isSpotHost(host) && (
-                <SpotHostTag
-                  host={host}
-                  catalog={pricingCatalogs ?? catalog}
-                  pricingSettings={pricingSettings}
-                />
-              )}
-            </Space>
-            {detail && (
-              <Typography.Text type="secondary">{detail}</Typography.Text>
-            )}
-          </Space>
-        );
-      },
-    },
-    {
-      title: "Region",
-      dataIndex: "region",
-      key: "region",
-      width: 140,
-      sorter: true,
-      sortDirections: ["ascend", "descend"],
-      sortOrder:
-        sortField === "region"
-          ? sortDirection === "asc"
-            ? "ascend"
-            : "descend"
-          : undefined,
-      render: (_: string, host: Host) =>
-        host.machine?.cloud === "self-host"
-          ? `Connector: ${host.region}`
-          : host.region,
-    },
-    {
-      title: "Size",
-      dataIndex: "size",
-      key: "size",
-      sorter: true,
-      sortDirections: ["ascend", "descend"],
-      sortOrder:
-        sortField === "size"
-          ? sortDirection === "asc"
-            ? "ascend"
-            : "descend"
-          : undefined,
-      render: (_: string, host: Host) => {
-        const size = getHostSizeDisplay(host);
-        if (!size.secondary) return size.primary;
-        return (
-          <Space orientation="vertical" size={0}>
-            <span>{size.primary}</span>
-            <Typography.Text type="secondary">{size.secondary}</Typography.Text>
-          </Space>
-        );
-      },
-    },
-    {
-      title: "GPU",
-      key: "gpu",
-      render: (_: string, host: Host) => (host.gpu ? "Yes" : "No"),
+      title: "Configuration",
+      key: "configuration",
+      width: 440,
+      render: (_: string, host: Host) => <HostConfigurationCell host={host} />,
     },
     {
       title: "Price",
