@@ -274,7 +274,7 @@ Seat management:
 - search by name/email/account id
 - revoke seat
 - export CSV
-- inactive-seat candidates
+- aggregate inactive-release counts and recent releases
 
 Audit:
 
@@ -292,16 +292,21 @@ Do not immediately revoke seats on inactivity.
 
 Recommended model:
 
-1. A seat becomes an inactive candidate after `inactivity_timeout_days`.
-2. The user and managers are notified.
+1. A seat enters `pending_inactive_release` after
+   `inactivity_timeout_days`.
+2. The user is notified by email/in-app notification: "Sign into CoCalc to
+   continue your membership."
 3. A grace period starts, e.g. 30 days.
-4. Managers can pin/extend the seat.
-5. If no action occurs, the grant and claim identity are revoked/released.
+4. If the user signs in during the grace period, the pending release is
+   canceled.
+5. If no sign-in occurs, the grant and claim identity are revoked/released.
+6. Managers can see aggregate counts and recent releases, but are not expected
+   to review individual inactive users.
 
 Recommended defaults:
 
 - Student pool: 365 inactive days, 30-day grace.
-- Instructor pool: 540 inactive days, manager-reviewed release.
+- Instructor pool: 540 inactive days, 30-day grace.
 
 Use account-level activity first. Project-level or course-level activity can be
 added later.
@@ -311,23 +316,22 @@ added later.
 Default policy:
 
 - One active site-license pool per site license per account.
-- Higher-trust pools supersede lower-trust pools.
+- Higher-trust pools replace lower-trust pools.
 
 Example:
 
 - A user first claims a student seat.
 - The same user later receives instructor approval.
 - The instructor grant becomes active.
-- The student package assignment for the same site license is revoked or
-  marked superseded.
+- The student package assignment for the same site license is revoked.
 
 This is simpler to explain and avoids double-counting seats.
 
-If implementation pressure is high, an acceptable first implementation is:
+If implementation pressure is high, an acceptable temporary implementation is:
 
 - allow both grants to exist
 - make effective membership resolution choose the higher tier
-- still report the lower grant as superseded in manager UI
+- still report the lower grant as temporarily ignored in manager UI
 
 But the long-term model should avoid consuming two seats for one person in the
 same site license.
@@ -430,6 +434,9 @@ The CLI matters for enterprise onboarding, migrations, and scripted demos.
 - Keep backward compatibility for existing single-pool `kind = "site"` package
   rows by treating each as a one-pool site license.
 - Add admin API/CLI commands for creating pools and managers.
+- The admin panel for deleting membership tiers already blocks deleting a tier
+  that has claims/users. It should also block deleting a tier that is attached
+  to a site license, and ideally show how many site licenses use that tier.
 
 ### Phase 3: Claimable and Requestable User Flow
 
@@ -452,14 +459,15 @@ The CLI matters for enterprise onboarding, migrations, and scripted demos.
 ### Phase 5: Seat Reconciliation
 
 - Enforce one active pool per account per site license.
-- Decide whether instructor approval revokes or supersedes student seat.
-- Add reporting so managers can see superseded/revoked seats.
+- Instructor approval revokes the lower student seat for simplicity and to
+  avoid confusion.
+- Add reporting so managers can see seats revoked due to upgrades.
 
 ### Phase 6: Inactivity Release
 
-- Add inactive-candidate query.
-- Add notification/grace workflow.
-- Add manager pin/extend controls.
+- Add pending-inactive-release query.
+- Add user notification/grace workflow.
+- Clear pending release when the user signs in.
 - Add scheduled release job.
 
 ### Phase 7: Invite Limit Integration
@@ -474,7 +482,7 @@ The CLI matters for enterprise onboarding, migrations, and scripted demos.
 - Unit tests for claimable/requestable pool logic.
 - Unit tests for approval/rejection and cap rechecks.
 - Unit tests for canonical identity duplicate prevention.
-- Unit tests for one-active-pool/supersede behavior.
+- Unit tests for one-active-pool/revoke-on-upgrade behavior.
 - Inter-bay tests for license/package authority routing.
 - Browser smoke test for:
   - student claim
@@ -517,16 +525,20 @@ Manager policy:
 - owners can delegate manager/viewer roles
 - all manager actions audited
 
-## Open Questions
+## Resolved Decisions
 
-- Should baseline student seats be auto-claimed on sign-in, or always require a
-  click?
-- Should pending approval requests reserve instructor seats?
-- Should manager owners be allowed to approve their own instructor request?
-- Should inactive release use account activity only, or also project/course
-  activity?
-- Should organization-verified SSO attributes eventually drive automatic
-  instructor eligibility?
+- Baseline student seats require a click, but the claim UI should be very
+  discoverable and clear. The click ensures users know they received something
+  extra.
+- Pending approval requests eventually should reserve instructor seats, but the
+  first version can recheck cap availability at approval time and error if the
+  pool has filled.
+- Site-license owners can approve their own instructor request. This avoids
+  unnecessary CoCalc-admin work.
+- Inactive release uses account activity only in the first version. Signing in
+  is enough to keep the seat.
+- Organization-verified SSO attributes should eventually drive automatic
+  instructor eligibility, but not in the first release.
 
 ## Recommendation
 
@@ -534,12 +546,11 @@ Implement the first version with:
 
 - explicit site-license managers
 - one or more site-package-backed pools per site license
-- auto-claimable baseline pool
+- click-to-claim baseline pool
 - approval-required instructor pool
 - no pending-seat reservation
 - one active pool per account per site license
-- account-activity-based inactivity candidates, with manager review before
-  release
+- account-activity-based inactive release, renewed by user sign-in
 
 This is the least confusing model for campus admins, preserves the existing
 membership package machinery, and gives CoCalc the trust boundary needed for
