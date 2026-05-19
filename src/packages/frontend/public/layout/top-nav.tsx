@@ -185,6 +185,7 @@ export default function PublicTopNav({
           title="Navigation"
         >
           <Menu
+            aria-label="Public pages"
             items={menuItems}
             mode="vertical"
             onClick={() => setMobileMenuOpen(false)}
