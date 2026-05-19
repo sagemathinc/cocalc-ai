@@ -32,6 +32,7 @@ import { labels } from "@cocalc/frontend/i18n";
 import { ProjectMap, UserMap } from "@cocalc/frontend/todo-types";
 import { User } from "@cocalc/frontend/users";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { ProjectCollabInviteRow } from "@cocalc/conat/hub/api/projects";
 import type { MembershipPackageDetails } from "@cocalc/conat/hub/api/purchases";
 import { search_match, search_split, trunc_middle } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -121,6 +122,8 @@ export function Student({
   const [seatLoading, setSeatLoading] = useState<boolean>(false);
   const [seatError, setSeatError] = useState<string>("");
   const [copyInviteLoading, setCopyInviteLoading] = useState<boolean>(false);
+  const [revokeInviteLoading, setRevokeInviteLoading] =
+    useState<boolean>(false);
 
   const size = useButtonSize();
 
@@ -501,6 +504,47 @@ export function Student({
           ).toLocaleString()}`
         : "never";
 
+    async function findPendingCourseInvite(): Promise<ProjectCollabInviteRow> {
+      const student_project_id = student.get("project_id");
+      if (!student_project_id) {
+        throw new Error("Student project has not been created yet.");
+      }
+      const rows = await webapp_client.project_collaborators.list_invites({
+        project_id: student_project_id,
+        direction: "outbound",
+        status: "pending",
+        limit: 100,
+      });
+      const email = `${student.get("email_address") ?? ""}`
+        .trim()
+        .toLowerCase();
+      const invite =
+        rows.find(
+          (row) =>
+            row.invite_source === "email" &&
+            row.scope === "course_student" &&
+            row.context?.student_id === student_id,
+        ) ??
+        rows.find(
+          (row) =>
+            row.invite_source === "email" &&
+            row.scope === "course_student" &&
+            row.context?.student_project_id === student_project_id,
+        ) ??
+        rows.find(
+          (row) =>
+            row.invite_source === "email" &&
+            row.scope === "course_student" &&
+            `${row.target_email ?? ""}`.trim().toLowerCase() === email,
+        );
+      if (!invite) {
+        throw new Error(
+          "No pending course invite link was found. Send an invitation first.",
+        );
+      }
+      return invite;
+    }
+
     async function copyInviteLink() {
       const student_project_id = student.get("project_id");
       if (!student_project_id) {
@@ -508,39 +552,7 @@ export function Student({
       }
       setCopyInviteLoading(true);
       try {
-        const rows = await webapp_client.project_collaborators.list_invites({
-          project_id: student_project_id,
-          direction: "outbound",
-          status: "pending",
-          limit: 100,
-        });
-        const email = `${student.get("email_address") ?? ""}`
-          .trim()
-          .toLowerCase();
-        const invite =
-          rows.find(
-            (row) =>
-              row.invite_source === "email" &&
-              row.scope === "course_student" &&
-              row.context?.student_id === student_id,
-          ) ??
-          rows.find(
-            (row) =>
-              row.invite_source === "email" &&
-              row.scope === "course_student" &&
-              row.context?.student_project_id === student_project_id,
-          ) ??
-          rows.find(
-            (row) =>
-              row.invite_source === "email" &&
-              row.scope === "course_student" &&
-              `${row.target_email ?? ""}`.trim().toLowerCase() === email,
-          );
-        if (!invite) {
-          throw new Error(
-            "No pending course invite link was found. Send an invitation first.",
-          );
-        }
+        const invite = await findPendingCourseInvite();
         const result =
           await webapp_client.project_collaborators.copy_email_invite_link({
             invite_id: invite.invite_id,
@@ -552,6 +564,32 @@ export function Student({
         void antdMessage.error(`${err}`);
       } finally {
         setCopyInviteLoading(false);
+      }
+    }
+
+    async function revokeInviteLink() {
+      const student_project_id = student.get("project_id");
+      if (!student_project_id) {
+        return;
+      }
+      setRevokeInviteLoading(true);
+      try {
+        const invite = await findPendingCourseInvite();
+        await webapp_client.project_collaborators.respond_invite({
+          invite_id: invite.invite_id,
+          project_id: student_project_id,
+          action: "revoke",
+        });
+        actions.set({
+          table: "students",
+          student_id,
+          last_email_invite: undefined,
+        });
+        void antdMessage.success("Invite link revoked.");
+      } catch (err) {
+        void antdMessage.error(`${err}`);
+      } finally {
+        setRevokeInviteLoading(false);
       }
     }
 
@@ -576,13 +614,24 @@ export function Student({
           </Button>
         </Tooltip>
         {last_email_invite != null && (
-          <Button
-            size={size}
-            loading={copyInviteLoading}
-            onClick={() => void copyInviteLink()}
-          >
-            <Icon name="copy" /> Copy invite link
-          </Button>
+          <Space size={4} wrap>
+            <Button
+              size={size}
+              loading={copyInviteLoading}
+              onClick={() => void copyInviteLink()}
+            >
+              <Icon name="copy" /> Copy invite link
+            </Button>
+            <Popconfirm
+              title="Revoke this pending course invite link?"
+              description="Anyone with the old link will no longer be able to use it."
+              onConfirm={() => void revokeInviteLink()}
+            >
+              <Button size={size} loading={revokeInviteLoading}>
+                Revoke link
+              </Button>
+            </Popconfirm>
+          </Space>
         )}
       </Space>
     );
