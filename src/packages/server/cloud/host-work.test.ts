@@ -461,7 +461,7 @@ describe("cloud host start failures", () => {
     ]);
   });
 
-  it("stops rescheduling verify_host_ready when the cloud VM disappears", async () => {
+  it("schedules spot recovery when the cloud VM disappears during readiness verification", async () => {
     const hostId = "40f6e06d-75ec-4030-8709-7af14fe72127";
     const startedAt = new Date(Date.now() - 60_000).toISOString();
     const deadlineAt = new Date(Date.now() + 5 * 60_000).toISOString();
@@ -527,7 +527,7 @@ describe("cloud host start failures", () => {
       "SELECT status, last_seen, public_url, internal_url, metadata FROM project_hosts WHERE id=$1",
       [hostId],
     );
-    expect(hostRows.rows[0].status).toBe("off");
+    expect(hostRows.rows[0].status).toBe("starting");
     expect(hostRows.rows[0].last_seen).toBeNull();
     expect(hostRows.rows[0].public_url).toBeNull();
     expect(hostRows.rows[0].internal_url).toBeNull();
@@ -542,6 +542,10 @@ describe("cloud host start failures", () => {
     });
     expect(hostRows.rows[0].metadata.runtime.provider_status).toBe("missing");
     expect(hostRows.rows[0].metadata.runtime.public_ip).toBeNull();
+    expect(hostRows.rows[0].metadata.spot_recovery_state).toMatchObject({
+      phase: "retrying_spot",
+      attempt: 1,
+    });
 
     const workRows = await getPool().query(
       `
@@ -551,7 +555,12 @@ describe("cloud host start failures", () => {
       `,
       [hostId],
     );
-    expect(workRows.rows).toEqual([]);
+    expect(workRows.rows).toEqual([
+      {
+        action: "start",
+        state: "queued",
+      },
+    ]);
   });
 
   it("recreates Nebius spot hosts as standard fallback while preserving data disk", async () => {
@@ -672,6 +681,486 @@ describe("cloud host start failures", () => {
     );
     expect(hostRows.rows[0].metadata.spot_recovery_state.phase).toBe(
       "running_standard_fallback",
+    );
+  });
+
+  it("returns stopped Nebius standard fallback hosts to spot on manual start", async () => {
+    const hostId = "6be1c093-31f0-4d1a-8b27-8333cbe0ed68";
+    const deleteHost = jest.fn(async () => undefined);
+    const startHost = jest.fn(async () => undefined);
+    const getStatus = jest.fn(async () => "running");
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          deleteHost,
+          startHost,
+          getStatus,
+          setPricingModel: jest.fn(async () => {
+            throw new Error("Nebius should recreate instead");
+          }),
+        },
+      },
+      creds: {},
+    });
+    provisionIfNeededMock.mockImplementation(async (row) => ({
+      ...row,
+      status: "running",
+      metadata: {
+        ...row.metadata,
+        runtime: {
+          provider: "nebius",
+          instance_id: "spot-instance-new",
+          ssh_user: "ubuntu",
+          metadata: {
+            diskIds: {
+              data: "data-disk",
+              boot: "new-boot-disk",
+            },
+          },
+        },
+      },
+    }));
+
+    await upsertProjectHost({
+      id: hostId,
+      name: "Stopped Nebius fallback host",
+      region: "eu-north1",
+      status: "off",
+      metadata: {
+        owner: "acct-owner",
+        pricing_model: "spot",
+        desired_pricing_model: "spot",
+        effective_pricing_model: "on_demand",
+        interruption_restore_policy: "immediate",
+        machine: {
+          cloud: "nebius",
+          machine_type: "gpu-h100",
+          platform: "gpu-h100",
+          disk_gb: 200,
+          disk_type: "ssd",
+          storage_mode: "persistent",
+          metadata: {
+            source_image: "image-1",
+          },
+        },
+        runtime: {
+          provider: "nebius",
+          instance_id: "standard-instance",
+          ssh_user: "ubuntu",
+          metadata: {
+            diskIds: {
+              data: "data-disk",
+              boot: "standard-boot-disk",
+            },
+          },
+        },
+        spot_recovery_policy: {
+          max_restore_attempts_before_fallback: 1,
+        },
+        spot_recovery_state: {
+          phase: "running_standard_fallback",
+          outage_started_at: "2026-05-04T03:00:00.000Z",
+          fallback_started_at: "2026-05-04T03:05:00.000Z",
+        },
+      },
+    });
+
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.start({
+      id: "start-nebius-return-to-spot-1",
+      vm_id: hostId,
+      action: "start",
+      payload: { provider: "nebius" },
+    } as any);
+
+    expect(deleteHost).toHaveBeenCalledWith(
+      expect.objectContaining({ instance_id: "standard-instance" }),
+      {},
+      { preserveDataDisk: true },
+    );
+    expect(startHost).not.toHaveBeenCalled();
+    const provisionRow = provisionIfNeededMock.mock.calls[0][0];
+    expect(provisionRow.metadata).toMatchObject({
+      desired_pricing_model: "spot",
+      effective_pricing_model: "spot",
+      machine: {
+        metadata: {
+          data_disk_id: "data-disk",
+        },
+      },
+      spot_recovery_state: {
+        phase: "returning_to_spot",
+      },
+    });
+
+    const hostRows = await getPool().query(
+      "SELECT status, metadata FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(hostRows.rows[0].status).toBe("starting");
+    expect(hostRows.rows[0].metadata.effective_pricing_model).toBe("spot");
+    expect(hostRows.rows[0].metadata.runtime.instance_id).toBe(
+      "spot-instance-new",
+    );
+    expect(hostRows.rows[0].metadata.spot_recovery_state.phase).toBe(
+      "returning_to_spot",
+    );
+  }, 10000);
+
+  it("recreates a stopped Nebius runtime when it does not match spot configuration", async () => {
+    const hostId = "14a424e6-3dd6-4979-ac40-d5fdf1935238";
+    const deleteHost = jest.fn(async () => undefined);
+    const startHost = jest.fn(async () => undefined);
+    const getStatus = jest.fn(async () => "running");
+    const getInstance = jest
+      .fn()
+      .mockResolvedValueOnce({
+        instance_id: "standard-instance",
+        status: "STOPPED",
+        metadata: {
+          machine_type: "gpu-h100-standard",
+          platform: "gpu-h100",
+          pricing_model: "on_demand",
+          preemptible: false,
+        },
+      })
+      .mockResolvedValueOnce({
+        instance_id: "spot-instance-new",
+        status: "RUNNING",
+        metadata: {
+          machine_type: "gpu-h100-spot",
+          platform: "gpu-h100",
+          pricing_model: "spot",
+          preemptible: true,
+        },
+      });
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          deleteHost,
+          startHost,
+          getStatus,
+          getInstance,
+        },
+      },
+      creds: {},
+    });
+    provisionIfNeededMock.mockImplementation(async (row) => ({
+      ...row,
+      status: "running",
+      metadata: {
+        ...row.metadata,
+        runtime: {
+          provider: "nebius",
+          instance_id: "spot-instance-new",
+          ssh_user: "ubuntu",
+          metadata: {
+            diskIds: {
+              data: "data-disk",
+              boot: "new-boot-disk",
+            },
+          },
+        },
+      },
+    }));
+
+    await upsertProjectHost({
+      id: hostId,
+      name: "Stale Nebius runtime host",
+      region: "eu-north1",
+      status: "off",
+      metadata: {
+        owner: "acct-owner",
+        pricing_model: "spot",
+        desired_pricing_model: "spot",
+        effective_pricing_model: "spot",
+        interruption_restore_policy: "none",
+        machine: {
+          cloud: "nebius",
+          machine_type: "gpu-h100-spot",
+          platform: "gpu-h100",
+          disk_gb: 200,
+          disk_type: "ssd",
+          storage_mode: "persistent",
+          metadata: {
+            platform: "gpu-h100",
+            source_image: "image-1",
+          },
+        },
+        runtime: {
+          provider: "nebius",
+          instance_id: "standard-instance",
+          ssh_user: "ubuntu",
+          metadata: {
+            diskIds: {
+              data: "data-disk",
+              boot: "standard-boot-disk",
+            },
+          },
+        },
+      },
+    });
+
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.start({
+      id: "start-nebius-stale-runtime-1",
+      vm_id: hostId,
+      action: "start",
+      payload: { provider: "nebius" },
+    } as any);
+
+    expect(getInstance).toHaveBeenCalled();
+    expect(deleteHost).toHaveBeenCalledWith(
+      expect.objectContaining({ instance_id: "standard-instance" }),
+      {},
+      { preserveDataDisk: true },
+    );
+    expect(startHost).not.toHaveBeenCalled();
+    const provisionRow = provisionIfNeededMock.mock.calls[0][0];
+    expect(provisionRow.metadata).toMatchObject({
+      desired_pricing_model: "spot",
+      effective_pricing_model: "spot",
+      machine: {
+        machine_type: "gpu-h100-spot",
+        metadata: {
+          data_disk_id: "data-disk",
+        },
+      },
+    });
+
+    const hostRows = await getPool().query(
+      "SELECT status, metadata FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(hostRows.rows[0].status).toBe("starting");
+    expect(hostRows.rows[0].metadata.runtime.instance_id).toBe(
+      "spot-instance-new",
+    );
+  });
+
+  it("starts spot-only Nebius hosts as spot even if stale effective pricing is standard", async () => {
+    const hostId = "ab8e71c9-ef9c-4c9a-97d9-e62ecf1c72b4";
+    const deleteHost = jest.fn(async () => undefined);
+    const startHost = jest.fn(async () => undefined);
+    const getStatus = jest.fn(async () => "running");
+    const getInstance = jest
+      .fn()
+      .mockResolvedValueOnce({
+        instance_id: "standard-instance",
+        status: "STOPPED",
+        metadata: {
+          machine_type: "gpu-h100",
+          platform: "gpu-h100",
+          pricing_model: "on_demand",
+          preemptible: false,
+        },
+      })
+      .mockResolvedValueOnce({
+        instance_id: "spot-instance-new",
+        status: "RUNNING",
+        metadata: {
+          machine_type: "gpu-h100",
+          platform: "gpu-h100",
+          pricing_model: "spot",
+          preemptible: true,
+        },
+      });
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          deleteHost,
+          startHost,
+          getStatus,
+          getInstance,
+        },
+      },
+      creds: {},
+    });
+    provisionIfNeededMock.mockImplementation(async (row) => ({
+      ...row,
+      status: "running",
+      metadata: {
+        ...row.metadata,
+        runtime: {
+          provider: "nebius",
+          instance_id: "spot-instance-new",
+          ssh_user: "ubuntu",
+          metadata: {
+            diskIds: {
+              data: "data-disk",
+              boot: "new-boot-disk",
+            },
+          },
+        },
+      },
+    }));
+
+    await upsertProjectHost({
+      id: hostId,
+      name: "Spot-only Nebius host",
+      region: "eu-north1",
+      status: "off",
+      metadata: {
+        owner: "acct-owner",
+        pricing_model: "spot",
+        desired_pricing_model: "spot",
+        effective_pricing_model: "on_demand",
+        interruption_restore_policy: "none",
+        machine: {
+          cloud: "nebius",
+          machine_type: "gpu-h100",
+          platform: "gpu-h100",
+          disk_gb: 200,
+          disk_type: "ssd",
+          storage_mode: "persistent",
+          metadata: {
+            platform: "gpu-h100",
+            source_image: "image-1",
+          },
+        },
+        runtime: {
+          provider: "nebius",
+          instance_id: "standard-instance",
+          ssh_user: "ubuntu",
+          metadata: {
+            diskIds: {
+              data: "data-disk",
+              boot: "standard-boot-disk",
+            },
+          },
+        },
+      },
+    });
+
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.start({
+      id: "start-nebius-spot-only-stale-effective-1",
+      vm_id: hostId,
+      action: "start",
+      payload: { provider: "nebius" },
+    } as any);
+
+    expect(getInstance).toHaveBeenCalled();
+    expect(deleteHost).toHaveBeenCalledWith(
+      expect.objectContaining({ instance_id: "standard-instance" }),
+      {},
+      { preserveDataDisk: true },
+    );
+    expect(startHost).not.toHaveBeenCalled();
+    const provisionRow = provisionIfNeededMock.mock.calls[0][0];
+    expect(provisionRow.metadata).toMatchObject({
+      desired_pricing_model: "spot",
+      effective_pricing_model: "spot",
+      machine: {
+        metadata: {
+          data_disk_id: "data-disk",
+        },
+      },
+    });
+
+    const hostRows = await getPool().query(
+      "SELECT status, metadata FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(hostRows.rows[0].status).toBe("starting");
+    expect(hostRows.rows[0].metadata.effective_pricing_model).toBe("spot");
+    expect(hostRows.rows[0].metadata.runtime.instance_id).toBe(
+      "spot-instance-new",
+    );
+  });
+
+  it("rejects Nebius provision results that are not actually spot", async () => {
+    const hostId = "1a922e22-0272-4639-ac9a-d7bf5de4a59a";
+    const deleteHost = jest.fn(async () => undefined);
+    const getStatus = jest.fn(async () => "running");
+    const getInstance = jest
+      .fn()
+      .mockResolvedValueOnce({
+        metadata: {
+          machine_type: "gpu-h200",
+          platform: "gpu-h200-sxm",
+          pricing_model: "on_demand",
+          preemptible: false,
+        },
+      })
+      .mockResolvedValueOnce(undefined);
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          deleteHost,
+          getStatus,
+          getInstance,
+        },
+      },
+      creds: {},
+    });
+    provisionIfNeededMock.mockImplementation(async (row) => ({
+      ...row,
+      status: "running",
+      metadata: {
+        ...row.metadata,
+        runtime: {
+          provider: "nebius",
+          instance_id: "created-standard-instance",
+          ssh_user: "ubuntu",
+          metadata: {
+            diskIds: {
+              data: "data-disk",
+              boot: "boot-disk",
+            },
+          },
+        },
+      },
+    }));
+
+    await upsertProjectHost({
+      id: hostId,
+      name: "Nebius bad spot create",
+      region: "eu-north1",
+      status: "starting",
+      metadata: {
+        owner: "acct-owner",
+        pricing_model: "spot",
+        desired_pricing_model: "spot",
+        effective_pricing_model: "spot",
+        interruption_restore_policy: "immediate",
+        machine: {
+          cloud: "nebius",
+          machine_type: "gpu-h200",
+          metadata: {
+            platform: "gpu-h200-sxm",
+            data_disk_id: "data-disk",
+          },
+          disk_gb: 200,
+          disk_type: "ssd",
+          storage_mode: "persistent",
+        },
+      },
+    });
+
+    const { cloudHostHandlers } = await import("./host-work");
+    await expect(
+      cloudHostHandlers.start({
+        id: "nebius-bad-spot-create",
+        vm_id: hostId,
+        action: "start",
+        payload: { provider: "nebius" },
+      } as any),
+    ).rejects.toThrow("does not match the requested host configuration");
+
+    expect(deleteHost).toHaveBeenCalledWith(
+      expect.objectContaining({ instance_id: "created-standard-instance" }),
+      {},
+      { preserveDataDisk: true },
+    );
+
+    const hostRows = await getPool().query(
+      "SELECT status, metadata FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(hostRows.rows[0].status).toBe("off");
+    expect(hostRows.rows[0].metadata.last_error).toContain(
+      "does not match the requested host configuration",
     );
   });
 

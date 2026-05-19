@@ -11,6 +11,7 @@ const disksGetMock = jest.fn();
 const disksDeleteMock = jest.fn();
 const instancesCreateMock = jest.fn();
 const instancesDeleteMock = jest.fn();
+const instancesGetMock = jest.fn();
 
 jest.mock("../nebius/client", () => {
   class NebiusClient {
@@ -23,6 +24,7 @@ jest.mock("../nebius/client", () => {
     readonly instances = {
       create: instancesCreateMock,
       delete: instancesDeleteMock,
+      get: instancesGetMock,
     };
 
     constructor(private creds: any) {}
@@ -75,6 +77,7 @@ describe("NebiusProvider", () => {
     disksDeleteMock.mockReset();
     instancesCreateMock.mockReset();
     instancesDeleteMock.mockReset();
+    instancesGetMock.mockReset();
     disksListMock.mockResolvedValue({ items: [], nextPageToken: "" });
     disksCreateMock
       .mockResolvedValueOnce(diskOp("boot-disk"))
@@ -107,6 +110,118 @@ describe("NebiusProvider", () => {
     );
     expect(createArgs.spec.preemptible.priority).toBe(3);
     expect(createArgs.spec.recoveryPolicy).toBe(InstanceRecoveryPolicy.FAIL);
+  });
+
+  it("reports observed machine type and spot pricing for existing instances", async () => {
+    const provider = new NebiusProvider();
+    instancesGetMock.mockResolvedValue({
+      metadata: {
+        id: "instance-1",
+        name: "host-1",
+      },
+      spec: {
+        resources: {
+          platform: "spot-platform",
+          size: {
+            $case: "preset",
+            preset: "spot-enabled-machine",
+          },
+        },
+        preemptible: {
+          priority: 3,
+        },
+      },
+      status: {
+        state: {
+          name: "STOPPED",
+        },
+        networkInterfaces: [
+          {
+            publicIpAddress: {
+              address: "192.0.2.44",
+            },
+          },
+        ],
+      },
+    });
+
+    const instance = await provider.getInstance(
+      {
+        provider: "nebius",
+        instance_id: "instance-1",
+        ssh_user: "ubuntu",
+      },
+      {
+        parentId: "project-1",
+        serviceAccountId: "svc-1",
+        publicKeyId: "pub-1",
+        privateKeyPem: "key",
+        sshPublicKey: "ssh-ed25519 AAAA",
+        subnetId: "subnet-1",
+      },
+    );
+
+    expect(instance).toMatchObject({
+      instance_id: "instance-1",
+      name: "host-1",
+      status: "STOPPED",
+      public_ip: "192.0.2.44",
+      metadata: {
+        machine_type: "spot-enabled-machine",
+        platform: "spot-platform",
+        pricing_model: "spot",
+        preemptible: true,
+      },
+    });
+  });
+
+  it("does not classify default empty preemptible specs as spot", async () => {
+    const provider = new NebiusProvider();
+    instancesGetMock.mockResolvedValue({
+      metadata: {
+        id: "instance-1",
+        name: "host-1",
+      },
+      spec: {
+        resources: {
+          platform: "standard-platform",
+          size: {
+            $case: "preset",
+            preset: "standard-machine",
+          },
+        },
+        preemptible: {
+          onPreemption: PreemptibleSpec_PreemptionPolicy.UNSPECIFIED,
+          priority: 0,
+        },
+      },
+      status: {
+        state: {
+          name: "STOPPED",
+        },
+      },
+    });
+
+    const instance = await provider.getInstance(
+      {
+        provider: "nebius",
+        instance_id: "instance-1",
+        ssh_user: "ubuntu",
+      },
+      {
+        parentId: "project-1",
+        serviceAccountId: "svc-1",
+        publicKeyId: "pub-1",
+        privateKeyPem: "key",
+        sshPublicKey: "ssh-ed25519 AAAA",
+        subnetId: "subnet-1",
+      },
+    );
+
+    expect(instance?.metadata).toMatchObject({
+      pricing_model: "on_demand",
+      preemptible: false,
+    });
   });
 
   it("waits for disks to detach before deleting a deprovisioned host", async () => {

@@ -9,6 +9,7 @@ import { React } from "@cocalc/frontend/app-framework";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { COLORS } from "@cocalc/util/theme";
 import { Space, Typography } from "antd";
+import { Tooltip } from "@cocalc/frontend/components";
 import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import {
   formatBinaryBytes,
@@ -16,6 +17,7 @@ import {
   getHostRamGiB,
   getHostSizeDisplay,
 } from "../utils/format";
+import { isSpotHost, isSpotStandardFallbackHost } from "../spot-ui";
 
 function getProviderLabel(host: Host): string {
   const cloud = host.machine?.cloud;
@@ -51,11 +53,13 @@ function HostConfigChip({
   label,
   detail,
   tone = "default",
+  tooltip,
 }: {
   icon: React.ReactNode;
   label: React.ReactNode;
   detail?: React.ReactNode;
   tone?: "default" | "blue" | "amber" | "muted";
+  tooltip?: React.ReactNode;
 }) {
   const colors =
     tone === "blue"
@@ -81,7 +85,7 @@ function HostConfigChip({
               background: "white",
               text: COLORS.GRAY_D,
             };
-  return (
+  const chip = (
     <span
       style={{
         display: "inline-flex",
@@ -113,6 +117,7 @@ function HostConfigChip({
       </span>
     </span>
   );
+  return tooltip ? <Tooltip title={tooltip}>{chip}</Tooltip> : chip;
 }
 
 export function HostConfigurationCell({
@@ -137,6 +142,8 @@ export function HostConfigurationCell({
   const gpuLabel = host.gpu
     ? `${gpuCount > 0 ? `${gpuCount}x ` : ""}${host.machine?.gpu_type ?? "GPU"}`
     : "No GPU";
+  const spot = isSpotHost(host);
+  const fallback = isSpotStandardFallbackHost(host);
   return (
     <Space
       size={[6, 6]}
@@ -157,6 +164,19 @@ export function HostConfigurationCell({
         detail={host.machine?.cloud === "self-host" ? host.region : undefined}
         tone="blue"
       />
+      {spot ? (
+        <HostConfigChip
+          icon={<ThunderboltOutlined />}
+          label="Spot default"
+          detail={fallback ? "fallback active" : "starts on spot"}
+          tone="amber"
+          tooltip={
+            fallback
+              ? "This host is configured to prefer spot pricing. It is temporarily using standard fallback; after it is stopped, Start will try to return it to spot."
+              : "This host is configured to start as a spot instance by default."
+          }
+        />
+      ) : null}
       <HostConfigChip
         icon={<HddOutlined />}
         label={size.secondary ?? size.primary}

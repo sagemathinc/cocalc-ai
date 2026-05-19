@@ -418,7 +418,11 @@ export async function initHostRegistryService() {
         const currentStatus = await loadCurrentStatus(info.id);
         if (
           currentStatus &&
-          !["running", "active"].includes(String(currentStatus))
+          // During cloud startup, register is the readiness signal. Accepting
+          // it immediately upserts status=running and last_seen below.
+          !["running", "active", "starting", "restarting"].includes(
+            String(currentStatus),
+          )
         ) {
           logger.debug("register ignored (status)", {
             id: info.id,

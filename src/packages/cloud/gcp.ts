@@ -876,7 +876,11 @@ export class GcpProvider implements CloudProvider {
     });
   }
 
-  async probeSpotAvailability(spec: HostSpec, creds: any): Promise<boolean> {
+  async probeSpotAvailability(
+    spec: HostSpec,
+    creds: any,
+    opts?: { stableForMs?: number },
+  ): Promise<boolean> {
     logger.info("gcp.probeSpotAvailability", {
       region: spec.region,
       zone: spec.zone,
@@ -950,6 +954,29 @@ export class GcpProvider implements CloudProvider {
         zone,
         credentials,
       });
+      let remainedStable = true;
+      const stableForMs = Math.max(0, opts?.stableForMs ?? 0);
+      const stableDeadline = Date.now() + stableForMs;
+      while (Date.now() < stableDeadline) {
+        const [instance] = await client.get({
+          project: credentials.projectId,
+          zone,
+          instance: name,
+        });
+        if (instance.status !== "RUNNING") {
+          logger.warn("gcp.probeSpotAvailability did not remain running", {
+            name,
+            zone,
+            status: instance.status,
+            stableForMs,
+          });
+          remainedStable = false;
+          break;
+        }
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.min(10_000, stableDeadline - Date.now())),
+        );
+      }
       const [deleteResponse] = await client.delete({
         project: credentials.projectId,
         zone,
@@ -960,7 +987,7 @@ export class GcpProvider implements CloudProvider {
         zone,
         credentials,
       });
-      return true;
+      return remainedStable;
     } catch (err) {
       try {
         const [deleteResponse] = await client.delete({

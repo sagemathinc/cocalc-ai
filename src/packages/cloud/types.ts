@@ -55,6 +55,7 @@ export type RemoteInstance = {
   public_ip?: string;
   private_ip?: string;
   internal_hostname?: string;
+  metadata?: Record<string, any>;
 };
 
 export interface CloudProvider {
@@ -66,7 +67,11 @@ export interface CloudProvider {
     pricingModel: NonNullable<HostSpec["pricing_model"]>,
     creds: any,
   ): Promise<void>;
-  probeSpotAvailability?(spec: HostSpec, creds: any): Promise<boolean>;
+  probeSpotAvailability?(
+    spec: HostSpec,
+    creds: any,
+    opts?: { stableForMs?: number },
+  ): Promise<boolean>;
   restartHost?(runtime: HostRuntime, creds: any): Promise<void>;
   hardRestartHost?(runtime: HostRuntime, creds: any): Promise<void>;
   ensureSshAccess?(runtime: HostRuntime, creds: any): Promise<void>;
