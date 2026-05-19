@@ -33,6 +33,7 @@ import { ProjectMap, UserMap } from "@cocalc/frontend/todo-types";
 import { User } from "@cocalc/frontend/users";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { MembershipPackageDetails } from "@cocalc/conat/hub/api/purchases";
+import type { ProjectCollabInviteRow } from "@cocalc/conat/hub/api/projects";
 import { search_match, search_split, trunc_middle } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { CourseActions } from "../actions";
@@ -120,9 +121,15 @@ export function Student({
   );
   const [seatLoading, setSeatLoading] = useState<boolean>(false);
   const [seatError, setSeatError] = useState<string>("");
+  const [sendInviteLoading, setSendInviteLoading] = useState<boolean>(false);
   const [copyInviteLoading, setCopyInviteLoading] = useState<boolean>(false);
   const [revokeInviteLoading, setRevokeInviteLoading] =
     useState<boolean>(false);
+  const [inviteStatusLoading, setInviteStatusLoading] =
+    useState<boolean>(false);
+  const [courseInvite, setCourseInvite] = useState<
+    ProjectCollabInviteRow | undefined
+  >();
 
   const size = useButtonSize();
 
@@ -155,6 +162,38 @@ export function Student({
   useEffect(() => {
     set_edited_email_address(student.get("email_address") ?? "");
   }, [student.get("email_address")]);
+
+  async function refreshCourseInviteStatus(): Promise<void> {
+    if (hasAccount || !studentProjectId || !student.get("email_address")) {
+      setCourseInvite(undefined);
+      return;
+    }
+    setInviteStatusLoading(true);
+    try {
+      setCourseInvite(
+        await actions.student_projects.get_student_course_invite({
+          student_id,
+        }),
+      );
+    } catch (_err) {
+      // Invite status is helpful, but failure should not break the student row.
+      setCourseInvite(undefined);
+    } finally {
+      setInviteStatusLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!is_expanded) return;
+    void refreshCourseInviteStatus();
+  }, [
+    hasAccount,
+    is_expanded,
+    student.get("email_address"),
+    student.get("last_email_invite"),
+    student_id,
+    studentProjectId,
+  ]);
 
   function on_key_down(e) {
     switch (e.keyCode) {
@@ -482,20 +521,92 @@ export function Student({
     }
   }
 
+  function render_course_invite_status() {
+    if (hasAccount) return;
+    if (inviteStatusLoading) {
+      return (
+        <Text type="secondary" style={{ fontSize: "12px" }}>
+          Checking invite status...
+        </Text>
+      );
+    }
+    if (courseInvite == null) {
+      const last_email_invite = student.get("last_email_invite");
+      if (last_email_invite == null) return;
+      return (
+        <Text type="secondary" style={{ fontSize: "12px" }}>
+          Last invite attempt <TimeAgo date={last_email_invite} />
+        </Text>
+      );
+    }
+    const isExpiredPendingInvite =
+      courseInvite.status === "pending" &&
+      courseInvite.expires != null &&
+      new Date(courseInvite.expires).valueOf() <= Date.now();
+    const status = isExpiredPendingInvite ? "expired" : courseInvite.status;
+    const color =
+      status === "pending"
+        ? "processing"
+        : status === "accepted"
+          ? "success"
+          : status === "canceled" || status === "expired"
+            ? "default"
+            : "warning";
+    const label = status === "canceled" ? "revoked" : status;
+    return (
+      <Space direction="vertical" size={0}>
+        <Space size={4} wrap>
+          <Tag color={color}>Invite {label}</Tag>
+          {courseInvite.target_email && (
+            <Text type="secondary" style={{ fontSize: "12px" }}>
+              {courseInvite.target_email}
+            </Text>
+          )}
+        </Space>
+        <Text type="secondary" style={{ fontSize: "12px" }}>
+          Created <TimeAgo date={courseInvite.created} />
+          {courseInvite.last_sent ? (
+            <>
+              {" "}
+              · emailed <TimeAgo date={courseInvite.last_sent} />
+            </>
+          ) : undefined}
+        </Text>
+        {courseInvite.status === "pending" && courseInvite.expires ? (
+          <Text type="secondary" style={{ fontSize: "12px" }}>
+            Expires <TimeAgo date={courseInvite.expires} />
+          </Text>
+        ) : undefined}
+      </Space>
+    );
+  }
+
   function render_resend_invitation() {
     // don't invite student if there is already an account
     if (hasAccount) return;
     const last_email_invite = student.get("last_email_invite");
+    const hasInvite = courseInvite != null || last_email_invite != null;
+    const isExpiredPendingInvite =
+      courseInvite?.status === "pending" &&
+      courseInvite.expires != null &&
+      new Date(courseInvite.expires).valueOf() <= Date.now();
+    const canCopyInvite =
+      courseInvite?.status === "pending" && !isExpiredPendingInvite;
+    const canRevokeInvite = courseInvite?.status === "pending";
+    const canCreateInvite =
+      courseInvite?.status !== "accepted" && courseInvite?.status !== "blocked";
     const allowResending =
       !last_email_invite || new Date(last_email_invite) < RESEND_INVITE_BEFORE;
 
-    const msg = intl.formatMessage(
-      {
-        id: "course.student-panel.resend_invitation.button",
-        defaultMessage: `{allowResending, select, true {Resend invitation} other {Recently invited}}`,
-      },
-      { allowResending },
-    );
+    const msg = hasInvite
+      ? intl.formatMessage(
+          {
+            id: "course.student-panel.resend_invitation.button",
+            defaultMessage: `{allowResending, select, true {Resend invitation} other {Recently invited}}`,
+          },
+          { allowResending },
+        )
+      : "Send invitation";
     const when =
       last_email_invite != null
         ? `Last invitation sent on ${new Date(
@@ -525,6 +636,7 @@ export function Student({
         await actions.student_projects.revoke_pending_student_invite_link({
           student_id,
         });
+        await refreshCourseInviteStatus();
         void antdMessage.success("Invite link revoked.");
       } catch (err) {
         void antdMessage.error(`${err}`);
@@ -535,33 +647,50 @@ export function Student({
 
     return (
       <Space direction="vertical" size={4}>
+        {render_course_invite_status()}
         <Tooltip placement="bottom" title={when}>
           <Button
             size={size}
-            onClick={() => {
+            onClick={async () => {
               const email = student.get("email_address");
               if (email) {
-                actions.student_projects.invite_student_to_project({
-                  student: email, // we use email address to trigger sending an actual email!
-                  student_project_id: student.get("project_id"),
-                  student_id: student.get("student_id"),
-                });
+                setSendInviteLoading(true);
+                try {
+                  await actions.student_projects.invite_student_to_project({
+                    student: email, // we use email address to trigger sending an actual email!
+                    student_project_id: student.get("project_id"),
+                    student_id: student.get("student_id"),
+                  });
+                  await refreshCourseInviteStatus();
+                  void antdMessage.success("Invitation created.");
+                } catch (err) {
+                  void antdMessage.error(`${err}`);
+                } finally {
+                  setSendInviteLoading(false);
+                }
               }
             }}
-            disabled={!allowResending}
+            loading={sendInviteLoading}
+            disabled={
+              !student.get("email_address") ||
+              !allowResending ||
+              !canCreateInvite
+            }
           >
             <Icon name="mail" /> {msg}
           </Button>
         </Tooltip>
-        {last_email_invite != null && (
+        {canRevokeInvite && (
           <Space size={4} wrap>
-            <Button
-              size={size}
-              loading={copyInviteLoading}
-              onClick={() => void copyInviteLink()}
-            >
-              <Icon name="copy" /> Copy invite link
-            </Button>
+            {canCopyInvite && (
+              <Button
+                size={size}
+                loading={copyInviteLoading}
+                onClick={() => void copyInviteLink()}
+              >
+                <Icon name="copy" /> Copy invite link
+              </Button>
+            )}
             <Popconfirm
               title="Revoke this pending course invite link?"
               description="Anyone with the old link will no longer be able to use it."

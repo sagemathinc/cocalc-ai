@@ -13,7 +13,10 @@ import { markdown_to_html } from "@cocalc/frontend/markdown";
 import { setProjectRootfsImage } from "@cocalc/frontend/rootfs/manifest";
 import { Datastore, EnvVars } from "@cocalc/frontend/projects/actions";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import type { ProjectCollabInviteRow } from "@cocalc/conat/hub/api/projects";
+import type {
+  ProjectCollabInviteRow,
+  ProjectCollabInviteStatus,
+} from "@cocalc/conat/hub/api/projects";
 import { RESEND_INVITE_INTERVAL_DAYS } from "@cocalc/util/consts/invites";
 import { copy, days_ago } from "@cocalc/util/misc";
 import { SITE_NAME } from "@cocalc/util/theme";
@@ -708,10 +711,11 @@ export class StudentProjectsActions {
       if (student == null || student.get("account_id") != null) continue;
       const student_project_id = store.get_student_project_id(student_id);
       if (!student_project_id) continue;
-      const invite = await this.get_pending_course_invite({
+      const invite = await this.get_course_invite({
         student_id,
         student_project_id,
         email_address: student.get("email_address"),
+        status: "pending",
       });
       if (invite == null) continue;
       const result =
@@ -740,10 +744,11 @@ export class StudentProjectsActions {
     if (student == null || !student_project_id) {
       throw new Error("Student project has not been created yet.");
     }
-    const invite = await this.get_pending_course_invite({
+    const invite = await this.get_course_invite({
       student_id,
       student_project_id,
       email_address: student.get("email_address"),
+      status: "pending",
     });
     if (invite == null) {
       throw new Error(
@@ -758,6 +763,27 @@ export class StudentProjectsActions {
     return result.invite_url;
   };
 
+  get_student_course_invite = async ({
+    student_id,
+    status,
+  }: {
+    student_id: string;
+    status?: ProjectCollabInviteStatus;
+  }): Promise<ProjectCollabInviteRow | undefined> => {
+    const store = this.get_store();
+    const student = store.get_student(student_id);
+    const student_project_id = store.get_student_project_id(student_id);
+    if (student == null || !student_project_id) {
+      return;
+    }
+    return await this.get_course_invite({
+      student_id,
+      student_project_id,
+      email_address: student.get("email_address"),
+      status,
+    });
+  };
+
   revoke_pending_student_invite_link = async ({
     student_id,
   }: {
@@ -769,10 +795,11 @@ export class StudentProjectsActions {
     if (student == null || !student_project_id) {
       throw new Error("Student project has not been created yet.");
     }
-    const invite = await this.get_pending_course_invite({
+    const invite = await this.get_course_invite({
       student_id,
       student_project_id,
       email_address: student.get("email_address"),
+      status: "pending",
     });
     if (invite == null) {
       throw new Error(
@@ -791,38 +818,43 @@ export class StudentProjectsActions {
     });
   };
 
-  private get_pending_course_invite = async ({
+  private get_course_invite = async ({
     student_id,
     student_project_id,
     email_address,
+    status,
   }: {
     student_id: string;
     student_project_id: string;
     email_address?: string;
+    status?: ProjectCollabInviteStatus;
   }): Promise<ProjectCollabInviteRow | undefined> => {
     const rows = await webapp_client.project_collaborators.list_invites({
       project_id: student_project_id,
       direction: "outbound",
-      status: "pending",
+      status,
       limit: 100,
     });
     const email = `${email_address ?? ""}`.trim().toLowerCase();
     return (
       rows.find(
         (row) =>
-          row.invite_source === "email" &&
+          (row.invite_source === "email" ||
+            row.invite_source === "course_email") &&
           row.scope === "course_student" &&
           row.context?.student_id === student_id,
       ) ??
       rows.find(
         (row) =>
-          row.invite_source === "email" &&
+          (row.invite_source === "email" ||
+            row.invite_source === "course_email") &&
           row.scope === "course_student" &&
           row.context?.student_project_id === student_project_id,
       ) ??
       rows.find(
         (row) =>
-          row.invite_source === "email" &&
+          (row.invite_source === "email" ||
+            row.invite_source === "course_email") &&
           row.scope === "course_student" &&
           `${row.target_email ?? ""}`.trim().toLowerCase() === email,
       )
