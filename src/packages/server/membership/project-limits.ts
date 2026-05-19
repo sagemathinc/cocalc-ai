@@ -183,6 +183,22 @@ function extractProjectCollaboratorInviteLimit(
     .project_max_collaborators_and_pending_invites;
 }
 
+export async function getProjectCollaboratorInviteLimit({
+  project_id,
+  resolution,
+}: {
+  project_id: string;
+  resolution?: MembershipResolution;
+}): Promise<number | undefined> {
+  const account_id = await getProjectUsageAccountId(project_id);
+  if (!account_id) {
+    return undefined;
+  }
+  const effectiveResolution =
+    resolution ?? (await resolveMembershipForAccount(account_id));
+  return extractProjectCollaboratorInviteLimit(effectiveResolution);
+}
+
 async function getProjectOwnerLimit({
   project_id,
   resolution,
@@ -288,6 +304,18 @@ export async function getProjectCollaboratorsAndPendingInviteCount(
   );
   const row = rows[0];
   return Number(row?.collaborators ?? 0) + Number(row?.pending_invites ?? 0);
+}
+
+export async function getProjectCollaboratorInviteUsage(project_id: string) {
+  const [current, limit] = await Promise.all([
+    getProjectCollaboratorsAndPendingInviteCount(project_id),
+    getProjectCollaboratorInviteLimit({ project_id }),
+  ]);
+  return {
+    current,
+    limit: limit ?? null,
+    remaining: limit == null ? null : Math.max(0, limit - current),
+  };
 }
 
 export async function assertProjectCollaboratorInviteLimit({

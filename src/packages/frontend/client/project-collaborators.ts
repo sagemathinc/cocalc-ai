@@ -11,6 +11,7 @@ import type {
   ProjectCollabInviteDirection,
   ProjectCollabInviteRow,
   ProjectCollabInviteStatus,
+  ProjectCollaboratorInviteUsage,
 } from "@cocalc/conat/hub/api/projects";
 
 export class ProjectCollaborators {
@@ -133,6 +134,14 @@ export class ProjectCollaborators {
     limit?: number;
   }): Promise<ProjectCollabInviteBlockRow[]> {
     return await this.conat.hub.projects.listCollabInviteBlocks(opts ?? {});
+  }
+
+  public async get_invite_usage(opts: {
+    project_id: string;
+  }): Promise<ProjectCollaboratorInviteUsage> {
+    return await this.conat.hub.projects.getProjectCollaboratorInviteUsage(
+      opts,
+    );
   }
 
   public async unblock_inviter(opts: {

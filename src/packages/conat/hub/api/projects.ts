@@ -307,6 +307,12 @@ export interface ProjectCollabInviteBlockRow {
   updated: Date;
 }
 
+export interface ProjectCollaboratorInviteUsage {
+  current: number;
+  limit: number | null;
+  remaining: number | null;
+}
+
 export interface ProjectCollaboratorRow {
   account_id: string;
   name?: string | null;
@@ -523,6 +529,7 @@ export const projects = {
   listCollabInviteBlocks: authFirstRequireAccount,
   unblockCollabInviteSender: authFirstRequireAccount,
   listCollaborators: authFirstRequireAccount,
+  getProjectCollaboratorInviteUsage: authFirstRequireAccount,
   listMyCollaborators: authFirstRequireAccount,
   getProjectRegion: authFirstRequireAccount,
   getProjectCreated: authFirstRequireAccount,
@@ -829,6 +836,11 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<ProjectCollaboratorRow[]>;
+
+  getProjectCollaboratorInviteUsage: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectCollaboratorInviteUsage>;
 
   listMyCollaborators: (opts: {
     account_id?: string;

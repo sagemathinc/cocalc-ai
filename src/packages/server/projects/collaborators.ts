@@ -1056,11 +1056,11 @@ async function getPendingEmailCollabInviteForToken({
   if (project_id && invite.project_id !== project_id) {
     throw new Error("project invite link is invalid for this project");
   }
-  if (invite.status !== "pending") {
-    throw new Error(`invite is not pending (status=${invite.status})`);
-  }
   if (!timingSafeStringEqual(invite.token_hash, await hashInviteToken(token))) {
     throw new Error("invalid invite token");
+  }
+  if (invite.status !== "pending") {
+    throw new Error(`invite is not pending (status=${invite.status})`);
   }
   return invite;
 }
@@ -1820,7 +1820,6 @@ export async function redeemEmailProjectInvite({
 }
 
 export async function previewEmailProjectInvite({
-  account_id,
   invite_id,
   token,
   project_id,
@@ -1830,9 +1829,6 @@ export async function previewEmailProjectInvite({
   token: string;
   project_id?: string;
 }): Promise<ProjectCollabInviteRow> {
-  if (!account_id) {
-    throw new Error("user must be signed in");
-  }
   await getPendingEmailCollabInviteForToken({ invite_id, project_id, token });
   const updated = await fetchInviteById(invite_id, false);
   if (!updated) {

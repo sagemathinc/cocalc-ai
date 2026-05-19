@@ -9,11 +9,13 @@ Add collaborators to a project
 
 import { Alert, Button, Input, Select } from "antd";
 import { useIntl } from "react-intl";
+import type { ProjectCollaboratorInviteUsage } from "@cocalc/conat/hub/api/projects";
 import { labels } from "@cocalc/frontend/i18n";
 import {
   React,
   redux,
   useActions,
+  useEffect,
   useIsMountedRef,
   useMemo,
   useRef,
@@ -39,6 +41,10 @@ import { Avatar } from "../account/avatar/avatar";
 import { alert_message } from "../alerts";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
+import { ShowSupportLink } from "@cocalc/frontend/support/link";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { joinUrlPath } from "@cocalc/util/url-path";
+import { onCollabInvitesChanged } from "./invite-events";
 
 const INVITE_MESSAGE_MAX_LENGTH = 1000;
 
@@ -112,6 +118,7 @@ export const AddCollaborators: React.FC<Props> = ({
     () => project_map?.get(project_id),
     [project_id, project_map],
   );
+  const project_users = project?.get("users");
 
   // search that user has typed in so far
   const [search, set_search] = useState<string>("");
@@ -142,6 +149,9 @@ export const AddCollaborators: React.FC<Props> = ({
   const [manual_invite_links, set_manual_invite_links] = useState<
     ManualInviteLink[]
   >([]);
+  const [invite_usage, set_invite_usage] =
+    useState<ProjectCollaboratorInviteUsage | null>(null);
+  const [invite_usage_error, set_invite_usage_error] = useState<string>("");
 
   const isMountedRef = useIsMountedRef();
 
@@ -152,6 +162,38 @@ export const AddCollaborators: React.FC<Props> = ({
     () => !!(runQuota?.network || runQuota?.member_host),
     [runQuota],
   );
+
+  async function load_invite_usage(): Promise<void> {
+    try {
+      const usage = await webapp_client.project_collaborators.get_invite_usage({
+        project_id,
+      });
+      if (!isMountedRef.current) return;
+      set_invite_usage(usage);
+      set_invite_usage_error("");
+    } catch (err) {
+      if (!isMountedRef.current) return;
+      set_invite_usage_error(`${err}`);
+    }
+  }
+
+  useEffect(() => {
+    void load_invite_usage();
+  }, [project_id, project_users]);
+
+  useEffect(() => {
+    return onCollabInvitesChanged(({ project_id: changedProjectId }) => {
+      if (changedProjectId == null || changedProjectId === project_id) {
+        void load_invite_usage();
+      }
+    });
+  }, [project_id]);
+
+  const invite_slots_remaining = invite_usage?.remaining ?? null;
+  const invite_slot_limited =
+    invite_usage?.limit != null && invite_slots_remaining != null;
+  const invite_slots_exhausted =
+    invite_slot_limited && invite_slots_remaining <= 0;
 
   function reset(): void {
     set_search("");
@@ -383,6 +425,7 @@ export const AddCollaborators: React.FC<Props> = ({
       }
     }
     reset();
+    void load_invite_usage();
     if (errors.length > 0) {
       set_invite_result(errors.join("\n"));
       set_state("invited_errors");
@@ -480,6 +523,7 @@ export const AddCollaborators: React.FC<Props> = ({
       }
     }
     reset();
+    void load_invite_usage();
     if (errors.length > 0) {
       set_invite_result(errors.join("\n"));
       set_state("invited_errors");
@@ -574,6 +618,12 @@ export const AddCollaborators: React.FC<Props> = ({
     if (!email_to) {
       return;
     }
+    const recipientCount = email_to
+      .split(",")
+      .map((x) => x.trim())
+      .filter((x) => x.length > 0).length;
+    const exceedsSlots =
+      invite_slots_remaining != null && recipientCount > invite_slots_remaining;
 
     return (
       <div>
@@ -602,9 +652,16 @@ export const AddCollaborators: React.FC<Props> = ({
             <Button
               type="primary"
               onClick={() => void send_email_invite()}
-              disabled={!!email_body_editing}
+              disabled={
+                !!email_body_editing || invite_slots_exhausted || exceedsSlots
+              }
             >
-              Send Invitation
+              {exceedsSlots
+                ? `Only ${invite_slots_remaining} invite ${plural(
+                    invite_slots_remaining,
+                    "slot",
+                  )} left`
+                : "Send Invitation"}
             </Button>
           </div>
         </Well>
@@ -635,6 +692,43 @@ export const AddCollaborators: React.FC<Props> = ({
           through the course instead.
         </span>
       </div>
+    );
+  }
+
+  function render_invite_slots(): React.JSX.Element | undefined {
+    if (invite_usage_error) {
+      return (
+        <Alert
+          showIcon
+          type="warning"
+          style={{ marginBottom: 10 }}
+          message="Unable to load collaborator slot usage"
+          description={invite_usage_error}
+        />
+      );
+    }
+    if (invite_usage == null || invite_usage.limit == null) {
+      return;
+    }
+    const { current, limit, remaining } = invite_usage;
+    const remainingCount = remaining ?? 0;
+    const exhausted = remainingCount <= 0;
+    return (
+      <Alert
+        showIcon
+        type={exhausted ? "warning" : "info"}
+        style={{ marginBottom: 10 }}
+        message={`${remainingCount} invite ${plural(remainingCount, "slot")} left`}
+        description={
+          <span>
+            This project is using {current} of {limit} member and pending invite
+            slots. To add more people, revoke a pending invite, remove a
+            collaborator or owner,{" "}
+            <a href={joinUrlPath(appBasePath, "store")}>upgrade membership</a>,
+            or <ShowSupportLink text="contact support" />.
+          </span>
+        }
+      />
     );
   }
 
@@ -683,6 +777,7 @@ export const AddCollaborators: React.FC<Props> = ({
           <Input
             autoFocus={autoFocus}
             placeholder="Search by name or email address..."
+            disabled={invite_slots_exhausted}
             value={search}
             onChange={(e) => {
               const value = (e.target as any).value ?? "";
@@ -697,7 +792,11 @@ export const AddCollaborators: React.FC<Props> = ({
           />
           <Button
             onClick={() => void do_search(search_ref.current)}
-            disabled={state === ("searching" as State) || !search.trim()}
+            disabled={
+              invite_slots_exhausted ||
+              state === ("searching" as State) ||
+              !search.trim()
+            }
             type={search.trim() ? "primary" : "default"}
           >
             Search
@@ -781,6 +880,16 @@ export const AddCollaborators: React.FC<Props> = ({
     }
     if (email_body_error) {
       disabled = true;
+    }
+    if (
+      invite_slots_remaining != null &&
+      number_selected > invite_slots_remaining
+    ) {
+      disabled = true;
+      label = `Only ${invite_slots_remaining} invite ${plural(
+        invite_slots_remaining,
+        "slot",
+      )} left`;
     }
     return (
       <div
@@ -994,6 +1103,7 @@ export const AddCollaborators: React.FC<Props> = ({
     >
       {err && <ErrorDisplay error={err} onClose={() => set_err("")} />}
       {state == "searching" && <Loading />}
+      {render_invite_slots()}
       {render_search()}
       {render_select_list()}
       {render_send_email()}

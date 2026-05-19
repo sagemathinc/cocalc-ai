@@ -25,6 +25,37 @@ function openPath(path: string): void {
   window.location.assign(path);
 }
 
+function friendlyProjectInviteError(err: unknown): string {
+  const message = `${err}`;
+  const status = message.match(/invite is not pending \(status=([^)]+)\)/)?.[1];
+  switch (status) {
+    case "expired":
+      return "Sorry, this project invite link has expired.";
+    case "accepted":
+      return "This project invite has already been accepted.";
+    case "declined":
+      return "This project invite has already been declined.";
+    case "blocked":
+      return "This project invite has already been blocked.";
+    case "canceled":
+      return "This project invite has been revoked.";
+    case undefined:
+      break;
+    default:
+      return "This project invite is no longer pending.";
+  }
+  if (message.includes("invalid invite token")) {
+    return "This project invite link is invalid.";
+  }
+  if (message.includes("project invite link is incomplete")) {
+    return "This project invite link is incomplete.";
+  }
+  if (message.includes("not found")) {
+    return "This project invite link was not found.";
+  }
+  return message;
+}
+
 export function PublicRedeemPasswordResetView({
   passwordResetId,
 }: {
@@ -238,7 +269,7 @@ export function PublicRedeemProjectInviteView({
   token: string;
 }) {
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(isAuthenticated);
+  const [loading, setLoading] = useState(true);
   const [invite, setInvite] = useState<ProjectCollabInviteRow | null>(null);
   const [projectTitle, setProjectTitle] = useState<string | undefined>();
   const [state, setState] = useState<
@@ -262,10 +293,6 @@ export function PublicRedeemProjectInviteView({
     let cancelled = false;
 
     async function preview(): Promise<void> {
-      if (!isAuthenticated) {
-        setLoading(false);
-        return;
-      }
       if (!projectId || !inviteId || !token) {
         setError("This project invite link is incomplete or invalid.");
         setLoading(false);
@@ -286,7 +313,7 @@ export function PublicRedeemProjectInviteView({
         }
       } catch (err) {
         if (!cancelled) {
-          setError(`${err}`);
+          setError(friendlyProjectInviteError(err));
         }
       } finally {
         if (!cancelled) {
@@ -299,7 +326,7 @@ export function PublicRedeemProjectInviteView({
     return () => {
       cancelled = true;
     };
-  }, [inviteId, isAuthenticated, projectId, token]);
+  }, [inviteId, projectId, token]);
 
   async function respond(action: "accept" | "decline" | "block") {
     if (!projectId || !inviteId || !token) {
@@ -325,7 +352,7 @@ export function PublicRedeemProjectInviteView({
             : "declined",
       );
     } catch (err) {
-      setError(`${err}`);
+      setError(friendlyProjectInviteError(err));
     } finally {
       setSubmitting("");
     }
@@ -347,12 +374,26 @@ export function PublicRedeemProjectInviteView({
   if (!isAuthenticated) {
     return (
       <Flex vertical gap={16}>
-        <Alert
-          title="Sign in to accept this project invite"
-          description="You can accept this invite using whichever CoCalc account you actually use. The account email does not have to match the address where the invite was sent."
-          showIcon
-          type="info"
-        />
+        {loading ? (
+          <Flex align="center" gap={12}>
+            <Spin />
+            <Text>Loading project invite...</Text>
+          </Flex>
+        ) : error ? (
+          <Alert
+            title="Project invite unavailable"
+            description={error}
+            showIcon
+            type="error"
+          />
+        ) : (
+          <Alert
+            title="Sign in to accept this project invite"
+            description="You can accept this invite using whichever CoCalc account you actually use. The account email does not have to match the address where the invite was sent."
+            showIcon
+            type="info"
+          />
+        )}
       </Flex>
     );
   }

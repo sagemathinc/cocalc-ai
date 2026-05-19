@@ -246,6 +246,7 @@ import {
   toWire as collabInviteToWire,
   upsertProjectedCollabInviteDirect,
 } from "@cocalc/server/projects/collab-invite-inbox";
+import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import {
   copyEmailProjectInviteLink,
   createCollabInvite,
@@ -257,6 +258,7 @@ import {
   respondCollabInviteCanonical,
   respondEmailProjectInvite,
 } from "@cocalc/server/projects/collaborators";
+import { getProjectCollaboratorInviteUsage } from "@cocalc/server/membership/project-limits";
 import { leaveOrDeleteProjectsForAccount } from "@cocalc/server/projects/ownership";
 import {
   BAY_OPS_INTERNAL_AUTH,
@@ -960,6 +962,10 @@ async function startProjectCollabInviteService(): Promise<void> {
       ),
     removeCollaborator: async (opts) => {
       await removeCollaborator(opts);
+    },
+    getUsage: async (opts) => {
+      await assertLocalProjectCollaborator(opts);
+      return await getProjectCollaboratorInviteUsage(opts.project_id);
     },
     leaveOrDeleteProjects: async ({ account_id, project_ids }) =>
       await leaveOrDeleteProjectsForAccount({
