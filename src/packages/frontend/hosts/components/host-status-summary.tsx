@@ -610,6 +610,22 @@ function operationStatus(op?: HostLroState): {
   };
 }
 
+function shouldDisplayHostOperation(op?: HostLroState): boolean {
+  if (!op) return false;
+  const status = op.summary?.status;
+  if (status === "queued" || status === "running" || status === "failed") {
+    return true;
+  }
+  if (status) {
+    return false;
+  }
+  const phase = getHostOpPhase(op)?.trim().toLowerCase();
+  if (phase?.includes("done") || phase?.includes("complete")) {
+    return false;
+  }
+  return true;
+}
+
 function projectCounts(host: Host): {
   assigned: number;
   provisioned: number;
@@ -1120,18 +1136,22 @@ export function HostStatusSummary({
   host,
   op,
   onDetails,
+  fullWidth = false,
 }: {
   host: Host;
   op?: HostLroState;
   onDetails?: (host: Host) => void;
+  fullWidth?: boolean;
 }) {
-  const displayOp = shouldSuppressProjectHostFailedOp({
-    op,
-    currentVersion: host.version,
-    observation: host.observed_host_agent?.project_host,
-  })
-    ? undefined
-    : op;
+  const displayOp =
+    shouldDisplayHostOperation(op) &&
+    !shouldSuppressProjectHostFailedOp({
+      op,
+      currentVersion: host.version,
+      observation: host.observed_host_agent?.project_host,
+    })
+      ? op
+      : undefined;
   const projectHostRolloutPhase = currentProjectHostRolloutPhase({
     op: displayOp,
     currentVersion: host.version,
@@ -1148,7 +1168,13 @@ export function HostStatusSummary({
   const daemons = daemonSummary(host);
 
   return (
-    <div style={CARD_STYLE}>
+    <div
+      style={
+        fullWidth
+          ? { ...CARD_STYLE, width: "100%", maxWidth: "100%" }
+          : CARD_STYLE
+      }
+    >
       <div style={HEADER_STYLE}>
         <StatusHero host={host} />
         {connection ? (

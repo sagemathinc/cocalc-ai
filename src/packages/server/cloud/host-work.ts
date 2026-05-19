@@ -329,6 +329,69 @@ function sanitizedMetadataForFailedStart(opts: {
   return nextMetadata;
 }
 
+async function observeStoppedStartFailure(opts: {
+  action?: string;
+  row: any;
+  message: string;
+}): Promise<boolean> {
+  if (opts.action !== "start" && opts.action !== "provision") {
+    return false;
+  }
+  const providerId = normalizeProviderId(opts.row.metadata?.machine?.cloud);
+  if (!providerId || !opts.row.metadata?.runtime?.instance_id) {
+    return false;
+  }
+  const observation = await observeProviderReadyStatus({
+    row: opts.row,
+    providerId,
+  });
+  const stoppedStatus = stoppedProviderStatus(observation);
+  if (stoppedStatus !== "off") return false;
+  const nextMetadata = metadataForProviderStoppedBeforeReady({
+    metadata: opts.row.metadata ?? {},
+    observation,
+    message: opts.message,
+  });
+  await updateHostRow(opts.row.id, {
+    status: "off",
+    metadata: nextMetadata,
+    last_seen: null,
+    ...(observation?.instance_missing || !observation?.public_ip
+      ? { public_url: null, internal_url: null }
+      : {}),
+  });
+  return true;
+}
+
+function metadataForNebiusRecreateFallback(opts: {
+  metadata: any;
+  runtime: any;
+  desiredPricing: HostPricingModel;
+  effectivePricing: HostPricingModel;
+  state: HostSpotRecoveryState;
+}) {
+  const nextMetadata = withPricingAndRecoveryMetadata(
+    setRuntimeObservedAt(opts.metadata ?? {}, new Date()),
+    {
+      desired_pricing_model: opts.desiredPricing,
+      effective_pricing_model: opts.effectivePricing,
+      spot_recovery_state: opts.state,
+    },
+  );
+  const nextMachine = { ...(nextMetadata.machine ?? {}) };
+  const nextMachineMeta = { ...(nextMachine.metadata ?? {}) };
+  const dataDiskId = opts.runtime?.metadata?.diskIds?.data;
+  if (dataDiskId) {
+    nextMachineMeta.data_disk_id = dataDiskId;
+  }
+  nextMachine.metadata = nextMachineMeta;
+  nextMetadata.machine = nextMachine;
+  delete nextMetadata.runtime;
+  delete nextMetadata.dns;
+  delete nextMetadata.cloudflare_tunnel;
+  return nextMetadata;
+}
+
 async function updateHostRow(id: string, updates: Record<string, any>) {
   const keys = Object.keys(updates).filter((key) => updates[key] !== undefined);
   if (!keys.length) return;
@@ -1078,14 +1141,9 @@ async function handleStart(row: any) {
       row.metadata = nextMetadata;
       return nextMetadata;
     };
-    const promoteToStandardFallback = async (reason: string) => {
-      if (!entry.provider.setPricingModel || !recoveryPolicy) {
-        throw new Error(
-          `standard fallback is not supported for provider '${providerId}'`,
-        );
-      }
-      await entry.provider.setPricingModel(runtime, "on_demand", creds);
-      effectivePricingForStart = "on_demand";
+    const promoteToStandardFallback = async (
+      reason: string,
+    ): Promise<"recreated" | "updated"> => {
       const fallbackState: HostSpotRecoveryState = {
         ...(nextRecoveryState ?? { phase: "running_standard_fallback" }),
         phase: "running_standard_fallback",
@@ -1095,6 +1153,57 @@ async function handleStart(row: any) {
       };
       nextRecoveryState =
         clearVerificationFields(fallbackState) ?? fallbackState;
+      if (providerId === "nebius") {
+        if (
+          row.metadata?.machine?.storage_mode === "persistent" &&
+          !runtime?.metadata?.diskIds?.data
+        ) {
+          throw new Error(
+            "standard fallback recreate is not safe for Nebius host without a preserved data disk",
+          );
+        }
+        await entry.provider.deleteHost(runtime, creds, {
+          preserveDataDisk: true,
+        });
+        effectivePricingForStart = "on_demand";
+        const nextMetadata = metadataForNebiusRecreateFallback({
+          metadata: row.metadata ?? {},
+          runtime,
+          desiredPricing,
+          effectivePricing: effectivePricingForStart,
+          state: nextRecoveryState,
+        });
+        row.metadata = nextMetadata;
+        await updateHostRow(row.id, {
+          status: "starting",
+          last_seen: null,
+          public_url: null,
+          internal_url: null,
+          metadata: nextMetadata,
+        });
+        await logCloudVmEvent({
+          vm_id: row.id,
+          action: "spot_restore_fallback_standard",
+          status: "success",
+          provider: providerId,
+          runtime: { reason, mode: "recreate" },
+        });
+        await handleProvision({
+          ...row,
+          metadata: nextMetadata,
+          status: "starting",
+          public_url: null,
+          internal_url: null,
+        });
+        return "recreated";
+      }
+      if (!entry.provider.setPricingModel || !recoveryPolicy) {
+        throw new Error(
+          `standard fallback is not supported for provider '${providerId}'`,
+        );
+      }
+      await entry.provider.setPricingModel(runtime, "on_demand", creds);
+      effectivePricingForStart = "on_demand";
       await updateRecoveryRecord(nextRecoveryState);
       await logCloudVmEvent({
         vm_id: row.id,
@@ -1103,6 +1212,7 @@ async function handleStart(row: any) {
         provider: providerId,
         runtime: { reason },
       });
+      return "updated";
     };
     if (managedSpotRecovery && nextRecoveryState) {
       await updateRecoveryRecord(nextRecoveryState);
@@ -1182,7 +1292,12 @@ async function handleStart(row: any) {
           now: new Date(),
         })
       ) {
-        await promoteToStandardFallback("retry-window-exhausted");
+        if (
+          (await promoteToStandardFallback("retry-window-exhausted")) ===
+          "recreated"
+        ) {
+          return;
+        }
       }
 
       await entry.provider.startHost(runtimeForStart, creds);
@@ -1196,7 +1311,12 @@ async function handleStart(row: any) {
             provider: providerId,
             error: `${err}`,
           });
-          await promoteToStandardFallback(`spot-return-failed:${err}`);
+          if (
+            (await promoteToStandardFallback(`spot-return-failed:${err}`)) ===
+            "recreated"
+          ) {
+            return;
+          }
           await entry.provider.startHost(runtimeForStart, creds);
         } else if (
           shouldFallbackToStandard({
@@ -1212,7 +1332,12 @@ async function handleStart(row: any) {
             provider: providerId,
             error: `${err}`,
           });
-          await promoteToStandardFallback(`spot-start-failed:${err}`);
+          if (
+            (await promoteToStandardFallback(`spot-start-failed:${err}`)) ===
+            "recreated"
+          ) {
+            return;
+          }
           await entry.provider.startHost(runtimeForStart, creds);
         } else {
           await logCloudVmEvent({
@@ -1265,9 +1390,13 @@ async function handleStart(row: any) {
               now: new Date(),
             })
           ) {
-            await promoteToStandardFallback(
-              `provider-status:${normalizedStatus ?? "unknown"}`,
-            );
+            if (
+              (await promoteToStandardFallback(
+                `provider-status:${normalizedStatus ?? "unknown"}`,
+              )) === "recreated"
+            ) {
+              return;
+            }
           } else {
             await scheduleSpotRetry({
               row,
@@ -2108,6 +2237,15 @@ async function markHostError(
 ) {
   const message = err ? String(err) : "unknown error";
   const currentRow = (await loadHostRow(row.id)) ?? row;
+  if (
+    await observeStoppedStartFailure({
+      action: opts?.action,
+      row: currentRow,
+      message,
+    })
+  ) {
+    return;
+  }
   if (
     shouldResetToStoppedAfterStartFailure({
       action: opts?.action,
