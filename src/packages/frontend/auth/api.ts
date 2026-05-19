@@ -4,7 +4,12 @@
  */
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
+import {
+  clearStoredControlPlaneOrigin,
+  getStoredControlPlaneOrigin,
+  setStoredControlPlaneOrigin,
+} from "@cocalc/frontend/control-plane-origin";
+import { deleteRememberMe } from "@cocalc/frontend/misc/remember-me";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 export type WrongBayAuthResponse = {
@@ -127,4 +132,17 @@ export async function getAuthBootstrap(
     origin,
     body: {},
   });
+}
+
+export async function signOutAuthSession({
+  all = false,
+}: { all?: boolean } = {}): Promise<void> {
+  const origin = getStoredControlPlaneOrigin();
+  await postAuthApi({
+    endpoint: "accounts/sign-out",
+    origin,
+    body: { all },
+  });
+  clearStoredControlPlaneOrigin();
+  deleteRememberMe(appBasePath);
 }

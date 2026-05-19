@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   postAuthApi,
+  signOutAuthSession,
   type SecondFactorMethod,
 } from "@cocalc/frontend/auth/api";
 import { approveCliElevationWithPasskey } from "@cocalc/frontend/auth/passkeys";
@@ -285,10 +286,7 @@ export function PublicCliLoginApprovalView({
     setSigningOut(true);
     setError("");
     try {
-      await postAuthApi({
-        endpoint: "accounts/sign-out",
-        body: { all: false },
-      });
+      await signOutAuthSession();
       window.location.reload();
     } catch (err) {
       setError(`${err}`);
@@ -442,10 +440,7 @@ export function PublicCliElevateApprovalView({
     setSigningOut(true);
     setError("");
     try {
-      await postAuthApi({
-        endpoint: "accounts/sign-out",
-        body: { all: false },
-      });
+      await signOutAuthSession();
       window.location.reload();
     } catch (err) {
       setError(`${err}`);
