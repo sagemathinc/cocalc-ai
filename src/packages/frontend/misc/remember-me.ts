@@ -19,12 +19,6 @@ sign in page visited, we can just redirect the user
 appropriately.
 */
 
-import {
-  set_local_storage,
-  get_local_storage,
-  delete_local_storage,
-} from "@cocalc/frontend/misc/local-storage";
-
 function name(basePath: string) {
   // we normalize the basePath by removing the leading slash if there
   // is one, so any definition of basePath gives same result.
@@ -34,14 +28,35 @@ function name(basePath: string) {
   return "remember_me" + basePath;
 }
 
+function storage(): Storage | undefined {
+  if (typeof window === "undefined") return;
+  try {
+    return window.localStorage;
+  } catch {
+    return;
+  }
+}
+
 export function setRememberMe(basePath: string): void {
-  set_local_storage(name(basePath), "true");
+  try {
+    storage()?.setItem(name(basePath), "true");
+  } catch {
+    // Ignore unavailable storage; this is only a client-side routing hint.
+  }
 }
 
 export function deleteRememberMe(basePath: string): void {
-  delete_local_storage(name(basePath));
+  try {
+    storage()?.removeItem(name(basePath));
+  } catch {
+    // Ignore unavailable storage; this is only a client-side routing hint.
+  }
 }
 
 export function hasRememberMe(basePath: string): boolean {
-  return get_local_storage(name(basePath)) == "true";
+  try {
+    return storage()?.getItem(name(basePath)) === "true";
+  } catch {
+    return false;
+  }
 }
