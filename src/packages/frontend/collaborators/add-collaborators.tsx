@@ -411,7 +411,7 @@ export const AddCollaborators: React.FC<Props> = ({
       // then they will get added as collaborator to this project....
       alert_message({
         type: "warning",
-        message: `For security reasons you should contact ${email_address} directly and ask them to join Cocalc to get access to this project.`,
+        message: `If email delivery is unreliable, copy the pending invite link and send it to ${email_address} through a trusted channel.`,
       });
     }
   }
