@@ -13,6 +13,7 @@ import { markdown_to_html } from "@cocalc/frontend/markdown";
 import { setProjectRootfsImage } from "@cocalc/frontend/rootfs/manifest";
 import { Datastore, EnvVars } from "@cocalc/frontend/projects/actions";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { ProjectCollabInviteRow } from "@cocalc/conat/hub/api/projects";
 import { RESEND_INVITE_INTERVAL_DAYS } from "@cocalc/util/consts/invites";
 import { copy, days_ago } from "@cocalc/util/misc";
 import { SITE_NAME } from "@cocalc/util/theme";
@@ -692,6 +693,78 @@ export class StudentProjectsActions {
       this.course_actions.setState({ reinviting_students: false });
       this.course_actions.set_activity({ id });
     }
+  };
+
+  get_pending_student_invite_links = async (): Promise<string> => {
+    const store = this.get_store();
+    if (store == null) return "";
+    const ids = store.get_student_ids({ deleted: false });
+    if (ids == undefined) return "";
+
+    const lines: string[] = [];
+    for (const student_id of ids) {
+      if (this.course_actions.is_closed()) return lines.join("\n");
+      const student = store.get_student(student_id);
+      if (student == null || student.get("account_id") != null) continue;
+      const student_project_id = store.get_student_project_id(student_id);
+      if (!student_project_id) continue;
+      const invite = await this.get_pending_course_invite({
+        student_id,
+        student_project_id,
+        email_address: student.get("email_address"),
+      });
+      if (invite == null) continue;
+      const result =
+        await webapp_client.project_collaborators.copy_email_invite_link({
+          invite_id: invite.invite_id,
+          project_id: student_project_id,
+        });
+      const email = `${student.get("email_address") ?? ""}`.trim();
+      const label = email
+        ? `${store.get_student_name(student_id)} <${email}>`
+        : store.get_student_name(student_id);
+      lines.push(`${label}: ${result.invite_url}`);
+      await delay(0);
+    }
+    return lines.join("\n");
+  };
+
+  private get_pending_course_invite = async ({
+    student_id,
+    student_project_id,
+    email_address,
+  }: {
+    student_id: string;
+    student_project_id: string;
+    email_address?: string;
+  }): Promise<ProjectCollabInviteRow | undefined> => {
+    const rows = await webapp_client.project_collaborators.list_invites({
+      project_id: student_project_id,
+      direction: "outbound",
+      status: "pending",
+      limit: 100,
+    });
+    const email = `${email_address ?? ""}`.trim().toLowerCase();
+    return (
+      rows.find(
+        (row) =>
+          row.invite_source === "email" &&
+          row.scope === "course_student" &&
+          row.context?.student_id === student_id,
+      ) ??
+      rows.find(
+        (row) =>
+          row.invite_source === "email" &&
+          row.scope === "course_student" &&
+          row.context?.student_project_id === student_project_id,
+      ) ??
+      rows.find(
+        (row) =>
+          row.invite_source === "email" &&
+          row.scope === "course_student" &&
+          `${row.target_email ?? ""}`.trim().toLowerCase() === email,
+      )
+    );
   };
 
   configure_all_projects = async (force: boolean = false): Promise<void> => {

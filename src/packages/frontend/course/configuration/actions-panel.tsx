@@ -3,7 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Card, Col, Row, Space } from "antd";
+import { Button, Card, Col, Row, Space, message } from "antd";
+import { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { useActions, useStore } from "@cocalc/frontend/app-framework";
@@ -195,6 +196,25 @@ export function ResendInvites({
   reinviting_students?;
 }) {
   const intl = useIntl();
+  const [copyingInviteLinks, setCopyingInviteLinks] = useState<boolean>(false);
+
+  async function copyPendingInviteLinks() {
+    setCopyingInviteLinks(true);
+    try {
+      const links =
+        await actions.student_projects.get_pending_student_invite_links();
+      if (!links) {
+        void message.info("No pending course invite links found.");
+        return;
+      }
+      await navigator.clipboard.writeText(links);
+      void message.success("Pending course invite links copied.");
+    } catch (err) {
+      void message.error(`${err}`);
+    } finally {
+      setCopyingInviteLinks(false);
+    }
+  }
 
   return (
     <Card
@@ -224,6 +244,14 @@ export function ResendInvites({
           defaultMessage={"Reinvite students"}
           description={"Resending email invitiatons to students in a course."}
         />
+      </Button>
+      <Button
+        style={{ marginLeft: "8px" }}
+        disabled={reinviting_students}
+        loading={copyingInviteLinks}
+        onClick={() => void copyPendingInviteLinks()}
+      >
+        <Icon name="copy" /> Copy pending invite links
       </Button>
     </Card>
   );
