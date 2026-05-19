@@ -1,3 +1,5 @@
+import { Col, Row } from "antd";
+
 import { A, policyHref, PolicySection, type PublicPolicy } from "./policy";
 
 const SOC2LOGO = "/public/soc2-aicpa-logo.png";
@@ -38,37 +40,10 @@ export const trustPolicy: PublicPolicy = {
   updated: "March 12, 2025",
   content: (
     <>
-      <PolicySection title="GDPR">
-        <p>
-          SageMath, Inc. compliance with{" "}
-          <A href={"https://gdpr-info.eu/"}>GDPR</A> has been verified by our EU
-          and UK representative{" "}
-          <A href={"https://gdprlocal.com/"}>GDPR Local</A>.
-        </p>
-        <p>
-          <iframe
-            srcDoc={GDPR_BADGE_HTML}
-            sandbox="allow-scripts"
-            style={{
-              width: "100%",
-              height: "180px",
-              border: "none",
-              overflow: "auto",
-            }}
-          />
-        </p>
-      </PolicySection>
       <PolicySection title="SOC 2">
-        <div
-          style={{
-            alignItems: "start",
-            display: "grid",
-            gap: "1em",
-            gridTemplateColumns: "minmax(0, 1fr) auto",
-          }}
-        >
-          <div>
-            <p>
+        <Row align="top" gutter={["middle", "middle"]}>
+          <Col sm={16} xs={24}>
+            <p style={{ marginTop: 0 }}>
               CoCalc by SageMath, Inc. is{" "}
               <strong>
                 <A href="https://www.vanta.com/collection/soc-2/what-is-soc-2">
@@ -91,13 +66,44 @@ export const trustPolicy: PublicPolicy = {
                 .
               </strong>
             </p>
-          </div>
-          <img
-            style={{ maxWidth: "100%", width: "150px" }}
-            src={policyHref(SOC2LOGO)}
-            alt={"SOC 2 Compliance Logo"}
-          />
-        </div>
+          </Col>
+          <Col sm={8} xs={24}>
+            <div style={{ textAlign: "center" }}>
+              <img
+                style={{ maxWidth: "100%", width: "150px" }}
+                src={policyHref(SOC2LOGO)}
+                alt={"SOC 2 Compliance Logo"}
+              />
+            </div>
+          </Col>
+        </Row>
+      </PolicySection>
+      <PolicySection title="GDPR">
+        <Row align="top" gutter={["middle", "middle"]}>
+          <Col sm={16} xs={24}>
+            <p style={{ marginTop: 0 }}>
+              SageMath, Inc. compliance with{" "}
+              <A href={"https://gdpr-info.eu/"}>GDPR</A> has been verified by
+              our EU and UK representative{" "}
+              <A href={"https://gdprlocal.com/"}>GDPR Local</A>.
+            </p>
+          </Col>
+          <Col sm={8} xs={24}>
+            <div style={{ textAlign: "center" }}>
+              <iframe
+                srcDoc={GDPR_BADGE_HTML}
+                sandbox="allow-scripts"
+                style={{
+                  border: "none",
+                  height: "180px",
+                  maxWidth: "100%",
+                  overflow: "auto",
+                  width: "180px",
+                }}
+              />
+            </div>
+          </Col>
+        </Row>
       </PolicySection>
       <PolicySection title="Questions?">
         <p>
