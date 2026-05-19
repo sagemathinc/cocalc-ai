@@ -32,6 +32,7 @@ import {
   Markdown,
   Paragraph,
   SettingBox,
+  TimeAgo,
 } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
@@ -71,13 +72,6 @@ export type InviteInboxState = {
   copyInviteLink: (invite_id: string) => Promise<void>;
   unblock: (blocked_account_id: string) => Promise<void>;
 };
-
-function formatTime(value: Date | string | null | undefined): string {
-  if (!value) return "";
-  const d = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(d.valueOf())) return "";
-  return d.toLocaleString();
-}
 
 function userName(
   value:
@@ -345,11 +339,11 @@ function renderIncomingCards(
                   </div>
                 ))}
                 <div style={{ fontSize: "12px", opacity: 0.75 }}>
-                  Received {formatTime(invite.created)}
+                  Received <TimeAgo date={invite.created} />
                 </div>
                 {!!invite.expires && (
                   <div style={{ fontSize: "12px", opacity: 0.75 }}>
-                    Expires {formatTime(invite.expires)}
+                    Expires <TimeAgo date={invite.expires} />
                   </div>
                 )}
               </div>
@@ -587,11 +581,11 @@ export const InviteInboxPanel: React.FC<Props> = ({
                     </div>
                   )}
                   <div style={{ fontSize: "12px", opacity: 0.75 }}>
-                    Sent {formatTime(invite.created)}
+                    Sent <TimeAgo date={invite.created} />
                   </div>
                   {!!invite.expires && (
                     <div style={{ fontSize: "12px", opacity: 0.75 }}>
-                      Expires {formatTime(invite.expires)}
+                      Expires <TimeAgo date={invite.expires} />
                     </div>
                   )}
                 </div>
@@ -655,7 +649,7 @@ export const InviteInboxPanel: React.FC<Props> = ({
                     <strong>{blocked}</strong>
                   </div>
                   <div style={{ fontSize: "12px", opacity: 0.75 }}>
-                    Blocked {formatTime(block.created)}
+                    Blocked <TimeAgo date={block.created} />
                   </div>
                 </div>
                 <Button
