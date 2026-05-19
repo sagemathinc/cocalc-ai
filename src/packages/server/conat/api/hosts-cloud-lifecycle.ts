@@ -215,6 +215,7 @@ export async function createHostInternalHelper({
   pricing_model,
   interruption_restore_policy,
   spot_recovery_policy,
+  start_after_create = true,
   machine,
   normalizeHostPricingModel,
   normalizeHostInterruptionRestorePolicy,
@@ -230,6 +231,7 @@ export async function createHostInternalHelper({
   pricing_model?: HostPricingModel;
   interruption_restore_policy?: HostInterruptionRestorePolicy;
   spot_recovery_policy?: HostSpotRecoveryPolicy;
+  start_after_create?: boolean;
   machine?: Host["machine"];
   normalizeHostPricingModel: (value: unknown) => HostPricingModel | undefined;
   normalizeHostInterruptionRestorePolicy: (
@@ -246,6 +248,7 @@ export async function createHostInternalHelper({
   const id = randomUUID();
   const machineCloud = normalizeProviderId(machine?.cloud);
   const isSelfHost = machineCloud === "self-host";
+  const shouldStartAfterCreate = !!start_after_create;
   const normalizedPricingModel = normalizeHostPricingModel(pricing_model);
   if (pricing_model != null && !normalizedPricingModel) {
     throw new Error(`invalid pricing_model '${pricing_model}'`);
@@ -266,9 +269,12 @@ export async function createHostInternalHelper({
     (pricingModel === "spot" && interruptionRestorePolicy === "immediate"
       ? normalizeSpotRecoveryPolicy({})
       : undefined);
-  const initialStatus = machineCloud && !isSelfHost ? "starting" : "off";
+  const initialStatus =
+    machineCloud && !isSelfHost && shouldStartAfterCreate ? "starting" : "off";
   const initialDesiredState: "running" | "stopped" =
-    machineCloud && !isSelfHost ? "running" : "stopped";
+    machineCloud && !isSelfHost && shouldStartAfterCreate
+      ? "running"
+      : "stopped";
   const rawSelfHostMode = machine?.metadata?.self_host_mode;
   const selfHostMode =
     rawSelfHostMode === "cloudflare" || rawSelfHostMode === "local"
@@ -332,16 +338,18 @@ export async function createHostInternalHelper({
     gpu,
   );
   const gpuEnabled = machineHasGpu(normalizedMachine);
-  const billableSession = await resolveBillableHostSessionConfig({
-    account_id: owner,
-    action: "create",
-    provider: machineCloud,
-    region: resolvedRegion,
-    size,
-    machine: normalizedMachine,
-    pricing_model: pricingModel,
-    funding_mode_override: funding_mode,
-  });
+  const billableSession = shouldStartAfterCreate
+    ? await resolveBillableHostSessionConfig({
+        account_id: owner,
+        action: "create",
+        provider: machineCloud,
+        region: resolvedRegion,
+        size,
+        machine: normalizedMachine,
+        pricing_model: pricingModel,
+        funding_mode_override: funding_mode,
+      })
+    : undefined;
   const billingStartedAt = billableSession
     ? new Date().toISOString()
     : undefined;
@@ -367,7 +375,7 @@ export async function createHostInternalHelper({
           : {}),
         desired_state: initialDesiredState,
         machine: normalizedMachine,
-        ...(machineCloud && !isSelfHost
+        ...(machineCloud && !isSelfHost && shouldStartAfterCreate
           ? {
               bootstrap: {
                 status: "queued",
@@ -410,7 +418,7 @@ export async function createHostInternalHelper({
       started_at: billingStartedAt,
     });
   }
-  if (machineCloud && !isSelfHost) {
+  if (machineCloud && !isSelfHost && shouldStartAfterCreate) {
     await enqueueCloudVmWork({
       vm_id: id,
       action: "provision",

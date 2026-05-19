@@ -62,11 +62,11 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
   const refreshCatalogAndNotify = async () => {
     await refreshCatalog(provider.selectedProvider);
   };
-  const confirmCreateHost = async () => {
+  const confirmCreateHost = async (start: boolean) => {
     try {
       const vals = await formInstance.validateFields();
       const runCreate = async () => {
-        const created = await onCreate(vals);
+        const created = await onCreate(vals, { start });
         if (!created) return;
         formInstance.resetFields();
         onCreated?.();
@@ -383,7 +383,26 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
             <Popconfirm
               title={
                 <div>
-                  <div>Create this host?</div>
+                  <div>Create this host without starting it?</div>
+                  <div>
+                    It will be saved in the host list, but no VM will be
+                    provisioned until you start it.
+                  </div>
+                </div>
+              }
+              okText="Create"
+              cancelText="Cancel"
+              onConfirm={() => confirmCreateHost(false)}
+              disabled={createDisabled}
+            >
+              <Button loading={creating} disabled={createDisabled} block>
+                Create Server (don't start)
+              </Button>
+            </Popconfirm>
+            <Popconfirm
+              title={
+                <div>
+                  <div>Create and start this host?</div>
                   <div>
                     {provider.selectedProvider === "self-host"
                       ? "Setup may take a few minutes."
@@ -391,9 +410,9 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
                   </div>
                 </div>
               }
-              okText="Create"
+              okText="Start"
               cancelText="Cancel"
-              onConfirm={confirmCreateHost}
+              onConfirm={() => confirmCreateHost(true)}
               disabled={createDisabled}
             >
               <Button
@@ -402,7 +421,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
                 disabled={createDisabled}
                 block
               >
-                Create host
+                Start Server
               </Button>
             </Popconfirm>
           </Space>

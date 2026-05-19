@@ -31,9 +31,13 @@ export const useHostProviders = ({ form, flags }: UseHostProvidersArgs) => {
   const refreshProviders = useMemo(() => getRefreshProviders(flags), [flags]);
 
   useEffect(() => {
-    if (selectedProvider && !isProviderEnabled(selectedProvider, flags)) {
+    const currentProvider = form.getFieldValue("provider") as
+      | HostProvider
+      | undefined;
+    const provider = selectedProvider ?? currentProvider;
+    if (provider && !isProviderEnabled(provider, flags)) {
       form.setFieldsValue({ provider: providerOptions[0]?.value ?? "none" });
-    } else if (!selectedProvider) {
+    } else if (!provider) {
       form.setFieldsValue({ provider: providerOptions[0]?.value ?? "none" });
     }
   }, [selectedProvider, flags, providerOptions, form]);

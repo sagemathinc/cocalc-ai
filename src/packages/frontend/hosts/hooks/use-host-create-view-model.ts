@@ -19,7 +19,7 @@ export type HostCreateViewModel = {
   form: {
     form: FormInstance;
     creating: boolean;
-    onCreate: (vals: any) => Promise<boolean>;
+    onCreate: (vals: any, opts?: { start?: boolean }) => Promise<boolean>;
     onCreated?: () => void;
     runFreshAuthAction?: (action: () => Promise<void>) => Promise<boolean>;
   };

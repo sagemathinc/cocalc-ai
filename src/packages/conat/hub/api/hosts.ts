@@ -1531,6 +1531,7 @@ export interface Hosts {
     funding_mode?: HostFundingMode;
     pricing_model?: HostPricingModel;
     interruption_restore_policy?: HostInterruptionRestorePolicy;
+    start_after_create?: boolean;
     machine?: HostMachine;
   }) => Promise<Host>;
 

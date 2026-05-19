@@ -40,14 +40,20 @@ export const useHostCreate = ({
 }: UseHostCreateOptions) => {
   const [creating, setCreating] = useState(false);
 
-  const onCreate = async (vals: any) => {
+  const onCreate = async (vals: any, opts?: { start?: boolean }) => {
     if (creating) return false;
     setCreating(true);
     try {
       const payload = buildCreateHostPayload(vals, { fieldOptions, catalog });
-      const created = await hub.hosts.createHost({ ...payload, browser_id });
+      const startAfterCreate = opts?.start !== false;
+      const created = await hub.hosts.createHost({
+        ...payload,
+        start_after_create: startAfterCreate,
+        browser_id,
+      });
       const selfHostKind = payload?.machine?.metadata?.self_host_kind;
       const shouldAutoStart =
+        startAfterCreate &&
         payload?.machine?.cloud === "self-host" &&
         (selfHostKind === "direct" || selfHostKind == null);
       if (shouldAutoStart && created?.id && hub.hosts.startHost) {
