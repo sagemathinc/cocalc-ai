@@ -843,7 +843,7 @@ export const AddCollaborators: React.FC<Props> = ({
     return (
       <div
         style={{
-          background: `linear-gradient(135deg, ${COLORS.BLUE_LLLL}, ${COLORS.GRAY_LLL})`,
+          background: COLORS.BLUE_LLLL,
           border: `1px solid ${COLORS.BLUE_LLL}`,
           borderRadius: 12,
           margin: "10px 0",
