@@ -3,6 +3,7 @@ export {
   listCloudVmLog,
   enqueueCloudVmWork,
   claimCloudVmWork,
+  refreshCloudVmWorkLease,
   requeueStaleCloudVmWork,
   markCloudVmWorkDone,
   markCloudVmWorkFailed,

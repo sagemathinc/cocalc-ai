@@ -428,6 +428,11 @@ function nebiusRuntimeMismatch(opts: {
   return undefined;
 }
 
+function runtimeProviderStatusIsStopped(runtime: any): boolean {
+  const status = `${runtime?.provider_status ?? ""}`.trim().toLowerCase();
+  return ["off", "stopped", "stopping", "terminated"].includes(status);
+}
+
 async function updateHostRow(id: string, updates: Record<string, any>) {
   const keys = Object.keys(updates).filter((key) => updates[key] !== undefined);
   if (!keys.length) return;
@@ -601,6 +606,7 @@ async function scheduleSpotRetry(opts: {
     effective_pricing_model: effectivePricingModel(opts.row),
     spot_recovery_state: clearVerificationFields(nextState),
   });
+  nextMetadata.desired_state = "running";
   await updateHostRow(opts.row.id, {
     status: "starting",
     metadata: nextMetadata,
@@ -1145,7 +1151,9 @@ async function handleStart(row: any) {
       managedSpotRecovery &&
       desiredPricing === "spot" &&
       currentEffectivePricing === "on_demand" &&
-      (row.status === "off" || row.status === "stopped");
+      (row.status === "off" ||
+        row.status === "stopped" ||
+        runtimeProviderStatusIsStopped(runtime));
     const startMode =
       stoppedFallbackShouldReturnToSpot ||
       (managedSpotRecovery &&
@@ -2278,6 +2286,7 @@ async function handleVerifyHostReady(row: any) {
             now: new Date(),
           })
         ) {
+          nextMetadata.desired_state = "running";
           await updateHostRow(host.id, {
             status: "starting",
             metadata: nextMetadata,
