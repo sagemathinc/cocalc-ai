@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { Alert, Button, Flex, Input, Spin, Typography } from "antd";
 
 import type { ProjectCollabInviteRow } from "@cocalc/conat/hub/api/projects";
-import { postAuthApi } from "@cocalc/frontend/auth/api";
+import { signOutAuthSession } from "@cocalc/frontend/auth/api";
 import api from "@cocalc/frontend/client/api";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
@@ -335,10 +335,7 @@ export function PublicRedeemProjectInviteView({
     setSigningOut(true);
     setError("");
     try {
-      await postAuthApi({
-        endpoint: "accounts/sign-out",
-        body: { all: false },
-      });
+      await signOutAuthSession();
       window.location.reload();
     } catch (err) {
       setError(`${err}`);

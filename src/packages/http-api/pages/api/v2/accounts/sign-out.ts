@@ -10,7 +10,7 @@ import {
   revokeAllAuthSessions,
   revokeAuthSession,
 } from "@cocalc/server/auth/auth-sessions";
-import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
+import { getRememberMeHashes } from "@cocalc/server/auth/remember-me";
 import {
   deleteRememberMe,
   deleteAllRememberMe,
@@ -45,12 +45,13 @@ async function signOut(req, res): Promise<void> {
     // Revoke host-level persistent sessions/tokens issued before now.
     await recordAccountRevocation(account_id, Date.now());
   } else {
-    const hash = getRememberMeHash(req);
-    if (!hash) return; // not signed in
     const account_id = await getAccountId(req);
-    await deleteRememberMe(hash);
-    if (account_id) {
-      await revokeAuthSession({ account_id, session_hash: hash });
+    const hashes = getRememberMeHashes(req);
+    for (const hash of hashes) {
+      await deleteRememberMe(hash);
+      if (account_id) {
+        await revokeAuthSession({ account_id, session_hash: hash });
+      }
     }
   }
   // also delete any security relevant cookies for safety and to avoid confusion.

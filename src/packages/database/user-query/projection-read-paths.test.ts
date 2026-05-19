@@ -11,7 +11,7 @@ const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
 const PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const OTHER_PROJECT_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-const NOW = new Date("2026-04-04T16:30:00.000Z");
+const NOW = new Date(Date.now() - 60 * 60 * 1000);
 
 describe("projection-backed read paths", () => {
   let database: any;

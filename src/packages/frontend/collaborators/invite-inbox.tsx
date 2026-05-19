@@ -126,6 +126,7 @@ function inviteeLabel(invite: ProjectCollabInviteRow): string {
     `${invite.invitee_name ?? ""}`.trim() ||
     `${invite.invitee_first_name ?? ""} ${invite.invitee_last_name ?? ""}`.trim() ||
     `${invite.invitee_email_address ?? ""}`.trim() ||
+    `${invite.target_email ?? ""}`.trim() ||
     `${invite.invitee_account_id ?? ""}`.trim() ||
     "Unknown user"
   );

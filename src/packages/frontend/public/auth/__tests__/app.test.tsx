@@ -2,7 +2,7 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import api from "@cocalc/frontend/client/api";
-import { postAuthApi } from "@cocalc/frontend/auth/api";
+import { postAuthApi, signOutAuthSession } from "@cocalc/frontend/auth/api";
 import type { PublicConfig } from "@cocalc/frontend/public/common";
 import PublicAuthApp, { getPublicAuthRouteFromPath } from "../app";
 import { getPublicAuthRedirectTargetFromSearch } from "../routes";
@@ -10,12 +10,14 @@ import { getPublicAuthRedirectTargetFromSearch } from "../routes";
 jest.mock("@cocalc/frontend/client/api", () => jest.fn());
 jest.mock("@cocalc/frontend/auth/api", () => ({
   postAuthApi: jest.fn(),
+  signOutAuthSession: jest.fn(),
   isWrongBayAuthResponse: jest.fn(() => false),
   retryAuthOnHomeBay: jest.fn(),
 }));
 
 const mockedApi = jest.mocked(api);
 const mockedPostAuthApi = jest.mocked(postAuthApi);
+const mockedSignOutAuthSession = jest.mocked(signOutAuthSession);
 const config = (overrides: Partial<PublicConfig> = {}): PublicConfig => ({
   site_name: "Launchpad",
   ...overrides,
@@ -40,6 +42,7 @@ beforeAll(() => {
 beforeEach(() => {
   mockedApi.mockReset();
   mockedPostAuthApi.mockReset();
+  mockedSignOutAuthSession.mockReset();
 });
 
 describe("getPublicAuthRouteFromPath", () => {
@@ -475,7 +478,7 @@ describe("PublicAuthApp", () => {
         status: "pending",
       },
     } as any);
-    mockedPostAuthApi.mockResolvedValueOnce({ signed_out: true } as any);
+    mockedSignOutAuthSession.mockResolvedValueOnce(undefined);
 
     render(
       <PublicAuthApp
@@ -505,10 +508,7 @@ describe("PublicAuthApp", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "sign out first" }));
     await waitFor(() =>
-      expect(mockedPostAuthApi).toHaveBeenCalledWith({
-        endpoint: "accounts/sign-out",
-        body: { all: false },
-      }),
+      expect(mockedSignOutAuthSession).toHaveBeenCalledWith(),
     );
     consoleError.mockRestore();
   });
@@ -619,7 +619,7 @@ describe("PublicAuthApp", () => {
       state: "pending",
       expires_at: "2026-05-08T18:00:00.000Z",
     } as any);
-    mockedPostAuthApi.mockResolvedValueOnce({ success: true } as any);
+    mockedSignOutAuthSession.mockResolvedValueOnce(undefined);
 
     render(
       <PublicAuthApp
@@ -653,10 +653,7 @@ describe("PublicAuthApp", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
     await waitFor(() =>
-      expect(mockedPostAuthApi).toHaveBeenCalledWith({
-        endpoint: "accounts/sign-out",
-        body: { all: false },
-      }),
+      expect(mockedSignOutAuthSession).toHaveBeenCalledWith(),
     );
     consoleError.mockRestore();
   });

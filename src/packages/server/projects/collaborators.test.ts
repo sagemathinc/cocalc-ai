@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { encryptSecretSettingValue } from "@cocalc/util/secret-settings-crypto";
 
 let assertLocalProjectCollaboratorMock: jest.Mock;
 let assertProjectCollaboratorAccessAllowRemoteMock: jest.Mock;
@@ -157,6 +158,14 @@ describe("project collaborators local bay access", () => {
       .update(token)
       .digest("base64url");
     return `${aad}:${digest}`;
+  }
+
+  function encryptedInviteEmail(email: string): string {
+    return encryptSecretSettingValue(
+      "project_collab_invites.email",
+      email,
+      Buffer.alloc(32, 1),
+    );
   }
 
   beforeEach(() => {
@@ -562,6 +571,49 @@ describe("project collaborators local bay access", () => {
       ACCOUNT_ID,
       "invite collaborators",
     );
+  });
+
+  it("shows the original target email on outgoing email-token invites", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_collab_invites i")) {
+        return {
+          rows: [
+            {
+              invite_id: "77777777-7777-4777-8777-777777777777",
+              project_id: PROJECT_ID,
+              project_title: "Test Project",
+              inviter_account_id: ACCOUNT_ID,
+              invitee_account_id: null,
+              invite_source: "email",
+              email_ciphertext: encryptedInviteEmail("student@example.com"),
+              status: "pending",
+              created: new Date("2026-04-01T00:00:00Z"),
+              updated: new Date("2026-04-01T00:00:00Z"),
+              responded: null,
+              expires: new Date("2026-04-15T00:00:00Z"),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { listCollabInvites } = await import("./collaborators");
+    await expect(
+      listCollabInvites({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        direction: "outbound",
+        status: "pending",
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        invite_id: "77777777-7777-4777-8777-777777777777",
+        invite_source: "email",
+        invitee_email_address: null,
+        target_email: "student@example.com",
+      }),
+    ]);
   });
 
   it("creates email-only invites when the email backend is unavailable", async () => {
