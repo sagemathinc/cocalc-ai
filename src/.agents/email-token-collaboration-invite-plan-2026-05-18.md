@@ -545,18 +545,19 @@ Implemented:
   project-owning bay.
 - Opening a token link while signed in previews the invite without adding a
   collaborator, then requires explicit Accept, Decline, or Block.
+- Signed-in invite confirmation reminds the user which account will accept the
+  invite and provides a sign-out path for switching accounts first.
 - Decline and Block are implemented for email token invites; neither adds a
   collaborator.
 - Course-scoped project invite redemption can bind the accepting account id
   through the student-project course metadata path.
 - `cocalc-cli` has project invite commands for create, copy-link, redeem, list,
   accept, decline, block, revoke, blocks, and unblock.
+- Manual-delivery project invite results are rendered as successful structured
+  UI with copy-link buttons when email is unavailable or disabled.
 
 Remaining before this plan is fully finished:
 
-- Polish the manual-delivery UI so invite creation with no email backend looks
-  like a successful info state, includes a copy button, and does not look like a
-  warning/error.
 - Complete full course-invite UI and end-to-end tests, including accepting with
   an account whose primary email differs from the roster email.
 - Add site-license student/instructor pool support and delegated instructor
