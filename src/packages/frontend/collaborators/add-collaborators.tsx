@@ -40,6 +40,8 @@ import { alert_message } from "../alerts";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
 
+const INVITE_MESSAGE_MAX_LENGTH = 1000;
+
 interface RegisteredUser {
   sort?: string;
   account_id: string;
@@ -474,21 +476,33 @@ export const AddCollaborators: React.FC<Props> = ({
 
   function render_email_textarea(): React.JSX.Element {
     return (
-      <Input.TextArea
-        defaultValue={email_body}
-        autoSize={true}
-        maxLength={1000}
-        showCount={true}
-        onBlur={() => {
-          set_email_body_editing(false);
-        }}
-        onFocus={() => set_email_body_editing(true)}
-        onChange={(e) => {
-          const value: string = (e.target as any).value;
-          set_email_body(value);
-          check_email_body(value);
-        }}
-      />
+      <>
+        <Input.TextArea
+          value={email_body}
+          autoSize={true}
+          maxLength={INVITE_MESSAGE_MAX_LENGTH}
+          onBlur={() => {
+            set_email_body_editing(false);
+          }}
+          onFocus={() => set_email_body_editing(true)}
+          onChange={(e) => {
+            const value: string = (e.target as any).value;
+            set_email_body(value);
+            check_email_body(value);
+          }}
+        />
+        <div
+          style={{
+            color: COLORS.GRAY,
+            fontSize: "12px",
+            lineHeight: "18px",
+            marginTop: "4px",
+            textAlign: "right",
+          }}
+        >
+          {email_body.length} / {INVITE_MESSAGE_MAX_LENGTH}
+        </div>
+      </>
     );
   }
 
