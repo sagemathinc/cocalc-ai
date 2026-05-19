@@ -25,7 +25,7 @@ import type { DStream } from "@cocalc/conat/sync/dstream";
 import { lite, remote_sync } from "@cocalc/frontend/lite";
 import { showCodexTurnCompletionToastBestEffort } from "../codex-turn-toast";
 
-const DEFAULT_INBOX_LIMIT = 500;
+const DEFAULT_INBOX_LIMIT = 200;
 const REFRESH_RETRY_INITIAL_MS = 5_000;
 const REFRESH_RETRY_MAX_MS = 60_000;
 const REFRESH_ON_RESUME_STALE_MS = 60_000;

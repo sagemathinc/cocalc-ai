@@ -130,6 +130,9 @@ describe("MentionsActions realtime feed", () => {
     expect(
       mockedWebappClient.conat_client.hub.notifications.list,
     ).toHaveBeenCalledTimes(1);
+    expect(
+      mockedWebappClient.conat_client.hub.notifications.list,
+    ).toHaveBeenCalledWith({ limit: 200 });
 
     const feed = await getSharedAccountDStreamMock.mock.results[0].value;
     feed.emit("change", {
