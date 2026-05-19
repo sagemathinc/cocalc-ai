@@ -188,6 +188,16 @@ export function HostActionsPanel({
     height: 30,
     paddingInline: 8,
   } as const;
+  const runStop = () => {
+    if (allowEmergencyStop) {
+      onStop({ skip_backups: true });
+      return;
+    }
+    confirmHostStop({
+      host,
+      onConfirm: onStop,
+    });
+  };
   const primaryAction =
     !startDisabled || !allowStop
       ? {
@@ -203,11 +213,7 @@ export function HostActionsPanel({
             icon: <PoweroffOutlined />,
             disabled: false,
             type: "default" as const,
-            onClick: () =>
-              confirmHostStop({
-                host,
-                onConfirm: onStop,
-              }),
+            onClick: runStop,
           }
         : {
             label: "Restart",
@@ -240,10 +246,7 @@ export function HostActionsPanel({
         style={actionButtonStyle}
         onClick={() => {
           closeMore();
-          confirmHostStop({
-            host,
-            onConfirm: onStop,
-          });
+          runStop();
         }}
       >
         {stopLabel}
