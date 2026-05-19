@@ -55,6 +55,7 @@ type SiteLicensePool = {
   membership_class: string;     // e.g. "student", "instructor"
   seat_count: number;
   requires_approval: boolean;
+  verification_policy: "email-domain" | "sso-affiliation" | "manager-approval";
   affiliation_reverification_days?: number;
   affiliation_reverification_grace_days?: number;
 };
@@ -114,6 +115,8 @@ Fields:
 - `organization_name`
 - `owner_account_id`
 - `allowed_domains`
+- `custom_terms_url`
+- `custom_policy_url`
 - `starts_at`
 - `expires_at`
 - `metadata`
@@ -139,13 +142,39 @@ For each pool:
 - `metadata.site_license_id = <site license id>`
 - `metadata.pool_name = "Students" | "Instructors" | ...`
 - `metadata.requires_approval = boolean`
+- `metadata.verification_policy = "email-domain" | "sso-affiliation" | "manager-approval"`
 - `metadata.affiliation_reverification_days = number | undefined`
+- `metadata.affiliation_reverification_grace_days = number | undefined`
 - `metadata.allowed_domains = string[]`
 - `starts_at` / `expires_at` inherited from, or constrained by, the site
   license
 
 This keeps grants, assignments, package claims, billing integration, and
 effective membership resolution tied to the existing package system.
+
+### Custom Terms and Policies
+
+Some organizations require users to see negotiated site-specific terms or
+policies before accepting institution-funded membership.
+
+Support optional URLs on the site license:
+
+- `custom_terms_url`
+- `custom_policy_url`
+
+If configured, the claim/request UI should show links before the user claims a
+student seat or submits an instructor request. The user must explicitly accept
+that they reviewed the linked terms/policies before the site-license membership
+is granted or requested.
+
+Rules:
+
+- CoCalc hosts only the link and acceptance record, not the custom legal text.
+- Accepted terms should be recorded in grant/request metadata with URL and
+  timestamp.
+- Updating a custom URL should not silently invalidate existing grants in the
+  first implementation. If an organization needs re-acceptance, add that as an
+  explicit later policy.
 
 ### Managers
 
@@ -255,8 +284,10 @@ Overview:
 
 - organization name
 - verified domains
+- custom terms/policy links, if configured
 - license expiration
 - pool list with tier, cap, active seats, available seats, pending requests
+- active, pending-reverification, and recently released seat counts
 - recent activity
 
 Pending requests:
@@ -276,6 +307,8 @@ Seat management:
 - revoke seat
 - export CSV
 - aggregate affiliation-reverification status and recent releases
+- role source for each seat, e.g. domain claim, manager approval, or SSO
+  assertion
 
 Audit:
 
@@ -284,6 +317,35 @@ Audit:
 - revocations
 - manager changes
 - pool/cap/domain changes
+- custom terms/policy URL changes
+
+## Verification Policies
+
+Each pool has a `verification_policy`.
+
+Supported policies:
+
+- `email-domain`: the user must verify an email address at an allowed domain.
+- `sso-affiliation`: the user must sign in through an organization SSO flow
+  that asserts current affiliation or role.
+- `manager-approval`: a delegated site-license manager must approve the user.
+
+The first implementation can support `email-domain` and `manager-approval`.
+The important design point is that `sso-affiliation` is built into the model
+now, because email-domain control is not always a reliable affiliation signal.
+Some universities provide alumni email access or lifetime forwarding, so SSO
+affiliation is the stronger long-term proof.
+
+Policies can be combined at the pool level by using both `requires_approval`
+and `verification_policy`:
+
+- Student year-one default: `verification_policy = "email-domain"`,
+  `requires_approval = false`.
+- Instructor year-one default: `verification_policy = "email-domain"`,
+  `requires_approval = true`.
+- Future stricter instructor default: `verification_policy =
+  "sso-affiliation"` plus approval, or SSO role assertion without manager
+  approval if the organization provides reliable role data.
 
 ## Fresh Affiliation Verification
 
@@ -300,14 +362,16 @@ Recommended model:
 
 1. A site-license grant stores `affiliation_verified_at` and the verified
    institutional email or SSO subject that established eligibility.
+   It also stores the `verification_policy` that was satisfied.
 2. After `affiliation_reverification_days`, the seat enters
    `pending_affiliation_reverification`.
 3. The user is notified by email/in-app notification: "Re-verify your
    institutional email to continue this membership."
-4. A grace period starts, e.g. 30 days.
-5. If the user re-verifies an allowed-domain email, or signs in through an SSO
-   flow that asserts current affiliation, the pending release is canceled and
-   `affiliation_verified_at` is updated.
+4. A grace period starts, e.g. 30 days. The user gets warning notifications at
+   the start of the grace period, about 14 days before release, about 3 days
+   before release, and after release.
+5. If the user re-satisfies the pool's verification policy, the pending
+   release is canceled and `affiliation_verified_at` is updated.
 6. If the user does not re-verify during the grace period, the site-license
    grant and claim identity are revoked/released.
 7. Managers can see aggregate status and recent releases, but are not expected
@@ -319,6 +383,10 @@ Recommended defaults:
 - Instructor pool: reverify every 365 days, 45-day grace.
 - SSO-backed pool: a fresh SSO assertion that includes current institutional
   affiliation satisfies reverification automatically.
+
+Seats in the grace period still count against the pool cap. Manager dashboards
+should expose active, pending-reverification, and recently released counts so
+licensees understand why seats are temporarily unavailable.
 
 Regular CoCalc account access is unaffected. Only the site-license membership
 is released if affiliation cannot be reverified.
@@ -372,6 +440,11 @@ Controls required from the start:
 - Domain-based eligibility requires a verified email address.
 - Approval-required pools never auto-grant from email domain alone.
 - Site-license seats require periodic fresh affiliation verification.
+- Reverification emails are rate-limited per account, email, and site license,
+  and contain no user-controlled content.
+- Reverification must require a current CoCalc login plus proof of the
+  institutional email or SSO affiliation. Email-token proof alone must not
+  silently transfer a site-license seat to a different signed-in account.
 - Manager actions are license-scoped and audited.
 - Request creation is rate-limited per account, canonical identity, and site
   license.
@@ -380,6 +453,27 @@ Controls required from the start:
 - Revoking a grant also releases or revokes the claim identity.
 - Managers cannot approve themselves unless they already have `owner` role or
   a CoCalc admin explicitly allows it.
+- If the user changes their primary CoCalc email, that does not reset
+  affiliation verification unless they verify an allowed-domain email or
+  satisfy the pool's SSO policy.
+- Downgrade/release messages should be clear: the CoCalc account and projects
+  remain available, but the institution-funded membership no longer applies.
+
+## Licensee-Facing Policy Summary
+
+Each site-license manager dashboard should show a plain policy summary:
+
+- domains covered
+- pool caps and tiers
+- verification policy per pool
+- reverification interval and grace period per pool
+- whether approval is required
+- custom terms/policy URLs
+- warning cadence before seat release
+- whether SSO is configured and what attributes satisfy affiliation
+
+This avoids surprises and makes the rules visible to the licensee before
+students or instructors hit them.
 
 ## APIs
 
@@ -407,9 +501,11 @@ Admin APIs:
 
 - create site license
 - update domains
+- update custom terms/policy URLs
 - create/update pool
 - set pool cap
 - set pool approval policy
+- set pool verification policy
 - set affiliation reverification interval and grace period
 - add initial owner manager
 
@@ -436,9 +532,13 @@ The CLI matters for enterprise onboarding, migrations, and scripted demos.
   - `site_license_id`
   - `pool_name`
   - `requires_approval`
+  - `verification_policy`
   - `affiliation_reverification_days`
   - `affiliation_reverification_grace_days`
   - `allowed_domains`
+- Add site-license metadata for:
+  - `custom_terms_url`
+  - `custom_policy_url`
 - Add shared TypeScript types in `@cocalc/util`.
 
 ### Phase 2: Admin Provisioning
@@ -458,6 +558,8 @@ The CLI matters for enterprise onboarding, migrations, and scripted demos.
   - immediately claimable pools
   - approval-required requestable pools
   - existing request status
+- Include custom terms/policy URLs and whether the user must accept them before
+  claiming/requesting.
 - Keep existing no-approval claim path for baseline pools.
 - Add request creation for approval-required pools.
 
@@ -481,6 +583,7 @@ The CLI matters for enterprise onboarding, migrations, and scripted demos.
 
 - Store `affiliation_verified_at` and the verifying institutional identity on
   site-license grants or claim metadata.
+- Store the verification policy that was satisfied.
 - Add pending-affiliation-reverification query.
 - Add user notification/grace workflow.
 - Clear pending release when the user re-verifies institutional email or has a
@@ -500,6 +603,9 @@ The CLI matters for enterprise onboarding, migrations, and scripted demos.
 - Unit tests for approval/rejection and cap rechecks.
 - Unit tests for canonical identity duplicate prevention.
 - Unit tests for one-active-pool/revoke-on-upgrade behavior.
+- Unit tests for verification-policy enforcement.
+- Unit tests for custom terms acceptance metadata.
+- Unit tests for reverification grace/release behavior.
 - Inter-bay tests for license/package authority routing.
 - Browser smoke test for:
   - student claim
@@ -514,6 +620,7 @@ Student pool:
 
 - tier: `student`
 - requires approval: `false`
+- verification policy: `email-domain`
 - affiliation reverification: every 180 days, 30-day grace
 - invite email: disabled or very low
 - collaborator/project caps: modest
@@ -522,10 +629,18 @@ Instructor pool:
 
 - tier: `instructor`
 - requires approval: `true`
+- verification policy: `email-domain` for year one, with planned support for
+  `sso-affiliation`
 - affiliation reverification: every 365 days, 45-day grace
 - invite email: enabled with course-aware limits
 - collaborator/project caps: higher than `member`, lower than `pro` unless the
   deal says otherwise
+
+Terms/policy links:
+
+- optional per site license
+- shown before claim/request if configured
+- acceptance recorded with URL and timestamp
 
 Request policy:
 
@@ -557,6 +672,11 @@ Manager policy:
 - Organization-verified SSO attributes should eventually drive automatic
   instructor eligibility, and can also satisfy periodic affiliation
   reverification.
+- Each pool has a verification policy. Year one can be generous with
+  email-domain verification, while the model explicitly supports stricter SSO
+  affiliation policies later.
+- Site licenses can include custom negotiated terms/policy URLs that users see
+  and accept before claiming or requesting membership.
 
 ## Recommendation
 
@@ -566,6 +686,8 @@ Implement the first version with:
 - one or more site-package-backed pools per site license
 - click-to-claim baseline pool
 - approval-required instructor pool
+- per-pool verification policy
+- optional custom site-license terms/policy links
 - no pending-seat reservation
 - one active pool per account per site license
 - periodic fresh affiliation reverification, with automatic release when the
