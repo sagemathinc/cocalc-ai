@@ -3,7 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Children, isValidElement, type ReactNode } from "react";
+import {
+  Children,
+  isValidElement,
+  type CSSProperties,
+  type ReactNode,
+  useState,
+} from "react";
 
 import {
   App as AntdApp,
@@ -35,7 +41,7 @@ import { COMPANY_NAME, DOC_URL } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import PublicTopNav, { type PublicTopNavActiveKey } from "./top-nav";
 
-const { Content, Footer, Header } = Layout;
+const { Content, Footer, Header, Sider } = Layout;
 const { Paragraph, Text, Title } = Typography;
 
 const PUBLIC_DISPLAY_FONT_URL = joinUrlPath(
@@ -80,50 +86,26 @@ const PUBLIC_PAGE_CSS = `
     color: ${PUBLIC_COLORS.heading};
   }
 
-  .cocalc-public-policy-article p,
-  .cocalc-public-policy-article li {
-    line-height: 1.75;
-  }
-
-  .cocalc-public-policy-article table {
-    border-collapse: collapse;
-    display: block;
-    max-width: 100%;
-    overflow-x: auto;
-  }
-
-  .cocalc-public-policy-article th,
-  .cocalc-public-policy-article td {
-    border: 1px solid ${PUBLIC_COLORS.border};
-    padding: 0.5em;
-    vertical-align: top;
-  }
-
-  .cocalc-public-policy-article .uppercase {
-    text-transform: uppercase;
+  .cocalc-public-sider.ant-layout-sider {
+    background: transparent;
+    max-height: calc(100vh - var(--cocalc-public-anchor-offset));
+    overflow: auto;
+    overscroll-behavior: contain;
+    position: sticky;
+    top: var(--cocalc-public-anchor-offset);
   }
 
   @media print {
     .cocalc-public-header,
     .cocalc-public-footer-band,
-    .cocalc-public-policy-subnav {
+    .cocalc-public-sider {
       display: none !important;
     }
 
+    .cocalc-public-main-band,
     .cocalc-public-content {
       background: white !important;
       padding: 0 !important;
-    }
-
-    .cocalc-public-policy-article {
-      max-width: none !important;
-    }
-
-    .cocalc-public-policy-article h1,
-    .cocalc-public-policy-article h2,
-    .cocalc-public-policy-article h3 {
-      break-after: avoid;
-      page-break-after: avoid;
     }
   }
 `;
@@ -340,6 +322,8 @@ interface PublicPageProps {
   beforeTitle?: ReactNode;
   children: ReactNode;
   config?: PublicConfig;
+  sider?: ReactNode;
+  siderLabel?: string;
   title?: ReactNode;
 }
 
@@ -348,9 +332,16 @@ export function PublicPage({
   beforeTitle,
   children,
   config,
+  sider,
+  siderLabel,
   title,
 }: PublicPageProps) {
   const { token } = theme.useToken();
+  const [siderHiddenByBreakpoint, setSiderHiddenByBreakpoint] = useState(false);
+  const publicPageStyle = {
+    "--cocalc-public-anchor-offset": `${token.Layout?.headerHeight ?? 64}px`,
+    minHeight: "100vh",
+  } as CSSProperties;
 
   return (
     <ConfigProvider
@@ -377,12 +368,7 @@ export function PublicPage({
       <PublicConfigProvider config={config}>
         <AntdApp>
           <style>{PUBLIC_PAGE_CSS}</style>
-          <Layout
-            className="cocalc-public-page"
-            style={{
-              minHeight: "100vh",
-            }}
-          >
+          <Layout className="cocalc-public-page" style={publicPageStyle}>
             <Header
               className="cocalc-public-header"
               style={{
@@ -395,36 +381,55 @@ export function PublicPage({
             >
               <PublicTopNav active={active} />
             </Header>
-            <Content
-              className="cocalc-public-content"
+            <Layout
+              className="cocalc-public-main-band"
+              hasSider={sider != null}
               style={{
                 ...PAGE_BAND_STYLE,
-                background: PUBLIC_COLORS.pageBackground,
-                paddingBlock: token.paddingXL,
+                columnGap:
+                  sider != null && !siderHiddenByBreakpoint
+                    ? token.paddingSM
+                    : undefined,
               }}
             >
-              {beforeTitle}
-              {title != null ? (
-                <Title
-                  level={1}
+              {sider != null ? (
+                <Sider
+                  aria-label={siderLabel}
+                  breakpoint="md"
+                  className="cocalc-public-sider"
+                  collapsedWidth={0}
+                  onBreakpoint={setSiderHiddenByBreakpoint}
                   style={{
-                    textAlign: "center",
+                    paddingInlineEnd: token.paddingSM,
                   }}
+                  trigger={null}
                 >
-                  {title}
-                </Title>
+                  {sider}
+                </Sider>
               ) : null}
-              <Flex vertical gap="large">
-                {children}
-              </Flex>
-            </Content>
+              <Content className="cocalc-public-content">
+                {beforeTitle}
+                {title != null ? (
+                  <Title
+                    level={1}
+                    style={{
+                      textAlign: "center",
+                    }}
+                  >
+                    {title}
+                  </Title>
+                ) : null}
+                <Flex vertical gap="large">
+                  {children}
+                </Flex>
+              </Content>
+            </Layout>
             <Footer
               className="cocalc-public-footer-band"
               style={{
                 ...PAGE_BAND_STYLE,
                 background: PUBLIC_COLORS.footerBackground,
                 color: token.colorWhite,
-                paddingBlock: token.paddingXL,
               }}
             >
               <PublicFooter config={config} />

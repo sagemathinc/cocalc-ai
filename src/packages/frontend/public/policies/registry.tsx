@@ -8,7 +8,7 @@ import accessibilityPolicy from "./accessibility";
 import copyrightPolicy from "./copyright";
 import dpaPolicy from "./dpa";
 import ferpaPolicy from "./ferpa";
-import { getPolicyNavLabel, PolicyDocument, type PublicPolicy } from "./policy";
+import { getPolicyNavLabel, type PublicPolicy } from "./policy";
 import privacyPolicy from "./privacy";
 import termsPolicy from "./terms";
 import trustPolicy from "./trust";
@@ -26,20 +26,6 @@ export const BUILTIN_POLICIES = [
 const BUILTIN_POLICY_BY_SLUG = Object.fromEntries(
   BUILTIN_POLICIES.map((policy) => [policy.slug, policy]),
 ) as Record<string, PublicPolicy>;
-
-export function BuiltinPolicyPage({
-  siteName,
-  slug,
-}: {
-  siteName: string;
-  slug?: string;
-}) {
-  const policy = slug == null ? undefined : BUILTIN_POLICY_BY_SLUG[slug];
-  if (policy == null) {
-    return null;
-  }
-  return <PolicyDocument policy={policy} siteName={siteName} />;
-}
 
 export function getBuiltinPolicy(slug?: string): PublicPolicy | undefined {
   if (slug == null) return;
