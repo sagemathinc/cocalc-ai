@@ -544,6 +544,8 @@ Implemented:
   project-owning bay.
 - Course-scoped project invite redemption can bind the accepting account id
   through the student-project course metadata path.
+- `cocalc-cli` has project invite commands for create, copy-link, redeem, list,
+  accept, decline, block, revoke, blocks, and unblock.
 
 Remaining before this plan is fully finished:
 
@@ -558,8 +560,9 @@ Remaining before this plan is fully finished:
 - Polish the manual-delivery UI so invite creation with no email backend looks
   like a successful info state, includes a copy button, and does not look like a
   warning/error.
-- Finish `cocalc-cli` commands for creating, printing, optionally sending, and
-  revoking project invite links.
+- Validate `cocalc-cli` invite commands against a freshly rebuilt/restarted
+  hub. The source commands and unit tests exist, but a stale running hub can
+  still reject the newer RPC names.
 - Complete full course-invite UI and end-to-end tests, including accepting with
   an account whose primary email differs from the roster email.
 - Add site-license student/instructor pool support and delegated instructor
