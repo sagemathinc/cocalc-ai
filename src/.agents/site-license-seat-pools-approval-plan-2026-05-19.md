@@ -29,6 +29,39 @@ larger project, collaborator, and email-invite quotas; students should not get
 the same mass-email or course-management capabilities just because they have an
 institutional email address.
 
+## Go-To-Market Framing
+
+The first version should support a low-friction expansion path that feels
+normal to campus departments and procurement:
+
+1. A department already paying for CoCalc receives a broader campus-wide trial
+   or first-year site license at a compelling price.
+2. The first-year license uses verified institutional email domains as a simple
+   onboarding mechanism. This should be described as "domain-based onboarding",
+   not as strong identity proof.
+3. If the license becomes popular across campus, the renewal conversation moves
+   to procurement/IT with negotiated terms, custom policy links, SOC-2/security
+   review, formal seat caps, and SSO integration.
+4. SSO affiliation becomes the stronger long-term verification mechanism once
+   the license is formalized.
+
+This is viable because it minimizes year-one friction while creating a clear
+upgrade path to the more standard enterprise model.
+
+Language matters. User and licensee-facing copy should avoid sounding like
+CoCalc is policing affiliation. Preferred framing:
+
+> Your institution funds this membership for currently affiliated users.
+> CoCalc periodically confirms eligibility using the verification method
+> configured by your institution.
+
+Avoid harsh words like "revoked" in user-facing messages. Prefer:
+
+- "institution-funded membership ended"
+- "seat released"
+- "university membership no longer applies"
+- "your CoCalc account and projects remain available"
+
 ## Existing Primitive
 
 The current code already has a useful primitive:
@@ -117,6 +150,9 @@ Fields:
 - `allowed_domains`
 - `custom_terms_url`
 - `custom_policy_url`
+- `terms_version_label`
+- `renewal_policy`
+- `overage_policy`
 - `starts_at`
 - `expires_at`
 - `metadata`
@@ -175,6 +211,44 @@ Rules:
 - Updating a custom URL should not silently invalidate existing grants in the
   first implementation. If an organization needs re-acceptance, add that as an
   explicit later policy.
+- The acceptance record should include account id, URL, version label if
+  configured, timestamp, and request metadata such as IP/user agent if already
+  available in the surrounding request context.
+
+## Contract Term, Renewal, and Overage
+
+Procurement and IT will expect normal contract-term behavior.
+
+Default model:
+
+- A site license has `starts_at` and `expires_at`.
+- Every pool is constrained by the site-license term.
+- Renewing a license extends the site license and its pool packages.
+- If the license is renewed before expiration, existing active grants continue
+  without user action unless a pool's verification policy requires
+  reverification.
+- If the whole license expires and is not renewed, institution-funded
+  memberships end after the configured license-expiration grace period.
+- Regular CoCalc accounts and projects remain available after site-license
+  membership ends.
+
+Negotiable parameters:
+
+- site-license term dates
+- pool caps
+- pool tiers and resource limits
+- verification policy per pool
+- reverification interval and grace period
+- license-expiration grace period
+- overage behavior
+
+Recommended first overage policy:
+
+- Use hard caps for self-service claiming and instructor approval.
+- Expose clear counts for active, pending-reverification, pending-approval, and
+  available seats.
+- If an organization wants soft overages or true-up billing, treat that as an
+  explicit negotiated `overage_policy` later.
 
 ### Managers
 
@@ -464,11 +538,15 @@ Controls required from the start:
 Each site-license manager dashboard should show a plain policy summary:
 
 - domains covered
+- site-license term dates and renewal status
 - pool caps and tiers
+- active, pending approval, pending reverification, recently released, and
+  available seat counts
 - verification policy per pool
 - reverification interval and grace period per pool
 - whether approval is required
 - custom terms/policy URLs
+- overage policy
 - warning cadence before seat release
 - whether SSO is configured and what attributes satisfy affiliation
 
@@ -502,6 +580,7 @@ Admin APIs:
 - create site license
 - update domains
 - update custom terms/policy URLs
+- update term dates, renewal status, and overage policy
 - create/update pool
 - set pool cap
 - set pool approval policy
@@ -539,6 +618,9 @@ The CLI matters for enterprise onboarding, migrations, and scripted demos.
 - Add site-license metadata for:
   - `custom_terms_url`
   - `custom_policy_url`
+  - `terms_version_label`
+  - `renewal_policy`
+  - `overage_policy`
 - Add shared TypeScript types in `@cocalc/util`.
 
 ### Phase 2: Admin Provisioning
@@ -606,6 +688,7 @@ The CLI matters for enterprise onboarding, migrations, and scripted demos.
 - Unit tests for verification-policy enforcement.
 - Unit tests for custom terms acceptance metadata.
 - Unit tests for reverification grace/release behavior.
+- Unit tests for site-license term expiration and renewal extension behavior.
 - Inter-bay tests for license/package authority routing.
 - Browser smoke test for:
   - student claim
@@ -642,6 +725,15 @@ Terms/policy links:
 - shown before claim/request if configured
 - acceptance recorded with URL and timestamp
 
+Contract defaults:
+
+- annual term
+- hard seat caps
+- no automatic overage
+- renewal extends the site license and pool packages
+- non-renewal ends institution-funded memberships after the negotiated
+  expiration grace period
+
 Request policy:
 
 - one pending instructor request per account per site license
@@ -677,6 +769,8 @@ Manager policy:
   affiliation policies later.
 - Site licenses can include custom negotiated terms/policy URLs that users see
   and accept before claiming or requesting membership.
+- Site licenses use standard contract-term semantics: start date, expiration
+  date, renewal, hard caps by default, and negotiated overage/grace parameters.
 
 ## Recommendation
 
@@ -688,6 +782,7 @@ Implement the first version with:
 - approval-required instructor pool
 - per-pool verification policy
 - optional custom site-license terms/policy links
+- standard term/renewal/overage policy fields
 - no pending-seat reservation
 - one active pool per account per site license
 - periodic fresh affiliation reverification, with automatic release when the
