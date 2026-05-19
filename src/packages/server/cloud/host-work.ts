@@ -50,6 +50,7 @@ const pool = () => getPool();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const HOST_READY_VERIFY_DELAY_MS = 10_000;
 const HOST_READY_VERIFY_DEADLINE_MS = 10 * 60 * 1000;
+const SPOT_PROBE_STABLE_MS = 5 * 60 * 1000;
 
 type ProviderReadyObservation = {
   mapped_status?: "running" | "starting" | "off" | "stopped" | "error";
@@ -950,6 +951,31 @@ async function handleProvision(row: any) {
     const observedAtDone = new Date();
     nextMetadata = setRuntimeObservedAt(nextMetadata, observedAtDone);
     nextStatus = waitedStatus ?? "starting";
+    if (providerId === "nebius" && entry.provider.getInstance) {
+      const effectivePricing = effectivePricingModel({
+        metadata: nextMetadata,
+      });
+      const remote = await entry.provider.getInstance(runtime, creds);
+      const mismatch = nebiusRuntimeMismatch({
+        desiredMachineType: machine.machine_type,
+        desiredPlatform: machine.metadata?.platform,
+        desiredPricing: effectivePricing,
+        remote,
+      });
+      if (mismatch) {
+        logger.warn("handleProvision: Nebius runtime mismatch after create", {
+          host_id: row.id,
+          instance_id: runtime.instance_id,
+          mismatch,
+        });
+        await entry.provider.deleteHost(runtime, creds, {
+          preserveDataDisk: true,
+        });
+        throw new Error(
+          `Nebius created a VM that does not match the requested host configuration (${mismatch})`,
+        );
+      }
+    }
   }
   const publicUrl = isLocalSelfHost
     ? null
@@ -2236,6 +2262,52 @@ async function handleVerifyHostReady(row: any) {
           instance_missing: observation?.instance_missing,
         },
       });
+      const nextHost = {
+        ...host,
+        status: stoppedStatus,
+        metadata: nextMetadata,
+        last_seen: null,
+      };
+      const policy = spotRecoveryPolicy(nextHost);
+      const state = spotRecoveryState(nextHost);
+      if (stoppedStatus === "off" && policy && state) {
+        if (
+          shouldFallbackToStandard({
+            state,
+            policy,
+            now: new Date(),
+          })
+        ) {
+          await updateHostRow(host.id, {
+            status: "starting",
+            metadata: nextMetadata,
+            last_seen: null,
+          });
+          await enqueueCloudVmWorkOnce({
+            vm_id: host.id,
+            action: "start",
+            payload: {
+              provider: providerId,
+              source: "verify_host_ready",
+              reason: providerStatusText
+                ? `provider-status:${providerStatusText}`
+                : "provider-stopped-before-ready",
+            },
+          });
+          await bumpReconcile(providerId, 1000);
+        } else {
+          await scheduleSpotRetry({
+            row: nextHost,
+            provider: providerId,
+            policy,
+            state,
+            reason: providerStatusText
+              ? `provider-status:${providerStatusText}`
+              : "provider-stopped-before-ready",
+          });
+          await bumpReconcile(providerId, DEFAULT_INTERVALS.running_ms);
+        }
+      }
       return;
     }
   }
@@ -2319,7 +2391,9 @@ async function handleProbeSpot(row: any) {
     ...(await buildHostSpec({ ...host, metadata: probingMetadata })),
     pricing_model: "spot" as const,
   };
-  const available = await entry.provider.probeSpotAvailability(spec, creds);
+  const available = await entry.provider.probeSpotAvailability(spec, creds, {
+    stableForMs: SPOT_PROBE_STABLE_MS,
+  });
   if (!available) {
     const failedState: HostSpotRecoveryState = {
       ...(probingState ?? { phase: "running_standard_fallback" }),
