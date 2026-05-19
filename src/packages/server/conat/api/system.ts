@@ -38,7 +38,7 @@ export { manageApiKeys };
 import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import getName from "@cocalc/server/accounts/get-name";
-import { filterAccountSearchResultsToRelated } from "@cocalc/server/accounts/search-policy";
+import { searchRelatedClusterAccounts } from "@cocalc/server/accounts/search-policy";
 import type { AccountEntitlementOverride } from "@cocalc/conat/hub/api/purchases";
 import {
   clearAccountEntitlementOverrideLocal,
@@ -3033,18 +3033,19 @@ export async function userSearch({
       limit = 50;
     }
   }
-  const rows = await searchClusterAccounts({
+  if (adminSearch) {
+    return await searchClusterAccounts({
+      query,
+      limit,
+      admin: true,
+      only_email,
+    });
+  }
+  return await searchRelatedClusterAccounts({
+    account_id,
     query,
     limit,
-    admin: adminSearch,
     only_email,
-  });
-  if (adminSearch) {
-    return rows;
-  }
-  return await filterAccountSearchResultsToRelated({
-    account_id,
-    rows,
   });
 }
 
