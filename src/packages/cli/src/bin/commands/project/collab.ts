@@ -5,6 +5,7 @@
  * and block list controls for collaboration access.
  */
 import { Command } from "commander";
+import { isValidUUID } from "@cocalc/util/misc";
 
 import type { ProjectCommandDeps } from "../project";
 
@@ -198,6 +199,20 @@ export function registerProjectCollabCommands(
     .command("invite")
     .description("manage project collaboration invites");
 
+  async function resolveProjectIdForInviteCommand(
+    ctx,
+    project?: string,
+  ): Promise<string | undefined> {
+    const value = `${project ?? ""}`.trim();
+    if (!value) {
+      return undefined;
+    }
+    if (isValidUUID(value)) {
+      return value;
+    }
+    return (await resolveProjectFromArgOrContext(ctx, value)).project_id;
+  }
+
   invite
     .command("create")
     .description("create an email invite link for a project")
@@ -288,13 +303,14 @@ export function registerProjectCollabCommands(
         command: Command,
       ) => {
         await withContext(command, "project invite redeem", async (ctx) => {
-          const project = opts.project
-            ? await resolveProjectFromArgOrContext(ctx, opts.project)
-            : null;
+          const project_id = await resolveProjectIdForInviteCommand(
+            ctx,
+            opts.project,
+          );
           const row = (await ctx.hub.projects.redeemEmailProjectInvite({
             invite_id: inviteId,
             token: opts.token,
-            project_id: project?.project_id,
+            project_id,
           })) as ProjectCollabInviteRow;
           return serializeInviteRow(row);
         });
@@ -356,12 +372,32 @@ export function registerProjectCollabCommands(
     command: Command,
     inviteId: string,
     action: ProjectCollabInviteAction,
+    opts?: { token?: string; project?: string },
   ): Promise<void> {
     await withContext(command, `project invite ${action}`, async (ctx) => {
-      const row = (await ctx.hub.projects.respondCollabInvite({
-        invite_id: inviteId,
-        action,
-      })) as ProjectCollabInviteRow;
+      let row: ProjectCollabInviteRow;
+      if (opts?.token) {
+        const project_id = await resolveProjectIdForInviteCommand(
+          ctx,
+          opts.project,
+        );
+        row = (await ctx.hub.projects.respondEmailProjectInvite({
+          invite_id: inviteId,
+          token: opts.token,
+          project_id,
+          action,
+        })) as ProjectCollabInviteRow;
+      } else {
+        const project_id = await resolveProjectIdForInviteCommand(
+          ctx,
+          opts?.project,
+        );
+        row = (await ctx.hub.projects.respondCollabInvite({
+          invite_id: inviteId,
+          project_id,
+          action,
+        })) as ProjectCollabInviteRow;
+      }
       return serializeInviteRow(row);
     });
   }
@@ -369,30 +405,61 @@ export function registerProjectCollabCommands(
   invite
     .command("accept <inviteId>")
     .description("accept an invite")
-    .action(async (inviteId: string, command: Command) => {
-      await respondProjectInvite(command, inviteId, "accept");
-    });
+    .option("--token <token>", "redemption token from an email invite URL")
+    .option("-w, --project <project>", "project id or name")
+    .action(
+      async (
+        inviteId: string,
+        opts: { token?: string; project?: string },
+        command: Command,
+      ) => {
+        await respondProjectInvite(command, inviteId, "accept", opts);
+      },
+    );
 
   invite
     .command("decline <inviteId>")
     .description("decline an invite")
-    .action(async (inviteId: string, command: Command) => {
-      await respondProjectInvite(command, inviteId, "decline");
-    });
+    .option("--token <token>", "redemption token from an email invite URL")
+    .option("-w, --project <project>", "project id or name")
+    .action(
+      async (
+        inviteId: string,
+        opts: { token?: string; project?: string },
+        command: Command,
+      ) => {
+        await respondProjectInvite(command, inviteId, "decline", opts);
+      },
+    );
 
   invite
     .command("block <inviteId>")
     .description("block inviter and mark invite as blocked")
-    .action(async (inviteId: string, command: Command) => {
-      await respondProjectInvite(command, inviteId, "block");
-    });
+    .option("--token <token>", "redemption token from an email invite URL")
+    .option("-w, --project <project>", "project id or name")
+    .action(
+      async (
+        inviteId: string,
+        opts: { token?: string; project?: string },
+        command: Command,
+      ) => {
+        await respondProjectInvite(command, inviteId, "block", opts);
+      },
+    );
 
   invite
     .command("revoke <inviteId>")
     .description("revoke (cancel) an outstanding invite you sent")
-    .action(async (inviteId: string, command: Command) => {
-      await respondProjectInvite(command, inviteId, "revoke");
-    });
+    .option("-w, --project <project>", "project id or name")
+    .action(
+      async (
+        inviteId: string,
+        opts: { project?: string },
+        command: Command,
+      ) => {
+        await respondProjectInvite(command, inviteId, "revoke", opts);
+      },
+    );
 
   invite
     .command("blocks")

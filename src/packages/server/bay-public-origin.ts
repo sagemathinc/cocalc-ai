@@ -229,7 +229,7 @@ export async function getBayPublicOrigin(
   }
   if (requested === getConfiguredClusterSeedBayId()) {
     const siteOrigin = await getSitePublicOrigin();
-    if (siteOrigin) {
+    if (isUsablePublicOrigin(siteOrigin)) {
       return siteOrigin;
     }
   }

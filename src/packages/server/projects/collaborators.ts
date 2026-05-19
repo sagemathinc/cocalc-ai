@@ -7,7 +7,6 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { db } from "@cocalc/database";
 import { listProjectedMyCollaboratorsForAccount } from "@cocalc/database/postgres/account-collaborator-index";
 import getPool from "@cocalc/database/pool";
-import siteURL from "@cocalc/database/settings/site-url";
 import { callback2 } from "@cocalc/util/async-utils";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
@@ -51,6 +50,8 @@ import {
   syncProjectedInboundCollabInvite,
 } from "@cocalc/server/projects/collab-invite-inbox";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
+import { getBayPublicOrigin } from "@cocalc/server/bay-public-origin";
+import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { assertProjectCollaboratorInviteLimit } from "@cocalc/server/membership/project-limits";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
@@ -263,7 +264,12 @@ async function inviteUrl({
   invite_id: string;
   token: string;
 }): Promise<string> {
-  const base = (await siteURL()).replace(/\/+$/, "");
+  const base = (
+    await getBayPublicOrigin(getConfiguredClusterSeedBayId())
+  )?.replace(/\/+$/, "");
+  if (!base) {
+    throw new Error("unable to determine public site URL for invite link");
+  }
   return `${base}/invites/project/${project_id}/${invite_id}?token=${encodeURIComponent(token)}`;
 }
 
