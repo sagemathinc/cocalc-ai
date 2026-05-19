@@ -55,7 +55,8 @@ type SiteLicensePool = {
   membership_class: string;     // e.g. "student", "instructor"
   seat_count: number;
   requires_approval: boolean;
-  inactivity_timeout_days?: number;
+  affiliation_reverification_days?: number;
+  affiliation_reverification_grace_days?: number;
 };
 ```
 
@@ -138,7 +139,7 @@ For each pool:
 - `metadata.site_license_id = <site license id>`
 - `metadata.pool_name = "Students" | "Instructors" | ...`
 - `metadata.requires_approval = boolean`
-- `metadata.inactivity_timeout_days = number | undefined`
+- `metadata.affiliation_reverification_days = number | undefined`
 - `metadata.allowed_domains = string[]`
 - `starts_at` / `expires_at` inherited from, or constrained by, the site
   license
@@ -216,9 +217,9 @@ For a pool where `requires_approval = false`:
 
 Policy choice:
 
-- For a single unambiguous baseline pool, auto-claiming on sign-in is
-  reasonable, but a visible "Claim your University membership" button is less
-  surprising.
+- For a single unambiguous baseline pool, auto-claiming after verified
+  eligibility is technically possible, but a visible "Claim your University
+  membership" button is less surprising.
 - Start with explicit claim. Add auto-claim later only if the UX demands it.
 
 ### Instructor / Higher-Trust Pool
@@ -274,7 +275,7 @@ Seat management:
 - search by name/email/account id
 - revoke seat
 - export CSV
-- aggregate inactive-release counts and recent releases
+- aggregate affiliation-reverification status and recent releases
 
 Audit:
 
@@ -284,32 +285,43 @@ Audit:
 - manager changes
 - pool/cap/domain changes
 
-## Inactivity Release
+## Fresh Affiliation Verification
 
 Site-license seats should be reclaimable because academic populations change.
+The important signal is not whether the CoCalc account is active. The important
+signal is whether the user still controls a verified email address at the
+licensed institution, or has an equivalent current SSO affiliation assertion.
 
-Do not immediately revoke seats on inactivity.
+This replaces a generic inactivity-release system. A user who still wants the
+site-license membership must periodically renew their institutional
+affiliation.
 
 Recommended model:
 
-1. A seat enters `pending_inactive_release` after
-   `inactivity_timeout_days`.
-2. The user is notified by email/in-app notification: "Sign into CoCalc to
-   continue your membership."
-3. A grace period starts, e.g. 30 days.
-4. If the user signs in during the grace period, the pending release is
-   canceled.
-5. If no sign-in occurs, the grant and claim identity are revoked/released.
-6. Managers can see aggregate counts and recent releases, but are not expected
-   to review individual inactive users.
+1. A site-license grant stores `affiliation_verified_at` and the verified
+   institutional email or SSO subject that established eligibility.
+2. After `affiliation_reverification_days`, the seat enters
+   `pending_affiliation_reverification`.
+3. The user is notified by email/in-app notification: "Re-verify your
+   institutional email to continue this membership."
+4. A grace period starts, e.g. 30 days.
+5. If the user re-verifies an allowed-domain email, or signs in through an SSO
+   flow that asserts current affiliation, the pending release is canceled and
+   `affiliation_verified_at` is updated.
+6. If the user does not re-verify during the grace period, the site-license
+   grant and claim identity are revoked/released.
+7. Managers can see aggregate status and recent releases, but are not expected
+   to review individual users.
 
 Recommended defaults:
 
-- Student pool: 365 inactive days, 30-day grace.
-- Instructor pool: 540 inactive days, 30-day grace.
+- Student pool: reverify every 180 days, 30-day grace.
+- Instructor pool: reverify every 365 days, 45-day grace.
+- SSO-backed pool: a fresh SSO assertion that includes current institutional
+  affiliation satisfies reverification automatically.
 
-Use account-level activity first. Project-level or course-level activity can be
-added later.
+Regular CoCalc account access is unaffected. Only the site-license membership
+is released if affiliation cannot be reverified.
 
 ## Multiple Pools for One User
 
@@ -359,6 +371,7 @@ Controls required from the start:
   claims.
 - Domain-based eligibility requires a verified email address.
 - Approval-required pools never auto-grant from email domain alone.
+- Site-license seats require periodic fresh affiliation verification.
 - Manager actions are license-scoped and audited.
 - Request creation is rate-limited per account, canonical identity, and site
   license.
@@ -397,7 +410,7 @@ Admin APIs:
 - create/update pool
 - set pool cap
 - set pool approval policy
-- set inactivity timeout
+- set affiliation reverification interval and grace period
 - add initial owner manager
 
 CLI:
@@ -423,7 +436,8 @@ The CLI matters for enterprise onboarding, migrations, and scripted demos.
   - `site_license_id`
   - `pool_name`
   - `requires_approval`
-  - `inactivity_timeout_days`
+  - `affiliation_reverification_days`
+  - `affiliation_reverification_grace_days`
   - `allowed_domains`
 - Add shared TypeScript types in `@cocalc/util`.
 
@@ -463,12 +477,15 @@ The CLI matters for enterprise onboarding, migrations, and scripted demos.
   avoid confusion.
 - Add reporting so managers can see seats revoked due to upgrades.
 
-### Phase 6: Inactivity Release
+### Phase 6: Fresh Affiliation Reverification
 
-- Add pending-inactive-release query.
+- Store `affiliation_verified_at` and the verifying institutional identity on
+  site-license grants or claim metadata.
+- Add pending-affiliation-reverification query.
 - Add user notification/grace workflow.
-- Clear pending release when the user signs in.
-- Add scheduled release job.
+- Clear pending release when the user re-verifies institutional email or has a
+  fresh qualifying SSO assertion.
+- Add scheduled release job for seats that miss the grace deadline.
 
 ### Phase 7: Invite Limit Integration
 
@@ -497,7 +514,7 @@ Student pool:
 
 - tier: `student`
 - requires approval: `false`
-- inactivity timeout: 365 days
+- affiliation reverification: every 180 days, 30-day grace
 - invite email: disabled or very low
 - collaborator/project caps: modest
 
@@ -505,7 +522,7 @@ Instructor pool:
 
 - tier: `instructor`
 - requires approval: `true`
-- inactivity timeout: 540 days
+- affiliation reverification: every 365 days, 45-day grace
 - invite email: enabled with course-aware limits
 - collaborator/project caps: higher than `member`, lower than `pro` unless the
   deal says otherwise
@@ -535,10 +552,11 @@ Manager policy:
   pool has filled.
 - Site-license owners can approve their own instructor request. This avoids
   unnecessary CoCalc-admin work.
-- Inactive release uses account activity only in the first version. Signing in
-  is enough to keep the seat.
+- Site-license seats use fresh affiliation verification instead of generic
+  inactivity release. Signing in is not enough to keep a site-license seat.
 - Organization-verified SSO attributes should eventually drive automatic
-  instructor eligibility, but not in the first release.
+  instructor eligibility, and can also satisfy periodic affiliation
+  reverification.
 
 ## Recommendation
 
@@ -550,7 +568,8 @@ Implement the first version with:
 - approval-required instructor pool
 - no pending-seat reservation
 - one active pool per account per site license
-- account-activity-based inactive release, renewed by user sign-in
+- periodic fresh affiliation reverification, with automatic release when the
+  user cannot reverify during the grace period
 
 This is the least confusing model for campus admins, preserves the existing
 membership package machinery, and gives CoCalc the trust boundary needed for
