@@ -1386,6 +1386,7 @@ function classifyBayBackupCleanupKey(
   key: string,
 ): "wal" | "manifest" | "other" {
   if (/^bay-backups\/[^/]+\/wal\/[^/]+$/.test(key)) return "wal";
+  if (/^bay-backups\/[^/]+\/wal\/[^/]+\.zst$/.test(key)) return "wal";
   if (/^bay-backups\/[^/]+\/[^/]+\/manifest\.json$/.test(key)) {
     return "manifest";
   }

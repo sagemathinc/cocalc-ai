@@ -10,6 +10,7 @@ import {
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { zstdCompressSync, zstdDecompressSync } from "node:zlib";
 
 let execFileMock: jest.Mock;
 let getPoolMock: jest.Mock;
@@ -248,6 +249,11 @@ describe("bay-backup runner", () => {
           : input instanceof URL
             ? input.toString()
             : input.url;
+      if (url.endsWith("/bay-backups/bay-0/wal/0000000100000000000000E8.zst")) {
+        return new Response(zstdCompressSync(Buffer.from("segment")), {
+          status: 200,
+        });
+      }
       if (url.endsWith("/bay-backups/bay-0/wal/0000000100000000000000E8")) {
         return new Response("segment", { status: 200 });
       }
@@ -1364,8 +1370,8 @@ describe("bay-backup runner", () => {
     const sentinelRows: Array<{ run_id: string; phase: "pre" | "post" }> = [];
     const walArchiveDir = join(bayRoot, "wal", "archive");
     const remoteWalKeys = [
-      "bay-backups/bay-0/wal/0000000100000000000000E8",
-      "bay-backups/bay-0/wal/0000000100000000000000E9",
+      "bay-backups/bay-0/wal/0000000100000000000000E8.zst",
+      "bay-backups/bay-0/wal/0000000100000000000000E9.zst",
     ];
     getPoolMock = jest.fn(() => ({
       query: jest.fn(async (sql: string, params?: string[]) => {
@@ -1669,12 +1675,16 @@ describe("bay-backup runner", () => {
       writeFileSync(join(walArchiveDir, name), `segment-${index + 1}`);
     }
     const uploadedKeys = new Set<string>();
+    const uploadedBodies = new Map<string, Buffer>();
     listObjectsMock = jest.fn(async ({ prefix }: { prefix?: string }) =>
       prefix === "bay-backups/bay-0/wal/" ? [...uploadedKeys] : [],
     );
-    uploadObjectFromFileMock = jest.fn(async ({ key }: { key: string }) => {
-      uploadedKeys.add(key);
-    });
+    uploadObjectFromFileMock = jest.fn(
+      async ({ key, filePath }: { key: string; filePath: string }) => {
+        uploadedBodies.set(key, readFileSync(filePath));
+        uploadedKeys.add(key);
+      },
+    );
 
     const { getBayBackupStatus, runBayBackup } = await import("./index");
 
@@ -1684,9 +1694,16 @@ describe("bay-backup runner", () => {
     expect(
       uploadObjectFromFileMock.mock.calls.map((call) => call[0].key),
     ).toEqual([
-      "bay-backups/bay-0/wal/0000000100000000000000E1",
-      "bay-backups/bay-0/wal/0000000100000000000000E2",
+      "bay-backups/bay-0/wal/0000000100000000000000E1.zst",
+      "bay-backups/bay-0/wal/0000000100000000000000E2.zst",
     ]);
+    expect(
+      zstdDecompressSync(
+        uploadedBodies.get(
+          "bay-backups/bay-0/wal/0000000100000000000000E1.zst",
+        )!,
+      ).toString(),
+    ).toBe("segment-1");
     const status = await getBayBackupStatus();
     expect(status.bay_backup.last_uploaded_wal_segment).toBe(
       "0000000100000000000000E2",
