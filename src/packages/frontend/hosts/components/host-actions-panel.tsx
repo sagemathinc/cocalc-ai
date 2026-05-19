@@ -11,6 +11,7 @@ import {
   ToolOutlined,
 } from "@ant-design/icons";
 import { Button, Popconfirm, Popover, Space, Tag, Typography } from "antd";
+import { React } from "@cocalc/frontend/app-framework";
 import { Tooltip } from "@cocalc/frontend/components";
 import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import type {
@@ -85,6 +86,8 @@ export function HostActionsPanel({
   onDetails,
   onRefreshCloudStatus,
 }: HostActionsPanelProps) {
+  const [moreOpen, setMoreOpen] = React.useState(false);
+  const closeMore = () => setMoreOpen(false);
   const isDeleted = !!host.deleted;
   const hostOpActive = isHostOpActive(hostOp);
   const isSelfHost = host.machine?.cloud === "self-host";
@@ -198,7 +201,10 @@ export function HostActionsPanel({
         disabled={startDisabled}
         icon={<PlayCircleOutlined />}
         style={actionButtonStyle}
-        onClick={onStart}
+        onClick={() => {
+          closeMore();
+          onStart();
+        }}
       >
         {startLabel}
       </Button>
@@ -208,12 +214,13 @@ export function HostActionsPanel({
         disabled={!allowStop}
         icon={<PoweroffOutlined />}
         style={actionButtonStyle}
-        onClick={() =>
+        onClick={() => {
+          closeMore();
           confirmHostStop({
             host,
             onConfirm: onStop,
-          })
-        }
+          });
+        }}
       >
         {stopLabel}
       </Button>
@@ -223,7 +230,10 @@ export function HostActionsPanel({
         disabled={!allowRestart}
         icon={<ReloadOutlined />}
         style={actionButtonStyle}
-        onClick={onRestart}
+        onClick={() => {
+          closeMore();
+          onRestart();
+        }}
       >
         Restart
       </Button>
@@ -234,7 +244,10 @@ export function HostActionsPanel({
           disabled={hostOpActive}
           icon={<ToolOutlined />}
           style={actionButtonStyle}
-          onClick={() => selfHost.onSetup(host)}
+          onClick={() => {
+            closeMore();
+            selfHost.onSetup(host);
+          }}
         >
           Setup / reconnect
         </Button>
@@ -250,7 +263,10 @@ export function HostActionsPanel({
           type="text"
           icon={<InfoCircleOutlined />}
           style={actionButtonStyle}
-          onClick={onDetails}
+          onClick={() => {
+            closeMore();
+            onDetails();
+          }}
         >
           Details
         </Button>
@@ -261,7 +277,10 @@ export function HostActionsPanel({
         icon={<EditOutlined />}
         disabled={!canManageLifecycle || isDeleted}
         style={actionButtonStyle}
-        onClick={onEdit}
+        onClick={() => {
+          closeMore();
+          onEdit();
+        }}
       >
         Edit settings
       </Button>
@@ -271,7 +290,10 @@ export function HostActionsPanel({
           description="This forces an immediate cloud reconcile for this host's provider and updates the host row if reality drifted."
           okText="Refresh"
           cancelText="Cancel"
-          onConfirm={onRefreshCloudStatus}
+          onConfirm={() => {
+            closeMore();
+            onRefreshCloudStatus();
+          }}
         >
           <Button
             block
@@ -294,12 +316,13 @@ export function HostActionsPanel({
         disabled={isDeleted || hostOpActive}
         icon={<StopOutlined />}
         style={actionButtonStyle}
-        onClick={() =>
+        onClick={() => {
+          closeMore();
           confirmHostDrain({
             host,
             onConfirm: onDrain,
-          })
-        }
+          });
+        }}
       >
         Drain
       </Button>
@@ -308,7 +331,10 @@ export function HostActionsPanel({
           title="Cancel backups for this host?"
           okText="Cancel backups"
           cancelText="Keep running"
-          onConfirm={() => onCancelOp?.(hostOp.op_id)}
+          onConfirm={() => {
+            closeMore();
+            onCancelOp?.(hostOp.op_id);
+          }}
         >
           <Button
             block
@@ -331,7 +357,10 @@ export function HostActionsPanel({
           okText={deleteOkText}
           cancelText="Cancel"
           okButtonProps={{ danger: true }}
-          onConfirm={() => onDelete()}
+          onConfirm={() => {
+            closeMore();
+            onDelete();
+          }}
           disabled={isDeleted || hostOpActive}
         >
           <Button
@@ -353,12 +382,13 @@ export function HostActionsPanel({
           disabled={isDeleted || hostOpActive}
           icon={<DeleteOutlined />}
           style={actionButtonStyle}
-          onClick={() =>
+          onClick={() => {
+            closeMore();
             confirmHostDeprovision({
               host,
               onConfirm: onDelete,
-            })
-          }
+            });
+          }}
         >
           {deleteLabel}
         </Button>
@@ -380,9 +410,16 @@ export function HostActionsPanel({
     <Space
       direction="vertical"
       size={6}
-      style={{ maxWidth: mode === "card" ? undefined : 220, width: "100%" }}
+      style={{ maxWidth: mode === "card" ? undefined : 260, width: "100%" }}
     >
-      <Space size={6} wrap style={{ width: "100%" }}>
+      <Space
+        size={6}
+        wrap={mode === "card"}
+        style={{
+          width: "100%",
+          flexWrap: mode === "card" ? undefined : "nowrap",
+        }}
+      >
         <Button
           size="small"
           type={primaryAction.type}
@@ -414,6 +451,8 @@ export function HostActionsPanel({
         <Popover
           trigger="click"
           placement="bottomRight"
+          open={moreOpen}
+          onOpenChange={setMoreOpen}
           content={moreActions}
           overlayInnerStyle={{ padding: 10 }}
         >
