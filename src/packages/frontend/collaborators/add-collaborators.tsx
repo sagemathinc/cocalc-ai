@@ -89,6 +89,12 @@ type State =
   | "invited_manual"
   | "invited_errors";
 
+interface ManualInviteLink {
+  email_address: string;
+  reason?: string;
+  invite_urls: string[];
+}
+
 export const AddCollaborators: React.FC<Props> = ({
   autoFocus,
   project_id,
@@ -133,6 +139,9 @@ export const AddCollaborators: React.FC<Props> = ({
   const [email_body_editing, set_email_body_editing] = useState<boolean>(false);
   const [customize_email, set_customize_email] = useState<boolean>(false);
   const [invite_result, set_invite_result] = useState<string>("");
+  const [manual_invite_links, set_manual_invite_links] = useState<
+    ManualInviteLink[]
+  >([]);
 
   const isMountedRef = useIsMountedRef();
 
@@ -156,6 +165,8 @@ export const AddCollaborators: React.FC<Props> = ({
     set_email_body_error("");
     set_email_body_editing(false);
     set_customize_email(false);
+    set_invite_result("");
+    set_manual_invite_links([]);
     set_select_open(false);
   }
 
@@ -343,7 +354,7 @@ export const AddCollaborators: React.FC<Props> = ({
 
   async function add_selected(): Promise<void> {
     const errors: string[] = [];
-    const manualDeliveryMessages: string[] = [];
+    const manualDeliveryLinks: ManualInviteLink[] = [];
     const number_selected = selected_entries.length;
     for (const x of selected_entries) {
       try {
@@ -353,11 +364,11 @@ export const AddCollaborators: React.FC<Props> = ({
             .map((invite) => invite.invite_url)
             .filter((url) => !!url);
           if (result?.manual_delivery_required && inviteLinks.length > 0) {
-            const prefix =
-              result.email_blocked_reason === "email_not_configured"
-                ? `Email is not configured for this site. To add ${x}, send them this invite link:`
-                : `To add ${x}, send them this invite link:`;
-            manualDeliveryMessages.push(`${prefix}\n${inviteLinks.join("\n")}`);
+            manualDeliveryLinks.push({
+              email_address: x,
+              invite_urls: inviteLinks,
+              reason: result.email_blocked_reason,
+            });
           }
         } else if (is_valid_uuid_string(x)) {
           await invite_collaborator(x);
@@ -375,8 +386,9 @@ export const AddCollaborators: React.FC<Props> = ({
     if (errors.length > 0) {
       set_invite_result(errors.join("\n"));
       set_state("invited_errors");
-    } else if (manualDeliveryMessages.length > 0) {
-      set_invite_result(manualDeliveryMessages.join("\n\n"));
+    } else if (manualDeliveryLinks.length > 0) {
+      set_manual_invite_links(manualDeliveryLinks);
+      set_invite_result("");
       set_state("invited_manual");
     } else {
       set_invite_result(
@@ -442,21 +454,44 @@ export const AddCollaborators: React.FC<Props> = ({
     return result;
   }
 
-  function send_email_invite(): void {
+  async function send_email_invite(): Promise<void> {
     if (project == null) return;
-    const { subject, replyto, replyto_name } = sender_info();
-    project_actions.invite_collaborators_by_email(
-      project_id,
-      email_to,
-      email_body,
-      subject,
-      false,
-      replyto,
-      replyto_name,
-    );
-    set_email_to("");
-    set_email_body("");
+    const emails = email_to
+      .split(",")
+      .map((x) => x.trim())
+      .filter((x) => x.length > 0);
+    const errors: string[] = [];
+    const manualDeliveryLinks: ManualInviteLink[] = [];
+    for (const email of emails) {
+      try {
+        const result = await invite_noncloud_collaborator(email, true);
+        const inviteLinks = (result?.invites ?? [])
+          .map((invite) => invite.invite_url)
+          .filter((url) => !!url);
+        if (result?.manual_delivery_required && inviteLinks.length > 0) {
+          manualDeliveryLinks.push({
+            email_address: email,
+            invite_urls: inviteLinks,
+            reason: result.email_blocked_reason,
+          });
+        }
+      } catch (err) {
+        errors.push(`Error inviting ${email} - ${err}`);
+      }
+    }
     reset();
+    if (errors.length > 0) {
+      set_invite_result(errors.join("\n"));
+      set_state("invited_errors");
+    } else if (manualDeliveryLinks.length > 0) {
+      set_manual_invite_links(manualDeliveryLinks);
+      set_state("invited_manual");
+    } else {
+      set_invite_result(
+        `${emails.length} ${plural(emails.length, "invitation")} created.`,
+      );
+      set_state("invited");
+    }
   }
 
   function check_email_body(value: string): void {
@@ -566,7 +601,7 @@ export const AddCollaborators: React.FC<Props> = ({
             <Gap />
             <Button
               type="primary"
-              onClick={send_email_invite}
+              onClick={() => void send_email_invite()}
               disabled={!!email_body_editing}
             >
               Send Invitation
@@ -786,7 +821,7 @@ export const AddCollaborators: React.FC<Props> = ({
           state == "invited_errors"
             ? "error"
             : state == "invited_manual"
-              ? "warning"
+              ? "success"
               : "success"
         }
         message={
@@ -796,12 +831,74 @@ export const AddCollaborators: React.FC<Props> = ({
               ? "Invitation failed"
               : "Invitation created"
         }
-        description={
-          <div style={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}>
-            {invite_result}
-          </div>
-        }
+        description={render_invite_result_description()}
       />
+    );
+  }
+
+  function render_invite_result_description(): React.JSX.Element {
+    if (state === "invited_manual" && manual_invite_links.length > 0) {
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div>
+            Email was not sent automatically. Send the invite link through
+            email, Canvas, Slack, chat, or another trusted channel.
+          </div>
+          {manual_invite_links.map((entry, index) => (
+            <div
+              key={`${entry.email_address}:${index}`}
+              style={{
+                background: "rgba(255,255,255,0.75)",
+                border: `1px solid ${COLORS.GRAY_LL}`,
+                borderRadius: 8,
+                padding: 10,
+              }}
+            >
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                {entry.email_address}
+              </div>
+              {entry.reason === "email_not_configured" && (
+                <div style={{ color: COLORS.GRAY_M, marginBottom: 8 }}>
+                  Email is not configured for this site.
+                </div>
+              )}
+              {entry.invite_urls.map((url) => (
+                <div
+                  key={url}
+                  style={{
+                    alignItems: "center",
+                    display: "flex",
+                    gap: 8,
+                    minWidth: 0,
+                  }}
+                >
+                  <Input readOnly value={url} />
+                  <Button
+                    onClick={() => {
+                      void navigator.clipboard.writeText(url);
+                      alert_message({
+                        type: "success",
+                        message: "Invite link copied.",
+                      });
+                    }}
+                  >
+                    Copy link
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ))}
+          <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
+            Anyone with an invite link can accept it until it expires or is
+            revoked. You can revoke pending invitations below.
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div style={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}>
+        {invite_result}
+      </div>
     );
   }
 

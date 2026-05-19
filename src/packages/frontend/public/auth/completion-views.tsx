@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { Alert, Button, Flex, Input, Spin, Typography } from "antd";
 
 import type { ProjectCollabInviteRow } from "@cocalc/conat/hub/api/projects";
+import { postAuthApi } from "@cocalc/frontend/auth/api";
 import api from "@cocalc/frontend/client/api";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
@@ -220,11 +221,17 @@ export function PublicVerifyEmailView({
 }
 
 export function PublicRedeemProjectInviteView({
+  currentAccountDisplayName,
+  currentAccountEmailAddress,
+  currentAccountId,
   inviteId,
   isAuthenticated = false,
   projectId,
   token,
 }: {
+  currentAccountDisplayName?: string;
+  currentAccountEmailAddress?: string;
+  currentAccountId?: string;
   inviteId: string;
   isAuthenticated?: boolean;
   projectId: string;
@@ -240,6 +247,16 @@ export function PublicRedeemProjectInviteView({
   const [submitting, setSubmitting] = useState<
     "" | "accept" | "decline" | "block"
   >("");
+  const [signingOut, setSigningOut] = useState(false);
+
+  const accountLabel = [
+    currentAccountEmailAddress?.trim() || currentAccountId?.trim(),
+    currentAccountDisplayName?.trim()
+      ? `(${currentAccountDisplayName.trim()})`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   useEffect(() => {
     let cancelled = false;
@@ -314,6 +331,22 @@ export function PublicRedeemProjectInviteView({
     }
   }
 
+  async function signOutToSwitchAccount(): Promise<void> {
+    setSigningOut(true);
+    setError("");
+    try {
+      await postAuthApi({
+        endpoint: "accounts/sign-out",
+        body: { all: false },
+      });
+      window.location.reload();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSigningOut(false);
+    }
+  }
+
   if (!isAuthenticated) {
     return (
       <Flex vertical gap={16}>
@@ -363,7 +396,36 @@ export function PublicRedeemProjectInviteView({
         <Flex vertical gap={12}>
           <Alert
             title="Confirm project invite"
-            description="Only accept this invite if you trust the person who sent it. You can accept with this signed-in CoCalc account even if the email address that received the link is different."
+            description={
+              <Flex vertical gap={8}>
+                <span>
+                  Only accept this invite if you trust the person who sent it.
+                  You can accept with this signed-in CoCalc account even if the
+                  email address that received the link is different.
+                </span>
+                <span>
+                  This browser is signed in
+                  {accountLabel ? (
+                    <>
+                      {" "}
+                      as <Text strong>{accountLabel}</Text>
+                    </>
+                  ) : null}
+                  . If you want to accept using a different account,{" "}
+                  <Button
+                    disabled={signingOut || !!submitting}
+                    loading={signingOut}
+                    size="small"
+                    type="link"
+                    style={{ padding: 0 }}
+                    onClick={() => void signOutToSwitchAccount()}
+                  >
+                    sign out first
+                  </Button>
+                  , then sign in with the account you want to use.
+                </span>
+              </Flex>
+            }
             showIcon
             type="info"
           />

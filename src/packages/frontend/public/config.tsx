@@ -11,6 +11,9 @@ import { SITE_NAME } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 export interface PublicConfig {
+  account_display_name?: string;
+  account_email_address?: string;
+  account_id?: string;
   help_email?: string;
   imprint?: string;
   is_admin?: boolean;

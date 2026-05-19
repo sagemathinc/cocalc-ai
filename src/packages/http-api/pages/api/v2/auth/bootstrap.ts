@@ -26,9 +26,15 @@ export default async function bootstrap(req, res) {
   const account = await getClusterAccountById(account_id);
   const home_bay_id =
     `${account?.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+  const display_name =
+    `${account?.name ?? ""}`.trim() ||
+    `${account?.first_name ?? ""} ${account?.last_name ?? ""}`.trim() ||
+    undefined;
   res.json({
     signed_in: true,
     account_id,
+    email_address: account?.email_address,
+    display_name,
     home_bay_id,
     home_bay_url: await getBayPublicOriginForRequest(req, home_bay_id),
     impersonation: await getImpersonationBootstrapInfo({ req, account_id }),

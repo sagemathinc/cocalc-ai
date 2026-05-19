@@ -465,6 +465,54 @@ describe("PublicAuthApp", () => {
     });
   });
 
+  it("shows the signed-in account before accepting a project invite", async () => {
+    mockedApi.mockResolvedValueOnce({
+      invite: {
+        invite_id: "77777777-7777-4777-8777-777777777777",
+        inviter_name: "Ada Lovelace",
+        project_id: "22222222-2222-4222-8222-222222222222",
+        project_title: "Research Project",
+        status: "pending",
+      },
+    } as any);
+    mockedPostAuthApi.mockResolvedValueOnce({ signed_out: true } as any);
+
+    render(
+      <PublicAuthApp
+        config={config({
+          account_display_name: "Alice Example",
+          account_email_address: "alice@example.com",
+          account_id: "acct-alice",
+          is_authenticated: true,
+        })}
+        initialRoute={{
+          inviteId: "77777777-7777-4777-8777-777777777777",
+          kind: "project-invite",
+          projectId: "22222222-2222-4222-8222-222222222222",
+          token: "secret",
+        }}
+      />,
+    );
+
+    expect(
+      await screen.findByText(/This browser is signed in as/),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("alice@example.com (Alice Example)"),
+    ).not.toBeNull();
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => {
+      // jsdom does not implement full-page reloads.
+    });
+    fireEvent.click(screen.getByRole("button", { name: "sign out first" }));
+    await waitFor(() =>
+      expect(mockedPostAuthApi).toHaveBeenCalledWith({
+        endpoint: "accounts/sign-out",
+        body: { all: false },
+      }),
+    );
+    consoleError.mockRestore();
+  });
+
   it("accepts project invite links only after clicking Accept", async () => {
     mockedApi
       .mockResolvedValueOnce({

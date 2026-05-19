@@ -81,7 +81,11 @@ function titleForRoute(route: PublicAuthRoute, siteName: string): string {
   }
 }
 
-function subtitleForRoute(route: PublicAuthRoute, siteName: string): string {
+function subtitleForRoute(
+  route: PublicAuthRoute,
+  siteName: string,
+  isAuthenticated?: boolean,
+): string {
   switch (route.kind) {
     case "sso-detail":
     case "sso-index":
@@ -97,6 +101,9 @@ function subtitleForRoute(route: PublicAuthRoute, siteName: string): string {
     case "redeem":
       return `Sign in or create an account to apply voucher credit to your ${siteName} account.`;
     case "project-invite":
+      if (isAuthenticated) {
+        return `Review this ${siteName} project invite before accepting it.`;
+      }
       return `Sign in or create an account to accept this ${siteName} project invite.`;
     default:
       return siteName;
@@ -157,7 +164,7 @@ export default function PublicAuthApp({
     <PublicPage active="auth" config={config} title={title}>
       <PublicAuthPageShell
         cardWidth={cardWidthForRoute(route)}
-        subtitle={subtitleForRoute(route, siteName)}
+        subtitle={subtitleForRoute(route, siteName, config?.is_authenticated)}
       >
         {route.kind === "auth-form" && route.view === "sign-in" && (
           <PublicSignInForm
@@ -243,6 +250,9 @@ export default function PublicAuthApp({
           <>
             <PublicRedeemProjectInviteView
               inviteId={route.inviteId}
+              currentAccountDisplayName={config?.account_display_name}
+              currentAccountEmailAddress={config?.account_email_address}
+              currentAccountId={config?.account_id}
               isAuthenticated={!!config?.is_authenticated}
               projectId={route.projectId}
               token={route.token}

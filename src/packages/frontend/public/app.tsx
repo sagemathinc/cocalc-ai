@@ -189,6 +189,9 @@ export default function PublicApp({
         if (cancelled || typeof bootstrap?.signed_in !== "boolean") return;
         setResolvedConfig((current) => ({
           ...(current ?? config ?? {}),
+          account_display_name: bootstrap?.display_name,
+          account_email_address: bootstrap?.email_address,
+          account_id: bootstrap?.account_id,
           is_authenticated: !!bootstrap?.signed_in,
         }));
       } catch {

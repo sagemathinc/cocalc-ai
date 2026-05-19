@@ -27,6 +27,8 @@ export type SecondFactorMethod = "totp" | "recovery_code" | "passkey";
 export type AuthBootstrapResponse = {
   signed_in: boolean;
   account_id?: string;
+  email_address?: string;
+  display_name?: string;
   home_bay_id?: string;
   home_bay_url?: string;
   impersonation?: {
