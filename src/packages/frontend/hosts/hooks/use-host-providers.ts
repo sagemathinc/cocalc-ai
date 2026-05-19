@@ -11,9 +11,14 @@ import {
 type UseHostProvidersArgs = {
   flags: HostProviderFlags;
   form: FormInstance;
+  manageFormProvider?: boolean;
 };
 
-export const useHostProviders = ({ form, flags }: UseHostProvidersArgs) => {
+export const useHostProviders = ({
+  form,
+  flags,
+  manageFormProvider = true,
+}: UseHostProvidersArgs) => {
   const [refreshProvider, setRefreshProvider] = useState<HostProvider>("none");
   const selectedProvider = Form.useWatch("provider", form) as
     | HostProvider
@@ -31,6 +36,7 @@ export const useHostProviders = ({ form, flags }: UseHostProvidersArgs) => {
   const refreshProviders = useMemo(() => getRefreshProviders(flags), [flags]);
 
   useEffect(() => {
+    if (!manageFormProvider) return;
     const currentProvider = form.getFieldValue("provider") as
       | HostProvider
       | undefined;
@@ -40,7 +46,7 @@ export const useHostProviders = ({ form, flags }: UseHostProvidersArgs) => {
     } else if (!provider) {
       form.setFieldsValue({ provider: providerOptions[0]?.value ?? "none" });
     }
-  }, [selectedProvider, flags, providerOptions, form]);
+  }, [selectedProvider, flags, providerOptions, form, manageFormProvider]);
 
   useEffect(() => {
     if (!isProviderEnabled(refreshProvider, flags)) {

@@ -11,11 +11,19 @@ type HostCreateAdvancedFieldsProps = {
   provider: HostCreateViewModel["provider"];
   showSpotFields: boolean;
   nebiusSpotSupported: boolean;
+  draftManaged?: boolean;
+  onDraftPatch?: (patch: Record<string, any>) => void;
 };
 
 export const HostCreateAdvancedFields: React.FC<
   HostCreateAdvancedFieldsProps
-> = ({ provider, showSpotFields, nebiusSpotSupported }) => {
+> = ({
+  provider,
+  showSpotFields,
+  nebiusSpotSupported,
+  draftManaged = false,
+  onDraftPatch,
+}) => {
   const { selectedProvider, fields, storage } = provider;
   const form = Form.useFormInstance();
   const diskTypeOptions = getDiskTypeOptions(selectedProvider);
@@ -32,6 +40,7 @@ export const HostCreateAdvancedFields: React.FC<
   const watchedDiskType = Form.useWatch("disk_type", form);
 
   React.useEffect(() => {
+    if (draftManaged) return;
     if (!diskTypeOptions.length) return;
     const hasDiskType =
       watchedDiskType &&
@@ -39,7 +48,7 @@ export const HostCreateAdvancedFields: React.FC<
     if (!hasDiskType) {
       form.setFieldsValue({ disk_type: defaultDiskType });
     }
-  }, [defaultDiskType, diskTypeOptions, form, watchedDiskType]);
+  }, [defaultDiskType, diskTypeOptions, draftManaged, form, watchedDiskType]);
 
   const renderField = (field: HostFieldId) => {
     const fieldOptions = options[field] ?? [];
@@ -56,7 +65,7 @@ export const HostCreateAdvancedFields: React.FC<
           name={field}
           label={label}
           tooltip={tooltip}
-          initialValue={fieldOptions[0]?.value}
+          initialValue={draftManaged ? undefined : fieldOptions[0]?.value}
         >
           <HostOptionsSelect
             options={fieldOptions}
@@ -79,7 +88,7 @@ export const HostCreateAdvancedFields: React.FC<
             <Form.Item
               name="pricing_model"
               label="Pricing model"
-              initialValue="on_demand"
+              initialValue={draftManaged ? undefined : "on_demand"}
               extra={
                 selectedProvider === "nebius" && !nebiusSpotSupported
                   ? "Spot is unavailable for the selected Nebius instance type."
@@ -103,7 +112,7 @@ export const HostCreateAdvancedFields: React.FC<
             <Form.Item
               name="interruption_restore_policy"
               label="Interruption restore"
-              initialValue="immediate"
+              initialValue={draftManaged ? undefined : "immediate"}
               tooltip="For spot hosts, immediately restoring the host is strongly preferred because users otherwise lose access until a backup restore or manual recovery."
             >
               <Select
@@ -114,7 +123,11 @@ export const HostCreateAdvancedFields: React.FC<
               />
             </Form.Item>
           </Col>
-          <HostSpotRecoveryFields visible={showSpotFields} />
+          <HostSpotRecoveryFields
+            visible={showSpotFields}
+            draftManaged={draftManaged}
+            onDraftPatch={onDraftPatch}
+          />
         </>
       )}
       {schema.advanced.map(renderField)}
@@ -123,7 +136,7 @@ export const HostCreateAdvancedFields: React.FC<
           <Form.Item
             name="storage_mode"
             label="Storage mode"
-            initialValue="persistent"
+            initialValue={draftManaged ? undefined : "persistent"}
             tooltip={
               selectedProvider === "gcp"
                 ? "Persistent disk only for GCP hosts in this release. Local SSD and newer Hyperdisk-style storage are not offered yet."
@@ -149,7 +162,7 @@ export const HostCreateAdvancedFields: React.FC<
             <Form.Item
               name="disk_type"
               label={<DiskTypeLabel provider={selectedProvider} />}
-              initialValue={defaultDiskType}
+              initialValue={draftManaged ? undefined : defaultDiskType}
             >
               <Select
                 options={diskTypeOptions}

@@ -620,6 +620,7 @@ export const useHostsPageViewModel = () => {
   } = useHostProviders({
     form,
     flags,
+    manageFormProvider: false,
   });
   const enabledProviders = providerOptions.map((option) => option.value);
   const {
@@ -1551,6 +1552,7 @@ export const useHostsPageViewModel = () => {
     selectedRegionPreference,
     selectedPriceDisplay,
     enabledProviders,
+    manageFormValues: false,
   });
 
   const fundingModeOptions = React.useMemo(

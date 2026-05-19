@@ -6,6 +6,7 @@ import type {
   HostPricingModel,
   HostSpotRecoveryPolicy,
 } from "@cocalc/conat/hub/api/hosts";
+import type { R2Region } from "@cocalc/util/consts";
 import { getDiskTypeOptions } from "../constants";
 import type { HostProvider } from "../types";
 import {
@@ -24,6 +25,10 @@ import {
   activeSpotRecoveryPolicy,
   defaultRestorePolicy,
 } from "../utils/spot-recovery-policy";
+import {
+  markRecommendedRegionOption,
+  sortRegionOptionsByPreference,
+} from "../utils/region-ranking";
 
 export type HostCreatePresetId =
   | "balanced-cpu"
@@ -72,6 +77,7 @@ export type HostCreateDraft = {
 export type HostCreateDraftContext = {
   enabledProviders: HostProvider[];
   catalogByProvider?: Partial<Record<HostProvider, HostCatalog | undefined>>;
+  preferredRegion?: R2Region;
   billing?: {
     fundingModeOptions?: Array<{ value: HostFundingMode }>;
     defaultFundingMode?: HostFundingMode;
@@ -139,11 +145,24 @@ const getFieldOptions = (
   provider: HostProvider,
   draft: HostCreateDraft,
   context: HostCreateDraftContext,
-) =>
-  getProviderOptions(provider, getCatalog(provider, context), {
+) => {
+  const options = getProviderOptions(provider, getCatalog(provider, context), {
     ...draft,
     price_display: draft.price_display,
   } satisfies ProviderSelection);
+  const regionOptions = options.region ?? [];
+  if (regionOptions.length <= 1) return options;
+  return {
+    ...options,
+    region: markRecommendedRegionOption(
+      sortRegionOptionsByPreference({
+        options: regionOptions,
+        preference: draft.region_preference,
+        preferredRegion: context.preferredRegion,
+      }),
+    ),
+  };
+};
 
 const similarName = (name: string | undefined): string => {
   const base = (name ?? DEFAULT_NAME).trim() || DEFAULT_NAME;

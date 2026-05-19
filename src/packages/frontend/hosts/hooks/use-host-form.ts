@@ -51,6 +51,7 @@ type UseHostFormArgs = {
   selectedRegionPreference?: string;
   selectedPriceDisplay?: string;
   enabledProviders: HostProvider[];
+  manageFormValues?: boolean;
 };
 
 const FIELD_LABELS: Record<HostFieldId, string> = {
@@ -91,6 +92,7 @@ export const useHostForm = ({
   selectedRegionPreference,
   selectedPriceDisplay,
   enabledProviders,
+  manageFormValues = true,
 }: UseHostFormArgs) => {
   const prevProviderRef = useRef<HostProvider | undefined>(undefined);
   const provider =
@@ -231,6 +233,7 @@ export const useHostForm = ({
   );
 
   useEffect(() => {
+    if (!manageFormValues) return;
     const currentStorageMode = form.getFieldValue("storage_mode");
     if (!supportsPersistentStorage) {
       if (currentStorageMode !== "ephemeral") {
@@ -247,9 +250,10 @@ export const useHostForm = ({
         form.setFieldsValue({ storage_mode: nextStorageMode });
       }
     }
-  }, [supportsPersistentStorage, storageModeOptions, form]);
+  }, [supportsPersistentStorage, storageModeOptions, form, manageFormValues]);
 
   useEffect(() => {
+    if (!manageFormValues) return;
     if (!selectedProvider || selectedProvider === "none") return;
     const updates: Record<string, any> = {};
     const providerChanged = provider !== prevProviderRef.current;
@@ -311,6 +315,7 @@ export const useHostForm = ({
     selectedGpu,
     fieldSchema,
     fieldOptions,
+    manageFormValues,
   ]);
 
   const applyRecommendation = (rec: HostRecommendation) => {

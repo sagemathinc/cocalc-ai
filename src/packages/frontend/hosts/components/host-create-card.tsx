@@ -2,7 +2,6 @@ import {
   Alert,
   Button,
   Card,
-  Divider,
   Form,
   Popconfirm,
   Select,
@@ -10,14 +9,17 @@ import {
   Spin,
   Typography,
 } from "antd";
-import { React } from "@cocalc/frontend/app-framework";
+import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { mapCountryRegionToR2Region } from "@cocalc/util/consts";
+import type { Host } from "@cocalc/conat/hub/api/hosts";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import {
-  applyPreset,
   getAvailablePresets,
+  type HostCreateDraft,
   type HostCreateDraftContext,
 } from "../create/host-create-draft";
+import { useHostCreateDraft } from "../create/use-host-create-draft";
 import {
   getProviderPriceEstimate,
   type HostFieldId,
@@ -31,9 +33,17 @@ import { HostPriceBreakdown } from "./host-price-breakdown";
 
 type HostCreateCardProps = {
   vm: HostCreateViewModel;
+  initialDraft?: HostCreateDraft | null;
+  sourceHost?: Pick<Host, "id" | "name"> | null;
+  onInitialDraftConsumed?: () => void;
 };
 
-export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
+export const HostCreateCard: React.FC<HostCreateCardProps> = ({
+  vm,
+  initialDraft,
+  sourceHost,
+  onInitialDraftConsumed,
+}) => {
   const { permissions, form, provider, billing, catalogRefresh } = vm;
   const pricingSettings = useHostPricingSettings();
   const { isAdmin, canCreateHosts } = permissions;
@@ -54,12 +64,22 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
   const hasExternalProviders = refreshProviders.some(
     (entry) => entry.value !== "self-host",
   );
+  const cloudflareCountry = useTypedRedux("customize", "country");
+  const cloudflareRegionCode = useTypedRedux(
+    "customize",
+    "cloudflare_region_code",
+  );
+  const preferredRegion = React.useMemo(
+    () => mapCountryRegionToR2Region(cloudflareCountry, cloudflareRegionCode),
+    [cloudflareCountry, cloudflareRegionCode],
+  );
   const draftContext = React.useMemo<HostCreateDraftContext>(
     () => ({
       enabledProviders: provider.providerOptions.map((option) => option.value),
       catalogByProvider: provider.catalog
         ? { [provider.selectedProvider]: provider.catalog }
         : {},
+      preferredRegion,
       billing: {
         fundingModeOptions: billing.fundingModeOptions,
         defaultFundingMode: billing.defaultFundingMode,
@@ -71,17 +91,24 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
       provider.catalog,
       provider.providerOptions,
       provider.selectedProvider,
+      preferredRegion,
     ],
   );
+  const draftState = useHostCreateDraft({
+    form: formInstance,
+    context: draftContext,
+    initialDraft,
+    onInitialDraftConsumed,
+  });
   const onProviderChange = React.useCallback(
     (value: string) => {
       const nextProvider = value as HostProvider;
-      formInstance.setFieldsValue({ provider: nextProvider });
+      draftState.setProvider(nextProvider);
       if (refreshProviders.some((entry) => entry.value === nextProvider)) {
         setRefreshProvider(nextProvider);
       }
     },
-    [formInstance, refreshProviders, setRefreshProvider],
+    [draftState, refreshProviders, setRefreshProvider],
   );
   const refreshCatalogAndNotify = async () => {
     await refreshCatalog(provider.selectedProvider);
@@ -92,7 +119,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
       const runCreate = async () => {
         const created = await onCreate(vals, { start });
         if (!created) return;
-        formInstance.resetFields();
+        draftState.resetDefault();
         onCreated?.();
       };
       if (runFreshAuthAction) {
@@ -115,55 +142,15 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
   const watchedPricingModel = Form.useWatch("pricing_model", formInstance);
   const watchedPriceDisplay = Form.useWatch("price_display", formInstance);
   const watchedFundingMode = Form.useWatch("funding_mode", formInstance);
-  const currentDraftValues = React.useMemo(
-    () => ({
-      ...formInstance.getFieldsValue(true),
-      provider: provider.selectedProvider,
-      region: watchedRegion,
-      zone: watchedZone,
-      machine_type: watchedMachineType,
-      gpu_type: watchedGpuType,
-      pricing_model: watchedPricingModel,
-      storage_mode: watchedStorageMode,
-      disk_type: watchedDiskType,
-      disk_gb: watchedDiskGb,
-      disk: watchedDisk,
-      funding_mode: watchedFundingMode,
-      price_display: watchedPriceDisplay === "monthly" ? "monthly" : "hourly",
-    }),
-    [
-      formInstance,
-      provider.selectedProvider,
-      watchedDisk,
-      watchedDiskGb,
-      watchedDiskType,
-      watchedFundingMode,
-      watchedGpuType,
-      watchedMachineType,
-      watchedPriceDisplay,
-      watchedPricingModel,
-      watchedRegion,
-      watchedStorageMode,
-      watchedZone,
-    ],
-  );
   const presets = React.useMemo(
-    () => getAvailablePresets(currentDraftValues, draftContext),
-    [currentDraftValues, draftContext],
+    () => getAvailablePresets(draftState.draft, draftContext),
+    [draftContext, draftState.draft],
   );
   const applyCreatePreset = React.useCallback(
     (presetId: (typeof presets)[number]["id"]) => {
-      const next = applyPreset(
-        presetId,
-        {
-          ...formInstance.getFieldsValue(true),
-          provider: provider.selectedProvider,
-        },
-        draftContext,
-      );
-      formInstance.setFieldsValue(next);
+      draftState.applyPreset(presetId);
     },
-    [draftContext, formInstance, provider.selectedProvider],
+    [draftState],
   );
   const selectedDiskGb =
     typeof watchedDiskGb === "number" && Number.isFinite(watchedDiskGb)
@@ -338,14 +325,179 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
     !!provider.catalogLoading;
   const showCatalogRefreshGate =
     !showCatalogLoading && catalogMissingForProvider && hasExternalProviders;
-
-  return (
+  const providerSelectForm = (
+    <HostCreateForm
+      form={formInstance}
+      canCreateHosts={canCreateHosts}
+      provider={provider}
+      billing={billing}
+      onProviderChange={onProviderChange}
+      onValuesChange={draftState.onValuesChange}
+      draftManaged
+      showOnlyProviderSelect
+    />
+  );
+  const fullCreateForm = (
+    <HostCreateForm
+      form={formInstance}
+      canCreateHosts={canCreateHosts}
+      provider={provider}
+      billing={billing}
+      onProviderChange={onProviderChange}
+      onValuesChange={draftState.onValuesChange}
+      draftManaged
+    />
+  );
+  const priceSummary =
+    provider.selectedProvider !== "none" &&
+    provider.selectedProvider !== "self-host" &&
+    !livePriceEstimate ? (
+      supportsCatalogPricing && priceSelectionComplete ? (
+        <Alert
+          type="warning"
+          showIcon
+          title="Configuration unavailable"
+          description="Pricing is unavailable for this region, machine type, or disk choice, so CoCalc cannot provision it."
+        />
+      ) : (
+        <Typography.Text type="secondary">
+          {supportsCatalogPricing
+            ? "Estimated cost updates when region, machine type, pricing model, and disk are fully selected."
+            : "Catalog pricing is not wired for this provider yet."}
+        </Typography.Text>
+      )
+    ) : livePriceEstimate ? (
+      <HostPriceBreakdown
+        displayMode={watchedPriceDisplay === "monthly" ? "monthly" : "hourly"}
+        estimate={livePriceEstimate}
+      />
+    ) : (
+      <Typography.Text type="secondary">
+        No cloud price estimate is needed for this host type.
+      </Typography.Text>
+    );
+  const createActions = (
+    <Space orientation="vertical" style={{ width: "100%" }} size="small">
+      <Popconfirm
+        title={
+          <div>
+            <div>Create this host without starting it?</div>
+            <div>
+              It will be saved in the host list, but no VM will be provisioned
+              until you start it.
+            </div>
+          </div>
+        }
+        okText="Create"
+        cancelText="Cancel"
+        onConfirm={() => confirmCreateHost(false)}
+        disabled={createDisabled}
+      >
+        <Button loading={creating} disabled={createDisabled} block>
+          Create Server (don't start)
+        </Button>
+      </Popconfirm>
+      <Popconfirm
+        title={
+          <div>
+            <div>Create and start this host?</div>
+            <div>
+              {provider.selectedProvider === "self-host"
+                ? "Setup may take a few minutes."
+                : "Provisioning may take a few minutes and can incur costs."}
+            </div>
+          </div>
+        }
+        okText="Start"
+        cancelText="Cancel"
+        onConfirm={() => confirmCreateHost(true)}
+        disabled={createDisabled}
+      >
+        <Button
+          type="primary"
+          loading={creating}
+          disabled={createDisabled}
+          block
+        >
+          Start Server
+        </Button>
+      </Popconfirm>
+    </Space>
+  );
+  const adminTools =
+    isAdmin && hasExternalProviders && !showCatalogRefreshGate ? (
+      <Space orientation="vertical" style={{ width: "100%" }} size="small">
+        <Typography.Text type="secondary">Admin tools</Typography.Text>
+        <Space size="small" wrap>
+          <Select
+            size="small"
+            value={refreshProvider}
+            onChange={(value) => value && setRefreshProvider(value)}
+            options={refreshProviders}
+            style={{ width: 160 }}
+          />
+          <Button
+            size="small"
+            onClick={refreshCatalogAndNotify}
+            loading={catalogRefreshing}
+            disabled={!refreshProviders.length}
+          >
+            Refresh catalog
+          </Button>
+        </Space>
+      </Space>
+    ) : null;
+  const presetsSection =
+    provider.selectedProvider !== "none" &&
+    provider.selectedProvider !== "self-host" ? (
+      <Card size="small" title="Presets">
+        <Space size="small" wrap>
+          {presets.map((preset) => (
+            <Button
+              key={preset.id}
+              size="small"
+              disabled={preset.disabled}
+              title={preset.disabledReason ?? preset.description}
+              onClick={() => applyCreatePreset(preset.id)}
+            >
+              {preset.label}
+            </Button>
+          ))}
+        </Space>
+      </Card>
+    ) : null;
+  const summaryPanel = (
+    <Card
+      size="small"
+      title="Summary"
+      style={{
+        position: "sticky",
+        top: 0,
+      }}
+    >
+      <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+        {noFundingModes && (
+          <Alert
+            type="warning"
+            showIcon
+            title="No billing mode available"
+            description="This account cannot currently fund billable dedicated hosts with the selected provider."
+          />
+        )}
+        {priceSummary}
+        {createActions}
+        {adminTools}
+      </Space>
+    </Card>
+  );
+  const renderShell = (main: React.ReactNode, summary: React.ReactNode) => (
     <Card
       title={
         <span>
           <Icon name="plus" /> Create host
         </span>
       }
+      styles={{ body: { padding: 16 } }}
     >
       {!canCreateHosts && (
         <Alert
@@ -355,37 +507,68 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
           style={{ marginBottom: 12 }}
         />
       )}
-      {showCatalogLoading ? (
-        <>
-          <HostCreateForm
-            form={formInstance}
-            canCreateHosts={canCreateHosts}
-            provider={provider}
-            billing={billing}
-            onProviderChange={onProviderChange}
-            showOnlyProviderSelect
-          />
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Spin size="small" />
-            <Typography.Text type="secondary">
-              Loading cloud catalog...
-            </Typography.Text>
-          </div>
-        </>
-      ) : showCatalogRefreshGate ? (
-        <>
-          <HostCreateForm
-            form={formInstance}
-            canCreateHosts={canCreateHosts}
-            provider={provider}
-            billing={billing}
-            onProviderChange={onProviderChange}
-            showOnlyProviderSelect
-          />
+      {sourceHost && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="Creating a similar host"
+          description={
+            <>
+              Based on {sourceHost.name || "host"}{" "}
+              <Typography.Text code>
+                {sourceHost.id.slice(0, 8)}
+              </Typography.Text>
+            </>
+          }
+        />
+      )}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: 16,
+          flexWrap: "wrap",
+        }}
+      >
+        <Space
+          orientation="vertical"
+          size="middle"
+          style={{ flex: "1 1 560px", minWidth: 0 }}
+        >
+          {main}
+        </Space>
+        <div style={{ flex: "0 0 300px", minWidth: 280 }}>{summary}</div>
+      </div>
+    </Card>
+  );
+
+  if (showCatalogLoading) {
+    return renderShell(
+      <Card size="small" title="Provider">
+        {providerSelectForm}
+      </Card>,
+      <Card size="small" title="Catalog">
+        <Space size="small">
+          <Spin size="small" />
+          <Typography.Text type="secondary">
+            Loading cloud catalog...
+          </Typography.Text>
+        </Space>
+      </Card>,
+    );
+  }
+
+  if (showCatalogRefreshGate) {
+    return renderShell(
+      <Card size="small" title="Provider">
+        {providerSelectForm}
+      </Card>,
+      <Card size="small" title="Catalog">
+        <Space orientation="vertical" style={{ width: "100%" }} size="middle">
           <Alert
             type="warning"
             showIcon
-            style={{ marginBottom: 12 }}
             title="Cloud catalog not loaded yet"
             description="Before creating hosts for this provider, refresh its catalog to load regions and machine types."
           />
@@ -408,146 +591,18 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
               description="Contact an admin to refresh the provider catalog before creating hosts."
             />
           )}
-        </>
-      ) : (
-        <>
-          <HostCreateForm
-            form={formInstance}
-            canCreateHosts={canCreateHosts}
-            provider={provider}
-            billing={billing}
-            onProviderChange={onProviderChange}
-          />
-          {provider.selectedProvider !== "none" &&
-            provider.selectedProvider !== "self-host" && (
-              <>
-                <Divider style={{ margin: "4px 0 8px" }} />
-                <Space direction="vertical" size={6} style={{ width: "100%" }}>
-                  <Typography.Text type="secondary">Presets</Typography.Text>
-                  <Space size="small" wrap>
-                    {presets.map((preset) => (
-                      <Button
-                        key={preset.id}
-                        size="small"
-                        disabled={preset.disabled}
-                        title={preset.disabledReason ?? preset.description}
-                        onClick={() => applyCreatePreset(preset.id)}
-                      >
-                        {preset.label}
-                      </Button>
-                    ))}
-                  </Space>
-                </Space>
-              </>
-            )}
-          {noFundingModes && (
-            <Alert
-              type="warning"
-              showIcon
-              style={{ marginBottom: 12 }}
-              title="No billing mode available for this host"
-              description="This account cannot currently fund billable dedicated hosts with the selected provider."
-            />
-          )}
-          <Divider style={{ margin: "8px 0" }} />
-          <Space orientation="vertical" style={{ width: "100%" }} size="small">
-            {provider.selectedProvider !== "none" &&
-              provider.selectedProvider !== "self-host" &&
-              !livePriceEstimate &&
-              (supportsCatalogPricing && priceSelectionComplete ? (
-                <Alert
-                  type="warning"
-                  showIcon
-                  title="This configuration is not available for purchase"
-                  description="Pricing is unavailable for this region, machine type, or disk choice, so CoCalc cannot provision it."
-                />
-              ) : (
-                <Typography.Text type="secondary">
-                  {supportsCatalogPricing
-                    ? "Estimated cost updates when region, machine type, pricing model, and disk are fully selected."
-                    : "Catalog pricing is not wired for this provider yet."}
-                </Typography.Text>
-              ))}
-            {livePriceEstimate && (
-              <HostPriceBreakdown
-                displayMode={
-                  watchedPriceDisplay === "monthly" ? "monthly" : "hourly"
-                }
-                estimate={livePriceEstimate}
-              />
-            )}
-            <Popconfirm
-              title={
-                <div>
-                  <div>Create this host without starting it?</div>
-                  <div>
-                    It will be saved in the host list, but no VM will be
-                    provisioned until you start it.
-                  </div>
-                </div>
-              }
-              okText="Create"
-              cancelText="Cancel"
-              onConfirm={() => confirmCreateHost(false)}
-              disabled={createDisabled}
-            >
-              <Button loading={creating} disabled={createDisabled} block>
-                Create Server (don't start)
-              </Button>
-            </Popconfirm>
-            <Popconfirm
-              title={
-                <div>
-                  <div>Create and start this host?</div>
-                  <div>
-                    {provider.selectedProvider === "self-host"
-                      ? "Setup may take a few minutes."
-                      : "Provisioning may take a few minutes and can incur costs."}
-                  </div>
-                </div>
-              }
-              okText="Start"
-              cancelText="Cancel"
-              onConfirm={() => confirmCreateHost(true)}
-              disabled={createDisabled}
-            >
-              <Button
-                type="primary"
-                loading={creating}
-                disabled={createDisabled}
-                block
-              >
-                Start Server
-              </Button>
-            </Popconfirm>
-          </Space>
-        </>
-      )}
-      {isAdmin && hasExternalProviders && !showCatalogRefreshGate && (
-        <>
-          <Divider style={{ margin: "12px 0" }} />
-          <Space orientation="vertical" style={{ width: "100%" }} size="small">
-            <Typography.Text type="secondary">Admin tools</Typography.Text>
-            <Space size="small" wrap>
-              <Select
-                size="small"
-                value={refreshProvider}
-                onChange={(value) => value && setRefreshProvider(value)}
-                options={refreshProviders}
-                style={{ width: 160 }}
-              />
-              <Button
-                size="small"
-                onClick={refreshCatalogAndNotify}
-                loading={catalogRefreshing}
-                disabled={!refreshProviders.length}
-              >
-                Refresh catalog
-              </Button>
-            </Space>
-          </Space>
-        </>
-      )}
-    </Card>
+        </Space>
+      </Card>,
+    );
+  }
+
+  return renderShell(
+    <>
+      <Card size="small" title="Configuration">
+        {fullCreateForm}
+      </Card>
+      {presetsSection}
+    </>,
+    summaryPanel,
   );
 };
