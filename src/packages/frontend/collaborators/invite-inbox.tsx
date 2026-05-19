@@ -9,6 +9,7 @@ import {
   Card,
   Collapse,
   Divider,
+  Popconfirm,
   Space,
   Tag,
   message,
@@ -132,6 +133,26 @@ function inviteeLabel(invite: ProjectCollabInviteRow): string {
   );
 }
 
+function friendlyRespondError(err: unknown): string {
+  const message = `${err}`;
+  const match = message.match(/invite is not pending \(status=([^)]+)\)/);
+  if (match == null) {
+    return message;
+  }
+  switch (match[1]) {
+    case "accepted":
+      return "Invite already accepted.";
+    case "declined":
+      return "Invite already declined.";
+    case "blocked":
+      return "Invite already blocked.";
+    case "canceled":
+      return "Invite already revoked.";
+    default:
+      return "Invite is no longer pending.";
+  }
+}
+
 export function useInviteInboxState({
   project_id,
   includeIncoming = true,
@@ -213,7 +234,11 @@ export function useInviteInboxState({
       await load();
       notifyCollabInvitesChanged(project_id);
     } catch (err) {
-      set_error(`${err}`);
+      const message = friendlyRespondError(err);
+      if (message !== `${err}`) {
+        await load();
+      }
+      set_error(message);
     } finally {
       set_busy("");
     }
@@ -590,13 +615,26 @@ export const InviteInboxPanel: React.FC<Props> = ({
                     </div>
                   )}
                 </div>
-                <Button
-                  size="small"
-                  loading={busy === `${invite.invite_id}:revoke`}
-                  onClick={() => void respond(invite.invite_id, "revoke")}
+                <Popconfirm
+                  title="Revoke this pending invitation?"
+                  description={
+                    invite.invite_source === "email"
+                      ? "The invite link will stop working."
+                      : "The invitee will no longer be able to accept this invitation."
+                  }
+                  okText="Revoke"
+                  cancelText="Cancel"
+                  okButtonProps={{ danger: true }}
+                  onConfirm={() => void respond(invite.invite_id, "revoke")}
                 >
-                  Revoke
-                </Button>
+                  <Button
+                    danger
+                    size="small"
+                    loading={busy === `${invite.invite_id}:revoke`}
+                  >
+                    Revoke
+                  </Button>
+                </Popconfirm>
                 {invite.invite_source === "email" && (
                   <Button
                     size="small"
