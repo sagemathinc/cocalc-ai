@@ -3,7 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Card, Collapse, Divider, Space, Tag } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Collapse,
+  Divider,
+  Space,
+  Tag,
+  message,
+} from "antd";
 import type {
   ProjectCollabInviteAction,
   ProjectCollabInviteBlockRow,
@@ -59,6 +68,7 @@ export type InviteInboxState = {
     invite_id: string,
     action: ProjectCollabInviteAction,
   ) => Promise<void>;
+  copyInviteLink: (invite_id: string) => Promise<void>;
   unblock: (blocked_account_id: string) => Promise<void>;
 };
 
@@ -214,6 +224,24 @@ export function useInviteInboxState({
     }
   }
 
+  async function copyInviteLink(invite_id: string) {
+    set_busy(`${invite_id}:copy`);
+    set_error("");
+    try {
+      const result =
+        await webapp_client.project_collaborators.copy_email_invite_link({
+          invite_id,
+          project_id,
+        });
+      await navigator.clipboard.writeText(result.invite_url);
+      void message.success("Invite link copied.");
+    } catch (err) {
+      set_error(`${err}`);
+    } finally {
+      set_busy("");
+    }
+  }
+
   async function unblock(blocked_account_id: string) {
     set_busy(`unblock:${blocked_account_id}`);
     set_error("");
@@ -239,6 +267,7 @@ export function useInviteInboxState({
     blocks,
     load,
     respond,
+    copyInviteLink,
     unblock,
   };
 }
@@ -466,6 +495,7 @@ export const InviteInboxPanel: React.FC<Props> = ({
     blocks,
     load,
     respond,
+    copyInviteLink,
     unblock,
   } = useInviteInboxState({
     project_id,
@@ -572,6 +602,15 @@ export const InviteInboxPanel: React.FC<Props> = ({
                 >
                   Revoke
                 </Button>
+                {invite.invite_source === "email" && (
+                  <Button
+                    size="small"
+                    loading={busy === `${invite.invite_id}:copy`}
+                    onClick={() => void copyInviteLink(invite.invite_id)}
+                  >
+                    <Icon name="copy" /> Copy Link
+                  </Button>
+                )}
               </div>
             </Card>
           );

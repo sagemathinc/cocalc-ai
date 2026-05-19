@@ -2300,7 +2300,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     const email = markdown_to_html(body);
 
     try {
-      await webapp_client.project_collaborators.invite_noncloud({
+      const result = await webapp_client.project_collaborators.invite_noncloud({
         project_id,
         title,
         link2proj,
@@ -2313,8 +2313,13 @@ export class ProjectsActions extends Actions<ProjectsState> {
       });
       notifyCollabInvitesChanged(project_id);
       if (!silent) {
+        const firstLink = result?.invites?.find(
+          (invite) => invite.invite_url,
+        )?.invite_url;
         alert_message({
-          message: `Invited ${to} to collaborate on project.`,
+          message: firstLink
+            ? `Created invite for ${to}. If email delivery is unreliable, copy the invite link from Pending invitations.`
+            : `Invited ${to} to collaborate on project.`,
         });
       }
     } catch (err) {

@@ -17,6 +17,7 @@ import {
 import {
   PublicPasswordResetDoneView,
   PublicRedeemPasswordResetView,
+  PublicRedeemProjectInviteView,
   PublicVerifyEmailView,
 } from "./completion-views";
 import {
@@ -70,6 +71,8 @@ function titleForRoute(route: PublicAuthRoute, siteName: string): string {
       return `Verify your ${siteName} email`;
     case "redeem":
       return `Redeem voucher for ${siteName}`;
+    case "project-invite":
+      return `Accept project invite for ${siteName}`;
     case "sso-detail":
     case "sso-index":
       return `${siteName} single sign-on`;
@@ -93,6 +96,8 @@ function subtitleForRoute(route: PublicAuthRoute, siteName: string): string {
       return siteName;
     case "redeem":
       return `Sign in or create an account to apply voucher credit to your ${siteName} account.`;
+    case "project-invite":
+      return `Sign in or create an account to accept this ${siteName} project invite.`;
     default:
       return siteName;
   }
@@ -111,6 +116,7 @@ function cardWidthForRoute(route: PublicAuthRoute): string | undefined {
     case "auth-verify-email":
       return "min(560px, 96vw)";
     case "redeem":
+    case "project-invite":
       return "min(720px, 96vw)";
     default:
       return undefined;
@@ -232,6 +238,24 @@ export default function PublicAuthApp({
             isAuthenticated={!!config?.is_authenticated}
             onNavigate={onNavigate}
           />
+        )}
+        {route.kind === "project-invite" && (
+          <>
+            <PublicRedeemProjectInviteView
+              inviteId={route.inviteId}
+              isAuthenticated={!!config?.is_authenticated}
+              projectId={route.projectId}
+              token={route.token}
+            />
+            {!config?.is_authenticated ? (
+              <PublicSignInForm
+                onNavigate={onNavigate}
+                redirectToPath={() =>
+                  window.location.pathname + window.location.search
+                }
+              />
+            ) : null}
+          </>
         )}
         {route.kind === "sso-index" && (
           <PublicSSOIndexView initialStrategies={initialSSOStrategies} />

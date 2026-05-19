@@ -233,9 +233,17 @@ function generateInviteToken(): string {
   return randomBytes(24).toString("base64url");
 }
 
-async function inviteUrl(invite_id: string, token: string): Promise<string> {
+async function inviteUrl({
+  project_id,
+  invite_id,
+  token,
+}: {
+  project_id: string;
+  invite_id: string;
+  token: string;
+}): Promise<string> {
   const base = (await siteURL()).replace(/\/+$/, "");
-  return `${base}/invites/project/${invite_id}?token=${encodeURIComponent(token)}`;
+  return `${base}/invites/project/${project_id}/${invite_id}?token=${encodeURIComponent(token)}`;
 }
 
 function isEmailOnlyInviteId(invite_id: string): boolean {
@@ -1667,7 +1675,11 @@ async function createEmailProjectInvite({
     if (!invite) {
       throw new Error("failed to load existing email invite");
     }
-    const url = await inviteUrl(existing.invite_id, token);
+    const url = await inviteUrl({
+      project_id,
+      invite_id: existing.invite_id,
+      token,
+    });
     return {
       created: false,
       invite: {
@@ -1717,7 +1729,7 @@ async function createEmailProjectInvite({
   if (!invite) {
     throw new Error("failed to load created email invite");
   }
-  const url = await inviteUrl(invite_id, token);
+  const url = await inviteUrl({ project_id, invite_id, token });
   return {
     created: true,
     invite: {
@@ -1775,7 +1787,11 @@ export async function copyEmailProjectInviteLink({
   );
   return {
     invite_id,
-    invite_url: await inviteUrl(invite_id, token),
+    invite_url: await inviteUrl({
+      project_id: row.project_id,
+      invite_id,
+      token,
+    }),
     expires: new Date(
       new Date(row.created).valueOf() +
         EMAIL_ONLY_INVITE_TTL_DAYS * 24 * 60 * 60 * 1000,
