@@ -6,9 +6,6 @@ done before calling this.
 
 import getPool from "@cocalc/database/pool";
 import passwordHash from "@cocalc/backend/auth/password-hash";
-import accountCreationActions, {
-  creationActionsDone,
-} from "./account-creation-actions";
 import { getLogger } from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 
@@ -79,12 +76,6 @@ export default async function createAccount({
           : null,
       ],
     );
-    await accountCreationActions({
-      email_address: email,
-      account_id,
-      tags,
-    });
-    await creationActionsDone(account_id);
   } catch (error) {
     log.error("Error creating account", error);
     throw error; // re-throw to bubble up to higher layers if needed

@@ -80,7 +80,7 @@ export function ProjectCollaboratorsContent({
         <InviteInboxPanel
           project_id={project.get("project_id")}
           mode="project"
-          showWhenEmpty={false}
+          showWhenEmpty={true}
         />
       </Space>
     ) : (
@@ -96,7 +96,7 @@ export function ProjectCollaboratorsContent({
         <InviteInboxPanel
           project_id={project.get("project_id")}
           mode="project"
-          showWhenEmpty={false}
+          showWhenEmpty={true}
         />
       </div>
     );

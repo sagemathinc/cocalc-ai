@@ -97,11 +97,6 @@ export async function set_account_info_if_different(
         email_address: do_email,
       });
     }
-    // Just changed email address - might be added to a project...
-    await callback2(opts.db.do_account_creation_actions.bind(opts.db), {
-      email_address: do_email,
-      account_id: opts.account_id,
-    });
   }
 }
 

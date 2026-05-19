@@ -10,10 +10,6 @@ The password must also be provided. If the email address is already set in the
 database, then password has to be the current correct password. If the email
 address is NOT set, then a new email address and password are set.
 
-Also, if user changes email address to one that has some pending actions, carry
-those actions out.  (TODO: should probably only do these after email address
-is verified.)
-
 Throws an exception if something is wrong.
 */
 
@@ -32,9 +28,6 @@ import {
   is_valid_email_address as isValidEmailAddress,
 } from "@cocalc/util/misc";
 import { StripeClient } from "../stripe/client";
-import accountCreationActions, {
-  creationActionsDone,
-} from "./account-creation-actions";
 import sendEmailVerification from "./send-email-verification";
 import { getLogger } from "@cocalc/backend/logger";
 
@@ -203,10 +196,6 @@ export default async function setEmailAddress({
     });
     throw err;
   }
-
-  // Do any pending account creation actions for this email.
-  await accountCreationActions({ email_address, account_id });
-  await creationActionsDone(account_id);
 
   // sync new email address with stripe
   if (stripe_customer_id != null) {

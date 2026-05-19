@@ -42,7 +42,6 @@ import getEmailAddress from "../../accounts/get-email-address";
 import { emailBelongsToDomain, getEmailDomain } from "./check-required-sso";
 import { SSO_API_KEY_COOKIE_NAME } from "./consts";
 import isBanned from "@cocalc/server/accounts/is-banned";
-import accountCreationActions from "@cocalc/server/accounts/account-creation-actions";
 import clientSideRedirect from "@cocalc/server/auth/client-side-redirect";
 import setSignInCookies from "@cocalc/server/auth/set-sign-in-cookies";
 import type { AccountCreationAuthMethod } from "@cocalc/server/auth/account-creation-policy";
@@ -669,14 +668,6 @@ export class PassportLogin {
     locals.account_id = await this.create_account(opts, locals.email_address);
     locals.new_account_created = true;
 
-    // if we know the email address provided by t
-    // we execute the account creation actions and set the address to be verified
-    await accountCreationActions({
-      email_address: locals.email_address,
-      account_id: locals.account_id,
-      // TODO: tags should be encoded in URL and passed here, but that's
-      // not implemented
-    });
     if (locals.email_address != null && emailVerified) {
       await set_email_address_verified({
         db: this.database,

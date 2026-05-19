@@ -118,6 +118,13 @@ async function getAccountRow(account_id: string): Promise<{
   if (!isValidUUID(account_id)) {
     throw new Error(`invalid account id '${account_id}'`);
   }
+  if (!isMultiBayCluster()) {
+    const local = await getLocalAccountRow(account_id);
+    if (local?.account_id) {
+      return local;
+    }
+    throw new Error(`account '${account_id}' not found`);
+  }
   const global = await getClusterAccountById(account_id);
   if (global?.account_id) {
     return {
@@ -130,6 +137,25 @@ async function getAccountRow(account_id: string): Promise<{
       source: "cluster-directory",
     };
   }
+  const local = await getLocalAccountRow(account_id);
+  if (!local?.account_id) {
+    throw new Error(`account '${account_id}' not found`);
+  }
+  return local;
+}
+
+async function getLocalAccountRow(account_id: string): Promise<
+  | {
+      account_id: string;
+      email_address?: string | null;
+      first_name?: string | null;
+      last_name?: string | null;
+      name?: string | null;
+      home_bay_id?: string | null;
+      source: "account-row";
+    }
+  | undefined
+> {
   const { rows } = await getPool().query(
     `SELECT account_id, email_address, first_name, last_name, name, home_bay_id FROM accounts
       WHERE account_id=$1
@@ -138,7 +164,7 @@ async function getAccountRow(account_id: string): Promise<{
     [account_id],
   );
   if (!rows[0]?.account_id) {
-    throw new Error(`account '${account_id}' not found`);
+    return;
   }
   return {
     ...rows[0],

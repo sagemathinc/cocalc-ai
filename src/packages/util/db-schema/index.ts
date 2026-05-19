@@ -15,7 +15,6 @@ export type { RetentionModel } from "./retention";
 export { retentionModels } from "./retention";
 
 // The tables
-import "./account-creation-actions";
 import "./account-collaborator-index";
 import "./account-notification-index";
 import "./account-project-index";

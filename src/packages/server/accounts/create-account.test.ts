@@ -1,8 +1,6 @@
 export {};
 
 let queryMock: jest.Mock;
-let accountCreationActionsMock: jest.Mock;
-let creationActionsDoneMock: jest.Mock;
 let passwordHashMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -15,18 +13,10 @@ jest.mock("@cocalc/backend/auth/password-hash", () => ({
   default: (...args: any[]) => passwordHashMock(...args),
 }));
 
-jest.mock("./account-creation-actions", () => ({
-  __esModule: true,
-  default: (...args: any[]) => accountCreationActionsMock(...args),
-  creationActionsDone: (...args: any[]) => creationActionsDoneMock(...args),
-}));
-
 describe("accounts.createAccount", () => {
   beforeEach(() => {
     jest.resetModules();
     queryMock = jest.fn(async () => ({ rowCount: 1 }));
-    accountCreationActionsMock = jest.fn(async () => undefined);
-    creationActionsDoneMock = jest.fn(async () => undefined);
     passwordHashMock = jest.fn(() => "hashed-password");
   });
 
@@ -57,10 +47,6 @@ describe("accounts.createAccount", () => {
         false,
         null,
       ],
-    );
-    expect(accountCreationActionsMock).toHaveBeenCalled();
-    expect(creationActionsDoneMock).toHaveBeenCalledWith(
-      "11111111-1111-4111-8111-111111111111",
     );
   });
 
