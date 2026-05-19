@@ -468,6 +468,31 @@ describe("PublicAuthApp", () => {
     });
   });
 
+  it("shows expired project invite links before sign-in", async () => {
+    mockedApi.mockRejectedValueOnce(
+      new Error("invite is not pending (status=expired)"),
+    );
+
+    render(
+      <PublicAuthApp
+        config={config({ is_authenticated: false })}
+        initialRoute={{
+          inviteId: "77777777-7777-4777-8777-777777777777",
+          kind: "project-invite",
+          projectId: "22222222-2222-4222-8222-222222222222",
+          token: "secret",
+        }}
+      />,
+    );
+
+    expect(
+      await screen.findByText("Project invite unavailable"),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Sorry, this project invite link has expired."),
+    ).not.toBeNull();
+  });
+
   it("shows the signed-in account before accepting a project invite", async () => {
     mockedApi.mockResolvedValueOnce({
       invite: {
@@ -558,6 +583,41 @@ describe("PublicAuthApp", () => {
         token: "secret",
       },
     );
+  });
+
+  it("shows a clear expired error when accepting an expired project invite", async () => {
+    mockedApi
+      .mockResolvedValueOnce({
+        invite: {
+          invite_id: "77777777-7777-4777-8777-777777777777",
+          project_id: "22222222-2222-4222-8222-222222222222",
+          project_title: "Research Project",
+          status: "pending",
+        },
+      } as any)
+      .mockRejectedValueOnce(
+        new Error("invite is not pending (status=expired)"),
+      );
+
+    render(
+      <PublicAuthApp
+        config={config({ is_authenticated: true })}
+        initialRoute={{
+          inviteId: "77777777-7777-4777-8777-777777777777",
+          kind: "project-invite",
+          projectId: "22222222-2222-4222-8222-222222222222",
+          token: "secret",
+        }}
+      />,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Accept invite" }),
+    );
+
+    expect(
+      await screen.findByText("Sorry, this project invite link has expired."),
+    ).not.toBeNull();
   });
 
   it("declines project invite links without accepting them", async () => {

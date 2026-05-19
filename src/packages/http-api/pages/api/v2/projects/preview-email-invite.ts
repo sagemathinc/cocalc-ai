@@ -10,9 +10,6 @@ import { previewEmailProjectInvite } from "@cocalc/server/conat/api/projects";
 export default async function handle(req, res) {
   try {
     const account_id = await getAccountId(req);
-    if (!account_id) {
-      throw new Error("must be signed in to view a project invite");
-    }
     const { invite_id, project_id, token } = getParams(req);
     if (!project_id || !invite_id || !token) {
       throw new Error("project invite link is incomplete");

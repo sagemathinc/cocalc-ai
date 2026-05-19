@@ -1055,7 +1055,7 @@ export interface ProjectCollabInviteRedeemEmailRequest {
 }
 
 export interface ProjectCollabInvitePreviewEmailRequest {
-  account_id: string;
+  account_id?: string;
   invite_id: string;
   token: string;
   project_id?: string;

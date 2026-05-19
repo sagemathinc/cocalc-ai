@@ -1773,9 +1773,6 @@ export async function previewEmailProjectInvite({
       project_id,
     });
   }
-  if (!account_id) {
-    throw new Error("user must be signed in");
-  }
   const result = await getInterBayBridge()
     .projectCollabInvite(ownership.bay_id)
     .previewEmail({

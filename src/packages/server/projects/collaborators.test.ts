@@ -831,6 +831,105 @@ describe("project collaborators local bay access", () => {
     expect(addUserToProject).not.toHaveBeenCalled();
   });
 
+  it("previews email token invites without requiring sign-in", async () => {
+    const inviteId = "77777777-7777-4777-8777-777777777777";
+    const token = "preview-public-token";
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "SELECT invite_id, project_id, inviter_account_id, status, token_hash",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              status: "pending",
+              token_hash: inviteTokenHash(token),
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM project_collab_invites i")) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              project_title: "Test Project",
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              inviter_name: "Inviter",
+              invitee_account_id: null,
+              invite_source: "email",
+              status: "pending",
+              message: "Please join",
+              created: new Date("2026-04-01T00:00:00Z"),
+              updated: new Date("2026-04-01T00:00:00Z"),
+              responded: null,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { previewEmailProjectInvite } = await import("./collaborators");
+    await expect(
+      previewEmailProjectInvite({
+        invite_id: inviteId,
+        project_id: PROJECT_ID,
+        token,
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        invite_id: inviteId,
+        status: "pending",
+      }),
+    );
+  });
+
+  it("checks email invite tokens before revealing expired status", async () => {
+    const inviteId = "77777777-7777-4777-8777-777777777777";
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "SELECT invite_id, project_id, inviter_account_id, status, token_hash",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              status: "expired",
+              token_hash: inviteTokenHash("correct-token"),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { previewEmailProjectInvite } = await import("./collaborators");
+    await expect(
+      previewEmailProjectInvite({
+        invite_id: inviteId,
+        project_id: PROJECT_ID,
+        token: "wrong-token",
+      }),
+    ).rejects.toThrow("invalid invite token");
+    await expect(
+      previewEmailProjectInvite({
+        invite_id: inviteId,
+        project_id: PROJECT_ID,
+        token: "correct-token",
+      }),
+    ).rejects.toThrow("invite is not pending (status=expired)");
+  });
+
   it("declines email token invites without adding a collaborator", async () => {
     const inviteId = "77777777-7777-4777-8777-777777777777";
     const token = "decline-invite-token";
