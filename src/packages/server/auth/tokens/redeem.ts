@@ -16,6 +16,7 @@ import {
 } from "@cocalc/server/cluster-config";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import {
+  canReadRegistrationTokenValue,
   encryptRegistrationTokenValue,
   hashRegistrationTokenValue,
   isEncryptedRegistrationTokenValue,
@@ -63,11 +64,22 @@ async function findRegistrationToken(
     `SELECT "token", "expires", "counter", "limit", "disabled", "ephemeral", "customize"
        FROM registration_tokens${opts.forUpdate ? " FOR UPDATE" : ""}`,
   );
+  let match: MatchedRegistrationToken | undefined;
   for (const row of rows ?? []) {
     if (await storedRegistrationTokenMatches(row.token, token)) {
-      return { storedToken: row.token, row };
+      match = { storedToken: row.token, row };
+      continue;
+    }
+    if (
+      isEncryptedRegistrationTokenValue(row.token) &&
+      !(await canReadRegistrationTokenValue(row.token))
+    ) {
+      await client.query("DELETE FROM registration_tokens WHERE token=$1", [
+        row.token,
+      ]);
     }
   }
+  return match;
 }
 
 async function protectedStorageValueForMatchedToken(

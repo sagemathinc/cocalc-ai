@@ -48,6 +48,20 @@ export async function decryptRegistrationTokenValue(
   );
 }
 
+export async function canReadRegistrationTokenValue(
+  storedToken: string,
+): Promise<boolean> {
+  if (isHashedRegistrationTokenValue(storedToken)) {
+    return true;
+  }
+  try {
+    await decryptRegistrationTokenValue(storedToken);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function hashRegistrationTokenValue(
   token: string,
 ): Promise<string> {
@@ -78,8 +92,14 @@ export async function storedRegistrationTokenMatches(
       await hashRegistrationTokenValue(token),
     );
   }
-  return timingSafeStringEqual(
-    await decryptRegistrationTokenValue(storedToken),
-    token,
-  );
+  try {
+    return timingSafeStringEqual(
+      await decryptRegistrationTokenValue(storedToken),
+      token,
+    );
+  } catch {
+    // Stale encrypted rows can exist after a site key reset or database copy.
+    // They must not prevent validation of other active registration tokens.
+    return false;
+  }
 }
