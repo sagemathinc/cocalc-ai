@@ -23,7 +23,6 @@ import type {
 } from "@cocalc/conat/hub/api/projects";
 import { add_collaborators_to_projects } from "./collab";
 import {
-  days_ago,
   is_array,
   is_valid_email_address,
   is_valid_uuid_string,
@@ -1550,6 +1549,15 @@ async function canSendInviteEmail(account_id: string): Promise<boolean> {
   return limits.invite_email_send_enabled !== false;
 }
 
+async function getInviteEmailResendCutoff(account_id: string): Promise<Date> {
+  const resolution = await resolveMembershipForAccount(account_id);
+  const limits = getEffectiveMembershipUsageLimits(resolution);
+  const minutes =
+    limits.invite_email_resend_cooldown_minutes ??
+    RESEND_INVITE_INTERVAL_DAYS * 24 * 60;
+  return new Date(Date.now() - Math.max(0, minutes) * 60_000);
+}
+
 async function assertEmailInviteCreationLimits({
   account_id,
   project_id,
@@ -1961,7 +1969,10 @@ export async function inviteCollaborator({
     project_id: opts.project_id,
     to: email_address,
   });
-  if (when_sent && when_sent >= days_ago(RESEND_INVITE_INTERVAL_DAYS)) {
+  if (
+    when_sent &&
+    when_sent >= (await getInviteEmailResendCutoff(account_id))
+  ) {
     return;
   }
   const settings = await callback2(database.get_server_settings_cached);
@@ -2089,7 +2100,10 @@ export async function inviteCollaboratorWithoutAccount({
       project_id: opts.project_id,
       to: email_address,
     });
-    if (when_sent && when_sent >= days_ago(RESEND_INVITE_INTERVAL_DAYS)) {
+    if (
+      when_sent &&
+      when_sent >= (await getInviteEmailResendCutoff(account_id))
+    ) {
       // recent email -- nothing more to do
       return created.invite;
     }
