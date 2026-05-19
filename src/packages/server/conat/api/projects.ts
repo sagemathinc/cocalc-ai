@@ -74,6 +74,7 @@ import {
 } from "@cocalc/server/projects/offline-move-confirmation";
 import {
   assertCanIncreaseAccountStorage,
+  getProjectCollaboratorInviteUsage as getProjectCollaboratorInviteUsageLocal,
   getProjectOwnerAccountId,
 } from "@cocalc/server/membership/project-limits";
 import { assertCanPerformDestructiveStorageAction } from "@cocalc/server/projects/destructive-storage-actions";
@@ -1625,6 +1626,29 @@ export async function removeCollaborator({
 function isCollabInviteNotFound(err: unknown, invite_id: string): boolean {
   const message = err instanceof Error ? err.message : `${err}`;
   return message.includes(`invite '${invite_id}' not found`);
+}
+
+export async function getProjectCollaboratorInviteUsage({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+}) {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null) {
+    throw new Error(`project ${project_id} not found`);
+  }
+  if (ownership.bay_id === getConfiguredBayId()) {
+    return await getProjectCollaboratorInviteUsageLocal(project_id);
+  }
+  return await getInterBayBridge()
+    .projectCollabInvite(ownership.bay_id)
+    .getUsage({ account_id, project_id });
 }
 
 export async function respondCollabInvite({

@@ -1069,6 +1069,17 @@ export interface ProjectCollabInviteRespondEmailRequest {
   project_id?: string;
 }
 
+export interface ProjectCollaboratorInviteUsageRequest {
+  account_id: string;
+  project_id: string;
+}
+
+export interface ProjectCollaboratorInviteUsageWire {
+  current: number;
+  limit: number | null;
+  remaining: number | null;
+}
+
 export interface ProjectCollabInviteListRequest {
   account_id: string;
   project_id?: string;
@@ -1280,6 +1291,7 @@ export type ProjectCollabInviteMethod =
   | "upsert-inbox"
   | "delete-inbox"
   | "list"
+  | "usage"
   | "remove-collaborator"
   | "leave-or-delete-projects"
   | "create"
@@ -2108,6 +2120,9 @@ export interface InterBayProjectCollabInviteApi {
     opts: ProjectCollabInviteListRequest,
   ) => Promise<ProjectCollabInviteWire[]>;
   removeCollaborator: (opts: ProjectRemoveCollaboratorRequest) => Promise<void>;
+  getUsage: (
+    opts: ProjectCollaboratorInviteUsageRequest,
+  ) => Promise<ProjectCollaboratorInviteUsageWire>;
   leaveOrDeleteProjects: (
     opts: ProjectLeaveOrDeleteProjectsRequest,
   ) => Promise<ProjectLeaveOrDeleteProjectsResult[]>;
@@ -4515,6 +4530,15 @@ export function createInterBayProjectCollabInviteClient({
       method: "remove-collaborator",
     }),
   });
+  const usageClient = createServiceClient<
+    Pick<InterBayProjectCollabInviteApi, "getUsage">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({
+      dest_bay,
+      method: "usage",
+    }),
+  });
   const leaveOrDeleteProjectsClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "leaveOrDeleteProjects">
   >({
@@ -4536,6 +4560,7 @@ export function createInterBayProjectCollabInviteClient({
     list: async (opts) => await listClient.list(opts),
     removeCollaborator: async (opts) =>
       await removeCollaboratorClient.removeCollaborator(opts),
+    getUsage: async (opts) => await usageClient.getUsage(opts),
     leaveOrDeleteProjects: async (opts) =>
       await leaveOrDeleteProjectsClient.leaveOrDeleteProjects(opts),
     create: async (opts) => await createClient.create(opts),
@@ -4677,6 +4702,17 @@ export function createInterBayProjectCollabInviteHandlers({
       }),
       impl: {
         respondEmail: async (opts) => await impl.respondEmail(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayProjectCollabInviteApi, "getUsage">>({
+      ...options,
+      service: "inter-bay-project-collab-invite",
+      subject: projectCollabInviteSubject({
+        dest_bay: bay_id,
+        method: "usage",
+      }),
+      impl: {
+        getUsage: async (opts) => await impl.getUsage(opts),
       },
     }),
     createServiceHandler<Pick<InterBayProjectCollabInviteApi, "list">>({

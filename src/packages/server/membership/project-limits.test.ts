@@ -148,6 +148,30 @@ describe("project membership limits", () => {
     ).resolves.toBe(5);
   });
 
+  it("returns collaborator and pending invite usage for a project", async () => {
+    getProjectUsageAccountIdMock.mockResolvedValue("owner-1");
+    resolveMembershipForAccountMock.mockResolvedValue({
+      class: "member",
+      source: "subscription",
+      entitlements: {},
+      effective_limits: {
+        project_max_collaborators_and_pending_invites: 6,
+      },
+    });
+    queryMock.mockResolvedValue({
+      rows: [{ collaborators: 3, pending_invites: 2 }],
+    });
+    const { getProjectCollaboratorInviteUsage } =
+      await import("./project-limits");
+    await expect(
+      getProjectCollaboratorInviteUsage("project-1"),
+    ).resolves.toEqual({
+      current: 5,
+      limit: 6,
+      remaining: 1,
+    });
+  });
+
   it("does nothing when no max_projects limit is configured", async () => {
     const { assertCanOwnAdditionalProject } = await import("./project-limits");
     await expect(
