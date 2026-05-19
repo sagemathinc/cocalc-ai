@@ -694,10 +694,11 @@ export type HostDisplayedPrice = {
 };
 
 export type HostPricingModeEstimates = {
-  current_mode: "standard" | "spot" | "stopped";
+  current_mode: "standard" | "spot" | "stopped" | "deprovisioned";
   standard_estimate?: ProviderPriceEstimate;
   spot_estimate?: ProviderPriceEstimate;
   stopped_estimate?: ProviderPriceEstimate;
+  deprovisioned_estimate?: ProviderPriceEstimate;
 };
 
 function providerChargeNote(
@@ -943,21 +944,27 @@ export const getHostPricingModeEstimates = (
   const stopped_estimate = stoppedHostPriceEstimate(
     standard_estimate ?? spot_estimate,
   );
+  const deprovisioned_estimate = zeroProviderPriceEstimate(
+    standard_estimate?.notes ?? spot_estimate?.notes ?? [],
+  );
   const currentPricingModel =
     host.effective_pricing_model ??
     host.pricing_model ??
     host.desired_pricing_model;
   const current_mode =
-    host.status === "off" || host.status === "deprovisioned"
-      ? "stopped"
-      : currentPricingModel === "spot"
-        ? "spot"
-        : "standard";
+    host.status === "deprovisioned"
+      ? "deprovisioned"
+      : host.status === "off"
+        ? "stopped"
+        : currentPricingModel === "spot"
+          ? "spot"
+          : "standard";
   return {
     current_mode,
     standard_estimate,
     spot_estimate,
     stopped_estimate,
+    deprovisioned_estimate,
   };
 };
 

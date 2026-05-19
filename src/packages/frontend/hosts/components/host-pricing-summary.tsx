@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Space, Tag, Typography } from "antd";
+import { Space, Typography } from "antd";
 import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import type { DedicatedHostSurchargeSettings } from "@cocalc/util/project-host-pricing";
 import { COLORS } from "@cocalc/util/theme";
@@ -25,7 +25,7 @@ type Props = {
   compact?: boolean;
 };
 
-type PriceMode = "standard" | "spot" | "stopped";
+type PriceMode = "standard" | "spot" | "stopped" | "deprovisioned";
 
 function percentSavings(
   standard?: ProviderPriceEstimate,
@@ -58,6 +58,8 @@ function modeLabel(mode: PriceMode, host: Host): string {
       return "Spot";
     case "stopped":
       return "Stopped";
+    case "deprovisioned":
+      return "Deprovisioned";
   }
 }
 
@@ -75,6 +77,9 @@ function modeNote(opts: {
   }
   if (opts.mode === "stopped") {
     return "disk only";
+  }
+  if (opts.mode === "deprovisioned") {
+    return "free";
   }
   return undefined;
 }
@@ -110,16 +115,19 @@ function PriceModeRow({
           display: "flex",
           justifyContent: "space-between",
           gap: 8,
-          alignItems: "center",
+          alignItems: "baseline",
         }}
       >
         <Typography.Text strong={current} style={{ fontSize: 12 }}>
           {modeLabel(mode, host)}
         </Typography.Text>
-        {current ? (
-          <Tag color="blue" style={{ marginRight: 0 }}>
-            Current
-          </Tag>
+        {note ? (
+          <Typography.Text
+            type="secondary"
+            style={{ fontSize: 11, whiteSpace: "nowrap" }}
+          >
+            {note}
+          </Typography.Text>
         ) : null}
       </div>
       <div
@@ -139,11 +147,6 @@ function PriceModeRow({
           </Typography.Text>
         ) : null}
       </div>
-      {note ? (
-        <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-          {note}
-        </Typography.Text>
-      ) : null}
     </div>
   );
 }
@@ -173,8 +176,8 @@ export function HostPricingSummary({
   return (
     <Space
       orientation="vertical"
-      size={compact ? 4 : 6}
-      style={{ minWidth: compact ? 180 : 220, width: "100%" }}
+      size={compact ? 3 : 4}
+      style={{ minWidth: compact ? 170 : 210, width: "100%" }}
     >
       <PriceModeRow
         mode="standard"
@@ -197,6 +200,14 @@ export function HostPricingSummary({
         host={host}
         current={estimates.current_mode === "stopped"}
         estimate={estimates.stopped_estimate}
+        standard={estimates.standard_estimate}
+        spot={estimates.spot_estimate}
+      />
+      <PriceModeRow
+        mode="deprovisioned"
+        host={host}
+        current={estimates.current_mode === "deprovisioned"}
+        estimate={estimates.deprovisioned_estimate}
         standard={estimates.standard_estimate}
         spot={estimates.spot_estimate}
       />

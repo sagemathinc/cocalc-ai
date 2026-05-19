@@ -1063,5 +1063,10 @@ describe("catalog-backed pricing labels", () => {
     expect(display?.current_state).toBe("deprovisioned");
     expect(display?.current_estimate?.usd_per_hour).toBe(0);
     expect(display?.running_estimate?.usd_per_hour).toBeCloseTo(0.371, 9);
+
+    const modes = getHostPricingModeEstimates(host, { gcp: gcpCatalog });
+    expect(modes?.current_mode).toBe("deprovisioned");
+    expect(modes?.deprovisioned_estimate?.usd_per_hour).toBe(0);
+    expect(modes?.stopped_estimate?.usd_per_hour).toBeCloseTo(0.006, 9);
   });
 });
