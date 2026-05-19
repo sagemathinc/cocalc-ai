@@ -238,6 +238,7 @@ type BayRusticRepoConfig = {
 type WalArchiveFile = {
   name: string;
   path: string;
+  bytes: number;
   mtime_iso: string | null;
 };
 
@@ -279,7 +280,9 @@ let walMaintenanceRunning = false;
 let backupMaintenanceTimer: NodeJS.Timeout | undefined;
 let backupMaintenanceRunning = false;
 
-const DEFAULT_WAL_ARCHIVE_INTERVAL_MS = 60 * 1000;
+const DEFAULT_WAL_ARCHIVE_INTERVAL_MS = 60 * 60 * 1000;
+const DEFAULT_WAL_ARCHIVE_MAX_UPLOAD_SEGMENTS = 32;
+const DEFAULT_WAL_ARCHIVE_MAX_UPLOAD_BYTES = 512 * 1024 * 1024;
 const DEFAULT_BAY_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_BAY_BACKUP_RETRY_INTERVAL_MS = 15 * 60 * 1000;
 const DEFAULT_BAY_BACKUP_RETENTION_COUNT = 14;
@@ -295,6 +298,22 @@ function getWalArchiveIntervalMs(): number {
     10,
   );
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_WAL_ARCHIVE_INTERVAL_MS;
+}
+
+function getWalArchiveMaxUploadSegments(): number {
+  return parsePositiveIntEnv({
+    name: "COCALC_BAY_WAL_ARCHIVE_MAX_UPLOAD_SEGMENTS",
+    defaultValue: DEFAULT_WAL_ARCHIVE_MAX_UPLOAD_SEGMENTS,
+    allowZero: true,
+  });
+}
+
+function getWalArchiveMaxUploadBytes(): number {
+  return parsePositiveIntEnv({
+    name: "COCALC_BAY_WAL_ARCHIVE_MAX_UPLOAD_BYTES",
+    defaultValue: DEFAULT_WAL_ARCHIVE_MAX_UPLOAD_BYTES,
+    allowZero: true,
+  });
 }
 
 function parsePositiveIntEnv({
@@ -1368,6 +1387,48 @@ async function snapshotSyncTree({
   }
 }
 
+async function treeContainsSqliteDatabase(sourceDir: string): Promise<boolean> {
+  const entries = await readdir(sourceDir, { withFileTypes: true }).catch(
+    (err) => {
+      if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+        return [];
+      }
+      throw err;
+    },
+  );
+  for (const entry of entries) {
+    const sourcePath = join(sourceDir, entry.name);
+    if (entry.isDirectory()) {
+      if (await treeContainsSqliteDatabase(sourcePath)) {
+        return true;
+      }
+      continue;
+    }
+    if (entry.isFile() && entry.name.endsWith(".db")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function requireBinary(binary: string): Promise<void> {
+  const path = await which(binary);
+  if (!path) {
+    throw new Error(`required binary '${binary}' was not found in PATH`);
+  }
+}
+
+async function assertControlPlaneBackupToolsAvailable(): Promise<void> {
+  const needsSyncArchive = await exists(syncFiles.local);
+  const needsSecretsArchive = await exists(secrets);
+  if (needsSyncArchive || needsSecretsArchive) {
+    await requireBinary("tar");
+  }
+  if (needsSyncArchive && (await treeContainsSqliteDatabase(syncFiles.local))) {
+    await requireBinary("sqlite3");
+  }
+}
+
 async function copySecretsTree({
   sourceDir,
   destinationDir,
@@ -2359,6 +2420,7 @@ async function listArchivedWalFiles(
       files.push({
         name,
         path,
+        bytes: info.size,
         mtime_iso: new Date(info.mtimeMs).toISOString(),
       });
     }
@@ -2418,6 +2480,34 @@ async function getWalArchiveSnapshot({
     last_archived_wal_segment: last?.name ?? null,
     last_archived_wal_at: last?.mtime_iso ?? null,
   };
+}
+
+function limitWalFilesForUpload(files: WalArchiveFile[]): WalArchiveFile[] {
+  const maxSegments = getWalArchiveMaxUploadSegments();
+  const maxBytes = getWalArchiveMaxUploadBytes();
+  if (maxSegments <= 0 && maxBytes <= 0) {
+    return files;
+  }
+  const selected: WalArchiveFile[] = [];
+  let selectedBytes = 0;
+  for (const file of files) {
+    if (maxSegments > 0 && selected.length >= maxSegments) {
+      break;
+    }
+    if (
+      maxBytes > 0 &&
+      selected.length > 0 &&
+      selectedBytes + file.bytes > maxBytes
+    ) {
+      break;
+    }
+    selected.push(file);
+    selectedBytes += file.bytes;
+    if (maxBytes > 0 && selectedBytes >= maxBytes) {
+      break;
+    }
+  }
+  return selected;
 }
 
 async function waitForWalArchiveAdvance({
@@ -2576,7 +2666,8 @@ async function syncBayWalArchive({
   };
 
   try {
-    if (canUploadRemote && snapshot.pending_files.length > 0) {
+    const pendingFilesToUpload = limitWalFilesForUpload(snapshot.pending_files);
+    if (canUploadRemote && pendingFilesToUpload.length > 0) {
       const bucket_endpoint = r2.bucket_endpoint!;
       const access_key = r2.access_key!;
       const secret_key = r2.secret_key!;
@@ -2589,7 +2680,7 @@ async function syncBayWalArchive({
         throw new Error("missing WAL object prefix");
       }
       let last_uploaded_wal_segment = state.last_uploaded_wal_segment;
-      for (const file of snapshot.pending_files) {
+      for (const file of pendingFilesToUpload) {
         const object_key = `${object_prefix}/${file.name}`;
         const { sha256, bytes } = await hashFile(file.path);
         await uploadObjectFromFile({
@@ -3218,6 +3309,7 @@ export async function runBayBackup({
         strategy: postgres.preferred_strategy,
         current_storage_backend,
       });
+      await assertControlPlaneBackupToolsAvailable();
       const actual_strategy = await runBackupCommand({
         strategy: postgres.preferred_strategy,
         staging_dir,

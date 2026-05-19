@@ -20,6 +20,7 @@ let whichMock: jest.Mock;
 let listObjectsMock: jest.Mock;
 let deleteObjectsMock: jest.Mock;
 let issueSignedObjectDownloadMock: jest.Mock;
+let uploadObjectFromFileMock: jest.Mock;
 let oldFetch: typeof global.fetch | undefined;
 
 jest.mock("node:child_process", () => {
@@ -85,7 +86,7 @@ jest.mock("@cocalc/server/project-backup/r2", () => ({
   issueSignedObjectDownload: (...args: any[]) =>
     issueSignedObjectDownloadMock(...args),
   uploadObjectFromBuffer: jest.fn(),
-  uploadObjectFromFile: jest.fn(),
+  uploadObjectFromFile: (...args: any[]) => uploadObjectFromFileMock(...args),
 }));
 
 describe("bay-backup runner", () => {
@@ -234,6 +235,7 @@ describe("bay-backup runner", () => {
     whichMock = jest.fn(async (binary: string) => `/usr/bin/${binary}`);
     listObjectsMock = jest.fn(async () => []);
     deleteObjectsMock = jest.fn(async () => undefined);
+    uploadObjectFromFileMock = jest.fn(async () => undefined);
     issueSignedObjectDownloadMock = jest.fn(({ key }: { key: string }) => ({
       url: `https://example.invalid/${key}`,
       headers: {},
@@ -610,6 +612,48 @@ describe("bay-backup runner", () => {
     expect(result.format).toBe("pg_dumpall");
     expect(execFileMock.mock.calls[0][0]).toBe("pg_basebackup");
     expect(execFileMock.mock.calls[1][0]).toBe("pg_dumpall");
+  });
+
+  it("fails before starting postgres backup when sqlite backup tooling is missing", async () => {
+    whichMock = jest.fn(async (binary: string) =>
+      binary === "sqlite3" ? null : `/usr/bin/${binary}`,
+    );
+    getPoolMock = jest.fn(() => ({
+      query: jest.fn(async () => ({
+        rows: [
+          {
+            current_user: "smc",
+            role_superuser: true,
+            role_replication: false,
+            data_directory: "/tmp/pgdata",
+            config_file: "/tmp/pgdata/postgresql.conf",
+            archive_mode: "off",
+            archive_command: null,
+            archive_timeout: null,
+            wal_level: "replica",
+            max_wal_senders: "10",
+          },
+        ],
+      })),
+    }));
+
+    const { runBayBackup } = await import("./index");
+
+    await expect(runBayBackup()).rejects.toThrow(
+      "required binary 'sqlite3' was not found in PATH",
+    );
+    expect(execFileMock).not.toHaveBeenCalledWith(
+      "pg_basebackup",
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(execFileMock).not.toHaveBeenCalledWith(
+      "pg_dumpall",
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
   });
 
   it("stages a fenced pg_basebackup restore workspace", async () => {
@@ -1600,6 +1644,54 @@ describe("bay-backup runner", () => {
     expect(status.bay_backup.pending_wal_count).toBe(2);
     expect(status.bay_backup.last_pruned_wal_count).toBe(3);
     expect(status.bay_backup.last_pruned_at).toBeTruthy();
+  });
+
+  it("bounds remote WAL upload work in each sync pass", async () => {
+    process.env.COCALC_BAY_WAL_ARCHIVE_MAX_UPLOAD_SEGMENTS = "2";
+    process.env.COCALC_BAY_WAL_ARCHIVE_MAX_UPLOAD_BYTES = "999999999";
+    getServerSettingsMock = jest.fn(async () => ({
+      r2_account_id: "acct-1",
+      r2_access_key_id: "key-1",
+      r2_secret_access_key: "secret-1",
+      r2_bucket_prefix: "lite4-dev",
+    }));
+
+    const bayRoot = join(backupRoot, "bay-backups", "bay-0");
+    const walArchiveDir = join(bayRoot, "wal", "archive");
+    mkdirSync(walArchiveDir, { recursive: true });
+    const walSegments = [
+      "0000000100000000000000E1",
+      "0000000100000000000000E2",
+      "0000000100000000000000E3",
+      "0000000100000000000000E4",
+    ];
+    for (const [index, name] of walSegments.entries()) {
+      writeFileSync(join(walArchiveDir, name), `segment-${index + 1}`);
+    }
+    const uploadedKeys = new Set<string>();
+    listObjectsMock = jest.fn(async ({ prefix }: { prefix?: string }) =>
+      prefix === "bay-backups/bay-0/wal/" ? [...uploadedKeys] : [],
+    );
+    uploadObjectFromFileMock = jest.fn(async ({ key }: { key: string }) => {
+      uploadedKeys.add(key);
+    });
+
+    const { getBayBackupStatus, runBayBackup } = await import("./index");
+
+    await runBayBackup();
+
+    expect(uploadObjectFromFileMock).toHaveBeenCalledTimes(2);
+    expect(
+      uploadObjectFromFileMock.mock.calls.map((call) => call[0].key),
+    ).toEqual([
+      "bay-backups/bay-0/wal/0000000100000000000000E1",
+      "bay-backups/bay-0/wal/0000000100000000000000E2",
+    ]);
+    const status = await getBayBackupStatus();
+    expect(status.bay_backup.last_uploaded_wal_segment).toBe(
+      "0000000100000000000000E2",
+    );
+    expect(status.bay_backup.pending_wal_count).toBe(2);
   });
 
   it("prunes remote WAL older than the latest two recovery-ready backups", async () => {
