@@ -1,6 +1,7 @@
 import { callback2 } from "@cocalc/util/async-utils";
 import { PostgreSQL } from "../types";
 import {
+  canReadRegistrationTokenValue,
   decryptRegistrationTokenValue,
   encryptRegistrationTokenValue,
   hashRegistrationTokenValue,
@@ -47,14 +48,25 @@ async function findStoredToken(
     db,
     "SELECT token, customize FROM registration_tokens",
   );
+  let match: string | undefined;
   for (const row of rows ?? []) {
     if (isBootstrapCustomize(row.customize)) {
       continue;
     }
     if (await storedRegistrationTokenMatches(row.token, token)) {
-      return row.token;
+      match = row.token;
+      continue;
+    }
+    if (
+      isEncryptedRegistrationTokenValue(row.token) &&
+      !(await canReadRegistrationTokenValue(row.token))
+    ) {
+      await runQuery(db, "DELETE FROM registration_tokens WHERE token = $1", [
+        row.token,
+      ]);
     }
   }
+  return match;
 }
 
 async function protectBootstrapTokenAtRest(
@@ -110,17 +122,31 @@ export default async function registrationTokensQuery(
     const visibleRows: RegistrationTokenRow[] = [];
     for (const row of rows ?? []) {
       if (isBootstrapCustomize(row.customize)) {
-        await protectBootstrapTokenAtRest(db, row);
+        try {
+          await protectBootstrapTokenAtRest(db, row);
+        } catch {
+          await runQuery(
+            db,
+            "DELETE FROM registration_tokens WHERE token = $1",
+            [row.token],
+          );
+        }
         continue;
       }
       if (isHashedRegistrationTokenValue(row.token)) {
         continue;
       }
       const { customize: _customize, ...visibleRow } = row;
-      visibleRows.push({
-        ...visibleRow,
-        token: await protectAdminTokenAtRest(db, row),
-      });
+      try {
+        visibleRows.push({
+          ...visibleRow,
+          token: await protectAdminTokenAtRest(db, row),
+        });
+      } catch {
+        await runQuery(db, "DELETE FROM registration_tokens WHERE token = $1", [
+          row.token,
+        ]);
+      }
     }
     return visibleRows;
   } else if (query.token) {

@@ -129,6 +129,48 @@ describe("registration token storage protection", () => {
     ).resolves.toBe(true);
   });
 
+  it("ignores unreadable stale encrypted rows when validating and listing tokens", async () => {
+    await registrationTokensQuery(queryDb(), [], {
+      token: "valid-token",
+      descr: "Valid Token",
+    });
+    await getPool().query(
+      `INSERT INTO registration_tokens (token, descr, disabled)
+       VALUES ($1, $2, false)`,
+      [
+        "enc:v1:default:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAA==:AAAA",
+        "Stale Token",
+      ],
+    );
+
+    await expect(
+      storedRegistrationTokenMatches(
+        "enc:v1:default:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAA==:AAAA",
+        "anything",
+      ),
+    ).resolves.toBe(false);
+    await expect(
+      validateRegistrationTokenDirect("valid-token"),
+    ).resolves.toMatchObject({
+      token: "valid-token",
+    });
+    let rawRows = await rawRegistrationTokenRows();
+    expect(rawRows).toHaveLength(1);
+    expect(rawRows[0].descr).toBe("Valid Token");
+
+    const visibleRows = await registrationTokensQuery(queryDb(), [], {
+      token: "*",
+    });
+    expect(visibleRows).toEqual([
+      expect.objectContaining({
+        token: "valid-token",
+        descr: "Valid Token",
+      }),
+    ]);
+    rawRows = await rawRegistrationTokenRows();
+    expect(rawRows).toHaveLength(1);
+  });
+
   it("stores bootstrap-admin tokens hash-only and hides them from admin token listing", async () => {
     const url = await ensureBootstrapAdminToken({
       baseUrl: "https://cocalc.example/",
