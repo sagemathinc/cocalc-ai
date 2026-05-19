@@ -6,6 +6,10 @@
 import getPool from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
+  MAX_NOTIFICATION_ID_BATCH,
+  MAX_NOTIFICATION_INBOX_LIST_LIMIT,
+} from "@cocalc/util/security-limits";
+import {
   type MentionNotificationSourceRow,
   NOTIFICATION_MENTION_LOOKBACK_INTERVAL,
   buildMentionNotificationPayload,
@@ -58,8 +62,10 @@ type Queryable = {
   ) => Promise<{ rows: any[]; rowCount?: number | null }>;
 };
 
-export const MAX_NOTIFICATION_LIST_LIMIT = 200;
-export const MAX_NOTIFICATION_ID_BATCH = 200;
+export {
+  MAX_NOTIFICATION_ID_BATCH,
+  MAX_NOTIFICATION_INBOX_LIST_LIMIT as MAX_NOTIFICATION_LIST_LIMIT,
+};
 
 function normalizeBayId(raw?: string): string {
   const bay_id = `${raw ?? ""}`.trim();
@@ -86,8 +92,8 @@ function normalizeLimit(raw?: number): number {
   if (!Number.isInteger(limit) || limit <= 0) {
     throw Error("limit must be a positive integer");
   }
-  if (limit > MAX_NOTIFICATION_LIST_LIMIT) {
-    throw Error(`limit must be at most ${MAX_NOTIFICATION_LIST_LIMIT}`);
+  if (limit > MAX_NOTIFICATION_INBOX_LIST_LIMIT) {
+    throw Error(`limit must be at most ${MAX_NOTIFICATION_INBOX_LIST_LIMIT}`);
   }
   return limit;
 }

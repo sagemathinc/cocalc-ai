@@ -9,9 +9,9 @@ import TTL from "@isaacs/ttlcache";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import type { WebappClient } from "./client";
 import type { AccountEntitlementOverride } from "@cocalc/conat/hub/api/purchases";
+import { MAX_GET_NAMES_ACCOUNT_IDS } from "@cocalc/util/security-limits";
 
 const nameCache = new TTL({ ttl: 60 * 1000 });
-const MAX_GET_NAMES_BATCH = 250;
 
 export class UsersClient {
   private client: WebappClient;
@@ -179,8 +179,8 @@ export class UsersClient {
       }
     }
     if (v.length > 0) {
-      for (let i = 0; i < v.length; i += MAX_GET_NAMES_BATCH) {
-        const batch = v.slice(i, i + MAX_GET_NAMES_BATCH);
+      for (let i = 0; i < v.length; i += MAX_GET_NAMES_ACCOUNT_IDS) {
+        const batch = v.slice(i, i + MAX_GET_NAMES_ACCOUNT_IDS);
         const names = await this.client.conat_client.hub.system.getNames(batch);
         for (const account_id of batch) {
           // iterate over batch to record accounts that don't exist too

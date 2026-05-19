@@ -6,6 +6,10 @@
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { publishProjectedNotificationFeedUpdatesBestEffort } from "@cocalc/server/notifications/feed";
 import {
+  MAX_NOTIFICATION_ID_BATCH,
+  MAX_NOTIFICATION_INBOX_LIST_LIMIT,
+} from "@cocalc/util/security-limits";
+import {
   archive,
   counts,
   createAccountNotice,
@@ -433,12 +437,14 @@ describe("conat notifications api", () => {
     await expect(
       list({
         account_id: ACTOR_ACCOUNT_ID,
-        limit: 201,
+        limit: MAX_NOTIFICATION_INBOX_LIST_LIMIT + 1,
       }),
-    ).rejects.toThrow("limit must be at most 200");
+    ).rejects.toThrow(
+      `limit must be at most ${MAX_NOTIFICATION_INBOX_LIST_LIMIT}`,
+    );
 
     const notification_ids = Array.from(
-      { length: 201 },
+      { length: MAX_NOTIFICATION_ID_BATCH + 1 },
       (_, i) => `99999999-9999-4999-8999-${`${i}`.padStart(12, "0")}`,
     );
     await expect(
@@ -446,6 +452,8 @@ describe("conat notifications api", () => {
         account_id: ACTOR_ACCOUNT_ID,
         notification_ids,
       }),
-    ).rejects.toThrow("at most 200 notification ids are allowed");
+    ).rejects.toThrow(
+      `at most ${MAX_NOTIFICATION_ID_BATCH} notification ids are allowed`,
+    );
   });
 });
