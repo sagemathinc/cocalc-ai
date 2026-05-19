@@ -1549,6 +1549,12 @@ async function canSendInviteEmail(account_id: string): Promise<boolean> {
   return limits.invite_email_send_enabled !== false;
 }
 
+async function canCopyInviteLink(account_id: string): Promise<boolean> {
+  const resolution = await resolveMembershipForAccount(account_id);
+  const limits = getEffectiveMembershipUsageLimits(resolution);
+  return limits.invite_email_link_copy_enabled !== false;
+}
+
 async function getInviteEmailResendCutoff(account_id: string): Promise<Date> {
   const resolution = await resolveMembershipForAccount(account_id);
   const limits = getEffectiveMembershipUsageLimits(resolution);
@@ -1768,6 +1774,9 @@ export async function copyEmailProjectInviteLink({
 }): Promise<{ invite_id: string; invite_url: string; expires?: Date | null }> {
   if (!account_id) {
     throw new Error("user must be signed in");
+  }
+  if (!(await canCopyInviteLink(account_id))) {
+    throw new Error("copying invite links is not enabled for this account");
   }
   ensureUuid(invite_id, "invite_id");
   await ensureProjectCollabInviteEmailTokenSchema();
