@@ -419,7 +419,7 @@ async function hydrateInviteRows(
       );
       let target_email: string | null = null;
       const emailCiphertext = (row as any).email_ciphertext;
-      if (includeEmail && emailCiphertext) {
+      if (emailCiphertext) {
         try {
           target_email = await decryptInviteValue(
             EMAIL_INVITE_EMAIL_AAD,
@@ -890,7 +890,7 @@ export async function listCollabInvites({
       i.invite_source,
       i.accepted_account_id,
       CASE
-        WHEN $1::boolean THEN i.email_ciphertext
+        WHEN $1::boolean OR i.inviter_account_id=${accountParam}::uuid THEN i.email_ciphertext
         ELSE NULL
       END AS email_ciphertext,
       i.token_hint,
