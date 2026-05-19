@@ -597,8 +597,11 @@ export async function removeCollaborator({
     account_id,
     project_id: opts.project_id,
   });
-  // @ts-ignore
-  await callback2(db().remove_collaborator_from_project, opts);
+  const database = db();
+  await callback2(
+    database.remove_collaborator_from_project.bind(database),
+    opts,
+  );
   await publishProjectAccountFeedEventsBestEffort({
     project_id: opts.project_id,
   });
@@ -735,7 +738,7 @@ export async function createCollabInvite({
       throw new Error("direct collaborator add requires admin privileges");
     }
     const database = db();
-    await callback2(database.add_user_to_project, {
+    await callback2(database.add_user_to_project.bind(database), {
       project_id,
       account_id: invitee_account_id,
       group: "collaborator",
@@ -1088,7 +1091,7 @@ export async function respondCollabInviteCanonical({
     const alreadyCollaborator = !!collabRows[0]?.already;
     if (!alreadyCollaborator) {
       const database = db();
-      await callback2(database.add_user_to_project, {
+      await callback2(database.add_user_to_project.bind(database), {
         project_id: invite.project_id,
         account_id,
         group: "collaborator",
@@ -1739,7 +1742,7 @@ export async function redeemEmailProjectInvite({
   );
   if (!collabRows[0]?.already) {
     const database = db();
-    await callback2(database.add_user_to_project, {
+    await callback2(database.add_user_to_project.bind(database), {
       project_id: invite.project_id,
       account_id,
       group: "collaborator",
