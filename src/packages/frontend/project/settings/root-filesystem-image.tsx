@@ -829,6 +829,8 @@ export default function RootFilesystemImage({
             />
           ) : null}
 
+          <RootfsPublishOps project_id={project_id} />
+
           <div
             style={{
               display: "grid",
@@ -1398,6 +1400,14 @@ export default function RootFilesystemImage({
           width={920}
           onCancel={() => setPublishOpen(false)}
           onOk={saveCatalogEntry}
+          okText={
+            publishMode === "manage"
+              ? "Update Catalog Entry"
+              : publishCopyMode === "project"
+                ? "Publish RootFS"
+                : "Save Metadata"
+          }
+          cancelText="Cancel"
           okButtonProps={{ loading: publishing }}
           title={
             publishMode === "manage"
@@ -1561,6 +1571,15 @@ export default function RootFilesystemImage({
                 }
               />
             )}
+
+            {publishMode === "copy" && publishCopyMode === "project" ? (
+              <Alert
+                type="info"
+                showIcon
+                title="Publishing continues in the background"
+                description="After you click Publish RootFS, this dialog closes and progress appears in RootFS publish operations on the Runtime Image screen. You can close and reopen project settings later to see current and past publish operations."
+              />
+            ) : null}
 
             <RuntimePanel
               icon="pencil"
