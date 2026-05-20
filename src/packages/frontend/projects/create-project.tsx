@@ -109,7 +109,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   const [titlePreview, setTitlePreview] = useState<string>(default_value);
   const saving = createAction != null;
   const new_project_title_ref = useRef<any>(null);
-  const [rootfsModalOpen, setRootfsModalOpen] = useState<boolean>(false);
+  const [rootfsPickerOpen, setRootfsPickerOpen] = useState<boolean>(false);
   const [showOlderRootfsVersions, setShowOlderRootfsVersions] =
     useState<boolean>(false);
   const [rootfsMode, setRootfsMode] = useState<"catalog" | "custom">("catalog");
@@ -193,7 +193,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     setTitlePreview(draft.title);
     set_error("");
     setCreateAction(null);
-    setRootfsModalOpen(false);
+    setRootfsPickerOpen(false);
     setRootfsMode("catalog");
     setRootfsDraft("");
     setRootfsDraftId(undefined);
@@ -268,7 +268,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     }
   }
 
-  function openRootfsModal() {
+  function openRootfsPicker() {
     const current = (draft.rootfs_image?.trim() ||
       DEFAULT_PROJECT_IMAGE) as string;
     setRootfsDraft(current);
@@ -279,42 +279,43 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     setRootfsDraftId(currentEntry?.id);
     const isCatalog = !!currentEntry || !isAdmin;
     setRootfsMode(isCatalog ? "catalog" : "custom");
-    setRootfsModalOpen(true);
+    setRootfsPickerOpen(true);
   }
 
-  function renderRootfsModal() {
-    if (!rootfsModalOpen) return null;
+  function applyRootfsDraft() {
+    const trimmed = rootfsDraft.trim();
+    if (rootfsMode === "custom") {
+      setRootfs({ image: trimmed || DEFAULT_PROJECT_IMAGE });
+    } else {
+      const nextEntry =
+        filteredRootfsImages.find((entry) => entry.id === rootfsDraftId) ??
+        filteredRootfsImages.find((entry) => entry.image === rootfsDraft);
+      setRootfs({
+        image: nextEntry?.image || draft.rootfs_image,
+        image_id: nextEntry?.id,
+      });
+    }
+    setRootfsPickerOpen(false);
+  }
+
+  function renderRootfsPicker() {
+    if (!rootfsPickerOpen) return null;
     const activeEntry =
       filteredRootfsImages.find((entry) => entry.id === rootfsDraftId) ??
       filteredRootfsImages.find((entry) => entry.image === rootfsDraft);
     return (
-      <Modal
-        open
-        width={720}
-        title="Root Filesystem Software Image"
-        onCancel={() => setRootfsModalOpen(false)}
-        onOk={() => {
-          const trimmed = rootfsDraft.trim();
-          if (rootfsMode === "custom") {
-            setRootfs({ image: trimmed || DEFAULT_PROJECT_IMAGE });
-          } else {
-            const nextEntry =
-              filteredRootfsImages.find(
-                (entry) => entry.id === rootfsDraftId,
-              ) ??
-              filteredRootfsImages.find((entry) => entry.image === rootfsDraft);
-            setRootfs({
-              image: nextEntry?.image || draft.rootfs_image,
-              image_id: nextEntry?.id,
-            });
-          }
-          setRootfsModalOpen(false);
+      <Card
+        size="small"
+        styles={{ body: { padding: "10px 12px" } }}
+        style={{
+          borderColor: COLORS.GRAY_LL,
+          background: "white",
         }}
       >
         <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
           <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            Pick a managed RootFS image for this project. You can always change
-            it later in project settings.
+            Pick a managed RootFS image for this project. Scan findings are
+            shown for review but do not block selection.
           </Paragraph>
           {rootfsMode === "catalog" ? (
             <>
@@ -347,6 +348,18 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                 loading={rootfsLoading}
                 disabled={rootfsLoading}
               />
+              <Space wrap>
+                <Button
+                  type="primary"
+                  onClick={applyRootfsDraft}
+                  disabled={!rootfsDraftId}
+                >
+                  Use this image
+                </Button>
+                <Button onClick={() => setRootfsPickerOpen(false)}>
+                  Cancel
+                </Button>
+              </Space>
               <Checkbox
                 checked={showOlderRootfsVersions}
                 onChange={(e) => setShowOlderRootfsVersions(e.target.checked)}
@@ -416,6 +429,18 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                   setRootfsDraftId(undefined);
                 }}
               />
+              <Space wrap>
+                <Button
+                  type="primary"
+                  onClick={applyRootfsDraft}
+                  disabled={!rootfsDraft.trim()}
+                >
+                  Use this image
+                </Button>
+                <Button onClick={() => setRootfsPickerOpen(false)}>
+                  Cancel
+                </Button>
+              </Space>
               <Button
                 type="link"
                 onClick={() => setRootfsMode("catalog")}
@@ -426,7 +451,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             </Space>
           )}
         </Space>
-      </Modal>
+      </Card>
     );
   }
 
@@ -442,8 +467,8 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             Select the base root filesystem image for this project.
           </Paragraph>
           <Space wrap>
-            <Button onClick={openRootfsModal} disabled={saving}>
-              Choose image...
+            <Button onClick={openRootfsPicker} disabled={saving}>
+              {rootfsPickerOpen ? "Change image..." : "Choose image..."}
             </Button>
             <Tag color="blue">{displayLabel}</Tag>
             {selectedRootfsEntry?.section && (
@@ -469,7 +494,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
           {selectedRootfsEntry && (
             <RootfsScanStatus entry={selectedRootfsEntry} />
           )}
-          {renderRootfsModal()}
+          {renderRootfsPicker()}
         </Space>
       </Card>
     );
