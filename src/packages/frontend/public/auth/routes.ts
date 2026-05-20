@@ -205,20 +205,6 @@ export function getPublicAuthRouteFromPath(
     };
   }
 
-  if (
-    routeParts[0] === "invites" &&
-    routeParts[1] === "project" &&
-    routeParts[2] &&
-    routeParts[3]
-  ) {
-    return {
-      inviteId: routeParts[3],
-      kind: "project-invite",
-      projectId: routeParts[2],
-      token: url.searchParams.get("token") ?? "",
-    };
-  }
-
   if (routeParts[0] === "invites" && routeParts[1]) {
     return {
       kind: "project-invite",

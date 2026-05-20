@@ -101,17 +101,6 @@ describe("getPublicAuthRouteFromPath", () => {
       token: "secret-token",
     });
     expect(
-      getPublicAuthRouteFromPath(
-        "/base/invites/project/22222222-2222-4222-8222-222222222222/77777777-7777-4777-8777-777777777777",
-        "?token=secret",
-      ),
-    ).toEqual({
-      inviteId: "77777777-7777-4777-8777-777777777777",
-      kind: "project-invite",
-      projectId: "22222222-2222-4222-8222-222222222222",
-      token: "secret",
-    });
-    expect(
       getPublicAuthRouteFromPath("/base/auth/cli-login/challenge-1"),
     ).toEqual({
       challengeId: "challenge-1",
