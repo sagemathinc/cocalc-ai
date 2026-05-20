@@ -678,6 +678,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
           onChange={setHost}
           regionFilter={draft.region}
           regionLabel={R2_REGION_LABELS[draft.region]}
+          wantsGpu={summary.gpu}
           pickerMode="create"
         />
         <Button

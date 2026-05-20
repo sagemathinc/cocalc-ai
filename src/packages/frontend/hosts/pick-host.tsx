@@ -20,7 +20,12 @@ import { useIntl } from "react-intl";
 import {
   mapCloudRegionToR2Region,
   R2_REGION_LABELS,
+  type R2Region,
 } from "@cocalc/util/consts";
+import {
+  recommendProjectHosts,
+  type ProjectHostRecommendation,
+} from "@cocalc/frontend/hosts/project-host-recommendations";
 
 import { getHostStatusTooltip } from "./constants";
 import {
@@ -90,6 +95,7 @@ export function HostPickerModal({
   sourceProjectRegion,
   lockRegion,
   showOfflineMoveWarning,
+  wantsGpu,
   mode = "move",
 }: {
   open: boolean;
@@ -101,6 +107,7 @@ export function HostPickerModal({
   sourceProjectRegion?: string;
   lockRegion?: boolean;
   showOfflineMoveWarning?: boolean;
+  wantsGpu?: boolean;
   mode?: "move" | "create";
 }) {
   const intl = useIntl();
@@ -114,6 +121,7 @@ export function HostPickerModal({
   const [regionFilterState, setRegionFilterState] = useState<
     string | undefined
   >(regionFilter);
+  const [autoExpandedRemote, setAutoExpandedRemote] = useState(false);
 
   const currentHost = useMemo(
     () => hosts.find((host) => host.id === currentHostId),
@@ -158,6 +166,39 @@ export function HostPickerModal({
     });
   }, [hosts, showUnavailable, regionFilterState]);
 
+  const createRecommendations = useMemo(() => {
+    if (!isCreate || !regionFilter) return undefined;
+    return recommendProjectHosts({
+      hosts,
+      projectRegion: regionFilter as R2Region,
+      wantsGpu,
+      selectedHostId,
+    });
+  }, [hosts, isCreate, regionFilter, selectedHostId, wantsGpu]);
+
+  const createRecommendationByHostId = useMemo(() => {
+    const byId = new Map<string, ProjectHostRecommendation>();
+    if (!createRecommendations) return byId;
+    for (const recommendation of [
+      ...createRecommendations.candidates,
+      ...createRecommendations.unavailable,
+    ]) {
+      byId.set(recommendation.host.id, recommendation);
+    }
+    return byId;
+  }, [createRecommendations]);
+
+  function createHostCompare(a: Host, b: Host): number {
+    const aRecommendation = createRecommendationByHostId.get(a.id);
+    const bRecommendation = createRecommendationByHostId.get(b.id);
+    if (aRecommendation || bRecommendation) {
+      const aScore = aRecommendation?.score ?? Number.NEGATIVE_INFINITY;
+      const bScore = bRecommendation?.score ?? Number.NEGATIVE_INFINITY;
+      if (aScore !== bScore) return bScore - aScore;
+    }
+    return autoSelectCompare(a, b);
+  }
+
   const selectableHosts = useMemo(() => {
     return filteredHosts.filter(
       (h) => h.can_place !== false && (isCreate || h.id !== currentHostId),
@@ -167,8 +208,15 @@ export function HostPickerModal({
   const bestSelectableHost = useMemo(() => {
     const preferred = selectableHosts.find((h) => h.id === selectedHostId);
     if (preferred) return preferred;
+    if (isCreate && createRecommendations) {
+      const selectable = new Set(selectableHosts.map((host) => host.id));
+      const recommended = createRecommendations.candidates.find((entry) =>
+        selectable.has(entry.host.id),
+      );
+      if (recommended) return recommended.host;
+    }
     return [...selectableHosts].sort(autoSelectCompare)[0];
-  }, [selectableHosts, selectedHostId]);
+  }, [createRecommendations, isCreate, selectableHosts, selectedHostId]);
 
   const noSelectableTarget =
     !loading && hosts.length > 0 && selectableHosts.length === 0;
@@ -212,12 +260,12 @@ export function HostPickerModal({
       items.push({ type: "header", label: g.label });
       items.push(
         ...g.items
-          .sort(autoSelectCompare)
+          .sort(isCreate ? createHostCompare : autoSelectCompare)
           .map((h) => ({ type: "host", host: h })),
       );
     }
     return items;
-  }, [filteredHosts, currentHostId]);
+  }, [filteredHosts, currentHostId, isCreate, createRecommendationByHostId]);
 
   const availableRegions = useMemo(() => {
     const regions = new Set<string>();
@@ -248,8 +296,37 @@ export function HostPickerModal({
       if (regionFilter) {
         setRegionFilterState(regionFilter);
       }
+      setAutoExpandedRemote(false);
     }
   }, [open, regionFilter, selectedHostId]);
+
+  useEffect(() => {
+    if (
+      !open ||
+      !isCreate ||
+      !regionFilter ||
+      loading ||
+      autoExpandedRemote ||
+      regionFilterState !== regionFilter
+    ) {
+      return;
+    }
+    if (
+      createRecommendations?.projectRegionCandidates.length === 0 &&
+      createRecommendations.remoteCandidates.length > 0
+    ) {
+      setRegionFilterState(undefined);
+      setAutoExpandedRemote(true);
+    }
+  }, [
+    autoExpandedRemote,
+    createRecommendations,
+    isCreate,
+    loading,
+    open,
+    regionFilter,
+    regionFilterState,
+  ]);
 
   useEffect(() => {
     if (!open) return;
@@ -324,6 +401,18 @@ export function HostPickerModal({
           description={`CoCalc will restore from the current ${sourceProjectRegionLabel} backups, create a new backup in ${selectedHostRegionLabel}, then switch the project's backup region after that backup succeeds. After the cutover, all previous backups from ${sourceProjectRegionLabel} will be discarded.`}
         />
       ) : null}
+      {isCreate &&
+        autoExpandedRemote &&
+        regionFilter &&
+        createRecommendations?.recommended && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 12 }}
+            title={`No available host in ${R2_REGION_LABELS[regionFilter] ?? regionFilter}.`}
+            description={`Showing remote hosts instead. Region mainly affects interactive latency, such as typing in terminals or waiting for notebook output; project host and region can be changed later.`}
+          />
+        )}
       <Space style={{ marginBottom: 8 }}>
         <Button size="small" onClick={load} loading={loading}>
           Refresh
