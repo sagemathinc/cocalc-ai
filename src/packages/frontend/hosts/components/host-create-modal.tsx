@@ -34,7 +34,7 @@ export function HostCreateModal({
           maxHeight: IS_MOBILE ? "calc(100vh - 32px)" : "calc(100vh - 96px)",
           marginRight: 10,
           overflowY: "auto",
-          padding: 0,
+          padding: 12,
         },
       }}
       style={IS_MOBILE ? { top: 8, paddingBottom: 8 } : { top: 32 }}

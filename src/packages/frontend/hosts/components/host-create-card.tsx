@@ -7,12 +7,14 @@ import {
   Select,
   Space,
   Spin,
+  Tag,
   Typography,
 } from "antd";
 import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { mapCountryRegionToR2Region } from "@cocalc/util/consts";
+import { COLORS } from "@cocalc/util/theme";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import {
@@ -31,6 +33,54 @@ import { isBillableHostProvider } from "../utils/funding-mode";
 import { useHostPricingSettings } from "../hooks/use-host-pricing-settings";
 import { HostCreateForm } from "./host-create-form";
 import { HostPriceBreakdown } from "./host-price-breakdown";
+
+const CARD_STYLES = {
+  header: { minHeight: 38, padding: "8px 12px" },
+  body: { padding: 12 },
+} as const;
+
+const labelFor = (value: unknown, fallback = "Not selected") =>
+  value == null || `${value}`.trim() === "" ? fallback : `${value}`;
+
+function SectionTitle({
+  icon,
+  title,
+  subtitle,
+}: {
+  icon: React.ComponentProps<typeof Icon>["name"];
+  title: string;
+  subtitle?: string;
+}) {
+  return (
+    <Space size={8} align="center">
+      <span
+        style={{
+          alignItems: "center",
+          background: COLORS.BLUE_LLLL,
+          borderRadius: 8,
+          color: COLORS.BLUE_D,
+          display: "inline-flex",
+          height: 24,
+          justifyContent: "center",
+          width: 24,
+        }}
+      >
+        <Icon name={icon} />
+      </span>
+      <span>
+        <Typography.Text strong>{title}</Typography.Text>
+        {subtitle && (
+          <Typography.Text
+            type="secondary"
+            style={{ display: "block", fontSize: 12, lineHeight: 1.1 }}
+          >
+            {subtitle}
+          </Typography.Text>
+        )}
+      </span>
+    </Space>
+  );
+}
 
 type HostCreateCardProps = {
   vm: HostCreateViewModel;
@@ -326,6 +376,14 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
     !!provider.catalogLoading;
   const showCatalogRefreshGate =
     !showCatalogLoading && catalogMissingForProvider && hasExternalProviders;
+  const providerLabel =
+    provider.providerOptions.find(
+      (option) => option.value === provider.selectedProvider,
+    )?.label ?? provider.selectedProvider;
+  const selectedMode =
+    watchedPricingModel === "spot" ? "Spot / interruptible" : "On-demand";
+  const selectedDiskLabel =
+    selectedDiskGb != null ? `${selectedDiskGb.toLocaleString()} GB` : "Disk";
   const providerSelectForm = (
     <HostCreateForm
       form={formInstance}
@@ -451,32 +509,128 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
   const presetsSection =
     provider.selectedProvider !== "none" &&
     provider.selectedProvider !== "self-host" ? (
-      <Card size="small" title="Presets">
-        <Space size="small" wrap>
+      <Card
+        size="small"
+        title={
+          <SectionTitle
+            icon="bolt"
+            title="Choose a starting point"
+            subtitle="Three intentionally simple presets"
+          />
+        }
+        styles={CARD_STYLES}
+      >
+        <div
+          style={{
+            display: "grid",
+            gap: 10,
+            gridTemplateColumns: IS_MOBILE
+              ? "1fr"
+              : "repeat(3, minmax(0, 1fr))",
+          }}
+        >
           {presets.map((preset) => (
-            <Button
+            <button
               key={preset.id}
-              size="small"
               disabled={preset.disabled}
               title={preset.disabledReason ?? preset.description}
               onClick={() => applyCreatePreset(preset.id)}
+              style={{
+                background: preset.disabled ? COLORS.GRAY_LLL : "white",
+                border: `1px solid ${COLORS.GRAY_DDD}`,
+                borderRadius: 10,
+                color: preset.disabled ? COLORS.GRAY : COLORS.GRAY_DD,
+                cursor: preset.disabled ? "not-allowed" : "pointer",
+                minHeight: 76,
+                padding: "10px 12px",
+                textAlign: "left",
+              }}
             >
-              {preset.label}
-            </Button>
+              <Space size={8} align="start">
+                <span
+                  style={{
+                    color:
+                      preset.id === "low-cost-spot"
+                        ? COLORS.BS_GREEN_D
+                        : COLORS.BLUE_D,
+                    fontSize: 16,
+                    lineHeight: "18px",
+                  }}
+                >
+                  <Icon
+                    name={
+                      preset.id === "gpu-workstation"
+                        ? "rocket"
+                        : preset.id === "low-cost-spot"
+                          ? "bolt"
+                          : "server"
+                    }
+                  />
+                </span>
+                <span>
+                  <Typography.Text strong>{preset.label}</Typography.Text>
+                  <Typography.Text
+                    type="secondary"
+                    style={{
+                      display: "block",
+                      fontSize: 12,
+                      lineHeight: 1.25,
+                    }}
+                  >
+                    {preset.disabled
+                      ? preset.disabledReason
+                      : preset.description}
+                  </Typography.Text>
+                </span>
+              </Space>
+            </button>
           ))}
-        </Space>
+        </div>
       </Card>
     ) : null;
   const summaryPanel = (
     <Card
       size="small"
-      title="Summary"
+      title={
+        <SectionTitle
+          icon="money-check"
+          title="Summary"
+          subtitle="Review cost and launch mode"
+        />
+      }
       style={{
         position: "sticky",
         top: 0,
+        boxShadow: `0 8px 24px ${COLORS.GRAY_DDD}`,
       }}
+      styles={CARD_STYLES}
     >
-      <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+      <Space orientation="vertical" style={{ width: "100%" }} size="small">
+        <div
+          style={{
+            background: COLORS.GRAY_LLL,
+            border: `1px solid ${COLORS.GRAY_LL}`,
+            borderRadius: 10,
+            padding: 10,
+          }}
+        >
+          <Space direction="vertical" size={4} style={{ width: "100%" }}>
+            <Space size={6} wrap>
+              <Tag color="blue">{providerLabel}</Tag>
+              <Tag color={watchedPricingModel === "spot" ? "green" : "default"}>
+                {selectedMode}
+              </Tag>
+            </Space>
+            <Typography.Text style={{ fontSize: 12 }}>
+              {labelFor(watchedRegion, "Region")} /{" "}
+              {labelFor(watchedZone, "Zone")}
+            </Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {labelFor(watchedMachineType ?? watchedGpuType, "Machine")} ·{" "}
+              {selectedDiskLabel}
+            </Typography.Text>
+          </Space>
+        </div>
         {noFundingModes && (
           <Alert
             type="warning"
@@ -492,14 +646,41 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
     </Card>
   );
   const renderShell = (main: React.ReactNode, summary: React.ReactNode) => (
-    <Card
-      title={
-        <span>
-          <Icon name="plus" /> Create host
-        </span>
-      }
-      styles={{ body: { padding: 16 } }}
-    >
+    <Card bordered={false} styles={{ body: { padding: 0 } }}>
+      <div
+        style={{
+          background: `linear-gradient(135deg, ${COLORS.BLUE_LLLL}, white 62%, ${COLORS.GRAY_LLL})`,
+          border: `1px solid ${COLORS.GRAY_LL}`,
+          borderRadius: 14,
+          marginBottom: 12,
+          padding: "12px 14px",
+        }}
+      >
+        <Space align="center" size={12}>
+          <span
+            style={{
+              alignItems: "center",
+              background: COLORS.BLUE_D,
+              borderRadius: 12,
+              color: "white",
+              display: "inline-flex",
+              height: 38,
+              justifyContent: "center",
+              width: 38,
+            }}
+          >
+            <Icon name="server" />
+          </span>
+          <span>
+            <Typography.Title level={4} style={{ margin: 0 }}>
+              Create host
+            </Typography.Title>
+            <Typography.Text type="secondary">
+              Configure provider, placement, compute, storage, and launch mode.
+            </Typography.Text>
+          </span>
+        </Space>
+      </div>
       {!canCreateHosts && (
         <Alert
           type="info"
@@ -599,10 +780,20 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
 
   return renderShell(
     <>
-      <Card size="small" title="Configuration">
+      {presetsSection}
+      <Card
+        size="small"
+        title={
+          <SectionTitle
+            icon="cog"
+            title="Configuration"
+            subtitle="Common controls should fit without scrolling"
+          />
+        }
+        styles={CARD_STYLES}
+      >
         {fullCreateForm}
       </Card>
-      {presetsSection}
     </>,
     summaryPanel,
   );
