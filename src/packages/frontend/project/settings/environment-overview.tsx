@@ -215,12 +215,29 @@ function SummaryRow({
             minWidth: 0,
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          <div
+            style={{
+              alignItems: "center",
+              display: "grid",
+              gap: 8,
+              gridTemplateColumns: "minmax(0, 1fr) auto",
+            }}
+          >
+            <Typography.Text
+              type="secondary"
+              style={{
+                display: "block",
+                fontSize: 12,
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
               {title}
             </Typography.Text>
             {action != null ? (
-              <div style={{ marginLeft: 8 }}>{action}</div>
+              <div style={{ minWidth: "fit-content" }}>{action}</div>
             ) : undefined}
           </div>
           <div style={{ minWidth: 0 }}>
