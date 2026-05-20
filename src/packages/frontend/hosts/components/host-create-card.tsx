@@ -268,9 +268,10 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
   );
   const selectProvider = React.useCallback(
     (value: HostProvider) => {
+      formInstance.setFieldsValue({ provider: value });
       onProviderChange?.(value);
     },
-    [onProviderChange],
+    [formInstance, onProviderChange],
   );
   const selectedDiskGb =
     typeof watchedDiskGb === "number" && Number.isFinite(watchedDiskGb)

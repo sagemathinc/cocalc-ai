@@ -643,7 +643,7 @@ describe("host-create-draft", () => {
 
     expect(
       getAvailablePresets(base, context).map((preset) => preset.label),
-    ).toEqual(["Standard GPU", "Low-cost spot GPU", "HPC"]);
+    ).toEqual(["Standard H200 GPU", "Low cost Spot H200 GPU", "HPC"]);
     expect(applyPreset("gpu-workstation", base, context)).toMatchObject({
       provider: "nebius",
       machine_type: "1gpu-16vcpu-200gb",

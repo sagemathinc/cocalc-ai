@@ -686,7 +686,9 @@ export function getAvailablePresets(
     {
       id: "low-cost-spot",
       label:
-        draft.provider === "nebius" ? "Low-cost spot GPU" : "Low-cost spot",
+        draft.provider === "nebius"
+          ? "Low cost Spot H200 GPU"
+          : "Low-cost spot",
       description:
         draft.provider === "nebius"
           ? "Use interruptible GPU capacity with automatic restore."
@@ -700,7 +702,8 @@ export function getAvailablePresets(
     },
     {
       id: "gpu-workstation",
-      label: draft.provider === "nebius" ? "Standard GPU" : "GPU workstation",
+      label:
+        draft.provider === "nebius" ? "Standard H200 GPU" : "GPU workstation",
       description:
         draft.provider === "nebius"
           ? "Use an on-demand GPU host."
