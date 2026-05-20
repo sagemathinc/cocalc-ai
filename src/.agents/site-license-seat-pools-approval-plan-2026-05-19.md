@@ -751,12 +751,17 @@ Acceptance criteria:
 
 ### Phase 5: Seat Reconciliation
 
-- Enforce one active pool per account per site-license exclusive group.
-- Instructor approval revokes the lower student seat in the same teaching group
-  for simplicity and to avoid confusion.
-- Researcher seats can coexist with teaching seats when they use a distinct
-  `exclusive_group`.
-- Add reporting so managers can see seats revoked due to upgrades.
+- [x] Enforce one active pool per account per site-license exclusive group.
+- [x] Instructor approval revokes the lower student seat in the same teaching group
+      for simplicity and to avoid confusion.
+- [x] Researcher seats can coexist with teaching seats when they use a distinct
+      `exclusive_group`.
+- [x] Add reporting so managers can see seats revoked due to upgrades.
+
+Implementation note: approval already records `seat-released-for-upgrade`
+audit events. Direct no-approval claims now hide and reject other active pools
+in the same site-license `exclusive_group`, while still allowing claims in
+distinct groups such as `research`.
 
 ### Phase 6: Fresh Affiliation Reverification
 
@@ -773,7 +778,7 @@ Acceptance criteria:
 
 - [x] Define resource limits for the new `instructor` and `researcher` tiers.
 - [x] Make project invite email quotas and collaborator caps depend on effective
-  membership.
+      membership.
 - [x] Ensure course workflows use instructor limits.
 
 Implementation note: course email invites now enforce both per-course pending

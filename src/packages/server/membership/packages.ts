@@ -300,6 +300,82 @@ function packageRequiresApproval(pkg: MembershipPackageRecord): boolean {
   return pkg.kind === "site" && pkg.metadata?.requires_approval === true;
 }
 
+function getSiteLicenseId(
+  metadata?: Record<string, unknown> | null,
+): string | undefined {
+  const siteLicenseId = `${metadata?.site_license_id ?? ""}`.trim();
+  return siteLicenseId || undefined;
+}
+
+function getPackageExclusiveGroup(pkg: {
+  membership_class: string;
+  metadata?: Record<string, unknown> | null;
+}): string {
+  return (
+    `${pkg.metadata?.exclusive_group ?? ""}`.trim().toLowerCase() ||
+    `${pkg.membership_class}`.trim().toLowerCase()
+  );
+}
+
+async function getActiveSiteLicenseAssignmentInExclusiveGroup({
+  pkg,
+  account_id,
+  client,
+  exclude_package_id,
+}: {
+  pkg: MembershipPackageRecord;
+  account_id: string;
+  client?: PoolClient;
+  exclude_package_id?: string;
+}): Promise<
+  | {
+      package_id: string;
+      assignment_id: string;
+      membership_class: string;
+    }
+  | undefined
+> {
+  if (pkg.kind !== "site") {
+    return;
+  }
+  const siteLicenseId = getSiteLicenseId(pkg.metadata);
+  if (!siteLicenseId) {
+    return;
+  }
+  const exclusiveGroup = getPackageExclusiveGroup(pkg);
+  const { rows } = await getQueryClient(client).query<{
+    assignment_id: string;
+    package_id: string;
+    membership_class: string;
+    metadata?: Record<string, unknown> | null;
+  }>(
+    `
+      SELECT
+        a.id AS assignment_id,
+        p.id AS package_id,
+        p.membership_class,
+        p.metadata
+      FROM membership_package_assignments a
+      JOIN membership_packages p
+        ON p.id = a.package_id
+      WHERE a.account_id = $1
+        AND a.revoked_at IS NULL
+        AND p.kind IN ('site', 'domain')
+        AND p.metadata ->> 'site_license_id' = $2
+        AND ($3::uuid IS NULL OR p.id <> $3::uuid)
+      ORDER BY a.assigned_at DESC NULLS LAST, a.created DESC NULLS LAST
+    `,
+    [account_id, siteLicenseId, exclude_package_id ?? null],
+  );
+  return rows.find(
+    (row) =>
+      getPackageExclusiveGroup({
+        membership_class: row.membership_class,
+        metadata: row.metadata,
+      }) === exclusiveGroup,
+  );
+}
+
 function getPackageStringMetadata(
   pkg: MembershipPackageRecord,
   key: string,
@@ -1765,6 +1841,17 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
         if (blocked) {
           continue;
         }
+        if (
+          !packageRequiresApproval(pkg) &&
+          (await getActiveSiteLicenseAssignmentInExclusiveGroup({
+            pkg,
+            account_id,
+            client,
+            exclude_package_id: pkg.id,
+          })) != null
+        ) {
+          continue;
+        }
         const pendingRequest =
           packageRequiresApproval(pkg) && claimDescriptor != null
             ? await getPendingSiteLicensePoolRequestForAccount({
@@ -1904,6 +1991,18 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
         );
         if (existing) {
           return existing;
+        }
+        const existingSameGroup =
+          await getActiveSiteLicenseAssignmentInExclusiveGroup({
+            pkg,
+            account_id,
+            client: dbClient,
+            exclude_package_id: package_id,
+          });
+        if (existingSameGroup != null) {
+          throw Error(
+            `account already has an active site-license seat in this ${getPackageExclusiveGroup(pkg)} group`,
+          );
         }
 
         const emailSet = new Set(verifiedEmailAddresses);

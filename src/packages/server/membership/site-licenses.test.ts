@@ -12,6 +12,7 @@ import {
 import { uuid } from "@cocalc/util/misc";
 import {
   claimMembershipPackageSeat,
+  claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay,
   listClaimableMembershipPackagesForAccount,
   listMembershipPackageAssignments,
 } from "./packages";
@@ -482,6 +483,119 @@ describe("site license seat pools", () => {
       }),
     );
     expect(request.metadata?.terms_accepted_at).toBeTruthy();
+  });
+
+  it("prevents direct claims for a second pool in the same exclusive group", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const account_id = uuid();
+    const teachingDomain = `teach-${uuid().slice(0, 8)}.edu`;
+    const researchDomain = `research-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await createTestAccount(account_id);
+    await markAdmin(admin_account_id);
+    await getPool().query(
+      `UPDATE accounts
+       SET email_address=$2,
+           email_address_verified=$3::jsonb
+       WHERE account_id=$1`,
+      [
+        account_id,
+        `ada@${teachingDomain}`,
+        {
+          [`ada@${teachingDomain}`]: new Date().toISOString(),
+          [`ada+research@${researchDomain}`]: new Date().toISOString(),
+        },
+      ],
+    );
+
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      owner_account_id,
+      name: "Exclusive Group Campus",
+      organization_name: "Example University",
+      allowed_domains: [teachingDomain, researchDomain],
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 5,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+          allowed_domains: [teachingDomain],
+        },
+        {
+          pool_name: "Teaching Staff",
+          membership_class: instructorTier,
+          seat_count: 5,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+          allowed_domains: [researchDomain],
+        },
+        {
+          pool_name: "Researchers",
+          membership_class: researcherTier,
+          seat_count: 5,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "research",
+          allowed_domains: [researchDomain],
+        },
+      ],
+    });
+    const studentPool = overview.pools.find(
+      (pool) => pool.pool_name === "Students",
+    )!;
+    const teachingStaffPool = overview.pools.find(
+      (pool) => pool.pool_name === "Teaching Staff",
+    )!;
+    const researcherPool = overview.pools.find(
+      (pool) => pool.pool_name === "Researchers",
+    )!;
+
+    await claimMembershipPackageSeat({
+      account_id,
+      package_id: studentPool.id,
+    });
+    const claimablesAfterStudentClaim =
+      await listClaimableMembershipPackagesForAccount({ account_id });
+    expect(
+      claimablesAfterStudentClaim.some(
+        (claimable) => claimable.package_id === teachingStaffPool.id,
+      ),
+    ).toBe(false);
+    expect(claimablesAfterStudentClaim).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ package_id: researcherPool.id }),
+      ]),
+    );
+
+    await expect(
+      claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
+        account_id,
+        package_id: teachingStaffPool.id,
+        verified_email_addresses: [
+          `ada@${teachingDomain}`,
+          `ada+research@${researchDomain}`,
+        ],
+      }),
+    ).rejects.toThrow(
+      "account already has an active site-license seat in this teaching group",
+    );
+    await expect(
+      claimMembershipPackageSeat({
+        account_id,
+        package_id: researcherPool.id,
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        account_id,
+        package_id: researcherPool.id,
+      }),
+    );
   });
 
   it("rechecks approval-required pool capacity at review time", async () => {
