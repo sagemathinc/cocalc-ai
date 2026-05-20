@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Col, Input, Row } from "antd";
+import { Alert, Button, Col, Input, Row } from "antd";
 import { Set } from "immutable";
 import { isEqual } from "lodash";
 import { useEffect, useMemo, useState } from "react";
@@ -28,7 +28,6 @@ import {
   StudentsMap,
 } from "../store";
 import * as util from "../util";
-import AddStudents from "./add-students";
 import { Student, StudentNameDescription } from "./students-panel-student";
 
 interface StudentsPanelReactProps {
@@ -234,7 +233,7 @@ export function StudentsPanel({
               onChange={(e) => setFilter(e.target.value)}
             />
           </Col>
-          <Col md={6}>
+          <Col md={8}>
             {num_omitted ? (
               <h5 style={{ marginLeft: "15px" }}>
                 {intl.formatMessage(
@@ -247,13 +246,13 @@ export function StudentsPanel({
               </h5>
             ) : undefined}
           </Col>
-          <Col md={11}>
-            <AddStudents
-              name={name}
-              students={students}
-              user_map={user_map}
-              project_id={project_id}
-            />
+          <Col md={6} style={{ textAlign: "right" }}>
+            <Button
+              type="primary"
+              onClick={() => frameActions.setModal("add-students")}
+            >
+              <Icon name="user-plus" /> Add Students
+            </Button>
           </Col>
         </Row>
       </div>
