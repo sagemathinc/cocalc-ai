@@ -246,11 +246,11 @@ export async function waitForConsistentState(
                   `link stream ${type}: `,
                   hashLink[type],
                   // @ts-ignore
-                  link.streams[type].stream.client.id,
+                  link.streams?.[type]?.stream.client.id,
                   // @ts-ignore
-                  link.streams[type].stream.storage.path,
+                  link.streams?.[type]?.stream.storage.path,
                   // @ts-ignore
-                  link.streams[type].seqs(),
+                  link.streams?.[type]?.seqs(),
                   // @ts-ignore
                   //link.streams.interest.getAll(),
                 );
@@ -272,10 +272,12 @@ export async function waitForConsistentState(
             }
             if (!isEqual(a, x) /*|| !isEqual(b, y) */) {
               // @ts-ignore
-              const seqs0 = servers[i].clusterStreams.interest.seqs();
+              const seqs0 = servers[i].clusterStreams?.interest.seqs();
               // @ts-ignore
-              const seqs1 = link.streams.interest.seqs();
+              const seqs1 = link.streams?.interest.seqs();
               if (
+                seqs0 != null &&
+                seqs1 != null &&
                 !isEqual(
                   seqs0.slice(0, seqs1.length),
                   seqs1.slice(0, seqs0.length),

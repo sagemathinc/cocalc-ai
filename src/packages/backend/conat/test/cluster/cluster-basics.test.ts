@@ -254,13 +254,13 @@ describe("create a cluster with two distinct servers and send a message from one
     sub = await client1.subscribe("rsa");
 
     const x = await client2.publish("rsa", N);
-    // interest hasn't propogated from one cluster to another yet:
-    expect(x.count).toBe(0);
-
-    await client2.waitForInterest("rsa");
-
-    const y = await client2.publish("rsa", N);
-    expect(y.count).toBe(1);
+    if (x.count == 0) {
+      await client2.waitForInterest("rsa");
+      const y = await client2.publish("rsa", N);
+      expect(y.count).toBe(1);
+    } else {
+      expect(x.count).toBe(1);
+    }
 
     const { value } = await sub.next();
     expect(value.data).toBe(N);

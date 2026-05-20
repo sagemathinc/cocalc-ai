@@ -54,7 +54,16 @@ import { UsageMonitor } from "@cocalc/conat/monitor/usage";
 import { until } from "@cocalc/util/async-utils";
 import {
   clusterLink,
+  CLUSTER_INTEREST_CLOSE,
+  CLUSTER_INTEREST_DELTA,
+  CLUSTER_INTEREST_OPEN,
+  CLUSTER_INTEREST_PROTOCOL,
+  CLUSTER_INTEREST_SNAPSHOT_REQUEST,
   type ClusterLink,
+  type ClusterInterestOpen,
+  type ClusterInterestOpenResponse,
+  type ClusterInterestSnapshotRequest,
+  type ClusterInterestSnapshotResponse,
   clusterStreams,
   type ClusterStreams,
   trimClusterStreams,
@@ -318,6 +327,13 @@ type InboundAdmissionRecord = {
   lastLogged: number;
 };
 
+type ClusterInterestPeer = {
+  socket: any;
+  clusterName: string;
+  id?: string;
+  openedAt: number;
+};
+
 export class ConatServer extends EventEmitter {
   private static readonly testInstances = new Set<ConatServer>();
   public readonly io;
@@ -340,6 +356,7 @@ export class ConatServer extends EventEmitter {
   private readonly explicitMaxInboundEventsPerIdentityWindow: boolean;
   private readonly explicitInboundEventWindowMs: boolean;
   private readonly explicitInboundEventBlockMs: boolean;
+  private readonly noAuth: boolean;
   private inboundAdmissionBySocket: Map<string, InboundAdmissionRecord> =
     new Map();
   private inboundAdmissionByIdentity: Map<string, InboundAdmissionRecord> =
@@ -365,6 +382,7 @@ export class ConatServer extends EventEmitter {
   } = {};
   private clusterLinksByAddress: { [address: string]: ClusterLink } = {};
   private clusterPersistServer?: ConatSocketServer;
+  private clusterInterestPeers = new Map<string, ClusterInterestPeer>();
   public readonly clusterName?: string;
   private queuedClusterUpdates: Update[] = [];
   private interestVersion = 0;
@@ -421,6 +439,7 @@ export class ConatServer extends EventEmitter {
         ),
       ),
     } = options;
+    this.noAuth = getUser == null;
     this.clusterName = clusterName;
     this.explicitMaxInboundEventsPerSocketWindow =
       options.maxInboundEventsPerSocketWindow != null;
@@ -701,6 +720,7 @@ export class ConatServer extends EventEmitter {
     for (const address in this.clusterLinksByAddress) {
       delete this.clusterLinksByAddress[address];
     }
+    this.clusterInterestPeers.clear();
     this.clusterPersistServer?.close();
     delete this.clusterPersistServer;
     this.trimClusterStream.cancel?.();
@@ -1078,13 +1098,149 @@ export class ConatServer extends EventEmitter {
   // CLUSTER STREAM
   ////////////////////////////////////
 
-  private publishUpdate = (update: Update) => {
-    if (this.clusterStreams == null) {
-      throw Error("streams must be initialized");
+  private isSystemUser = (user: any): boolean => {
+    // Some tests and local no-auth deployments omit getUser entirely, in
+    // which case all connections have user=null. In authenticated deployments
+    // the cluster control protocol is restricted to the explicit system user.
+    return user?.hub_id === "system" || (this.noAuth && user == null);
+  };
+
+  private clusterInterestSnapshot = () =>
+    serializeInterest(this.interest, this.interestVersion);
+
+  private registerClusterInterestPeer = ({
+    socket,
+    payload,
+  }: {
+    socket: any;
+    payload: ClusterInterestOpen;
+  }): ClusterInterestOpenResponse => {
+    if (payload?.protocol !== CLUSTER_INTEREST_PROTOCOL) {
+      return {
+        ok: false,
+        error: `unsupported cluster interest protocol ${payload?.protocol}`,
+        code: 400,
+      };
     }
+    if (!this.clusterName || payload.clusterName !== this.clusterName) {
+      return {
+        ok: false,
+        error: `cluster interest open for wrong cluster '${payload?.clusterName}'`,
+        code: 400,
+      };
+    }
+    this.clusterInterestPeers.set(socket.id, {
+      socket,
+      clusterName: payload.clusterName,
+      id: payload.nodeId,
+      openedAt: Date.now(),
+    });
+    return { ok: true, snapshot: this.clusterInterestSnapshot() };
+  };
+
+  private unregisterClusterInterestPeer = (socketId: string) => {
+    this.clusterInterestPeers.delete(socketId);
+  };
+
+  private registerClusterInterestHandlers = ({ socket, user }) => {
+    const requireSystemPeer = (respond?): boolean => {
+      if (!this.isSystemUser(user)) {
+        respond?.({
+          ok: false,
+          error: "cluster interest protocol requires system account",
+          code: 403,
+        });
+        return false;
+      }
+      return true;
+    };
+
+    socket.on(
+      CLUSTER_INTEREST_OPEN,
+      (payload: ClusterInterestOpen, respond) => {
+        if (
+          !this.admitInboundEvent({
+            socket,
+            event: CLUSTER_INTEREST_OPEN,
+            respond,
+          })
+        ) {
+          return;
+        }
+        if (!requireSystemPeer(respond)) {
+          return;
+        }
+        respond?.(this.registerClusterInterestPeer({ socket, payload }));
+      },
+    );
+
+    socket.on(
+      CLUSTER_INTEREST_SNAPSHOT_REQUEST,
+      (payload: ClusterInterestSnapshotRequest, respond) => {
+        if (
+          !this.admitInboundEvent({
+            socket,
+            event: CLUSTER_INTEREST_SNAPSHOT_REQUEST,
+            respond,
+          })
+        ) {
+          return;
+        }
+        if (!requireSystemPeer(respond)) {
+          return;
+        }
+        if (payload?.protocol !== CLUSTER_INTEREST_PROTOCOL) {
+          respond?.({
+            ok: false,
+            error: `unsupported cluster interest protocol ${payload?.protocol}`,
+            code: 400,
+          } satisfies ClusterInterestSnapshotResponse);
+          return;
+        }
+        respond?.({
+          ok: true,
+          snapshot: this.clusterInterestSnapshot(),
+        } satisfies ClusterInterestSnapshotResponse);
+      },
+    );
+
+    socket.on(CLUSTER_INTEREST_CLOSE, (_payload, respond) => {
+      if (
+        !this.admitInboundEvent({
+          socket,
+          event: CLUSTER_INTEREST_CLOSE,
+          respond,
+        })
+      ) {
+        return;
+      }
+      this.unregisterClusterInterestPeer(socket.id);
+      respond?.({ ok: true });
+    });
+  };
+
+  private broadcastClusterInterestDelta = (interest: InterestUpdate) => {
+    if (!this.clusterName || this.clusterInterestPeers.size == 0) {
+      return;
+    }
+    for (const [socketId, peer] of this.clusterInterestPeers) {
+      if (
+        peer.clusterName !== this.clusterName ||
+        peer.socket.disconnected ||
+        peer.socket.conn?.readyState == "closed"
+      ) {
+        this.clusterInterestPeers.delete(socketId);
+        continue;
+      }
+      peer.socket.emit(CLUSTER_INTEREST_DELTA, interest);
+    }
+  };
+
+  private publishUpdate = (update: Update) => {
     const { interest } = update;
     if (interest !== undefined) {
-      this.clusterStreams.interest.publish(interest);
+      this.broadcastClusterInterestDelta(interest);
+      this.clusterStreams?.interest.publish(interest);
     }
     this.trimClusterStream();
   };
@@ -1092,9 +1248,8 @@ export class ConatServer extends EventEmitter {
   private updateClusterStream = (update: Update) => {
     if (!this.clusterName) return;
 
-    if (this.clusterStreams !== undefined) {
-      this.publishUpdate(update);
-    } else {
+    this.publishUpdate(update);
+    if (this.clusterStreams === undefined) {
       this.queuedClusterUpdates.push(update);
     }
   };
@@ -1132,10 +1287,10 @@ export class ConatServer extends EventEmitter {
       ...interest,
       version: ++this.interestVersion,
     };
-    // publish to the stream
-    this.updateClusterStream({ interest: versionedInterest });
     // update our local state
     updateInterest(versionedInterest, this.interest);
+    // publish to peers after local state is authoritative for this version.
+    this.updateClusterStream({ interest: versionedInterest });
   };
 
   ///////////////////////////////////////
@@ -1562,6 +1717,7 @@ export class ConatServer extends EventEmitter {
     }
     socket.on("disconnecting", async () => {
       this.log("disconnecting", { id, user });
+      this.unregisterClusterInterestPeer(socket.id);
       socket.conn?.off?.("packetCreate", onServerPacketCreate);
       // Always remove from tracked sockets on teardown so auth-failed
       // connections do not linger in memory if "closed" is not emitted.
@@ -1616,6 +1772,7 @@ export class ConatServer extends EventEmitter {
       return;
     }
 
+    this.registerClusterInterestHandlers({ socket, user });
     this.sendInfo(socket, user);
 
     socket.on("stats", (payload: any = {}) => {
@@ -2445,6 +2602,7 @@ export class ConatServer extends EventEmitter {
           address,
           this.options.systemAccountPassword,
           timeout,
+          this.id,
         );
         const { clusterName, id } = link;
         if (this.clusterLinks[clusterName] == null) {
