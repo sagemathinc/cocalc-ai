@@ -3753,9 +3753,12 @@ export async function getCatalog({
   account_id?: string;
   provider?: string;
 }): Promise<HostCatalog> {
-  requireAccount(account_id);
+  const owner = requireAccount(account_id);
   const cloud = provider ?? "gcp";
   if (cloud === "self-host") {
+    if (!(await isAdmin(owner))) {
+      throw new Error("self-hosted hosts are limited to admins");
+    }
     const { rows } = await pool().query<{
       connector_id: string;
       name: string | null;
@@ -4432,6 +4435,11 @@ export async function createHost({
 }): Promise<Host> {
   const owner = requireAccount(account_id);
   const requestedFundingMode = normalizeRequestedHostFundingMode(funding_mode);
+  if (normalizeProviderId(machine?.cloud) === "self-host") {
+    if (!(await isAdmin(owner))) {
+      throw new Error("self-hosted hosts are limited to admins");
+    }
+  }
   const auth = await maybeRequireFreshAuthForInteractiveHostAction({
     account_id,
     browser_id,
@@ -5307,6 +5315,12 @@ export async function updateHostMachine({
   const requestedCloudRaw = typeof cloud === "string" ? cloud : undefined;
   const requestedCloud = normalizeProviderId(requestedCloudRaw);
   const effectiveFundingCloud = requestedCloud ?? machineCloud;
+  if (
+    (requestedCloud === "self-host" || machineCloud === "self-host") &&
+    !(await isAdmin(owner))
+  ) {
+    throw new Error("self-hosted hosts are limited to admins");
+  }
   const currentFundingMode = currentHostFundingMode(metadata);
   await assertRequestedHostFundingModeAllowed({
     account_id: owner,

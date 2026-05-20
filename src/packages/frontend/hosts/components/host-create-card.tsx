@@ -67,6 +67,44 @@ const formatCpuRamDiskSummary = ({
   return parts.join(", ");
 };
 
+const providerShortName = (value: string, label: string) => {
+  if (value === "gcp") return "Google";
+  if (value === "nebius") return "Nebius";
+  if (value === "hyperstack") return "Hyperstack";
+  if (value === "lambda") return "Lambda";
+  if (value === "self-host") return "Self-hosted";
+  return label;
+};
+
+const providerDescription = (value: string) => {
+  if (value === "gcp") return "Broad regions, steady CPU and GPU capacity.";
+  if (value === "nebius") return "High-end GPU and HPC hosts.";
+  if (value === "hyperstack") return "Large CPU/RAM and GPU catalog.";
+  if (value === "lambda") return "Compact GPU cloud catalog.";
+  if (value === "self-host") return "Admin-only user-managed host.";
+  return "Configure this provider.";
+};
+
+const providerBadgeStyle = (value: string): React.CSSProperties => {
+  if (value === "gcp") {
+    return {
+      background:
+        "conic-gradient(from 180deg, #4285f4, #34a853, #fbbc05, #ea4335, #4285f4)",
+      color: "white",
+    };
+  }
+  if (value === "nebius") {
+    return {
+      background: "linear-gradient(135deg, #101828, #0ea5e9)",
+      color: "white",
+    };
+  }
+  return {
+    background: COLORS.BLUE_LLL,
+    color: COLORS.BLUE_D,
+  };
+};
+
 function SectionTitle({
   icon,
   title,
@@ -227,6 +265,12 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
       draftState.applyPreset(presetId);
     },
     [draftState],
+  );
+  const selectProvider = React.useCallback(
+    (value: HostProvider) => {
+      onProviderChange?.(value);
+    },
+    [onProviderChange],
   );
   const selectedDiskGb =
     typeof watchedDiskGb === "number" && Number.isFinite(watchedDiskGb)
@@ -447,6 +491,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
       onValuesChange={draftState.onValuesChange}
       pricingSettings={pricingSettings}
       draftManaged
+      hideProviderSelect
     />
   );
   const priceSummary =
@@ -629,6 +674,83 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
         </div>
       </Card>
     ) : null;
+  const providerSection = (
+    <Card
+      size="small"
+      title={<SectionTitle icon="cloud" title="Provider" />}
+      styles={CARD_STYLES}
+    >
+      <div
+        style={{
+          display: "grid",
+          gap: 10,
+          gridTemplateColumns: IS_MOBILE
+            ? "1fr"
+            : `repeat(${Math.min(provider.providerOptions.length || 1, 3)}, minmax(0, 1fr))`,
+        }}
+      >
+        {provider.providerOptions.map((option) => {
+          const selected = option.value === provider.selectedProvider;
+          const label = providerShortName(option.value, option.label);
+          return (
+            <Button
+              key={option.value}
+              htmlType="button"
+              type={selected ? "primary" : "default"}
+              size="large"
+              block
+              onClick={() => selectProvider(option.value)}
+              style={{
+                height: "auto",
+                justifyContent: "flex-start",
+                minHeight: 72,
+                padding: "10px 12px",
+                textAlign: "left",
+                whiteSpace: "normal",
+              }}
+            >
+              <Space size={10} align="center">
+                <span
+                  style={{
+                    alignItems: "center",
+                    borderRadius: 12,
+                    display: "inline-flex",
+                    flex: "0 0 auto",
+                    fontWeight: 800,
+                    height: 36,
+                    justifyContent: "center",
+                    lineHeight: 1,
+                    width: 36,
+                    ...providerBadgeStyle(option.value),
+                  }}
+                >
+                  {option.value === "gcp" ? "G" : label.slice(0, 1)}
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <Typography.Text
+                    strong
+                    style={{ color: selected ? "white" : undefined }}
+                  >
+                    {label}
+                  </Typography.Text>
+                  <Typography.Text
+                    style={{
+                      color: selected ? "rgba(255,255,255,0.82)" : COLORS.GRAY,
+                      display: "block",
+                      fontSize: 12,
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    {providerDescription(option.value)}
+                  </Typography.Text>
+                </span>
+              </Space>
+            </Button>
+          );
+        })}
+      </div>
+    </Card>
+  );
   const summaryPanel = (
     <Card
       size="small"
@@ -823,6 +945,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
 
   return renderShell(
     <>
+      {providerSection}
       {presetsSection}
       <Card
         size="small"

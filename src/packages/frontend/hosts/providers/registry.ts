@@ -2729,6 +2729,7 @@ export const getProviderEnablement = (opts: {
   // customize is the "customize" redux store
   customize?: { get?: (key: string) => unknown };
   showLocal: boolean;
+  isAdmin?: boolean;
 }): HostProviderFlags => {
   const readCustomizeFlag = (customize: any, key: string): unknown =>
     customize?.get?.(key);
@@ -2746,6 +2747,10 @@ export const getProviderEnablement = (opts: {
   };
   const enabled = {} as Record<HostProvider, boolean>;
   for (const entry of Object.values(PROVIDER_REGISTRY)) {
+    if (entry.id === "self-host" && !opts.isAdmin) {
+      enabled[entry.id] = false;
+      continue;
+    }
     if (entry.localOnly) {
       const flag = entry.featureFlagKey
         ? readCustomizeFlag(opts.customize, entry.featureFlagKey)

@@ -7,6 +7,8 @@ import {
   getHostPricingModeEstimates,
   getGcpMachineTypeOptions,
   getNebiusRegionOptions,
+  getProviderEnablement,
+  getProviderOptionsList,
   getProviderPriceEstimate,
   isNebiusSpotSupported,
 } from "./registry";
@@ -17,6 +19,36 @@ function testCatalog(entries: HostCatalog["entries"]): HostCatalog {
     provider_capabilities: {},
   };
 }
+
+describe("provider enablement", () => {
+  const enabledCustomize = {
+    get: () => true,
+  };
+
+  it("hides self-hosted providers from non-admins even when the flag is enabled", () => {
+    const flags = getProviderEnablement({
+      customize: enabledCustomize,
+      showLocal: false,
+      isAdmin: false,
+    });
+
+    expect(
+      getProviderOptionsList(flags).map((option) => option.value),
+    ).not.toContain("self-host");
+  });
+
+  it("allows self-hosted providers for admins when the flag is enabled", () => {
+    const flags = getProviderEnablement({
+      customize: enabledCustomize,
+      showLocal: false,
+      isAdmin: true,
+    });
+
+    expect(
+      getProviderOptionsList(flags).map((option) => option.value),
+    ).toContain("self-host");
+  });
+});
 
 describe("buildCreateHostPayload", () => {
   it("adds derived cpu and ram metadata for gcp machine types", () => {

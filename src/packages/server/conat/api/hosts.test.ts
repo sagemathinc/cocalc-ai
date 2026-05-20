@@ -1364,6 +1364,46 @@ describe("hosts.createHost", () => {
       session_hash: "session-hash",
     });
   });
+
+  it("rejects self-hosted host creation for non-admins", async () => {
+    isAdminMock = jest.fn(async () => false);
+    queryMock = jest.fn(async (sql: string) => {
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { createHost } = await import("./hosts");
+
+    await expect(
+      createHost({
+        account_id: ACCOUNT_ID,
+        name: "self-hosted",
+        region: "pending",
+        size: "custom",
+        machine: { cloud: "self-host", metadata: {} },
+      }),
+    ).rejects.toThrow("self-hosted hosts are limited to admins");
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("hosts.getCatalog", () => {
+  beforeEach(() => {
+    isAdminMock = jest.fn(async () => false);
+    queryMock = jest.fn(async (sql: string) => {
+      throw new Error(`unexpected query: ${sql}`);
+    });
+  });
+
+  it("rejects self-hosted catalog access for non-admins", async () => {
+    const { getCatalog } = await import("./hosts");
+
+    await expect(
+      getCatalog({
+        account_id: ACCOUNT_ID,
+        provider: "self-host",
+      }),
+    ).rejects.toThrow("self-hosted hosts are limited to admins");
+    expect(queryMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("hosts browser fresh auth gating", () => {
@@ -1457,6 +1497,40 @@ describe("hosts browser fresh auth gating", () => {
       allow_actor_impersonation: true,
       session_hash: "session-hash",
     });
+  });
+
+  it("rejects self-hosted host machine updates for non-admins", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "pending",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: {
+                  cloud: "self-host",
+                  metadata: {},
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { updateHostMachine } = await import("./hosts");
+    await expect(
+      updateHostMachine({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+        disk_gb: 100,
+      }),
+    ).rejects.toThrow("self-hosted hosts are limited to admins");
   });
 
   it("checks fresh auth before host starts when a CLI session hash is provided", async () => {

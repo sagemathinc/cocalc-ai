@@ -26,6 +26,7 @@ type HostCreateFormProps = {
   onProviderChange?: (value: string) => void;
   wrapForm?: boolean;
   showOnlyProviderSelect?: boolean;
+  hideProviderSelect?: boolean;
   autoSelectFundingMode?: boolean;
   pricingSettings?: DedicatedHostSurchargeSettings;
   onValuesChange?: (changedValues: any, allValues: any) => void;
@@ -40,6 +41,7 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
   onProviderChange,
   wrapForm = true,
   showOnlyProviderSelect = false,
+  hideProviderSelect = false,
   autoSelectFundingMode = true,
   pricingSettings,
   onValuesChange,
@@ -188,7 +190,7 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
 
   const content = (
     <>
-      {providerField}
+      {hideProviderSelect ? null : providerField}
       {showOnlyProviderSelect ? null : (
         <>
           {simpleSelfHost ? (
