@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Card, Col, Grid, Layout, Row, Space } from "antd";
+import { Button, Col, Grid, Layout, Row, Space } from "antd";
 import { Map, Set as ImmutableSet } from "immutable";
 import { useLayoutEffect, useRef } from "react";
 import { useIntl } from "react-intl";
@@ -25,7 +25,6 @@ import { Icon, Loading, LoginLink, Title } from "@cocalc/frontend/components";
 import { Footer } from "@cocalc/frontend/customize";
 import { labels } from "@cocalc/frontend/i18n";
 import { COLORS } from "@cocalc/util/theme";
-import { HostCreatePanel } from "@cocalc/frontend/hosts/components/host-create-panel";
 import {
   IncomingInviteBanner,
   useInviteInboxState,
@@ -50,40 +49,7 @@ const LOADING_STYLE: CSS = {
   color: COLORS.GRAY,
 } as const;
 
-const CREATE_PANEL_WIDTH_STORAGE_KEY = "cocalc:projects:createPanelWidth";
 const CREATE_PANEL_OPEN_STORAGE_KEY = "cocalc:projects:createPanelOpen";
-const DEFAULT_CREATE_PANEL_WIDTH = 420;
-const MIN_CREATE_PANEL_WIDTH = 260;
-const MAX_CREATE_PANEL_WIDTH = 640;
-
-function clampCreatePanelWidth(width: number) {
-  return Math.min(
-    MAX_CREATE_PANEL_WIDTH,
-    Math.max(MIN_CREATE_PANEL_WIDTH, width),
-  );
-}
-
-function readCreatePanelWidth() {
-  if (typeof window === "undefined") {
-    return DEFAULT_CREATE_PANEL_WIDTH;
-  }
-  const raw = window.localStorage.getItem(CREATE_PANEL_WIDTH_STORAGE_KEY);
-  const parsed = raw == null ? Number.NaN : Number(raw);
-  if (!Number.isFinite(parsed)) {
-    return DEFAULT_CREATE_PANEL_WIDTH;
-  }
-  return clampCreatePanelWidth(parsed);
-}
-
-function persistCreatePanelWidth(width: number) {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.localStorage.setItem(
-    CREATE_PANEL_WIDTH_STORAGE_KEY,
-    String(clampCreatePanelWidth(width)),
-  );
-}
 
 function readCreatePanelOpen() {
   if (typeof window === "undefined") {
@@ -145,8 +111,6 @@ export const ProjectsPage: React.FC = () => {
     operationsRef,
   ] as const;
 
-  const [createPanelWidth, setCreatePanelWidth] =
-    useState(readCreatePanelWidth);
   const [createPanelOpen, setCreatePanelOpen] = useState(readCreatePanelOpen);
 
   const [tableHeight, setTableHeight] = useState<number>(400);
@@ -156,10 +120,6 @@ export const ProjectsPage: React.FC = () => {
   const [filteredCollaborators, setFilteredCollaborators] = useState<
     string[] | null
   >(null);
-
-  useEffect(() => {
-    persistCreatePanelWidth(createPanelWidth);
-  }, [createPanelWidth]);
 
   useEffect(() => {
     persistCreatePanelOpen(createPanelOpen);
@@ -324,9 +284,6 @@ export const ProjectsPage: React.FC = () => {
     }
   }, [all_projects.length, createPanelOpen]);
 
-  const toggleCreatePanel = () => setCreatePanelOpen((prev) => !prev);
-  const showCreatePanel = !IS_MOBILE && createPanelOpen;
-
   function handleCreateProject() {
     setCreatePanelOpen(true);
   }
@@ -347,12 +304,11 @@ export const ProjectsPage: React.FC = () => {
     }
   }
 
-  const contentCol = showCreatePanel ? { span: 24 } : { span: 20, offset: 2 };
+  const contentCol = { span: 20, offset: 2 };
 
   return (
     <div className={"smc-vfill"} style={{ overflow: "hidden" }}>
       <Layout
-        hasSider={showCreatePanel}
         style={{
           background: "white",
           height: "100%",
@@ -361,26 +317,17 @@ export const ProjectsPage: React.FC = () => {
           minHeight: 0,
         }}
       >
-        {showCreatePanel && (
-          <HostCreatePanel
-            width={createPanelWidth}
-            setWidth={setCreatePanelWidth}
-            onHide={toggleCreatePanel}
-          >
-            <NewProjectCreator
-              default_value={search}
-              open={createPanelOpen}
-              onClose={() => setCreatePanelOpen(false)}
-            />
-          </HostCreatePanel>
-        )}
+        <NewProjectCreator
+          default_value={search}
+          open={createPanelOpen}
+          onClose={() => setCreatePanelOpen(false)}
+        />
         <Layout.Content
           style={{
             background: "white",
-            padding: showCreatePanel ? "16px 0 0 16px" : "16px 0 0 15px",
+            padding: "16px 0 0 15px",
             minHeight: 0,
             overflow: "auto",
-            borderLeft: showCreatePanel ? "2px solid #ccc" : "none",
             zIndex: 1,
           }}
         >
@@ -499,16 +446,6 @@ export const ProjectsPage: React.FC = () => {
                       }
                     />
                   </div>
-                  {IS_MOBILE && createPanelOpen && (
-                    <Card size="small" styles={{ body: { padding: "12px" } }}>
-                      <NewProjectCreator
-                        default_value={search}
-                        open={createPanelOpen}
-                        onClose={() => setCreatePanelOpen(false)}
-                      />
-                    </Card>
-                  )}
-
                   {/* Bulk Operations (when filters active) */}
                   <div ref={operationsRef}>
                     <ProjectsOperations

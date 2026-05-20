@@ -18,7 +18,6 @@ import {
   Select,
   Space,
   Tag,
-  Typography,
 } from "antd";
 import { delay } from "awaiting";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -67,7 +66,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
   const projectsLabel = intl.formatMessage(labels.projects);
-  const { Title } = Typography;
 
   const [error, set_error] = useState<string>("");
   const [saving, setSaving] = useState<boolean>(false);
@@ -86,7 +84,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     rootfsError,
     isAdmin,
     selectedHost,
-    setTitle,
     setAdvancedOpen,
     setRegion,
     setHost,
@@ -175,7 +172,14 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     setSaving(true);
     const actions = redux.getActions("projects");
     let project_id: string;
-    const opts = projectDraftToCreateOptions(draft);
+    const title =
+      `${(new_project_title_ref.current as any)?.input?.value ?? draft.title}`.trim();
+    if (!title) {
+      setSaving(false);
+      set_error(`Please enter a title for the new ${projectLabelLower}.`);
+      return;
+    }
+    const opts = projectDraftToCreateOptions({ ...draft, title });
     try {
       project_id = await actions.create_project(opts);
     } catch (err) {
@@ -201,23 +205,13 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   }
 
   function isDisabled() {
-    return (
-      // no name of new project
-      !draft.title?.trim() ||
-      // currently saving (?)
-      saving
-    );
-  }
-
-  function input_on_change(): void {
-    const text = (new_project_title_ref.current as any)?.input?.value;
-    setTitle(text);
+    return saving;
   }
 
   function handle_keypress(e): void {
     if (e.keyCode === 27) {
       cancel_editing();
-    } else if (e.keyCode === 13 && draft.title !== "") {
+    } else if (e.keyCode === 13) {
       create_project();
     }
   }
@@ -454,7 +448,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
               ref={new_project_title_ref}
               placeholder={`Name your new ${projectLabelLower}...`}
               disabled={saving}
-              onChange={input_on_change}
               onKeyDown={handle_keypress}
               autoFocus
             />
@@ -528,31 +521,48 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   if (!open) return null;
 
   return (
-    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-      <div>
-        <Title level={4} style={{ marginBottom: 4 }}>
+    <Modal
+      open={open}
+      destroyOnHidden
+      width="min(960px, 96vw)"
+      title={
+        <Space size="small">
+          <Icon name="plus-circle" />
           {intl.formatMessage(labels.create_project)}
-        </Title>
+        </Space>
+      }
+      onCancel={cancel_editing}
+      footer={null}
+      maskClosable={!saving}
+      styles={{
+        body: {
+          maxHeight: "min(780px, 82vh)",
+          overflowY: "auto",
+          paddingRight: 10,
+        },
+      }}
+    >
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
           Pick a title now and tune the rest later.
         </Paragraph>
-      </div>
-      {render_input_section()}
-      <Space>
-        <Button onClick={cancel_editing} disabled={saving}>
-          {intl.formatMessage(labels.cancel)}
-        </Button>
-        <Button
-          type="primary"
-          onClick={create_project}
-          disabled={isDisabled()}
-          loading={saving}
-          icon={<Icon name="plus-circle" />}
-        >
-          {capitalize(intl.formatMessage(labels.create))}
-        </Button>
+        {render_input_section()}
+        <Space>
+          <Button onClick={cancel_editing} disabled={saving}>
+            {intl.formatMessage(labels.cancel)}
+          </Button>
+          <Button
+            type="primary"
+            onClick={create_project}
+            disabled={isDisabled()}
+            loading={saving}
+            icon={<Icon name="plus-circle" />}
+          >
+            {capitalize(intl.formatMessage(labels.create))}
+          </Button>
+        </Space>
       </Space>
-    </Space>
+    </Modal>
   );
 }
 
