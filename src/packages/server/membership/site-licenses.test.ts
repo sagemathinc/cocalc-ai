@@ -18,6 +18,7 @@ import {
 import { resolveMembershipForAccount } from "./resolve";
 import {
   adminProvisionSiteLicense,
+  getSiteLicenseOverview,
   requestSiteLicensePool,
   reviewSiteLicensePoolRequest,
 } from "./site-licenses";
@@ -134,6 +135,25 @@ describe("site license seat pools", () => {
         }),
       ]),
     );
+    expect(overview.recent_audit_events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "site-license-provisioned",
+          actor_account_id: admin_account_id,
+          target_account_id: owner_account_id,
+        }),
+        expect.objectContaining({
+          action: "manager-added",
+          actor_account_id: admin_account_id,
+          target_account_id: owner_account_id,
+        }),
+        expect.objectContaining({
+          action: "pool-created",
+          actor_account_id: admin_account_id,
+          target_account_id: owner_account_id,
+        }),
+      ]),
+    );
     const studentPool = overview.pools.find(
       (pool) => pool.pool_name === "Students",
     )!;
@@ -197,6 +217,21 @@ describe("site license seat pools", () => {
       state: "pending",
       canonical_identity: `ada@${domain}`,
     });
+    let refreshedOverview = await getSiteLicenseOverview({
+      account_id: owner_account_id,
+      site_license_id: overview.site_license.id,
+    });
+    expect(refreshedOverview.recent_audit_events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "pool-request-created",
+          actor_account_id: student_account_id,
+          target_account_id: student_account_id,
+          package_id: instructorPool.id,
+          request_id: request.id,
+        }),
+      ]),
+    );
 
     const approved = await reviewSiteLicensePoolRequest({
       actor_account_id: owner_account_id,
@@ -205,6 +240,28 @@ describe("site license seat pools", () => {
       review_note: "Instructor confirmed.",
     });
     expect(approved.state).toBe("approved");
+    refreshedOverview = await getSiteLicenseOverview({
+      account_id: owner_account_id,
+      site_license_id: overview.site_license.id,
+    });
+    expect(refreshedOverview.recent_audit_events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "pool-request-approved",
+          actor_account_id: owner_account_id,
+          target_account_id: student_account_id,
+          package_id: instructorPool.id,
+          request_id: request.id,
+        }),
+        expect.objectContaining({
+          action: "seat-released-for-upgrade",
+          actor_account_id: owner_account_id,
+          target_account_id: student_account_id,
+          package_id: studentPool.id,
+          request_id: request.id,
+        }),
+      ]),
+    );
     expect((await resolveMembershipForAccount(student_account_id)).class).toBe(
       instructorTier,
     );

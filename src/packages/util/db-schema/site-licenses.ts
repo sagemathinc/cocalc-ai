@@ -344,3 +344,89 @@ Table({
     },
   },
 });
+
+Table({
+  name: "site_license_audit_log",
+  rules: {
+    primary_key: "id",
+    pg_indexes: [
+      "site_license_id",
+      "action",
+      "actor_account_id",
+      "target_account_id",
+      "package_id",
+      "request_id",
+      "created",
+    ],
+    user_query: {
+      get: {
+        admin: true,
+        fields: {
+          id: null,
+          site_license_id: null,
+          action: null,
+          actor_account_id: null,
+          target_account_id: null,
+          package_id: null,
+          request_id: null,
+          metadata: null,
+          created: null,
+        },
+      },
+      set: {
+        admin: true,
+        delete: true,
+        fields: {
+          id: null,
+          site_license_id: null,
+          action: null,
+          actor_account_id: null,
+          target_account_id: null,
+          package_id: null,
+          request_id: null,
+          metadata: null,
+        },
+      },
+    },
+  },
+  fields: {
+    id: {
+      type: "uuid",
+      desc: "Unique site-license audit event id.",
+    },
+    site_license_id: {
+      type: "uuid",
+      desc: "Site license this audit event belongs to.",
+    },
+    action: {
+      type: "string",
+      desc: "Site-license audit action.",
+    },
+    actor_account_id: {
+      type: "uuid",
+      desc: "Account that initiated the action, if any.",
+      render: { type: "account" },
+    },
+    target_account_id: {
+      type: "uuid",
+      desc: "Account affected by the action, if any.",
+      render: { type: "account" },
+    },
+    package_id: {
+      type: "uuid",
+      desc: "Membership package affected by the action, if any.",
+    },
+    request_id: {
+      type: "uuid",
+      desc: "Site-license pool request affected by the action, if any.",
+    },
+    metadata: {
+      type: "map",
+      desc: "Structured audit event metadata.",
+    },
+    created: {
+      type: "timestamp",
+      desc: "Creation time.",
+    },
+  },
+});
