@@ -5,7 +5,6 @@ import {
   DEFAULT_REQUEST_TIMEOUT,
 } from "@cocalc/conat/core/client";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
-import { once } from "@cocalc/util/async-utils";
 import {
   type Role,
   type State,
@@ -281,9 +280,59 @@ export abstract class ConatSocketBase extends EventEmitter {
     if (this.state == "ready") {
       return;
     }
-    await once(this, "ready", timeout ?? DEFAULT_REQUEST_TIMEOUT);
     if (this.state == "closed") {
       throw Error("closed");
+    }
+    if (this.state == "disconnected") {
+      if (!this.reconnection) {
+        throw Error("disconnected");
+      }
+      void this.connect();
+    }
+    const ms = timeout ?? DEFAULT_REQUEST_TIMEOUT;
+    await new Promise<void>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const cleanup = () => {
+        this.removeListener("ready", onReady);
+        this.removeListener("closed", onUnavailable);
+        this.removeListener("disconnected", onUnavailable);
+        if (timer != null) {
+          clearTimeout(timer);
+          timer = undefined;
+        }
+      };
+      const onReady = () => {
+        cleanup();
+        resolve();
+      };
+      const onUnavailable = () => {
+        const state = this.state;
+        cleanup();
+        reject(Error(state));
+      };
+      this.once("ready", onReady);
+      this.once("closed", onUnavailable);
+      if (!this.reconnection) {
+        this.once("disconnected", onUnavailable);
+      }
+      timer = setTimeout(() => {
+        cleanup();
+        reject(Error("timeout"));
+      }, ms);
+      timer.unref?.();
+      if (this.state == "ready") {
+        onReady();
+      } else if (this.state == "closed" || this.state == "disconnected") {
+        if (!this.reconnection || this.state == "closed") {
+          onUnavailable();
+        } else {
+          void this.connect();
+        }
+      }
+    });
+    const state = this.state as State;
+    if (state != "ready") {
+      throw Error(state);
     }
   });
 }
