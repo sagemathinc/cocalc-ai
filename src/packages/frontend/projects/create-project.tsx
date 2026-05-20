@@ -38,7 +38,6 @@ import {
   R2_REGIONS,
   type R2Region,
 } from "@cocalc/util/consts";
-import { capitalize } from "@cocalc/util/misc";
 import { SelectNewHost } from "@cocalc/frontend/hosts/select-new-host";
 import { RootfsScanStatus } from "@cocalc/frontend/rootfs/scan-status";
 import {
@@ -68,7 +67,10 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   const projectsLabel = intl.formatMessage(labels.projects);
 
   const [error, set_error] = useState<string>("");
-  const [saving, setSaving] = useState<boolean>(false);
+  const [createAction, setCreateAction] = useState<"create" | "open" | null>(
+    null,
+  );
+  const saving = createAction != null;
   const new_project_title_ref = useRef<any>(null);
   const [rootfsModalOpen, setRootfsModalOpen] = useState<boolean>(false);
   const [showOlderRootfsVersions, setShowOlderRootfsVersions] =
@@ -150,7 +152,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   function reset_form(): void {
     reset();
     set_error("");
-    setSaving(false);
+    setCreateAction(null);
     setRootfsModalOpen(false);
     setRootfsMode("catalog");
     setRootfsDraft("");
@@ -168,34 +170,44 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     onClose();
   }
 
-  async function create_project(): Promise<void> {
-    setSaving(true);
+  async function create_project({
+    openAfterCreate,
+  }: {
+    openAfterCreate: boolean;
+  }): Promise<void> {
+    setCreateAction(openAfterCreate ? "open" : "create");
     const actions = redux.getActions("projects");
     let project_id: string;
     const title =
       `${(new_project_title_ref.current as any)?.input?.value ?? draft.title}`.trim();
     if (!title) {
-      setSaving(false);
+      setCreateAction(null);
       set_error(`Please enter a title for the new ${projectLabelLower}.`);
       return;
     }
-    const opts = projectDraftToCreateOptions({ ...draft, title });
+    const opts = projectDraftToCreateOptions({
+      ...draft,
+      title,
+      start: openAfterCreate,
+    });
     try {
       project_id = await actions.create_project(opts);
     } catch (err) {
       if (!is_mounted_ref.current) return;
-      setSaving(false);
+      setCreateAction(null);
       setAdvancedOpen(true);
       set_error(`Error creating ${projectLabelLower} -- ${err}`);
       return;
     }
 
-    // switch_to=true is perhaps suggested by #4088
-    actions.open_project({
-      project_id,
-      target: "project-home",
-      switch_to: true,
-    });
+    if (openAfterCreate) {
+      // switch_to=true is perhaps suggested by #4088
+      actions.open_project({
+        project_id,
+        target: "project-home",
+        switch_to: true,
+      });
+    }
     cancel_editing();
   }
 
@@ -212,7 +224,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     if (e.keyCode === 27) {
       cancel_editing();
     } else if (e.keyCode === 13) {
-      create_project();
+      create_project({ openAfterCreate: true });
     }
   }
 
@@ -552,13 +564,21 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             {intl.formatMessage(labels.cancel)}
           </Button>
           <Button
-            type="primary"
-            onClick={create_project}
+            onClick={() => create_project({ openAfterCreate: false })}
             disabled={isDisabled()}
-            loading={saving}
+            loading={createAction === "create"}
             icon={<Icon name="plus-circle" />}
           >
-            {capitalize(intl.formatMessage(labels.create))}
+            Create Project
+          </Button>
+          <Button
+            type="primary"
+            onClick={() => create_project({ openAfterCreate: true })}
+            disabled={isDisabled()}
+            loading={createAction === "open"}
+            icon={<Icon name="arrow-right" />}
+          >
+            Create and Open
           </Button>
         </Space>
       </Space>
