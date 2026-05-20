@@ -770,8 +770,8 @@ distinct groups such as `research`.
 - [x] Store the verification policy that was satisfied.
 - [x] Add pending-affiliation-reverification query.
 - Add user notification/grace workflow.
-- Clear pending release when the user re-verifies institutional email or has a
-  fresh qualifying SSO assertion.
+- [x] Clear pending release when the user re-verifies institutional email.
+- Clear pending release when the user has a fresh qualifying SSO assertion.
 - [x] Add release path for seats that miss the grace deadline.
 - Add scheduled job to invoke grace-expired seat release.
 
@@ -782,6 +782,11 @@ pool-level reverification and grace settings.
 The release helper revokes grace-expired seats through the existing membership
 package revoke path and records a `seat-released-after-reverification-grace`
 audit event.
+The email-domain refresh helper lets an active site-license seat recover from
+pending reverification or grace-expired status when the signed-in account has a
+fresh verified allowed-domain email. It updates affiliation metadata and records
+a `seat-affiliation-reverified` audit event without changing claim-directory
+ownership.
 
 ### Phase 7: Invite Limit Integration
 

@@ -136,6 +136,7 @@ const SITE_LICENSE_AUDIT_ACTIONS = new Set<SiteLicenseAuditAction>([
   "pool-request-approved",
   "pool-request-rejected",
   "seat-released-for-upgrade",
+  "seat-affiliation-reverified",
   "seat-released-after-reverification-grace",
 ]);
 
@@ -495,6 +496,71 @@ function classifyAffiliationReverification({
   return { state: "grace_expired", due_at, grace_expires_at };
 }
 
+function getAssignmentVerificationPolicy({
+  assignment,
+  pool,
+}: {
+  assignment: MembershipPackageAssignment;
+  pool: SiteLicensePoolSummary;
+}): SiteLicenseVerificationPolicy {
+  return SITE_LICENSE_VERIFICATION_POLICIES.has(
+    assignment.metadata?.verification_policy as any,
+  )
+    ? (assignment.metadata
+        ?.verification_policy as SiteLicenseVerificationPolicy)
+    : pool.verification_policy;
+}
+
+function getAssignmentMatchedEmail(
+  assignment: MembershipPackageAssignment,
+): string | null {
+  return (
+    `${assignment.metadata?.matched_email_address ?? ""}`.trim() ||
+    `${assignment.metadata?.claimed_email_address ?? ""}`.trim() ||
+    assignment.email_address ||
+    null
+  );
+}
+
+function toAffiliationReverificationSeat({
+  site_license_id,
+  pool,
+  assignment,
+  now,
+}: {
+  site_license_id: string;
+  pool: SiteLicensePoolSummary;
+  assignment: MembershipPackageAssignment;
+  now: Date;
+}): SiteLicenseAffiliationReverificationSeat {
+  const affiliation_verified_at = getAffiliationVerifiedAt(assignment);
+  const classification = classifyAffiliationReverification({
+    verified_at: affiliation_verified_at,
+    reverification_days: pool.affiliation_reverification_days,
+    grace_days: pool.affiliation_reverification_grace_days,
+    now,
+  });
+  return {
+    site_license_id,
+    package_id: pool.id,
+    assignment_id: assignment.id,
+    account_id: assignment.account_id!,
+    membership_class: pool.membership_class,
+    pool_name: pool.pool_name,
+    exclusive_group:
+      `${assignment.metadata?.exclusive_group ?? ""}`.trim() ||
+      pool.exclusive_group,
+    verification_policy: getAssignmentVerificationPolicy({ assignment, pool }),
+    matched_email_address: getAssignmentMatchedEmail(assignment),
+    affiliation_verified_at: affiliation_verified_at ?? null,
+    reverification_due_at: classification.due_at ?? null,
+    reverification_grace_expires_at: classification.grace_expires_at ?? null,
+    reverification_days: pool.affiliation_reverification_days ?? null,
+    grace_days: pool.affiliation_reverification_grace_days ?? null,
+    state: classification.state,
+  };
+}
+
 function normalizeSiteLicenseRow(
   row: RawSiteLicenseRecord | undefined,
 ): SiteLicenseRecord | undefined {
@@ -687,6 +753,19 @@ function findMatchingVerifiedEmail({
     throw Error("no verified email matches this site license");
   }
   return match;
+}
+
+function findOptionalMatchingVerifiedEmail({
+  verified_email_addresses,
+  allowed_domains,
+}: {
+  verified_email_addresses: string[];
+  allowed_domains: string[];
+}): string | undefined {
+  const domains = new Set(allowed_domains);
+  return verified_email_addresses.find((email) =>
+    domains.has(email.split("@")[1] ?? ""),
+  );
 }
 
 async function getSiteLicense(
@@ -941,45 +1020,16 @@ export async function listSiteLicenseAffiliationReverificationSeats({
       if (assignment.revoked_at != null || !assignment.account_id) {
         continue;
       }
-      const affiliation_verified_at = getAffiliationVerifiedAt(assignment);
-      const classification = classifyAffiliationReverification({
-        verified_at: affiliation_verified_at,
-        reverification_days: pool.affiliation_reverification_days,
-        grace_days: pool.affiliation_reverification_grace_days,
+      const seat = toAffiliationReverificationSeat({
+        site_license_id: normalizedSiteLicenseId,
+        pool,
+        assignment,
         now,
       });
-      if (stateSet != null && !stateSet.has(classification.state)) {
+      if (stateSet != null && !stateSet.has(seat.state)) {
         continue;
       }
-      seats.push({
-        site_license_id: normalizedSiteLicenseId,
-        package_id: pool.id,
-        assignment_id: assignment.id,
-        account_id: assignment.account_id,
-        membership_class: pool.membership_class,
-        pool_name: pool.pool_name,
-        exclusive_group:
-          `${assignment.metadata?.exclusive_group ?? ""}`.trim() ||
-          pool.exclusive_group,
-        verification_policy: SITE_LICENSE_VERIFICATION_POLICIES.has(
-          assignment.metadata?.verification_policy as any,
-        )
-          ? (assignment.metadata
-              ?.verification_policy as SiteLicenseVerificationPolicy)
-          : pool.verification_policy,
-        matched_email_address:
-          `${assignment.metadata?.matched_email_address ?? ""}`.trim() ||
-          `${assignment.metadata?.claimed_email_address ?? ""}`.trim() ||
-          assignment.email_address ||
-          null,
-        affiliation_verified_at: affiliation_verified_at ?? null,
-        reverification_due_at: classification.due_at ?? null,
-        reverification_grace_expires_at:
-          classification.grace_expires_at ?? null,
-        reverification_days: pool.affiliation_reverification_days ?? null,
-        grace_days: pool.affiliation_reverification_grace_days ?? null,
-        state: classification.state,
-      });
+      seats.push(seat);
     }
   }
   return seats.sort((left, right) => {
@@ -997,6 +1047,166 @@ export async function listSiteLicenseAffiliationReverificationSeats({
         (right.reverification_due_at?.getTime() ?? 0) ||
       left.account_id.localeCompare(right.account_id)
     );
+  });
+}
+
+export async function refreshSiteLicenseAffiliationVerificationForAccount({
+  account_id,
+  site_license_id,
+  now = new Date(),
+  client,
+}: {
+  account_id: string;
+  site_license_id: string;
+  now?: Date;
+  client?: PoolClient;
+}): Promise<SiteLicenseAffiliationReverificationSeat[]> {
+  const accountId = normalizeAccountId(account_id);
+  const verifiedEmailAddresses = await getVerifiedEmailAddressesForAccount(
+    accountId,
+    client,
+  );
+  return await refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBay(
+    {
+      account_id: accountId,
+      site_license_id,
+      verified_email_addresses: verifiedEmailAddresses,
+      now,
+      client,
+    },
+  );
+}
+
+export async function refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBay({
+  account_id,
+  site_license_id,
+  verified_email_addresses,
+  now = new Date(),
+  client,
+}: {
+  account_id: string;
+  site_license_id: string;
+  verified_email_addresses: string[];
+  now?: Date;
+  client?: PoolClient;
+}): Promise<SiteLicenseAffiliationReverificationSeat[]> {
+  const accountId = normalizeAccountId(account_id);
+  const normalizedSiteLicenseId = normalizeAccountId(
+    site_license_id,
+    "site_license_id",
+  );
+  const verifiedEmailAddresses = Array.from(
+    new Set(
+      verified_email_addresses
+        .map((email) => normalizeEmailAddress(email))
+        .filter((email): email is string => !!email),
+    ),
+  );
+  if (verifiedEmailAddresses.length === 0) {
+    return [];
+  }
+  const siteLicense = await getSiteLicense(normalizedSiteLicenseId, client);
+  const refreshWithClient = async (
+    dbClient: PoolClient,
+  ): Promise<SiteLicenseAffiliationReverificationSeat[]> => {
+    const refreshed: SiteLicenseAffiliationReverificationSeat[] = [];
+    const pools = await listSiteLicensePoolSummaries({
+      site_license: siteLicense,
+      client: dbClient,
+    });
+    for (const pool of pools) {
+      const matchedEmailAddress = findOptionalMatchingVerifiedEmail({
+        verified_email_addresses: verifiedEmailAddresses,
+        allowed_domains: getPackageAllowedDomains(pool.metadata),
+      });
+      if (matchedEmailAddress == null) {
+        continue;
+      }
+      for (const assignment of pool.assignments) {
+        if (
+          assignment.revoked_at != null ||
+          assignment.account_id !== accountId
+        ) {
+          continue;
+        }
+        const previousSeat = toAffiliationReverificationSeat({
+          site_license_id: normalizedSiteLicenseId,
+          pool,
+          assignment,
+          now,
+        });
+        if (previousSeat.verification_policy !== "email-domain") {
+          continue;
+        }
+        const nextMetadata = {
+          ...normalizeMetadata(assignment.metadata),
+          site_license_id: normalizedSiteLicenseId,
+          verification_policy: "email-domain",
+          exclusive_group: previousSeat.exclusive_group,
+          matched_email_address: matchedEmailAddress,
+          affiliation_verified_at: now.toISOString(),
+          affiliation_reverified_at: now.toISOString(),
+        };
+        const { rows } = await dbClient.query<{
+          metadata?: Record<string, unknown> | null;
+        }>(
+          `UPDATE membership_package_assignments
+              SET metadata=$4::jsonb,
+                  updated=NOW()
+            WHERE id=$1
+              AND package_id=$2
+              AND account_id=$3
+              AND revoked_at IS NULL
+            RETURNING metadata`,
+          [assignment.id, pool.id, accountId, nextMetadata],
+        );
+        if (rows.length === 0) {
+          continue;
+        }
+        await recordSiteLicenseAuditEvent({
+          site_license_id: normalizedSiteLicenseId,
+          action: "seat-affiliation-reverified",
+          actor_account_id: accountId,
+          target_account_id: accountId,
+          package_id: pool.id,
+          metadata: {
+            assignment_id: assignment.id,
+            pool_name: pool.pool_name ?? null,
+            membership_class: pool.membership_class,
+            exclusive_group: previousSeat.exclusive_group,
+            verification_policy: previousSeat.verification_policy,
+            previous_state: previousSeat.state,
+            previous_matched_email_address:
+              previousSeat.matched_email_address ?? null,
+            matched_email_address: matchedEmailAddress,
+            previous_affiliation_verified_at:
+              previousSeat.affiliation_verified_at?.toISOString() ?? null,
+            affiliation_verified_at: now.toISOString(),
+          },
+          client: dbClient,
+        });
+        refreshed.push(
+          toAffiliationReverificationSeat({
+            site_license_id: normalizedSiteLicenseId,
+            pool,
+            assignment: {
+              ...assignment,
+              metadata: normalizeMetadata(rows[0].metadata),
+            },
+            now,
+          }),
+        );
+      }
+    }
+    return refreshed;
+  };
+  if (client != null) {
+    return await refreshWithClient(client);
+  }
+  return await withAccountRehomeWriteFence({
+    account_id: siteLicense.owner_account_id,
+    action: "refresh site-license affiliation verification",
+    fn: async (db) => await refreshWithClient(db as PoolClient),
   });
 }
 
