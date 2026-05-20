@@ -534,6 +534,7 @@ describe("purchases membership packages", () => {
     const { adminProvisionSiteLicense } = await import("./purchases");
     const result = await adminProvisionSiteLicense({
       account_id: "admin-1",
+      session_hash: "session-1",
       owner_account_id: "owner-1",
       name: "Example Campus",
       organization_name: "Example University",
@@ -549,6 +550,11 @@ describe("purchases membership packages", () => {
       ],
     });
 
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      session_hash: "session-1",
+      allow_actor_impersonation: true,
+    });
     expect(interBayAdminProvisionSiteLicenseMock).toHaveBeenCalledWith({
       actor_account_id: "admin-1",
       owner_account_id: "owner-1",
@@ -575,6 +581,27 @@ describe("purchases membership packages", () => {
     });
     expect(adminProvisionSiteLicenseMock).not.toHaveBeenCalled();
     expect(result.site_license.id).toBe("license-remote-1");
+  });
+
+  it("requires fresh auth before admin site-license provisioning", async () => {
+    isAdminMock.mockResolvedValue(true);
+
+    const { adminProvisionSiteLicense } = await import("./purchases");
+    await expect(
+      adminProvisionSiteLicense({
+        account_id: "admin-1",
+        owner_account_id: "owner-1",
+        name: "Example Campus",
+        organization_name: "Example University",
+        allowed_domains: ["example.edu"],
+      }),
+    ).rejects.toMatchObject({
+      code: "fresh_auth_required",
+    });
+
+    expect(resolveAccountHomeBayMock).not.toHaveBeenCalled();
+    expect(interBayAdminProvisionSiteLicenseMock).not.toHaveBeenCalled();
+    expect(adminProvisionSiteLicenseMock).not.toHaveBeenCalled();
   });
 
   it("routes site-license overview to the owner's home bay", async () => {
