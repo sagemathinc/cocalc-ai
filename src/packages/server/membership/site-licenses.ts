@@ -10,6 +10,8 @@ import isAdmin from "@cocalc/server/accounts/is-admin";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import type {
   MembershipPackageDetails,
+  SiteLicenseAuditAction,
+  SiteLicenseAuditEvent,
   SiteLicenseManager,
   SiteLicenseManagerRole,
   SiteLicenseOverview,
@@ -93,6 +95,18 @@ interface RawSiteLicensePoolRequest {
   updated?: Date | string;
 }
 
+interface RawSiteLicenseAuditEvent {
+  id: string;
+  site_license_id: string;
+  action: string;
+  actor_account_id?: string | null;
+  target_account_id?: string | null;
+  package_id?: string | null;
+  request_id?: string | null;
+  metadata?: Record<string, unknown> | null;
+  created?: Date | string;
+}
+
 const SITE_LICENSE_MANAGER_ROLES = new Set<SiteLicenseManagerRole>([
   "owner",
   "manager",
@@ -110,6 +124,15 @@ const SITE_LICENSE_POOL_REQUEST_STATES = new Set<SiteLicensePoolRequestState>([
   "rejected",
   "canceled",
   "expired",
+]);
+const SITE_LICENSE_AUDIT_ACTIONS = new Set<SiteLicenseAuditAction>([
+  "site-license-provisioned",
+  "manager-added",
+  "pool-created",
+  "pool-request-created",
+  "pool-request-approved",
+  "pool-request-rejected",
+  "seat-released-for-upgrade",
 ]);
 
 let schemaEnsured: Promise<void> | undefined;
@@ -210,6 +233,28 @@ async function ensureSiteLicenseSchemaWithClient(db: Queryable): Promise<void> {
   );
   await db.query(
     "CREATE INDEX IF NOT EXISTS site_license_pool_requests_state_idx ON site_license_pool_requests (state)",
+  );
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS site_license_audit_log (
+      id UUID PRIMARY KEY,
+      site_license_id UUID NOT NULL,
+      action TEXT NOT NULL,
+      actor_account_id UUID,
+      target_account_id UUID,
+      package_id UUID,
+      request_id UUID,
+      metadata JSONB,
+      created TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.query(
+    "CREATE INDEX IF NOT EXISTS site_license_audit_log_site_license_id_idx ON site_license_audit_log (site_license_id)",
+  );
+  await db.query(
+    "CREATE INDEX IF NOT EXISTS site_license_audit_log_created_idx ON site_license_audit_log (created)",
+  );
+  await db.query(
+    "CREATE INDEX IF NOT EXISTS site_license_audit_log_action_idx ON site_license_audit_log (action)",
   );
 }
 
@@ -434,6 +479,83 @@ function normalizeSiteLicensePoolRequestRow(
     created: asDate(row.created) ?? undefined,
     updated: asDate(row.updated) ?? undefined,
   };
+}
+
+function normalizeSiteLicenseAuditEventRow(
+  row: RawSiteLicenseAuditEvent,
+): SiteLicenseAuditEvent {
+  const action = SITE_LICENSE_AUDIT_ACTIONS.has(row.action as any)
+    ? (row.action as SiteLicenseAuditAction)
+    : "site-license-provisioned";
+  return {
+    id: row.id,
+    site_license_id: row.site_license_id,
+    action,
+    actor_account_id: row.actor_account_id ?? null,
+    target_account_id: row.target_account_id ?? null,
+    package_id: row.package_id ?? null,
+    request_id: row.request_id ?? null,
+    metadata: normalizeMetadata(row.metadata),
+    created: asDate(row.created) ?? undefined,
+  };
+}
+
+async function recordSiteLicenseAuditEvent({
+  site_license_id,
+  action,
+  actor_account_id,
+  target_account_id,
+  package_id,
+  request_id,
+  metadata,
+  client,
+}: {
+  site_license_id: string;
+  action: SiteLicenseAuditAction;
+  actor_account_id?: string | null;
+  target_account_id?: string | null;
+  package_id?: string | null;
+  request_id?: string | null;
+  metadata?: Record<string, unknown> | null;
+  client: Queryable;
+}): Promise<void> {
+  await client.query(
+    `INSERT INTO site_license_audit_log
+       (id, site_license_id, action, actor_account_id, target_account_id,
+        package_id, request_id, metadata, created)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,NOW())`,
+    [
+      uuid(),
+      site_license_id,
+      action,
+      normalizeOptionalString(actor_account_id),
+      normalizeOptionalString(target_account_id),
+      normalizeOptionalString(package_id),
+      normalizeOptionalString(request_id),
+      normalizeMetadata(metadata),
+    ],
+  );
+}
+
+async function listSiteLicenseAuditEvents({
+  site_license_id,
+  limit = 25,
+  client,
+}: {
+  site_license_id: string;
+  limit?: number;
+  client?: PoolClient;
+}): Promise<SiteLicenseAuditEvent[]> {
+  await ensureSiteLicenseSchema(client);
+  const { rows } = await getQueryClient(client).query<RawSiteLicenseAuditEvent>(
+    `SELECT *
+     FROM site_license_audit_log
+     WHERE site_license_id=$1
+     ORDER BY created DESC
+     LIMIT $2`,
+    [site_license_id, Math.max(1, Math.min(100, limit))],
+  );
+  return rows.map(normalizeSiteLicenseAuditEventRow);
 }
 
 export async function getVerifiedEmailAddressesForAccount(
@@ -717,17 +839,45 @@ export async function getSiteLicenseOverview({
     site_license_id: normalizedSiteLicenseId,
     client,
   });
+  return await getSiteLicenseOverviewWithoutAuthorization({
+    site_license_id: normalizedSiteLicenseId,
+    client,
+  });
+}
+
+async function getSiteLicenseOverviewWithoutAuthorization({
+  site_license_id,
+  client,
+}: {
+  site_license_id: string;
+  client?: PoolClient;
+}): Promise<SiteLicenseOverview> {
+  const normalizedSiteLicenseId = normalizeAccountId(
+    site_license_id,
+    "site_license_id",
+  );
   const siteLicense = await getSiteLicense(normalizedSiteLicenseId, client);
-  const [managers, pools, pending_requests] = await Promise.all([
-    listSiteLicenseManagers(normalizedSiteLicenseId, client),
-    listSiteLicensePoolSummaries({ site_license: siteLicense, client }),
-    listSiteLicensePoolRequests({
-      site_license_id: normalizedSiteLicenseId,
-      states: ["pending"],
-      client,
-    }),
-  ]);
-  return { site_license: siteLicense, pools, managers, pending_requests };
+  const [managers, pools, pending_requests, recent_audit_events] =
+    await Promise.all([
+      listSiteLicenseManagers(normalizedSiteLicenseId, client),
+      listSiteLicensePoolSummaries({ site_license: siteLicense, client }),
+      listSiteLicensePoolRequests({
+        site_license_id: normalizedSiteLicenseId,
+        states: ["pending"],
+        client,
+      }),
+      listSiteLicenseAuditEvents({
+        site_license_id: normalizedSiteLicenseId,
+        client,
+      }),
+    ]);
+  return {
+    site_license: siteLicense,
+    pools,
+    managers,
+    pending_requests,
+    recent_audit_events,
+  };
 }
 
 export async function adminProvisionSiteLicense({
@@ -818,8 +968,35 @@ export async function adminProvisionSiteLicense({
           { provisioned_by_account_id: actorAccountId },
         ],
       );
+      await recordSiteLicenseAuditEvent({
+        site_license_id,
+        action: "site-license-provisioned",
+        actor_account_id: actorAccountId,
+        target_account_id: ownerAccountId,
+        metadata: {
+          name: normalizeString(name, "name"),
+          organization_name: normalizeString(
+            organization_name,
+            "organization_name",
+          ),
+          allowed_domains: normalizedDomains,
+          pool_count: normalizedPools.length,
+        },
+        client,
+      });
+      await recordSiteLicenseAuditEvent({
+        site_license_id,
+        action: "manager-added",
+        actor_account_id: actorAccountId,
+        target_account_id: ownerAccountId,
+        metadata: {
+          role: "owner",
+          source: "admin-provision-site-license",
+        },
+        client,
+      });
       for (const pool of normalizedPools) {
-        await createMembershipPackage(
+        const packageId = await createMembershipPackage(
           {
             owner_account_id: ownerAccountId,
             kind: "site",
@@ -850,9 +1027,24 @@ export async function adminProvisionSiteLicense({
           },
           client,
         );
+        await recordSiteLicenseAuditEvent({
+          site_license_id,
+          action: "pool-created",
+          actor_account_id: actorAccountId,
+          target_account_id: ownerAccountId,
+          package_id: packageId,
+          metadata: {
+            pool_name: pool.pool_name,
+            membership_class: pool.membership_class,
+            seat_count: pool.seat_count,
+            requires_approval: pool.requires_approval,
+            verification_policy: pool.verification_policy,
+            exclusive_group: pool.exclusive_group,
+          },
+          client,
+        });
       }
-      return await getSiteLicenseOverview({
-        account_id: actorAccountId,
+      return await getSiteLicenseOverviewWithoutAuthorization({
         site_license_id,
         client,
       });
@@ -1056,6 +1248,22 @@ export async function requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
       metadata,
     ],
   );
+  await recordSiteLicenseAuditEvent({
+    site_license_id: siteLicense.id,
+    action: "pool-request-created",
+    actor_account_id: accountId,
+    target_account_id: accountId,
+    package_id: packageId,
+    request_id,
+    metadata: {
+      matched_email_domain: matchedEmailAddress.split("@")[1] ?? "",
+      canonical_identity: canonicalIdentity,
+      requested_membership_class: pkg.membership_class,
+      exclusive_group: exclusiveGroup,
+      requester_note: normalizeOptionalString(requester_note),
+    },
+    client: pool,
+  });
   return normalizeSiteLicensePoolRequestRow(rows[0])!;
 }
 
@@ -1101,17 +1309,30 @@ export async function reviewSiteLicensePoolRequest({
           throw Error(`request is not pending (state=${request.state})`);
         }
         if (action === "reject") {
-          return await updateRequestState({
+          const rejected = await updateRequestState({
             request_id: request.id,
             state: "rejected",
             reviewer_account_id: actorAccountId,
             review_note,
             client,
           });
+          await recordSiteLicenseAuditEvent({
+            site_license_id: siteLicense.id,
+            action: "pool-request-rejected",
+            actor_account_id: actorAccountId,
+            target_account_id: request.account_id,
+            package_id: request.package_id,
+            request_id: request.id,
+            metadata: {
+              review_note: normalizeOptionalString(review_note),
+            },
+            client,
+          });
+          return rejected;
         }
         const claimedDomain = request.matched_email_address.split("@")[1] ?? "";
         const exclusiveGroup = getPackageExclusiveGroup(pkg);
-        await revokeOtherSiteLicenseAssignments({
+        const releasedAssignments = await revokeOtherSiteLicenseAssignments({
           site_license_id: siteLicense.id,
           approved_package_id: pkg.id,
           exclusive_group: exclusiveGroup,
@@ -1188,7 +1409,23 @@ export async function reviewSiteLicensePoolRequest({
           },
           client,
         });
-        return await updateRequestState({
+        for (const released of releasedAssignments) {
+          await recordSiteLicenseAuditEvent({
+            site_license_id: siteLicense.id,
+            action: "seat-released-for-upgrade",
+            actor_account_id: actorAccountId,
+            target_account_id: request.account_id,
+            package_id: released.package_id,
+            request_id: request.id,
+            metadata: {
+              assignment_id: released.assignment_id,
+              replacement_package_id: pkg.id,
+              exclusive_group: exclusiveGroup,
+            },
+            client,
+          });
+        }
+        const approved = await updateRequestState({
           request_id: request.id,
           state: "approved",
           reviewer_account_id: actorAccountId,
@@ -1200,6 +1437,22 @@ export async function reviewSiteLicensePoolRequest({
           },
           client,
         });
+        await recordSiteLicenseAuditEvent({
+          site_license_id: siteLicense.id,
+          action: "pool-request-approved",
+          actor_account_id: actorAccountId,
+          target_account_id: request.account_id,
+          package_id: pkg.id,
+          request_id: request.id,
+          metadata: {
+            assignment_id: assignment.id,
+            grant_id: assignment.grant_id ?? null,
+            review_note: normalizeOptionalString(review_note),
+            exclusive_group: exclusiveGroup,
+          },
+          client,
+        });
+        return approved;
       },
     });
   } catch (err) {
@@ -1264,7 +1517,11 @@ async function revokeOtherSiteLicenseAssignments({
   exclusive_group: string;
   account_id: string;
   client: PoolClient;
-}): Promise<void> {
+}): Promise<Array<{ package_id: string; assignment_id: string }>> {
+  const revokedAssignments: Array<{
+    package_id: string;
+    assignment_id: string;
+  }> = [];
   const { rows } = await client.query<{
     id: string;
     membership_class: string;
@@ -1301,6 +1558,10 @@ async function revokeOtherSiteLicenseAssignments({
       client,
     );
     for (const assignment of accountAssignments) {
+      revokedAssignments.push({
+        package_id: row.id,
+        assignment_id: assignment.id,
+      });
       const scope_key = `${assignment.metadata?.claim_scope_key ?? ""}`.trim();
       const canonical_identity =
         `${assignment.metadata?.claim_identity_key ?? ""}`.trim();
@@ -1318,6 +1579,7 @@ async function revokeOtherSiteLicenseAssignments({
       }).catch(() => undefined);
     }
   }
+  return revokedAssignments;
 }
 
 async function withSiteLicenseRequestTransaction<T>({

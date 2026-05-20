@@ -18,6 +18,7 @@ import {
 import { resolveMembershipForAccount } from "./resolve";
 import {
   adminProvisionSiteLicense,
+  getSiteLicenseOverview,
   requestSiteLicensePool,
   reviewSiteLicensePoolRequest,
 } from "./site-licenses";
@@ -134,6 +135,25 @@ describe("site license seat pools", () => {
         }),
       ]),
     );
+    expect(overview.recent_audit_events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "site-license-provisioned",
+          actor_account_id: admin_account_id,
+          target_account_id: owner_account_id,
+        }),
+        expect.objectContaining({
+          action: "manager-added",
+          actor_account_id: admin_account_id,
+          target_account_id: owner_account_id,
+        }),
+        expect.objectContaining({
+          action: "pool-created",
+          actor_account_id: admin_account_id,
+          target_account_id: owner_account_id,
+        }),
+      ]),
+    );
     const studentPool = overview.pools.find(
       (pool) => pool.pool_name === "Students",
     )!;
@@ -197,6 +217,21 @@ describe("site license seat pools", () => {
       state: "pending",
       canonical_identity: `ada@${domain}`,
     });
+    let refreshedOverview = await getSiteLicenseOverview({
+      account_id: owner_account_id,
+      site_license_id: overview.site_license.id,
+    });
+    expect(refreshedOverview.recent_audit_events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "pool-request-created",
+          actor_account_id: student_account_id,
+          target_account_id: student_account_id,
+          package_id: instructorPool.id,
+          request_id: request.id,
+        }),
+      ]),
+    );
 
     const approved = await reviewSiteLicensePoolRequest({
       actor_account_id: owner_account_id,
@@ -205,6 +240,28 @@ describe("site license seat pools", () => {
       review_note: "Instructor confirmed.",
     });
     expect(approved.state).toBe("approved");
+    refreshedOverview = await getSiteLicenseOverview({
+      account_id: owner_account_id,
+      site_license_id: overview.site_license.id,
+    });
+    expect(refreshedOverview.recent_audit_events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "pool-request-approved",
+          actor_account_id: owner_account_id,
+          target_account_id: student_account_id,
+          package_id: instructorPool.id,
+          request_id: request.id,
+        }),
+        expect.objectContaining({
+          action: "seat-released-for-upgrade",
+          actor_account_id: owner_account_id,
+          target_account_id: student_account_id,
+          package_id: studentPool.id,
+          request_id: request.id,
+        }),
+      ]),
+    );
     expect((await resolveMembershipForAccount(student_account_id)).class).toBe(
       instructorTier,
     );
@@ -276,6 +333,49 @@ describe("site license seat pools", () => {
         expect.objectContaining({ account_id: researcher_account_id }),
       ]),
     );
+  });
+
+  it("returns provisioned overview for trusted remote admin actor", async () => {
+    const remote_admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const domain = `trusted-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(remote_admin_account_id);
+    await createTestAccount(owner_account_id);
+
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: remote_admin_account_id,
+      owner_account_id,
+      name: "Trusted Remote Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      trusted_admin: true,
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 20,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+        },
+      ],
+    });
+
+    expect(overview.site_license.name).toBe("Trusted Remote Campus");
+    expect(overview.managers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          account_id: owner_account_id,
+          role: "owner",
+        }),
+      ]),
+    );
+    await expect(
+      getSiteLicenseOverview({
+        account_id: remote_admin_account_id,
+        site_license_id: overview.site_license.id,
+      }),
+    ).rejects.toThrow("must view site license");
   });
 
   it("requires custom terms acceptance before claim or request", async () => {

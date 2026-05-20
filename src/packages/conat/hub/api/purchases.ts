@@ -374,11 +374,33 @@ export interface SiteLicensePoolRequest {
   updated?: Date;
 }
 
+export type SiteLicenseAuditAction =
+  | "site-license-provisioned"
+  | "manager-added"
+  | "pool-created"
+  | "pool-request-created"
+  | "pool-request-approved"
+  | "pool-request-rejected"
+  | "seat-released-for-upgrade";
+
+export interface SiteLicenseAuditEvent {
+  id: string;
+  site_license_id: string;
+  action: SiteLicenseAuditAction;
+  actor_account_id?: string | null;
+  target_account_id?: string | null;
+  package_id?: string | null;
+  request_id?: string | null;
+  metadata?: Record<string, unknown> | null;
+  created?: Date;
+}
+
 export interface SiteLicenseOverview {
   site_license: SiteLicenseRecord;
   pools: SiteLicensePoolSummary[];
   managers: SiteLicenseManager[];
   pending_requests: SiteLicensePoolRequest[];
+  recent_audit_events?: SiteLicenseAuditEvent[];
 }
 
 export interface MembershipUsageStatus {

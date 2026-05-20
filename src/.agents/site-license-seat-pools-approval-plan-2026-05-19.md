@@ -660,7 +660,7 @@ Scope:
       no-approval pools or request manager approval for approval-required pools.
 - [x] Add a minimal manager-facing account UI for reviewing pending
       site-license pool requests.
-- [ ] Add full audit records or structured metadata for manager changes,
+- [x] Add full audit records or structured metadata for manager changes,
       revocations, and CLI/API actor context.
 - [x] Add structured metadata for requests,
       approvals, rejections, and revocations.
