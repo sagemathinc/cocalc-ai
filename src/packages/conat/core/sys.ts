@@ -1,5 +1,6 @@
 import { type Client } from "./client";
 import type { ConnectionStats } from "./types";
+import type { SerializedInterest } from "./cluster";
 
 // requests go to *all* nodes in the cluster
 //   sys.conat.[clusterName]
@@ -30,6 +31,7 @@ export interface SysConatServer {
     [clusterName: string]: { [id: string]: string };
   }>;
   clusterAddresses: (clusterName?: string) => Promise<string[]>;
+  interestSnapshot: () => Promise<SerializedInterest>;
 }
 
 export interface SysConatServerCallMany {

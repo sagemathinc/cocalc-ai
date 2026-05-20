@@ -125,11 +125,23 @@ export class ConatSocketServer extends ConatSocketBase {
       // before we start sending messages, since otherwise first
       // message is likely to be dropped if client is on another node.
       const waitStart = Date.now();
+      let hasClientInterest = false;
       try {
-        await this.client.waitForInterest(socket.clientSubject);
+        hasClientInterest = await this.client.waitForInterest(
+          socket.clientSubject,
+        );
       } catch {}
       socket.connectWaitForInterestMs = Date.now() - waitStart;
       if (this.state == ("closed" as any)) {
+        return;
+      }
+      if (!hasClientInterest) {
+        logger.debug("closing socket whose client subject has no interest", {
+          id,
+          clientSubject: socket.clientSubject,
+          waitMs: socket.connectWaitForInterestMs,
+        });
+        socket.destroy();
         return;
       }
       this.emit("connection", socket);

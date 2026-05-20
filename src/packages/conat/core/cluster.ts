@@ -5,9 +5,19 @@ import type { DStream } from "@cocalc/conat/sync/dstream";
 import { server as createPersistServer } from "@cocalc/conat/persist/server";
 import { getLogger } from "@cocalc/conat/logger";
 import { hash_string } from "@cocalc/util/misc";
+import { sysApi } from "./sys";
 const CREATE_LINK_TIMEOUT = 45_000;
+const INTEREST_SNAPSHOT_INTERVAL = 30_000;
+const MAX_RECENT_INTEREST_UPDATES = 100_000;
 
 const logger = getLogger("conat:core:cluster");
+
+function unrefDelay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    (timer as any).unref?.();
+  });
+}
 
 export async function clusterLink(
   address: string,
@@ -42,6 +52,43 @@ export async function clusterLink(
 }
 
 export type Interest = Patterns<{ [queue: string]: Set<string> }>;
+export type SerializedInterest = {
+  version: number;
+  subjects: {
+    [subject: string]: { [queue: string]: string[] };
+  };
+};
+
+export function serializeInterest(
+  interest: Interest,
+  version = 0,
+): SerializedInterest {
+  return {
+    version,
+    subjects: interest.serialize((groups) => {
+      const serialized: { [queue: string]: string[] } = {};
+      for (const queue in groups) {
+        serialized[queue] = Array.from(groups[queue]).sort();
+      }
+      return serialized;
+    }).patterns,
+  };
+}
+
+export function replaceInterest(
+  interest: Interest,
+  snapshot: SerializedInterest,
+): void {
+  const next: Interest = new Patterns();
+  for (const subject in snapshot.subjects) {
+    const groups: { [queue: string]: Set<string> } = {};
+    for (const queue in snapshot.subjects[subject]) {
+      groups[queue] = new Set(snapshot.subjects[subject][queue]);
+    }
+    next.set(subject, groups);
+  }
+  interest.deserialize(next.serialize());
+}
 
 export { type ClusterLink };
 
@@ -50,6 +97,9 @@ class ClusterLink {
   private streams: ClusterStreams;
   private state: "init" | "ready" | "closed" = "init";
   private clientStateChanged = Date.now(); // when client status last changed
+  private interestSnapshotLoopStarted = false;
+  private interestVersion = 0;
+  private recentInterestUpdates: InterestUpdate[] = [];
 
   constructor(
     public readonly client: Client,
@@ -77,8 +127,9 @@ class ClusterLink {
       clusterName: this.clusterName,
     });
     for (const update of this.streams.interest.getAll()) {
-      updateInterest(update, this.interest);
+      this.handleInterestUpdate(update);
     }
+    await this.reconcileInterestSnapshot("init");
     // I have a slight concern about this because updates might not
     // arrive in order during automatic failover.  That said, maybe
     // automatic failover doesn't matter with these streams, since
@@ -87,6 +138,7 @@ class ClusterLink {
     // matters anymore.
     this.streams.interest.on("change", this.handleInterestUpdate);
     this.state = "ready";
+    this.startInterestSnapshotLoop();
   };
 
   isConnected = () => {
@@ -94,11 +146,138 @@ class ClusterLink {
   };
 
   handleInterestUpdate = (update: InterestUpdate) => {
+    const { version } = update;
+    if (version == null) {
+      if (this.interestVersion > 0) {
+        return;
+      }
+      updateInterest(update, this.interest);
+      return;
+    }
+    if (version <= this.interestVersion) {
+      return;
+    }
     updateInterest(update, this.interest);
+    this.interestVersion = version;
+    this.rememberInterestUpdate(update);
+  };
+
+  private rememberInterestUpdate = (update: InterestUpdate) => {
+    if (update.version == null) {
+      return;
+    }
+    this.recentInterestUpdates.push(update);
+    if (this.recentInterestUpdates.length > MAX_RECENT_INTEREST_UPDATES) {
+      this.recentInterestUpdates.splice(
+        0,
+        this.recentInterestUpdates.length - MAX_RECENT_INTEREST_UPDATES,
+      );
+    }
+  };
+
+  private replayUpdatesAfterSnapshot = (
+    snapshot: SerializedInterest,
+    currentVersion: number,
+  ): InterestUpdate[] | undefined => {
+    if (snapshot.version >= currentVersion) {
+      return [];
+    }
+    const byVersion = new Map<number, InterestUpdate>();
+    for (const update of this.recentInterestUpdates) {
+      if (
+        update.version != null &&
+        update.version > snapshot.version &&
+        update.version <= currentVersion
+      ) {
+        byVersion.set(update.version, update);
+      }
+    }
+    const updates: InterestUpdate[] = [];
+    for (
+      let version = snapshot.version + 1;
+      version <= currentVersion;
+      version++
+    ) {
+      const update = byVersion.get(version);
+      if (update == null) {
+        return;
+      }
+      updates.push(update);
+    }
+    return updates;
+  };
+
+  private applyInterestSnapshot = (snapshot: SerializedInterest): boolean => {
+    const currentVersion = this.interestVersion;
+    const replayUpdates = this.replayUpdatesAfterSnapshot(
+      snapshot,
+      currentVersion,
+    );
+    if (replayUpdates == null) {
+      return false;
+    }
+    replaceInterest(this.interest, snapshot);
+    this.interestVersion = snapshot.version;
+    for (const update of replayUpdates) {
+      updateInterest(update, this.interest);
+      this.interestVersion = update.version ?? this.interestVersion;
+    }
+    return true;
   };
 
   private handleClientStateChanged = () => {
     this.clientStateChanged = Date.now();
+    if (this.isConnected()) {
+      void this.reconcileInterestSnapshot("connected");
+    }
+  };
+
+  private reconcileInterestSnapshot = async (reason: string) => {
+    if (this.state == "closed" || !this.isConnected()) {
+      return;
+    }
+    try {
+      const snapshot = await sysApi(this.client, {
+        timeout: 15_000,
+        waitForInterest: true,
+      }).interestSnapshot();
+      if (!this.applyInterestSnapshot(snapshot)) {
+        logger.debug(
+          "interest snapshot reconciliation skipped because delta replay was incomplete",
+          {
+            id: this.id,
+            clusterName: this.clusterName,
+            address: this.address,
+            reason,
+            snapshotVersion: snapshot.version,
+            interestVersion: this.interestVersion,
+            recentInterestUpdates: this.recentInterestUpdates.length,
+          },
+        );
+      }
+    } catch (err) {
+      logger.debug("interest snapshot reconciliation failed", {
+        id: this.id,
+        clusterName: this.clusterName,
+        address: this.address,
+        reason,
+        err,
+      });
+    }
+  };
+
+  private startInterestSnapshotLoop = () => {
+    if (this.interestSnapshotLoopStarted) {
+      return;
+    }
+    this.interestSnapshotLoopStarted = true;
+    const loop = async () => {
+      while (this.state != "closed") {
+        await unrefDelay(INTEREST_SNAPSHOT_INTERVAL);
+        await this.reconcileInterestSnapshot("periodic");
+      }
+    };
+    void loop();
   };
 
   howLongDisconnected = () => {

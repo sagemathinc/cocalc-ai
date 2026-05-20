@@ -380,7 +380,7 @@ export class ConatSocketClient extends ConatSocketBase {
 
       //  logger.silly("run: getting subscription");
       this.lifecycleReporter?.("subscribe_start");
-      const sub = this.client.subscribeSync(
+      const sub = await this.client.subscribe(
         `${this.subject}.client.${this.id}`,
       );
       this.lifecycleReporter?.("subscribe_done");

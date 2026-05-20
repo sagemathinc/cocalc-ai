@@ -61,6 +61,7 @@ import {
   createClusterPersistServer,
   Interest,
   hashInterest,
+  serializeInterest,
 } from "./cluster";
 
 function unrefDelay(ms: number): Promise<void> {
@@ -219,6 +220,7 @@ export interface InterestUpdate {
   subject: string;
   queue?: string;
   room: string;
+  version?: number;
 }
 
 interface Update {
@@ -365,6 +367,7 @@ export class ConatServer extends EventEmitter {
   private clusterPersistServer?: ConatSocketServer;
   public readonly clusterName?: string;
   private queuedClusterUpdates: Update[] = [];
+  private interestVersion = 0;
 
   constructor(options: Options) {
     super();
@@ -1125,10 +1128,14 @@ export class ConatServer extends EventEmitter {
 
   private updateInterest = async (interest: InterestUpdate) => {
     if (this.isClosed()) return;
+    const versionedInterest = {
+      ...interest,
+      version: ++this.interestVersion,
+    };
     // publish to the stream
-    this.updateClusterStream({ interest });
+    this.updateClusterStream({ interest: versionedInterest });
     // update our local state
-    updateInterest(interest, this.interest);
+    updateInterest(versionedInterest, this.interest);
   };
 
   ///////////////////////////////////////
@@ -2541,6 +2548,9 @@ export class ConatServer extends EventEmitter {
         clusterAddresses: () => {
           throw Error("wrong service");
         },
+        interestSnapshot: () => {
+          throw Error("wrong service");
+        },
       },
       { queue: `${this.clusterName}-${this.id}` },
     );
@@ -2572,6 +2582,9 @@ export class ConatServer extends EventEmitter {
       // addresses of all nodes in the (super-)cluster
       clusterAddresses: async (clusterName?: string): Promise<string[]> =>
         this.clusterAddresses(clusterName),
+
+      interestSnapshot: async () =>
+        serializeInterest(this.interest, this.interestVersion),
     });
     this.log(`successfully started ${subject2} service`);
   };
