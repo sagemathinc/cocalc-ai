@@ -39,8 +39,8 @@ const FIELD_GROUP_STYLE: React.CSSProperties = {
   background: COLORS.GRAY_LLL,
   border: `1px solid ${COLORS.GRAY_LL}`,
   borderRadius: 10,
-  marginBottom: 10,
-  padding: "10px 12px 0",
+  marginBottom: 8,
+  padding: "8px 10px 0",
 };
 
 type HostCreateProviderFieldsProps = {
@@ -401,7 +401,7 @@ export const HostCreateProviderFields: React.FC<
     <>
       <div style={FIELD_GROUP_STYLE}>
         <Typography.Text strong>Placement preferences</Typography.Text>
-        <Row gutter={[12, 0]} style={{ marginTop: 8 }}>
+        <Row gutter={[10, 0]} style={{ marginTop: 6 }}>
           {!hideProviderSelect && (
             <Col xs={24} md={12}>
               <Form.Item
@@ -455,7 +455,7 @@ export const HostCreateProviderFields: React.FC<
       </div>
       <div style={FIELD_GROUP_STYLE}>
         <Typography.Text strong>Location and compute</Typography.Text>
-        <Row gutter={[12, 0]} style={{ marginTop: 8 }}>
+        <Row gutter={[10, 0]} style={{ marginTop: 6 }}>
           {schema.primary.map(renderField)}
         </Row>
       </div>
@@ -464,14 +464,14 @@ export const HostCreateProviderFields: React.FC<
           <Typography.Text strong>Storage</Typography.Text>
           <Form.Item
             label="Disk size (GB)"
-            style={{ marginTop: 8 }}
+            style={{ marginTop: 6 }}
             tooltip={`Disk for storing all projects on this host. Files are compressed and deduplicated. ${
               persistentGrowable
                 ? "You can enlarge this disk at any time later."
                 : "This disk CANNOT be enlarged later."
             }${isNebiusPersistentDisk ? " Nebius disks require multiples of 93 GB." : ""}`}
           >
-            <Row gutter={12} align="middle">
+            <Row gutter={10} align="middle">
               <Col flex="auto">
                 <Slider
                   min={diskMin}

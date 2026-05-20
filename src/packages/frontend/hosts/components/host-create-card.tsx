@@ -35,8 +35,8 @@ import { HostCreateForm } from "./host-create-form";
 import { HostPriceBreakdown } from "./host-price-breakdown";
 
 const CARD_STYLES = {
-  header: { minHeight: 38, padding: "8px 12px" },
-  body: { padding: 12 },
+  header: { minHeight: 34, padding: "6px 10px" },
+  body: { padding: 10 },
 } as const;
 
 const labelFor = (value: unknown, fallback = "Not selected") =>
@@ -537,8 +537,8 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
                 borderRadius: 10,
                 color: preset.disabled ? COLORS.GRAY : COLORS.GRAY_DD,
                 cursor: preset.disabled ? "not-allowed" : "pointer",
-                minHeight: 76,
-                padding: "10px 12px",
+                minHeight: 62,
+                padding: "8px 10px",
                 textAlign: "left",
               }}
             >
@@ -570,7 +570,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
                     style={{
                       display: "block",
                       fontSize: 12,
-                      lineHeight: 1.25,
+                      lineHeight: 1.15,
                     }}
                   >
                     {preset.disabled
@@ -648,8 +648,8 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
           background: `linear-gradient(135deg, ${COLORS.BLUE_LLLL}, white 62%, ${COLORS.GRAY_LLL})`,
           border: `1px solid ${COLORS.GRAY_LL}`,
           borderRadius: 14,
-          marginBottom: 12,
-          padding: "12px 14px",
+          marginBottom: 10,
+          padding: "10px 12px",
         }}
       >
         <Space align="center" size={12}>
@@ -660,9 +660,9 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
               borderRadius: 12,
               color: "white",
               display: "inline-flex",
-              height: 38,
+              height: 34,
               justifyContent: "center",
-              width: 38,
+              width: 34,
             }}
           >
             <Icon name="server" />
@@ -706,7 +706,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
           display: "grid",
           gridTemplateColumns: IS_MOBILE ? "1fr" : "minmax(0, 1fr) 300px",
           alignItems: "flex-start",
-          gap: 16,
+          gap: 14,
         }}
       >
         <Space

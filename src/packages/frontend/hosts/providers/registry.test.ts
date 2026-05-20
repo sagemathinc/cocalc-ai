@@ -640,7 +640,7 @@ describe("catalog-backed pricing labels", () => {
     });
 
     expect(estimate?.notes).toContain(
-      "Provider network egress and similar cloud charges are billed directly by your cloud provider and are not included in this estimate.",
+      "Network egress and provider-side charges outside these line items are billed by your cloud provider and are not included.",
     );
   });
 

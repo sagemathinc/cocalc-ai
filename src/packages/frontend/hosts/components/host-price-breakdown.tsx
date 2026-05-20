@@ -65,7 +65,6 @@ export const HostPriceBreakdown: React.FC<HostPriceBreakdownProps> = ({
         border: `1px solid ${COLORS.GRAY_LL}`,
         borderRadius: 8,
         padding: compact ? "8px 10px" : 12,
-        width: "100%",
       }}
     >
       <Space

@@ -13,8 +13,8 @@ const FIELD_GROUP_STYLE: React.CSSProperties = {
   background: COLORS.GRAY_LLL,
   border: `1px solid ${COLORS.GRAY_LL}`,
   borderRadius: 10,
-  marginBottom: 10,
-  padding: "10px 12px 0",
+  marginBottom: 8,
+  padding: "8px 10px 0",
 };
 
 type HostCreateFormProps = {
@@ -222,7 +222,7 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
             <>
               <div style={FIELD_GROUP_STYLE}>
                 <Typography.Text strong>Basics and billing</Typography.Text>
-                <Row gutter={[12, 0]} style={{ marginTop: 8 }}>
+                <Row gutter={[10, 0]} style={{ marginTop: 6 }}>
                   <Col xs={24} md={showSpotFields ? 12 : 24}>
                     <Form.Item
                       name="name"

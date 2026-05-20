@@ -709,7 +709,7 @@ function providerChargeNote(
     return "Provider charges outside the items shown above are not included.";
   }
   if (fundingMode === "site-funded") {
-    return "Provider network egress and similar cloud charges are billed directly by your cloud provider and are not included in this estimate.";
+    return "Network egress and provider-side charges outside these line items are billed by your cloud provider and are not included.";
   }
   return "There is no additional CoCalc charge to end users for network egress; any provider egress cost is covered by the site's subscription and cloud billing arrangement.";
 }
@@ -749,7 +749,7 @@ export const getProviderPriceEstimate = (
   }));
   const notes = [
     ...(provider === "gcp"
-      ? ["Includes the required public IPv4 address for managed GCP hosts."]
+      ? ["Includes the public IPv4 address required for managed GCP hosts."]
       : []),
     ...(surchargeFraction > 0
       ? [
