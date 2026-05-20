@@ -84,6 +84,7 @@ export const Notification: React.FC<Props> = React.memo((props: Props) => {
             count={count}
             size="small"
             showZero={false}
+            style={{ backgroundColor: "#52c41a" }}
           >
             <Icon
               style={{ fontSize: fontSizeIcons }}
