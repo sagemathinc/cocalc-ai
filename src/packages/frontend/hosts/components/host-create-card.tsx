@@ -530,6 +530,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
           {presets.map((preset) => (
             <button
               key={preset.id}
+              type="button"
               disabled={preset.disabled}
               title={preset.disabledReason ?? preset.description}
               onClick={() => applyCreatePreset(preset.id)}
