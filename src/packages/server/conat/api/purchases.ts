@@ -11,6 +11,7 @@ import {
   resolveMembershipForAccount,
 } from "@cocalc/server/membership/resolve";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
+import { getClusterAccountByIdDirect } from "@cocalc/server/accounts/cluster-directory";
 import {
   assignMembershipPackageSeat as assignMembershipPackageSeat0,
   claimMembershipPackageSeat as claimMembershipPackageSeat0,
@@ -65,14 +66,31 @@ export async function getMembership({ account_id }) {
 async function resolveTargetAccountHomeBay({
   account_id,
   user_account_id,
+  allow_cross_account_routing = false,
 }: {
   account_id: string;
   user_account_id: string;
+  allow_cross_account_routing?: boolean;
 }): Promise<string> {
-  const location = await resolveAccountHomeBay({
-    account_id,
-    user_account_id,
-  });
+  let location;
+  try {
+    location = await resolveAccountHomeBay({
+      account_id,
+      user_account_id,
+    });
+  } catch (err) {
+    if (
+      !allow_cross_account_routing ||
+      `${(err as Error)?.message ?? ""}` !== "not authorized"
+    ) {
+      throw err;
+    }
+    const entry = await getClusterAccountByIdDirect(user_account_id);
+    if (entry == null) {
+      throw new Error(`account ${user_account_id} not found`);
+    }
+    return `${entry.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+  }
   return `${location.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
 }
 
@@ -714,6 +732,7 @@ export async function adminProvisionSiteLicense({
     const home_bay_id = await resolveTargetAccountHomeBay({
       account_id: actorId,
       user_account_id: ownerAccountId,
+      allow_cross_account_routing: true,
     });
     if (home_bay_id !== getConfiguredBayId()) {
       return await createInterBayAccountLocalClient({
@@ -770,6 +789,7 @@ export async function getSiteLicenseOverview({
     const home_bay_id = await resolveTargetAccountHomeBay({
       account_id: actorId,
       user_account_id: ownerAccountId,
+      allow_cross_account_routing: true,
     });
     if (home_bay_id !== getConfiguredBayId()) {
       return await createInterBayAccountLocalClient({
@@ -810,6 +830,7 @@ export async function requestSiteLicensePool({
     const home_bay_id = await resolveTargetAccountHomeBay({
       account_id: actorId,
       user_account_id: ownerAccountId,
+      allow_cross_account_routing: true,
     });
     if (home_bay_id !== getConfiguredBayId()) {
       return await createInterBayAccountLocalClient({
