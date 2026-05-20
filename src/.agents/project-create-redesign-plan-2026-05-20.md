@@ -225,7 +225,7 @@ Mobile target:
 
 5. Advanced
    - Backup region.
-   - Custom OCI image entry.
+   - Custom OCI image entry.   (for abuse reasons, oci is admin ONLY)
    - Show older RootFS versions.
    - Future: quotas/license if needed.
 
@@ -337,7 +337,7 @@ Work:
 - Show selected image as a card.
 - Add compact search and filter.
 - Render RootFS cards/options using existing catalog UI helpers and `RootfsScanStatus`.
-- Keep custom OCI entry in advanced mode.
+- Keep custom OCI entry in advanced mode.  _admin only_
 - Keep scan findings visible but non-blocking.
 
 Validation:
