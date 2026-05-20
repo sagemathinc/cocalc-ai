@@ -17,7 +17,7 @@ export default async function handle(req, res) {
       throw new Error("must be signed in to respond to a project invite");
     }
     const { action, invite_id, project_id, token } = getParams(req);
-    if (!project_id || !invite_id || !token) {
+    if (!token) {
       throw new Error("project invite link is incomplete");
     }
     if (!ACTIONS.has(action)) {
@@ -26,8 +26,8 @@ export default async function handle(req, res) {
     const invite = await respondEmailProjectInvite({
       account_id,
       action: action as ProjectCollabInviteAction,
-      project_id,
-      invite_id,
+      ...(project_id ? { project_id } : {}),
+      ...(invite_id ? { invite_id } : {}),
       token,
     });
     res.json({ invite });

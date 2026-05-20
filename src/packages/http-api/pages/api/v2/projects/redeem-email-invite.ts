@@ -14,13 +14,13 @@ export default async function handle(req, res) {
       throw new Error("must be signed in to redeem a project invite");
     }
     const { invite_id, project_id, token } = getParams(req);
-    if (!project_id || !invite_id || !token) {
+    if (!token) {
       throw new Error("project invite link is incomplete");
     }
     const invite = await redeemEmailProjectInvite({
       account_id,
-      project_id,
-      invite_id,
+      ...(project_id ? { project_id } : {}),
+      ...(invite_id ? { invite_id } : {}),
       token,
     });
     res.json({ invite });
