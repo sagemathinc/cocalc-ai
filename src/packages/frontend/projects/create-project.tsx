@@ -86,7 +86,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     rootfsError,
     isAdmin,
     selectedHost,
-    setTitle,
     setAdvancedOpen,
     setRegion,
     setHost,
@@ -175,7 +174,14 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     setSaving(true);
     const actions = redux.getActions("projects");
     let project_id: string;
-    const opts = projectDraftToCreateOptions(draft);
+    const title =
+      `${(new_project_title_ref.current as any)?.input?.value ?? draft.title}`.trim();
+    if (!title) {
+      setSaving(false);
+      set_error(`Please enter a title for the new ${projectLabelLower}.`);
+      return;
+    }
+    const opts = projectDraftToCreateOptions({ ...draft, title });
     try {
       project_id = await actions.create_project(opts);
     } catch (err) {
@@ -201,23 +207,13 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   }
 
   function isDisabled() {
-    return (
-      // no name of new project
-      !draft.title?.trim() ||
-      // currently saving (?)
-      saving
-    );
-  }
-
-  function input_on_change(): void {
-    const text = (new_project_title_ref.current as any)?.input?.value;
-    setTitle(text);
+    return saving;
   }
 
   function handle_keypress(e): void {
     if (e.keyCode === 27) {
       cancel_editing();
-    } else if (e.keyCode === 13 && draft.title !== "") {
+    } else if (e.keyCode === 13) {
       create_project();
     }
   }
@@ -454,7 +450,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
               ref={new_project_title_ref}
               placeholder={`Name your new ${projectLabelLower}...`}
               disabled={saving}
-              onChange={input_on_change}
               onKeyDown={handle_keypress}
               autoFocus
             />
