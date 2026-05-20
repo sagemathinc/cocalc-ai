@@ -187,9 +187,11 @@ export function useHostCreateDraft({
   const onValuesChange = React.useCallback(
     (changedValues: any, allValues: any) => {
       if (isOnlyNameChange(changedValues)) {
-        setDraft({
-          ...normalized.draft,
-          name: changedValues.name,
+        React.startTransition(() => {
+          setDraft({
+            ...normalized.draft,
+            name: changedValues.name,
+          });
         });
         return;
       }
@@ -201,9 +203,11 @@ export function useHostCreateDraft({
             allValues.disk_gb ??
             allValues.disk,
         );
-        setDraft({
-          ...normalized.draft,
-          ...diskPatch,
+        React.startTransition(() => {
+          setDraft({
+            ...normalized.draft,
+            ...diskPatch,
+          });
         });
         return;
       }

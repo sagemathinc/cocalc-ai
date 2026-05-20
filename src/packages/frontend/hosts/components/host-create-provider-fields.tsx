@@ -9,7 +9,6 @@ import {
   Segmented,
   Slider,
   Tag,
-  Typography,
 } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -66,9 +65,12 @@ export const HostCreateProviderFields: React.FC<
   const { persistentGrowable, showDiskFields } = storage;
   const form = Form.useFormInstance();
   const setFormFields = React.useCallback(
-    (patch: Record<string, any>) => {
+    (
+      patch: Record<string, any>,
+      { syncDraft = true }: { syncDraft?: boolean } = {},
+    ) => {
       form.setFieldsValue(patch);
-      if (draftManaged) {
+      if (draftManaged && syncDraft) {
         onDraftPatch?.(patch);
       }
     },
@@ -400,8 +402,7 @@ export const HostCreateProviderFields: React.FC<
   return (
     <>
       <div style={FIELD_GROUP_STYLE}>
-        <Typography.Text strong>Placement preferences</Typography.Text>
-        <Row gutter={[10, 0]} style={{ marginTop: 6 }}>
+        <Row gutter={[10, 0]}>
           {!hideProviderSelect && (
             <Col xs={24} md={12}>
               <Form.Item
@@ -454,17 +455,12 @@ export const HostCreateProviderFields: React.FC<
         </Row>
       </div>
       <div style={FIELD_GROUP_STYLE}>
-        <Typography.Text strong>Location and compute</Typography.Text>
-        <Row gutter={[10, 0]} style={{ marginTop: 6 }}>
-          {schema.primary.map(renderField)}
-        </Row>
+        <Row gutter={[10, 0]}>{schema.primary.map(renderField)}</Row>
       </div>
       {showDiskFields && (
         <div style={FIELD_GROUP_STYLE}>
-          <Typography.Text strong>Storage</Typography.Text>
           <Form.Item
             label="Disk size (GB)"
-            style={{ marginTop: 6 }}
             tooltip={`Disk for storing all projects on this host. Files are compressed and deduplicated. ${
               persistentGrowable
                 ? "You can enlarge this disk at any time later."
@@ -479,6 +475,19 @@ export const HostCreateProviderFields: React.FC<
                   step={diskStep}
                   value={diskValue}
                   onChange={(value) => {
+                    if (typeof value !== "number" || Number.isNaN(value)) {
+                      return;
+                    }
+                    const normalized = normalizeDiskValue(value);
+                    setFormFields(
+                      {
+                        disk: normalized,
+                        disk_gb: normalized,
+                      },
+                      { syncDraft: false },
+                    );
+                  }}
+                  onChangeComplete={(value) => {
                     if (typeof value !== "number" || Number.isNaN(value)) {
                       return;
                     }

@@ -1,4 +1,4 @@
-import { Col, Collapse, Form, Input, Row, Select, Typography } from "antd";
+import { Col, Collapse, Form, Input, Row, Select } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { COLORS } from "@cocalc/util/theme";
 import type { FormInstance } from "antd/es/form";
@@ -221,8 +221,7 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
           ) : (
             <>
               <div style={FIELD_GROUP_STYLE}>
-                <Typography.Text strong>Basics and billing</Typography.Text>
-                <Row gutter={[10, 0]} style={{ marginTop: 6 }}>
+                <Row gutter={[10, 0]}>
                   <Col xs={24} md={showSpotFields ? 12 : 24}>
                     <Form.Item
                       name="name"
