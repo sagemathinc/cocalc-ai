@@ -1,43 +1,40 @@
-/*
- *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
- *  License: MS-RSL – see LICENSE.md for details
- */
+import { A, type PublicPolicy } from "./policy";
 
-import AccessibilityContent from "./accessibility-content";
-import { Customize, Footer, Head, Header, Layout, MAX_WIDTH } from "./compat";
+export const accessibilityPolicy: PublicPolicy = {
+  description: "Accessibility information, including VPAT-related material.",
+  navLabel: "Accessibility",
+  slug: "accessibility",
+  title: "Accessibility Statement",
+  updated: "December 3, 2025",
+  content: (
+    <>
+      <p>
+        Given the scope of what is possible in CoCalc, such as using arbitrary
+        Jupyter notebooks with custom styling and a broad collection of software
+        including user installed packages, it is infeasible to expect that
+        everything will be fully accessible and aligned with any standards, such
+        as WCAG. However, we are committed to do our best to resolve any
+        concrete issues that our customers face. We have a long history of
+        successfully facilitating courses for thousands of students (i.e. for
+        users who cannot easily switch to an alternative platform) as evidence
+        of success of this approach.
+      </p>
+      <p>
+        If your use case is primarily to interact with Jupyter notebooks, keep
+        in mind that CoCalc makes it easy to launch industry standard Jupyter
+        Classic (and Jupyter Lab). These projects have put substantial
+        deliberate efforts into making their products accessible, although they
+        still do not claim to have AA compliance with WCAG.
+      </p>
+      <p>
+        For more specific details, please consult our{" "}
+        <A href="/documents/SageMathInc_VPAT2.5Rev_WCAG_February2025_December2025.pdf">
+          Voluntary Product Accessibility Template, VPAT®
+        </A>{" "}
+        (Last Update: December 2025)
+      </p>
+    </>
+  ),
+};
 
-export default function AccessibilityPage() {
-  return (
-    <Customize>
-      <Head title="Accessibility" />
-      <Layout>
-        <Header page="policies" subPage="accessibility" />
-        <Layout.Content
-          style={{
-            backgroundColor: "white",
-          }}
-        >
-          <div
-            style={{
-              maxWidth: MAX_WIDTH,
-              margin: "15px auto",
-              padding: "15px",
-              backgroundColor: "white",
-            }}
-          >
-            <div style={{ textAlign: "center", color: "#444" }}>
-              <h1 style={{ fontSize: "28pt" }}>
-                CoCalc Voluntary Product Accessibility Template (VPAT)
-              </h1>
-              <h2>Last Updated: July 3, 2019</h2>
-            </div>
-            <div style={{ fontSize: "12pt", overflowX: "auto" }}>
-              <AccessibilityContent />
-            </div>
-          </div>
-          <Footer />
-        </Layout.Content>
-      </Layout>
-    </Customize>
-  );
-}
+export default accessibilityPolicy;

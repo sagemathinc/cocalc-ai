@@ -3,10 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useEffect } from "react";
+import { useEffect, type MouseEvent } from "react";
 
-import { Button, Flex, Menu, Typography } from "antd";
-import { theme } from "antd";
+import { Button, Flex, theme, Typography } from "antd";
 import {
   EmptySection,
   getSiteName,
@@ -20,17 +19,53 @@ import {
   publicPoliciesUseBuiltin,
   publicPoliciesUseCustom,
 } from "@cocalc/frontend/public/config";
+import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { publicPath } from "../routes";
 import { PublicCard, PublicGrid, PublicSection } from "../layout/shell";
 import {
-  BuiltinPolicyPage,
   BUILTIN_POLICIES,
   getBuiltinPolicy,
   getBuiltinPolicyNavItems,
 } from "./registry";
+import {
+  getPolicyNavLabel,
+  PolicyDocument,
+  preparePolicyContent,
+  type PreparedPolicyContent,
+  type PolicyTocItem,
+  type PublicPolicy,
+} from "./policy";
 import type { PublicPoliciesRoute } from "./routes";
 
-const { Paragraph, Title } = Typography;
+const { Paragraph, Text, Title } = Typography;
+
+const POLICY_RAIL_CSS = `
+  .cocalc-public-policy-rail-list {
+    display: grid;
+    gap: 0.15rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .cocalc-public-policy-rail-list a {
+    border-left: 2px solid transparent;
+    color: ${PUBLIC_COLORS.text};
+    display: block;
+    padding: 0.15rem 0 0.15rem 0.75rem;
+    text-decoration: none;
+  }
+
+  .cocalc-public-policy-rail-list a:hover {
+    color: ${PUBLIC_COLORS.linkHover};
+  }
+
+  .cocalc-public-policy-rail-list a[aria-current="page"] {
+    border-left-color: ${PUBLIC_COLORS.brandSubtle};
+    color: ${PUBLIC_COLORS.brandActive};
+    font-weight: 700;
+  }
+`;
 
 function titleForRoute(route: PublicPoliciesRoute, siteName: string): string {
   switch (route.view) {
@@ -164,46 +199,132 @@ function PoliciesDetailPage({
   return <MarkdownSection value={markdown} />;
 }
 
-function PolicySubNav({ slug }: { slug?: string }) {
-  const { token } = theme.useToken();
-  const items = getBuiltinPolicyNavItems().map((item) => ({
-    key: item.key,
-    label: <a href={item.href}>{item.label}</a>,
-  }));
+interface PolicyRailLink {
+  current?: boolean;
+  href: string;
+  key: string;
+  label: string;
+  onClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
+}
+
+function PolicyRailLinkList({ items }: { items: readonly PolicyRailLink[] }) {
   return (
-    <Flex
-      justify="center"
-      style={{ minWidth: 0, paddingBlock: token.paddingXS }}
-    >
-      <Menu
-        aria-label="Policy pages"
-        disabledOverflow
-        items={items}
-        mode="horizontal"
-        selectedKeys={slug == null ? [] : [slug]}
-        style={{
-          background: "transparent",
-          borderBottom: 0,
-          flex: "0 1 auto",
-          lineHeight: "normal",
-        }}
-      />
-    </Flex>
+    <ul className="cocalc-public-policy-rail-list">
+      {items.map((item) => (
+        <li key={item.key}>
+          <a
+            aria-current={item.current ? "page" : undefined}
+            href={item.href}
+            onClick={item.onClick}
+          >
+            {item.label}
+          </a>
+        </li>
+      ))}
+    </ul>
   );
 }
 
-function BuiltinPolicyPageShell({ slug }: { slug?: string }) {
-  if (getBuiltinPolicy(slug) == null) {
+function getPolicyRailLinks(currentSlug: string): PolicyRailLink[] {
+  return getBuiltinPolicyNavItems().map((item) => ({
+    current: item.key === currentSlug,
+    href: item.href,
+    key: item.key,
+    label: item.label,
+  }));
+}
+
+function scrollToPolicySection(
+  event: MouseEvent<HTMLAnchorElement>,
+  id: string,
+) {
+  const element = document.getElementById(id);
+  if (element == null) return;
+
+  event.preventDefault();
+  window.history.pushState(
+    null,
+    "",
+    `${window.location.pathname}${window.location.search}#${id}`,
+  );
+  element.scrollIntoView({ block: "start" });
+}
+
+function getPolicyTocRailLinks(
+  items: readonly PolicyTocItem[],
+): PolicyRailLink[] {
+  return items.map((item) => ({
+    href: `#${item.id}`,
+    key: item.id,
+    label: getPolicyNavLabel(item),
+    onClick: (event) => scrollToPolicySection(event, item.id),
+  }));
+}
+
+function PolicySideNav({
+  currentSlug,
+  tocItems,
+}: {
+  currentSlug: string;
+  tocItems: readonly PolicyTocItem[];
+}) {
+  const { token } = theme.useToken();
+
+  return (
+    <>
+      <style>{POLICY_RAIL_CSS}</style>
+      <Flex
+        vertical
+        gap="large"
+        style={{
+          paddingBlockEnd: token.paddingSM,
+          paddingBlockStart: token.paddingXS,
+        }}
+      >
+        <nav aria-label="Policies">
+          <Flex vertical gap="small">
+            <Text strong type="secondary">
+              Policies
+            </Text>
+            <PolicyRailLinkList items={getPolicyRailLinks(currentSlug)} />
+          </Flex>
+        </nav>
+        {tocItems.length > 0 ? (
+          <nav aria-label="On this page">
+            <Flex vertical gap="small">
+              <Text strong type="secondary">
+                On this page
+              </Text>
+              <PolicyRailLinkList items={getPolicyTocRailLinks(tocItems)} />
+            </Flex>
+          </nav>
+        ) : null}
+      </Flex>
+    </>
+  );
+}
+
+function BuiltinPolicyPageShell({
+  policy,
+  preparedPolicy,
+  siteName,
+}: {
+  policy?: PublicPolicy;
+  preparedPolicy?: PreparedPolicyContent;
+  siteName: string;
+}) {
+  if (policy == null || preparedPolicy == null) {
     return <EmptySection label="This policy page was not found." />;
   }
 
   return (
-    <div style={{ display: "grid" }}>
-      <PolicySubNav slug={slug} />
-      <PublicSection>
-        <BuiltinPolicyPage slug={slug} />
-      </PublicSection>
-    </div>
+    <PublicSection>
+      <PolicyDocument
+        content={preparedPolicy.content}
+        policy={policy}
+        siteName={siteName}
+      />
+    </PublicSection>
   );
 }
 
@@ -216,6 +337,17 @@ export default function PublicPoliciesApp({
 }) {
   const siteName = getSiteName(config);
   const title = titleForRoute(initialRoute, siteName);
+  const builtinPolicy =
+    initialRoute.view === "policies-detail" &&
+    arePublicPoliciesVisible(config) &&
+    !getExternalPoliciesUrl(config) &&
+    publicPoliciesUseBuiltin(config)
+      ? getBuiltinPolicy(initialRoute.policySlug)
+      : undefined;
+  const preparedPolicy =
+    builtinPolicy == null
+      ? undefined
+      : preparePolicyContent(builtinPolicy.content);
 
   useEffect(() => {
     document.title = title;
@@ -225,6 +357,15 @@ export default function PublicPoliciesApp({
     <PublicSectionShell
       active="policies"
       config={config}
+      sider={
+        builtinPolicy != null && preparedPolicy != null ? (
+          <PolicySideNav
+            currentSlug={builtinPolicy.slug}
+            tocItems={preparedPolicy.tocItems}
+          />
+        ) : undefined
+      }
+      siderLabel="Policy navigation"
       title={
         initialRoute.view === "policies" ? `${siteName} Policies` : undefined
       }
@@ -247,7 +388,11 @@ export default function PublicPoliciesApp({
         ) : !publicPoliciesUseBuiltin(config) ? (
           <EmptySection label="This policy page was not found." />
         ) : (
-          <BuiltinPolicyPageShell slug={initialRoute.policySlug} />
+          <BuiltinPolicyPageShell
+            policy={builtinPolicy}
+            preparedPolicy={preparedPolicy}
+            siteName={siteName}
+          />
         )
       ) : (
         <PoliciesHome config={config ?? {}} />
