@@ -771,10 +771,16 @@ Acceptance criteria:
 
 ### Phase 7: Invite Limit Integration
 
-- Define resource limits for the new `instructor` tier.
-- Make project invite email quotas and collaborator caps depend on effective
+- [x] Define resource limits for the new `instructor` and `researcher` tiers.
+- [x] Make project invite email quotas and collaborator caps depend on effective
   membership.
-- Ensure course workflows use instructor limits.
+- [x] Ensure course workflows use instructor limits.
+
+Implementation note: course email invites now enforce both per-course pending
+email invite limits and total course student-plus-pending-invite caps from the
+effective membership limits. The count uses persisted student-project course
+metadata plus pending course invite rows, so it does not depend on client-side
+course state.
 
 ### Phase 8: Tests and Validation
 

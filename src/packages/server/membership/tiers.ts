@@ -4,7 +4,10 @@ import type {
   MembershipUsageLimits,
 } from "@cocalc/conat/hub/api/purchases";
 import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
-import { applyMembershipTierTemplateFallbacks } from "@cocalc/util/membership-tier-templates";
+import {
+  applyMembershipTierTemplateFallbacks,
+  TIER_TEMPLATES,
+} from "@cocalc/util/membership-tier-templates";
 
 export interface MembershipTierPricing {
   price_monthly?: number;
@@ -86,7 +89,10 @@ export async function getMembershipTierMap({
   client?: PoolClient;
 } = {}): Promise<Record<string, MembershipTierRecord>> {
   const tiers = await getMembershipTiers({ includeDisabled, client });
-  return tiers.reduce(
+  const builtInTiers = Object.values(TIER_TEMPLATES).filter(
+    (tier) => includeDisabled || !(tier as MembershipTierRecord).disabled,
+  ) as MembershipTierRecord[];
+  return [...builtInTiers, ...tiers].reduce(
     (acc, tier) => {
       acc[tier.id] = tier;
       return acc;
@@ -113,9 +119,12 @@ export async function getMembershipTierById({
     [id],
   );
   const tier = rows[0] as MembershipTierRecord | undefined;
-  return tier == null
-    ? undefined
-    : (applyMembershipTierTemplateFallbacks(tier) as MembershipTierRecord);
+  if (tier == null) {
+    return TIER_TEMPLATES[id as keyof typeof TIER_TEMPLATES] as
+      | MembershipTierRecord
+      | undefined;
+  }
+  return applyMembershipTierTemplateFallbacks(tier) as MembershipTierRecord;
 }
 
 export function getMembershipPrice(

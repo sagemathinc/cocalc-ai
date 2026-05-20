@@ -57,7 +57,10 @@ import {
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import { getBayPublicOrigin } from "@cocalc/server/bay-public-origin";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
-import { assertProjectCollaboratorInviteLimit } from "@cocalc/server/membership/project-limits";
+import {
+  assertCourseStudentInviteLimit,
+  assertProjectCollaboratorInviteLimit,
+} from "@cocalc/server/membership/project-limits";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { getSecretSettingsKey } from "@cocalc/database/settings/secret-settings";
@@ -1541,11 +1544,15 @@ async function normalizeInviteMessageForAccount({
 async function assertEmailInviteCreationLimits({
   account_id,
   project_id,
+  context,
   recipientCount,
+  scope,
 }: {
   account_id: string;
   project_id: string;
+  context?: Record<string, unknown>;
   recipientCount: number;
+  scope?: string;
 }): Promise<void> {
   const resolution = await resolveMembershipForAccount(account_id);
   const limits = getEffectiveMembershipUsageLimits(resolution);
@@ -1572,6 +1579,39 @@ async function assertEmailInviteCreationLimits({
         `project pending email invite limit reached (${current}/${pendingLimit}); revoke pending invites or upgrade membership`,
       );
     }
+  }
+  if (scope === COURSE_EMAIL_INVITE_SCOPE) {
+    const course_project_id =
+      typeof context?.course_project_id === "string"
+        ? context.course_project_id.trim()
+        : "";
+    if (!course_project_id) {
+      throw new Error("course invite context is missing course_project_id");
+    }
+    const pendingCourseLimit = limits.invite_email_pending_per_course;
+    if (pendingCourseLimit != null) {
+      await ensureProjectCollabInviteEmailTokenSchema();
+      const { rows } = await getPool().query<{ count: number }>(
+        `SELECT COUNT(*)::int AS count
+           FROM project_collab_invites
+          WHERE inviter_account_id=$1
+            AND status='pending'
+            AND scope=$2
+            AND context ->> 'course_project_id' = $3`,
+        [account_id, COURSE_EMAIL_INVITE_SCOPE, course_project_id],
+      );
+      const current = rows[0]?.count ?? 0;
+      if (current + recipientCount > pendingCourseLimit) {
+        throw new Error(
+          `course pending email invite limit reached (${current}/${pendingCourseLimit}); revoke pending invites or upgrade membership`,
+        );
+      }
+    }
+    await assertCourseStudentInviteLimit({
+      course_project_id,
+      resolution,
+      additional: recipientCount,
+    });
   }
   const hourlyLimit = limits.invite_email_hourly_count;
   if (hourlyLimit != null) {
@@ -2162,8 +2202,10 @@ export async function inviteCollaboratorWithoutAccount({
   });
   await assertEmailInviteCreationLimits({
     account_id,
+    context: opts.invite_context,
     project_id: opts.project_id,
     recipientCount: to.length,
+    scope: opts.invite_scope,
   });
 
   // Helper for inviting one user by email

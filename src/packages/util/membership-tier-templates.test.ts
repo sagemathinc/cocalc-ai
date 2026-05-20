@@ -44,7 +44,7 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     ).toBe(500);
   });
 
-  it("preserves explicit entitlements instead of overwriting them", () => {
+  it("merges explicit entitlements over built-in defaults", () => {
     const tier = applyMembershipTierTemplateFallbacks({
       id: "member",
       course_store_visible: true,
@@ -57,13 +57,28 @@ describe("applyMembershipTierTemplateFallbacks", () => {
       usage_limits: { shared_compute_priority: 99 },
     });
 
-    expect(tier.project_defaults).toEqual({ memory: 1234 });
     expect(tier.course_store_visible).toBe(true);
     expect(tier.course_price).toBe(10);
     expect(tier.course_duration_days).toBe(30);
     expect(tier.course_grace_days).toBe(3);
-    expect(tier.ai_limits).toEqual({ units_5h: 7 });
-    expect(tier.features).toEqual({ create_hosts: false });
+    expect(tier.project_defaults).toEqual(
+      expect.objectContaining({
+        disk_quota: 10000,
+        memory: 1234,
+      }),
+    );
+    expect(tier.ai_limits).toEqual(
+      expect.objectContaining({
+        units_5h: 7,
+        units_7d: expect.any(Number),
+      }),
+    );
+    expect(tier.features).toEqual(
+      expect.objectContaining({
+        create_hosts: false,
+        project_host_tier: 1,
+      }),
+    );
     expect(tier.usage_limits).toEqual(
       expect.objectContaining({
         shared_compute_priority: 99,
@@ -117,6 +132,43 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(
       (tier.usage_limits as Record<string, unknown>).invite_email_daily_count,
     ).toBe(500);
+    expect(
+      (tier.usage_limits as Record<string, unknown>)
+        .course_max_students_and_pending_invites,
+    ).toBe(500);
+  });
+
+  it("defines a researcher tier with research-scale compute and storage", () => {
+    const tier = applyMembershipTierTemplateFallbacks({
+      id: "researcher",
+    });
+
+    expect(tier.label).toBe("Researcher");
+    expect(tier.store_visible).toBe(false);
+    expect(tier.course_store_visible).toBe(false);
+    expect((tier.features as Record<string, unknown>).create_hosts).toBe(true);
+    expect((tier.features as Record<string, unknown>).project_host_tier).toBe(
+      2,
+    );
+    expect((tier.project_defaults as Record<string, unknown>).disk_quota).toBe(
+      100000,
+    );
+    expect((tier.project_defaults as Record<string, unknown>).memory).toBe(
+      16000,
+    );
+    expect((tier.usage_limits as Record<string, unknown>).max_projects).toBe(
+      150,
+    );
+    expect((tier.usage_limits as Record<string, unknown>).rootfs_count).toBe(
+      100,
+    );
+    expect(
+      (tier.usage_limits as Record<string, unknown>).rootfs_oci_images,
+    ).toBe(true);
+    expect(
+      (tier.usage_limits as Record<string, unknown>)
+        .project_max_collaborators_and_pending_invites,
+    ).toBe(250);
     expect(
       (tier.usage_limits as Record<string, unknown>)
         .course_max_students_and_pending_invites,

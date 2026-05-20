@@ -15,6 +15,7 @@ let listProjectedInboundCollabInvitesMock: jest.Mock;
 let respondProjectedInboundCollabInviteMock: jest.Mock;
 let deleteProjectedInboundCollabInviteMock: jest.Mock;
 let assertAccountTrustedForProductAccessMock: jest.Mock;
+let resolveMembershipForAccountMock: jest.Mock;
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
@@ -92,6 +93,12 @@ jest.mock("@cocalc/server/accounts/trusted-product-access", () => ({
   __esModule: true,
   assertAccountTrustedForProductAccess: (...args: any[]) =>
     assertAccountTrustedForProductAccessMock(...args),
+}));
+
+jest.mock("@cocalc/server/membership/resolve", () => ({
+  __esModule: true,
+  resolveMembershipForAccount: (...args: any[]) =>
+    resolveMembershipForAccountMock(...args),
 }));
 
 jest.mock("@cocalc/backend/logger", () => {
@@ -209,6 +216,11 @@ describe("project collaborators local bay access", () => {
     respondProjectedInboundCollabInviteMock = jest.fn(async () => undefined);
     deleteProjectedInboundCollabInviteMock = jest.fn(async () => undefined);
     assertAccountTrustedForProductAccessMock = jest.fn(async () => undefined);
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      class: "free",
+      source: "free",
+      entitlements: {},
+    }));
     removeCollaboratorFromProject.mockClear();
     addUserToProject.mockClear();
     whenSentProjectInvite.mockClear();
@@ -678,6 +690,132 @@ describe("project collaborators local bay access", () => {
         }),
       ],
     });
+  });
+
+  it("blocks course email invites at the pending-per-course limit", async () => {
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      class: "instructor",
+      source: "site-license",
+      entitlements: {},
+      effective_limits: {
+        invite_email_recipients_per_batch: 10,
+        invite_email_pending_per_project: 100,
+        invite_email_pending_per_course: 2,
+        invite_email_hourly_count: 100,
+        invite_email_daily_count: 100,
+        course_max_students_and_pending_invites: 100,
+      },
+    }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("context ->> 'course_project_id'")) {
+        return { rows: [{ count: 1 }] };
+      }
+      if (sql.includes("COUNT(*)::int AS count")) {
+        return { rows: [{ count: 0 }] };
+      }
+      return { rows: [] };
+    });
+
+    const { inviteCollaboratorWithoutAccount } =
+      await import("./collaborators");
+    await expect(
+      inviteCollaboratorWithoutAccount({
+        account_id: ACCOUNT_ID,
+        opts: {
+          project_id: PROJECT_ID,
+          title: "Test Course",
+          link2proj: "",
+          to: "one@example.com,two@example.com",
+          email: "<p>Hello</p>",
+          invite_scope: "course_student",
+          invite_context: {
+            course_project_id: "44444444-4444-4444-8444-444444444444",
+          },
+        },
+      }),
+    ).rejects.toThrow("course pending email invite limit reached (1/2)");
+  });
+
+  it("blocks course email invites at the total course student cap", async () => {
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      class: "instructor",
+      source: "site-license",
+      entitlements: {},
+      effective_limits: {
+        invite_email_recipients_per_batch: 10,
+        invite_email_pending_per_project: 100,
+        invite_email_pending_per_course: 100,
+        invite_email_hourly_count: 100,
+        invite_email_daily_count: 100,
+        course_max_students_and_pending_invites: 3,
+      },
+    }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("course ->> 'type' = 'student'")) {
+        return { rows: [{ students: 3, pending_invites: 0 }] };
+      }
+      if (sql.includes("FROM projects AS p")) {
+        return {
+          rows: [
+            {
+              usage_account_id: null,
+              course: null,
+              owner_account_id: ACCOUNT_ID,
+            },
+          ],
+        };
+      }
+      if (sql.includes("COUNT(*)::int AS count")) {
+        return { rows: [{ count: 0 }] };
+      }
+      return { rows: [] };
+    });
+
+    const { inviteCollaboratorWithoutAccount } =
+      await import("./collaborators");
+    await expect(
+      inviteCollaboratorWithoutAccount({
+        account_id: ACCOUNT_ID,
+        opts: {
+          project_id: PROJECT_ID,
+          title: "Test Course",
+          link2proj: "",
+          to: "student@example.com",
+          email: "<p>Hello</p>",
+          invite_scope: "course_student",
+          invite_context: {
+            course_project_id: "44444444-4444-4444-8444-444444444444",
+          },
+        },
+      }),
+    ).rejects.toThrow("course student limit reached (3/3)");
+  });
+
+  it("requires course context for course email invites", async () => {
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      class: "instructor",
+      source: "site-license",
+      entitlements: {},
+      effective_limits: {
+        invite_email_recipients_per_batch: 10,
+      },
+    }));
+
+    const { inviteCollaboratorWithoutAccount } =
+      await import("./collaborators");
+    await expect(
+      inviteCollaboratorWithoutAccount({
+        account_id: ACCOUNT_ID,
+        opts: {
+          project_id: PROJECT_ID,
+          title: "Test Course",
+          link2proj: "",
+          to: "student@example.com",
+          email: "<p>Hello</p>",
+          invite_scope: "course_student",
+        },
+      }),
+    ).rejects.toThrow("course invite context is missing course_project_id");
   });
 
   it("migrates copied pending invite links to bay-independent token hashes", async () => {
