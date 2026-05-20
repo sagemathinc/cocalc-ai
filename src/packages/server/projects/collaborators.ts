@@ -1831,20 +1831,24 @@ export async function redeemEmailProjectInvite({
   invite_id,
   token,
   project_id,
+  trustedProductAccessChecked,
 }: {
   account_id?: string;
   invite_id: string;
   token: string;
   project_id?: string;
+  trustedProductAccessChecked?: boolean;
 }): Promise<ProjectCollabInviteRow> {
   if (!account_id) {
     throw new Error("user must be signed in");
   }
   ensureUuid(invite_id, "invite_id");
-  await assertAccountTrustedForProductAccess(
-    account_id,
-    "accept collaboration invites",
-  );
+  if (!trustedProductAccessChecked) {
+    await assertAccountTrustedForProductAccess(
+      account_id,
+      "accept collaboration invites",
+    );
+  }
   const pool = getPool();
   const invite = await getPendingEmailCollabInviteForToken({
     invite_id,
@@ -1937,12 +1941,14 @@ export async function respondEmailProjectInvite({
   invite_id,
   token,
   project_id,
+  trustedProductAccessChecked,
 }: {
   account_id?: string;
   action: ProjectCollabInviteAction;
   invite_id: string;
   token: string;
   project_id?: string;
+  trustedProductAccessChecked?: boolean;
 }): Promise<ProjectCollabInviteRow> {
   if (!account_id) {
     throw new Error("user must be signed in");
@@ -1954,6 +1960,7 @@ export async function respondEmailProjectInvite({
       invite_id,
       token,
       project_id,
+      trustedProductAccessChecked,
     });
   }
   if (normalizedAction === "revoke") {

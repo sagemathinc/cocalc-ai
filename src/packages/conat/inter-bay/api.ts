@@ -787,6 +787,11 @@ export interface AccountLocalRedeemVerifyEmailRequest {
   token: string;
 }
 
+export interface AccountLocalAssertProductAccessTrustRequest {
+  account_id: string;
+  action: string;
+}
+
 export interface AccountLocalGetMembershipPackagesRequest {
   owner_account_id: string;
 }
@@ -1077,6 +1082,7 @@ export interface ProjectCollabInviteRedeemEmailRequest {
   invite_id: string;
   token: string;
   project_id?: string;
+  trusted_product_access_checked?: boolean;
 }
 
 export interface ProjectCollabInvitePreviewEmailRequest {
@@ -1092,6 +1098,7 @@ export interface ProjectCollabInviteRespondEmailRequest {
   invite_id: string;
   token: string;
   project_id?: string;
+  trusted_product_access_checked?: boolean;
 }
 
 export interface ProjectCollaboratorInviteUsageRequest {
@@ -1279,6 +1286,7 @@ export type AccountLocalMethod =
   | "verify-sign-in-password"
   | "verify-fresh-auth-credentials"
   | "redeem-verify-email"
+  | "assert-product-access-trust"
   | "reconcile-dedicated-host-purchase-session"
   | "close-dedicated-host-purchase-session"
   | "reserve-project-runtime-slot"
@@ -2054,6 +2062,9 @@ export interface InterBayAccountLocalApi {
   ) => Promise<AccountLocalVerifySignInPasswordResult>;
   redeemVerifyEmail: (
     opts: AccountLocalRedeemVerifyEmailRequest,
+  ) => Promise<void>;
+  assertProductAccessTrust: (
+    opts: AccountLocalAssertProductAccessTrustRequest,
   ) => Promise<void>;
   reconcileDedicatedHostPurchaseSession: (
     opts: AccountLocalReconcileDedicatedHostPurchaseSessionRequest,
@@ -3499,6 +3510,15 @@ export function createInterBayAccountLocalClient({
       method: "redeem-verify-email",
     }),
   });
+  const assertProductAccessTrustClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "assertProductAccessTrust">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "assert-product-access-trust",
+    }),
+  });
   const reconcileDedicatedHostPurchaseSessionClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "reconcileDedicatedHostPurchaseSession">
   >({
@@ -3716,6 +3736,8 @@ export function createInterBayAccountLocalClient({
       await verifySignInPasswordClient.verifySignInPassword(opts),
     redeemVerifyEmail: async (opts) =>
       await redeemVerifyEmailClient.redeemVerifyEmail(opts),
+    assertProductAccessTrust: async (opts) =>
+      await assertProductAccessTrustClient.assertProductAccessTrust(opts),
     reconcileDedicatedHostPurchaseSession: async (opts) =>
       await reconcileDedicatedHostPurchaseSessionClient.reconcileDedicatedHostPurchaseSession(
         opts,
@@ -3911,6 +3933,20 @@ export function createInterBayAccountLocalHandler({
       }),
       impl: {
         redeemVerifyEmail: async (opts) => await impl.redeemVerifyEmail(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "assertProductAccessTrust">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "assert-product-access-trust",
+      }),
+      impl: {
+        assertProductAccessTrust: async (opts) =>
+          await impl.assertProductAccessTrust(opts),
       },
     }),
     createServiceHandler<

@@ -12,6 +12,7 @@ let redeemEmailMock: jest.Mock;
 let previewEmailMock: jest.Mock;
 let respondEmailMock: jest.Mock;
 let loadProjectReadDetailsDirectMock: jest.Mock;
+let assertClusterAccountTrustedForProductAccessMock: jest.Mock;
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
@@ -60,6 +61,12 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
       respondEmail: (...args: any[]) => respondEmailMock(...args),
     })),
   })),
+}));
+
+jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  __esModule: true,
+  assertClusterAccountTrustedForProductAccess: (...args: any[]) =>
+    assertClusterAccountTrustedForProductAccessMock(...args),
 }));
 
 jest.mock("@cocalc/server/projects/details", () => ({
@@ -168,6 +175,9 @@ describe("remote project detail reads", () => {
       responded: "2026-05-18T01:00:00.000Z",
     }));
     loadProjectReadDetailsDirectMock = jest.fn();
+    assertClusterAccountTrustedForProductAccessMock = jest.fn(
+      async () => undefined,
+    );
   });
 
   it("routes getProjectCreated through the owning bay", async () => {
@@ -241,6 +251,13 @@ describe("remote project detail reads", () => {
       project_id: PROJECT_ID,
       invite_id: "77777777-7777-4777-8777-777777777777",
       token: "token-1",
+      trusted_product_access_checked: true,
+    });
+    expect(
+      assertClusterAccountTrustedForProductAccessMock,
+    ).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      action: "accept collaboration invites",
     });
     expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
       invite_id: "77777777-7777-4777-8777-777777777777",
@@ -288,7 +305,11 @@ describe("remote project detail reads", () => {
       project_id: PROJECT_ID,
       invite_id: "77777777-7777-4777-8777-777777777777",
       token: "token-1",
+      trusted_product_access_checked: false,
     });
+    expect(
+      assertClusterAccountTrustedForProductAccessMock,
+    ).not.toHaveBeenCalled();
     expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
       invite_id: "77777777-7777-4777-8777-777777777777",
       token_hash: expect.any(String),
@@ -353,5 +374,29 @@ describe("remote project detail reads", () => {
       token: "token-1",
     });
     expect(result.project_id).toBe(PROJECT_ID);
+  });
+
+  it("checks account trust before routing email invite accept responses", async () => {
+    const { respondEmailProjectInvite } = await import("./projects");
+    await respondEmailProjectInvite({
+      account_id: ACCOUNT_ID,
+      action: "accept",
+      token: "token-1",
+    });
+
+    expect(
+      assertClusterAccountTrustedForProductAccessMock,
+    ).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      action: "accept collaboration invites",
+    });
+    expect(respondEmailMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      action: "accept",
+      project_id: PROJECT_ID,
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      token: "token-1",
+      trusted_product_access_checked: true,
+    });
   });
 });

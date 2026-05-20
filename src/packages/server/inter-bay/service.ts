@@ -107,6 +107,7 @@ import {
 } from "@cocalc/server/membership/grants";
 import { createImpersonationGrantLocal } from "@cocalc/server/auth/impersonation";
 import { verifyFreshAuthCredentials } from "@cocalc/server/auth/two-factor";
+import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import {
   activateMembershipClaimIdentityDirect,
   getMembershipClaimIdentityDirect,
@@ -576,6 +577,9 @@ async function startAccountLocalService(): Promise<void> {
     redeemVerifyEmail: async ({ email_address, token }) => {
       await redeemVerifyEmailLocal(email_address, token);
     },
+    assertProductAccessTrust: async ({ account_id, action }) => {
+      await assertAccountTrustedForProductAccess(account_id, action);
+    },
     reconcileDedicatedHostPurchaseSession: async (opts) => {
       await reconcileDedicatedHostPurchaseSessionLocal(opts);
     },
@@ -962,12 +966,22 @@ async function startProjectCollabInviteService(): Promise<void> {
         expires: result.expires ? new Date(result.expires).toISOString() : null,
       };
     },
-    redeemEmail: async (opts) =>
-      collabInviteToWire(await redeemEmailProjectInvite(opts)),
+    redeemEmail: async ({ trusted_product_access_checked, ...opts }) =>
+      collabInviteToWire(
+        await redeemEmailProjectInvite({
+          ...opts,
+          trustedProductAccessChecked: !!trusted_product_access_checked,
+        }),
+      ),
     previewEmail: async (opts) =>
       collabInviteToWire(await previewEmailProjectInvite(opts)),
-    respondEmail: async (opts) =>
-      collabInviteToWire(await respondEmailProjectInvite(opts)),
+    respondEmail: async ({ trusted_product_access_checked, ...opts }) =>
+      collabInviteToWire(
+        await respondEmailProjectInvite({
+          ...opts,
+          trustedProductAccessChecked: !!trusted_product_access_checked,
+        }),
+      ),
     list: async (opts) =>
       (await listCollabInvites(opts)).map((invite) =>
         collabInviteToWire(invite),
