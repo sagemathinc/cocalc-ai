@@ -108,18 +108,18 @@ const nebiusCatalog = () =>
       scope: "global",
       payload: [
         {
-          name: "cpu-d3-standard-4",
-          vcpus: 4,
-          memory_gib: 16,
+          name: "128vcpu-512gb",
+          vcpus: 128,
+          memory_gib: 512,
           gpus: 0,
           allowed_for_preemptibles: false,
         },
         {
-          name: "gpu-h100-sxm-1",
+          name: "1gpu-16vcpu-200gb",
           vcpus: 16,
           memory_gib: 200,
           gpus: 1,
-          gpu_label: "H100",
+          gpu_label: "H200",
           allowed_for_preemptibles: true,
         },
       ],
@@ -633,6 +633,30 @@ describe("host-create-draft", () => {
       provider: "hyperstack",
       region: "canada-1",
       size: "gpu-a100",
+    });
+  });
+
+  it("uses explicit Nebius presets in product order", () => {
+    const context = providerContext("nebius");
+    const base = buildDefaultDraft(context);
+
+    expect(
+      getAvailablePresets(base, context).map((preset) => preset.label),
+    ).toEqual(["Standard GPU", "Low-cost spot GPU", "HPC"]);
+    expect(applyPreset("gpu-workstation", base, context)).toMatchObject({
+      provider: "nebius",
+      machine_type: "1gpu-16vcpu-200gb",
+      pricing_model: "on_demand",
+    });
+    expect(applyPreset("low-cost-spot", base, context)).toMatchObject({
+      provider: "nebius",
+      machine_type: "1gpu-16vcpu-200gb",
+      pricing_model: "spot",
+    });
+    expect(applyPreset("balanced-cpu", base, context)).toMatchObject({
+      provider: "nebius",
+      machine_type: "128vcpu-512gb",
+      pricing_model: "on_demand",
     });
   });
 

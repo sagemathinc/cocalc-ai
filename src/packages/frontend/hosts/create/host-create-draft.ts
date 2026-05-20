@@ -427,37 +427,103 @@ const optionIsAvailable = (option: HostFieldOption) => {
   );
 };
 
+const hostOptionTypeLabel = (option: HostFieldOption): string =>
+  (
+    option.selectionLabel ??
+    option.mainLabel ??
+    option.label ??
+    option.value
+  ).toLowerCase();
+
+const compareHostOptionsByType = (
+  left: HostFieldOption,
+  right: HostFieldOption,
+) =>
+  hostOptionTypeLabel(left).localeCompare(
+    hostOptionTypeLabel(right),
+    undefined,
+    {
+      numeric: true,
+      sensitivity: "base",
+    },
+  );
+
+const compareHostOptionsByPrice = (
+  left: HostFieldOption,
+  right: HostFieldOption,
+) => {
+  const leftRate = left.hourlyRate;
+  const rightRate = right.hourlyRate;
+  const leftHasRate =
+    typeof leftRate === "number" && Number.isFinite(leftRate) && leftRate >= 0;
+  const rightHasRate =
+    typeof rightRate === "number" &&
+    Number.isFinite(rightRate) &&
+    rightRate >= 0;
+  if (leftHasRate && rightHasRate && leftRate !== rightRate) {
+    return leftRate - rightRate;
+  }
+  if (leftHasRate !== rightHasRate) {
+    return leftHasRate ? -1 : 1;
+  }
+  return compareHostOptionsByType(left, right);
+};
+
+const compareOptionalDescending = (
+  left: number | undefined,
+  right: number | undefined,
+): number | undefined => {
+  const leftHasValue =
+    typeof left === "number" && Number.isFinite(left) && left > 0;
+  const rightHasValue =
+    typeof right === "number" && Number.isFinite(right) && right > 0;
+  if (leftHasValue && rightHasValue) {
+    if (left === right) return 0;
+    return right - left;
+  }
+  if (leftHasValue !== rightHasValue) {
+    return leftHasValue ? -1 : 1;
+  }
+  return undefined;
+};
+
+const compareHostOptionsByValue = (
+  left: HostFieldOption,
+  right: HostFieldOption,
+) => {
+  const benchmarkOrder = compareOptionalDescending(
+    left.benchmarkValueScore,
+    right.benchmarkValueScore,
+  );
+  if (benchmarkOrder != null && benchmarkOrder !== 0) {
+    return benchmarkOrder;
+  }
+  return compareHostOptionsByPrice(left, right);
+};
+
+const availableOptionsWithAtLeast16GiBRam = (
+  options: HostFieldOption[] | undefined,
+) =>
+  (options ?? []).filter((option) => {
+    const ramGiB = optionRamGiB(option);
+    return optionIsAvailable(option) && (ramGiB == null || ramGiB >= 16);
+  });
+
 const selectFirstByPredicate = (
   options: HostFieldOption[] | undefined,
   predicate: (option: HostFieldOption) => boolean,
-) =>
-  options?.find((option) => {
-    const ramGiB = optionRamGiB(option);
-    return (
-      optionIsAvailable(option) &&
-      (ramGiB == null || ramGiB >= 16) &&
-      predicate(option)
-    );
-  })?.value;
+) => availableOptionsWithAtLeast16GiBRam(options).find(predicate)?.value;
 
-const selectLargestCpuOption = (options: HostFieldOption[] | undefined) =>
-  options
-    ?.filter(
-      (option) =>
-        optionIsAvailable(option) &&
-        !optionLooksGpu(option) &&
-        (optionRamGiB(option) ?? 0) >= 16,
-    )
-    .sort((a, b) => {
-      const left = (a.meta ?? {}) as Record<string, any>;
-      const right = (b.meta ?? {}) as Record<string, any>;
-      return (
-        Number(right.memory_gib ?? right.ram ?? 0) -
-          Number(left.memory_gib ?? left.ram ?? 0) ||
-        Number(right.vcpus ?? right.cpu ?? 0) -
-          Number(left.vcpus ?? left.cpu ?? 0)
-      );
-    })[0]?.value;
+const NEBIUS_HPC_MACHINE_TYPE = "128vcpu-512gb";
+const NEBIUS_GPU_MACHINE_TYPE = "1gpu-16vcpu-200gb";
+
+const selectExactOption = (
+  options: HostFieldOption[] | undefined,
+  value: string,
+) =>
+  options?.find(
+    (option) => optionIsAvailable(option) && option.value === value,
+  );
 
 const setPrimaryComputeOption = (
   draft: HostCreateDraft,
@@ -483,17 +549,31 @@ const setPrimaryComputeOption = (
         .map((option) => option.value)
         .filter((zone) => zone !== requestedZone),
     ];
-    for (const zone of zones) {
-      const fieldOptions = getFieldOptions("gcp", { ...draft, zone }, context);
-      const machineType = selectFirstByPredicate(
-        fieldOptions.machine_type,
-        mode === "gpu" ? () => true : (option) => !optionLooksGpu(option),
-      );
-      if (machineType) {
+    const candidateMachineTypes = availableOptionsWithAtLeast16GiBRam(
+      getFieldOptions("gcp", { ...draft, zone: undefined }, context)
+        .machine_type,
+    )
+      .filter(mode === "gpu" ? () => true : (option) => !optionLooksGpu(option))
+      .sort(compareHostOptionsByValue);
+    for (const machineOption of candidateMachineTypes) {
+      let selected = false;
+      for (const zone of zones) {
+        const fieldOptions = getFieldOptions(
+          "gcp",
+          { ...draft, zone, machine_type: machineOption.value },
+          context,
+        );
+        const availableInZone = selectFirstByPredicate(
+          fieldOptions.machine_type,
+          (option) => option.value === machineOption.value,
+        );
+        if (!availableInZone) continue;
         draft.zone = zone;
-        draft.machine_type = machineType;
+        draft.machine_type = machineOption.value;
+        selected = true;
         break;
       }
+      if (selected) break;
     }
     const finalZoneOptions = getFieldOptions("gcp", draft, context).zone ?? [];
     const selectedZoneOption = finalZoneOptions.find(
@@ -512,15 +592,21 @@ const setPrimaryComputeOption = (
     return;
   }
   const field = draft.provider === "hyperstack" ? "size" : "machine_type";
+  if (draft.provider === "nebius") {
+    const selected =
+      mode === "cpu"
+        ? selectExactOption(options[field], NEBIUS_HPC_MACHINE_TYPE)?.value
+        : selectExactOption(options[field], NEBIUS_GPU_MACHINE_TYPE)?.value;
+    if (selected) draft[field] = selected;
+    return;
+  }
   const selected =
-    draft.provider === "nebius" && mode === "cpu"
-      ? selectLargestCpuOption(options[field])
-      : mode === "gpu"
-        ? selectFirstByPredicate(options[field], optionLooksGpu)
-        : selectFirstByPredicate(
-            options[field],
-            (option) => !optionLooksGpu(option),
-          );
+    mode === "gpu"
+      ? selectFirstByPredicate(options[field], optionLooksGpu)
+      : selectFirstByPredicate(
+          options[field],
+          (option) => !optionLooksGpu(option),
+        );
   if (selected) draft[field] = selected;
 };
 
@@ -562,16 +648,25 @@ export function getAvailablePresets(
           fieldOptions.gpu_type,
           (option) => option.value !== "none",
         )
-      : !!selectFirstByPredicate(
-          fieldOptions[
-            draft.provider === "hyperstack" ? "size" : "machine_type"
-          ],
-          optionLooksGpu,
-        );
+      : draft.provider === "nebius"
+        ? !!selectExactOption(
+            fieldOptions.machine_type,
+            NEBIUS_GPU_MACHINE_TYPE,
+          )
+        : !!selectFirstByPredicate(
+            fieldOptions[
+              draft.provider === "hyperstack" ? "size" : "machine_type"
+            ],
+            optionLooksGpu,
+          );
+  const nebiusSpotOption = selectExactOption(
+    fieldOptions.machine_type,
+    NEBIUS_GPU_MACHINE_TYPE,
+  );
   const spotSupported =
     draft.provider !== "nebius" ||
-    isNebiusSpotSupported(fieldOptions.machine_type, draft.machine_type);
-  return [
+    isNebiusSpotSupported(fieldOptions.machine_type, nebiusSpotOption?.value);
+  const presets: HostCreatePreset[] = [
     {
       id: "balanced-cpu",
       label: draft.provider === "nebius" ? "HPC" : "Balanced CPU",
@@ -608,6 +703,10 @@ export function getAvailablePresets(
         : "No GPU shape is available in the loaded catalog.",
     },
   ];
+  if (draft.provider === "nebius") {
+    return [presets[2], presets[1], presets[0]];
+  }
+  return presets;
 }
 
 export function buildCreateHostPayloadFromDraft(
