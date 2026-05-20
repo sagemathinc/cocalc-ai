@@ -127,7 +127,8 @@ export const HostCreateProviderFields: React.FC<
     (selectedProvider === "gcp" ||
       (selectedProvider === "nebius" && nebiusSpotSupported));
   const diskTypeOptions = getDiskTypeOptions(selectedProvider);
-  const defaultDiskType = diskTypeOptions[0]?.value;
+  const defaultDiskType =
+    selectedProvider === "nebius" ? "ssd_io_m3" : diskTypeOptions[0]?.value;
   React.useEffect(() => {
     if (draftManaged) return;
     if (!showDiskFields || !diskTypeOptions.length) return;
@@ -148,13 +149,11 @@ export const HostCreateProviderFields: React.FC<
     if (watchedStorageMode === "persistent") return;
     setFormFields({ storage_mode: "persistent" });
   }, [draftManaged, selectedProvider, setFormFields, watchedStorageMode]);
-  const effectiveDiskType = watchedDiskType ?? defaultDiskType;
-  const isNebiusIoM3 =
-    selectedProvider === "nebius" && effectiveDiskType === "ssd_io_m3";
-  const diskMin = isNebiusIoM3
+  const isNebiusPersistentDisk = selectedProvider === "nebius";
+  const diskMin = isNebiusPersistentDisk
     ? Math.ceil(MIN_DISK_SIZE / NEBIUS_IO_M3_GB) * NEBIUS_IO_M3_GB
     : MIN_DISK_SIZE;
-  const diskStep = isNebiusIoM3 ? NEBIUS_IO_M3_GB : 1;
+  const diskStep = isNebiusPersistentDisk ? NEBIUS_IO_M3_GB : 1;
   const diskValue =
     typeof watchedDiskGb === "number" && Number.isFinite(watchedDiskGb)
       ? watchedDiskGb
@@ -163,15 +162,15 @@ export const HostCreateProviderFields: React.FC<
         : INITIAL_DISK_SIZE;
   const normalizeDiskValue = React.useCallback(
     (value: number) => {
-      if (!isNebiusIoM3) return value;
+      if (!isNebiusPersistentDisk) return value;
       const rounded = Math.ceil(value / NEBIUS_IO_M3_GB) * NEBIUS_IO_M3_GB;
       return Math.max(diskMin, rounded);
     },
-    [diskMin, isNebiusIoM3],
+    [diskMin, isNebiusPersistentDisk],
   );
   React.useEffect(() => {
     if (draftManaged) return;
-    if (!isNebiusIoM3) return;
+    if (!isNebiusPersistentDisk) return;
     const normalized = normalizeDiskValue(diskValue);
     if (normalized !== diskValue) {
       setFormFields({ disk: normalized, disk_gb: normalized });
@@ -179,7 +178,7 @@ export const HostCreateProviderFields: React.FC<
   }, [
     diskValue,
     draftManaged,
-    isNebiusIoM3,
+    isNebiusPersistentDisk,
     normalizeDiskValue,
     setFormFields,
   ]);
@@ -302,7 +301,11 @@ export const HostCreateProviderFields: React.FC<
     !String(watchedSelfHostTarget ?? "").trim() &&
     selfHostAlphaEnabled;
   const fieldColumnSpan = (field: HostFieldId) =>
-    field === "machine_type" || field === "size" ? 24 : 12;
+    field === "machine_type" || field === "size"
+      ? 16
+      : field === "gpu_type" || field === "gpu"
+        ? 8
+        : 12;
   const renderField = (field: HostFieldId) => {
     if (
       selectedProvider === "self-host" &&
@@ -466,7 +469,7 @@ export const HostCreateProviderFields: React.FC<
               persistentGrowable
                 ? "You can enlarge this disk at any time later."
                 : "This disk CANNOT be enlarged later."
-            }${isNebiusIoM3 ? " SSD IO M3 requires multiples of 93 GB." : ""}`}
+            }${isNebiusPersistentDisk ? " Nebius disks require multiples of 93 GB." : ""}`}
           >
             <Row gutter={12} align="middle">
               <Col flex="auto">

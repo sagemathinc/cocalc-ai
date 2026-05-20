@@ -427,8 +427,10 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
       )
     ) : livePriceEstimate ? (
       <HostPriceBreakdown
+        compact
         displayMode={watchedPriceDisplay === "monthly" ? "monthly" : "hourly"}
         estimate={livePriceEstimate}
+        title="Estimated cost"
       />
     ) : (
       <Typography.Text type="secondary">
@@ -511,13 +513,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
     provider.selectedProvider !== "self-host" ? (
       <Card
         size="small"
-        title={
-          <SectionTitle
-            icon="bolt"
-            title="Choose a starting point"
-            subtitle="Three intentionally simple presets"
-          />
-        }
+        title={<SectionTitle icon="bolt" title="Choose a starting point" />}
         styles={CARD_STYLES}
       >
         <div
@@ -783,13 +779,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
       {presetsSection}
       <Card
         size="small"
-        title={
-          <SectionTitle
-            icon="cog"
-            title="Configuration"
-            subtitle="Common controls should fit without scrolling"
-          />
-        }
+        title={<SectionTitle icon="cog" title="Configuration" />}
         styles={CARD_STYLES}
       >
         {fullCreateForm}

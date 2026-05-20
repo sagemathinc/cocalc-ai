@@ -359,6 +359,36 @@ describe("host-create-draft", () => {
     });
   });
 
+  it("normalizes Nebius disks to the provider-required 93 GB increments", () => {
+    const draft = normalizeDraft(
+      {
+        provider: "nebius",
+        disk_gb: 50,
+        disk: 50,
+      },
+      providerContext("nebius"),
+    ).draft;
+
+    expect(draft.disk_type).toBe("ssd_io_m3");
+    expect(draft.disk_gb).toBe(93);
+    expect(draft.disk).toBe(93);
+  });
+
+  it("keeps Nebius disk sizes constrained even with network SSD selected", () => {
+    const draft = normalizeDraft(
+      {
+        provider: "nebius",
+        disk_type: "ssd",
+        disk_gb: 100,
+      },
+      providerContext("nebius"),
+    ).draft;
+
+    expect(draft.disk_type).toBe("ssd");
+    expect(draft.disk_gb).toBe(186);
+    expect(draft.disk).toBe(186);
+  });
+
   it("uses ephemeral storage for Lambda drafts", () => {
     const context: HostCreateDraftContext = {
       enabledProviders: ["lambda"],

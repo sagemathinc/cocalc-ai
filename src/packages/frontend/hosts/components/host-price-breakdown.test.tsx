@@ -40,4 +40,35 @@ describe("HostPriceBreakdown", () => {
     expect(html).toContain("$0.25/hr");
     expect(html).toContain("$182.50/mo");
   });
+
+  it("keeps compact summaries to the selected display mode", () => {
+    const html = renderToStaticMarkup(
+      <HostPriceBreakdown
+        compact
+        displayMode="monthly"
+        estimate={{
+          usd_per_hour: 0.25,
+          usd_per_month: 182.5,
+          hourly_label: "$0.25/hr",
+          monthly_label: "$182.50/mo",
+          line_items: [
+            {
+              key: "vm",
+              label: "VM",
+              usd_per_hour: 0.2,
+              usd_per_month: 146,
+              hourly_label: "$0.20/hr",
+              monthly_label: "$146.00/mo",
+            },
+          ],
+          notes: ["Long provider caveat"],
+        }}
+      />,
+    );
+
+    expect(html).toContain("$146.00/mo");
+    expect(html).toContain("$182.50/mo");
+    expect(html).not.toContain("$0.20/hr");
+    expect(html).not.toContain("Long provider caveat");
+  });
 });

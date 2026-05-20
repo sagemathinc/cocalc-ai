@@ -127,13 +127,12 @@ const readPositiveInteger = (value: unknown): number | undefined => {
   return Math.floor(parsed);
 };
 
-const normalizeDiskSize = (
-  provider: HostProvider,
-  diskType: string | undefined,
-  diskGb: unknown,
-) => {
+const defaultDiskTypeForProvider = (provider: HostProvider) =>
+  provider === "nebius" ? "ssd_io_m3" : getDiskTypeOptions(provider)[0]?.value;
+
+const normalizeDiskSize = (provider: HostProvider, diskGb: unknown) => {
   const parsed = readPositiveInteger(diskGb) ?? DEFAULT_DISK_GB;
-  if (provider === "nebius" && diskType === "ssd_io_m3") {
+  if (provider === "nebius") {
     return (
       Math.ceil(parsed / NEBIUS_IO_M3_INCREMENT_GB) * NEBIUS_IO_M3_INCREMENT_GB
     );
@@ -352,14 +351,10 @@ export function normalizeDraft(
   } else {
     const diskTypeOptions = getDiskTypeOptions(provider);
     if (!draft.disk_type || !inOptions(draft.disk_type, diskTypeOptions)) {
-      draft.disk_type = diskTypeOptions[0]?.value;
+      draft.disk_type = defaultDiskTypeForProvider(provider);
     }
     if (draft.storage_mode !== "ephemeral") {
-      const diskGb = normalizeDiskSize(
-        provider,
-        draft.disk_type,
-        draft.disk_gb,
-      );
+      const diskGb = normalizeDiskSize(provider, draft.disk_gb);
       draft.disk_gb = diskGb;
       draft.disk = diskGb;
     }
