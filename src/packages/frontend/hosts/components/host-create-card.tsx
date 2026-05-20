@@ -392,6 +392,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
       billing={billing}
       onProviderChange={onProviderChange}
       onValuesChange={draftState.onValuesChange}
+      pricingSettings={pricingSettings}
       draftManaged
       showOnlyProviderSelect
     />
@@ -404,6 +405,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
       billing={billing}
       onProviderChange={onProviderChange}
       onValuesChange={draftState.onValuesChange}
+      pricingSettings={pricingSettings}
       draftManaged
     />
   );

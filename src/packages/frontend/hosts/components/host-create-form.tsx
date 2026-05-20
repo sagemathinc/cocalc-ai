@@ -1,5 +1,6 @@
 import { Col, Collapse, Form, Input, Row, Select } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
+import type { DedicatedHostSurchargeSettings } from "@cocalc/util/project-host-pricing";
 import { COLORS } from "@cocalc/util/theme";
 import type { FormInstance } from "antd/es/form";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
@@ -26,6 +27,7 @@ type HostCreateFormProps = {
   wrapForm?: boolean;
   showOnlyProviderSelect?: boolean;
   autoSelectFundingMode?: boolean;
+  pricingSettings?: DedicatedHostSurchargeSettings;
   onValuesChange?: (changedValues: any, allValues: any) => void;
   draftManaged?: boolean;
 };
@@ -39,6 +41,7 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
   wrapForm = true,
   showOnlyProviderSelect = false,
   autoSelectFundingMode = true,
+  pricingSettings,
   onValuesChange,
   draftManaged = false,
 }) => {
@@ -273,6 +276,7 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
                       provider={provider}
                       showSpotFields={showSpotFields}
                       nebiusSpotSupported={nebiusSpotSupported}
+                      pricingSettings={pricingSettings}
                       draftManaged={draftManaged}
                       onDraftPatch={updateDraftManagedFields}
                     />
