@@ -1,16 +1,53 @@
 import { type Client, connect } from "./client";
 import { Patterns } from "./patterns";
 import { updateInterest, type InterestUpdate } from "@cocalc/conat/core/server";
-import type { DStream } from "@cocalc/conat/sync/dstream";
-import { server as createPersistServer } from "@cocalc/conat/persist/server";
 import { getLogger } from "@cocalc/conat/logger";
 import { hash_string } from "@cocalc/util/misc";
-import { sysApi } from "./sys";
 const CREATE_LINK_TIMEOUT = 45_000;
 const INTEREST_SNAPSHOT_INTERVAL = 30_000;
 const MAX_RECENT_INTEREST_UPDATES = 100_000;
+const CLUSTER_INTEREST_RPC_TIMEOUT = 15_000;
 
 const logger = getLogger("conat:core:cluster");
+
+export const CLUSTER_INTEREST_PROTOCOL = 1;
+export const CLUSTER_INTEREST_OPEN = "cluster-interest-open";
+export const CLUSTER_INTEREST_DELTA = "cluster-interest-delta";
+export const CLUSTER_INTEREST_SNAPSHOT_REQUEST =
+  "cluster-interest-snapshot-request";
+export const CLUSTER_INTEREST_CLOSE = "cluster-interest-close";
+
+export interface ClusterInterestOpen {
+  protocol: typeof CLUSTER_INTEREST_PROTOCOL;
+  clusterName: string;
+  nodeId?: string;
+  knownVersion?: number;
+}
+
+export type ClusterInterestOpenResponse =
+  | { ok: true; snapshot: SerializedInterest }
+  | { ok: false; error: string; code?: number };
+
+export type ClusterInterestSnapshotRequestReason =
+  | "bootstrap"
+  | "gap"
+  | "periodic"
+  | "stale"
+  | "reconnect"
+  | "debug"
+  | "connected"
+  | "init"
+  | "test";
+
+export interface ClusterInterestSnapshotRequest {
+  protocol: typeof CLUSTER_INTEREST_PROTOCOL;
+  reason: ClusterInterestSnapshotRequestReason;
+  currentVersion?: number;
+}
+
+export type ClusterInterestSnapshotResponse =
+  | { ok: true; snapshot: SerializedInterest }
+  | { ok: false; error: string; code?: number };
 
 function unrefDelay(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -23,6 +60,7 @@ export async function clusterLink(
   address: string,
   systemAccountPassword: string,
   timeout = CREATE_LINK_TIMEOUT,
+  localId?: string,
 ) {
   const client = connect({ address, systemAccountPassword });
   if (client.info == null) {
@@ -46,7 +84,7 @@ export async function clusterLink(
   if (!clusterName) {
     throw Error("clusterName must be specified");
   }
-  const link = new ClusterLink(client, id, clusterName, address);
+  const link = new ClusterLink(client, id, clusterName, address, localId);
   await link.init();
   return link;
 }
@@ -94,18 +132,19 @@ export { type ClusterLink };
 
 class ClusterLink {
   public interest: Interest = new Patterns();
-  private streams: ClusterStreams;
   private state: "init" | "ready" | "closed" = "init";
   private clientStateChanged = Date.now(); // when client status last changed
   private interestSnapshotLoopStarted = false;
   private interestVersion = 0;
   private recentInterestUpdates: InterestUpdate[] = [];
+  private openInterestPromise?: Promise<void>;
 
   constructor(
     public readonly client: Client,
     public readonly id: string,
     public readonly clusterName: string,
     public readonly address: string,
+    public readonly localId?: string,
   ) {
     if (!client) {
       throw Error("client must be specified");
@@ -121,22 +160,8 @@ class ClusterLink {
   init = async () => {
     this.client.on("connected", this.handleClientStateChanged);
     this.client.on("disconnected", this.handleClientStateChanged);
-    this.streams = await clusterStreams({
-      client: this.client,
-      id: this.id,
-      clusterName: this.clusterName,
-    });
-    for (const update of this.streams.interest.getAll()) {
-      this.handleInterestUpdate(update);
-    }
-    await this.reconcileInterestSnapshot("init");
-    // I have a slight concern about this because updates might not
-    // arrive in order during automatic failover.  That said, maybe
-    // automatic failover doesn't matter with these streams, since
-    // it shouldn't really happen -- each stream is served from the server
-    // it is about, and when that server goes down none of this state
-    // matters anymore.
-    this.streams.interest.on("change", this.handleInterestUpdate);
+    this.client.conn.on(CLUSTER_INTEREST_DELTA, this.handleDirectInterestDelta);
+    await this.openDirectInterest("init");
     this.state = "ready";
     this.startInterestSnapshotLoop();
   };
@@ -157,9 +182,26 @@ class ClusterLink {
     if (version <= this.interestVersion) {
       return;
     }
+    this.rememberInterestUpdate(update);
+    if (version > this.interestVersion + 1) {
+      logger.debug("cluster interest delta gap detected", {
+        id: this.id,
+        clusterName: this.clusterName,
+        expectedVersion: this.interestVersion + 1,
+        receivedVersion: version,
+      });
+      void this.reconcileInterestSnapshot("gap");
+      return;
+    }
     updateInterest(update, this.interest);
     this.interestVersion = version;
-    this.rememberInterestUpdate(update);
+  };
+
+  private handleDirectInterestDelta = (update: InterestUpdate) => {
+    if (this.state == "closed") {
+      return;
+    }
+    this.handleInterestUpdate(update);
   };
 
   private rememberInterestUpdate = (update: InterestUpdate) => {
@@ -175,11 +217,21 @@ class ClusterLink {
     }
   };
 
+  private highestKnownInterestVersion = () => {
+    let version = this.interestVersion;
+    for (const update of this.recentInterestUpdates) {
+      if (update.version != null && update.version > version) {
+        version = update.version;
+      }
+    }
+    return version;
+  };
+
   private replayUpdatesAfterSnapshot = (
     snapshot: SerializedInterest,
-    currentVersion: number,
   ): InterestUpdate[] | undefined => {
-    if (snapshot.version >= currentVersion) {
+    const targetVersion = this.highestKnownInterestVersion();
+    if (snapshot.version >= targetVersion) {
       return [];
     }
     const byVersion = new Map<number, InterestUpdate>();
@@ -187,7 +239,7 @@ class ClusterLink {
       if (
         update.version != null &&
         update.version > snapshot.version &&
-        update.version <= currentVersion
+        update.version <= targetVersion
       ) {
         byVersion.set(update.version, update);
       }
@@ -195,7 +247,7 @@ class ClusterLink {
     const updates: InterestUpdate[] = [];
     for (
       let version = snapshot.version + 1;
-      version <= currentVersion;
+      version <= targetVersion;
       version++
     ) {
       const update = byVersion.get(version);
@@ -208,11 +260,7 @@ class ClusterLink {
   };
 
   private applyInterestSnapshot = (snapshot: SerializedInterest): boolean => {
-    const currentVersion = this.interestVersion;
-    const replayUpdates = this.replayUpdatesAfterSnapshot(
-      snapshot,
-      currentVersion,
-    );
+    const replayUpdates = this.replayUpdatesAfterSnapshot(snapshot);
     if (replayUpdates == null) {
       return false;
     }
@@ -228,19 +276,95 @@ class ClusterLink {
   private handleClientStateChanged = () => {
     this.clientStateChanged = Date.now();
     if (this.isConnected()) {
-      void this.reconcileInterestSnapshot("connected");
+      void this.openDirectInterest("connected");
     }
   };
 
-  private reconcileInterestSnapshot = async (reason: string) => {
+  private openDirectInterest = async (
+    reason: ClusterInterestSnapshotRequestReason,
+  ) => {
+    if (this.openInterestPromise != null) {
+      await this.openInterestPromise;
+      return;
+    }
+    this.openInterestPromise = this.openDirectInterest0(reason);
+    try {
+      await this.openInterestPromise;
+    } finally {
+      this.openInterestPromise = undefined;
+    }
+  };
+
+  private openDirectInterest0 = async (
+    reason: ClusterInterestSnapshotRequestReason,
+  ) => {
     if (this.state == "closed" || !this.isConnected()) {
       return;
     }
     try {
-      const snapshot = await sysApi(this.client, {
-        timeout: 15_000,
-        waitForInterest: true,
-      }).interestSnapshot();
+      const response: ClusterInterestOpenResponse = await this.client.conn
+        .timeout(CLUSTER_INTEREST_RPC_TIMEOUT)
+        .emitWithAck(CLUSTER_INTEREST_OPEN, {
+          protocol: CLUSTER_INTEREST_PROTOCOL,
+          clusterName: this.clusterName,
+          nodeId: this.localId,
+          knownVersion: this.interestVersion,
+        } satisfies ClusterInterestOpen);
+      if (!response?.ok) {
+        throw Error(response?.error ?? "failed to open cluster interest link");
+      }
+      if (!this.applyInterestSnapshot(response.snapshot)) {
+        logger.debug(
+          "cluster interest open snapshot skipped because delta replay was incomplete",
+          {
+            id: this.id,
+            clusterName: this.clusterName,
+            address: this.address,
+            reason,
+            snapshotVersion: response.snapshot.version,
+            interestVersion: this.interestVersion,
+            recentInterestUpdates: this.recentInterestUpdates.length,
+          },
+        );
+      }
+    } catch (err) {
+      logger.debug("cluster interest open failed", {
+        id: this.id,
+        clusterName: this.clusterName,
+        address: this.address,
+        reason,
+        err,
+      });
+      if (reason == "init") {
+        throw err;
+      }
+    }
+  };
+
+  private requestDirectInterestSnapshot = async (
+    reason: ClusterInterestSnapshotRequestReason,
+  ): Promise<SerializedInterest> => {
+    const response: ClusterInterestSnapshotResponse = await this.client.conn
+      .timeout(CLUSTER_INTEREST_RPC_TIMEOUT)
+      .emitWithAck(CLUSTER_INTEREST_SNAPSHOT_REQUEST, {
+        protocol: CLUSTER_INTEREST_PROTOCOL,
+        reason,
+        currentVersion: this.interestVersion,
+      } satisfies ClusterInterestSnapshotRequest);
+    if (!response?.ok) {
+      throw Error(response?.error ?? "failed to get cluster interest snapshot");
+    }
+    return response.snapshot;
+  };
+
+  private reconcileInterestSnapshot = async (
+    reason: ClusterInterestSnapshotRequestReason,
+  ) => {
+    if (this.state == "closed" || !this.isConnected()) {
+      return;
+    }
+    try {
+      const snapshot = await this.requestDirectInterestSnapshot(reason);
       if (!this.applyInterestSnapshot(snapshot)) {
         logger.debug(
           "interest snapshot reconciliation skipped because delta replay was incomplete",
@@ -294,12 +418,15 @@ class ClusterLink {
     this.state = "closed";
     this.client.removeListener("connected", this.handleClientStateChanged);
     this.client.removeListener("disconnected", this.handleClientStateChanged);
-    if (this.streams != null) {
-      this.streams.interest.removeListener("change", this.handleInterestUpdate);
-      this.streams.interest.close();
-      // @ts-ignore
-      delete this.streams;
-    }
+    this.client.conn.off(
+      CLUSTER_INTEREST_DELTA,
+      this.handleDirectInterestDelta,
+    );
+    this.client.conn.emit(CLUSTER_INTEREST_CLOSE, {
+      protocol: CLUSTER_INTEREST_PROTOCOL,
+      clusterName: this.clusterName,
+      nodeId: this.localId,
+    });
     this.client.close();
     // @ts-ignore
     delete this.client;
@@ -345,114 +472,6 @@ class ClusterLink {
       interest: hashInterest(this.interest),
     };
   };
-}
-
-function clusterStreamNames({
-  clusterName,
-  id,
-}: {
-  clusterName: string;
-  id: string;
-}) {
-  return {
-    interest: `cluster/${clusterName}/${id}/interest`,
-  };
-}
-
-export function clusterService({
-  id,
-  clusterName,
-}: {
-  id: string;
-  clusterName: string;
-}) {
-  return `persist:${clusterName}:${id}`;
-}
-
-export async function createClusterPersistServer({
-  client,
-  id,
-  clusterName,
-}: {
-  client: Client;
-  id: string;
-  clusterName: string;
-}) {
-  const service = clusterService({ clusterName, id });
-  logger.debug("createClusterPersistServer: ", { service });
-  return await createPersistServer({ client, service });
-}
-
-export interface ClusterStreams {
-  interest: DStream<InterestUpdate>;
-}
-
-export async function clusterStreams({
-  client,
-  clusterName,
-  id,
-}: {
-  client: Client;
-  clusterName: string;
-  id: string;
-}): Promise<ClusterStreams> {
-  logger.debug("clusterStream: ", { clusterName, id });
-  if (!clusterName) {
-    throw Error("clusterName must be set");
-  }
-  const names = clusterStreamNames({ clusterName, id });
-  const opts = {
-    service: clusterService({ clusterName, id }),
-    noCache: true,
-    ephemeral: true,
-  };
-  const interest = await client.sync.dstream<InterestUpdate>({
-    noInventory: true,
-    name: names.interest,
-    ...opts,
-  });
-  logger.debug("clusterStreams: got them", { clusterName });
-  return { interest };
-}
-
-// Periodically delete not-necessary updates from the interest stream
-export async function trimClusterStreams(
-  streams: ClusterStreams,
-  data: {
-    interest: Patterns<{ [queue: string]: Set<string> }>;
-    links: { interest: Patterns<{ [queue: string]: Set<string> }> }[];
-  },
-  // don't delete anything that isn't at lest minAge ms old.
-  minAge: number,
-): Promise<{ seqsInterest: number[] }> {
-  const { interest } = streams;
-  // First deal with interst
-  // we iterate over the interest stream checking for subjects
-  // with no current interest at all; in such cases it is safe
-  // to purge them entirely from the stream.
-  const seqs: number[] = [];
-  const now = Date.now();
-  for (let n = 0; n < interest.length; n++) {
-    const time = interest.time(n);
-    if (time == null) continue;
-    if (now - time.valueOf() <= minAge) {
-      break;
-    }
-    const update = interest.get(n) as InterestUpdate;
-    if (!data.interest.hasPattern(update.subject)) {
-      const seq = interest.seq(n);
-      if (seq != null) {
-        seqs.push(seq);
-      }
-    }
-  }
-  if (seqs.length > 0) {
-    // [ ] todo -- add to interest.delete a version where it takes an array of sequence numbers
-    logger.debug("trimClusterStream: trimming interest", { seqs });
-    await interest.delete({ seqs });
-    logger.debug("trimClusterStream: successfully trimmed interest", { seqs });
-  }
-  return { seqsInterest: seqs };
 }
 
 function hashSet(X: Set<string>): number {

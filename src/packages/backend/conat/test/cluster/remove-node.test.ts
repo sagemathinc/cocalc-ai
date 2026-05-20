@@ -32,9 +32,9 @@ describe("setup basic pub/sub test with a 2-node cluster, then remove a node and
     sub = await client1.subscribe("cocalc");
   });
 
-  it("publish -- message is initially dropped with no receiver because interest doesn't propogate instantly", async () => {
+  it("publish -- message may deliver immediately now that interest sync is direct", async () => {
     const { count } = await client0.publish("cocalc", "hi");
-    expect(count).toBe(0);
+    expect([0, 1]).toContain(count);
   });
 
   it("publish after waiting for interest -- this works", async () => {
