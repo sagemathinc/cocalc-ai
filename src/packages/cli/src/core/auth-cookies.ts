@@ -6,6 +6,8 @@ type CookieGlobals = {
   cookie?: string;
   apiKey?: string;
   hubPassword?: string;
+  accountId?: string;
+  account_id?: string;
   bearer?: string;
   disableEnvAuthDefaults?: boolean;
 };
@@ -163,6 +165,10 @@ export function buildCookieHeader(
     );
     if (hubPassword?.trim()) {
       appendCookie(parts, baseUrl, "hub_password", hubPassword);
+      const accountId = `${globals.accountId ?? globals.account_id ?? ""}`;
+      if (isValidUUID(accountId)) {
+        appendCookie(parts, baseUrl, "account_id", accountId);
+      }
     }
   }
 

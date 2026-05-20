@@ -12,6 +12,7 @@ import {
 import LRU from "lru-cache";
 import { conatPassword } from "@cocalc/backend/data";
 import {
+  ACCOUNT_ID_COOKIE_NAME,
   API_COOKIE_NAME,
   HUB_PASSWORD_COOKIE_NAME,
   PROJECT_SECRET_COOKIE_NAME,
@@ -52,6 +53,19 @@ import {
 
 const COOKIES = `'${HUB_PASSWORD_COOKIE_NAME}', '${REMEMBER_ME_COOKIE_NAME}', ${API_COOKIE_NAME}, '${PROJECT_SECRET_COOKIE_NAME}' or '${PROJECT_ID_COOKIE_NAME}'`;
 const DEFAULT_AGENT_SCOPES = ["browser_session", "project_session"] as const;
+
+function readCookieValue(
+  cookies: Record<string, string | undefined>,
+  name: string,
+): string | undefined {
+  return `${cookies[name] ?? cookies.account_id ?? ""}`
+    .trim()
+    .replace(/^"|"$/g, "");
+}
+
+function hubPasswordAccountImpersonationAllowed(): boolean {
+  return process.env.NODE_ENV !== "production";
+}
 
 function readBrowserId(socket): string | undefined {
   const value = `${socket?.handshake?.auth?.browser_id ?? ""}`.trim();
@@ -200,6 +214,18 @@ export async function getUser(
 
   if (cookies[HUB_PASSWORD_COOKIE_NAME]) {
     if (cookies[HUB_PASSWORD_COOKIE_NAME] == conatPassword) {
+      const account_id = readCookieValue(cookies, ACCOUNT_ID_COOKIE_NAME);
+      if (account_id) {
+        if (!hubPasswordAccountImpersonationAllowed()) {
+          throw Error(
+            "hub-password account impersonation is only available in development",
+          );
+        }
+        if (!isValidUUID(account_id)) {
+          throw Error("invalid hub-password account impersonation account_id");
+        }
+        return { account_id };
+      }
       return { hub_id: "hub" };
     } else {
       throw Error(`invalid hub password`);
