@@ -35,7 +35,7 @@ describe("getHostSizeDisplay", () => {
         },
       } as any),
     ).toEqual({
-      primary: "4 vCPU / 16 GiB",
+      primary: "4 vCPU / 16 GB",
       secondary: "t2d-standard-2",
     });
   });
@@ -72,7 +72,7 @@ describe("getHostSizeDisplay", () => {
         },
       } as any),
     ).toMatchObject({
-      primary: "4 vCPU / 16 GiB",
+      primary: "4 vCPU / 16 GB",
     });
   });
 });

@@ -34,7 +34,7 @@ function TestHostCreateForm() {
             machine_type: [
               {
                 value: "n2d-standard-4",
-                label: "n2d-standard-4 · 4 vCPU / 16 GiB",
+                label: "n2d-standard-4 · 4 vCPU / 16 GB",
               },
             ],
           },

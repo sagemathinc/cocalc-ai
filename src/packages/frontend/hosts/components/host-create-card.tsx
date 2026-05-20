@@ -61,7 +61,7 @@ const formatCpuRamDiskSummary = ({
     parts.push(`vCPU: ${cpu.toLocaleString()}`);
   }
   if (typeof ram === "number" && Number.isFinite(ram)) {
-    parts.push(`RAM: ${ram.toLocaleString()} GiB`);
+    parts.push(`RAM: ${ram.toLocaleString()} GB`);
   }
   parts.push(`Disk: ${diskLabel}`);
   return parts.join(", ");

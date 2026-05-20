@@ -11,7 +11,7 @@ export const formatCpuRamLabel = (
 ): string => {
   const cpuLabel = cpu != null ? String(cpu) : "?";
   const ramLabel = ramGiB != null ? String(ramGiB) : "?";
-  return `${cpuLabel} vCPU / ${ramLabel} GiB`;
+  return `${cpuLabel} vCPU / ${ramLabel} GB`;
 };
 
 export const formatGpuLabel = (

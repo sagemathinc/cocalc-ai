@@ -210,7 +210,7 @@ describe("catalog-backed pricing labels", () => {
 
     expect(options[0].label).toContain("/mo");
     expect(options[0].priceLabel).toContain("/mo");
-    expect(options[0].mainLabel).toContain("4 vCPU / 16 GiB");
+    expect(options[0].mainLabel).toContain("4 vCPU / 16 GB");
     expect(options[0].subLabel).toContain("CPU bench 1.00x");
     expect(options[0].subLabel).toContain("Value 1.00x");
     expect(options[0].benchmarkCpuScore).toBeCloseTo(20024.5, 2);
