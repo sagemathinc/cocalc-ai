@@ -99,20 +99,32 @@ export interface ProjectRuntimeLog {
   reason?: string;
 }
 
+export interface ProjectRuntimeSponsorActiveProject {
+  project_id: string;
+  title?: string;
+  state: "starting" | "running";
+  visible: boolean;
+  can_stop: boolean;
+}
+
 export interface ProjectRuntimeSponsorStatus {
   sponsor_account_id: string;
   sponsor_display_name?: string;
   limit?: number | null;
   current: number;
-  active_projects: Array<{
-    project_id: string;
-    title?: string;
-    state: "starting" | "running";
-    visible: boolean;
-    can_stop: boolean;
-  }>;
+  active_projects: ProjectRuntimeSponsorActiveProject[];
   allow_collaborator_starts_using_sponsor: boolean;
   autostart_enabled: boolean;
+}
+
+export interface AccountRuntimeSponsorStatus {
+  sponsor_account_id: string;
+  sponsor_display_name?: string;
+  limit?: number | null;
+  current: number;
+  active_projects: ProjectRuntimeSponsorActiveProject[];
+  can_upgrade: boolean;
+  can_change_sponsor: false;
 }
 
 export interface ImportPublicUrlResult {
@@ -548,6 +560,7 @@ export const projects = {
   getProjectSettings: authFirstRequireAccount,
   getProjectCourseInfo: authFirstRequireAccount,
   getProjectRuntimeSponsorStatus: authFirstRequireAccount,
+  getAccountRuntimeSponsorStatus: authFirstRequireAccount,
   getCourseStudentAccess: authFirstRequireAccount,
   getProjectSnapshotSchedule: authFirstRequireAccount,
   getProjectBackupSchedule: authFirstRequireAccount,
@@ -758,6 +771,10 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<ProjectRuntimeSponsorStatus>;
+
+  getAccountRuntimeSponsorStatus: (opts: {
+    account_id?: string;
+  }) => Promise<AccountRuntimeSponsorStatus>;
 
   getCourseStudentAccess: (opts: {
     account_id?: string;
