@@ -713,11 +713,13 @@ async function startAccountLocalService(): Promise<void> {
       package_id,
       account_id,
       verified_email_addresses,
+      accepted_terms,
     }) =>
       await claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
         package_id,
         account_id,
         verified_email_addresses,
+        accepted_terms,
       }),
     getSiteLicenseOverview: async ({ account_id, site_license_id }) =>
       await getSiteLicenseOverview({ account_id, site_license_id }),

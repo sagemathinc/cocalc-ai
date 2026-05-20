@@ -684,12 +684,12 @@ Acceptance criteria:
 - [x] A site-license manager can approve or reject the instructor request.
 - [x] Approval upgrades effective membership to the instructor tier and releases
       the student seat for the same site license.
-- [ ] Cap checks prevent claiming or approval past the pool limit.
-- [ ] Custom terms/policy links, if configured, are shown before claim/request and
+- [x] Cap checks prevent claiming or approval past the pool limit.
+- [x] Custom terms/policy links, if configured, are shown before claim/request and
       acceptance is recorded.
 - [x] Existing one-pool site packages still resolve as before or are treated as
       backward-compatible single-pool licenses.
-- [ ] Focused tests cover claim, request, approval, rejection, cap recheck,
+- [x] Focused tests cover claim, request, approval, rejection, cap recheck,
       one-active-pool upgrade, manager authorization, and custom terms metadata.
 
 ### Phase 1: Schema and Types
@@ -730,7 +730,7 @@ Acceptance criteria:
   - immediately claimable pools
   - approval-required requestable pools
   - existing request status
-- [ ] Include custom terms/policy URLs and whether the user must accept them before
+- [x] Include custom terms/policy URLs and whether the user must accept them before
   claiming/requesting.
 - [x] Keep existing no-approval claim path for baseline pools.
 - [x] Add request creation for approval-required pools.

@@ -1021,11 +1021,19 @@ export async function requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
     throw Error("site-license pool request already exists");
   }
   const request_id = uuid();
+  if (
+    (siteLicense.custom_terms_url || siteLicense.custom_policy_url) &&
+    accepted_terms !== true
+  ) {
+    throw Error("accept the site-license terms and policies before requesting");
+  }
   const metadata = {
     accepted_terms: accepted_terms === true,
     custom_terms_url: siteLicense.custom_terms_url ?? null,
     custom_policy_url: siteLicense.custom_policy_url ?? null,
     terms_version_label: siteLicense.terms_version_label ?? null,
+    terms_accepted_at:
+      accepted_terms === true ? new Date().toISOString() : null,
   };
   const { rows } = await pool.query<RawSiteLicensePoolRequest>(
     `INSERT INTO site_license_pool_requests

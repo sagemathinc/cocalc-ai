@@ -500,6 +500,7 @@ export async function getClaimableMembershipPackages(): Promise<
 
 export async function claimMembershipPackageSeat(opts: {
   package_id: string;
+  accepted_terms?: boolean;
 }): Promise<MembershipPackageAssignment> {
   return await (await getPurchasesHubRpc()).claimMembershipPackageSeat(opts);
 }

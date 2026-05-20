@@ -277,4 +277,165 @@ describe("site license seat pools", () => {
       ]),
     );
   });
+
+  it("requires custom terms acceptance before claim or request", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const student_account_id = uuid();
+    const instructor_account_id = uuid();
+    const domain = `terms-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await createTestAccount(student_account_id);
+    await createTestAccount(instructor_account_id);
+    await markAdmin(admin_account_id);
+    await markVerifiedEmail(student_account_id, `student@${domain}`);
+    await markVerifiedEmail(instructor_account_id, `instructor@${domain}`);
+
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      owner_account_id,
+      name: "Custom Terms Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      custom_terms_url: "https://example.edu/cocalc-terms",
+      custom_policy_url: "https://example.edu/cocalc-policy",
+      terms_version_label: "2026 pilot",
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 2,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+        },
+        {
+          pool_name: "Instructors",
+          membership_class: instructorTier,
+          seat_count: 2,
+          requires_approval: true,
+          verification_policy: "manager-approval",
+          exclusive_group: "teaching",
+        },
+      ],
+    });
+    const studentPool = overview.pools.find(
+      (pool) => pool.pool_name === "Students",
+    )!;
+    const instructorPool = overview.pools.find(
+      (pool) => pool.pool_name === "Instructors",
+    )!;
+
+    const claimables = await listClaimableMembershipPackagesForAccount({
+      account_id: student_account_id,
+    });
+    expect(claimables).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          package_id: studentPool.id,
+          requires_terms_acceptance: true,
+          custom_terms_url: "https://example.edu/cocalc-terms",
+          custom_policy_url: "https://example.edu/cocalc-policy",
+          terms_version_label: "2026 pilot",
+        }),
+      ]),
+    );
+    await expect(
+      claimMembershipPackageSeat({
+        package_id: studentPool.id,
+        account_id: student_account_id,
+      }),
+    ).rejects.toThrow("accept the site-license terms");
+    const claimed = await claimMembershipPackageSeat({
+      package_id: studentPool.id,
+      account_id: student_account_id,
+      accepted_terms: true,
+    });
+    expect(claimed.metadata).toEqual(
+      expect.objectContaining({
+        accepted_terms: true,
+        custom_terms_url: "https://example.edu/cocalc-terms",
+        custom_policy_url: "https://example.edu/cocalc-policy",
+        terms_version_label: "2026 pilot",
+      }),
+    );
+    expect(claimed.metadata?.terms_accepted_at).toBeTruthy();
+
+    await expect(
+      requestSiteLicensePool({
+        account_id: instructor_account_id,
+        package_id: instructorPool.id,
+      }),
+    ).rejects.toThrow("accept the site-license terms");
+    const request = await requestSiteLicensePool({
+      account_id: instructor_account_id,
+      package_id: instructorPool.id,
+      accepted_terms: true,
+    });
+    expect(request.metadata).toEqual(
+      expect.objectContaining({
+        accepted_terms: true,
+        custom_terms_url: "https://example.edu/cocalc-terms",
+        custom_policy_url: "https://example.edu/cocalc-policy",
+        terms_version_label: "2026 pilot",
+      }),
+    );
+    expect(request.metadata?.terms_accepted_at).toBeTruthy();
+  });
+
+  it("rechecks approval-required pool capacity at review time", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const first_account_id = uuid();
+    const second_account_id = uuid();
+    const domain = `cap-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await createTestAccount(first_account_id);
+    await createTestAccount(second_account_id);
+    await markAdmin(admin_account_id);
+    await markVerifiedEmail(first_account_id, `first@${domain}`);
+    await markVerifiedEmail(second_account_id, `second@${domain}`);
+
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      owner_account_id,
+      name: "Capacity Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Instructors",
+          membership_class: instructorTier,
+          seat_count: 1,
+          requires_approval: true,
+          verification_policy: "manager-approval",
+          exclusive_group: "teaching",
+        },
+      ],
+    });
+    const instructorPool = overview.pools[0]!;
+    const firstRequest = await requestSiteLicensePool({
+      account_id: first_account_id,
+      package_id: instructorPool.id,
+    });
+    const secondRequest = await requestSiteLicensePool({
+      account_id: second_account_id,
+      package_id: instructorPool.id,
+    });
+
+    await reviewSiteLicensePoolRequest({
+      actor_account_id: owner_account_id,
+      request_id: firstRequest.id,
+      action: "approve",
+    });
+    await expect(
+      reviewSiteLicensePoolRequest({
+        actor_account_id: owner_account_id,
+        request_id: secondRequest.id,
+        action: "approve",
+      }),
+    ).rejects.toThrow("no seats available in membership package");
+  });
 });

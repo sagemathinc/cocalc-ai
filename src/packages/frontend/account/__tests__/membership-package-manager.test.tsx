@@ -560,9 +560,59 @@ describe("ClaimableMembershipPackagesPanel", () => {
       expect(requestSiteLicensePool).toHaveBeenCalledWith({
         owner_account_id: "owner-1",
         package_id: "instructor-pool-1",
-        accepted_terms: true,
       });
       expect(claimMembershipPackageSeat).not.toHaveBeenCalled();
+    });
+  });
+
+  it("requires custom terms confirmation before claiming a site-license pool", async () => {
+    getClaimableMembershipPackages.mockResolvedValue([
+      {
+        package_id: "site-terms-1",
+        kind: "site",
+        membership_class: "member",
+        owner_account_id: "owner-1",
+        available_seat_count: 3,
+        matched_email_address: "ada@example.edu",
+        reason: "domain-match",
+        requires_terms_acceptance: true,
+        custom_terms_url: "https://example.edu/terms",
+        custom_policy_url: "https://example.edu/policy",
+        terms_version_label: "2026 pilot",
+      },
+    ]);
+    claimMembershipPackageSeat.mockResolvedValue({
+      id: "assignment-1",
+      package_id: "site-terms-1",
+      account_id: "account-1",
+    });
+
+    render(<ClaimableMembershipPackagesPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review required")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Claim seat"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Custom terms of service")).toBeTruthy();
+      expect(screen.getByText("Institution policy")).toBeTruthy();
+      expect(screen.getByText("Terms version: 2026 pilot")).toBeTruthy();
+    });
+    expect(claimMembershipPackageSeat).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByText(/I have reviewed the institution terms and policies/i),
+    );
+    const claimButtons = screen.getAllByText("Claim seat");
+    fireEvent.click(claimButtons[claimButtons.length - 1]);
+
+    await waitFor(() => {
+      expect(claimMembershipPackageSeat).toHaveBeenCalledWith({
+        package_id: "site-terms-1",
+        accepted_terms: true,
+      });
     });
   });
 });

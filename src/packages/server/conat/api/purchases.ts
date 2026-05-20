@@ -604,9 +604,11 @@ export async function getClaimableMembershipPackages({
 export async function claimMembershipPackageSeat({
   account_id,
   package_id,
+  accepted_terms,
 }: {
   account_id?: string;
   package_id?: string;
+  accepted_terms?: boolean;
 }) {
   if (!account_id) {
     throw Error("account_id required");
@@ -621,6 +623,7 @@ export async function claimMembershipPackageSeat({
   return await claimMembershipPackageSeat0({
     package_id,
     account_id,
+    accepted_terms,
   });
 }
 

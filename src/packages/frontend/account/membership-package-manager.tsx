@@ -7,6 +7,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   DatePicker,
   Descriptions,
   Divider,
@@ -221,6 +222,9 @@ export function ClaimableMembershipPackagesPanel({
   const [error, setError] = useState<string>("");
   const [claimingPackageId, setClaimingPackageId] = useState<string>("");
   const [requestingPackageId, setRequestingPackageId] = useState<string>("");
+  const [termsTarget, setTermsTarget] =
+    useState<ClaimableMembershipPackage | null>(null);
+  const [termsAccepted, setTermsAccepted] = useState<boolean>(false);
   const [claimables, setClaimables] = useState<ClaimableMembershipPackage[]>(
     [],
   );
@@ -246,6 +250,60 @@ export function ClaimableMembershipPackagesPanel({
   useEffect(() => {
     void refreshClaimables();
   }, [account_id]);
+
+  async function claimPackage(
+    claimablePackage: ClaimableMembershipPackage,
+    accepted_terms = false,
+  ) {
+    setClaimingPackageId(claimablePackage.package_id);
+    setError("");
+    try {
+      await claimMembershipPackageSeat({
+        package_id: claimablePackage.package_id,
+        ...(accepted_terms ? { accepted_terms: true } : {}),
+      });
+      await refreshClaimables();
+      onChanged?.();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setClaimingPackageId("");
+    }
+  }
+
+  async function requestPool(
+    claimablePackage: ClaimableMembershipPackage,
+    accepted_terms = false,
+  ) {
+    setRequestingPackageId(claimablePackage.package_id);
+    setError("");
+    try {
+      await requestSiteLicensePool({
+        owner_account_id: claimablePackage.owner_account_id,
+        package_id: claimablePackage.package_id,
+        ...(accepted_terms ? { accepted_terms: true } : {}),
+      });
+      await refreshClaimables();
+      onChanged?.();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setRequestingPackageId("");
+    }
+  }
+
+  function handlePrimaryAction(claimablePackage: ClaimableMembershipPackage) {
+    if (claimablePackage.requires_terms_acceptance) {
+      setTermsTarget(claimablePackage);
+      setTermsAccepted(false);
+      return;
+    }
+    if (claimablePackage.requires_approval) {
+      void requestPool(claimablePackage);
+    } else {
+      void claimPackage(claimablePackage);
+    }
+  }
 
   if (!account_id) {
     return null;
@@ -293,23 +351,7 @@ export function ClaimableMembershipPackagesPanel({
                       requestingPackageId === claimablePackage.package_id
                     }
                     disabled={claimablePackage.pending_request_id != null}
-                    onClick={async () => {
-                      setRequestingPackageId(claimablePackage.package_id);
-                      setError("");
-                      try {
-                        await requestSiteLicensePool({
-                          owner_account_id: claimablePackage.owner_account_id,
-                          package_id: claimablePackage.package_id,
-                          accepted_terms: true,
-                        });
-                        await refreshClaimables();
-                        onChanged?.();
-                      } catch (err) {
-                        setError(`${err}`);
-                      } finally {
-                        setRequestingPackageId("");
-                      }
-                    }}
+                    onClick={() => handlePrimaryAction(claimablePackage)}
                   >
                     {claimablePackage.pending_request_id
                       ? "Request pending"
@@ -319,21 +361,7 @@ export function ClaimableMembershipPackagesPanel({
                   <Button
                     type="primary"
                     loading={claimingPackageId === claimablePackage.package_id}
-                    onClick={async () => {
-                      setClaimingPackageId(claimablePackage.package_id);
-                      setError("");
-                      try {
-                        await claimMembershipPackageSeat({
-                          package_id: claimablePackage.package_id,
-                        });
-                        await refreshClaimables();
-                        onChanged?.();
-                      } catch (err) {
-                        setError(`${err}`);
-                      } finally {
-                        setClaimingPackageId("");
-                      }
-                    }}
+                    onClick={() => handlePrimaryAction(claimablePackage)}
                   >
                     Claim seat
                   </Button>
@@ -358,6 +386,11 @@ export function ClaimableMembershipPackagesPanel({
                     )}
                   </Descriptions.Item>
                 ) : null}
+                {claimablePackage.requires_terms_acceptance ? (
+                  <Descriptions.Item label="Terms">
+                    <Tag color="purple">Review required</Tag>
+                  </Descriptions.Item>
+                ) : null}
                 <Descriptions.Item label="Available seats">
                   {claimablePackage.available_seat_count}
                 </Descriptions.Item>
@@ -371,6 +404,69 @@ export function ClaimableMembershipPackagesPanel({
           ))}
         </Space>
       ) : null}
+      <Modal
+        open={termsTarget != null}
+        title="Review institution terms"
+        okText={
+          termsTarget?.requires_approval ? "Request access" : "Claim seat"
+        }
+        okButtonProps={{ disabled: !termsAccepted }}
+        onCancel={() => {
+          setTermsTarget(null);
+          setTermsAccepted(false);
+        }}
+        onOk={async () => {
+          const target = termsTarget;
+          if (!target) return;
+          setTermsTarget(null);
+          setTermsAccepted(false);
+          if (target.requires_approval) {
+            await requestPool(target, true);
+          } else {
+            await claimPackage(target, true);
+          }
+        }}
+        destroyOnHidden
+      >
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+          <Alert
+            type="info"
+            showIcon
+            title="Your institution requires custom terms or policies"
+            description="Review the configured links before using this institution-funded CoCalc membership."
+          />
+          {termsTarget?.custom_terms_url ? (
+            <a
+              href={termsTarget.custom_terms_url}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Custom terms of service
+            </a>
+          ) : null}
+          {termsTarget?.custom_policy_url ? (
+            <a
+              href={termsTarget.custom_policy_url}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Institution policy
+            </a>
+          ) : null}
+          {termsTarget?.terms_version_label ? (
+            <Text type="secondary">
+              Terms version: {termsTarget.terms_version_label}
+            </Text>
+          ) : null}
+          <Checkbox
+            checked={termsAccepted}
+            onChange={(event) => setTermsAccepted(event.target.checked)}
+          >
+            I have reviewed the institution terms and policies for this
+            membership.
+          </Checkbox>
+        </Space>
+      </Modal>
     </div>
   );
 }

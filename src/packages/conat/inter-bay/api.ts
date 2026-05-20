@@ -845,6 +845,7 @@ export interface AccountLocalClaimMembershipPackageSeatRequest {
   package_id: string;
   account_id: string;
   verified_email_addresses: string[];
+  accepted_terms?: boolean;
 }
 
 export interface AccountLocalGetSiteLicenseOverviewRequest {

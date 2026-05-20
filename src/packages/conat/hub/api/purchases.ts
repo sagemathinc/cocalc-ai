@@ -262,6 +262,10 @@ export interface ClaimableMembershipPackage {
   exclusive_group?: string;
   pending_request_id?: string;
   pending_request_state?: SiteLicensePoolRequestState;
+  custom_terms_url?: string | null;
+  custom_policy_url?: string | null;
+  terms_version_label?: string | null;
+  requires_terms_acceptance?: boolean;
   metadata?: Record<string, unknown> | null;
 }
 
@@ -627,6 +631,7 @@ export interface Purchases {
   claimMembershipPackageSeat: (opts?: {
     account_id?: string;
     package_id?: string;
+    accepted_terms?: boolean;
   }) => Promise<MembershipPackageAssignment>;
   adminProvisionSiteLicense: (opts?: {
     account_id?: string;
