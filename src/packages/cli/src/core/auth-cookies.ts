@@ -165,7 +165,11 @@ export function buildCookieHeader(
     );
     if (hubPassword?.trim()) {
       appendCookie(parts, baseUrl, "hub_password", hubPassword);
-      const accountId = `${globals.accountId ?? globals.account_id ?? ""}`;
+      const accountId = `${
+        globals.accountId ??
+        globals.account_id ??
+        (allowEnvAuthDefaults ? env.COCALC_ACCOUNT_ID : "")
+      }`;
       if (isValidUUID(accountId)) {
         appendCookie(parts, baseUrl, "account_id", accountId);
       }
