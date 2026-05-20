@@ -16,6 +16,9 @@ const projectsActions = {
 const mentionsActions = {
   set_filter: jest.fn(),
 };
+const webappClient = {
+  is_signed_in: jest.fn(() => false),
+};
 
 const accountStore = {
   get: jest.fn((key: string) => {
@@ -63,6 +66,10 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: mockRedux,
 }));
 
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: webappClient,
+}));
+
 jest.mock("@cocalc/frontend/misc/fragment-id", () => ({
   __esModule: true,
   default: fragment,
@@ -78,6 +85,13 @@ import { load_target } from "./history";
 describe("load_target", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    webappClient.is_signed_in.mockReturnValue(false);
+    accountStore.get.mockImplementation((key: string) => {
+      if (key === "is_logged_in") {
+        return true;
+      }
+      return undefined;
+    });
   });
 
   it("routes settings targets through account route state", () => {
@@ -95,6 +109,30 @@ describe("load_target", () => {
 
     expect(projectsActions.load_target).toHaveBeenCalledWith(
       "project-1/files/work.txt",
+      true,
+      true,
+      false,
+      { line: "7" },
+    );
+  });
+
+  it("does not misroute project targets while account store login state is catching up", () => {
+    accountStore.get.mockImplementation((key: string) => {
+      if (key === "is_logged_in") {
+        return false;
+      }
+      return undefined;
+    });
+    webappClient.is_signed_in.mockReturnValue(true);
+
+    load_target("projects/project-1/files", true, false);
+
+    expect(pageActions.set_active_tab).not.toHaveBeenCalledWith(
+      "account",
+      false,
+    );
+    expect(projectsActions.load_target).toHaveBeenCalledWith(
+      "project-1/files",
       true,
       true,
       false,
