@@ -3,6 +3,7 @@ export {};
 let getLocalProjectCollaboratorAccessStatusMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
+let resolveProjectBayAcrossClusterMock: jest.Mock;
 let projectDetailsGetMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
 let inviteWithoutAccountMock: jest.Mock;
@@ -28,6 +29,8 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
   __esModule: true,
   resolveProjectBay: (...args: any[]) => resolveProjectBayMock(...args),
+  resolveProjectBayAcrossCluster: (...args: any[]) =>
+    resolveProjectBayAcrossClusterMock(...args),
 }));
 
 jest.mock("@cocalc/server/inter-bay/bridge", () => ({
@@ -67,6 +70,10 @@ describe("remote project detail reads", () => {
     );
     isAdminMock = jest.fn(async () => false);
     resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-7",
+      epoch: 2,
+    }));
+    resolveProjectBayAcrossClusterMock = jest.fn(async () => ({
       bay_id: "bay-7",
       epoch: 2,
     }));
@@ -225,6 +232,7 @@ describe("remote project detail reads", () => {
       invite_id: "77777777-7777-4777-8777-777777777777",
       token: "token-1",
     });
+    expect(resolveProjectBayAcrossClusterMock).toHaveBeenCalledWith(PROJECT_ID);
     expect(result.responded).toEqual(new Date("2026-05-18T01:00:00.000Z"));
   });
 
@@ -243,6 +251,7 @@ describe("remote project detail reads", () => {
       invite_id: "77777777-7777-4777-8777-777777777777",
       token: "token-1",
     });
+    expect(resolveProjectBayAcrossClusterMock).toHaveBeenCalledWith(PROJECT_ID);
     expect(result.created).toEqual(new Date("2026-05-18T00:00:00.000Z"));
     expect(result.message).toBe("Please join");
   });
@@ -264,7 +273,39 @@ describe("remote project detail reads", () => {
       invite_id: "77777777-7777-4777-8777-777777777777",
       token: "token-1",
     });
+    expect(resolveProjectBayAcrossClusterMock).toHaveBeenCalledWith(PROJECT_ID);
     expect(result.responded).toEqual(new Date("2026-05-18T01:00:00.000Z"));
     expect(result.status).toBe("declined");
+  });
+
+  it("uses the cluster project resolver for email invite preview", async () => {
+    resolveProjectBayMock = jest.fn(async () => null);
+    resolveProjectBayAcrossClusterMock = jest.fn(async () => ({
+      bay_id: "bay-7",
+      epoch: 2,
+    }));
+
+    const { previewEmailProjectInvite } = await import("./projects");
+    await expect(
+      previewEmailProjectInvite({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        invite_id: "77777777-7777-4777-8777-777777777777",
+        token: "token-1",
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        invite_id: "77777777-7777-4777-8777-777777777777",
+        project_id: PROJECT_ID,
+      }),
+    );
+    expect(resolveProjectBayMock).not.toHaveBeenCalled();
+    expect(resolveProjectBayAcrossClusterMock).toHaveBeenCalledWith(PROJECT_ID);
+    expect(previewEmailMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      token: "token-1",
+    });
   });
 });

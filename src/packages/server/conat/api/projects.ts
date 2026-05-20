@@ -35,7 +35,10 @@ import { updateAuthorizedKeysOnHost as updateAuthorizedKeysOnHostControl } from 
 import { mirrorStartLroProgress } from "@cocalc/server/projects/start-lro-progress";
 import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
-import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
+import {
+  resolveProjectBay,
+  resolveProjectBayAcrossCluster,
+} from "@cocalc/server/inter-bay/directory";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
@@ -1628,6 +1631,13 @@ function isCollabInviteNotFound(err: unknown, invite_id: string): boolean {
   return message.includes(`invite '${invite_id}' not found`);
 }
 
+async function resolveProjectBayForEmailInvite(project_id: string) {
+  // Email invite links are often opened from the accepting account's home bay,
+  // which may not have a direct local project row. Use the bounded cluster
+  // fallback before deciding this invite is local/not found.
+  return await resolveProjectBayAcrossCluster(project_id);
+}
+
 export async function getProjectCollaboratorInviteUsage({
   account_id,
   project_id,
@@ -1704,7 +1714,7 @@ export async function copyEmailProjectInviteLink({
   if (!project_id) {
     return await copyEmailProjectInviteLinkLocal({ account_id, invite_id });
   }
-  const ownership = await resolveProjectBay(project_id);
+  const ownership = await resolveProjectBayForEmailInvite(project_id);
   if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
     return await copyEmailProjectInviteLinkLocal({
       account_id,
@@ -1747,7 +1757,7 @@ export async function redeemEmailProjectInvite({
       token,
     });
   }
-  const ownership = await resolveProjectBay(project_id);
+  const ownership = await resolveProjectBayForEmailInvite(project_id);
   if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
     return await redeemEmailProjectInviteLocal({
       account_id,
@@ -1788,7 +1798,7 @@ export async function previewEmailProjectInvite({
       token,
     });
   }
-  const ownership = await resolveProjectBay(project_id);
+  const ownership = await resolveProjectBayForEmailInvite(project_id);
   if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
     return await previewEmailProjectInviteLocal({
       account_id,
@@ -1829,7 +1839,7 @@ export async function respondEmailProjectInvite({
       token,
     });
   }
-  const ownership = await resolveProjectBay(project_id);
+  const ownership = await resolveProjectBayForEmailInvite(project_id);
   if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
     return await respondEmailProjectInviteLocal({
       account_id,

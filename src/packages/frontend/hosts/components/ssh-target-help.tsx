@@ -6,12 +6,12 @@ const HELP_CONTENT = (
   <div style={{ maxWidth: 360 }}>
     <div>
       Set this to user@host[:port] (or an ssh-config name) so that CoCalc can
-      install the connector on the remote machine. It must be possible to ssh to
-      that machine without having to type a password.
+      setup the remote computer as a dedicated project host. It must be possible 
+      to ssh to that computer without having to type a password.
     </div>
     <div style={{ marginTop: 8 }}>
-      This machine must run a recent Ubuntu Linux, sudo must work without a
-      password, and it should be used only as a CoCalc Project Host. GPUs,
+      This computer must run a recent Ubuntu Linux, sudo must work without a
+      password, and it will be used only as a CoCalc project host. GPUs,
       x86_64, and aarch64 (ARM) are supported.
     </div>
   </div>
