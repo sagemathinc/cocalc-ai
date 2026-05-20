@@ -9,6 +9,7 @@ import {
   Segmented,
   Slider,
   Tag,
+  Typography,
 } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -16,6 +17,7 @@ import {
   mapCloudRegionToR2Region,
   R2_REGION_LABELS,
 } from "@cocalc/util/consts";
+import { COLORS } from "@cocalc/util/theme";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import { getDiskTypeOptions } from "../constants";
 import { isNebiusSpotSupported } from "../providers/registry";
@@ -33,6 +35,13 @@ const MIN_DISK_SIZE = 50;
 const MAX_DISK_SIZE = 10_000;
 const INITIAL_DISK_SIZE = 100;
 const NEBIUS_IO_M3_GB = 93;
+const FIELD_GROUP_STYLE: React.CSSProperties = {
+  background: COLORS.GRAY_LLL,
+  border: `1px solid ${COLORS.GRAY_LL}`,
+  borderRadius: 10,
+  marginBottom: 10,
+  padding: "10px 12px 0",
+};
 
 type HostCreateProviderFieldsProps = {
   provider: HostCreateViewModel["provider"];
@@ -387,55 +396,126 @@ export const HostCreateProviderFields: React.FC<
 
   return (
     <>
-      <Row gutter={[12, 0]}>
-        {!hideProviderSelect && (
-          <Col xs={24} md={12}>
-            <Form.Item
-              name="provider"
-              label="Provider"
-              initialValue={
-                draftManaged ? undefined : (providerOptions[0]?.value ?? "none")
-              }
-            >
-              <Select options={providerOptions} onChange={onProviderChange} />
-            </Form.Item>
-          </Col>
-        )}
-        {showRegionPreference && (
-          <Col xs={24} md={12}>
-            <Form.Item
-              name="region_preference"
-              label="Region preference"
-              initialValue={draftManaged ? undefined : "balanced"}
-              extra="Sort by location and price."
-            >
-              <Select
-                options={[
-                  { value: "balanced", label: "Balanced" },
-                  { value: "closest", label: "Closest" },
-                  { value: "cheapest", label: "Cheapest" },
-                ]}
-              />
-            </Form.Item>
-          </Col>
-        )}
-        {showPriceDisplay && (
-          <Col xs={24} md={12}>
-            <Form.Item
-              name="price_display"
-              label="Show prices as"
-              initialValue={draftManaged ? undefined : "hourly"}
-            >
-              <Select
-                options={[
-                  { value: "hourly", label: "Hourly" },
-                  { value: "monthly", label: "Monthly" },
-                ]}
-              />
-            </Form.Item>
-          </Col>
-        )}
-      </Row>
+      <div style={FIELD_GROUP_STYLE}>
+        <Typography.Text strong>Placement preferences</Typography.Text>
+        <Row gutter={[12, 0]} style={{ marginTop: 8 }}>
+          {!hideProviderSelect && (
+            <Col xs={24} md={12}>
+              <Form.Item
+                name="provider"
+                label="Provider"
+                initialValue={
+                  draftManaged
+                    ? undefined
+                    : (providerOptions[0]?.value ?? "none")
+                }
+              >
+                <Select options={providerOptions} onChange={onProviderChange} />
+              </Form.Item>
+            </Col>
+          )}
+          {showRegionPreference && (
+            <Col xs={24} md={12}>
+              <Form.Item
+                name="region_preference"
+                label="Region preference"
+                initialValue={draftManaged ? undefined : "balanced"}
+                extra="Sort by location and price."
+              >
+                <Select
+                  options={[
+                    { value: "balanced", label: "Balanced" },
+                    { value: "closest", label: "Closest" },
+                    { value: "cheapest", label: "Cheapest" },
+                  ]}
+                />
+              </Form.Item>
+            </Col>
+          )}
+          {showPriceDisplay && (
+            <Col xs={24} md={12}>
+              <Form.Item
+                name="price_display"
+                label="Show prices as"
+                initialValue={draftManaged ? undefined : "hourly"}
+              >
+                <Select
+                  options={[
+                    { value: "hourly", label: "Hourly" },
+                    { value: "monthly", label: "Monthly" },
+                  ]}
+                />
+              </Form.Item>
+            </Col>
+          )}
+        </Row>
+      </div>
+      <div style={FIELD_GROUP_STYLE}>
+        <Typography.Text strong>Location and compute</Typography.Text>
+        <Row gutter={[12, 0]} style={{ marginTop: 8 }}>
+          {schema.primary.map(renderField)}
+        </Row>
+      </div>
+      {showDiskFields && (
+        <div style={FIELD_GROUP_STYLE}>
+          <Typography.Text strong>Storage</Typography.Text>
+          <Form.Item
+            label="Disk size (GB)"
+            style={{ marginTop: 8 }}
+            tooltip={`Disk for storing all projects on this host. Files are compressed and deduplicated. ${
+              persistentGrowable
+                ? "You can enlarge this disk at any time later."
+                : "This disk CANNOT be enlarged later."
+            }${isNebiusIoM3 ? " SSD IO M3 requires multiples of 93 GB." : ""}`}
+          >
+            <Row gutter={12} align="middle">
+              <Col flex="auto">
+                <Slider
+                  min={diskMin}
+                  max={MAX_DISK_SIZE}
+                  step={diskStep}
+                  value={diskValue}
+                  onChange={(value) => {
+                    if (typeof value !== "number" || Number.isNaN(value)) {
+                      return;
+                    }
+                    const normalized = normalizeDiskValue(value);
+                    setFormFields({
+                      disk: normalized,
+                      disk_gb: normalized,
+                    });
+                  }}
+                />
+              </Col>
+              <Col flex="120px">
+                <Form.Item
+                  name="disk"
+                  initialValue={draftManaged ? undefined : INITIAL_DISK_SIZE}
+                  noStyle
+                >
+                  <InputNumber
+                    min={diskMin}
+                    max={MAX_DISK_SIZE}
+                    step={diskStep}
+                    precision={0}
+                    style={{ width: "100%" }}
+                    onChange={(value) => {
+                      if (typeof value !== "number" || Number.isNaN(value)) {
+                        return;
+                      }
+                      const normalized = normalizeDiskValue(value);
+                      setFormFields({
+                        disk: normalized,
+                        disk_gb: normalized,
+                      });
+                    }}
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+          </Form.Item>
+        </div>
+      )}
       {showSpotHint && (
         <Alert
           type="info"
@@ -507,7 +587,6 @@ export const HostCreateProviderFields: React.FC<
           }
         />
       )}
-      <Row gutter={[12, 0]}>{schema.primary.map(renderField)}</Row>
       {selectedProvider === "self-host" && (
         <Form.Item
           name="self_host_ssh_target"
@@ -534,62 +613,6 @@ export const HostCreateProviderFields: React.FC<
           title="No SSH target provided"
           description="Without an SSH target, the host must be able to reach the hub’s SSH port directly."
         />
-      )}
-      {showDiskFields && (
-        <Form.Item
-          label="Disk size (GB)"
-          tooltip={`Disk for storing all projects on this host. Files are compressed and deduplicated. ${
-            persistentGrowable
-              ? "You can enlarge this disk at any time later."
-              : "This disk CANNOT be enlarged later."
-          }${isNebiusIoM3 ? " SSD IO M3 requires multiples of 93 GB." : ""}`}
-        >
-          <Row gutter={12} align="middle">
-            <Col flex="auto">
-              <Slider
-                min={diskMin}
-                max={MAX_DISK_SIZE}
-                step={diskStep}
-                value={diskValue}
-                onChange={(value) => {
-                  if (typeof value !== "number" || Number.isNaN(value)) {
-                    return;
-                  }
-                  const normalized = normalizeDiskValue(value);
-                  setFormFields({
-                    disk: normalized,
-                    disk_gb: normalized,
-                  });
-                }}
-              />
-            </Col>
-            <Col flex="120px">
-              <Form.Item
-                name="disk"
-                initialValue={draftManaged ? undefined : INITIAL_DISK_SIZE}
-                noStyle
-              >
-                <InputNumber
-                  min={diskMin}
-                  max={MAX_DISK_SIZE}
-                  step={diskStep}
-                  precision={0}
-                  style={{ width: "100%" }}
-                  onChange={(value) => {
-                    if (typeof value !== "number" || Number.isNaN(value)) {
-                      return;
-                    }
-                    const normalized = normalizeDiskValue(value);
-                    setFormFields({
-                      disk: normalized,
-                      disk_gb: normalized,
-                    });
-                  }}
-                />
-              </Form.Item>
-            </Col>
-          </Row>
-        </Form.Item>
       )}
       {selectedProvider === "self-host" && watchedSelfHostKind !== "direct" && (
         <>

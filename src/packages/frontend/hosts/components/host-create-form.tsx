@@ -1,5 +1,6 @@
-import { Col, Collapse, Form, Input, Row, Select } from "antd";
+import { Col, Collapse, Form, Input, Row, Select, Typography } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
+import { COLORS } from "@cocalc/util/theme";
 import type { FormInstance } from "antd/es/form";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import { isNebiusSpotSupported } from "../providers/registry";
@@ -7,6 +8,14 @@ import { defaultRestorePolicy } from "../utils/spot-recovery-policy";
 import { HostCreateAdvancedFields } from "./host-create-advanced-fields";
 import { HostCreateProviderFields } from "./host-create-provider-fields";
 import { SshTargetLabel } from "./ssh-target-help";
+
+const FIELD_GROUP_STYLE: React.CSSProperties = {
+  background: COLORS.GRAY_LLL,
+  border: `1px solid ${COLORS.GRAY_LL}`,
+  borderRadius: 10,
+  marginBottom: 10,
+  padding: "10px 12px 0",
+};
 
 type HostCreateFormProps = {
   form: FormInstance;
@@ -75,6 +84,7 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
     [draftManaged, form, updateDraftManagedFields],
   );
   React.useEffect(() => {
+    if (draftManaged) return;
     if (!simpleSelfHost) return;
     if (form.getFieldValue("provider") !== "self-host") {
       setFormFields({ provider: "self-host" });
@@ -88,15 +98,16 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
     if (form.getFieldValue("disk") == null) {
       setFormFields({ disk: 100, disk_gb: 100 });
     }
-  }, [form, setFormFields, simpleSelfHost]);
+  }, [draftManaged, form, setFormFields, simpleSelfHost]);
   React.useEffect(() => {
+    if (draftManaged) return;
     if (!simpleSelfHost) return;
     const nextName = (watchedSshTarget ?? "").trim();
     if (!nextName) return;
     if (form.getFieldValue("name") !== nextName) {
       setFormFields({ name: nextName });
     }
-  }, [form, setFormFields, simpleSelfHost, watchedSshTarget]);
+  }, [draftManaged, form, setFormFields, simpleSelfHost, watchedSshTarget]);
   React.useEffect(() => {
     if (draftManaged) return;
     if (!showSpotFields) return;
@@ -209,34 +220,37 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
             </>
           ) : (
             <>
-              <Row gutter={[12, 0]}>
-                <Col xs={24} md={showSpotFields ? 12 : 24}>
-                  <Form.Item
-                    name="name"
-                    label="Name"
-                    initialValue={draftManaged ? undefined : "My host"}
-                  >
-                    <Input placeholder="My host" />
-                  </Form.Item>
-                </Col>
-                {showSpotFields && (
-                  <Col xs={24} md={12}>
+              <div style={FIELD_GROUP_STYLE}>
+                <Typography.Text strong>Basics and billing</Typography.Text>
+                <Row gutter={[12, 0]} style={{ marginTop: 8 }}>
+                  <Col xs={24} md={showSpotFields ? 12 : 24}>
                     <Form.Item
-                      name="funding_mode"
-                      label="Billing"
-                      rules={[
-                        {
-                          required: true,
-                          message:
-                            "Please choose how this host will be funded.",
-                        },
-                      ]}
+                      name="name"
+                      label="Name"
+                      initialValue={draftManaged ? undefined : "My host"}
                     >
-                      <Select options={billing?.fundingModeOptions ?? []} />
+                      <Input placeholder="My host" />
                     </Form.Item>
                   </Col>
-                )}
-              </Row>
+                  {showSpotFields && (
+                    <Col xs={24} md={12}>
+                      <Form.Item
+                        name="funding_mode"
+                        label="Billing"
+                        rules={[
+                          {
+                            required: true,
+                            message:
+                              "Please choose how this host will be funded.",
+                          },
+                        ]}
+                      >
+                        <Select options={billing?.fundingModeOptions ?? []} />
+                      </Form.Item>
+                    </Col>
+                  )}
+                </Row>
+              </div>
               <HostCreateProviderFields
                 provider={provider}
                 onProviderChange={onProviderChange}
