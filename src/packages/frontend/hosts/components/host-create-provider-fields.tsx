@@ -292,6 +292,8 @@ export const HostCreateProviderFields: React.FC<
     watchedSelfHostMode === "local" &&
     !String(watchedSelfHostTarget ?? "").trim() &&
     selfHostAlphaEnabled;
+  const fieldColumnSpan = (field: HostFieldId) =>
+    field === "machine_type" || field === "size" ? 24 : 12;
   const renderField = (field: HostFieldId) => {
     if (
       selectedProvider === "self-host" &&
@@ -341,18 +343,19 @@ export const HostCreateProviderFields: React.FC<
       label
     );
     const item = (
-      <Form.Item
-        key={field}
-        name={field}
-        label={itemLabel}
-        tooltip={tooltip}
-        initialValue={draftManaged ? undefined : fieldOptions[0]?.value}
-      >
-        <HostOptionsSelect
-          options={fieldOptions}
-          disabled={!fieldOptions.length}
-        />
-      </Form.Item>
+      <Col xs={24} md={fieldColumnSpan(field)} key={field}>
+        <Form.Item
+          name={field}
+          label={itemLabel}
+          tooltip={tooltip}
+          initialValue={draftManaged ? undefined : fieldOptions[0]?.value}
+        >
+          <HostOptionsSelect
+            options={fieldOptions}
+            disabled={!fieldOptions.length}
+          />
+        </Form.Item>
+      </Col>
     );
     if (field === "region" && selectedProvider !== "self-host") {
       const regionValue = watchedRegion ?? fieldOptions[0]?.value;
@@ -360,12 +363,22 @@ export const HostCreateProviderFields: React.FC<
         const r2Region = mapCloudRegionToR2Region(regionValue);
         const r2Label = R2_REGION_LABELS[r2Region];
         return (
-          <React.Fragment key={field}>
-            {item}
+          <Col xs={24} md={fieldColumnSpan(field)} key={field}>
+            <Form.Item
+              name={field}
+              label={itemLabel}
+              tooltip={tooltip}
+              initialValue={draftManaged ? undefined : fieldOptions[0]?.value}
+            >
+              <HostOptionsSelect
+                options={fieldOptions}
+                disabled={!fieldOptions.length}
+              />
+            </Form.Item>
             <div style={{ marginBottom: 12 }}>
               <Tag>Backup region: {r2Label}</Tag>
             </div>
-          </React.Fragment>
+          </Col>
         );
       }
     }
@@ -374,47 +387,55 @@ export const HostCreateProviderFields: React.FC<
 
   return (
     <>
-      {!hideProviderSelect && (
-        <Form.Item
-          name="provider"
-          label="Provider"
-          initialValue={
-            draftManaged ? undefined : (providerOptions[0]?.value ?? "none")
-          }
-        >
-          <Select options={providerOptions} onChange={onProviderChange} />
-        </Form.Item>
-      )}
-      {showRegionPreference && (
-        <Form.Item
-          name="region_preference"
-          label="Region preference"
-          initialValue={draftManaged ? undefined : "balanced"}
-          extra="Sort regions using your approximate location and the current machine pricing."
-        >
-          <Select
-            options={[
-              { value: "balanced", label: "Balanced" },
-              { value: "closest", label: "Closest" },
-              { value: "cheapest", label: "Cheapest" },
-            ]}
-          />
-        </Form.Item>
-      )}
-      {showPriceDisplay && (
-        <Form.Item
-          name="price_display"
-          label="Show prices as"
-          initialValue={draftManaged ? undefined : "hourly"}
-        >
-          <Select
-            options={[
-              { value: "hourly", label: "Hourly" },
-              { value: "monthly", label: "Monthly" },
-            ]}
-          />
-        </Form.Item>
-      )}
+      <Row gutter={[12, 0]}>
+        {!hideProviderSelect && (
+          <Col xs={24} md={12}>
+            <Form.Item
+              name="provider"
+              label="Provider"
+              initialValue={
+                draftManaged ? undefined : (providerOptions[0]?.value ?? "none")
+              }
+            >
+              <Select options={providerOptions} onChange={onProviderChange} />
+            </Form.Item>
+          </Col>
+        )}
+        {showRegionPreference && (
+          <Col xs={24} md={12}>
+            <Form.Item
+              name="region_preference"
+              label="Region preference"
+              initialValue={draftManaged ? undefined : "balanced"}
+              extra="Sort by location and price."
+            >
+              <Select
+                options={[
+                  { value: "balanced", label: "Balanced" },
+                  { value: "closest", label: "Closest" },
+                  { value: "cheapest", label: "Cheapest" },
+                ]}
+              />
+            </Form.Item>
+          </Col>
+        )}
+        {showPriceDisplay && (
+          <Col xs={24} md={12}>
+            <Form.Item
+              name="price_display"
+              label="Show prices as"
+              initialValue={draftManaged ? undefined : "hourly"}
+            >
+              <Select
+                options={[
+                  { value: "hourly", label: "Hourly" },
+                  { value: "monthly", label: "Monthly" },
+                ]}
+              />
+            </Form.Item>
+          </Col>
+        )}
+      </Row>
       {showSpotHint && (
         <Alert
           type="info"
@@ -486,7 +507,7 @@ export const HostCreateProviderFields: React.FC<
           }
         />
       )}
-      {schema.primary.map(renderField)}
+      <Row gutter={[12, 0]}>{schema.primary.map(renderField)}</Row>
       {selectedProvider === "self-host" && (
         <Form.Item
           name="self_host_ssh_target"
