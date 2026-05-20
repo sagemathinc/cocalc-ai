@@ -640,7 +640,7 @@ Scope:
       verification policy, terms links, and overage/renewal policy.
 - [x] Add admin API provisioning for one site license with one or more pools,
       e.g. `Students`, `Instructors`, and `Researchers`.
-- [ ] Add CLI commands for provisioning, overview, requesting, and reviewing.
+- [x] Add CLI commands for provisioning, overview, requesting, and reviewing.
 - [x] Route site-license provisioning, overview, request, and review APIs to the
       site-license owner's home bay, with requester verified emails collected on
       the requester home bay.
@@ -720,6 +720,9 @@ Acceptance criteria:
 - Keep backward compatibility for existing single-pool `kind = "site"` package
   rows by treating each as a one-pool site license.
 - Add admin API/CLI commands for creating pools and managers.
+  - Current CLI supports provisioning a site license with initial pools and
+    owner manager. Editing managers/pools after creation is still future
+    polished admin tooling.
 - The admin panel for deleting membership tiers already blocks deleting a tier
   that has claims/users. It should also block deleting a tier that is attached
   to a site license, and ideally show how many site licenses use that tier.
@@ -731,7 +734,7 @@ Acceptance criteria:
   - approval-required requestable pools
   - existing request status
 - [x] Include custom terms/policy URLs and whether the user must accept them before
-  claiming/requesting.
+      claiming/requesting.
 - [x] Keep existing no-approval claim path for baseline pools.
 - [x] Add request creation for approval-required pools.
 - [x] Add minimal account UI actions for claimable and requestable pools.
