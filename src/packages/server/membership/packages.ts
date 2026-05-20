@@ -285,6 +285,10 @@ function getInstitutionalClaimScopeKind(
   return explicit || "institutional-domain-set";
 }
 
+function packageRequiresApproval(pkg: MembershipPackageRecord): boolean {
+  return pkg.kind === "site" && pkg.metadata?.requires_approval === true;
+}
+
 function getInstitutionalClaimDescriptorForEmail({
   pkg,
   matched_email_address,
@@ -1618,7 +1622,8 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
     if (
       !claimables.has(pkg.id) &&
       available_seat_count > 0 &&
-      pkg.kind === "site"
+      pkg.kind === "site" &&
+      !packageRequiresApproval(pkg)
     ) {
       const allowedDomains = new Set(getPackageDomains(pkg.metadata));
       if (allowedDomains.size === 0) {
@@ -1733,6 +1738,9 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
         const pool = getQueryClient(dbClient);
         if (pkg.expires_at && pkg.expires_at <= new Date()) {
           throw Error("membership package has expired");
+        }
+        if (packageRequiresApproval(pkg)) {
+          throw Error("this site-license pool requires manager approval");
         }
         const verifiedEmailAddresses = Array.from(
           new Set(

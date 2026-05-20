@@ -22,6 +22,12 @@ import {
   revokeMembershipPackageSeat as revokeMembershipPackageSeat0,
   updateMembershipPackage as updateMembershipPackage0,
 } from "@cocalc/server/membership/packages";
+import {
+  adminProvisionSiteLicense as adminProvisionSiteLicense0,
+  getSiteLicenseOverview as getSiteLicenseOverview0,
+  requestSiteLicensePool as requestSiteLicensePool0,
+  reviewSiteLicensePoolRequest as reviewSiteLicensePoolRequest0,
+} from "@cocalc/server/membership/site-licenses";
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 import type { MoneyValue } from "@cocalc/util/money";
 import isAdmin from "@cocalc/server/accounts/is-admin";
@@ -36,6 +42,9 @@ import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/tr
 import type {
   MembershipClass,
   MembershipPackageDetails,
+  SiteLicenseOverview,
+  SiteLicensePoolConfig,
+  SiteLicensePoolRequest,
 } from "@cocalc/conat/hub/api/purchases";
 
 export { getBalance };
@@ -611,6 +620,119 @@ export async function claimMembershipPackageSeat({
   return await claimMembershipPackageSeat0({
     package_id,
     account_id,
+  });
+}
+
+export async function adminProvisionSiteLicense({
+  account_id,
+  owner_account_id,
+  name,
+  organization_name,
+  allowed_domains,
+  pools,
+  custom_terms_url,
+  custom_policy_url,
+  terms_version_label,
+  renewal_policy,
+  overage_policy,
+  starts_at,
+  expires_at,
+  metadata,
+}: {
+  account_id?: string;
+  owner_account_id?: string;
+  name?: string;
+  organization_name?: string;
+  allowed_domains?: string[];
+  pools?: SiteLicensePoolConfig[];
+  custom_terms_url?: string | null;
+  custom_policy_url?: string | null;
+  terms_version_label?: string | null;
+  renewal_policy?: string | null;
+  overage_policy?: string | null;
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+  metadata?: Record<string, unknown> | null;
+} = {}): Promise<SiteLicenseOverview> {
+  const actorId = requireAccount(account_id);
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  const ownerAccountId = `${owner_account_id ?? actorId}`.trim();
+  if (!ownerAccountId) {
+    throw Error("owner_account_id required");
+  }
+  return await adminProvisionSiteLicense0({
+    actor_account_id: actorId,
+    owner_account_id: ownerAccountId,
+    name: `${name ?? ""}`,
+    organization_name: `${organization_name ?? ""}`,
+    allowed_domains: allowed_domains ?? [],
+    pools: pools ?? [],
+    custom_terms_url,
+    custom_policy_url,
+    terms_version_label,
+    renewal_policy,
+    overage_policy,
+    starts_at,
+    expires_at,
+    metadata,
+  });
+}
+
+export async function getSiteLicenseOverview({
+  account_id,
+  site_license_id,
+}: {
+  account_id?: string;
+  site_license_id?: string;
+} = {}): Promise<SiteLicenseOverview> {
+  return await getSiteLicenseOverview0({
+    account_id: requireAccount(account_id),
+    site_license_id: `${site_license_id ?? ""}`.trim(),
+  });
+}
+
+export async function requestSiteLicensePool({
+  account_id,
+  package_id,
+  requester_note,
+  accepted_terms,
+}: {
+  account_id?: string;
+  package_id?: string;
+  requester_note?: string | null;
+  accepted_terms?: boolean;
+} = {}): Promise<SiteLicensePoolRequest> {
+  const actorId = requireAccount(account_id);
+  await assertAccountTrustedForProductAccess(
+    actorId,
+    "request site-license pool",
+  );
+  return await requestSiteLicensePool0({
+    account_id: actorId,
+    package_id: `${package_id ?? ""}`.trim(),
+    requester_note,
+    accepted_terms,
+  });
+}
+
+export async function reviewSiteLicensePoolRequest({
+  account_id,
+  request_id,
+  action,
+  review_note,
+}: {
+  account_id?: string;
+  request_id?: string;
+  action?: "approve" | "reject";
+  review_note?: string | null;
+} = {}): Promise<SiteLicensePoolRequest> {
+  return await reviewSiteLicensePoolRequest0({
+    actor_account_id: requireAccount(account_id),
+    request_id: `${request_id ?? ""}`.trim(),
+    action: action ?? "reject",
+    review_note,
   });
 }
 
