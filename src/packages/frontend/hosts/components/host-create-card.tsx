@@ -408,8 +408,13 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
     watchedRegion,
     watchedZone,
   ]);
+  const catalogLoadingForProvider =
+    provider.selectedProvider !== "none" &&
+    provider.selectedProvider !== "self-host" &&
+    !!provider.catalogLoading;
   const createDisabled =
     !canCreateHosts ||
+    catalogLoadingForProvider ||
     gcpRegionIncompatible ||
     gcpZoneIncompatible ||
     missingSelfHostTarget ||
@@ -440,10 +445,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
     provider.selectedProvider,
     requiredCatalogFields,
   ]);
-  const showCatalogLoading =
-    provider.selectedProvider !== "none" &&
-    provider.selectedProvider !== "self-host" &&
-    !!provider.catalogLoading;
+  const showCatalogLoading = catalogLoadingForProvider;
   const showCatalogRefreshGate =
     !showCatalogLoading && catalogMissingForProvider && hasExternalProviders;
   const providerLabel =
@@ -468,19 +470,6 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
         diskLabel: selectedDiskLabel,
       }),
     [selectedDiskLabel, selectedMachineOption],
-  );
-  const providerSelectForm = (
-    <HostCreateForm
-      form={formInstance}
-      canCreateHosts={canCreateHosts}
-      provider={provider}
-      billing={billing}
-      onProviderChange={onProviderChange}
-      onValuesChange={draftState.onValuesChange}
-      pricingSettings={pricingSettings}
-      draftManaged
-      showOnlyProviderSelect
-    />
   );
   const fullCreateForm = (
     <HostCreateForm
@@ -752,6 +741,20 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
       </div>
     </Card>
   );
+  const catalogLoadingSection = (
+    <Card
+      size="small"
+      title={<SectionTitle icon="cog" title="Configuration" />}
+      styles={CARD_STYLES}
+    >
+      <Space size="small">
+        <Spin size="small" />
+        <Typography.Text type="secondary">
+          Loading {providerLabel} catalog...
+        </Typography.Text>
+      </Space>
+    </Card>
+  );
   const summaryPanel = (
     <Card
       size="small"
@@ -893,54 +896,49 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
 
   if (showCatalogLoading) {
     return renderShell(
-      <Card size="small" title="Provider">
-        {providerSelectForm}
-      </Card>,
-      <Card size="small" title="Catalog">
-        <Space size="small">
-          <Spin size="small" />
-          <Typography.Text type="secondary">
-            Loading cloud catalog...
-          </Typography.Text>
-        </Space>
-      </Card>,
+      <>
+        {providerSection}
+        {catalogLoadingSection}
+      </>,
+      summaryPanel,
     );
   }
 
   if (showCatalogRefreshGate) {
     return renderShell(
-      <Card size="small" title="Provider">
-        {providerSelectForm}
-      </Card>,
-      <Card size="small" title="Catalog">
-        <Space orientation="vertical" style={{ width: "100%" }} size="middle">
-          <Alert
-            type="warning"
-            showIcon
-            title="Cloud catalog not loaded yet"
-            description="Before creating hosts for this provider, refresh its catalog to load regions and machine types."
-          />
-          {isAdmin ? (
-            <Button
-              type="primary"
-              size="large"
-              block
-              onClick={refreshCatalogAndNotify}
-              loading={catalogRefreshing}
-              disabled={!canCreateHosts}
-            >
-              Refresh catalog
-            </Button>
-          ) : (
+      <>
+        {providerSection}
+        <Card size="small" title="Catalog">
+          <Space orientation="vertical" style={{ width: "100%" }} size="middle">
             <Alert
-              type="info"
+              type="warning"
               showIcon
-              title="Contact an admin"
-              description="Contact an admin to refresh the provider catalog before creating hosts."
+              title="Cloud catalog not loaded yet"
+              description="Before creating hosts for this provider, refresh its catalog to load regions and machine types."
             />
-          )}
-        </Space>
-      </Card>,
+            {isAdmin ? (
+              <Button
+                type="primary"
+                size="large"
+                block
+                onClick={refreshCatalogAndNotify}
+                loading={catalogRefreshing}
+                disabled={!canCreateHosts}
+              >
+                Refresh catalog
+              </Button>
+            ) : (
+              <Alert
+                type="info"
+                showIcon
+                title="Contact an admin"
+                description="Contact an admin to refresh the provider catalog before creating hosts."
+              />
+            )}
+          </Space>
+        </Card>
+      </>,
+      summaryPanel,
     );
   }
 
