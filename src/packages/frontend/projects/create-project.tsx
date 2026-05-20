@@ -38,6 +38,7 @@ import {
   R2_REGIONS,
   type R2Region,
 } from "@cocalc/util/consts";
+import { COLORS } from "@cocalc/util/theme";
 import { SelectNewHost } from "@cocalc/frontend/hosts/select-new-host";
 import { RootfsScanStatus } from "@cocalc/frontend/rootfs/scan-status";
 import {
@@ -51,7 +52,10 @@ import {
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 import { isNewProjectRootfsSelectable } from "./create-project-rootfs";
-import { projectDraftToCreateOptions } from "./create/project-create-draft";
+import {
+  type ProjectCreateMode,
+  projectDraftToCreateOptions,
+} from "./create/project-create-draft";
 import { useProjectCreateDraft } from "./create/use-project-create-draft";
 
 interface Props {
@@ -59,6 +63,38 @@ interface Props {
   open: boolean;
   onClose: () => void;
 }
+
+const PROJECT_PRESETS: {
+  mode: ProjectCreateMode;
+  title: string;
+  description: string;
+  icon: string;
+}[] = [
+  {
+    mode: "standard",
+    title: "Standard",
+    description: "Default image, automatic host, nearest backups.",
+    icon: "project-outlined",
+  },
+  {
+    mode: "gpu",
+    title: "GPU",
+    description: "GPU-capable image when one is available.",
+    icon: "bolt",
+  },
+  {
+    mode: "teaching",
+    title: "Teaching",
+    description: "Stable defaults for classes and workshops.",
+    icon: "graduation-cap",
+  },
+  {
+    mode: "custom",
+    title: "Custom",
+    description: "Expose advanced placement and image controls.",
+    icon: "sliders",
+  },
+];
 
 export function NewProjectCreator({ default_value, open, onClose }: Props) {
   const intl = useIntl();
@@ -70,6 +106,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   const [createAction, setCreateAction] = useState<"create" | "open" | null>(
     null,
   );
+  const [titlePreview, setTitlePreview] = useState<string>(default_value);
   const saving = createAction != null;
   const new_project_title_ref = useRef<any>(null);
   const [rootfsModalOpen, setRootfsModalOpen] = useState<boolean>(false);
@@ -90,6 +127,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     setRegion,
     setHost,
     setRootfs,
+    applyPreset,
     reset,
   } = useProjectCreateDraft({ defaultValue: default_value });
   const regionOptions = useMemo(
@@ -139,6 +177,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
 
   useEffect(() => {
     form.setFieldsValue({ title: draft.title });
+    setTitlePreview(draft.title);
   }, [draft.title, form]);
 
   const is_mounted_ref = useIsMountedRef();
@@ -151,6 +190,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
 
   function reset_form(): void {
     reset();
+    setTitlePreview(draft.title);
     set_error("");
     setCreateAction(null);
     setRootfsModalOpen(false);
@@ -435,6 +475,143 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     );
   }
 
+  function renderPresetSection(): React.JSX.Element {
+    return (
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+          gap: 10,
+        }}
+      >
+        {PROJECT_PRESETS.map((preset) => {
+          const active = draft.mode === preset.mode;
+          return (
+            <Button
+              key={preset.mode}
+              onClick={() => applyPreset(preset.mode)}
+              disabled={saving}
+              style={{
+                height: "auto",
+                minHeight: 82,
+                padding: "10px 12px",
+                textAlign: "left",
+                borderColor: active ? COLORS.BS_BLUE_BGRND : COLORS.GRAY_LL,
+                background: active ? COLORS.ANTD_BG_BLUE_L : "white",
+                boxShadow: active
+                  ? `0 0 0 1px ${COLORS.BS_BLUE_BGRND} inset`
+                  : undefined,
+              }}
+            >
+              <Space align="start" size="small">
+                <Icon
+                  name={preset.icon as any}
+                  style={{
+                    color: active ? COLORS.BS_BLUE_TEXT : COLORS.GRAY_M,
+                    marginTop: 2,
+                  }}
+                />
+                <span>
+                  <div style={{ fontWeight: 600, color: COLORS.GRAY_D }}>
+                    {preset.title}
+                  </div>
+                  <div
+                    style={{
+                      color: COLORS.GRAY_M,
+                      fontSize: 12,
+                      lineHeight: 1.35,
+                      whiteSpace: "normal",
+                    }}
+                  >
+                    {preset.description}
+                  </div>
+                </span>
+              </Space>
+            </Button>
+          );
+        })}
+      </div>
+    );
+  }
+
+  function renderSummarySection(): React.JSX.Element {
+    const title =
+      `${(new_project_title_ref.current as any)?.input?.value ?? titlePreview}`.trim() ||
+      "Untitled project";
+    return (
+      <Card
+        size="small"
+        styles={{ body: { padding: 14 } }}
+        style={{
+          position: "sticky",
+          top: 0,
+          borderColor: COLORS.GRAY_LL,
+          background: COLORS.GRAY_LLL,
+        }}
+      >
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>Summary</div>
+            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              Choose whether to start and open immediately.
+            </Paragraph>
+          </div>
+          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+            {summaryRow("Title", title)}
+            {summaryRow("Preset", presetTitle(draft.mode))}
+            {summaryRow("Runtime", summary.rootfsLabel)}
+            {summaryRow(
+              "Host",
+              summary.hostName || summary.host_id || "Automatic placement",
+            )}
+            {summaryRow("Backups", R2_REGION_LABELS[draft.region])}
+          </Space>
+          <Space wrap>
+            {summary.gpu && <Tag color="purple">GPU</Tag>}
+            {selectedRootfsEntry?.section && (
+              <Tag color={sectionTagColor(selectedRootfsEntry.section)}>
+                {sectionLabel(selectedRootfsEntry.section)}
+              </Tag>
+            )}
+            {selectedRootfsEntry?.warning && <Tag color="orange">Review</Tag>}
+            {!selectedRootfsEntry && <Tag color="orange">Advanced OCI</Tag>}
+          </Space>
+          {summary.warnings.length > 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              message={summary.warnings.join(" ")}
+            />
+          )}
+          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+            <Button
+              type="primary"
+              block
+              onClick={() => create_project({ openAfterCreate: true })}
+              disabled={isDisabled()}
+              loading={createAction === "open"}
+              icon={<Icon name="arrow-right" />}
+            >
+              Create and Open
+            </Button>
+            <Button
+              block
+              onClick={() => create_project({ openAfterCreate: false })}
+              disabled={isDisabled()}
+              loading={createAction === "create"}
+              icon={<Icon name="plus-circle" />}
+            >
+              Create Project
+            </Button>
+            <Button block onClick={cancel_editing} disabled={saving}>
+              {intl.formatMessage(labels.cancel)}
+            </Button>
+          </Space>
+        </Space>
+      </Card>
+    );
+  }
+
   function render_input_section(): React.JSX.Element | undefined {
     const helpTxt = intl.formatMessage({
       id: "projects.create-project.helpTxt",
@@ -443,6 +620,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
 
     return (
       <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+        {renderPresetSection()}
         <Form form={form} layout="vertical">
           <Form.Item
             label={intl.formatMessage(labels.title)}
@@ -461,6 +639,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
               placeholder={`Name your new ${projectLabelLower}...`}
               disabled={saving}
               onKeyDown={handle_keypress}
+              onChange={(e) => setTitlePreview(e.target.value)}
               autoFocus
             />
           </Form.Item>
@@ -536,7 +715,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     <Modal
       open={open}
       destroyOnHidden
-      width="min(960px, 96vw)"
+      width="min(1100px, 96vw)"
       title={
         <Space size="small">
           <Icon name="plus-circle" />
@@ -558,31 +737,41 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
           Pick a title now and tune the rest later.
         </Paragraph>
-        {render_input_section()}
-        <Space>
-          <Button onClick={cancel_editing} disabled={saving}>
-            {intl.formatMessage(labels.cancel)}
-          </Button>
-          <Button
-            onClick={() => create_project({ openAfterCreate: false })}
-            disabled={isDisabled()}
-            loading={createAction === "create"}
-            icon={<Icon name="plus-circle" />}
-          >
-            Create Project
-          </Button>
-          <Button
-            type="primary"
-            onClick={() => create_project({ openAfterCreate: true })}
-            disabled={isDisabled()}
-            loading={createAction === "open"}
-            icon={<Icon name="arrow-right" />}
-          >
-            Create and Open
-          </Button>
-        </Space>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1fr) minmax(260px, 320px)",
+            gap: 16,
+            alignItems: "start",
+          }}
+        >
+          {render_input_section()}
+          {renderSummarySection()}
+        </div>
       </Space>
     </Modal>
+  );
+}
+
+function presetTitle(mode: ProjectCreateMode): string {
+  return PROJECT_PRESETS.find((preset) => preset.mode === mode)?.title ?? mode;
+}
+
+function summaryRow(label: string, value: React.ReactNode): React.JSX.Element {
+  return (
+    <div>
+      <div style={{ color: COLORS.GRAY_M, fontSize: 11 }}>{label}</div>
+      <div
+        style={{
+          color: COLORS.GRAY_D,
+          fontSize: 13,
+          fontWeight: 600,
+          overflowWrap: "anywhere",
+        }}
+      >
+        {value}
+      </div>
+    </div>
   );
 }
 
