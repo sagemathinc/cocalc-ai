@@ -22,6 +22,7 @@ import {
 import getPool from "@cocalc/database/pool";
 import createAccountLocal from "@cocalc/server/accounts/create-account";
 import deleteAccountLocal from "@cocalc/server/accounts/delete";
+import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import { verifyLocalSignInPassword } from "@cocalc/server/auth/verify-sign-in-password";
 import {
   deleteClusterAccountApiKeyDirectoryEntryDirect,
@@ -227,6 +228,24 @@ export async function verifyClusterAccountSignInPassword({
     client: getInterBayFabricClient(),
     dest_bay: targetBay,
   }).verifySignInPassword({ email_address, password });
+}
+
+export async function assertClusterAccountTrustedForProductAccess({
+  account_id,
+  action,
+}: {
+  account_id: string;
+  action: string;
+}): Promise<void> {
+  const account = await getClusterAccountById(account_id);
+  if (!account?.home_bay_id || account.home_bay_id === currentBayId()) {
+    await assertAccountTrustedForProductAccess(account_id, action);
+    return;
+  }
+  await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: account.home_bay_id,
+  }).assertProductAccessTrust({ account_id, action });
 }
 
 export async function provisionLocalClusterAccount(

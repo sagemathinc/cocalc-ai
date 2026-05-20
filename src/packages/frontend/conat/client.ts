@@ -2257,7 +2257,12 @@ export class ConatClient extends EventEmitter {
     project_id?: string;
     timeout?: number;
   }) => {
-    const subject = `hub.account.${this.client.account_id}.${service}`;
+    const account_id =
+      this.client.account_id || this._conatClient?.info?.user?.account_id;
+    if (!account_id) {
+      throw Error("user must be signed in");
+    }
+    const subject = `hub.account.${account_id}.${service}`;
     const routeToProjectHost =
       !lite &&
       !!project_id &&

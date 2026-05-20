@@ -2,8 +2,10 @@
 
 Date: 2026-05-19
 
-Status: design spec. Do not implement until the email-token collaboration
-invite work is fully finished and validated.
+Status: ready for implementation. Email-token collaboration invites are
+functionally complete as of 2026-05-20, with remaining work limited to edge-case
+validation and observability. This site-license plan is now the next major
+implementation track.
 
 ## Problem
 
@@ -601,6 +603,66 @@ CLI:
 The CLI matters for enterprise onboarding, migrations, and scripted demos.
 
 ## Implementation Phases
+
+### Phase 1 Vertical Slice: Ship the Core Invariant
+
+The first implementation should be a small complete path, not the whole
+procurement/admin surface. It should prove the core invariant:
+
+> A site license has named seat pools; users claim or request exactly one
+> appropriate pool; approval-required pools are reviewed by delegated managers;
+> grants are auditable, revocable, and reflected in effective membership.
+
+Scope:
+
+- Add the `site_licenses`, `site_license_managers`, and
+  `site_license_pool_requests` schema.
+- Represent pools as `membership_packages.kind = "site"` rows linked by
+  `metadata.site_license_id`.
+- Add shared TypeScript types for site licenses, managers, pools, requests,
+  verification policy, terms links, and overage/renewal policy.
+- Add admin/CLI provisioning for one site license with two pools:
+  `Students` and `Instructors`.
+- Add an explicit manager list with `owner`, `manager`, and `viewer` roles.
+- Keep baseline student claim as explicit click-to-claim using verified
+  institutional email and current package assignment machinery.
+- Add instructor request creation for approval-required pools.
+- Add manager approval/rejection APIs that recheck cap availability and create
+  the package assignment/grant through existing membership package machinery.
+- Enforce one active pool per account per site license; instructor approval
+  replaces a lower student grant.
+- Record custom terms/policy acceptance metadata when URLs are configured.
+- Add minimal manager overview data: pool cap, active count, pending request
+  count, available seats, and recent approvals/rejections.
+- Add audit records or structured metadata for manager changes, requests,
+  approvals, rejections, and revocations.
+
+Explicitly out of the first slice:
+
+- Full polished manager dashboard.
+- CSV export.
+- Scheduled affiliation reverification jobs.
+- SSO affiliation enforcement beyond storing `verification_policy =
+  "sso-affiliation"` as a future-supported policy.
+- Soft overages or true-up billing.
+- Automatic student auto-claim.
+
+Acceptance criteria:
+
+- CoCalc admin can create a site license with student and instructor pools and
+  add an initial owner manager.
+- A verified-domain user can claim a student seat.
+- A verified-domain user can request instructor access.
+- A site-license manager can approve or reject the instructor request.
+- Approval upgrades effective membership to the instructor tier and releases
+  the student seat for the same site license.
+- Cap checks prevent claiming or approval past the pool limit.
+- Custom terms/policy links, if configured, are shown before claim/request and
+  acceptance is recorded.
+- Existing one-pool site packages still resolve as before or are treated as
+  backward-compatible single-pool licenses.
+- Focused tests cover claim, request, approval, rejection, cap recheck,
+  one-active-pool upgrade, manager authorization, and custom terms metadata.
 
 ### Phase 1: Schema and Types
 

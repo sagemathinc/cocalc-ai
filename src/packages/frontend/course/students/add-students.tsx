@@ -91,6 +91,17 @@ export default function AddStudents({ name, students, close }: Props) {
     if (err) {
       return <ShowError error={trunc(err, 1024)} setError={setErr} />;
     }
+    if (adding) {
+      return (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginTop: "12px" }}
+          message="Adding students..."
+          description="CoCalc is creating student projects and invite links."
+        />
+      );
+    }
     if (parsed.invalidRows.length > 0) {
       return (
         <Alert
@@ -130,109 +141,113 @@ export default function AddStudents({ name, students, close }: Props) {
         borderColor: COLORS.GRAY_L0,
       }}
     >
-      <Flex gap={24} align="stretch" wrap="wrap">
-        <div style={{ flex: "1 1 520px", minWidth: 320 }}>
-          <Space direction="vertical" size={10} style={{ width: "100%" }}>
-            <div>
-              <Title level={3} style={{ margin: 0 }}>
-                <Icon name="users" /> Add Students to Your Course
-              </Title>
-              <Paragraph type="secondary" style={{ margin: "8px 0 0" }}>
-                Paste student email addresses or a roster. CoCalc will create
-                student projects and secure invite links; students choose their
-                own CoCalc account when accepting.
-              </Paragraph>
-            </div>
-            <Form onFinish={addStudents}>
-              <Form.Item style={{ marginBottom: 8 }}>
-                <Input.TextArea
-                  value={rosterInput}
-                  rows={8}
-                  autoFocus
-                  onChange={(e) => setRosterInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") {
-                      clear();
-                    }
-                  }}
-                  placeholder={`alice@school.edu\nBob Lee <bob@school.edu>\ncarol@school.edu`}
-                  style={{ fontFamily: "monospace" }}
-                />
-              </Form.Item>
-              <Text type="secondary">
-                One email per line is best. Names are optional, e.g.{" "}
-                <Text code>Jane Doe &lt;jane@school.edu&gt;</Text>. This does
-                not search for CoCalc accounts.
-              </Text>
-              {renderFeedback()}
-              <Flex
-                justify="space-between"
-                align="center"
-                gap={12}
-                wrap="wrap"
-                style={{ marginTop: 16 }}
-              >
-                <Space wrap>
-                  <Button
-                    type="primary"
-                    htmlType="submit"
-                    loading={adding}
-                    disabled={!canAdd}
-                  >
-                    <Icon name="user-plus" />{" "}
-                    <FormattedMessage
-                      id="course.add-students.create-invites"
-                      defaultMessage="{count, plural, one {Add 1 student} other {Add # students}}"
-                      values={{ count: parsed.students.length }}
-                    />
-                  </Button>
-                  <Button onClick={clear} disabled={!rosterInput.trim()}>
-                    Clear
-                  </Button>
-                </Space>
-                <Text type="secondary">
-                  {parsed.students.length > 0
-                    ? `${parsed.students.length} ready to add`
-                    : "No valid emails yet"}
-                </Text>
-              </Flex>
-            </Form>
-          </Space>
+      <Space direction="vertical" size={18} style={{ width: "100%" }}>
+        <div>
+          <Title level={3} style={{ margin: 0 }}>
+            <Icon name="users" /> Add Students to Your Course
+          </Title>
+          <Paragraph type="secondary" style={{ margin: "8px 0 0" }}>
+            Paste student email addresses or a roster. CoCalc will create
+            student projects and secure invite links; students choose their own
+            CoCalc account when accepting.
+          </Paragraph>
         </div>
-        <div style={{ flex: "0 1 300px", minWidth: 260 }}>
+        <Form onFinish={addStudents}>
+          <Form.Item
+            label={<Text strong>Student email addresses</Text>}
+            style={{ marginBottom: 8 }}
+          >
+            <Input.TextArea
+              value={rosterInput}
+              rows={8}
+              autoFocus
+              onChange={(e) => setRosterInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  clear();
+                }
+              }}
+              placeholder={`alice@school.edu\nBob Lee <bob@school.edu>\ncarol@school.edu`}
+              style={{ fontFamily: "monospace" }}
+            />
+          </Form.Item>
+          <Text type="secondary">
+            One email per line is best. Names are optional, e.g.{" "}
+            <Text code>Jane Doe &lt;jane@school.edu&gt;</Text>. This does not
+            search for CoCalc accounts.
+          </Text>
+          {renderFeedback()}
           <Card
             size="small"
             style={{
-              height: "100%",
+              marginTop: 16,
               background: COLORS.GRAY_LLL,
               borderColor: COLORS.GRAY_L0,
             }}
           >
-            <Space direction="vertical" size={14}>
-              <div>
-                <Text strong>
-                  <Icon name="lock" /> Privacy-safe invite flow
-                </Text>
-                <Paragraph type="secondary" style={{ margin: "6px 0 0" }}>
-                  CoCalc does not look up students by email here. Email is used
-                  as the invite delivery channel, not as an account identity.
-                </Paragraph>
+            <Flex gap={24} align="stretch" wrap="wrap">
+              <div style={{ flex: "1 1 360px", minWidth: 280 }}>
+                <Space direction="vertical" size={12}>
+                  <div>
+                    <Text strong>
+                      <Icon name="lock" /> Privacy-safe invite flow
+                    </Text>
+                    <Paragraph type="secondary" style={{ margin: "6px 0 0" }}>
+                      CoCalc uses email to deliver invite links, not to look up
+                      or expose student accounts.
+                    </Paragraph>
+                  </div>
+                  <Space direction="vertical" size={10}>
+                    <StepTag n={1} text="Paste roster emails" />
+                    <StepTag n={2} text="Create student projects" />
+                    <StepTag n={3} text="Send or copy invite links" />
+                  </Space>
+                </Space>
               </div>
-              <Space direction="vertical" size={8}>
-                <StepTag n={1} text="Paste roster emails" />
-                <StepTag n={2} text="Create student projects" />
-                <StepTag n={3} text="Send or copy invite links" />
-              </Space>
-              <Alert
-                type="success"
-                showIcon
-                message="Students accept explicitly"
-                description="Opening the link shows an accept/decline page. It does not automatically add them."
-              />
-            </Space>
+              <div style={{ flex: "1 1 300px", minWidth: 260 }}>
+                <Alert
+                  type="success"
+                  showIcon
+                  style={{ height: "100%" }}
+                  message="Students accept explicitly"
+                  description="Opening the link shows an accept/decline page. It does not automatically add them."
+                />
+              </div>
+            </Flex>
           </Card>
-        </div>
-      </Flex>
+          <Flex
+            justify="space-between"
+            align="center"
+            gap={12}
+            wrap="wrap"
+            style={{ marginTop: 16 }}
+          >
+            <Space wrap>
+              <Button
+                type="primary"
+                htmlType="submit"
+                loading={adding}
+                disabled={!canAdd}
+              >
+                <Icon name="user-plus" />{" "}
+                <FormattedMessage
+                  id="course.add-students.create-invites"
+                  defaultMessage="{count, plural, one {Add 1 student} other {Add # students}}"
+                  values={{ count: parsed.students.length }}
+                />
+              </Button>
+              <Button onClick={clear} disabled={!rosterInput.trim()}>
+                Clear
+              </Button>
+            </Space>
+            <Text type="secondary">
+              {parsed.students.length > 0
+                ? `${parsed.students.length} ready to add`
+                : "No valid emails yet"}
+            </Text>
+          </Flex>
+        </Form>
+      </Space>
     </Card>
   );
 }

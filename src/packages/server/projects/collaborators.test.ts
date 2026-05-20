@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHash } from "node:crypto";
 import { encryptSecretSettingValue } from "@cocalc/util/secret-settings-crypto";
 
 let assertLocalProjectCollaboratorMock: jest.Mock;
@@ -160,8 +160,8 @@ describe("project collaborators local bay access", () => {
   }));
 
   function inviteTokenHash(token: string): string {
-    const aad = "project_collab_invites.email-token:v1";
-    const digest = createHmac("sha256", Buffer.alloc(32, 1))
+    const aad = "project_collab_invites.email-token:v2";
+    const digest = createHash("sha256")
       .update(aad)
       .update("\0")
       .update(token)
@@ -556,7 +556,7 @@ describe("project collaborators local bay access", () => {
         invite_id: "77777777-7777-4777-8777-777777777777",
         invite_source: "email",
         target_email: "nobody@example.com",
-        invite_url: expect.stringContaining("/invites/project/"),
+        invite_url: expect.stringMatching(/\/invites\/[^/?#]+$/),
       }),
     ]);
     expect(queryMock).toHaveBeenCalledWith(
@@ -674,10 +674,64 @@ describe("project collaborators local bay access", () => {
       email_blocked_reason: "email_not_configured",
       invites: [
         expect.objectContaining({
-          invite_url: expect.stringContaining("/invites/project/"),
+          invite_url: expect.stringMatching(/\/invites\/[^/?#]+$/),
         }),
       ],
     });
+  });
+
+  it("migrates copied pending invite links to bay-independent token hashes", async () => {
+    const inviteId = "77777777-7777-4777-8777-777777777777";
+    const token = "copied-pending-token";
+    const legacyHash = "project_collab_invites.email-token:v1:legacy";
+    const tokenCiphertext = encryptSecretSettingValue(
+      "project_collab_invites.token",
+      token,
+      Buffer.alloc(32, 1),
+    );
+
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "SELECT project_id, inviter_account_id, token_hash, token_ciphertext",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              inviter_account_id: ACCOUNT_ID,
+              token_hash: legacyHash,
+              token_ciphertext: tokenCiphertext,
+              scope: "project_collab",
+              status: "pending",
+              created: new Date("2026-04-01T00:00:00Z"),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { copyEmailProjectInviteLink } = await import("./collaborators");
+    await expect(
+      copyEmailProjectInviteLink({
+        account_id: ACCOUNT_ID,
+        invite_id: inviteId,
+      }),
+    ).resolves.toMatchObject({
+      invite_id: inviteId,
+      invite_url: "https://example.com/invites/copied-pending-token",
+    });
+
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("SET token_hash=$2"),
+      [inviteId, inviteTokenHash(token)],
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO project_collab_invite_directory"),
+      expect.arrayContaining([inviteId, PROJECT_ID, inviteTokenHash(token)]),
+    );
   });
 
   it("binds accepted course email invites to the student project course field", async () => {

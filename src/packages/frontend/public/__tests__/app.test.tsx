@@ -136,11 +136,7 @@ describe("section route parsers", () => {
     expect(isPublicTarget("/software/cocalc-plus")).toBe(false);
     expect(isPublicTarget("/pricing")).toBe(true);
     expect(isPublicTarget("/features/jupyter-notebook")).toBe(true);
-    expect(
-      isPublicTarget(
-        "/invites/project/22222222-2222-4222-8222-222222222222/77777777-7777-4777-8777-777777777777?token=abc",
-      ),
-    ).toBe(true);
+    expect(isPublicTarget("/invites/abc")).toBe(true);
   });
 
   it("uses an explicit not-found route for unknown public paths", () => {

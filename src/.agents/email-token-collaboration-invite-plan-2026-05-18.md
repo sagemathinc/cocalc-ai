@@ -2,9 +2,11 @@
 
 Date: 2026-05-18
 
-Status: partially implemented. Project email-token invites, including
-side-effect-free preview and Accept/Decline/Block confirmation, work end-to-end
-as of 2026-05-19; remaining work is listed below.
+Status: functionally complete; validation and hardening remain. Project and
+course email-token invites, including side-effect-free preview,
+Accept/Decline/Block confirmation, token-only invite URLs, manual-link fallback,
+email-enabled delivery, and multibay accept routing, work end-to-end as of
+2026-05-20.
 
 ## Problem
 
@@ -137,36 +139,23 @@ Token storage requirements:
 
 ## URL Shape
 
-Use a stable route such as:
+Use the stable token-only route:
 
 ```text
-/invites/project/<invite_id>?token=<secret>
+/invites/<opaque-token>
 ```
 
-or:
-
-```text
-/invites/redeem?invite_id=<invite_id>&token=<secret>
-```
-
-The URL should be safe to copy from the inviter UI. Because it is a bearer
-capability, the UI must label it clearly:
+The URL is safe to copy from the inviter UI, but it is a bearer capability, so
+the UI must label it clearly:
 
 ```text
 Anyone with this link can accept the invite until it expires or is revoked.
 ```
 
-The current implementation uses:
-
-```text
-/invites/project/<project_id>/<invite_id>?token=<secret>
-```
-
-The project id is intentionally included for now because it helps route the
-request correctly in the multibay architecture. A shorter shape such as
-`/invites/<opaque-token>` is desirable after the rest of the flow is stable, but
-that requires either a global token lookup path or an opaque token format that
-contains enough non-secret routing information.
+Routing is handled by the central invite directory keyed by the hashed token,
+not by project or invite ids embedded in the URL. This avoids leaking project
+implementation details in links and makes multibay redemption route by explicit
+directory ownership.
 
 ## Account Search Policy
 
@@ -524,7 +513,7 @@ Phase 6: LMS readiness.
 - Add inert context fields for future LMS identifiers if needed.
 - Document Canvas/LTI binding expectations before implementing LMS import.
 
-## Implementation Status and Remaining Work (2026-05-19)
+## Implementation Status and Remaining Work (2026-05-20)
 
 Implemented:
 
@@ -541,8 +530,13 @@ Implemented:
   manual-delivery invite link instead of failing or claiming email was sent.
 - Pending project invites can be listed and revoked from the collaborator UI.
 - Public `/invites/*` routing reaches the public shell.
+- Token-only `/invites/<opaque-token>` URLs are generated and accepted.
+- The central invite directory routes token preview and redemption without
+  embedding project ids or invite ids in the URL.
 - Email token redemption routes the project collaborator write through the
   project-owning bay.
+- Email token accept checks account trust on the accepting account's home bay
+  before forwarding the checked accept to the project-owning bay.
 - Opening a token link while signed in previews the invite without adding a
   collaborator, then requires explicit Accept, Decline, or Block.
 - Signed-in invite confirmation reminds the user which account will accept the
@@ -551,6 +545,10 @@ Implemented:
   collaborator.
 - Course-scoped project invite redemption can bind the accepting account id
   through the student-project course metadata path.
+- Full course invite creation and acceptance have been manually validated with
+  email enabled.
+- Course add-students UI uses email-first roster entry and copyable invite
+  links.
 - `cocalc-cli` has project invite commands for create, copy-link, redeem, list,
   accept, decline, block, revoke, blocks, and unblock.
 - Manual-delivery project invite results are rendered as successful structured
@@ -558,16 +556,12 @@ Implemented:
 
 Remaining before this plan is fully finished:
 
-- Complete full course-invite UI and end-to-end tests, including accepting with
-  an account whose primary email differs from the roster email.
-- Add site-license student/instructor pool support and delegated instructor
-  approval.
-- Decide and implement the shorter `/invites/<opaque-token>` URL after the
-  current multibay route is stable.
+- Complete the remaining validation matrix below, including accepting a course
+  invite with an account whose primary email differs from the roster email.
 - Add abuse/admin observability for invite creation, email sends, copied links,
   accepts, revokes, expirations, and rate-limit denials.
-- Run the remaining validation matrix below, especially a site with email
-  configured and full course workflows.
+- Keep site-license student/instructor pools in the separate plan:
+  `src/.agents/site-license-seat-pools-approval-plan-2026-05-19.md`.
 
 ## Open Questions
 

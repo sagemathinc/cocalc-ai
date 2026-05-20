@@ -96,16 +96,9 @@ describe("getPublicAuthRouteFromPath", () => {
       code: "CODE12345",
       kind: "redeem",
     });
-    expect(
-      getPublicAuthRouteFromPath(
-        "/base/invites/project/22222222-2222-4222-8222-222222222222/77777777-7777-4777-8777-777777777777",
-        "?token=secret",
-      ),
-    ).toEqual({
-      inviteId: "77777777-7777-4777-8777-777777777777",
+    expect(getPublicAuthRouteFromPath("/base/invites/secret-token")).toEqual({
       kind: "project-invite",
-      projectId: "22222222-2222-4222-8222-222222222222",
-      token: "secret",
+      token: "secret-token",
     });
     expect(
       getPublicAuthRouteFromPath("/base/auth/cli-login/challenge-1"),
@@ -448,9 +441,7 @@ describe("PublicAuthApp", () => {
       <PublicAuthApp
         config={config({ is_authenticated: true })}
         initialRoute={{
-          inviteId: "77777777-7777-4777-8777-777777777777",
           kind: "project-invite",
-          projectId: "22222222-2222-4222-8222-222222222222",
           token: "secret",
         }}
       />,
@@ -462,8 +453,6 @@ describe("PublicAuthApp", () => {
     expect(screen.getByText("Please join")).not.toBeNull();
     expect(mockedApi).toHaveBeenCalledTimes(1);
     expect(mockedApi).toHaveBeenCalledWith("projects/preview-email-invite", {
-      invite_id: "77777777-7777-4777-8777-777777777777",
-      project_id: "22222222-2222-4222-8222-222222222222",
       token: "secret",
     });
   });
@@ -477,9 +466,7 @@ describe("PublicAuthApp", () => {
       <PublicAuthApp
         config={config({ is_authenticated: false })}
         initialRoute={{
-          inviteId: "77777777-7777-4777-8777-777777777777",
           kind: "project-invite",
-          projectId: "22222222-2222-4222-8222-222222222222",
           token: "secret",
         }}
       />,
@@ -514,9 +501,7 @@ describe("PublicAuthApp", () => {
           is_authenticated: true,
         })}
         initialRoute={{
-          inviteId: "77777777-7777-4777-8777-777777777777",
           kind: "project-invite",
-          projectId: "22222222-2222-4222-8222-222222222222",
           token: "secret",
         }}
       />,
@@ -561,9 +546,7 @@ describe("PublicAuthApp", () => {
       <PublicAuthApp
         config={config({ is_authenticated: true })}
         initialRoute={{
-          inviteId: "77777777-7777-4777-8777-777777777777",
           kind: "project-invite",
-          projectId: "22222222-2222-4222-8222-222222222222",
           token: "secret",
         }}
       />,
@@ -578,8 +561,6 @@ describe("PublicAuthApp", () => {
       "projects/respond-email-invite",
       {
         action: "accept",
-        invite_id: "77777777-7777-4777-8777-777777777777",
-        project_id: "22222222-2222-4222-8222-222222222222",
         token: "secret",
       },
     );
@@ -603,9 +584,7 @@ describe("PublicAuthApp", () => {
       <PublicAuthApp
         config={config({ is_authenticated: true })}
         initialRoute={{
-          inviteId: "77777777-7777-4777-8777-777777777777",
           kind: "project-invite",
-          projectId: "22222222-2222-4222-8222-222222222222",
           token: "secret",
         }}
       />,
@@ -643,9 +622,7 @@ describe("PublicAuthApp", () => {
       <PublicAuthApp
         config={config({ is_authenticated: true })}
         initialRoute={{
-          inviteId: "77777777-7777-4777-8777-777777777777",
           kind: "project-invite",
-          projectId: "22222222-2222-4222-8222-222222222222",
           token: "secret",
         }}
       />,
@@ -658,8 +635,6 @@ describe("PublicAuthApp", () => {
       "projects/respond-email-invite",
       {
         action: "decline",
-        invite_id: "77777777-7777-4777-8777-777777777777",
-        project_id: "22222222-2222-4222-8222-222222222222",
         token: "secret",
       },
     );

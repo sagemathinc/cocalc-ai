@@ -25,6 +25,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import {
   Gap,
@@ -159,6 +160,7 @@ export function useInviteInboxState({
   includeOutgoing = true,
   includeBlocks = true,
 }: UseInviteInboxStateOptions): InviteInboxState {
+  const account_id = useTypedRedux("account", "account_id");
   const [loading, set_loading] = useState<boolean>(false);
   const [error, set_error] = useState<string>("");
   const [busy, set_busy] = useState<string>("");
@@ -167,6 +169,17 @@ export function useInviteInboxState({
   const [blocks, set_blocks] = useState<ProjectCollabInviteBlockRow[]>([]);
 
   const load = useCallback(async () => {
+    if (!account_id) {
+      set_loading(false);
+      set_error("");
+      set_incoming([]);
+      set_outgoing([]);
+      set_blocks([]);
+      if (project_id == null && includeIncoming) {
+        setUnreadIncomingInviteCount(0);
+      }
+      return;
+    }
     set_loading(true);
     set_error("");
     try {
@@ -205,7 +218,7 @@ export function useInviteInboxState({
     } finally {
       set_loading(false);
     }
-  }, [includeBlocks, includeIncoming, includeOutgoing, project_id]);
+  }, [account_id, includeBlocks, includeIncoming, includeOutgoing, project_id]);
 
   useEffect(() => {
     void load();

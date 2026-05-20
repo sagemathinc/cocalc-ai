@@ -11,13 +11,13 @@ export default async function handle(req, res) {
   try {
     const account_id = await getAccountId(req);
     const { invite_id, project_id, token } = getParams(req);
-    if (!project_id || !invite_id || !token) {
+    if (!token) {
       throw new Error("project invite link is incomplete");
     }
     const invite = await previewEmailProjectInvite({
       account_id,
-      project_id,
-      invite_id,
+      ...(project_id ? { project_id } : {}),
+      ...(invite_id ? { invite_id } : {}),
       token,
     });
     res.json({ invite });

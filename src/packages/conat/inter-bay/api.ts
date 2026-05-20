@@ -117,6 +117,31 @@ export interface ResolveHostBayRequest {
   include_deleted?: boolean;
 }
 
+export interface ProjectCollabInviteDirectoryEntry {
+  invite_id: string;
+  project_id: string;
+  owning_bay_id: string;
+  token_hash: string;
+  invite_source?: string | null;
+  scope?: string | null;
+  status?: ProjectCollabInviteStatus | null;
+}
+
+export interface UpsertProjectCollabInviteDirectoryRequest {
+  invite_id: string;
+  project_id: string;
+  owning_bay_id: string;
+  token_hash: string;
+  invite_source?: string | null;
+  scope?: string | null;
+  status?: ProjectCollabInviteStatus | null;
+}
+
+export interface ResolveProjectCollabInviteDirectoryRequest {
+  invite_id?: string;
+  token_hash?: string;
+}
+
 export interface ProjectControlStartRequest {
   project_id: string;
   account_id: string;
@@ -762,6 +787,11 @@ export interface AccountLocalRedeemVerifyEmailRequest {
   token: string;
 }
 
+export interface AccountLocalAssertProductAccessTrustRequest {
+  account_id: string;
+  action: string;
+}
+
 export interface AccountLocalGetMembershipPackagesRequest {
   owner_account_id: string;
 }
@@ -1052,6 +1082,7 @@ export interface ProjectCollabInviteRedeemEmailRequest {
   invite_id: string;
   token: string;
   project_id?: string;
+  trusted_product_access_checked?: boolean;
 }
 
 export interface ProjectCollabInvitePreviewEmailRequest {
@@ -1067,6 +1098,7 @@ export interface ProjectCollabInviteRespondEmailRequest {
   invite_id: string;
   token: string;
   project_id?: string;
+  trusted_product_access_checked?: boolean;
 }
 
 export interface ProjectCollaboratorInviteUsageRequest {
@@ -1127,7 +1159,11 @@ export type ProjectControlMethod =
   | "rehome"
   | "accept-rehome"
   | "active-op";
-export type DirectoryMethod = "resolve-project-bay" | "resolve-host-bay";
+export type DirectoryMethod =
+  | "resolve-project-bay"
+  | "resolve-host-bay"
+  | "resolve-project-collab-invite"
+  | "upsert-project-collab-invite";
 export type BayDirectoryMethod = DirectoryMethod;
 export type ProjectReferenceMethod = "get";
 export type ProjectDetailsMethod = "get";
@@ -1250,6 +1286,7 @@ export type AccountLocalMethod =
   | "verify-sign-in-password"
   | "verify-fresh-auth-credentials"
   | "redeem-verify-email"
+  | "assert-product-access-trust"
   | "reconcile-dedicated-host-purchase-session"
   | "close-dedicated-host-purchase-session"
   | "reserve-project-runtime-slot"
@@ -1321,11 +1358,29 @@ interface ResolveHostBayApi {
   resolveHostBay: (opts: ResolveHostBayRequest) => Promise<BayOwnership | null>;
 }
 
+interface ResolveProjectCollabInviteDirectoryApi {
+  resolveProjectCollabInvite: (
+    opts: ResolveProjectCollabInviteDirectoryRequest,
+  ) => Promise<ProjectCollabInviteDirectoryEntry | null>;
+}
+
+interface UpsertProjectCollabInviteDirectoryApi {
+  upsertProjectCollabInvite: (
+    opts: UpsertProjectCollabInviteDirectoryRequest,
+  ) => Promise<void>;
+}
+
 export interface InterBayDirectoryApi {
   resolveProjectBay: (
     opts: ResolveProjectBayRequest,
   ) => Promise<BayOwnership | null>;
   resolveHostBay: (opts: ResolveHostBayRequest) => Promise<BayOwnership | null>;
+  resolveProjectCollabInvite: (
+    opts: ResolveProjectCollabInviteDirectoryRequest,
+  ) => Promise<ProjectCollabInviteDirectoryEntry | null>;
+  upsertProjectCollabInvite: (
+    opts: UpsertProjectCollabInviteDirectoryRequest,
+  ) => Promise<void>;
 }
 
 export interface InterBayProjectControlApi {
@@ -2008,6 +2063,9 @@ export interface InterBayAccountLocalApi {
   redeemVerifyEmail: (
     opts: AccountLocalRedeemVerifyEmailRequest,
   ) => Promise<void>;
+  assertProductAccessTrust: (
+    opts: AccountLocalAssertProductAccessTrustRequest,
+  ) => Promise<void>;
   reconcileDedicatedHostPurchaseSession: (
     opts: AccountLocalReconcileDedicatedHostPurchaseSessionRequest,
   ) => Promise<void>;
@@ -2476,11 +2534,25 @@ export function createInterBayDirectoryClient({
     ...serviceClientOptions({ client, timeout }),
     subject: directorySubject({ method: "resolve-host-bay" }),
   });
+  const resolveProjectCollabInviteClient =
+    createServiceClient<ResolveProjectCollabInviteDirectoryApi>({
+      ...serviceClientOptions({ client, timeout }),
+      subject: directorySubject({ method: "resolve-project-collab-invite" }),
+    });
+  const upsertProjectCollabInviteClient =
+    createServiceClient<UpsertProjectCollabInviteDirectoryApi>({
+      ...serviceClientOptions({ client, timeout }),
+      subject: directorySubject({ method: "upsert-project-collab-invite" }),
+    });
   return {
     resolveProjectBay: async (opts) =>
       await resolveProjectBayClient.resolveProjectBay(opts),
     resolveHostBay: async (opts) =>
       await resolveHostBayClient.resolveHostBay(opts),
+    resolveProjectCollabInvite: async (opts) =>
+      await resolveProjectCollabInviteClient.resolveProjectCollabInvite(opts),
+    upsertProjectCollabInvite: async (opts) =>
+      await upsertProjectCollabInviteClient.upsertProjectCollabInvite(opts),
   };
 }
 
@@ -2505,6 +2577,24 @@ export function createInterBayDirectoryHandlers({
       subject: directorySubject({ method: "resolve-host-bay" }),
       impl: {
         resolveHostBay: async (opts) => await impl.resolveHostBay(opts),
+      },
+    }),
+    createServiceHandler<ResolveProjectCollabInviteDirectoryApi>({
+      ...options,
+      service: "inter-bay-directory",
+      subject: directorySubject({ method: "resolve-project-collab-invite" }),
+      impl: {
+        resolveProjectCollabInvite: async (opts) =>
+          await impl.resolveProjectCollabInvite(opts),
+      },
+    }),
+    createServiceHandler<UpsertProjectCollabInviteDirectoryApi>({
+      ...options,
+      service: "inter-bay-directory",
+      subject: directorySubject({ method: "upsert-project-collab-invite" }),
+      impl: {
+        upsertProjectCollabInvite: async (opts) =>
+          await impl.upsertProjectCollabInvite(opts),
       },
     }),
   ];
@@ -2538,6 +2628,12 @@ export function createInterBayBayDirectoryClient({
       await resolveProjectBayClient.resolveProjectBay(opts),
     resolveHostBay: async (opts) =>
       await resolveHostBayClient.resolveHostBay(opts),
+    resolveProjectCollabInvite: async () => {
+      throw new Error("project collab invite directory is global-only");
+    },
+    upsertProjectCollabInvite: async () => {
+      throw new Error("project collab invite directory is global-only");
+    },
   };
 }
 
@@ -3414,6 +3510,15 @@ export function createInterBayAccountLocalClient({
       method: "redeem-verify-email",
     }),
   });
+  const assertProductAccessTrustClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "assertProductAccessTrust">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "assert-product-access-trust",
+    }),
+  });
   const reconcileDedicatedHostPurchaseSessionClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "reconcileDedicatedHostPurchaseSession">
   >({
@@ -3631,6 +3736,8 @@ export function createInterBayAccountLocalClient({
       await verifySignInPasswordClient.verifySignInPassword(opts),
     redeemVerifyEmail: async (opts) =>
       await redeemVerifyEmailClient.redeemVerifyEmail(opts),
+    assertProductAccessTrust: async (opts) =>
+      await assertProductAccessTrustClient.assertProductAccessTrust(opts),
     reconcileDedicatedHostPurchaseSession: async (opts) =>
       await reconcileDedicatedHostPurchaseSessionClient.reconcileDedicatedHostPurchaseSession(
         opts,
@@ -3826,6 +3933,20 @@ export function createInterBayAccountLocalHandler({
       }),
       impl: {
         redeemVerifyEmail: async (opts) => await impl.redeemVerifyEmail(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "assertProductAccessTrust">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "assert-product-access-trust",
+      }),
+      impl: {
+        assertProductAccessTrust: async (opts) =>
+          await impl.assertProductAccessTrust(opts),
       },
     }),
     createServiceHandler<

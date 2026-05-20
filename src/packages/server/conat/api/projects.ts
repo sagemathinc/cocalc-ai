@@ -14,6 +14,7 @@ export * from "@cocalc/server/projects/collaborators";
 import {
   createCollabInvite as createCollabInviteLocal,
   copyEmailProjectInviteLink as copyEmailProjectInviteLinkLocal,
+  hashProjectCollabInviteToken,
   inviteCollaboratorWithoutAccount as inviteCollaboratorWithoutAccountLocal,
   previewEmailProjectInvite as previewEmailProjectInviteLocal,
   listCollabInvites as listCollabInvitesLocal,
@@ -37,7 +38,9 @@ import { supersedeOlderProjectStartLros } from "@cocalc/server/projects/start-lr
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import { assertClusterAccountTrustedForProductAccess } from "@cocalc/server/inter-bay/accounts";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { resolveProjectCollabInviteDirectory } from "@cocalc/server/projects/collab-invite-directory";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { posix } from "path";
 import type {
@@ -1628,6 +1631,39 @@ function isCollabInviteNotFound(err: unknown, invite_id: string): boolean {
   return message.includes(`invite '${invite_id}' not found`);
 }
 
+async function resolveProjectBayForEmailInvite({
+  invite_id,
+  token,
+}: {
+  invite_id?: string;
+  token?: string;
+}) {
+  const token_hash = token
+    ? await hashProjectCollabInviteToken(token)
+    : undefined;
+  const entry = await resolveProjectCollabInviteDirectory({
+    ...(invite_id ? { invite_id } : {}),
+    ...(token_hash ? { token_hash } : {}),
+  });
+  if (!entry) {
+    return null;
+  }
+  return {
+    bay_id: entry.owning_bay_id,
+    invite_id: entry.invite_id,
+    project_id: entry.project_id,
+  };
+}
+
+function requireResolvedEmailInvite(
+  ownership: Awaited<ReturnType<typeof resolveProjectBayForEmailInvite>>,
+) {
+  if (!ownership) {
+    throw new Error("This project invite link was not found.");
+  }
+  return ownership;
+}
+
 export async function getProjectCollaboratorInviteUsage({
   account_id,
   project_id,
@@ -1701,15 +1737,12 @@ export async function copyEmailProjectInviteLink({
   invite_id: string;
   project_id?: string;
 }) {
-  if (!project_id) {
-    return await copyEmailProjectInviteLinkLocal({ account_id, invite_id });
-  }
-  const ownership = await resolveProjectBay(project_id);
+  const ownership = await resolveProjectBayForEmailInvite({ invite_id });
   if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
     return await copyEmailProjectInviteLinkLocal({
       account_id,
-      invite_id,
-      project_id,
+      invite_id: ownership?.invite_id ?? invite_id,
+      project_id: project_id ?? ownership?.project_id,
     });
   }
   if (!account_id) {
@@ -1719,14 +1752,26 @@ export async function copyEmailProjectInviteLink({
     .projectCollabInvite(ownership.bay_id)
     .copyEmailLink({
       account_id,
-      invite_id,
-      project_id,
+      invite_id: ownership.invite_id,
+      project_id: project_id ?? ownership.project_id,
     });
   return {
     invite_id: result.invite_id,
     invite_url: result.invite_url,
     expires: result.expires ? new Date(result.expires) : null,
   };
+}
+
+async function assertEmailInviteAcceptAccountTrusted(
+  account_id: string | undefined,
+): Promise<void> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  await assertClusterAccountTrustedForProductAccess({
+    account_id,
+    action: "accept collaboration invites",
+  });
 }
 
 export async function redeemEmailProjectInvite({
@@ -1736,36 +1781,36 @@ export async function redeemEmailProjectInvite({
   project_id,
 }: {
   account_id?: string;
-  invite_id: string;
+  invite_id?: string;
   token: string;
   project_id?: string;
 }) {
-  if (!project_id) {
-    return await redeemEmailProjectInviteLocal({
-      account_id,
-      invite_id,
-      token,
-    });
+  await assertEmailInviteAcceptAccountTrusted(account_id);
+  const checkedAccountId = account_id!;
+  const ownership = await resolveProjectBayForEmailInvite({
+    invite_id,
+    token,
+  });
+  if (!invite_id) {
+    requireResolvedEmailInvite(ownership);
   }
-  const ownership = await resolveProjectBay(project_id);
   if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
     return await redeemEmailProjectInviteLocal({
-      account_id,
-      invite_id,
+      account_id: checkedAccountId,
+      invite_id: ownership?.invite_id ?? invite_id!,
       token,
-      project_id,
+      project_id: project_id ?? ownership?.project_id,
+      trustedProductAccessChecked: true,
     });
-  }
-  if (!account_id) {
-    throw new Error("user must be signed in");
   }
   const result = await getInterBayBridge()
     .projectCollabInvite(ownership.bay_id)
     .redeemEmail({
-      account_id,
-      invite_id,
+      account_id: checkedAccountId,
+      invite_id: ownership.invite_id,
       token,
-      project_id,
+      project_id: project_id ?? ownership.project_id,
+      trusted_product_access_checked: true,
     });
   return collabInviteFromWire(result);
 }
@@ -1777,33 +1822,32 @@ export async function previewEmailProjectInvite({
   project_id,
 }: {
   account_id?: string;
-  invite_id: string;
+  invite_id?: string;
   token: string;
   project_id?: string;
 }) {
-  if (!project_id) {
-    return await previewEmailProjectInviteLocal({
-      account_id,
-      invite_id,
-      token,
-    });
+  const ownership = await resolveProjectBayForEmailInvite({
+    invite_id,
+    token,
+  });
+  if (!invite_id) {
+    requireResolvedEmailInvite(ownership);
   }
-  const ownership = await resolveProjectBay(project_id);
   if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
     return await previewEmailProjectInviteLocal({
       account_id,
-      invite_id,
+      invite_id: ownership?.invite_id ?? invite_id!,
       token,
-      project_id,
+      project_id: project_id ?? ownership?.project_id,
     });
   }
   const result = await getInterBayBridge()
     .projectCollabInvite(ownership.bay_id)
     .previewEmail({
       account_id,
-      invite_id,
+      invite_id: ownership.invite_id,
       token,
-      project_id,
+      project_id: project_id ?? ownership.project_id,
     });
   return collabInviteFromWire(result);
 }
@@ -1817,26 +1861,28 @@ export async function respondEmailProjectInvite({
 }: {
   account_id?: string;
   action: ProjectCollabInviteAction;
-  invite_id: string;
+  invite_id?: string;
   token: string;
   project_id?: string;
 }) {
-  if (!project_id) {
-    return await respondEmailProjectInviteLocal({
-      account_id,
-      action,
-      invite_id,
-      token,
-    });
+  if (action === "accept") {
+    await assertEmailInviteAcceptAccountTrusted(account_id);
   }
-  const ownership = await resolveProjectBay(project_id);
+  const ownership = await resolveProjectBayForEmailInvite({
+    invite_id,
+    token,
+  });
+  if (!invite_id) {
+    requireResolvedEmailInvite(ownership);
+  }
   if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
     return await respondEmailProjectInviteLocal({
       account_id,
       action,
-      invite_id,
+      invite_id: ownership?.invite_id ?? invite_id!,
       token,
-      project_id,
+      project_id: project_id ?? ownership?.project_id,
+      trustedProductAccessChecked: action === "accept",
     });
   }
   if (!account_id) {
@@ -1847,9 +1893,10 @@ export async function respondEmailProjectInvite({
     .respondEmail({
       account_id,
       action,
-      invite_id,
+      invite_id: ownership.invite_id,
       token,
-      project_id,
+      project_id: project_id ?? ownership.project_id,
+      trusted_product_access_checked: action === "accept",
     });
   return collabInviteFromWire(result);
 }

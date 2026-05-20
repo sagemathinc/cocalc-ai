@@ -32,11 +32,12 @@ describe("create_email_body", () => {
       "<p>Please join</p>",
       "student@example.com",
       "Course <script>alert(1)</script>",
-      "https://example.com/invites/project/invite-1?token=secret",
+      "https://example.com/invites/secret",
       false,
     );
 
-    expect(body).toContain("Accept or reject this invitation.");
+    expect(body).toContain("Accept or reject this invitation");
+    expect(body).toContain("review the invitation before joining");
     expect(body).not.toContain("To accept the invitation");
     expect(body).not.toContain("Sign in or create an account");
     expect(body).not.toContain("exactly");

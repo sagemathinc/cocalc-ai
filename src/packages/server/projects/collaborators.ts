@@ -2,7 +2,12 @@
 Add, remove and invite collaborators on projects.
 */
 
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import {
+  createHash,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto";
 
 import { db } from "@cocalc/database";
 import { listProjectedMyCollaboratorsForAccount } from "@cocalc/database/postgres/account-collaborator-index";
@@ -60,6 +65,7 @@ import {
   decryptSecretSettingValue,
   encryptSecretSettingValue,
 } from "@cocalc/util/secret-settings-crypto";
+import { upsertProjectCollabInviteDirectory } from "@cocalc/server/projects/collab-invite-directory";
 
 const logger = getLogger("project:collaborators");
 const COLLAB_GROUPS = ["owner", "collaborator"] as const;
@@ -70,7 +76,7 @@ const EMAIL_ONLY_INVITE_TTL_DAYS = 14;
 const EMAIL_INVITE_EXPIRES_INTERVAL = `${EMAIL_ONLY_INVITE_TTL_DAYS} days`;
 const EMAIL_INVITE_TOKEN_AAD = "project_collab_invites.token";
 const EMAIL_INVITE_EMAIL_AAD = "project_collab_invites.email";
-const EMAIL_INVITE_HASH_AAD = "project_collab_invites.email-token:v1";
+const EMAIL_INVITE_HASH_AAD = "project_collab_invites.email-token:v2";
 const EMAIL_INVITE_SOURCE = "email";
 const EMAIL_INVITE_SCOPE = "project_collab";
 const COURSE_EMAIL_INVITE_SCOPE = "course_student";
@@ -229,8 +235,60 @@ async function hmacInviteValue(aad: string, value: string): Promise<string> {
   return `${aad}:${digest}`;
 }
 
-async function hashInviteToken(token: string): Promise<string> {
-  return await hmacInviteValue(EMAIL_INVITE_HASH_AAD, token);
+export async function hashProjectCollabInviteToken(
+  token: string,
+): Promise<string> {
+  const digest = createHash("sha256")
+    .update(EMAIL_INVITE_HASH_AAD)
+    .update("\0")
+    .update(token)
+    .digest("base64url");
+  return `${EMAIL_INVITE_HASH_AAD}:${digest}`;
+}
+
+async function registerEmailInviteDirectory({
+  invite_id,
+  project_id,
+  token_hash,
+  scope,
+  status = "pending",
+}: {
+  invite_id: string;
+  project_id: string;
+  token_hash: string;
+  scope?: string | null;
+  status?: ProjectCollabInviteStatus;
+}): Promise<void> {
+  await upsertProjectCollabInviteDirectory({
+    invite_id,
+    project_id,
+    token_hash,
+    owning_bay_id: getConfiguredBayId(),
+    invite_source: EMAIL_INVITE_SOURCE,
+    scope: scope ?? EMAIL_INVITE_SCOPE,
+    status,
+  });
+}
+
+async function ensureBayIndependentInviteTokenHash({
+  invite_id,
+  current_token_hash,
+  token,
+}: {
+  invite_id: string;
+  current_token_hash?: string | null;
+  token: string;
+}): Promise<string> {
+  const token_hash = await hashProjectCollabInviteToken(token);
+  if (current_token_hash !== token_hash) {
+    await getPool().query(
+      `UPDATE project_collab_invites
+          SET token_hash=$2, updated=NOW()
+        WHERE invite_id=$1`,
+      [invite_id, token_hash],
+    );
+  }
+  return token_hash;
 }
 
 async function hashInviteEmail(email: string): Promise<string> {
@@ -255,22 +313,14 @@ function generateInviteToken(): string {
   return randomBytes(24).toString("base64url");
 }
 
-async function inviteUrl({
-  project_id,
-  invite_id,
-  token,
-}: {
-  project_id: string;
-  invite_id: string;
-  token: string;
-}): Promise<string> {
+async function inviteUrl({ token }: { token: string }): Promise<string> {
   const base = (
     await getBayPublicOrigin(getConfiguredClusterSeedBayId())
   )?.replace(/\/+$/, "");
   if (!base) {
     throw new Error("unable to determine public site URL for invite link");
   }
-  return `${base}/invites/project/${project_id}/${invite_id}?token=${encodeURIComponent(token)}`;
+  return `${base}/invites/${encodeURIComponent(token)}`;
 }
 
 function isAlreadyCollaboratorError(err: unknown): boolean {
@@ -1031,6 +1081,7 @@ async function getPendingEmailCollabInviteForToken({
   invite_id: string;
   project_id: string;
   inviter_account_id: string;
+  token_hash: string;
   scope?: string | null;
 }> {
   ensureUuid(invite_id, "invite_id");
@@ -1059,16 +1110,22 @@ async function getPendingEmailCollabInviteForToken({
   if (!invite || !invite.token_hash) {
     throw new Error(`invite '${invite_id}' not found`);
   }
+  const token_hash = invite.token_hash;
   if (project_id && invite.project_id !== project_id) {
     throw new Error("project invite link is invalid for this project");
   }
-  if (!timingSafeStringEqual(invite.token_hash, await hashInviteToken(token))) {
+  if (
+    !timingSafeStringEqual(
+      token_hash,
+      await hashProjectCollabInviteToken(token),
+    )
+  ) {
     throw new Error("invalid invite token");
   }
   if (invite.status !== "pending") {
     throw new Error(`invite is not pending (status=${invite.status})`);
   }
-  return invite;
+  return { ...invite, token_hash };
 }
 
 export async function respondCollabInviteCanonical({
@@ -1593,9 +1650,10 @@ async function createEmailProjectInvite({
 
   const { rows: existingRows } = await pool.query<{
     invite_id: string;
+    token_hash: string | null;
     token_ciphertext: string;
   }>(
-    `SELECT invite_id, token_ciphertext
+    `SELECT invite_id, token_hash, token_ciphertext
        FROM project_collab_invites
       WHERE project_id=$1
         AND inviter_account_id=$2
@@ -1613,15 +1671,22 @@ async function createEmailProjectInvite({
       EMAIL_INVITE_TOKEN_AAD,
       existing.token_ciphertext,
     );
+    const token_hash = await ensureBayIndependentInviteTokenHash({
+      invite_id: existing.invite_id,
+      current_token_hash: existing.token_hash,
+      token,
+    });
     const invite = await fetchInviteById(existing.invite_id, false);
     if (!invite) {
       throw new Error("failed to load existing email invite");
     }
-    const url = await inviteUrl({
-      project_id,
+    await registerEmailInviteDirectory({
       invite_id: existing.invite_id,
-      token,
+      project_id,
+      token_hash,
+      scope,
     });
+    const url = await inviteUrl({ token });
     return {
       created: false,
       invite: {
@@ -1636,7 +1701,7 @@ async function createEmailProjectInvite({
   await assertProjectCollaboratorInviteLimit({ project_id });
   const token = generateInviteToken();
   const invite_id = uuid();
-  const token_hash = await hashInviteToken(token);
+  const token_hash = await hashProjectCollabInviteToken(token);
   const token_ciphertext = await encryptInviteValue(
     EMAIL_INVITE_TOKEN_AAD,
     token,
@@ -1672,7 +1737,13 @@ async function createEmailProjectInvite({
   if (!invite) {
     throw new Error("failed to load created email invite");
   }
-  const url = await inviteUrl({ project_id, invite_id, token });
+  await registerEmailInviteDirectory({
+    invite_id,
+    project_id,
+    token_hash,
+    scope,
+  });
+  const url = await inviteUrl({ token });
   return {
     created: true,
     invite: {
@@ -1703,11 +1774,14 @@ export async function copyEmailProjectInviteLink({
   const { rows } = await getPool().query<{
     project_id: string;
     inviter_account_id: string;
+    token_hash: string | null;
     token_ciphertext: string | null;
+    scope: string | null;
     status: string;
     created: Date;
   }>(
-    `SELECT project_id, inviter_account_id, token_ciphertext, status, created
+    `SELECT project_id, inviter_account_id, token_hash, token_ciphertext,
+            scope, status, created
        FROM project_collab_invites
       WHERE invite_id=$1
         AND invite_source IN ('email', 'course_email')
@@ -1731,13 +1805,20 @@ export async function copyEmailProjectInviteLink({
     EMAIL_INVITE_TOKEN_AAD,
     row.token_ciphertext,
   );
+  const token_hash = await ensureBayIndependentInviteTokenHash({
+    invite_id,
+    current_token_hash: row.token_hash,
+    token,
+  });
+  await registerEmailInviteDirectory({
+    invite_id,
+    project_id: row.project_id,
+    token_hash,
+    scope: row.scope,
+  });
   return {
     invite_id,
-    invite_url: await inviteUrl({
-      project_id: row.project_id,
-      invite_id,
-      token,
-    }),
+    invite_url: await inviteUrl({ token }),
     expires: new Date(
       new Date(row.created).valueOf() +
         EMAIL_ONLY_INVITE_TTL_DAYS * 24 * 60 * 60 * 1000,
@@ -1750,20 +1831,24 @@ export async function redeemEmailProjectInvite({
   invite_id,
   token,
   project_id,
+  trustedProductAccessChecked,
 }: {
   account_id?: string;
   invite_id: string;
   token: string;
   project_id?: string;
+  trustedProductAccessChecked?: boolean;
 }): Promise<ProjectCollabInviteRow> {
   if (!account_id) {
     throw new Error("user must be signed in");
   }
   ensureUuid(invite_id, "invite_id");
-  await assertAccountTrustedForProductAccess(
-    account_id,
-    "accept collaboration invites",
-  );
+  if (!trustedProductAccessChecked) {
+    await assertAccountTrustedForProductAccess(
+      account_id,
+      "accept collaboration invites",
+    );
+  }
   const pool = getPool();
   const invite = await getPendingEmailCollabInviteForToken({
     invite_id,
@@ -1815,6 +1900,13 @@ export async function redeemEmailProjectInvite({
       WHERE invite_id=$1`,
     [invite_id, account_id],
   );
+  await registerEmailInviteDirectory({
+    invite_id,
+    project_id: invite.project_id,
+    token_hash: invite.token_hash,
+    scope: invite.scope,
+    status: "accepted",
+  });
   await publishProjectAccountFeedEventsBestEffort({
     project_id: invite.project_id,
   });
@@ -1849,12 +1941,14 @@ export async function respondEmailProjectInvite({
   invite_id,
   token,
   project_id,
+  trustedProductAccessChecked,
 }: {
   account_id?: string;
   action: ProjectCollabInviteAction;
   invite_id: string;
   token: string;
   project_id?: string;
+  trustedProductAccessChecked?: boolean;
 }): Promise<ProjectCollabInviteRow> {
   if (!account_id) {
     throw new Error("user must be signed in");
@@ -1866,6 +1960,7 @@ export async function respondEmailProjectInvite({
       invite_id,
       token,
       project_id,
+      trustedProductAccessChecked,
     });
   }
   if (normalizedAction === "revoke") {
@@ -1896,6 +1991,13 @@ export async function respondEmailProjectInvite({
       WHERE invite_id=$1`,
     [invite_id, nextStatus, normalizedAction],
   );
+  await registerEmailInviteDirectory({
+    invite_id,
+    project_id: invite.project_id,
+    token_hash: invite.token_hash,
+    scope: invite.scope,
+    status: nextStatus,
+  });
   const updated = await fetchInviteById(invite_id, false);
   if (!updated) {
     throw new Error("failed to load invite response");

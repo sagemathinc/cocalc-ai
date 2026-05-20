@@ -107,6 +107,7 @@ import {
 } from "@cocalc/server/membership/grants";
 import { createImpersonationGrantLocal } from "@cocalc/server/auth/impersonation";
 import { verifyFreshAuthCredentials } from "@cocalc/server/auth/two-factor";
+import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import {
   activateMembershipClaimIdentityDirect,
   getMembershipClaimIdentityDirect,
@@ -148,6 +149,10 @@ import {
   resolveProjectBayAcrossCluster,
   resolveProjectBayDirect,
 } from "@cocalc/server/inter-bay/directory";
+import {
+  resolveProjectCollabInviteDirectoryDirect,
+  upsertProjectCollabInviteDirectoryDirect,
+} from "@cocalc/server/projects/collab-invite-directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import {
   handleProjectControlAddress,
@@ -421,6 +426,10 @@ async function startDirectoryService(): Promise<void> {
       await resolveHostBayDirect(`${host_id ?? ""}`, {
         include_deleted: !!include_deleted,
       }),
+    resolveProjectCollabInvite: async (opts) =>
+      await resolveProjectCollabInviteDirectoryDirect(opts),
+    upsertProjectCollabInvite: async (opts) =>
+      await upsertProjectCollabInviteDirectoryDirect(opts),
   };
   services.push(
     ...createInterBayBayDirectoryHandlers({
@@ -445,6 +454,10 @@ async function startDirectoryService(): Promise<void> {
           await resolveHostBayAcrossCluster(`${host_id ?? ""}`, {
             include_deleted: !!include_deleted,
           }),
+        resolveProjectCollabInvite: async (opts) =>
+          await resolveProjectCollabInviteDirectoryDirect(opts),
+        upsertProjectCollabInvite: async (opts) =>
+          await upsertProjectCollabInviteDirectoryDirect(opts),
       },
     }),
   );
@@ -563,6 +576,9 @@ async function startAccountLocalService(): Promise<void> {
       await verifyLocalSignInPassword({ email_address, password }),
     redeemVerifyEmail: async ({ email_address, token }) => {
       await redeemVerifyEmailLocal(email_address, token);
+    },
+    assertProductAccessTrust: async ({ account_id, action }) => {
+      await assertAccountTrustedForProductAccess(account_id, action);
     },
     reconcileDedicatedHostPurchaseSession: async (opts) => {
       await reconcileDedicatedHostPurchaseSessionLocal(opts);
@@ -950,12 +966,22 @@ async function startProjectCollabInviteService(): Promise<void> {
         expires: result.expires ? new Date(result.expires).toISOString() : null,
       };
     },
-    redeemEmail: async (opts) =>
-      collabInviteToWire(await redeemEmailProjectInvite(opts)),
+    redeemEmail: async ({ trusted_product_access_checked, ...opts }) =>
+      collabInviteToWire(
+        await redeemEmailProjectInvite({
+          ...opts,
+          trustedProductAccessChecked: !!trusted_product_access_checked,
+        }),
+      ),
     previewEmail: async (opts) =>
       collabInviteToWire(await previewEmailProjectInvite(opts)),
-    respondEmail: async (opts) =>
-      collabInviteToWire(await respondEmailProjectInvite(opts)),
+    respondEmail: async ({ trusted_product_access_checked, ...opts }) =>
+      collabInviteToWire(
+        await respondEmailProjectInvite({
+          ...opts,
+          trustedProductAccessChecked: !!trusted_product_access_checked,
+        }),
+      ),
     list: async (opts) =>
       (await listCollabInvites(opts)).map((invite) =>
         collabInviteToWire(invite),

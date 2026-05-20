@@ -304,7 +304,7 @@ export class CourseStore extends Store<CourseState> {
     const invite = this.getIn(["settings", "email_invite"]);
     if (invite) return invite;
     const site_name = redux.getStore("customize").get("site_name") ?? SITE_NAME;
-    return `Hello!\n\nWe will use ${site_name} for the course *{title}*.\n\nPlease sign up!\n\n--\n\n{name}`;
+    return `Hello,\n\n{name} invited you to join **{title}** on ${site_name}.\n\nCoCalc will create your private student project after you accept. Use the link below to review the invitation, then accept or decline it.\n\nThanks,\n{name}`;
   }
 
   public get_students(): StudentsMap {

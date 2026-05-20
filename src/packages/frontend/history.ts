@@ -56,6 +56,7 @@ import {
 } from "@cocalc/frontend/account/settings-routing";
 import { IS_EMBEDDED } from "@cocalc/frontend/client/handle-target";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   getPageUrlPath,
   parsePageTarget,
@@ -150,6 +151,7 @@ export function load_target(
   const parsed = parsePageTarget(target);
   if (
     !redux.getStore("account").get("is_logged_in") &&
+    !webapp_client.is_signed_in() &&
     parsed.page !== "auth"
   ) {
     // this will redirect to the sign in page after a brief pause

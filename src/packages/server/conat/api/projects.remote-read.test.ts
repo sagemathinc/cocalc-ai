@@ -3,6 +3,7 @@ export {};
 let getLocalProjectCollaboratorAccessStatusMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
+let resolveProjectCollabInviteDirectoryMock: jest.Mock;
 let projectDetailsGetMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
 let inviteWithoutAccountMock: jest.Mock;
@@ -11,6 +12,7 @@ let redeemEmailMock: jest.Mock;
 let previewEmailMock: jest.Mock;
 let respondEmailMock: jest.Mock;
 let loadProjectReadDetailsDirectMock: jest.Mock;
+let assertClusterAccountTrustedForProductAccessMock: jest.Mock;
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
@@ -28,6 +30,17 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
   __esModule: true,
   resolveProjectBay: (...args: any[]) => resolveProjectBayMock(...args),
+}));
+
+jest.mock("@cocalc/server/projects/collab-invite-directory", () => ({
+  __esModule: true,
+  resolveProjectCollabInviteDirectory: (...args: any[]) =>
+    resolveProjectCollabInviteDirectoryMock(...args),
+}));
+
+jest.mock("@cocalc/database/settings/secret-settings", () => ({
+  __esModule: true,
+  getSecretSettingsKey: jest.fn(async () => Buffer.alloc(32, 1)),
 }));
 
 jest.mock("@cocalc/server/inter-bay/bridge", () => ({
@@ -50,6 +63,12 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   })),
 }));
 
+jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  __esModule: true,
+  assertClusterAccountTrustedForProductAccess: (...args: any[]) =>
+    assertClusterAccountTrustedForProductAccessMock(...args),
+}));
+
 jest.mock("@cocalc/server/projects/details", () => ({
   __esModule: true,
   loadProjectReadDetailsDirect: (...args: any[]) =>
@@ -69,6 +88,12 @@ describe("remote project detail reads", () => {
     resolveProjectBayMock = jest.fn(async () => ({
       bay_id: "bay-7",
       epoch: 2,
+    }));
+    resolveProjectCollabInviteDirectoryMock = jest.fn(async () => ({
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      project_id: PROJECT_ID,
+      owning_bay_id: "bay-7",
+      token_hash: "hash",
     }));
     projectDetailsGetMock = jest.fn(async () => ({
       region: "wnam",
@@ -110,8 +135,7 @@ describe("remote project detail reads", () => {
     }));
     copyEmailLinkMock = jest.fn(async () => ({
       invite_id: "77777777-7777-4777-8777-777777777777",
-      invite_url:
-        "https://example.com/invites/project/22222222-2222-4222-8222-222222222222/77777777-7777-4777-8777-777777777777?token=t",
+      invite_url: "https://example.com/invites/t",
       expires: "2026-06-01T00:00:00.000Z",
     }));
     redeemEmailMock = jest.fn(async () => ({
@@ -151,6 +175,9 @@ describe("remote project detail reads", () => {
       responded: "2026-05-18T01:00:00.000Z",
     }));
     loadProjectReadDetailsDirectMock = jest.fn();
+    assertClusterAccountTrustedForProductAccessMock = jest.fn(
+      async () => undefined,
+    );
   });
 
   it("routes getProjectCreated through the owning bay", async () => {
@@ -224,6 +251,17 @@ describe("remote project detail reads", () => {
       project_id: PROJECT_ID,
       invite_id: "77777777-7777-4777-8777-777777777777",
       token: "token-1",
+      trusted_product_access_checked: true,
+    });
+    expect(
+      assertClusterAccountTrustedForProductAccessMock,
+    ).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      action: "accept collaboration invites",
+    });
+    expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      token_hash: expect.any(String),
     });
     expect(result.responded).toEqual(new Date("2026-05-18T01:00:00.000Z"));
   });
@@ -242,6 +280,10 @@ describe("remote project detail reads", () => {
       project_id: PROJECT_ID,
       invite_id: "77777777-7777-4777-8777-777777777777",
       token: "token-1",
+    });
+    expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      token_hash: expect.any(String),
     });
     expect(result.created).toEqual(new Date("2026-05-18T00:00:00.000Z"));
     expect(result.message).toBe("Please join");
@@ -263,8 +305,98 @@ describe("remote project detail reads", () => {
       project_id: PROJECT_ID,
       invite_id: "77777777-7777-4777-8777-777777777777",
       token: "token-1",
+      trusted_product_access_checked: false,
+    });
+    expect(
+      assertClusterAccountTrustedForProductAccessMock,
+    ).not.toHaveBeenCalled();
+    expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      token_hash: expect.any(String),
     });
     expect(result.responded).toEqual(new Date("2026-05-18T01:00:00.000Z"));
     expect(result.status).toBe("declined");
+  });
+
+  it("uses the central invite directory for email invite preview", async () => {
+    resolveProjectBayMock = jest.fn(async () => null);
+    resolveProjectCollabInviteDirectoryMock = jest.fn(async () => ({
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      project_id: PROJECT_ID,
+      owning_bay_id: "bay-7",
+      token_hash: "hash",
+    }));
+
+    const { previewEmailProjectInvite } = await import("./projects");
+    await expect(
+      previewEmailProjectInvite({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        invite_id: "77777777-7777-4777-8777-777777777777",
+        token: "token-1",
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        invite_id: "77777777-7777-4777-8777-777777777777",
+        project_id: PROJECT_ID,
+      }),
+    );
+    expect(resolveProjectBayMock).not.toHaveBeenCalled();
+    expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      token_hash: expect.any(String),
+    });
+    expect(previewEmailMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      token: "token-1",
+    });
+  });
+
+  it("routes token-only email invite preview through the central directory", async () => {
+    resolveProjectBayMock = jest.fn(async () => null);
+
+    const { previewEmailProjectInvite } = await import("./projects");
+    const result = await previewEmailProjectInvite({
+      account_id: ACCOUNT_ID,
+      token: "token-1",
+    });
+
+    expect(resolveProjectBayMock).not.toHaveBeenCalled();
+    expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
+      token_hash: expect.any(String),
+    });
+    expect(previewEmailMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      token: "token-1",
+    });
+    expect(result.project_id).toBe(PROJECT_ID);
+  });
+
+  it("checks account trust before routing email invite accept responses", async () => {
+    const { respondEmailProjectInvite } = await import("./projects");
+    await respondEmailProjectInvite({
+      account_id: ACCOUNT_ID,
+      action: "accept",
+      token: "token-1",
+    });
+
+    expect(
+      assertClusterAccountTrustedForProductAccessMock,
+    ).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      action: "accept collaboration invites",
+    });
+    expect(respondEmailMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      action: "accept",
+      project_id: PROJECT_ID,
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      token: "token-1",
+      trusted_product_access_checked: true,
+    });
   });
 });
