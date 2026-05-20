@@ -49,6 +49,10 @@ const FORM_SYNC_FIELDS: Array<keyof HostCreateDraft> = [
   "auto_grow_min_grow_interval_minutes",
 ];
 
+const NORMALIZATION_FIELDS = FORM_SYNC_FIELDS.filter(
+  (field) => field !== "name",
+);
+
 function formPatchForDraft(form: FormInstance, draft: HostCreateDraft) {
   const patch: Record<string, unknown> = {};
   for (const field of FORM_SYNC_FIELDS) {
@@ -66,6 +70,22 @@ function sameDraft(a: HostCreateDraft, b: HostCreateDraft) {
   return true;
 }
 
+function draftNormalizationKey(draft: HostCreateDraft) {
+  return JSON.stringify(
+    NORMALIZATION_FIELDS.map((field) => draft[field] ?? null),
+  );
+}
+
+function isOnlyNameChange(
+  changedValues: any,
+): changedValues is { name: string } {
+  if (changedValues == null || typeof changedValues !== "object") {
+    return false;
+  }
+  const keys = Object.keys(changedValues);
+  return keys.length === 1 && keys[0] === "name";
+}
+
 export function useHostCreateDraft({
   form,
   context,
@@ -80,9 +100,26 @@ export function useHostCreateDraft({
   const [draft, setDraft] = React.useState<HostCreateDraft>(() =>
     buildDefaultDraft(context),
   );
-  const normalized = React.useMemo(
+  const normalizationKey = React.useMemo(
+    () => draftNormalizationKey(draft),
+    [draft],
+  );
+  const normalizedBase = React.useMemo(
     () => normalizeDraft(draft, context),
-    [context, draft],
+    [context, normalizationKey],
+  );
+  const normalized = React.useMemo(
+    () =>
+      normalizedBase.draft.name === draft.name
+        ? normalizedBase
+        : {
+            ...normalizedBase,
+            draft: {
+              ...normalizedBase.draft,
+              name: draft.name,
+            },
+          },
+    [draft.name, normalizedBase],
   );
 
   React.useEffect(() => {
@@ -92,11 +129,10 @@ export function useHostCreateDraft({
   }, [context, initialDraft, onInitialDraftConsumed]);
 
   React.useEffect(() => {
-    const next = normalizeDraft(draft, context).draft;
-    if (!sameDraft(next, draft)) {
-      setDraft(next);
-    }
-  }, [context, draft]);
+    setDraft((current) =>
+      sameDraft(normalized.draft, current) ? current : normalized.draft,
+    );
+  }, [normalized.draft]);
 
   React.useEffect(() => {
     const patch = formPatchForDraft(form, normalized.draft);
@@ -106,7 +142,14 @@ export function useHostCreateDraft({
   }, [form, normalized.draft]);
 
   const onValuesChange = React.useCallback(
-    (_changedValues: any, allValues: any) => {
+    (changedValues: any, allValues: any) => {
+      if (isOnlyNameChange(changedValues)) {
+        setDraft({
+          ...normalized.draft,
+          name: changedValues.name,
+        });
+        return;
+      }
       setDraft(
         normalizeDraft({ ...normalized.draft, ...allValues }, context).draft,
       );
