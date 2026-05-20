@@ -639,16 +639,19 @@ export interface Purchases {
   }) => Promise<SiteLicenseOverview>;
   getSiteLicenseOverview: (opts?: {
     account_id?: string;
+    owner_account_id?: string;
     site_license_id?: string;
   }) => Promise<SiteLicenseOverview>;
   requestSiteLicensePool: (opts?: {
     account_id?: string;
+    owner_account_id?: string;
     package_id?: string;
     requester_note?: string | null;
     accepted_terms?: boolean;
   }) => Promise<SiteLicensePoolRequest>;
   reviewSiteLicensePoolRequest: (opts?: {
     account_id?: string;
+    owner_account_id?: string;
     request_id?: string;
     action?: "approve" | "reject";
     review_note?: string | null;

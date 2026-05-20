@@ -122,6 +122,12 @@ import {
   updateMembershipPackage,
 } from "@cocalc/server/membership/packages";
 import {
+  adminProvisionSiteLicense,
+  getSiteLicenseOverview,
+  requestSiteLicensePoolWithVerifiedEmailsOnLocalBay,
+  reviewSiteLicensePoolRequest,
+} from "@cocalc/server/membership/site-licenses";
+import {
   resolveMembershipDetailsForAccount,
   resolveMembershipForAccount,
 } from "@cocalc/server/membership/resolve";
@@ -681,6 +687,8 @@ async function startAccountLocalService(): Promise<void> {
       }
       return membershipPackage;
     },
+    adminProvisionSiteLicense: async (opts) =>
+      await adminProvisionSiteLicense({ ...opts, trusted_admin: true }),
     updateMembershipPackage: async ({
       package_id,
       seat_count,
@@ -711,6 +719,24 @@ async function startAccountLocalService(): Promise<void> {
         account_id,
         verified_email_addresses,
       }),
+    getSiteLicenseOverview: async ({ account_id, site_license_id }) =>
+      await getSiteLicenseOverview({ account_id, site_license_id }),
+    requestSiteLicensePool: async ({
+      account_id,
+      package_id,
+      verified_email_addresses,
+      requester_note,
+      accepted_terms,
+    }) =>
+      await requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
+        account_id,
+        package_id,
+        verified_email_addresses,
+        requester_note,
+        accepted_terms,
+      }),
+    reviewSiteLicensePoolRequest: async (opts) =>
+      await reviewSiteLicensePoolRequest(opts),
     getMembershipPortableState: async ({ account_id }) =>
       await getMembershipPortableState(account_id),
     replaceMembershipPortableState: async ({

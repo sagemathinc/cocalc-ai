@@ -436,7 +436,7 @@ function normalizeSiteLicensePoolRequestRow(
   };
 }
 
-async function getVerifiedEmailAddressesForAccount(
+export async function getVerifiedEmailAddressesForAccount(
   account_id: string,
   client?: PoolClient,
 ): Promise<string[]> {
@@ -745,6 +745,7 @@ export async function adminProvisionSiteLicense({
   starts_at,
   expires_at,
   metadata,
+  trusted_admin = false,
 }: {
   actor_account_id: string;
   owner_account_id: string;
@@ -760,9 +761,10 @@ export async function adminProvisionSiteLicense({
   starts_at?: Date | string | null;
   expires_at?: Date | string | null;
   metadata?: Record<string, unknown> | null;
+  trusted_admin?: boolean;
 }): Promise<SiteLicenseOverview> {
   const actorAccountId = normalizeAccountId(actor_account_id);
-  if (!(await isAdmin(actorAccountId))) {
+  if (!trusted_admin && !(await isAdmin(actorAccountId))) {
     throw Error("must be an admin");
   }
   const ownerAccountId = normalizeAccountId(
@@ -924,6 +926,37 @@ export async function requestSiteLicensePool({
 }): Promise<SiteLicensePoolRequest> {
   const accountId = normalizeAccountId(account_id);
   const packageId = normalizePackageId(package_id);
+  const verifiedEmailAddresses = await getVerifiedEmailAddressesForAccount(
+    accountId,
+    client,
+  );
+  return await requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
+    account_id: accountId,
+    package_id: packageId,
+    verified_email_addresses: verifiedEmailAddresses,
+    requester_note,
+    accepted_terms,
+    client,
+  });
+}
+
+export async function requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
+  account_id,
+  package_id,
+  verified_email_addresses,
+  requester_note,
+  accepted_terms,
+  client,
+}: {
+  account_id: string;
+  package_id: string;
+  verified_email_addresses: string[];
+  requester_note?: string | null;
+  accepted_terms?: boolean;
+  client?: PoolClient;
+}): Promise<SiteLicensePoolRequest> {
+  const accountId = normalizeAccountId(account_id);
+  const packageId = normalizePackageId(package_id);
   const { siteLicense, pkg } = await getSiteLicenseForPackage(
     packageId,
     client,
@@ -931,12 +964,8 @@ export async function requestSiteLicensePool({
   if (pkg.metadata?.requires_approval !== true) {
     throw Error("this site-license pool does not require approval");
   }
-  const verifiedEmailAddresses = await getVerifiedEmailAddressesForAccount(
-    accountId,
-    client,
-  );
   const matchedEmailAddress = findMatchingVerifiedEmail({
-    verified_email_addresses: verifiedEmailAddresses,
+    verified_email_addresses,
     allowed_domains: getPackageAllowedDomains(pkg.metadata),
   });
   const canonicalIdentity =
