@@ -47,6 +47,9 @@ Implemented:
 - Custom OCI path hidden from non-admins.
 - RootFS scan findings visible but non-blocking.
 - Host placement visible in the main path, still using the existing host picker.
+- Account capacity health card with project slots, running-project slots, and
+  storage usage.
+- Health card can stop visible running projects when runtime slots are full.
 
 Still rough:
 
@@ -213,8 +216,7 @@ Historical uptime:
 
 Host creation path:
 
-- If the user's tier can create hosts, show a concise path: `Need dedicated
-  capacity? Create your own host.`
+- If the user's tier can create hosts, show a concise path: `Need dedicated capacity? Create your own host.`
 - If the user cannot create hosts, explain the membership/admin requirement.
 - This should be visible without overwhelming first-run users.
 
@@ -577,6 +579,8 @@ Missing:
 - Summary/action column.
 - Inline RootFS picker.
 - Host placement visible in the main path.
+- Account capacity health card.
+- Runtime-slot full state includes stop actions for visible running projects.
 
 ### Phase A: Update Data/Policy Inventory
 
@@ -589,7 +593,7 @@ Follow-up completed:
 
 ### Phase B: Health Card
 
-Add the compact quota/health card to the create modal.
+Initial implementation completed 2026-05-20.
 
 Requirements:
 
@@ -599,6 +603,13 @@ Requirements:
 - Clear near-limit and at-limit messaging.
 - Links/actions for delete projects, archive projects, stop running projects, or
   upgrade membership tier where possible.
+
+Follow-up:
+
+- Add direct actions from the health card for upgrade, project cleanup, archive
+  guidance, and richer stop/retry flows.
+- Consider sharing the same health card data/formatting with the main projects
+  page.
 
 Validation:
 
@@ -620,6 +631,24 @@ Requirements:
 - Make latency impact explicit and concrete.
 - Show privacy-preserving host load and reliability labels.
 - Keep host creation path visible when eligible.
+
+Implemented foundation:
+
+- Added a pure, tested host recommendation helper under `frontend/hosts` that ranks available hosts,
+  separates unavailable hosts, prefers same backup region, falls back to remote
+  hosts, accounts for host pressure, spot/fallback status, GPU fit, explicit
+  selection, and known GCP relative CPU speed.
+- This is intentionally not wired into the create modal yet. The next Phase C
+  UI step should consume this helper from the host picker/recommendation card
+  without changing project creation semantics at the same time.
+
+Implemented first UI slice:
+
+- The project create host picker now uses the recommendation model in create
+  mode, including GPU intent and selected-host intent.
+- The picker still starts in the project's backup region, but if no available
+  host exists there and a remote host is available, it automatically expands to
+  all regions and explains that the main impact is interactive latency.
 
 Validation:
 

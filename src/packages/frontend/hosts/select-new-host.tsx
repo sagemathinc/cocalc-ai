@@ -23,6 +23,7 @@ export function SelectNewHost({
   disabled,
   regionFilter,
   regionLabel,
+  wantsGpu,
   pickerMode = "create",
 }: {
   selectedHost?: Host;
@@ -30,6 +31,7 @@ export function SelectNewHost({
   disabled?: boolean;
   regionFilter?: string;
   regionLabel?: string;
+  wantsGpu?: boolean;
   pickerMode?: "move" | "create";
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -131,7 +133,8 @@ export function SelectNewHost({
         currentHostId={pickerMode === "move" ? selectedHost?.id : undefined}
         selectedHostId={selectedHost?.id}
         regionFilter={regionFilter}
-        lockRegion={Boolean(regionFilter)}
+        lockRegion={pickerMode !== "create" && Boolean(regionFilter)}
+        wantsGpu={wantsGpu}
         mode={pickerMode}
         onCancel={() => setPickerOpen(false)}
         onSelect={(_, host) => {

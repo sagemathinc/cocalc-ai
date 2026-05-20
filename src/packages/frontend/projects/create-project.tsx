@@ -56,6 +56,7 @@ import {
   type ProjectCreateMode,
   projectDraftToCreateOptions,
 } from "./create/project-create-draft";
+import { ProjectCreateHealthCard } from "./create/project-create-health-card";
 import { useProjectCreateDraft } from "./create/use-project-create-draft";
 
 interface Props {
@@ -645,6 +646,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
 
     return (
       <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+        <ProjectCreateHealthCard open={open} />
         {renderPresetSection()}
         <Form form={form} layout="vertical">
           <Form.Item
@@ -676,6 +678,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
           onChange={setHost}
           regionFilter={draft.region}
           regionLabel={R2_REGION_LABELS[draft.region]}
+          wantsGpu={summary.gpu}
           pickerMode="create"
         />
         <Button
