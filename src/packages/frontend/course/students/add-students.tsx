@@ -91,6 +91,17 @@ export default function AddStudents({ name, students, close }: Props) {
     if (err) {
       return <ShowError error={trunc(err, 1024)} setError={setErr} />;
     }
+    if (adding) {
+      return (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginTop: "12px" }}
+          message="Adding students..."
+          description="CoCalc is creating student projects and invite links."
+        />
+      );
+    }
     if (parsed.invalidRows.length > 0) {
       return (
         <Alert

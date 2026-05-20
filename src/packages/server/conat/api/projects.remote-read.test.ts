@@ -3,7 +3,7 @@ export {};
 let getLocalProjectCollaboratorAccessStatusMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
-let resolveProjectBayAcrossClusterMock: jest.Mock;
+let resolveProjectCollabInviteDirectoryMock: jest.Mock;
 let projectDetailsGetMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
 let inviteWithoutAccountMock: jest.Mock;
@@ -29,8 +29,12 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
   __esModule: true,
   resolveProjectBay: (...args: any[]) => resolveProjectBayMock(...args),
-  resolveProjectBayAcrossCluster: (...args: any[]) =>
-    resolveProjectBayAcrossClusterMock(...args),
+}));
+
+jest.mock("@cocalc/server/projects/collab-invite-directory", () => ({
+  __esModule: true,
+  resolveProjectCollabInviteDirectory: (...args: any[]) =>
+    resolveProjectCollabInviteDirectoryMock(...args),
 }));
 
 jest.mock("@cocalc/server/inter-bay/bridge", () => ({
@@ -73,9 +77,11 @@ describe("remote project detail reads", () => {
       bay_id: "bay-7",
       epoch: 2,
     }));
-    resolveProjectBayAcrossClusterMock = jest.fn(async () => ({
-      bay_id: "bay-7",
-      epoch: 2,
+    resolveProjectCollabInviteDirectoryMock = jest.fn(async () => ({
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      project_id: PROJECT_ID,
+      owning_bay_id: "bay-7",
+      token_hash: "hash",
     }));
     projectDetailsGetMock = jest.fn(async () => ({
       region: "wnam",
@@ -232,7 +238,9 @@ describe("remote project detail reads", () => {
       invite_id: "77777777-7777-4777-8777-777777777777",
       token: "token-1",
     });
-    expect(resolveProjectBayAcrossClusterMock).toHaveBeenCalledWith(PROJECT_ID);
+    expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
+      invite_id: "77777777-7777-4777-8777-777777777777",
+    });
     expect(result.responded).toEqual(new Date("2026-05-18T01:00:00.000Z"));
   });
 
@@ -251,7 +259,9 @@ describe("remote project detail reads", () => {
       invite_id: "77777777-7777-4777-8777-777777777777",
       token: "token-1",
     });
-    expect(resolveProjectBayAcrossClusterMock).toHaveBeenCalledWith(PROJECT_ID);
+    expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
+      invite_id: "77777777-7777-4777-8777-777777777777",
+    });
     expect(result.created).toEqual(new Date("2026-05-18T00:00:00.000Z"));
     expect(result.message).toBe("Please join");
   });
@@ -273,16 +283,20 @@ describe("remote project detail reads", () => {
       invite_id: "77777777-7777-4777-8777-777777777777",
       token: "token-1",
     });
-    expect(resolveProjectBayAcrossClusterMock).toHaveBeenCalledWith(PROJECT_ID);
+    expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
+      invite_id: "77777777-7777-4777-8777-777777777777",
+    });
     expect(result.responded).toEqual(new Date("2026-05-18T01:00:00.000Z"));
     expect(result.status).toBe("declined");
   });
 
-  it("uses the cluster project resolver for email invite preview", async () => {
+  it("uses the central invite directory for email invite preview", async () => {
     resolveProjectBayMock = jest.fn(async () => null);
-    resolveProjectBayAcrossClusterMock = jest.fn(async () => ({
-      bay_id: "bay-7",
-      epoch: 2,
+    resolveProjectCollabInviteDirectoryMock = jest.fn(async () => ({
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      project_id: PROJECT_ID,
+      owning_bay_id: "bay-7",
+      token_hash: "hash",
     }));
 
     const { previewEmailProjectInvite } = await import("./projects");
@@ -300,7 +314,9 @@ describe("remote project detail reads", () => {
       }),
     );
     expect(resolveProjectBayMock).not.toHaveBeenCalled();
-    expect(resolveProjectBayAcrossClusterMock).toHaveBeenCalledWith(PROJECT_ID);
+    expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
+      invite_id: "77777777-7777-4777-8777-777777777777",
+    });
     expect(previewEmailMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       project_id: PROJECT_ID,

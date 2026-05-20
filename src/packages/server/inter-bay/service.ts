@@ -148,6 +148,10 @@ import {
   resolveProjectBayAcrossCluster,
   resolveProjectBayDirect,
 } from "@cocalc/server/inter-bay/directory";
+import {
+  resolveProjectCollabInviteDirectoryDirect,
+  upsertProjectCollabInviteDirectoryDirect,
+} from "@cocalc/server/projects/collab-invite-directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import {
   handleProjectControlAddress,
@@ -421,6 +425,10 @@ async function startDirectoryService(): Promise<void> {
       await resolveHostBayDirect(`${host_id ?? ""}`, {
         include_deleted: !!include_deleted,
       }),
+    resolveProjectCollabInvite: async (opts) =>
+      await resolveProjectCollabInviteDirectoryDirect(opts),
+    upsertProjectCollabInvite: async (opts) =>
+      await upsertProjectCollabInviteDirectoryDirect(opts),
   };
   services.push(
     ...createInterBayBayDirectoryHandlers({
@@ -445,6 +453,10 @@ async function startDirectoryService(): Promise<void> {
           await resolveHostBayAcrossCluster(`${host_id ?? ""}`, {
             include_deleted: !!include_deleted,
           }),
+        resolveProjectCollabInvite: async (opts) =>
+          await resolveProjectCollabInviteDirectoryDirect(opts),
+        upsertProjectCollabInvite: async (opts) =>
+          await upsertProjectCollabInviteDirectoryDirect(opts),
       },
     }),
   );

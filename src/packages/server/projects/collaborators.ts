@@ -60,6 +60,7 @@ import {
   decryptSecretSettingValue,
   encryptSecretSettingValue,
 } from "@cocalc/util/secret-settings-crypto";
+import { upsertProjectCollabInviteDirectory } from "@cocalc/server/projects/collab-invite-directory";
 
 const logger = getLogger("project:collaborators");
 const COLLAB_GROUPS = ["owner", "collaborator"] as const;
@@ -231,6 +232,28 @@ async function hmacInviteValue(aad: string, value: string): Promise<string> {
 
 async function hashInviteToken(token: string): Promise<string> {
   return await hmacInviteValue(EMAIL_INVITE_HASH_AAD, token);
+}
+
+async function registerEmailInviteDirectory({
+  invite_id,
+  project_id,
+  token_hash,
+  scope,
+}: {
+  invite_id: string;
+  project_id: string;
+  token_hash: string;
+  scope?: string | null;
+}): Promise<void> {
+  await upsertProjectCollabInviteDirectory({
+    invite_id,
+    project_id,
+    token_hash,
+    owning_bay_id: getConfiguredBayId(),
+    invite_source: EMAIL_INVITE_SOURCE,
+    scope: scope ?? EMAIL_INVITE_SCOPE,
+    status: "pending",
+  });
 }
 
 async function hashInviteEmail(email: string): Promise<string> {
@@ -1593,9 +1616,10 @@ async function createEmailProjectInvite({
 
   const { rows: existingRows } = await pool.query<{
     invite_id: string;
+    token_hash: string;
     token_ciphertext: string;
   }>(
-    `SELECT invite_id, token_ciphertext
+    `SELECT invite_id, token_hash, token_ciphertext
        FROM project_collab_invites
       WHERE project_id=$1
         AND inviter_account_id=$2
@@ -1617,6 +1641,12 @@ async function createEmailProjectInvite({
     if (!invite) {
       throw new Error("failed to load existing email invite");
     }
+    await registerEmailInviteDirectory({
+      invite_id: existing.invite_id,
+      project_id,
+      token_hash: existing.token_hash,
+      scope,
+    });
     const url = await inviteUrl({
       project_id,
       invite_id: existing.invite_id,
@@ -1672,6 +1702,12 @@ async function createEmailProjectInvite({
   if (!invite) {
     throw new Error("failed to load created email invite");
   }
+  await registerEmailInviteDirectory({
+    invite_id,
+    project_id,
+    token_hash,
+    scope,
+  });
   const url = await inviteUrl({ project_id, invite_id, token });
   return {
     created: true,
@@ -1703,11 +1739,14 @@ export async function copyEmailProjectInviteLink({
   const { rows } = await getPool().query<{
     project_id: string;
     inviter_account_id: string;
+    token_hash: string | null;
     token_ciphertext: string | null;
+    scope: string | null;
     status: string;
     created: Date;
   }>(
-    `SELECT project_id, inviter_account_id, token_ciphertext, status, created
+    `SELECT project_id, inviter_account_id, token_hash, token_ciphertext,
+            scope, status, created
        FROM project_collab_invites
       WHERE invite_id=$1
         AND invite_source IN ('email', 'course_email')
@@ -1731,6 +1770,14 @@ export async function copyEmailProjectInviteLink({
     EMAIL_INVITE_TOKEN_AAD,
     row.token_ciphertext,
   );
+  if (row.token_hash) {
+    await registerEmailInviteDirectory({
+      invite_id,
+      project_id: row.project_id,
+      token_hash: row.token_hash,
+      scope: row.scope,
+    });
+  }
   return {
     invite_id,
     invite_url: await inviteUrl({
