@@ -20,6 +20,7 @@ import { resolveMembershipForAccount } from "./resolve";
 import {
   adminProvisionSiteLicense,
   getSiteLicenseOverview,
+  listSiteLicenseAffiliationReverificationSeats,
   requestSiteLicensePool,
   reviewSiteLicensePoolRequest,
 } from "./site-licenses";
@@ -596,6 +597,157 @@ describe("site license seat pools", () => {
         package_id: researcherPool.id,
       }),
     );
+  });
+
+  it("classifies site-license affiliation reverification status", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const current_account_id = uuid();
+    const due_account_id = uuid();
+    const expired_account_id = uuid();
+    const instructor_account_id = uuid();
+    const domain = `verify-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await createTestAccount(current_account_id);
+    await createTestAccount(due_account_id);
+    await createTestAccount(expired_account_id);
+    await createTestAccount(instructor_account_id);
+    await markAdmin(admin_account_id);
+    await markVerifiedEmail(current_account_id, `current@${domain}`);
+    await markVerifiedEmail(due_account_id, `due@${domain}`);
+    await markVerifiedEmail(expired_account_id, `expired@${domain}`);
+    await markVerifiedEmail(instructor_account_id, `instructor@${domain}`);
+
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      owner_account_id,
+      name: "Reverification Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 10,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+          affiliation_reverification_days: 30,
+          affiliation_reverification_grace_days: 10,
+        },
+        {
+          pool_name: "Instructors",
+          membership_class: instructorTier,
+          seat_count: 10,
+          requires_approval: true,
+          verification_policy: "manager-approval",
+          exclusive_group: "teaching",
+          affiliation_reverification_days: 30,
+          affiliation_reverification_grace_days: 10,
+        },
+      ],
+    });
+    const studentPool = overview.pools.find(
+      (pool) => pool.pool_name === "Students",
+    )!;
+    const instructorPool = overview.pools.find(
+      (pool) => pool.pool_name === "Instructors",
+    )!;
+
+    await claimMembershipPackageSeat({
+      account_id: current_account_id,
+      package_id: studentPool.id,
+    });
+    await claimMembershipPackageSeat({
+      account_id: due_account_id,
+      package_id: studentPool.id,
+    });
+    await claimMembershipPackageSeat({
+      account_id: expired_account_id,
+      package_id: studentPool.id,
+    });
+
+    const instructorRequest = await requestSiteLicensePool({
+      account_id: instructor_account_id,
+      package_id: instructorPool.id,
+    });
+    await reviewSiteLicensePoolRequest({
+      actor_account_id: owner_account_id,
+      request_id: instructorRequest.id,
+      action: "approve",
+    });
+
+    async function setVerifiedAt(account_id: string, verified_at: string) {
+      await getPool().query(
+        `UPDATE membership_package_assignments
+            SET metadata=jsonb_set(
+                  COALESCE(metadata, '{}'::jsonb),
+                  '{affiliation_verified_at}',
+                  to_jsonb($3::text),
+                  true
+                )
+          WHERE package_id=$1
+            AND account_id=$2`,
+        [studentPool.id, account_id, verified_at],
+      );
+    }
+    await setVerifiedAt(current_account_id, "2026-05-01T00:00:00.000Z");
+    await setVerifiedAt(due_account_id, "2026-04-15T00:00:00.000Z");
+    await setVerifiedAt(expired_account_id, "2026-04-01T00:00:00.000Z");
+
+    const seats = await listSiteLicenseAffiliationReverificationSeats({
+      account_id: owner_account_id,
+      site_license_id: overview.site_license.id,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+    });
+    expect(seats).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          account_id: current_account_id,
+          state: "current",
+          verification_policy: "email-domain",
+          matched_email_address: `current@${domain}`,
+          affiliation_verified_at: new Date("2026-05-01T00:00:00.000Z"),
+          reverification_due_at: new Date("2026-05-31T00:00:00.000Z"),
+        }),
+        expect.objectContaining({
+          account_id: due_account_id,
+          state: "pending_reverification",
+          reverification_due_at: new Date("2026-05-15T00:00:00.000Z"),
+          reverification_grace_expires_at: new Date("2026-05-25T00:00:00.000Z"),
+        }),
+        expect.objectContaining({
+          account_id: expired_account_id,
+          state: "grace_expired",
+          reverification_due_at: new Date("2026-05-01T00:00:00.000Z"),
+          reverification_grace_expires_at: new Date("2026-05-11T00:00:00.000Z"),
+        }),
+        expect.objectContaining({
+          account_id: instructor_account_id,
+          state: "current",
+          verification_policy: "manager-approval",
+          matched_email_address: `instructor@${domain}`,
+        }),
+      ]),
+    );
+    await expect(
+      listSiteLicenseAffiliationReverificationSeats({
+        account_id: owner_account_id,
+        site_license_id: overview.site_license.id,
+        states: ["pending_reverification", "grace_expired"],
+        now: new Date("2026-05-20T00:00:00.000Z"),
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        account_id: expired_account_id,
+        state: "grace_expired",
+      }),
+      expect.objectContaining({
+        account_id: due_account_id,
+        state: "pending_reverification",
+      }),
+    ]);
   });
 
   it("rechecks approval-required pool capacity at review time", async () => {

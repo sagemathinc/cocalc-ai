@@ -403,6 +403,29 @@ export interface SiteLicenseOverview {
   recent_audit_events?: SiteLicenseAuditEvent[];
 }
 
+export type SiteLicenseAffiliationReverificationState =
+  | "current"
+  | "pending_reverification"
+  | "grace_expired";
+
+export interface SiteLicenseAffiliationReverificationSeat {
+  site_license_id: string;
+  package_id: string;
+  assignment_id: string;
+  account_id: string;
+  membership_class: MembershipClass;
+  pool_name?: string | null;
+  exclusive_group: string;
+  verification_policy: SiteLicenseVerificationPolicy;
+  matched_email_address?: string | null;
+  affiliation_verified_at?: Date | null;
+  reverification_due_at?: Date | null;
+  reverification_grace_expires_at?: Date | null;
+  reverification_days?: number | null;
+  grace_days?: number | null;
+  state: SiteLicenseAffiliationReverificationState;
+}
+
 export interface MembershipUsageStatus {
   collected_at: string;
   owned_project_count: number;

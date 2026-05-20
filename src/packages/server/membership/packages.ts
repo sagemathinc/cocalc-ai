@@ -469,6 +469,28 @@ function getTermsAcceptanceMetadata({
   };
 }
 
+function getSiteLicenseAffiliationMetadata({
+  pkg,
+  matched_email_address,
+  verified_at = new Date(),
+}: {
+  pkg: MembershipPackageRecord;
+  matched_email_address: string;
+  verified_at?: Date;
+}): Record<string, unknown> {
+  if (pkg.kind !== "site") {
+    return {};
+  }
+  return {
+    site_license_id: getSiteLicenseId(pkg.metadata) ?? null,
+    verification_policy:
+      `${pkg.metadata?.verification_policy ?? ""}`.trim() || "email-domain",
+    exclusive_group: getPackageExclusiveGroup(pkg),
+    matched_email_address,
+    affiliation_verified_at: verified_at.toISOString(),
+  };
+}
+
 function getInstitutionalClaimDescriptorForEmail({
   pkg,
   matched_email_address,
@@ -2051,6 +2073,10 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
           });
           const nextMetadata = {
             ...normalizeMetadata(pendingAssignment.metadata),
+            ...getSiteLicenseAffiliationMetadata({
+              pkg,
+              matched_email_address: pendingAssignment.email_address!,
+            }),
             grant_id: grantInfo.grant_id,
             grant_source: grantInfo.grant_source,
             grant_purchase_id: grantInfo.grant_purchase_id ?? null,
@@ -2168,6 +2194,10 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
             metadata: {
               claimed_from_domain: matchedEmailAddress.split("@")[1],
               claimed_email_address: matchedEmailAddress,
+              ...getSiteLicenseAffiliationMetadata({
+                pkg,
+                matched_email_address: matchedEmailAddress,
+              }),
               ...getTermsAcceptanceMetadata({ terms, accepted_terms }),
               claim_scope_key: reservedInstitutionalClaim.scope_key,
               claim_scope_kind: reservedInstitutionalClaim.scope_kind,

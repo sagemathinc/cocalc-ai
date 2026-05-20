@@ -765,14 +765,19 @@ distinct groups such as `research`.
 
 ### Phase 6: Fresh Affiliation Reverification
 
-- Store `affiliation_verified_at` and the verifying institutional identity on
-  site-license grants or claim metadata.
-- Store the verification policy that was satisfied.
-- Add pending-affiliation-reverification query.
+- [x] Store `affiliation_verified_at` and the verifying institutional identity on
+      site-license grants or claim metadata.
+- [x] Store the verification policy that was satisfied.
+- [x] Add pending-affiliation-reverification query.
 - Add user notification/grace workflow.
 - Clear pending release when the user re-verifies institutional email or has a
   fresh qualifying SSO assertion.
 - Add scheduled release job for seats that miss the grace deadline.
+
+Implementation note: active site-license seats now carry affiliation metadata
+for direct claims and manager approvals. The backend reverification query
+classifies seats as current, pending reverification, or grace expired using
+pool-level reverification and grace settings.
 
 ### Phase 7: Invite Limit Integration
 
