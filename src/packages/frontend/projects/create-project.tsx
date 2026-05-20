@@ -670,6 +670,14 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
           </Form.Item>
         </Form>
         {renderRootfsSection()}
+        <SelectNewHost
+          disabled={saving}
+          selectedHost={selectedHost}
+          onChange={setHost}
+          regionFilter={draft.region}
+          regionLabel={R2_REGION_LABELS[draft.region]}
+          pickerMode="create"
+        />
         <Button
           type="link"
           onClick={() => setAdvancedOpen(!draft.advanced_open)}
@@ -711,14 +719,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                 </Paragraph>
               </Space>
             </Card>
-            <SelectNewHost
-              disabled={saving}
-              selectedHost={selectedHost}
-              onChange={setHost}
-              regionFilter={draft.region}
-              regionLabel={R2_REGION_LABELS[draft.region]}
-              pickerMode="create"
-            />
           </Space>
         )}
         {render_error()}
