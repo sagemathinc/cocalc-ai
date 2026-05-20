@@ -51,6 +51,7 @@ import {
   type InterBayProjectReferenceApi,
 } from "@cocalc/conat/inter-bay/api";
 import type { ConatService } from "@cocalc/conat/service/typed";
+import type { SiteLicenseAffiliationReverificationSeat } from "@cocalc/conat/hub/api/purchases";
 import getLogger from "@cocalc/backend/logger";
 import { db } from "@cocalc/database";
 import { callback2 } from "@cocalc/util/async-utils";
@@ -127,8 +128,10 @@ import {
 import {
   adminProvisionSiteLicense,
   getVerifiedEmailAddressesForAccount,
+  getSiteLicenseAffiliationReverificationStatusForAccount,
   getSiteLicenseOverview,
   requestSiteLicensePoolWithVerifiedEmailsOnLocalBay,
+  refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBay,
   reviewSiteLicensePoolRequest,
 } from "@cocalc/server/membership/site-licenses";
 import {
@@ -804,6 +807,81 @@ async function startAccountLocalService(): Promise<void> {
     },
     reviewSiteLicensePoolRequest: async (opts) =>
       await reviewSiteLicensePoolRequest(opts),
+    refreshSiteLicenseAffiliationVerification: async ({
+      account_id,
+      site_license_id,
+      verified_email_addresses,
+    }) =>
+      await refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBay(
+        {
+          account_id,
+          site_license_id,
+          verified_email_addresses,
+        },
+      ),
+    refreshSiteLicenseAffiliationVerificationForAccount: async ({
+      account_id,
+      site_license_id,
+    }) => {
+      await assertAccountTrustedForProductAccess(
+        account_id,
+        "refresh site-license affiliation verification",
+      );
+      const verified_email_addresses =
+        await getVerifiedEmailAddressesForAccount(account_id);
+      const status =
+        await getSiteLicenseAffiliationReverificationStatusForAccount({
+          account_id,
+        });
+      const refreshed: SiteLicenseAffiliationReverificationSeat[] = [];
+      for (const seat of status.seats.filter(
+        (seat) =>
+          seat.can_refresh_with_verified_email &&
+          (site_license_id
+            ? seat.site_license_id === site_license_id
+            : seat.state === "pending_reverification" ||
+              seat.state === "grace_expired"),
+      )) {
+        const ownerAccountId =
+          `${seat.site_license_owner_account_id ?? ""}`.trim();
+        if (!ownerAccountId) continue;
+        const ownerAccount = await getClusterAccountById(ownerAccountId);
+        if (!ownerAccount) {
+          throw Error(`account ${ownerAccountId} not found`);
+        }
+        const ownerBayId =
+          `${ownerAccount.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+        if (ownerBayId !== getConfiguredBayId()) {
+          refreshed.push(
+            ...(await createInterBayAccountLocalClient({
+              client: getInterBayFabricClient(),
+              dest_bay: ownerBayId,
+            }).refreshSiteLicenseAffiliationVerification({
+              account_id,
+              site_license_id: seat.site_license_id,
+              verified_email_addresses,
+            })),
+          );
+          continue;
+        }
+        refreshed.push(
+          ...(await refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBay(
+            {
+              account_id,
+              site_license_id: seat.site_license_id,
+              verified_email_addresses,
+            },
+          )),
+        );
+      }
+      return refreshed;
+    },
+    getSiteLicenseAffiliationReverificationStatusForAccount: async ({
+      account_id,
+    }) =>
+      await getSiteLicenseAffiliationReverificationStatusForAccount({
+        account_id,
+      }),
     getMembershipPortableState: async ({ account_id }) =>
       await getMembershipPortableState(account_id),
     replaceMembershipPortableState: async ({

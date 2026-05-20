@@ -98,6 +98,10 @@ interface RawSiteLicensePoolRequestSummary {
 }
 
 interface RawSiteLicenseTerms {
+  id?: string | null;
+  name?: string | null;
+  organization_name?: string | null;
+  owner_account_id?: string | null;
   custom_terms_url?: string | null;
   custom_policy_url?: string | null;
   terms_version_label?: string | null;
@@ -425,7 +429,8 @@ async function getSiteLicenseTermsForPackage({
     return {};
   }
   const { rows } = await getQueryClient(client).query<RawSiteLicenseTerms>(
-    `SELECT custom_terms_url, custom_policy_url, terms_version_label
+    `SELECT id, name, organization_name, owner_account_id,
+            custom_terms_url, custom_policy_url, terms_version_label
        FROM site_licenses
        WHERE id=$1`,
     [siteLicenseId],
@@ -472,10 +477,12 @@ function getTermsAcceptanceMetadata({
 function getSiteLicenseAffiliationMetadata({
   pkg,
   matched_email_address,
+  site_license,
   verified_at = new Date(),
 }: {
   pkg: MembershipPackageRecord;
   matched_email_address: string;
+  site_license?: RawSiteLicenseTerms | null;
   verified_at?: Date;
 }): Record<string, unknown> {
   if (pkg.kind !== "site") {
@@ -483,9 +490,18 @@ function getSiteLicenseAffiliationMetadata({
   }
   return {
     site_license_id: getSiteLicenseId(pkg.metadata) ?? null,
+    site_license_name: site_license?.name ?? null,
+    organization_name: site_license?.organization_name ?? null,
+    site_license_owner_account_id:
+      site_license?.owner_account_id ?? pkg.owner_account_id,
+    pool_name: `${pkg.metadata?.pool_name ?? ""}`.trim() || null,
     verification_policy:
       `${pkg.metadata?.verification_policy ?? ""}`.trim() || "email-domain",
     exclusive_group: getPackageExclusiveGroup(pkg),
+    affiliation_reverification_days:
+      pkg.metadata?.affiliation_reverification_days ?? null,
+    affiliation_reverification_grace_days:
+      pkg.metadata?.affiliation_reverification_grace_days ?? null,
     matched_email_address,
     affiliation_verified_at: verified_at.toISOString(),
   };
@@ -2061,6 +2077,14 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
           };
         }
         if (pendingAssignment) {
+          const baseMetadata = {
+            ...normalizeMetadata(pendingAssignment.metadata),
+            ...getSiteLicenseAffiliationMetadata({
+              pkg,
+              matched_email_address: pendingAssignment.email_address!,
+              site_license: terms,
+            }),
+          };
           const grantInfo = await createGrantForAssignment({
             owner_account_id: pkg.owner_account_id,
             package_id,
@@ -2068,15 +2092,11 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
             assigned_by_account_id:
               pendingAssignment.assigned_by_account_id ?? null,
             assignment_id: pendingAssignment.id,
-            metadata: pendingAssignment.metadata,
+            metadata: baseMetadata,
             client: dbClient,
           });
           const nextMetadata = {
-            ...normalizeMetadata(pendingAssignment.metadata),
-            ...getSiteLicenseAffiliationMetadata({
-              pkg,
-              matched_email_address: pendingAssignment.email_address!,
-            }),
+            ...baseMetadata,
             grant_id: grantInfo.grant_id,
             grant_source: grantInfo.grant_source,
             grant_purchase_id: grantInfo.grant_purchase_id ?? null,
@@ -2197,6 +2217,7 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
               ...getSiteLicenseAffiliationMetadata({
                 pkg,
                 matched_email_address: matchedEmailAddress,
+                site_license: terms,
               }),
               ...getTermsAcceptanceMetadata({ terms, accepted_terms }),
               claim_scope_key: reservedInstitutionalClaim.scope_key,

@@ -11,6 +11,8 @@ import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fenc
 import type {
   MembershipPackageAssignment,
   MembershipPackageDetails,
+  SiteLicenseAffiliationReverificationUserSeat,
+  SiteLicenseAffiliationReverificationUserStatus,
   SiteLicenseAffiliationReverificationSeat,
   SiteLicenseAffiliationReverificationState,
   SiteLicenseAuditAction,
@@ -44,7 +46,11 @@ import {
   listMembershipPackageDetailsForOwner,
   revokeMembershipPackageSeat,
 } from "./packages";
-import { queueMembershipClaimIdentitySyncEffect } from "./side-effects";
+import { listActiveMembershipGrantsForAccount } from "./grants";
+import {
+  queueMembershipClaimIdentitySyncEffect,
+  queueMembershipGrantSyncEffect,
+} from "./side-effects";
 
 type Queryable = PoolClient | ReturnType<typeof getPool>;
 
@@ -416,12 +422,14 @@ function getClaimScopeKey(
 
 function getSiteLicenseAffiliationMetadata({
   site_license_id,
+  site_license,
   pkg,
   matched_email_address,
   exclusive_group,
   verified_at = new Date(),
 }: {
   site_license_id: string;
+  site_license: SiteLicenseRecord;
   pkg: { metadata?: Record<string, unknown> | null };
   matched_email_address: string;
   exclusive_group: string;
@@ -429,8 +437,16 @@ function getSiteLicenseAffiliationMetadata({
 }): Record<string, unknown> {
   return {
     site_license_id,
+    site_license_name: site_license.name,
+    organization_name: site_license.organization_name,
+    site_license_owner_account_id: site_license.owner_account_id,
+    pool_name: `${pkg.metadata?.pool_name ?? ""}`.trim() || null,
     verification_policy: getPackageVerificationPolicy(pkg.metadata),
     exclusive_group,
+    affiliation_reverification_days:
+      pkg.metadata?.affiliation_reverification_days ?? null,
+    affiliation_reverification_grace_days:
+      pkg.metadata?.affiliation_reverification_grace_days ?? null,
     matched_email_address,
     affiliation_verified_at: verified_at.toISOString(),
   };
@@ -558,6 +574,107 @@ function toAffiliationReverificationSeat({
     reverification_days: pool.affiliation_reverification_days ?? null,
     grace_days: pool.affiliation_reverification_grace_days ?? null,
     state: classification.state,
+  };
+}
+
+function getMetadataString(
+  metadata: Record<string, unknown> | null | undefined,
+  key: string,
+): string | null {
+  return `${metadata?.[key] ?? ""}`.trim() || null;
+}
+
+function toUserAffiliationReverificationSeat({
+  grant,
+  now,
+}: {
+  grant: {
+    account_id: string;
+    membership_class: string;
+    package_id?: string | null;
+    metadata?: Record<string, unknown> | null;
+  };
+  now: Date;
+}): SiteLicenseAffiliationReverificationUserSeat | undefined {
+  const metadata = normalizeMetadata(grant.metadata);
+  const site_license_id = getMetadataString(metadata, "site_license_id");
+  const package_id = `${grant.package_id ?? ""}`.trim();
+  if (!site_license_id || !package_id) {
+    return;
+  }
+  const affiliation_verified_at =
+    getMetadataDate(metadata, "affiliation_verified_at") ??
+    getMetadataDate(metadata, "approved_at") ??
+    getMetadataDate(metadata, "claimed_at");
+  const reverification_days = normalizeOptionalPositiveInt(
+    metadata?.affiliation_reverification_days,
+  );
+  const grace_days = normalizeOptionalPositiveInt(
+    metadata?.affiliation_reverification_grace_days,
+  );
+  const classification = classifyAffiliationReverification({
+    verified_at: affiliation_verified_at,
+    reverification_days,
+    grace_days,
+    now,
+  });
+  const verification_policy = SITE_LICENSE_VERIFICATION_POLICIES.has(
+    metadata?.verification_policy as any,
+  )
+    ? (metadata?.verification_policy as SiteLicenseVerificationPolicy)
+    : "email-domain";
+  return {
+    site_license_id,
+    package_id,
+    assignment_id: getMetadataString(metadata, "assignment_id") ?? "",
+    account_id: grant.account_id,
+    membership_class: grant.membership_class,
+    pool_name: getMetadataString(metadata, "pool_name"),
+    site_license_name: getMetadataString(metadata, "site_license_name"),
+    organization_name: getMetadataString(metadata, "organization_name"),
+    site_license_owner_account_id: getMetadataString(
+      metadata,
+      "site_license_owner_account_id",
+    ),
+    exclusive_group:
+      getMetadataString(metadata, "exclusive_group") ??
+      `${grant.membership_class}`.trim().toLowerCase(),
+    verification_policy,
+    matched_email_address: getMetadataString(metadata, "matched_email_address"),
+    affiliation_verified_at: affiliation_verified_at ?? null,
+    reverification_due_at: classification.due_at ?? null,
+    reverification_grace_expires_at: classification.grace_expires_at ?? null,
+    reverification_days,
+    grace_days,
+    state: classification.state,
+    can_refresh_with_verified_email: verification_policy === "email-domain",
+  };
+}
+
+function buildUserAffiliationReverificationStatus(
+  seats: SiteLicenseAffiliationReverificationUserSeat[],
+): SiteLicenseAffiliationReverificationUserStatus {
+  const pendingSeats = seats.filter(
+    (seat) =>
+      seat.state === "pending_reverification" || seat.state === "grace_expired",
+  );
+  const dueDates = pendingSeats
+    .map((seat) => seat.reverification_due_at)
+    .filter((date): date is Date => date instanceof Date)
+    .sort((left, right) => left.getTime() - right.getTime());
+  const graceDates = pendingSeats
+    .map((seat) => seat.reverification_grace_expires_at)
+    .filter((date): date is Date => date instanceof Date)
+    .sort((left, right) => left.getTime() - right.getTime());
+  return {
+    seats,
+    pending_count: seats.filter(
+      (seat) => seat.state === "pending_reverification",
+    ).length,
+    grace_expired_count: seats.filter((seat) => seat.state === "grace_expired")
+      .length,
+    next_reverification_due_at: dueDates[0] ?? null,
+    next_reverification_grace_expires_at: graceDates[0] ?? null,
   };
 }
 
@@ -1075,6 +1192,29 @@ export async function listSiteLicenseAffiliationReverificationSeats({
   });
 }
 
+export async function getSiteLicenseAffiliationReverificationStatusForAccount({
+  account_id,
+  now = new Date(),
+  client,
+}: {
+  account_id: string;
+  now?: Date;
+  client?: PoolClient;
+}): Promise<SiteLicenseAffiliationReverificationUserStatus> {
+  const accountId = normalizeAccountId(account_id);
+  const grants = await listActiveMembershipGrantsForAccount(accountId, client);
+  const seats = sortAffiliationReverificationSeats(
+    grants
+      .filter((grant) => grant.source === "site-license")
+      .map((grant) => toUserAffiliationReverificationSeat({ grant, now }))
+      .filter(
+        (seat): seat is SiteLicenseAffiliationReverificationUserSeat =>
+          seat != null && seat.reverification_days != null,
+      ),
+  ) as SiteLicenseAffiliationReverificationUserSeat[];
+  return buildUserAffiliationReverificationStatus(seats);
+}
+
 export async function refreshSiteLicenseAffiliationVerificationForAccount({
   account_id,
   site_license_id,
@@ -1166,8 +1306,15 @@ export async function refreshSiteLicenseAffiliationVerificationWithVerifiedEmail
         const nextMetadata = {
           ...normalizeMetadata(assignment.metadata),
           site_license_id: normalizedSiteLicenseId,
+          site_license_name: siteLicense.name,
+          organization_name: siteLicense.organization_name,
+          site_license_owner_account_id: siteLicense.owner_account_id,
+          pool_name: pool.pool_name ?? null,
           verification_policy: "email-domain",
           exclusive_group: previousSeat.exclusive_group,
+          affiliation_reverification_days: pool.affiliation_reverification_days,
+          affiliation_reverification_grace_days:
+            pool.affiliation_reverification_grace_days,
           matched_email_address: matchedEmailAddress,
           affiliation_verified_at: now.toISOString(),
           affiliation_reverified_at: now.toISOString(),
@@ -1187,6 +1334,33 @@ export async function refreshSiteLicenseAffiliationVerificationWithVerifiedEmail
         );
         if (rows.length === 0) {
           continue;
+        }
+        if (assignment.grant_id) {
+          await queueMembershipGrantSyncEffect({
+            owner_account_id: siteLicense.owner_account_id,
+            package_id: pool.id,
+            assignment_id: assignment.id,
+            desired_payload: {
+              desired_state: "active",
+              grant: {
+                id: assignment.grant_id,
+                account_id: accountId,
+                membership_class: pool.membership_class,
+                source: assignment.grant_source ?? "site-license",
+                package_id: pool.id,
+                purchase_id: assignment.grant_purchase_id ?? null,
+                granted_by_account_id:
+                  assignment.assigned_by_account_id ?? null,
+                starts_at: pool.starts_at ?? null,
+                expires_at: pool.expires_at ?? null,
+                metadata: {
+                  ...nextMetadata,
+                  assignment_id: assignment.id,
+                },
+              },
+            },
+            client: dbClient,
+          });
         }
         await recordSiteLicenseAuditEvent({
           site_license_id: normalizedSiteLicenseId,
@@ -1958,6 +2132,7 @@ export async function reviewSiteLicensePoolRequest({
               site_license_id: siteLicense.id,
               ...getSiteLicenseAffiliationMetadata({
                 site_license_id: siteLicense.id,
+                site_license: siteLicense,
                 pkg,
                 matched_email_address: request.matched_email_address,
                 exclusive_group: exclusiveGroup,

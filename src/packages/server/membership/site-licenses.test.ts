@@ -17,9 +17,11 @@ import {
   listMembershipPackageAssignments,
 } from "./packages";
 import { resolveMembershipForAccount } from "./resolve";
+import { runMembershipSideEffectsPass } from "./side-effects";
 import { runSiteLicenseAffiliationReleaseMaintenancePass } from "./site-license-affiliation-maintenance";
 import {
   adminProvisionSiteLicense,
+  getSiteLicenseAffiliationReverificationStatusForAccount,
   getSiteLicenseOverview,
   listSiteLicenseAffiliationReverificationSeats,
   releaseGraceExpiredSiteLicenseAffiliationSeats,
@@ -694,6 +696,18 @@ describe("site license seat pools", () => {
             AND account_id=$2`,
         [studentPool.id, account_id, verified_at],
       );
+      await getPool().query(
+        `UPDATE membership_grants
+            SET metadata=jsonb_set(
+                  COALESCE(metadata, '{}'::jsonb),
+                  '{affiliation_verified_at}',
+                  to_jsonb($3::text),
+                  true
+                )
+          WHERE package_id=$1
+            AND account_id=$2`,
+        [studentPool.id, account_id, verified_at],
+      );
     }
     await setVerifiedAt(current_account_id, "2026-05-01T00:00:00.000Z");
     await setVerifiedAt(due_account_id, "2026-04-15T00:00:00.000Z");
@@ -897,11 +911,45 @@ describe("site license seat pools", () => {
             AND account_id=$2`,
         [studentPool.id, account_id, verified_at],
       );
+      await getPool().query(
+        `UPDATE membership_grants
+            SET metadata=jsonb_set(
+                  COALESCE(metadata, '{}'::jsonb),
+                  '{affiliation_verified_at}',
+                  to_jsonb($3::text),
+                  true
+                )
+          WHERE package_id=$1
+            AND account_id=$2`,
+        [studentPool.id, account_id, verified_at],
+      );
     }
     await setVerifiedAt(pending_account_id, "2026-04-15T00:00:00.000Z");
     await setVerifiedAt(expired_account_id, "2026-04-01T00:00:00.000Z");
     await setVerifiedAt(wrong_domain_account_id, "2026-04-15T00:00:00.000Z");
     await markVerifiedEmail(wrong_domain_account_id, `wrong@example.com`);
+
+    await expect(
+      getSiteLicenseAffiliationReverificationStatusForAccount({
+        account_id: pending_account_id,
+        now: new Date("2026-05-20T00:00:00.000Z"),
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        pending_count: 1,
+        grace_expired_count: 0,
+        seats: [
+          expect.objectContaining({
+            account_id: pending_account_id,
+            state: "pending_reverification",
+            organization_name: "Example University",
+            site_license_owner_account_id: owner_account_id,
+            pool_name: "Students",
+            can_refresh_with_verified_email: true,
+          }),
+        ],
+      }),
+    );
 
     await expect(
       refreshSiteLicenseAffiliationVerificationForAccount({
@@ -931,6 +979,25 @@ describe("site license seat pools", () => {
         affiliation_verified_at: new Date("2026-05-20T00:00:00.000Z"),
       }),
     ]);
+    await runMembershipSideEffectsPass({ limit: 100 });
+    await expect(
+      getSiteLicenseAffiliationReverificationStatusForAccount({
+        account_id: pending_account_id,
+        now: new Date("2026-05-20T00:00:00.000Z"),
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        pending_count: 0,
+        grace_expired_count: 0,
+        seats: [
+          expect.objectContaining({
+            account_id: pending_account_id,
+            state: "current",
+            affiliation_verified_at: new Date("2026-05-20T00:00:00.000Z"),
+          }),
+        ],
+      }),
+    );
     await expect(
       refreshSiteLicenseAffiliationVerificationForAccount({
         account_id: wrong_domain_account_id,

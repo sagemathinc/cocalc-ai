@@ -428,6 +428,21 @@ export interface SiteLicenseAffiliationReverificationSeat {
   state: SiteLicenseAffiliationReverificationState;
 }
 
+export interface SiteLicenseAffiliationReverificationUserSeat extends SiteLicenseAffiliationReverificationSeat {
+  site_license_name?: string | null;
+  organization_name?: string | null;
+  site_license_owner_account_id?: string | null;
+  can_refresh_with_verified_email: boolean;
+}
+
+export interface SiteLicenseAffiliationReverificationUserStatus {
+  seats: SiteLicenseAffiliationReverificationUserSeat[];
+  pending_count: number;
+  grace_expired_count: number;
+  next_reverification_due_at?: Date | null;
+  next_reverification_grace_expires_at?: Date | null;
+}
+
 export interface MembershipUsageStatus {
   collected_at: string;
   owned_project_count: number;
@@ -718,6 +733,13 @@ export interface Purchases {
     action?: "approve" | "reject";
     review_note?: string | null;
   }) => Promise<SiteLicensePoolRequest>;
+  getSiteLicenseAffiliationReverificationStatus: (opts?: {
+    account_id?: string;
+  }) => Promise<SiteLicenseAffiliationReverificationUserStatus>;
+  refreshSiteLicenseAffiliationVerification: (opts?: {
+    account_id?: string;
+    site_license_id?: string;
+  }) => Promise<SiteLicenseAffiliationReverificationSeat[]>;
   getAIUsage: (opts?: { account_id?: string }) => Promise<AIUsageStatus>;
   getManagedEgressHistory: (
     opts?: ManagedEgressHistoryQuery,
@@ -748,6 +770,8 @@ export const purchases = {
   getSiteLicenseOverview: authFirst,
   requestSiteLicensePool: authFirst,
   reviewSiteLicensePoolRequest: authFirst,
+  getSiteLicenseAffiliationReverificationStatus: authFirst,
+  refreshSiteLicenseAffiliationVerification: authFirst,
   getAIUsage: authFirst,
   getManagedEgressHistory: authFirst,
   getManagedEgressAdminOverview: authFirst,

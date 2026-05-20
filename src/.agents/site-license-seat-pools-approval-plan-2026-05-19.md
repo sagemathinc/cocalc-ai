@@ -792,6 +792,10 @@ startup path and invokes the system release helper for active site licenses with
 reverification-enabled pools. It releases only grace-expired seats, batches work
 per tick, and records `seat-released-after-reverification-grace` with
 maintenance metadata.
+The user-facing backend contract now exposes a signed-in account's
+reverification status from account-home grant metadata and a refresh RPC that
+routes directly to the site-license owner bay using grant routing metadata.
+Actual in-app/email notification delivery and UI presentation are still pending.
 
 ### Phase 7: Invite Limit Integration
 
