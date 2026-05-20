@@ -839,6 +839,23 @@ export async function getSiteLicenseOverview({
     site_license_id: normalizedSiteLicenseId,
     client,
   });
+  return await getSiteLicenseOverviewWithoutAuthorization({
+    site_license_id: normalizedSiteLicenseId,
+    client,
+  });
+}
+
+async function getSiteLicenseOverviewWithoutAuthorization({
+  site_license_id,
+  client,
+}: {
+  site_license_id: string;
+  client?: PoolClient;
+}): Promise<SiteLicenseOverview> {
+  const normalizedSiteLicenseId = normalizeAccountId(
+    site_license_id,
+    "site_license_id",
+  );
   const siteLicense = await getSiteLicense(normalizedSiteLicenseId, client);
   const [managers, pools, pending_requests, recent_audit_events] =
     await Promise.all([
@@ -1027,8 +1044,7 @@ export async function adminProvisionSiteLicense({
           client,
         });
       }
-      return await getSiteLicenseOverview({
-        account_id: actorAccountId,
+      return await getSiteLicenseOverviewWithoutAuthorization({
         site_license_id,
         client,
       });

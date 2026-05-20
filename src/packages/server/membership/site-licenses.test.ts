@@ -335,6 +335,49 @@ describe("site license seat pools", () => {
     );
   });
 
+  it("returns provisioned overview for trusted remote admin actor", async () => {
+    const remote_admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const domain = `trusted-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(remote_admin_account_id);
+    await createTestAccount(owner_account_id);
+
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: remote_admin_account_id,
+      owner_account_id,
+      name: "Trusted Remote Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      trusted_admin: true,
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 20,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+        },
+      ],
+    });
+
+    expect(overview.site_license.name).toBe("Trusted Remote Campus");
+    expect(overview.managers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          account_id: owner_account_id,
+          role: "owner",
+        }),
+      ]),
+    );
+    await expect(
+      getSiteLicenseOverview({
+        account_id: remote_admin_account_id,
+        site_license_id: overview.site_license.id,
+      }),
+    ).rejects.toThrow("must view site license");
+  });
+
   it("requires custom terms acceptance before claim or request", async () => {
     const admin_account_id = uuid();
     const owner_account_id = uuid();
