@@ -94,6 +94,7 @@ type SiteLicensePool = {
   seat_count: number;
   requires_approval: boolean;
   verification_policy: "email-domain" | "sso-affiliation" | "manager-approval";
+  exclusive_group?: string; // e.g. "teaching", "research"; defaults to tier
   affiliation_reverification_days?: number;
   affiliation_reverification_grace_days?: number;
 };
@@ -105,6 +106,13 @@ Example:
 - `Instructors`: 200 seats, `instructor` tier, approval required
 - `Researchers`: 500 seats, `researcher` tier, approval required or SSO-backed
   eligibility
+
+`exclusive_group` controls deduplication and upgrade behavior. For example,
+`Students` and `Instructors` should usually share `exclusive_group =
+"teaching"`, so instructor approval releases a lower student teaching seat.
+`Researchers` should use `exclusive_group = "research"`, so a professor can
+hold a teaching seat and a research seat, potentially on separate CoCalc
+accounts using plus-address aliases.
 
 The organization should not have to understand package rows, assignment rows,
 grant rows, or bay routing.
@@ -186,9 +194,12 @@ For each pool:
 - `metadata.pool_name = "Students" | "Instructors" | "Researchers" | ...`
 - `metadata.requires_approval = boolean`
 - `metadata.verification_policy = "email-domain" | "sso-affiliation" | "manager-approval"`
+- `metadata.exclusive_group = "teaching" | "research" | ...`
 - `metadata.affiliation_reverification_days = number | undefined`
 - `metadata.affiliation_reverification_grace_days = number | undefined`
 - `metadata.allowed_domains = string[]`
+- `metadata.claim_scope_key = "site-license:<id>:group:<exclusive_group>"`
+- `metadata.claim_scope_kind = "site-license-exclusive-group"`
 - `starts_at` / `expires_at` inherited from, or constrained by, the site
   license
 
@@ -302,9 +313,10 @@ Fields:
 
 Rules:
 
-- At most one active pending request per account per site-license pool.
+- At most one active pending request per account per site-license exclusive
+  group.
 - At most one active pending request per canonical institutional identity per
-  site-license pool.
+  site-license exclusive group.
 - Pending requests should not consume seats by default.
 - Approval must recheck cap availability before creating the grant.
 - Rejection should be final for the specific request but allow a new request
@@ -635,8 +647,9 @@ Scope:
 - [x] Add instructor request creation for approval-required pools.
 - [x] Add manager approval/rejection APIs that recheck cap availability and create
       the package assignment/grant through existing membership package machinery.
-- [x] Enforce one active pool per account per site license; instructor approval
-      replaces a lower student grant.
+- [x] Enforce one active pool per account per site-license exclusive group;
+      instructor approval replaces a lower student teaching grant, while a
+      separate research grant can coexist.
 - [x] Record custom terms/policy acceptance metadata when URLs are configured.
 - [x] Add minimal manager overview data: pool cap, active count, pending request
       count, available seats, and recent approvals/rejections.
@@ -726,9 +739,11 @@ Acceptance criteria:
 
 ### Phase 5: Seat Reconciliation
 
-- Enforce one active pool per account per site license.
-- Instructor approval revokes the lower student seat for simplicity and to
-  avoid confusion.
+- Enforce one active pool per account per site-license exclusive group.
+- Instructor approval revokes the lower student seat in the same teaching group
+  for simplicity and to avoid confusion.
+- Researcher seats can coexist with teaching seats when they use a distinct
+  `exclusive_group`.
 - Add reporting so managers can see seats revoked due to upgrades.
 
 ### Phase 6: Fresh Affiliation Reverification
@@ -854,7 +869,7 @@ Implement the first version with:
 - optional custom site-license terms/policy links
 - standard term/renewal/overage policy fields
 - no pending-seat reservation
-- one active pool per account per site license
+- one active pool per account per site-license exclusive group
 - periodic fresh affiliation reverification, with automatic release when the
   user cannot reverify during the grace period
 

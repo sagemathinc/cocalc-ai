@@ -27,6 +27,7 @@ import {
 } from "@cocalc/util/misc";
 import {
   canonicalizeInstitutionalClaimEmail,
+  getMembershipClaimIdentity,
   reserveMembershipClaimIdentity,
   revokeMembershipClaimIdentity,
 } from "./claim-directory";
@@ -335,8 +336,32 @@ function getPackageVerificationPolicy(
   return "email-domain";
 }
 
-function getClaimScopeKey(site_license_id: string): string {
-  return `site-license:${site_license_id}`;
+function normalizeExclusiveGroup(
+  exclusive_group: unknown,
+  fallback: string,
+): string {
+  const normalized = `${exclusive_group ?? ""}`.trim().toLowerCase();
+  if (normalized) {
+    return normalized;
+  }
+  return normalizeString(fallback, "exclusive_group").toLowerCase();
+}
+
+function getPackageExclusiveGroup({
+  membership_class,
+  metadata,
+}: {
+  membership_class: string;
+  metadata?: Record<string, unknown> | null;
+}): string {
+  return normalizeExclusiveGroup(metadata?.exclusive_group, membership_class);
+}
+
+function getClaimScopeKey(
+  site_license_id: string,
+  exclusive_group: string,
+): string {
+  return `site-license:${site_license_id}:group:${exclusive_group}`;
 }
 
 function normalizeSiteLicenseRow(
@@ -609,6 +634,37 @@ async function countPendingRequestsByPackage({
   return new Map(rows.map((row) => [row.package_id, Number(row.count)]));
 }
 
+async function listSiteLicensePackageIdsByExclusiveGroup({
+  site_license_id,
+  exclusive_group,
+  client,
+}: {
+  site_license_id: string;
+  exclusive_group: string;
+  client?: PoolClient;
+}): Promise<string[]> {
+  const { rows } = await getQueryClient(client).query<{
+    id: string;
+    membership_class: string;
+    metadata?: Record<string, unknown> | null;
+  }>(
+    `SELECT id, membership_class, metadata
+     FROM membership_packages
+     WHERE metadata->>'site_license_id'=$1`,
+    [site_license_id],
+  );
+  const ids = rows
+    .filter(
+      (row) =>
+        getPackageExclusiveGroup({
+          membership_class: row.membership_class,
+          metadata: row.metadata,
+        }) === exclusive_group,
+    )
+    .map((row) => row.id);
+  return ids.length === 0 ? [] : ids;
+}
+
 async function listSiteLicensePoolSummaries({
   site_license,
   client,
@@ -631,6 +687,7 @@ async function listSiteLicensePoolSummaries({
       pool_name: getPackagePoolName(pkg),
       requires_approval: pkg.metadata?.requires_approval === true,
       verification_policy: getPackageVerificationPolicy(pkg.metadata),
+      exclusive_group: getPackageExclusiveGroup(pkg),
       affiliation_reverification_days: normalizeOptionalPositiveInt(
         pkg.metadata?.affiliation_reverification_days,
       ),
@@ -775,6 +832,12 @@ export async function adminProvisionSiteLicense({
               allowed_domains: pool.allowed_domains,
               requires_approval: pool.requires_approval,
               verification_policy: pool.verification_policy,
+              exclusive_group: pool.exclusive_group,
+              claim_scope_key: getClaimScopeKey(
+                site_license_id,
+                pool.exclusive_group,
+              ),
+              claim_scope_kind: "site-license-exclusive-group",
               affiliation_reverification_days:
                 pool.affiliation_reverification_days,
               affiliation_reverification_grace_days:
@@ -801,6 +864,7 @@ function normalizePools(
 ): Array<
   SiteLicensePoolConfig & {
     allowed_domains: string[];
+    exclusive_group: string;
     affiliation_reverification_days: number | null;
     affiliation_reverification_grace_days: number | null;
   }
@@ -827,6 +891,10 @@ function normalizePools(
       seat_count: normalizeSeatCount(pool.seat_count),
       requires_approval: pool.requires_approval === true,
       verification_policy: verification_policy as SiteLicenseVerificationPolicy,
+      exclusive_group: normalizeExclusiveGroup(
+        pool.exclusive_group,
+        pool.membership_class,
+      ),
       affiliation_reverification_days: normalizeOptionalPositiveInt(
         pool.affiliation_reverification_days,
       ),
@@ -873,6 +941,15 @@ export async function requestSiteLicensePool({
   });
   const canonicalIdentity =
     canonicalizeInstitutionalClaimEmail(matchedEmailAddress);
+  const exclusiveGroup = getPackageExclusiveGroup(pkg);
+  const scopeKey = getClaimScopeKey(siteLicense.id, exclusiveGroup);
+  const activeClaim = await getMembershipClaimIdentity({
+    scope_key: scopeKey,
+    canonical_identity: canonicalIdentity,
+  });
+  if (activeClaim != null && activeClaim.account_id !== accountId) {
+    throw Error("site-license pool already claimed for this identity");
+  }
   const pool = getQueryClient(client);
   const existingAssignments = await listMembershipPackageAssignments({
     package_id: packageId,
@@ -886,16 +963,21 @@ export async function requestSiteLicensePool({
   ) {
     throw Error("account already has this site-license pool");
   }
+  const exclusivePackageIds = await listSiteLicensePackageIdsByExclusiveGroup({
+    site_license_id: siteLicense.id,
+    exclusive_group: exclusiveGroup,
+    client,
+  });
   const existingRequestRows = await pool.query<RawSiteLicensePoolRequest>(
     `SELECT *
        FROM site_license_pool_requests
        WHERE site_license_id=$1
-         AND package_id=$2
+         AND package_id = ANY($2::uuid[])
          AND state IN ('pending', 'approved')
          AND (account_id=$3 OR canonical_identity=$4)
        ORDER BY requested_at DESC
        LIMIT 1`,
-    [siteLicense.id, packageId, accountId, canonicalIdentity],
+    [siteLicense.id, exclusivePackageIds, accountId, canonicalIdentity],
   );
   const existingRequest = normalizeSiteLicensePoolRequestRow(
     existingRequestRows.rows[0],
@@ -991,8 +1073,16 @@ export async function reviewSiteLicensePoolRequest({
           });
         }
         const claimedDomain = request.matched_email_address.split("@")[1] ?? "";
-        const scope_key = getClaimScopeKey(siteLicense.id);
-        const scope_kind = "site-license";
+        const exclusiveGroup = getPackageExclusiveGroup(pkg);
+        await revokeOtherSiteLicenseAssignments({
+          site_license_id: siteLicense.id,
+          approved_package_id: pkg.id,
+          exclusive_group: exclusiveGroup,
+          account_id: request.account_id,
+          client,
+        });
+        const scope_key = getClaimScopeKey(siteLicense.id, exclusiveGroup);
+        const scope_kind = "site-license-exclusive-group";
         const reserved = await reserveMembershipClaimIdentity({
           scope_key,
           scope_kind,
@@ -1005,6 +1095,7 @@ export async function reviewSiteLicensePoolRequest({
             site_license_id: siteLicense.id,
             package_id: pkg.id,
             request_id: request.id,
+            exclusive_group: exclusiveGroup,
           },
         });
         reservedInstitutionalClaim = {
@@ -1016,12 +1107,6 @@ export async function reviewSiteLicensePoolRequest({
           claimed_domain: claimedDomain,
           reservation_id: reserved.reservation_id,
         };
-        await revokeOtherSiteLicenseAssignments({
-          site_license_id: siteLicense.id,
-          approved_package_id: pkg.id,
-          account_id: request.account_id,
-          client,
-        });
         const assignment = await assignMembershipPackageSeat(
           {
             package_id: pkg.id,
@@ -1033,6 +1118,7 @@ export async function reviewSiteLicensePoolRequest({
               site_license_request_id: request.id,
               approved_by_account_id: actorAccountId,
               approved_at: new Date().toISOString(),
+              exclusive_group: exclusiveGroup,
               claim_scope_key: scope_key,
               claim_scope_kind: scope_kind,
               claim_identity_key: request.canonical_identity,
@@ -1060,6 +1146,7 @@ export async function reviewSiteLicensePoolRequest({
             metadata: {
               site_license_id: siteLicense.id,
               request_id: request.id,
+              exclusive_group: exclusiveGroup,
             },
           },
           client,
@@ -1131,22 +1218,44 @@ async function updateRequestState({
 async function revokeOtherSiteLicenseAssignments({
   site_license_id,
   approved_package_id,
+  exclusive_group,
   account_id,
   client,
 }: {
   site_license_id: string;
   approved_package_id: string;
+  exclusive_group: string;
   account_id: string;
   client: PoolClient;
 }): Promise<void> {
-  const { rows } = await client.query<{ id: string }>(
-    `SELECT id
+  const { rows } = await client.query<{
+    id: string;
+    membership_class: string;
+    metadata?: Record<string, unknown> | null;
+  }>(
+    `SELECT id, membership_class, metadata
      FROM membership_packages
      WHERE metadata->>'site_license_id'=$1
        AND id <> $2`,
     [site_license_id, approved_package_id],
   );
   for (const row of rows) {
+    if (
+      getPackageExclusiveGroup({
+        membership_class: row.membership_class,
+        metadata: row.metadata,
+      }) !== exclusive_group
+    ) {
+      continue;
+    }
+    const assignments = await listMembershipPackageAssignments({
+      package_id: row.id,
+      include_revoked: false,
+      client,
+    });
+    const accountAssignments = assignments.filter(
+      (assignment) => assignment.account_id === account_id,
+    );
     await revokeMembershipPackageSeat(
       {
         package_id: row.id,
@@ -1154,6 +1263,23 @@ async function revokeOtherSiteLicenseAssignments({
       },
       client,
     );
+    for (const assignment of accountAssignments) {
+      const scope_key = `${assignment.metadata?.claim_scope_key ?? ""}`.trim();
+      const canonical_identity =
+        `${assignment.metadata?.claim_identity_key ?? ""}`.trim();
+      if (!scope_key || !canonical_identity) {
+        continue;
+      }
+      await revokeMembershipClaimIdentity({
+        scope_key,
+        canonical_identity,
+        account_id,
+        assignment_id: assignment.id,
+        reservation_id:
+          `${assignment.metadata?.claim_reservation_id ?? ""}`.trim() ||
+          undefined,
+      }).catch(() => undefined);
+    }
   }
 }
 

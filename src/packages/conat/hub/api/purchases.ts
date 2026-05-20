@@ -296,6 +296,7 @@ export interface SiteLicensePoolConfig {
   seat_count: number;
   requires_approval: boolean;
   verification_policy: SiteLicenseVerificationPolicy;
+  exclusive_group?: string | null;
   affiliation_reverification_days?: number | null;
   affiliation_reverification_grace_days?: number | null;
   allowed_domains?: string[];
@@ -336,6 +337,7 @@ export interface SiteLicensePoolSummary extends MembershipPackageDetails {
   pool_name: string;
   requires_approval: boolean;
   verification_policy: SiteLicenseVerificationPolicy;
+  exclusive_group: string;
   affiliation_reverification_days?: number | null;
   affiliation_reverification_grace_days?: number | null;
   pending_request_count: number;

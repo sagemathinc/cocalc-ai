@@ -76,12 +76,15 @@ describe("site license seat pools", () => {
     const admin_account_id = uuid();
     const owner_account_id = uuid();
     const student_account_id = uuid();
+    const researcher_account_id = uuid();
     const domain = `site-${uuid().slice(0, 8)}.edu`;
     await createTestAccount(admin_account_id);
     await createTestAccount(owner_account_id);
     await createTestAccount(student_account_id);
+    await createTestAccount(researcher_account_id);
     await markAdmin(admin_account_id);
     await markVerifiedEmail(student_account_id, `ada@${domain}`);
+    await markVerifiedEmail(researcher_account_id, `ada+research@${domain}`);
 
     const overview = await adminProvisionSiteLicense({
       actor_account_id: admin_account_id,
@@ -96,6 +99,7 @@ describe("site license seat pools", () => {
           seat_count: 20,
           requires_approval: false,
           verification_policy: "email-domain",
+          exclusive_group: "teaching",
         },
         {
           pool_name: "Instructors",
@@ -103,6 +107,7 @@ describe("site license seat pools", () => {
           seat_count: 5,
           requires_approval: true,
           verification_policy: "manager-approval",
+          exclusive_group: "teaching",
         },
         {
           pool_name: "Researchers",
@@ -110,6 +115,7 @@ describe("site license seat pools", () => {
           seat_count: 50,
           requires_approval: true,
           verification_policy: "manager-approval",
+          exclusive_group: "research",
         },
       ],
     });
@@ -140,6 +146,9 @@ describe("site license seat pools", () => {
     expect(studentPool.requires_approval).toBe(false);
     expect(instructorPool.requires_approval).toBe(true);
     expect(researcherPool.requires_approval).toBe(true);
+    expect(studentPool.exclusive_group).toBe("teaching");
+    expect(instructorPool.exclusive_group).toBe("teaching");
+    expect(researcherPool.exclusive_group).toBe("research");
 
     const claimables = await listClaimableMembershipPackagesForAccount({
       account_id: student_account_id,
@@ -210,6 +219,56 @@ describe("site license seat pools", () => {
     ).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ account_id: student_account_id }),
+      ]),
+    );
+
+    await expect(
+      requestSiteLicensePool({
+        account_id: researcher_account_id,
+        package_id: instructorPool.id,
+      }),
+    ).rejects.toThrow("site-license pool already claimed for this identity");
+
+    const researcherRequest = await requestSiteLicensePool({
+      account_id: researcher_account_id,
+      package_id: researcherPool.id,
+      requester_note: "Running a research group.",
+      accepted_terms: true,
+    });
+    expect(researcherRequest).toMatchObject({
+      site_license_id: overview.site_license.id,
+      package_id: researcherPool.id,
+      account_id: researcher_account_id,
+      state: "pending",
+      canonical_identity: `ada@${domain}`,
+    });
+    await reviewSiteLicensePoolRequest({
+      actor_account_id: owner_account_id,
+      request_id: researcherRequest.id,
+      action: "approve",
+      review_note: "Researcher confirmed.",
+    });
+    expect(
+      (await resolveMembershipForAccount(researcher_account_id)).class,
+    ).toBe(researcherTier);
+    expect(
+      await listMembershipPackageAssignments({
+        package_id: instructorPool.id,
+        include_revoked: false,
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ account_id: student_account_id }),
+      ]),
+    );
+    expect(
+      await listMembershipPackageAssignments({
+        package_id: researcherPool.id,
+        include_revoked: false,
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ account_id: researcher_account_id }),
       ]),
     );
   });
