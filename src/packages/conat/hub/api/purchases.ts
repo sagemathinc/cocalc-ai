@@ -381,7 +381,8 @@ export type SiteLicenseAuditAction =
   | "pool-request-created"
   | "pool-request-approved"
   | "pool-request-rejected"
-  | "seat-released-for-upgrade";
+  | "seat-released-for-upgrade"
+  | "seat-released-after-reverification-grace";
 
 export interface SiteLicenseAuditEvent {
   id: string;

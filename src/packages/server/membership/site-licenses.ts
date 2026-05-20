@@ -136,6 +136,7 @@ const SITE_LICENSE_AUDIT_ACTIONS = new Set<SiteLicenseAuditAction>([
   "pool-request-approved",
   "pool-request-rejected",
   "seat-released-for-upgrade",
+  "seat-released-after-reverification-grace",
 ]);
 
 let schemaEnsured: Promise<void> | undefined;
@@ -996,6 +997,91 @@ export async function listSiteLicenseAffiliationReverificationSeats({
         (right.reverification_due_at?.getTime() ?? 0) ||
       left.account_id.localeCompare(right.account_id)
     );
+  });
+}
+
+export async function releaseGraceExpiredSiteLicenseAffiliationSeats({
+  account_id,
+  site_license_id,
+  now = new Date(),
+  limit = 100,
+  client,
+}: {
+  account_id: string;
+  site_license_id: string;
+  now?: Date;
+  limit?: number;
+  client?: PoolClient;
+}): Promise<SiteLicenseAffiliationReverificationSeat[]> {
+  const normalizedAccountId = normalizeAccountId(account_id);
+  const normalizedSiteLicenseId = normalizeAccountId(
+    site_license_id,
+    "site_license_id",
+  );
+  const siteLicense = await getSiteLicense(normalizedSiteLicenseId, client);
+  const releaseLimit = Math.max(1, Math.min(500, Math.floor(limit)));
+  const releaseWithClient = async (
+    dbClient: PoolClient,
+  ): Promise<SiteLicenseAffiliationReverificationSeat[]> => {
+    await assertSiteLicenseManager({
+      account_id: normalizedAccountId,
+      site_license_id: normalizedSiteLicenseId,
+      write: true,
+      client: dbClient,
+    });
+    const expired = await listSiteLicenseAffiliationReverificationSeats({
+      account_id: normalizedAccountId,
+      site_license_id: normalizedSiteLicenseId,
+      states: ["grace_expired"],
+      now,
+      client: dbClient,
+    });
+    const released: SiteLicenseAffiliationReverificationSeat[] = [];
+    for (const seat of expired.slice(0, releaseLimit)) {
+      const revoked = await revokeMembershipPackageSeat(
+        {
+          package_id: seat.package_id,
+          account_id: seat.account_id,
+        },
+        dbClient,
+      );
+      if (!revoked) {
+        continue;
+      }
+      await recordSiteLicenseAuditEvent({
+        site_license_id: normalizedSiteLicenseId,
+        action: "seat-released-after-reverification-grace",
+        actor_account_id: normalizedAccountId,
+        target_account_id: seat.account_id,
+        package_id: seat.package_id,
+        metadata: {
+          assignment_id: seat.assignment_id,
+          pool_name: seat.pool_name ?? null,
+          membership_class: seat.membership_class,
+          exclusive_group: seat.exclusive_group,
+          verification_policy: seat.verification_policy,
+          matched_email_address: seat.matched_email_address ?? null,
+          affiliation_verified_at:
+            seat.affiliation_verified_at?.toISOString() ?? null,
+          reverification_due_at:
+            seat.reverification_due_at?.toISOString() ?? null,
+          reverification_grace_expires_at:
+            seat.reverification_grace_expires_at?.toISOString() ?? null,
+          released_at: now.toISOString(),
+        },
+        client: dbClient,
+      });
+      released.push(seat);
+    }
+    return released;
+  };
+  if (client != null) {
+    return await releaseWithClient(client);
+  }
+  return await withAccountRehomeWriteFence({
+    account_id: siteLicense.owner_account_id,
+    action: "release grace-expired site-license affiliation seats",
+    fn: async (db) => await releaseWithClient(db as PoolClient),
   });
 }
 

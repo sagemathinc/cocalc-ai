@@ -21,6 +21,7 @@ import {
   adminProvisionSiteLicense,
   getSiteLicenseOverview,
   listSiteLicenseAffiliationReverificationSeats,
+  releaseGraceExpiredSiteLicenseAffiliationSeats,
   requestSiteLicensePool,
   reviewSiteLicensePoolRequest,
 } from "./site-licenses";
@@ -748,6 +749,59 @@ describe("site license seat pools", () => {
         state: "pending_reverification",
       }),
     ]);
+
+    const released = await releaseGraceExpiredSiteLicenseAffiliationSeats({
+      account_id: owner_account_id,
+      site_license_id: overview.site_license.id,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+    });
+    expect(released).toEqual([
+      expect.objectContaining({
+        account_id: expired_account_id,
+        state: "grace_expired",
+      }),
+    ]);
+    expect(
+      await listMembershipPackageAssignments({
+        package_id: studentPool.id,
+        include_revoked: false,
+      }),
+    ).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ account_id: expired_account_id }),
+      ]),
+    );
+    expect(
+      await listMembershipPackageAssignments({
+        package_id: studentPool.id,
+        include_revoked: false,
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ account_id: current_account_id }),
+        expect.objectContaining({ account_id: due_account_id }),
+      ]),
+    );
+    const refreshedOverview = await getSiteLicenseOverview({
+      account_id: owner_account_id,
+      site_license_id: overview.site_license.id,
+    });
+    expect(refreshedOverview.recent_audit_events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "seat-released-after-reverification-grace",
+          actor_account_id: owner_account_id,
+          target_account_id: expired_account_id,
+          package_id: studentPool.id,
+          metadata: expect.objectContaining({
+            assignment_id: expect.any(String),
+            exclusive_group: "teaching",
+            verification_policy: "email-domain",
+            released_at: "2026-05-20T00:00:00.000Z",
+          }),
+        }),
+      ]),
+    );
   });
 
   it("rechecks approval-required pool capacity at review time", async () => {

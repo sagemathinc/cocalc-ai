@@ -772,12 +772,16 @@ distinct groups such as `research`.
 - Add user notification/grace workflow.
 - Clear pending release when the user re-verifies institutional email or has a
   fresh qualifying SSO assertion.
-- Add scheduled release job for seats that miss the grace deadline.
+- [x] Add release path for seats that miss the grace deadline.
+- Add scheduled job to invoke grace-expired seat release.
 
 Implementation note: active site-license seats now carry affiliation metadata
 for direct claims and manager approvals. The backend reverification query
 classifies seats as current, pending reverification, or grace expired using
 pool-level reverification and grace settings.
+The release helper revokes grace-expired seats through the existing membership
+package revoke path and records a `seat-released-after-reverification-grace`
+audit event.
 
 ### Phase 7: Invite Limit Integration
 
