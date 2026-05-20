@@ -316,6 +316,249 @@ Imagegen2 pass:
 - Prompt should include quota health, latency explanation, runtime image, host
   recommendation, summary card, and create actions.
 
+## Phase A Data And Policy Inventory
+
+Status: completed 2026-05-20.
+
+Architectural constraint:
+
+- Account-facing quota and membership data must come from the account home bay.
+- Project placement and project runtime state must respect project owning bay and
+  host bay routing.
+- The create modal should consume Conat hub APIs that already route correctly.
+  It should not infer these values from local browser/project-list state.
+
+### Project Quota And Storage
+
+Available now:
+
+- `src/packages/conat/hub/api/purchases.ts`
+  - `MembershipUsageLimits`
+  - `MembershipUsageStatus`
+  - `MembershipDetails.usage_status`
+  - `getMembershipDetails({ refresh_usage_status? })`
+- `src/packages/server/conat/api/purchases.ts`
+  - Routes `getMembershipDetails` to the account home bay when needed.
+- `src/packages/server/membership/usage-status.ts`
+  - Computes `owned_project_count`, `remaining_project_slots`,
+    `total_storage_bytes`, soft/hard storage limits, and over-limit flags.
+  - Samples provisioned project storage via project routing.
+  - Uses a short cache; `refresh_usage_status` can force a refresh.
+- `src/packages/server/membership/project-limits.ts`
+  - `assertCanOwnAdditionalProject` enforces project count limits.
+  - `assertCanIncreaseAccountStorage` enforces cached/fresh storage caps.
+  - `assertCanRestoreProvisionedProjectStorage` protects archive restore.
+- `src/packages/frontend/account/membership-status.tsx`
+  - Existing account settings UI for project slots and storage progress.
+- `src/packages/frontend/purchases/account-storage-warning.tsx`
+  - Existing storage warning helper and threshold behavior.
+
+Create-flow implication:
+
+- The health card can fetch `hub.purchases.getMembershipDetails({})` for normal
+  display.
+- Use `refresh_usage_status: true` only for explicit refresh or near-limit
+  preflight, not every render.
+- Project-count and storage blocking should remain backend-enforced by
+  `createProject`; the modal only previews and explains the likely outcome.
+
+Missing:
+
+- A small frontend hook/component shared by account settings, project list, and
+  project creation so usage cards do not duplicate threshold logic.
+
+### Runtime Slots
+
+Available now:
+
+- `src/packages/conat/hub/api/purchases.ts`
+  - `MembershipUsageLimits.max_sponsored_running_projects`
+- `src/packages/server/projects/runtime-slots.ts`
+  - `listProjectRuntimeSlots` routes to the sponsor account home bay.
+  - `getProjectRuntimeSlotDenial` produces structured slot exhaustion details.
+- `src/packages/conat/hub/api/projects.ts`
+  - `ProjectRuntimeSponsorStatus`
+  - `getProjectRuntimeSponsorStatus({ project_id })`
+- `src/packages/server/conat/api/projects.ts`
+  - `getProjectRuntimeSponsorStatus` returns limit/current active projects for
+    an existing project sponsor.
+- `src/packages/util/runtime-sponsor-denial.ts`
+  - Shared structured denial encoding/formatting.
+- `src/packages/frontend/project/start-button.tsx`
+  - Existing UI for runtime sponsor slot exhaustion and stopping/switching
+    sponsor flows after a start attempt.
+- `src/packages/frontend/project/settings/runtime-sponsor-controls.tsx`
+  - Existing runtime sponsor usage summary for an existing project.
+
+Create-flow implication:
+
+- The backend already enforces runtime-slot admission when starting.
+- `Create Project` does not need runtime-slot capacity because it does not
+  start.
+- `Create and Open` should preflight the actor/default sponsor's runtime slots
+  before creation when possible, then still rely on backend enforcement.
+
+Missing:
+
+- There is no create-friendly account-level API yet for “my current runtime
+  sponsor usage” before a project exists.
+- Add a small Conat hub API such as
+  `projects.getAccountRuntimeSponsorStatus({ sponsor_account_id? })` or
+  `purchases.getMembershipDetails` extension that returns:
+  - `limit`
+  - `current`
+  - visible active projects
+  - stop eligibility/action hints
+  - upgrade/change-sponsor hints
+- The new API must route by sponsor account home bay, matching
+  `listProjectRuntimeSlots`.
+
+### Project Creation Admission
+
+Available now:
+
+- `src/packages/server/projects/create.ts`
+  - Calls `assertAccountTrustedForProductAccess(account_id, "create projects")`.
+  - Calls `assertCanOwnAdditionalProject`.
+  - Calls cached `assertCanIncreaseAccountStorage`.
+  - Creates project and optionally starts it.
+  - Creates a `project-start` LRO when `start: true`.
+- `src/packages/frontend/projects/create-project.tsx`
+  - Current create modal sends `start: false` for `Create Project`.
+  - Current create modal sends `start: true` for `Create and Open`.
+
+Create-flow implication:
+
+- The modal can safely expose both actions.
+- If `Create and Open` fails due to runtime slots, reuse structured denial UI
+  rather than inventing a second policy.
+- Health card warnings must be treated as advisory; backend remains source of
+  truth.
+
+### Host Availability, Pressure, And Placement
+
+Available now:
+
+- `src/packages/conat/hub/api/hosts.ts`
+  - `Host.can_place`
+  - `Host.reason_unavailable`
+  - `Host.pressure`
+  - `Host.metrics.current`
+  - `Host.tier`
+  - `Host.scope`
+  - `Host.pricing_model`, `desired_pricing_model`, `effective_pricing_model`
+  - `Host.interruption_restore_policy`
+  - `Host.spot_recovery_policy`
+  - `Host.spot_recovery_state`
+  - `Host.recovery_phase`
+- `src/packages/server/conat/api/hosts.ts`
+  - `listHosts` computes `can_place` and `reason_unavailable`.
+  - `listHosts` can aggregate remote bay hosts.
+- `src/packages/frontend/hosts/pick-host.tsx`
+  - Existing host picker filters `can_place`, groups owned/collab/pool hosts,
+    and sorts by pressure via `autoSelectCompare`.
+- `src/packages/frontend/hosts/select-new-host.tsx`
+  - Current project-create host selection block.
+- `src/packages/frontend/hosts/pressure-ui.tsx`
+  - Existing pressure buckets and placement summary.
+- `src/packages/frontend/hosts/spot-ui.tsx`
+  - Existing spot/fallback tags and explanatory popovers.
+- `src/packages/frontend/hosts/components/host-current-metrics.tsx`
+  - Admin/manager-facing exact metrics display.
+
+Create-flow implication:
+
+- Host recommendations should start from `hub.hosts.listHosts({ catalog: true })`
+  and use `can_place`, pressure, provider/region, spot/fallback state, tier, GPU,
+  and scope.
+- Non-admin create UI should not show exact assigned/running project counts from
+  host metrics.
+- Convert raw metrics to privacy-preserving labels such as `light`, `normal`,
+  `busy`, and `very busy` if they are exposed to ordinary users.
+
+Missing:
+
+- A reusable host recommendation function that ranks candidate hosts for create.
+- A privacy-normalized host load/reliability summary suitable for non-admins.
+- A create-specific host display that avoids opening a second modal for the
+  common path.
+
+### Host Reliability And Uptime
+
+Available now:
+
+- `src/packages/conat/hub/api/hosts.ts`
+  - `last_seen`
+  - host action/log types and `getHostLog`
+  - spot recovery state has `outage_started_at`, retry/probe/fallback fields.
+- `src/packages/frontend/hosts/hooks/use-host-log.ts`
+  - Existing admin/manager log fetch hook.
+- `src/packages/server/cloud/host-work.ts`
+  - Persists spot recovery phases and `desired_state`.
+  - Maintains `last_seen` and spot outage/fallback state.
+
+Create-flow implication:
+
+- Spot/fallback state can be displayed now.
+- Intent-normalized reliability should not be hacked out of raw host logs in the
+  browser.
+
+Missing:
+
+- A backend-derived, privacy-preserving reliability summary per host.
+- The summary should count only periods where `desired_state` intended the host
+  to be running.
+- It should separate intentional off/maintenance, spot preemption, cloud
+  failures, and unknown downtime where possible.
+
+### Region And Latency
+
+Available now:
+
+- Host rows expose cloud-provider `region`.
+- `src/packages/util/db-schema/projects.ts` and current project create flow
+  support project `region`.
+- `src/packages/frontend/hosts/pick-host.tsx` maps host provider region to
+  backup/R2 region for region filtering.
+- Existing move/rehome backend supports moving projects between hosts/regions.
+
+Create-flow implication:
+
+- The modal should explain that region mostly affects interactive latency.
+- If no hosts exist in the user's nearest region, host recommendation should
+  select the best remote compatible region instead of showing an empty state.
+- The host and backup region must remain compatible when an explicit host is
+  selected.
+
+Missing:
+
+- A clear frontend source for the user's inferred latency region in project
+  creation.
+- A reusable helper that ranks backup regions by user latency region and host
+  availability.
+
+### CPU Speed
+
+Available now:
+
+- `src/packages/util/project-host-benchmarks.ts`
+  - GCP CoreMark-derived relative CPU speed and CPU platform data.
+  - Baseline is `n2d-standard-4`.
+- `src/packages/util/project-host-pricing.ts`
+  - Machine-type parsing helpers.
+
+Create-flow implication:
+
+- GCP host recommendation can explain relative CPU speed when machine type is
+  known.
+- Unknown providers should show neutral/unknown speed rather than inventing a
+  number.
+
+Missing:
+
+- A provider-neutral speed summary shape for host recommendations.
+- Non-GCP benchmark sources for Nebius, Hyperstack, Lambda, and self-hosted.
+
 ## Implementation Roadmap
 
 ### Completed
@@ -331,23 +574,18 @@ Imagegen2 pass:
 
 ### Phase A: Update Data/Policy Inventory
 
-Find existing sources for:
+Completed in `Phase A Data And Policy Inventory` above.
 
-- Project quota and membership tier project limit.
-- Running project/runtime slot limit.
-- Current running projects sponsored by the user.
-- Storage used and storage quota.
-- Existing backend flow for stopping another project when runtime slots are
-  exhausted.
-- Host pressure and availability fields.
-- Host spot/fallback configuration.
-- Host uptime or event history.
-- Coremark/processor speed tables.
+Next code-facing decision:
 
-Deliverable:
+- Add the missing account-level runtime slot status API before implementing the
+  health card, or make the first health card show project/storage immediately
+  and runtime slots as `loaded after first start attempt`.
 
-- A short code map in this plan or a follow-up agent note that says what data is
-  available now and what is missing.
+Recommendation:
+
+- Add the small runtime slot status API first. The health card is more useful if
+  all three gauges are visible together.
 
 ### Phase B: Health Card
 
