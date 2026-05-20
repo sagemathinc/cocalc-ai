@@ -14,6 +14,7 @@ export * from "@cocalc/server/projects/collaborators";
 import {
   createCollabInvite as createCollabInviteLocal,
   copyEmailProjectInviteLink as copyEmailProjectInviteLinkLocal,
+  hashProjectCollabInviteToken,
   inviteCollaboratorWithoutAccount as inviteCollaboratorWithoutAccountLocal,
   previewEmailProjectInvite as previewEmailProjectInviteLocal,
   listCollabInvites as listCollabInvitesLocal,
@@ -1629,15 +1630,37 @@ function isCollabInviteNotFound(err: unknown, invite_id: string): boolean {
   return message.includes(`invite '${invite_id}' not found`);
 }
 
-async function resolveProjectBayForEmailInvite(invite_id: string) {
-  const entry = await resolveProjectCollabInviteDirectory({ invite_id });
+async function resolveProjectBayForEmailInvite({
+  invite_id,
+  token,
+}: {
+  invite_id?: string;
+  token?: string;
+}) {
+  const token_hash = token
+    ? await hashProjectCollabInviteToken(token)
+    : undefined;
+  const entry = await resolveProjectCollabInviteDirectory({
+    ...(invite_id ? { invite_id } : {}),
+    ...(token_hash ? { token_hash } : {}),
+  });
   if (!entry) {
     return null;
   }
   return {
     bay_id: entry.owning_bay_id,
+    invite_id: entry.invite_id,
     project_id: entry.project_id,
   };
+}
+
+function requireResolvedEmailInvite(
+  ownership: Awaited<ReturnType<typeof resolveProjectBayForEmailInvite>>,
+) {
+  if (!ownership) {
+    throw new Error("This project invite link was not found.");
+  }
+  return ownership;
 }
 
 export async function getProjectCollaboratorInviteUsage({
@@ -1713,11 +1736,11 @@ export async function copyEmailProjectInviteLink({
   invite_id: string;
   project_id?: string;
 }) {
-  const ownership = await resolveProjectBayForEmailInvite(invite_id);
+  const ownership = await resolveProjectBayForEmailInvite({ invite_id });
   if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
     return await copyEmailProjectInviteLinkLocal({
       account_id,
-      invite_id,
+      invite_id: ownership?.invite_id ?? invite_id,
       project_id: project_id ?? ownership?.project_id,
     });
   }
@@ -1728,7 +1751,7 @@ export async function copyEmailProjectInviteLink({
     .projectCollabInvite(ownership.bay_id)
     .copyEmailLink({
       account_id,
-      invite_id,
+      invite_id: ownership.invite_id,
       project_id: project_id ?? ownership.project_id,
     });
   return {
@@ -1745,15 +1768,21 @@ export async function redeemEmailProjectInvite({
   project_id,
 }: {
   account_id?: string;
-  invite_id: string;
+  invite_id?: string;
   token: string;
   project_id?: string;
 }) {
-  const ownership = await resolveProjectBayForEmailInvite(invite_id);
+  const ownership = await resolveProjectBayForEmailInvite({
+    invite_id,
+    token,
+  });
+  if (!invite_id) {
+    requireResolvedEmailInvite(ownership);
+  }
   if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
     return await redeemEmailProjectInviteLocal({
       account_id,
-      invite_id,
+      invite_id: ownership?.invite_id ?? invite_id!,
       token,
       project_id: project_id ?? ownership?.project_id,
     });
@@ -1765,7 +1794,7 @@ export async function redeemEmailProjectInvite({
     .projectCollabInvite(ownership.bay_id)
     .redeemEmail({
       account_id,
-      invite_id,
+      invite_id: ownership.invite_id,
       token,
       project_id: project_id ?? ownership.project_id,
     });
@@ -1779,15 +1808,21 @@ export async function previewEmailProjectInvite({
   project_id,
 }: {
   account_id?: string;
-  invite_id: string;
+  invite_id?: string;
   token: string;
   project_id?: string;
 }) {
-  const ownership = await resolveProjectBayForEmailInvite(invite_id);
+  const ownership = await resolveProjectBayForEmailInvite({
+    invite_id,
+    token,
+  });
+  if (!invite_id) {
+    requireResolvedEmailInvite(ownership);
+  }
   if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
     return await previewEmailProjectInviteLocal({
       account_id,
-      invite_id,
+      invite_id: ownership?.invite_id ?? invite_id!,
       token,
       project_id: project_id ?? ownership?.project_id,
     });
@@ -1796,7 +1831,7 @@ export async function previewEmailProjectInvite({
     .projectCollabInvite(ownership.bay_id)
     .previewEmail({
       account_id,
-      invite_id,
+      invite_id: ownership.invite_id,
       token,
       project_id: project_id ?? ownership.project_id,
     });
@@ -1812,16 +1847,22 @@ export async function respondEmailProjectInvite({
 }: {
   account_id?: string;
   action: ProjectCollabInviteAction;
-  invite_id: string;
+  invite_id?: string;
   token: string;
   project_id?: string;
 }) {
-  const ownership = await resolveProjectBayForEmailInvite(invite_id);
+  const ownership = await resolveProjectBayForEmailInvite({
+    invite_id,
+    token,
+  });
+  if (!invite_id) {
+    requireResolvedEmailInvite(ownership);
+  }
   if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
     return await respondEmailProjectInviteLocal({
       account_id,
       action,
-      invite_id,
+      invite_id: ownership?.invite_id ?? invite_id!,
       token,
       project_id: project_id ?? ownership?.project_id,
     });
@@ -1834,7 +1875,7 @@ export async function respondEmailProjectInvite({
     .respondEmail({
       account_id,
       action,
-      invite_id,
+      invite_id: ownership.invite_id,
       token,
       project_id: project_id ?? ownership.project_id,
     });

@@ -1,4 +1,8 @@
-import { authFirstRequireAccount, authFirstRequireProject } from "./util";
+import {
+  authFirst,
+  authFirstRequireAccount,
+  authFirstRequireProject,
+} from "./util";
 import {
   type CourseInfo,
   type CreateProjectOptions,
@@ -552,7 +556,7 @@ export const projects = {
   inviteCollaboratorWithoutAccount: authFirstRequireAccount,
   copyEmailProjectInviteLink: authFirstRequireAccount,
   redeemEmailProjectInvite: authFirstRequireAccount,
-  previewEmailProjectInvite: authFirstRequireAccount,
+  previewEmailProjectInvite: authFirst,
   respondEmailProjectInvite: authFirstRequireAccount,
   setQuotas: authFirstRequireAccount,
 
@@ -904,14 +908,14 @@ export interface Projects {
 
   redeemEmailProjectInvite: (opts: {
     account_id?: string;
-    invite_id: string;
+    invite_id?: string;
     token: string;
     project_id?: string;
   }) => Promise<ProjectCollabInviteRow>;
 
   previewEmailProjectInvite: (opts: {
     account_id?: string;
-    invite_id: string;
+    invite_id?: string;
     token: string;
     project_id?: string;
   }) => Promise<ProjectCollabInviteRow>;
@@ -919,7 +923,7 @@ export interface Projects {
   respondEmailProjectInvite: (opts: {
     account_id?: string;
     action: ProjectCollabInviteAction;
-    invite_id: string;
+    invite_id?: string;
     token: string;
     project_id?: string;
   }) => Promise<ProjectCollabInviteRow>;

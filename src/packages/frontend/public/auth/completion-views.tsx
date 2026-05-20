@@ -263,9 +263,9 @@ export function PublicRedeemProjectInviteView({
   currentAccountDisplayName?: string;
   currentAccountEmailAddress?: string;
   currentAccountId?: string;
-  inviteId: string;
+  inviteId?: string;
   isAuthenticated?: boolean;
-  projectId: string;
+  projectId?: string;
   token: string;
 }) {
   const [error, setError] = useState("");
@@ -293,7 +293,7 @@ export function PublicRedeemProjectInviteView({
     let cancelled = false;
 
     async function preview(): Promise<void> {
-      if (!projectId || !inviteId || !token) {
+      if (!token) {
         setError("This project invite link is incomplete or invalid.");
         setLoading(false);
         return;
@@ -302,8 +302,8 @@ export function PublicRedeemProjectInviteView({
       setError("");
       try {
         const result = await api("projects/preview-email-invite", {
-          project_id: projectId,
-          invite_id: inviteId,
+          ...(projectId ? { project_id: projectId } : {}),
+          ...(inviteId ? { invite_id: inviteId } : {}),
           token,
         });
         if (!cancelled) {
@@ -329,7 +329,7 @@ export function PublicRedeemProjectInviteView({
   }, [inviteId, projectId, token]);
 
   async function respond(action: "accept" | "decline" | "block") {
-    if (!projectId || !inviteId || !token) {
+    if (!token) {
       setError("This project invite link is incomplete or invalid.");
       return;
     }
@@ -338,8 +338,8 @@ export function PublicRedeemProjectInviteView({
     try {
       const result = await api("projects/respond-email-invite", {
         action,
-        project_id: projectId,
-        invite_id: inviteId,
+        ...(projectId ? { project_id: projectId } : {}),
+        ...(inviteId ? { invite_id: inviteId } : {}),
         token,
       });
       setProjectTitle(result?.invite?.project_title ?? projectTitle);
@@ -397,6 +397,8 @@ export function PublicRedeemProjectInviteView({
       </Flex>
     );
   }
+
+  const resolvedProjectId = invite?.project_id ?? projectId;
 
   return (
     <Flex vertical gap={16}>
@@ -529,9 +531,9 @@ export function PublicRedeemProjectInviteView({
             </Button>
           </>
         ) : null}
-        {state === "accepted" ? (
+        {state === "accepted" && resolvedProjectId ? (
           <Button
-            href={joinUrlPath(appBasePath, "projects", projectId)}
+            href={joinUrlPath(appBasePath, "projects", resolvedProjectId)}
             type="primary"
           >
             Open project

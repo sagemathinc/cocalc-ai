@@ -15,9 +15,9 @@ export type PublicAuthRoute =
   | { kind: "auth-password-reset-redeem"; passwordResetId: string }
   | { email?: string; kind: "auth-verify-email"; token: string }
   | {
-      inviteId: string;
+      inviteId?: string;
       kind: "project-invite";
-      projectId: string;
+      projectId?: string;
       token: string;
     }
   | { code?: string; kind: "redeem" }
@@ -216,6 +216,13 @@ export function getPublicAuthRouteFromPath(
       kind: "project-invite",
       projectId: routeParts[2],
       token: url.searchParams.get("token") ?? "",
+    };
+  }
+
+  if (routeParts[0] === "invites" && routeParts[1]) {
+    return {
+      kind: "project-invite",
+      token: routeParts[1],
     };
   }
 

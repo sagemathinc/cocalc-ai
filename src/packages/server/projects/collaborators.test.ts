@@ -556,7 +556,7 @@ describe("project collaborators local bay access", () => {
         invite_id: "77777777-7777-4777-8777-777777777777",
         invite_source: "email",
         target_email: "nobody@example.com",
-        invite_url: expect.stringContaining("/invites/project/"),
+        invite_url: expect.stringMatching(/\/invites\/[^/?#]+$/),
       }),
     ]);
     expect(queryMock).toHaveBeenCalledWith(
@@ -674,7 +674,7 @@ describe("project collaborators local bay access", () => {
       email_blocked_reason: "email_not_configured",
       invites: [
         expect.objectContaining({
-          invite_url: expect.stringContaining("/invites/project/"),
+          invite_url: expect.stringMatching(/\/invites\/[^/?#]+$/),
         }),
       ],
     });

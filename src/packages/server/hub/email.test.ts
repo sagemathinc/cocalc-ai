@@ -32,7 +32,7 @@ describe("create_email_body", () => {
       "<p>Please join</p>",
       "student@example.com",
       "Course <script>alert(1)</script>",
-      "https://example.com/invites/project/invite-1?token=secret",
+      "https://example.com/invites/secret",
       false,
     );
 

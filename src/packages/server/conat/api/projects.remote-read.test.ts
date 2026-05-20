@@ -37,6 +37,11 @@ jest.mock("@cocalc/server/projects/collab-invite-directory", () => ({
     resolveProjectCollabInviteDirectoryMock(...args),
 }));
 
+jest.mock("@cocalc/database/settings/secret-settings", () => ({
+  __esModule: true,
+  getSecretSettingsKey: jest.fn(async () => Buffer.alloc(32, 1)),
+}));
+
 jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   __esModule: true,
   getInterBayBridge: jest.fn(() => ({
@@ -123,8 +128,7 @@ describe("remote project detail reads", () => {
     }));
     copyEmailLinkMock = jest.fn(async () => ({
       invite_id: "77777777-7777-4777-8777-777777777777",
-      invite_url:
-        "https://example.com/invites/project/22222222-2222-4222-8222-222222222222/77777777-7777-4777-8777-777777777777?token=t",
+      invite_url: "https://example.com/invites/t",
       expires: "2026-06-01T00:00:00.000Z",
     }));
     redeemEmailMock = jest.fn(async () => ({
@@ -240,6 +244,7 @@ describe("remote project detail reads", () => {
     });
     expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
       invite_id: "77777777-7777-4777-8777-777777777777",
+      token_hash: expect.any(String),
     });
     expect(result.responded).toEqual(new Date("2026-05-18T01:00:00.000Z"));
   });
@@ -261,6 +266,7 @@ describe("remote project detail reads", () => {
     });
     expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
       invite_id: "77777777-7777-4777-8777-777777777777",
+      token_hash: expect.any(String),
     });
     expect(result.created).toEqual(new Date("2026-05-18T00:00:00.000Z"));
     expect(result.message).toBe("Please join");
@@ -285,6 +291,7 @@ describe("remote project detail reads", () => {
     });
     expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
       invite_id: "77777777-7777-4777-8777-777777777777",
+      token_hash: expect.any(String),
     });
     expect(result.responded).toEqual(new Date("2026-05-18T01:00:00.000Z"));
     expect(result.status).toBe("declined");
@@ -316,6 +323,7 @@ describe("remote project detail reads", () => {
     expect(resolveProjectBayMock).not.toHaveBeenCalled();
     expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
       invite_id: "77777777-7777-4777-8777-777777777777",
+      token_hash: expect.any(String),
     });
     expect(previewEmailMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
@@ -323,5 +331,27 @@ describe("remote project detail reads", () => {
       invite_id: "77777777-7777-4777-8777-777777777777",
       token: "token-1",
     });
+  });
+
+  it("routes token-only email invite preview through the central directory", async () => {
+    resolveProjectBayMock = jest.fn(async () => null);
+
+    const { previewEmailProjectInvite } = await import("./projects");
+    const result = await previewEmailProjectInvite({
+      account_id: ACCOUNT_ID,
+      token: "token-1",
+    });
+
+    expect(resolveProjectBayMock).not.toHaveBeenCalled();
+    expect(resolveProjectCollabInviteDirectoryMock).toHaveBeenCalledWith({
+      token_hash: expect.any(String),
+    });
+    expect(previewEmailMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      token: "token-1",
+    });
+    expect(result.project_id).toBe(PROJECT_ID);
   });
 });

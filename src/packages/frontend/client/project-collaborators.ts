@@ -106,7 +106,7 @@ export class ProjectCollaborators {
   }
 
   public async redeem_email_invite(opts: {
-    invite_id: string;
+    invite_id?: string;
     token: string;
     project_id?: string;
   }): Promise<ProjectCollabInviteRow> {
@@ -114,7 +114,7 @@ export class ProjectCollaborators {
   }
 
   public async preview_email_invite(opts: {
-    invite_id: string;
+    invite_id?: string;
     token: string;
     project_id?: string;
   }): Promise<ProjectCollabInviteRow> {
@@ -123,7 +123,7 @@ export class ProjectCollaborators {
 
   public async respond_email_invite(opts: {
     action: ProjectCollabInviteAction;
-    invite_id: string;
+    invite_id?: string;
     token: string;
     project_id?: string;
   }): Promise<ProjectCollabInviteRow> {
