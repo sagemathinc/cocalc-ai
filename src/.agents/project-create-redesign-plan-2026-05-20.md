@@ -426,6 +426,12 @@ Available now:
 - `src/packages/frontend/projects/create-project.tsx`
   - Current create modal sends `start: false` for `Create Project`.
   - Current create modal sends `start: true` for `Create and Open`.
+- `src/packages/conat/hub/api/projects.ts`
+  - `getAccountRuntimeSponsorStatus({})` exposes the authenticated account's
+    current runtime-slot usage for create-time preflight.
+- `src/packages/server/conat/api/projects.ts`
+  - `getAccountRuntimeSponsorStatus` uses the existing account-home-bay routed
+    runtime-slot listing and returns visible active projects.
 
 Create-flow implication:
 
@@ -576,16 +582,10 @@ Missing:
 
 Completed in `Phase A Data And Policy Inventory` above.
 
-Next code-facing decision:
+Follow-up completed:
 
-- Add the missing account-level runtime slot status API before implementing the
-  health card, or make the first health card show project/storage immediately
-  and runtime slots as `loaded after first start attempt`.
-
-Recommendation:
-
-- Add the small runtime slot status API first. The health card is more useful if
-  all three gauges are visible together.
+- Added account-level runtime slot status API for the authenticated account.
+- Phase B can now show all three health gauges together.
 
 ### Phase B: Health Card
 

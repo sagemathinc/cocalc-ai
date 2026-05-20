@@ -108,9 +108,11 @@ import type {
   ImportPublicUrlResult,
   ImportPublicPathResult,
   PublicPathInspectionResult,
+  AccountRuntimeSponsorStatus,
   ProjectActiveOperationSummary,
   ProjectCopyDestination,
   ProjectCopyRow,
+  ProjectRuntimeSponsorActiveProject,
   ProjectRuntimeLog,
   ProjectRuntimeSponsorStatus,
   ProjectAddress,
@@ -179,6 +181,7 @@ import {
 } from "@cocalc/server/projects/runtime-sponsor-db";
 import {
   listProjectRuntimeSlots,
+  type ProjectRuntimeSlot,
   releaseProjectRuntimeSlot,
   reserveProjectRuntimeSlot,
 } from "@cocalc/server/projects/runtime-slots";
@@ -239,6 +242,41 @@ async function enrichRuntimeSponsorDenial({
     can_change_sponsor: account_id !== denial.sponsor_account_id,
     active_projects,
   };
+}
+
+async function runtimeSponsorActiveProjectsForViewer({
+  account_id,
+  slots,
+}: {
+  account_id: string;
+  slots: ProjectRuntimeSlot[];
+}): Promise<ProjectRuntimeSponsorActiveProject[]> {
+  return await Promise.all(
+    slots.map(async (slot) => {
+      const state: "starting" | "running" =
+        slot.state === "starting" ? "starting" : "running";
+      try {
+        const reference = await resolveProjectOwningBay({
+          account_id,
+          project_id: slot.project_id,
+        });
+        return {
+          project_id: slot.project_id,
+          title: reference.title || undefined,
+          state,
+          visible: true,
+          can_stop: true,
+        };
+      } catch {
+        return {
+          project_id: slot.project_id,
+          state,
+          visible: false,
+          can_stop: false,
+        };
+      }
+    }),
+  );
 }
 
 async function projectFs(project_id: string) {
@@ -1313,32 +1351,10 @@ export async function getProjectRuntimeSponsorStatus({
     resolveMembershipForAccount(sponsor.sponsor_account_id),
     getName(sponsor.sponsor_account_id).catch(() => undefined),
   ]);
-  const active_projects = await Promise.all(
-    slots.map(async (slot) => {
-      const state: "starting" | "running" =
-        slot.state === "starting" ? "starting" : "running";
-      try {
-        const reference = await resolveProjectOwningBay({
-          account_id,
-          project_id: slot.project_id,
-        });
-        return {
-          project_id: slot.project_id,
-          title: reference.title || undefined,
-          state,
-          visible: true,
-          can_stop: true,
-        };
-      } catch {
-        return {
-          project_id: slot.project_id,
-          state,
-          visible: false,
-          can_stop: false,
-        };
-      }
-    }),
-  );
+  const active_projects = await runtimeSponsorActiveProjectsForViewer({
+    account_id,
+    slots,
+  });
   const limit =
     getEffectiveMembershipUsageLimits(membership)
       .max_sponsored_running_projects ?? null;
@@ -1351,6 +1367,37 @@ export async function getProjectRuntimeSponsorStatus({
     allow_collaborator_starts_using_sponsor:
       sponsor.allow_collaborator_starts_using_sponsor !== false,
     autostart_enabled: sponsor.autostart_enabled !== false,
+  };
+}
+
+export async function getAccountRuntimeSponsorStatus({
+  account_id,
+}: {
+  account_id: string;
+}): Promise<AccountRuntimeSponsorStatus> {
+  const [slots, membership, sponsor_display_name] = await Promise.all([
+    listProjectRuntimeSlots({
+      sponsor_account_id: account_id,
+      active_only: true,
+    }),
+    resolveMembershipForAccount(account_id),
+    getName(account_id).catch(() => undefined),
+  ]);
+  const active_projects = await runtimeSponsorActiveProjectsForViewer({
+    account_id,
+    slots,
+  });
+  const limit =
+    getEffectiveMembershipUsageLimits(membership)
+      .max_sponsored_running_projects ?? null;
+  return {
+    sponsor_account_id: account_id,
+    ...(sponsor_display_name ? { sponsor_display_name } : {}),
+    limit,
+    current: slots.length,
+    active_projects,
+    can_upgrade: true,
+    can_change_sponsor: false,
   };
 }
 
