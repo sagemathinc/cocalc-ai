@@ -28,6 +28,7 @@ import { defaults, required, split, to_json } from "@cocalc/util/misc";
 import {
   COMPANY_EMAIL,
   COMPANY_NAME,
+  COLORS,
   DNS,
   HELP_EMAIL,
   LIVE_DEMO_REQUEST,
@@ -316,8 +317,8 @@ export function create_email_body(
 ): string {
   const base_url = baseUrlFromInviteLink(link2proj);
   const accept_or_reject = link2proj
-    ? `<a href="${escapeHtmlText(link2proj)}">Accept or reject this invitation.</a>`
-    : `<a href="${base_url}/app">Open CoCalc to accept or reject this invitation.</a>`;
+    ? `<a href="${escapeHtmlText(link2proj)}" style="display:inline-block; background:${COLORS.ANTD_LINK_BLUE}; color:${COLORS.TOP_BAR.ACTIVE}; text-decoration:none; padding:12px 18px; border-radius:8px; font-weight:700;">Accept or reject this invitation</a>`
+    : `<a href="${base_url}/app" style="display:inline-block; background:${COLORS.ANTD_LINK_BLUE}; color:${COLORS.TOP_BAR.ACTIVE}; text-decoration:none; padding:12px 18px; border-radius:8px; font-weight:700;">Open CoCalc to accept or reject this invitation</a>`;
 
   let email_body = "";
   if (body) {
@@ -331,10 +332,12 @@ export function create_email_body(
   }
 
   email_body += `
-<br/><br/>
-<p style="font-size:16px; font-weight:bold;">${accept_or_reject}</p>
-<br/><br />
-If this message was forwarded to the wrong person, ask the project owner to revoke the invite link.
+<div style="margin:28px 0; padding:20px; border:1px solid ${COLORS.BLUE_LLL}; border-radius:12px; background:${COLORS.BLUE_LLLL};">
+  <div style="margin-bottom:14px;">${accept_or_reject}</div>
+  <div style="font-size:13px; line-height:1.5; color:${COLORS.GRAY_M};">
+    Clicking the link lets you review the invitation before joining. If this message was forwarded to the wrong person, ask the project owner to revoke the invite link.
+  </div>
+</div>
 `;
 
   return email_body;

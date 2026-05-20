@@ -36,7 +36,8 @@ describe("create_email_body", () => {
       false,
     );
 
-    expect(body).toContain("Accept or reject this invitation.");
+    expect(body).toContain("Accept or reject this invitation");
+    expect(body).toContain("review the invitation before joining");
     expect(body).not.toContain("To accept the invitation");
     expect(body).not.toContain("Sign in or create an account");
     expect(body).not.toContain("exactly");

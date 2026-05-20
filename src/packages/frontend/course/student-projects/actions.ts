@@ -33,6 +33,16 @@ import type { StudentRecord } from "../store";
 export const MAX_PARALLEL_TASKS = 30;
 
 export const RESEND_INVITE_BEFORE = days_ago(RESEND_INVITE_INTERVAL_DAYS);
+
+function courseInviteTitle(title?: string): string {
+  const raw = `${title ?? ""}`.trim();
+  if (!raw) {
+    return "your course";
+  }
+  const leaf = raw.replace(/\/+$/, "").split("/").filter(Boolean).pop() ?? raw;
+  return leaf.replace(/\.course$/i, "").trim() || "your course";
+}
+
 export class StudentProjectsActions {
   private course_actions: CourseActions;
 
@@ -150,12 +160,12 @@ export class StudentProjectsActions {
       const store = this.get_store();
       if (store == null) return;
       const account_store = redux.getStore("account");
-      const name = account_store.get_fullname();
+      const name = account_store.get_fullname() || "Your instructor";
       const replyto = account_store.get_email_address();
-      const title = store.get("settings").get("title");
+      const title = courseInviteTitle(store.get("settings").get("title"));
       const site_name =
         redux.getStore("customize").get("site_name") ?? SITE_NAME;
-      const subject = `${site_name} Invitation to Course ${title}`;
+      const subject = `${site_name} course invitation: ${title}`;
       let body = store.get_email_invite();
       body = body.replace(/{title}/g, title).replace(/{name}/g, name);
       const message = body;
