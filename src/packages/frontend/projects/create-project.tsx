@@ -18,7 +18,6 @@ import {
   Select,
   Space,
   Tag,
-  Typography,
 } from "antd";
 import { delay } from "awaiting";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -67,7 +66,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
   const projectsLabel = intl.formatMessage(labels.projects);
-  const { Title } = Typography;
 
   const [error, set_error] = useState<string>("");
   const [saving, setSaving] = useState<boolean>(false);
@@ -523,31 +521,48 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   if (!open) return null;
 
   return (
-    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-      <div>
-        <Title level={4} style={{ marginBottom: 4 }}>
+    <Modal
+      open={open}
+      destroyOnHidden
+      width="min(960px, 96vw)"
+      title={
+        <Space size="small">
+          <Icon name="plus-circle" />
           {intl.formatMessage(labels.create_project)}
-        </Title>
+        </Space>
+      }
+      onCancel={cancel_editing}
+      footer={null}
+      maskClosable={!saving}
+      styles={{
+        body: {
+          maxHeight: "min(780px, 82vh)",
+          overflowY: "auto",
+          paddingRight: 10,
+        },
+      }}
+    >
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
           Pick a title now and tune the rest later.
         </Paragraph>
-      </div>
-      {render_input_section()}
-      <Space>
-        <Button onClick={cancel_editing} disabled={saving}>
-          {intl.formatMessage(labels.cancel)}
-        </Button>
-        <Button
-          type="primary"
-          onClick={create_project}
-          disabled={isDisabled()}
-          loading={saving}
-          icon={<Icon name="plus-circle" />}
-        >
-          {capitalize(intl.formatMessage(labels.create))}
-        </Button>
+        {render_input_section()}
+        <Space>
+          <Button onClick={cancel_editing} disabled={saving}>
+            {intl.formatMessage(labels.cancel)}
+          </Button>
+          <Button
+            type="primary"
+            onClick={create_project}
+            disabled={isDisabled()}
+            loading={saving}
+            icon={<Icon name="plus-circle" />}
+          >
+            {capitalize(intl.formatMessage(labels.create))}
+          </Button>
+        </Space>
       </Space>
-    </Space>
+    </Modal>
   );
 }
 
