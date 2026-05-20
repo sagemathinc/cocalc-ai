@@ -108,7 +108,7 @@ describe("parseTrivyRootfsJsonReport", () => {
 });
 
 describe("rootfs scan selection policy", () => {
-  it("blocks official images with critical findings", () => {
+  it("warns but allows official images with critical findings", () => {
     const summary = parseTrivyRootfsJsonReport({
       report: {
         Results: [
@@ -125,7 +125,7 @@ describe("rootfs scan selection policy", () => {
     expect(rootfsScanHasBlockingFindings({ summary })).toBe("critical");
     expect(evaluateRootfsScanSelection({ summary, official: true })).toEqual(
       expect.objectContaining({
-        allowed: false,
+        allowed: true,
         reason: "findings",
         blocking_severity: "critical",
       }),

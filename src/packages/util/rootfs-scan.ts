@@ -343,7 +343,7 @@ export function evaluateRootfsScanSelection({
   });
   if (blocking_severity) {
     return {
-      allowed: false,
+      allowed: true,
       reason: "findings",
       blocking_severity,
       message: `This RootFS image has unresolved ${blocking_severity} vulnerabilities.`,
