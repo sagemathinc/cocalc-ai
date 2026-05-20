@@ -38,6 +38,11 @@ jest.mock("@cocalc/database/settings/site-url", () => ({
   default: jest.fn(async () => "https://example.com"),
 }));
 
+jest.mock("@cocalc/server/bay-public-origin", () => ({
+  __esModule: true,
+  getBayPublicOrigin: jest.fn(async () => "https://example.com"),
+}));
+
 jest.mock("@cocalc/database/settings/secret-settings", () => ({
   __esModule: true,
   getSecretSettingsKey: jest.fn(async () => Buffer.alloc(32, 1)),
@@ -89,15 +94,19 @@ jest.mock("@cocalc/server/accounts/trusted-product-access", () => ({
     assertAccountTrustedForProductAccessMock(...args),
 }));
 
-jest.mock("@cocalc/backend/logger", () => ({
-  __esModule: true,
-  default: jest.fn(() => ({
+jest.mock("@cocalc/backend/logger", () => {
+  const factory = jest.fn(() => ({
     debug: jest.fn(),
     info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
-  })),
-}));
+  }));
+  return {
+    __esModule: true,
+    default: factory,
+    getLogger: factory,
+  };
+});
 
 jest.mock("./collab", () => ({
   __esModule: true,

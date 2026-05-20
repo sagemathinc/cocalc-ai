@@ -1947,7 +1947,7 @@ describe("hosts browser fresh auth gating", () => {
       session_hash: "session-hash",
     });
     expect(createLroMock).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: "host-deprovision" }),
+      expect.objectContaining({ kind: "host-delete" }),
     );
   });
 
@@ -1997,7 +1997,7 @@ describe("hosts browser fresh auth gating", () => {
       id: HOST_ID,
     });
 
-    expect(result.kind).toBe("host-deprovision");
+    expect(result.kind).toBe("host-delete");
     expect(updateLroMock).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
