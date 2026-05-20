@@ -92,6 +92,11 @@ interface RawMembershipPackageAssignment {
   grant_purchase_id?: number | null;
 }
 
+interface RawSiteLicensePoolRequestSummary {
+  id: string;
+  state: string;
+}
+
 const MEMBERSHIP_PACKAGE_KINDS = new Set<MembershipPackageKind>([
   "course",
   "team",
@@ -287,6 +292,43 @@ function getInstitutionalClaimScopeKind(
 
 function packageRequiresApproval(pkg: MembershipPackageRecord): boolean {
   return pkg.kind === "site" && pkg.metadata?.requires_approval === true;
+}
+
+function getPackageStringMetadata(
+  pkg: MembershipPackageRecord,
+  key: string,
+): string | undefined {
+  const value = `${pkg.metadata?.[key] ?? ""}`.trim();
+  return value || undefined;
+}
+
+async function getPendingSiteLicensePoolRequestForAccount({
+  pkg,
+  account_id,
+  canonical_identity,
+  client,
+}: {
+  pkg: MembershipPackageRecord;
+  account_id: string;
+  canonical_identity: string;
+  client?: PoolClient;
+}): Promise<RawSiteLicensePoolRequestSummary | undefined> {
+  const siteLicenseId = getPackageStringMetadata(pkg, "site_license_id");
+  if (!siteLicenseId) return;
+  const { rows } = await getQueryClient(
+    client,
+  ).query<RawSiteLicensePoolRequestSummary>(
+    `SELECT id, state
+       FROM site_license_pool_requests
+       WHERE site_license_id=$1
+         AND package_id=$2
+         AND state='pending'
+         AND (account_id=$3 OR canonical_identity=$4)
+       ORDER BY requested_at DESC
+       LIMIT 1`,
+    [siteLicenseId, pkg.id, account_id, canonical_identity],
+  );
+  return rows[0];
 }
 
 function getInstitutionalClaimDescriptorForEmail({
@@ -1579,7 +1621,10 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
     .map((row) => normalizePackageRecord(row))
     .filter((row): row is MembershipPackageRecord => !!row);
   const claimables = new Map<string, ClaimableMembershipPackage>();
-  const claimIdentityCache = new Map<string, boolean>();
+  const claimIdentityCache = new Map<
+    string,
+    { account_id?: string | null } | null
+  >();
   for (const pkg of allPackages) {
     const assignments = await listMembershipPackageAssignments({
       package_id: pkg.id,
@@ -1622,8 +1667,7 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
     if (
       !claimables.has(pkg.id) &&
       available_seat_count > 0 &&
-      pkg.kind === "site" &&
-      !packageRequiresApproval(pkg)
+      pkg.kind === "site"
     ) {
       const allowedDomains = new Set(getPackageDomains(pkg.metadata));
       if (allowedDomains.size === 0) {
@@ -1648,13 +1692,26 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
               scope_key: claimDescriptor.scope_key,
               canonical_identity: claimDescriptor.canonical_identity,
             });
-            claimIdentityCache.set(claimIdentityKey, currentClaim != null);
+            claimIdentityCache.set(claimIdentityKey, currentClaim);
           }
-          blocked = claimIdentityCache.get(claimIdentityKey) ?? false;
+          const currentClaim = claimIdentityCache.get(claimIdentityKey) ?? null;
+          blocked =
+            currentClaim != null &&
+            (!packageRequiresApproval(pkg) ||
+              currentClaim.account_id !== account_id);
         }
         if (blocked) {
           continue;
         }
+        const pendingRequest =
+          packageRequiresApproval(pkg) && claimDescriptor != null
+            ? await getPendingSiteLicensePoolRequestForAccount({
+                pkg,
+                account_id,
+                canonical_identity: claimDescriptor.canonical_identity,
+                client,
+              })
+            : undefined;
         claimables.set(pkg.id, {
           package_id: pkg.id,
           kind: pkg.kind,
@@ -1665,6 +1722,17 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
           available_seat_count,
           matched_email_address: matchedEmailAddress,
           reason: "domain-match",
+          requires_approval: packageRequiresApproval(pkg),
+          site_license_id: getPackageStringMetadata(pkg, "site_license_id"),
+          pool_name: getPackageStringMetadata(pkg, "pool_name"),
+          verification_policy: getPackageStringMetadata(
+            pkg,
+            "verification_policy",
+          ) as ClaimableMembershipPackage["verification_policy"],
+          exclusive_group: getPackageStringMetadata(pkg, "exclusive_group"),
+          pending_request_id: pendingRequest?.id,
+          pending_request_state:
+            pendingRequest?.state as ClaimableMembershipPackage["pending_request_state"],
           metadata: normalizeMetadata(pkg.metadata),
         });
       }

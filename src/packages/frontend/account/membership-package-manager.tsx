@@ -40,9 +40,12 @@ import {
   getClaimableMembershipPackages,
   getMembershipPackageQuote,
   getMembershipPackages,
+  getSiteLicenseOverview,
   isPurchaseAllowed,
   processPaymentIntents,
   purchaseMembershipPackage,
+  requestSiteLicensePool,
+  reviewSiteLicensePoolRequest,
   revokeMembershipPackageSeat,
   updateMembershipPackage,
 } from "@cocalc/frontend/purchases/api";
@@ -55,6 +58,8 @@ import type {
   MembershipPackageDetails,
   MembershipPackageKind,
   MembershipPackageQuote,
+  SiteLicenseOverview,
+  SiteLicensePoolRequest,
 } from "@cocalc/conat/hub/api/purchases";
 import { MEMBERSHIP_PACKAGE_PURCHASE } from "@cocalc/util/db-schema/purchases";
 import {
@@ -63,6 +68,7 @@ import {
   is_valid_email_address as isValidEmailAddress,
 } from "@cocalc/util/misc";
 import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
+import { COLORS } from "@cocalc/util/theme";
 import type { LineItem } from "@cocalc/util/stripe/types";
 
 const { Paragraph, Text, Title } = Typography;
@@ -198,9 +204,13 @@ function getAccountSecondaryLabel(
 function getClaimReasonLabel(
   claimablePackage: ClaimableMembershipPackage,
 ): string {
-  return claimablePackage.reason === "email-assignment"
-    ? `Assigned to verified email ${claimablePackage.matched_email_address}`
-    : `Verified domain match via ${claimablePackage.matched_email_address}`;
+  if (claimablePackage.reason === "email-assignment") {
+    return `Assigned to verified email ${claimablePackage.matched_email_address}`;
+  }
+  const poolName = claimablePackage.pool_name
+    ? `${claimablePackage.pool_name} pool`
+    : "site-license pool";
+  return `Verified domain match for ${poolName} via ${claimablePackage.matched_email_address}`;
 }
 
 export function ClaimableMembershipPackagesPanel({
@@ -210,6 +220,7 @@ export function ClaimableMembershipPackagesPanel({
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [claimingPackageId, setClaimingPackageId] = useState<string>("");
+  const [requestingPackageId, setRequestingPackageId] = useState<string>("");
   const [claimables, setClaimables] = useState<ClaimableMembershipPackage[]>(
     [],
   );
@@ -275,33 +286,78 @@ export function ClaimableMembershipPackagesPanel({
                 </Space>
               }
               extra={
-                <Button
-                  type="primary"
-                  loading={claimingPackageId === claimablePackage.package_id}
-                  onClick={async () => {
-                    setClaimingPackageId(claimablePackage.package_id);
-                    setError("");
-                    try {
-                      await claimMembershipPackageSeat({
-                        package_id: claimablePackage.package_id,
-                      });
-                      await refreshClaimables();
-                      onChanged?.();
-                    } catch (err) {
-                      setError(`${err}`);
-                    } finally {
-                      setClaimingPackageId("");
+                claimablePackage.requires_approval ? (
+                  <Button
+                    type="primary"
+                    loading={
+                      requestingPackageId === claimablePackage.package_id
                     }
-                  }}
-                >
-                  Claim seat
-                </Button>
+                    disabled={claimablePackage.pending_request_id != null}
+                    onClick={async () => {
+                      setRequestingPackageId(claimablePackage.package_id);
+                      setError("");
+                      try {
+                        await requestSiteLicensePool({
+                          owner_account_id: claimablePackage.owner_account_id,
+                          package_id: claimablePackage.package_id,
+                          accepted_terms: true,
+                        });
+                        await refreshClaimables();
+                        onChanged?.();
+                      } catch (err) {
+                        setError(`${err}`);
+                      } finally {
+                        setRequestingPackageId("");
+                      }
+                    }}
+                  >
+                    {claimablePackage.pending_request_id
+                      ? "Request pending"
+                      : "Request access"}
+                  </Button>
+                ) : (
+                  <Button
+                    type="primary"
+                    loading={claimingPackageId === claimablePackage.package_id}
+                    onClick={async () => {
+                      setClaimingPackageId(claimablePackage.package_id);
+                      setError("");
+                      try {
+                        await claimMembershipPackageSeat({
+                          package_id: claimablePackage.package_id,
+                        });
+                        await refreshClaimables();
+                        onChanged?.();
+                      } catch (err) {
+                        setError(`${err}`);
+                      } finally {
+                        setClaimingPackageId("");
+                      }
+                    }}
+                  >
+                    Claim seat
+                  </Button>
+                )
               }
             >
               <Descriptions size="small" column={1}>
                 <Descriptions.Item label="Eligibility">
                   {getClaimReasonLabel(claimablePackage)}
                 </Descriptions.Item>
+                {claimablePackage.pool_name ? (
+                  <Descriptions.Item label="Pool">
+                    {claimablePackage.pool_name}
+                  </Descriptions.Item>
+                ) : null}
+                {claimablePackage.requires_approval ? (
+                  <Descriptions.Item label="Approval">
+                    {claimablePackage.pending_request_id ? (
+                      <Tag color="gold">Pending manager review</Tag>
+                    ) : (
+                      <Tag color="blue">Manager approval required</Tag>
+                    )}
+                  </Descriptions.Item>
+                ) : null}
                 <Descriptions.Item label="Available seats">
                   {claimablePackage.available_seat_count}
                 </Descriptions.Item>
@@ -346,6 +402,15 @@ export function MembershipPackageManager({
   const [accountNames, setAccountNames] = useState<
     Record<string, { first_name?: string; last_name?: string } | undefined>
   >({});
+  const [siteLicenseOverviews, setSiteLicenseOverviews] = useState<
+    SiteLicenseOverview[]
+  >([]);
+  const [siteLicenseReviewLoadingId, setSiteLicenseReviewLoadingId] =
+    useState<string>("");
+  const [siteLicenseOverviewLoading, setSiteLicenseOverviewLoading] =
+    useState<boolean>(false);
+  const [siteLicenseOverviewError, setSiteLicenseOverviewError] =
+    useState<string>("");
 
   const refreshPackages = async () => {
     setLoading(true);
@@ -425,6 +490,59 @@ export function MembershipPackageManager({
       ),
     [membershipPackages],
   );
+  const siteLicenseIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          sitePackages
+            .map((membershipPackage) =>
+              `${membershipPackage.metadata?.site_license_id ?? ""}`.trim(),
+            )
+            .filter((value) => value.length > 0),
+        ),
+      ).sort(),
+    [sitePackages],
+  );
+
+  useEffect(() => {
+    let canceled = false;
+    async function loadSiteLicenseOverviews() {
+      if (!ownerAccountId || siteLicenseIds.length === 0) {
+        setSiteLicenseOverviews([]);
+        setSiteLicenseOverviewError("");
+        setSiteLicenseOverviewLoading(false);
+        return;
+      }
+      setSiteLicenseOverviewLoading(true);
+      setSiteLicenseOverviewError("");
+      try {
+        const overviews = await Promise.all(
+          siteLicenseIds.map((site_license_id) =>
+            getSiteLicenseOverview({
+              owner_account_id: ownerAccountId,
+              site_license_id,
+            }),
+          ),
+        );
+        if (!canceled) {
+          setSiteLicenseOverviews(overviews);
+        }
+      } catch (err) {
+        if (!canceled) {
+          setSiteLicenseOverviews([]);
+          setSiteLicenseOverviewError(`${err}`);
+        }
+      } finally {
+        if (!canceled) {
+          setSiteLicenseOverviewLoading(false);
+        }
+      }
+    }
+    void loadSiteLicenseOverviews();
+    return () => {
+      canceled = true;
+    };
+  }, [ownerAccountId, siteLicenseIds.join("\n")]);
 
   const handleChanged = async () => {
     await refreshPackages();
@@ -510,6 +628,28 @@ export function MembershipPackageManager({
               await handleChanged();
             }}
           />
+          <SiteLicenseApprovalRequests
+            overviews={siteLicenseOverviews}
+            loading={siteLicenseOverviewLoading}
+            error={siteLicenseOverviewError}
+            reviewingRequestId={siteLicenseReviewLoadingId}
+            onReview={async (overview, request, action) => {
+              setSiteLicenseReviewLoadingId(request.id);
+              setError("");
+              try {
+                await reviewSiteLicensePoolRequest({
+                  owner_account_id: overview.site_license.owner_account_id,
+                  request_id: request.id,
+                  action,
+                });
+                await handleChanged();
+              } catch (err) {
+                setError(`${err}`);
+              } finally {
+                setSiteLicenseReviewLoadingId("");
+              }
+            }}
+          />
         </Space>
       )}
       <TeamPackagePurchaseModal
@@ -548,6 +688,113 @@ export function MembershipPackageManager({
         }}
       />
     </div>
+  );
+}
+
+function SiteLicenseApprovalRequests({
+  overviews,
+  loading,
+  error,
+  reviewingRequestId,
+  onReview,
+}: {
+  overviews: SiteLicenseOverview[];
+  loading: boolean;
+  error: string;
+  reviewingRequestId: string;
+  onReview: (
+    overview: SiteLicenseOverview,
+    request: SiteLicensePoolRequest,
+    action: "approve" | "reject",
+  ) => Promise<void>;
+}) {
+  const requests = overviews.flatMap((overview) =>
+    overview.pending_requests.map((request) => ({
+      overview,
+      request,
+      pool: overview.pools.find((pool) => pool.id === request.package_id),
+    })),
+  );
+  if (loading) {
+    return (
+      <Card size="small">
+        <Spin /> <Text type="secondary">Loading site-license requests...</Text>
+      </Card>
+    );
+  }
+  if (error) {
+    return (
+      <Alert
+        type="warning"
+        showIcon
+        title="Could not load site-license approval requests"
+        description={error}
+      />
+    );
+  }
+  if (requests.length === 0) {
+    return null;
+  }
+  return (
+    <Card
+      size="small"
+      title={
+        <Space>
+          <Icon name="user-plus" />
+          <span>Site-license approval requests</span>
+          <Tag color="gold">{requests.length} pending</Tag>
+        </Space>
+      }
+    >
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+        {requests.map(({ overview, request, pool }) => (
+          <div
+            key={request.id}
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 16,
+              alignItems: "flex-start",
+              borderBottom: `1px solid ${COLORS.GRAY_LLL}`,
+              paddingBottom: 12,
+            }}
+          >
+            <Space orientation="vertical" size={2}>
+              <Space wrap>
+                <Text strong>{request.matched_email_address}</Text>
+                <Tag color="blue">
+                  {capitalize(request.requested_membership_class)}
+                </Tag>
+                {pool?.pool_name ? <Tag>{pool.pool_name}</Tag> : null}
+              </Space>
+              <Text type="secondary">
+                {overview.site_license.organization_name} requested{" "}
+                <TimeAgo date={request.requested_at} />
+              </Text>
+              {request.requester_note ? (
+                <Text>{request.requester_note}</Text>
+              ) : null}
+            </Space>
+            <Space>
+              <Button
+                type="primary"
+                loading={reviewingRequestId === request.id}
+                onClick={() => void onReview(overview, request, "approve")}
+              >
+                Approve
+              </Button>
+              <Button
+                danger
+                loading={reviewingRequestId === request.id}
+                onClick={() => void onReview(overview, request, "reject")}
+              >
+                Reject
+              </Button>
+            </Space>
+          </div>
+        ))}
+      </Space>
+    </Card>
   );
 }
 

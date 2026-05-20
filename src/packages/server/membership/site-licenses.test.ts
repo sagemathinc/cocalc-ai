@@ -158,9 +158,14 @@ describe("site license seat pools", () => {
         expect.objectContaining({ package_id: studentPool.id }),
       ]),
     );
-    expect(claimables).not.toEqual(
+    expect(claimables).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ package_id: instructorPool.id }),
+        expect.objectContaining({
+          package_id: instructorPool.id,
+          requires_approval: true,
+          pool_name: "Instructors",
+          site_license_id: overview.site_license.id,
+        }),
       ]),
     );
     await expect(
@@ -168,7 +173,7 @@ describe("site license seat pools", () => {
         package_id: instructorPool.id,
         account_id: student_account_id,
       }),
-    ).rejects.toThrow("no claimable seat found for this account");
+    ).rejects.toThrow("this site-license pool requires manager approval");
 
     const studentClaim = await claimMembershipPackageSeat({
       package_id: studentPool.id,

@@ -255,6 +255,13 @@ export interface ClaimableMembershipPackage {
   available_seat_count: number;
   matched_email_address: string;
   reason: "email-assignment" | "domain-match";
+  requires_approval?: boolean;
+  site_license_id?: string;
+  pool_name?: string;
+  verification_policy?: SiteLicenseVerificationPolicy;
+  exclusive_group?: string;
+  pending_request_id?: string;
+  pending_request_state?: SiteLicensePoolRequestState;
   metadata?: Record<string, unknown> | null;
 }
 

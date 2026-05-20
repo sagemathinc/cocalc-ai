@@ -641,6 +641,9 @@ Scope:
 - [x] Add admin API provisioning for one site license with one or more pools,
       e.g. `Students`, `Instructors`, and `Researchers`.
 - [ ] Add CLI commands for provisioning, overview, requesting, and reviewing.
+- [x] Route site-license provisioning, overview, request, and review APIs to the
+      site-license owner's home bay, with requester verified emails collected on
+      the requester home bay.
 - [x] Add an explicit manager list with `owner`, `manager`, and `viewer` roles.
 - [x] Keep baseline student claim as explicit click-to-claim using verified
       institutional email and current package assignment machinery.
@@ -653,6 +656,10 @@ Scope:
 - [x] Record custom terms/policy acceptance metadata when URLs are configured.
 - [x] Add minimal manager overview data: pool cap, active count, pending request
       count, available seats, and recent approvals/rejections.
+- [x] Add a minimal user-facing account UI for verified-domain users to claim
+      no-approval pools or request manager approval for approval-required pools.
+- [x] Add a minimal manager-facing account UI for reviewing pending
+      site-license pool requests.
 - [ ] Add full audit records or structured metadata for manager changes,
       revocations, and CLI/API actor context.
 - [x] Add structured metadata for requests,
@@ -719,19 +726,21 @@ Acceptance criteria:
 
 ### Phase 3: Claimable and Requestable User Flow
 
-- Update claimable-membership APIs to return:
+- [x] Update claimable-membership APIs to return:
   - immediately claimable pools
   - approval-required requestable pools
   - existing request status
-- Include custom terms/policy URLs and whether the user must accept them before
+- [ ] Include custom terms/policy URLs and whether the user must accept them before
   claiming/requesting.
-- Keep existing no-approval claim path for baseline pools.
-- Add request creation for approval-required pools.
+- [x] Keep existing no-approval claim path for baseline pools.
+- [x] Add request creation for approval-required pools.
+- [x] Add minimal account UI actions for claimable and requestable pools.
 
 ### Phase 4: Manager Dashboard and Approval Flow
 
-- Add manager-scoped APIs.
-- Add manager dashboard.
+- [x] Add manager-scoped APIs.
+- [x] Add minimal manager review panel in the account membership package manager.
+- [ ] Add polished manager dashboard.
 - Add notifications for new requests and review outcomes.
 - Approval creates assignment and grant through existing membership package
   machinery.

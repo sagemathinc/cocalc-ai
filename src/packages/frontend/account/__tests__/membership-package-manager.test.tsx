@@ -8,6 +8,9 @@ import {
 const getMembershipPackages = jest.fn();
 const getClaimableMembershipPackages = jest.fn();
 const claimMembershipPackageSeat = jest.fn();
+const requestSiteLicensePool = jest.fn();
+const getSiteLicenseOverview = jest.fn();
+const reviewSiteLicensePoolRequest = jest.fn();
 const getMembershipPackageQuote = jest.fn();
 const isPurchaseAllowed = jest.fn();
 const purchaseMembershipPackage = jest.fn();
@@ -56,6 +59,10 @@ jest.mock("@cocalc/frontend/purchases/api", () => ({
     getClaimableMembershipPackages(...args),
   claimMembershipPackageSeat: (...args: any[]) =>
     claimMembershipPackageSeat(...args),
+  requestSiteLicensePool: (...args: any[]) => requestSiteLicensePool(...args),
+  getSiteLicenseOverview: (...args: any[]) => getSiteLicenseOverview(...args),
+  reviewSiteLicensePoolRequest: (...args: any[]) =>
+    reviewSiteLicensePoolRequest(...args),
   getMembershipPackageQuote: (...args: any[]) =>
     getMembershipPackageQuote(...args),
   isPurchaseAllowed: (...args: any[]) => isPurchaseAllowed(...args),
@@ -503,7 +510,9 @@ describe("ClaimableMembershipPackagesPanel", () => {
     await waitFor(() => {
       expect(screen.getByText("Claim memberships")).toBeTruthy();
       expect(
-        screen.getByText(/Verified domain match via ada@example.edu/i),
+        screen.getByText(
+          /Verified domain match for site-license pool via ada@example.edu/i,
+        ),
       ).toBeTruthy();
     });
 
@@ -514,6 +523,46 @@ describe("ClaimableMembershipPackagesPanel", () => {
         package_id: "site-1",
       });
       expect(getClaimableMembershipPackages).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("requests manager approval for an approval-required site-license pool", async () => {
+    getClaimableMembershipPackages.mockResolvedValue([
+      {
+        package_id: "instructor-pool-1",
+        kind: "site",
+        membership_class: "pro",
+        owner_account_id: "owner-1",
+        available_seat_count: 3,
+        matched_email_address: "ada@example.edu",
+        reason: "domain-match",
+        requires_approval: true,
+        pool_name: "Instructors",
+      },
+    ]);
+    requestSiteLicensePool.mockResolvedValue({
+      id: "request-1",
+      package_id: "instructor-pool-1",
+      account_id: "account-1",
+      state: "pending",
+    });
+
+    render(<ClaimableMembershipPackagesPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Request access")).toBeTruthy();
+      expect(screen.getByText("Manager approval required")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Request access"));
+
+    await waitFor(() => {
+      expect(requestSiteLicensePool).toHaveBeenCalledWith({
+        owner_account_id: "owner-1",
+        package_id: "instructor-pool-1",
+        accepted_terms: true,
+      });
+      expect(claimMembershipPackageSeat).not.toHaveBeenCalled();
     });
   });
 });
