@@ -64,10 +64,6 @@ import {
   type ClusterInterestOpenResponse,
   type ClusterInterestSnapshotRequest,
   type ClusterInterestSnapshotResponse,
-  clusterStreams,
-  type ClusterStreams,
-  trimClusterStreams,
-  createClusterPersistServer,
   Interest,
   hashInterest,
   serializeInterest,
@@ -115,8 +111,6 @@ function emitWithAckTimeoutValue(
     });
   });
 }
-import { type ConatSocketServer } from "@cocalc/conat/socket";
-
 function socketIoCompressionEnabled(): boolean {
   const value = `${process.env.COCALC_CONAT_SOCKET_IO_COMPRESSION ?? ""}`
     .trim()
@@ -230,10 +224,6 @@ export interface InterestUpdate {
   queue?: string;
   room: string;
   version?: number;
-}
-
-interface Update {
-  interest?: InterestUpdate;
 }
 
 export function init(opts: Options) {
@@ -376,15 +366,12 @@ export class ConatServer extends EventEmitter {
   private rpcServiceSubjects: { [socketId: string]: Set<string> } = {};
   private rawRpcPending: Map<string, RawRpcPending> = new Map();
 
-  private clusterStreams?: ClusterStreams;
   private clusterLinks: {
     [clusterName: string]: { [id: string]: ClusterLink };
   } = {};
   private clusterLinksByAddress: { [address: string]: ClusterLink } = {};
-  private clusterPersistServer?: ConatSocketServer;
   private clusterInterestPeers = new Map<string, ClusterInterestPeer>();
   public readonly clusterName?: string;
-  private queuedClusterUpdates: Update[] = [];
   private interestVersion = 0;
 
   constructor(options: Options) {
@@ -703,12 +690,6 @@ export class ConatServer extends EventEmitter {
     }
     this.setState("closed");
 
-    if (this.clusterStreams != null) {
-      for (const name in this.clusterStreams) {
-        this.clusterStreams[name].close();
-      }
-      delete this.clusterStreams;
-    }
     for (const clusterName in this.clusterLinks) {
       const link = this.clusterLinks[clusterName];
       for (const id in link) {
@@ -721,9 +702,6 @@ export class ConatServer extends EventEmitter {
       delete this.clusterLinksByAddress[address];
     }
     this.clusterInterestPeers.clear();
-    this.clusterPersistServer?.close();
-    delete this.clusterPersistServer;
-    this.trimClusterStream.cancel?.();
     this.scanSoon.cancel?.();
 
     await unrefDelay(100);
@@ -1236,47 +1214,6 @@ export class ConatServer extends EventEmitter {
     }
   };
 
-  private publishUpdate = (update: Update) => {
-    const { interest } = update;
-    if (interest !== undefined) {
-      this.broadcastClusterInterestDelta(interest);
-      this.clusterStreams?.interest.publish(interest);
-    }
-    this.trimClusterStream();
-  };
-
-  private updateClusterStream = (update: Update) => {
-    if (!this.clusterName) return;
-
-    this.publishUpdate(update);
-    if (this.clusterStreams === undefined) {
-      this.queuedClusterUpdates.push(update);
-    }
-  };
-
-  // throttled because could be expensive -- once a minute it trims
-  // operations that are definitely no longer relevant and are at least
-  // several minutes old.  These are ops involving a pattern where
-  // there is no interest in that pattern.
-  private trimClusterStream = throttle(
-    async () => {
-      if (this.clusterStreams !== undefined && this.interest !== undefined) {
-        await trimClusterStreams(
-          this.clusterStreams,
-          {
-            interest: this.interest,
-            links: Object.values(
-              this.clusterLinks?.[this.clusterName ?? ""] ?? {},
-            ),
-          },
-          15 * 60000,
-        );
-      }
-    },
-    60000,
-    { leading: false, trailing: true },
-  );
-
   ///////////////////////////////////////
   // INTEREST - PATTERNS USERS ARE SUBSCRIBED TO
   ///////////////////////////////////////
@@ -1290,7 +1227,7 @@ export class ConatServer extends EventEmitter {
     // update our local state
     updateInterest(versionedInterest, this.interest);
     // publish to peers after local state is authoritative for this version.
-    this.updateClusterStream({ interest: versionedInterest });
+    this.broadcastClusterInterestDelta(versionedInterest);
   };
 
   ///////////////////////////////////////
@@ -2445,33 +2382,6 @@ export class ConatServer extends EventEmitter {
       id: this.id,
       clusterName: this.clusterName,
     });
-    const client = this.client({
-      systemAccountPassword: this.options.systemAccountPassword,
-    });
-    await client.waitUntilSignedIn();
-    // What this does:
-    // - Start a persist server that runs in same process but is just for
-    //   use for coordinator cluster nodes.
-    // - Publish interest updates to a dstream.
-    // - Route messages from another cluster to subscribers in this cluster.
-
-    this.log("creating persist server");
-    this.clusterPersistServer = await createClusterPersistServer({
-      client,
-      id: this.id,
-      clusterName: this.clusterName,
-    });
-    this.log("creating cluster streams");
-    this.clusterStreams = await clusterStreams({
-      client,
-      id: this.id,
-      clusterName: this.clusterName,
-    });
-    // add in everything so far in interest (TODO)
-    if (this.queuedClusterUpdates.length > 0) {
-      this.queuedClusterUpdates.map(this.publishUpdate);
-      this.queuedClusterUpdates.length = 0;
-    }
     this.initAutoscan();
     await this.initClusterNodes();
     this.log("cluster successfully initialized");

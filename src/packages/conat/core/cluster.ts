@@ -1,8 +1,6 @@
 import { type Client, connect } from "./client";
 import { Patterns } from "./patterns";
 import { updateInterest, type InterestUpdate } from "@cocalc/conat/core/server";
-import type { DStream } from "@cocalc/conat/sync/dstream";
-import { server as createPersistServer } from "@cocalc/conat/persist/server";
 import { getLogger } from "@cocalc/conat/logger";
 import { hash_string } from "@cocalc/util/misc";
 const CREATE_LINK_TIMEOUT = 45_000;
@@ -134,7 +132,6 @@ export { type ClusterLink };
 
 class ClusterLink {
   public interest: Interest = new Patterns();
-  private streams?: ClusterStreams;
   private state: "init" | "ready" | "closed" = "init";
   private clientStateChanged = Date.now(); // when client status last changed
   private interestSnapshotLoopStarted = false;
@@ -430,12 +427,6 @@ class ClusterLink {
       clusterName: this.clusterName,
       nodeId: this.localId,
     });
-    if (this.streams != null) {
-      this.streams.interest.removeListener("change", this.handleInterestUpdate);
-      this.streams.interest.close();
-      // @ts-ignore
-      delete this.streams;
-    }
     this.client.close();
     // @ts-ignore
     delete this.client;
@@ -481,114 +472,6 @@ class ClusterLink {
       interest: hashInterest(this.interest),
     };
   };
-}
-
-function clusterStreamNames({
-  clusterName,
-  id,
-}: {
-  clusterName: string;
-  id: string;
-}) {
-  return {
-    interest: `cluster/${clusterName}/${id}/interest`,
-  };
-}
-
-export function clusterService({
-  id,
-  clusterName,
-}: {
-  id: string;
-  clusterName: string;
-}) {
-  return `persist:${clusterName}:${id}`;
-}
-
-export async function createClusterPersistServer({
-  client,
-  id,
-  clusterName,
-}: {
-  client: Client;
-  id: string;
-  clusterName: string;
-}) {
-  const service = clusterService({ clusterName, id });
-  logger.debug("createClusterPersistServer: ", { service });
-  return await createPersistServer({ client, service });
-}
-
-export interface ClusterStreams {
-  interest: DStream<InterestUpdate>;
-}
-
-export async function clusterStreams({
-  client,
-  clusterName,
-  id,
-}: {
-  client: Client;
-  clusterName: string;
-  id: string;
-}): Promise<ClusterStreams> {
-  logger.debug("clusterStream: ", { clusterName, id });
-  if (!clusterName) {
-    throw Error("clusterName must be set");
-  }
-  const names = clusterStreamNames({ clusterName, id });
-  const opts = {
-    service: clusterService({ clusterName, id }),
-    noCache: true,
-    ephemeral: true,
-  };
-  const interest = await client.sync.dstream<InterestUpdate>({
-    noInventory: true,
-    name: names.interest,
-    ...opts,
-  });
-  logger.debug("clusterStreams: got them", { clusterName });
-  return { interest };
-}
-
-// Periodically delete not-necessary updates from the interest stream
-export async function trimClusterStreams(
-  streams: ClusterStreams,
-  data: {
-    interest: Patterns<{ [queue: string]: Set<string> }>;
-    links: { interest: Patterns<{ [queue: string]: Set<string> }> }[];
-  },
-  // don't delete anything that isn't at lest minAge ms old.
-  minAge: number,
-): Promise<{ seqsInterest: number[] }> {
-  const { interest } = streams;
-  // First deal with interst
-  // we iterate over the interest stream checking for subjects
-  // with no current interest at all; in such cases it is safe
-  // to purge them entirely from the stream.
-  const seqs: number[] = [];
-  const now = Date.now();
-  for (let n = 0; n < interest.length; n++) {
-    const time = interest.time(n);
-    if (time == null) continue;
-    if (now - time.valueOf() <= minAge) {
-      break;
-    }
-    const update = interest.get(n) as InterestUpdate;
-    if (!data.interest.hasPattern(update.subject)) {
-      const seq = interest.seq(n);
-      if (seq != null) {
-        seqs.push(seq);
-      }
-    }
-  }
-  if (seqs.length > 0) {
-    // [ ] todo -- add to interest.delete a version where it takes an array of sequence numbers
-    logger.debug("trimClusterStream: trimming interest", { seqs });
-    await interest.delete({ seqs });
-    logger.debug("trimClusterStream: successfully trimmed interest", { seqs });
-  }
-  return { seqsInterest: seqs };
 }
 
 function hashSet(X: Set<string>): number {

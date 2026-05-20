@@ -228,36 +228,11 @@ export async function waitForConsistentState(
             const hashLink = link.hash();
             const x = link.interest.serialize().patterns;
             const showInfo = () => {
-              for (const type of ["interest"]) {
-                console.log(
-                  `server stream ${type}: `,
-                  hashServer[type],
-                  // @ts-ignore
-                  servers[i].clusterStreams[type].stream.client.id,
-                  // @ts-ignore
-                  servers[i].clusterStreams[type].stream.storage.path,
-                  // @ts-ignore
-                  servers[i].clusterStreams[type].seqs(),
-                  // @ts-ignore
-                  //servers[i].clusterStreams.interest.getAll(),
-                );
-
-                console.log(
-                  `link stream ${type}: `,
-                  hashLink[type],
-                  // @ts-ignore
-                  link.streams?.[type]?.stream.client.id,
-                  // @ts-ignore
-                  link.streams?.[type]?.stream.storage.path,
-                  // @ts-ignore
-                  link.streams?.[type]?.seqs(),
-                  // @ts-ignore
-                  //link.streams.interest.getAll(),
-                );
-              }
               console.log("waitForConsistentState", {
                 i,
                 j,
+                hashServer,
+                hashLink,
                 serverInterest: a,
                 linkInterest: x,
               });
@@ -271,22 +246,6 @@ export async function waitForConsistentState(
               return false;
             }
             if (!isEqual(a, x) /*|| !isEqual(b, y) */) {
-              // @ts-ignore
-              const seqs0 = servers[i].clusterStreams?.interest.seqs();
-              // @ts-ignore
-              const seqs1 = link.streams?.interest.seqs();
-              if (
-                seqs0 != null &&
-                seqs1 != null &&
-                !isEqual(
-                  seqs0.slice(0, seqs1.length),
-                  seqs1.slice(0, seqs0.length),
-                )
-              ) {
-                showInfo();
-                throw Error(`inconsistent initial sequences`);
-              }
-
               if (Date.now() - start > 3000) {
                 // likely going to fail
                 showInfo();

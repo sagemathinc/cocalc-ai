@@ -8,16 +8,10 @@ import {
   before,
   after,
   delay,
-  once,
   wait,
   waitForConsistentState,
 } from "@cocalc/backend/conat/test/setup";
-import {
-  clusterLink,
-  clusterStreams,
-  clusterService,
-  trimClusterStreams,
-} from "@cocalc/conat/core/cluster";
+import { clusterLink } from "@cocalc/conat/core/cluster";
 import { createClusterNode as createClusterNode0 } from "./util";
 import type { Client } from "@cocalc/conat/core/client";
 import { sysApi } from "@cocalc/conat/core/sys";
@@ -36,7 +30,7 @@ async function createClusterNode(
 
 jest.setTimeout(20000);
 
-describe("create a cluster enabled socketio server and test that the streams update as they should", () => {
+describe("create a cluster enabled socketio server and test direct interest links", () => {
   let server, client;
   it("create a server with cluster support enabled", async () => {
     ({ server, client } = await createClusterNode({
@@ -47,56 +41,8 @@ describe("create a cluster enabled socketio server and test that the streams upd
     expect(server.isHealthy()).toBe(true);
   });
 
-  let streams;
-  it("get the interest stream via our client. There MUST be at least two persist subjects in there, since they were needed to even create the interest stream.", async () => {
-    streams = await clusterStreams({
-      ...server.options,
-      client,
-    });
-    const service = clusterService(server.options);
-    await wait({
-      until: () => {
-        const v = streams.interest.getAll();
-        expect(service).toContain(server.options.clusterName);
-        const persistUpdates = v.filter((update) =>
-          update.subject.startsWith(service),
-        );
-        if (persistUpdates.length <= 1) {
-          return false;
-        }
-        expect(persistUpdates.length).toBeGreaterThan(1);
-        return true;
-      },
-    });
-  });
-
-  it("subscribe and see update appear in the stream; close sub and see delete appear", async () => {
-    const sub = await client.subscribe("foo");
-    while (true) {
-      const v = streams.interest.getAll().filter((x) => x.subject == "foo");
-      if (v.length == 1) {
-        expect(v[0]).toEqual(
-          expect.objectContaining({ op: "add", subject: "foo" }),
-        );
-        break;
-      }
-      await once(streams.interest, "change");
-    }
-    sub.close();
-    while (true) {
-      const v = streams.interest.getAll().filter((x) => x.subject == "foo");
-      if (v.length == 2) {
-        expect(v[1]).toEqual(
-          expect.objectContaining({ op: "delete", subject: "foo" }),
-        );
-        break;
-      }
-      await once(streams.interest, "change");
-    }
-  });
-
   let link;
-  it("get access to the same stream, but via a cluster link, and note that it is identical to the one in the server -- keeping these pattern objects sync'd is the point of the link", async () => {
+  it("get access to the same interest state via a cluster link", async () => {
     link = await clusterLink(
       server.address(),
       server.options.systemAccountPassword,
@@ -184,10 +130,6 @@ describe("create a cluster enabled socketio server and test that the streams upd
 
   afterAll(async () => {
     link?.close?.();
-    streams?.interest?.close?.();
-    streams?.subscriptions?.close?.();
-    streams?.services?.close?.();
-    streams?.sockets?.close?.();
     client?.close?.();
     await server?.close?.();
   });
@@ -383,65 +325,6 @@ describe(`a cluster with ${clusterSize} nodes`, () => {
       client?.close?.();
     }
     await Promise.all(servers.map((server) => server?.close?.()));
-  });
-});
-
-describe("test trimming the interest stream", () => {
-  let server, client;
-  it("create a cluster server", async () => {
-    ({ server, client } = await createClusterNode({
-      id: "0",
-      clusterName: "trim",
-    }));
-    await wait({ until: () => server.clusterStreams != null });
-  });
-
-  let sub;
-  it("subscribes and verifies that trimming does nothing", async () => {
-    sub = await client.sub("389");
-    const { seqsInterest: seqs } = await trimClusterStreams(
-      server.clusterStreams,
-      server,
-      0,
-    );
-    expect(seqs).toEqual([]);
-  });
-
-  it("unsubscribes and verifies that trimming with a 5s maxAge does nothing", async () => {
-    sub.close();
-    await delay(100);
-    const { seqsInterest: seqs } = await trimClusterStreams(
-      server.clusterStreams,
-      server,
-      5000,
-    );
-    expect(seqs).toEqual([]);
-  });
-
-  it(" see that two updates are trimmed when maxAge is 0s", async () => {
-    // have to use wait since don't know how long until
-    // stream actually updated after unsub.
-    let seqs;
-    await wait({
-      until: async () => {
-        seqs = (await trimClusterStreams(server.clusterStreams, server, 0))
-          .seqsInterest;
-        return seqs.length >= 2;
-      },
-    });
-    expect(seqs.length).toBe(2);
-    await delay(1);
-    for (const update of server.clusterStreams.interest.getAll()) {
-      if (update.subject == "389" && update.op == "add") {
-        throw Error("adding 389 should have been removed");
-      }
-    }
-  });
-
-  afterAll(async () => {
-    sub?.close?.();
-    client?.close?.();
-    await server?.close?.();
   });
 });
 
