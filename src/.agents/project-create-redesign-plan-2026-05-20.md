@@ -47,6 +47,8 @@ Implemented:
 - Custom OCI path hidden from non-admins.
 - RootFS scan findings visible but non-blocking.
 - Host placement visible in the main path, still using the existing host picker.
+- Account capacity health card with project slots, running-project slots, and
+  storage usage.
 
 Still rough:
 
@@ -577,6 +579,7 @@ Missing:
 - Summary/action column.
 - Inline RootFS picker.
 - Host placement visible in the main path.
+- Account capacity health card.
 
 ### Phase A: Update Data/Policy Inventory
 
@@ -589,7 +592,7 @@ Follow-up completed:
 
 ### Phase B: Health Card
 
-Add the compact quota/health card to the create modal.
+Initial implementation completed 2026-05-20.
 
 Requirements:
 
@@ -599,6 +602,13 @@ Requirements:
 - Clear near-limit and at-limit messaging.
 - Links/actions for delete projects, archive projects, stop running projects, or
   upgrade membership tier where possible.
+
+Follow-up:
+
+- Add direct actions from the health card for upgrade, project cleanup, archive
+  guidance, and stopping a running sponsored project.
+- Consider sharing the same health card data/formatting with the main projects
+  page.
 
 Validation:
 
