@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Card, Collapse, Space, Typography } from "antd";
+import { Button, Card, Collapse, Space, Tag, Typography } from "antd";
 import type { CSSProperties, ReactNode } from "react";
 import { useMemo, useRef, useState } from "react";
 
@@ -192,48 +192,140 @@ function SummaryRow({
   return (
     <div
       style={{
-        alignItems: "center",
+        alignItems: "start",
         borderBottom: isLast ? undefined : `1px solid ${COLORS.GRAY_LL}`,
-        display: "grid",
         gap: 8,
-        gridTemplateColumns: "24px minmax(0, 1fr) auto",
         padding: "8px 0",
       }}
     >
-      <Icon
-        name={icon as any}
-        style={{ color: COLORS.ANTD_LINK_BLUE, fontSize: 15 }}
-      />
-      <div style={{ minWidth: 0 }}>
+      <div
+        style={{
+          alignItems: "start",
+          display: "grid",
+          gap: 8,
+          gridTemplateColumns: "24px minmax(0, 1fr)",
+        }}
+      >
+        <Icon
+          name={icon as any}
+          style={{ color: COLORS.ANTD_LINK_BLUE, fontSize: 15, marginTop: 2 }}
+        />
         <div
           style={{
-            alignItems: "baseline",
-            display: "flex",
-            gap: 6,
             minWidth: 0,
           }}
         >
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {title}
-          </Typography.Text>
           <div
             style={{
-              fontWeight: 600,
-              minWidth: 0,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
+              alignItems: "center",
+              display: "grid",
+              gap: 8,
+              gridTemplateColumns: "minmax(0, 1fr) auto",
             }}
-            title={typeof value === "string" ? value : undefined}
           >
-            {value}
+            <Typography.Text
+              type="secondary"
+              style={{
+                display: "block",
+                fontSize: 12,
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {title}
+            </Typography.Text>
+            {action != null ? (
+              <div style={{ minWidth: "fit-content" }}>{action}</div>
+            ) : undefined}
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div
+              style={{
+                fontWeight: 600,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={typeof value === "string" ? value : undefined}
+            >
+              {value}
+            </div>
+            {subtitle != null ? (
+              <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
+                {subtitle}
+              </div>
+            ) : undefined}
           </div>
         </div>
-        {subtitle != null ? (
-          <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>{subtitle}</div>
-        ) : undefined}
       </div>
-      {action != null ? <div>{action}</div> : undefined}
+    </div>
+  );
+}
+
+function EnvironmentStatusHeader({
+  envCount,
+  featureCount,
+  runtimeImage,
+  secretCount,
+}: {
+  envCount: number;
+  featureCount: number;
+  runtimeImage: string;
+  secretCount: number;
+}) {
+  return (
+    <div
+      style={{
+        background: `linear-gradient(135deg, ${COLORS.ANTD_BG_BLUE_L}, white)`,
+        border: `1px solid ${COLORS.GRAY_LL}`,
+        borderRadius: 10,
+        padding: "10px 12px",
+      }}
+    >
+      <Space align="start" size={10} style={{ width: "100%" }}>
+        <div
+          style={{
+            alignItems: "center",
+            background: "white",
+            borderRadius: 8,
+            color: COLORS.ANTD_LINK_BLUE,
+            display: "flex",
+            flex: "0 0 auto",
+            height: 34,
+            justifyContent: "center",
+            width: 34,
+          }}
+        >
+          <Icon name="terminal" />
+        </div>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <Typography.Text strong>Environment</Typography.Text>
+          <div
+            style={{
+              color: COLORS.GRAY_D,
+              fontSize: 12,
+              overflowWrap: "anywhere",
+              wordBreak: "break-word",
+            }}
+            title={runtimeImage}
+          >
+            Runtime image: {runtimeImage}
+          </div>
+          <Space size={[6, 6]} wrap style={{ marginTop: 6 }}>
+            <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+              {featureCount} features
+            </Tag>
+            <Tag style={{ marginInlineEnd: 0 }}>
+              {envCount} env var{envCount === 1 ? "" : "s"}
+            </Tag>
+            <Tag style={{ marginInlineEnd: 0 }}>
+              {secretCount} secret{secretCount === 1 ? "" : "s"}
+            </Tag>
+          </Space>
+        </div>
+      </Space>
     </div>
   );
 }
@@ -442,6 +534,14 @@ export function EnvironmentOverview({
       size={isFlyout ? 10 : 14}
       style={{ width: "100%" }}
     >
+      {isFlyout ? (
+        <EnvironmentStatusHeader
+          envCount={envCount}
+          featureCount={features.availableCount}
+          runtimeImage={runtimeImage}
+          secretCount={secretCount}
+        />
+      ) : null}
       <div
         style={{
           display: "grid",

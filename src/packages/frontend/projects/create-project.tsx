@@ -38,7 +38,7 @@ import {
   R2_REGIONS,
   type R2Region,
 } from "@cocalc/util/consts";
-import { capitalize } from "@cocalc/util/misc";
+import { COLORS } from "@cocalc/util/theme";
 import { SelectNewHost } from "@cocalc/frontend/hosts/select-new-host";
 import { RootfsScanStatus } from "@cocalc/frontend/rootfs/scan-status";
 import {
@@ -52,7 +52,10 @@ import {
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 import { isNewProjectRootfsSelectable } from "./create-project-rootfs";
-import { projectDraftToCreateOptions } from "./create/project-create-draft";
+import {
+  type ProjectCreateMode,
+  projectDraftToCreateOptions,
+} from "./create/project-create-draft";
 import { useProjectCreateDraft } from "./create/use-project-create-draft";
 
 interface Props {
@@ -61,6 +64,38 @@ interface Props {
   onClose: () => void;
 }
 
+const PROJECT_PRESETS: {
+  mode: ProjectCreateMode;
+  title: string;
+  description: string;
+  icon: string;
+}[] = [
+  {
+    mode: "standard",
+    title: "Standard",
+    description: "Default image, automatic host, nearest backups.",
+    icon: "project-outlined",
+  },
+  {
+    mode: "gpu",
+    title: "GPU",
+    description: "GPU-capable image when one is available.",
+    icon: "bolt",
+  },
+  {
+    mode: "teaching",
+    title: "Teaching",
+    description: "Stable defaults for classes and workshops.",
+    icon: "graduation-cap",
+  },
+  {
+    mode: "custom",
+    title: "Custom",
+    description: "Expose advanced placement and image controls.",
+    icon: "sliders",
+  },
+];
+
 export function NewProjectCreator({ default_value, open, onClose }: Props) {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
@@ -68,9 +103,13 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   const projectsLabel = intl.formatMessage(labels.projects);
 
   const [error, set_error] = useState<string>("");
-  const [saving, setSaving] = useState<boolean>(false);
+  const [createAction, setCreateAction] = useState<"create" | "open" | null>(
+    null,
+  );
+  const [titlePreview, setTitlePreview] = useState<string>(default_value);
+  const saving = createAction != null;
   const new_project_title_ref = useRef<any>(null);
-  const [rootfsModalOpen, setRootfsModalOpen] = useState<boolean>(false);
+  const [rootfsPickerOpen, setRootfsPickerOpen] = useState<boolean>(false);
   const [showOlderRootfsVersions, setShowOlderRootfsVersions] =
     useState<boolean>(false);
   const [rootfsMode, setRootfsMode] = useState<"catalog" | "custom">("catalog");
@@ -88,6 +127,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     setRegion,
     setHost,
     setRootfs,
+    applyPreset,
     reset,
   } = useProjectCreateDraft({ defaultValue: default_value });
   const regionOptions = useMemo(
@@ -137,6 +177,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
 
   useEffect(() => {
     form.setFieldsValue({ title: draft.title });
+    setTitlePreview(draft.title);
   }, [draft.title, form]);
 
   const is_mounted_ref = useIsMountedRef();
@@ -149,9 +190,10 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
 
   function reset_form(): void {
     reset();
+    setTitlePreview(draft.title);
     set_error("");
-    setSaving(false);
-    setRootfsModalOpen(false);
+    setCreateAction(null);
+    setRootfsPickerOpen(false);
     setRootfsMode("catalog");
     setRootfsDraft("");
     setRootfsDraftId(undefined);
@@ -168,34 +210,44 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     onClose();
   }
 
-  async function create_project(): Promise<void> {
-    setSaving(true);
+  async function create_project({
+    openAfterCreate,
+  }: {
+    openAfterCreate: boolean;
+  }): Promise<void> {
+    setCreateAction(openAfterCreate ? "open" : "create");
     const actions = redux.getActions("projects");
     let project_id: string;
     const title =
       `${(new_project_title_ref.current as any)?.input?.value ?? draft.title}`.trim();
     if (!title) {
-      setSaving(false);
+      setCreateAction(null);
       set_error(`Please enter a title for the new ${projectLabelLower}.`);
       return;
     }
-    const opts = projectDraftToCreateOptions({ ...draft, title });
+    const opts = projectDraftToCreateOptions({
+      ...draft,
+      title,
+      start: openAfterCreate,
+    });
     try {
       project_id = await actions.create_project(opts);
     } catch (err) {
       if (!is_mounted_ref.current) return;
-      setSaving(false);
+      setCreateAction(null);
       setAdvancedOpen(true);
       set_error(`Error creating ${projectLabelLower} -- ${err}`);
       return;
     }
 
-    // switch_to=true is perhaps suggested by #4088
-    actions.open_project({
-      project_id,
-      target: "project-home",
-      switch_to: true,
-    });
+    if (openAfterCreate) {
+      // switch_to=true is perhaps suggested by #4088
+      actions.open_project({
+        project_id,
+        target: "project-home",
+        switch_to: true,
+      });
+    }
     cancel_editing();
   }
 
@@ -212,11 +264,11 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     if (e.keyCode === 27) {
       cancel_editing();
     } else if (e.keyCode === 13) {
-      create_project();
+      create_project({ openAfterCreate: true });
     }
   }
 
-  function openRootfsModal() {
+  function openRootfsPicker() {
     const current = (draft.rootfs_image?.trim() ||
       DEFAULT_PROJECT_IMAGE) as string;
     setRootfsDraft(current);
@@ -227,42 +279,43 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     setRootfsDraftId(currentEntry?.id);
     const isCatalog = !!currentEntry || !isAdmin;
     setRootfsMode(isCatalog ? "catalog" : "custom");
-    setRootfsModalOpen(true);
+    setRootfsPickerOpen(true);
   }
 
-  function renderRootfsModal() {
-    if (!rootfsModalOpen) return null;
+  function applyRootfsDraft() {
+    const trimmed = rootfsDraft.trim();
+    if (rootfsMode === "custom") {
+      setRootfs({ image: trimmed || DEFAULT_PROJECT_IMAGE });
+    } else {
+      const nextEntry =
+        filteredRootfsImages.find((entry) => entry.id === rootfsDraftId) ??
+        filteredRootfsImages.find((entry) => entry.image === rootfsDraft);
+      setRootfs({
+        image: nextEntry?.image || draft.rootfs_image,
+        image_id: nextEntry?.id,
+      });
+    }
+    setRootfsPickerOpen(false);
+  }
+
+  function renderRootfsPicker() {
+    if (!rootfsPickerOpen) return null;
     const activeEntry =
       filteredRootfsImages.find((entry) => entry.id === rootfsDraftId) ??
       filteredRootfsImages.find((entry) => entry.image === rootfsDraft);
     return (
-      <Modal
-        open
-        width={720}
-        title="Root Filesystem Software Image"
-        onCancel={() => setRootfsModalOpen(false)}
-        onOk={() => {
-          const trimmed = rootfsDraft.trim();
-          if (rootfsMode === "custom") {
-            setRootfs({ image: trimmed || DEFAULT_PROJECT_IMAGE });
-          } else {
-            const nextEntry =
-              filteredRootfsImages.find(
-                (entry) => entry.id === rootfsDraftId,
-              ) ??
-              filteredRootfsImages.find((entry) => entry.image === rootfsDraft);
-            setRootfs({
-              image: nextEntry?.image || draft.rootfs_image,
-              image_id: nextEntry?.id,
-            });
-          }
-          setRootfsModalOpen(false);
+      <Card
+        size="small"
+        styles={{ body: { padding: "10px 12px" } }}
+        style={{
+          borderColor: COLORS.GRAY_LL,
+          background: "white",
         }}
       >
         <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
           <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            Pick a managed RootFS image for this project. You can always change
-            it later in project settings.
+            Pick a managed RootFS image for this project. Scan findings are
+            shown for review but do not block selection.
           </Paragraph>
           {rootfsMode === "catalog" ? (
             <>
@@ -295,6 +348,18 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                 loading={rootfsLoading}
                 disabled={rootfsLoading}
               />
+              <Space wrap>
+                <Button
+                  type="primary"
+                  onClick={applyRootfsDraft}
+                  disabled={!rootfsDraftId}
+                >
+                  Use this image
+                </Button>
+                <Button onClick={() => setRootfsPickerOpen(false)}>
+                  Cancel
+                </Button>
+              </Space>
               <Checkbox
                 checked={showOlderRootfsVersions}
                 onChange={(e) => setShowOlderRootfsVersions(e.target.checked)}
@@ -364,6 +429,18 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                   setRootfsDraftId(undefined);
                 }}
               />
+              <Space wrap>
+                <Button
+                  type="primary"
+                  onClick={applyRootfsDraft}
+                  disabled={!rootfsDraft.trim()}
+                >
+                  Use this image
+                </Button>
+                <Button onClick={() => setRootfsPickerOpen(false)}>
+                  Cancel
+                </Button>
+              </Space>
               <Button
                 type="link"
                 onClick={() => setRootfsMode("catalog")}
@@ -374,7 +451,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             </Space>
           )}
         </Space>
-      </Modal>
+      </Card>
     );
   }
 
@@ -390,8 +467,8 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             Select the base root filesystem image for this project.
           </Paragraph>
           <Space wrap>
-            <Button onClick={openRootfsModal} disabled={saving}>
-              Choose image...
+            <Button onClick={openRootfsPicker} disabled={saving}>
+              {rootfsPickerOpen ? "Change image..." : "Choose image..."}
             </Button>
             <Tag color="blue">{displayLabel}</Tag>
             {selectedRootfsEntry?.section && (
@@ -417,7 +494,144 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
           {selectedRootfsEntry && (
             <RootfsScanStatus entry={selectedRootfsEntry} />
           )}
-          {renderRootfsModal()}
+          {renderRootfsPicker()}
+        </Space>
+      </Card>
+    );
+  }
+
+  function renderPresetSection(): React.JSX.Element {
+    return (
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+          gap: 10,
+        }}
+      >
+        {PROJECT_PRESETS.map((preset) => {
+          const active = draft.mode === preset.mode;
+          return (
+            <Button
+              key={preset.mode}
+              onClick={() => applyPreset(preset.mode)}
+              disabled={saving}
+              style={{
+                height: "auto",
+                minHeight: 82,
+                padding: "10px 12px",
+                textAlign: "left",
+                borderColor: active ? COLORS.BS_BLUE_BGRND : COLORS.GRAY_LL,
+                background: active ? COLORS.ANTD_BG_BLUE_L : "white",
+                boxShadow: active
+                  ? `0 0 0 1px ${COLORS.BS_BLUE_BGRND} inset`
+                  : undefined,
+              }}
+            >
+              <Space align="start" size="small">
+                <Icon
+                  name={preset.icon as any}
+                  style={{
+                    color: active ? COLORS.BS_BLUE_TEXT : COLORS.GRAY_M,
+                    marginTop: 2,
+                  }}
+                />
+                <span>
+                  <div style={{ fontWeight: 600, color: COLORS.GRAY_D }}>
+                    {preset.title}
+                  </div>
+                  <div
+                    style={{
+                      color: COLORS.GRAY_M,
+                      fontSize: 12,
+                      lineHeight: 1.35,
+                      whiteSpace: "normal",
+                    }}
+                  >
+                    {preset.description}
+                  </div>
+                </span>
+              </Space>
+            </Button>
+          );
+        })}
+      </div>
+    );
+  }
+
+  function renderSummarySection(): React.JSX.Element {
+    const title =
+      `${(new_project_title_ref.current as any)?.input?.value ?? titlePreview}`.trim() ||
+      "Untitled project";
+    return (
+      <Card
+        size="small"
+        styles={{ body: { padding: 14 } }}
+        style={{
+          position: "sticky",
+          top: 0,
+          borderColor: COLORS.GRAY_LL,
+          background: COLORS.GRAY_LLL,
+        }}
+      >
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>Summary</div>
+            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              Choose whether to start and open immediately.
+            </Paragraph>
+          </div>
+          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+            {summaryRow("Title", title)}
+            {summaryRow("Preset", presetTitle(draft.mode))}
+            {summaryRow("Runtime", summary.rootfsLabel)}
+            {summaryRow(
+              "Host",
+              summary.hostName || summary.host_id || "Automatic placement",
+            )}
+            {summaryRow("Backups", R2_REGION_LABELS[draft.region])}
+          </Space>
+          <Space wrap>
+            {summary.gpu && <Tag color="purple">GPU</Tag>}
+            {selectedRootfsEntry?.section && (
+              <Tag color={sectionTagColor(selectedRootfsEntry.section)}>
+                {sectionLabel(selectedRootfsEntry.section)}
+              </Tag>
+            )}
+            {selectedRootfsEntry?.warning && <Tag color="orange">Review</Tag>}
+            {!selectedRootfsEntry && <Tag color="orange">Advanced OCI</Tag>}
+          </Space>
+          {summary.warnings.length > 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              message={summary.warnings.join(" ")}
+            />
+          )}
+          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+            <Button
+              type="primary"
+              block
+              onClick={() => create_project({ openAfterCreate: true })}
+              disabled={isDisabled()}
+              loading={createAction === "open"}
+              icon={<Icon name="arrow-right" />}
+            >
+              Create and Open
+            </Button>
+            <Button
+              block
+              onClick={() => create_project({ openAfterCreate: false })}
+              disabled={isDisabled()}
+              loading={createAction === "create"}
+              icon={<Icon name="plus-circle" />}
+            >
+              Create Project
+            </Button>
+            <Button block onClick={cancel_editing} disabled={saving}>
+              {intl.formatMessage(labels.cancel)}
+            </Button>
+          </Space>
         </Space>
       </Card>
     );
@@ -431,6 +645,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
 
     return (
       <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+        {renderPresetSection()}
         <Form form={form} layout="vertical">
           <Form.Item
             label={intl.formatMessage(labels.title)}
@@ -449,11 +664,20 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
               placeholder={`Name your new ${projectLabelLower}...`}
               disabled={saving}
               onKeyDown={handle_keypress}
+              onChange={(e) => setTitlePreview(e.target.value)}
               autoFocus
             />
           </Form.Item>
         </Form>
         {renderRootfsSection()}
+        <SelectNewHost
+          disabled={saving}
+          selectedHost={selectedHost}
+          onChange={setHost}
+          regionFilter={draft.region}
+          regionLabel={R2_REGION_LABELS[draft.region]}
+          pickerMode="create"
+        />
         <Button
           type="link"
           onClick={() => setAdvancedOpen(!draft.advanced_open)}
@@ -495,14 +719,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                 </Paragraph>
               </Space>
             </Card>
-            <SelectNewHost
-              disabled={saving}
-              selectedHost={selectedHost}
-              onChange={setHost}
-              regionFilter={draft.region}
-              regionLabel={R2_REGION_LABELS[draft.region]}
-              pickerMode="create"
-            />
           </Space>
         )}
         {render_error()}
@@ -524,7 +740,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     <Modal
       open={open}
       destroyOnHidden
-      width="min(960px, 96vw)"
+      width="min(1100px, 96vw)"
       title={
         <Space size="small">
           <Icon name="plus-circle" />
@@ -546,23 +762,41 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
           Pick a title now and tune the rest later.
         </Paragraph>
-        {render_input_section()}
-        <Space>
-          <Button onClick={cancel_editing} disabled={saving}>
-            {intl.formatMessage(labels.cancel)}
-          </Button>
-          <Button
-            type="primary"
-            onClick={create_project}
-            disabled={isDisabled()}
-            loading={saving}
-            icon={<Icon name="plus-circle" />}
-          >
-            {capitalize(intl.formatMessage(labels.create))}
-          </Button>
-        </Space>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1fr) minmax(260px, 320px)",
+            gap: 16,
+            alignItems: "start",
+          }}
+        >
+          {render_input_section()}
+          {renderSummarySection()}
+        </div>
       </Space>
     </Modal>
+  );
+}
+
+function presetTitle(mode: ProjectCreateMode): string {
+  return PROJECT_PRESETS.find((preset) => preset.mode === mode)?.title ?? mode;
+}
+
+function summaryRow(label: string, value: React.ReactNode): React.JSX.Element {
+  return (
+    <div>
+      <div style={{ color: COLORS.GRAY_M, fontSize: 11 }}>{label}</div>
+      <div
+        style={{
+          color: COLORS.GRAY_D,
+          fontSize: 13,
+          fontWeight: 600,
+          overflowWrap: "anywhere",
+        }}
+      >
+        {value}
+      </div>
+    </div>
   );
 }
 
