@@ -51,8 +51,8 @@ const budgets = [
   },
   {
     html: "public.html",
-    maxRawBytes: 1200 * KiB,
-    maxGzipBytes: 380 * KiB,
+    maxRawBytes: 900 * KiB,
+    maxGzipBytes: 280 * KiB,
   },
 ];
 
