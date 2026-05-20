@@ -10,11 +10,13 @@ implementation track.
 ## Problem
 
 CoCalc site licensing needs to support real academic and enterprise deals where
-one organization has at least two classes of users:
+one organization has multiple classes of users:
 
 - a broad, low-risk student or baseline user population
 - a smaller, higher-trust instructor/faculty/admin population with higher
   resource limits and higher abuse potential
+- a research population with different compute, storage, and network
+  expectations from both students and instructors
 
 The current site-license model is effectively one pool:
 
@@ -23,8 +25,9 @@ The current site-license model is effectively one pool:
 - one membership tier
 
 That is not enough for campus licenses. A university may buy, for example,
-5000 student seats and 200 instructor seats. Those seats should have different
-tiers, different limits, and different claim/approval rules.
+5000 student seats, 200 instructor seats, and 500 researcher seats. Those seats
+should have different tiers, different limits, and different claim/approval
+rules.
 
 This directly affects project invites and course workflows. Instructors need
 larger project, collaborator, and email-invite quotas; students should not get
@@ -86,8 +89,8 @@ more named pools:
 
 ```ts
 type SiteLicensePool = {
-  name: string;                 // e.g. "Students", "Instructors"
-  membership_class: string;     // e.g. "student", "instructor"
+  name: string; // e.g. "Students", "Instructors"
+  membership_class: string; // e.g. "student", "instructor"
   seat_count: number;
   requires_approval: boolean;
   verification_policy: "email-domain" | "sso-affiliation" | "manager-approval";
@@ -100,6 +103,8 @@ Example:
 
 - `Students`: 5000 seats, `student` tier, no approval
 - `Instructors`: 200 seats, `instructor` tier, approval required
+- `Researchers`: 500 seats, `researcher` tier, approval required or SSO-backed
+  eligibility
 
 The organization should not have to understand package rows, assignment rows,
 grant rows, or bay routing.
@@ -178,7 +183,7 @@ For each pool:
 - `membership_class = <pool tier>`
 - `seat_count = <pool cap>`
 - `metadata.site_license_id = <site license id>`
-- `metadata.pool_name = "Students" | "Instructors" | ...`
+- `metadata.pool_name = "Students" | "Instructors" | "Researchers" | ...`
 - `metadata.requires_approval = boolean`
 - `metadata.verification_policy = "email-domain" | "sso-affiliation" | "manager-approval"`
 - `metadata.affiliation_reverification_days = number | undefined`
@@ -420,7 +425,7 @@ and `verification_policy`:
 - Instructor year-one default: `verification_policy = "email-domain"`,
   `requires_approval = true`.
 - Future stricter instructor default: `verification_policy =
-  "sso-affiliation"` plus approval, or SSO role assertion without manager
+"sso-affiliation"` plus approval, or SSO role assertion without manager
   approval if the organization provides reliable role data.
 
 ## Fresh Affiliation Verification
@@ -616,29 +621,29 @@ procurement/admin surface. It should prove the core invariant:
 Scope:
 
 - [x] Add the `site_licenses`, `site_license_managers`, and
-  `site_license_pool_requests` schema.
+      `site_license_pool_requests` schema.
 - [x] Represent pools as `membership_packages.kind = "site"` rows linked by
-  `metadata.site_license_id`.
+      `metadata.site_license_id`.
 - [x] Add shared TypeScript types for site licenses, managers, pools, requests,
-  verification policy, terms links, and overage/renewal policy.
-- [x] Add admin API provisioning for one site license with two pools:
-  `Students` and `Instructors`.
+      verification policy, terms links, and overage/renewal policy.
+- [x] Add admin API provisioning for one site license with one or more pools,
+      e.g. `Students`, `Instructors`, and `Researchers`.
 - [ ] Add CLI commands for provisioning, overview, requesting, and reviewing.
 - [x] Add an explicit manager list with `owner`, `manager`, and `viewer` roles.
 - [x] Keep baseline student claim as explicit click-to-claim using verified
-  institutional email and current package assignment machinery.
+      institutional email and current package assignment machinery.
 - [x] Add instructor request creation for approval-required pools.
 - [x] Add manager approval/rejection APIs that recheck cap availability and create
-  the package assignment/grant through existing membership package machinery.
+      the package assignment/grant through existing membership package machinery.
 - [x] Enforce one active pool per account per site license; instructor approval
-  replaces a lower student grant.
+      replaces a lower student grant.
 - [x] Record custom terms/policy acceptance metadata when URLs are configured.
 - [x] Add minimal manager overview data: pool cap, active count, pending request
-  count, available seats, and recent approvals/rejections.
+      count, available seats, and recent approvals/rejections.
 - [ ] Add full audit records or structured metadata for manager changes,
-  revocations, and CLI/API actor context.
+      revocations, and CLI/API actor context.
 - [x] Add structured metadata for requests,
-  approvals, rejections, and revocations.
+      approvals, rejections, and revocations.
 
 Explicitly out of the first slice:
 
@@ -646,26 +651,26 @@ Explicitly out of the first slice:
 - CSV export.
 - Scheduled affiliation reverification jobs.
 - SSO affiliation enforcement beyond storing `verification_policy =
-  "sso-affiliation"` as a future-supported policy.
+"sso-affiliation"` as a future-supported policy.
 - Soft overages or true-up billing.
 - Automatic student auto-claim.
 
 Acceptance criteria:
 
-- [x] CoCalc admin can create a site license with student and instructor pools and
-  add an initial owner manager.
+- [x] CoCalc admin can create a site license with an arbitrary nonempty list of
+      named pools and add an initial owner manager.
 - [x] A verified-domain user can claim a student seat.
 - [x] A verified-domain user can request instructor access.
 - [x] A site-license manager can approve or reject the instructor request.
 - [x] Approval upgrades effective membership to the instructor tier and releases
-  the student seat for the same site license.
+      the student seat for the same site license.
 - [ ] Cap checks prevent claiming or approval past the pool limit.
 - [ ] Custom terms/policy links, if configured, are shown before claim/request and
-  acceptance is recorded.
+      acceptance is recorded.
 - [x] Existing one-pool site packages still resolve as before or are treated as
-  backward-compatible single-pool licenses.
+      backward-compatible single-pool licenses.
 - [ ] Focused tests cover claim, request, approval, rejection, cap recheck,
-  one-active-pool upgrade, manager authorization, and custom terms metadata.
+      one-active-pool upgrade, manager authorization, and custom terms metadata.
 
 ### Phase 1: Schema and Types
 

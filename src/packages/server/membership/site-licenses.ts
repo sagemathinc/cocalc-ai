@@ -133,7 +133,7 @@ async function ensureSiteLicenseSchemaWithClient(db: Queryable): Promise<void> {
       name TEXT NOT NULL,
       organization_name TEXT NOT NULL,
       owner_account_id UUID NOT NULL,
-      allowed_domains JSONB,
+      allowed_domains TEXT[],
       custom_terms_url TEXT,
       custom_policy_url TEXT,
       terms_version_label TEXT,
@@ -728,7 +728,7 @@ export async function adminProvisionSiteLicense({
             renewal_policy, overage_policy, starts_at, expires_at, metadata,
             created, updated)
          VALUES
-           ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,NOW(),NOW())`,
+           ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,NOW(),NOW())`,
         [
           site_license_id,
           normalizeString(name, "name"),

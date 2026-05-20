@@ -31,6 +31,7 @@ afterAll(after);
 describe("site license seat pools", () => {
   const studentTier = `student-tier-${uuid()}`;
   const instructorTier = `instructor-tier-${uuid()}`;
+  const researcherTier = `researcher-tier-${uuid()}`;
 
   beforeAll(async () => {
     await createTestMembershipTier({
@@ -42,6 +43,11 @@ describe("site license seat pools", () => {
       id: instructorTier,
       priority: 20,
       price_yearly: 200,
+    });
+    await createTestMembershipTier({
+      id: researcherTier,
+      priority: 30,
+      price_yearly: 300,
     });
   });
 
@@ -98,10 +104,22 @@ describe("site license seat pools", () => {
           requires_approval: true,
           verification_policy: "manager-approval",
         },
+        {
+          pool_name: "Researchers",
+          membership_class: researcherTier,
+          seat_count: 50,
+          requires_approval: true,
+          verification_policy: "manager-approval",
+        },
       ],
     });
 
     expect(overview.site_license.allowed_domains).toEqual([domain]);
+    expect(overview.pools.map((pool) => pool.pool_name).sort()).toEqual([
+      "Instructors",
+      "Researchers",
+      "Students",
+    ]);
     expect(overview.managers).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -116,8 +134,12 @@ describe("site license seat pools", () => {
     const instructorPool = overview.pools.find(
       (pool) => pool.pool_name === "Instructors",
     )!;
+    const researcherPool = overview.pools.find(
+      (pool) => pool.pool_name === "Researchers",
+    )!;
     expect(studentPool.requires_approval).toBe(false);
     expect(instructorPool.requires_approval).toBe(true);
+    expect(researcherPool.requires_approval).toBe(true);
 
     const claimables = await listClaimableMembershipPackagesForAccount({
       account_id: student_account_id,

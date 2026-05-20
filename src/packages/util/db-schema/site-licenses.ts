@@ -78,6 +78,7 @@ Table({
     },
     allowed_domains: {
       type: "array",
+      pg_type: "TEXT[]",
       desc: "Institutional email domains covered by this license.",
     },
     custom_terms_url: {
