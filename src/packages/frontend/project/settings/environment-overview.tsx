@@ -192,48 +192,57 @@ function SummaryRow({
   return (
     <div
       style={{
-        alignItems: "center",
+        alignItems: "start",
         borderBottom: isLast ? undefined : `1px solid ${COLORS.GRAY_LL}`,
-        display: "grid",
         gap: 8,
-        gridTemplateColumns: "24px minmax(0, 1fr) auto",
         padding: "8px 0",
       }}
     >
-      <Icon
-        name={icon as any}
-        style={{ color: COLORS.ANTD_LINK_BLUE, fontSize: 15 }}
-      />
-      <div style={{ minWidth: 0 }}>
+      <div
+        style={{
+          alignItems: "start",
+          display: "grid",
+          gap: 8,
+          gridTemplateColumns: "24px minmax(0, 1fr)",
+        }}
+      >
+        <Icon
+          name={icon as any}
+          style={{ color: COLORS.ANTD_LINK_BLUE, fontSize: 15, marginTop: 2 }}
+        />
         <div
           style={{
-            alignItems: "baseline",
-            display: "flex",
-            gap: 6,
             minWidth: 0,
           }}
         >
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {title}
-          </Typography.Text>
-          <div
-            style={{
-              fontWeight: 600,
-              minWidth: 0,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-            title={typeof value === "string" ? value : undefined}
-          >
-            {value}
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {title}
+            </Typography.Text>
+            {action != null ? (
+              <div style={{ marginLeft: 8 }}>{action}</div>
+            ) : undefined}
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div
+              style={{
+                fontWeight: 600,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={typeof value === "string" ? value : undefined}
+            >
+              {value}
+            </div>
+            {subtitle != null ? (
+              <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
+                {subtitle}
+              </div>
+            ) : undefined}
           </div>
         </div>
-        {subtitle != null ? (
-          <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>{subtitle}</div>
-        ) : undefined}
       </div>
-      {action != null ? <div>{action}</div> : undefined}
     </div>
   );
 }
@@ -280,9 +289,8 @@ function EnvironmentStatusHeader({
             style={{
               color: COLORS.GRAY_D,
               fontSize: 12,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
+              overflowWrap: "anywhere",
+              wordBreak: "break-word",
             }}
             title={runtimeImage}
           >
