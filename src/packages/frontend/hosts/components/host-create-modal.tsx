@@ -27,7 +27,7 @@ export function HostCreateModal({
       open={open}
       onCancel={onClose}
       footer={null}
-      width={IS_MOBILE ? "100%" : 980}
+      width={IS_MOBILE ? "100%" : 1120}
       destroyOnHidden
       styles={{
         body: {

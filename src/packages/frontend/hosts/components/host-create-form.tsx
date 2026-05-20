@@ -1,4 +1,4 @@
-import { Collapse, Form, Input, Select } from "antd";
+import { Col, Collapse, Form, Input, Row, Select } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import type { FormInstance } from "antd/es/form";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
@@ -209,27 +209,34 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
             </>
           ) : (
             <>
-              <Form.Item
-                name="name"
-                label="Name"
-                initialValue={draftManaged ? undefined : "My host"}
-              >
-                <Input placeholder="My host" />
-              </Form.Item>
-              {showSpotFields && (
-                <Form.Item
-                  name="funding_mode"
-                  label="Billing"
-                  rules={[
-                    {
-                      required: true,
-                      message: "Please choose how this host will be funded.",
-                    },
-                  ]}
-                >
-                  <Select options={billing?.fundingModeOptions ?? []} />
-                </Form.Item>
-              )}
+              <Row gutter={[12, 0]}>
+                <Col xs={24} md={showSpotFields ? 12 : 24}>
+                  <Form.Item
+                    name="name"
+                    label="Name"
+                    initialValue={draftManaged ? undefined : "My host"}
+                  >
+                    <Input placeholder="My host" />
+                  </Form.Item>
+                </Col>
+                {showSpotFields && (
+                  <Col xs={24} md={12}>
+                    <Form.Item
+                      name="funding_mode"
+                      label="Billing"
+                      rules={[
+                        {
+                          required: true,
+                          message:
+                            "Please choose how this host will be funded.",
+                        },
+                      ]}
+                    >
+                      <Select options={billing?.fundingModeOptions ?? []} />
+                    </Form.Item>
+                  </Col>
+                )}
+              </Row>
               <HostCreateProviderFields
                 provider={provider}
                 onProviderChange={onProviderChange}
@@ -269,6 +276,7 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
   return (
     <Form
       layout="vertical"
+      size="small"
       disabled={!canCreateHosts}
       form={form}
       onValuesChange={onValuesChange}
