@@ -49,6 +49,7 @@ Implemented:
 - Host placement visible in the main path, still using the existing host picker.
 - Account capacity health card with project slots, running-project slots, and
   storage usage.
+- Health card can stop visible running projects when runtime slots are full.
 
 Still rough:
 
@@ -580,6 +581,7 @@ Missing:
 - Inline RootFS picker.
 - Host placement visible in the main path.
 - Account capacity health card.
+- Runtime-slot full state includes stop actions for visible running projects.
 
 ### Phase A: Update Data/Policy Inventory
 
@@ -606,7 +608,7 @@ Requirements:
 Follow-up:
 
 - Add direct actions from the health card for upgrade, project cleanup, archive
-  guidance, and stopping a running sponsored project.
+  guidance, and richer stop/retry flows.
 - Consider sharing the same health card data/formatting with the main projects
   page.
 

@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import type { AccountRuntimeSponsorStatus } from "@cocalc/conat/hub/api/projects";
 import type { MembershipDetails } from "@cocalc/conat/hub/api/purchases";
+import { redux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { humanSize } from "@cocalc/util/misc";
@@ -226,6 +227,10 @@ export function ProjectCreateHealthCard({ open }: { open: boolean }) {
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
+  const [runtimeActionError, setRuntimeActionError] = useState<string>("");
+  const [stoppingProjectIds, setStoppingProjectIds] = useState<
+    Record<string, true>
+  >({});
   const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
@@ -265,6 +270,34 @@ export function ProjectCreateHealthCard({ open }: { open: boolean }) {
     [membership, runtime],
   );
   const message = healthMessage(gauges);
+  const runtimeLimit = positiveNumber(runtime?.limit);
+  const runtimeCurrent = nonnegativeNumber(runtime?.current);
+  const runtimeFull =
+    runtimeLimit != null &&
+    runtimeCurrent != null &&
+    runtimeCurrent >= runtimeLimit;
+  const visibleRuntimeProjects =
+    runtime?.active_projects.filter((project) => project.visible !== false) ??
+    [];
+  const hiddenRuntimeProjectCount =
+    (runtime?.active_projects.length ?? 0) - visibleRuntimeProjects.length;
+
+  async function stopRuntimeProject(project_id: string) {
+    setRuntimeActionError("");
+    setStoppingProjectIds((ids) => ({ ...ids, [project_id]: true }));
+    try {
+      await redux.getActions("projects").stop_project(project_id);
+      setReloadToken((token) => token + 1);
+    } catch (err) {
+      setRuntimeActionError(`${err}`);
+    } finally {
+      setStoppingProjectIds((ids) => {
+        const next = { ...ids };
+        delete next[project_id];
+        return next;
+      });
+    }
+  }
 
   return (
     <Card
@@ -302,6 +335,64 @@ export function ProjectCreateHealthCard({ open }: { open: boolean }) {
           ))}
         </div>
         {message && <Alert type="info" showIcon message={message} />}
+        {runtimeFull && visibleRuntimeProjects.length > 0 && (
+          <Card size="small" styles={{ body: { padding: "8px 10px" } }}>
+            <Space
+              orientation="vertical"
+              size="small"
+              style={{ width: "100%" }}
+            >
+              <Text type="secondary">
+                Stop one running project to free a slot before using Create and
+                Open.
+              </Text>
+              <Space orientation="vertical" size={6} style={{ width: "100%" }}>
+                {visibleRuntimeProjects.map((project) => (
+                  <div
+                    key={project.project_id}
+                    style={{
+                      alignItems: "center",
+                      display: "flex",
+                      gap: 8,
+                      justifyContent: "space-between",
+                    }}
+                  >
+                    <Text ellipsis>
+                      {project.title || project.project_id.slice(0, 8)}
+                      {project.state ? ` (${project.state})` : ""}
+                    </Text>
+                    {project.can_stop !== false && (
+                      <Button
+                        size="small"
+                        loading={!!stoppingProjectIds[project.project_id]}
+                        onClick={() => stopRuntimeProject(project.project_id)}
+                      >
+                        Stop
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </Space>
+              {hiddenRuntimeProjectCount > 0 && (
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {hiddenRuntimeProjectCount} sponsored running{" "}
+                  {hiddenRuntimeProjectCount === 1
+                    ? "project is"
+                    : "projects are"}{" "}
+                  not shown because your account is not a collaborator.
+                </Text>
+              )}
+            </Space>
+          </Card>
+        )}
+        {runtimeActionError && (
+          <Alert
+            type="warning"
+            showIcon
+            message="Unable to stop project"
+            description={runtimeActionError}
+          />
+        )}
         {error && (
           <Alert
             type="warning"
