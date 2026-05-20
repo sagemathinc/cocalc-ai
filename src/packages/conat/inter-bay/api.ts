@@ -29,6 +29,8 @@ import type {
   MembershipPackageAssignment,
   MembershipPackageDetails,
   MembershipResolution,
+  SiteLicenseAffiliationReverificationSeat,
+  SiteLicenseAffiliationReverificationUserStatus,
   SiteLicenseOverview,
   SiteLicensePoolConfig,
   SiteLicensePoolRequest,
@@ -886,6 +888,21 @@ export interface AccountLocalReviewSiteLicensePoolRequest {
   review_note?: string | null;
 }
 
+export interface AccountLocalRefreshSiteLicenseAffiliationVerificationRequest {
+  account_id: string;
+  site_license_id: string;
+  verified_email_addresses: string[];
+}
+
+export interface AccountLocalRefreshSiteLicenseAffiliationVerificationForAccountRequest {
+  account_id: string;
+  site_license_id?: string;
+}
+
+export interface AccountLocalGetSiteLicenseAffiliationReverificationStatusForAccountRequest {
+  account_id: string;
+}
+
 export interface AccountMembershipPortableState {
   membership_grants?: Record<string, unknown>[];
   membership_packages?: Record<string, unknown>[];
@@ -1373,6 +1390,9 @@ export type AccountLocalMethod =
   | "request-site-license-pool"
   | "request-site-license-pool-for-account"
   | "review-site-license-pool-request"
+  | "refresh-site-license-affiliation-verification"
+  | "refresh-site-license-affiliation-verification-for-account"
+  | "get-site-license-affiliation-reverification-status-for-account"
   | "get-membership-portable-state"
   | "replace-membership-portable-state";
 export type AuthTokenMethod =
@@ -2213,6 +2233,15 @@ export interface InterBayAccountLocalApi {
   reviewSiteLicensePoolRequest: (
     opts: AccountLocalReviewSiteLicensePoolRequest,
   ) => Promise<SiteLicensePoolRequest>;
+  refreshSiteLicenseAffiliationVerification: (
+    opts: AccountLocalRefreshSiteLicenseAffiliationVerificationRequest,
+  ) => Promise<SiteLicenseAffiliationReverificationSeat[]>;
+  refreshSiteLicenseAffiliationVerificationForAccount: (
+    opts: AccountLocalRefreshSiteLicenseAffiliationVerificationForAccountRequest,
+  ) => Promise<SiteLicenseAffiliationReverificationSeat[]>;
+  getSiteLicenseAffiliationReverificationStatusForAccount: (
+    opts: AccountLocalGetSiteLicenseAffiliationReverificationStatusForAccountRequest,
+  ) => Promise<SiteLicenseAffiliationReverificationUserStatus>;
   getMembershipPortableState: (
     opts: AccountLocalGetMembershipPortableStateRequest,
   ) => Promise<AccountMembershipPortableState>;
@@ -3849,6 +3878,42 @@ export function createInterBayAccountLocalClient({
       method: "review-site-license-pool-request",
     }),
   });
+  const refreshSiteLicenseAffiliationVerificationClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "refreshSiteLicenseAffiliationVerification">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "refresh-site-license-affiliation-verification",
+    }),
+  });
+  const refreshSiteLicenseAffiliationVerificationForAccountClient =
+    createServiceClient<
+      Pick<
+        InterBayAccountLocalApi,
+        "refreshSiteLicenseAffiliationVerificationForAccount"
+      >
+    >({
+      ...serviceClientOptions({ client, timeout }),
+      subject: accountLocalSubject({
+        dest_bay,
+        method: "refresh-site-license-affiliation-verification-for-account",
+      }),
+    });
+  const getSiteLicenseAffiliationReverificationStatusForAccountClient =
+    createServiceClient<
+      Pick<
+        InterBayAccountLocalApi,
+        "getSiteLicenseAffiliationReverificationStatusForAccount"
+      >
+    >({
+      ...serviceClientOptions({ client, timeout }),
+      subject: accountLocalSubject({
+        dest_bay,
+        method:
+          "get-site-license-affiliation-reverification-status-for-account",
+      }),
+    });
   const getMembershipPortableStateClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "getMembershipPortableState">
   >({
@@ -3966,6 +4031,18 @@ export function createInterBayAccountLocalClient({
       ),
     reviewSiteLicensePoolRequest: async (opts) =>
       await reviewSiteLicensePoolRequestClient.reviewSiteLicensePoolRequest(
+        opts,
+      ),
+    refreshSiteLicenseAffiliationVerification: async (opts) =>
+      await refreshSiteLicenseAffiliationVerificationClient.refreshSiteLicenseAffiliationVerification(
+        opts,
+      ),
+    refreshSiteLicenseAffiliationVerificationForAccount: async (opts) =>
+      await refreshSiteLicenseAffiliationVerificationForAccountClient.refreshSiteLicenseAffiliationVerificationForAccount(
+        opts,
+      ),
+    getSiteLicenseAffiliationReverificationStatusForAccount: async (opts) =>
+      await getSiteLicenseAffiliationReverificationStatusForAccountClient.getSiteLicenseAffiliationReverificationStatusForAccount(
         opts,
       ),
     getMembershipPortableState: async (opts) =>
@@ -4494,6 +4571,57 @@ export function createInterBayAccountLocalHandler({
       impl: {
         reviewSiteLicensePoolRequest: async (opts) =>
           await impl.reviewSiteLicensePoolRequest(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "refreshSiteLicenseAffiliationVerification">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "refresh-site-license-affiliation-verification",
+      }),
+      impl: {
+        refreshSiteLicenseAffiliationVerification: async (opts) =>
+          await impl.refreshSiteLicenseAffiliationVerification(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<
+        InterBayAccountLocalApi,
+        "refreshSiteLicenseAffiliationVerificationForAccount"
+      >
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "refresh-site-license-affiliation-verification-for-account",
+      }),
+      impl: {
+        refreshSiteLicenseAffiliationVerificationForAccount: async (opts) =>
+          await impl.refreshSiteLicenseAffiliationVerificationForAccount(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<
+        InterBayAccountLocalApi,
+        "getSiteLicenseAffiliationReverificationStatusForAccount"
+      >
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method:
+          "get-site-license-affiliation-reverification-status-for-account",
+      }),
+      impl: {
+        getSiteLicenseAffiliationReverificationStatusForAccount: async (opts) =>
+          await impl.getSiteLicenseAffiliationReverificationStatusForAccount(
+            opts,
+          ),
       },
     }),
     createServiceHandler<

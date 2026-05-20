@@ -172,6 +172,51 @@ describe("project membership limits", () => {
     });
   });
 
+  it("returns student and pending invite usage for a course", async () => {
+    getProjectUsageAccountIdMock.mockResolvedValue("instructor-1");
+    resolveMembershipForAccountMock.mockResolvedValue({
+      class: "instructor",
+      source: "site-license",
+      entitlements: {},
+      effective_limits: {
+        course_max_students_and_pending_invites: 12,
+      },
+    });
+    queryMock.mockResolvedValue({
+      rows: [{ students: 8, pending_invites: 3 }],
+    });
+    const { getCourseStudentInviteUsage } = await import("./project-limits");
+    await expect(
+      getCourseStudentInviteUsage("course-project-1"),
+    ).resolves.toEqual({
+      current: 11,
+      limit: 12,
+      remaining: 1,
+    });
+  });
+
+  it("blocks course student invites at the configured course cap", async () => {
+    getProjectUsageAccountIdMock.mockResolvedValue("instructor-1");
+    resolveMembershipForAccountMock.mockResolvedValue({
+      class: "instructor",
+      source: "site-license",
+      entitlements: {},
+      effective_limits: {
+        course_max_students_and_pending_invites: 10,
+      },
+    });
+    queryMock.mockResolvedValue({
+      rows: [{ students: 8, pending_invites: 2 }],
+    });
+    const { assertCourseStudentInviteLimit } = await import("./project-limits");
+    await expect(
+      assertCourseStudentInviteLimit({
+        course_project_id: "course-project-1",
+        additional: 1,
+      }),
+    ).rejects.toThrow("course student limit reached (10/10)");
+  });
+
   it("does nothing when no max_projects limit is configured", async () => {
     const { assertCanOwnAdditionalProject } = await import("./project-limits");
     await expect(

@@ -22,6 +22,10 @@ const adminProvisionSiteLicenseMock = jest.fn();
 const getVerifiedEmailAddressesForAccountMock = jest.fn();
 const getSiteLicenseOverviewMock = jest.fn();
 const requestSiteLicensePoolMock = jest.fn();
+const getSiteLicenseAffiliationReverificationStatusForAccountMock = jest.fn();
+const refreshSiteLicenseAffiliationVerificationForAccountMock = jest.fn();
+const refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBayMock =
+  jest.fn();
 const reviewSiteLicensePoolRequestMock = jest.fn();
 const purchaseMembershipPackageMock = jest.fn();
 const resolveAccountHomeBayMock = jest.fn();
@@ -37,6 +41,11 @@ const interBayGetSiteLicenseOverviewMock = jest.fn();
 const interBayRequestSiteLicensePoolMock = jest.fn();
 const interBayRequestSiteLicensePoolForAccountMock = jest.fn();
 const interBayReviewSiteLicensePoolRequestMock = jest.fn();
+const interBayGetSiteLicenseAffiliationReverificationStatusForAccountMock =
+  jest.fn();
+const interBayRefreshSiteLicenseAffiliationVerificationMock = jest.fn();
+const interBayRefreshSiteLicenseAffiliationVerificationForAccountMock =
+  jest.fn();
 const getBrowserAuthSessionHashMock = jest.fn();
 const requireFreshAuthForSessionHashMock = jest.fn();
 const assertAccountTrustedForProductAccessMock = jest.fn();
@@ -97,6 +106,16 @@ jest.mock("@cocalc/server/membership/site-licenses", () => ({
     getSiteLicenseOverviewMock(...args),
   requestSiteLicensePool: (...args: any[]) =>
     requestSiteLicensePoolMock(...args),
+  getSiteLicenseAffiliationReverificationStatusForAccount: (...args: any[]) =>
+    getSiteLicenseAffiliationReverificationStatusForAccountMock(...args),
+  refreshSiteLicenseAffiliationVerificationForAccount: (...args: any[]) =>
+    refreshSiteLicenseAffiliationVerificationForAccountMock(...args),
+  refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBay: (
+    ...args: any[]
+  ) =>
+    refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBayMock(
+      ...args,
+    ),
   reviewSiteLicensePoolRequest: (...args: any[]) =>
     reviewSiteLicensePoolRequestMock(...args),
 }));
@@ -172,6 +191,14 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
       interBayRequestSiteLicensePoolForAccountMock(...args),
     reviewSiteLicensePoolRequest: (...args: any[]) =>
       interBayReviewSiteLicensePoolRequestMock(...args),
+    getSiteLicenseAffiliationReverificationStatusForAccount: (...args: any[]) =>
+      interBayGetSiteLicenseAffiliationReverificationStatusForAccountMock(
+        ...args,
+      ),
+    refreshSiteLicenseAffiliationVerification: (...args: any[]) =>
+      interBayRefreshSiteLicenseAffiliationVerificationMock(...args),
+    refreshSiteLicenseAffiliationVerificationForAccount: (...args: any[]) =>
+      interBayRefreshSiteLicenseAffiliationVerificationForAccountMock(...args),
   })),
 }));
 
@@ -859,6 +886,106 @@ describe("purchases membership packages", () => {
     });
     expect(reviewSiteLicensePoolRequestMock).not.toHaveBeenCalled();
     expect(result.state).toBe("approved");
+  });
+
+  it("routes site-license reverification status to the account home bay", async () => {
+    resolveAccountHomeBayMock.mockResolvedValue({
+      account_id: "student-1",
+      home_bay_id: "bay-1",
+      source: "cluster-directory",
+    });
+    interBayGetSiteLicenseAffiliationReverificationStatusForAccountMock.mockResolvedValue(
+      {
+        seats: [],
+        pending_count: 0,
+        grace_expired_count: 0,
+        next_reverification_due_at: null,
+        next_reverification_grace_expires_at: null,
+      },
+    );
+
+    const { getSiteLicenseAffiliationReverificationStatus } =
+      await import("./purchases");
+    const result = await getSiteLicenseAffiliationReverificationStatus({
+      account_id: "student-1",
+    });
+
+    expect(
+      interBayGetSiteLicenseAffiliationReverificationStatusForAccountMock,
+    ).toHaveBeenCalledWith({ account_id: "student-1" });
+    expect(
+      getSiteLicenseAffiliationReverificationStatusForAccountMock,
+    ).not.toHaveBeenCalled();
+    expect(result.pending_count).toBe(0);
+  });
+
+  it("routes site-license affiliation refresh from account home to license owner bay", async () => {
+    resolveAccountHomeBayMock.mockImplementation(
+      async ({ user_account_id }: { user_account_id: string }) => ({
+        account_id: user_account_id,
+        home_bay_id: user_account_id === "owner-1" ? "bay-2" : "bay-0",
+        source: "cluster-directory",
+      }),
+    );
+    getSiteLicenseAffiliationReverificationStatusForAccountMock.mockResolvedValue(
+      {
+        seats: [
+          {
+            site_license_id: "license-1",
+            package_id: "package-1",
+            assignment_id: "assignment-1",
+            account_id: "student-1",
+            membership_class: "student",
+            pool_name: "Students",
+            exclusive_group: "teaching",
+            verification_policy: "email-domain",
+            matched_email_address: "student@example.edu",
+            state: "pending_reverification",
+            site_license_owner_account_id: "owner-1",
+            can_refresh_with_verified_email: true,
+          },
+        ],
+        pending_count: 1,
+        grace_expired_count: 0,
+        next_reverification_due_at: null,
+        next_reverification_grace_expires_at: null,
+      },
+    );
+    getVerifiedEmailAddressesForAccountMock.mockResolvedValue([
+      "student@example.edu",
+    ]);
+    interBayRefreshSiteLicenseAffiliationVerificationMock.mockResolvedValue([
+      {
+        site_license_id: "license-1",
+        package_id: "package-1",
+        assignment_id: "assignment-1",
+        account_id: "student-1",
+        membership_class: "student",
+        exclusive_group: "teaching",
+        verification_policy: "email-domain",
+        state: "current",
+      },
+    ]);
+
+    const { refreshSiteLicenseAffiliationVerification } =
+      await import("./purchases");
+    const result = await refreshSiteLicenseAffiliationVerification({
+      account_id: "student-1",
+    });
+
+    expect(
+      interBayRefreshSiteLicenseAffiliationVerificationMock,
+    ).toHaveBeenCalledWith({
+      account_id: "student-1",
+      site_license_id: "license-1",
+      verified_email_addresses: ["student@example.edu"],
+    });
+    expect(result).toEqual([
+      expect.objectContaining({
+        site_license_id: "license-1",
+        state: "current",
+      }),
+    ]);
   });
 
   it("updates site-license allowed domains", async () => {

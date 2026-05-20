@@ -751,30 +751,64 @@ Acceptance criteria:
 
 ### Phase 5: Seat Reconciliation
 
-- Enforce one active pool per account per site-license exclusive group.
-- Instructor approval revokes the lower student seat in the same teaching group
-  for simplicity and to avoid confusion.
-- Researcher seats can coexist with teaching seats when they use a distinct
-  `exclusive_group`.
-- Add reporting so managers can see seats revoked due to upgrades.
+- [x] Enforce one active pool per account per site-license exclusive group.
+- [x] Instructor approval revokes the lower student seat in the same teaching group
+      for simplicity and to avoid confusion.
+- [x] Researcher seats can coexist with teaching seats when they use a distinct
+      `exclusive_group`.
+- [x] Add reporting so managers can see seats revoked due to upgrades.
+
+Implementation note: approval already records `seat-released-for-upgrade`
+audit events. Direct no-approval claims now hide and reject other active pools
+in the same site-license `exclusive_group`, while still allowing claims in
+distinct groups such as `research`.
 
 ### Phase 6: Fresh Affiliation Reverification
 
-- Store `affiliation_verified_at` and the verifying institutional identity on
-  site-license grants or claim metadata.
-- Store the verification policy that was satisfied.
-- Add pending-affiliation-reverification query.
+- [x] Store `affiliation_verified_at` and the verifying institutional identity on
+      site-license grants or claim metadata.
+- [x] Store the verification policy that was satisfied.
+- [x] Add pending-affiliation-reverification query.
 - Add user notification/grace workflow.
-- Clear pending release when the user re-verifies institutional email or has a
-  fresh qualifying SSO assertion.
-- Add scheduled release job for seats that miss the grace deadline.
+- [x] Clear pending release when the user re-verifies institutional email.
+- Clear pending release when the user has a fresh qualifying SSO assertion.
+- [x] Add release path for seats that miss the grace deadline.
+- [x] Add scheduled job to invoke grace-expired seat release.
+
+Implementation note: active site-license seats now carry affiliation metadata
+for direct claims and manager approvals. The backend reverification query
+classifies seats as current, pending reverification, or grace expired using
+pool-level reverification and grace settings.
+The release helper revokes grace-expired seats through the existing membership
+package revoke path and records a `seat-released-after-reverification-grace`
+audit event.
+The email-domain refresh helper lets an active site-license seat recover from
+pending reverification or grace-expired status when the signed-in account has a
+fresh verified allowed-domain email. It updates affiliation metadata and records
+a `seat-affiliation-reverified` audit event without changing claim-directory
+ownership.
+The scheduled release maintenance loop runs from the Conat backend maintenance
+startup path and invokes the system release helper for active site licenses with
+reverification-enabled pools. It releases only grace-expired seats, batches work
+per tick, and records `seat-released-after-reverification-grace` with
+maintenance metadata.
+The user-facing backend contract now exposes a signed-in account's
+reverification status from account-home grant metadata and a refresh RPC that
+routes directly to the site-license owner bay using grant routing metadata.
+Actual in-app/email notification delivery and UI presentation are still pending.
 
 ### Phase 7: Invite Limit Integration
 
-- Define resource limits for the new `instructor` tier.
-- Make project invite email quotas and collaborator caps depend on effective
-  membership.
-- Ensure course workflows use instructor limits.
+- [x] Define resource limits for the new `instructor` and `researcher` tiers.
+- [x] Make project invite email quotas and collaborator caps depend on effective
+      membership.
+- [x] Ensure course workflows use instructor limits.
+
+Implementation note: course email invites now enforce both per-course pending
+email invite limits and total course student-plus-pending-invite caps from the
+effective membership limits. The count uses persisted student-project course
+metadata plus pending course invite rows, so it does not depend on client-side
+course state.
 
 ### Phase 8: Tests and Validation
 
