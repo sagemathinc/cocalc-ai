@@ -30,26 +30,17 @@ import {
   useMemo,
   useRef,
   useState,
-  useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { A, ErrorDisplay, Icon, Paragraph } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 
 import {
-  DEFAULT_R2_REGION,
-  mapCountryRegionToR2Region,
-  mapCloudRegionToR2Region,
   R2_REGION_LABELS,
   R2_REGIONS,
   type R2Region,
 } from "@cocalc/util/consts";
 import { capitalize } from "@cocalc/util/misc";
-import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { SelectNewHost } from "@cocalc/frontend/hosts/select-new-host";
-import {
-  managedRootfsCatalogUrl,
-  useRootfsImages,
-} from "@cocalc/frontend/rootfs/manifest";
 import { RootfsScanStatus } from "@cocalc/frontend/rootfs/scan-status";
 import {
   groupedRootfsOptions,
@@ -61,10 +52,9 @@ import {
 } from "@cocalc/frontend/rootfs/catalog-ui";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
-import {
-  chooseNewProjectRootfsDefault,
-  isNewProjectRootfsSelectable,
-} from "./create-project-rootfs";
+import { isNewProjectRootfsSelectable } from "./create-project-rootfs";
+import { projectDraftToCreateOptions } from "./create/project-create-draft";
+import { useProjectCreateDraft } from "./create/use-project-create-draft";
 
 interface Props {
   default_value: string;
@@ -79,37 +69,30 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   const projectsLabel = intl.formatMessage(labels.projects);
   const { Title } = Typography;
 
-  const [title_text, set_title_text] = useState<string>(
-    default_value ?? getDefaultTitle(),
-  );
   const [error, set_error] = useState<string>("");
-  const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
   const new_project_title_ref = useRef<any>(null);
-  const [selectedHost, setSelectedHost] = useState<Host | undefined>();
-  const cloudflareCountry = useTypedRedux("customize", "country");
-  const cloudflareRegionCode = useTypedRedux(
-    "customize",
-    "cloudflare_region_code",
-  );
-  const preferredProjectRegion = useMemo(
-    () =>
-      mapCountryRegionToR2Region(cloudflareCountry, cloudflareRegionCode) ??
-      DEFAULT_R2_REGION,
-    [cloudflareCountry, cloudflareRegionCode],
-  );
-  const [projectRegion, setProjectRegion] = useState<R2Region>(
-    preferredProjectRegion,
-  );
   const [rootfsModalOpen, setRootfsModalOpen] = useState<boolean>(false);
   const [showOlderRootfsVersions, setShowOlderRootfsVersions] =
     useState<boolean>(false);
-  const [rootfsTouched, setRootfsTouched] = useState<boolean>(false);
-  const [rootfsImage, setRootfsImage] = useState<string | undefined>();
-  const [rootfsImageId, setRootfsImageId] = useState<string | undefined>();
   const [rootfsMode, setRootfsMode] = useState<"catalog" | "custom">("catalog");
   const [rootfsDraft, setRootfsDraft] = useState<string>("");
   const [rootfsDraftId, setRootfsDraftId] = useState<string | undefined>();
+  const {
+    draft,
+    summary,
+    rootfsImages,
+    rootfsLoading,
+    rootfsError,
+    isAdmin,
+    selectedHost,
+    setTitle,
+    setAdvancedOpen,
+    setRegion,
+    setHost,
+    setRootfs,
+    reset,
+  } = useProjectCreateDraft({ defaultValue: default_value });
   const regionOptions = useMemo(
     () =>
       R2_REGIONS.map((region) => ({
@@ -118,64 +101,9 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
       })),
     [],
   );
-  const siteDefaultRootfs = useTypedRedux(
-    "customize",
-    "project_rootfs_default_image",
-  );
-  const siteDefaultRootfsGpu = useTypedRedux(
-    "customize",
-    "project_rootfs_default_image_gpu",
-  );
-  const accountDefaultRootfs = useTypedRedux("account", "default_rootfs_image");
-  const accountDefaultRootfsGpu = useTypedRedux(
-    "account",
-    "default_rootfs_image_gpu",
-  );
 
   const [form] = Form.useForm();
-  const {
-    images: rootfsImages,
-    loading: rootfsLoading,
-    error: rootfsError,
-  } = useRootfsImages([managedRootfsCatalogUrl()]);
-  const isGpu = selectedHost?.gpu ?? false;
-  const configuredDefaultRootfs = useMemo(() => {
-    const siteDefault = siteDefaultRootfs?.trim() || DEFAULT_PROJECT_IMAGE;
-    const siteGpu = siteDefaultRootfsGpu?.trim() || "";
-    const accountDefault = accountDefaultRootfs?.trim() || "";
-    const accountDefaultGpu = accountDefaultRootfsGpu?.trim() || "";
-    if (isGpu) {
-      return (
-        accountDefaultGpu ||
-        siteGpu ||
-        accountDefault ||
-        siteDefault ||
-        DEFAULT_PROJECT_IMAGE
-      );
-    }
-    return accountDefault || siteDefault || DEFAULT_PROJECT_IMAGE;
-  }, [
-    accountDefaultRootfs,
-    accountDefaultRootfsGpu,
-    isGpu,
-    siteDefaultRootfs,
-    siteDefaultRootfsGpu,
-  ]);
-  const preferredRootfsImages = useMemo(() => {
-    const siteDefault = siteDefaultRootfs?.trim() || DEFAULT_PROJECT_IMAGE;
-    const siteGpu = siteDefaultRootfsGpu?.trim() || "";
-    const accountDefault = accountDefaultRootfs?.trim() || "";
-    const accountDefaultGpu = accountDefaultRootfsGpu?.trim() || "";
-    return isGpu
-      ? [accountDefaultGpu, siteGpu, accountDefault, siteDefault]
-      : [accountDefault, siteDefault];
-  }, [
-    accountDefaultRootfs,
-    accountDefaultRootfsGpu,
-    isGpu,
-    siteDefaultRootfs,
-    siteDefaultRootfsGpu,
-  ]);
+  const isGpu = summary.gpu;
   const filteredRootfsImages = useMemo(
     () =>
       rootfsImages.filter((entry) => {
@@ -183,65 +111,36 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
       }),
     [rootfsImages, isGpu],
   );
-  const effectiveDefaultRootfsEntry = useMemo(
-    () =>
-      chooseNewProjectRootfsDefault({
-        images: rootfsImages,
-        isGpu,
-        preferredImages: preferredRootfsImages,
-        fallbackImage: DEFAULT_PROJECT_IMAGE,
-      }),
-    [isGpu, preferredRootfsImages, rootfsImages],
-  );
-  const effectiveDefaultRootfs =
-    effectiveDefaultRootfsEntry?.image ||
-    configuredDefaultRootfs ||
-    DEFAULT_PROJECT_IMAGE;
   const pickerRootfsImages = useMemo(
     () =>
       latestRootfsVersionEntries(filteredRootfsImages, {
         showOlderVersions: showOlderRootfsVersions,
-        preserveIds: [rootfsDraftId, rootfsImageId],
+        preserveIds: [rootfsDraftId, draft.rootfs_image_id],
       }),
     [
+      draft.rootfs_image_id,
       filteredRootfsImages,
       rootfsDraftId,
-      rootfsImageId,
       showOlderRootfsVersions,
     ],
   );
   const selectedRootfsEntry = useMemo(() => {
-    const imageId = rootfsImageId?.trim();
+    const imageId = draft.rootfs_image_id?.trim();
     if (imageId) {
       return rootfsImages.find((entry) => entry.id === imageId);
     }
-    const image = rootfsImage?.trim();
+    const image = draft.rootfs_image?.trim();
     if (!image) return undefined;
     return rootfsImages.find((entry) => entry.image === image);
-  }, [rootfsImage, rootfsImageId, rootfsImages]);
+  }, [draft.rootfs_image, draft.rootfs_image_id, rootfsImages]);
   const rootfsGroupedOptions = useMemo(
     () => groupedRootfsOptions(pickerRootfsImages),
     [pickerRootfsImages],
   );
 
   useEffect(() => {
-    form.setFieldsValue({ title: title_text });
-  }, [title_text]);
-
-  useEffect(() => {
-    if (!selectedHost) return;
-    const hostRegion = mapCloudRegionToR2Region(selectedHost.region);
-    if (hostRegion !== projectRegion) {
-      setSelectedHost(undefined);
-    }
-  }, [projectRegion, selectedHost]);
-
-  useEffect(() => {
-    if (!rootfsTouched) {
-      setRootfsImage(effectiveDefaultRootfs);
-      setRootfsImageId(effectiveDefaultRootfsEntry?.id);
-    }
-  }, [effectiveDefaultRootfs, effectiveDefaultRootfsEntry?.id, rootfsTouched]);
+    form.setFieldsValue({ title: draft.title });
+  }, [draft.title, form]);
 
   const is_mounted_ref = useIsMountedRef();
 
@@ -251,21 +150,10 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     (new_project_title_ref.current as any)?.input?.select();
   }
 
-  function getDefaultTitle(): string {
-    const ts = new Date().toISOString().split("T")[0];
-    return `Untitled ${ts}`;
-  }
-
   function reset_form(): void {
-    set_title_text(default_value || getDefaultTitle());
-    setProjectRegion(preferredProjectRegion);
-    setSelectedHost(undefined);
-    setShowAdvanced(false);
+    reset();
     set_error("");
     setSaving(false);
-    setRootfsTouched(false);
-    setRootfsImage(effectiveDefaultRootfs);
-    setRootfsImageId(effectiveDefaultRootfsEntry?.id);
     setRootfsModalOpen(false);
     setRootfsMode("catalog");
     setRootfsDraft("");
@@ -287,22 +175,13 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     setSaving(true);
     const actions = redux.getActions("projects");
     let project_id: string;
-    const chosenRootfs =
-      rootfsImage?.trim() || effectiveDefaultRootfs || DEFAULT_PROJECT_IMAGE;
-    const opts = {
-      title: title_text,
-      rootfs_image: chosenRootfs,
-      rootfs_image_id: rootfsImageId?.trim() || undefined,
-      start: true,
-      host_id: selectedHost?.id,
-      region: projectRegion,
-    };
+    const opts = projectDraftToCreateOptions(draft);
     try {
       project_id = await actions.create_project(opts);
     } catch (err) {
       if (!is_mounted_ref.current) return;
       setSaving(false);
-      setShowAdvanced(true);
+      setAdvancedOpen(true);
       set_error(`Error creating ${projectLabelLower} -- ${err}`);
       return;
     }
@@ -324,7 +203,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   function isDisabled() {
     return (
       // no name of new project
-      !title_text?.trim() ||
+      !draft.title?.trim() ||
       // currently saving (?)
       saving
     );
@@ -332,27 +211,27 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
 
   function input_on_change(): void {
     const text = (new_project_title_ref.current as any)?.input?.value;
-    set_title_text(text);
+    setTitle(text);
   }
 
   function handle_keypress(e): void {
     if (e.keyCode === 27) {
       cancel_editing();
-    } else if (e.keyCode === 13 && title_text !== "") {
+    } else if (e.keyCode === 13 && draft.title !== "") {
       create_project();
     }
   }
 
   function openRootfsModal() {
-    const current = (rootfsImage?.trim() ||
-      effectiveDefaultRootfs ||
+    const current = (draft.rootfs_image?.trim() ||
       DEFAULT_PROJECT_IMAGE) as string;
     setRootfsDraft(current);
     const currentEntry =
-      filteredRootfsImages.find((entry) => entry.id === rootfsImageId) ??
-      filteredRootfsImages.find((entry) => entry.image === current);
+      filteredRootfsImages.find(
+        (entry) => entry.id === draft.rootfs_image_id,
+      ) ?? filteredRootfsImages.find((entry) => entry.image === current);
     setRootfsDraftId(currentEntry?.id);
-    const isCatalog = !!currentEntry;
+    const isCatalog = !!currentEntry || !isAdmin;
     setRootfsMode(isCatalog ? "catalog" : "custom");
     setRootfsModalOpen(true);
   }
@@ -371,18 +250,18 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
         onOk={() => {
           const trimmed = rootfsDraft.trim();
           if (rootfsMode === "custom") {
-            setRootfsImage(trimmed || effectiveDefaultRootfs);
-            setRootfsImageId(undefined);
+            setRootfs({ image: trimmed || DEFAULT_PROJECT_IMAGE });
           } else {
             const nextEntry =
               filteredRootfsImages.find(
                 (entry) => entry.id === rootfsDraftId,
               ) ??
               filteredRootfsImages.find((entry) => entry.image === rootfsDraft);
-            setRootfsImage(nextEntry?.image || effectiveDefaultRootfs);
-            setRootfsImageId(nextEntry?.id);
+            setRootfs({
+              image: nextEntry?.image || draft.rootfs_image,
+              image_id: nextEntry?.id,
+            });
           }
-          setRootfsTouched(true);
           setRootfsModalOpen(false);
         }}
       >
@@ -428,13 +307,15 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
               >
                 Show older versions
               </Checkbox>
-              <Button
-                type="link"
-                onClick={() => setRootfsMode("custom")}
-                style={{ paddingLeft: 0, width: "fit-content" }}
-              >
-                Use an advanced OCI or Docker image instead
-              </Button>
+              {isAdmin && (
+                <Button
+                  type="link"
+                  onClick={() => setRootfsMode("custom")}
+                  style={{ paddingLeft: 0, width: "fit-content" }}
+                >
+                  Use an advanced OCI or Docker image instead
+                </Button>
+              )}
               {activeEntry?.description && (
                 <Paragraph type="secondary" style={{ marginBottom: 0 }}>
                   {activeEntry.description}
@@ -504,8 +385,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   }
 
   function renderRootfsSection(): React.JSX.Element {
-    const displayImage =
-      rootfsImage?.trim() || effectiveDefaultRootfs || DEFAULT_PROJECT_IMAGE;
+    const displayImage = draft.rootfs_image?.trim() || DEFAULT_PROJECT_IMAGE;
     const displayLabel =
       selectedRootfsEntry?.label || displayImage || DEFAULT_PROJECT_IMAGE;
     return (
@@ -561,7 +441,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
           <Form.Item
             label={intl.formatMessage(labels.title)}
             name="title"
-            initialValue={title_text}
+            initialValue={draft.title}
             rules={[
               {
                 required: true,
@@ -583,12 +463,12 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
         {renderRootfsSection()}
         <Button
           type="link"
-          onClick={() => setShowAdvanced((prev) => !prev)}
+          onClick={() => setAdvancedOpen(!draft.advanced_open)}
           style={{ paddingLeft: 0 }}
         >
-          {showAdvanced ? "Hide advanced" : "Show advanced"}
+          {draft.advanced_open ? "Hide advanced" : "Show advanced"}
         </Button>
-        {showAdvanced && (
+        {draft.advanced_open && (
           <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
             <Paragraph type="secondary">
               <FormattedMessage
@@ -611,8 +491,8 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
               >
                 <div style={{ fontWeight: 600 }}>Backup region</div>
                 <Select
-                  value={projectRegion}
-                  onChange={(value) => setProjectRegion(value as R2Region)}
+                  value={draft.region}
+                  onChange={(value) => setRegion(value as R2Region)}
                   options={regionOptions}
                   disabled={saving}
                 />
@@ -625,9 +505,9 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             <SelectNewHost
               disabled={saving}
               selectedHost={selectedHost}
-              onChange={setSelectedHost}
-              regionFilter={projectRegion}
-              regionLabel={R2_REGION_LABELS[projectRegion]}
+              onChange={setHost}
+              regionFilter={draft.region}
+              regionLabel={R2_REGION_LABELS[draft.region]}
               pickerMode="create"
             />
           </Space>

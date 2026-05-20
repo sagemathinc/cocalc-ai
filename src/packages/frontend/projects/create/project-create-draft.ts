@@ -291,6 +291,13 @@ export function setProjectDraftStart(
   return { ...draft, start };
 }
 
+export function setProjectDraftAdvancedOpen(
+  draft: ProjectCreateDraft,
+  advanced_open: boolean,
+): ProjectCreateDraft {
+  return { ...draft, advanced_open };
+}
+
 export function projectDraftToCreateOptions(
   draft: ProjectCreateDraft,
 ): ProjectCreateOptions {
