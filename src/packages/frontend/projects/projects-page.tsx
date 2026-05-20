@@ -94,6 +94,7 @@ export const ProjectsPage: React.FC = () => {
   const createNewRef = useRef<any>(null);
   const projectListRef = useRef<any>(null);
   const filenameSearchRef = useRef<any>(null);
+  const autoOpenedEmptyCreateRef = useRef<boolean>(false);
 
   // Calculating table height
   const containerRef = useRef<HTMLDivElement>(null);
@@ -279,10 +280,16 @@ export const ProjectsPage: React.FC = () => {
   }, [bookmarkedProjects.length]);
 
   useEffect(() => {
-    if (all_projects.length === 0 && !createPanelOpen) {
+    if (
+      project_map != null &&
+      all_projects.length === 0 &&
+      !createPanelOpen &&
+      !autoOpenedEmptyCreateRef.current
+    ) {
+      autoOpenedEmptyCreateRef.current = true;
       setCreatePanelOpen(true);
     }
-  }, [all_projects.length, createPanelOpen]);
+  }, [all_projects.length, createPanelOpen, project_map]);
 
   function handleCreateProject() {
     setCreatePanelOpen(true);
