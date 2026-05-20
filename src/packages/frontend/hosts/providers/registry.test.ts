@@ -373,6 +373,45 @@ describe("catalog-backed pricing labels", () => {
     expect(options.map((opt) => opt.value)).toEqual(["c3d-standard-8"]);
   });
 
+  it("filters out GCP machine types below 8 GiB RAM", () => {
+    const catalog = testCatalog([
+      {
+        kind: "machine_types",
+        scope: "zone/us-west1-a",
+        payload: [
+          { name: "e2-standard-2", guestCpus: 2, memoryMb: 8192 },
+          { name: "e2-standard-1", guestCpus: 1, memoryMb: 4096 },
+        ],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: {
+          fetched_at: "2026-05-08T00:00:00.000Z",
+          service_id: "compute",
+          families: {
+            e2: {
+              cpu: { "us-west1": 0.03 },
+              ram: { "us-west1": 0.004 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+          },
+          gpus: {},
+          disks: {},
+        },
+      },
+    ]);
+
+    const options = getGcpMachineTypeOptions(catalog, {
+      region: "us-west1",
+      zone: "us-west1-a",
+      pricing_model: "on_demand",
+    });
+
+    expect(options.map((opt) => opt.value)).toEqual(["e2-standard-2"]);
+  });
+
   it("freezes the GCP GPU lane to L4 on G2", () => {
     const catalog = testCatalog([
       {

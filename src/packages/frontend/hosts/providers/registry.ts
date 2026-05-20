@@ -162,6 +162,8 @@ type NebiusImage = {
   updated_at?: string | null;
 };
 
+const MIN_USABLE_RAM_GIB = 8;
+
 const getMachineTypeArchitecture = (
   machineType: string,
 ): "arm64" | "x86_64" => {
@@ -1332,6 +1334,9 @@ export const getGcpMachineTypeOptions = (
   const filtered = types.filter((mt) => {
     const name = mt.name ?? "";
     if (!name) return false;
+    const memoryGiB =
+      mt.memoryMb != null ? Number(mt.memoryMb) / 1024 : undefined;
+    if (memoryGiB != null && memoryGiB < MIN_USABLE_RAM_GIB) return false;
     if (!selection.gpu_type || selection.gpu_type === "none") {
       return !GCP_GPU_ONLY_MACHINE_PREFIXES.some((prefix) =>
         name.startsWith(prefix),
@@ -1635,6 +1640,7 @@ export const getHyperstackFlavorOptions = (
   }
   return flat
     .filter((flavor) => flavor.region_name === selectedRegion)
+    .filter((flavor) => Number(flavor.ram ?? 0) >= MIN_USABLE_RAM_GIB)
     .map((flavor) => {
       const cpuRamLabel = formatCpuRamLabel(flavor.cpu, flavor.ram);
       const gpuLabel = formatGpuLabel(
@@ -1678,6 +1684,11 @@ export const getLambdaInstanceTypeOptions = (
   if (!instanceTypes?.length) return [];
   return instanceTypes
     .filter((entry) => !!entry?.name)
+    .filter(
+      (entry) =>
+        entry.memory_gib == null ||
+        Number(entry.memory_gib) >= MIN_USABLE_RAM_GIB,
+    )
     .map((entry) => {
       const regionsCount = entry.regions?.length ?? 0;
       const hasRegions = regionsCount > 0;
@@ -1940,6 +1951,11 @@ export const getNebiusInstanceTypeOptions = (
   })();
   let filtered = instances
     .filter((entry) => !!entry?.name)
+    .filter(
+      (entry) =>
+        entry.memory_gib == null ||
+        Number(entry.memory_gib) >= MIN_USABLE_RAM_GIB,
+    )
     .filter((entry) => {
       if (!platformFilters || !entry.platform) return true;
       const isGpuType = (entry.gpus ?? 0) > 0;

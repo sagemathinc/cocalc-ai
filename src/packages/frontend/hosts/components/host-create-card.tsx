@@ -528,21 +528,23 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
           }}
         >
           {presets.map((preset) => (
-            <button
+            <Button
               key={preset.id}
-              type="button"
+              htmlType="button"
+              block
               disabled={preset.disabled}
               title={preset.disabledReason ?? preset.description}
               onClick={() => applyCreatePreset(preset.id)}
               style={{
                 background: preset.disabled ? COLORS.GRAY_LLL : "white",
-                border: `1px solid ${COLORS.GRAY_DDD}`,
                 borderRadius: 10,
                 color: preset.disabled ? COLORS.GRAY : COLORS.GRAY_DD,
-                cursor: preset.disabled ? "not-allowed" : "pointer",
+                height: "auto",
+                justifyContent: "flex-start",
                 minHeight: 62,
                 padding: "8px 10px",
                 textAlign: "left",
+                whiteSpace: "normal",
               }}
             >
               <Space size={8} align="start">
@@ -582,7 +584,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
                   </Typography.Text>
                 </span>
               </Space>
-            </button>
+            </Button>
           ))}
         </div>
       </Card>
@@ -625,8 +627,10 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
               {labelFor(watchedZone, "Zone")}
             </Typography.Text>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {labelFor(watchedMachineType ?? watchedGpuType, "Machine")} ·{" "}
-              {selectedDiskLabel}
+              {labelFor(watchedMachineType ?? watchedGpuType, "Machine")}
+            </Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Disk: {selectedDiskLabel}
             </Typography.Text>
           </Space>
         </div>

@@ -65,6 +65,35 @@ const gcpCatalog = () =>
       scope: "zone/us-west1-a",
       payload: [{ name: "nvidia-l4" }],
     },
+    {
+      kind: "prices",
+      scope: "global",
+      payload: {
+        fetched_at: "2026-05-19T00:00:00.000Z",
+        service_id: "compute",
+        families: {
+          n2d: {
+            cpu: { "us-west1": 0.05, "us-central1": 0.05 },
+            ram: { "us-west1": 0.01, "us-central1": 0.01 },
+            spot_cpu: { "us-west1": 0.02, "us-central1": 0.02 },
+            spot_ram: { "us-west1": 0.004, "us-central1": 0.004 },
+          },
+          g2: {
+            cpu: { "us-west1": 0.05 },
+            ram: { "us-west1": 0.01 },
+            spot_cpu: { "us-west1": 0.02 },
+            spot_ram: { "us-west1": 0.004 },
+          },
+        },
+        gpus: {
+          "nvidia-l4": {
+            on_demand: { "us-west1": 0.5 },
+            spot: { "us-west1": 0.2 },
+          },
+        },
+        disks: {},
+      },
+    },
   ]);
 
 const nebiusCatalog = () =>
@@ -604,6 +633,29 @@ describe("host-create-draft", () => {
       provider: "hyperstack",
       region: "canada-1",
       size: "gpu-a100",
+    });
+  });
+
+  it("applies the GCP GPU preset in a compatible zone", () => {
+    const context = providerContext("gcp");
+    const draft = applyPreset(
+      "gpu-workstation",
+      {
+        ...buildDefaultDraft(context),
+        region: "us-west1",
+        zone: "us-west1-b",
+        machine_type: "n2d-standard-4",
+      },
+      context,
+    );
+
+    expect(draft).toMatchObject({
+      provider: "gcp",
+      region: "us-west1",
+      zone: "us-west1-a",
+      gpu_type: "nvidia-l4",
+      machine_type: "g2-standard-4",
+      pricing_model: "on_demand",
     });
   });
 

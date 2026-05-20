@@ -406,15 +406,64 @@ const optionLooksGpu = (option: HostFieldOption) => {
   );
 };
 
+const optionRamGiB = (option: HostFieldOption): number | undefined => {
+  const meta = (option.meta ?? {}) as Record<string, any>;
+  const value =
+    meta.memory_gib ??
+    meta.ram_gb ??
+    meta.ram ??
+    (meta.memoryMb != null ? Number(meta.memoryMb) / 1024 : undefined);
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const optionIsAvailable = (option: HostFieldOption) => {
+  const meta = (option.meta ?? {}) as Record<string, any>;
+  return (
+    !option.disabled &&
+    option.stateLabel !== "unavailable" &&
+    option.stateLabel !== "price unavailable" &&
+    meta.compatible !== false
+  );
+};
+
 const selectFirstByPredicate = (
   options: HostFieldOption[] | undefined,
   predicate: (option: HostFieldOption) => boolean,
-) => options?.find((option) => !option.disabled && predicate(option))?.value;
+) =>
+  options?.find((option) => {
+    const ramGiB = optionRamGiB(option);
+    return (
+      optionIsAvailable(option) &&
+      (ramGiB == null || ramGiB >= 16) &&
+      predicate(option)
+    );
+  })?.value;
+
+const selectLargestCpuOption = (options: HostFieldOption[] | undefined) =>
+  options
+    ?.filter(
+      (option) =>
+        optionIsAvailable(option) &&
+        !optionLooksGpu(option) &&
+        (optionRamGiB(option) ?? 0) >= 16,
+    )
+    .sort((a, b) => {
+      const left = (a.meta ?? {}) as Record<string, any>;
+      const right = (b.meta ?? {}) as Record<string, any>;
+      return (
+        Number(right.memory_gib ?? right.ram ?? 0) -
+          Number(left.memory_gib ?? left.ram ?? 0) ||
+        Number(right.vcpus ?? right.cpu ?? 0) -
+          Number(left.vcpus ?? left.cpu ?? 0)
+      );
+    })[0]?.value;
 
 const setPrimaryComputeOption = (
   draft: HostCreateDraft,
   options: FieldOptionsMap,
   mode: "cpu" | "gpu",
+  context: HostCreateDraftContext,
 ) => {
   if (draft.provider === "gcp") {
     if (mode === "gpu") {
@@ -426,16 +475,52 @@ const setPrimaryComputeOption = (
     } else {
       draft.gpu_type = "none";
     }
+    const zoneOptions = getFieldOptions("gcp", draft, context).zone ?? [];
+    const requestedZone = draft.zone;
+    const zones = [
+      ...(requestedZone ? [requestedZone] : []),
+      ...zoneOptions
+        .map((option) => option.value)
+        .filter((zone) => zone !== requestedZone),
+    ];
+    for (const zone of zones) {
+      const fieldOptions = getFieldOptions("gcp", { ...draft, zone }, context);
+      const machineType = selectFirstByPredicate(
+        fieldOptions.machine_type,
+        mode === "gpu" ? () => true : (option) => !optionLooksGpu(option),
+      );
+      if (machineType) {
+        draft.zone = zone;
+        draft.machine_type = machineType;
+        break;
+      }
+    }
+    const finalZoneOptions = getFieldOptions("gcp", draft, context).zone ?? [];
+    const selectedZoneOption = finalZoneOptions.find(
+      (option) => option.value === draft.zone,
+    );
+    const currentMeta = (selectedZoneOption?.meta ?? {}) as {
+      compatible?: boolean;
+    };
+    if (currentMeta.compatible === false) {
+      const compatibleZone = finalZoneOptions.find((option) => {
+        const meta = (option.meta ?? {}) as { compatible?: boolean };
+        return meta.compatible === true;
+      })?.value;
+      if (compatibleZone) draft.zone = compatibleZone;
+    }
     return;
   }
   const field = draft.provider === "hyperstack" ? "size" : "machine_type";
   const selected =
-    mode === "gpu"
-      ? selectFirstByPredicate(options[field], optionLooksGpu)
-      : selectFirstByPredicate(
-          options[field],
-          (option) => !optionLooksGpu(option),
-        );
+    draft.provider === "nebius" && mode === "cpu"
+      ? selectLargestCpuOption(options[field])
+      : mode === "gpu"
+        ? selectFirstByPredicate(options[field], optionLooksGpu)
+        : selectFirstByPredicate(
+            options[field],
+            (option) => !optionLooksGpu(option),
+          );
   if (selected) draft[field] = selected;
 };
 
@@ -448,15 +533,20 @@ export function applyPreset(
   if (presetId === "balanced-cpu") {
     draft.pricing_model = "on_demand";
     draft.interruption_restore_policy = defaultRestorePolicy("on_demand");
-    setPrimaryComputeOption(draft, fieldOptions, "cpu");
+    setPrimaryComputeOption(draft, fieldOptions, "cpu", context);
   } else if (presetId === "low-cost-spot") {
     draft.pricing_model = "spot";
     draft.interruption_restore_policy = defaultRestorePolicy("spot");
-    setPrimaryComputeOption(draft, fieldOptions, "cpu");
+    setPrimaryComputeOption(
+      draft,
+      fieldOptions,
+      draft.provider === "nebius" ? "gpu" : "cpu",
+      context,
+    );
   } else {
     draft.pricing_model = "on_demand";
     draft.interruption_restore_policy = defaultRestorePolicy("on_demand");
-    setPrimaryComputeOption(draft, fieldOptions, "gpu");
+    setPrimaryComputeOption(draft, fieldOptions, "gpu", context);
   }
   return normalizeDraft(draft, context).draft;
 }
@@ -484,13 +574,20 @@ export function getAvailablePresets(
   return [
     {
       id: "balanced-cpu",
-      label: "Balanced CPU",
-      description: "A general-purpose CPU host with on-demand pricing.",
+      label: draft.provider === "nebius" ? "HPC" : "Balanced CPU",
+      description:
+        draft.provider === "nebius"
+          ? "A high-value CPU/RAM host with on-demand pricing."
+          : "A general-purpose CPU host with on-demand pricing.",
     },
     {
       id: "low-cost-spot",
-      label: "Low-cost spot",
-      description: "Use interruptible capacity with automatic restore.",
+      label:
+        draft.provider === "nebius" ? "Low-cost spot GPU" : "Low-cost spot",
+      description:
+        draft.provider === "nebius"
+          ? "Use interruptible GPU capacity with automatic restore."
+          : "Use interruptible capacity with automatic restore.",
       disabled: !isManagedProvider(draft.provider) || !spotSupported,
       disabledReason: !isManagedProvider(draft.provider)
         ? "Spot pricing is only available for managed cloud hosts."
@@ -500,8 +597,11 @@ export function getAvailablePresets(
     },
     {
       id: "gpu-workstation",
-      label: "GPU workstation",
-      description: "Pick the first valid GPU shape for this provider.",
+      label: draft.provider === "nebius" ? "Standard GPU" : "GPU workstation",
+      description:
+        draft.provider === "nebius"
+          ? "Use an on-demand GPU host."
+          : "Pick the first valid GPU shape for this provider.",
       disabled: !hasGpuOption,
       disabledReason: hasGpuOption
         ? undefined
