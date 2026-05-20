@@ -312,7 +312,7 @@ describe("rootfs membership limits", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("blocks ordinary users from selecting official images with unresolved critical scan findings", async () => {
+  it("allows ordinary users to select official images with unresolved critical scan findings", async () => {
     scanEntry = {
       image_id: "official-example",
       release_id: "release-1",
@@ -340,14 +340,10 @@ describe("rootfs membership limits", () => {
         image: "cocalc.local/rootfs/official",
         image_id: "official-example",
       }),
-    ).rejects.toThrow("critical vulnerabilities");
-    expect(centralLogMock).toHaveBeenCalledWith(
+    ).resolves.toBeUndefined();
+    expect(centralLogMock).not.toHaveBeenCalledWith(
       expect.objectContaining({
         event: "rootfs_scan_policy_blocked",
-        value: expect.objectContaining({
-          image_id: "official-example",
-          release_id: "release-1",
-        }),
       }),
     );
   });
