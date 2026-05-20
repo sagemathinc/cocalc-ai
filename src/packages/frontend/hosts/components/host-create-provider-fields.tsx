@@ -9,6 +9,7 @@ import {
   Segmented,
   Slider,
   Tag,
+  Typography,
 } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -16,6 +17,7 @@ import {
   mapCloudRegionToR2Region,
   R2_REGION_LABELS,
 } from "@cocalc/util/consts";
+import { COLORS } from "@cocalc/util/theme";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import { getDiskTypeOptions } from "../constants";
 import { isNebiusSpotSupported } from "../providers/registry";
@@ -33,6 +35,13 @@ const MIN_DISK_SIZE = 50;
 const MAX_DISK_SIZE = 10_000;
 const INITIAL_DISK_SIZE = 100;
 const NEBIUS_IO_M3_GB = 93;
+const FIELD_GROUP_STYLE: React.CSSProperties = {
+  background: COLORS.GRAY_LLL,
+  border: `1px solid ${COLORS.GRAY_LL}`,
+  borderRadius: 10,
+  marginBottom: 8,
+  padding: "8px 10px 0",
+};
 
 type HostCreateProviderFieldsProps = {
   provider: HostCreateViewModel["provider"];
@@ -118,7 +127,8 @@ export const HostCreateProviderFields: React.FC<
     (selectedProvider === "gcp" ||
       (selectedProvider === "nebius" && nebiusSpotSupported));
   const diskTypeOptions = getDiskTypeOptions(selectedProvider);
-  const defaultDiskType = diskTypeOptions[0]?.value;
+  const defaultDiskType =
+    selectedProvider === "nebius" ? "ssd_io_m3" : diskTypeOptions[0]?.value;
   React.useEffect(() => {
     if (draftManaged) return;
     if (!showDiskFields || !diskTypeOptions.length) return;
@@ -139,13 +149,11 @@ export const HostCreateProviderFields: React.FC<
     if (watchedStorageMode === "persistent") return;
     setFormFields({ storage_mode: "persistent" });
   }, [draftManaged, selectedProvider, setFormFields, watchedStorageMode]);
-  const effectiveDiskType = watchedDiskType ?? defaultDiskType;
-  const isNebiusIoM3 =
-    selectedProvider === "nebius" && effectiveDiskType === "ssd_io_m3";
-  const diskMin = isNebiusIoM3
+  const isNebiusPersistentDisk = selectedProvider === "nebius";
+  const diskMin = isNebiusPersistentDisk
     ? Math.ceil(MIN_DISK_SIZE / NEBIUS_IO_M3_GB) * NEBIUS_IO_M3_GB
     : MIN_DISK_SIZE;
-  const diskStep = isNebiusIoM3 ? NEBIUS_IO_M3_GB : 1;
+  const diskStep = isNebiusPersistentDisk ? NEBIUS_IO_M3_GB : 1;
   const diskValue =
     typeof watchedDiskGb === "number" && Number.isFinite(watchedDiskGb)
       ? watchedDiskGb
@@ -154,15 +162,15 @@ export const HostCreateProviderFields: React.FC<
         : INITIAL_DISK_SIZE;
   const normalizeDiskValue = React.useCallback(
     (value: number) => {
-      if (!isNebiusIoM3) return value;
+      if (!isNebiusPersistentDisk) return value;
       const rounded = Math.ceil(value / NEBIUS_IO_M3_GB) * NEBIUS_IO_M3_GB;
       return Math.max(diskMin, rounded);
     },
-    [diskMin, isNebiusIoM3],
+    [diskMin, isNebiusPersistentDisk],
   );
   React.useEffect(() => {
     if (draftManaged) return;
-    if (!isNebiusIoM3) return;
+    if (!isNebiusPersistentDisk) return;
     const normalized = normalizeDiskValue(diskValue);
     if (normalized !== diskValue) {
       setFormFields({ disk: normalized, disk_gb: normalized });
@@ -170,7 +178,7 @@ export const HostCreateProviderFields: React.FC<
   }, [
     diskValue,
     draftManaged,
-    isNebiusIoM3,
+    isNebiusPersistentDisk,
     normalizeDiskValue,
     setFormFields,
   ]);
@@ -293,7 +301,11 @@ export const HostCreateProviderFields: React.FC<
     !String(watchedSelfHostTarget ?? "").trim() &&
     selfHostAlphaEnabled;
   const fieldColumnSpan = (field: HostFieldId) =>
-    field === "machine_type" || field === "size" ? 24 : 12;
+    field === "machine_type" || field === "size"
+      ? 16
+      : field === "gpu_type" || field === "gpu"
+        ? 8
+        : 12;
   const renderField = (field: HostFieldId) => {
     if (
       selectedProvider === "self-host" &&
@@ -387,55 +399,126 @@ export const HostCreateProviderFields: React.FC<
 
   return (
     <>
-      <Row gutter={[12, 0]}>
-        {!hideProviderSelect && (
-          <Col xs={24} md={12}>
-            <Form.Item
-              name="provider"
-              label="Provider"
-              initialValue={
-                draftManaged ? undefined : (providerOptions[0]?.value ?? "none")
-              }
-            >
-              <Select options={providerOptions} onChange={onProviderChange} />
-            </Form.Item>
-          </Col>
-        )}
-        {showRegionPreference && (
-          <Col xs={24} md={12}>
-            <Form.Item
-              name="region_preference"
-              label="Region preference"
-              initialValue={draftManaged ? undefined : "balanced"}
-              extra="Sort by location and price."
-            >
-              <Select
-                options={[
-                  { value: "balanced", label: "Balanced" },
-                  { value: "closest", label: "Closest" },
-                  { value: "cheapest", label: "Cheapest" },
-                ]}
-              />
-            </Form.Item>
-          </Col>
-        )}
-        {showPriceDisplay && (
-          <Col xs={24} md={12}>
-            <Form.Item
-              name="price_display"
-              label="Show prices as"
-              initialValue={draftManaged ? undefined : "hourly"}
-            >
-              <Select
-                options={[
-                  { value: "hourly", label: "Hourly" },
-                  { value: "monthly", label: "Monthly" },
-                ]}
-              />
-            </Form.Item>
-          </Col>
-        )}
-      </Row>
+      <div style={FIELD_GROUP_STYLE}>
+        <Typography.Text strong>Placement preferences</Typography.Text>
+        <Row gutter={[10, 0]} style={{ marginTop: 6 }}>
+          {!hideProviderSelect && (
+            <Col xs={24} md={12}>
+              <Form.Item
+                name="provider"
+                label="Provider"
+                initialValue={
+                  draftManaged
+                    ? undefined
+                    : (providerOptions[0]?.value ?? "none")
+                }
+              >
+                <Select options={providerOptions} onChange={onProviderChange} />
+              </Form.Item>
+            </Col>
+          )}
+          {showRegionPreference && (
+            <Col xs={24} md={12}>
+              <Form.Item
+                name="region_preference"
+                label="Region preference"
+                initialValue={draftManaged ? undefined : "balanced"}
+                extra="Sort by location and price."
+              >
+                <Select
+                  options={[
+                    { value: "balanced", label: "Balanced" },
+                    { value: "closest", label: "Closest" },
+                    { value: "cheapest", label: "Cheapest" },
+                  ]}
+                />
+              </Form.Item>
+            </Col>
+          )}
+          {showPriceDisplay && (
+            <Col xs={24} md={12}>
+              <Form.Item
+                name="price_display"
+                label="Show prices as"
+                initialValue={draftManaged ? undefined : "hourly"}
+              >
+                <Select
+                  options={[
+                    { value: "hourly", label: "Hourly" },
+                    { value: "monthly", label: "Monthly" },
+                  ]}
+                />
+              </Form.Item>
+            </Col>
+          )}
+        </Row>
+      </div>
+      <div style={FIELD_GROUP_STYLE}>
+        <Typography.Text strong>Location and compute</Typography.Text>
+        <Row gutter={[10, 0]} style={{ marginTop: 6 }}>
+          {schema.primary.map(renderField)}
+        </Row>
+      </div>
+      {showDiskFields && (
+        <div style={FIELD_GROUP_STYLE}>
+          <Typography.Text strong>Storage</Typography.Text>
+          <Form.Item
+            label="Disk size (GB)"
+            style={{ marginTop: 6 }}
+            tooltip={`Disk for storing all projects on this host. Files are compressed and deduplicated. ${
+              persistentGrowable
+                ? "You can enlarge this disk at any time later."
+                : "This disk CANNOT be enlarged later."
+            }${isNebiusPersistentDisk ? " Nebius disks require multiples of 93 GB." : ""}`}
+          >
+            <Row gutter={10} align="middle">
+              <Col flex="auto">
+                <Slider
+                  min={diskMin}
+                  max={MAX_DISK_SIZE}
+                  step={diskStep}
+                  value={diskValue}
+                  onChange={(value) => {
+                    if (typeof value !== "number" || Number.isNaN(value)) {
+                      return;
+                    }
+                    const normalized = normalizeDiskValue(value);
+                    setFormFields({
+                      disk: normalized,
+                      disk_gb: normalized,
+                    });
+                  }}
+                />
+              </Col>
+              <Col flex="120px">
+                <Form.Item
+                  name="disk"
+                  initialValue={draftManaged ? undefined : INITIAL_DISK_SIZE}
+                  noStyle
+                >
+                  <InputNumber
+                    min={diskMin}
+                    max={MAX_DISK_SIZE}
+                    step={diskStep}
+                    precision={0}
+                    style={{ width: "100%" }}
+                    onChange={(value) => {
+                      if (typeof value !== "number" || Number.isNaN(value)) {
+                        return;
+                      }
+                      const normalized = normalizeDiskValue(value);
+                      setFormFields({
+                        disk: normalized,
+                        disk_gb: normalized,
+                      });
+                    }}
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+          </Form.Item>
+        </div>
+      )}
       {showSpotHint && (
         <Alert
           type="info"
@@ -507,7 +590,6 @@ export const HostCreateProviderFields: React.FC<
           }
         />
       )}
-      <Row gutter={[12, 0]}>{schema.primary.map(renderField)}</Row>
       {selectedProvider === "self-host" && (
         <Form.Item
           name="self_host_ssh_target"
@@ -534,62 +616,6 @@ export const HostCreateProviderFields: React.FC<
           title="No SSH target provided"
           description="Without an SSH target, the host must be able to reach the hub’s SSH port directly."
         />
-      )}
-      {showDiskFields && (
-        <Form.Item
-          label="Disk size (GB)"
-          tooltip={`Disk for storing all projects on this host. Files are compressed and deduplicated. ${
-            persistentGrowable
-              ? "You can enlarge this disk at any time later."
-              : "This disk CANNOT be enlarged later."
-          }${isNebiusIoM3 ? " SSD IO M3 requires multiples of 93 GB." : ""}`}
-        >
-          <Row gutter={12} align="middle">
-            <Col flex="auto">
-              <Slider
-                min={diskMin}
-                max={MAX_DISK_SIZE}
-                step={diskStep}
-                value={diskValue}
-                onChange={(value) => {
-                  if (typeof value !== "number" || Number.isNaN(value)) {
-                    return;
-                  }
-                  const normalized = normalizeDiskValue(value);
-                  setFormFields({
-                    disk: normalized,
-                    disk_gb: normalized,
-                  });
-                }}
-              />
-            </Col>
-            <Col flex="120px">
-              <Form.Item
-                name="disk"
-                initialValue={draftManaged ? undefined : INITIAL_DISK_SIZE}
-                noStyle
-              >
-                <InputNumber
-                  min={diskMin}
-                  max={MAX_DISK_SIZE}
-                  step={diskStep}
-                  precision={0}
-                  style={{ width: "100%" }}
-                  onChange={(value) => {
-                    if (typeof value !== "number" || Number.isNaN(value)) {
-                      return;
-                    }
-                    const normalized = normalizeDiskValue(value);
-                    setFormFields({
-                      disk: normalized,
-                      disk_gb: normalized,
-                    });
-                  }}
-                />
-              </Form.Item>
-            </Col>
-          </Row>
-        </Form.Item>
       )}
       {selectedProvider === "self-host" && watchedSelfHostKind !== "direct" && (
         <>

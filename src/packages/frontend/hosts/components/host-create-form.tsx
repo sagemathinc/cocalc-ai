@@ -1,5 +1,7 @@
-import { Col, Collapse, Form, Input, Row, Select } from "antd";
+import { Col, Collapse, Form, Input, Row, Select, Typography } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
+import type { DedicatedHostSurchargeSettings } from "@cocalc/util/project-host-pricing";
+import { COLORS } from "@cocalc/util/theme";
 import type { FormInstance } from "antd/es/form";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import { isNebiusSpotSupported } from "../providers/registry";
@@ -7,6 +9,14 @@ import { defaultRestorePolicy } from "../utils/spot-recovery-policy";
 import { HostCreateAdvancedFields } from "./host-create-advanced-fields";
 import { HostCreateProviderFields } from "./host-create-provider-fields";
 import { SshTargetLabel } from "./ssh-target-help";
+
+const FIELD_GROUP_STYLE: React.CSSProperties = {
+  background: COLORS.GRAY_LLL,
+  border: `1px solid ${COLORS.GRAY_LL}`,
+  borderRadius: 10,
+  marginBottom: 8,
+  padding: "8px 10px 0",
+};
 
 type HostCreateFormProps = {
   form: FormInstance;
@@ -16,7 +26,9 @@ type HostCreateFormProps = {
   onProviderChange?: (value: string) => void;
   wrapForm?: boolean;
   showOnlyProviderSelect?: boolean;
+  hideProviderSelect?: boolean;
   autoSelectFundingMode?: boolean;
+  pricingSettings?: DedicatedHostSurchargeSettings;
   onValuesChange?: (changedValues: any, allValues: any) => void;
   draftManaged?: boolean;
 };
@@ -29,7 +41,9 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
   onProviderChange,
   wrapForm = true,
   showOnlyProviderSelect = false,
+  hideProviderSelect = false,
   autoSelectFundingMode = true,
+  pricingSettings,
   onValuesChange,
   draftManaged = false,
 }) => {
@@ -75,6 +89,7 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
     [draftManaged, form, updateDraftManagedFields],
   );
   React.useEffect(() => {
+    if (draftManaged) return;
     if (!simpleSelfHost) return;
     if (form.getFieldValue("provider") !== "self-host") {
       setFormFields({ provider: "self-host" });
@@ -88,15 +103,16 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
     if (form.getFieldValue("disk") == null) {
       setFormFields({ disk: 100, disk_gb: 100 });
     }
-  }, [form, setFormFields, simpleSelfHost]);
+  }, [draftManaged, form, setFormFields, simpleSelfHost]);
   React.useEffect(() => {
+    if (draftManaged) return;
     if (!simpleSelfHost) return;
     const nextName = (watchedSshTarget ?? "").trim();
     if (!nextName) return;
     if (form.getFieldValue("name") !== nextName) {
       setFormFields({ name: nextName });
     }
-  }, [form, setFormFields, simpleSelfHost, watchedSshTarget]);
+  }, [draftManaged, form, setFormFields, simpleSelfHost, watchedSshTarget]);
   React.useEffect(() => {
     if (draftManaged) return;
     if (!showSpotFields) return;
@@ -174,7 +190,7 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
 
   const content = (
     <>
-      {providerField}
+      {hideProviderSelect ? null : providerField}
       {showOnlyProviderSelect ? null : (
         <>
           {simpleSelfHost ? (
@@ -209,34 +225,37 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
             </>
           ) : (
             <>
-              <Row gutter={[12, 0]}>
-                <Col xs={24} md={showSpotFields ? 12 : 24}>
-                  <Form.Item
-                    name="name"
-                    label="Name"
-                    initialValue={draftManaged ? undefined : "My host"}
-                  >
-                    <Input placeholder="My host" />
-                  </Form.Item>
-                </Col>
-                {showSpotFields && (
-                  <Col xs={24} md={12}>
+              <div style={FIELD_GROUP_STYLE}>
+                <Typography.Text strong>Basics and billing</Typography.Text>
+                <Row gutter={[10, 0]} style={{ marginTop: 6 }}>
+                  <Col xs={24} md={showSpotFields ? 12 : 24}>
                     <Form.Item
-                      name="funding_mode"
-                      label="Billing"
-                      rules={[
-                        {
-                          required: true,
-                          message:
-                            "Please choose how this host will be funded.",
-                        },
-                      ]}
+                      name="name"
+                      label="Name"
+                      initialValue={draftManaged ? undefined : "My host"}
                     >
-                      <Select options={billing?.fundingModeOptions ?? []} />
+                      <Input placeholder="My host" />
                     </Form.Item>
                   </Col>
-                )}
-              </Row>
+                  {showSpotFields && (
+                    <Col xs={24} md={12}>
+                      <Form.Item
+                        name="funding_mode"
+                        label="Billing"
+                        rules={[
+                          {
+                            required: true,
+                            message:
+                              "Please choose how this host will be funded.",
+                          },
+                        ]}
+                      >
+                        <Select options={billing?.fundingModeOptions ?? []} />
+                      </Form.Item>
+                    </Col>
+                  )}
+                </Row>
+              </div>
               <HostCreateProviderFields
                 provider={provider}
                 onProviderChange={onProviderChange}
@@ -260,6 +279,7 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
                       provider={provider}
                       showSpotFields={showSpotFields}
                       nebiusSpotSupported={nebiusSpotSupported}
+                      pricingSettings={pricingSettings}
                       draftManaged={draftManaged}
                       onDraftPatch={updateDraftManagedFields}
                     />

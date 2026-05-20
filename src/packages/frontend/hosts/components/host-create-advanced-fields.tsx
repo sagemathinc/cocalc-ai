@@ -1,8 +1,16 @@
 import { Col, Form, Row, Select } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
+import type { HostCatalog } from "@cocalc/conat/hub/api/hosts";
+import type { DedicatedHostSurchargeSettings } from "@cocalc/util/project-host-pricing";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import { getDiskTypeOptions } from "../constants";
-import type { HostFieldId } from "../providers/registry";
+import {
+  getProviderPriceEstimate,
+  type HostFieldOption,
+  type HostFieldId,
+  type ProviderSelection,
+} from "../providers/registry";
+import type { HostProvider } from "../types";
 import { HostOptionsSelect } from "./host-options-select";
 import { DiskTypeLabel } from "./disk-type-help";
 import { HostSpotRecoveryFields } from "./host-spot-recovery-fields";
@@ -11,9 +19,41 @@ type HostCreateAdvancedFieldsProps = {
   provider: HostCreateViewModel["provider"];
   showSpotFields: boolean;
   nebiusSpotSupported: boolean;
+  pricingSettings?: DedicatedHostSurchargeSettings;
   draftManaged?: boolean;
   onDraftPatch?: (patch: Record<string, any>) => void;
 };
+
+export function addMonthlyDiskPriceLabels(opts: {
+  options: HostFieldOption[];
+  provider: HostProvider;
+  catalog?: HostCatalog;
+  selection: ProviderSelection;
+  pricingSettings?: DedicatedHostSurchargeSettings;
+}): HostFieldOption[] {
+  if (opts.provider !== "gcp" && opts.provider !== "nebius") {
+    return opts.options;
+  }
+  return opts.options.map((option) => {
+    const diskLine = getProviderPriceEstimate(
+      opts.provider,
+      opts.catalog,
+      {
+        ...opts.selection,
+        storage_mode: opts.selection.storage_mode ?? "persistent",
+        disk_type: option.value,
+        disk_gb: 1,
+      },
+      opts.pricingSettings,
+    )?.line_items.find((item) => item.key === "disk");
+    if (!diskLine) return option;
+    const monthlyPerGb = diskLine.monthly_label.replace(/\/mo$/, "/GB/mo");
+    return {
+      ...option,
+      label: `${option.label} · ${monthlyPerGb}`,
+    };
+  });
+}
 
 export const HostCreateAdvancedFields: React.FC<
   HostCreateAdvancedFieldsProps
@@ -21,10 +61,11 @@ export const HostCreateAdvancedFields: React.FC<
   provider,
   showSpotFields,
   nebiusSpotSupported,
+  pricingSettings,
   draftManaged = false,
   onDraftPatch,
 }) => {
-  const { selectedProvider, fields, storage } = provider;
+  const { selectedProvider, catalog, fields, storage } = provider;
   const form = Form.useFormInstance();
   const diskTypeOptions = getDiskTypeOptions(selectedProvider);
   const defaultDiskType =
@@ -37,7 +78,41 @@ export const HostCreateAdvancedFields: React.FC<
     persistentGrowable,
     showDiskFields,
   } = storage;
+  const watchedRegion = Form.useWatch("region", form);
+  const watchedZone = Form.useWatch("zone", form);
+  const watchedMachineType = Form.useWatch("machine_type", form);
+  const watchedPricingModel = Form.useWatch("pricing_model", form);
+  const watchedFundingMode = Form.useWatch("funding_mode", form);
+  const watchedStorageMode = Form.useWatch("storage_mode", form);
   const watchedDiskType = Form.useWatch("disk_type", form);
+
+  const pricedDiskTypeOptions = React.useMemo(() => {
+    return addMonthlyDiskPriceLabels({
+      options: diskTypeOptions,
+      provider: selectedProvider,
+      catalog,
+      pricingSettings,
+      selection: {
+        region: watchedRegion,
+        zone: watchedZone,
+        machine_type: watchedMachineType,
+        funding_mode: watchedFundingMode,
+        pricing_model: watchedPricingModel,
+        storage_mode: watchedStorageMode ?? "persistent",
+      },
+    });
+  }, [
+    catalog,
+    diskTypeOptions,
+    pricingSettings,
+    selectedProvider,
+    watchedFundingMode,
+    watchedMachineType,
+    watchedPricingModel,
+    watchedRegion,
+    watchedStorageMode,
+    watchedZone,
+  ]);
 
   React.useEffect(() => {
     if (draftManaged) return;
@@ -165,8 +240,8 @@ export const HostCreateAdvancedFields: React.FC<
               initialValue={draftManaged ? undefined : defaultDiskType}
             >
               <Select
-                options={diskTypeOptions}
-                disabled={!diskTypeOptions.length}
+                options={pricedDiskTypeOptions}
+                disabled={!pricedDiskTypeOptions.length}
               />
             </Form.Item>
           </Col>

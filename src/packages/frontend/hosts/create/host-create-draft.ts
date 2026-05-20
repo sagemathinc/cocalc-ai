@@ -127,13 +127,12 @@ const readPositiveInteger = (value: unknown): number | undefined => {
   return Math.floor(parsed);
 };
 
-const normalizeDiskSize = (
-  provider: HostProvider,
-  diskType: string | undefined,
-  diskGb: unknown,
-) => {
+const defaultDiskTypeForProvider = (provider: HostProvider) =>
+  provider === "nebius" ? "ssd_io_m3" : getDiskTypeOptions(provider)[0]?.value;
+
+const normalizeDiskSize = (provider: HostProvider, diskGb: unknown) => {
   const parsed = readPositiveInteger(diskGb) ?? DEFAULT_DISK_GB;
-  if (provider === "nebius" && diskType === "ssd_io_m3") {
+  if (provider === "nebius") {
     return (
       Math.ceil(parsed / NEBIUS_IO_M3_INCREMENT_GB) * NEBIUS_IO_M3_INCREMENT_GB
     );
@@ -352,14 +351,10 @@ export function normalizeDraft(
   } else {
     const diskTypeOptions = getDiskTypeOptions(provider);
     if (!draft.disk_type || !inOptions(draft.disk_type, diskTypeOptions)) {
-      draft.disk_type = diskTypeOptions[0]?.value;
+      draft.disk_type = defaultDiskTypeForProvider(provider);
     }
     if (draft.storage_mode !== "ephemeral") {
-      const diskGb = normalizeDiskSize(
-        provider,
-        draft.disk_type,
-        draft.disk_gb,
-      );
+      const diskGb = normalizeDiskSize(provider, draft.disk_gb);
       draft.disk_gb = diskGb;
       draft.disk = diskGb;
     }
@@ -411,15 +406,138 @@ const optionLooksGpu = (option: HostFieldOption) => {
   );
 };
 
+const optionRamGiB = (option: HostFieldOption): number | undefined => {
+  const meta = (option.meta ?? {}) as Record<string, any>;
+  const value =
+    meta.memory_gib ??
+    meta.ram_gb ??
+    meta.ram ??
+    (meta.memoryMb != null ? Number(meta.memoryMb) / 1024 : undefined);
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const optionIsAvailable = (option: HostFieldOption) => {
+  const meta = (option.meta ?? {}) as Record<string, any>;
+  return (
+    !option.disabled &&
+    option.stateLabel !== "unavailable" &&
+    option.stateLabel !== "price unavailable" &&
+    meta.compatible !== false
+  );
+};
+
+const hostOptionTypeLabel = (option: HostFieldOption): string =>
+  (
+    option.selectionLabel ??
+    option.mainLabel ??
+    option.label ??
+    option.value
+  ).toLowerCase();
+
+const compareHostOptionsByType = (
+  left: HostFieldOption,
+  right: HostFieldOption,
+) =>
+  hostOptionTypeLabel(left).localeCompare(
+    hostOptionTypeLabel(right),
+    undefined,
+    {
+      numeric: true,
+      sensitivity: "base",
+    },
+  );
+
+const compareHostOptionsByPrice = (
+  left: HostFieldOption,
+  right: HostFieldOption,
+) => {
+  const leftRate = left.hourlyRate;
+  const rightRate = right.hourlyRate;
+  const leftHasRate =
+    typeof leftRate === "number" && Number.isFinite(leftRate) && leftRate >= 0;
+  const rightHasRate =
+    typeof rightRate === "number" &&
+    Number.isFinite(rightRate) &&
+    rightRate >= 0;
+  if (leftHasRate && rightHasRate && leftRate !== rightRate) {
+    return leftRate - rightRate;
+  }
+  if (leftHasRate !== rightHasRate) {
+    return leftHasRate ? -1 : 1;
+  }
+  return compareHostOptionsByType(left, right);
+};
+
+const compareOptionalDescending = (
+  left: number | undefined,
+  right: number | undefined,
+): number | undefined => {
+  const leftHasValue =
+    typeof left === "number" && Number.isFinite(left) && left > 0;
+  const rightHasValue =
+    typeof right === "number" && Number.isFinite(right) && right > 0;
+  if (leftHasValue && rightHasValue) {
+    if (left === right) return 0;
+    return right - left;
+  }
+  if (leftHasValue !== rightHasValue) {
+    return leftHasValue ? -1 : 1;
+  }
+  return undefined;
+};
+
+const compareHostOptionsByValue = (
+  left: HostFieldOption,
+  right: HostFieldOption,
+) => {
+  const benchmarkOrder = compareOptionalDescending(
+    left.benchmarkValueScore,
+    right.benchmarkValueScore,
+  );
+  if (benchmarkOrder != null && benchmarkOrder !== 0) {
+    return benchmarkOrder;
+  }
+  return compareHostOptionsByPrice(left, right);
+};
+
+const availableOptionsWithAtLeast16GiBRam = (
+  options: HostFieldOption[] | undefined,
+) =>
+  (options ?? []).filter((option) => {
+    const ramGiB = optionRamGiB(option);
+    return optionIsAvailable(option) && (ramGiB == null || ramGiB >= 16);
+  });
+
+const availableOptionsWithExactly16GiBRam = (
+  options: HostFieldOption[] | undefined,
+) =>
+  (options ?? []).filter((option) => {
+    const ramGiB = optionRamGiB(option);
+    return optionIsAvailable(option) && ramGiB === 16;
+  });
+
 const selectFirstByPredicate = (
   options: HostFieldOption[] | undefined,
   predicate: (option: HostFieldOption) => boolean,
-) => options?.find((option) => !option.disabled && predicate(option))?.value;
+) => availableOptionsWithAtLeast16GiBRam(options).find(predicate)?.value;
+
+const NEBIUS_HPC_MACHINE_TYPE = "128vcpu-512gb";
+const NEBIUS_GPU_MACHINE_TYPE = "1gpu-16vcpu-200gb";
+
+const selectExactOption = (
+  options: HostFieldOption[] | undefined,
+  value: string,
+) =>
+  options?.find(
+    (option) => optionIsAvailable(option) && option.value === value,
+  );
 
 const setPrimaryComputeOption = (
   draft: HostCreateDraft,
   options: FieldOptionsMap,
   mode: "cpu" | "gpu",
+  context: HostCreateDraftContext,
 ) => {
   if (draft.provider === "gcp") {
     if (mode === "gpu") {
@@ -431,9 +549,65 @@ const setPrimaryComputeOption = (
     } else {
       draft.gpu_type = "none";
     }
+    const zoneOptions = getFieldOptions("gcp", draft, context).zone ?? [];
+    const requestedZone = draft.zone;
+    const zones = [
+      ...(requestedZone ? [requestedZone] : []),
+      ...zoneOptions
+        .map((option) => option.value)
+        .filter((zone) => zone !== requestedZone),
+    ];
+    const candidateMachineTypes = availableOptionsWithExactly16GiBRam(
+      getFieldOptions("gcp", { ...draft, zone: undefined }, context)
+        .machine_type,
+    )
+      .filter(mode === "gpu" ? () => true : (option) => !optionLooksGpu(option))
+      .sort(compareHostOptionsByValue);
+    for (const machineOption of candidateMachineTypes) {
+      let selected = false;
+      for (const zone of zones) {
+        const fieldOptions = getFieldOptions(
+          "gcp",
+          { ...draft, zone, machine_type: machineOption.value },
+          context,
+        );
+        const availableInZone = selectFirstByPredicate(
+          fieldOptions.machine_type,
+          (option) => option.value === machineOption.value,
+        );
+        if (!availableInZone) continue;
+        draft.zone = zone;
+        draft.machine_type = machineOption.value;
+        selected = true;
+        break;
+      }
+      if (selected) break;
+    }
+    const finalZoneOptions = getFieldOptions("gcp", draft, context).zone ?? [];
+    const selectedZoneOption = finalZoneOptions.find(
+      (option) => option.value === draft.zone,
+    );
+    const currentMeta = (selectedZoneOption?.meta ?? {}) as {
+      compatible?: boolean;
+    };
+    if (currentMeta.compatible === false) {
+      const compatibleZone = finalZoneOptions.find((option) => {
+        const meta = (option.meta ?? {}) as { compatible?: boolean };
+        return meta.compatible === true;
+      })?.value;
+      if (compatibleZone) draft.zone = compatibleZone;
+    }
     return;
   }
   const field = draft.provider === "hyperstack" ? "size" : "machine_type";
+  if (draft.provider === "nebius") {
+    const selected =
+      mode === "cpu"
+        ? selectExactOption(options[field], NEBIUS_HPC_MACHINE_TYPE)?.value
+        : selectExactOption(options[field], NEBIUS_GPU_MACHINE_TYPE)?.value;
+    if (selected) draft[field] = selected;
+    return;
+  }
   const selected =
     mode === "gpu"
       ? selectFirstByPredicate(options[field], optionLooksGpu)
@@ -453,15 +627,20 @@ export function applyPreset(
   if (presetId === "balanced-cpu") {
     draft.pricing_model = "on_demand";
     draft.interruption_restore_policy = defaultRestorePolicy("on_demand");
-    setPrimaryComputeOption(draft, fieldOptions, "cpu");
+    setPrimaryComputeOption(draft, fieldOptions, "cpu", context);
   } else if (presetId === "low-cost-spot") {
     draft.pricing_model = "spot";
     draft.interruption_restore_policy = defaultRestorePolicy("spot");
-    setPrimaryComputeOption(draft, fieldOptions, "cpu");
+    setPrimaryComputeOption(
+      draft,
+      fieldOptions,
+      draft.provider === "nebius" ? "gpu" : "cpu",
+      context,
+    );
   } else {
     draft.pricing_model = "on_demand";
     draft.interruption_restore_policy = defaultRestorePolicy("on_demand");
-    setPrimaryComputeOption(draft, fieldOptions, "gpu");
+    setPrimaryComputeOption(draft, fieldOptions, "gpu", context);
   }
   return normalizeDraft(draft, context).draft;
 }
@@ -477,25 +656,43 @@ export function getAvailablePresets(
           fieldOptions.gpu_type,
           (option) => option.value !== "none",
         )
-      : !!selectFirstByPredicate(
-          fieldOptions[
-            draft.provider === "hyperstack" ? "size" : "machine_type"
-          ],
-          optionLooksGpu,
-        );
+      : draft.provider === "nebius"
+        ? !!selectExactOption(
+            fieldOptions.machine_type,
+            NEBIUS_GPU_MACHINE_TYPE,
+          )
+        : !!selectFirstByPredicate(
+            fieldOptions[
+              draft.provider === "hyperstack" ? "size" : "machine_type"
+            ],
+            optionLooksGpu,
+          );
+  const nebiusSpotOption = selectExactOption(
+    fieldOptions.machine_type,
+    NEBIUS_GPU_MACHINE_TYPE,
+  );
   const spotSupported =
     draft.provider !== "nebius" ||
-    isNebiusSpotSupported(fieldOptions.machine_type, draft.machine_type);
-  return [
+    isNebiusSpotSupported(fieldOptions.machine_type, nebiusSpotOption?.value);
+  const presets: HostCreatePreset[] = [
     {
       id: "balanced-cpu",
-      label: "Balanced CPU",
-      description: "A general-purpose CPU host with on-demand pricing.",
+      label: draft.provider === "nebius" ? "HPC" : "Balanced CPU",
+      description:
+        draft.provider === "nebius"
+          ? "A high-value CPU/RAM host with on-demand pricing."
+          : "A general-purpose CPU host with on-demand pricing.",
     },
     {
       id: "low-cost-spot",
-      label: "Low-cost spot",
-      description: "Use interruptible capacity with automatic restore.",
+      label:
+        draft.provider === "nebius"
+          ? "Low cost Spot H200 GPU"
+          : "Low-cost spot",
+      description:
+        draft.provider === "nebius"
+          ? "Use interruptible GPU capacity with automatic restore."
+          : "Use interruptible capacity with automatic restore.",
       disabled: !isManagedProvider(draft.provider) || !spotSupported,
       disabledReason: !isManagedProvider(draft.provider)
         ? "Spot pricing is only available for managed cloud hosts."
@@ -505,14 +702,22 @@ export function getAvailablePresets(
     },
     {
       id: "gpu-workstation",
-      label: "GPU workstation",
-      description: "Pick the first valid GPU shape for this provider.",
+      label:
+        draft.provider === "nebius" ? "Standard H200 GPU" : "GPU workstation",
+      description:
+        draft.provider === "nebius"
+          ? "Use an on-demand GPU host."
+          : "Pick the first valid GPU shape for this provider.",
       disabled: !hasGpuOption,
       disabledReason: hasGpuOption
         ? undefined
         : "No GPU shape is available in the loaded catalog.",
     },
   ];
+  if (draft.provider === "nebius") {
+    return [presets[2], presets[1], presets[0]];
+  }
+  return presets;
 }
 
 export function buildCreateHostPayloadFromDraft(

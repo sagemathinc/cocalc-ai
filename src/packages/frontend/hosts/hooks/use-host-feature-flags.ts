@@ -10,5 +10,5 @@ export const useHostFeatureFlags = () => {
     isAdmin &&
     typeof window !== "undefined" &&
     window.location.hostname === "localhost";
-  return getProviderEnablement({ customize, showLocal });
+  return getProviderEnablement({ customize, showLocal, isAdmin });
 };

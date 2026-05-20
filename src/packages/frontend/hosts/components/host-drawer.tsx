@@ -1837,7 +1837,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           </Typography.Text>
           {showHostResources && (
             <Typography.Text type="secondary">
-              Resources {hostCpu ?? "?"} vCPU · {hostRam ?? "?"} GiB RAM ·{" "}
+              Resources {hostCpu ?? "?"} vCPU · {hostRam ?? "?"} GB RAM ·{" "}
               {hostDisk ?? "?"} disk
             </Typography.Text>
           )}

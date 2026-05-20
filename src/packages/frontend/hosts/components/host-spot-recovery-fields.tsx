@@ -115,8 +115,8 @@ export const HostSpotRecoveryFields: React.FC<HostSpotRecoveryFieldsProps> = ({
           <Alert
             showIcon
             type="info"
-            message="How it works"
-            description="CoCalc first retries the interrupted spot VM, can temporarily fall back to a standard VM, then probes and switches back to spot to control cost."
+            message="Read-only recovery diagram"
+            description="The boxes show the possible recovery states; they are not buttons. Configure behavior with the settings below the diagram."
           />
           <HostSpotRecoveryDiagram
             policyActive={policyActive}

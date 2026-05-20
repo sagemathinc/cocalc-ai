@@ -7,6 +7,8 @@ import {
   getHostPricingModeEstimates,
   getGcpMachineTypeOptions,
   getNebiusRegionOptions,
+  getProviderEnablement,
+  getProviderOptionsList,
   getProviderPriceEstimate,
   isNebiusSpotSupported,
 } from "./registry";
@@ -17,6 +19,36 @@ function testCatalog(entries: HostCatalog["entries"]): HostCatalog {
     provider_capabilities: {},
   };
 }
+
+describe("provider enablement", () => {
+  const enabledCustomize = {
+    get: () => true,
+  };
+
+  it("hides self-hosted providers from non-admins even when the flag is enabled", () => {
+    const flags = getProviderEnablement({
+      customize: enabledCustomize,
+      showLocal: false,
+      isAdmin: false,
+    });
+
+    expect(
+      getProviderOptionsList(flags).map((option) => option.value),
+    ).not.toContain("self-host");
+  });
+
+  it("allows self-hosted providers for admins when the flag is enabled", () => {
+    const flags = getProviderEnablement({
+      customize: enabledCustomize,
+      showLocal: false,
+      isAdmin: true,
+    });
+
+    expect(
+      getProviderOptionsList(flags).map((option) => option.value),
+    ).toContain("self-host");
+  });
+});
 
 describe("buildCreateHostPayload", () => {
   it("adds derived cpu and ram metadata for gcp machine types", () => {
@@ -210,7 +242,7 @@ describe("catalog-backed pricing labels", () => {
 
     expect(options[0].label).toContain("/mo");
     expect(options[0].priceLabel).toContain("/mo");
-    expect(options[0].mainLabel).toContain("4 vCPU / 16 GiB");
+    expect(options[0].mainLabel).toContain("4 vCPU / 16 GB");
     expect(options[0].subLabel).toContain("CPU bench 1.00x");
     expect(options[0].subLabel).toContain("Value 1.00x");
     expect(options[0].benchmarkCpuScore).toBeCloseTo(20024.5, 2);
@@ -371,6 +403,45 @@ describe("catalog-backed pricing labels", () => {
     });
 
     expect(options.map((opt) => opt.value)).toEqual(["c3d-standard-8"]);
+  });
+
+  it("filters out GCP machine types below 8 GiB RAM", () => {
+    const catalog = testCatalog([
+      {
+        kind: "machine_types",
+        scope: "zone/us-west1-a",
+        payload: [
+          { name: "e2-standard-2", guestCpus: 2, memoryMb: 8192 },
+          { name: "e2-standard-1", guestCpus: 1, memoryMb: 4096 },
+        ],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: {
+          fetched_at: "2026-05-08T00:00:00.000Z",
+          service_id: "compute",
+          families: {
+            e2: {
+              cpu: { "us-west1": 0.03 },
+              ram: { "us-west1": 0.004 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+          },
+          gpus: {},
+          disks: {},
+        },
+      },
+    ]);
+
+    const options = getGcpMachineTypeOptions(catalog, {
+      region: "us-west1",
+      zone: "us-west1-a",
+      pricing_model: "on_demand",
+    });
+
+    expect(options.map((opt) => opt.value)).toEqual(["e2-standard-2"]);
   });
 
   it("freezes the GCP GPU lane to L4 on G2", () => {
@@ -640,7 +711,7 @@ describe("catalog-backed pricing labels", () => {
     });
 
     expect(estimate?.notes).toContain(
-      "Provider network egress and similar cloud charges are billed directly by your cloud provider and are not included in this estimate.",
+      "Network egress and provider-side charges outside these line items are billed by your cloud provider and are not included.",
     );
   });
 

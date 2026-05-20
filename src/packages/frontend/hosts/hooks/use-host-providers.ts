@@ -20,9 +20,10 @@ export const useHostProviders = ({
   manageFormProvider = true,
 }: UseHostProvidersArgs) => {
   const [refreshProvider, setRefreshProvider] = useState<HostProvider>("none");
-  const selectedProvider = Form.useWatch("provider", form) as
-    | HostProvider
-    | undefined;
+  const selectedProvider = Form.useWatch("provider", {
+    form,
+    preserve: true,
+  }) as HostProvider | undefined;
 
   const providerOptions = useMemo(() => getProviderOptionsList(flags), [flags]);
 

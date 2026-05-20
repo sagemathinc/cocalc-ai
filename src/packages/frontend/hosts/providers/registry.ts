@@ -162,6 +162,8 @@ type NebiusImage = {
   updated_at?: string | null;
 };
 
+const MIN_USABLE_RAM_GIB = 8;
+
 const getMachineTypeArchitecture = (
   machineType: string,
 ): "arm64" | "x86_64" => {
@@ -709,7 +711,7 @@ function providerChargeNote(
     return "Provider charges outside the items shown above are not included.";
   }
   if (fundingMode === "site-funded") {
-    return "Provider network egress and similar cloud charges are billed directly by your cloud provider and are not included in this estimate.";
+    return "Network egress and provider-side charges outside these line items are billed by your cloud provider and are not included.";
   }
   return "There is no additional CoCalc charge to end users for network egress; any provider egress cost is covered by the site's subscription and cloud billing arrangement.";
 }
@@ -749,7 +751,7 @@ export const getProviderPriceEstimate = (
   }));
   const notes = [
     ...(provider === "gcp"
-      ? ["Includes the required public IPv4 address for managed GCP hosts."]
+      ? ["Includes the public IPv4 address required for managed GCP hosts."]
       : []),
     ...(surchargeFraction > 0
       ? [
@@ -1332,6 +1334,9 @@ export const getGcpMachineTypeOptions = (
   const filtered = types.filter((mt) => {
     const name = mt.name ?? "";
     if (!name) return false;
+    const memoryGiB =
+      mt.memoryMb != null ? Number(mt.memoryMb) / 1024 : undefined;
+    if (memoryGiB != null && memoryGiB < MIN_USABLE_RAM_GIB) return false;
     if (!selection.gpu_type || selection.gpu_type === "none") {
       return !GCP_GPU_ONLY_MACHINE_PREFIXES.some((prefix) =>
         name.startsWith(prefix),
@@ -1635,6 +1640,7 @@ export const getHyperstackFlavorOptions = (
   }
   return flat
     .filter((flavor) => flavor.region_name === selectedRegion)
+    .filter((flavor) => Number(flavor.ram ?? 0) >= MIN_USABLE_RAM_GIB)
     .map((flavor) => {
       const cpuRamLabel = formatCpuRamLabel(flavor.cpu, flavor.ram);
       const gpuLabel = formatGpuLabel(
@@ -1678,6 +1684,11 @@ export const getLambdaInstanceTypeOptions = (
   if (!instanceTypes?.length) return [];
   return instanceTypes
     .filter((entry) => !!entry?.name)
+    .filter(
+      (entry) =>
+        entry.memory_gib == null ||
+        Number(entry.memory_gib) >= MIN_USABLE_RAM_GIB,
+    )
     .map((entry) => {
       const regionsCount = entry.regions?.length ?? 0;
       const hasRegions = regionsCount > 0;
@@ -1940,6 +1951,11 @@ export const getNebiusInstanceTypeOptions = (
   })();
   let filtered = instances
     .filter((entry) => !!entry?.name)
+    .filter(
+      (entry) =>
+        entry.memory_gib == null ||
+        Number(entry.memory_gib) >= MIN_USABLE_RAM_GIB,
+    )
     .filter((entry) => {
       if (!platformFilters || !entry.platform) return true;
       const isGpuType = (entry.gpus ?? 0) > 0;
@@ -2713,6 +2729,7 @@ export const getProviderEnablement = (opts: {
   // customize is the "customize" redux store
   customize?: { get?: (key: string) => unknown };
   showLocal: boolean;
+  isAdmin?: boolean;
 }): HostProviderFlags => {
   const readCustomizeFlag = (customize: any, key: string): unknown =>
     customize?.get?.(key);
@@ -2730,6 +2747,10 @@ export const getProviderEnablement = (opts: {
   };
   const enabled = {} as Record<HostProvider, boolean>;
   for (const entry of Object.values(PROVIDER_REGISTRY)) {
+    if (entry.id === "self-host" && !opts.isAdmin) {
+      enabled[entry.id] = false;
+      continue;
+    }
     if (entry.localOnly) {
       const flag = entry.featureFlagKey
         ? readCustomizeFlag(opts.customize, entry.featureFlagKey)

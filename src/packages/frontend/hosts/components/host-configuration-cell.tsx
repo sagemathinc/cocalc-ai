@@ -186,7 +186,7 @@ export function HostConfigurationCell({
         <HostConfigChip icon={<CloudServerOutlined />} label={`${cpu} vCPU`} />
       ) : null}
       {ramGiB != null ? (
-        <HostConfigChip icon={<HddOutlined />} label={`${ramGiB} GiB RAM`} />
+        <HostConfigChip icon={<HddOutlined />} label={`${ramGiB} GB RAM`} />
       ) : null}
       {disk ? <HostConfigChip icon={<HddOutlined />} label={disk} /> : null}
       <HostConfigChip

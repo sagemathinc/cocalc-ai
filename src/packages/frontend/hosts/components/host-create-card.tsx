@@ -7,12 +7,14 @@ import {
   Select,
   Space,
   Spin,
+  Tag,
   Typography,
 } from "antd";
 import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { mapCountryRegionToR2Region } from "@cocalc/util/consts";
+import { COLORS } from "@cocalc/util/theme";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import {
@@ -31,6 +33,117 @@ import { isBillableHostProvider } from "../utils/funding-mode";
 import { useHostPricingSettings } from "../hooks/use-host-pricing-settings";
 import { HostCreateForm } from "./host-create-form";
 import { HostPriceBreakdown } from "./host-price-breakdown";
+
+const CARD_STYLES = {
+  header: { minHeight: 34, padding: "6px 10px" },
+  body: { padding: 10 },
+} as const;
+
+const labelFor = (value: unknown, fallback = "Not selected") =>
+  value == null || `${value}`.trim() === "" ? fallback : `${value}`;
+
+const formatCpuRamDiskSummary = ({
+  machineOption,
+  diskLabel,
+}: {
+  machineOption?: { meta?: unknown };
+  diskLabel: string;
+}) => {
+  const meta = (machineOption?.meta ?? {}) as Record<string, any>;
+  const cpu = meta.guestCpus ?? meta.vcpus ?? meta.cpu;
+  const ram =
+    meta.memory_gib ??
+    meta.ram_gb ??
+    meta.ram ??
+    (meta.memoryMb != null ? Number(meta.memoryMb) / 1024 : undefined);
+  const parts: string[] = [];
+  if (typeof cpu === "number" && Number.isFinite(cpu)) {
+    parts.push(`vCPU: ${cpu.toLocaleString()}`);
+  }
+  if (typeof ram === "number" && Number.isFinite(ram)) {
+    parts.push(`RAM: ${ram.toLocaleString()} GB`);
+  }
+  parts.push(`Disk: ${diskLabel}`);
+  return parts.join(", ");
+};
+
+const providerShortName = (value: string, label: string) => {
+  if (value === "gcp") return "Google";
+  if (value === "nebius") return "Nebius";
+  if (value === "hyperstack") return "Hyperstack";
+  if (value === "lambda") return "Lambda";
+  if (value === "self-host") return "Self-hosted";
+  return label;
+};
+
+const providerDescription = (value: string) => {
+  if (value === "gcp") return "Broad regions, steady CPU and GPU capacity.";
+  if (value === "nebius") return "High-end GPU and HPC hosts.";
+  if (value === "hyperstack") return "Large CPU/RAM and GPU catalog.";
+  if (value === "lambda") return "Compact GPU cloud catalog.";
+  if (value === "self-host") return "Admin-only user-managed host.";
+  return "Configure this provider.";
+};
+
+const providerBadgeStyle = (value: string): React.CSSProperties => {
+  if (value === "gcp") {
+    return {
+      background:
+        "conic-gradient(from 180deg, #4285f4, #34a853, #fbbc05, #ea4335, #4285f4)",
+      color: "white",
+    };
+  }
+  if (value === "nebius") {
+    return {
+      background: "linear-gradient(135deg, #101828, #0ea5e9)",
+      color: "white",
+    };
+  }
+  return {
+    background: COLORS.BLUE_LLL,
+    color: COLORS.BLUE_D,
+  };
+};
+
+function SectionTitle({
+  icon,
+  title,
+  subtitle,
+}: {
+  icon: React.ComponentProps<typeof Icon>["name"];
+  title: string;
+  subtitle?: string;
+}) {
+  return (
+    <Space size={8} align="center">
+      <span
+        style={{
+          alignItems: "center",
+          background: COLORS.BLUE_LLLL,
+          borderRadius: 8,
+          color: COLORS.BLUE_D,
+          display: "inline-flex",
+          height: 24,
+          justifyContent: "center",
+          width: 24,
+        }}
+      >
+        <Icon name={icon} />
+      </span>
+      <span>
+        <Typography.Text strong>{title}</Typography.Text>
+        {subtitle && (
+          <Typography.Text
+            type="secondary"
+            style={{ display: "block", fontSize: 12, lineHeight: 1.1 }}
+          >
+            {subtitle}
+          </Typography.Text>
+        )}
+      </span>
+    </Space>
+  );
+}
 
 type HostCreateCardProps = {
   vm: HostCreateViewModel;
@@ -152,6 +265,13 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
       draftState.applyPreset(presetId);
     },
     [draftState],
+  );
+  const selectProvider = React.useCallback(
+    (value: HostProvider) => {
+      formInstance.setFieldsValue({ provider: value });
+      onProviderChange?.(value);
+    },
+    [formInstance, onProviderChange],
   );
   const selectedDiskGb =
     typeof watchedDiskGb === "number" && Number.isFinite(watchedDiskGb)
@@ -288,8 +408,13 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
     watchedRegion,
     watchedZone,
   ]);
+  const catalogLoadingForProvider =
+    provider.selectedProvider !== "none" &&
+    provider.selectedProvider !== "self-host" &&
+    !!provider.catalogLoading;
   const createDisabled =
     !canCreateHosts ||
+    catalogLoadingForProvider ||
     gcpRegionIncompatible ||
     gcpZoneIncompatible ||
     missingSelfHostTarget ||
@@ -320,23 +445,31 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
     provider.selectedProvider,
     requiredCatalogFields,
   ]);
-  const showCatalogLoading =
-    provider.selectedProvider !== "none" &&
-    provider.selectedProvider !== "self-host" &&
-    !!provider.catalogLoading;
+  const showCatalogLoading = catalogLoadingForProvider;
   const showCatalogRefreshGate =
     !showCatalogLoading && catalogMissingForProvider && hasExternalProviders;
-  const providerSelectForm = (
-    <HostCreateForm
-      form={formInstance}
-      canCreateHosts={canCreateHosts}
-      provider={provider}
-      billing={billing}
-      onProviderChange={onProviderChange}
-      onValuesChange={draftState.onValuesChange}
-      draftManaged
-      showOnlyProviderSelect
-    />
+  const providerLabel =
+    provider.providerOptions.find(
+      (option) => option.value === provider.selectedProvider,
+    )?.label ?? provider.selectedProvider;
+  const selectedMode =
+    watchedPricingModel === "spot" ? "Spot / interruptible" : "On-demand";
+  const selectedDiskLabel =
+    selectedDiskGb != null ? `${selectedDiskGb.toLocaleString()} GB` : "Disk";
+  const selectedMachineOption = React.useMemo(
+    () =>
+      (provider.fields.options.machine_type ?? []).find(
+        (opt) => opt.value === watchedMachineType,
+      ),
+    [provider.fields.options.machine_type, watchedMachineType],
+  );
+  const selectedResourceSummary = React.useMemo(
+    () =>
+      formatCpuRamDiskSummary({
+        machineOption: selectedMachineOption,
+        diskLabel: selectedDiskLabel,
+      }),
+    [selectedDiskLabel, selectedMachineOption],
   );
   const fullCreateForm = (
     <HostCreateForm
@@ -346,7 +479,9 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
       billing={billing}
       onProviderChange={onProviderChange}
       onValuesChange={draftState.onValuesChange}
+      pricingSettings={pricingSettings}
       draftManaged
+      hideProviderSelect
     />
   );
   const priceSummary =
@@ -369,8 +504,10 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
       )
     ) : livePriceEstimate ? (
       <HostPriceBreakdown
+        compact
         displayMode={watchedPriceDisplay === "monthly" ? "monthly" : "hourly"}
         estimate={livePriceEstimate}
+        title="Estimated cost"
       />
     ) : (
       <Typography.Text type="secondary">
@@ -451,32 +588,218 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
   const presetsSection =
     provider.selectedProvider !== "none" &&
     provider.selectedProvider !== "self-host" ? (
-      <Card size="small" title="Presets">
-        <Space size="small" wrap>
+      <Card
+        size="small"
+        title={<SectionTitle icon="bolt" title="Choose a starting point" />}
+        styles={CARD_STYLES}
+      >
+        <div
+          style={{
+            display: "grid",
+            gap: 10,
+            gridTemplateColumns: IS_MOBILE
+              ? "1fr"
+              : "repeat(3, minmax(0, 1fr))",
+          }}
+        >
           {presets.map((preset) => (
             <Button
               key={preset.id}
-              size="small"
+              htmlType="button"
+              block
               disabled={preset.disabled}
               title={preset.disabledReason ?? preset.description}
               onClick={() => applyCreatePreset(preset.id)}
+              style={{
+                background: preset.disabled ? COLORS.GRAY_LLL : "white",
+                borderRadius: 10,
+                color: preset.disabled ? COLORS.GRAY : COLORS.GRAY_DD,
+                height: "auto",
+                justifyContent: "flex-start",
+                minHeight: 62,
+                padding: "8px 10px",
+                textAlign: "left",
+                whiteSpace: "normal",
+              }}
             >
-              {preset.label}
+              <Space size={8} align="start">
+                <span
+                  style={{
+                    color:
+                      preset.id === "low-cost-spot"
+                        ? COLORS.BS_GREEN_D
+                        : COLORS.BLUE_D,
+                    fontSize: 16,
+                    lineHeight: "18px",
+                  }}
+                >
+                  <Icon
+                    name={
+                      preset.id === "gpu-workstation"
+                        ? "rocket"
+                        : preset.id === "low-cost-spot"
+                          ? "bolt"
+                          : "server"
+                    }
+                  />
+                </span>
+                <span>
+                  <Typography.Text strong>{preset.label}</Typography.Text>
+                  <Typography.Text
+                    type="secondary"
+                    style={{
+                      display: "block",
+                      fontSize: 12,
+                      lineHeight: 1.15,
+                    }}
+                  >
+                    {preset.disabled
+                      ? preset.disabledReason
+                      : preset.description}
+                  </Typography.Text>
+                </span>
+              </Space>
             </Button>
           ))}
-        </Space>
+        </div>
       </Card>
     ) : null;
+  const providerSection = (
+    <Card
+      size="small"
+      title={<SectionTitle icon="cloud" title="Provider" />}
+      styles={CARD_STYLES}
+    >
+      <div
+        style={{
+          display: "grid",
+          gap: 10,
+          gridTemplateColumns: IS_MOBILE
+            ? "1fr"
+            : `repeat(${Math.min(provider.providerOptions.length || 1, 3)}, minmax(0, 1fr))`,
+        }}
+      >
+        {provider.providerOptions.map((option) => {
+          const selected = option.value === provider.selectedProvider;
+          const label = providerShortName(option.value, option.label);
+          return (
+            <Button
+              key={option.value}
+              htmlType="button"
+              type={selected ? "primary" : "default"}
+              size="large"
+              block
+              onClick={() => selectProvider(option.value)}
+              style={{
+                height: "auto",
+                justifyContent: "flex-start",
+                minHeight: 72,
+                padding: "10px 12px",
+                textAlign: "left",
+                whiteSpace: "normal",
+              }}
+            >
+              <Space size={10} align="center">
+                <span
+                  style={{
+                    alignItems: "center",
+                    borderRadius: 12,
+                    display: "inline-flex",
+                    flex: "0 0 auto",
+                    fontWeight: 800,
+                    height: 36,
+                    justifyContent: "center",
+                    lineHeight: 1,
+                    width: 36,
+                    ...providerBadgeStyle(option.value),
+                  }}
+                >
+                  {option.value === "gcp" ? "G" : label.slice(0, 1)}
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <Typography.Text
+                    strong
+                    style={{ color: selected ? "white" : undefined }}
+                  >
+                    {label}
+                  </Typography.Text>
+                  <Typography.Text
+                    style={{
+                      color: selected ? "rgba(255,255,255,0.82)" : COLORS.GRAY,
+                      display: "block",
+                      fontSize: 12,
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    {providerDescription(option.value)}
+                  </Typography.Text>
+                </span>
+              </Space>
+            </Button>
+          );
+        })}
+      </div>
+    </Card>
+  );
+  const catalogLoadingSection = (
+    <Card
+      size="small"
+      title={<SectionTitle icon="cog" title="Configuration" />}
+      styles={CARD_STYLES}
+    >
+      <Space size="small">
+        <Spin size="small" />
+        <Typography.Text type="secondary">
+          Loading {providerLabel} catalog...
+        </Typography.Text>
+      </Space>
+    </Card>
+  );
   const summaryPanel = (
     <Card
       size="small"
-      title="Summary"
+      title={
+        <SectionTitle
+          icon="money-check"
+          title="Summary"
+          subtitle="Review cost and launch mode"
+        />
+      }
       style={{
         position: "sticky",
         top: 0,
+        boxShadow: `0 8px 24px ${COLORS.GRAY_DDD}`,
       }}
+      styles={CARD_STYLES}
     >
-      <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+      <Space orientation="vertical" style={{ width: "100%" }} size="small">
+        <div
+          style={{
+            background: COLORS.GRAY_LLL,
+            border: `1px solid ${COLORS.GRAY_LL}`,
+            borderRadius: 10,
+            padding: 10,
+          }}
+        >
+          <Space direction="vertical" size={4} style={{ width: "100%" }}>
+            <Space size={6} wrap>
+              <Tag color="blue">{providerLabel}</Tag>
+              <Tag color={watchedPricingModel === "spot" ? "green" : "default"}>
+                {selectedMode}
+              </Tag>
+            </Space>
+            <Typography.Text style={{ fontSize: 12 }}>
+              {labelFor(watchedRegion, "Region")} /{" "}
+              {labelFor(watchedZone, "Zone")}
+            </Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {labelFor(watchedMachineType ?? watchedGpuType, "Machine")}
+            </Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {selectedResourceSummary}
+            </Typography.Text>
+          </Space>
+        </div>
         {noFundingModes && (
           <Alert
             type="warning"
@@ -492,14 +815,41 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
     </Card>
   );
   const renderShell = (main: React.ReactNode, summary: React.ReactNode) => (
-    <Card
-      title={
-        <span>
-          <Icon name="plus" /> Create host
-        </span>
-      }
-      styles={{ body: { padding: 16 } }}
-    >
+    <Card bordered={false} styles={{ body: { padding: 0 } }}>
+      <div
+        style={{
+          background: `linear-gradient(135deg, ${COLORS.BLUE_LLLL}, white 62%, ${COLORS.GRAY_LLL})`,
+          border: `1px solid ${COLORS.GRAY_LL}`,
+          borderRadius: 14,
+          marginBottom: 10,
+          padding: "10px 12px",
+        }}
+      >
+        <Space align="center" size={12}>
+          <span
+            style={{
+              alignItems: "center",
+              background: COLORS.BLUE_D,
+              borderRadius: 12,
+              color: "white",
+              display: "inline-flex",
+              height: 34,
+              justifyContent: "center",
+              width: 34,
+            }}
+          >
+            <Icon name="server" />
+          </span>
+          <span>
+            <Typography.Title level={4} style={{ margin: 0 }}>
+              Create host
+            </Typography.Title>
+            <Typography.Text type="secondary">
+              Configure provider, placement, compute, storage, and launch mode.
+            </Typography.Text>
+          </span>
+        </Space>
+      </div>
       {!canCreateHosts && (
         <Alert
           type="info"
@@ -529,7 +879,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
           display: "grid",
           gridTemplateColumns: IS_MOBILE ? "1fr" : "minmax(0, 1fr) 300px",
           alignItems: "flex-start",
-          gap: 16,
+          gap: 14,
         }}
       >
         <Space
@@ -546,63 +896,63 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
 
   if (showCatalogLoading) {
     return renderShell(
-      <Card size="small" title="Provider">
-        {providerSelectForm}
-      </Card>,
-      <Card size="small" title="Catalog">
-        <Space size="small">
-          <Spin size="small" />
-          <Typography.Text type="secondary">
-            Loading cloud catalog...
-          </Typography.Text>
-        </Space>
-      </Card>,
+      <>
+        {providerSection}
+        {catalogLoadingSection}
+      </>,
+      summaryPanel,
     );
   }
 
   if (showCatalogRefreshGate) {
     return renderShell(
-      <Card size="small" title="Provider">
-        {providerSelectForm}
-      </Card>,
-      <Card size="small" title="Catalog">
-        <Space orientation="vertical" style={{ width: "100%" }} size="middle">
-          <Alert
-            type="warning"
-            showIcon
-            title="Cloud catalog not loaded yet"
-            description="Before creating hosts for this provider, refresh its catalog to load regions and machine types."
-          />
-          {isAdmin ? (
-            <Button
-              type="primary"
-              size="large"
-              block
-              onClick={refreshCatalogAndNotify}
-              loading={catalogRefreshing}
-              disabled={!canCreateHosts}
-            >
-              Refresh catalog
-            </Button>
-          ) : (
+      <>
+        {providerSection}
+        <Card size="small" title="Catalog">
+          <Space orientation="vertical" style={{ width: "100%" }} size="middle">
             <Alert
-              type="info"
+              type="warning"
               showIcon
-              title="Contact an admin"
-              description="Contact an admin to refresh the provider catalog before creating hosts."
+              title="Cloud catalog not loaded yet"
+              description="Before creating hosts for this provider, refresh its catalog to load regions and machine types."
             />
-          )}
-        </Space>
-      </Card>,
+            {isAdmin ? (
+              <Button
+                type="primary"
+                size="large"
+                block
+                onClick={refreshCatalogAndNotify}
+                loading={catalogRefreshing}
+                disabled={!canCreateHosts}
+              >
+                Refresh catalog
+              </Button>
+            ) : (
+              <Alert
+                type="info"
+                showIcon
+                title="Contact an admin"
+                description="Contact an admin to refresh the provider catalog before creating hosts."
+              />
+            )}
+          </Space>
+        </Card>
+      </>,
+      summaryPanel,
     );
   }
 
   return renderShell(
     <>
-      <Card size="small" title="Configuration">
+      {providerSection}
+      {presetsSection}
+      <Card
+        size="small"
+        title={<SectionTitle icon="cog" title="Configuration" />}
+        styles={CARD_STYLES}
+      >
         {fullCreateForm}
       </Card>
-      {presetsSection}
     </>,
     summaryPanel,
   );

@@ -47,6 +47,7 @@ const gcpCatalog = () =>
       scope: "zone/us-west1-a",
       payload: [
         { name: "n2d-standard-4", guestCpus: 4, memoryMb: 16384 },
+        { name: "n2d-standard-128", guestCpus: 128, memoryMb: 524288 },
         { name: "g2-standard-4", guestCpus: 4, memoryMb: 16384 },
       ],
     },
@@ -65,6 +66,35 @@ const gcpCatalog = () =>
       scope: "zone/us-west1-a",
       payload: [{ name: "nvidia-l4" }],
     },
+    {
+      kind: "prices",
+      scope: "global",
+      payload: {
+        fetched_at: "2026-05-19T00:00:00.000Z",
+        service_id: "compute",
+        families: {
+          n2d: {
+            cpu: { "us-west1": 0.05, "us-central1": 0.05 },
+            ram: { "us-west1": 0.01, "us-central1": 0.01 },
+            spot_cpu: { "us-west1": 0.02, "us-central1": 0.02 },
+            spot_ram: { "us-west1": 0.004, "us-central1": 0.004 },
+          },
+          g2: {
+            cpu: { "us-west1": 0.05 },
+            ram: { "us-west1": 0.01 },
+            spot_cpu: { "us-west1": 0.02 },
+            spot_ram: { "us-west1": 0.004 },
+          },
+        },
+        gpus: {
+          "nvidia-l4": {
+            on_demand: { "us-west1": 0.5 },
+            spot: { "us-west1": 0.2 },
+          },
+        },
+        disks: {},
+      },
+    },
   ]);
 
 const nebiusCatalog = () =>
@@ -79,18 +109,18 @@ const nebiusCatalog = () =>
       scope: "global",
       payload: [
         {
-          name: "cpu-d3-standard-4",
-          vcpus: 4,
-          memory_gib: 16,
+          name: "128vcpu-512gb",
+          vcpus: 128,
+          memory_gib: 512,
           gpus: 0,
           allowed_for_preemptibles: false,
         },
         {
-          name: "gpu-h100-sxm-1",
+          name: "1gpu-16vcpu-200gb",
           vcpus: 16,
           memory_gib: 200,
           gpus: 1,
-          gpu_label: "H100",
+          gpu_label: "H200",
           allowed_for_preemptibles: true,
         },
       ],
@@ -359,6 +389,36 @@ describe("host-create-draft", () => {
     });
   });
 
+  it("normalizes Nebius disks to the provider-required 93 GB increments", () => {
+    const draft = normalizeDraft(
+      {
+        provider: "nebius",
+        disk_gb: 50,
+        disk: 50,
+      },
+      providerContext("nebius"),
+    ).draft;
+
+    expect(draft.disk_type).toBe("ssd_io_m3");
+    expect(draft.disk_gb).toBe(93);
+    expect(draft.disk).toBe(93);
+  });
+
+  it("keeps Nebius disk sizes constrained even with network SSD selected", () => {
+    const draft = normalizeDraft(
+      {
+        provider: "nebius",
+        disk_type: "ssd",
+        disk_gb: 100,
+      },
+      providerContext("nebius"),
+    ).draft;
+
+    expect(draft.disk_type).toBe("ssd");
+    expect(draft.disk_gb).toBe(186);
+    expect(draft.disk).toBe(186);
+  });
+
   it("uses ephemeral storage for Lambda drafts", () => {
     const context: HostCreateDraftContext = {
       enabledProviders: ["lambda"],
@@ -574,6 +634,75 @@ describe("host-create-draft", () => {
       provider: "hyperstack",
       region: "canada-1",
       size: "gpu-a100",
+    });
+  });
+
+  it("uses explicit Nebius presets in product order", () => {
+    const context = providerContext("nebius");
+    const base = buildDefaultDraft(context);
+
+    expect(
+      getAvailablePresets(base, context).map((preset) => preset.label),
+    ).toEqual(["Standard H200 GPU", "Low cost Spot H200 GPU", "HPC"]);
+    expect(applyPreset("gpu-workstation", base, context)).toMatchObject({
+      provider: "nebius",
+      machine_type: "1gpu-16vcpu-200gb",
+      pricing_model: "on_demand",
+    });
+    expect(applyPreset("low-cost-spot", base, context)).toMatchObject({
+      provider: "nebius",
+      machine_type: "1gpu-16vcpu-200gb",
+      pricing_model: "spot",
+    });
+    expect(applyPreset("balanced-cpu", base, context)).toMatchObject({
+      provider: "nebius",
+      machine_type: "128vcpu-512gb",
+      pricing_model: "on_demand",
+    });
+  });
+
+  it("keeps GCP CPU presets on exactly 16 GiB machines", () => {
+    const context = providerContext("gcp");
+    const base = {
+      ...buildDefaultDraft(context),
+      region: "us-west1",
+      zone: "us-west1-a",
+    };
+
+    expect(applyPreset("balanced-cpu", base, context)).toMatchObject({
+      provider: "gcp",
+      region: "us-west1",
+      machine_type: "n2d-standard-4",
+      pricing_model: "on_demand",
+    });
+    expect(applyPreset("low-cost-spot", base, context)).toMatchObject({
+      provider: "gcp",
+      region: "us-west1",
+      machine_type: "n2d-standard-4",
+      pricing_model: "spot",
+    });
+  });
+
+  it("applies the GCP GPU preset in a compatible zone", () => {
+    const context = providerContext("gcp");
+    const draft = applyPreset(
+      "gpu-workstation",
+      {
+        ...buildDefaultDraft(context),
+        region: "us-west1",
+        zone: "us-west1-b",
+        machine_type: "n2d-standard-4",
+      },
+      context,
+    );
+
+    expect(draft).toMatchObject({
+      provider: "gcp",
+      region: "us-west1",
+      zone: "us-west1-a",
+      gpu_type: "nvidia-l4",
+      machine_type: "g2-standard-4",
+      pricing_model: "on_demand",
     });
   });
 

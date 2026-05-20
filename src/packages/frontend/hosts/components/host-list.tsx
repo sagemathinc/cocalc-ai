@@ -1066,8 +1066,13 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         <Typography.Title level={5} style={{ margin: 0, whiteSpace: "nowrap" }}>
           Project Hosts
         </Typography.Title>
-        {onToggleCreatePanel && !createPanelOpen && (
-          <Button size="small" type="primary" onClick={onToggleCreatePanel}>
+        {onToggleCreatePanel && (
+          <Button
+            size="small"
+            type="primary"
+            onClick={onToggleCreatePanel}
+            disabled={createPanelOpen}
+          >
             Create
           </Button>
         )}
