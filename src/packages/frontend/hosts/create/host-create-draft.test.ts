@@ -47,6 +47,7 @@ const gcpCatalog = () =>
       scope: "zone/us-west1-a",
       payload: [
         { name: "n2d-standard-4", guestCpus: 4, memoryMb: 16384 },
+        { name: "n2d-standard-128", guestCpus: 128, memoryMb: 524288 },
         { name: "g2-standard-4", guestCpus: 4, memoryMb: 16384 },
       ],
     },
@@ -657,6 +658,28 @@ describe("host-create-draft", () => {
       provider: "nebius",
       machine_type: "128vcpu-512gb",
       pricing_model: "on_demand",
+    });
+  });
+
+  it("keeps GCP CPU presets on exactly 16 GiB machines", () => {
+    const context = providerContext("gcp");
+    const base = {
+      ...buildDefaultDraft(context),
+      region: "us-west1",
+      zone: "us-west1-a",
+    };
+
+    expect(applyPreset("balanced-cpu", base, context)).toMatchObject({
+      provider: "gcp",
+      region: "us-west1",
+      machine_type: "n2d-standard-4",
+      pricing_model: "on_demand",
+    });
+    expect(applyPreset("low-cost-spot", base, context)).toMatchObject({
+      provider: "gcp",
+      region: "us-west1",
+      machine_type: "n2d-standard-4",
+      pricing_model: "spot",
     });
   });
 

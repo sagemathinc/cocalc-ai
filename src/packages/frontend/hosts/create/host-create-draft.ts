@@ -509,6 +509,14 @@ const availableOptionsWithAtLeast16GiBRam = (
     return optionIsAvailable(option) && (ramGiB == null || ramGiB >= 16);
   });
 
+const availableOptionsWithExactly16GiBRam = (
+  options: HostFieldOption[] | undefined,
+) =>
+  (options ?? []).filter((option) => {
+    const ramGiB = optionRamGiB(option);
+    return optionIsAvailable(option) && ramGiB === 16;
+  });
+
 const selectFirstByPredicate = (
   options: HostFieldOption[] | undefined,
   predicate: (option: HostFieldOption) => boolean,
@@ -549,7 +557,7 @@ const setPrimaryComputeOption = (
         .map((option) => option.value)
         .filter((zone) => zone !== requestedZone),
     ];
-    const candidateMachineTypes = availableOptionsWithAtLeast16GiBRam(
+    const candidateMachineTypes = availableOptionsWithExactly16GiBRam(
       getFieldOptions("gcp", { ...draft, zone: undefined }, context)
         .machine_type,
     )

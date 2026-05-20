@@ -42,6 +42,31 @@ const CARD_STYLES = {
 const labelFor = (value: unknown, fallback = "Not selected") =>
   value == null || `${value}`.trim() === "" ? fallback : `${value}`;
 
+const formatCpuRamDiskSummary = ({
+  machineOption,
+  diskLabel,
+}: {
+  machineOption?: { meta?: unknown };
+  diskLabel: string;
+}) => {
+  const meta = (machineOption?.meta ?? {}) as Record<string, any>;
+  const cpu = meta.guestCpus ?? meta.vcpus ?? meta.cpu;
+  const ram =
+    meta.memory_gib ??
+    meta.ram_gb ??
+    meta.ram ??
+    (meta.memoryMb != null ? Number(meta.memoryMb) / 1024 : undefined);
+  const parts: string[] = [];
+  if (typeof cpu === "number" && Number.isFinite(cpu)) {
+    parts.push(`vCPU: ${cpu.toLocaleString()}`);
+  }
+  if (typeof ram === "number" && Number.isFinite(ram)) {
+    parts.push(`RAM: ${ram.toLocaleString()} GiB`);
+  }
+  parts.push(`Disk: ${diskLabel}`);
+  return parts.join(", ");
+};
+
 function SectionTitle({
   icon,
   title,
@@ -384,6 +409,21 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
     watchedPricingModel === "spot" ? "Spot / interruptible" : "On-demand";
   const selectedDiskLabel =
     selectedDiskGb != null ? `${selectedDiskGb.toLocaleString()} GB` : "Disk";
+  const selectedMachineOption = React.useMemo(
+    () =>
+      (provider.fields.options.machine_type ?? []).find(
+        (opt) => opt.value === watchedMachineType,
+      ),
+    [provider.fields.options.machine_type, watchedMachineType],
+  );
+  const selectedResourceSummary = React.useMemo(
+    () =>
+      formatCpuRamDiskSummary({
+        machineOption: selectedMachineOption,
+        diskLabel: selectedDiskLabel,
+      }),
+    [selectedDiskLabel, selectedMachineOption],
+  );
   const providerSelectForm = (
     <HostCreateForm
       form={formInstance}
@@ -630,7 +670,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
               {labelFor(watchedMachineType ?? watchedGpuType, "Machine")}
             </Typography.Text>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              Disk: {selectedDiskLabel}
+              {selectedResourceSummary}
             </Typography.Text>
           </Space>
         </div>
