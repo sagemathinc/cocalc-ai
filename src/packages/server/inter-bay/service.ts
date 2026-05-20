@@ -10,6 +10,7 @@ import {
   createInterBayBayRegistryHandlers,
   createInterBayAccountDirectoryHandlers,
   createInterBayAccountLocalHandler,
+  createInterBayAccountLocalClient,
   createInterBayProjectCollabInviteHandlers,
   createInterBayProjectDetailsHandler,
   createInterBayProjectSecretsHandlers,
@@ -117,12 +118,15 @@ import {
 import {
   claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay,
   createMembershipPackage,
+  claimMembershipPackageSeat as claimMembershipPackageSeatForAccount,
+  listClaimableMembershipPackagesForAccount,
   listLocalClaimableMembershipPackagesForVerifiedEmails,
   listMembershipPackageDetailsForOwner,
   updateMembershipPackage,
 } from "@cocalc/server/membership/packages";
 import {
   adminProvisionSiteLicense,
+  getVerifiedEmailAddressesForAccount,
   getSiteLicenseOverview,
   requestSiteLicensePoolWithVerifiedEmailsOnLocalBay,
   reviewSiteLicensePoolRequest,
@@ -709,6 +713,10 @@ async function startAccountLocalService(): Promise<void> {
         account_id,
         verified_email_addresses,
       }),
+    getClaimableMembershipPackagesForAccount: async ({ account_id }) =>
+      await listClaimableMembershipPackagesForAccount({
+        account_id,
+      }),
     claimMembershipPackageSeat: async ({
       package_id,
       account_id,
@@ -721,6 +729,21 @@ async function startAccountLocalService(): Promise<void> {
         verified_email_addresses,
         accepted_terms,
       }),
+    claimMembershipPackageSeatForAccount: async ({
+      package_id,
+      account_id,
+      accepted_terms,
+    }) => {
+      await assertAccountTrustedForProductAccess(
+        account_id,
+        "claim membership seats",
+      );
+      return await claimMembershipPackageSeatForAccount({
+        package_id,
+        account_id,
+        accepted_terms,
+      });
+    },
     getSiteLicenseOverview: async ({ account_id, site_license_id }) =>
       await getSiteLicenseOverview({ account_id, site_license_id }),
     requestSiteLicensePool: async ({
@@ -737,6 +760,48 @@ async function startAccountLocalService(): Promise<void> {
         requester_note,
         accepted_terms,
       }),
+    requestSiteLicensePoolForAccount: async ({
+      account_id,
+      owner_account_id,
+      package_id,
+      requester_note,
+      accepted_terms,
+    }) => {
+      await assertAccountTrustedForProductAccess(
+        account_id,
+        "request site-license pool",
+      );
+      const verified_email_addresses =
+        await getVerifiedEmailAddressesForAccount(account_id);
+      const ownerAccountId = `${owner_account_id ?? ""}`.trim();
+      if (ownerAccountId) {
+        const ownerAccount = await getClusterAccountById(ownerAccountId);
+        if (!ownerAccount) {
+          throw Error(`account ${ownerAccountId} not found`);
+        }
+        const ownerBayId =
+          `${ownerAccount.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+        if (ownerBayId !== getConfiguredBayId()) {
+          return await createInterBayAccountLocalClient({
+            client: getInterBayFabricClient(),
+            dest_bay: ownerBayId,
+          }).requestSiteLicensePool({
+            account_id,
+            package_id,
+            verified_email_addresses,
+            requester_note,
+            accepted_terms,
+          });
+        }
+      }
+      return await requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
+        account_id,
+        package_id,
+        verified_email_addresses,
+        requester_note,
+        accepted_terms,
+      });
+    },
     reviewSiteLicensePoolRequest: async (opts) =>
       await reviewSiteLicensePoolRequest(opts),
     getMembershipPortableState: async ({ account_id }) =>
