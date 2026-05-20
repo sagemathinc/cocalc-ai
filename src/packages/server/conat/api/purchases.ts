@@ -134,31 +134,63 @@ async function getCreatedMembershipPackageDetails({
   return membershipPackage;
 }
 
-async function maybeRequireFreshAuthForBrowserPurchaseAction({
+async function validatePurchaseFreshAuth({
   account_id,
   browser_id,
+  session_hash,
 }: {
   account_id?: string;
   browser_id?: string;
+  session_hash?: string | null;
 }): Promise<void> {
   const owner = requireAccount(account_id);
-  const cleanedBrowserId = `${browser_id ?? ""}`.trim();
-  if (!cleanedBrowserId) {
+  const cleanedSessionHash = `${session_hash ?? ""}`.trim();
+  if (cleanedSessionHash) {
+    await requireFreshAuthForSessionHash({
+      account_id: owner,
+      session_hash: cleanedSessionHash,
+      allow_actor_impersonation: true,
+    });
     return;
   }
-  const session_hash = getBrowserAuthSessionHash({
+  const cleanedBrowserId = `${browser_id ?? ""}`.trim();
+  if (!cleanedBrowserId) {
+    throw Object.assign(new Error("fresh auth is required"), {
+      code: "fresh_auth_required",
+    });
+  }
+  const browserSessionHash = getBrowserAuthSessionHash({
     account_id: owner,
     browser_id: cleanedBrowserId,
   });
-  if (!session_hash) {
+  if (!browserSessionHash) {
     throw Object.assign(new Error("fresh auth is required"), {
       code: "fresh_auth_required",
     });
   }
   await requireFreshAuthForSessionHash({
     account_id: owner,
-    session_hash,
+    session_hash: browserSessionHash,
     allow_actor_impersonation: true,
+  });
+}
+
+async function maybeRequireFreshAuthForBrowserPurchaseAction({
+  account_id,
+  browser_id,
+  session_hash,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+}): Promise<void> {
+  if (!`${browser_id ?? ""}`.trim() && !`${session_hash ?? ""}`.trim()) {
+    return;
+  }
+  await validatePurchaseFreshAuth({
+    account_id,
+    browser_id,
+    session_hash,
   });
 }
 
@@ -253,6 +285,7 @@ export async function getMembershipPackageQuote({
 export async function purchaseMembershipPackage({
   account_id,
   browser_id,
+  session_hash,
   package_id,
   kind,
   membership_class,
@@ -265,6 +298,7 @@ export async function purchaseMembershipPackage({
 }: {
   account_id?: string;
   browser_id?: string;
+  session_hash?: string | null;
   package_id?: string;
   kind?;
   membership_class?: string;
@@ -285,6 +319,7 @@ export async function purchaseMembershipPackage({
   await maybeRequireFreshAuthForBrowserPurchaseAction({
     account_id,
     browser_id,
+    session_hash,
   });
   const product: MembershipPackageProduct = {
     type: "membership-package",
@@ -629,6 +664,8 @@ export async function claimMembershipPackageSeat({
 
 export async function adminProvisionSiteLicense({
   account_id,
+  browser_id,
+  session_hash,
   owner_account_id,
   name,
   organization_name,
@@ -644,6 +681,8 @@ export async function adminProvisionSiteLicense({
   metadata,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
   owner_account_id?: string;
   name?: string;
   organization_name?: string;
@@ -662,6 +701,11 @@ export async function adminProvisionSiteLicense({
   if (!(await isAdmin(actorId))) {
     throw Error("must be an admin");
   }
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+  });
   const ownerAccountId = `${owner_account_id ?? actorId}`.trim();
   if (!ownerAccountId) {
     throw Error("owner_account_id required");

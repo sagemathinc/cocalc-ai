@@ -579,6 +579,7 @@ export interface Purchases {
   purchaseMembershipPackage: (opts?: {
     account_id?: string;
     browser_id?: string;
+    session_hash?: string | null;
     package_id?: string;
     kind?: MembershipPackageKind;
     membership_class?: MembershipClass;
@@ -635,6 +636,8 @@ export interface Purchases {
   }) => Promise<MembershipPackageAssignment>;
   adminProvisionSiteLicense: (opts?: {
     account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
     owner_account_id?: string;
     name?: string;
     organization_name?: string;
