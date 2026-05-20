@@ -35,6 +35,7 @@ import {
 } from "@cocalc/server/bay-backup";
 import { initInterBayServices } from "@cocalc/server/inter-bay/service";
 import { startMembershipSideEffectsMaintenance } from "@cocalc/server/membership/side-effects";
+import { startSiteLicenseAffiliationReleaseMaintenance } from "@cocalc/server/membership/site-license-affiliation-maintenance";
 import { configureHubServiceAdmissionDenialRecorder } from "./api/service-admission-denials";
 import { startConatAdmissionSettingsRefresh } from "./admission-settings";
 
@@ -105,6 +106,7 @@ export async function initConatApi() {
   startAccountNotificationIndexProjectionMaintenance();
   startNotificationEmailOutboxMaintenance();
   startMembershipSideEffectsMaintenance();
+  startSiteLicenseAffiliationReleaseMaintenance();
   startBayBackupMaintenance();
   startBayWalArchiveMaintenance();
   initInterBayServices().catch((err) => {

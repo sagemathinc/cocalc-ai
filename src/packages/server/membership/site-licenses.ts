@@ -985,6 +985,64 @@ async function listSiteLicensePoolSummaries({
     }));
 }
 
+async function listSiteLicenseAffiliationReverificationSeatsForSiteLicense({
+  site_license,
+  states,
+  now,
+  client,
+}: {
+  site_license: SiteLicenseRecord;
+  states?: SiteLicenseAffiliationReverificationState[];
+  now: Date;
+  client?: PoolClient;
+}): Promise<SiteLicenseAffiliationReverificationSeat[]> {
+  const pools = await listSiteLicensePoolSummaries({
+    site_license,
+    client,
+  });
+  const stateSet = states == null ? undefined : new Set(states);
+  const seats: SiteLicenseAffiliationReverificationSeat[] = [];
+  for (const pool of pools) {
+    for (const assignment of pool.assignments) {
+      if (assignment.revoked_at != null || !assignment.account_id) {
+        continue;
+      }
+      const seat = toAffiliationReverificationSeat({
+        site_license_id: site_license.id,
+        pool,
+        assignment,
+        now,
+      });
+      if (stateSet != null && !stateSet.has(seat.state)) {
+        continue;
+      }
+      seats.push(seat);
+    }
+  }
+  return sortAffiliationReverificationSeats(seats);
+}
+
+function sortAffiliationReverificationSeats(
+  seats: SiteLicenseAffiliationReverificationSeat[],
+): SiteLicenseAffiliationReverificationSeat[] {
+  return seats.sort((left, right) => {
+    const stateOrder: Record<
+      SiteLicenseAffiliationReverificationState,
+      number
+    > = {
+      grace_expired: 0,
+      pending_reverification: 1,
+      current: 2,
+    };
+    return (
+      stateOrder[left.state] - stateOrder[right.state] ||
+      (left.reverification_due_at?.getTime() ?? 0) -
+        (right.reverification_due_at?.getTime() ?? 0) ||
+      left.account_id.localeCompare(right.account_id)
+    );
+  });
+}
+
 export async function listSiteLicenseAffiliationReverificationSeats({
   account_id,
   site_license_id,
@@ -1009,44 +1067,11 @@ export async function listSiteLicenseAffiliationReverificationSeats({
     client,
   });
   const siteLicense = await getSiteLicense(normalizedSiteLicenseId, client);
-  const pools = await listSiteLicensePoolSummaries({
+  return await listSiteLicenseAffiliationReverificationSeatsForSiteLicense({
     site_license: siteLicense,
+    states,
+    now,
     client,
-  });
-  const stateSet = states == null ? undefined : new Set(states);
-  const seats: SiteLicenseAffiliationReverificationSeat[] = [];
-  for (const pool of pools) {
-    for (const assignment of pool.assignments) {
-      if (assignment.revoked_at != null || !assignment.account_id) {
-        continue;
-      }
-      const seat = toAffiliationReverificationSeat({
-        site_license_id: normalizedSiteLicenseId,
-        pool,
-        assignment,
-        now,
-      });
-      if (stateSet != null && !stateSet.has(seat.state)) {
-        continue;
-      }
-      seats.push(seat);
-    }
-  }
-  return seats.sort((left, right) => {
-    const stateOrder: Record<
-      SiteLicenseAffiliationReverificationState,
-      number
-    > = {
-      grace_expired: 0,
-      pending_reverification: 1,
-      current: 2,
-    };
-    return (
-      stateOrder[left.state] - stateOrder[right.state] ||
-      (left.reverification_due_at?.getTime() ?? 0) -
-        (right.reverification_due_at?.getTime() ?? 0) ||
-      left.account_id.localeCompare(right.account_id)
-    );
   });
 }
 
@@ -1224,6 +1249,57 @@ export async function releaseGraceExpiredSiteLicenseAffiliationSeats({
   client?: PoolClient;
 }): Promise<SiteLicenseAffiliationReverificationSeat[]> {
   const normalizedAccountId = normalizeAccountId(account_id);
+  return await releaseGraceExpiredSiteLicenseAffiliationSeatsInternal({
+    actor_account_id: normalizedAccountId,
+    site_license_id,
+    now,
+    limit,
+    require_manager: true,
+    client,
+  });
+}
+
+export async function releaseGraceExpiredSiteLicenseAffiliationSeatsForSystem({
+  site_license_id,
+  now = new Date(),
+  limit = 100,
+  client,
+}: {
+  site_license_id: string;
+  now?: Date;
+  limit?: number;
+  client?: PoolClient;
+}): Promise<SiteLicenseAffiliationReverificationSeat[]> {
+  return await releaseGraceExpiredSiteLicenseAffiliationSeatsInternal({
+    actor_account_id: null,
+    site_license_id,
+    now,
+    limit,
+    require_manager: false,
+    audit_metadata: {
+      released_by: "site-license-affiliation-maintenance",
+    },
+    client,
+  });
+}
+
+async function releaseGraceExpiredSiteLicenseAffiliationSeatsInternal({
+  actor_account_id,
+  site_license_id,
+  now,
+  limit,
+  require_manager,
+  audit_metadata,
+  client,
+}: {
+  actor_account_id?: string | null;
+  site_license_id: string;
+  now: Date;
+  limit: number;
+  require_manager: boolean;
+  audit_metadata?: Record<string, unknown> | null;
+  client?: PoolClient;
+}): Promise<SiteLicenseAffiliationReverificationSeat[]> {
   const normalizedSiteLicenseId = normalizeAccountId(
     site_license_id,
     "site_license_id",
@@ -1233,19 +1309,21 @@ export async function releaseGraceExpiredSiteLicenseAffiliationSeats({
   const releaseWithClient = async (
     dbClient: PoolClient,
   ): Promise<SiteLicenseAffiliationReverificationSeat[]> => {
-    await assertSiteLicenseManager({
-      account_id: normalizedAccountId,
-      site_license_id: normalizedSiteLicenseId,
-      write: true,
-      client: dbClient,
-    });
-    const expired = await listSiteLicenseAffiliationReverificationSeats({
-      account_id: normalizedAccountId,
-      site_license_id: normalizedSiteLicenseId,
-      states: ["grace_expired"],
-      now,
-      client: dbClient,
-    });
+    if (require_manager) {
+      await assertSiteLicenseManager({
+        account_id: normalizeAccountId(actor_account_id, "actor_account_id"),
+        site_license_id: normalizedSiteLicenseId,
+        write: true,
+        client: dbClient,
+      });
+    }
+    const expired =
+      await listSiteLicenseAffiliationReverificationSeatsForSiteLicense({
+        site_license: siteLicense,
+        states: ["grace_expired"],
+        now,
+        client: dbClient,
+      });
     const released: SiteLicenseAffiliationReverificationSeat[] = [];
     for (const seat of expired.slice(0, releaseLimit)) {
       const revoked = await revokeMembershipPackageSeat(
@@ -1261,10 +1339,11 @@ export async function releaseGraceExpiredSiteLicenseAffiliationSeats({
       await recordSiteLicenseAuditEvent({
         site_license_id: normalizedSiteLicenseId,
         action: "seat-released-after-reverification-grace",
-        actor_account_id: normalizedAccountId,
+        actor_account_id: actor_account_id ?? null,
         target_account_id: seat.account_id,
         package_id: seat.package_id,
         metadata: {
+          ...normalizeMetadata(audit_metadata),
           assignment_id: seat.assignment_id,
           pool_name: seat.pool_name ?? null,
           membership_class: seat.membership_class,
@@ -1293,6 +1372,35 @@ export async function releaseGraceExpiredSiteLicenseAffiliationSeats({
     action: "release grace-expired site-license affiliation seats",
     fn: async (db) => await releaseWithClient(db as PoolClient),
   });
+}
+
+export async function listSiteLicenseIdsWithAffiliationReverification({
+  limit = 10_000,
+  client,
+}: {
+  limit?: number;
+  client?: PoolClient;
+} = {}): Promise<string[]> {
+  await ensureSiteLicenseSchema(client);
+  const { rows } = await getQueryClient(client).query<{ id: string }>(
+    `SELECT s.id
+       FROM site_licenses s
+      WHERE (s.starts_at IS NULL OR s.starts_at <= NOW())
+        AND (s.expires_at IS NULL OR s.expires_at > NOW())
+        AND EXISTS (
+          SELECT 1
+            FROM membership_packages p
+           WHERE p.kind='site'
+             AND p.metadata->>'site_license_id'=s.id::text
+             AND p.metadata->>'affiliation_reverification_days' IS NOT NULL
+             AND (p.starts_at IS NULL OR p.starts_at <= NOW())
+             AND (p.expires_at IS NULL OR p.expires_at > NOW())
+        )
+      ORDER BY s.id
+      LIMIT $1`,
+    [Math.max(1, Math.min(100_000, Math.floor(limit)))],
+  );
+  return rows.map((row) => row.id);
 }
 
 export async function getSiteLicenseOverview({

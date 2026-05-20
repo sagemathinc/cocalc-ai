@@ -773,7 +773,7 @@ distinct groups such as `research`.
 - [x] Clear pending release when the user re-verifies institutional email.
 - Clear pending release when the user has a fresh qualifying SSO assertion.
 - [x] Add release path for seats that miss the grace deadline.
-- Add scheduled job to invoke grace-expired seat release.
+- [x] Add scheduled job to invoke grace-expired seat release.
 
 Implementation note: active site-license seats now carry affiliation metadata
 for direct claims and manager approvals. The backend reverification query
@@ -787,6 +787,11 @@ pending reverification or grace-expired status when the signed-in account has a
 fresh verified allowed-domain email. It updates affiliation metadata and records
 a `seat-affiliation-reverified` audit event without changing claim-directory
 ownership.
+The scheduled release maintenance loop runs from the Conat backend maintenance
+startup path and invokes the system release helper for active site licenses with
+reverification-enabled pools. It releases only grace-expired seats, batches work
+per tick, and records `seat-released-after-reverification-grace` with
+maintenance metadata.
 
 ### Phase 7: Invite Limit Integration
 

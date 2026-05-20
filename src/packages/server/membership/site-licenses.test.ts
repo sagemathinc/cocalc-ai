@@ -17,6 +17,7 @@ import {
   listMembershipPackageAssignments,
 } from "./packages";
 import { resolveMembershipForAccount } from "./resolve";
+import { runSiteLicenseAffiliationReleaseMaintenancePass } from "./site-license-affiliation-maintenance";
 import {
   adminProvisionSiteLicense,
   getSiteLicenseOverview,
@@ -997,6 +998,109 @@ describe("site license seat pools", () => {
           package_id: studentPool.id,
           metadata: expect.objectContaining({
             previous_state: "grace_expired",
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("releases grace-expired site-license seats from maintenance", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const expired_account_id = uuid();
+    const current_account_id = uuid();
+    const domain = `maintenance-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await createTestAccount(expired_account_id);
+    await createTestAccount(current_account_id);
+    await markAdmin(admin_account_id);
+    await markVerifiedEmail(expired_account_id, `expired@${domain}`);
+    await markVerifiedEmail(current_account_id, `current@${domain}`);
+
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      owner_account_id,
+      name: "Maintenance Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 10,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+          affiliation_reverification_days: 30,
+          affiliation_reverification_grace_days: 10,
+        },
+      ],
+    });
+    const studentPool = overview.pools[0]!;
+
+    await claimMembershipPackageSeat({
+      account_id: expired_account_id,
+      package_id: studentPool.id,
+    });
+    await claimMembershipPackageSeat({
+      account_id: current_account_id,
+      package_id: studentPool.id,
+    });
+    await getPool().query(
+      `UPDATE membership_package_assignments
+          SET metadata=jsonb_set(
+                COALESCE(metadata, '{}'::jsonb),
+                '{affiliation_verified_at}',
+                to_jsonb(CASE
+                  WHEN account_id=$2 THEN '2026-04-01T00:00:00.000Z'
+                  ELSE '2026-05-01T00:00:00.000Z'
+                END::text),
+                true
+              )
+        WHERE package_id=$1
+          AND account_id IN ($2, $3)`,
+      [studentPool.id, expired_account_id, current_account_id],
+    );
+
+    await expect(
+      runSiteLicenseAffiliationReleaseMaintenancePass({
+        now: new Date("2026-05-20T00:00:00.000Z"),
+        site_license_limit: 10_000,
+        seat_limit: 100,
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        scanned_site_licenses: expect.any(Number),
+        site_licenses_with_releases: expect.any(Number),
+        released_seats: expect.any(Number),
+        failed_site_licenses: 0,
+      }),
+    );
+    expect(
+      await listMembershipPackageAssignments({
+        package_id: studentPool.id,
+        include_revoked: false,
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        account_id: current_account_id,
+      }),
+    ]);
+    const refreshedOverview = await getSiteLicenseOverview({
+      account_id: owner_account_id,
+      site_license_id: overview.site_license.id,
+    });
+    expect(refreshedOverview.recent_audit_events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "seat-released-after-reverification-grace",
+          actor_account_id: null,
+          target_account_id: expired_account_id,
+          package_id: studentPool.id,
+          metadata: expect.objectContaining({
+            released_by: "site-license-affiliation-maintenance",
+            released_at: "2026-05-20T00:00:00.000Z",
           }),
         }),
       ]),
