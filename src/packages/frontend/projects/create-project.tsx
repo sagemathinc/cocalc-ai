@@ -958,7 +958,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
           background: COLORS.GRAY_LLL,
           maxHeight: "min(780px, 88vh)",
           overflowY: "auto",
-          padding: "0 14px 14px",
+          padding: 14,
         },
       }}
     >
