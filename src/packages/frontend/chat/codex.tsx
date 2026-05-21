@@ -16,6 +16,7 @@ import {
   useMemo,
   useState,
 } from "@cocalc/frontend/app-framework";
+import { Icon } from "@cocalc/frontend/components/icon";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import { lite } from "@cocalc/frontend/lite";
 import { CodexCredentialsPanel } from "@cocalc/frontend/account/codex-credentials-panel";
@@ -50,6 +51,7 @@ import {
 const { Text } = Typography;
 const DEFAULT_MODEL_NAME = DEFAULT_CODEX_MODELS[0].name;
 const CODEX_USAGE_URL = "https://chatgpt.com/codex/settings/usage";
+const CODEX_CONTROLS_COLLAPSED_KEY = "cocalc.chat.codexControlsCollapsed";
 
 type ModeOption = {
   value: CodexSessionMode;
@@ -129,6 +131,27 @@ const gridTwoColStyle = {
   gap: 12,
   width: "100%",
 } as const;
+
+function readCodexControlsCollapsed(): boolean {
+  try {
+    return (
+      globalThis.localStorage?.getItem(CODEX_CONTROLS_COLLAPSED_KEY) === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function writeCodexControlsCollapsed(collapsed: boolean): void {
+  try {
+    globalThis.localStorage?.setItem(
+      CODEX_CONTROLS_COLLAPSED_KEY,
+      collapsed ? "1" : "0",
+    );
+  } catch {
+    // Ignore storage errors; this is only a local display preference.
+  }
+}
 
 export function CodexPaymentCredentialsModal({
   open,
@@ -268,6 +291,9 @@ export function CodexConfigButton({
   const [form] = Form.useForm();
   const [models, setModels] = useState<ModelOption[]>([]);
   const [value, setValue] = useState<Partial<CodexThreadConfig> | null>(null);
+  const [controlsCollapsed, setControlsCollapsed] = useState(
+    readCodexControlsCollapsed,
+  );
 
   useEffect(() => {
     const initialModels = DEFAULT_CODEX_MODELS.map((m) => ({
@@ -367,6 +393,21 @@ export function CodexConfigButton({
     ? "Checking…"
     : getCodexPaymentSourceShortLabel(paymentSource?.source);
   const sourceTooltip = getCodexPaymentSourceTooltip(paymentSource);
+  const modeLabel =
+    modeOptions.find((option) => option.value === currentSessionMode)?.label ??
+    "Mode";
+  const reasoningLabel =
+    reasoningOptions.find((option) => option.value === selectedReasoningValue)
+      ?.label ?? selectedReasoningValue;
+  const paymentNeedsAttention =
+    paymentSourceLoading || paymentSource?.source === "none" || !paymentSource;
+  const toggleControlsCollapsed = () => {
+    setControlsCollapsed((collapsed) => {
+      const next = !collapsed;
+      writeCodexControlsCollapsed(next);
+      return next;
+    });
+  };
 
   const saveConfig = () => {
     const values = form.getFieldsValue();
@@ -386,26 +427,9 @@ export function CodexConfigButton({
 
   const onSave = () => saveConfig();
 
-  const updateConfig = (patch: Partial<CodexThreadConfig>) => {
-    const base = value ?? form.getFieldsValue();
-    const next = { ...base, ...patch };
-    const sessionMode: CodexSessionMode =
-      normalizeSessionMode(next) ?? defaultSessionMode;
-    const finalValues = {
-      ...next,
-      sessionId: normalizeCodexSessionId(next?.sessionId),
-      sessionMode,
-      allowWrite: sessionMode !== "read-only",
-    };
-    actions?.setCodexConfig?.(threadKey, finalValues);
-    setValue(finalValues);
-    form.setFieldsValue(finalValues);
-  };
-
-  const compactModeOptions = modeOptions.map((option) => ({
-    value: option.value,
-    label: option.label,
-  }));
+  const summaryParts = [selectedModelValue, modeLabel, reasoningLabel].filter(
+    (part) => typeof part === "string" && part.trim().length > 0,
+  );
 
   return (
     <>
@@ -413,53 +437,116 @@ export function CodexConfigButton({
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 6,
-          padding: "4px 6px",
-          background: "white",
-          border: "1px solid #d9d9d9",
-          borderRadius: 6,
+          gap: 5,
+          maxWidth: "min(760px, calc(100vw - 32px))",
         }}
       >
-        <Button size="small" onClick={() => setOpen(true)}>
-          Codex
-        </Button>
-        <Tooltip title={sourceTooltip}>
-          <Button size="small" onClick={() => setPaymentOpen(true)}>
-            {sourceShortLabel}
-          </Button>
+        <Tooltip
+          title={
+            controlsCollapsed ? "Show Codex controls" : "Hide Codex controls"
+          }
+        >
+          <Button
+            size="small"
+            type="text"
+            aria-label={
+              controlsCollapsed ? "Show Codex controls" : "Hide Codex controls"
+            }
+            icon={
+              <Icon
+                name={controlsCollapsed ? "chevron-right" : "chevron-left"}
+              />
+            }
+            onClick={toggleControlsCollapsed}
+            style={{
+              background: "white",
+              border: `1px solid ${COLORS.GRAY_L}`,
+            }}
+          />
         </Tooltip>
-        <Select
-          size="small"
-          value={currentSessionMode}
-          options={compactModeOptions}
-          style={{ minWidth: 140 }}
-          onChange={(val) => {
-            updateConfig({ sessionMode: val as CodexSessionMode });
-          }}
-        />
-        <Select
-          size="small"
-          value={selectedModelValue}
-          options={models}
-          style={{ minWidth: 160 }}
-          onChange={(val) => {
-            const nextReasoning = getReasoningForModel({
-              models,
-              modelValue: val,
-            });
-            updateConfig({ model: val, reasoning: nextReasoning });
-          }}
-        />
-        <Select
-          size="small"
-          value={selectedReasoningValue}
-          options={reasoningOptions}
-          style={{ minWidth: 140 }}
-          onChange={(val) => {
-            updateConfig({ reasoning: val });
-          }}
-          disabled={reasoningOptions.length === 0}
-        />
+        {controlsCollapsed ? (
+          <Tooltip title="Show Codex controls">
+            <Button
+              size="small"
+              onClick={toggleControlsCollapsed}
+              style={{
+                borderRadius: 999,
+                boxShadow: "0 1px 5px rgba(0,0,0,0.08)",
+                fontWeight: 600,
+              }}
+            >
+              Codex
+            </Button>
+          </Tooltip>
+        ) : (
+          <>
+            <Button
+              size="small"
+              onClick={() => setOpen(true)}
+              style={{
+                alignItems: "center",
+                background: "white",
+                borderColor: COLORS.GRAY_L,
+                borderRadius: 999,
+                boxShadow: "0 1px 5px rgba(0,0,0,0.08)",
+                display: "inline-flex",
+                fontWeight: 600,
+                gap: 6,
+                maxWidth: "min(520px, calc(100vw - 220px))",
+                overflow: "hidden",
+              }}
+            >
+              <span
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: "50%",
+                  background: COLORS.BS_GREEN_D,
+                  display: "inline-block",
+                  flex: "0 0 auto",
+                }}
+              />
+              <span>Codex</span>
+              <Text
+                type="secondary"
+                style={{
+                  fontSize: 12,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {summaryParts.join(" · ")}
+              </Text>
+            </Button>
+            <Tooltip title="Configure Codex session">
+              <Button
+                size="small"
+                aria-label="Configure Codex session"
+                icon={<Icon name="gear" />}
+                onClick={() => setOpen(true)}
+                style={{ background: "white" }}
+              />
+            </Tooltip>
+            {paymentNeedsAttention ? (
+              <Tooltip title={sourceTooltip}>
+                <Button
+                  size="small"
+                  danger={paymentSource?.source === "none"}
+                  onClick={() => setPaymentOpen(true)}
+                  style={{
+                    background:
+                      paymentSource?.source === "none"
+                        ? COLORS.ANTD_BG_RED_L
+                        : "white",
+                  }}
+                >
+                  {sourceShortLabel}
+                </Button>
+              </Tooltip>
+            ) : null}
+          </>
+        )}
       </div>
       <Modal
         open={open}
