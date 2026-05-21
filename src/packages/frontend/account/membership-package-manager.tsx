@@ -25,7 +25,14 @@ import {
   Typography,
 } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
@@ -110,6 +117,34 @@ interface PackageUserSearchResult {
 
 interface ClaimableMembershipPackagesPanelProps {
   onChanged?: () => void;
+}
+
+function CompactField({
+  children,
+  help,
+  label,
+  style,
+}: {
+  children: ReactNode;
+  help?: ReactNode;
+  label: ReactNode;
+  style?: CSSProperties;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        minWidth: 0,
+        ...style,
+      }}
+    >
+      <Text strong>{label}</Text>
+      {children}
+      {help ? <Text type="secondary">{help}</Text> : null}
+    </div>
+  );
 }
 
 function toTime(value?: Date | null): number {
@@ -2299,23 +2334,25 @@ function ProvisionSiteLicenseModal({
                 </Space>
               }
             >
-              <Space
-                wrap
-                align="start"
-                style={{ width: "100%", marginBottom: 12 }}
+              <div
+                style={{
+                  display: "grid",
+                  gap: 14,
+                  gridTemplateColumns:
+                    "minmax(190px, 1.3fr) minmax(170px, 1fr) minmax(110px, 0.55fr) minmax(170px, 0.8fr)",
+                  marginBottom: 12,
+                }}
               >
-                <div>
-                  <Text strong>Name</Text>
+                <CompactField label="Name">
                   <Input
                     value={pool.pool_name}
                     onChange={(event) =>
                       updatePool(index, { pool_name: event.target.value })
                     }
-                    style={{ width: 170, marginTop: 6 }}
+                    style={{ width: "100%" }}
                   />
-                </div>
-                <div>
-                  <Text strong>Tier</Text>
+                </CompactField>
+                <CompactField label="Tier">
                   <Select
                     value={pool.membership_class}
                     onChange={(value) =>
@@ -2323,15 +2360,14 @@ function ProvisionSiteLicenseModal({
                         membership_class: value as MembershipClass,
                       })
                     }
-                    style={{ width: 160, marginTop: 6 }}
+                    style={{ width: "100%" }}
                     options={siteLicenseTierOptions.map((tier) => ({
                       label: tier.label ?? capitalize(tier.id),
                       value: tier.id,
                     }))}
                   />
-                </div>
-                <div>
-                  <Text strong>Seats</Text>
+                </CompactField>
+                <CompactField label="Seats">
                   <InputNumber
                     min={1}
                     precision={0}
@@ -2339,25 +2375,42 @@ function ProvisionSiteLicenseModal({
                     onChange={(value) =>
                       updatePool(index, { seat_count: Number(value ?? 1) })
                     }
-                    style={{ width: 100, marginTop: 6 }}
+                    style={{ width: "100%" }}
                   />
-                </div>
-                <div>
-                  <Text strong>Approval</Text>
+                </CompactField>
+                <CompactField
+                  label="Approval"
+                  help={
+                    pool.requires_approval
+                      ? "Manager reviews requests."
+                      : "Eligible users can claim."
+                  }
+                >
                   <Radio.Group
+                    buttonStyle="solid"
                     value={pool.requires_approval ? "yes" : "no"}
                     onChange={(event) =>
                       updatePool(index, {
                         requires_approval: event.target.value === "yes",
                       })
                     }
-                    style={{ display: "block", marginTop: 6 }}
+                    style={{ display: "flex", width: "100%" }}
                   >
-                    <Radio.Button value="no">No</Radio.Button>
-                    <Radio.Button value="yes">Yes</Radio.Button>
+                    <Radio.Button
+                      style={{ flex: 1, textAlign: "center" }}
+                      value="no"
+                    >
+                      No
+                    </Radio.Button>
+                    <Radio.Button
+                      style={{ flex: 1, textAlign: "center" }}
+                      value="yes"
+                    >
+                      Yes
+                    </Radio.Button>
                   </Radio.Group>
-                </div>
-              </Space>
+                </CompactField>
+              </div>
               <Collapse
                 size="small"
                 items={[
@@ -2378,9 +2431,18 @@ function ProvisionSiteLicenseModal({
                           <Text code>research</Text>, so research access can
                           coexist.
                         </Text>
-                        <Space wrap align="start">
-                          <div>
-                            <Text strong>Verification</Text>
+                        <div
+                          style={{
+                            display: "grid",
+                            gap: 14,
+                            gridTemplateColumns:
+                              "minmax(180px, 1fr) minmax(150px, 0.8fr) minmax(130px, 0.7fr) minmax(130px, 0.7fr)",
+                          }}
+                        >
+                          <CompactField
+                            label="Verification"
+                            help="The proof required for this pool."
+                          >
                             <Select
                               value={pool.verification_policy}
                               onChange={(value) =>
@@ -2389,7 +2451,6 @@ function ProvisionSiteLicenseModal({
                                     value as SiteLicenseVerificationPolicy,
                                 })
                               }
-                              style={{ width: 170, marginTop: 6 }}
                               options={[
                                 {
                                   label: "Email domain",
@@ -2404,10 +2465,13 @@ function ProvisionSiteLicenseModal({
                                   value: "sso-affiliation",
                                 },
                               ]}
+                              style={{ width: "100%" }}
                             />
-                          </div>
-                          <div>
-                            <Text strong>Exclusive group</Text>
+                          </CompactField>
+                          <CompactField
+                            label="Exclusive group"
+                            help="Pools in the same group replace each other."
+                          >
                             <Input
                               value={`${pool.exclusive_group ?? ""}`}
                               onChange={(event) =>
@@ -2415,11 +2479,13 @@ function ProvisionSiteLicenseModal({
                                   exclusive_group: event.target.value,
                                 })
                               }
-                              style={{ width: 140, marginTop: 6 }}
+                              style={{ width: "100%" }}
                             />
-                          </div>
-                          <div>
-                            <Text strong>Reverify days</Text>
+                          </CompactField>
+                          <CompactField
+                            label="Reverify days"
+                            help="How often eligibility is refreshed."
+                          >
                             <InputNumber
                               min={1}
                               precision={0}
@@ -2433,11 +2499,13 @@ function ProvisionSiteLicenseModal({
                                     value == null ? null : Number(value),
                                 })
                               }
-                              style={{ width: 120, marginTop: 6 }}
+                              style={{ width: "100%" }}
                             />
-                          </div>
-                          <div>
-                            <Text strong>Grace days</Text>
+                          </CompactField>
+                          <CompactField
+                            label="Grace days"
+                            help="Time before the seat is released."
+                          >
                             <InputNumber
                               min={1}
                               precision={0}
@@ -2451,10 +2519,10 @@ function ProvisionSiteLicenseModal({
                                     value == null ? null : Number(value),
                                 })
                               }
-                              style={{ width: 120, marginTop: 6 }}
+                              style={{ width: "100%" }}
                             />
-                          </div>
-                        </Space>
+                          </CompactField>
+                        </div>
                       </Space>
                     ),
                   },
