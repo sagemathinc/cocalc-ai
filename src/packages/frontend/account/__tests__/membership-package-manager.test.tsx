@@ -101,6 +101,7 @@ jest.mock("@cocalc/frontend/purchases/api", () => ({
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
+    browser_id: "browser-1",
     users_client: {
       user_search: (...args: any[]) => userSearch(...args),
       getNames: (...args: any[]) => getNames(...args),
