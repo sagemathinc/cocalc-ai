@@ -75,19 +75,19 @@ const PROJECT_PRESETS: {
   {
     mode: "standard",
     title: "Standard",
-    description: "Default image, automatic host, nearest backups.",
+    description: "Default or catalog-tagged base image, automatic host.",
     icon: "project-outlined",
   },
   {
     mode: "gpu",
     title: "GPU",
-    description: "GPU-capable image when one is available.",
+    description: "GPU-tagged image when one is available.",
     icon: "bolt",
   },
   {
     mode: "teaching",
     title: "Teaching",
-    description: "Stable defaults for classes and workshops.",
+    description: "Teaching-tagged image for classes and workshops.",
     icon: "graduation-cap",
   },
   {

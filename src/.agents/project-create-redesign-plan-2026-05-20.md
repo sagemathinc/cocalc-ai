@@ -53,6 +53,8 @@ Implemented:
 - Host recommendation model with tests.
 - Host picker uses create-specific recommendations and explains remote-host
   fallback when no compatible host exists in the selected backup region.
+- RootFS presets choose catalog images by tags/metadata rather than hardcoded
+  image names.
 
 Still rough:
 
@@ -62,10 +64,10 @@ Still rough:
 - Host recommendations still need live dogfood validation against a deliberately
   varied set of hosts.
 - Region/latency explanation is incomplete.
-- RootFS presets are currently hardcoded UI choices rather than catalog-driven
-  metadata.
-- The visual design is functional but still has unnecessary vertical scrolling
-  on normal laptop screens.
+- RootFS preset configuration is not yet site-configurable beyond the initial
+  built-in preset tags.
+- The visual design is functional and no longer scrolls by default on the
+  dogfood laptop viewport, but it still needs broader viewport testing.
 
 ## Core Product Principles
 
@@ -232,11 +234,14 @@ Current status:
 - Scan status is visible.
 - Critical vulnerabilities do not block selection.
 - Custom OCI is admin-only in the frontend.
+- Project-create presets choose RootFS images from catalog tags such as
+  `preset:standard`, `preset:gpu`, `preset:teaching`, `standard`, `gpu`,
+  `teaching`, `course`, and `workshop`.
+- The RootFS publisher tag editor offers one-click buttons for the explicit
+  `preset:standard`, `preset:gpu`, and `preset:teaching` tags.
 
 Next requirements:
 
-- Presets should map to RootFS catalog tags/metadata instead of hardcoded image
-  names.
 - Launchpad customers should be able to define their own meaningful preset tags.
 - The catalog should support very different deployments, such as a small
   research group that does not need teaching-oriented presets.
@@ -595,6 +600,8 @@ Missing:
 - Runtime-slot full state includes stop actions for visible running projects.
 - Host recommendation model and tests.
 - Create-mode host picker uses recommendation ranking and remote-region fallback.
+- RootFS preset image selection uses catalog tags/metadata.
+- RootFS publisher UI documents and inserts project-create preset tags.
 
 ### Phase A: Update Data/Policy Inventory
 
@@ -673,11 +680,16 @@ avoidance, GPU fit, and remote-region fallback without needing a large fleet.
 
 ### Phase D: RootFS Metadata Presets
 
+Initial implementation started 2026-05-20.
+
 Replace hardcoded preset semantics with catalog metadata.
 
 Requirements:
 
-- Presets use tags/capabilities from RootFS catalog entries.
+- Presets use tags/capabilities from RootFS catalog entries. Initial support
+  implemented for `standard`, `gpu`, and `teaching` presets.
+- RootFS publishers can add explicit project-create preset tags from the
+  metadata editor without memorizing tag names.
 - Site-specific Launchpad deployments can define different meaningful presets.
 - Full vulnerability report is browsable.
 - Publisher comments are displayed with scan reports.
@@ -688,6 +700,13 @@ Validation:
 - Site with no teaching image.
 - Site with custom research images.
 - Image with critical vulnerabilities and publisher notes.
+
+Follow-up:
+
+- Consider site-configurable preset labels/tags once multiple launchpad
+  deployments need different first-run presets.
+- Add a full scan report browser and publisher comments before calling Phase D
+  complete.
 
 ### Phase E: Region/Latency Explanation
 
@@ -766,4 +785,4 @@ Polish the existing modal before adding deeper policy UI:
   screen.
 - Keep host choice visible, but avoid forcing the user into the secondary host
   picker unless they need to override the recommendation.
-- Then proceed to Phase D RootFS metadata presets.
+- Continue Phase D by adding full scan report browsing and publisher comments.
