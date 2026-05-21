@@ -58,16 +58,16 @@ async function cookieTargets({
   req;
   name: string;
 }): Promise<{ name: string; domain?: string }[]> {
-  if (name !== REMEMBER_ME_COOKIE_NAME) {
-    return [{ name }];
-  }
   const domain = await getBrowserCookieDomainForRequest(req);
   if (!domain) {
     return [{ name }];
   }
+  if (name !== REMEMBER_ME_COOKIE_NAME) {
+    return [{ name }, { name, domain }];
+  }
   const sharedName = await getBrowserCookieNameForRequest({ name, req });
   return sharedName === name
-    ? [{ name }]
+    ? [{ name }, { name, domain }]
     : [{ name }, { name: sharedName, domain }];
 }
 
