@@ -58,20 +58,26 @@ Implemented:
 - Region/latency copy explains terminal/Jupyter lag, later host/region moves,
   nearby browser region, backup region, provider region, and backup-history
   limits when moving regions.
+- Imagegen2-inspired layout polish: capacity is a top strip, project name comes
+  before presets, presets are visual cards, region/latency is in the common
+  path, and the summary uses decision-ready icon rows.
+- Host selection can expand inline in the create modal, matching the inline
+  RootFS picker pattern.
 
 Still rough:
 
 - The capacity card still needs visual polish and robust handling for missing
   backend usage fields.
-- Host selection still opens a secondary modal.
+- Host selection no longer requires a secondary modal in project creation; other
+  callers still use the host picker modal wrapper.
 - Host recommendations still need live dogfood validation against a deliberately
   varied set of hosts.
 - Region/latency explanation has initial create-modal coverage, but still needs
   dogfood validation with remote-host fallback scenarios.
 - RootFS preset configuration is not yet site-configurable beyond the initial
   built-in preset tags.
-- The visual design is functional and no longer scrolls by default on the
-  dogfood laptop viewport, but it still needs broader viewport testing.
+- The visual design is much closer to the target mockup, but still needs live
+  dogfood validation across several viewport sizes and account states.
 
 ## Core Product Principles
 
@@ -723,10 +729,10 @@ Requirements:
 - Explain region impact in terms of terminal/Jupyter lag. Initial copy added.
 - Explain that region/host can be changed later. Initial copy added.
 - Distinguish user latency region from project backup region and provider
-  region without exposing too much terminology. Initial advanced-region card
+  region without exposing too much terminology. Initial inline host-picker card
   added.
 - Explain when region changes reset backups beyond the latest backup. Initial
-  advanced-region copy added.
+  inline host-picker copy added.
 
 Validation:
 
@@ -738,7 +744,8 @@ Validation:
 
 Requirements:
 
-- Imagegen2-informed visual pass.
+- Imagegen2-informed visual pass. Initial pass implemented against the
+  project-create mockup generated on 2026-05-20.
 - No unnecessary vertical scrolling for the common path on normal laptop sizes.
 - Mobile/narrow layout.
 - Keyboard navigation.

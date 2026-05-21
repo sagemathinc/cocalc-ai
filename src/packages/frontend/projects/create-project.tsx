@@ -21,7 +21,7 @@ import {
   Typography,
 } from "antd";
 import { delay } from "awaiting";
-import { FormattedMessage, useIntl } from "react-intl";
+import { useIntl } from "react-intl";
 
 import {
   redux,
@@ -31,14 +31,10 @@ import {
   useRef,
   useState,
 } from "@cocalc/frontend/app-framework";
-import { A, ErrorDisplay, Icon, Paragraph } from "@cocalc/frontend/components";
+import { ErrorDisplay, Icon, Paragraph } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 
-import {
-  R2_REGION_LABELS,
-  R2_REGIONS,
-  type R2Region,
-} from "@cocalc/util/consts";
+import { R2_REGION_LABELS } from "@cocalc/util/consts";
 import { COLORS } from "@cocalc/util/theme";
 import { SelectNewHost } from "@cocalc/frontend/hosts/select-new-host";
 import { RootfsScanStatus } from "@cocalc/frontend/rootfs/scan-status";
@@ -93,7 +89,7 @@ const PROJECT_PRESETS: {
   {
     mode: "custom",
     title: "Custom",
-    description: "Expose advanced placement and image controls.",
+    description: "Choose your own runtime image and host.",
     icon: "sliders",
   },
 ];
@@ -116,6 +112,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   const [rootfsMode, setRootfsMode] = useState<"catalog" | "custom">("catalog");
   const [rootfsDraft, setRootfsDraft] = useState<string>("");
   const [rootfsDraftId, setRootfsDraftId] = useState<string | undefined>();
+  const [hostPickerOpen, setHostPickerOpen] = useState<boolean>(false);
   const {
     draft,
     summary,
@@ -125,21 +122,11 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     context,
     isAdmin,
     selectedHost,
-    setAdvancedOpen,
-    setRegion,
     setHost,
     setRootfs,
     applyPreset,
     reset,
   } = useProjectCreateDraft({ defaultValue: default_value });
-  const regionOptions = useMemo(
-    () =>
-      R2_REGIONS.map((region) => ({
-        value: region,
-        label: R2_REGION_LABELS[region],
-      })),
-    [],
-  );
 
   const [form] = Form.useForm();
   const isGpu = summary.gpu;
@@ -196,6 +183,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     set_error("");
     setCreateAction(null);
     setRootfsPickerOpen(false);
+    setHostPickerOpen(false);
     setRootfsMode("catalog");
     setRootfsDraft("");
     setRootfsDraftId(undefined);
@@ -237,7 +225,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     } catch (err) {
       if (!is_mounted_ref.current) return;
       setCreateAction(null);
-      setAdvancedOpen(true);
       set_error(`Error creating ${projectLabelLower} -- ${err}`);
       return;
     }
@@ -462,17 +449,40 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     const displayLabel =
       selectedRootfsEntry?.label || displayImage || DEFAULT_PROJECT_IMAGE;
     return (
-      <Card size="small" styles={{ body: { padding: "10px 12px" } }}>
-        <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+      <Card
+        size="small"
+        styles={{ body: { padding: "10px 12px" } }}
+        style={{ borderColor: COLORS.GRAY_LL }}
+      >
+        <Space orientation="vertical" size={6} style={{ width: "100%" }}>
           <Space
             align="center"
             style={{ width: "100%", justifyContent: "space-between" }}
             wrap
           >
-            <Space size="small" wrap>
-              <Icon name="cube" />
-              <Typography.Text strong>Runtime image</Typography.Text>
-              <Tag color="blue">{displayLabel}</Tag>
+            <Space size="middle" wrap>
+              <span
+                style={{
+                  alignItems: "center",
+                  background: COLORS.YELL_LLL,
+                  borderRadius: 10,
+                  color: COLORS.YELL_D,
+                  display: "inline-flex",
+                  height: 32,
+                  justifyContent: "center",
+                  width: 32,
+                }}
+              >
+                <Icon name="cube" />
+              </span>
+              <span>
+                <div style={{ fontWeight: 700, color: COLORS.GRAY_D }}>
+                  {displayLabel}
+                </div>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Runtime image
+                </Typography.Text>
+              </span>
               {selectedRootfsEntry?.section && (
                 <Tag color={sectionTagColor(selectedRootfsEntry.section)}>
                   {sectionLabel(selectedRootfsEntry.section)}
@@ -491,7 +501,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
               {rootfsPickerOpen ? "Change image..." : "Choose image..."}
             </Button>
           </Space>
-          {displayImage && (
+          {!selectedRootfsEntry && displayImage && (
             <code style={{ fontSize: "11px", overflowWrap: "anywhere" }}>
               {displayImage}
             </code>
@@ -511,7 +521,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
           gap: 10,
         }}
       >
@@ -524,9 +534,9 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
               disabled={saving}
               style={{
                 height: "auto",
-                minHeight: 64,
-                padding: "8px 10px",
-                textAlign: "left",
+                minHeight: 96,
+                padding: "10px 9px",
+                textAlign: "center",
                 borderColor: active ? COLORS.BS_BLUE_BGRND : COLORS.GRAY_LL,
                 background: active ? COLORS.ANTD_BG_BLUE_L : "white",
                 boxShadow: active
@@ -534,14 +544,22 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                   : undefined,
               }}
             >
-              <Space align="start" size="small">
-                <Icon
-                  name={preset.icon as any}
+              <Space orientation="vertical" align="center" size={6}>
+                <span
                   style={{
+                    alignItems: "center",
+                    background: active ? "white" : COLORS.GRAY_LLL,
+                    borderRadius: 12,
                     color: active ? COLORS.BS_BLUE_TEXT : COLORS.GRAY_M,
-                    marginTop: 2,
+                    display: "inline-flex",
+                    fontSize: 18,
+                    height: 34,
+                    justifyContent: "center",
+                    width: 34,
                   }}
-                />
+                >
+                  <Icon name={preset.icon as any} />
+                </span>
                 <span>
                   <div style={{ fontWeight: 600, color: COLORS.GRAY_D }}>
                     {preset.title}
@@ -550,8 +568,9 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                     style={{
                       color: COLORS.GRAY_M,
                       fontSize: 12,
-                      lineHeight: 1.25,
+                      lineHeight: 1.2,
                       whiteSpace: "normal",
+                      maxWidth: 150,
                     }}
                   >
                     {preset.description}
@@ -583,40 +602,45 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     const remoteFromBrowser = context.preferredRegion !== draft.region;
 
     return (
-      <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-        <div
-          style={{
-            display: "grid",
-            gap: 10,
-            gridTemplateColumns:
-              "repeat(auto-fit, minmax(min(150px, 100%), 1fr))",
-          }}
-        >
-          {renderRegionFact("Near you", nearbyRegionLabel)}
-          {renderRegionFact("Project backups", selectedRegionLabel)}
-          {renderRegionFact(
-            "Provider region",
-            providerRegion ? <code>{providerRegion}</code> : "Automatic",
+      <Card
+        size="small"
+        styles={{ body: { padding: "10px 12px" } }}
+        style={{ borderColor: COLORS.GRAY_LL, background: "white" }}
+      >
+        <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+          <Paragraph style={{ marginBottom: 0 }}>
+            <Icon name="map" /> Host and region mainly affect interactive lag,
+            such as terminal typing and Jupyter notebook output, not your data.
+          </Paragraph>
+          <div
+            style={{
+              display: "grid",
+              gap: 14,
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(min(150px, 100%), 1fr))",
+            }}
+          >
+            {renderRegionFact("Near you", nearbyRegionLabel)}
+            {renderRegionFact("Project backups", selectedRegionLabel)}
+            {renderRegionFact(
+              "Provider region",
+              providerRegion ? <code>{providerRegion}</code> : "Automatic",
+            )}
+          </div>
+          {remoteFromBrowser && (
+            <Alert
+              type="info"
+              showIcon
+              message={`This is not your nearest detected region (${nearbyRegionLabel}). It may still be the best choice when the available hosts there are faster or less busy.`}
+            />
           )}
-        </div>
-        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          Region choice mainly changes interactive latency: lag when typing in a
-          terminal and time to see Jupyter notebook output. It does not lock in
-          the project; you can change hosts or move to another region later.
-        </Paragraph>
-        {remoteFromBrowser && (
-          <Alert
-            type="info"
-            showIcon
-            message={`This is not your nearest detected region (${nearbyRegionLabel}). It may still be the best choice when the available hosts there are faster or less busy.`}
-          />
-        )}
-        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          If you later move a project to a different backup region, the current
-          files move with it, but older backup history is not fully carried
-          over.
-        </Paragraph>
-      </Space>
+          <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+            You can change the host or region later. Cross-region moves carry
+            the current files, but older backup history is not fully carried
+            over.
+          </Paragraph>
+        </Space>
+      </Card>
     );
   }
 
@@ -624,33 +648,99 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     const title =
       `${(new_project_title_ref.current as any)?.input?.value ?? titlePreview}`.trim() ||
       "Untitled project";
+    const summaryItems = [
+      {
+        icon: "project-outlined",
+        label: "Project name",
+        value: title,
+        color: COLORS.ANTD_BG_BLUE_L,
+      },
+      {
+        icon: "sliders",
+        label: "Preset",
+        value: presetTitle(draft.mode),
+        color: COLORS.GRAY_LLL,
+      },
+      {
+        icon: "cube",
+        label: "Runtime image",
+        value: summary.rootfsLabel,
+        color: COLORS.YELL_LLL,
+      },
+      {
+        icon: "servers",
+        label: "Host / region",
+        value: summary.hostName || summary.host_id || "Automatic placement",
+        color: COLORS.BS_GREEN_LL,
+      },
+      {
+        icon: "database",
+        label: "Backups",
+        value: R2_REGION_LABELS[draft.region],
+        color: COLORS.GRAY_LLL,
+      },
+    ];
     return (
       <Card
         size="small"
-        styles={{ body: { padding: 14 } }}
+        styles={{ body: { padding: 16 } }}
         style={{
           position: "sticky",
           top: 0,
           borderColor: COLORS.GRAY_LL,
-          background: COLORS.GRAY_LLL,
+          background: "white",
         }}
       >
-        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 15 }}>Summary</div>
-            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              Choose whether to start and open immediately.
-            </Paragraph>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>Project summary</div>
           </div>
-          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-            {summaryRow("Title", title)}
-            {summaryRow("Preset", presetTitle(draft.mode))}
-            {summaryRow("Runtime", summary.rootfsLabel)}
-            {summaryRow(
-              "Host",
-              summary.hostName || summary.host_id || "Automatic placement",
-            )}
-            {summaryRow("Backups", R2_REGION_LABELS[draft.region])}
+          <Space orientation="vertical" size={0} style={{ width: "100%" }}>
+            {summaryItems.map((item, index) => (
+              <div
+                key={item.label}
+                style={{
+                  borderBottom:
+                    index === summaryItems.length - 1
+                      ? undefined
+                      : `1px solid ${COLORS.GRAY_LL}`,
+                  display: "grid",
+                  gap: 10,
+                  gridTemplateColumns: "30px minmax(0, 1fr)",
+                  padding: "6px 0",
+                }}
+              >
+                <span
+                  style={{
+                    alignItems: "center",
+                    background: item.color,
+                    borderRadius: 8,
+                    color: COLORS.BS_BLUE_TEXT,
+                    display: "inline-flex",
+                    height: 30,
+                    justifyContent: "center",
+                    width: 30,
+                  }}
+                >
+                  <Icon name={item.icon as any} />
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
+                    {item.label}
+                  </div>
+                  <div
+                    style={{
+                      color: COLORS.GRAY_D,
+                      fontSize: 13,
+                      fontWeight: 600,
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    {item.value}
+                  </div>
+                </span>
+              </div>
+            ))}
           </Space>
           <Space wrap>
             {summary.gpu && <Tag color="purple">GPU</Tag>}
@@ -706,11 +796,13 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
 
     return (
       <Space orientation="vertical" size={10} style={{ width: "100%" }}>
-        <ProjectCreateHealthCard open={open} />
-        {renderPresetSection()}
         <Form form={form} layout="vertical">
           <Form.Item
-            label={intl.formatMessage(labels.title)}
+            label={
+              <span style={{ fontWeight: 700 }}>
+                {intl.formatMessage(labels.title)}
+              </span>
+            }
             name="title"
             style={{ marginBottom: 0 }}
             initialValue={draft.title}
@@ -732,6 +824,12 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             />
           </Form.Item>
         </Form>
+        <div>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>
+            Choose a preset
+          </div>
+          {renderPresetSection()}
+        </div>
         {renderRootfsSection()}
         <SelectNewHost
           disabled={saving}
@@ -741,47 +839,12 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
           regionLabel={R2_REGION_LABELS[draft.region]}
           wantsGpu={summary.gpu}
           pickerMode="create"
+          pickerDisplay="inline"
+          pickerOpen={hostPickerOpen}
+          onPickerOpenChange={setHostPickerOpen}
+          showHelp={false}
         />
-        <Button
-          type="link"
-          onClick={() => setAdvancedOpen(!draft.advanced_open)}
-          style={{ paddingLeft: 0 }}
-        >
-          {draft.advanced_open ? "Hide advanced" : "Show advanced"}
-        </Button>
-        {draft.advanced_open && (
-          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-            <Paragraph type="secondary">
-              <FormattedMessage
-                id="projects.create-project.explanation"
-                defaultMessage={`A <A1>{projectLabel}</A1> is a private computational environment
-                  where you can work with collaborators that you explicitly invite.`}
-                values={{
-                  projectLabel: projectLabelLower,
-                  A1: (c) => (
-                    <A href="https://doc.cocalc.com/project.html">{c}</A>
-                  ),
-                }}
-              />
-            </Paragraph>
-            <Card size="small" styles={{ body: { padding: "10px 12px" } }}>
-              <Space
-                orientation="vertical"
-                size="small"
-                style={{ width: "100%" }}
-              >
-                <div style={{ fontWeight: 600 }}>Backup region</div>
-                <Select
-                  value={draft.region}
-                  onChange={(value) => setRegion(value as R2Region)}
-                  options={regionOptions}
-                  disabled={saving}
-                />
-                {renderRegionExplanation()}
-              </Space>
-            </Card>
-          </Space>
-        )}
+        {hostPickerOpen && renderRegionExplanation()}
         {render_error()}
       </Space>
     );
@@ -801,11 +864,32 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     <Modal
       open={open}
       destroyOnHidden
-      width="min(1100px, 96vw)"
+      width="min(1180px, 96vw)"
       title={
-        <Space size="small">
-          <Icon name="plus-circle" />
-          {intl.formatMessage(labels.create_project)}
+        <Space size="middle" align="start">
+          <span
+            style={{
+              alignItems: "center",
+              background: COLORS.ANTD_BG_BLUE_L,
+              borderRadius: 10,
+              color: COLORS.BS_BLUE_TEXT,
+              display: "inline-flex",
+              height: 36,
+              justifyContent: "center",
+              marginTop: 1,
+              width: 36,
+            }}
+          >
+            <Icon name="plus-circle" />
+          </span>
+          <span>
+            <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.1 }}>
+              {intl.formatMessage(labels.create_project)}
+            </div>
+            <Typography.Text type="secondary" style={{ fontWeight: 400 }}>
+              Pick a good default now. Everything can be changed later.
+            </Typography.Text>
+          </span>
         </Space>
       }
       onCancel={cancel_editing}
@@ -813,18 +897,20 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
       maskClosable={!saving}
       styles={{
         body: {
-          maxHeight: "min(760px, 88vh)",
+          background: COLORS.GRAY_LLL,
+          maxHeight: "min(780px, 88vh)",
           overflowY: "auto",
-          paddingRight: 10,
+          padding: 14,
         },
       }}
     >
-      <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+      <Space orientation="vertical" size={12} style={{ width: "100%" }}>
+        <ProjectCreateHealthCard open={open} />
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "minmax(0, 1fr) minmax(260px, 320px)",
-            gap: 14,
+            gridTemplateColumns: "minmax(0, 1fr) minmax(320px, 380px)",
+            gap: 24,
             alignItems: "start",
           }}
         >
@@ -838,24 +924,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
 
 function presetTitle(mode: ProjectCreateMode): string {
   return PROJECT_PRESETS.find((preset) => preset.mode === mode)?.title ?? mode;
-}
-
-function summaryRow(label: string, value: React.ReactNode): React.JSX.Element {
-  return (
-    <div>
-      <div style={{ color: COLORS.GRAY_M, fontSize: 11 }}>{label}</div>
-      <div
-        style={{
-          color: COLORS.GRAY_D,
-          fontSize: 13,
-          fontWeight: 600,
-          overflowWrap: "anywhere",
-        }}
-      >
-        {value}
-      </div>
-    </div>
-  );
 }
 
 function renderRootfsWarning(

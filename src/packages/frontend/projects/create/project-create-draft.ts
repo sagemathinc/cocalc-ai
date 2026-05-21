@@ -30,7 +30,6 @@ export type ProjectCreateDraft = {
   rootfs_image: string;
   rootfs_image_id?: string;
   start: boolean;
-  advanced_open: boolean;
   rootfs_touched: boolean;
   host_touched: boolean;
 };
@@ -270,7 +269,6 @@ export function createInitialProjectDraft(
     mode: "standard",
     region: context.preferredRegion || DEFAULT_R2_REGION,
     start: true,
-    advanced_open: false,
     rootfs_image: DEFAULT_PROJECT_IMAGE,
     rootfs_touched: false,
     host_touched: false,
@@ -319,7 +317,6 @@ export function applyProjectPreset(
     {
       ...draft,
       mode,
-      advanced_open: mode === "custom" ? true : draft.advanced_open,
       rootfs_touched: false,
     },
     context,
@@ -377,13 +374,6 @@ export function setProjectDraftStart(
   start: boolean,
 ): ProjectCreateDraft {
   return { ...draft, start };
-}
-
-export function setProjectDraftAdvancedOpen(
-  draft: ProjectCreateDraft,
-  advanced_open: boolean,
-): ProjectCreateDraft {
-  return { ...draft, advanced_open };
 }
 
 export function projectDraftToCreateOptions(
