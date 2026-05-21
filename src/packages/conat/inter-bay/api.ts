@@ -147,6 +147,26 @@ export interface ResolveProjectCollabInviteDirectoryRequest {
   token_hash?: string;
 }
 
+export interface AccountImpersonationGrantDirectoryEntry {
+  grant_id: string;
+  subject_account_id: string;
+  subject_home_bay_id: string;
+  status?: string | null;
+  expires_at?: Date | string | null;
+}
+
+export interface UpsertAccountImpersonationGrantDirectoryRequest {
+  grant_id: string;
+  subject_account_id: string;
+  subject_home_bay_id: string;
+  status?: string | null;
+  expires_at?: Date | string | null;
+}
+
+export interface ResolveAccountImpersonationGrantDirectoryRequest {
+  grant_id: string;
+}
+
 export interface ProjectControlStartRequest {
   project_id: string;
   account_id: string;
@@ -1294,7 +1314,9 @@ export type DirectoryMethod =
   | "resolve-project-bay"
   | "resolve-host-bay"
   | "resolve-project-collab-invite"
-  | "upsert-project-collab-invite";
+  | "upsert-project-collab-invite"
+  | "resolve-account-impersonation-grant"
+  | "upsert-account-impersonation-grant";
 export type BayDirectoryMethod = DirectoryMethod;
 export type ProjectReferenceMethod = "get";
 export type ProjectDetailsMethod = "get";
@@ -1517,6 +1539,18 @@ interface UpsertProjectCollabInviteDirectoryApi {
   ) => Promise<void>;
 }
 
+interface ResolveAccountImpersonationGrantDirectoryApi {
+  resolveAccountImpersonationGrant: (
+    opts: ResolveAccountImpersonationGrantDirectoryRequest,
+  ) => Promise<AccountImpersonationGrantDirectoryEntry | null>;
+}
+
+interface UpsertAccountImpersonationGrantDirectoryApi {
+  upsertAccountImpersonationGrant: (
+    opts: UpsertAccountImpersonationGrantDirectoryRequest,
+  ) => Promise<void>;
+}
+
 export interface InterBayDirectoryApi {
   resolveProjectBay: (
     opts: ResolveProjectBayRequest,
@@ -1527,6 +1561,12 @@ export interface InterBayDirectoryApi {
   ) => Promise<ProjectCollabInviteDirectoryEntry | null>;
   upsertProjectCollabInvite: (
     opts: UpsertProjectCollabInviteDirectoryRequest,
+  ) => Promise<void>;
+  resolveAccountImpersonationGrant: (
+    opts: ResolveAccountImpersonationGrantDirectoryRequest,
+  ) => Promise<AccountImpersonationGrantDirectoryEntry | null>;
+  upsertAccountImpersonationGrant: (
+    opts: UpsertAccountImpersonationGrantDirectoryRequest,
   ) => Promise<void>;
 }
 
@@ -2739,6 +2779,20 @@ export function createInterBayDirectoryClient({
       ...serviceClientOptions({ client, timeout }),
       subject: directorySubject({ method: "upsert-project-collab-invite" }),
     });
+  const resolveAccountImpersonationGrantClient =
+    createServiceClient<ResolveAccountImpersonationGrantDirectoryApi>({
+      ...serviceClientOptions({ client, timeout }),
+      subject: directorySubject({
+        method: "resolve-account-impersonation-grant",
+      }),
+    });
+  const upsertAccountImpersonationGrantClient =
+    createServiceClient<UpsertAccountImpersonationGrantDirectoryApi>({
+      ...serviceClientOptions({ client, timeout }),
+      subject: directorySubject({
+        method: "upsert-account-impersonation-grant",
+      }),
+    });
   return {
     resolveProjectBay: async (opts) =>
       await resolveProjectBayClient.resolveProjectBay(opts),
@@ -2748,6 +2802,14 @@ export function createInterBayDirectoryClient({
       await resolveProjectCollabInviteClient.resolveProjectCollabInvite(opts),
     upsertProjectCollabInvite: async (opts) =>
       await upsertProjectCollabInviteClient.upsertProjectCollabInvite(opts),
+    resolveAccountImpersonationGrant: async (opts) =>
+      await resolveAccountImpersonationGrantClient.resolveAccountImpersonationGrant(
+        opts,
+      ),
+    upsertAccountImpersonationGrant: async (opts) =>
+      await upsertAccountImpersonationGrantClient.upsertAccountImpersonationGrant(
+        opts,
+      ),
   };
 }
 
@@ -2792,6 +2854,28 @@ export function createInterBayDirectoryHandlers({
           await impl.upsertProjectCollabInvite(opts),
       },
     }),
+    createServiceHandler<ResolveAccountImpersonationGrantDirectoryApi>({
+      ...options,
+      service: "inter-bay-directory",
+      subject: directorySubject({
+        method: "resolve-account-impersonation-grant",
+      }),
+      impl: {
+        resolveAccountImpersonationGrant: async (opts) =>
+          await impl.resolveAccountImpersonationGrant(opts),
+      },
+    }),
+    createServiceHandler<UpsertAccountImpersonationGrantDirectoryApi>({
+      ...options,
+      service: "inter-bay-directory",
+      subject: directorySubject({
+        method: "upsert-account-impersonation-grant",
+      }),
+      impl: {
+        upsertAccountImpersonationGrant: async (opts) =>
+          await impl.upsertAccountImpersonationGrant(opts),
+      },
+    }),
   ];
 }
 
@@ -2828,6 +2912,12 @@ export function createInterBayBayDirectoryClient({
     },
     upsertProjectCollabInvite: async () => {
       throw new Error("project collab invite directory is global-only");
+    },
+    resolveAccountImpersonationGrant: async () => {
+      throw new Error("account impersonation grant directory is global-only");
+    },
+    upsertAccountImpersonationGrant: async () => {
+      throw new Error("account impersonation grant directory is global-only");
     },
   };
 }

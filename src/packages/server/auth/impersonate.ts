@@ -13,6 +13,7 @@ import {
   verifyHomeBayRetryToken,
 } from "@cocalc/server/auth/home-bay-retry-token";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
+import { resolveAccountImpersonationGrantDirectory } from "@cocalc/server/auth/impersonation-grant-directory";
 import setSignInCookies from "@cocalc/server/auth/set-sign-in-cookies";
 import clearAuthCookies from "@cocalc/server/auth/clear-auth-cookies";
 import {
@@ -56,7 +57,13 @@ async function doIt({ req, res }) {
   } else if (hasGrantId) {
     account_id = `${account_id_param ?? ""}`.trim();
     if (!account_id) {
-      throw Error("account_id is required for impersonation grants");
+      const entry = await resolveAccountImpersonationGrantDirectory({
+        grant_id: grantId,
+      });
+      account_id = `${entry?.subject_account_id ?? ""}`.trim();
+      if (!account_id) {
+        throw Error("invalid or expired impersonation grant");
+      }
     }
   } else {
     throw Error("grant_id is required");
@@ -80,7 +87,6 @@ async function doIt({ req, res }) {
     target.searchParams.set("retry_token", retry.token);
     if (hasGrantId) {
       target.searchParams.set("grant_id", grantId);
-      target.searchParams.set("account_id", account_id);
     }
     if (isLocale(lang_temp)) {
       target.searchParams.set("lang_temp", lang_temp);
