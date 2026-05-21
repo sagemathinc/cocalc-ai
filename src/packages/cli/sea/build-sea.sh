@@ -6,15 +6,18 @@ SEA_DIR="$(realpath "$(dirname "$0")")"
 BUILD_DIR="$ROOT/packages/cli/build/sea"
 BUNDLE_ENTRY="$ROOT/packages/cli/build/bundle/index.js"
 NAME="cocalc-cli"
-VERSION="${npm_package_version:-$(node -p "require('$ROOT/packages/cli/package.json').version")}"
+# shellcheck source=../../project-host/sea/node-bin.sh
+source "$ROOT/packages/project-host/sea/node-bin.sh"
+NODE_BIN="$(resolve_sea_node_bin)"
+VERSION="${npm_package_version:-$("$NODE_BIN" -p "require('$ROOT/packages/cli/package.json').version")}"
 MACHINE="$(uname -m)"
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-NODE_BIN="$(command -v node)"
 TARGET="$BUILD_DIR/$NAME-$VERSION-$MACHINE-$OS"
 SIGN_ID="${COCALC_CLI_SIGN_ID:-}"
 ENTITLEMENTS="${COCALC_CLI_ENTITLEMENTS:-entitlements.plist}"
 
 echo "Building CoCalc CLI SEA for $OS/$MACHINE"
+echo "Using Node.js $("$NODE_BIN" -p 'process.version') at $NODE_BIN"
 
 "$SEA_DIR/build-bundle.sh"
 
@@ -30,7 +33,7 @@ chmod u+w "$TARGET"
 cp "$BUNDLE_ENTRY" "$SEA_DIR/cocalc.js"
 
 cd "$SEA_DIR"
-node --experimental-sea-config sea-config.json
+"$NODE_BIN" --experimental-sea-config sea-config.json
 
 FUSE="$(strings "$NODE_BIN" | rg -o 'NODE_SEA_FUSE_[a-f0-9]+' -m 1 || true)"
 if [ -z "$FUSE" ]; then
