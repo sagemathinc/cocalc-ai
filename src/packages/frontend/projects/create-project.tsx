@@ -75,19 +75,19 @@ const PROJECT_PRESETS: {
   {
     mode: "standard",
     title: "Standard",
-    description: "Default image, automatic host, nearest backups.",
+    description: "Default or catalog-tagged base image, automatic host.",
     icon: "project-outlined",
   },
   {
     mode: "gpu",
     title: "GPU",
-    description: "GPU-capable image when one is available.",
+    description: "GPU-tagged image when one is available.",
     icon: "bolt",
   },
   {
     mode: "teaching",
     title: "Teaching",
-    description: "Stable defaults for classes and workshops.",
+    description: "Teaching-tagged image for classes and workshops.",
     icon: "graduation-cap",
   },
   {
@@ -102,7 +102,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
-  const projectsLabel = intl.formatMessage(labels.projects);
 
   const [error, set_error] = useState<string>("");
   const [createAction, setCreateAction] = useState<"create" | "open" | null>(
@@ -123,6 +122,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     rootfsImages,
     rootfsLoading,
     rootfsError,
+    context,
     isAdmin,
     selectedHost,
     setAdvancedOpen,
@@ -565,6 +565,61 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     );
   }
 
+  function renderRegionFact(label: string, value: React.ReactNode) {
+    return (
+      <div>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {label}
+        </Typography.Text>
+        <div style={{ fontWeight: 600 }}>{value}</div>
+      </div>
+    );
+  }
+
+  function renderRegionExplanation(): React.JSX.Element {
+    const selectedRegionLabel = R2_REGION_LABELS[draft.region];
+    const nearbyRegionLabel = R2_REGION_LABELS[context.preferredRegion];
+    const providerRegion = selectedHost?.region?.trim();
+    const remoteFromBrowser = context.preferredRegion !== draft.region;
+
+    return (
+      <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+        <div
+          style={{
+            display: "grid",
+            gap: 10,
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(min(150px, 100%), 1fr))",
+          }}
+        >
+          {renderRegionFact("Near you", nearbyRegionLabel)}
+          {renderRegionFact("Project backups", selectedRegionLabel)}
+          {renderRegionFact(
+            "Provider region",
+            providerRegion ? <code>{providerRegion}</code> : "Automatic",
+          )}
+        </div>
+        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          Region choice mainly changes interactive latency: lag when typing in a
+          terminal and time to see Jupyter notebook output. It does not lock in
+          the project; you can change hosts or move to another region later.
+        </Paragraph>
+        {remoteFromBrowser && (
+          <Alert
+            type="info"
+            showIcon
+            message={`This is not your nearest detected region (${nearbyRegionLabel}). It may still be the best choice when the available hosts there are faster or less busy.`}
+          />
+        )}
+        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          If you later move a project to a different backup region, the current
+          files move with it, but older backup history is not fully carried
+          over.
+        </Paragraph>
+      </Space>
+    );
+  }
+
   function renderSummarySection(): React.JSX.Element {
     const title =
       `${(new_project_title_ref.current as any)?.input?.value ?? titlePreview}`.trim() ||
@@ -722,10 +777,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                   options={regionOptions}
                   disabled={saving}
                 />
-                <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-                  Backups are stored in this region. {projectsLabel} can only
-                  run on hosts in the same region.
-                </Paragraph>
+                {renderRegionExplanation()}
               </Space>
             </Card>
           </Space>

@@ -199,6 +199,93 @@ describe("project create draft", () => {
     expect(draft.rootfs_image_id).toBe("gpu");
   });
 
+  it("uses catalog preset tags for the teaching preset", () => {
+    const teaching = image("teaching", "cocalc.local/rootfs/teaching", {
+      official: true,
+      priority: 10,
+      release_id: "release-teaching",
+      tags: ["teaching"],
+    });
+    const ctx = context({
+      rootfsImages: [...context().rootfsImages, teaching],
+    });
+    const draft = applyProjectPreset(
+      createInitialProjectDraft(ctx),
+      "teaching",
+      ctx,
+    );
+
+    expect(draft.mode).toBe("teaching");
+    expect(draft.rootfs_image).toBe("cocalc.local/rootfs/teaching");
+    expect(draft.rootfs_image_id).toBe("teaching");
+  });
+
+  it("prefers preset-specific tags over generic tags", () => {
+    const genericGpu = image("generic-gpu", "cocalc.local/rootfs/generic-gpu", {
+      official: true,
+      gpu: true,
+      priority: 1000,
+      release_id: "release-generic-gpu",
+      tags: ["gpu"],
+    });
+    const presetGpu = image("preset-gpu", "cocalc.local/rootfs/preset-gpu", {
+      gpu: true,
+      release_id: "release-preset-gpu",
+      tags: ["preset:gpu"],
+    });
+    const ctx = context({
+      rootfsImages: [context().rootfsImages[0], genericGpu, presetGpu],
+      siteDefaultRootfsGpu: undefined,
+    });
+
+    const draft = applyProjectPreset(
+      createInitialProjectDraft(ctx),
+      "gpu",
+      ctx,
+    );
+
+    expect(draft.rootfs_image).toBe("cocalc.local/rootfs/preset-gpu");
+    expect(draft.rootfs_image_id).toBe("preset-gpu");
+  });
+
+  it("does not select hidden preset-tagged RootFS entries", () => {
+    const hiddenTeaching = image(
+      "hidden-teaching",
+      "cocalc.local/rootfs/hidden-teaching",
+      {
+        hidden: true,
+        official: true,
+        release_id: "release-hidden-teaching",
+        tags: ["preset:teaching"],
+      },
+    );
+    const fallbackTeaching = image(
+      "fallback-teaching",
+      "cocalc.local/rootfs/fallback-teaching",
+      {
+        official: true,
+        release_id: "release-fallback-teaching",
+        tags: ["teaching"],
+      },
+    );
+    const ctx = context({
+      rootfsImages: [
+        ...context().rootfsImages,
+        hiddenTeaching,
+        fallbackTeaching,
+      ],
+    });
+
+    const draft = applyProjectPreset(
+      createInitialProjectDraft(ctx),
+      "teaching",
+      ctx,
+    );
+
+    expect(draft.rootfs_image).toBe("cocalc.local/rootfs/fallback-teaching");
+    expect(draft.rootfs_image_id).toBe("fallback-teaching");
+  });
+
   it("falls back to the default project image when no catalog image exists", () => {
     const draft = createInitialProjectDraft(
       context({
