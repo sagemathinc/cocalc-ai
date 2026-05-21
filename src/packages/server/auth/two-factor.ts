@@ -17,6 +17,7 @@ import getPool from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
+import getEmailAddress from "@cocalc/server/accounts/get-email-address";
 import hasPassword from "@cocalc/server/auth/has-password";
 import {
   getImpersonationBootstrapInfo,
@@ -654,6 +655,7 @@ export async function getFreshAuthStatus({
   mode: "account" | "impersonation_actor";
   enabled: boolean;
   methods: SecondFactorMethod[];
+  email_address?: string | null;
   actor_account_id?: string;
   actor_email_address?: string | null;
   actor_name?: string | null;
@@ -681,6 +683,7 @@ export async function getFreshAuthStatus({
     mode: "account",
     enabled: methods.length > 0,
     methods,
+    email_address: (await getEmailAddress(accountId)) ?? null,
   };
 }
 
