@@ -681,15 +681,14 @@ async function ensureManagedRootfsCacheIsUsable({
   const preflight = await loadRootfsPreflightMetadata(finalPreflightPath);
   if (preflight == null || preflight.version !== ROOTFS_NORMALIZER_VERSION) {
     const counts = rootfsUsageCounts(usage);
-    if (counts.project_count > 0 || counts.running > 0) {
+    if (counts.running > 0) {
       throw new Error(
-        `cached managed RootFS '${image}' does not satisfy RootFS preflight v${ROOTFS_NORMALIZER_VERSION} and is currently in use by ${counts.project_count} project(s); reprovision the host or flush the RootFS cache before using this image`,
+        `cached managed RootFS '${image}' does not satisfy RootFS preflight v${ROOTFS_NORMALIZER_VERSION} and is currently in use by ${counts.running} running project(s); stop those projects, reprovision the host, or flush the RootFS cache before using this image`,
       );
     }
     await deleteCachedManagedRootfs({
       image,
-      reason:
-        "cached image is missing or outdated RootFS preflight metadata; refreshing cache entry",
+      reason: `cached image is missing or outdated RootFS preflight metadata; refreshing cache entry referenced by ${counts.project_count} stopped project(s)`,
     });
     return false;
   }

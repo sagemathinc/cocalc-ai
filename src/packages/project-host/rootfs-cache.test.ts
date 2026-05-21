@@ -48,6 +48,7 @@ import {
   preflightMetadataFilePath,
 } from "@cocalc/project-runner/run/rootfs-base";
 import { hubApi } from "@cocalc/lite/hub/api";
+import { listProjects } from "./sqlite/projects";
 
 import {
   pullRootfsCacheEntry,
@@ -63,6 +64,7 @@ describe("rootfs-cache", () => {
     });
     await mkdir(mockTestImageCache, { recursive: true });
     jest.clearAllMocks();
+    jest.mocked(listProjects).mockReturnValue([]);
   });
 
   afterAll(async () => {
@@ -157,5 +159,54 @@ describe("rootfs-cache", () => {
     expect(entry.size_bytes).toBe(123);
     expect(entry.project_count).toBe(0);
     expect(entry.running_project_count).toBe(0);
+  });
+
+  it("refreshes an outdated managed RootFS cache referenced only by stopped projects", async () => {
+    const image = `cocalc.local/rootfs/${"c".repeat(64)}`;
+    const cachePath = imageCachePath(image);
+    await mkdir(join(cachePath, "usr"), { recursive: true });
+    jest.mocked(listProjects).mockReturnValue([
+      {
+        project_id: "11111111-1111-4111-8111-111111111111",
+        state: "opened",
+        image,
+      },
+    ]);
+
+    const getManagedRootfsReleaseArtifact = jest.mocked(
+      hubApi.hosts.getManagedRootfsReleaseArtifact,
+    );
+    getManagedRootfsReleaseArtifact.mockRejectedValue(
+      new Error("hub called after local refresh"),
+    );
+
+    await expect(
+      pullRootfsCacheEntry(image, {
+        awaitRegionalReplication: false,
+      }),
+    ).rejects.toThrow("hub called after local refresh");
+    expect(getManagedRootfsReleaseArtifact).toHaveBeenCalledWith({ image });
+  });
+
+  it("does not refresh an outdated managed RootFS cache while projects are running", async () => {
+    const image = `cocalc.local/rootfs/${"d".repeat(64)}`;
+    const cachePath = imageCachePath(image);
+    await mkdir(join(cachePath, "usr"), { recursive: true });
+    jest.mocked(listProjects).mockReturnValue([
+      {
+        project_id: "22222222-2222-4222-8222-222222222222",
+        state: "running",
+        image,
+      },
+    ]);
+
+    await expect(
+      pullRootfsCacheEntry(image, {
+        awaitRegionalReplication: false,
+      }),
+    ).rejects.toThrow(
+      `cached managed RootFS '${image}' does not satisfy RootFS preflight v${ROOTFS_NORMALIZER_VERSION} and is currently in use by 1 running project(s)`,
+    );
+    expect(hubApi.hosts.getManagedRootfsReleaseArtifact).not.toHaveBeenCalled();
   });
 });
