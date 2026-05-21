@@ -216,7 +216,8 @@ Historical uptime:
 
 Host creation path:
 
-- If the user's tier can create hosts, show a concise path: `Need dedicated capacity? Create your own host.`
+- If the user's tier can create hosts, show a concise path: `Need dedicated
+  capacity? Create your own host.`
 - If the user cannot create hosts, explain the membership/admin requirement.
 - This should be visible without overwhelming first-run users.
 
@@ -631,24 +632,6 @@ Requirements:
 - Make latency impact explicit and concrete.
 - Show privacy-preserving host load and reliability labels.
 - Keep host creation path visible when eligible.
-
-Implemented foundation:
-
-- Added a pure, tested host recommendation helper under `frontend/hosts` that ranks available hosts,
-  separates unavailable hosts, prefers same backup region, falls back to remote
-  hosts, accounts for host pressure, spot/fallback status, GPU fit, explicit
-  selection, and known GCP relative CPU speed.
-- This is intentionally not wired into the create modal yet. The next Phase C
-  UI step should consume this helper from the host picker/recommendation card
-  without changing project creation semantics at the same time.
-
-Implemented first UI slice:
-
-- The project create host picker now uses the recommendation model in create
-  mode, including GPU intent and selected-host intent.
-- The picker still starts in the project's backup region, but if no available
-  host exists there and a remote host is available, it automatically expands to
-  all regions and explains that the main impact is interactive latency.
 
 Validation:
 
