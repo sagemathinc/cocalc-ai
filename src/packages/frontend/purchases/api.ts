@@ -475,7 +475,13 @@ export async function adminProvisionSiteLicense(opts: {
   expires_at?: Date | string | null;
   metadata?: Record<string, unknown> | null;
 }): Promise<SiteLicenseOverview> {
-  return await (await getPurchasesHubRpc()).adminProvisionSiteLicense(opts);
+  const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+  return await (
+    await getPurchasesHubRpc()
+  ).adminProvisionSiteLicense({
+    ...opts,
+    browser_id: webapp_client.browser_id,
+  });
 }
 
 export async function updateMembershipPackage(opts: {

@@ -131,6 +131,7 @@ import {
   listClaimableMembershipPackagesForAccount,
   listLocalClaimableMembershipPackagesForVerifiedEmails,
   listMembershipPackageDetailsForOwner,
+  resolveClaimableMembershipPackageOwnerBay,
   updateMembershipPackage,
 } from "@cocalc/server/membership/packages";
 import {
@@ -814,11 +815,14 @@ async function startAccountLocalService(): Promise<void> {
       const ownerAccountId = `${owner_account_id ?? ""}`.trim();
       if (ownerAccountId) {
         const ownerAccount = await getClusterAccountById(ownerAccountId);
-        if (!ownerAccount) {
-          throw Error(`account ${ownerAccountId} not found`);
-        }
         const ownerBayId =
-          `${ownerAccount.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+          `${ownerAccount?.home_bay_id ?? ""}`.trim() ||
+          (await resolveClaimableMembershipPackageOwnerBay({
+            account_id,
+            package_id,
+            verified_email_addresses,
+          })) ||
+          getConfiguredBayId();
         if (ownerBayId !== getConfiguredBayId()) {
           return await createInterBayAccountLocalClient({
             client: getInterBayFabricClient(),

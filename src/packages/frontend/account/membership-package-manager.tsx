@@ -1563,6 +1563,9 @@ function ProvisionSiteLicenseModal({
   const [pools, setPools] = useState<SiteLicensePoolConfig[]>([]);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -1695,21 +1698,23 @@ function ProvisionSiteLicenseModal({
       if (cleanPools.some((pool) => !pool.pool_name)) {
         throw Error("Every pool needs a name.");
       }
-      await adminProvisionSiteLicense({
-        owner_account_id,
-        name: cleanName,
-        organization_name: cleanOrganizationName,
-        allowed_domains,
-        pools: cleanPools,
-        custom_terms_url: customTermsUrl.trim() || null,
-        custom_policy_url: customPolicyUrl.trim() || null,
-        terms_version_label: termsVersionLabel.trim() || null,
-        renewal_policy: renewalPolicy.trim() || null,
-        overage_policy: overagePolicy.trim() || null,
-        starts_at: startsAt?.startOf("day").toDate() ?? undefined,
-        expires_at: expiresAt?.endOf("day").toDate() ?? undefined,
+      await runFreshAuthAction(async () => {
+        await adminProvisionSiteLicense({
+          owner_account_id,
+          name: cleanName,
+          organization_name: cleanOrganizationName,
+          allowed_domains,
+          pools: cleanPools,
+          custom_terms_url: customTermsUrl.trim() || null,
+          custom_policy_url: customPolicyUrl.trim() || null,
+          terms_version_label: termsVersionLabel.trim() || null,
+          renewal_policy: renewalPolicy.trim() || null,
+          overage_policy: overagePolicy.trim() || null,
+          starts_at: startsAt?.startOf("day").toDate() ?? undefined,
+          expires_at: expiresAt?.endOf("day").toDate() ?? undefined,
+        });
+        await onProvisioned();
       });
-      await onProvisioned();
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -2005,6 +2010,7 @@ function ProvisionSiteLicenseModal({
             </Card>
           ))}
         </Space>
+        <FreshAuthModal {...freshAuthModalProps} />
       </Space>
     </Modal>
   );

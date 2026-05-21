@@ -17,6 +17,7 @@ const resolveMembershipPackageQuoteMock = jest.fn();
 const assignMembershipPackageSeatMock = jest.fn();
 const revokeMembershipPackageSeatMock = jest.fn();
 const listClaimableMembershipPackagesForAccountMock = jest.fn();
+const resolveClaimableMembershipPackageOwnerBayMock = jest.fn();
 const claimMembershipPackageSeatMock = jest.fn();
 const adminProvisionSiteLicenseMock = jest.fn();
 const getVerifiedEmailAddressesForAccountMock = jest.fn();
@@ -93,6 +94,8 @@ jest.mock("@cocalc/server/membership/packages", () => ({
     revokeMembershipPackageSeatMock(...args),
   listClaimableMembershipPackagesForAccount: (...args: any[]) =>
     listClaimableMembershipPackagesForAccountMock(...args),
+  resolveClaimableMembershipPackageOwnerBay: (...args: any[]) =>
+    resolveClaimableMembershipPackageOwnerBayMock(...args),
   claimMembershipPackageSeat: (...args: any[]) =>
     claimMembershipPackageSeatMock(...args),
 }));
@@ -801,6 +804,55 @@ describe("purchases membership packages", () => {
     });
 
     expect(getClusterAccountByIdDirectMock).toHaveBeenCalledWith("owner-1");
+    expect(interBayRequestSiteLicensePoolMock).toHaveBeenCalledWith({
+      account_id: "student-1",
+      package_id: "pool-remote-1",
+      verified_email_addresses: ["student@example.edu"],
+      requester_note: undefined,
+      accepted_terms: true,
+    });
+    expect(requestSiteLicensePoolMock).not.toHaveBeenCalled();
+    expect(result.id).toBe("request-remote-1");
+  });
+
+  it("routes site-license pool requests by claimable package when the requester bay cannot resolve the owner account", async () => {
+    resolveAccountHomeBayMock.mockResolvedValueOnce({
+      account_id: "student-1",
+      home_bay_id: "bay-0",
+      source: "cluster-directory",
+    });
+    resolveAccountHomeBayMock.mockRejectedValueOnce(
+      new Error("not authorized"),
+    );
+    getClusterAccountByIdDirectMock.mockResolvedValue(null);
+    getVerifiedEmailAddressesForAccountMock.mockResolvedValue([
+      "student@example.edu",
+    ]);
+    resolveClaimableMembershipPackageOwnerBayMock.mockResolvedValue("bay-2");
+    interBayRequestSiteLicensePoolMock.mockResolvedValue({
+      id: "request-remote-1",
+      site_license_id: "license-remote-1",
+      package_id: "pool-remote-1",
+      account_id: "student-1",
+      matched_email_address: "student@example.edu",
+      canonical_identity: "student@example.edu",
+      requested_membership_class: "member",
+      state: "pending",
+    });
+
+    const { requestSiteLicensePool } = await import("./purchases");
+    const result = await requestSiteLicensePool({
+      account_id: "student-1",
+      owner_account_id: "owner-1",
+      package_id: "pool-remote-1",
+      accepted_terms: true,
+    });
+
+    expect(resolveClaimableMembershipPackageOwnerBayMock).toHaveBeenCalledWith({
+      account_id: "student-1",
+      package_id: "pool-remote-1",
+      verified_email_addresses: ["student@example.edu"],
+    });
     expect(interBayRequestSiteLicensePoolMock).toHaveBeenCalledWith({
       account_id: "student-1",
       package_id: "pool-remote-1",

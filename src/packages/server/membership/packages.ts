@@ -1973,6 +1973,25 @@ async function listClaimableMembershipPackagesAcrossCluster({
   return sortClaimableMembershipPackages(Array.from(claimables.values()));
 }
 
+export async function resolveClaimableMembershipPackageOwnerBay({
+  package_id,
+  account_id,
+  verified_email_addresses,
+  client,
+}: {
+  package_id: string;
+  account_id: string;
+  verified_email_addresses: string[];
+  client?: PoolClient;
+}): Promise<string | undefined> {
+  const claimables = await listClaimableMembershipPackagesAcrossCluster({
+    account_id,
+    verified_email_addresses,
+    client,
+  });
+  return claimables.find((row) => row.package_id === package_id)?.owner_bay_id;
+}
+
 export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
   package_id,
   account_id,

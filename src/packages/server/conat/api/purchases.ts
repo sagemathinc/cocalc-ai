@@ -19,6 +19,7 @@ import {
   getMembershipPackage,
   listClaimableMembershipPackagesForAccount,
   listMembershipPackageDetailsForOwner,
+  resolveClaimableMembershipPackageOwnerBay,
   resolveMembershipPackageQuote as resolveMembershipPackageQuote0,
   revokeMembershipPackageSeat as revokeMembershipPackageSeat0,
   updateMembershipPackage as updateMembershipPackage0,
@@ -852,6 +853,7 @@ export async function requestSiteLicensePool({
 } = {}): Promise<SiteLicensePoolRequest> {
   const actorId = requireAccount(account_id);
   const ownerAccountId = `${owner_account_id ?? ""}`.trim();
+  const packageId = `${package_id ?? ""}`.trim();
   const actorHomeBayId = await resolveTargetAccountHomeBay({
     account_id: actorId,
     user_account_id: actorId,
@@ -863,7 +865,7 @@ export async function requestSiteLicensePool({
     }).requestSiteLicensePoolForAccount({
       account_id: actorId,
       owner_account_id: ownerAccountId || undefined,
-      package_id: `${package_id ?? ""}`.trim(),
+      package_id: packageId,
       requester_note,
       accepted_terms,
     });
@@ -873,18 +875,44 @@ export async function requestSiteLicensePool({
     "request site-license pool",
   );
   if (ownerAccountId) {
-    const home_bay_id = await resolveTargetAccountHomeBay({
-      account_id: actorId,
-      user_account_id: ownerAccountId,
-      allow_cross_account_routing: true,
-    });
+    let home_bay_id: string | undefined;
+    try {
+      home_bay_id = await resolveTargetAccountHomeBay({
+        account_id: actorId,
+        user_account_id: ownerAccountId,
+        allow_cross_account_routing: true,
+      });
+    } catch (err) {
+      const verifiedEmailAddresses =
+        await getVerifiedEmailAddressesForAccount(actorId);
+      home_bay_id = await resolveClaimableMembershipPackageOwnerBay({
+        account_id: actorId,
+        package_id: packageId,
+        verified_email_addresses: verifiedEmailAddresses,
+      });
+      if (!home_bay_id) {
+        throw err;
+      }
+      if (home_bay_id !== getConfiguredBayId()) {
+        return await createInterBayAccountLocalClient({
+          client: getInterBayFabricClient(),
+          dest_bay: home_bay_id,
+        }).requestSiteLicensePool({
+          account_id: actorId,
+          package_id: packageId,
+          verified_email_addresses: verifiedEmailAddresses,
+          requester_note,
+          accepted_terms,
+        });
+      }
+    }
     if (home_bay_id !== getConfiguredBayId()) {
       return await createInterBayAccountLocalClient({
         client: getInterBayFabricClient(),
         dest_bay: home_bay_id,
       }).requestSiteLicensePool({
         account_id: actorId,
-        package_id: `${package_id ?? ""}`.trim(),
+        package_id: packageId,
         verified_email_addresses:
           await getVerifiedEmailAddressesForAccount(actorId),
         requester_note,
@@ -894,7 +922,7 @@ export async function requestSiteLicensePool({
   }
   return await requestSiteLicensePool0({
     account_id: actorId,
-    package_id: `${package_id ?? ""}`.trim(),
+    package_id: packageId,
     requester_note,
     accepted_terms,
   });
