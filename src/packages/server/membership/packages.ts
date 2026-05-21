@@ -48,7 +48,10 @@ import {
   resolveProjectBayAcrossCluster,
   resolveProjectBayDirect,
 } from "@cocalc/server/inter-bay/directory";
-import { getConfiguredClusterBayIdsForStaticEnumerationOnly } from "@cocalc/server/cluster-config";
+import {
+  getConfiguredClusterBayIdsForStaticEnumerationOnly,
+  getConfiguredClusterSeedBayId,
+} from "@cocalc/server/cluster-config";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 
@@ -115,6 +118,20 @@ const MEMBERSHIP_PACKAGE_KINDS = new Set<MembershipPackageKind>([
 
 function getQueryClient(client?: PoolClient): Queryable {
   return client ?? getPool();
+}
+
+function getSeedBayId(): string {
+  return getConfiguredClusterSeedBayId();
+}
+
+function isSeedBay(): boolean {
+  return getConfiguredBayId() === getSeedBayId();
+}
+
+function isSeedAuthoritativeSitePackage(
+  pkg: Pick<MembershipPackageRecord, "kind" | "metadata">,
+): boolean {
+  return pkg.kind === "site" && getSiteLicenseId(pkg.metadata) != null;
 }
 
 async function assertAccountPackageWriteAllowed({
@@ -901,6 +918,23 @@ async function withPackageOwnerWriteFence<T>({
   if (!pkg) {
     throw Error("membership package not found");
   }
+  if (isSeedBay() && isSeedAuthoritativeSitePackage(pkg)) {
+    if (client != null) {
+      return await fn({ client, pkg });
+    }
+    const dbClient = await getPool().connect();
+    try {
+      await dbClient.query("BEGIN");
+      const result = await fn({ client: dbClient, pkg });
+      await dbClient.query("COMMIT");
+      return result;
+    } catch (err) {
+      await dbClient.query("ROLLBACK");
+      throw err;
+    } finally {
+      dbClient.release();
+    }
+  }
   if (client != null) {
     await assertAccountPackageWriteAllowed({
       account_id: pkg.owner_account_id,
@@ -1169,7 +1203,40 @@ export async function createMembershipPackage(
   },
   client?: PoolClient,
 ): Promise<string> {
+  const normalizedKind = normalizePackageKind(kind);
+  const normalizedMetadata = normalizeMetadata(metadata);
   if (client == null) {
+    if (
+      normalizedKind === "site" &&
+      isSeedBay() &&
+      getSiteLicenseId(normalizedMetadata) != null
+    ) {
+      const dbClient = await getPool().connect();
+      try {
+        await dbClient.query("BEGIN");
+        const result = await createMembershipPackage(
+          {
+            id,
+            owner_account_id,
+            kind,
+            membership_class,
+            seat_count,
+            purchase_id,
+            starts_at,
+            expires_at,
+            metadata,
+          },
+          dbClient,
+        );
+        await dbClient.query("COMMIT");
+        return result;
+      } catch (err) {
+        await dbClient.query("ROLLBACK");
+        throw err;
+      } finally {
+        dbClient.release();
+      }
+    }
     return await withAccountRehomeWriteFence({
       account_id: owner_account_id,
       action: "create membership package",
@@ -1190,13 +1257,19 @@ export async function createMembershipPackage(
         ),
     });
   }
-  await assertAccountPackageWriteAllowed({
-    account_id: owner_account_id,
-    action: "create membership package",
-    client,
-  });
-  const normalizedKind = normalizePackageKind(kind);
-  const normalizedMetadata = normalizeMetadata(metadata);
+  if (
+    !(
+      normalizedKind === "site" &&
+      isSeedBay() &&
+      getSiteLicenseId(normalizedMetadata) != null
+    )
+  ) {
+    await assertAccountPackageWriteAllowed({
+      account_id: owner_account_id,
+      action: "create membership package",
+      client,
+    });
+  }
   if (normalizedKind === "site") {
     const allowedDomains = normalizeSitePackageDomains(
       getPackageDomains(normalizedMetadata),
@@ -2114,11 +2187,16 @@ async function listClaimableMembershipPackagesAcrossCluster({
   const addClaimables = (
     rows: ClaimableMembershipPackage[],
     owner_bay_id: string,
+    include?: (row: ClaimableMembershipPackage) => boolean,
   ) => {
     for (const row of rows) {
+      if (include != null && !include(row)) {
+        continue;
+      }
       claimables.set(row.package_id, { ...row, owner_bay_id });
     }
   };
+  const seedBayId = getSeedBayId();
   addClaimables(
     await listLocalClaimableMembershipPackagesForVerifiedEmails({
       account_id,
@@ -2126,9 +2204,20 @@ async function listClaimableMembershipPackagesAcrossCluster({
       client,
     }),
     getConfiguredBayId(),
+    (row) => row.kind !== "site" || isSeedBay(),
   );
+  if (!isSeedBay()) {
+    const seedRows = await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: seedBayId,
+    }).getClaimableMembershipPackages({
+      account_id,
+      verified_email_addresses,
+    });
+    addClaimables(seedRows, seedBayId, (row) => row.kind === "site");
+  }
   for (const bay_id of getConfiguredClusterBayIdsForStaticEnumerationOnly()) {
-    if (bay_id === getConfiguredBayId()) continue;
+    if (bay_id === getConfiguredBayId() || bay_id === seedBayId) continue;
     const remoteRows = await createInterBayAccountLocalClient({
       client: getInterBayFabricClient(),
       dest_bay: bay_id,
@@ -2136,7 +2225,7 @@ async function listClaimableMembershipPackagesAcrossCluster({
       account_id,
       verified_email_addresses,
     });
-    addClaimables(remoteRows, bay_id);
+    addClaimables(remoteRows, bay_id, (row) => row.kind !== "site");
   }
   return sortClaimableMembershipPackages(Array.from(claimables.values()));
 }

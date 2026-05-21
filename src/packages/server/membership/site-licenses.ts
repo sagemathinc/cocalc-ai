@@ -1682,141 +1682,145 @@ export async function adminProvisionSiteLicense({
   const normalizedDomains = normalizeAllowedDomains(allowed_domains);
   const normalizedPools = normalizePools(pools, normalizedDomains);
   const site_license_id = uuid();
-  return await withAccountRehomeWriteFence({
-    account_id: ownerAccountId,
-    action: "provision site license",
-    fn: async (db) => {
-      const client = db as PoolClient;
-      await ensureSiteLicenseSchema(client);
-      for (const pool of normalizedPools) {
-        await assertNoActiveSiteLicenseDomainOverlap({
-          allowed_domains: pool.allowed_domains,
-          site_license_id,
-          starts_at,
-          expires_at,
-          client,
-        });
-      }
-      await client.query(
-        `INSERT INTO site_licenses
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await ensureSiteLicenseSchema(client);
+    for (const pool of normalizedPools) {
+      await assertNoActiveSiteLicenseDomainOverlap({
+        allowed_domains: pool.allowed_domains,
+        site_license_id,
+        starts_at,
+        expires_at,
+        client,
+      });
+    }
+    await client.query(
+      `INSERT INTO site_licenses
            (id, name, organization_name, owner_account_id, allowed_domains,
             custom_terms_url, custom_policy_url, terms_version_label,
             renewal_policy, overage_policy, starts_at, expires_at, metadata,
             created, updated)
          VALUES
            ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,NOW(),NOW())`,
-        [
-          site_license_id,
-          normalizeString(name, "name"),
-          normalizeString(organization_name, "organization_name"),
-          ownerAccountId,
-          normalizedDomains,
-          normalizeOptionalString(custom_terms_url),
-          normalizeOptionalString(custom_policy_url),
-          normalizeOptionalString(terms_version_label),
-          normalizeOptionalString(renewal_policy),
-          normalizeOptionalString(overage_policy),
-          starts_at ?? null,
-          expires_at ?? null,
-          normalizeMetadata(metadata),
-        ],
-      );
-      await client.query(
-        `INSERT INTO site_license_managers
+      [
+        site_license_id,
+        normalizeString(name, "name"),
+        normalizeString(organization_name, "organization_name"),
+        ownerAccountId,
+        normalizedDomains,
+        normalizeOptionalString(custom_terms_url),
+        normalizeOptionalString(custom_policy_url),
+        normalizeOptionalString(terms_version_label),
+        normalizeOptionalString(renewal_policy),
+        normalizeOptionalString(overage_policy),
+        starts_at ?? null,
+        expires_at ?? null,
+        normalizeMetadata(metadata),
+      ],
+    );
+    await client.query(
+      `INSERT INTO site_license_managers
            (id, site_license_id, account_id, role, created_by_account_id,
             metadata, created, updated)
          VALUES ($1,$2,$3,$4,$5,$6::jsonb,NOW(),NOW())`,
-        [
-          uuid(),
-          site_license_id,
-          ownerAccountId,
-          "owner",
-          actorAccountId,
-          { provisioned_by_account_id: actorAccountId },
-        ],
-      );
-      await recordSiteLicenseAuditEvent({
+      [
+        uuid(),
         site_license_id,
-        action: "site-license-provisioned",
-        actor_account_id: actorAccountId,
-        target_account_id: ownerAccountId,
-        metadata: {
-          name: normalizeString(name, "name"),
-          organization_name: normalizeString(
-            organization_name,
-            "organization_name",
-          ),
-          allowed_domains: normalizedDomains,
-          pool_count: normalizedPools.length,
-        },
-        client,
-      });
-      await recordSiteLicenseAuditEvent({
-        site_license_id,
-        action: "manager-added",
-        actor_account_id: actorAccountId,
-        target_account_id: ownerAccountId,
-        metadata: {
-          role: "owner",
-          source: "admin-provision-site-license",
-        },
-        client,
-      });
-      for (const pool of normalizedPools) {
-        const packageId = await createMembershipPackage(
-          {
-            owner_account_id: ownerAccountId,
-            kind: "site",
-            membership_class: pool.membership_class,
-            seat_count: pool.seat_count,
-            starts_at,
-            expires_at,
-            metadata: {
-              ...normalizeMetadata(pool.metadata),
-              site_license_id,
-              pool_name: pool.pool_name,
-              allowed_domains: pool.allowed_domains,
-              requires_approval: pool.requires_approval,
-              verification_policy: pool.verification_policy,
-              exclusive_group: pool.exclusive_group,
-              claim_scope_key: getClaimScopeKey(
-                site_license_id,
-                pool.exclusive_group,
-              ),
-              claim_scope_kind: "site-license-exclusive-group",
-              affiliation_reverification_days:
-                pool.affiliation_reverification_days,
-              affiliation_reverification_grace_days:
-                pool.affiliation_reverification_grace_days,
-              provisioned_by_account_id: actorAccountId,
-              provisioned_via: "site-license",
-            },
-          },
-          client,
-        );
-        await recordSiteLicenseAuditEvent({
-          site_license_id,
-          action: "pool-created",
-          actor_account_id: actorAccountId,
-          target_account_id: ownerAccountId,
-          package_id: packageId,
+        ownerAccountId,
+        "owner",
+        actorAccountId,
+        { provisioned_by_account_id: actorAccountId },
+      ],
+    );
+    await recordSiteLicenseAuditEvent({
+      site_license_id,
+      action: "site-license-provisioned",
+      actor_account_id: actorAccountId,
+      target_account_id: ownerAccountId,
+      metadata: {
+        name: normalizeString(name, "name"),
+        organization_name: normalizeString(
+          organization_name,
+          "organization_name",
+        ),
+        allowed_domains: normalizedDomains,
+        pool_count: normalizedPools.length,
+      },
+      client,
+    });
+    await recordSiteLicenseAuditEvent({
+      site_license_id,
+      action: "manager-added",
+      actor_account_id: actorAccountId,
+      target_account_id: ownerAccountId,
+      metadata: {
+        role: "owner",
+        source: "admin-provision-site-license",
+      },
+      client,
+    });
+    for (const pool of normalizedPools) {
+      const packageId = await createMembershipPackage(
+        {
+          owner_account_id: ownerAccountId,
+          kind: "site",
+          membership_class: pool.membership_class,
+          seat_count: pool.seat_count,
+          starts_at,
+          expires_at,
           metadata: {
+            ...normalizeMetadata(pool.metadata),
+            site_license_id,
             pool_name: pool.pool_name,
-            membership_class: pool.membership_class,
-            seat_count: pool.seat_count,
+            allowed_domains: pool.allowed_domains,
             requires_approval: pool.requires_approval,
             verification_policy: pool.verification_policy,
             exclusive_group: pool.exclusive_group,
+            claim_scope_key: getClaimScopeKey(
+              site_license_id,
+              pool.exclusive_group,
+            ),
+            claim_scope_kind: "site-license-exclusive-group",
+            affiliation_reverification_days:
+              pool.affiliation_reverification_days,
+            affiliation_reverification_grace_days:
+              pool.affiliation_reverification_grace_days,
+            provisioned_by_account_id: actorAccountId,
+            provisioned_via: "site-license",
           },
-          client,
-        });
-      }
-      return await getSiteLicenseOverviewWithoutAuthorization({
+        },
+        client,
+      );
+      await recordSiteLicenseAuditEvent({
         site_license_id,
+        action: "pool-created",
+        actor_account_id: actorAccountId,
+        target_account_id: ownerAccountId,
+        package_id: packageId,
+        metadata: {
+          pool_name: pool.pool_name,
+          membership_class: pool.membership_class,
+          seat_count: pool.seat_count,
+          requires_approval: pool.requires_approval,
+          verification_policy: pool.verification_policy,
+          exclusive_group: pool.exclusive_group,
+        },
         client,
       });
-    },
-  });
+    }
+    const overview = await getSiteLicenseOverviewWithoutAuthorization({
+      site_license_id,
+      client,
+    });
+    await client.query("COMMIT");
+    return overview;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 function normalizePools(

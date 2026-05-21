@@ -75,6 +75,7 @@ describe("membership packages", () => {
   let remoteGrantRevocations: Array<{ dest_bay: string; opts: any }>;
   let remoteProjectUsageUpdates: Array<{ dest_bay: string; opts: any }>;
   const clusterBayIdsEnv = process.env.COCALC_CLUSTER_BAY_IDS;
+  const clusterSeedBayIdEnv = process.env.COCALC_CLUSTER_SEED_BAY_ID;
 
   async function markVerifiedEmail(account_id: string, email_address: string) {
     await getPool().query(
@@ -184,6 +185,11 @@ describe("membership packages", () => {
       delete process.env.COCALC_CLUSTER_BAY_IDS;
     } else {
       process.env.COCALC_CLUSTER_BAY_IDS = clusterBayIdsEnv;
+    }
+    if (clusterSeedBayIdEnv === undefined) {
+      delete process.env.COCALC_CLUSTER_SEED_BAY_ID;
+    } else {
+      process.env.COCALC_CLUSTER_SEED_BAY_ID = clusterSeedBayIdEnv;
     }
   });
 
@@ -976,8 +982,9 @@ describe("membership packages", () => {
     );
   });
 
-  it("discovers remote claimable site packages across the cluster", async () => {
+  it("discovers seed claimable site packages across the cluster", async () => {
     process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1";
+    process.env.COCALC_CLUSTER_SEED_BAY_ID = "bay-1";
     const claimant_account_id = uuid();
     const remote_package_id = uuid();
     const verifiedEmail = `ada-${uuid()}@example.edu`;
@@ -1041,8 +1048,9 @@ describe("membership packages", () => {
     );
   });
 
-  it("forwards remote claims to the package-owning bay with verified emails", async () => {
+  it("forwards remote site-license claims to the seed bay with verified emails", async () => {
     process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1";
+    process.env.COCALC_CLUSTER_SEED_BAY_ID = "bay-1";
     const claimant_account_id = uuid();
     const remote_package_id = uuid();
     const verifiedEmail = `ada-${uuid()}@example.edu`;
@@ -1097,6 +1105,10 @@ describe("membership packages", () => {
       account_id: claimant_account_id,
     });
     expect(claimed).toEqual(remoteAssignment);
+    expect(createInterBayAccountLocalClientMock).toHaveBeenCalledWith({
+      client: { id: "fabric-client" },
+      dest_bay: "bay-1",
+    });
     expect(remoteClaimMock).toHaveBeenCalledWith({
       package_id: remote_package_id,
       account_id: claimant_account_id,

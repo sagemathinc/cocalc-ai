@@ -176,10 +176,26 @@ Fields:
 
 Multibay authority:
 
-- The license should live on the owner account's home bay.
-- Claim and approval operations must route to the authoritative bay for the
-  site license/package.
-- Launchpad is the one-bay special case.
+- Site-license records should live in the seed/global Postgres database, not on
+  an arbitrary license-owner home bay.
+- Site licenses are billing/contract-like global resources. Their most important
+  invariants are global domain uniqueness, global claim discovery, and durable
+  admin/support visibility.
+- The license owner account is a manager/contact for the license, not the
+  storage authority for the license.
+- Account rehome must not move site-license records. Rehoming a manager account
+  changes where that manager's account state lives, but the organization
+  license stays in the seed/global authority.
+- Claim and approval operations should route to the seed/global site-license
+  service. Resulting user grants and grant side effects are then written or
+  synchronized to the claiming user's home bay.
+- Launchpad is the one-bay special case where the seed/global database and the
+  only bay database are the same deployment.
+
+This supersedes the earlier owner-home-bay design. The owner-home-bay design
+made site-license placement arbitrary, forced claim discovery to scan all bays,
+made global domain uniqueness difficult, and introduced account-rehome bugs
+because site-license side tables were easy to omit from portable account state.
 
 ### Seat Pools
 
@@ -205,6 +221,18 @@ For each pool:
 
 This keeps grants, assignments, package claims, billing integration, and
 effective membership resolution tied to the existing package system.
+
+Important multibay correction:
+
+- In the final architecture, site-license pools should be global/seed-backed.
+  They can initially continue to use `membership_packages.kind = "site"` if that
+  table is accessed through a seed-authoritative site-license service.
+- Long term, it may be cleaner to split site-license pools into a dedicated
+  `site_license_pools` table instead of overloading bay-local
+  `membership_packages`. The important invariant is that the domain-to-pool
+  lookup is seed/global, not bay-local.
+- User-specific grant records remain on the user's home bay, because effective
+  membership is account state and must move with account rehome.
 
 ### Custom Terms and Policies
 
@@ -321,6 +349,210 @@ Rules:
 - Approval must recheck cap availability before creating the grant.
 - Rejection should be final for the specific request but allow a new request
   after a cooldown or manager reset.
+
+## Seed/Global Site-License Architecture
+
+Site licenses should be treated as seed/global control-plane state, similar to
+billing and directory data, not as bay-local account state.
+
+### Why Seed/Global Authority
+
+Option 1, storing site licenses on an arbitrary owner account home bay, is not a
+good architecture:
+
+- the owner account's home bay is operationally arbitrary;
+- claim discovery requires scanning every bay that might contain a matching
+  domain;
+- global domain uniqueness cannot be enforced by a local bay query;
+- account rehome must copy or redirect site-license tables, requests, managers,
+  audit logs, package rows, and side-effect rows;
+- forgetting any one of those tables creates subtle production bugs;
+- support and sales workflows become harder because the license may be anywhere.
+
+Option 2, giving site licenses their own `owning_bay_id`, is cleaner than option
+1, but it still creates a new rehome/move domain:
+
+- a global `site_license_id -> owning_bay_id` directory is required;
+- a global domain index is still required for uniqueness and discovery;
+- site-license move/drain needs locks, routing, retries, repair, and CLI
+  tooling;
+- every new site-license table must be included in site-license move/backup
+  semantics;
+- this repeats the same class of rehome bugs already seen for accounts,
+  projects, and hosts.
+
+Option 3, seed/global authority, is the recommended model:
+
+- one database enforces global domain uniqueness;
+- claim discovery becomes a direct indexed lookup by verified email domain;
+- there is no site-license rehome state machine;
+- account rehome and bay drain do not move organization contracts;
+- the seed database is the natural HA/durable location for billing-adjacent
+  contract data;
+- site-license volume should be bounded compared with projects, files,
+  collaborators, and project-host state.
+
+### Authoritative Tables
+
+Seed/global Postgres should own these tables:
+
+- `site_licenses`
+- `site_license_domains`
+- `site_license_pools` or seed-authoritative `membership_packages.kind = "site"`
+  rows
+- `site_license_managers`
+- `site_license_pool_requests`
+- `site_license_audit_log`
+- site-license claim-directory rows for institutional identities, or a
+  seed/global equivalent scoped by `site_license_id` and `exclusive_group`
+
+Bay-local account Postgres should own:
+
+- `membership_grants` for accounts homed on that bay
+- account-facing grant projections and side effects
+- any per-account notification state
+- local cached/projection rows, if we later add them for performance
+
+Do not store authoritative site-license state on the account home bay merely
+because a manager or owner account is homed there.
+
+### Domain Index
+
+Add a seed/global `site_license_domains` table.
+
+Suggested fields:
+
+- `site_license_id`
+- `domain`
+- `starts_at`
+- `expires_at`
+- `created`
+- `updated`
+
+Rules:
+
+- Domains are normalized to lowercase, with leading `@` removed.
+- Active exact overlaps are forbidden.
+- Active parent/child overlaps are forbidden, e.g. `example.edu` conflicts with
+  `math.example.edu`.
+- Expired licenses do not block new licenses.
+- Multiple pools inside the same site license may share the same domain.
+- The domain index is updated transactionally with site-license provisioning and
+  domain edits.
+
+Implementation note: parent/child overlap cannot be fully enforced by a simple
+unique index. The seed service should enforce it inside the same transaction
+that updates the domain rows, ideally with an advisory lock around normalized
+domain suffixes or a coarse site-license-domain lock. A simple transaction-level
+service lock is acceptable for the first version because site-license writes are
+low volume.
+
+### Claim Discovery
+
+Claim discovery should not scan bays.
+
+Recommended flow:
+
+1. The user's home bay reads the user's verified email addresses.
+2. It extracts normalized domains from those email addresses.
+3. It calls the seed/global site-license service with those domains and the
+   account id.
+4. The seed/global service returns claimable/requestable pools matching those
+   domains, request status, custom terms/policy requirements, and current
+   capacity.
+5. The user's home bay displays that data in the account UI.
+
+This is O(number of verified email domains + matching site licenses), not
+O(number of bays).
+
+### Claim, Request, and Approval Writes
+
+Claim/request/approval should use seed/global site-license authority for the
+license-side operation, and account-home authority for the resulting user grant.
+
+Recommended direct-claim flow:
+
+1. User on home bay asks to claim a seed/global site-license pool.
+2. Home bay forwards verified emails and account id to the seed/global service.
+3. Seed/global service validates domain eligibility, terms acceptance,
+   capacity, exclusive-group claim identity, and active domain policy.
+4. Seed/global service creates or reserves the site-license seat/assignment.
+5. Seed/global service writes or queues the membership grant to the user's home
+   bay.
+6. The home bay resolves effective membership from the local grant.
+
+Recommended approval-required flow:
+
+1. User submits a request through the seed/global service.
+2. Manager dashboard reads pending requests from seed/global state.
+3. Manager approval rechecks capacity and claim identity on seed/global state.
+4. Approval creates the seat/assignment and writes or queues the grant to the
+   user's home bay.
+5. If approval upgrades a user from a lower pool in the same exclusive group,
+   seed/global state records the lower seat release and queues the corresponding
+   grant revocation to the user's home bay.
+
+The grant side effect must be idempotent. The seed/global service should be able
+to retry grant upsert/revoke without duplicating grants or corrupting effective
+membership.
+
+### Rehome and Bay Drain Invariants
+
+Account rehome:
+
+- moves user account state and user grants;
+- does not move site-license records, pools, requests, managers, or audit logs;
+- must preserve enough grant metadata to route back to the seed/global
+  site-license service for reverification, release, and manager reporting;
+- must not require scanning former account home bays for site-license state.
+
+Bay drain:
+
+- can drain a bay containing users with site-license grants without moving the
+  licenses themselves;
+- only account grants/projections move with those users;
+- seed/global site-license state remains stable.
+
+Manager account rehome:
+
+- does not change manager authority;
+- `site_license_managers.account_id` remains the same;
+- future manager actions authenticate on the manager's current home bay, then
+  call the seed/global site-license service.
+
+Seed/global restore:
+
+- is high-value durable state and should run in the strongest available HA/backup
+  mode;
+- restoring it must be fenced because it contains billing-adjacent contract
+  state and global domain ownership.
+
+### Multibay Mistakes to Avoid
+
+- Do not add site-license tables to account rehome portable state as the primary
+  architecture. That preserves the wrong ownership model.
+- Do not make claim discovery enumerate all bays in production.
+- Do not enforce domain uniqueness with a bay-local query.
+- Do not route by the license owner's current home bay.
+- Do not couple a user's effective grant storage to the license storage
+  location.
+- Do not assume the seed service can directly mutate arbitrary bay-local account
+  grants without an idempotent routed write or outbox.
+- Do not let stale bay-local cached site-license data make authorization or
+  claim decisions. Caches may accelerate UI reads only.
+
+### Performance and Caching
+
+The seed/global design is acceptable because site licenses are expected to be
+bounded in count and low-write compared with project state.
+
+If read load becomes noticeable:
+
+- cache domain lookup results in the home bay with a short TTL;
+- project claimable pools into per-bay read caches;
+- invalidate caches from seed/global site-license update events;
+- keep seed/global state authoritative for every write and every security
+  decision.
 
 ## Claim and Approval Flow
 
@@ -621,6 +853,111 @@ The CLI matters for enterprise onboarding, migrations, and scripted demos.
 
 ## Implementation Phases
 
+### Phase 0: Correct Multibay Authority to Seed/Global
+
+Before further feature polish, move site-license authority from owner-home-bay
+state to seed/global state.
+
+Goals:
+
+- make seed/global Postgres the authoritative source for site licenses, pools,
+  managers, requests, audit log, and domain ownership;
+- remove the need to scan all bays for claimable site licenses;
+- remove site-license state from account rehome semantics;
+- keep user membership grants on the user's home bay;
+- preserve Launchpad as the one-bay special case.
+
+Implementation steps:
+
+1. Add a seed/global site-license data access layer.
+   - It should use the seed/global Postgres connection explicitly, not
+     `withAccountRehomeWriteFence`.
+   - It should expose create/update/list/claim/request/review/reverification
+     helpers that are clearly marked as seed-authoritative.
+   - It should be the only write path for `site_licenses`,
+     `site_license_managers`, `site_license_pool_requests`, site-license audit,
+     site-license domain rows, and site-license pool rows.
+
+2. Add `site_license_domains`.
+   - Backfill from existing `site_licenses.allowed_domains` and pool
+     `metadata.allowed_domains`.
+   - Enforce exact and parent/child overlap in seed/global transactions.
+   - Keep expired licenses from blocking new domain ownership.
+
+3. Decide the pool storage shape.
+   - Short-term acceptable: continue using `membership_packages.kind = "site"`
+     rows, but ensure those rows are seed/global for site-license pools.
+   - Long-term cleaner: introduce `site_license_pools` and make generic
+     `membership_packages` stop carrying site-license pool authority.
+   - If using `membership_packages` short term, add guardrails so bay-local
+     membership package APIs cannot create or mutate site-license pools outside
+     the seed/global service.
+
+4. Change provisioning.
+   - Admin provisioning always writes to seed/global state.
+   - `owner_account_id` remains the first manager/contact, but does not decide
+     storage location.
+   - Fresh-auth protection still applies at the API layer.
+   - Domain overlap checks become seed/global and supersede bay-local checks.
+
+5. Change claim discovery.
+   - Home bay gathers verified emails.
+   - Home bay calls seed/global claim-discovery API with normalized domains and
+     account id.
+   - Seed/global returns matching pools and request status.
+   - Remove static bay enumeration for site-license claim discovery.
+
+6. Change direct claim/request/review writes.
+   - Seed/global validates eligibility, capacity, exclusive-group identity, and
+     terms acceptance.
+   - Seed/global records request/assignment/audit state.
+   - Seed/global queues idempotent grant upsert/revoke effects to the user's
+     home bay.
+   - User home bay remains authoritative for effective membership resolution.
+
+7. Change reverification and release.
+   - Seed/global finds seats due for reverification/release.
+   - User-facing status can still be read from account-home grant metadata, but
+     refresh/release decisions route through seed/global license state.
+   - Release queues idempotent grant revocation to the user's home bay.
+
+8. Remove or constrain owner-home-bay assumptions.
+   - Remove routing that sends site-license overview/provision/request/review to
+     `owner_account_id` home bay.
+   - Remove bay scans from `listClaimableMembershipPackagesAcrossCluster` for
+     site-license pools.
+   - Leave non-site membership package behavior unchanged.
+
+9. Account rehome audit.
+   - Confirm account rehome still moves `membership_grants` for site-license
+     users.
+   - Confirm account rehome does not move site-license records or pools.
+   - Confirm manager account rehome does not break manager authorization.
+   - Confirm stale source bays cannot approve, revoke, or mutate site-license
+     state after rehome.
+
+10. Local dev cleanup.
+    - On the current lite1b dev install, delete all existing site-license data
+      manually from the database before switching to the seed/global authority
+      model.
+    - Existing dev site-license rows do not matter and should not complicate the
+      implementation.
+    - A real production migration/backfill can be designed later if needed.
+
+Validation:
+
+- Creating two active site licenses with overlapping domains fails globally even
+  if the managers/owners live on different bays.
+- Claim discovery for a user on bay-2 finds a license whose manager account is
+  on bay-0 without scanning every bay.
+- Claiming a seed/global license creates the effective grant on the user's home
+  bay.
+- Approving a request as a manager whose account was rehomed still works.
+- Rehoming a user with a site-license grant preserves effective membership and
+  does not move the license.
+- Draining a non-seed bay with users and managers does not move site-license
+  records.
+
 ### Phase 1 Vertical Slice: Ship the Core Invariant
 
 The first implementation should be a small complete path, not the whole
@@ -743,19 +1080,11 @@ Acceptance criteria:
 
 - [x] Add manager-scoped APIs.
 - [x] Add minimal manager review panel in the account membership package manager.
-- [x] Add crude but functional manager dashboard.
 - [ ] Add polished manager dashboard.
 - Add notifications for new requests and review outcomes.
 - Approval creates assignment and grant through existing membership package
   machinery.
 - Rejection records review state and reason.
-
-Implementation note: the account membership page now has a deliberately plain
-site-license manager dashboard that shows license terms, domains, pools,
-managers, active seats, pending requests, revoke buttons, and recent audit
-events. The admin provision modal now uses the real pool-based site-license API
-instead of the older single-package site-license helper. This is suitable for
-manual end-to-end testing, not final production polish.
 
 ### Phase 5: Seat Reconciliation
 
@@ -803,9 +1132,7 @@ maintenance metadata.
 The user-facing backend contract now exposes a signed-in account's
 reverification status from account-home grant metadata and a refresh RPC that
 routes directly to the site-license owner bay using grant routing metadata.
-The account membership page now exposes a basic user-facing reverification panel
-with per-license status and refresh buttons. Actual in-app/email notification
-delivery and polished UX presentation are still pending.
+Actual in-app/email notification delivery and UI presentation are still pending.
 
 ### Phase 7: Invite Limit Integration
 
@@ -902,6 +1229,14 @@ Manager policy:
   unnecessary CoCalc-admin work.
 - Site-license seats use fresh affiliation verification instead of generic
   inactivity release. Signing in is not enough to keep a site-license seat.
+- Site licenses are seed/global contract state, not owner-home-bay account
+  state. The license owner account is a manager/contact, not the storage
+  authority.
+- Site-license claim discovery must not scan all bays in production. It should
+  use seed/global domain lookup and route writes through the seed/global
+  site-license service.
+- Account rehome moves user grants and account state, but not site-license
+  records, pools, requests, managers, audit logs, or domain ownership.
 - Organization-verified SSO attributes should eventually drive automatic
   instructor eligibility, and can also satisfy periodic affiliation
   reverification.
@@ -917,6 +1252,7 @@ Manager policy:
 
 Implement the first version with:
 
+- seed/global site-license authority
 - explicit site-license managers
 - one or more site-package-backed pools per site license
 - click-to-claim baseline pool

@@ -73,7 +73,10 @@ import adminVerifyEmailAddressLocal from "@cocalc/server/accounts/admin-verify-e
 import setPasswordFromResetLocal from "@cocalc/server/accounts/set-password-from-reset";
 import { adminDisableTwoFactor as adminDisableTwoFactorLocal } from "@cocalc/server/auth/two-factor";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
+import {
+  getConfiguredClusterRole,
+  getConfiguredClusterSeedBayId,
+} from "@cocalc/server/cluster-config";
 import {
   listBayRegistryLocal,
   registerBayPresenceLocal,
@@ -131,7 +134,6 @@ import {
   listClaimableMembershipPackagesForAccount,
   listLocalClaimableMembershipPackagesForVerifiedEmails,
   listMembershipPackageDetailsForOwner,
-  resolveClaimableMembershipPackageOwnerBay,
   updateMembershipPackage,
 } from "@cocalc/server/membership/packages";
 import {
@@ -298,6 +300,21 @@ import {
 } from "@cocalc/server/conat/api/system";
 
 const logger = getLogger("server:inter-bay:service");
+
+function getSeedSiteLicenseBayId(): string {
+  return getConfiguredClusterSeedBayId();
+}
+
+function isSeedSiteLicenseBay(): boolean {
+  return getConfiguredBayId() === getSeedSiteLicenseBayId();
+}
+
+function getSeedSiteLicenseClient() {
+  return createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: getSeedSiteLicenseBayId(),
+  });
+}
 
 let serviceStarted = false;
 let services: ConatService[] = [];
@@ -731,7 +748,9 @@ async function startAccountLocalService(): Promise<void> {
       return membershipPackage;
     },
     adminProvisionSiteLicense: async (opts) =>
-      await adminProvisionSiteLicense({ ...opts, trusted_admin: true }),
+      isSeedSiteLicenseBay()
+        ? await adminProvisionSiteLicense({ ...opts, trusted_admin: true })
+        : await getSeedSiteLicenseClient().adminProvisionSiteLicense(opts),
     updateMembershipPackage: async ({
       package_id,
       seat_count,
@@ -747,11 +766,15 @@ async function startAccountLocalService(): Promise<void> {
     getClaimableMembershipPackages: async ({
       account_id,
       verified_email_addresses,
-    }) =>
-      await listLocalClaimableMembershipPackagesForVerifiedEmails({
+    }) => {
+      const rows = await listLocalClaimableMembershipPackagesForVerifiedEmails({
         account_id,
         verified_email_addresses,
-      }),
+      });
+      return isSeedSiteLicenseBay()
+        ? rows
+        : rows.filter((row) => row.kind !== "site");
+    },
     getClaimableMembershipPackagesForAccount: async ({ account_id }) =>
       await listClaimableMembershipPackagesForAccount({
         account_id,
@@ -784,7 +807,12 @@ async function startAccountLocalService(): Promise<void> {
       });
     },
     getSiteLicenseOverview: async ({ account_id, site_license_id }) =>
-      await getSiteLicenseOverview({ account_id, site_license_id }),
+      isSeedSiteLicenseBay()
+        ? await getSiteLicenseOverview({ account_id, site_license_id })
+        : await getSeedSiteLicenseClient().getSiteLicenseOverview({
+            account_id,
+            site_license_id,
+          }),
     requestSiteLicensePool: async ({
       account_id,
       package_id,
@@ -792,16 +820,23 @@ async function startAccountLocalService(): Promise<void> {
       requester_note,
       accepted_terms,
     }) =>
-      await requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
-        account_id,
-        package_id,
-        verified_email_addresses,
-        requester_note,
-        accepted_terms,
-      }),
+      isSeedSiteLicenseBay()
+        ? await requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
+            account_id,
+            package_id,
+            verified_email_addresses,
+            requester_note,
+            accepted_terms,
+          })
+        : await getSeedSiteLicenseClient().requestSiteLicensePool({
+            account_id,
+            package_id,
+            verified_email_addresses,
+            requester_note,
+            accepted_terms,
+          }),
     requestSiteLicensePoolForAccount: async ({
       account_id,
-      owner_account_id,
       package_id,
       requester_note,
       accepted_terms,
@@ -812,52 +847,46 @@ async function startAccountLocalService(): Promise<void> {
       );
       const verified_email_addresses =
         await getVerifiedEmailAddressesForAccount(account_id);
-      const ownerAccountId = `${owner_account_id ?? ""}`.trim();
-      if (ownerAccountId) {
-        const ownerAccount = await getClusterAccountById(ownerAccountId);
-        const ownerBayId =
-          `${ownerAccount?.home_bay_id ?? ""}`.trim() ||
-          (await resolveClaimableMembershipPackageOwnerBay({
+      return isSeedSiteLicenseBay()
+        ? await requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
             account_id,
             package_id,
             verified_email_addresses,
-          })) ||
-          getConfiguredBayId();
-        if (ownerBayId !== getConfiguredBayId()) {
-          return await createInterBayAccountLocalClient({
-            client: getInterBayFabricClient(),
-            dest_bay: ownerBayId,
-          }).requestSiteLicensePool({
+            requester_note,
+            accepted_terms,
+          })
+        : await getSeedSiteLicenseClient().requestSiteLicensePool({
             account_id,
             package_id,
             verified_email_addresses,
             requester_note,
             accepted_terms,
           });
-        }
-      }
-      return await requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
-        account_id,
-        package_id,
-        verified_email_addresses,
-        requester_note,
-        accepted_terms,
-      });
     },
     reviewSiteLicensePoolRequest: async (opts) =>
-      await reviewSiteLicensePoolRequest(opts),
+      isSeedSiteLicenseBay()
+        ? await reviewSiteLicensePoolRequest(opts)
+        : await getSeedSiteLicenseClient().reviewSiteLicensePoolRequest(opts),
     refreshSiteLicenseAffiliationVerification: async ({
       account_id,
       site_license_id,
       verified_email_addresses,
     }) =>
-      await refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBay(
-        {
-          account_id,
-          site_license_id,
-          verified_email_addresses,
-        },
-      ),
+      isSeedSiteLicenseBay()
+        ? await refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBay(
+            {
+              account_id,
+              site_license_id,
+              verified_email_addresses,
+            },
+          )
+        : await getSeedSiteLicenseClient().refreshSiteLicenseAffiliationVerification(
+            {
+              account_id,
+              site_license_id,
+              verified_email_addresses,
+            },
+          ),
     refreshSiteLicenseAffiliationVerificationForAccount: async ({
       account_id,
       site_license_id,
@@ -881,25 +910,15 @@ async function startAccountLocalService(): Promise<void> {
             : seat.state === "pending_reverification" ||
               seat.state === "grace_expired"),
       )) {
-        const ownerAccountId =
-          `${seat.site_license_owner_account_id ?? ""}`.trim();
-        if (!ownerAccountId) continue;
-        const ownerAccount = await getClusterAccountById(ownerAccountId);
-        if (!ownerAccount) {
-          throw Error(`account ${ownerAccountId} not found`);
-        }
-        const ownerBayId =
-          `${ownerAccount.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
-        if (ownerBayId !== getConfiguredBayId()) {
+        if (!isSeedSiteLicenseBay()) {
           refreshed.push(
-            ...(await createInterBayAccountLocalClient({
-              client: getInterBayFabricClient(),
-              dest_bay: ownerBayId,
-            }).refreshSiteLicenseAffiliationVerification({
-              account_id,
-              site_license_id: seat.site_license_id,
-              verified_email_addresses,
-            })),
+            ...(await getSeedSiteLicenseClient().refreshSiteLicenseAffiliationVerification(
+              {
+                account_id,
+                site_license_id: seat.site_license_id,
+                verified_email_addresses,
+              },
+            )),
           );
           continue;
         }
