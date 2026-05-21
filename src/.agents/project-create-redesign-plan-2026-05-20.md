@@ -61,12 +61,15 @@ Implemented:
 - Imagegen2-inspired layout polish: capacity is a top strip, project name comes
   before presets, presets are visual cards, region/latency is in the common
   path, and the summary uses decision-ready icon rows.
+- Host selection can expand inline in the create modal, matching the inline
+  RootFS picker pattern.
 
 Still rough:
 
 - The capacity card still needs visual polish and robust handling for missing
   backend usage fields.
-- Host selection still opens a secondary modal.
+- Host selection no longer requires a secondary modal in project creation; other
+  callers still use the host picker modal wrapper.
 - Host recommendations still need live dogfood validation against a deliberately
   varied set of hosts.
 - Region/latency explanation has initial create-modal coverage, but still needs

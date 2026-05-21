@@ -202,13 +202,13 @@ function healthMessage(gauges: Gauge[]): string | undefined {
   return undefined;
 }
 
-function GaugeCard({ gauge }: { gauge: Gauge }) {
+function GaugeCard({ gauge, isLast }: { gauge: Gauge; isLast?: boolean }) {
   return (
     <div
       style={{
-        borderRight: `1px solid ${COLORS.GRAY_LL}`,
+        borderRight: isLast ? undefined : `1px solid ${COLORS.GRAY_LL}`,
         minWidth: 0,
-        padding: "0 18px",
+        padding: "0 16px",
       }}
     >
       <Space orientation="vertical" size={3} style={{ width: "100%" }}>
@@ -333,11 +333,15 @@ export function ProjectCreateHealthCard({ open }: { open: boolean }) {
             display: "grid",
             gridTemplateColumns: "repeat(3, minmax(120px, 1fr)) auto",
             alignItems: "center",
-            gap: 0,
+            columnGap: 18,
           }}
         >
-          {gauges.map((gauge) => (
-            <GaugeCard key={gauge.key} gauge={gauge} />
+          {gauges.map((gauge, index) => (
+            <GaugeCard
+              key={gauge.key}
+              gauge={gauge}
+              isLast={index === gauges.length - 1}
+            />
           ))}
           <Button
             size="small"

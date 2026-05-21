@@ -116,6 +116,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   const [rootfsMode, setRootfsMode] = useState<"catalog" | "custom">("catalog");
   const [rootfsDraft, setRootfsDraft] = useState<string>("");
   const [rootfsDraftId, setRootfsDraftId] = useState<string | undefined>();
+  const [hostPickerOpen, setHostPickerOpen] = useState<boolean>(false);
   const {
     draft,
     summary,
@@ -196,6 +197,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     set_error("");
     setCreateAction(null);
     setRootfsPickerOpen(false);
+    setHostPickerOpen(false);
     setRootfsMode("catalog");
     setRootfsDraft("");
     setRootfsDraftId(undefined);
@@ -861,9 +863,12 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
           regionLabel={R2_REGION_LABELS[draft.region]}
           wantsGpu={summary.gpu}
           pickerMode="create"
+          pickerDisplay="inline"
+          pickerOpen={hostPickerOpen}
+          onPickerOpenChange={setHostPickerOpen}
           showHelp={false}
         />
-        {renderRegionExplanation()}
+        {hostPickerOpen && renderRegionExplanation()}
         <Button
           type="link"
           onClick={() => setAdvancedOpen(!draft.advanced_open)}
@@ -962,7 +967,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
           background: COLORS.GRAY_LLL,
           maxHeight: "min(780px, 88vh)",
           overflowY: "auto",
-          padding: "0 10px 10px 0",
+          padding: "0 14px 14px",
         },
       }}
     >
