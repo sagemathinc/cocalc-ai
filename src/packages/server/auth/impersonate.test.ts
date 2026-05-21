@@ -116,6 +116,7 @@ describe("auth/impersonate", () => {
       query: {
         grant_id: "22222222-2222-4222-8222-222222222222",
         account_id: "11111111-1111-1111-1111-111111111111",
+        confirm: "1",
         lang_temp: "en",
       },
       protocol: "https",
@@ -139,7 +140,7 @@ describe("auth/impersonate", () => {
     expect(clientSideRedirectMock).toHaveBeenCalledWith({
       res,
       target:
-        "https://bay-2-lite4b.cocalc.ai/auth/impersonate?retry_token=retry-token&grant_id=22222222-2222-4222-8222-222222222222&lang_temp=en",
+        "https://bay-2-lite4b.cocalc.ai/auth/impersonate?retry_token=retry-token&grant_id=22222222-2222-4222-8222-222222222222&confirm=1&lang_temp=en",
     });
   });
 
@@ -148,6 +149,7 @@ describe("auth/impersonate", () => {
     const req = {
       query: {
         grant_id: "22222222-2222-4222-8222-222222222222",
+        confirm: "1",
         lang_temp: "en",
       },
       protocol: "https",
@@ -166,7 +168,7 @@ describe("auth/impersonate", () => {
     expect(clientSideRedirectMock).toHaveBeenCalledWith({
       res,
       target:
-        "https://bay-2-lite4b.cocalc.ai/auth/impersonate?retry_token=retry-token&grant_id=22222222-2222-4222-8222-222222222222&lang_temp=en",
+        "https://bay-2-lite4b.cocalc.ai/auth/impersonate?retry_token=retry-token&grant_id=22222222-2222-4222-8222-222222222222&confirm=1&lang_temp=en",
     });
   });
 
@@ -179,6 +181,7 @@ describe("auth/impersonate", () => {
     const req = {
       query: {
         grant_id: "22222222-2222-4222-8222-222222222222",
+        confirm: "1",
         lang_temp: "en",
       },
       protocol: "https",
@@ -200,8 +203,41 @@ describe("auth/impersonate", () => {
     expect(clientSideRedirectMock).toHaveBeenCalledWith({
       res,
       target:
-        "https://bay-2-lite4b.cocalc.ai/auth/impersonate?retry_token=retry-token&grant_id=22222222-2222-4222-8222-222222222222&lang_temp=en",
+        "https://bay-2-lite4b.cocalc.ai/auth/impersonate?retry_token=retry-token&grant_id=22222222-2222-4222-8222-222222222222&confirm=1&lang_temp=en",
     });
+  });
+
+  it("renders a non-consuming landing page before confirming impersonation", async () => {
+    const { signInUsingImpersonateToken } = await import("./impersonate");
+    const req = {
+      query: {
+        grant_id: "22222222-2222-4222-8222-222222222222",
+        lang_temp: "en",
+      },
+      protocol: "https",
+      headers: { host: "lite4b.cocalc.ai" },
+    };
+    const res = { send: jest.fn(), setHeader: jest.fn() };
+
+    await signInUsingImpersonateToken({ req, res });
+
+    expect(resolveAccountImpersonationGrantDirectoryMock).toHaveBeenCalledWith({
+      grant_id: "22222222-2222-4222-8222-222222222222",
+    });
+    expect(consumeImpersonationGrantLocalMock).not.toHaveBeenCalled();
+    expect(clearAuthCookiesMock).not.toHaveBeenCalled();
+    expect(clientSideRedirectMock).not.toHaveBeenCalled();
+    expect(res.setHeader).toHaveBeenCalledWith(
+      "Content-Type",
+      "text/html; charset=utf-8",
+    );
+    expect(`${res.send.mock.calls[0]?.[0]}`).toContain(
+      "Confirm support impersonation",
+    );
+    expect(`${res.send.mock.calls[0]?.[0]}`).toContain("confirm=1");
+    expect(`${res.send.mock.calls[0]?.[0]}`).toContain(
+      "https://bay-2-lite4b.cocalc.ai",
+    );
   });
 
   it("sets cookies locally when redeeming an impersonation retry token", async () => {
