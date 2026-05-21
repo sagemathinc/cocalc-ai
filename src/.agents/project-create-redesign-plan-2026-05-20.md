@@ -50,18 +50,22 @@ Implemented:
 - Account capacity health card with project slots, running-project slots, and
   storage usage.
 - Health card can stop visible running projects when runtime slots are full.
+- Host recommendation model with tests.
+- Host picker uses create-specific recommendations and explains remote-host
+  fallback when no compatible host exists in the selected backup region.
 
 Still rough:
 
-- The plan document had not yet captured quota, capacity, region, and host
-  recommendation requirements.
+- The capacity card still needs visual polish and robust handling for missing
+  backend usage fields.
 - Host selection still opens a secondary modal.
-- Host recommendations are not yet intelligent enough.
-- Quota/storage/runtime slot visibility is missing.
+- Host recommendations still need live dogfood validation against a deliberately
+  varied set of hosts.
 - Region/latency explanation is incomplete.
 - RootFS presets are currently hardcoded UI choices rather than catalog-driven
   metadata.
-- The visual design is functional but not yet final.
+- The visual design is functional but still has unnecessary vertical scrolling
+  on normal laptop screens.
 
 ## Core Product Principles
 
@@ -484,9 +488,17 @@ Create-flow implication:
 - Convert raw metrics to privacy-preserving labels such as `light`, `normal`,
   `busy`, and `very busy` if they are exposed to ordinary users.
 
-Missing:
+- Implemented:
 
-- A reusable host recommendation function that ranks candidate hosts for create.
+- `src/packages/frontend/hosts/project-host-recommendations.ts`
+- `src/packages/frontend/hosts/project-host-recommendations.test.ts`
+- Create-mode host picker ranking by same-region availability, pressure,
+  spot/fallback, GPU fit, scope, tier, and explicit selection.
+- Remote-host fallback when the selected backup region has no available
+  compatible hosts.
+
+Still missing:
+
 - A privacy-normalized host load/reliability summary suitable for non-admins.
 - A create-specific host display that avoids opening a second modal for the
   common path.
@@ -581,6 +593,8 @@ Missing:
 - Host placement visible in the main path.
 - Account capacity health card.
 - Runtime-slot full state includes stop actions for visible running projects.
+- Host recommendation model and tests.
+- Create-mode host picker uses recommendation ranking and remote-region fallback.
 
 ### Phase A: Update Data/Policy Inventory
 
@@ -621,34 +635,21 @@ Validation:
 
 ### Phase C: Host Recommendation Model
 
+Initial implementation completed 2026-05-20.
+
 Upgrade host placement from a picker to recommendations.
 
 Requirements:
 
-- Recommend a host or auto placement using region, pressure, reliability,
-  spot/standard, fallback, GPU, CPU speed, and eligibility.
+- Recommend a host or auto placement using region, pressure, spot/standard,
+  fallback, GPU, scope, tier, and eligibility. Implemented.
 - If no host exists in the user's region, recommend the best remote region/host.
-- Make latency impact explicit and concrete.
-- Show privacy-preserving host load and reliability labels.
-- Keep host creation path visible when eligible.
-
-Implemented foundation:
-
-- Added a pure, tested host recommendation helper under `frontend/hosts` that ranks available hosts,
-  separates unavailable hosts, prefers same backup region, falls back to remote
-  hosts, accounts for host pressure, spot/fallback status, GPU fit, explicit
-  selection, and known GCP relative CPU speed.
-- This is intentionally not wired into the create modal yet. The next Phase C
-  UI step should consume this helper from the host picker/recommendation card
-  without changing project creation semantics at the same time.
-
-Implemented first UI slice:
-
-- The project create host picker now uses the recommendation model in create
-  mode, including GPU intent and selected-host intent.
-- The picker still starts in the project's backup region, but if no available
-  host exists there and a remote host is available, it automatically expands to
-  all regions and explains that the main impact is interactive latency.
+  Implemented in the host picker fallback.
+- Make latency impact explicit and concrete. Partially implemented.
+- Show privacy-preserving host load and reliability labels. Not yet implemented
+  beyond existing pressure tags.
+- Keep host creation path visible when eligible. Not yet implemented in project
+  creation.
 
 Validation:
 
@@ -656,6 +657,19 @@ Validation:
 - Multiple hosts in same backup region with different pressure/speed.
 - Spot host with fallback enabled.
 - GPU project with no GPU host in nearest region.
+
+Recommended dogfood host set:
+
+- One standard GCP/Nebius pool host in the user's nearest backup region.
+- One spot host in the same backup region, preferably with fallback enabled.
+- One stressed or placement-blocked host in the same backup region to verify it
+  is deprioritized or hidden by default.
+- One GPU host in the same backup region.
+- One standard remote-region host so the no-local-host fallback has a useful
+  target.
+
+This is enough to test same-region preference, spot/fallback labeling, pressure
+avoidance, GPU fit, and remote-region fallback without needing a large fleet.
 
 ### Phase D: RootFS Metadata Presets
 
@@ -745,7 +759,11 @@ Add tests as new rules become deterministic:
 
 ## Immediate Next Step
 
-Do Phase A before adding more UI. The next implementation should identify the
-actual frontend/backend data sources for quota, runtime slots, storage, host
-pressure, host uptime, spot fallback, and CPU speed. After that, implement the
-health card because it is high-impact and relatively isolated.
+Polish the existing modal before adding deeper policy UI:
+
+- Fix capacity-card missing/unknown states.
+- Reduce default vertical height so the common path fits on a normal laptop
+  screen.
+- Keep host choice visible, but avoid forcing the user into the secondary host
+  picker unless they need to override the recommendation.
+- Then proceed to Phase D RootFS metadata presets.

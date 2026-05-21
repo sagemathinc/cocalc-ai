@@ -18,6 +18,7 @@ import {
   Select,
   Space,
   Tag,
+  Typography,
 } from "antd";
 import { delay } from "awaiting";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -463,28 +464,32 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     return (
       <Card size="small" styles={{ body: { padding: "10px 12px" } }}>
         <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-          <div style={{ fontWeight: 600 }}>Root Filesystem Software Image</div>
-          <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            Select the base root filesystem image for this project.
-          </Paragraph>
-          <Space wrap>
-            <Button onClick={openRootfsPicker} disabled={saving}>
+          <Space
+            align="center"
+            style={{ width: "100%", justifyContent: "space-between" }}
+            wrap
+          >
+            <Space size="small" wrap>
+              <Icon name="cube" />
+              <Typography.Text strong>Runtime image</Typography.Text>
+              <Tag color="blue">{displayLabel}</Tag>
+              {selectedRootfsEntry?.section && (
+                <Tag color={sectionTagColor(selectedRootfsEntry.section)}>
+                  {sectionLabel(selectedRootfsEntry.section)}
+                </Tag>
+              )}
+              {selectedRootfsEntry?.version && (
+                <Tag>{selectedRootfsEntry.version}</Tag>
+              )}
+              {selectedRootfsEntry?.channel && (
+                <Tag color="cyan">{selectedRootfsEntry.channel}</Tag>
+              )}
+              {selectedRootfsEntry?.gpu && <Tag color="purple">GPU</Tag>}
+              {!selectedRootfsEntry && <Tag color="orange">Advanced OCI</Tag>}
+            </Space>
+            <Button size="small" onClick={openRootfsPicker} disabled={saving}>
               {rootfsPickerOpen ? "Change image..." : "Choose image..."}
             </Button>
-            <Tag color="blue">{displayLabel}</Tag>
-            {selectedRootfsEntry?.section && (
-              <Tag color={sectionTagColor(selectedRootfsEntry.section)}>
-                {sectionLabel(selectedRootfsEntry.section)}
-              </Tag>
-            )}
-            {selectedRootfsEntry?.version && (
-              <Tag>{selectedRootfsEntry.version}</Tag>
-            )}
-            {selectedRootfsEntry?.channel && (
-              <Tag color="cyan">{selectedRootfsEntry.channel}</Tag>
-            )}
-            {selectedRootfsEntry?.gpu && <Tag color="purple">GPU</Tag>}
-            {!selectedRootfsEntry && <Tag color="orange">Advanced OCI</Tag>}
           </Space>
           {displayImage && (
             <code style={{ fontSize: "11px", overflowWrap: "anywhere" }}>
@@ -519,8 +524,8 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
               disabled={saving}
               style={{
                 height: "auto",
-                minHeight: 82,
-                padding: "10px 12px",
+                minHeight: 64,
+                padding: "8px 10px",
                 textAlign: "left",
                 borderColor: active ? COLORS.BS_BLUE_BGRND : COLORS.GRAY_LL,
                 background: active ? COLORS.ANTD_BG_BLUE_L : "white",
@@ -545,7 +550,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                     style={{
                       color: COLORS.GRAY_M,
                       fontSize: 12,
-                      lineHeight: 1.35,
+                      lineHeight: 1.25,
                       whiteSpace: "normal",
                     }}
                   >
@@ -645,13 +650,14 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     });
 
     return (
-      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+      <Space orientation="vertical" size={10} style={{ width: "100%" }}>
         <ProjectCreateHealthCard open={open} />
         {renderPresetSection()}
         <Form form={form} layout="vertical">
           <Form.Item
             label={intl.formatMessage(labels.title)}
             name="title"
+            style={{ marginBottom: 0 }}
             initialValue={draft.title}
             rules={[
               {
@@ -755,21 +761,18 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
       maskClosable={!saving}
       styles={{
         body: {
-          maxHeight: "min(780px, 82vh)",
+          maxHeight: "min(760px, 88vh)",
           overflowY: "auto",
           paddingRight: 10,
         },
       }}
     >
-      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          Pick a title now and tune the rest later.
-        </Paragraph>
+      <Space orientation="vertical" size="small" style={{ width: "100%" }}>
         <div
           style={{
             display: "grid",
             gridTemplateColumns: "minmax(0, 1fr) minmax(260px, 320px)",
-            gap: 16,
+            gap: 14,
             alignItems: "start",
           }}
         >

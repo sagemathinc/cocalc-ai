@@ -27,7 +27,7 @@ afterAll(async () => {
 describe("basic core of the async path watch functionality", () => {
   let fs;
   it("creates sandboxed filesystem", () => {
-    fs = new SandboxedFilesystem(tmp);
+    fs = new SandboxedFilesystem(tmp, { disableOpenAt2: true });
   });
 
   let server;

@@ -79,7 +79,10 @@ function gaugeTag(tone: GaugeTone) {
   }
 }
 
-function projectGauge(details?: MembershipDetails | null): Gauge {
+function projectGauge(
+  details: MembershipDetails | null,
+  loading: boolean,
+): Gauge {
   const usage = details?.usage_status;
   const limits =
     details?.selected?.effective_limits ??
@@ -97,7 +100,9 @@ function projectGauge(details?: MembershipDetails | null): Gauge {
     label: "Projects",
     value:
       current == null
-        ? "Loading"
+        ? loading
+          ? "Loading"
+          : "Not reported"
         : limit == null
           ? `${current}`
           : `${current}/${limit}`,
@@ -110,7 +115,10 @@ function projectGauge(details?: MembershipDetails | null): Gauge {
   };
 }
 
-function storageGauge(details?: MembershipDetails | null): Gauge {
+function storageGauge(
+  details: MembershipDetails | null,
+  loading: boolean,
+): Gauge {
   const usage = details?.usage_status;
   const limits =
     details?.selected?.effective_limits ??
@@ -136,7 +144,9 @@ function storageGauge(details?: MembershipDetails | null): Gauge {
     label: "Storage",
     value:
       current == null
-        ? "Loading"
+        ? loading
+          ? "Loading"
+          : "Not reported"
         : limit == null
           ? humanSize(current)
           : `${humanSize(current)} / ${humanSize(limit)}`,
@@ -148,7 +158,10 @@ function storageGauge(details?: MembershipDetails | null): Gauge {
   };
 }
 
-function runtimeGauge(status?: AccountRuntimeSponsorStatus | null): Gauge {
+function runtimeGauge(
+  status: AccountRuntimeSponsorStatus | null,
+  loading: boolean,
+): Gauge {
   const current = nonnegativeNumber(status?.current);
   const limit = positiveNumber(status?.limit);
   const tone = toneFor({ current, limit });
@@ -157,7 +170,9 @@ function runtimeGauge(status?: AccountRuntimeSponsorStatus | null): Gauge {
     label: "Running",
     value:
       current == null
-        ? "Loading"
+        ? loading
+          ? "Loading"
+          : "Not reported"
         : limit == null
           ? `${current}`
           : `${current}/${limit}`,
@@ -190,7 +205,7 @@ function healthMessage(gauges: Gauge[]): string | undefined {
 
 function GaugeCard({ gauge }: { gauge: Gauge }) {
   return (
-    <Card size="small" styles={{ body: { padding: "8px 10px" } }}>
+    <Card size="small" styles={{ body: { padding: "7px 9px" } }}>
       <Space orientation="vertical" size={4} style={{ width: "100%" }}>
         <Space
           size="small"
@@ -212,7 +227,7 @@ function GaugeCard({ gauge }: { gauge: Gauge }) {
             status={progressStatus(gauge.tone)}
           />
         )}
-        <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.25 }}>
+        <Text type="secondary" style={{ fontSize: 11, lineHeight: 1.2 }}>
           {gauge.caption}
         </Text>
       </Space>
@@ -239,7 +254,9 @@ export function ProjectCreateHealthCard({ open }: { open: boolean }) {
     setLoading(true);
     setError("");
     Promise.all([
-      webapp_client.conat_client.hub.purchases.getMembershipDetails({}),
+      webapp_client.conat_client.hub.purchases.getMembershipDetails({
+        refresh_usage_status: true,
+      }),
       webapp_client.conat_client.hub.projects.getAccountRuntimeSponsorStatus(
         {},
       ),
@@ -263,11 +280,11 @@ export function ProjectCreateHealthCard({ open }: { open: boolean }) {
 
   const gauges = useMemo(
     () => [
-      projectGauge(membership),
-      runtimeGauge(runtime),
-      storageGauge(membership),
+      projectGauge(membership, loading),
+      runtimeGauge(runtime, loading),
+      storageGauge(membership, loading),
     ],
-    [membership, runtime],
+    [loading, membership, runtime],
   );
   const message = healthMessage(gauges);
   const runtimeLimit = positiveNumber(runtime?.limit);
@@ -302,7 +319,7 @@ export function ProjectCreateHealthCard({ open }: { open: boolean }) {
   return (
     <Card
       size="small"
-      styles={{ body: { padding: 12 } }}
+      styles={{ body: { padding: "9px 10px" } }}
       style={{
         borderColor: COLORS.GRAY_LL,
         background: COLORS.GRAY_LLL,
@@ -326,7 +343,7 @@ export function ProjectCreateHealthCard({ open }: { open: boolean }) {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+            gridTemplateColumns: "repeat(auto-fit, minmax(135px, 1fr))",
             gap: 8,
           }}
         >
