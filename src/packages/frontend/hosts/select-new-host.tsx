@@ -122,8 +122,9 @@ export function SelectNewHost({
           type="secondary"
           style={{ fontSize: 12, lineHeight: 1.25, marginBottom: 0 }}
         >
-          Host choice mainly affects latency, such as terminal typing and
-          notebook output. You can change it later.
+          Host choice mainly affects interactive lag, such as terminal typing
+          and Jupyter notebook output. You can change the host or move the
+          project to another region later.
         </Paragraph>
       </Space>
       <HostPickerModal

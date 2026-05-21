@@ -55,6 +55,9 @@ Implemented:
   fallback when no compatible host exists in the selected backup region.
 - RootFS presets choose catalog images by tags/metadata rather than hardcoded
   image names.
+- Region/latency copy explains terminal/Jupyter lag, later host/region moves,
+  nearby browser region, backup region, provider region, and backup-history
+  limits when moving regions.
 
 Still rough:
 
@@ -63,7 +66,8 @@ Still rough:
 - Host selection still opens a secondary modal.
 - Host recommendations still need live dogfood validation against a deliberately
   varied set of hosts.
-- Region/latency explanation is incomplete.
+- Region/latency explanation has initial create-modal coverage, but still needs
+  dogfood validation with remote-host fallback scenarios.
 - RootFS preset configuration is not yet site-configurable beyond the initial
   built-in preset tags.
 - The visual design is functional and no longer scrolls by default on the
@@ -712,13 +716,17 @@ Follow-up:
 
 Add concise inline explanation and warnings.
 
+Initial implementation started 2026-05-20.
+
 Requirements:
 
-- Explain region impact in terms of terminal/Jupyter lag.
-- Explain that region/host can be changed later.
+- Explain region impact in terms of terminal/Jupyter lag. Initial copy added.
+- Explain that region/host can be changed later. Initial copy added.
 - Distinguish user latency region from project backup region and provider
-  region without exposing too much terminology.
-- Explain when region changes reset backups beyond the latest backup.
+  region without exposing too much terminology. Initial advanced-region card
+  added.
+- Explain when region changes reset backups beyond the latest backup. Initial
+  advanced-region copy added.
 
 Validation:
 
