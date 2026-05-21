@@ -24,6 +24,10 @@ const getSiteLicenseAffiliationReverificationStatus = jest.fn();
 const refreshSiteLicenseAffiliationVerification = jest.fn();
 const userSearch = jest.fn();
 const getNames = jest.fn();
+const runFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
+  await action();
+  return true;
+});
 
 let accountId = "owner-1";
 let isAdmin = false;
@@ -40,6 +44,14 @@ jest.mock("@cocalc/frontend/components", () => ({
 
 jest.mock("@cocalc/frontend/components/time-ago", () => ({
   TimeAgo: () => <span>time-ago</span>,
+}));
+
+jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
+  FreshAuthModal: () => <div data-testid="fresh-auth-modal" />,
+  useFreshAuthAction: () => ({
+    freshAuthModalProps: {},
+    runFreshAuthAction,
+  }),
 }));
 
 jest.mock("@cocalc/frontend/purchases/money-statistic", () => (props: any) => (
@@ -145,6 +157,7 @@ describe("MembershipPackageManager", () => {
     isAdmin = false;
     getClaimableMembershipPackages.mockResolvedValue([]);
     processPaymentIntents.mockResolvedValue({ count: 0 });
+    runFreshAuthAction.mockClear();
     getNames.mockResolvedValue({
       "user-1": { first_name: "Grace", last_name: "Hopper" },
     });
@@ -425,6 +438,7 @@ describe("MembershipPackageManager", () => {
     fireEvent.click(screen.getByText("Provision license"));
 
     await waitFor(() => {
+      expect(runFreshAuthAction).toHaveBeenCalledTimes(1);
       expect(adminProvisionSiteLicense).toHaveBeenCalledWith({
         owner_account_id: undefined,
         allowed_domains: ["dept.example.edu", "example.edu"],
