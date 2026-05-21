@@ -30,7 +30,7 @@
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/node": "^22.10.10",
-    "ts-jest": "^29.4.5"
+    "ts-jest": "29.4.9"
   },
   "license": "SEE LICENSE.md"
 }

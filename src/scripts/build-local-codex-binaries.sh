@@ -5,21 +5,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 UPSTREAM_DIR="${CODEX_UPSTREAM_DIR:-/home/user/upstream/codex}"
 CODEX_UPSTREAM_REPO="${CODEX_UPSTREAM_REPO:-https://github.com/openai/codex.git}"
-CODEX_VERSION="${CODEX_VERSION:-0.124.0}"
+CODEX_VERSION="${CODEX_VERSION:-0.133.0}"
 CODEX_TAG="rust-v${CODEX_VERSION}"
 CODEX_BRANCH="cocalc-local-build-v${CODEX_VERSION}"
 PATCH_DIR="${REPO_ROOT}/src/scripts/patches"
 PATCH_FILES=(
   "${PATCH_DIR}/codex-rust-v${CODEX_VERSION}-tcp-user-timeout.patch"
-  "${PATCH_DIR}/codex-rust-v${CODEX_VERSION}-force-local-compact.patch"
 )
 LOCAL_BIN_ROOT="${COCALC_CODEX_LOCAL_BIN_DIR:-${REPO_ROOT}/src/.cache/codex-binaries}"
 CARGO_MANIFEST="${UPSTREAM_DIR}/codex-rs/Cargo.toml"
 ARM_LINKER="${CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER:-aarch64-linux-gnu-gcc}"
 ARM64_BUILD_TOOL="${CODEX_ARM64_BUILD_TOOL:-auto}"
 ARM64_PKG_CONFIG_PATH="${AARCH64_UNKNOWN_LINUX_GNU_PKG_CONFIG_PATH:-/usr/lib/aarch64-linux-gnu/pkgconfig}"
-ARM64_RELEASE_LTO="${CODEX_ARM64_RELEASE_LTO:-off}"
-ARM64_RELEASE_CODEGEN_UNITS="${CODEX_ARM64_RELEASE_CODEGEN_UNITS:-16}"
+RELEASE_LTO="${CODEX_RELEASE_LTO:-off}"
+RELEASE_CODEGEN_UNITS="${CODEX_RELEASE_CODEGEN_UNITS:-16}"
+ARM64_RELEASE_LTO="${CODEX_ARM64_RELEASE_LTO:-${RELEASE_LTO}}"
+ARM64_RELEASE_CODEGEN_UNITS="${CODEX_ARM64_RELEASE_CODEGEN_UNITS:-${RELEASE_CODEGEN_UNITS}}"
 ARM64_SYSROOT_LIB_DIR="${AARCH64_UNKNOWN_LINUX_GNU_LIB_DIR:-/usr/lib/aarch64-linux-gnu}"
 PUBLISH_AFTER_BUILD="${CODEX_PUBLISH_RELEASE:-0}"
 
@@ -83,7 +84,9 @@ cargo fmt --manifest-path "${CARGO_MANIFEST}" --all >/dev/null
 git -C "${UPSTREAM_DIR}" restore codex-rs/Cargo.lock
 cargo metadata --format-version 1 --manifest-path "${CARGO_MANIFEST}" >/dev/null
 
-cargo build --release --locked -p codex-cli --manifest-path "${CARGO_MANIFEST}"
+CARGO_PROFILE_RELEASE_LTO="${RELEASE_LTO}" \
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${RELEASE_CODEGEN_UNITS}" \
+  cargo build --release --locked -p codex-cli --manifest-path "${CARGO_MANIFEST}"
 case "${ARM64_BUILD_TOOL}" in
   auto)
     if [[ -f "${ARM64_PKG_CONFIG_PATH}/openssl.pc" ]]; then
