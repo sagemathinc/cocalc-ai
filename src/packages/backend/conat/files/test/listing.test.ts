@@ -19,7 +19,7 @@ afterAll(async () => {
 describe("creating a listing monitor starting with an empty directory", () => {
   let fs, dir;
   it("creates sandboxed filesystem", async () => {
-    fs = new SandboxedFilesystem(tmp);
+    fs = new SandboxedFilesystem(tmp, { disableOpenAt2: true });
     dir = await listing({ path: "", fs });
   });
 
@@ -108,27 +108,34 @@ describe("listing initialization", () => {
       ),
     };
 
-    const dir = await Promise.race([
-      listing({ path: "", fs }),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error("listing initialization timed out")),
-          250,
-        ),
-      ),
-    ]);
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+      const dir = await Promise.race([
+        listing({ path: "", fs }),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error("listing initialization timed out")),
+            250,
+          );
+        }),
+      ]);
 
-    expect(fs.getListing).toHaveBeenCalledWith("");
-    expect(fs.watch).toHaveBeenCalledWith("", {
-      closeOnUnlink: true,
-      stats: true,
-    });
-    expect(dir.files).toEqual({});
+      expect(fs.getListing).toHaveBeenCalledWith("");
+      expect(fs.watch).toHaveBeenCalledWith("", {
+        closeOnUnlink: true,
+        stats: true,
+      });
+      expect(dir.files).toEqual({});
 
-    resolveWatch({
-      async *[Symbol.asyncIterator]() {},
-      close() {},
-    });
-    dir.close();
+      resolveWatch({
+        async *[Symbol.asyncIterator]() {},
+        close() {},
+      });
+      dir.close();
+    } finally {
+      if (timeout != null) {
+        clearTimeout(timeout);
+      }
+    }
   });
 });

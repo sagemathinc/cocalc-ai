@@ -59,8 +59,8 @@ describe("restarting the network and/or persist server, but with no delay afterw
     expect(mesg.data).toBe("data");
   });
 
-  it("restarts just persist server", () => {
-    restartPersistServer();
+  it("restarts just persist server", async () => {
+    await restartPersistServer();
   });
 
   it("it starts working again after restart after persist server only, though we expect some errors", async () => {
@@ -82,9 +82,9 @@ describe("restarting the network and/or persist server, but with no delay afterw
     expect(mesg.data).toBe("data");
   });
 
-  it("restarts BOTH the socketio server and the persist server", () => {
-    restartServer();
-    restartPersistServer();
+  it("restarts BOTH the socketio server and the persist server", async () => {
+    await restartServer();
+    await restartPersistServer();
   });
 
   it("it starts working again after restart of BOTH servers, though we expect some errors", async () => {

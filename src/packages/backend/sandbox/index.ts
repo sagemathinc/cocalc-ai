@@ -273,6 +273,9 @@ interface Options {
   allowSafeModeHardlink?: boolean;
   // Explicitly allow symlink creation in safe mode.
   allowSafeModeSymlink?: boolean;
+  // Test/development escape hatch for code paths that exercise the generic
+  // filesystem API but are not specifically testing native openat2 behavior.
+  disableOpenAt2?: boolean;
 }
 
 function normalizeHomeAliases(homeAliases?: string[]): string[] {
@@ -303,6 +306,7 @@ const INTERNAL_METHODS = new Set([
   "scratchEnabled",
   "allowSafeModeHardlink",
   "allowSafeModeSymlink",
+  "openAt2Disabled",
   "assertWritable",
   "resolveSandboxPath",
   "resolveWritableSandboxPath",
@@ -345,6 +349,7 @@ export class SandboxedFilesystem {
   private scratchEnabled = false;
   public readonly allowSafeModeHardlink: boolean;
   public readonly allowSafeModeSymlink: boolean;
+  private readonly openAt2Disabled: boolean;
   public rusticRepo: string;
   private host?: string;
   private openAt2Roots = new Map<string, OpenAt2SandboxRoot | null>();
@@ -374,6 +379,7 @@ export class SandboxedFilesystem {
       rusticRepo: repo,
       allowSafeModeHardlink = false,
       allowSafeModeSymlink = false,
+      disableOpenAt2 = false,
     }: Options = {},
   ) {
     this.homeAliases = normalizeHomeAliases(homeAliases);
@@ -384,6 +390,7 @@ export class SandboxedFilesystem {
     this.host = host;
     this.allowSafeModeHardlink = allowSafeModeHardlink;
     this.allowSafeModeSymlink = allowSafeModeSymlink;
+    this.openAt2Disabled = disableOpenAt2;
     this.rusticRepo = repo ?? rusticRepo;
     for (const f in this) {
       if (INTERNAL_METHODS.has(f)) {
@@ -505,7 +512,10 @@ export class SandboxedFilesystem {
 
   private isOpenAt2Enabled(): boolean {
     return (
-      !this.unsafeMode && process.platform === "linux" && !OPENAT2_DISABLED
+      !this.unsafeMode &&
+      process.platform === "linux" &&
+      !OPENAT2_DISABLED &&
+      !this.openAt2Disabled
     );
   }
 
@@ -553,11 +563,13 @@ export class SandboxedFilesystem {
     if (initError != null) {
       throw initError;
     }
-    if (OPENAT2_DISABLED) {
+    if (OPENAT2_DISABLED || this.openAt2Disabled) {
       this.logOpenAt2Mode(
         basePath,
         "node-fallback",
-        `explicitly disabled via COCALC_SANDBOX_OPENAT2='${OPENAT2_SETTING || "(empty)"}'`,
+        this.openAt2Disabled
+          ? "explicitly disabled by SandboxedFilesystem option"
+          : `explicitly disabled via COCALC_SANDBOX_OPENAT2='${OPENAT2_SETTING || "(empty)"}'`,
       );
       this.openAt2Roots.set(basePath, null);
       return null;
@@ -622,6 +634,17 @@ export class SandboxedFilesystem {
     this.openAt2Roots.delete(basePath);
     this.openAt2InitErrors.delete(basePath);
     this.openAt2RootIdentities.delete(basePath);
+  }
+
+  close(): void {
+    this.openAt2Roots.clear();
+    this.openAt2InitErrors.clear();
+    this.openAt2ModeLogged.clear();
+    this.openAt2RootIdentities.clear();
+    this.sandboxBasePathCache.clear();
+    this.lastOnDisk.clear();
+    this.lastOnDiskHash.clear();
+    this.lastOnDiskHash.cancelTimer();
   }
 
   private getOpenAt2BaseIdentity(basePath: string): string | null {

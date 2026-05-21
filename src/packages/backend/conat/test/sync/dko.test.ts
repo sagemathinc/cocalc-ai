@@ -23,7 +23,7 @@ describe("create a public dko and do a basic operation", () => {
   const name = `test-${Math.random()}`;
 
   it("creates the dko", async () => {
-    kv = await createDko({ name });
+    kv = await createDko({ name, client });
     expect(kv.getAll()).toEqual({});
   });
 
@@ -40,8 +40,8 @@ describe("create a public dko and do a basic operation", () => {
 
   it("waits for the dko to be saved, then closing and recreates the kv and verifies that the key is there.", async () => {
     await kv.save();
-    kv.close();
-    kv = await createDko({ name });
+    await kv.close();
+    kv = await createDko({ name, client });
     expect(kv.a).toEqual({ a: 5, b: 7 });
   });
 
@@ -63,7 +63,7 @@ describe("create dko and check more complicated keys", () => {
   const name = `test-${Math.random()}`;
 
   it("creates the dko", async () => {
-    kv = await createDko({ name });
+    kv = await createDko({ name, client });
     expect(kv.getAll()).toEqual({});
     const key = "a!@#$%^&*|()lkasdjfxxxxxxxxxx";
     kv.set(key, { [key]: "bar" });
@@ -90,7 +90,7 @@ describe("test a large value that requires chunking", () => {
   });
 
   it("creates the dko", async () => {
-    kv = await createDko({ name });
+    kv = await createDko({ name, client });
     expect(kv.getAll()).toEqual({});
 
     const big = { foo: "b".repeat(maxPayload * 1.3) };
@@ -126,8 +126,8 @@ describe("test keys that start with a bracket, weird keys, valid JSON, etc", () 
       await wait({ until: () => kv2.has(key) });
       expect(kv2.get(key)).toEqual({ cocalc: "conat" });
     }
-    kv.close();
-    kv2.close();
+    await kv.close();
+    await kv2.close();
   });
 });
 
@@ -146,6 +146,7 @@ describe("illustrate that https://github.com/sagemathinc/cocalc/issues/8386 is n
       key: { field: ["foo"] },
       '["key","field"]': { foo: "bar" },
     });
+    await kv.close();
   });
 });
 

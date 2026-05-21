@@ -149,6 +149,7 @@ export interface FileDescription {
 }
 
 export interface Filesystem {
+  close?: () => void | Promise<void>;
   appendFile: (path: string, data: string | Buffer, encoding?) => Promise<void>;
   chmod: (path: string, mode: string | number) => Promise<void>;
   constants: () => Promise<{ [key: string]: number }>;
@@ -442,7 +443,15 @@ export async function fsServer({
   // given that fs(...) is called separately in all functions
   // below.  Any ttl cache is natural because this cache is used
   // for locks, which are short lived.
-  const cache = new TTL<string, Filesystem>({ ttl: 60 * 1000 * 60 });
+  const closeFilesystem = (filesystem: Filesystem) => {
+    try {
+      void filesystem.close?.();
+    } catch {}
+  };
+  const cache = new TTL<string, Filesystem>({
+    ttl: 60 * 1000 * 60,
+    dispose: closeFilesystem,
+  });
   const fs = reuseInFlight(async (subject) => {
     if (!cache.has(subject)) {
       cache.set(subject, await fs0(subject));
@@ -688,6 +697,8 @@ export async function fsServer({
         watches[subject].close();
         delete watches[subject];
       }
+      cache.clear();
+      cache.cancelTimer();
       sub.close();
     },
   };
