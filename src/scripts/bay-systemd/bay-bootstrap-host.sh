@@ -8,7 +8,9 @@ BAY_ROOT_BASE="/mnt/cocalc/bays"
 INSTALL_BASE="/opt/cocalc/bay"
 INSTALL_PACKAGES=1
 INSTALL_NODEJS=0
-NODE_MAJOR=22
+NODE_VERSION="26.2.0"
+NVM_VERSION="0.40.4"
+NVM_DIR="/opt/cocalc/nvm"
 PRESERVE_SYSTEM_POSTGRES=0
 
 usage() {
@@ -24,8 +26,11 @@ Options:
   --bay-root-base <dir>    base dir for bay state (default: /mnt/cocalc/bays)
   --install-base <dir>     install base for releases/current (default: /opt/cocalc/bay)
   --skip-packages          do not apt install base packages
-  --install-nodejs         install Node.js from NodeSource if node is missing or too old
-  --node-major <n>         NodeSource major version when using --install-nodejs (default: 22)
+  --install-nodejs         install Node.js 26.2.0 using nvm if missing
+  --node-version <v>       Node.js version when using --install-nodejs (default: 26.2.0)
+  --nvm-version <v>        nvm version to install or refresh (default: 0.40.4)
+  --nvm-dir <dir>          nvm install directory (default: /opt/cocalc/nvm)
+  --node-major <n>         deprecated alias for --node-version
   --preserve-system-postgres
                            do not stop/disable Ubuntu's package-managed postgres service
   -h, --help               show help
@@ -45,22 +50,42 @@ require_root() {
 }
 
 ensure_node() {
-  local version major
-  if command -v node >/dev/null 2>&1; then
-    version="$(node -v | sed 's/^v//')"
-    major="${version%%.*}"
-    if [[ "$major" =~ ^[0-9]+$ ]] && [[ "$major" -ge 22 ]]; then
+  local node_bin="${NVM_DIR}/versions/node/v${NODE_VERSION}/bin/node"
+  local version
+  if [[ "$INSTALL_NODEJS" -eq 1 ]]; then
+    install_nvm_node
+    return 0
+  fi
+
+  if [[ -x "$node_bin" ]]; then
+    version="$("$node_bin" -p 'process.versions.node' 2>/dev/null || true)"
+    if [[ "$version" == "$NODE_VERSION" ]]; then
       return 0
     fi
   fi
-  if [[ "$INSTALL_NODEJS" -ne 1 ]]; then
-    echo "node >=22 is required; rerun with --install-nodejs or install it first" >&2
-    exit 1
+
+  if command -v node >/dev/null 2>&1; then
+    version="$(node -p 'process.versions.node' 2>/dev/null || true)"
+    if [[ "$version" == "$NODE_VERSION" ]]; then
+      return 0
+    fi
   fi
+
+  echo "node ${NODE_VERSION} is required; rerun with --install-nodejs or install it first" >&2
+  exit 1
+}
+
+install_nvm_node() {
+  local node_bin="${NVM_DIR}/versions/node/v${NODE_VERSION}/bin/node"
   run apt-get update
   run apt-get install -y ca-certificates curl gnupg
-  run bash -lc "curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash -"
-  run apt-get install -y nodejs
+  run mkdir -p "$NVM_DIR"
+  run bash -lc "export NVM_DIR='$NVM_DIR'; export PROFILE=/dev/null; curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_VERSION}/install.sh | bash"
+  run bash -lc "export NVM_DIR='$NVM_DIR'; . '$NVM_DIR/nvm.sh'; nvm install '$NODE_VERSION'; nvm alias default '$NODE_VERSION'"
+  if [[ ! -x "$node_bin" ]]; then
+    echo "expected Node.js binary was not installed: $node_bin" >&2
+    exit 1
+  fi
 }
 
 find_initdb() {
@@ -102,8 +127,24 @@ main() {
         INSTALL_NODEJS=1
         shift
         ;;
+      --node-version)
+        NODE_VERSION="$2"
+        shift 2
+        ;;
+      --nvm-version)
+        NVM_VERSION="$2"
+        shift 2
+        ;;
+      --nvm-dir)
+        NVM_DIR="$2"
+        shift 2
+        ;;
       --node-major)
-        NODE_MAJOR="$2"
+        if [[ "$2" != "26" ]]; then
+          echo "--node-major is deprecated; only major 26 is supported" >&2
+          exit 2
+        fi
+        NODE_VERSION="26.2.0"
         shift 2
         ;;
       --preserve-system-postgres)
@@ -187,6 +228,7 @@ Bay user:        ${BAY_USER}
 Bay root:        ${BAY_ROOT}
 Install base:    ${INSTALL_BASE}
 initdb:          ${INITDB}
+Node.js:         ${NVM_DIR}/versions/node/v${NODE_VERSION}/bin/node
 
 Next step:
   install the shared site master key before starting any bay services:

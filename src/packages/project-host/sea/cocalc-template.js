@@ -144,10 +144,7 @@ if (path.basename(process.argv[1]) == "node") {
       const message =
         typeof warning === "string" ? warning : (warning?.message ?? "");
       const code = typeof warning === "object" ? warning?.code : undefined;
-      if (
-        message.includes("SQLite is an experimental feature") ||
-        code === "DEP0169"
-      ) {
+      if (code === "DEP0169") {
         return;
       }
       return originalEmitWarning.call(process, warning, ...args);

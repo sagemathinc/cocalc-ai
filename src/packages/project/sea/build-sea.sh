@@ -5,6 +5,9 @@ export NAME="cocalc-project"
 export MAIN="bundle/index.js"
 export VERSION="$npm_package_version"
 
+# shellcheck source=../../project-host/sea/node-bin.sh
+source ../../project-host/sea/node-bin.sh
+
 FUSE="NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2"
 ARCH="$(uname -m)"
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -14,10 +17,10 @@ case "$ARCH" in
 esac
 
 TARGET="./$NAME-$VERSION-$ARCH-$OS"
-
-NODE_BIN="$(command -v node)"
+NODE_BIN="$(resolve_sea_node_bin)"
 
 echo "Building CoCalc Project SEA for $OS"
+echo "Using Node.js $("$NODE_BIN" -p 'process.version') at $NODE_BIN"
 
 cp "$NODE_BIN" "$TARGET"
 chmod u+w "$TARGET"
@@ -27,14 +30,14 @@ if [ "$OS" != "linux" ]; then
   exit 1
 fi
 cp ../build/bundle-linux.tar.xz cocalc.tar.xz
-node ../../project-host/sea/render-template.js \
+"$NODE_BIN" ../../project-host/sea/render-template.js \
   ../../project-host/sea/cocalc-template.js \
   cocalc.js \
   "$NAME" \
   "$VERSION" \
   "$MAIN"
 
-node --experimental-sea-config sea-config.json
+"$NODE_BIN" --experimental-sea-config sea-config.json
 
 case "$OS" in
   darwin)

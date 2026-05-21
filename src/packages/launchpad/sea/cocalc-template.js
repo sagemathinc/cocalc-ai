@@ -24,11 +24,7 @@ function installWarningFilter() {
     const argCode = typeof args[1] === "string" ? args[1] : undefined;
     const code = objectCode ?? argCode;
 
-    if (
-      code === "DEP0040" ||
-      code === "DEP0169" ||
-      message.includes("SQLite is an experimental feature")
-    ) {
+    if (code === "DEP0040" || code === "DEP0169") {
       return;
     }
 

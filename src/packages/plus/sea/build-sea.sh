@@ -5,6 +5,9 @@ export NAME="cocalc-plus"
 export MAIN="bundle/index.js"
 export VERSION="$npm_package_version"
 
+# shellcheck source=../../project-host/sea/node-bin.sh
+source ../../project-host/sea/node-bin.sh
+
 FUSE="NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2"   # must match your sea-config.json
 MACHINE="$(uname -m)"
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -13,17 +16,17 @@ ENTITLEMENTS="${COCALC_PLUS_ENTITLEMENTS:-entitlements.plist}"
 
 # final single-file executable
 TARGET="./$NAME-$VERSION-$MACHINE-$OS"
-
-NODE_BIN="$(command -v node)"
+NODE_BIN="$(resolve_sea_node_bin)"
 
 echo "Building SEA for $OS"
+echo "Using Node.js $("$NODE_BIN" -p 'process.version') at $NODE_BIN"
 
 # 1) Stage the node runtime we’ll inject into
 cp "$NODE_BIN" "$TARGET"
 chmod u+w "$TARGET"   # make sure it's writable even if copied from system paths
 
 cp ../build/bundle.tar.xz cocalc.tar.xz
-node ../../project-host/sea/render-template.js \
+"$NODE_BIN" ../../project-host/sea/render-template.js \
   ../../project-host/sea/cocalc-template.js \
   cocalc.js \
   "$NAME" \
@@ -32,7 +35,7 @@ node ../../project-host/sea/render-template.js \
 
 # 2) Bundle app into a SEA blob
 #    This writes ./sea-prep.blob using your sea-config.json
-node --experimental-sea-config sea-config.json
+"$NODE_BIN" --experimental-sea-config sea-config.json
 
 # 3) Platform-specific injection and signing
 case "$OS" in
