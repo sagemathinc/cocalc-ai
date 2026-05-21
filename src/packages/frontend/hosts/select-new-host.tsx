@@ -25,6 +25,7 @@ export function SelectNewHost({
   regionLabel,
   wantsGpu,
   pickerMode = "create",
+  showHelp = true,
 }: {
   selectedHost?: Host;
   onChange: (host?: Host) => void;
@@ -33,6 +34,7 @@ export function SelectNewHost({
   regionLabel?: string;
   wantsGpu?: boolean;
   pickerMode?: "move" | "create";
+  showHelp?: boolean;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -118,14 +120,16 @@ export function SelectNewHost({
             )}
           </div>
         </Card>
-        <Paragraph
-          type="secondary"
-          style={{ fontSize: 12, lineHeight: 1.25, marginBottom: 0 }}
-        >
-          Host choice mainly affects interactive lag, such as terminal typing
-          and Jupyter notebook output. You can change the host or move the
-          project to another region later.
-        </Paragraph>
+        {showHelp && (
+          <Paragraph
+            type="secondary"
+            style={{ fontSize: 12, lineHeight: 1.25, marginBottom: 0 }}
+          >
+            Host choice mainly affects interactive lag, such as terminal typing
+            and Jupyter notebook output. You can change the host or move the
+            project to another region later.
+          </Paragraph>
+        )}
       </Space>
       <HostPickerModal
         open={pickerOpen}

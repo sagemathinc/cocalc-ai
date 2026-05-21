@@ -9,7 +9,6 @@ import { useEffect, useMemo, useState } from "react";
 import type { AccountRuntimeSponsorStatus } from "@cocalc/conat/hub/api/projects";
 import type { MembershipDetails } from "@cocalc/conat/hub/api/purchases";
 import { redux } from "@cocalc/frontend/app-framework";
-import { Icon } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { humanSize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -205,8 +204,14 @@ function healthMessage(gauges: Gauge[]): string | undefined {
 
 function GaugeCard({ gauge }: { gauge: Gauge }) {
   return (
-    <Card size="small" styles={{ body: { padding: "7px 9px" } }}>
-      <Space orientation="vertical" size={4} style={{ width: "100%" }}>
+    <div
+      style={{
+        borderRight: `1px solid ${COLORS.GRAY_LL}`,
+        minWidth: 0,
+        padding: "0 18px",
+      }}
+    >
+      <Space orientation="vertical" size={3} style={{ width: "100%" }}>
         <Space
           size="small"
           style={{ width: "100%", justifyContent: "space-between" }}
@@ -214,9 +219,9 @@ function GaugeCard({ gauge }: { gauge: Gauge }) {
           <Text type="secondary" style={{ fontSize: 12 }}>
             {gauge.label}
           </Text>
-          {gaugeTag(gauge.tone)}
+          <span style={{ fontSize: 11 }}>{gaugeTag(gauge.tone)}</span>
         </Space>
-        <Text strong style={{ color: COLORS.GRAY_D }}>
+        <Text strong style={{ color: COLORS.GRAY_D, fontSize: 16 }}>
           {gauge.value}
         </Text>
         {gauge.percent != null && (
@@ -227,11 +232,8 @@ function GaugeCard({ gauge }: { gauge: Gauge }) {
             status={progressStatus(gauge.tone)}
           />
         )}
-        <Text type="secondary" style={{ fontSize: 11, lineHeight: 1.2 }}>
-          {gauge.caption}
-        </Text>
       </Space>
-    </Card>
+    </div>
   );
 }
 
@@ -319,37 +321,31 @@ export function ProjectCreateHealthCard({ open }: { open: boolean }) {
   return (
     <Card
       size="small"
-      styles={{ body: { padding: "9px 10px" } }}
+      styles={{ body: { padding: "10px 12px" } }}
       style={{
         borderColor: COLORS.GRAY_LL,
-        background: COLORS.GRAY_LLL,
+        background: "white",
       }}
     >
       <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-        <Space style={{ width: "100%", justifyContent: "space-between" }}>
-          <Space size="small">
-            <Icon name="dashboard" />
-            <Text strong>Account capacity</Text>
-          </Space>
-          <Button
-            size="small"
-            type="text"
-            onClick={() => setReloadToken((token) => token + 1)}
-            loading={loading}
-          >
-            Refresh
-          </Button>
-        </Space>
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(135px, 1fr))",
-            gap: 8,
+            gridTemplateColumns: "repeat(3, minmax(120px, 1fr)) auto",
+            alignItems: "center",
+            gap: 0,
           }}
         >
           {gauges.map((gauge) => (
             <GaugeCard key={gauge.key} gauge={gauge} />
           ))}
+          <Button
+            size="small"
+            onClick={() => setReloadToken((token) => token + 1)}
+            loading={loading}
+          >
+            Refresh
+          </Button>
         </div>
         {message && <Alert type="info" showIcon message={message} />}
         {runtimeFull && visibleRuntimeProjects.length > 0 && (
