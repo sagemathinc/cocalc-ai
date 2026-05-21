@@ -177,9 +177,7 @@ describe("PublicPage", () => {
     );
 
     const footer = screen.getByRole("contentinfo");
-    fireEvent.click(
-      within(footer).getByRole("link", { name: "Cookie preferences" }),
-    );
+    fireEvent.click(within(footer).getByRole("link", { name: "Cookies" }));
 
     await waitFor(() => expect(showPreferences).toHaveBeenCalledTimes(1));
   });

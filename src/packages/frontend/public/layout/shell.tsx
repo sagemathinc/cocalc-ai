@@ -160,7 +160,7 @@ function getFooterColumns(config?: PublicConfig) {
   if (config?.cookie_banner_enabled) {
     companyLinks.push({
       href: "#cookie-preferences",
-      label: "Cookie preferences",
+      label: "Cookies",
       onClick: (event) => {
         event.preventDefault();
         void Promise.all([
