@@ -77,6 +77,7 @@ import {
 import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
 import { COLORS } from "@cocalc/util/theme";
 import type { LineItem } from "@cocalc/util/stripe/types";
+import { openAccountSettings } from "./settings-routing";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -307,6 +308,11 @@ export function ClaimableMembershipPackagesPanel({
   onChanged,
 }: ClaimableMembershipPackagesPanelProps) {
   const account_id = useTypedRedux("account", "account_id");
+  const email_address = useTypedRedux("account", "email_address");
+  const email_address_verified = useTypedRedux(
+    "account",
+    "email_address_verified",
+  );
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [claimingPackageId, setClaimingPackageId] = useState<string>("");
@@ -397,6 +403,8 @@ export function ClaimableMembershipPackagesPanel({
   if (!account_id) {
     return null;
   }
+  const emailVerified =
+    !!email_address && !!email_address_verified?.get?.(email_address);
 
   return (
     <div>
@@ -415,7 +423,29 @@ export function ClaimableMembershipPackagesPanel({
           type="info"
           showIcon
           title="No claimable memberships right now"
-          description="Please verify your email address to claim a reserved seat or site license membership. Only verified email addresses are used for membership claims."
+          description={
+            emailVerified ? (
+              <span>
+                Your signed-in email address <Text code>{email_address}</Text>{" "}
+                is verified, but no reserved seats or matching site-license
+                pools are available for it right now.
+              </span>
+            ) : (
+              <Space orientation="vertical" size="small">
+                <span>
+                  Verify your signed-in email address{" "}
+                  <Text code>{email_address}</Text> to claim reserved seats or
+                  matching site-license memberships.
+                </span>
+                <Button
+                  size="small"
+                  onClick={() => openAccountSettings({ kind: "profile" })}
+                >
+                  Open Profile email verification
+                </Button>
+              </Space>
+            )
+          }
         />
       ) : null}
       {!loading && claimables.length > 0 ? (
