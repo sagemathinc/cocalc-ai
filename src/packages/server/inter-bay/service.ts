@@ -64,7 +64,14 @@ import {
 } from "@cocalc/server/auth/tokens/redeem";
 import { verifyLocalSignInPassword } from "@cocalc/server/auth/verify-sign-in-password";
 import { redeemVerifyEmailLocal } from "@cocalc/server/auth/redeem-verify-email";
+import {
+  createResetLocal as createPasswordResetLocal,
+  recentAttemptsLocal as recentPasswordResetAttemptsLocal,
+  redeemResetLocal as redeemPasswordResetLocal,
+} from "@cocalc/server/auth/password-reset";
 import adminVerifyEmailAddressLocal from "@cocalc/server/accounts/admin-verify-email-address";
+import setPasswordFromResetLocal from "@cocalc/server/accounts/set-password-from-reset";
+import { adminDisableTwoFactor as adminDisableTwoFactorLocal } from "@cocalc/server/auth/two-factor";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
 import {
@@ -515,6 +522,26 @@ async function startAccountDirectoryService(): Promise<void> {
       await updateClusterAccountApiKeysHomeBay(opts),
     touchApiKey: async (opts) =>
       await touchClusterAccountApiKeyDirectoryEntry(opts),
+    recentPasswordResetAttempts: async ({ email_address, ip_address }) => ({
+      count: await recentPasswordResetAttemptsLocal(email_address, ip_address),
+    }),
+    createPasswordReset: async ({ email_address, ip_address, ttl_s }) => ({
+      id: await createPasswordResetLocal(email_address, ip_address, ttl_s),
+    }),
+    redeemPasswordReset: async ({ password_reset_id }) => {
+      const { email_address } =
+        await redeemPasswordResetLocal(password_reset_id);
+      const account = await getClusterAccountByEmail(email_address);
+      const account_id = account?.account_id;
+      if (!account_id) {
+        throw Error("Password reset no longer valid.");
+      }
+      return {
+        account_id,
+        email_address,
+        home_bay_id: account.home_bay_id ?? null,
+      };
+    },
     getMembershipClaimIdentity: async (opts) =>
       await getMembershipClaimIdentityDirect(opts),
     reserveMembershipClaimIdentity: async (opts) =>
@@ -593,6 +620,11 @@ async function startAccountLocalService(): Promise<void> {
     },
     adminVerifyEmailAddress: async ({ account_id }) =>
       await adminVerifyEmailAddressLocal({ account_id }),
+    adminDisableTwoFactor: async ({ account_id }) =>
+      await adminDisableTwoFactorLocal({ account_id }),
+    setPasswordFromReset: async ({ account_id, password }) => {
+      await setPasswordFromResetLocal({ account_id, password });
+    },
     assertProductAccessTrust: async ({ account_id, action }) => {
       await assertAccountTrustedForProductAccess(account_id, action);
     },

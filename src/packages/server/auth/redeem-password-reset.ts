@@ -6,10 +6,9 @@
 5. Return account_id of user who just reset their password.
 */
 
-import getPool from "@cocalc/database/pool";
-import getAccountId from "@cocalc/database/pool/account/get";
-import setPassword from "@cocalc/database/pool/account/set-password";
 import passwordStrength from "@cocalc/server/auth/password-strength";
+import { redeemReset } from "@cocalc/server/auth/password-reset";
+import { setClusterAccountPasswordFromReset } from "@cocalc/server/inter-bay/accounts";
 import { MIN_PASSWORD_LENGTH, MIN_PASSWORD_STRENGTH } from "@cocalc/util/auth";
 
 export default async function redeemPasswordReset(
@@ -25,21 +24,10 @@ export default async function redeemPasswordReset(
     throw Error(help ? help : "password is too weak");
   }
 
-  const pool = getPool();
-  const { rows } = await pool.query(
-    "SELECT email_address FROM password_reset WHERE expire > NOW() AND id=$1::UUID",
-    [passwordResetId],
-  );
-  if (rows.length == 0) {
-    throw Error("Password reset no longer valid.");
-  }
-  const { email_address } = rows[0];
-
-  await pool.query("UPDATE password_reset SET expire=NOW() WHERE id=$1::UUID", [
-    passwordResetId,
-  ]);
-
-  const account_id = await getAccountId({ email_address });
-  await setPassword(account_id, password);
+  const { account_id } = await redeemReset(passwordResetId);
+  await setClusterAccountPasswordFromReset({
+    account_id,
+    password,
+  });
   return account_id;
 }
