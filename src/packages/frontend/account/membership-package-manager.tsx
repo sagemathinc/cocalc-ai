@@ -1933,6 +1933,7 @@ function ProvisionSiteLicenseModal({
   const [startsAt, setStartsAt] = useState<Dayjs | null>(null);
   const [expiresAt, setExpiresAt] = useState<Dayjs | null>(null);
   const [pools, setPools] = useState<SiteLicensePoolConfig[]>([]);
+  const [editingPoolIndex, setEditingPoolIndex] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
@@ -1997,6 +1998,7 @@ function ProvisionSiteLicenseModal({
         },
       ].filter((pool) => !!pool.membership_class),
     );
+    setEditingPoolIndex(null);
     setSubmitting(false);
     setError("");
   }, [open, siteLicenseTierOptions]);
@@ -2008,6 +2010,7 @@ function ProvisionSiteLicenseModal({
   }
 
   function addPool() {
+    const newPoolIndex = pools.length;
     setPools((current) => [
       ...current,
       {
@@ -2022,6 +2025,7 @@ function ProvisionSiteLicenseModal({
         affiliation_reverification_grace_days: 30,
       },
     ]);
+    setEditingPoolIndex(newPoolIndex);
   }
 
   async function provision() {
@@ -2092,6 +2096,8 @@ function ProvisionSiteLicenseModal({
       setSubmitting(false);
     }
   }
+  const editingPool =
+    editingPoolIndex == null ? undefined : pools[editingPoolIndex];
 
   return (
     <Modal
@@ -2425,216 +2431,261 @@ function ProvisionSiteLicenseModal({
                   </Space>
                 </div>
                 <div style={{ padding: 14 }}>
-                  <div
-                    style={{
-                      display: "grid",
-                      gap: 14,
-                      gridTemplateColumns:
-                        "minmax(180px, 1fr) minmax(145px, 0.9fr)",
-                      marginBottom: 14,
-                    }}
+                  <Space
+                    orientation="vertical"
+                    size="middle"
+                    style={{ width: "100%" }}
                   >
-                    <CompactField label="Name">
-                      <Input
-                        value={pool.pool_name}
-                        onChange={(event) =>
-                          updatePool(index, { pool_name: event.target.value })
-                        }
-                        style={{ width: "100%" }}
-                      />
-                    </CompactField>
-                    <CompactField label="Tier">
-                      <Select
-                        value={pool.membership_class}
-                        onChange={(value) =>
-                          updatePool(index, {
-                            membership_class: value as MembershipClass,
-                          })
-                        }
-                        style={{ width: "100%" }}
-                        options={siteLicenseTierOptions.map((tier) => ({
-                          label: tier.label ?? capitalize(tier.id),
-                          value: tier.id,
-                        }))}
-                      />
-                    </CompactField>
-                  </div>
-                  <div
-                    style={{
-                      display: "grid",
-                      gap: 14,
-                      gridTemplateColumns:
-                        "minmax(115px, 0.55fr) minmax(190px, 1fr)",
-                      marginBottom: 14,
-                    }}
-                  >
-                    <CompactField label="Seats">
-                      <InputNumber
-                        min={1}
-                        precision={0}
-                        value={pool.seat_count}
-                        onChange={(value) =>
-                          updatePool(index, { seat_count: Number(value ?? 1) })
-                        }
-                        style={{ width: "100%" }}
-                      />
-                    </CompactField>
-                    <CompactField
-                      label="Access mode"
-                      help={
-                        pool.requires_approval
-                          ? "Manager reviews requests."
-                          : "Eligible users can claim."
-                      }
+                    <div
+                      style={{
+                        background: COLORS.GRAY_LLL,
+                        border: `1px solid ${COLORS.GRAY_LL}`,
+                        borderRadius: 12,
+                        padding: 10,
+                      }}
                     >
-                      <Radio.Group
-                        buttonStyle="solid"
-                        value={pool.requires_approval ? "yes" : "no"}
-                        onChange={(event) =>
-                          updatePool(index, {
-                            requires_approval: event.target.value === "yes",
-                          })
-                        }
-                        style={{ display: "flex", width: "100%" }}
+                      <Space
+                        wrap
+                        style={{
+                          justifyContent: "space-between",
+                          width: "100%",
+                        }}
                       >
-                        <Radio.Button
-                          style={{ flex: 1, textAlign: "center" }}
-                          value="no"
-                        >
-                          No
-                        </Radio.Button>
-                        <Radio.Button
-                          style={{ flex: 1, textAlign: "center" }}
-                          value="yes"
-                        >
-                          Yes
-                        </Radio.Button>
-                      </Radio.Group>
-                    </CompactField>
-                  </div>
-                  <Collapse
-                    size="small"
-                    items={[
-                      {
-                        key: "advanced",
-                        label: "Advanced pool policy",
-                        children: (
-                          <Space
-                            orientation="vertical"
-                            size="middle"
-                            style={{ width: "100%" }}
-                          >
-                            <Text type="secondary">
-                              Use exclusive groups to avoid double-counting
-                              seats. For example, Students and Instructors both
-                              use <Text code>teaching</Text>, so instructor
-                              approval releases the lower student seat.
-                              Researchers use <Text code>research</Text>, so
-                              research access can coexist.
-                            </Text>
-                            <div
-                              style={{
-                                display: "grid",
-                                gap: 14,
-                                gridTemplateColumns:
-                                  "minmax(180px, 1fr) minmax(150px, 0.8fr) minmax(130px, 0.7fr) minmax(130px, 0.7fr)",
-                              }}
-                            >
-                              <CompactField
-                                label="Verification"
-                                help="The proof required for this pool."
-                              >
-                                <Select
-                                  value={pool.verification_policy}
-                                  onChange={(value) =>
-                                    updatePool(index, {
-                                      verification_policy:
-                                        value as SiteLicenseVerificationPolicy,
-                                    })
-                                  }
-                                  options={[
-                                    {
-                                      label: "Email domain",
-                                      value: "email-domain",
-                                    },
-                                    {
-                                      label: "Manager approval",
-                                      value: "manager-approval",
-                                    },
-                                    {
-                                      label: "SSO affiliation",
-                                      value: "sso-affiliation",
-                                    },
-                                  ]}
-                                  style={{ width: "100%" }}
-                                />
-                              </CompactField>
-                              <CompactField
-                                label="Exclusive group"
-                                help="Pools in the same group replace each other."
-                              >
-                                <Input
-                                  value={`${pool.exclusive_group ?? ""}`}
-                                  onChange={(event) =>
-                                    updatePool(index, {
-                                      exclusive_group: event.target.value,
-                                    })
-                                  }
-                                  style={{ width: "100%" }}
-                                />
-                              </CompactField>
-                              <CompactField
-                                label="Reverify days"
-                                help="How often eligibility is refreshed."
-                              >
-                                <InputNumber
-                                  min={1}
-                                  precision={0}
-                                  value={
-                                    pool.affiliation_reverification_days ??
-                                    undefined
-                                  }
-                                  onChange={(value) =>
-                                    updatePool(index, {
-                                      affiliation_reverification_days:
-                                        value == null ? null : Number(value),
-                                    })
-                                  }
-                                  style={{ width: "100%" }}
-                                />
-                              </CompactField>
-                              <CompactField
-                                label="Grace days"
-                                help="Time before the seat is released."
-                              >
-                                <InputNumber
-                                  min={1}
-                                  precision={0}
-                                  value={
-                                    pool.affiliation_reverification_grace_days ??
-                                    undefined
-                                  }
-                                  onChange={(value) =>
-                                    updatePool(index, {
-                                      affiliation_reverification_grace_days:
-                                        value == null ? null : Number(value),
-                                    })
-                                  }
-                                  style={{ width: "100%" }}
-                                />
-                              </CompactField>
-                            </div>
-                          </Space>
-                        ),
-                      },
-                    ]}
-                  />
+                        <Space orientation="vertical" size={0}>
+                          <Text strong>{pool.seat_count} seats</Text>
+                          <Text type="secondary">
+                            {pool.requires_approval
+                              ? "Manager approval required"
+                              : "Eligible users can self-claim"}
+                          </Text>
+                        </Space>
+                        <Text type="secondary">
+                          {pool.verification_policy}; group{" "}
+                          {pool.exclusive_group || "none"}
+                        </Text>
+                      </Space>
+                    </div>
+                    <Button
+                      block
+                      onClick={() => setEditingPoolIndex(index)}
+                      type="primary"
+                    >
+                      Edit pool
+                    </Button>
+                  </Space>
                 </div>
               </Card>
             );
           })}
         </div>
+        <ProvisionPoolEditModal
+          open={editingPool != null}
+          pool={editingPool}
+          poolIndex={editingPoolIndex ?? 0}
+          siteLicenseTierOptions={siteLicenseTierOptions}
+          onChange={(patch) => {
+            if (editingPoolIndex != null) {
+              updatePool(editingPoolIndex, patch);
+            }
+          }}
+          onClose={() => setEditingPoolIndex(null)}
+        />
         <FreshAuthModal {...freshAuthModalProps} />
+      </Space>
+    </Modal>
+  );
+}
+
+function ProvisionPoolEditModal({
+  open,
+  pool,
+  poolIndex,
+  siteLicenseTierOptions,
+  onChange,
+  onClose,
+}: {
+  open: boolean;
+  pool?: SiteLicensePoolConfig;
+  poolIndex: number;
+  siteLicenseTierOptions: MembershipTierLike[];
+  onChange: (patch: Partial<SiteLicensePoolConfig>) => void;
+  onClose: () => void;
+}) {
+  if (pool == null) return null;
+  const theme = getProvisionPoolTheme(pool, poolIndex);
+
+  return (
+    <Modal
+      open={open}
+      onCancel={onClose}
+      onOk={onClose}
+      okText="Done"
+      width={760}
+      title={
+        <Space>
+          <Icon name={theme.icon} style={{ color: theme.accent }} />
+          <span>Edit {pool.pool_name || `Pool ${poolIndex + 1}`}</span>
+        </Space>
+      }
+    >
+      <Space orientation="vertical" size="large" style={{ width: "100%" }}>
+        <Alert
+          type="info"
+          showIcon
+          title={theme.description}
+          description="Changes are applied immediately to the provisioning draft. They are not saved until you provision the site license."
+        />
+        <div
+          style={{
+            display: "grid",
+            gap: 14,
+            gridTemplateColumns: "minmax(220px, 1fr) minmax(180px, 0.8fr)",
+          }}
+        >
+          <CompactField label="Pool name">
+            <Input
+              value={pool.pool_name}
+              onChange={(event) => onChange({ pool_name: event.target.value })}
+              style={{ width: "100%" }}
+            />
+          </CompactField>
+          <CompactField label="Tier">
+            <Select
+              value={pool.membership_class}
+              onChange={(value) =>
+                onChange({ membership_class: value as MembershipClass })
+              }
+              options={siteLicenseTierOptions.map((tier) => ({
+                label: tier.label ?? capitalize(tier.id),
+                value: tier.id,
+              }))}
+              style={{ width: "100%" }}
+            />
+          </CompactField>
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gap: 14,
+            gridTemplateColumns: "minmax(150px, 0.55fr) minmax(260px, 1fr)",
+          }}
+        >
+          <CompactField label="Seats">
+            <InputNumber
+              min={1}
+              precision={0}
+              value={pool.seat_count}
+              onChange={(value) => onChange({ seat_count: Number(value ?? 1) })}
+              style={{ width: "100%" }}
+            />
+          </CompactField>
+          <CompactField
+            label="Access mode"
+            help={
+              pool.requires_approval
+                ? "Users submit a request and a site-license manager approves it."
+                : "Eligible users with a verified matching email can claim directly."
+            }
+          >
+            <Radio.Group
+              buttonStyle="solid"
+              value={pool.requires_approval ? "yes" : "no"}
+              onChange={(event) =>
+                onChange({ requires_approval: event.target.value === "yes" })
+              }
+              style={{ display: "flex", width: "100%" }}
+            >
+              <Radio.Button style={{ flex: 1, textAlign: "center" }} value="no">
+                Self-claim
+              </Radio.Button>
+              <Radio.Button
+                style={{ flex: 1, textAlign: "center" }}
+                value="yes"
+              >
+                Approval
+              </Radio.Button>
+            </Radio.Group>
+          </CompactField>
+        </div>
+        <Divider style={{ margin: "0" }} />
+        <Space orientation="vertical" size={2}>
+          <Text strong>Advanced policy</Text>
+          <Text type="secondary">
+            Exclusive groups avoid double-counting seats. Pools in the same
+            group replace each other; pools in different groups can coexist.
+          </Text>
+        </Space>
+        <div
+          style={{
+            display: "grid",
+            gap: 14,
+            gridTemplateColumns:
+              "minmax(190px, 1fr) minmax(160px, 0.8fr) minmax(130px, 0.65fr) minmax(130px, 0.65fr)",
+          }}
+        >
+          <CompactField
+            label="Verification"
+            help="Proof required for this pool."
+          >
+            <Select
+              value={pool.verification_policy}
+              onChange={(value) =>
+                onChange({
+                  verification_policy: value as SiteLicenseVerificationPolicy,
+                })
+              }
+              options={[
+                { label: "Email domain", value: "email-domain" },
+                { label: "Manager approval", value: "manager-approval" },
+                { label: "SSO affiliation", value: "sso-affiliation" },
+              ]}
+              style={{ width: "100%" }}
+            />
+          </CompactField>
+          <CompactField
+            label="Exclusive group"
+            help="Same group seats replace each other."
+          >
+            <Input
+              value={`${pool.exclusive_group ?? ""}`}
+              onChange={(event) =>
+                onChange({ exclusive_group: event.target.value })
+              }
+              style={{ width: "100%" }}
+            />
+          </CompactField>
+          <CompactField
+            label="Reverify days"
+            help="Eligibility refresh interval."
+          >
+            <InputNumber
+              min={1}
+              precision={0}
+              value={pool.affiliation_reverification_days ?? undefined}
+              onChange={(value) =>
+                onChange({
+                  affiliation_reverification_days:
+                    value == null ? null : Number(value),
+                })
+              }
+              style={{ width: "100%" }}
+            />
+          </CompactField>
+          <CompactField label="Grace days" help="Before seat release.">
+            <InputNumber
+              min={1}
+              precision={0}
+              value={pool.affiliation_reverification_grace_days ?? undefined}
+              onChange={(value) =>
+                onChange({
+                  affiliation_reverification_grace_days:
+                    value == null ? null : Number(value),
+                })
+              }
+              style={{ width: "100%" }}
+            />
+          </CompactField>
+        </div>
       </Space>
     </Modal>
   );
