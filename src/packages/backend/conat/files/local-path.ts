@@ -19,6 +19,7 @@ export async function localPathFileserver({
   rootfs,
   allowSafeModeHardlink,
   allowSafeModeSymlink,
+  disableOpenAt2,
   onMutation,
 }: {
   service?: string;
@@ -34,6 +35,7 @@ export async function localPathFileserver({
   rootfs?: string;
   allowSafeModeHardlink?: boolean;
   allowSafeModeSymlink?: boolean;
+  disableOpenAt2?: boolean;
   onMutation?: (opts: {
     subject: string;
     op: string;
@@ -48,6 +50,7 @@ export async function localPathFileserver({
     rootfs,
     allowSafeModeHardlink,
     allowSafeModeSymlink,
+    disableOpenAt2,
   });
   client ??= conat();
   logger.debug("localPathFileserver: got client");
@@ -87,6 +90,7 @@ export async function localPathFileserver({
         rootfs: rootfs ?? (unsafeMode ? "/" : undefined),
         allowSafeModeHardlink,
         allowSafeModeSymlink,
+        disableOpenAt2,
       });
     },
     onMutation,

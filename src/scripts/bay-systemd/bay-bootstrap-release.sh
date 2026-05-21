@@ -20,6 +20,8 @@ HUB_BASE_PORT=9300
 PUBLIC_URL=""
 DAEMON_RELOAD=1
 SITE_MASTER_KEY_PATH="/etc/cocalc/site-master-key"
+NODE_VERSION="26.2.0"
+NVM_DIR="/opt/cocalc/nvm"
 
 usage() {
   cat <<'EOF'
@@ -48,6 +50,8 @@ Options:
   --overlay <mode>         overlay mode passed to install-scaffold
                            (default: current-cocalc for --source, rocket-bundle for --bundle)
   --no-daemon-reload       skip daemon-reload during scaffold install
+  --node-version <v>       Node.js runtime version for generated bay env (default: 26.2.0)
+  --nvm-dir <dir>          nvm directory for generated bay env (default: /opt/cocalc/nvm)
   -h, --help               show help
 EOF
 }
@@ -331,6 +335,14 @@ main() {
         DAEMON_RELOAD=0
         shift
         ;;
+      --node-version)
+        NODE_VERSION="$2"
+        shift 2
+        ;;
+      --nvm-dir)
+        NVM_DIR="$2"
+        shift 2
+        ;;
       -h|--help)
         usage
         exit 0
@@ -428,6 +440,8 @@ COCALC_BAY_ID=${BAY_ID}
 COCALC_BAY_ROOT=${BAY_ROOT}
 COCALC_BAY_RELEASES_DIR=${RELEASES_DIR}
 COCALC_BAY_CURRENT_LINK=${CURRENT_LINK}
+COCALC_BAY_NODE_VERSION=${NODE_VERSION}
+COCALC_BAY_NODE_BIN=${NVM_DIR}/versions/node/v${NODE_VERSION}/bin/node
 COCALC_BAY_STATE_DIR=${BAY_ROOT}/state
 COCALC_BAY_RUN_DIR=${BAY_ROOT}/run
 COCALC_BAY_LOG_DIR=${BAY_ROOT}/logs

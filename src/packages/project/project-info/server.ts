@@ -14,10 +14,8 @@ if there is a limit on the number of processes that can be spawned, or memory pr
 */
 
 import { delay } from "awaiting";
-import type { DiskUsage as DF_DiskUsage } from "diskusage";
-import { check as df } from "diskusage";
 import { EventEmitter } from "node:events";
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, statfs } from "node:fs/promises";
 
 import { pidToPath as terminalPidToPath } from "@cocalc/project/conat/terminal";
 import { getLogger } from "@cocalc/project/logger";
@@ -565,28 +563,29 @@ export class ProjectInfoServer extends EventEmitter {
   // users home dir and /tmp. /tmp is a ram disk, which will count against
   // the overall memory limit!
   private async disk_usage(): Promise<DiskUsage> {
-    const convert = function (val: DF_DiskUsage) {
+    const diskUsage = async (path: string) => {
+      const stats = await statfs(path);
+      const total = stats.blocks * stats.bsize;
+      const free = stats.bfree * stats.bsize;
       return {
-        total: bytes2MiB(val.total),
-        free: bytes2MiB(val.free),
-        available: bytes2MiB(val.available),
-        usage: bytes2MiB(val.total - val.free),
+        total: bytes2MiB(total),
+        free: bytes2MiB(free),
+        available: bytes2MiB(stats.bavail * stats.bsize),
+        usage: bytes2MiB(total - free),
       };
     };
     const [tmp, project] = await Promise.all([
-      df("/tmp"),
-      df(process.env.HOME ?? "/home/user"),
+      diskUsage("/tmp"),
+      diskUsage(process.env.HOME ?? "/home/user"),
     ]);
-
-    const tmpData = convert(tmp);
 
     // If /tmp is not tmpfs (memory-based), don't count its disk usage toward memory
     // since cgroup_stats adds disk_usage.tmp.usage to memory calculations
     if (this.tmpIsMemoryBased === false) {
-      tmpData.usage = 0;
+      tmp.usage = 0;
     }
 
-    return { tmp: tmpData, project: convert(project) };
+    return { tmp, project };
   }
 
   // orchestrating where all the information is bundled up for an update

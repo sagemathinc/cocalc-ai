@@ -8,6 +8,7 @@ import {
   Radio,
   Select,
   Space,
+  Tag,
   Typography,
 } from "antd";
 import {
@@ -16,6 +17,7 @@ import {
   useMemo,
   useState,
 } from "@cocalc/frontend/app-framework";
+import { Icon } from "@cocalc/frontend/components/icon";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import { lite } from "@cocalc/frontend/lite";
 import { CodexCredentialsPanel } from "@cocalc/frontend/account/codex-credentials-panel";
@@ -50,6 +52,7 @@ import {
 const { Text } = Typography;
 const DEFAULT_MODEL_NAME = DEFAULT_CODEX_MODELS[0].name;
 const CODEX_USAGE_URL = "https://chatgpt.com/codex/settings/usage";
+const CODEX_CONTROLS_COLLAPSED_KEY = "cocalc.chat.codexControlsCollapsed";
 
 type ModeOption = {
   value: CodexSessionMode;
@@ -129,6 +132,33 @@ const gridTwoColStyle = {
   gap: 12,
   width: "100%",
 } as const;
+const sectionStyle: React.CSSProperties = {
+  border: `1px solid ${COLORS.GRAY_LL}`,
+  borderRadius: 12,
+  background: "white",
+  padding: 14,
+};
+
+function readCodexControlsCollapsed(): boolean {
+  try {
+    return (
+      globalThis.localStorage?.getItem(CODEX_CONTROLS_COLLAPSED_KEY) === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function writeCodexControlsCollapsed(collapsed: boolean): void {
+  try {
+    globalThis.localStorage?.setItem(
+      CODEX_CONTROLS_COLLAPSED_KEY,
+      collapsed ? "1" : "0",
+    );
+  } catch {
+    // Ignore storage errors; this is only a local display preference.
+  }
+}
 
 export function CodexPaymentCredentialsModal({
   open,
@@ -268,6 +298,9 @@ export function CodexConfigButton({
   const [form] = Form.useForm();
   const [models, setModels] = useState<ModelOption[]>([]);
   const [value, setValue] = useState<Partial<CodexThreadConfig> | null>(null);
+  const [controlsCollapsed, setControlsCollapsed] = useState(
+    readCodexControlsCollapsed,
+  );
 
   useEffect(() => {
     const initialModels = DEFAULT_CODEX_MODELS.map((m) => ({
@@ -367,6 +400,24 @@ export function CodexConfigButton({
     ? "Checking…"
     : getCodexPaymentSourceShortLabel(paymentSource?.source);
   const sourceTooltip = getCodexPaymentSourceTooltip(paymentSource);
+  const modeLabel =
+    modeOptions.find((option) => option.value === currentSessionMode)?.label ??
+    "Mode";
+  const selectedModeOption = modeOptions.find(
+    (option) => option.value === currentSessionMode,
+  );
+  const reasoningLabel =
+    reasoningOptions.find((option) => option.value === selectedReasoningValue)
+      ?.label ?? selectedReasoningValue;
+  const paymentNeedsAttention =
+    paymentSourceLoading || paymentSource?.source === "none" || !paymentSource;
+  const toggleControlsCollapsed = () => {
+    setControlsCollapsed((collapsed) => {
+      const next = !collapsed;
+      writeCodexControlsCollapsed(next);
+      return next;
+    });
+  };
 
   const saveConfig = () => {
     const values = form.getFieldsValue();
@@ -386,26 +437,9 @@ export function CodexConfigButton({
 
   const onSave = () => saveConfig();
 
-  const updateConfig = (patch: Partial<CodexThreadConfig>) => {
-    const base = value ?? form.getFieldsValue();
-    const next = { ...base, ...patch };
-    const sessionMode: CodexSessionMode =
-      normalizeSessionMode(next) ?? defaultSessionMode;
-    const finalValues = {
-      ...next,
-      sessionId: normalizeCodexSessionId(next?.sessionId),
-      sessionMode,
-      allowWrite: sessionMode !== "read-only",
-    };
-    actions?.setCodexConfig?.(threadKey, finalValues);
-    setValue(finalValues);
-    form.setFieldsValue(finalValues);
-  };
-
-  const compactModeOptions = modeOptions.map((option) => ({
-    value: option.value,
-    label: option.label,
-  }));
+  const summaryParts = [selectedModelValue, modeLabel, reasoningLabel].filter(
+    (part) => typeof part === "string" && part.trim().length > 0,
+  );
 
   return (
     <>
@@ -413,186 +447,347 @@ export function CodexConfigButton({
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 6,
-          padding: "4px 6px",
-          background: "white",
-          border: "1px solid #d9d9d9",
-          borderRadius: 6,
+          gap: 5,
+          maxWidth: "min(760px, calc(100vw - 32px))",
         }}
       >
-        <Button size="small" onClick={() => setOpen(true)}>
-          Codex
-        </Button>
-        <Tooltip title={sourceTooltip}>
-          <Button size="small" onClick={() => setPaymentOpen(true)}>
-            {sourceShortLabel}
-          </Button>
-        </Tooltip>
-        <Select
-          size="small"
-          value={currentSessionMode}
-          options={compactModeOptions}
-          style={{ minWidth: 140 }}
-          onChange={(val) => {
-            updateConfig({ sessionMode: val as CodexSessionMode });
-          }}
-        />
-        <Select
-          size="small"
-          value={selectedModelValue}
-          options={models}
-          style={{ minWidth: 160 }}
-          onChange={(val) => {
-            const nextReasoning = getReasoningForModel({
-              models,
-              modelValue: val,
-            });
-            updateConfig({ model: val, reasoning: nextReasoning });
-          }}
-        />
-        <Select
-          size="small"
-          value={selectedReasoningValue}
-          options={reasoningOptions}
-          style={{ minWidth: 140 }}
-          onChange={(val) => {
-            updateConfig({ reasoning: val });
-          }}
-          disabled={reasoningOptions.length === 0}
-        />
+        {controlsCollapsed ? (
+          <Tooltip title="Show Codex controls">
+            <Button
+              size="small"
+              onClick={toggleControlsCollapsed}
+              icon={<Icon name="chevron-right" />}
+              style={{
+                borderRadius: 999,
+                boxShadow: "0 1px 5px rgba(0,0,0,0.08)",
+                fontWeight: 600,
+              }}
+            >
+              Codex
+            </Button>
+          </Tooltip>
+        ) : (
+          <>
+            <Button
+              size="small"
+              onClick={() => setOpen(true)}
+              style={{
+                alignItems: "center",
+                background: "white",
+                borderColor: COLORS.GRAY_L,
+                borderRadius: 999,
+                boxShadow: "0 1px 5px rgba(0,0,0,0.08)",
+                display: "inline-flex",
+                fontWeight: 600,
+                gap: 6,
+                maxWidth: "min(520px, calc(100vw - 220px))",
+                overflow: "hidden",
+              }}
+            >
+              <span
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: "50%",
+                  background: COLORS.BS_GREEN_D,
+                  display: "inline-block",
+                  flex: "0 0 auto",
+                }}
+              />
+              <span>Codex</span>
+              <Text
+                type="secondary"
+                style={{
+                  fontSize: 12,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {summaryParts.join(" · ")}
+              </Text>
+            </Button>
+            <Tooltip title="Hide Codex controls">
+              <Button
+                size="small"
+                aria-label="Hide Codex controls"
+                icon={<Icon name="chevron-left" />}
+                onClick={toggleControlsCollapsed}
+                style={{ background: "white" }}
+              />
+            </Tooltip>
+            {paymentNeedsAttention ? (
+              <Tooltip title={sourceTooltip}>
+                <Button
+                  size="small"
+                  danger={paymentSource?.source === "none"}
+                  onClick={() => setPaymentOpen(true)}
+                  style={{
+                    background:
+                      paymentSource?.source === "none"
+                        ? COLORS.ANTD_BG_RED_L
+                        : "white",
+                  }}
+                >
+                  {sourceShortLabel}
+                </Button>
+              </Tooltip>
+            ) : null}
+          </>
+        )}
       </div>
       <Modal
         open={open}
-        title="Codex Session Configuration"
+        title="Codex settings"
         okText="Save"
         onOk={onSave}
         onCancel={() => setOpen(false)}
-        width={560}
-        styles={{ body: { maxHeight: "75vh", overflowY: "auto" } }}
+        width={720}
+        styles={{
+          body: {
+            maxHeight: "75vh",
+            overflowY: "auto",
+            background: "white",
+            paddingTop: 12,
+          },
+        }}
       >
         <Space orientation="vertical" style={{ width: "100%" }} size={12}>
+          <div
+            style={{
+              ...sectionStyle,
+              background: COLORS.ANTD_BG_BLUE_L,
+              borderColor: COLORS.BS_BLUE_BGRND,
+              display: "flex",
+              gap: 12,
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ minWidth: 240, flex: "1 1 300px" }}>
+              <Text strong style={{ color: COLORS.BS_BLUE_TEXT }}>
+                Codex configuration for this chat
+              </Text>
+              <div
+                style={{
+                  color: COLORS.GRAY_M,
+                  fontSize: 12,
+                  marginTop: 4,
+                  lineHeight: 1.35,
+                }}
+              >
+                These settings apply to the selected Codex thread. The compact
+                pill in chat shows the same model, access mode, and reasoning
+                level.
+              </div>
+            </div>
+            <Space size={6} wrap>
+              <Tag color="blue">{selectedModelValue ?? "Model"}</Tag>
+              <Tag color={selectedModeOption?.warning ? "red" : "green"}>
+                {modeLabel}
+              </Tag>
+              {reasoningLabel ? <Tag>{reasoningLabel}</Tag> : null}
+            </Space>
+          </div>
           <Form form={form} layout="vertical">
-            <SectionTitle>Session basics</SectionTitle>
-            <div style={gridTwoColStyle}>
-              <Form.Item
-                label="Working directory"
-                name="workingDirectory"
-                tooltip="Codex runs in this directory for subsequent turns."
-                style={formItemStyle}
-              >
-                <Input placeholder="Derived from the directory containing this chat" />
-              </Form.Item>
-              <Form.Item
-                label="Session ID"
-                name="sessionId"
-                tooltip="Reuse a Codex session to keep continuity."
-                style={formItemStyle}
-              >
-                <Input
-                  placeholder="Leave blank to create a new session"
-                  allowClear
-                />
-              </Form.Item>
-            </div>
-            <div style={gridTwoColStyle}>
-              <Form.Item label="Model" name="model" style={formItemStyle}>
-                <Select
-                  placeholder="e.g., gpt-5.4"
-                  options={models}
-                  optionRender={(option) =>
-                    renderOptionWithDescription({
-                      title: `${option.data.label}`,
-                      description: option.data.description,
-                    })
-                  }
-                  showSearch
-                  allowClear
-                  onChange={(val) => {
-                    const selected = models.find((m) => m.value === val);
-                    if (selected?.reasoning?.length) {
-                      const def =
-                        selected.reasoning.find((r) => r.default)?.id ??
-                        selected.reasoning[0]?.id;
-                      form.setFieldsValue({ reasoning: def });
-                    }
+            <Space orientation="vertical" style={{ width: "100%" }} size={12}>
+              <div style={sectionStyle}>
+                <SectionTitle>Model and session</SectionTitle>
+                <div
+                  style={{
+                    color: COLORS.GRAY_M,
+                    fontSize: 12,
+                    margin: "3px 0 10px",
                   }}
-                />
-              </Form.Item>
-              <Form.Item
-                label="Reasoning level"
-                name="reasoning"
-                style={formItemStyle}
-              >
-                <Select
-                  placeholder="Select reasoning"
-                  options={reasoningOptions}
-                  optionRender={(option) =>
-                    renderOptionWithDescription({
-                      title: `${option.data.label}${
-                        option.data.default ? " (default)" : ""
-                      }`,
-                      description: option.data.description,
-                    })
-                  }
-                />
-              </Form.Item>
-            </div>
-            <Divider style={{ margin: "12px 0" }} />
-            <Form.Item
-              label="Execution mode"
-              name="sessionMode"
-              tooltip="Control how much access Codex has inside your project."
-              style={formItemStyle}
-            >
-              <Radio.Group style={{ width: "100%" }}>
-                <Space
-                  orientation="vertical"
-                  size={8}
-                  style={{ width: "100%" }}
                 >
-                  {modeOptions.map((option) => {
-                    const selected = currentSessionMode === option.value;
-                    return (
-                      <div
-                        key={option.value}
-                        style={{
-                          border: `1px solid ${
-                            selected ? COLORS.BLUE : COLORS.GRAY_L
+                  Choose the model, access continuity, and directory Codex uses
+                  for future turns.
+                </div>
+                <div style={gridTwoColStyle}>
+                  <Form.Item label="Model" name="model" style={formItemStyle}>
+                    <Select
+                      placeholder="e.g., gpt-5.4"
+                      options={models}
+                      optionRender={(option) =>
+                        renderOptionWithDescription({
+                          title: `${option.data.label}`,
+                          description: option.data.description,
+                        })
+                      }
+                      showSearch
+                      allowClear
+                      onChange={(val) => {
+                        const selected = models.find((m) => m.value === val);
+                        if (selected?.reasoning?.length) {
+                          const def =
+                            selected.reasoning.find((r) => r.default)?.id ??
+                            selected.reasoning[0]?.id;
+                          form.setFieldsValue({ reasoning: def });
+                        }
+                      }}
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    label="Reasoning level"
+                    name="reasoning"
+                    style={formItemStyle}
+                  >
+                    <Select
+                      placeholder="Select reasoning"
+                      options={reasoningOptions}
+                      optionRender={(option) =>
+                        renderOptionWithDescription({
+                          title: `${option.data.label}${
+                            option.data.default ? " (default)" : ""
                           }`,
-                          borderRadius: 8,
-                          padding: 10,
-                          background: selected ? COLORS.GRAY_LL : undefined,
-                        }}
-                      >
-                        <Radio value={option.value} style={{ width: "100%" }}>
-                          <div>
-                            <strong
-                              style={{
-                                color: option.warning
-                                  ? COLORS.FG_RED
-                                  : COLORS.GRAY_D,
-                              }}
+                          description: option.data.description,
+                        })
+                      }
+                    />
+                  </Form.Item>
+                </div>
+                <div style={gridTwoColStyle}>
+                  <Form.Item
+                    label="Working directory"
+                    name="workingDirectory"
+                    tooltip="Codex runs in this directory for subsequent turns."
+                    style={formItemStyle}
+                  >
+                    <Input placeholder="Derived from the directory containing this chat" />
+                  </Form.Item>
+                  <Form.Item
+                    label="Session ID"
+                    name="sessionId"
+                    tooltip="Reuse a Codex session to keep continuity."
+                    style={formItemStyle}
+                  >
+                    <Input
+                      placeholder="Leave blank to create a new session"
+                      allowClear
+                    />
+                  </Form.Item>
+                </div>
+              </div>
+              <div style={sectionStyle}>
+                <SectionTitle>Access</SectionTitle>
+                <div
+                  style={{
+                    color: COLORS.GRAY_M,
+                    fontSize: 12,
+                    margin: "3px 0 10px",
+                  }}
+                >
+                  Control whether Codex can only inspect files, edit this
+                  workspace, or use full project-container access.
+                </div>
+                <Form.Item
+                  name="sessionMode"
+                  tooltip="Control how much access Codex has inside your project."
+                  style={{ marginBottom: 0 }}
+                >
+                  <Radio.Group style={{ width: "100%" }}>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns:
+                          "repeat(auto-fit, minmax(185px, 1fr))",
+                        gap: 8,
+                      }}
+                    >
+                      {modeOptions.map((option) => {
+                        const selected = currentSessionMode === option.value;
+                        return (
+                          <label
+                            key={option.value}
+                            style={{
+                              border: `1px solid ${
+                                selected ? COLORS.BLUE : COLORS.GRAY_L
+                              }`,
+                              borderRadius: 10,
+                              padding: "10px 12px",
+                              background: selected
+                                ? COLORS.ANTD_BG_BLUE_L
+                                : "white",
+                              boxShadow: selected
+                                ? `0 0 0 1px ${COLORS.BLUE} inset`
+                                : undefined,
+                              cursor: "pointer",
+                              minHeight: 88,
+                              display: "block",
+                            }}
+                          >
+                            <Radio
+                              value={option.value}
+                              style={{ width: "100%" }}
                             >
-                              {option.label}
-                            </strong>
-                            <div
-                              style={{
-                                fontSize: 12,
-                                color: option.warning
-                                  ? COLORS.FG_RED
-                                  : COLORS.GRAY_M,
-                              }}
-                            >
-                              {option.description}
-                            </div>
-                          </div>
-                        </Radio>
-                      </div>
-                    );
-                  })}
-                </Space>
-              </Radio.Group>
-            </Form.Item>
+                              <div>
+                                <strong
+                                  style={{
+                                    color: option.warning
+                                      ? COLORS.FG_RED
+                                      : COLORS.GRAY_D,
+                                  }}
+                                >
+                                  {option.label}
+                                </strong>
+                                <div
+                                  style={{
+                                    fontSize: 12,
+                                    color: option.warning
+                                      ? COLORS.FG_RED
+                                      : COLORS.GRAY_M,
+                                    lineHeight: 1.35,
+                                  }}
+                                >
+                                  {option.description}
+                                </div>
+                              </div>
+                            </Radio>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </Radio.Group>
+                </Form.Item>
+              </div>
+              <div
+                style={{
+                  ...sectionStyle,
+                  background: COLORS.GRAY_LLL,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 10,
+                  flexWrap: "wrap",
+                  padding: "10px 12px",
+                }}
+              >
+                <div style={{ flex: "1 1 300px", minWidth: 240 }}>
+                  <SectionTitle>Payment & credentials</SectionTitle>
+                  <div
+                    style={{
+                      color: COLORS.GRAY_M,
+                      fontSize: 12,
+                      marginTop: 4,
+                      lineHeight: 1.35,
+                    }}
+                  >
+                    Current source:{" "}
+                    <Text strong>
+                      {paymentSourceLoading ? "Checking..." : sourceShortLabel}
+                    </Text>
+                    . {sourceTooltip}
+                  </div>
+                </div>
+                <Button
+                  icon={<Icon name="credit-card" />}
+                  onClick={() => setPaymentOpen(true)}
+                >
+                  Payment & Credentials
+                </Button>
+              </div>
+            </Space>
           </Form>
         </Space>
       </Modal>

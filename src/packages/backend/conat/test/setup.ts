@@ -273,6 +273,15 @@ export async function after() {
   }
   cleaningUp = (async () => {
     try {
+      await require("@cocalc/sync/editor/generic/sync-doc").SyncDoc.closeAllForTests?.();
+    } catch {}
+    try {
+      require("@cocalc/backend/sandbox/sync-fs-service").cleanupSyncFsServicesForTests?.();
+    } catch {}
+    try {
+      await require("@cocalc/backend/sandbox/watch").cleanupSandboxWatchersForTests?.();
+    } catch {}
+    try {
       await persistServer?.close();
     } catch {}
     for (const cn of clients.splice(0, clients.length)) {

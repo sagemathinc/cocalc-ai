@@ -42,6 +42,12 @@ load_bay_env
 : "${COCALC_BAY_MIN_FREE_MB:=1024}"
 : "${COCALC_BAY_EVENT_LOG:=${COCALC_BAY_STATE_DIR}/rollout-events.jsonl}"
 : "${COCALC_BAY_SKIP_NEXT_MIGRATIONS_MARKER:=${COCALC_BAY_STATE_DIR}/skip-next-migrations}"
+: "${COCALC_BAY_NODE_VERSION:=26.2.0}"
+: "${COCALC_BAY_NODE_BIN:=/opt/cocalc/nvm/versions/node/v${COCALC_BAY_NODE_VERSION}/bin/node}"
+
+if [[ -x "$COCALC_BAY_NODE_BIN" ]]; then
+  export PATH="$(dirname "$COCALC_BAY_NODE_BIN"):${PATH}"
+fi
 
 bay_log() {
   printf '[bay:%s] %s\n' "$COCALC_BAY_ID" "$*" >&2

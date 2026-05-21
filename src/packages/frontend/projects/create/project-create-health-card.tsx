@@ -9,7 +9,6 @@ import { useEffect, useMemo, useState } from "react";
 import type { AccountRuntimeSponsorStatus } from "@cocalc/conat/hub/api/projects";
 import type { MembershipDetails } from "@cocalc/conat/hub/api/purchases";
 import { redux } from "@cocalc/frontend/app-framework";
-import { Icon } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { humanSize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -79,7 +78,10 @@ function gaugeTag(tone: GaugeTone) {
   }
 }
 
-function projectGauge(details?: MembershipDetails | null): Gauge {
+function projectGauge(
+  details: MembershipDetails | null,
+  loading: boolean,
+): Gauge {
   const usage = details?.usage_status;
   const limits =
     details?.selected?.effective_limits ??
@@ -97,7 +99,9 @@ function projectGauge(details?: MembershipDetails | null): Gauge {
     label: "Projects",
     value:
       current == null
-        ? "Loading"
+        ? loading
+          ? "Loading"
+          : "Not reported"
         : limit == null
           ? `${current}`
           : `${current}/${limit}`,
@@ -110,7 +114,10 @@ function projectGauge(details?: MembershipDetails | null): Gauge {
   };
 }
 
-function storageGauge(details?: MembershipDetails | null): Gauge {
+function storageGauge(
+  details: MembershipDetails | null,
+  loading: boolean,
+): Gauge {
   const usage = details?.usage_status;
   const limits =
     details?.selected?.effective_limits ??
@@ -136,7 +143,9 @@ function storageGauge(details?: MembershipDetails | null): Gauge {
     label: "Storage",
     value:
       current == null
-        ? "Loading"
+        ? loading
+          ? "Loading"
+          : "Not reported"
         : limit == null
           ? humanSize(current)
           : `${humanSize(current)} / ${humanSize(limit)}`,
@@ -148,7 +157,10 @@ function storageGauge(details?: MembershipDetails | null): Gauge {
   };
 }
 
-function runtimeGauge(status?: AccountRuntimeSponsorStatus | null): Gauge {
+function runtimeGauge(
+  status: AccountRuntimeSponsorStatus | null,
+  loading: boolean,
+): Gauge {
   const current = nonnegativeNumber(status?.current);
   const limit = positiveNumber(status?.limit);
   const tone = toneFor({ current, limit });
@@ -157,7 +169,9 @@ function runtimeGauge(status?: AccountRuntimeSponsorStatus | null): Gauge {
     label: "Running",
     value:
       current == null
-        ? "Loading"
+        ? loading
+          ? "Loading"
+          : "Not reported"
         : limit == null
           ? `${current}`
           : `${current}/${limit}`,
@@ -188,10 +202,17 @@ function healthMessage(gauges: Gauge[]): string | undefined {
   return undefined;
 }
 
-function GaugeCard({ gauge }: { gauge: Gauge }) {
+function GaugeCard({ gauge, isLast }: { gauge: Gauge; isLast?: boolean }) {
   return (
-    <Card size="small" styles={{ body: { padding: "8px 10px" } }}>
-      <Space orientation="vertical" size={4} style={{ width: "100%" }}>
+    <div
+      className="cc-project-create-health-gauge"
+      style={{
+        borderRight: isLast ? undefined : `1px solid ${COLORS.GRAY_LL}`,
+        minWidth: 0,
+        padding: "0 16px",
+      }}
+    >
+      <Space orientation="vertical" size={3} style={{ width: "100%" }}>
         <Space
           size="small"
           style={{ width: "100%", justifyContent: "space-between" }}
@@ -199,9 +220,9 @@ function GaugeCard({ gauge }: { gauge: Gauge }) {
           <Text type="secondary" style={{ fontSize: 12 }}>
             {gauge.label}
           </Text>
-          {gaugeTag(gauge.tone)}
+          <span style={{ fontSize: 11 }}>{gaugeTag(gauge.tone)}</span>
         </Space>
-        <Text strong style={{ color: COLORS.GRAY_D }}>
+        <Text strong style={{ color: COLORS.GRAY_D, fontSize: 16 }}>
           {gauge.value}
         </Text>
         {gauge.percent != null && (
@@ -212,11 +233,8 @@ function GaugeCard({ gauge }: { gauge: Gauge }) {
             status={progressStatus(gauge.tone)}
           />
         )}
-        <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.25 }}>
-          {gauge.caption}
-        </Text>
       </Space>
-    </Card>
+    </div>
   );
 }
 
@@ -239,7 +257,9 @@ export function ProjectCreateHealthCard({ open }: { open: boolean }) {
     setLoading(true);
     setError("");
     Promise.all([
-      webapp_client.conat_client.hub.purchases.getMembershipDetails({}),
+      webapp_client.conat_client.hub.purchases.getMembershipDetails({
+        refresh_usage_status: true,
+      }),
       webapp_client.conat_client.hub.projects.getAccountRuntimeSponsorStatus(
         {},
       ),
@@ -263,11 +283,11 @@ export function ProjectCreateHealthCard({ open }: { open: boolean }) {
 
   const gauges = useMemo(
     () => [
-      projectGauge(membership),
-      runtimeGauge(runtime),
-      storageGauge(membership),
+      projectGauge(membership, loading),
+      runtimeGauge(runtime, loading),
+      storageGauge(membership, loading),
     ],
-    [membership, runtime],
+    [loading, membership, runtime],
   );
   const message = healthMessage(gauges);
   const runtimeLimit = positiveNumber(runtime?.limit);
@@ -302,37 +322,37 @@ export function ProjectCreateHealthCard({ open }: { open: boolean }) {
   return (
     <Card
       size="small"
-      styles={{ body: { padding: 12 } }}
+      styles={{ body: { padding: "10px 12px" } }}
+      className="cc-project-create-health-card"
       style={{
         borderColor: COLORS.GRAY_LL,
-        background: COLORS.GRAY_LLL,
+        background: "white",
       }}
     >
       <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-        <Space style={{ width: "100%", justifyContent: "space-between" }}>
-          <Space size="small">
-            <Icon name="dashboard" />
-            <Text strong>Account capacity</Text>
-          </Space>
+        <div
+          className="cc-project-create-health-grid"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(3, minmax(120px, 1fr)) auto",
+            alignItems: "center",
+            columnGap: 18,
+          }}
+        >
+          {gauges.map((gauge, index) => (
+            <GaugeCard
+              key={gauge.key}
+              gauge={gauge}
+              isLast={index === gauges.length - 1}
+            />
+          ))}
           <Button
             size="small"
-            type="text"
             onClick={() => setReloadToken((token) => token + 1)}
             loading={loading}
           >
             Refresh
           </Button>
-        </Space>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
-            gap: 8,
-          }}
-        >
-          {gauges.map((gauge) => (
-            <GaugeCard key={gauge.key} gauge={gauge} />
-          ))}
         </div>
         {message && <Alert type="info" showIcon message={message} />}
         {runtimeFull && visibleRuntimeProjects.length > 0 && (

@@ -74,6 +74,7 @@ import { observedRuntimeArtifactsFromMetadata } from "../conat/api/hosts-runtime
 
 const logger = getLogger("server:cloud:bootstrap-host");
 const pool = () => getPool("medium");
+export const DEFAULT_PROJECT_HOST_NODE_VERSION = "26";
 
 type HostBootstrapState = {
   status?: "pending" | "running" | "done";
@@ -893,7 +894,9 @@ export async function buildBootstrapScripts(
   const toolsRoot = "/opt/cocalc/tools";
   const toolsDir = `${toolsRoot}/${toolsVersion}`;
   const toolsRemote = `${bootstrapRoot}/tmp/tools.tar.xz`;
-  const nodeVersion = process.env.COCALC_PROJECT_HOST_NODE_VERSION || "24";
+  const nodeVersion =
+    process.env.COCALC_PROJECT_HOST_NODE_VERSION ||
+    DEFAULT_PROJECT_HOST_NODE_VERSION;
   if (!projectHostBundleUrl) {
     throw new Error("project host bundle URL could not be resolved");
   }

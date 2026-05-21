@@ -20,7 +20,7 @@ export function info() {
 
 export default function refCache<
   Options extends { noCache?: boolean },
-  T extends { close: () => void },
+  T extends { close: () => void | Promise<void> },
 >({
   createKey,
   createObject,
@@ -32,7 +32,7 @@ export default function refCache<
 }) {
   const cache: { [key: string]: T } = {};
   const count: { [key: string]: number } = {};
-  const close: { [key: number]: Function } = {};
+  const close: { [key: string]: () => void | Promise<void> } = {};
   if (createKey == null) {
     createKey = (x) => jsonStableStringify(x) ?? "";
   }
@@ -70,14 +70,14 @@ export default function refCache<
     cache[key] = obj;
     count[key] = 1;
     close[key] = obj.close;
-    obj.close = () => {
+    obj.close = (() => {
       count[key] -= 1;
       if (VERBOSE) {
         console.log("refCache: close", { name, key, count: count[key] });
       }
       // make it so calling close again is a no-op
       if (count[key] <= 0) {
-        close[key]?.();
+        const result = close[key]?.();
         delete cache[key];
         delete count[key];
         delete close[key];
@@ -87,8 +87,9 @@ export default function refCache<
             { name, key },
           );
         }
+        return result;
       }
-    };
+    }) as T["close"];
 
     return obj;
   };

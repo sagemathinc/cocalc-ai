@@ -21,7 +21,6 @@ import {
   createInitialProjectDraft,
   normalizeProjectDraft,
   projectDraftSummary,
-  setProjectDraftAdvancedOpen,
   setProjectDraftHost,
   setProjectDraftRegion,
   setProjectDraftRootfs,
@@ -125,10 +124,6 @@ export function useProjectCreateDraft({
     setDraft((cur) => setProjectDraftTitle(cur, title));
   }, []);
 
-  const setAdvancedOpen = useCallback((advancedOpen: boolean) => {
-    setDraft((cur) => setProjectDraftAdvancedOpen(cur, advancedOpen));
-  }, []);
-
   const setRegion = useCallback(
     (region: R2Region) => {
       setDraft((cur) => setProjectDraftRegion(cur, region, context));
@@ -177,7 +172,6 @@ export function useProjectCreateDraft({
     isAdmin,
     selectedHost,
     setTitle,
-    setAdvancedOpen,
     setRegion,
     setHost,
     setRootfs,

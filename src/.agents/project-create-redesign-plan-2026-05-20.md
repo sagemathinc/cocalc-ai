@@ -50,18 +50,37 @@ Implemented:
 - Account capacity health card with project slots, running-project slots, and
   storage usage.
 - Health card can stop visible running projects when runtime slots are full.
+- Host recommendation model with tests.
+- Host picker uses create-specific recommendations and explains remote-host
+  fallback when no compatible host exists in the selected backup region.
+- RootFS presets choose catalog images by tags/metadata rather than hardcoded
+  image names.
+- Region/latency copy explains terminal/Jupyter lag, later host/region moves,
+  nearby browser region, backup region, provider region, and backup-history
+  limits when moving regions.
+- Imagegen2-inspired layout polish: capacity is a top strip, project name comes
+  before presets, presets are visual cards, region/latency is in the common
+  path, and the summary uses decision-ready icon rows.
+- Host selection can expand inline in the create modal, matching the inline
+  RootFS picker pattern.
+- Mobile-responsive layout pass for narrow screens: the modal uses a single
+  column, compact title, 2-column presets, stacked capacity gauges, and a
+  non-sticky summary.
 
 Still rough:
 
-- The plan document had not yet captured quota, capacity, region, and host
-  recommendation requirements.
-- Host selection still opens a secondary modal.
-- Host recommendations are not yet intelligent enough.
-- Quota/storage/runtime slot visibility is missing.
-- Region/latency explanation is incomplete.
-- RootFS presets are currently hardcoded UI choices rather than catalog-driven
-  metadata.
-- The visual design is functional but not yet final.
+- The capacity card still needs visual polish and robust handling for missing
+  backend usage fields.
+- Host selection no longer requires a secondary modal in project creation; other
+  callers still use the host picker modal wrapper.
+- Host recommendations still need live dogfood validation against a deliberately
+  varied set of hosts.
+- Region/latency explanation has initial create-modal coverage, but still needs
+  dogfood validation with remote-host fallback scenarios.
+- RootFS preset configuration is not yet site-configurable beyond the initial
+  built-in preset tags.
+- The visual design is much closer to the target mockup, but still needs live
+  dogfood validation across varied account states.
 
 ## Core Product Principles
 
@@ -228,11 +247,14 @@ Current status:
 - Scan status is visible.
 - Critical vulnerabilities do not block selection.
 - Custom OCI is admin-only in the frontend.
+- Project-create presets choose RootFS images from catalog tags such as
+  `preset:standard`, `preset:gpu`, `preset:teaching`, `standard`, `gpu`,
+  `teaching`, `course`, and `workshop`.
+- The RootFS publisher tag editor offers one-click buttons for the explicit
+  `preset:standard`, `preset:gpu`, and `preset:teaching` tags.
 
 Next requirements:
 
-- Presets should map to RootFS catalog tags/metadata instead of hardcoded image
-  names.
 - Launchpad customers should be able to define their own meaningful preset tags.
 - The catalog should support very different deployments, such as a small
   research group that does not need teaching-oriented presets.
@@ -484,9 +506,17 @@ Create-flow implication:
 - Convert raw metrics to privacy-preserving labels such as `light`, `normal`,
   `busy`, and `very busy` if they are exposed to ordinary users.
 
-Missing:
+- Implemented:
 
-- A reusable host recommendation function that ranks candidate hosts for create.
+- `src/packages/frontend/hosts/project-host-recommendations.ts`
+- `src/packages/frontend/hosts/project-host-recommendations.test.ts`
+- Create-mode host picker ranking by same-region availability, pressure,
+  spot/fallback, GPU fit, scope, tier, and explicit selection.
+- Remote-host fallback when the selected backup region has no available
+  compatible hosts.
+
+Still missing:
+
 - A privacy-normalized host load/reliability summary suitable for non-admins.
 - A create-specific host display that avoids opening a second modal for the
   common path.
@@ -581,6 +611,10 @@ Missing:
 - Host placement visible in the main path.
 - Account capacity health card.
 - Runtime-slot full state includes stop actions for visible running projects.
+- Host recommendation model and tests.
+- Create-mode host picker uses recommendation ranking and remote-region fallback.
+- RootFS preset image selection uses catalog tags/metadata.
+- RootFS publisher UI documents and inserts project-create preset tags.
 
 ### Phase A: Update Data/Policy Inventory
 
@@ -621,34 +655,21 @@ Validation:
 
 ### Phase C: Host Recommendation Model
 
+Initial implementation completed 2026-05-20.
+
 Upgrade host placement from a picker to recommendations.
 
 Requirements:
 
-- Recommend a host or auto placement using region, pressure, reliability,
-  spot/standard, fallback, GPU, CPU speed, and eligibility.
+- Recommend a host or auto placement using region, pressure, spot/standard,
+  fallback, GPU, scope, tier, and eligibility. Implemented.
 - If no host exists in the user's region, recommend the best remote region/host.
-- Make latency impact explicit and concrete.
-- Show privacy-preserving host load and reliability labels.
-- Keep host creation path visible when eligible.
-
-Implemented foundation:
-
-- Added a pure, tested host recommendation helper under `frontend/hosts` that ranks available hosts,
-  separates unavailable hosts, prefers same backup region, falls back to remote
-  hosts, accounts for host pressure, spot/fallback status, GPU fit, explicit
-  selection, and known GCP relative CPU speed.
-- This is intentionally not wired into the create modal yet. The next Phase C
-  UI step should consume this helper from the host picker/recommendation card
-  without changing project creation semantics at the same time.
-
-Implemented first UI slice:
-
-- The project create host picker now uses the recommendation model in create
-  mode, including GPU intent and selected-host intent.
-- The picker still starts in the project's backup region, but if no available
-  host exists there and a remote host is available, it automatically expands to
-  all regions and explains that the main impact is interactive latency.
+  Implemented in the host picker fallback.
+- Make latency impact explicit and concrete. Partially implemented.
+- Show privacy-preserving host load and reliability labels. Not yet implemented
+  beyond existing pressure tags.
+- Keep host creation path visible when eligible. Not yet implemented in project
+  creation.
 
 Validation:
 
@@ -657,13 +678,31 @@ Validation:
 - Spot host with fallback enabled.
 - GPU project with no GPU host in nearest region.
 
+Recommended dogfood host set:
+
+- One standard GCP/Nebius pool host in the user's nearest backup region.
+- One spot host in the same backup region, preferably with fallback enabled.
+- One stressed or placement-blocked host in the same backup region to verify it
+  is deprioritized or hidden by default.
+- One GPU host in the same backup region.
+- One standard remote-region host so the no-local-host fallback has a useful
+  target.
+
+This is enough to test same-region preference, spot/fallback labeling, pressure
+avoidance, GPU fit, and remote-region fallback without needing a large fleet.
+
 ### Phase D: RootFS Metadata Presets
+
+Initial implementation started 2026-05-20.
 
 Replace hardcoded preset semantics with catalog metadata.
 
 Requirements:
 
-- Presets use tags/capabilities from RootFS catalog entries.
+- Presets use tags/capabilities from RootFS catalog entries. Initial support
+  implemented for `standard`, `gpu`, and `teaching` presets.
+- RootFS publishers can add explicit project-create preset tags from the
+  metadata editor without memorizing tag names.
 - Site-specific Launchpad deployments can define different meaningful presets.
 - Full vulnerability report is browsable.
 - Publisher comments are displayed with scan reports.
@@ -675,17 +714,28 @@ Validation:
 - Site with custom research images.
 - Image with critical vulnerabilities and publisher notes.
 
+Follow-up:
+
+- Consider site-configurable preset labels/tags once multiple launchpad
+  deployments need different first-run presets.
+- Add a full scan report browser and publisher comments before calling Phase D
+  complete.
+
 ### Phase E: Region/Latency Explanation
 
 Add concise inline explanation and warnings.
 
+Initial implementation started 2026-05-20.
+
 Requirements:
 
-- Explain region impact in terms of terminal/Jupyter lag.
-- Explain that region/host can be changed later.
+- Explain region impact in terms of terminal/Jupyter lag. Initial copy added.
+- Explain that region/host can be changed later. Initial copy added.
 - Distinguish user latency region from project backup region and provider
-  region without exposing too much terminology.
-- Explain when region changes reset backups beyond the latest backup.
+  region without exposing too much terminology. Initial inline host-picker card
+  added.
+- Explain when region changes reset backups beyond the latest backup. Initial
+  inline host-picker copy added.
 
 Validation:
 
@@ -697,7 +747,8 @@ Validation:
 
 Requirements:
 
-- Imagegen2-informed visual pass.
+- Imagegen2-informed visual pass. Initial pass implemented against the
+  project-create mockup generated on 2026-05-20.
 - No unnecessary vertical scrolling for the common path on normal laptop sizes.
 - Mobile/narrow layout.
 - Keyboard navigation.
@@ -745,7 +796,11 @@ Add tests as new rules become deterministic:
 
 ## Immediate Next Step
 
-Do Phase A before adding more UI. The next implementation should identify the
-actual frontend/backend data sources for quota, runtime slots, storage, host
-pressure, host uptime, spot fallback, and CPU speed. After that, implement the
-health card because it is high-impact and relatively isolated.
+Polish the existing modal before adding deeper policy UI:
+
+- Fix capacity-card missing/unknown states.
+- Reduce default vertical height so the common path fits on a normal laptop
+  screen.
+- Keep host choice visible, but avoid forcing the user into the secondary host
+  picker unless they need to override the recommendation.
+- Continue Phase D by adding full scan report browsing and publisher comments.

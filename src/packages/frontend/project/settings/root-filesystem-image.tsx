@@ -53,6 +53,11 @@ import {
   sectionTagColor,
 } from "@cocalc/frontend/rootfs/catalog-ui";
 import {
+  ROOTFS_PROJECT_PRESET_LABELS,
+  ROOTFS_PROJECT_PRESET_TAGS,
+  type RootfsProjectPreset,
+} from "@cocalc/frontend/rootfs/project-presets";
+import {
   themeDraftFromTheme,
   themeFromDraft,
   type ThemeEditorDraft,
@@ -366,7 +371,10 @@ export default function RootFilesystemImage({
     () =>
       Array.from(
         new Set(
-          rootfsImages.flatMap((entry) => entry.tags ?? []).filter(Boolean),
+          [
+            ...rootfsImages.flatMap((entry) => entry.tags ?? []),
+            ...Object.values(ROOTFS_PROJECT_PRESET_TAGS).flat(),
+          ].filter(Boolean),
         ),
       )
         .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
@@ -1632,6 +1640,18 @@ export default function RootFilesystemImage({
                       tokenSeparators={[","]}
                       placeholder="course, python, jupyter, gpu"
                     />
+                    <ProjectPresetTagHints
+                      selectedTags={parseRootfsTagString(publishDraft.tags)}
+                      onAdd={(tag) =>
+                        setPublishDraft((cur) => ({
+                          ...cur,
+                          tags: normalizeRootfsTags([
+                            ...parseRootfsTagString(cur.tags),
+                            tag,
+                          ]).join(", "),
+                        }))
+                      }
+                    />
                   </div>
                 </div>
                 <div>
@@ -2108,6 +2128,48 @@ function compareRootfsVersions(a?: string, b?: string): number {
     numeric: true,
     sensitivity: "base",
   });
+}
+
+function ProjectPresetTagHints({
+  onAdd,
+  selectedTags,
+}: {
+  onAdd: (tag: string) => void;
+  selectedTags: string[];
+}) {
+  const selected = new Set(
+    selectedTags.map((tag) => tag.trim().toLowerCase()).filter(Boolean),
+  );
+  const entries = Object.entries(ROOTFS_PROJECT_PRESET_TAGS) as Array<
+    [RootfsProjectPreset, string[]]
+  >;
+
+  return (
+    <div style={{ marginTop: 6 }}>
+      <Paragraph type="secondary" style={{ marginBottom: 6 }}>
+        Project-create presets watch these tags. Use an explicit{" "}
+        <code>preset:...</code> tag when this image should be a recommended
+        default.
+      </Paragraph>
+      <Space wrap size={[6, 6]}>
+        {entries.map(([preset, tags]) => {
+          const primaryTag = tags[0];
+          const added = selected.has(primaryTag);
+          return (
+            <Button
+              disabled={added}
+              key={primaryTag}
+              onClick={() => onAdd(primaryTag)}
+              size="small"
+            >
+              {added ? "Added" : "Add"} {ROOTFS_PROJECT_PRESET_LABELS[preset]} (
+              {primaryTag})
+            </Button>
+          );
+        })}
+      </Space>
+    </div>
+  );
 }
 
 function normalizeRootfsTags(tags: string[]): string[] {

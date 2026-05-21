@@ -14,6 +14,7 @@ export async function createPathFileserver({
   rootfs,
   allowSafeModeHardlink = true,
   allowSafeModeSymlink = true,
+  disableOpenAt2 = true,
 }: {
   service?: string;
   path?: string;
@@ -21,6 +22,7 @@ export async function createPathFileserver({
   rootfs?: string;
   allowSafeModeHardlink?: boolean;
   allowSafeModeSymlink?: boolean;
+  disableOpenAt2?: boolean;
 } = {}) {
   const tempDir =
     path ?? (await mkdtemp(join(tmpdir(), `cocalc-${randomId()}0`)));
@@ -33,6 +35,7 @@ export async function createPathFileserver({
     rootfs,
     allowSafeModeHardlink,
     allowSafeModeSymlink,
+    disableOpenAt2,
   });
   servers.push(server);
   return server;

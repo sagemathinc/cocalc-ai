@@ -260,14 +260,19 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
     () => getAvailablePresets(draftState.draft, draftContext),
     [draftContext, draftState.draft],
   );
+  const [selectedPresetId, setSelectedPresetId] = React.useState<
+    (typeof presets)[number]["id"] | undefined
+  >();
   const applyCreatePreset = React.useCallback(
     (presetId: (typeof presets)[number]["id"]) => {
+      setSelectedPresetId(presetId);
       draftState.applyPreset(presetId);
     },
     [draftState],
   );
   const selectProvider = React.useCallback(
     (value: HostProvider) => {
+      setSelectedPresetId(undefined);
       formInstance.setFieldsValue({ provider: value });
       onProviderChange?.(value);
     },
@@ -602,65 +607,75 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
               : "repeat(3, minmax(0, 1fr))",
           }}
         >
-          {presets.map((preset) => (
-            <Button
-              key={preset.id}
-              htmlType="button"
-              block
-              disabled={preset.disabled}
-              title={preset.disabledReason ?? preset.description}
-              onClick={() => applyCreatePreset(preset.id)}
-              style={{
-                background: preset.disabled ? COLORS.GRAY_LLL : "white",
-                borderRadius: 10,
-                color: preset.disabled ? COLORS.GRAY : COLORS.GRAY_DD,
-                height: "auto",
-                justifyContent: "flex-start",
-                minHeight: 62,
-                padding: "8px 10px",
-                textAlign: "left",
-                whiteSpace: "normal",
-              }}
-            >
-              <Space size={8} align="start">
-                <span
-                  style={{
-                    color:
-                      preset.id === "low-cost-spot"
-                        ? COLORS.BS_GREEN_D
-                        : COLORS.BLUE_D,
-                    fontSize: 16,
-                    lineHeight: "18px",
-                  }}
-                >
-                  <Icon
-                    name={
-                      preset.id === "gpu-workstation"
-                        ? "rocket"
-                        : preset.id === "low-cost-spot"
-                          ? "bolt"
-                          : "server"
-                    }
-                  />
-                </span>
-                <span>
-                  <Typography.Text strong>{preset.label}</Typography.Text>
-                  <Typography.Text
-                    type="secondary"
+          {presets.map((preset) => {
+            const active = !preset.disabled && selectedPresetId === preset.id;
+            const accentColor =
+              preset.id === "low-cost-spot" ? COLORS.BS_GREEN_D : COLORS.BLUE_D;
+            return (
+              <Button
+                key={preset.id}
+                htmlType="button"
+                block
+                disabled={preset.disabled}
+                title={preset.disabledReason ?? preset.description}
+                onClick={() => applyCreatePreset(preset.id)}
+                style={{
+                  background: preset.disabled
+                    ? COLORS.GRAY_LLL
+                    : active
+                      ? COLORS.ANTD_BG_BLUE_L
+                      : "white",
+                  borderColor: active ? COLORS.BS_BLUE_BGRND : undefined,
+                  borderRadius: 10,
+                  boxShadow: active
+                    ? `0 0 0 1px ${COLORS.BS_BLUE_BGRND} inset`
+                    : undefined,
+                  color: preset.disabled ? COLORS.GRAY : COLORS.GRAY_DD,
+                  height: "auto",
+                  justifyContent: "flex-start",
+                  minHeight: 62,
+                  padding: "8px 10px",
+                  textAlign: "left",
+                  whiteSpace: "normal",
+                }}
+              >
+                <Space size={8} align="start">
+                  <span
                     style={{
-                      display: "block",
-                      fontSize: 12,
-                      lineHeight: 1.15,
+                      color: active ? COLORS.BS_BLUE_TEXT : accentColor,
+                      fontSize: 16,
+                      lineHeight: "18px",
                     }}
                   >
-                    {preset.disabled
-                      ? preset.disabledReason
-                      : preset.description}
-                  </Typography.Text>
-                </span>
-              </Space>
-            </Button>
-          ))}
+                    <Icon
+                      name={
+                        preset.id === "gpu-workstation"
+                          ? "rocket"
+                          : preset.id === "low-cost-spot"
+                            ? "bolt"
+                            : "server"
+                      }
+                    />
+                  </span>
+                  <span>
+                    <Typography.Text strong>{preset.label}</Typography.Text>
+                    <Typography.Text
+                      type="secondary"
+                      style={{
+                        display: "block",
+                        fontSize: 12,
+                        lineHeight: 1.15,
+                      }}
+                    >
+                      {preset.disabled
+                        ? preset.disabledReason
+                        : preset.description}
+                    </Typography.Text>
+                  </span>
+                </Space>
+              </Button>
+            );
+          })}
         </div>
       </Card>
     ) : null;

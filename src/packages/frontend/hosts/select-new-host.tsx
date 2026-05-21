@@ -8,7 +8,10 @@ import { Button, Card, Space, Tag, Typography } from "antd";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { Icon } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
-import { HostPickerModal } from "@cocalc/frontend/hosts/pick-host";
+import {
+  HostPickerModal,
+  HostPickerPanel,
+} from "@cocalc/frontend/hosts/pick-host";
 import {
   HostPlacementSummary,
   HostPressureTag,
@@ -25,6 +28,10 @@ export function SelectNewHost({
   regionLabel,
   wantsGpu,
   pickerMode = "create",
+  showHelp = true,
+  pickerDisplay = "modal",
+  pickerOpen,
+  onPickerOpenChange,
 }: {
   selectedHost?: Host;
   onChange: (host?: Host) => void;
@@ -33,16 +40,21 @@ export function SelectNewHost({
   regionLabel?: string;
   wantsGpu?: boolean;
   pickerMode?: "move" | "create";
+  showHelp?: boolean;
+  pickerDisplay?: "modal" | "inline";
+  pickerOpen?: boolean;
+  onPickerOpenChange?: (open: boolean) => void;
 }) {
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [uncontrolledPickerOpen, setUncontrolledPickerOpen] = useState(false);
+  const effectivePickerOpen = pickerOpen ?? uncontrolledPickerOpen;
+  const setPickerOpen = (open: boolean) => {
+    setUncontrolledPickerOpen(open);
+    onPickerOpenChange?.(open);
+  };
 
   return (
     <>
-      <Space
-        orientation="vertical"
-        size="small"
-        style={{ width: "100%", paddingTop: 12 }}
-      >
+      <Space orientation="vertical" size="small" style={{ width: "100%" }}>
         <Card size="small" styles={{ body: { padding: "10px 12px" } }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div style={{ flex: 1 }}>
@@ -108,7 +120,11 @@ export function SelectNewHost({
               disabled={disabled}
               size="small"
             >
-              {selectedHost ? "Change..." : "Choose host..."}
+              {effectivePickerOpen
+                ? "Choosing..."
+                : selectedHost
+                  ? "Change..."
+                  : "Choose host..."}
             </Button>
             {selectedHost && (
               <Button
@@ -122,26 +138,57 @@ export function SelectNewHost({
             )}
           </div>
         </Card>
-        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          Select where this will run. Choose one of your hosts, a collaborator’s
-          host, or leave it on auto to use the shared pool in the nearest
-          region.
-        </Paragraph>
+        {pickerDisplay === "inline" && effectivePickerOpen && (
+          <Card
+            size="small"
+            styles={{ body: { padding: "10px 12px" } }}
+            style={{ borderColor: COLORS.GRAY_LL, background: "white" }}
+          >
+            <HostPickerPanel
+              active={effectivePickerOpen}
+              currentHostId={
+                pickerMode === "move" ? selectedHost?.id : undefined
+              }
+              selectedHostId={selectedHost?.id}
+              regionFilter={regionFilter}
+              lockRegion={pickerMode !== "create" && Boolean(regionFilter)}
+              wantsGpu={wantsGpu}
+              mode={pickerMode}
+              onCancel={() => setPickerOpen(false)}
+              onSelect={(_, host) => {
+                setPickerOpen(false);
+                onChange(host);
+              }}
+            />
+          </Card>
+        )}
+        {showHelp && (
+          <Paragraph
+            type="secondary"
+            style={{ fontSize: 12, lineHeight: 1.25, marginBottom: 0 }}
+          >
+            Host choice mainly affects interactive lag, such as terminal typing
+            and Jupyter notebook output. You can change the host or move the
+            project to another region later.
+          </Paragraph>
+        )}
       </Space>
-      <HostPickerModal
-        open={pickerOpen}
-        currentHostId={pickerMode === "move" ? selectedHost?.id : undefined}
-        selectedHostId={selectedHost?.id}
-        regionFilter={regionFilter}
-        lockRegion={pickerMode !== "create" && Boolean(regionFilter)}
-        wantsGpu={wantsGpu}
-        mode={pickerMode}
-        onCancel={() => setPickerOpen(false)}
-        onSelect={(_, host) => {
-          setPickerOpen(false);
-          onChange(host);
-        }}
-      />
+      {pickerDisplay === "modal" && (
+        <HostPickerModal
+          open={effectivePickerOpen}
+          currentHostId={pickerMode === "move" ? selectedHost?.id : undefined}
+          selectedHostId={selectedHost?.id}
+          regionFilter={regionFilter}
+          lockRegion={pickerMode !== "create" && Boolean(regionFilter)}
+          wantsGpu={wantsGpu}
+          mode={pickerMode}
+          onCancel={() => setPickerOpen(false)}
+          onSelect={(_, host) => {
+            setPickerOpen(false);
+            onChange(host);
+          }}
+        />
+      )}
     </>
   );
 }

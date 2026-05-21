@@ -29,6 +29,17 @@ const logger = getLogger("sandbox:watch");
 export { type WatchOptions };
 export type WatchIterator = EventIterator<ChangeEvent>;
 
+const activeWatchers = new Set<Watcher>();
+const pendingWatcherCloses = new Set<Promise<void>>();
+
+export async function cleanupSandboxWatchersForTests(): Promise<void> {
+  if (!process.env.COCALC_TEST_MODE) {
+    return;
+  }
+  const closes = [...activeWatchers].map((watcher) => watcher.close());
+  await Promise.all([...closes, ...pendingWatcherCloses]);
+}
+
 const ALLOW_HIGH_FANOUT_SYSTEM_WATCH = (() => {
   const raw = process.env.COCALC_SANDBOX_WATCH_ALLOW_HIGH_FANOUT_SYSTEM_DIRS;
   if (raw == null) return false;
@@ -177,6 +188,7 @@ class Watcher extends EventEmitter {
     private lastOnDiskHash: TTL<string, boolean>,
   ) {
     super();
+    activeWatchers.add(this);
     this.readyPromise = new Promise((resolve) => {
       this.readyResolve = resolve;
     });
@@ -408,16 +420,31 @@ class Watcher extends EventEmitter {
     await this.readyPromise;
   };
 
-  close() {
+  close(): Promise<void> | void {
     log(this.path, "close()");
     this.stopTrackingWatcher?.();
     this.stopTrackingWatcher = undefined;
-    this.watcher?.close();
+    const watcher = this.watcher;
     this.emit("close");
     this.removeAllListeners();
     // @ts-ignore
     delete this.watcher;
     // @ts-ignore
     delete this.ready;
+    const closeResult = watcher?.close();
+    if (
+      closeResult != null &&
+      typeof (closeResult as any).then === "function"
+    ) {
+      const pending = (closeResult as Promise<void>)
+        .catch(() => {})
+        .finally(() => {
+          pendingWatcherCloses.delete(pending);
+          activeWatchers.delete(this);
+        });
+      pendingWatcherCloses.add(pending);
+      return pending;
+    }
+    activeWatchers.delete(this);
   }
 }

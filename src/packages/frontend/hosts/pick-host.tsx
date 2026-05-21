@@ -110,6 +110,62 @@ export function HostPickerModal({
   wantsGpu?: boolean;
   mode?: "move" | "create";
 }) {
+  const isCreate = mode === "create";
+  return (
+    <Modal
+      width={600}
+      open={open}
+      onCancel={onCancel}
+      footer={null}
+      title={
+        <Space>
+          <Icon name="server" /> {isCreate ? "Choose host" : "Move to host"}
+        </Space>
+      }
+      destroyOnHidden
+    >
+      <HostPickerPanel
+        active={open}
+        currentHostId={currentHostId}
+        selectedHostId={selectedHostId}
+        regionFilter={regionFilter}
+        sourceProjectRegion={sourceProjectRegion}
+        lockRegion={lockRegion}
+        showOfflineMoveWarning={showOfflineMoveWarning}
+        wantsGpu={wantsGpu}
+        mode={mode}
+        onCancel={onCancel}
+        onSelect={onSelect}
+      />
+    </Modal>
+  );
+}
+
+export function HostPickerPanel({
+  active,
+  onCancel,
+  onSelect,
+  currentHostId,
+  selectedHostId,
+  regionFilter,
+  sourceProjectRegion,
+  lockRegion,
+  showOfflineMoveWarning,
+  wantsGpu,
+  mode = "move",
+}: {
+  active: boolean;
+  currentHostId?: string;
+  selectedHostId?: string;
+  onCancel: () => void;
+  onSelect: (host_id: string, host?: Host) => void;
+  regionFilter?: string;
+  sourceProjectRegion?: string;
+  lockRegion?: boolean;
+  showOfflineMoveWarning?: boolean;
+  wantsGpu?: boolean;
+  mode?: "move" | "create";
+}) {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const projectsLabel = intl.formatMessage(labels.projects);
@@ -291,18 +347,18 @@ export function HostPickerModal({
   };
 
   useEffect(() => {
-    if (open) {
+    if (active) {
       load().catch(console.error);
       if (regionFilter) {
         setRegionFilterState(regionFilter);
       }
       setAutoExpandedRemote(false);
     }
-  }, [open, regionFilter, selectedHostId]);
+  }, [active, regionFilter, selectedHostId]);
 
   useEffect(() => {
     if (
-      !open ||
+      !active ||
       !isCreate ||
       !regionFilter ||
       loading ||
@@ -319,41 +375,23 @@ export function HostPickerModal({
       setAutoExpandedRemote(true);
     }
   }, [
+    active,
     autoExpandedRemote,
     createRecommendations,
     isCreate,
     loading,
-    open,
     regionFilter,
     regionFilterState,
   ]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!active) return;
     if (selected && selectableHosts.some((h) => h.id === selected)) return;
     setSelected(bestSelectableHost?.id);
-  }, [open, selected, selectableHosts, bestSelectableHost]);
+  }, [active, selected, selectableHosts, bestSelectableHost]);
 
   return (
-    <Modal
-      width={600}
-      open={open}
-      onCancel={onCancel}
-      onOk={() => {
-        if (!selected) return;
-        const host = hosts.find((h) => h.id === selected);
-        if (!host) return;
-        onSelect(selected, host);
-      }}
-      okButtonProps={{ disabled: !selected || noSelectableTarget, loading }}
-      okText={isCreate ? "Use host" : undefined}
-      title={
-        <Space>
-          <Icon name="server" /> {isCreate ? "Choose host" : "Move to host"}
-        </Space>
-      }
-      destroyOnHidden
-    >
+    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       {showOfflineMoveWarning && currentHostId && !currentHostAvailable && (
         <Alert
           type="warning"
@@ -562,6 +600,22 @@ export function HostPickerModal({
           }}
         />
       </Radio.Group>
-    </Modal>
+      <Space wrap style={{ justifyContent: "flex-end", width: "100%" }}>
+        <Button onClick={onCancel}>Cancel</Button>
+        <Button
+          type="primary"
+          disabled={!selected || noSelectableTarget}
+          loading={loading}
+          onClick={() => {
+            if (!selected) return;
+            const host = hosts.find((h) => h.id === selected);
+            if (!host) return;
+            onSelect(selected, host);
+          }}
+        >
+          {isCreate ? "Use host" : "Move to host"}
+        </Button>
+      </Space>
+    </Space>
   );
 }

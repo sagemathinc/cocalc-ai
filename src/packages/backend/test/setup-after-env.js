@@ -40,6 +40,11 @@ async function cleanupOnce() {
     // best-effort cleanup only
   }
   try {
+    await require("../sandbox/watch").cleanupSandboxWatchersForTests?.();
+  } catch {
+    // best-effort cleanup only
+  }
+  try {
     await require("@cocalc/conat/project/jupyter/live-run").closeAllLiveRunStoresForTests?.();
   } catch {
     // best-effort cleanup only
@@ -62,10 +67,6 @@ async function cleanupOnce() {
 }
 
 afterAll(async () => {
-  const testPath = expect.getState?.().testPath ?? "";
-  if (testPath.includes("/conat/test/")) {
-    return;
-  }
   await withSuppressedCleanupDisconnects(async () => {
     await cleanupOnce();
     await new Promise((resolve) => setTimeout(resolve, 50));

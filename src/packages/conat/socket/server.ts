@@ -12,6 +12,7 @@ import { type Headers } from "@cocalc/conat/core/client";
 import { getLogger } from "@cocalc/conat/logger";
 
 const logger = getLogger("socket:server");
+const CONNECT_CLIENT_INTEREST_TIMEOUT = 5_000;
 
 function unrefDelay(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -24,6 +25,8 @@ function unrefDelay(ms: number): Promise<void> {
 // socket.listen method on ConatClient.
 
 export class ConatSocketServer extends ConatSocketBase {
+  private messageQueues: { [id: string]: Promise<void> } = {};
+
   serverSubjectPattern = (): string => {
     return `${this.subject}.server.${this.id}.*`;
   };
@@ -76,26 +79,45 @@ export class ConatSocketServer extends ConatSocketBase {
     this.sub = sub;
     this.setState("ready");
     for await (const mesg of this.sub) {
-      // console.log("got mesg", mesg.data, mesg.headers);
       if (this.state == ("closed" as any)) {
         return;
       }
-      try {
-        await this.handleMesg(mesg);
-      } catch (err) {
+      this.queueMesg(mesg);
+    }
+  }
+
+  private socketIdFromSubject = (subject: string): string =>
+    subject.split(".").slice(-1)[0];
+
+  private queueMesg = (mesg) => {
+    const id = this.socketIdFromSubject(mesg.subject);
+    const previous = this.messageQueues[id] ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(async () => {
+        if (this.state != ("closed" as any)) {
+          await this.handleMesg(mesg);
+        }
+      })
+      .catch((err) => {
         logger.debug(
           `WARNING -- unexpected issue handling connection -- ${err}`,
         );
+      });
+    this.messageQueues[id] = next;
+    void next.finally(() => {
+      if (this.messageQueues[id] === next) {
+        delete this.messageQueues[id];
       }
-    }
-  }
+    });
+  };
 
   private handleMesg = async (mesg) => {
     if (this.state == ("closed" as any)) {
       return;
     }
     const cmd = mesg.headers?.[SOCKET_HEADER_CMD];
-    const id = mesg.subject.split(".").slice(-1)[0];
+    const id = this.socketIdFromSubject(mesg.subject);
     let socket = this.sockets[id];
 
     if (socket === undefined) {
@@ -129,6 +151,7 @@ export class ConatSocketServer extends ConatSocketBase {
       try {
         hasClientInterest = await this.client.waitForInterest(
           socket.clientSubject,
+          { timeout: CONNECT_CLIENT_INTEREST_TIMEOUT },
         );
       } catch {}
       socket.connectWaitForInterestMs = Date.now() - waitStart;

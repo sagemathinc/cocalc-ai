@@ -13,6 +13,10 @@ import {
 } from "@cocalc/backend/conat/test/setup";
 import { once } from "@cocalc/util/async-utils";
 import { delay } from "awaiting";
+import {
+  SOCKET_HEADER_CMD,
+  SOCKET_HEADER_CONNECT_ATTEMPT,
+} from "@cocalc/conat/socket/util";
 
 beforeAll(async () => {
   await before();
@@ -74,6 +78,43 @@ describe("create a server and client, then send a message and get a response", (
 
   it("cleans up", async () => {
     await closeAndSettle(client, server, cn1, cn2);
+  });
+});
+
+describe("socket server connect handling is isolated by socket id", () => {
+  let cnServer, cnBad, cnGood, socketServer, goodSocket;
+  const subject = "socket.head-of-line";
+
+  it("a missing client return subject does not block unrelated clients", async () => {
+    cnServer = connect();
+    socketServer = cnServer.socket.listen(subject);
+    socketServer.on("connection", (socket) => {
+      socket.write(`ack:${socket.id}`);
+    });
+    await socketServer.waitUntilReady(1000);
+
+    cnBad = connect();
+    await cnBad.waitUntilReady();
+    const badId = "missing-client-interest";
+    const badServerSubject = `${subject}.server.${socketServer.id}.${badId}`;
+    await cnBad.waitForInterest(badServerSubject, { timeout: 1000 });
+    cnBad.publishSync(badServerSubject, null, {
+      headers: {
+        [SOCKET_HEADER_CMD]: "connect",
+        [SOCKET_HEADER_CONNECT_ATTEMPT]: 1,
+        id: badId,
+      },
+    });
+    await delay(50);
+
+    cnGood = connect();
+    goodSocket = cnGood.socket.connect(subject, { reconnection: false });
+    const [data] = await once(goodSocket, "data", 2000);
+    expect(data).toBe(`ack:${goodSocket.id}`);
+  });
+
+  it("cleans up", async () => {
+    await closeAndSettle(goodSocket, socketServer, cnBad, cnGood, cnServer);
   });
 });
 
