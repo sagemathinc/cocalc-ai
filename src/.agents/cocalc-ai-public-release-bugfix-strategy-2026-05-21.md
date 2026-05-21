@@ -29,7 +29,8 @@ Do not ship public release until these are true:
 - Markdown/Slate collaborative editing is not known to lose content.
 - Browser file/project clients recover from hub/project-host restarts without
   requiring a page refresh.
-- Cross-bay impersonation works or is explicitly disabled with a safe error.
+- Cross-bay impersonation works. **Fixed 2026-05-21** via central
+  impersonation grant routing plus shared-domain bay identity cookies.
 - Impersonation state is persistently obvious after refresh.
 - Sign-in redirects to `/projects` after success.
 - Passkey sign-in UI does not confuse "select passkey method" with "use
@@ -43,13 +44,18 @@ Do not ship public release until these are true:
 
 ## Triage Buckets
 
+### Solved During This Push
+
+| Item                                    | Area            | Status | Resolution                                                                                                                                                                                                                     |
+| --------------------------------------- | --------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Cross-bay impersonation stopped working | auth / multibay | fixed  | Grants are routed through a central seed-bay directory and token-only URLs. Grant redemption on the subject home bay now sets shared-domain `account_id` and `home_bay_id` cookies before redirecting back to the site origin. |
+
 ### P0: Release Blockers
 
 These should be worked before broad UI polish.
 
 | Item                                                      | Area                            | Risk                                         | First investigation                                                                                                              |
 | --------------------------------------------------------- | ------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Cross-bay impersonation stopped working                   | auth / multibay                 | Security/admin correctness                   | Reproduce with accounts on different `home_bay_id`; trace auth token/session authority through global/home bay/owner bay.        |
 | Impersonation banner disappears after refresh             | auth / admin UX                 | Admin can forget they are impersonating      | Find where impersonation state is stored; make banner derive from durable session/account state, not transient navigation state. |
 | Markdown Slate collaborative editing loses content        | editor / sync                   | Data loss                                    | Build a two-client regression harness; inspect Slate patch application and conflict handling under concurrent edits.             |
 | Offline editor switches to loading                        | editor / sync / offline         | Apparent data loss and unusable offline mode | Identify loading gate that hides existing document; keep last synced content visible and editable while reconnecting.            |
@@ -108,7 +114,7 @@ Primary files/packages to inspect:
 
 Scope:
 
-- Cross-bay impersonation.
+- Cross-bay impersonation. **Fixed 2026-05-21.**
 - Persistent impersonation banner.
 - Sign-in redirect to `/projects`.
 - Passkey selector/action distinction.
@@ -117,7 +123,8 @@ Scope:
 
 Acceptance:
 
-- Manual cross-bay impersonation smoke test passes.
+- Manual cross-bay impersonation smoke test passes. **Done for
+  `wstein+1@gmail.com`, home bay `bay-1`.**
 - Refresh while impersonating still shows obvious banner.
 - Sign-in lands on `/projects`.
 - Passkey method choice and passkey submit are visually distinct.
@@ -229,7 +236,7 @@ Acceptance:
 
 ## First 48 Hours Execution Plan
 
-1. Fix or disable cross-bay impersonation failure.
+1. Fix or disable cross-bay impersonation failure. **Done 2026-05-21.**
 2. Make impersonation banner persistent after refresh.
 3. Reproduce Markdown Slate collaborative data loss with a minimal harness.
 4. Reproduce hub/project-host restart FS-client failure with a scripted smoke
@@ -271,7 +278,7 @@ For each blocker:
 - Passkey selector visual fix.
 - SSO layout stability.
 - Impersonation banner persistence.
-- Cross-bay impersonation fix or safe disable.
+- Cross-bay impersonation fix. **Done 2026-05-21.**
 
 ### Batch 2: Editor And Recovery Correctness
 
@@ -305,11 +312,13 @@ For each blocker:
 ## Open Questions
 
 - Should cross-bay impersonation be launch-blocking if public launch is
-  single-bay only, or should the UI explicitly disable it outside same-bay?
+  single-bay only, or should the UI explicitly disable it outside same-bay? (YES: launch blocking; it's critical for support. We will definitely be able to fix this, as we've fixed many similar issues - it's just multibay correctness and design. It's also EASY to reproduce, fortunately.)
+  **RESOLVED 2026-05-21:** keep it enabled; cross-bay impersonation now works
+  in lite4b dogfood.
 - What is the minimal acceptable Markdown collaboration behavior for public
-  launch: Slate fixed, or Slate markdown collaboration temporarily disabled?
+  launch: Slate fixed, or Slate markdown collaboration temporarily disabled? (ANS: fixed -- this is a core part of the value prop of cocalc, and only recently broke.)
 - Should offline editing be fully writable for public launch, or is "visible
-  read-only with reconnect status" acceptable as a mitigation?
+  read-only with reconnect status" acceptable as a mitigation? (ANS: visible but read only is fine -- people can copy/paste; the point is to not prevent them from even seeing/access content they were just using)
 - Should the first public release include Nebius H200 as a supported path, or
-  mark GPU hosts as preview until CUDA package expectations are solved?
-- What exact support channels should remain on the community support page?
+  mark GPU hosts as preview until CUDA package expectations are solved? (ANS: yes, absolutely critical. We had it working before too, and it's likely not hard. E.g., nvidia-smi is there and working, so the hard podman integration stuff is done and working. Maybe it's just a version bump or something.)
+- What exact support channels should remain on the community support page? (ANS: maybe we just remove it. So far there has been no momentum with any approaches -- maybe discord was the most popular historically. Maybe you can suggest a strategy here? But for "release blocker" bug, just hiding the page would be sufficient. In practice, I think people talk privately in their own forums.)
