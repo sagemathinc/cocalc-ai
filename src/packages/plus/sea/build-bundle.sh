@@ -5,7 +5,7 @@
 # Usage:
 #   ./build-bundle.sh [output-directory]
 #
-# The script expects pnpm v8+ and Node 18+ (Node 24 for runtime).
+# The script expects pnpm v8+ and Node 18+ (Node 26 for runtime).
 # It runs the package build for @cocalc/plus, bundles the entry point
 # packages/plus/dist/bin/start.js (delegating to @cocalc/lite/main),
 # and copies the static frontend assets.

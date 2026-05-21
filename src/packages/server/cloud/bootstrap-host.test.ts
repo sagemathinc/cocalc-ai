@@ -116,6 +116,10 @@ describe("GCP bootstrap helpers", () => {
 });
 
 describe("bootstrap-host shell templates", () => {
+  it("defaults new project hosts to Node 26", () => {
+    expect(bootstrapHost.DEFAULT_PROJECT_HOST_NODE_VERSION).toBe("26");
+  });
+
   it("keeps carriage-return stripping as a literal backslash-r sequence", () => {
     const source = fs.readFileSync(
       path.join(__dirname, "bootstrap-host.ts"),

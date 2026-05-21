@@ -26,7 +26,7 @@ chmod u+w "$TARGET"
 cp ../build/bundle-linux.tar.xz cocalc.tar.xz
 
 # Replace ${NAME}, ${VERSION}, and ${MAIN} in the template
-envsubst < cocalc-template.js > cocalc.js
+node ./render-template.js cocalc-template.js cocalc.js "$NAME" "$VERSION" "$MAIN"
 
 # 2) Bundle app into a SEA blob
 node --experimental-sea-config sea-config.json

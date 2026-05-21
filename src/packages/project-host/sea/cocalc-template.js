@@ -1,7 +1,7 @@
 /*
 This is run when starting the SEA executable.
 This template is shared by other bundles; keep it generic and rely on
-envsubst to provide NAME, VERSION, and MAIN.
+render-template.js to provide NAME, VERSION, and MAIN.
 */
 
 const path = require("node:path");
@@ -9,13 +9,14 @@ const fs = require("node:fs");
 const repl = require("node:repl");
 const os = require("node:os");
 
-// DO NOT use ${} in this file; envsubst fills NAME/VERSION/MAIN.
+// render-template.js fills NAME/VERSION/MAIN.
 const version = "${VERSION}";
 const exeName = path.basename(process.argv[0] ?? "");
 const inferredName = exeName.startsWith("cocalc-plus") ? "cocalc-plus" : "";
+const unsubstitutedName = "$" + "{NAME}";
 const configuredName = "${NAME}";
 const name =
-  configuredName === "${NAME}" || configuredName === ""
+  configuredName === unsubstitutedName || configuredName === ""
     ? process.env.COCALC_NAME || inferredName || "cocalc"
     : configuredName;
 const mainScript = "${MAIN}";

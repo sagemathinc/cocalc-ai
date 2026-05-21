@@ -27,7 +27,12 @@ if [ "$OS" != "linux" ]; then
   exit 1
 fi
 cp ../build/bundle-linux.tar.xz cocalc.tar.xz
-envsubst < ../../project-host/sea/cocalc-template.js > cocalc.js
+node ../../project-host/sea/render-template.js \
+  ../../project-host/sea/cocalc-template.js \
+  cocalc.js \
+  "$NAME" \
+  "$VERSION" \
+  "$MAIN"
 
 node --experimental-sea-config sea-config.json
 

@@ -5,7 +5,7 @@
 # Usage:
 #   ./build-bundle.sh [output-directory]
 #
-# The script expects pnpm v8+ and Node 18+ (Node 24 for runtime).
+# The script expects pnpm v8+ and Node 18+ (Node 26 for runtime).
 # It builds Launchpad plus its runtime dependencies, bundles the CLI entry
 # point (packages/launchpad/bin/start.js), and copies static assets,
 # public assets, http-api handlers, and PGlite assets.
