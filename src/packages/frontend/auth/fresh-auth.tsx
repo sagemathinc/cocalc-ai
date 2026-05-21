@@ -125,7 +125,6 @@ export function FreshAuthModal({
       const requireSecondFactor = factorEnabled === true;
       if (requireSecondFactor && usePasskey) {
         await freshAuthWithPasskey({
-          current_password: currentPassword,
           duration: extended ? "extended" : "default",
           origin,
         });
@@ -204,17 +203,19 @@ export function FreshAuthModal({
             </div>
           ) : undefined}
         </div>
-        <div>
-          <div>Current password</div>
-          <Input.Password
-            name="current-password"
-            autoComplete="current-password"
-            value={currentPassword}
-            placeholder="Leave blank if this account has no password"
-            onChange={(e) => setCurrentPassword(e.target.value)}
-            onPressEnter={submit}
-          />
-        </div>
+        {factorEnabled === false ? (
+          <div>
+            <div>Current password</div>
+            <Input.Password
+              name="current-password"
+              autoComplete="current-password"
+              value={currentPassword}
+              placeholder="Leave blank if this account has no password"
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              onPressEnter={submit}
+            />
+          </div>
+        ) : undefined}
         {factorEnabled === true ? (
           <>
             <div>

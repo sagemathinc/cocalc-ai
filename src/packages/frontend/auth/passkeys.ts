@@ -104,11 +104,10 @@ export async function signInWithPasskey({
 }
 
 export async function freshAuthWithPasskey({
-  current_password,
   duration,
   origin,
 }: {
-  current_password: string;
+  current_password?: string;
   duration?: "default" | "extended";
   origin?: string;
 }): Promise<PasskeyFreshAuthResult> {
@@ -120,7 +119,6 @@ export async function freshAuthWithPasskey({
     endpoint: "auth/2fa/passkeys/fresh-auth/start",
     origin,
     body: {
-      current_password,
       duration,
     },
   });

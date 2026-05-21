@@ -436,7 +436,8 @@ async function verifyFreshAuthInputs({
   code?: string;
   db: Queryable;
 }): Promise<AuthSessionFactorLevel> {
-  if (await hasPassword(account_id)) {
+  const hasSecondFactor = await hasActiveSecondFactor(account_id);
+  if (!hasSecondFactor && (await hasPassword(account_id))) {
     const ok = await isPasswordCorrect({
       account_id,
       password: current_password,
@@ -446,7 +447,7 @@ async function verifyFreshAuthInputs({
     }
   }
 
-  if (!(await hasActiveSecondFactor(account_id))) {
+  if (!hasSecondFactor) {
     return "none";
   }
 
