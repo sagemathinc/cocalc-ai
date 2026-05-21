@@ -112,7 +112,6 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 const TIERS = [
   { id: "member", label: "Member", store_visible: true },
   { id: "pro", label: "Pro", store_visible: true },
-  { id: "student", label: "Student", store_visible: false },
 ];
 
 describe("MembershipPackageManager", () => {
@@ -455,16 +454,19 @@ describe("MembershipPackageManager", () => {
         pools: expect.arrayContaining([
           expect.objectContaining({
             pool_name: "Students",
+            membership_class: "student",
             requires_approval: false,
             allowed_domains: ["dept.example.edu", "example.edu"],
           }),
           expect.objectContaining({
             pool_name: "Instructors",
+            membership_class: "instructor",
             requires_approval: true,
             allowed_domains: ["dept.example.edu", "example.edu"],
           }),
           expect.objectContaining({
             pool_name: "Researchers",
+            membership_class: "researcher",
             requires_approval: true,
             allowed_domains: ["dept.example.edu", "example.edu"],
           }),

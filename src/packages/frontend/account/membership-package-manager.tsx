@@ -86,6 +86,12 @@ interface MembershipTierLike {
   disabled?: boolean;
 }
 
+const SITE_LICENSE_TEMPLATE_TIERS: MembershipTierLike[] = [
+  { id: "student", label: "Student" },
+  { id: "instructor", label: "Instructor" },
+  { id: "researcher", label: "Researcher" },
+];
+
 interface Props {
   tiers: MembershipTierLike[];
   onChanged?: () => void;
@@ -144,6 +150,17 @@ function getTeamSeatTiers(tiers: MembershipTierLike[]): MembershipTierLike[] {
         tier.id !== "student",
     )
     .sort((a, b) => (a.label ?? a.id).localeCompare(b.label ?? b.id));
+}
+
+function mergeTierOptions(
+  ...tierLists: MembershipTierLike[][]
+): MembershipTierLike[] {
+  const options = new Map<string, MembershipTierLike>();
+  for (const tier of tierLists.flat()) {
+    if (tier.disabled) continue;
+    options.set(tier.id, { ...options.get(tier.id), ...tier });
+  }
+  return Array.from(options.values());
 }
 
 function getPackageDomains(
@@ -1548,6 +1565,14 @@ function ProvisionSiteLicenseModal({
   onProvisioned: () => Promise<void>;
 }) {
   const provisionableTiers = useMemo(() => getTeamSeatTiers(tiers), [tiers]);
+  const siteLicenseTierOptions = useMemo(
+    () =>
+      mergeTierOptions(
+        SITE_LICENSE_TEMPLATE_TIERS,
+        tiers.filter((tier) => !tier.disabled),
+      ),
+    [tiers],
+  );
   const [name, setName] = useState<string>("Campus site license");
   const [organizationName, setOrganizationName] =
     useState<string>("Example University");
@@ -1569,16 +1594,15 @@ function ProvisionSiteLicenseModal({
 
   useEffect(() => {
     if (!open) return;
-    const studentTier =
-      tiers.find((tier) => tier.id === "student") ?? provisionableTiers[0];
+    const studentTier = siteLicenseTierOptions.find(
+      (tier) => tier.id === "student",
+    );
     const instructorTier =
-      tiers.find((tier) => tier.id === "instructor") ??
-      tiers.find((tier) => tier.id === "pro") ??
-      provisionableTiers[0];
+      siteLicenseTierOptions.find((tier) => tier.id === "instructor") ??
+      siteLicenseTierOptions.find((tier) => tier.id === "pro");
     const researcherTier =
-      tiers.find((tier) => tier.id === "researcher") ??
-      tiers.find((tier) => tier.id === "pro") ??
-      provisionableTiers[0];
+      siteLicenseTierOptions.find((tier) => tier.id === "researcher") ??
+      siteLicenseTierOptions.find((tier) => tier.id === "pro");
     setName("Campus site license");
     setOrganizationName("Example University");
     setDomains([]);
@@ -1628,7 +1652,7 @@ function ProvisionSiteLicenseModal({
     );
     setSubmitting(false);
     setError("");
-  }, [open, provisionableTiers, tiers]);
+  }, [open, siteLicenseTierOptions]);
 
   function updatePool(index: number, patch: Partial<SiteLicensePoolConfig>) {
     setPools((current) =>
@@ -1909,12 +1933,10 @@ function ProvisionSiteLicenseModal({
                       })
                     }
                     style={{ width: 160, marginTop: 6 }}
-                    options={tiers
-                      .filter((tier) => !tier.disabled)
-                      .map((tier) => ({
-                        label: tier.label ?? capitalize(tier.id),
-                        value: tier.id,
-                      }))}
+                    options={siteLicenseTierOptions.map((tier) => ({
+                      label: tier.label ?? capitalize(tier.id),
+                      value: tier.id,
+                    }))}
                   />
                 </div>
                 <div>
