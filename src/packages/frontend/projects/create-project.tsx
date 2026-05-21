@@ -55,6 +55,7 @@ import {
 } from "./create/project-create-draft";
 import { ProjectCreateHealthCard } from "./create/project-create-health-card";
 import { useProjectCreateDraft } from "./create/use-project-create-draft";
+import "./create-project.css";
 
 interface Props {
   default_value: string;
@@ -518,13 +519,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
 
   function renderPresetSection(): React.JSX.Element {
     return (
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-          gap: 10,
-        }}
-      >
+      <div className="cc-project-create-preset-grid">
         {PROJECT_PRESETS.map((preset) => {
           const active = draft.mode === preset.mode;
           return (
@@ -533,29 +528,20 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
               onClick={() => applyPreset(preset.mode)}
               disabled={saving}
               style={{
-                height: "auto",
-                minHeight: 96,
-                padding: "10px 9px",
-                textAlign: "center",
                 borderColor: active ? COLORS.BS_BLUE_BGRND : COLORS.GRAY_LL,
                 background: active ? COLORS.ANTD_BG_BLUE_L : "white",
                 boxShadow: active
                   ? `0 0 0 1px ${COLORS.BS_BLUE_BGRND} inset`
                   : undefined,
               }}
+              className="cc-project-create-preset-button"
             >
               <Space orientation="vertical" align="center" size={6}>
                 <span
+                  className="cc-project-create-preset-icon"
                   style={{
-                    alignItems: "center",
                     background: active ? "white" : COLORS.GRAY_LLL,
-                    borderRadius: 12,
                     color: active ? COLORS.BS_BLUE_TEXT : COLORS.GRAY_M,
-                    display: "inline-flex",
-                    fontSize: 18,
-                    height: 34,
-                    justifyContent: "center",
-                    width: 34,
                   }}
                 >
                   <Icon name={preset.icon as any} />
@@ -565,12 +551,9 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                     {preset.title}
                   </div>
                   <div
+                    className="cc-project-create-preset-description"
                     style={{
                       color: COLORS.GRAY_M,
-                      fontSize: 12,
-                      lineHeight: 1.2,
-                      whiteSpace: "normal",
-                      maxWidth: 150,
                     }}
                   >
                     {preset.description}
@@ -684,9 +667,8 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
       <Card
         size="small"
         styles={{ body: { padding: 16 } }}
+        className="cc-project-create-summary-card"
         style={{
-          position: "sticky",
-          top: 0,
           borderColor: COLORS.GRAY_LL,
           background: "white",
         }}
@@ -699,27 +681,19 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             {summaryItems.map((item, index) => (
               <div
                 key={item.label}
+                className="cc-project-create-summary-row"
                 style={{
                   borderBottom:
                     index === summaryItems.length - 1
                       ? undefined
                       : `1px solid ${COLORS.GRAY_LL}`,
-                  display: "grid",
-                  gap: 10,
-                  gridTemplateColumns: "30px minmax(0, 1fr)",
-                  padding: "6px 0",
                 }}
               >
                 <span
+                  className="cc-project-create-summary-icon"
                   style={{
-                    alignItems: "center",
                     background: item.color,
-                    borderRadius: 8,
                     color: COLORS.BS_BLUE_TEXT,
-                    display: "inline-flex",
-                    height: 30,
-                    justifyContent: "center",
-                    width: 30,
                   }}
                 >
                   <Icon name={item.icon as any} />
@@ -795,7 +769,11 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     });
 
     return (
-      <Space orientation="vertical" size={10} style={{ width: "100%" }}>
+      <Space
+        orientation="vertical"
+        size={10}
+        className="cc-project-create-form-column"
+      >
         <Form form={form} layout="vertical">
           <Form.Item
             label={
@@ -864,29 +842,27 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     <Modal
       open={open}
       destroyOnHidden
+      className="cc-project-create-modal"
       width="min(1180px, 96vw)"
       title={
         <Space size="middle" align="start">
           <span
+            className="cc-project-create-title-icon"
             style={{
-              alignItems: "center",
               background: COLORS.ANTD_BG_BLUE_L,
-              borderRadius: 10,
               color: COLORS.BS_BLUE_TEXT,
-              display: "inline-flex",
-              height: 36,
-              justifyContent: "center",
-              marginTop: 1,
-              width: 36,
             }}
           >
             <Icon name="plus-circle" />
           </span>
           <span>
-            <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.1 }}>
+            <div className="cc-project-create-title">
               {intl.formatMessage(labels.create_project)}
             </div>
-            <Typography.Text type="secondary" style={{ fontWeight: 400 }}>
+            <Typography.Text
+              type="secondary"
+              className="cc-project-create-subtitle"
+            >
               Pick a good default now. Everything can be changed later.
             </Typography.Text>
           </span>
@@ -904,20 +880,13 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
         },
       }}
     >
-      <Space orientation="vertical" size={12} style={{ width: "100%" }}>
+      <div className="cc-project-create-body">
         <ProjectCreateHealthCard open={open} />
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "minmax(0, 1fr) minmax(320px, 380px)",
-            gap: 24,
-            alignItems: "start",
-          }}
-        >
+        <div className="cc-project-create-content-grid">
           {render_input_section()}
           {renderSummarySection()}
         </div>
-      </Space>
+      </div>
     </Modal>
   );
 }

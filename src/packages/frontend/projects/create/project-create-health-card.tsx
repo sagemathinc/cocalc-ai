@@ -205,6 +205,7 @@ function healthMessage(gauges: Gauge[]): string | undefined {
 function GaugeCard({ gauge, isLast }: { gauge: Gauge; isLast?: boolean }) {
   return (
     <div
+      className="cc-project-create-health-gauge"
       style={{
         borderRight: isLast ? undefined : `1px solid ${COLORS.GRAY_LL}`,
         minWidth: 0,
@@ -322,6 +323,7 @@ export function ProjectCreateHealthCard({ open }: { open: boolean }) {
     <Card
       size="small"
       styles={{ body: { padding: "10px 12px" } }}
+      className="cc-project-create-health-card"
       style={{
         borderColor: COLORS.GRAY_LL,
         background: "white",
@@ -329,6 +331,7 @@ export function ProjectCreateHealthCard({ open }: { open: boolean }) {
     >
       <Space orientation="vertical" size="small" style={{ width: "100%" }}>
         <div
+          className="cc-project-create-health-grid"
           style={{
             display: "grid",
             gridTemplateColumns: "repeat(3, minmax(120px, 1fr)) auto",

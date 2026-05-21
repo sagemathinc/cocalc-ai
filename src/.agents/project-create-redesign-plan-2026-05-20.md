@@ -63,6 +63,9 @@ Implemented:
   path, and the summary uses decision-ready icon rows.
 - Host selection can expand inline in the create modal, matching the inline
   RootFS picker pattern.
+- Mobile-responsive layout pass for narrow screens: the modal uses a single
+  column, compact title, 2-column presets, stacked capacity gauges, and a
+  non-sticky summary.
 
 Still rough:
 
@@ -77,7 +80,7 @@ Still rough:
 - RootFS preset configuration is not yet site-configurable beyond the initial
   built-in preset tags.
 - The visual design is much closer to the target mockup, but still needs live
-  dogfood validation across several viewport sizes and account states.
+  dogfood validation across varied account states.
 
 ## Core Product Principles
 
