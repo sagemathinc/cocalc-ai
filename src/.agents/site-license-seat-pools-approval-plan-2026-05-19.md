@@ -743,11 +743,19 @@ Acceptance criteria:
 
 - [x] Add manager-scoped APIs.
 - [x] Add minimal manager review panel in the account membership package manager.
+- [x] Add crude but functional manager dashboard.
 - [ ] Add polished manager dashboard.
 - Add notifications for new requests and review outcomes.
 - Approval creates assignment and grant through existing membership package
   machinery.
 - Rejection records review state and reason.
+
+Implementation note: the account membership page now has a deliberately plain
+site-license manager dashboard that shows license terms, domains, pools,
+managers, active seats, pending requests, revoke buttons, and recent audit
+events. The admin provision modal now uses the real pool-based site-license API
+instead of the older single-package site-license helper. This is suitable for
+manual end-to-end testing, not final production polish.
 
 ### Phase 5: Seat Reconciliation
 
@@ -795,7 +803,9 @@ maintenance metadata.
 The user-facing backend contract now exposes a signed-in account's
 reverification status from account-home grant metadata and a refresh RPC that
 routes directly to the site-license owner bay using grant routing metadata.
-Actual in-app/email notification delivery and UI presentation are still pending.
+The account membership page now exposes a basic user-facing reverification panel
+with per-license status and refresh buttons. Actual in-app/email notification
+delivery and polished UX presentation are still pending.
 
 ### Phase 7: Invite Limit Integration
 

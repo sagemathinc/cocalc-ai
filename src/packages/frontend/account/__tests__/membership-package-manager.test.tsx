@@ -15,10 +15,13 @@ const getMembershipPackageQuote = jest.fn();
 const isPurchaseAllowed = jest.fn();
 const purchaseMembershipPackage = jest.fn();
 const processPaymentIntents = jest.fn();
+const adminProvisionSiteLicense = jest.fn();
 const adminProvisionMembershipPackage = jest.fn();
 const updateMembershipPackage = jest.fn();
 const assignMembershipPackageSeat = jest.fn();
 const revokeMembershipPackageSeat = jest.fn();
+const getSiteLicenseAffiliationReverificationStatus = jest.fn();
+const refreshSiteLicenseAffiliationVerification = jest.fn();
 const userSearch = jest.fn();
 const getNames = jest.fn();
 
@@ -69,6 +72,8 @@ jest.mock("@cocalc/frontend/purchases/api", () => ({
   purchaseMembershipPackage: (...args: any[]) =>
     purchaseMembershipPackage(...args),
   processPaymentIntents: (...args: any[]) => processPaymentIntents(...args),
+  adminProvisionSiteLicense: (...args: any[]) =>
+    adminProvisionSiteLicense(...args),
   adminProvisionMembershipPackage: (...args: any[]) =>
     adminProvisionMembershipPackage(...args),
   updateMembershipPackage: (...args: any[]) => updateMembershipPackage(...args),
@@ -76,6 +81,10 @@ jest.mock("@cocalc/frontend/purchases/api", () => ({
     assignMembershipPackageSeat(...args),
   revokeMembershipPackageSeat: (...args: any[]) =>
     revokeMembershipPackageSeat(...args),
+  getSiteLicenseAffiliationReverificationStatus: (...args: any[]) =>
+    getSiteLicenseAffiliationReverificationStatus(...args),
+  refreshSiteLicenseAffiliationVerification: (...args: any[]) =>
+    refreshSiteLicenseAffiliationVerification(...args),
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -384,16 +393,17 @@ describe("MembershipPackageManager", () => {
   it("lets admins provision a site license without payment", async () => {
     isAdmin = true;
     getMembershipPackages.mockResolvedValue([]);
-    adminProvisionMembershipPackage.mockResolvedValue({
-      id: "site-1",
-      owner_account_id: "owner-1",
-      kind: "site",
-      membership_class: "pro",
-      seat_count: 25,
-      active_assignment_count: 0,
-      available_seat_count: 25,
-      assignments: [],
-      metadata: { allowed_domains: ["example.edu"] },
+    adminProvisionSiteLicense.mockResolvedValue({
+      site_license: {
+        id: "license-1",
+        name: "Campus site license",
+        organization_name: "Example University",
+        owner_account_id: "owner-1",
+        allowed_domains: ["example.edu"],
+      },
+      pools: [],
+      managers: [],
+      pending_requests: [],
     });
 
     render(<MembershipPackageManager tiers={TIERS} />);
@@ -405,7 +415,7 @@ describe("MembershipPackageManager", () => {
     fireEvent.click(screen.getByText("Provision site license"));
 
     await waitFor(() => {
-      expect(screen.getByText(/support-managed license/i)).toBeTruthy();
+      expect(screen.getByText(/real site license/i)).toBeTruthy();
     });
 
     const domainInput = screen.getByLabelText("Allowed email domains");
@@ -415,13 +425,35 @@ describe("MembershipPackageManager", () => {
     fireEvent.click(screen.getByText("Provision license"));
 
     await waitFor(() => {
-      expect(adminProvisionMembershipPackage).toHaveBeenCalledWith({
+      expect(adminProvisionSiteLicense).toHaveBeenCalledWith({
         owner_account_id: undefined,
-        kind: "site",
-        membership_class: "member",
-        seat_count: 25,
         allowed_domains: ["dept.example.edu", "example.edu"],
+        name: "Campus site license",
+        organization_name: "Example University",
+        custom_terms_url: null,
+        custom_policy_url: null,
+        terms_version_label: null,
+        renewal_policy: "annual",
+        overage_policy: "hard-cap",
+        starts_at: undefined,
         expires_at: undefined,
+        pools: expect.arrayContaining([
+          expect.objectContaining({
+            pool_name: "Students",
+            requires_approval: false,
+            allowed_domains: ["dept.example.edu", "example.edu"],
+          }),
+          expect.objectContaining({
+            pool_name: "Instructors",
+            requires_approval: true,
+            allowed_domains: ["dept.example.edu", "example.edu"],
+          }),
+          expect.objectContaining({
+            pool_name: "Researchers",
+            requires_approval: true,
+            allowed_domains: ["dept.example.edu", "example.edu"],
+          }),
+        ]),
       });
     });
   });

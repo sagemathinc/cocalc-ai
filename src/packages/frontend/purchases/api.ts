@@ -20,7 +20,10 @@ import type {
   MembershipPackageDetails,
   MembershipPackageKind,
   MembershipPackageQuote,
+  SiteLicenseAffiliationReverificationSeat,
+  SiteLicenseAffiliationReverificationUserStatus,
   SiteLicenseOverview,
+  SiteLicensePoolConfig,
   SiteLicensePoolRequest,
 } from "@cocalc/conat/hub/api/purchases";
 import { hoursInInterval } from "@cocalc/util/stripe/timecalcs";
@@ -457,6 +460,24 @@ export async function adminProvisionMembershipPackage(opts: {
   ).adminProvisionMembershipPackage(opts);
 }
 
+export async function adminProvisionSiteLicense(opts: {
+  owner_account_id?: string;
+  name: string;
+  organization_name: string;
+  allowed_domains: string[];
+  pools: SiteLicensePoolConfig[];
+  custom_terms_url?: string | null;
+  custom_policy_url?: string | null;
+  terms_version_label?: string | null;
+  renewal_policy?: string | null;
+  overage_policy?: string | null;
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+  metadata?: Record<string, unknown> | null;
+}): Promise<SiteLicenseOverview> {
+  return await (await getPurchasesHubRpc()).adminProvisionSiteLicense(opts);
+}
+
 export async function updateMembershipPackage(opts: {
   package_id: string;
   owner_account_id?: string;
@@ -528,6 +549,22 @@ export async function reviewSiteLicensePoolRequest(opts: {
   review_note?: string | null;
 }): Promise<SiteLicensePoolRequest> {
   return await (await getPurchasesHubRpc()).reviewSiteLicensePoolRequest(opts);
+}
+
+export async function getSiteLicenseAffiliationReverificationStatus(): Promise<SiteLicenseAffiliationReverificationUserStatus> {
+  return await (
+    await getPurchasesHubRpc()
+  ).getSiteLicenseAffiliationReverificationStatus({});
+}
+
+export async function refreshSiteLicenseAffiliationVerification(
+  opts: {
+    site_license_id?: string;
+  } = {},
+): Promise<SiteLicenseAffiliationReverificationSeat[]> {
+  return await (
+    await getPurchasesHubRpc()
+  ).refreshSiteLicenseAffiliationVerification(opts);
 }
 
 // Deprecated compatibility API; the effective minimum balance is always 0.
