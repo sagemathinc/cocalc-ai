@@ -21,7 +21,7 @@ import {
   Typography,
 } from "antd";
 import { delay } from "awaiting";
-import { FormattedMessage, useIntl } from "react-intl";
+import { useIntl } from "react-intl";
 
 import {
   redux,
@@ -31,14 +31,10 @@ import {
   useRef,
   useState,
 } from "@cocalc/frontend/app-framework";
-import { A, ErrorDisplay, Icon, Paragraph } from "@cocalc/frontend/components";
+import { ErrorDisplay, Icon, Paragraph } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 
-import {
-  R2_REGION_LABELS,
-  R2_REGIONS,
-  type R2Region,
-} from "@cocalc/util/consts";
+import { R2_REGION_LABELS } from "@cocalc/util/consts";
 import { COLORS } from "@cocalc/util/theme";
 import { SelectNewHost } from "@cocalc/frontend/hosts/select-new-host";
 import { RootfsScanStatus } from "@cocalc/frontend/rootfs/scan-status";
@@ -93,7 +89,7 @@ const PROJECT_PRESETS: {
   {
     mode: "custom",
     title: "Custom",
-    description: "Expose advanced placement and image controls.",
+    description: "Choose your own runtime image and host.",
     icon: "sliders",
   },
 ];
@@ -126,21 +122,11 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     context,
     isAdmin,
     selectedHost,
-    setAdvancedOpen,
-    setRegion,
     setHost,
     setRootfs,
     applyPreset,
     reset,
   } = useProjectCreateDraft({ defaultValue: default_value });
-  const regionOptions = useMemo(
-    () =>
-      R2_REGIONS.map((region) => ({
-        value: region,
-        label: R2_REGION_LABELS[region],
-      })),
-    [],
-  );
 
   const [form] = Form.useForm();
   const isGpu = summary.gpu;
@@ -239,7 +225,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     } catch (err) {
       if (!is_mounted_ref.current) return;
       setCreateAction(null);
-      setAdvancedOpen(true);
       set_error(`Error creating ${projectLabelLower} -- ${err}`);
       return;
     }
@@ -860,49 +845,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
           showHelp={false}
         />
         {hostPickerOpen && renderRegionExplanation()}
-        <Button
-          type="link"
-          onClick={() => setAdvancedOpen(!draft.advanced_open)}
-          style={{ paddingLeft: 0 }}
-        >
-          {draft.advanced_open ? "Hide advanced" : "Show advanced"}
-        </Button>
-        {draft.advanced_open && (
-          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-            <Paragraph type="secondary">
-              <FormattedMessage
-                id="projects.create-project.explanation"
-                defaultMessage={`A <A1>{projectLabel}</A1> is a private computational environment
-                  where you can work with collaborators that you explicitly invite.`}
-                values={{
-                  projectLabel: projectLabelLower,
-                  A1: (c) => (
-                    <A href="https://doc.cocalc.com/project.html">{c}</A>
-                  ),
-                }}
-              />
-            </Paragraph>
-            <Card size="small" styles={{ body: { padding: "10px 12px" } }}>
-              <Space
-                orientation="vertical"
-                size="small"
-                style={{ width: "100%" }}
-              >
-                <div style={{ fontWeight: 600 }}>Backup region</div>
-                <Select
-                  value={draft.region}
-                  onChange={(value) => setRegion(value as R2Region)}
-                  options={regionOptions}
-                  disabled={saving}
-                />
-                <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-                  Choose the backup region used for project placement. The host
-                  selector updates to show compatible hosts for this region.
-                </Paragraph>
-              </Space>
-            </Card>
-          </Space>
-        )}
         {render_error()}
       </Space>
     );

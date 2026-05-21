@@ -79,7 +79,6 @@ describe("project create draft", () => {
         mode: "standard",
         region: "wnam",
         start: true,
-        advanced_open: false,
         rootfs_image: "cocalc.local/rootfs/standard",
         rootfs_image_id: "standard",
       }),

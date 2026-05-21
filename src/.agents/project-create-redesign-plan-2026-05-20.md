@@ -729,10 +729,10 @@ Requirements:
 - Explain region impact in terms of terminal/Jupyter lag. Initial copy added.
 - Explain that region/host can be changed later. Initial copy added.
 - Distinguish user latency region from project backup region and provider
-  region without exposing too much terminology. Initial advanced-region card
+  region without exposing too much terminology. Initial inline host-picker card
   added.
 - Explain when region changes reset backups beyond the latest backup. Initial
-  advanced-region copy added.
+  inline host-picker copy added.
 
 Validation:
 
