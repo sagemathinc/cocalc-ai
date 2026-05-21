@@ -8,6 +8,7 @@ import {
   Button,
   Card,
   Checkbox,
+  Collapse,
   DatePicker,
   Descriptions,
   Divider,
@@ -2022,6 +2023,7 @@ function ProvisionSiteLicenseModal({
       okText="Provision license"
       width={1000}
       destroyOnHidden
+      styles={{ body: { maxHeight: "calc(100vh - 220px)", overflowY: "auto" } }}
       title={
         <>
           <Icon name="plus-circle" style={{ marginRight: 10 }} />
@@ -2038,30 +2040,92 @@ function ProvisionSiteLicenseModal({
             onClose={() => setError("")}
           />
         ) : null}
-        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          This creates a real site license with one or more named pools. It is
-          intentionally basic UI for testing the full backend flow.
-        </Paragraph>
-        <Space wrap style={{ width: "100%" }}>
-          <div style={{ flex: "1 1 280px" }}>
-            <Text strong>License name</Text>
-            <Input
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              style={{ marginTop: 6 }}
-            />
-          </div>
-          <div style={{ flex: "1 1 280px" }}>
-            <Text strong>Organization</Text>
-            <Input
-              value={organizationName}
-              onChange={(event) => setOrganizationName(event.target.value)}
-              style={{ marginTop: 6 }}
-            />
-          </div>
-        </Space>
-        <div>
-          <Text strong>Allowed email domains</Text>
+        <Card
+          style={{
+            background: `linear-gradient(135deg, ${COLORS.BLUE_LLLL}, ${COLORS.BS_GREEN_LL})`,
+            border: `1px solid ${COLORS.GRAY_LL}`,
+            borderRadius: 16,
+          }}
+          styles={{ body: { padding: 18 } }}
+        >
+          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+            <Space orientation="vertical" size={2}>
+              <Text strong style={{ fontSize: 16 }}>
+                Create one customer-facing license with multiple seat pools
+              </Text>
+              <Paragraph style={{ marginBottom: 0 }}>
+                This creates a real site license. The organization sees one
+                license; CoCalc enforces the individual pools underneath it.
+              </Paragraph>
+            </Space>
+            <div
+              style={{
+                display: "grid",
+                gap: 12,
+                gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+              }}
+            >
+              <Card size="small" styles={{ body: { padding: 12 } }}>
+                <Text strong>1. Identify the institution</Text>
+                <div style={{ color: COLORS.GRAY_M, marginTop: 4 }}>
+                  Name, organization, contract dates, and policy links.
+                </div>
+              </Card>
+              <Card size="small" styles={{ body: { padding: 12 } }}>
+                <Text strong>2. Add eligible domains</Text>
+                <div style={{ color: COLORS.GRAY_M, marginTop: 4 }}>
+                  Verified emails at these domains unlock claims and requests.
+                </div>
+              </Card>
+              <Card size="small" styles={{ body: { padding: 12 } }}>
+                <Text strong>3. Tune the pools</Text>
+                <div style={{ color: COLORS.GRAY_M, marginTop: 4 }}>
+                  Students can self-claim; instructors and researchers usually
+                  need approval.
+                </div>
+              </Card>
+            </div>
+          </Space>
+        </Card>
+
+        <Card
+          title="License identity"
+          size="small"
+          style={{ borderRadius: 14 }}
+        >
+          <Space wrap style={{ width: "100%" }}>
+            <div style={{ flex: "1 1 280px" }}>
+              <Text strong>License name</Text>
+              <Input
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Campus site license"
+                style={{ marginTop: 6 }}
+              />
+              <Text type="secondary">Internal and manager-facing name.</Text>
+            </div>
+            <div style={{ flex: "1 1 280px" }}>
+              <Text strong>Organization</Text>
+              <Input
+                value={organizationName}
+                onChange={(event) => setOrganizationName(event.target.value)}
+                placeholder="Example University"
+                style={{ marginTop: 6 }}
+              />
+              <Text type="secondary">The customer or institution name.</Text>
+            </div>
+          </Space>
+        </Card>
+
+        <Card
+          title="Eligibility domains"
+          size="small"
+          style={{ borderRadius: 14 }}
+        >
+          <Text type="secondary">
+            Users must verify an email at one of these domains before they can
+            claim a self-serve seat or request an approval-required seat.
+          </Text>
           <Select
             aria-label="Allowed email domains"
             mode="tags"
@@ -2079,73 +2143,126 @@ function ProvisionSiteLicenseModal({
               setDomainSearch("");
             }}
             placeholder="example.edu, department.example.edu"
-            style={{ width: "100%", marginTop: 6 }}
+            style={{ width: "100%", marginTop: 10 }}
           />
           <Text type="secondary">
             Separate domains with commas, spaces, or new lines. Do not include
             full email addresses.
           </Text>
-        </div>
-        <div>
-          <Text strong>Terms and policy links</Text>
-          <Space wrap style={{ width: "100%", marginTop: 6 }}>
-            <Input
-              placeholder="Custom terms URL"
-              value={customTermsUrl}
-              onChange={(event) => setCustomTermsUrl(event.target.value)}
-              style={{ width: 260 }}
-            />
-            <Input
-              placeholder="Custom policy URL"
-              value={customPolicyUrl}
-              onChange={(event) => setCustomPolicyUrl(event.target.value)}
-              style={{ width: 260 }}
-            />
-            <Input
-              placeholder="Terms version label"
-              value={termsVersionLabel}
-              onChange={(event) => setTermsVersionLabel(event.target.value)}
-              style={{ width: 190 }}
-            />
+        </Card>
+
+        <Collapse
+          items={[
+            {
+              key: "contract",
+              label: "Optional contract terms, dates, and policy links",
+              children: (
+                <Space
+                  orientation="vertical"
+                  size="middle"
+                  style={{ width: "100%" }}
+                >
+                  <Alert
+                    type="info"
+                    showIcon
+                    title="These fields are visible context, not a billing engine."
+                    description="Use them to record negotiated policy links, renewal language, overage handling, and term dates for the site-license dashboard."
+                  />
+                  <Space wrap style={{ width: "100%" }}>
+                    <div style={{ flex: "1 1 260px" }}>
+                      <Text strong>Custom terms URL</Text>
+                      <Input
+                        placeholder="https://example.edu/cocalc-terms"
+                        value={customTermsUrl}
+                        onChange={(event) =>
+                          setCustomTermsUrl(event.target.value)
+                        }
+                        style={{ marginTop: 6 }}
+                      />
+                    </div>
+                    <div style={{ flex: "1 1 260px" }}>
+                      <Text strong>Custom policy URL</Text>
+                      <Input
+                        placeholder="https://example.edu/acceptable-use"
+                        value={customPolicyUrl}
+                        onChange={(event) =>
+                          setCustomPolicyUrl(event.target.value)
+                        }
+                        style={{ marginTop: 6 }}
+                      />
+                    </div>
+                    <div style={{ flex: "1 1 190px" }}>
+                      <Text strong>Terms version</Text>
+                      <Input
+                        placeholder="2026 pilot"
+                        value={termsVersionLabel}
+                        onChange={(event) =>
+                          setTermsVersionLabel(event.target.value)
+                        }
+                        style={{ marginTop: 6 }}
+                      />
+                    </div>
+                  </Space>
+                  <Space wrap style={{ width: "100%" }}>
+                    <div style={{ flex: "1 1 180px" }}>
+                      <Text strong>Renewal policy</Text>
+                      <Input
+                        value={renewalPolicy}
+                        onChange={(event) =>
+                          setRenewalPolicy(event.target.value)
+                        }
+                        style={{ marginTop: 6 }}
+                      />
+                    </div>
+                    <div style={{ flex: "1 1 180px" }}>
+                      <Text strong>Overage policy</Text>
+                      <Input
+                        value={overagePolicy}
+                        onChange={(event) =>
+                          setOveragePolicy(event.target.value)
+                        }
+                        style={{ marginTop: 6 }}
+                      />
+                    </div>
+                    <div style={{ flex: "1 1 180px" }}>
+                      <Text strong>Starts at</Text>
+                      <DatePicker
+                        value={startsAt}
+                        onChange={setStartsAt}
+                        style={{ width: "100%", marginTop: 6 }}
+                      />
+                    </div>
+                    <div style={{ flex: "1 1 180px" }}>
+                      <Text strong>Expires at</Text>
+                      <DatePicker
+                        value={expiresAt}
+                        onChange={setExpiresAt}
+                        style={{ width: "100%", marginTop: 6 }}
+                      />
+                    </div>
+                  </Space>
+                </Space>
+              ),
+            },
+          ]}
+        />
+
+        <Divider style={{ margin: "4px 0" }} />
+
+        <Space
+          wrap
+          align="start"
+          style={{ width: "100%", justifyContent: "space-between" }}
+        >
+          <Space orientation="vertical" size={2}>
+            <Text strong style={{ fontSize: 16 }}>
+              Seat pools
+            </Text>
+            <Text type="secondary">
+              Start with the default academic pools. Expand advanced settings
+              only when a deal needs different identity or reverification rules.
+            </Text>
           </Space>
-        </div>
-        <Space wrap>
-          <div>
-            <Text strong>Renewal policy</Text>
-            <Input
-              value={renewalPolicy}
-              onChange={(event) => setRenewalPolicy(event.target.value)}
-              style={{ width: 180, marginTop: 6 }}
-            />
-          </div>
-          <div>
-            <Text strong>Overage policy</Text>
-            <Input
-              value={overagePolicy}
-              onChange={(event) => setOveragePolicy(event.target.value)}
-              style={{ width: 180, marginTop: 6 }}
-            />
-          </div>
-          <div>
-            <Text strong>Starts at</Text>
-            <DatePicker
-              value={startsAt}
-              onChange={setStartsAt}
-              style={{ width: 180, marginTop: 6 }}
-            />
-          </div>
-          <div>
-            <Text strong>Expires at</Text>
-            <DatePicker
-              value={expiresAt}
-              onChange={setExpiresAt}
-              style={{ width: 180, marginTop: 6 }}
-            />
-          </div>
-        </Space>
-        <Divider style={{ margin: "8px 0" }} />
-        <Space style={{ width: "100%", justifyContent: "space-between" }}>
-          <Text strong>Pools</Text>
           <Button onClick={addPool}>Add pool</Button>
         </Space>
         <Space orientation="vertical" style={{ width: "100%" }}>
@@ -2165,21 +2282,28 @@ function ProvisionSiteLicenseModal({
                 </Space>
               }
               extra={
-                <Button
-                  danger
-                  size="small"
-                  disabled={pools.length <= 1}
-                  onClick={() =>
-                    setPools((current) =>
-                      current.filter((_pool, i) => i !== index),
-                    )
-                  }
-                >
-                  Remove
-                </Button>
+                <Space>
+                  <Tag>{pool.seat_count} seats</Tag>
+                  <Button
+                    danger
+                    size="small"
+                    disabled={pools.length <= 1}
+                    onClick={() =>
+                      setPools((current) =>
+                        current.filter((_pool, i) => i !== index),
+                      )
+                    }
+                  >
+                    Remove
+                  </Button>
+                </Space>
               }
             >
-              <Space wrap align="start">
+              <Space
+                wrap
+                align="start"
+                style={{ width: "100%", marginBottom: 12 }}
+              >
                 <div>
                   <Text strong>Name</Text>
                   <Input
@@ -2233,69 +2357,109 @@ function ProvisionSiteLicenseModal({
                     <Radio.Button value="yes">Yes</Radio.Button>
                   </Radio.Group>
                 </div>
-                <div>
-                  <Text strong>Verification</Text>
-                  <Select
-                    value={pool.verification_policy}
-                    onChange={(value) =>
-                      updatePool(index, {
-                        verification_policy:
-                          value as SiteLicenseVerificationPolicy,
-                      })
-                    }
-                    style={{ width: 170, marginTop: 6 }}
-                    options={[
-                      { label: "Email domain", value: "email-domain" },
-                      { label: "Manager approval", value: "manager-approval" },
-                      { label: "SSO affiliation", value: "sso-affiliation" },
-                    ]}
-                  />
-                </div>
-                <div>
-                  <Text strong>Exclusive group</Text>
-                  <Input
-                    value={`${pool.exclusive_group ?? ""}`}
-                    onChange={(event) =>
-                      updatePool(index, {
-                        exclusive_group: event.target.value,
-                      })
-                    }
-                    style={{ width: 140, marginTop: 6 }}
-                  />
-                </div>
-                <div>
-                  <Text strong>Reverify days</Text>
-                  <InputNumber
-                    min={1}
-                    precision={0}
-                    value={pool.affiliation_reverification_days ?? undefined}
-                    onChange={(value) =>
-                      updatePool(index, {
-                        affiliation_reverification_days:
-                          value == null ? null : Number(value),
-                      })
-                    }
-                    style={{ width: 120, marginTop: 6 }}
-                  />
-                </div>
-                <div>
-                  <Text strong>Grace days</Text>
-                  <InputNumber
-                    min={1}
-                    precision={0}
-                    value={
-                      pool.affiliation_reverification_grace_days ?? undefined
-                    }
-                    onChange={(value) =>
-                      updatePool(index, {
-                        affiliation_reverification_grace_days:
-                          value == null ? null : Number(value),
-                      })
-                    }
-                    style={{ width: 120, marginTop: 6 }}
-                  />
-                </div>
               </Space>
+              <Collapse
+                size="small"
+                items={[
+                  {
+                    key: "advanced",
+                    label: "Advanced pool policy",
+                    children: (
+                      <Space
+                        orientation="vertical"
+                        size="middle"
+                        style={{ width: "100%" }}
+                      >
+                        <Text type="secondary">
+                          Use exclusive groups to avoid double-counting seats.
+                          For example, Students and Instructors both use{" "}
+                          <Text code>teaching</Text>, so instructor approval
+                          releases the lower student seat. Researchers use{" "}
+                          <Text code>research</Text>, so research access can
+                          coexist.
+                        </Text>
+                        <Space wrap align="start">
+                          <div>
+                            <Text strong>Verification</Text>
+                            <Select
+                              value={pool.verification_policy}
+                              onChange={(value) =>
+                                updatePool(index, {
+                                  verification_policy:
+                                    value as SiteLicenseVerificationPolicy,
+                                })
+                              }
+                              style={{ width: 170, marginTop: 6 }}
+                              options={[
+                                {
+                                  label: "Email domain",
+                                  value: "email-domain",
+                                },
+                                {
+                                  label: "Manager approval",
+                                  value: "manager-approval",
+                                },
+                                {
+                                  label: "SSO affiliation",
+                                  value: "sso-affiliation",
+                                },
+                              ]}
+                            />
+                          </div>
+                          <div>
+                            <Text strong>Exclusive group</Text>
+                            <Input
+                              value={`${pool.exclusive_group ?? ""}`}
+                              onChange={(event) =>
+                                updatePool(index, {
+                                  exclusive_group: event.target.value,
+                                })
+                              }
+                              style={{ width: 140, marginTop: 6 }}
+                            />
+                          </div>
+                          <div>
+                            <Text strong>Reverify days</Text>
+                            <InputNumber
+                              min={1}
+                              precision={0}
+                              value={
+                                pool.affiliation_reverification_days ??
+                                undefined
+                              }
+                              onChange={(value) =>
+                                updatePool(index, {
+                                  affiliation_reverification_days:
+                                    value == null ? null : Number(value),
+                                })
+                              }
+                              style={{ width: 120, marginTop: 6 }}
+                            />
+                          </div>
+                          <div>
+                            <Text strong>Grace days</Text>
+                            <InputNumber
+                              min={1}
+                              precision={0}
+                              value={
+                                pool.affiliation_reverification_grace_days ??
+                                undefined
+                              }
+                              onChange={(value) =>
+                                updatePool(index, {
+                                  affiliation_reverification_grace_days:
+                                    value == null ? null : Number(value),
+                                })
+                              }
+                              style={{ width: 120, marginTop: 6 }}
+                            />
+                          </div>
+                        </Space>
+                      </Space>
+                    ),
+                  },
+                ]}
+              />
             </Card>
           ))}
         </Space>
