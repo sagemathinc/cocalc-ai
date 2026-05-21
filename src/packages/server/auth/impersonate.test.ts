@@ -243,6 +243,7 @@ describe("auth/impersonate", () => {
       res,
       account_id: "11111111-1111-1111-1111-111111111111",
       maxAge: 12 * 3600 * 1000,
+      home_bay_id: "bay-2",
       session: expect.objectContaining({
         metadata: expect.objectContaining({
           session_mode: "impersonation",

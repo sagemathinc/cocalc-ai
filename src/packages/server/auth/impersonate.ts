@@ -114,6 +114,7 @@ async function doIt({ req, res }) {
       res,
       account_id,
       maxAge: 12 * 3600 * 1000,
+      home_bay_id,
       session: {
         authenticated_at: new Date(),
         password_verified_at: null,

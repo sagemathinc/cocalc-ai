@@ -25,6 +25,7 @@ export default async function setSignInCookies({
   account_id,
   maxAge = DEFAULT_MAX_AGE_MS,
   session,
+  home_bay_id,
 }: {
   req;
   res;
@@ -38,9 +39,10 @@ export default async function setSignInCookies({
     fresh_auth_until?: Date | null;
     metadata?: Record<string, unknown>;
   };
+  home_bay_id?: string;
 }) {
   await clearLegacySharedAuthCookies({ req, res });
-  const opts = { req, res, account_id, maxAge, session };
+  const opts = { req, res, account_id, maxAge, session, home_bay_id };
   const [rememberMe] = await Promise.all([
     setRememberMeCookie(opts),
     setAccountIdCookie(opts),
@@ -120,16 +122,18 @@ async function setAccountIdCookie({ req, res, account_id, maxAge }) {
   }
 }
 
-async function setHomeBayCookie({ req, res, account_id, maxAge }) {
+async function setHomeBayCookie({ req, res, account_id, maxAge, home_bay_id }) {
   const cookies = new Cookies(req, res);
   const account = await getClusterAccountById(account_id);
-  const home_bay_id =
-    `${account?.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+  const resolvedHomeBayId =
+    `${home_bay_id ?? ""}`.trim() ||
+    `${account?.home_bay_id ?? ""}`.trim() ||
+    getConfiguredBayId();
   for (const target of await cookieTargets({
     req,
     name: HOME_BAY_ID_COOKIE_NAME,
   })) {
-    cookies.set(target.name, home_bay_id, {
+    cookies.set(target.name, resolvedHomeBayId, {
       ...(target.domain ? { domain: target.domain } : {}),
       maxAge,
       sameSite: "lax",
