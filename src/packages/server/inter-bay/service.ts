@@ -64,6 +64,10 @@ import {
 } from "@cocalc/server/auth/tokens/redeem";
 import { verifyLocalSignInPassword } from "@cocalc/server/auth/verify-sign-in-password";
 import { redeemVerifyEmailLocal } from "@cocalc/server/auth/redeem-verify-email";
+import {
+  createResetLocal as createPasswordResetLocal,
+  recentAttemptsLocal as recentPasswordResetAttemptsLocal,
+} from "@cocalc/server/auth/password-reset";
 import adminVerifyEmailAddressLocal from "@cocalc/server/accounts/admin-verify-email-address";
 import { adminDisableTwoFactor as adminDisableTwoFactorLocal } from "@cocalc/server/auth/two-factor";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -596,6 +600,12 @@ async function startAccountLocalService(): Promise<void> {
       await adminVerifyEmailAddressLocal({ account_id }),
     adminDisableTwoFactor: async ({ account_id }) =>
       await adminDisableTwoFactorLocal({ account_id }),
+    recentPasswordResetAttempts: async ({ email_address, ip_address }) => ({
+      count: await recentPasswordResetAttemptsLocal(email_address, ip_address),
+    }),
+    createPasswordReset: async ({ email_address, ip_address, ttl_s }) => ({
+      id: await createPasswordResetLocal(email_address, ip_address, ttl_s),
+    }),
     assertProductAccessTrust: async ({ account_id, action }) => {
       await assertAccountTrustedForProductAccess(account_id, action);
     },

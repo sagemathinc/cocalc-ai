@@ -6,10 +6,18 @@
 import { v4 } from "uuid";
 import getPool from "@cocalc/database/pool";
 import { expireTime } from "@cocalc/database/pool/util";
+import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+
+async function getAccountHomeBay(email_address: string) {
+  return await getClusterAccountByEmail(`${email_address ?? ""}`.trim());
+}
 
 // Returns number of "recent" attempts to reset the password with this
 // email from this ip address. By "recent" we mean, "in the last 10 minutes".
-export async function recentAttempts(
+export async function recentAttemptsLocal(
   email_address: string,
   ip_address: string,
 ): Promise<number> {
@@ -21,7 +29,27 @@ export async function recentAttempts(
   return rows[0].count;
 }
 
-export async function createReset(
+export async function recentAttempts(
+  email_address: string,
+  ip_address: string,
+): Promise<number> {
+  const account = await getAccountHomeBay(email_address);
+  const homeBayId = `${account?.home_bay_id ?? ""}`.trim();
+  if (homeBayId && homeBayId !== getConfiguredBayId()) {
+    return (
+      await createInterBayAccountLocalClient({
+        client: getInterBayFabricClient(),
+        dest_bay: homeBayId,
+      }).recentPasswordResetAttempts({
+        email_address,
+        ip_address,
+      })
+    ).count;
+  }
+  return await recentAttemptsLocal(email_address, ip_address);
+}
+
+export async function createResetLocal(
   email_address: string,
   ip_address: string,
   ttl_s: number,
@@ -44,4 +72,26 @@ export async function createReset(
   );
 
   return id;
+}
+
+export async function createReset(
+  email_address: string,
+  ip_address: string,
+  ttl_s: number,
+): Promise<string> {
+  const account = await getAccountHomeBay(email_address);
+  const homeBayId = `${account?.home_bay_id ?? ""}`.trim();
+  if (homeBayId && homeBayId !== getConfiguredBayId()) {
+    return (
+      await createInterBayAccountLocalClient({
+        client: getInterBayFabricClient(),
+        dest_bay: homeBayId,
+      }).createPasswordReset({
+        email_address,
+        ip_address,
+        ttl_s,
+      })
+    ).id;
+  }
+  return await createResetLocal(email_address, ip_address, ttl_s);
 }

@@ -7,8 +7,9 @@
 */
 
 import getPool from "@cocalc/database/pool";
-import getAccountId from "@cocalc/database/pool/account/get";
-import setPassword from "@cocalc/database/pool/account/set-password";
+import passwordHash from "@cocalc/backend/auth/password-hash";
+import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
+import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
 import passwordStrength from "@cocalc/server/auth/password-strength";
 import { MIN_PASSWORD_LENGTH, MIN_PASSWORD_STRENGTH } from "@cocalc/util/auth";
 
@@ -39,7 +40,20 @@ export default async function redeemPasswordReset(
     passwordResetId,
   ]);
 
-  const account_id = await getAccountId({ email_address });
-  await setPassword(account_id, password);
+  const account = await getClusterAccountByEmail(email_address);
+  const account_id = account?.account_id;
+  if (!account_id) {
+    throw Error("Password reset no longer valid.");
+  }
+  await withAccountRehomeWriteFence({
+    account_id,
+    action: "redeem password reset",
+    fn: async (db) => {
+      await db.query(
+        "UPDATE accounts SET password_hash=$1 WHERE account_id=$2",
+        [passwordHash(password), account_id],
+      );
+    },
+  });
   return account_id;
 }

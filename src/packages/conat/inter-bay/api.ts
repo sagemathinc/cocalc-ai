@@ -813,6 +813,25 @@ export interface AccountLocalAdminDisableTwoFactorResult {
   deleted_recovery_codes: number;
 }
 
+export interface AccountLocalRecentPasswordResetAttemptsRequest {
+  email_address: string;
+  ip_address: string;
+}
+
+export interface AccountLocalRecentPasswordResetAttemptsResult {
+  count: number;
+}
+
+export interface AccountLocalCreatePasswordResetRequest {
+  email_address: string;
+  ip_address: string;
+  ttl_s: number;
+}
+
+export interface AccountLocalCreatePasswordResetResult {
+  id: string;
+}
+
 export interface AccountLocalAssertProductAccessTrustRequest {
   account_id: string;
   action: string;
@@ -1385,6 +1404,8 @@ export type AccountLocalMethod =
   | "redeem-verify-email"
   | "admin-verify-email-address"
   | "admin-disable-two-factor"
+  | "recent-password-reset-attempts"
+  | "create-password-reset"
   | "assert-product-access-trust"
   | "reconcile-dedicated-host-purchase-session"
   | "close-dedicated-host-purchase-session"
@@ -2178,6 +2199,12 @@ export interface InterBayAccountLocalApi {
   adminDisableTwoFactor: (
     opts: AccountLocalAdminDisableTwoFactorRequest,
   ) => Promise<AccountLocalAdminDisableTwoFactorResult>;
+  recentPasswordResetAttempts: (
+    opts: AccountLocalRecentPasswordResetAttemptsRequest,
+  ) => Promise<AccountLocalRecentPasswordResetAttemptsResult>;
+  createPasswordReset: (
+    opts: AccountLocalCreatePasswordResetRequest,
+  ) => Promise<AccountLocalCreatePasswordResetResult>;
   assertProductAccessTrust: (
     opts: AccountLocalAssertProductAccessTrustRequest,
   ) => Promise<void>;
@@ -3673,6 +3700,24 @@ export function createInterBayAccountLocalClient({
       method: "admin-disable-two-factor",
     }),
   });
+  const recentPasswordResetAttemptsClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "recentPasswordResetAttempts">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "recent-password-reset-attempts",
+    }),
+  });
+  const createPasswordResetClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "createPasswordReset">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "create-password-reset",
+    }),
+  });
   const assertProductAccessTrustClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "assertProductAccessTrust">
   >({
@@ -4002,6 +4047,10 @@ export function createInterBayAccountLocalClient({
       await adminVerifyEmailAddressClient.adminVerifyEmailAddress(opts),
     adminDisableTwoFactor: async (opts) =>
       await adminDisableTwoFactorClient.adminDisableTwoFactor(opts),
+    recentPasswordResetAttempts: async (opts) =>
+      await recentPasswordResetAttemptsClient.recentPasswordResetAttempts(opts),
+    createPasswordReset: async (opts) =>
+      await createPasswordResetClient.createPasswordReset(opts),
     assertProductAccessTrust: async (opts) =>
       await assertProductAccessTrustClient.assertProductAccessTrust(opts),
     reconcileDedicatedHostPurchaseSession: async (opts) =>
@@ -4261,6 +4310,32 @@ export function createInterBayAccountLocalHandler({
       impl: {
         adminDisableTwoFactor: async (opts) =>
           await impl.adminDisableTwoFactor(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "recentPasswordResetAttempts">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "recent-password-reset-attempts",
+      }),
+      impl: {
+        recentPasswordResetAttempts: async (opts) =>
+          await impl.recentPasswordResetAttempts(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "createPasswordReset">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "create-password-reset",
+      }),
+      impl: {
+        createPasswordReset: async (opts) =>
+          await impl.createPasswordReset(opts),
       },
     }),
     createServiceHandler<

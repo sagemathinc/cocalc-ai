@@ -52,9 +52,11 @@ export function PasswordReset({ account_id, email_address }: Props) {
             browser_id: webapp_client.browser_id,
             user_account_id: account_id,
           });
-        nextLink = `${document.location.origin}${
-          appBasePath.length <= 1 ? "" : appBasePath
-        }${nextLink}`;
+        if (!/^https?:\/\//i.test(nextLink)) {
+          nextLink = `${document.location.origin}${
+            appBasePath.length <= 1 ? "" : appBasePath
+          }${nextLink}`;
+        }
         setLink(nextLink);
       });
     } catch (err) {

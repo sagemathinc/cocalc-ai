@@ -95,6 +95,26 @@ describe("PasswordReset profile actions", () => {
     ).toBeTruthy();
   });
 
+  it("does not rewrite absolute admin password reset links", async () => {
+    mockAdminResetPasswordLink.mockResolvedValue(
+      "https://bay-0.example.test/auth/password-reset/reset-1",
+    );
+
+    render(
+      <PasswordReset account_id="acct-1" email_address="ada@example.com" />,
+    );
+
+    fireEvent.click(screen.getByText("Request Password Reset Link..."));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "https://bay-0.example.test/auth/password-reset/reset-1",
+        ),
+      ).toBeTruthy();
+    });
+  });
+
   it("fresh-auth wraps admin email verification", async () => {
     mockAdminVerifyEmailAddress.mockResolvedValue({
       account_id: "acct-1",
