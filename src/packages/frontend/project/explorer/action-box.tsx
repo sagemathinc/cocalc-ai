@@ -18,6 +18,10 @@ import {
   Well,
 } from "@cocalc/frontend/antd-bootstrap";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { Icon, LoginLink } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import {
@@ -85,6 +89,13 @@ export function ActionBox({
     useState<boolean>(!!dnd_copy_dest && dnd_copy_dest !== project_id);
   const [overwrite, set_overwrite] = useState<boolean>(true);
   const [deleteWithSudo, setDeleteWithSudo] = useState<boolean>(false);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) =>
+      alert_message({
+        type: "error",
+        message: `Error deleting files -- ${err}`,
+      }),
+  });
   const bodyStyle =
     display === "modal"
       ? undefined
@@ -137,14 +148,16 @@ export function ActionBox({
     );
   }
 
-  function delete_click(): void {
+  async function delete_click(): Promise<void> {
     const paths = checked_files.toArray();
-    for (const path of paths) {
-      actions.close_tab(path);
-    }
-    onUserFilesystemChange?.();
-    actions.deleteFiles({ paths, sudo: deleteWithSudo });
-    clear();
+    await runFreshAuthAction(async () => {
+      await actions.deleteFiles({ paths, sudo: deleteWithSudo });
+      for (const path of paths) {
+        actions.close_tab(path);
+      }
+      onUserFilesystemChange?.();
+      clear();
+    });
   }
 
   function render_delete() {
@@ -196,7 +209,7 @@ export function ActionBox({
           <div style={{ textAlign: "right" }}>
             <Space>
               <AntdButton onClick={cancel_action}>Cancel</AntdButton>
-              <AntdButton danger onClick={delete_click}>
+              <AntdButton danger onClick={() => void delete_click()}>
                 <Icon name="trash" /> Delete {size} {misc.plural(size, "Item")}
               </AntdButton>
             </Space>
@@ -255,7 +268,7 @@ export function ActionBox({
           <Col sm={12}>
             <Space>
               <AntdButton onClick={cancel_action}>Cancel</AntdButton>
-              <AntdButton danger onClick={delete_click}>
+              <AntdButton danger onClick={() => void delete_click()}>
                 <Icon name="trash" /> Delete {size} {misc.plural(size, "Item")}
               </AntdButton>
             </Space>
@@ -585,30 +598,38 @@ export function ActionBox({
     return <div>Undefined action</div>;
   }
   if (display === "modal") {
-    return <div>{render_action_box(action)}</div>;
+    return (
+      <div>
+        {render_action_box(action)}
+        <FreshAuthModal {...freshAuthModalProps} />
+      </div>
+    );
   }
 
   return (
-    <Well style={bodyStyle}>
-      <Row>
-        <Col
-          sm={12}
-          style={{
-            color: COLORS.GRAY_M,
-            fontWeight: "bold",
-            fontSize: "15pt",
-          }}
-        >
-          <Icon name={action_button.icon ?? "exclamation-circle"} />{" "}
-          {intl.formatMessage(action_button.name)}
-          <div style={{ float: "right" }}>
-            <AntdButton onClick={cancel_action} type="text">
-              <Icon name="times" />
-            </AntdButton>
-          </div>
-        </Col>
-        <Col sm={12}>{render_action_box(action)}</Col>
-      </Row>
-    </Well>
+    <>
+      <Well style={bodyStyle}>
+        <Row>
+          <Col
+            sm={12}
+            style={{
+              color: COLORS.GRAY_M,
+              fontWeight: "bold",
+              fontSize: "15pt",
+            }}
+          >
+            <Icon name={action_button.icon ?? "exclamation-circle"} />{" "}
+            {intl.formatMessage(action_button.name)}
+            <div style={{ float: "right" }}>
+              <AntdButton onClick={cancel_action} type="text">
+                <Icon name="times" />
+              </AntdButton>
+            </div>
+          </Col>
+          <Col sm={12}>{render_action_box(action)}</Col>
+        </Row>
+      </Well>
+      <FreshAuthModal {...freshAuthModalProps} />
+    </>
   );
 }

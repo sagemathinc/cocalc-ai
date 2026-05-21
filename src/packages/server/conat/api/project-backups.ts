@@ -391,17 +391,20 @@ export async function createBackup(
 
 export async function deleteBackup({
   account_id,
+  browser_id,
   session_hash,
   project_id,
   id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   project_id: string;
   id: string;
 }) {
   await requireDangerousProjectMutationAuth({
     account_id,
+    browser_id,
     session_hash,
   });
   await assertCanPerformDestructiveStorageAction({

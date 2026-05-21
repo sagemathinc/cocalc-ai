@@ -29,6 +29,12 @@ type FileOperationContext = {
   log: LogProjectEvent;
 };
 
+function isFreshAuthRequiredError(err: unknown): boolean {
+  const code = `${(err as any)?.code ?? ""}`.trim().toLowerCase();
+  const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  return code === "fresh_auth_required" || message.includes("fresh auth");
+}
+
 export async function copyPaths({
   src,
   dest,
@@ -305,6 +311,7 @@ export async function deleteFiles({
     if (snapshots.length > 0) {
       for (const name of snapshots) {
         await webapp_client.conat_client.hub.projects.deleteSnapshot({
+          browser_id: webapp_client.browser_id,
           project_id: projectId,
           name,
         });
@@ -325,6 +332,10 @@ export async function deleteFiles({
       stop: "",
     });
   } catch (err) {
+    if (isFreshAuthRequiredError(err)) {
+      setActivity({ id, stop: "" });
+      throw err;
+    }
     setActivity({
       id,
       error: `Error deleting ${mesg} -- ${err}`,

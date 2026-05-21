@@ -14,6 +14,10 @@ import {
 } from "antd";
 import immutable from "immutable";
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import {
   ACTION_BUTTONS_DIR,
@@ -87,6 +91,9 @@ export function FilesSelectedControls({
   );
   const [restoreLoading, setRestoreLoading] = useState<boolean>(false);
   const [restoreError, setRestoreError] = useState<any>(null);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => message.error(`${err}`),
+  });
 
   useEffect(() => {
     const requestId = backupsRequestIdRef.current + 1;
@@ -374,16 +381,19 @@ export function FilesSelectedControls({
     const onDelete = async () => {
       if (!project_id || !entries || entries.length === 0) return;
       try {
-        for (const entry of entries) {
-          await webapp_client.conat_client.hub.projects.deleteBackup({
-            project_id,
-            id: entry.id,
-          });
-        }
-        message.success("Backup deleted");
-        refreshBackups?.();
-        setBackupsTick((value) => value + 1);
-        actions?.open_directory?.(effective_current_path, false);
+        await runFreshAuthAction(async () => {
+          for (const entry of entries) {
+            await webapp_client.conat_client.hub.projects.deleteBackup({
+              browser_id: webapp_client.browser_id,
+              project_id,
+              id: entry.id,
+            });
+          }
+          message.success("Backup deleted");
+          refreshBackups?.();
+          setBackupsTick((value) => value + 1);
+          actions?.open_directory?.(effective_current_path, false);
+        });
       } catch (err) {
         message.error(err?.message ?? `${err}`);
       }
@@ -491,6 +501,7 @@ export function FilesSelectedControls({
           ? renderButtons(ACTION_BUTTONS_MULTI)
           : undefined}
       {renderFileInfo()}
+      <FreshAuthModal {...freshAuthModalProps} />
     </Space>
   );
 }

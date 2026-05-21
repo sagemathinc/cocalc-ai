@@ -8,6 +8,10 @@ import * as immutable from "immutable";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { Button, ButtonToolbar } from "@cocalc/frontend/antd-bootstrap";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { Gap, Icon } from "@cocalc/frontend/components";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
@@ -85,6 +89,9 @@ function ActionBarEnabled({
   const [backupsErr, setBackupsErr] = useState<any>(null);
   const [backupsTick, setBackupsTick] = useState(0);
   const backupsRequestIdRef = useRef(0);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => message.error(`${err}`),
+  });
 
   useEffect(() => {
     const requestId = backupsRequestIdRef.current + 1;
@@ -377,18 +384,21 @@ function ActionBarEnabled({
     if (!project_id) return;
     if (deleteDisabled) return;
     try {
-      for (const entry of backupEntries) {
-        await webapp_client.conat_client.hub.projects.deleteBackup({
-          project_id,
-          id: entry.id,
-        });
-      }
-      message.success("Backup deleted");
-      // Force a refresh and clear selection so the listing updates immediately.
-      actions?.set_all_files_unchecked?.();
-      refreshBackups?.();
-      setBackupsTick((value) => value + 1);
-      actions?.open_directory?.(current_path, true);
+      await runFreshAuthAction(async () => {
+        for (const entry of backupEntries) {
+          await webapp_client.conat_client.hub.projects.deleteBackup({
+            browser_id: webapp_client.browser_id,
+            project_id,
+            id: entry.id,
+          });
+        }
+        message.success("Backup deleted");
+        // Force a refresh and clear selection so the listing updates immediately.
+        actions?.set_all_files_unchecked?.();
+        refreshBackups?.();
+        setBackupsTick((value) => value + 1);
+        actions?.open_directory?.(current_path, true);
+      });
     } catch (err) {
       message.error(`${err}`);
     }
@@ -557,6 +567,7 @@ function ActionBarEnabled({
         </ButtonToolbar>
       </div>
       <div style={{ flex: "1 0 auto" }}>{render_currently_selected()}</div>
+      <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
 }
