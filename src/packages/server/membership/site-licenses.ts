@@ -40,6 +40,7 @@ import {
 } from "./claim-directory";
 import {
   assignMembershipPackageSeat,
+  assertNoActiveSiteLicenseDomainOverlap,
   createMembershipPackage,
   getMembershipPackage,
   listMembershipPackageAssignments,
@@ -1687,6 +1688,15 @@ export async function adminProvisionSiteLicense({
     fn: async (db) => {
       const client = db as PoolClient;
       await ensureSiteLicenseSchema(client);
+      for (const pool of normalizedPools) {
+        await assertNoActiveSiteLicenseDomainOverlap({
+          allowed_domains: pool.allowed_domains,
+          site_license_id,
+          starts_at,
+          expires_at,
+          client,
+        });
+      }
       await client.query(
         `INSERT INTO site_licenses
            (id, name, organization_name, owner_account_id, allowed_domains,

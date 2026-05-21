@@ -9,6 +9,7 @@ import {
   createTestAccount,
   createTestMembershipTier,
 } from "@cocalc/server/purchases/test-data";
+import dayjs from "dayjs";
 import { uuid } from "@cocalc/util/misc";
 import {
   claimMembershipPackageSeat,
@@ -383,6 +384,124 @@ describe("site license seat pools", () => {
         site_license_id: overview.site_license.id,
       }),
     ).rejects.toThrow("must view site license");
+  });
+
+  it("prevents active site license domain overlap", async () => {
+    const admin_account_id = uuid();
+    const first_owner_account_id = uuid();
+    const second_owner_account_id = uuid();
+    const domain = `overlap-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(first_owner_account_id);
+    await createTestAccount(second_owner_account_id);
+    await markAdmin(admin_account_id);
+
+    await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      owner_account_id: first_owner_account_id,
+      name: "Active Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 20,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+        },
+      ],
+    });
+
+    await expect(
+      adminProvisionSiteLicense({
+        actor_account_id: admin_account_id,
+        owner_account_id: second_owner_account_id,
+        name: "Duplicate Campus",
+        organization_name: "Other University",
+        allowed_domains: [domain],
+        pools: [
+          {
+            pool_name: "Students",
+            membership_class: studentTier,
+            seat_count: 20,
+            requires_approval: false,
+            verification_policy: "email-domain",
+            exclusive_group: "teaching",
+          },
+        ],
+      }),
+    ).rejects.toThrow(`site license domain '${domain}' overlaps`);
+
+    await expect(
+      adminProvisionSiteLicense({
+        actor_account_id: admin_account_id,
+        owner_account_id: second_owner_account_id,
+        name: "Subdomain Campus",
+        organization_name: "Other University",
+        allowed_domains: [`dept.${domain}`],
+        pools: [
+          {
+            pool_name: "Students",
+            membership_class: studentTier,
+            seat_count: 20,
+            requires_approval: false,
+            verification_policy: "email-domain",
+            exclusive_group: "teaching",
+          },
+        ],
+      }),
+    ).rejects.toThrow(`site license domain 'dept.${domain}' overlaps`);
+  });
+
+  it("allows a new site license to reuse an expired site license domain", async () => {
+    const admin_account_id = uuid();
+    const expired_owner_account_id = uuid();
+    const active_owner_account_id = uuid();
+    const domain = `expired-overlap-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(expired_owner_account_id);
+    await createTestAccount(active_owner_account_id);
+    await markAdmin(admin_account_id);
+
+    await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      owner_account_id: expired_owner_account_id,
+      name: "Expired Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      expires_at: dayjs().subtract(1, "day").toDate(),
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 20,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+        },
+      ],
+    });
+
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      owner_account_id: active_owner_account_id,
+      name: "Replacement Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 20,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+        },
+      ],
+    });
+    expect(overview.site_license.allowed_domains).toEqual([domain]);
   });
 
   it("requires custom terms acceptance before claim or request", async () => {

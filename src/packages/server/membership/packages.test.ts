@@ -808,6 +808,51 @@ describe("membership packages", () => {
     expect(membership.source).toBe("grant");
   });
 
+  it("prevents active site package domain overlap when updating domains", async () => {
+    const first_owner_account_id = uuid();
+    const second_owner_account_id = uuid();
+    const firstDomain = `update-overlap-${uuid().slice(0, 8)}.edu`;
+    const secondDomain = `update-other-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(first_owner_account_id);
+    await createTestAccount(second_owner_account_id);
+
+    await createTestMembershipPackage({
+      owner_account_id: first_owner_account_id,
+      kind: "site",
+      membership_class: teamTier,
+      seat_count: 3,
+      metadata: {
+        interval: "year",
+        seat_price: 100,
+        allowed_domains: [firstDomain],
+        site_license_id: uuid(),
+        pool_name: "Existing pool",
+      },
+    });
+    const package_id = await createTestMembershipPackage({
+      owner_account_id: second_owner_account_id,
+      kind: "site",
+      membership_class: teamTier,
+      seat_count: 3,
+      metadata: {
+        interval: "year",
+        seat_price: 100,
+        allowed_domains: [secondDomain],
+        site_license_id: uuid(),
+        pool_name: "Updated pool",
+      },
+    });
+
+    await expect(
+      updateMembershipPackage({
+        package_id,
+        allowed_domains: [`dept.${firstDomain}`],
+      }),
+    ).rejects.toThrow(
+      `site license domain 'dept.${firstDomain}' overlaps active site license domain '${firstDomain}'`,
+    );
+  });
+
   it("dedupes site-license claims across plus aliases until the prior claim is revoked", async () => {
     const owner_account_id = uuid();
     const first_account_id = uuid();
