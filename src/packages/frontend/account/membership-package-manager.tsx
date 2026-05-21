@@ -14,6 +14,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Progress,
   Radio,
   Select,
   Space,
@@ -259,6 +260,36 @@ function getPoolAvailableSeats(
   pool: SiteLicenseOverview["pools"][number],
 ): number {
   return Math.max(0, pool.seat_count - getPoolActiveSeats(pool));
+}
+
+function getPoolUtilizationPercent(
+  pool: SiteLicenseOverview["pools"][number],
+): number {
+  if (pool.seat_count <= 0) return 0;
+  return Math.min(
+    100,
+    Math.round((getPoolActiveSeats(pool) / pool.seat_count) * 100),
+  );
+}
+
+function getOverviewSeatTotals(overview: SiteLicenseOverview): {
+  activeSeats: number;
+  availableSeats: number;
+  pendingRequests: number;
+  totalSeats: number;
+} {
+  const seatTotals = overview.pools.reduce(
+    (totals, pool) => ({
+      activeSeats: totals.activeSeats + getPoolActiveSeats(pool),
+      availableSeats: totals.availableSeats + getPoolAvailableSeats(pool),
+      totalSeats: totals.totalSeats + pool.seat_count,
+    }),
+    { activeSeats: 0, availableSeats: 0, totalSeats: 0 },
+  );
+  return {
+    ...seatTotals,
+    pendingRequests: countPendingRequests(overview),
+  };
 }
 
 function getPolicyColor(policy: SiteLicenseVerificationPolicy): string {
@@ -979,6 +1010,42 @@ export function MembershipPackageManager({
   );
 }
 
+function SiteLicenseMetricCard({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: number | string;
+  tone?: "blue" | "green" | "gold" | "neutral";
+}) {
+  const toneStyle =
+    tone === "blue"
+      ? { background: COLORS.ANTD_BG_BLUE_L, color: COLORS.BLUE_DD }
+      : tone === "green"
+        ? { background: COLORS.BS_GREEN_LL, color: COLORS.ANTD_GREEN_D }
+        : tone === "gold"
+          ? { background: COLORS.YELL_LLL, color: COLORS.BRWN }
+          : { background: COLORS.GRAY_LLL, color: COLORS.GRAY_D };
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${COLORS.GRAY_LL}`,
+        borderRadius: 14,
+        minWidth: 142,
+        padding: "12px 14px",
+        ...toneStyle,
+      }}
+    >
+      <div style={{ fontSize: 12, fontWeight: 600, opacity: 0.8 }}>{label}</div>
+      <div style={{ fontSize: 26, fontWeight: 700, lineHeight: 1.15 }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
 function SiteLicenseDashboard({
   overviews,
   loading,
@@ -1035,59 +1102,86 @@ function SiteLicenseDashboard({
     return null;
   }
   return (
-    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-      <Title level={5} style={{ marginTop: 0 }}>
-        Site-license manager dashboard
-      </Title>
-      {overviews.map((overview) => (
-        <Card
-          key={overview.site_license.id}
-          size="small"
-          title={
-            <Space wrap>
-              <Icon name="users" />
-              <span>{overview.site_license.name}</span>
-              <Tag>{overview.site_license.organization_name}</Tag>
-              {countPendingRequests(overview) ? (
-                <Tag color="gold">
-                  {countPendingRequests(overview)} pending requests
-                </Tag>
-              ) : null}
-            </Space>
-          }
-        >
-          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-            <Descriptions size="small" column={1}>
-              <Descriptions.Item label="License id">
-                {overview.site_license.id}
-              </Descriptions.Item>
-              <Descriptions.Item label="Owner account">
-                {overview.site_license.owner_account_id}
-              </Descriptions.Item>
-              <Descriptions.Item label="Domains">
-                <Space wrap>
-                  {overview.site_license.allowed_domains.map((domain) => (
-                    <Tag key={domain}>{domain}</Tag>
-                  ))}
-                </Space>
-              </Descriptions.Item>
-              <Descriptions.Item label="Term">
-                {dateLabel(overview.site_license.starts_at)} to{" "}
-                {dateLabel(overview.site_license.expires_at)}
-              </Descriptions.Item>
-              <Descriptions.Item label="Policies">
-                renewal={overview.site_license.renewal_policy ?? "none"},{" "}
-                overage={overview.site_license.overage_policy ?? "none"}
-              </Descriptions.Item>
-              {(overview.site_license.custom_terms_url ||
-                overview.site_license.custom_policy_url) && (
-                <Descriptions.Item label="Custom links">
+    <Space orientation="vertical" size="large" style={{ width: "100%" }}>
+      <Space orientation="vertical" size={2}>
+        <Title level={4} style={{ margin: 0 }}>
+          Site-license manager dashboard
+        </Title>
+        <Text type="secondary">
+          Review access requests, monitor seat usage, and manage active seats
+          for each institutional license.
+        </Text>
+      </Space>
+      {overviews.map((overview) => {
+        const totals = getOverviewSeatTotals(overview);
+        const overviewRequests = requests.filter(
+          ({ overview: requestOverview, request }) =>
+            requestOverview.site_license.id === overview.site_license.id &&
+            request.state === "pending",
+        );
+        return (
+          <Card
+            key={overview.site_license.id}
+            style={{
+              border: `1px solid ${COLORS.GRAY_LL}`,
+              borderRadius: 18,
+              boxShadow: `0 14px 32px ${COLORS.GRAY_LL}`,
+              overflow: "hidden",
+            }}
+            styles={{ body: { padding: 0 } }}
+          >
+            <div
+              style={{
+                background: `linear-gradient(135deg, ${COLORS.BLUE_DDD}, ${COLORS.BLUE_D})`,
+                color: "white",
+                padding: 22,
+              }}
+            >
+              <Space
+                wrap
+                align="start"
+                style={{ justifyContent: "space-between", width: "100%" }}
+              >
+                <Space
+                  orientation="vertical"
+                  size={8}
+                  style={{ maxWidth: 720 }}
+                >
                   <Space wrap>
+                    <Tag color="blue">Site license</Tag>
+                    <Tag>{overview.site_license.organization_name}</Tag>
+                    {totals.pendingRequests ? (
+                      <Tag color="gold">
+                        {totals.pendingRequests} pending requests
+                      </Tag>
+                    ) : (
+                      <Tag color="green">No pending requests</Tag>
+                    )}
+                  </Space>
+                  <Title level={3} style={{ color: "white", margin: 0 }}>
+                    {overview.site_license.name}
+                  </Title>
+                  <Paragraph style={{ color: "white", marginBottom: 0 }}>
+                    {dateLabel(overview.site_license.starts_at)} to{" "}
+                    {dateLabel(overview.site_license.expires_at)}
+                    {" · "}
+                    renewal {overview.site_license.renewal_policy ?? "none"}
+                    {" · "}
+                    overage {overview.site_license.overage_policy ?? "none"}
+                  </Paragraph>
+                  <Space wrap>
+                    {overview.site_license.allowed_domains.map((domain) => (
+                      <Tag key={domain}>{domain}</Tag>
+                    ))}
+                    {overview.site_license.terms_version_label ? (
+                      <Tag>{overview.site_license.terms_version_label}</Tag>
+                    ) : null}
                     {overview.site_license.custom_terms_url ? (
                       <a
                         href={overview.site_license.custom_terms_url}
                         target="_blank"
                         rel="noreferrer"
+                        style={{ color: "white", textDecoration: "underline" }}
                       >
                         terms
                       </a>
@@ -1097,229 +1191,372 @@ function SiteLicenseDashboard({
                         href={overview.site_license.custom_policy_url}
                         target="_blank"
                         rel="noreferrer"
+                        style={{ color: "white", textDecoration: "underline" }}
                       >
                         policy
                       </a>
                     ) : null}
-                    {overview.site_license.terms_version_label ? (
-                      <Tag>{overview.site_license.terms_version_label}</Tag>
-                    ) : null}
                   </Space>
-                </Descriptions.Item>
-              )}
-            </Descriptions>
-
-            <div>
-              <Text strong>Pools</Text>
-              <Space
-                orientation="vertical"
-                size="small"
-                style={{ width: "100%", marginTop: 8 }}
-              >
-                {overview.pools.map((pool) => (
-                  <Card
-                    size="small"
-                    key={pool.id}
-                    title={
-                      <Space wrap>
-                        <span>{pool.pool_name}</span>
-                        <Tag>{capitalize(pool.membership_class)}</Tag>
-                        <Tag color={getPolicyColor(pool.verification_policy)}>
-                          {pool.verification_policy}
-                        </Tag>
-                        {pool.requires_approval ? (
-                          <Tag color="gold">approval required</Tag>
-                        ) : (
-                          <Tag color="green">self claim</Tag>
-                        )}
-                      </Space>
-                    }
-                  >
-                    <Space wrap style={{ marginBottom: 8 }}>
-                      <Tag>{pool.seat_count} seats</Tag>
-                      <Tag color="green">{getPoolActiveSeats(pool)} active</Tag>
-                      <Tag color="gold">
-                        {pool.pending_request_count} pending
-                      </Tag>
-                      <Tag color="blue">{getPoolAvailableSeats(pool)} free</Tag>
-                      <Tag>group: {pool.exclusive_group}</Tag>
-                      <Tag>
-                        reverify:{" "}
-                        {pool.affiliation_reverification_days ?? "off"}d / grace{" "}
-                        {pool.affiliation_reverification_grace_days ?? "off"}d
-                      </Tag>
-                    </Space>
-                    {pool.assignments.filter(isActiveAssignment).length ===
-                    0 ? (
-                      <Text type="secondary">No active seats.</Text>
-                    ) : (
-                      <Space
-                        orientation="vertical"
-                        size="small"
-                        style={{ width: "100%" }}
-                      >
-                        {pool.assignments
-                          .filter(isActiveAssignment)
-                          .map((assignment) => {
-                            const key = `${pool.id}-${assignment.id}`;
-                            return (
-                              <div
-                                key={key}
-                                style={{
-                                  display: "flex",
-                                  justifyContent: "space-between",
-                                  gap: 12,
-                                  borderBottom: `1px solid ${COLORS.GRAY_LLL}`,
-                                  paddingBottom: 6,
-                                }}
-                              >
-                                <Space orientation="vertical" size={0}>
-                                  <Text>
-                                    {getAccountDisplayName(
-                                      assignment,
-                                      accountNames,
-                                    )}
-                                  </Text>
-                                  <Text type="secondary">
-                                    {assignment.email_address ||
-                                      assignment.account_id ||
-                                      "unknown account"}{" "}
-                                    assigned {dateLabel(assignment.assigned_at)}
-                                  </Text>
-                                </Space>
-                                <Button
-                                  size="small"
-                                  danger
-                                  loading={revokingSeat === key}
-                                  onClick={async () => {
-                                    setRevokingSeat(key);
-                                    try {
-                                      await onRevokeSeat(pool, assignment);
-                                    } finally {
-                                      setRevokingSeat("");
-                                    }
-                                  }}
-                                >
-                                  Revoke
-                                </Button>
-                              </div>
-                            );
-                          })}
-                      </Space>
-                    )}
-                  </Card>
-                ))}
+                </Space>
+                <Space wrap>
+                  <SiteLicenseMetricCard
+                    label="Total seats"
+                    value={totals.totalSeats}
+                    tone="blue"
+                  />
+                  <SiteLicenseMetricCard
+                    label="Active"
+                    value={totals.activeSeats}
+                    tone="green"
+                  />
+                  <SiteLicenseMetricCard
+                    label="Available"
+                    value={totals.availableSeats}
+                    tone="neutral"
+                  />
+                  <SiteLicenseMetricCard
+                    label="Pending"
+                    value={totals.pendingRequests}
+                    tone={totals.pendingRequests ? "gold" : "neutral"}
+                  />
+                </Space>
               </Space>
             </div>
 
-            <div>
-              <Text strong>Managers</Text>
-              <div style={{ marginTop: 8 }}>
-                <Space wrap>
-                  {overview.managers.map((manager) => (
-                    <Tag key={manager.id}>
-                      {manager.account_id}: {manager.role}
-                    </Tag>
-                  ))}
-                </Space>
-              </div>
-            </div>
-
-            {requests.filter(
-              ({ overview: requestOverview }) =>
-                requestOverview.site_license.id === overview.site_license.id,
-            ).length ? (
-              <div>
-                <Text strong>Pending requests</Text>
-                <Space
-                  orientation="vertical"
-                  size="small"
-                  style={{ width: "100%", marginTop: 8 }}
-                >
-                  {requests
-                    .filter(
-                      ({ overview: requestOverview }) =>
-                        requestOverview.site_license.id ===
-                        overview.site_license.id,
-                    )
-                    .map(({ request, pool }) => (
-                      <div
-                        key={request.id}
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          gap: 16,
-                          alignItems: "flex-start",
-                          borderBottom: `1px solid ${COLORS.GRAY_LLL}`,
-                          paddingBottom: 12,
-                        }}
-                      >
-                        <Space orientation="vertical" size={2}>
-                          <Space wrap>
-                            <Text strong>{request.matched_email_address}</Text>
-                            <Tag color="blue">
-                              {capitalize(request.requested_membership_class)}
-                            </Tag>
-                            {pool?.pool_name ? (
-                              <Tag>{pool.pool_name}</Tag>
+            <div style={{ padding: 22 }}>
+              <Space
+                orientation="vertical"
+                size="large"
+                style={{ width: "100%" }}
+              >
+                {overviewRequests.length ? (
+                  <Card
+                    size="small"
+                    title={
+                      <Space>
+                        <Icon name="bell" />
+                        <span>Approval queue</span>
+                        <Tag color="gold">{overviewRequests.length}</Tag>
+                      </Space>
+                    }
+                    style={{
+                      borderColor: COLORS.YELL_LL,
+                      background: COLORS.YELL_LLL,
+                    }}
+                  >
+                    <Space
+                      orientation="vertical"
+                      size="small"
+                      style={{ width: "100%" }}
+                    >
+                      {overviewRequests.map(({ request, pool }) => (
+                        <div
+                          key={request.id}
+                          style={{
+                            alignItems: "flex-start",
+                            background: "white",
+                            border: `1px solid ${COLORS.GRAY_LL}`,
+                            borderRadius: 12,
+                            display: "flex",
+                            gap: 16,
+                            justifyContent: "space-between",
+                            padding: 12,
+                          }}
+                        >
+                          <Space orientation="vertical" size={2}>
+                            <Space wrap>
+                              <Text strong>
+                                {request.matched_email_address}
+                              </Text>
+                              <Tag color="blue">
+                                {capitalize(request.requested_membership_class)}
+                              </Tag>
+                              {pool?.pool_name ? (
+                                <Tag>{pool.pool_name}</Tag>
+                              ) : null}
+                            </Space>
+                            <Text type="secondary">
+                              account {request.account_id}; requested{" "}
+                              <TimeAgo date={request.requested_at} />
+                            </Text>
+                            {request.requester_note ? (
+                              <Text>{request.requester_note}</Text>
                             ) : null}
                           </Space>
-                          <Text type="secondary">
-                            account {request.account_id}; requested{" "}
-                            <TimeAgo date={request.requested_at} />
-                          </Text>
-                          {request.requester_note ? (
-                            <Text>{request.requester_note}</Text>
-                          ) : null}
-                        </Space>
-                        <Space>
-                          <Button
-                            type="primary"
-                            loading={reviewingRequestId === request.id}
-                            onClick={() =>
-                              void onReview(overview, request, "approve")
-                            }
-                          >
-                            Approve
-                          </Button>
-                          <Button
-                            danger
-                            loading={reviewingRequestId === request.id}
-                            onClick={() =>
-                              void onReview(overview, request, "reject")
-                            }
-                          >
-                            Reject
-                          </Button>
-                        </Space>
-                      </div>
-                    ))}
-                </Space>
-              </div>
-            ) : null}
+                          <Space>
+                            <Button
+                              type="primary"
+                              loading={reviewingRequestId === request.id}
+                              onClick={() =>
+                                void onReview(overview, request, "approve")
+                              }
+                            >
+                              Approve
+                            </Button>
+                            <Button
+                              danger
+                              loading={reviewingRequestId === request.id}
+                              onClick={() =>
+                                void onReview(overview, request, "reject")
+                              }
+                            >
+                              Reject
+                            </Button>
+                          </Space>
+                        </div>
+                      ))}
+                    </Space>
+                  </Card>
+                ) : null}
 
-            {overview.recent_audit_events?.length ? (
-              <div>
-                <Text strong>Recent activity</Text>
-                <Space
-                  orientation="vertical"
-                  size={2}
-                  style={{ width: "100%", marginTop: 8 }}
-                >
-                  {overview.recent_audit_events.map((event) => (
-                    <Text key={event.id} type="secondary">
-                      {dateLabel(event.created)}: {event.action}
-                      {event.target_account_id
-                        ? ` for ${event.target_account_id}`
-                        : ""}
+                <div>
+                  <Space
+                    wrap
+                    align="baseline"
+                    style={{
+                      justifyContent: "space-between",
+                      marginBottom: 12,
+                      width: "100%",
+                    }}
+                  >
+                    <Title level={5} style={{ margin: 0 }}>
+                      Seat pools
+                    </Title>
+                    <Text type="secondary">
+                      Pools can have distinct policies for students,
+                      instructors, researchers, or other campus groups.
                     </Text>
-                  ))}
-                </Space>
-              </div>
-            ) : null}
-          </Space>
-        </Card>
-      ))}
+                  </Space>
+                  <div
+                    style={{
+                      display: "grid",
+                      gap: 14,
+                      gridTemplateColumns:
+                        "repeat(auto-fit, minmax(280px, 1fr))",
+                    }}
+                  >
+                    {overview.pools.map((pool) => {
+                      const activeSeats = getPoolActiveSeats(pool);
+                      const availableSeats = getPoolAvailableSeats(pool);
+                      const utilizationPercent =
+                        getPoolUtilizationPercent(pool);
+                      return (
+                        <Card
+                          size="small"
+                          key={pool.id}
+                          style={{
+                            border: `1px solid ${COLORS.GRAY_LL}`,
+                            borderRadius: 14,
+                          }}
+                          styles={{ body: { padding: 14 } }}
+                        >
+                          <Space
+                            orientation="vertical"
+                            size="middle"
+                            style={{ width: "100%" }}
+                          >
+                            <Space
+                              wrap
+                              align="start"
+                              style={{
+                                justifyContent: "space-between",
+                                width: "100%",
+                              }}
+                            >
+                              <Space orientation="vertical" size={2}>
+                                <Text strong style={{ fontSize: 16 }}>
+                                  {pool.pool_name}
+                                </Text>
+                                <Text type="secondary">
+                                  {capitalize(pool.membership_class)} seats
+                                </Text>
+                              </Space>
+                              <Tag
+                                color={getPolicyColor(pool.verification_policy)}
+                              >
+                                {pool.verification_policy}
+                              </Tag>
+                            </Space>
+
+                            <div>
+                              <Space
+                                wrap
+                                style={{
+                                  justifyContent: "space-between",
+                                  marginBottom: 6,
+                                  width: "100%",
+                                }}
+                              >
+                                <Text type="secondary">
+                                  {activeSeats} of {pool.seat_count} seats used
+                                </Text>
+                                <Text strong>{utilizationPercent}%</Text>
+                              </Space>
+                              <Progress
+                                percent={utilizationPercent}
+                                showInfo={false}
+                                strokeColor={
+                                  utilizationPercent >= 90
+                                    ? COLORS.BG_WARNING
+                                    : COLORS.BS_GREEN
+                                }
+                              />
+                            </div>
+
+                            <Space wrap>
+                              <Tag color="green">{activeSeats} active</Tag>
+                              <Tag color="blue">{availableSeats} free</Tag>
+                              <Tag color="gold">
+                                {pool.pending_request_count} pending
+                              </Tag>
+                              {pool.requires_approval ? (
+                                <Tag color="gold">approval required</Tag>
+                              ) : (
+                                <Tag color="green">self claim</Tag>
+                              )}
+                              <Tag>group: {pool.exclusive_group}</Tag>
+                              <Tag>
+                                reverify:{" "}
+                                {pool.affiliation_reverification_days ?? "off"}d
+                              </Tag>
+                              <Tag>
+                                grace:{" "}
+                                {pool.affiliation_reverification_grace_days ??
+                                  "off"}
+                                d
+                              </Tag>
+                            </Space>
+
+                            {pool.assignments.filter(isActiveAssignment)
+                              .length === 0 ? (
+                              <Text type="secondary">No active seats.</Text>
+                            ) : (
+                              <Space
+                                orientation="vertical"
+                                size="small"
+                                style={{ width: "100%" }}
+                              >
+                                {pool.assignments
+                                  .filter(isActiveAssignment)
+                                  .map((assignment) => {
+                                    const key = `${pool.id}-${assignment.id}`;
+                                    return (
+                                      <div
+                                        key={key}
+                                        style={{
+                                          alignItems: "center",
+                                          borderTop: `1px solid ${COLORS.GRAY_LLL}`,
+                                          display: "flex",
+                                          gap: 12,
+                                          justifyContent: "space-between",
+                                          paddingTop: 8,
+                                        }}
+                                      >
+                                        <Space orientation="vertical" size={0}>
+                                          <Text>
+                                            {getAccountDisplayName(
+                                              assignment,
+                                              accountNames,
+                                            )}
+                                          </Text>
+                                          <Text type="secondary">
+                                            {assignment.email_address ||
+                                              assignment.account_id ||
+                                              "unknown account"}{" "}
+                                            assigned{" "}
+                                            {dateLabel(assignment.assigned_at)}
+                                          </Text>
+                                        </Space>
+                                        <Button
+                                          size="small"
+                                          danger
+                                          loading={revokingSeat === key}
+                                          onClick={async () => {
+                                            setRevokingSeat(key);
+                                            try {
+                                              await onRevokeSeat(
+                                                pool,
+                                                assignment,
+                                              );
+                                            } finally {
+                                              setRevokingSeat("");
+                                            }
+                                          }}
+                                        >
+                                          Revoke
+                                        </Button>
+                                      </div>
+                                    );
+                                  })}
+                              </Space>
+                            )}
+                          </Space>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <Card
+                  size="small"
+                  title={
+                    <Space>
+                      <Icon name="users" />
+                      <span>Managers</span>
+                    </Space>
+                  }
+                  style={{ borderRadius: 14 }}
+                >
+                  {overview.managers.length ? (
+                    <Space wrap>
+                      {overview.managers.map((manager) => (
+                        <Tag key={manager.id}>
+                          {manager.account_id}: {manager.role}
+                        </Tag>
+                      ))}
+                    </Space>
+                  ) : (
+                    <Text type="secondary">No managers listed.</Text>
+                  )}
+                </Card>
+
+                {overview.recent_audit_events?.length ? (
+                  <Card
+                    size="small"
+                    title={
+                      <Space>
+                        <Icon name="history" />
+                        <span>Recent activity</span>
+                      </Space>
+                    }
+                    style={{ borderRadius: 14 }}
+                  >
+                    <Space
+                      orientation="vertical"
+                      size={4}
+                      style={{ width: "100%" }}
+                    >
+                      {overview.recent_audit_events.map((event) => (
+                        <Text key={event.id} type="secondary">
+                          {dateLabel(event.created)}: {event.action}
+                          {event.target_account_id
+                            ? ` for ${event.target_account_id}`
+                            : ""}
+                        </Text>
+                      ))}
+                    </Space>
+                  </Card>
+                ) : null}
+
+                <Text type="secondary">
+                  License id {overview.site_license.id}; owner account{" "}
+                  {overview.site_license.owner_account_id}
+                </Text>
+              </Space>
+            </div>
+          </Card>
+        );
+      })}
     </Space>
   );
 }

@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 
 import api from "@cocalc/frontend/client/api";
 import { Icon, Loading } from "@cocalc/frontend/components";
+import { COLORS } from "@cocalc/util/theme";
 import {
   ClaimableMembershipPackagesPanel,
   MembershipPackageManager,
@@ -79,8 +80,8 @@ function SiteLicensesPage() {
       <Card
         style={{
           border: 0,
-          background:
-            "linear-gradient(135deg, rgba(25, 118, 210, 0.12), rgba(46, 125, 50, 0.12))",
+          background: `linear-gradient(135deg, ${COLORS.BLUE_LLLL}, ${COLORS.BS_GREEN_LL})`,
+          boxShadow: `0 12px 28px ${COLORS.GRAY_LL}`,
         }}
       >
         <Space
@@ -143,9 +144,10 @@ function SiteLicensesPage() {
 
 export function LicensesPage() {
   return (
-    <div style={{ margin: "auto", maxWidth: 1200 }}>
+    <div style={{ margin: "auto", maxWidth: 1200, width: "100%" }}>
       <Tabs
         defaultActiveKey="site"
+        style={{ width: "100%" }}
         items={[
           {
             key: "site",
