@@ -69,6 +69,9 @@ patchedDependencies:
   '@rc-component/portal@2.2.0':
     hash: b6f877518e590497afc1bc08045e7388a098c2d276d59c861683811ebfb8da04
     path: patches/@rc-component__portal@2.2.0.patch
+  fs-ext@2.1.1:
+    hash: 8de34bb8636073ff75cba28e1092a4e6bd4b0f9f8b2cc05b5fc95f80d978408b
+    path: patches/fs-ext@2.1.1.patch
 
 importers:
 
@@ -13420,7 +13423,7 @@ snapshots:
       '@grpc/grpc-js': 1.14.3
       '@grpc/proto-loader': 0.8.1
       dayjs: 1.11.19
-      fs-ext: 2.1.1
+      fs-ext: 2.1.1(patch_hash=8de34bb8636073ff75cba28e1092a4e6bd4b0f9f8b2cc05b5fc95f80d978408b)
       google-protobuf: 4.0.1
       long: 5.3.2
       yaml: 2.9.0
@@ -17448,7 +17451,7 @@ snapshots:
       inherits: 2.0.4
       readable-stream: 2.3.8
 
-  fs-ext@2.1.1:
+  fs-ext@2.1.1(patch_hash=8de34bb8636073ff75cba28e1092a4e6bd4b0f9f8b2cc05b5fc95f80d978408b):
     dependencies:
       nan: 2.23.0
 

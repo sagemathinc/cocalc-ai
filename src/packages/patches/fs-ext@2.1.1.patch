@@ -1,0 +1,142 @@
+diff --git a/fs-ext.js b/fs-ext.js
+index 24300b3a9e34034a7696f0dc756d8d14da21cbc4..6b1ce87c3b2e22c0f21ba75343d372bf3c44a5ce 100644
+--- a/fs-ext.js
++++ b/fs-ext.js
+@@ -19,7 +19,31 @@
+ 
+ "use strict";
+ 
+-var binding = require('./build/Release/fs_ext.node');
++var binding;
++try {
++  binding = require('./build/Release/fs_ext.node');
++} catch (err) {
++  binding = null;
++}
++
++var fallbackConstants = {
++  LOCK_SH: 1,
++  LOCK_EX: 2,
++  LOCK_NB: 4,
++  LOCK_UN: 8,
++};
++
++function unsupported(name, callback) {
++  var err = new Error(name + ' requires the native fs-ext binding');
++  if (typeof callback === 'function') {
++    return process.nextTick(callback, err);
++  }
++  throw err;
++}
++
++function constants() {
++  return binding ? binding.constants : fallbackConstants;
++}
+ 
+ // Used by flock
+ function stringToFlockFlags(flag) {
+@@ -29,19 +53,19 @@ function stringToFlockFlags(flag) {
+   }
+   switch (flag) {
+     case 'sh':
+-      return binding.constants.LOCK_SH;
++      return constants().LOCK_SH;
+ 
+     case 'ex':
+-      return binding.constants.LOCK_EX;
++      return constants().LOCK_EX;
+ 
+     case 'shnb':
+-      return binding.constants.LOCK_SH | binding.constants.LOCK_NB;
++      return constants().LOCK_SH | constants().LOCK_NB;
+ 
+     case 'exnb':
+-      return binding.constants.LOCK_EX | binding.constants.LOCK_NB;
++      return constants().LOCK_EX | constants().LOCK_NB;
+ 
+     case 'un':
+-      return binding.constants.LOCK_UN;
++      return constants().LOCK_UN;
+ 
+     default:
+       throw new Error('Unknown flock flag: ' + flag);
+@@ -53,6 +77,9 @@ function stringToFcntlFlags(flag) {
+   if (typeof flag !== 'string') {
+     return flag;
+   }
++  if (!binding) {
++    throw new Error('fcntl requires the native fs-ext binding');
++  }
+ 
+   switch (flag) {
+     case 'getfd':
+@@ -85,26 +112,40 @@ exports.flock = function(fd, flags, callback) {
+ 
+   var oper = stringToFlockFlags(flags);
+ 
++  if (!binding) {
++    return process.nextTick(callback);
++  }
++
+   binding.flock(fd, oper, callback);
+ };
+ 
+ exports.flockSync = function(fd, flags) {
+   var oper = stringToFlockFlags(flags);
+ 
++  if (!binding) {
++    return;
++  }
++
+   return binding.flock(fd, oper);
+ };
+ 
+ exports.fcntl = function(fd, cmd, arg, callback) {
+-  cmd = stringToFcntlFlags(cmd);
+   if (arguments.length < 4) {
+     callback = arg;
+     arg = 0;
+   }
++  if (!binding) {
++    return unsupported('fcntl', callback);
++  }
++  cmd = stringToFcntlFlags(cmd);
+   if (!arg) arg = 0;
+   return binding.fcntl(fd, cmd, arg, callback);
+ };
+ 
+ exports.fcntlSync = function(fd, cmd, arg) {
++  if (!binding) {
++    return unsupported('fcntlSync');
++  }
+   cmd = stringToFcntlFlags(cmd);
+   if (!arg) arg = 0;
+   return binding.fcntl(fd, cmd, arg);
+@@ -116,16 +157,26 @@ exports.seek = function(fd, position, whence, callback) {
+     callback = noop;
+   }
+ 
++  if (!binding) {
++    return unsupported('seek', callback);
++  }
++
+   binding.seek(fd, position, whence, callback);
+ };
+ 
+ exports.seekSync = function(fd, position, whence) {
++  if (!binding) {
++    return unsupported('seekSync');
++  }
+   return binding.seek(fd, position, whence);
+ };
+ 
+ exports.statVFS = function(path, callback) {
+   path = path || '/';
++  if (!binding) {
++    return unsupported('statVFS', callback);
++  }
+   return binding.statVFS(path, callback);
+ };
+ 
+-exports.constants = binding.constants;
++exports.constants = constants();

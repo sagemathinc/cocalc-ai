@@ -107,7 +107,8 @@
       "zeromq"
     ],
     "patchedDependencies": {
-      "@rc-component/portal@2.2.0": "patches/@rc-component__portal@2.2.0.patch"
+      "@rc-component/portal@2.2.0": "patches/@rc-component__portal@2.2.0.patch",
+      "fs-ext@2.1.1": "patches/fs-ext@2.1.1.patch"
     }
   }
 }
