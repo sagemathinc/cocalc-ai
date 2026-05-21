@@ -38,6 +38,8 @@ async function doIt({ req, res }) {
   } = req.query;
   const local_bay_id = getConfiguredBayId();
   let account_id: string;
+  let directory_home_bay_id: string | undefined;
+  let retry_home_bay_id: string | undefined;
   const grantId = `${grant_id ?? ""}`.trim();
   const hasGrantId = !!grantId;
 
@@ -54,6 +56,7 @@ async function doIt({ req, res }) {
     if (!account_id) {
       throw Error("invalid impersonation retry token");
     }
+    retry_home_bay_id = `${claims.home_bay_id ?? ""}`.trim() || undefined;
   } else if (hasGrantId) {
     account_id = `${account_id_param ?? ""}`.trim();
     if (!account_id) {
@@ -61,6 +64,8 @@ async function doIt({ req, res }) {
         grant_id: grantId,
       });
       account_id = `${entry?.subject_account_id ?? ""}`.trim();
+      directory_home_bay_id =
+        `${entry?.subject_home_bay_id ?? ""}`.trim() || undefined;
       if (!account_id) {
         throw Error("invalid or expired impersonation grant");
       }
@@ -70,7 +75,11 @@ async function doIt({ req, res }) {
   }
 
   const account = await getClusterAccountById(account_id);
-  const home_bay_id = `${account?.home_bay_id ?? ""}`.trim() || local_bay_id;
+  const home_bay_id =
+    directory_home_bay_id ||
+    retry_home_bay_id ||
+    `${account?.home_bay_id ?? ""}`.trim() ||
+    local_bay_id;
 
   if (!`${retry_token ?? ""}`.trim() && home_bay_id !== local_bay_id) {
     await clearAuthCookies({ req, res });
