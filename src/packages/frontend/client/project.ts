@@ -660,13 +660,23 @@ if (
 ) {
   ReadableStream.prototype[Symbol.asyncIterator] = function () {
     const reader = this.getReader();
+    let released = false;
+    const releaseLock = () => {
+      if (!released) {
+        released = true;
+        reader.releaseLock();
+      }
+    };
     return {
       async next() {
         return reader.read();
       },
       async return() {
-        reader.releaseLock();
-        return { done: true };
+        releaseLock();
+        return { done: true, value: undefined };
+      },
+      async [Symbol.asyncDispose]() {
+        releaseLock();
       },
       [Symbol.asyncIterator]() {
         return this;
