@@ -61,4 +61,27 @@ describe("auth/home-bay-retry-token", () => {
       purpose: "impersonate",
     });
   });
+
+  it("round-trips password reset tokens by account id", async () => {
+    const { issueHomeBayRetryToken, verifyHomeBayRetryToken } =
+      await import("./home-bay-retry-token");
+    const issued = issueHomeBayRetryToken({
+      account_id: "22222222-2222-4222-8222-222222222222",
+      home_bay_id: "bay-1",
+      purpose: "password-reset",
+    });
+
+    expect(
+      verifyHomeBayRetryToken({
+        token: issued.token,
+        account_id: "22222222-2222-4222-8222-222222222222",
+        home_bay_id: "bay-1",
+        purpose: "password-reset",
+      }),
+    ).toMatchObject({
+      account_id: "22222222-2222-4222-8222-222222222222",
+      home_bay_id: "bay-1",
+      purpose: "password-reset",
+    });
+  });
 });

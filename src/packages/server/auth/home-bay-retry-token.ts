@@ -126,7 +126,7 @@ export function issueHomeBayRetryToken({
   if (!normalizedBay) {
     throw new Error("home_bay_id is required");
   }
-  if (purpose === "impersonate") {
+  if (purpose === "impersonate" || purpose === "password-reset") {
     if (!normalizedAccountId) {
       throw new Error("account_id is required");
     }
