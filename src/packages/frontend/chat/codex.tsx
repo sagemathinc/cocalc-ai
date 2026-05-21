@@ -547,12 +547,12 @@ export function CodexConfigButton({
           body: {
             maxHeight: "75vh",
             overflowY: "auto",
-            background: COLORS.GRAY_LLL,
-            paddingTop: 14,
+            background: "white",
+            paddingTop: 12,
           },
         }}
       >
-        <Space orientation="vertical" style={{ width: "100%" }} size={14}>
+        <Space orientation="vertical" style={{ width: "100%" }} size={12}>
           <div
             style={{
               ...sectionStyle,
@@ -591,18 +591,18 @@ export function CodexConfigButton({
             </Space>
           </div>
           <Form form={form} layout="vertical">
-            <Space orientation="vertical" style={{ width: "100%" }} size={14}>
+            <Space orientation="vertical" style={{ width: "100%" }} size={12}>
               <div style={sectionStyle}>
-                <SectionTitle>Model</SectionTitle>
+                <SectionTitle>Model and session</SectionTitle>
                 <div
                   style={{
                     color: COLORS.GRAY_M,
                     fontSize: 12,
-                    margin: "3px 0 12px",
+                    margin: "3px 0 10px",
                   }}
                 >
-                  Choose the model and reasoning level for future Codex turns in
-                  this chat.
+                  Choose the model, access continuity, and directory Codex uses
+                  for future turns.
                 </div>
                 <div style={gridTwoColStyle}>
                   <Form.Item label="Model" name="model" style={formItemStyle}>
@@ -647,6 +647,27 @@ export function CodexConfigButton({
                     />
                   </Form.Item>
                 </div>
+                <div style={gridTwoColStyle}>
+                  <Form.Item
+                    label="Working directory"
+                    name="workingDirectory"
+                    tooltip="Codex runs in this directory for subsequent turns."
+                    style={formItemStyle}
+                  >
+                    <Input placeholder="Derived from the directory containing this chat" />
+                  </Form.Item>
+                  <Form.Item
+                    label="Session ID"
+                    name="sessionId"
+                    tooltip="Reuse a Codex session to keep continuity."
+                    style={formItemStyle}
+                  >
+                    <Input
+                      placeholder="Leave blank to create a new session"
+                      allowClear
+                    />
+                  </Form.Item>
+                </div>
               </div>
               <div style={sectionStyle}>
                 <SectionTitle>Access</SectionTitle>
@@ -654,7 +675,7 @@ export function CodexConfigButton({
                   style={{
                     color: COLORS.GRAY_M,
                     fontSize: 12,
-                    margin: "3px 0 12px",
+                    margin: "3px 0 10px",
                   }}
                 >
                   Control whether Codex can only inspect files, edit this
@@ -666,10 +687,13 @@ export function CodexConfigButton({
                   style={{ marginBottom: 0 }}
                 >
                   <Radio.Group style={{ width: "100%" }}>
-                    <Space
-                      orientation="vertical"
-                      size={8}
-                      style={{ width: "100%" }}
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns:
+                          "repeat(auto-fit, minmax(185px, 1fr))",
+                        gap: 8,
+                      }}
                     >
                       {modeOptions.map((option) => {
                         const selected = currentSessionMode === option.value;
@@ -689,6 +713,7 @@ export function CodexConfigButton({
                                 ? `0 0 0 1px ${COLORS.BLUE} inset`
                                 : undefined,
                               cursor: "pointer",
+                              minHeight: 88,
                               display: "block",
                             }}
                           >
@@ -722,52 +747,20 @@ export function CodexConfigButton({
                           </label>
                         );
                       })}
-                    </Space>
+                    </div>
                   </Radio.Group>
                 </Form.Item>
-              </div>
-              <div style={sectionStyle}>
-                <SectionTitle>Session</SectionTitle>
-                <div
-                  style={{
-                    color: COLORS.GRAY_M,
-                    fontSize: 12,
-                    margin: "3px 0 12px",
-                  }}
-                >
-                  Codex runs from this directory and can optionally reuse an
-                  existing session id for continuity.
-                </div>
-                <div style={gridTwoColStyle}>
-                  <Form.Item
-                    label="Working directory"
-                    name="workingDirectory"
-                    tooltip="Codex runs in this directory for subsequent turns."
-                    style={formItemStyle}
-                  >
-                    <Input placeholder="Derived from the directory containing this chat" />
-                  </Form.Item>
-                  <Form.Item
-                    label="Session ID"
-                    name="sessionId"
-                    tooltip="Reuse a Codex session to keep continuity."
-                    style={formItemStyle}
-                  >
-                    <Input
-                      placeholder="Leave blank to create a new session"
-                      allowClear
-                    />
-                  </Form.Item>
-                </div>
               </div>
               <div
                 style={{
                   ...sectionStyle,
+                  background: COLORS.GRAY_LLL,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
-                  gap: 12,
+                  gap: 10,
                   flexWrap: "wrap",
+                  padding: "10px 12px",
                 }}
               >
                 <div style={{ flex: "1 1 300px", minWidth: 240 }}>
