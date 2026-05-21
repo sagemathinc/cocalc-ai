@@ -114,14 +114,14 @@ function getCodexReleaseAssetName(version: string): string {
   if (currentArch !== "x64" && currentArch !== "arm64") {
     throw Error(`unsupported codex arch ${currentArch}`);
   }
-  return `codex-v${version}-linux-${currentArch}`;
+  return `codex-v${version}-linux-${currentArch}.xz`;
 }
 
 function getCodexInstallScript(version: string): string {
   const assetName = getCodexReleaseAssetName(version);
   const dest = join(binPath, "codex");
   const url = `https://github.com/sagemathinc/codex/releases/download/v${version}/${assetName}`;
-  return `curl -fL "${url}" -o "${dest}" && chmod a+x "${dest}"`;
+  return `curl -fL "${url}" | xz -dc > "${dest}" && chmod a+x "${dest}"`;
 }
 
 interface Spec {
