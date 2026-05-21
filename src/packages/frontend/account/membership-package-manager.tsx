@@ -2143,33 +2143,11 @@ function ProvisionSiteLicenseModal({
                 license; CoCalc enforces the individual pools underneath it.
               </Paragraph>
             </Space>
-            <div
-              style={{
-                display: "grid",
-                gap: 12,
-                gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
-              }}
-            >
-              <Card size="small" styles={{ body: { padding: 12 } }}>
-                <Text strong>1. Identify the institution</Text>
-                <div style={{ color: COLORS.GRAY_M, marginTop: 4 }}>
-                  Name, organization, contract dates, and policy links.
-                </div>
-              </Card>
-              <Card size="small" styles={{ body: { padding: 12 } }}>
-                <Text strong>2. Add eligible domains</Text>
-                <div style={{ color: COLORS.GRAY_M, marginTop: 4 }}>
-                  Verified emails at these domains unlock claims and requests.
-                </div>
-              </Card>
-              <Card size="small" styles={{ body: { padding: 12 } }}>
-                <Text strong>3. Tune the pools</Text>
-                <div style={{ color: COLORS.GRAY_M, marginTop: 4 }}>
-                  Students can self-claim; instructors and researchers usually
-                  need approval.
-                </div>
-              </Card>
-            </div>
+            <Space wrap>
+              <Tag color="blue">1. Identity</Tag>
+              <Tag color="green">2. Domains</Tag>
+              <Tag color="gold">3. Pools</Tag>
+            </Space>
           </Space>
         </Card>
 
@@ -2177,29 +2155,36 @@ function ProvisionSiteLicenseModal({
           title="License identity"
           size="small"
           style={{ borderRadius: 14 }}
+          styles={{ body: { padding: 14 } }}
         >
-          <Space wrap style={{ width: "100%" }}>
-            <div style={{ flex: "1 1 280px" }}>
-              <Text strong>License name</Text>
+          <div
+            style={{
+              display: "grid",
+              gap: 14,
+              gridTemplateColumns: "repeat(2, minmax(260px, 1fr))",
+            }}
+          >
+            <CompactField
+              label="License name"
+              help="Internal and manager-facing name."
+            >
               <Input
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 placeholder="Campus site license"
-                style={{ marginTop: 6 }}
               />
-              <Text type="secondary">Internal and manager-facing name.</Text>
-            </div>
-            <div style={{ flex: "1 1 280px" }}>
-              <Text strong>Organization</Text>
+            </CompactField>
+            <CompactField
+              label="Organization"
+              help="The customer or institution name."
+            >
               <Input
                 value={organizationName}
                 onChange={(event) => setOrganizationName(event.target.value)}
                 placeholder="Example University"
-                style={{ marginTop: 6 }}
               />
-              <Text type="secondary">The customer or institution name.</Text>
-            </div>
-          </Space>
+            </CompactField>
+          </div>
         </Card>
 
         <Card
