@@ -38,11 +38,7 @@ export function SelectNewHost({
 
   return (
     <>
-      <Space
-        orientation="vertical"
-        size="small"
-        style={{ width: "100%", paddingTop: 12 }}
-      >
+      <Space orientation="vertical" size="small" style={{ width: "100%" }}>
         <Card size="small" styles={{ body: { padding: "10px 12px" } }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div style={{ flex: 1 }}>
@@ -122,10 +118,12 @@ export function SelectNewHost({
             )}
           </div>
         </Card>
-        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          Select where this will run. Choose one of your hosts, a collaborator’s
-          host, or leave it on auto to use the shared pool in the nearest
-          region.
+        <Paragraph
+          type="secondary"
+          style={{ fontSize: 12, lineHeight: 1.25, marginBottom: 0 }}
+        >
+          Host choice mainly affects latency, such as terminal typing and
+          notebook output. You can change it later.
         </Paragraph>
       </Space>
       <HostPickerModal
