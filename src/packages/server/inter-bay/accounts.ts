@@ -12,6 +12,9 @@ import {
   type AccountApiKeyDirectoryTouchRequest,
   type AccountApiKeyDirectoryUpdateHomeBayRequest,
   type AccountApiKeyDirectoryUpsertRequest,
+  type AccountLocalAdminDisableTwoFactorResult,
+  type AccountLocalAdminVerifyEmailAddressResult,
+  type AccountLocalSetPasswordFromResetRequest,
   type AccountLocalVerifySignInPasswordRequest,
   type AccountLocalVerifySignInPasswordResult,
   type AccountDirectoryCreateRequest,
@@ -20,9 +23,12 @@ import {
   type AccountDirectoryEntry,
 } from "@cocalc/conat/inter-bay/api";
 import getPool from "@cocalc/database/pool";
+import adminVerifyEmailAddressLocal from "@cocalc/server/accounts/admin-verify-email-address";
 import createAccountLocal from "@cocalc/server/accounts/create-account";
 import deleteAccountLocal from "@cocalc/server/accounts/delete";
+import setPasswordFromResetLocal from "@cocalc/server/accounts/set-password-from-reset";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
+import { adminDisableTwoFactor as adminDisableTwoFactorLocal } from "@cocalc/server/auth/two-factor";
 import { verifyLocalSignInPassword } from "@cocalc/server/auth/verify-sign-in-password";
 import {
   deleteClusterAccountApiKeyDirectoryEntryDirect,
@@ -246,6 +252,63 @@ export async function assertClusterAccountTrustedForProductAccess({
     client: getInterBayFabricClient(),
     dest_bay: account.home_bay_id,
   }).assertProductAccessTrust({ account_id, action });
+}
+
+export async function adminVerifyClusterAccountEmailAddress({
+  account_id,
+}: {
+  account_id: string;
+}): Promise<AccountLocalAdminVerifyEmailAddressResult> {
+  const account = await getClusterAccountById(account_id);
+  if (!account) {
+    throw Error(`account ${account_id} not found`);
+  }
+  const homeBayId = `${account.home_bay_id ?? ""}`.trim();
+  if (!homeBayId || homeBayId === currentBayId()) {
+    return await adminVerifyEmailAddressLocal({ account_id });
+  }
+  return await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: homeBayId,
+  }).adminVerifyEmailAddress({ account_id });
+}
+
+export async function adminDisableClusterAccountTwoFactor({
+  account_id,
+}: {
+  account_id: string;
+}): Promise<AccountLocalAdminDisableTwoFactorResult> {
+  const account = await getClusterAccountById(account_id);
+  if (!account) {
+    throw Error(`account ${account_id} not found`);
+  }
+  const homeBayId = `${account.home_bay_id ?? ""}`.trim();
+  if (!homeBayId || homeBayId === currentBayId()) {
+    return await adminDisableTwoFactorLocal({ account_id });
+  }
+  return await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: homeBayId,
+  }).adminDisableTwoFactor({ account_id });
+}
+
+export async function setClusterAccountPasswordFromReset({
+  account_id,
+  password,
+}: AccountLocalSetPasswordFromResetRequest): Promise<void> {
+  const account = await getClusterAccountById(account_id);
+  if (!account) {
+    throw Error(`account ${account_id} not found`);
+  }
+  const homeBayId = `${account.home_bay_id ?? ""}`.trim();
+  if (!homeBayId || homeBayId === currentBayId()) {
+    await setPasswordFromResetLocal({ account_id, password });
+    return;
+  }
+  await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: homeBayId,
+  }).setPasswordFromReset({ account_id, password });
 }
 
 export async function provisionLocalClusterAccount(

@@ -171,6 +171,26 @@ describe("resolveMembershipForAccount", () => {
     });
   });
 
+  it("resolves built-in site-license tier grants even without a database tier row", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    await createTestMembershipGrant(account_id, {
+      membership_class: "researcher",
+      source: "site-license",
+    });
+
+    const result = await resolveMembershipForAccount(account_id);
+
+    expect(result.class).toBe("researcher");
+    expect(result.source).toBe("grant");
+    expect(result.grant_source).toBe("site-license");
+    expect(result.entitlements.features?.create_hosts).toBe(true);
+    expect(result.entitlements.project_defaults?.disk_quota).toBe(100000);
+    expect(result.effective_limits.max_projects).toBe(150);
+    expect(result.effective_limits.rootfs_count).toBe(100);
+    expect(result.effective_limits.rootfs_oci_images).toBe(true);
+  });
+
   it("applies active admin entitlement overrides to the selected membership", async () => {
     const account_id = uuid();
     const overrideTier = `test-override-${uuid()}`;

@@ -87,13 +87,14 @@ export function UserResult({
   };
 
   const renderMoreLink = (name: More) => {
+    const label = name === "password" ? "profile" : name;
     return (
       <Tag.CheckableTag
         style={{ fontSize: "11pt" }}
         checked={state[name]}
         onChange={() => setState({ ...state, [name]: !state[name] })}
       >
-        {capitalize(name)}
+        {capitalize(label)}
       </Tag.CheckableTag>
     );
   };
@@ -187,7 +188,7 @@ export function UserResult({
             />
           )}
           {state.password && email_address && (
-            <Card title="Password">
+            <Card title="Profile">
               <PasswordReset
                 account_id={account_id}
                 email_address={email_address}

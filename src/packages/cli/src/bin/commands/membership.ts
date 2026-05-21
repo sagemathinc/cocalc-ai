@@ -6,6 +6,9 @@ import type {
   MembershipPackageDetails,
   MembershipPackageKind,
   MembershipPackageQuote,
+  SiteLicenseOverview,
+  SiteLicensePoolConfig,
+  SiteLicensePoolRequest,
 } from "@cocalc/conat/hub/api/purchases";
 
 export type MembershipCommandDeps = {
@@ -38,6 +41,96 @@ function parseMetadataJson(
     throw new Error("--metadata-json must be a JSON object");
   }
   return parsed as Record<string, unknown>;
+}
+
+function parseJsonArray<T>(raw: string | undefined, flagName: string): T[] {
+  const trimmed = `${raw ?? ""}`.trim();
+  if (!trimmed) {
+    throw new Error(`${flagName} is required`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch (err) {
+    throw new Error(`invalid ${flagName}: ${err}`);
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${flagName} must be a JSON array`);
+  }
+  return parsed as T[];
+}
+
+function normalizeStringList(values: string[] | undefined): string[] {
+  return Array.from(
+    new Set(
+      (values ?? [])
+        .flatMap((value) => `${value ?? ""}`.split(/[\s,;]+/))
+        .map((value) => value.trim().toLowerCase().replace(/^@+/, ""))
+        .filter(Boolean),
+    ),
+  ).sort();
+}
+
+function parseSiteLicensePoolsJson(
+  raw: string | undefined,
+): SiteLicensePoolConfig[] {
+  const pools = parseJsonArray<Record<string, unknown>>(raw, "--pools-json");
+  if (pools.length === 0) {
+    throw new Error("--pools-json must contain at least one pool");
+  }
+  return pools.map((pool, index) => {
+    const pool_name = `${pool.pool_name ?? pool.name ?? ""}`.trim();
+    const membership_class = `${pool.membership_class ?? ""}`.trim();
+    const seat_count = Number(pool.seat_count);
+    const verification_policy = `${pool.verification_policy ?? ""}`.trim();
+    if (!pool_name) {
+      throw new Error(`pool ${index + 1} is missing pool_name`);
+    }
+    if (!membership_class) {
+      throw new Error(`pool ${index + 1} is missing membership_class`);
+    }
+    if (
+      !Number.isFinite(seat_count) ||
+      !Number.isInteger(seat_count) ||
+      seat_count <= 0
+    ) {
+      throw new Error(
+        `pool ${index + 1} seat_count must be a positive integer`,
+      );
+    }
+    if (
+      verification_policy !== "email-domain" &&
+      verification_policy !== "manager-approval" &&
+      verification_policy !== "sso-affiliation"
+    ) {
+      throw new Error(
+        `pool ${index + 1} verification_policy must be email-domain, manager-approval, or sso-affiliation`,
+      );
+    }
+    return {
+      pool_name,
+      membership_class,
+      seat_count,
+      requires_approval: pool.requires_approval === true,
+      verification_policy,
+      exclusive_group: `${pool.exclusive_group ?? ""}`.trim() || undefined,
+      affiliation_reverification_days:
+        typeof pool.affiliation_reverification_days === "number"
+          ? pool.affiliation_reverification_days
+          : undefined,
+      affiliation_reverification_grace_days:
+        typeof pool.affiliation_reverification_grace_days === "number"
+          ? pool.affiliation_reverification_grace_days
+          : undefined,
+      allowed_domains: Array.isArray(pool.allowed_domains)
+        ? normalizeStringList(pool.allowed_domains as string[])
+        : undefined,
+      metadata:
+        pool.metadata && typeof pool.metadata === "object"
+          ? (pool.metadata as Record<string, unknown>)
+          : undefined,
+    };
+  });
 }
 
 function normalizePackageKind(
@@ -188,7 +281,86 @@ function serializeClaimablePackage(
     available_seat_count: claimablePackage.available_seat_count,
     matched_email_address: claimablePackage.matched_email_address,
     reason: claimablePackage.reason,
+    requires_approval: claimablePackage.requires_approval ?? false,
+    site_license_id: claimablePackage.site_license_id ?? null,
+    pool_name: claimablePackage.pool_name ?? null,
+    verification_policy: claimablePackage.verification_policy ?? null,
+    exclusive_group: claimablePackage.exclusive_group ?? null,
+    pending_request_id: claimablePackage.pending_request_id ?? null,
+    pending_request_state: claimablePackage.pending_request_state ?? null,
+    custom_terms_url: claimablePackage.custom_terms_url ?? null,
+    custom_policy_url: claimablePackage.custom_policy_url ?? null,
+    terms_version_label: claimablePackage.terms_version_label ?? null,
+    requires_terms_acceptance:
+      claimablePackage.requires_terms_acceptance ?? false,
     metadata: claimablePackage.metadata ?? null,
+  };
+}
+
+function serializeSiteLicenseRequest(
+  request: SiteLicensePoolRequest,
+  toIso: MembershipCommandDeps["toIso"],
+) {
+  return {
+    request_id: request.id,
+    site_license_id: request.site_license_id,
+    package_id: request.package_id,
+    account_id: request.account_id,
+    matched_email_address: request.matched_email_address,
+    canonical_identity: request.canonical_identity,
+    requested_membership_class: request.requested_membership_class,
+    state: request.state,
+    requester_note: request.requester_note ?? null,
+    reviewer_account_id: request.reviewer_account_id ?? null,
+    review_note: request.review_note ?? null,
+    requested_at: toIso(request.requested_at),
+    reviewed_at: toIso(request.reviewed_at),
+    expires_at: toIso(request.expires_at),
+    metadata: request.metadata ?? null,
+  };
+}
+
+function serializeSiteLicenseOverview(
+  overview: SiteLicenseOverview,
+  toIso: MembershipCommandDeps["toIso"],
+) {
+  return {
+    site_license: {
+      ...overview.site_license,
+      starts_at: toIso(overview.site_license.starts_at),
+      expires_at: toIso(overview.site_license.expires_at),
+      created: toIso(overview.site_license.created),
+      updated: toIso(overview.site_license.updated),
+    },
+    pools: overview.pools.map((pool) => ({
+      ...serializeMembershipPackage(pool, toIso, {
+        mode: "full",
+        includeAssignments: true,
+      }),
+      pool_name: pool.pool_name,
+      requires_approval: pool.requires_approval,
+      verification_policy: pool.verification_policy,
+      exclusive_group: pool.exclusive_group,
+      affiliation_reverification_days:
+        pool.affiliation_reverification_days ?? null,
+      affiliation_reverification_grace_days:
+        pool.affiliation_reverification_grace_days ?? null,
+      pending_request_count: pool.pending_request_count,
+    })),
+    managers: overview.managers.map((manager) => ({
+      manager_id: manager.id,
+      site_license_id: manager.site_license_id,
+      account_id: manager.account_id,
+      role: manager.role,
+      created_by_account_id: manager.created_by_account_id ?? null,
+      revoked_at: toIso(manager.revoked_at),
+      metadata: manager.metadata ?? null,
+      created: toIso(manager.created),
+      updated: toIso(manager.updated),
+    })),
+    pending_requests: overview.pending_requests.map((request) =>
+      serializeSiteLicenseRequest(request, toIso),
+    ),
   };
 }
 
@@ -600,21 +772,260 @@ export function registerMembershipCommand(
     .description(
       "claim a reserved or site-license matched membership package seat",
     )
-    .action(async (packageId: string, command: Command) => {
-      await withContext(command, "membership claim", async (ctx) => {
-        const package_id = `${packageId ?? ""}`.trim();
-        if (!package_id) {
-          throw new Error("package id must be non-empty");
-        }
-        return serializeAssignment(
-          await ctx.hub.purchases.claimMembershipPackageSeat({
-            account_id: ctx.accountId,
-            package_id,
-          }),
-          toIso,
+    .option(
+      "--accepted-terms",
+      "confirm custom site-license terms and policies when required",
+    )
+    .action(
+      async (
+        packageId: string,
+        opts: { acceptedTerms?: boolean },
+        command: Command,
+      ) => {
+        await withContext(command, "membership claim", async (ctx) => {
+          const package_id = `${packageId ?? ""}`.trim();
+          if (!package_id) {
+            throw new Error("package id must be non-empty");
+          }
+          return serializeAssignment(
+            await ctx.hub.purchases.claimMembershipPackageSeat({
+              account_id: ctx.accountId,
+              package_id,
+              ...(opts.acceptedTerms ? { accepted_terms: true } : {}),
+            }),
+            toIso,
+          );
+        });
+      },
+    );
+
+  const siteLicense = membership
+    .command("site-license")
+    .description("site-license pool and approval operations");
+
+  siteLicense
+    .command("provision")
+    .description("admin provision a site license with named pools")
+    .requiredOption("--owner <account>", "owner account identifier")
+    .requiredOption("--name <name>", "site license name")
+    .requiredOption("--organization-name <name>", "organization name")
+    .requiredOption(
+      "--domain <domain...>",
+      "allowed institutional email domain; repeat or pass comma-separated values",
+    )
+    .requiredOption(
+      "--pools-json <json>",
+      'JSON array of pool configs, e.g. [{"pool_name":"Students","membership_class":"student","seat_count":5000,"requires_approval":false,"verification_policy":"email-domain"}]',
+    )
+    .option("--custom-terms-url <url>", "custom negotiated terms URL")
+    .option("--custom-policy-url <url>", "custom organization policy URL")
+    .option("--terms-version-label <label>", "custom terms version label")
+    .option("--renewal-policy <policy>", "site-license renewal policy")
+    .option("--overage-policy <policy>", "site-license overage policy")
+    .option("--starts-at <iso>", "explicit start time")
+    .option("--expires-at <iso>", "explicit expiry time")
+    .option("--metadata-json <json>", "site license metadata as a JSON object")
+    .action(
+      async (
+        opts: {
+          owner: string;
+          name: string;
+          organizationName: string;
+          domain: string[];
+          poolsJson: string;
+          customTermsUrl?: string;
+          customPolicyUrl?: string;
+          termsVersionLabel?: string;
+          renewalPolicy?: string;
+          overagePolicy?: string;
+          startsAt?: string;
+          expiresAt?: string;
+          metadataJson?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "membership site-license provision",
+          async (ctx) => {
+            const owner = await resolveAccountByIdentifier(ctx, opts.owner);
+            const owner_account_id = `${owner?.account_id ?? ""}`.trim();
+            if (!owner_account_id) {
+              throw new Error("unable to resolve owner account");
+            }
+            const allowed_domains = normalizeStringList(opts.domain);
+            if (allowed_domains.length === 0) {
+              throw new Error("at least one --domain is required");
+            }
+            return serializeSiteLicenseOverview(
+              await ctx.hub.purchases.adminProvisionSiteLicense({
+                account_id: ctx.accountId,
+                owner_account_id,
+                name: `${opts.name ?? ""}`.trim(),
+                organization_name: `${opts.organizationName ?? ""}`.trim(),
+                allowed_domains,
+                pools: parseSiteLicensePoolsJson(opts.poolsJson),
+                custom_terms_url:
+                  `${opts.customTermsUrl ?? ""}`.trim() || undefined,
+                custom_policy_url:
+                  `${opts.customPolicyUrl ?? ""}`.trim() || undefined,
+                terms_version_label:
+                  `${opts.termsVersionLabel ?? ""}`.trim() || undefined,
+                renewal_policy:
+                  `${opts.renewalPolicy ?? ""}`.trim() || undefined,
+                overage_policy:
+                  `${opts.overagePolicy ?? ""}`.trim() || undefined,
+                starts_at: `${opts.startsAt ?? ""}`.trim() || undefined,
+                expires_at: `${opts.expiresAt ?? ""}`.trim() || undefined,
+                metadata: parseMetadataJson(opts.metadataJson) ?? null,
+              }),
+              toIso,
+            );
+          },
         );
-      });
-    });
+      },
+    );
+
+  siteLicense
+    .command("overview <siteLicenseId>")
+    .description("show a site-license manager overview")
+    .requiredOption(
+      "--owner <account>",
+      "site-license owner account identifier for bay routing",
+    )
+    .action(
+      async (
+        siteLicenseId: string,
+        opts: { owner: string },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "membership site-license overview",
+          async (ctx) => {
+            const owner = await resolveAccountByIdentifier(ctx, opts.owner);
+            const owner_account_id = `${owner?.account_id ?? ""}`.trim();
+            if (!owner_account_id) {
+              throw new Error("unable to resolve owner account");
+            }
+            const site_license_id = `${siteLicenseId ?? ""}`.trim();
+            if (!site_license_id) {
+              throw new Error("site license id must be non-empty");
+            }
+            return serializeSiteLicenseOverview(
+              await ctx.hub.purchases.getSiteLicenseOverview({
+                account_id: ctx.accountId,
+                owner_account_id,
+                site_license_id,
+              }),
+              toIso,
+            );
+          },
+        );
+      },
+    );
+
+  siteLicense
+    .command("request")
+    .description("request access to an approval-required site-license pool")
+    .requiredOption("--package <packageId>", "site-license pool package id")
+    .requiredOption(
+      "--owner <account>",
+      "site-license owner account identifier for bay routing",
+    )
+    .option("--note <text>", "requester note for managers")
+    .option(
+      "--accepted-terms",
+      "confirm custom site-license terms and policies when required",
+    )
+    .action(
+      async (
+        opts: {
+          package: string;
+          owner: string;
+          note?: string;
+          acceptedTerms?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "membership site-license request",
+          async (ctx) => {
+            const owner = await resolveAccountByIdentifier(ctx, opts.owner);
+            const owner_account_id = `${owner?.account_id ?? ""}`.trim();
+            if (!owner_account_id) {
+              throw new Error("unable to resolve owner account");
+            }
+            const package_id = `${opts.package ?? ""}`.trim();
+            if (!package_id) {
+              throw new Error("--package is required");
+            }
+            return serializeSiteLicenseRequest(
+              await ctx.hub.purchases.requestSiteLicensePool({
+                account_id: ctx.accountId,
+                owner_account_id,
+                package_id,
+                requester_note: `${opts.note ?? ""}`.trim() || undefined,
+                ...(opts.acceptedTerms ? { accepted_terms: true } : {}),
+              }),
+              toIso,
+            );
+          },
+        );
+      },
+    );
+
+  siteLicense
+    .command("review <requestId>")
+    .description("approve or reject a site-license pool request")
+    .requiredOption(
+      "--owner <account>",
+      "site-license owner account identifier for bay routing",
+    )
+    .requiredOption("--action <action>", "review action: approve or reject")
+    .option("--note <text>", "manager review note")
+    .action(
+      async (
+        requestId: string,
+        opts: {
+          owner: string;
+          action: string;
+          note?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "membership site-license review",
+          async (ctx) => {
+            const action = `${opts.action ?? ""}`.trim().toLowerCase();
+            if (action !== "approve" && action !== "reject") {
+              throw new Error("--action must be approve or reject");
+            }
+            const owner = await resolveAccountByIdentifier(ctx, opts.owner);
+            const owner_account_id = `${owner?.account_id ?? ""}`.trim();
+            if (!owner_account_id) {
+              throw new Error("unable to resolve owner account");
+            }
+            const request_id = `${requestId ?? ""}`.trim();
+            if (!request_id) {
+              throw new Error("request id must be non-empty");
+            }
+            return serializeSiteLicenseRequest(
+              await ctx.hub.purchases.reviewSiteLicensePoolRequest({
+                account_id: ctx.accountId,
+                owner_account_id,
+                request_id,
+                action,
+                review_note: `${opts.note ?? ""}`.trim() || undefined,
+              }),
+              toIso,
+            );
+          },
+        );
+      },
+    );
 
   return membership;
 }

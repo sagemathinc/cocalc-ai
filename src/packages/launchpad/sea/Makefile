@@ -14,8 +14,9 @@ DEV_INST_ID    ?= Developer ID Installer: William STEIN ($(TEAM_ID))
 
 # SEA inputs (only needed if you want `make sea`)
 SEA_MAIN       ?= cocalc.js
-SEA_CONFIG     ?= sea-config.json                 # writes sea-prep.blob + sea.term
-NODE_BIN       ?= $(shell command -v node)
+# Writes sea-prep.blob + sea.term.
+SEA_CONFIG     ?= sea-config.json
+NODE_BIN       ?= $(if $(COCALC_SEA_NODE_BIN),$(COCALC_SEA_NODE_BIN),$(shell command -v node))
 
 # ======= derived paths =======
 BIN            := ./$(APP_NAME)
@@ -23,9 +24,9 @@ PAYLOAD_DIR    := ./payload
 PKG_UNSIGNED   := ./unsigned.pkg
 PKG_SIGNED     := ./$(APP_NAME)-$(VERSION).pkg
 
-# Read the SEA fuse value that `node --experimental-sea-config` emits (first line)
-FUSE           := $(shell [ -f sea.term ] && sed -n '1p' sea.term)
+# `node --experimental-sea-config` writes the SEA fuse to sea.term.
 
+SHELL := /bin/bash
 .SHELLFLAGS := -euo pipefail -c
 
 .PHONY: help sea signed-tar sign-bin verify-bin pkg sign-pkg notarize staple release clean veryclean show-ids entitlements
@@ -51,16 +52,17 @@ show-ids:
 # ---- SEA build/inject (optional if you already have ./cocalc) ----
 sea: clean-sea
 	@[ -x "$(NODE_BIN)" ] || (echo "node not found" && exit 1)
+	@[ "$$("$(NODE_BIN)" -p 'process.versions.node.split(".")[0]')" = "26" ] || (echo "SEA builds require Node.js 26; got $$("$(NODE_BIN)" -p 'process.version') at $(NODE_BIN)" && exit 1)
 	@echo "→ Copy node → $(BIN) and strip any existing signature"
 	cp "$(NODE_BIN)" "$(BIN)"
 	codesign --remove-signature "$(BIN)" 2>/dev/null || true
 	@echo "→ Generate SEA blob from $(SEA_CONFIG)"
-	node --experimental-sea-config "$(SEA_CONFIG)"
+	"$(NODE_BIN)" --experimental-sea-config "$(SEA_CONFIG)"
 	@[ -s sea-prep.blob ] || (echo "sea-prep.blob missing" && exit 1)
 	@[ -s sea.term ] || (echo "sea.term missing (fuse) — ensure Node wrote it" && exit 1)
 	@echo "→ Inject SEA blob (Mach-O segment + sentinel fuse)"
 	npx -y postject@latest "$(BIN)" NODE_SEA_BLOB sea-prep.blob \
-	  --sentinel-fuse "$(FUSE)" \
+	  --sentinel-fuse "$$(sed -n '1p' sea.term)" \
 	  --macho-segment-name NODE_SEA
 	@echo "SEA injection done: $(BIN)"
 

@@ -255,6 +255,17 @@ export interface ClaimableMembershipPackage {
   available_seat_count: number;
   matched_email_address: string;
   reason: "email-assignment" | "domain-match";
+  requires_approval?: boolean;
+  site_license_id?: string;
+  pool_name?: string;
+  verification_policy?: SiteLicenseVerificationPolicy;
+  exclusive_group?: string;
+  pending_request_id?: string;
+  pending_request_state?: SiteLicensePoolRequestState;
+  custom_terms_url?: string | null;
+  custom_policy_url?: string | null;
+  terms_version_label?: string | null;
+  requires_terms_acceptance?: boolean;
   metadata?: Record<string, unknown> | null;
 }
 
@@ -276,6 +287,160 @@ export interface MembershipPackageDetails extends MembershipPackageRecord {
   active_assignment_count: number;
   available_seat_count: number;
   assignments: MembershipPackageAssignment[];
+}
+
+export type SiteLicenseManagerRole = "owner" | "manager" | "viewer";
+export type SiteLicenseVerificationPolicy =
+  | "email-domain"
+  | "sso-affiliation"
+  | "manager-approval";
+export type SiteLicensePoolRequestState =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "canceled"
+  | "expired";
+
+export interface SiteLicensePoolConfig {
+  pool_name: string;
+  membership_class: MembershipClass;
+  seat_count: number;
+  requires_approval: boolean;
+  verification_policy: SiteLicenseVerificationPolicy;
+  exclusive_group?: string | null;
+  affiliation_reverification_days?: number | null;
+  affiliation_reverification_grace_days?: number | null;
+  allowed_domains?: string[];
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface SiteLicenseRecord {
+  id: string;
+  name: string;
+  organization_name: string;
+  owner_account_id: string;
+  allowed_domains: string[];
+  custom_terms_url?: string | null;
+  custom_policy_url?: string | null;
+  terms_version_label?: string | null;
+  renewal_policy?: string | null;
+  overage_policy?: string | null;
+  starts_at?: Date | null;
+  expires_at?: Date | null;
+  metadata?: Record<string, unknown> | null;
+  created?: Date;
+  updated?: Date;
+}
+
+export interface SiteLicenseManager {
+  id: string;
+  site_license_id: string;
+  account_id: string;
+  role: SiteLicenseManagerRole;
+  created_by_account_id?: string | null;
+  revoked_at?: Date | null;
+  metadata?: Record<string, unknown> | null;
+  created?: Date;
+  updated?: Date;
+}
+
+export interface SiteLicensePoolSummary extends MembershipPackageDetails {
+  pool_name: string;
+  requires_approval: boolean;
+  verification_policy: SiteLicenseVerificationPolicy;
+  exclusive_group: string;
+  affiliation_reverification_days?: number | null;
+  affiliation_reverification_grace_days?: number | null;
+  pending_request_count: number;
+}
+
+export interface SiteLicensePoolRequest {
+  id: string;
+  site_license_id: string;
+  package_id: string;
+  account_id: string;
+  matched_email_address: string;
+  canonical_identity: string;
+  requested_membership_class: MembershipClass;
+  state: SiteLicensePoolRequestState;
+  requester_note?: string | null;
+  reviewer_account_id?: string | null;
+  review_note?: string | null;
+  requested_at?: Date;
+  reviewed_at?: Date | null;
+  expires_at?: Date | null;
+  metadata?: Record<string, unknown> | null;
+  created?: Date;
+  updated?: Date;
+}
+
+export type SiteLicenseAuditAction =
+  | "site-license-provisioned"
+  | "manager-added"
+  | "pool-created"
+  | "pool-request-created"
+  | "pool-request-approved"
+  | "pool-request-rejected"
+  | "seat-released-for-upgrade"
+  | "seat-affiliation-reverified"
+  | "seat-released-after-reverification-grace";
+
+export interface SiteLicenseAuditEvent {
+  id: string;
+  site_license_id: string;
+  action: SiteLicenseAuditAction;
+  actor_account_id?: string | null;
+  target_account_id?: string | null;
+  package_id?: string | null;
+  request_id?: string | null;
+  metadata?: Record<string, unknown> | null;
+  created?: Date;
+}
+
+export interface SiteLicenseOverview {
+  site_license: SiteLicenseRecord;
+  pools: SiteLicensePoolSummary[];
+  managers: SiteLicenseManager[];
+  pending_requests: SiteLicensePoolRequest[];
+  recent_audit_events?: SiteLicenseAuditEvent[];
+}
+
+export type SiteLicenseAffiliationReverificationState =
+  | "current"
+  | "pending_reverification"
+  | "grace_expired";
+
+export interface SiteLicenseAffiliationReverificationSeat {
+  site_license_id: string;
+  package_id: string;
+  assignment_id: string;
+  account_id: string;
+  membership_class: MembershipClass;
+  pool_name?: string | null;
+  exclusive_group: string;
+  verification_policy: SiteLicenseVerificationPolicy;
+  matched_email_address?: string | null;
+  affiliation_verified_at?: Date | null;
+  reverification_due_at?: Date | null;
+  reverification_grace_expires_at?: Date | null;
+  reverification_days?: number | null;
+  grace_days?: number | null;
+  state: SiteLicenseAffiliationReverificationState;
+}
+
+export interface SiteLicenseAffiliationReverificationUserSeat extends SiteLicenseAffiliationReverificationSeat {
+  site_license_name?: string | null;
+  organization_name?: string | null;
+  site_license_owner_account_id?: string | null;
+  can_refresh_with_verified_email: boolean;
+}
+
+export interface SiteLicenseAffiliationReverificationUserStatus {
+  seats: SiteLicenseAffiliationReverificationUserSeat[];
+  pending_count: number;
+  grace_expired_count: number;
+  next_reverification_due_at?: Date | null;
+  next_reverification_grace_expires_at?: Date | null;
 }
 
 export interface MembershipUsageStatus {
@@ -476,6 +641,7 @@ export interface Purchases {
   purchaseMembershipPackage: (opts?: {
     account_id?: string;
     browser_id?: string;
+    session_hash?: string | null;
     package_id?: string;
     kind?: MembershipPackageKind;
     membership_class?: MembershipClass;
@@ -528,7 +694,52 @@ export interface Purchases {
   claimMembershipPackageSeat: (opts?: {
     account_id?: string;
     package_id?: string;
+    accepted_terms?: boolean;
   }) => Promise<MembershipPackageAssignment>;
+  adminProvisionSiteLicense: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    owner_account_id?: string;
+    name?: string;
+    organization_name?: string;
+    allowed_domains?: string[];
+    pools?: SiteLicensePoolConfig[];
+    custom_terms_url?: string | null;
+    custom_policy_url?: string | null;
+    terms_version_label?: string | null;
+    renewal_policy?: string | null;
+    overage_policy?: string | null;
+    starts_at?: Date | string | null;
+    expires_at?: Date | string | null;
+    metadata?: Record<string, unknown> | null;
+  }) => Promise<SiteLicenseOverview>;
+  getSiteLicenseOverview: (opts?: {
+    account_id?: string;
+    owner_account_id?: string;
+    site_license_id?: string;
+  }) => Promise<SiteLicenseOverview>;
+  requestSiteLicensePool: (opts?: {
+    account_id?: string;
+    owner_account_id?: string;
+    package_id?: string;
+    requester_note?: string | null;
+    accepted_terms?: boolean;
+  }) => Promise<SiteLicensePoolRequest>;
+  reviewSiteLicensePoolRequest: (opts?: {
+    account_id?: string;
+    owner_account_id?: string;
+    request_id?: string;
+    action?: "approve" | "reject";
+    review_note?: string | null;
+  }) => Promise<SiteLicensePoolRequest>;
+  getSiteLicenseAffiliationReverificationStatus: (opts?: {
+    account_id?: string;
+  }) => Promise<SiteLicenseAffiliationReverificationUserStatus>;
+  refreshSiteLicenseAffiliationVerification: (opts?: {
+    account_id?: string;
+    site_license_id?: string;
+  }) => Promise<SiteLicenseAffiliationReverificationSeat[]>;
   getAIUsage: (opts?: { account_id?: string }) => Promise<AIUsageStatus>;
   getManagedEgressHistory: (
     opts?: ManagedEgressHistoryQuery,
@@ -555,6 +766,12 @@ export const purchases = {
   revokeMembershipPackageSeat: authFirst,
   getClaimableMembershipPackages: authFirst,
   claimMembershipPackageSeat: authFirst,
+  adminProvisionSiteLicense: authFirst,
+  getSiteLicenseOverview: authFirst,
+  requestSiteLicensePool: authFirst,
+  reviewSiteLicensePoolRequest: authFirst,
+  getSiteLicenseAffiliationReverificationStatus: authFirst,
+  refreshSiteLicenseAffiliationVerification: authFirst,
   getAIUsage: authFirst,
   getManagedEgressHistory: authFirst,
   getManagedEgressAdminOverview: authFirst,

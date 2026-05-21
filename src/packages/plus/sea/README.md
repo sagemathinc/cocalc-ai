@@ -4,7 +4,7 @@ https://nodejs.org/api/single-executable-applications.html
 ASSUMPTION:
 
 - you have built `cocalc-plus.tar.gz`
-- you have installed nvm.sh with node version 24
+- you have installed nvm.sh with node version 26
 
 Then just run ./build.sh.
 
@@ -29,9 +29,9 @@ Start it
 Setup port forward to your laptop (e.g., using reflect-sync):
 
 ```sh
-wstein@lite:~/build/sea/cocalc$ reflect forward create -n wdev 9000 root@35.212.230.72:42513 
-Created session fwrd_R1STMVOKmnS2Q3W4ic0YP5slUOBpWvyJq96KQgYXMfw                
-wstein@lite:~/build/sea/cocalc$ 
+wstein@lite:~/build/sea/cocalc$ reflect forward create -n wdev 9000 root@35.212.230.72:42513
+Created session fwrd_R1STMVOKmnS2Q3W4ic0YP5slUOBpWvyJq96KQgYXMfw
+wstein@lite:~/build/sea/cocalc$
 ```
 
 This should work for proxy.json to directly connect, but it isn't:

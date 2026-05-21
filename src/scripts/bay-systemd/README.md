@@ -35,6 +35,11 @@ For a fresh Ubuntu VM, the intended first pass is:
 sudo ./src/scripts/bay-systemd/bay-bootstrap-host.sh --install-nodejs
 ```
 
+This installs Node.js 26.2.0 via nvm 0.40.4 under `/opt/cocalc/nvm` by default.
+The generated bay environment points services at that exact runtime with
+`COCALC_BAY_NODE_BIN`, instead of relying on whichever `node` binary systemd
+would otherwise find.
+
 On a fresh Ubuntu VM, the host bootstrap also stops and disables the default
 package-managed `postgresql` service so it does not collide with the bay-local
 Postgres instance on `127.0.0.1:5432`. Use `--preserve-system-postgres` only if

@@ -2,7 +2,7 @@
 
 Date: 2026-05-19
 
-Status: ready for implementation. Email-token collaboration invites are
+Status: implementation started. Email-token collaboration invites are
 functionally complete as of 2026-05-20, with remaining work limited to edge-case
 validation and observability. This site-license plan is now the next major
 implementation track.
@@ -10,11 +10,13 @@ implementation track.
 ## Problem
 
 CoCalc site licensing needs to support real academic and enterprise deals where
-one organization has at least two classes of users:
+one organization has multiple classes of users:
 
 - a broad, low-risk student or baseline user population
 - a smaller, higher-trust instructor/faculty/admin population with higher
   resource limits and higher abuse potential
+- a research population with different compute, storage, and network
+  expectations from both students and instructors
 
 The current site-license model is effectively one pool:
 
@@ -23,8 +25,9 @@ The current site-license model is effectively one pool:
 - one membership tier
 
 That is not enough for campus licenses. A university may buy, for example,
-5000 student seats and 200 instructor seats. Those seats should have different
-tiers, different limits, and different claim/approval rules.
+5000 student seats, 200 instructor seats, and 500 researcher seats. Those seats
+should have different tiers, different limits, and different claim/approval
+rules.
 
 This directly affects project invites and course workflows. Instructors need
 larger project, collaborator, and email-invite quotas; students should not get
@@ -86,11 +89,12 @@ more named pools:
 
 ```ts
 type SiteLicensePool = {
-  name: string;                 // e.g. "Students", "Instructors"
-  membership_class: string;     // e.g. "student", "instructor"
+  name: string; // e.g. "Students", "Instructors"
+  membership_class: string; // e.g. "student", "instructor"
   seat_count: number;
   requires_approval: boolean;
   verification_policy: "email-domain" | "sso-affiliation" | "manager-approval";
+  exclusive_group?: string; // e.g. "teaching", "research"; defaults to tier
   affiliation_reverification_days?: number;
   affiliation_reverification_grace_days?: number;
 };
@@ -100,6 +104,15 @@ Example:
 
 - `Students`: 5000 seats, `student` tier, no approval
 - `Instructors`: 200 seats, `instructor` tier, approval required
+- `Researchers`: 500 seats, `researcher` tier, approval required or SSO-backed
+  eligibility
+
+`exclusive_group` controls deduplication and upgrade behavior. For example,
+`Students` and `Instructors` should usually share `exclusive_group =
+"teaching"`, so instructor approval releases a lower student teaching seat.
+`Researchers` should use `exclusive_group = "research"`, so a professor can
+hold a teaching seat and a research seat, potentially on separate CoCalc
+accounts using plus-address aliases.
 
 The organization should not have to understand package rows, assignment rows,
 grant rows, or bay routing.
@@ -178,12 +191,15 @@ For each pool:
 - `membership_class = <pool tier>`
 - `seat_count = <pool cap>`
 - `metadata.site_license_id = <site license id>`
-- `metadata.pool_name = "Students" | "Instructors" | ...`
+- `metadata.pool_name = "Students" | "Instructors" | "Researchers" | ...`
 - `metadata.requires_approval = boolean`
 - `metadata.verification_policy = "email-domain" | "sso-affiliation" | "manager-approval"`
+- `metadata.exclusive_group = "teaching" | "research" | ...`
 - `metadata.affiliation_reverification_days = number | undefined`
 - `metadata.affiliation_reverification_grace_days = number | undefined`
 - `metadata.allowed_domains = string[]`
+- `metadata.claim_scope_key = "site-license:<id>:group:<exclusive_group>"`
+- `metadata.claim_scope_kind = "site-license-exclusive-group"`
 - `starts_at` / `expires_at` inherited from, or constrained by, the site
   license
 
@@ -297,9 +313,10 @@ Fields:
 
 Rules:
 
-- At most one active pending request per account per site-license pool.
+- At most one active pending request per account per site-license exclusive
+  group.
 - At most one active pending request per canonical institutional identity per
-  site-license pool.
+  site-license exclusive group.
 - Pending requests should not consume seats by default.
 - Approval must recheck cap availability before creating the grant.
 - Rejection should be final for the specific request but allow a new request
@@ -420,7 +437,7 @@ and `verification_policy`:
 - Instructor year-one default: `verification_policy = "email-domain"`,
   `requires_approval = true`.
 - Future stricter instructor default: `verification_policy =
-  "sso-affiliation"` plus approval, or SSO role assertion without manager
+"sso-affiliation"` plus approval, or SSO role assertion without manager
   approval if the organization provides reliable role data.
 
 ## Fresh Affiliation Verification
@@ -615,27 +632,38 @@ procurement/admin surface. It should prove the core invariant:
 
 Scope:
 
-- Add the `site_licenses`, `site_license_managers`, and
-  `site_license_pool_requests` schema.
-- Represent pools as `membership_packages.kind = "site"` rows linked by
-  `metadata.site_license_id`.
-- Add shared TypeScript types for site licenses, managers, pools, requests,
-  verification policy, terms links, and overage/renewal policy.
-- Add admin/CLI provisioning for one site license with two pools:
-  `Students` and `Instructors`.
-- Add an explicit manager list with `owner`, `manager`, and `viewer` roles.
-- Keep baseline student claim as explicit click-to-claim using verified
-  institutional email and current package assignment machinery.
-- Add instructor request creation for approval-required pools.
-- Add manager approval/rejection APIs that recheck cap availability and create
-  the package assignment/grant through existing membership package machinery.
-- Enforce one active pool per account per site license; instructor approval
-  replaces a lower student grant.
-- Record custom terms/policy acceptance metadata when URLs are configured.
-- Add minimal manager overview data: pool cap, active count, pending request
-  count, available seats, and recent approvals/rejections.
-- Add audit records or structured metadata for manager changes, requests,
-  approvals, rejections, and revocations.
+- [x] Add the `site_licenses`, `site_license_managers`, and
+      `site_license_pool_requests` schema.
+- [x] Represent pools as `membership_packages.kind = "site"` rows linked by
+      `metadata.site_license_id`.
+- [x] Add shared TypeScript types for site licenses, managers, pools, requests,
+      verification policy, terms links, and overage/renewal policy.
+- [x] Add admin API provisioning for one site license with one or more pools,
+      e.g. `Students`, `Instructors`, and `Researchers`.
+- [x] Add CLI commands for provisioning, overview, requesting, and reviewing.
+- [x] Route site-license provisioning, overview, request, and review APIs to the
+      site-license owner's home bay, with requester verified emails collected on
+      the requester home bay.
+- [x] Add an explicit manager list with `owner`, `manager`, and `viewer` roles.
+- [x] Keep baseline student claim as explicit click-to-claim using verified
+      institutional email and current package assignment machinery.
+- [x] Add instructor request creation for approval-required pools.
+- [x] Add manager approval/rejection APIs that recheck cap availability and create
+      the package assignment/grant through existing membership package machinery.
+- [x] Enforce one active pool per account per site-license exclusive group;
+      instructor approval replaces a lower student teaching grant, while a
+      separate research grant can coexist.
+- [x] Record custom terms/policy acceptance metadata when URLs are configured.
+- [x] Add minimal manager overview data: pool cap, active count, pending request
+      count, available seats, and recent approvals/rejections.
+- [x] Add a minimal user-facing account UI for verified-domain users to claim
+      no-approval pools or request manager approval for approval-required pools.
+- [x] Add a minimal manager-facing account UI for reviewing pending
+      site-license pool requests.
+- [x] Add full audit records or structured metadata for manager changes,
+      revocations, and CLI/API actor context.
+- [x] Add structured metadata for requests,
+      approvals, rejections, and revocations.
 
 Explicitly out of the first slice:
 
@@ -643,26 +671,26 @@ Explicitly out of the first slice:
 - CSV export.
 - Scheduled affiliation reverification jobs.
 - SSO affiliation enforcement beyond storing `verification_policy =
-  "sso-affiliation"` as a future-supported policy.
+"sso-affiliation"` as a future-supported policy.
 - Soft overages or true-up billing.
 - Automatic student auto-claim.
 
 Acceptance criteria:
 
-- CoCalc admin can create a site license with student and instructor pools and
-  add an initial owner manager.
-- A verified-domain user can claim a student seat.
-- A verified-domain user can request instructor access.
-- A site-license manager can approve or reject the instructor request.
-- Approval upgrades effective membership to the instructor tier and releases
-  the student seat for the same site license.
-- Cap checks prevent claiming or approval past the pool limit.
-- Custom terms/policy links, if configured, are shown before claim/request and
-  acceptance is recorded.
-- Existing one-pool site packages still resolve as before or are treated as
-  backward-compatible single-pool licenses.
-- Focused tests cover claim, request, approval, rejection, cap recheck,
-  one-active-pool upgrade, manager authorization, and custom terms metadata.
+- [x] CoCalc admin can create a site license with an arbitrary nonempty list of
+      named pools and add an initial owner manager.
+- [x] A verified-domain user can claim a student seat.
+- [x] A verified-domain user can request instructor access.
+- [x] A site-license manager can approve or reject the instructor request.
+- [x] Approval upgrades effective membership to the instructor tier and releases
+      the student seat for the same site license.
+- [x] Cap checks prevent claiming or approval past the pool limit.
+- [x] Custom terms/policy links, if configured, are shown before claim/request and
+      acceptance is recorded.
+- [x] Existing one-pool site packages still resolve as before or are treated as
+      backward-compatible single-pool licenses.
+- [x] Focused tests cover claim, request, approval, rejection, cap recheck,
+      one-active-pool upgrade, manager authorization, and custom terms metadata.
 
 ### Phase 1: Schema and Types
 
@@ -692,54 +720,105 @@ Acceptance criteria:
 - Keep backward compatibility for existing single-pool `kind = "site"` package
   rows by treating each as a one-pool site license.
 - Add admin API/CLI commands for creating pools and managers.
+  - Current CLI supports provisioning a site license with initial pools and
+    owner manager. Editing managers/pools after creation is still future
+    polished admin tooling.
 - The admin panel for deleting membership tiers already blocks deleting a tier
   that has claims/users. It should also block deleting a tier that is attached
   to a site license, and ideally show how many site licenses use that tier.
 
 ### Phase 3: Claimable and Requestable User Flow
 
-- Update claimable-membership APIs to return:
+- [x] Update claimable-membership APIs to return:
   - immediately claimable pools
   - approval-required requestable pools
   - existing request status
-- Include custom terms/policy URLs and whether the user must accept them before
-  claiming/requesting.
-- Keep existing no-approval claim path for baseline pools.
-- Add request creation for approval-required pools.
+- [x] Include custom terms/policy URLs and whether the user must accept them before
+      claiming/requesting.
+- [x] Keep existing no-approval claim path for baseline pools.
+- [x] Add request creation for approval-required pools.
+- [x] Add minimal account UI actions for claimable and requestable pools.
 
 ### Phase 4: Manager Dashboard and Approval Flow
 
-- Add manager-scoped APIs.
-- Add manager dashboard.
+- [x] Add manager-scoped APIs.
+- [x] Add minimal manager review panel in the account membership package manager.
+- [x] Add crude but functional manager dashboard.
+- [ ] Add polished manager dashboard.
 - Add notifications for new requests and review outcomes.
 - Approval creates assignment and grant through existing membership package
   machinery.
 - Rejection records review state and reason.
 
+Implementation note: the account membership page now has a deliberately plain
+site-license manager dashboard that shows license terms, domains, pools,
+managers, active seats, pending requests, revoke buttons, and recent audit
+events. The admin provision modal now uses the real pool-based site-license API
+instead of the older single-package site-license helper. This is suitable for
+manual end-to-end testing, not final production polish.
+
 ### Phase 5: Seat Reconciliation
 
-- Enforce one active pool per account per site license.
-- Instructor approval revokes the lower student seat for simplicity and to
-  avoid confusion.
-- Add reporting so managers can see seats revoked due to upgrades.
+- [x] Enforce one active pool per account per site-license exclusive group.
+- [x] Instructor approval revokes the lower student seat in the same teaching group
+      for simplicity and to avoid confusion.
+- [x] Researcher seats can coexist with teaching seats when they use a distinct
+      `exclusive_group`.
+- [x] Add reporting so managers can see seats revoked due to upgrades.
+
+Implementation note: approval already records `seat-released-for-upgrade`
+audit events. Direct no-approval claims now hide and reject other active pools
+in the same site-license `exclusive_group`, while still allowing claims in
+distinct groups such as `research`.
 
 ### Phase 6: Fresh Affiliation Reverification
 
-- Store `affiliation_verified_at` and the verifying institutional identity on
-  site-license grants or claim metadata.
-- Store the verification policy that was satisfied.
-- Add pending-affiliation-reverification query.
+- [x] Store `affiliation_verified_at` and the verifying institutional identity on
+      site-license grants or claim metadata.
+- [x] Store the verification policy that was satisfied.
+- [x] Add pending-affiliation-reverification query.
 - Add user notification/grace workflow.
-- Clear pending release when the user re-verifies institutional email or has a
-  fresh qualifying SSO assertion.
-- Add scheduled release job for seats that miss the grace deadline.
+- [x] Clear pending release when the user re-verifies institutional email.
+- Clear pending release when the user has a fresh qualifying SSO assertion.
+- [x] Add release path for seats that miss the grace deadline.
+- [x] Add scheduled job to invoke grace-expired seat release.
+
+Implementation note: active site-license seats now carry affiliation metadata
+for direct claims and manager approvals. The backend reverification query
+classifies seats as current, pending reverification, or grace expired using
+pool-level reverification and grace settings.
+The release helper revokes grace-expired seats through the existing membership
+package revoke path and records a `seat-released-after-reverification-grace`
+audit event.
+The email-domain refresh helper lets an active site-license seat recover from
+pending reverification or grace-expired status when the signed-in account has a
+fresh verified allowed-domain email. It updates affiliation metadata and records
+a `seat-affiliation-reverified` audit event without changing claim-directory
+ownership.
+The scheduled release maintenance loop runs from the Conat backend maintenance
+startup path and invokes the system release helper for active site licenses with
+reverification-enabled pools. It releases only grace-expired seats, batches work
+per tick, and records `seat-released-after-reverification-grace` with
+maintenance metadata.
+The user-facing backend contract now exposes a signed-in account's
+reverification status from account-home grant metadata and a refresh RPC that
+routes directly to the site-license owner bay using grant routing metadata.
+The account membership page now exposes a basic user-facing reverification panel
+with per-license status and refresh buttons. Actual in-app/email notification
+delivery and polished UX presentation are still pending.
 
 ### Phase 7: Invite Limit Integration
 
-- Define resource limits for the new `instructor` tier.
-- Make project invite email quotas and collaborator caps depend on effective
-  membership.
-- Ensure course workflows use instructor limits.
+- [x] Define resource limits for the new `instructor` and `researcher` tiers.
+- [x] Make project invite email quotas and collaborator caps depend on effective
+      membership.
+- [x] Ensure course workflows use instructor limits.
+
+Implementation note: course email invites now enforce both per-course pending
+email invite limits and total course student-plus-pending-invite caps from the
+effective membership limits. The count uses persisted student-project course
+metadata plus pending course invite rows, so it does not depend on client-side
+course state.
 
 ### Phase 8: Tests and Validation
 
@@ -846,7 +925,7 @@ Implement the first version with:
 - optional custom site-license terms/policy links
 - standard term/renewal/overage policy fields
 - no pending-seat reservation
-- one active pool per account per site license
+- one active pool per account per site-license exclusive group
 - periodic fresh affiliation reverification, with automatic release when the
   user cannot reverify during the grace period
 

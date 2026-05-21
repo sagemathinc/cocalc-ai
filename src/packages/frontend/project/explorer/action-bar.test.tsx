@@ -45,6 +45,17 @@ jest.mock("@cocalc/frontend/antd-bootstrap", () => ({
   ButtonToolbar: ({ children }: any) => <div>{children}</div>,
 }));
 
+jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
+  FreshAuthModal: () => null,
+  useFreshAuthAction: () => ({
+    freshAuthModalProps: {},
+    runFreshAuthAction: async (action: () => Promise<void>) => {
+      await action();
+      return true;
+    },
+  }),
+}));
+
 jest.mock("@cocalc/frontend/components", () => ({
   Gap: () => null,
   Icon: () => null,
@@ -66,6 +77,7 @@ jest.mock("@cocalc/frontend/project/archive-info", () => ({
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
+    browser_id: "browser-1",
     conat_client: {
       hub: {
         projects: {

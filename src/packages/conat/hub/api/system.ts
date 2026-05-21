@@ -90,6 +90,8 @@ export const system = {
   drainAccountRehome: authFirstRequireAccount,
   repairAccountMembershipPortability: authFirstRequireAccount,
   adminResetPasswordLink: authFirst,
+  adminVerifyEmailAddress: authFirst,
+  adminDisableTwoFactor: authFirst,
   sendTestEmail: authFirst,
   setSiteSettings: authFirst,
   syncSiteSettingsToBays: authFirst,
@@ -1778,6 +1780,29 @@ export interface System {
     session_hash?: string | null;
     user_account_id: string;
   }) => Promise<string>;
+
+  adminVerifyEmailAddress: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    user_account_id: string;
+  }) => Promise<{
+    account_id: string;
+    already_verified: boolean;
+    email_address: string;
+    verified_at: Date | string;
+  }>;
+
+  adminDisableTwoFactor: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    user_account_id: string;
+  }) => Promise<{
+    account_id: string;
+    disabled_factors: number;
+    deleted_recovery_codes: number;
+  }>;
 
   sendTestEmail: (opts: {
     account_id?: string;

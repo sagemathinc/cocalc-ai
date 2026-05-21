@@ -42,6 +42,7 @@ from typing import Any
 STATE_SCHEMA_VERSION = 1
 HELPER_SCHEMA_VERSION = "20260330-v1"
 RUNTIME_WRAPPER_VERSION = "20260505-v9"
+NVM_VERSION = "0.40.4"
 BOOTSTRAP_LOG_MAX_BYTES = 4 * 1024 * 1024
 BUNDLE_RETENTION_COUNT = 3
 ROOTLESS_SUBID_MIN_TOTAL = 4 * 1024 * 1024
@@ -3228,8 +3229,9 @@ def install_node(cfg: BootstrapConfig) -> None:
     nvm_dir = f"{runtime_home(cfg)}/.nvm"
     install_cmd = (
         f'export NVM_DIR="{nvm_dir}"; '
-        f'if [ ! -s "$NVM_DIR/nvm.sh" ]; then '
-        f'curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash; '
+        f'if [ ! -s "$NVM_DIR/nvm.sh" ] || '
+        f'! ( . "$NVM_DIR/nvm.sh"; [ "$(nvm --version)" = "{NVM_VERSION}" ] ); then '
+        f'curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v{NVM_VERSION}/install.sh | PROFILE=/dev/null bash; '
         f'fi; '
         f'. "$NVM_DIR/nvm.sh"; '
         f'nvm install {cfg.node_version}; '

@@ -1,6 +1,13 @@
 /** @jest-environment jsdom */
 
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import type { NewsItem } from "@cocalc/util/types/news";
@@ -380,7 +387,7 @@ describe("PublicApp", () => {
 
     expect(screen.getByText("Terms of Service")).not.toBeNull();
     expect(screen.getByText("Privacy Policy")).not.toBeNull();
-    expect(screen.getByText("Trust")).not.toBeNull();
+    expect(screen.getByText("Trust and Compliance")).not.toBeNull();
     expect(screen.queryByText("Open page")).toBeNull();
     expect(
       screen.getByRole("link", { name: /Terms of Service/i }),
@@ -440,51 +447,103 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(await screen.findByText("CoCalc - Privacy Policy")).not.toBeNull();
+    expect(
+      await screen.findByRole("heading", { name: "Privacy Policy" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Launchpad · Last Updated: May 13, 2026"),
+    ).not.toBeNull();
     expect(
       screen.getByText(/Protecting your privacy is really important to us/i),
     ).not.toBeNull();
     expect(screen.queryByText("PUBLIC CONTENT")).toBeNull();
     expect(screen.queryByText("Back to policies")).toBeNull();
-    const policyPages = screen.getByRole("menu", { name: "Policy pages" });
+    expect(screen.queryByRole("menu", { name: "Policy pages" })).toBeNull();
+    const policyNavigation = screen.getByRole("complementary", {
+      name: "Policy navigation",
+    });
     expect(
-      within(policyPages)
-        .getByRole("menuitem", { name: "Privacy" })
-        .closest("li"),
-    ).toHaveClass("ant-menu-item-selected");
+      within(policyNavigation)
+        .getAllByRole("navigation")
+        .map((nav) => nav.getAttribute("aria-label")),
+    ).toEqual(["Policies", "On this page"]);
+    const policyToc = screen.getByRole("navigation", { name: "On this page" });
+    expect(
+      within(policyToc).getByRole("link", {
+        name: "Revisions to this Privacy Policy",
+      }),
+    ).toHaveAttribute("href", "#revisions-to-this-privacy-policy");
+    expect(
+      within(policyToc).getByRole("link", { name: "1 Purpose" }),
+    ).toHaveAttribute("href", "#purpose");
+    const scrollIntoView = jest.fn();
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    try {
+      fireEvent.click(
+        within(policyToc).getByRole("link", { name: "1 Purpose" }),
+      );
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+    } finally {
+      HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+    }
+    expect(
+      within(policyToc).queryByRole("link", {
+        name: "3.1 Types of Personal Information We Collect",
+      }),
+    ).toBeNull();
+    const policyPages = screen.getByRole("navigation", { name: "Policies" });
+    expect(
+      within(policyPages).getByRole("link", { name: "Privacy" }),
+    ).toHaveAttribute("aria-current", "page");
   });
 
-  it("renders the built-in third-party policy page", async () => {
+  it("renders the built-in data processing addendum page", async () => {
     await renderPublicApp(
       <PublicApp
         config={{ policy_pages: "sagemathinc", site_name: "Launchpad" }}
         initialRoute={policiesRoute({
-          policySlug: "thirdparties",
+          policySlug: "dpa",
           view: "policies-detail",
         })}
       />,
     );
 
     expect(
-      await screen.findByText("CoCalc - Third Parties Statements"),
+      await screen.findByRole("heading", {
+        name: "Data Processing Addendum",
+      }),
     ).not.toBeNull();
-    expect(screen.getByText("Cloudflare")).not.toBeNull();
-    expect(screen.getByText("Salesloft")).not.toBeNull();
-    const policyPages = screen.getByRole("menu", { name: "Policy pages" });
+    expect(
+      screen.getByText("Launchpad · Last Updated: April 15, 2026"),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/The Controller \(User\) provides/i),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "2. Sub-processors" }),
+    ).not.toBeNull();
+    const policyToc = screen.getByRole("navigation", { name: "On this page" });
+    expect(
+      within(policyToc).getByRole("link", { name: "2. Sub-processors" }),
+    ).toHaveAttribute("href", "#section-2-sub-processors");
+    const policyPages = screen.getByRole("navigation", { name: "Policies" });
     expect(
       within(policyPages)
-        .getAllByRole("menuitem")
+        .getAllByRole("link")
         .map((item) => item.textContent),
     ).toEqual([
       "Terms",
       "Privacy",
-      "Third Parties",
+      "DPA",
       "Trust",
-      "Enterprise",
       "Accessibility",
       "Copyright",
       "FERPA",
     ]);
+    expect(
+      within(policyPages).getByRole("link", { name: "DPA" }),
+    ).toHaveAttribute("aria-current", "page");
   });
 
   it("renders the built-in terms page", async () => {
@@ -498,7 +557,9 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(await screen.findByText("CoCalc - Terms of Service")).not.toBeNull();
+    expect(
+      await screen.findByRole("heading", { name: "Terms of Service" }),
+    ).not.toBeNull();
     expect(
       screen.getByText(/Once you POST TO THE GENERAL PUBLIC/i),
     ).not.toBeNull();
@@ -521,6 +582,7 @@ describe("PublicApp", () => {
     expect(screen.queryByText("PUBLIC CONTENT")).toBeNull();
     expect(screen.queryByText("Back to policies")).toBeNull();
     expect(screen.queryByRole("menu", { name: "Policy pages" })).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Policies" })).toBeNull();
   });
 
   it("shows a generic title for unknown policy routes", async () => {

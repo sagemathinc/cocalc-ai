@@ -626,17 +626,6 @@ function normalizeOptionalSecret(
   return trimmed;
 }
 
-function buildRememberMeCookieHeader(
-  apiBaseUrl: string,
-  rememberMeCookie: string,
-): string {
-  const value = `${rememberMeCookie ?? ""}`.trim();
-  const names = Array.from(
-    new Set([cookieNameFor(apiBaseUrl, "remember_me"), "remember_me"]),
-  ).filter(Boolean);
-  return names.map((name) => `${name}=${value}`).join("; ");
-}
-
 function parseEnvFile(text: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const raw of `${text ?? ""}`.split(/\r?\n/)) {
@@ -1203,13 +1192,9 @@ function resolveAccountIdFromRemote(
 
 async function maybeReconnectAsRequestedAccount({
   globals,
-  apiBaseUrl,
-  timeoutMs,
   remote,
 }: {
   globals: GlobalOptions;
-  apiBaseUrl: string;
-  timeoutMs: number;
   remote: RemoteConnection;
 }): Promise<
   | {
@@ -1230,7 +1215,8 @@ async function maybeReconnectAsRequestedAccount({
   const signedInAccountId = resolveAccountIdFromRemote(remote);
   if (
     signedInAccountId === cleanRequestedAccountId &&
-    `${remote.user?.auth_session_hash ?? ""}`.trim()
+    (hasHubPassword(globals) ||
+      `${remote.user?.auth_session_hash ?? ""}`.trim())
   ) {
     return;
   }
@@ -1248,36 +1234,9 @@ async function maybeReconnectAsRequestedAccount({
     return;
   }
 
-  const rememberMeCookie = await maybeCreateLocalDevRememberMeCookie({
-    globals,
-    apiBaseUrl,
-    requestedAccountId: cleanRequestedAccountId,
-    freshAuthDuration: "extended",
-  });
-  if (!rememberMeCookie?.value) {
-    throw new Error(
-      "requested-account bootstrap requires local dev hub-password access",
-    );
-  }
-
-  try {
-    remote.client.close();
-  } catch {
-    // ignore
-  }
-
-  const nextGlobals: GlobalOptions = {
-    ...globals,
-    cookie: buildRememberMeCookieHeader(apiBaseUrl, rememberMeCookie.value),
-    hubPassword: "",
-  };
-  const nextRemote = await connectRemote({
-    globals: nextGlobals,
-    apiBaseUrl,
-    timeoutMs,
-  });
-
-  return { globals: nextGlobals, remote: nextRemote };
+  throw new Error(
+    "requested-account hub-password impersonation was not accepted by the hub; rebuild/restart the dev hub or sign in with an account cookie",
+  );
 }
 
 async function contextForGlobals(
@@ -1310,8 +1269,6 @@ async function contextForGlobals(
   });
   const bootstrapped = await maybeReconnectAsRequestedAccount({
     globals: effectiveGlobals,
-    apiBaseUrl,
-    timeoutMs,
     remote,
   });
   if (bootstrapped) {

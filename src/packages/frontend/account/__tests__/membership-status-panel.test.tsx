@@ -111,6 +111,9 @@ jest.mock("./../membership-package-manager", () => ({
   ClaimableMembershipPackagesPanel: () => (
     <div>claimable-membership-packages-panel</div>
   ),
+  SiteLicenseReverificationPanel: () => (
+    <div>site-license-reverification-panel</div>
+  ),
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -132,6 +135,28 @@ jest.mock("@cocalc/frontend/purchases/managed-egress-history", () => ({
   ),
   ManagedEgressRateSummary: () => <div>recent-egress-summary</div>,
   ManagedEgressTopProjectsSummary: () => <div>top-projects-summary</div>,
+}));
+
+jest.mock("@cocalc/frontend/purchases/managed-egress-recent-events", () => ({
+  formatManagedEgressCategory: (category: string) =>
+    category === "file-download" ? "File downloads" : category,
+  ManagedEgressRecentEventsButton: ({ events }: any) => (
+    <div>
+      <button>View recent events ({events?.length ?? 0})</button>
+      <div>Recent managed egress events</div>
+      {events?.map((event: any, i: number) => (
+        <div key={i}>
+          <div>
+            {event.category === "file-download"
+              ? "File downloads"
+              : event.category}
+          </div>
+          <div>{event.project_title}</div>
+          <div>{event.metadata?.request_path}</div>
+        </div>
+      ))}
+    </div>
+  ),
 }));
 
 function deferred<T>() {

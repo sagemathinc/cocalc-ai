@@ -92,6 +92,21 @@ interface RawMembershipPackageAssignment {
   grant_purchase_id?: number | null;
 }
 
+interface RawSiteLicensePoolRequestSummary {
+  id: string;
+  state: string;
+}
+
+interface RawSiteLicenseTerms {
+  id?: string | null;
+  name?: string | null;
+  organization_name?: string | null;
+  owner_account_id?: string | null;
+  custom_terms_url?: string | null;
+  custom_policy_url?: string | null;
+  terms_version_label?: string | null;
+}
+
 const MEMBERSHIP_PACKAGE_KINDS = new Set<MembershipPackageKind>([
   "course",
   "team",
@@ -283,6 +298,213 @@ function getInstitutionalClaimScopeKind(
 ): string {
   const explicit = `${metadata?.claim_scope_kind ?? ""}`.trim().toLowerCase();
   return explicit || "institutional-domain-set";
+}
+
+function packageRequiresApproval(pkg: MembershipPackageRecord): boolean {
+  return pkg.kind === "site" && pkg.metadata?.requires_approval === true;
+}
+
+function getSiteLicenseId(
+  metadata?: Record<string, unknown> | null,
+): string | undefined {
+  const siteLicenseId = `${metadata?.site_license_id ?? ""}`.trim();
+  return siteLicenseId || undefined;
+}
+
+function getPackageExclusiveGroup(pkg: {
+  membership_class: string;
+  metadata?: Record<string, unknown> | null;
+}): string {
+  return (
+    `${pkg.metadata?.exclusive_group ?? ""}`.trim().toLowerCase() ||
+    `${pkg.membership_class}`.trim().toLowerCase()
+  );
+}
+
+async function getActiveSiteLicenseAssignmentInExclusiveGroup({
+  pkg,
+  account_id,
+  client,
+  exclude_package_id,
+}: {
+  pkg: MembershipPackageRecord;
+  account_id: string;
+  client?: PoolClient;
+  exclude_package_id?: string;
+}): Promise<
+  | {
+      package_id: string;
+      assignment_id: string;
+      membership_class: string;
+    }
+  | undefined
+> {
+  if (pkg.kind !== "site") {
+    return;
+  }
+  const siteLicenseId = getSiteLicenseId(pkg.metadata);
+  if (!siteLicenseId) {
+    return;
+  }
+  const exclusiveGroup = getPackageExclusiveGroup(pkg);
+  const { rows } = await getQueryClient(client).query<{
+    assignment_id: string;
+    package_id: string;
+    membership_class: string;
+    metadata?: Record<string, unknown> | null;
+  }>(
+    `
+      SELECT
+        a.id AS assignment_id,
+        p.id AS package_id,
+        p.membership_class,
+        p.metadata
+      FROM membership_package_assignments a
+      JOIN membership_packages p
+        ON p.id = a.package_id
+      WHERE a.account_id = $1
+        AND a.revoked_at IS NULL
+        AND p.kind IN ('site', 'domain')
+        AND p.metadata ->> 'site_license_id' = $2
+        AND ($3::uuid IS NULL OR p.id <> $3::uuid)
+      ORDER BY a.assigned_at DESC NULLS LAST, a.created DESC NULLS LAST
+    `,
+    [account_id, siteLicenseId, exclude_package_id ?? null],
+  );
+  return rows.find(
+    (row) =>
+      getPackageExclusiveGroup({
+        membership_class: row.membership_class,
+        metadata: row.metadata,
+      }) === exclusiveGroup,
+  );
+}
+
+function getPackageStringMetadata(
+  pkg: MembershipPackageRecord,
+  key: string,
+): string | undefined {
+  const value = `${pkg.metadata?.[key] ?? ""}`.trim();
+  return value || undefined;
+}
+
+async function getPendingSiteLicensePoolRequestForAccount({
+  pkg,
+  account_id,
+  canonical_identity,
+  client,
+}: {
+  pkg: MembershipPackageRecord;
+  account_id: string;
+  canonical_identity: string;
+  client?: PoolClient;
+}): Promise<RawSiteLicensePoolRequestSummary | undefined> {
+  const siteLicenseId = getPackageStringMetadata(pkg, "site_license_id");
+  if (!siteLicenseId) return;
+  const { rows } = await getQueryClient(
+    client,
+  ).query<RawSiteLicensePoolRequestSummary>(
+    `SELECT id, state
+       FROM site_license_pool_requests
+       WHERE site_license_id=$1
+         AND package_id=$2
+         AND state='pending'
+         AND (account_id=$3 OR canonical_identity=$4)
+       ORDER BY requested_at DESC
+       LIMIT 1`,
+    [siteLicenseId, pkg.id, account_id, canonical_identity],
+  );
+  return rows[0];
+}
+
+async function getSiteLicenseTermsForPackage({
+  pkg,
+  client,
+}: {
+  pkg: MembershipPackageRecord;
+  client?: PoolClient;
+}): Promise<RawSiteLicenseTerms> {
+  const siteLicenseId = getPackageStringMetadata(pkg, "site_license_id");
+  if (!siteLicenseId) {
+    return {};
+  }
+  const { rows } = await getQueryClient(client).query<RawSiteLicenseTerms>(
+    `SELECT id, name, organization_name, owner_account_id,
+            custom_terms_url, custom_policy_url, terms_version_label
+       FROM site_licenses
+       WHERE id=$1`,
+    [siteLicenseId],
+  );
+  return rows[0] ?? {};
+}
+
+function requiresTermsAcceptance(terms: RawSiteLicenseTerms): boolean {
+  return !!(
+    `${terms.custom_terms_url ?? ""}`.trim() ||
+    `${terms.custom_policy_url ?? ""}`.trim()
+  );
+}
+
+function assertTermsAccepted({
+  terms,
+  accepted_terms,
+}: {
+  terms: RawSiteLicenseTerms;
+  accepted_terms?: boolean;
+}) {
+  if (requiresTermsAcceptance(terms) && accepted_terms !== true) {
+    throw Error("accept the site-license terms and policies before claiming");
+  }
+}
+
+function getTermsAcceptanceMetadata({
+  terms,
+  accepted_terms,
+}: {
+  terms: RawSiteLicenseTerms;
+  accepted_terms?: boolean;
+}): Record<string, unknown> {
+  return {
+    accepted_terms: accepted_terms === true,
+    custom_terms_url: terms.custom_terms_url ?? null,
+    custom_policy_url: terms.custom_policy_url ?? null,
+    terms_version_label: terms.terms_version_label ?? null,
+    terms_accepted_at:
+      accepted_terms === true ? new Date().toISOString() : null,
+  };
+}
+
+function getSiteLicenseAffiliationMetadata({
+  pkg,
+  matched_email_address,
+  site_license,
+  verified_at = new Date(),
+}: {
+  pkg: MembershipPackageRecord;
+  matched_email_address: string;
+  site_license?: RawSiteLicenseTerms | null;
+  verified_at?: Date;
+}): Record<string, unknown> {
+  if (pkg.kind !== "site") {
+    return {};
+  }
+  return {
+    site_license_id: getSiteLicenseId(pkg.metadata) ?? null,
+    site_license_name: site_license?.name ?? null,
+    organization_name: site_license?.organization_name ?? null,
+    site_license_owner_account_id:
+      site_license?.owner_account_id ?? pkg.owner_account_id,
+    pool_name: `${pkg.metadata?.pool_name ?? ""}`.trim() || null,
+    verification_policy:
+      `${pkg.metadata?.verification_policy ?? ""}`.trim() || "email-domain",
+    exclusive_group: getPackageExclusiveGroup(pkg),
+    affiliation_reverification_days:
+      pkg.metadata?.affiliation_reverification_days ?? null,
+    affiliation_reverification_grace_days:
+      pkg.metadata?.affiliation_reverification_grace_days ?? null,
+    matched_email_address,
+    affiliation_verified_at: verified_at.toISOString(),
+  };
 }
 
 function getInstitutionalClaimDescriptorForEmail({
@@ -1575,7 +1797,10 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
     .map((row) => normalizePackageRecord(row))
     .filter((row): row is MembershipPackageRecord => !!row);
   const claimables = new Map<string, ClaimableMembershipPackage>();
-  const claimIdentityCache = new Map<string, boolean>();
+  const claimIdentityCache = new Map<
+    string,
+    { account_id?: string | null } | null
+  >();
   for (const pkg of allPackages) {
     const assignments = await listMembershipPackageAssignments({
       package_id: pkg.id,
@@ -1643,13 +1868,38 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
               scope_key: claimDescriptor.scope_key,
               canonical_identity: claimDescriptor.canonical_identity,
             });
-            claimIdentityCache.set(claimIdentityKey, currentClaim != null);
+            claimIdentityCache.set(claimIdentityKey, currentClaim);
           }
-          blocked = claimIdentityCache.get(claimIdentityKey) ?? false;
+          const currentClaim = claimIdentityCache.get(claimIdentityKey) ?? null;
+          blocked =
+            currentClaim != null &&
+            (!packageRequiresApproval(pkg) ||
+              currentClaim.account_id !== account_id);
         }
         if (blocked) {
           continue;
         }
+        if (
+          !packageRequiresApproval(pkg) &&
+          (await getActiveSiteLicenseAssignmentInExclusiveGroup({
+            pkg,
+            account_id,
+            client,
+            exclude_package_id: pkg.id,
+          })) != null
+        ) {
+          continue;
+        }
+        const pendingRequest =
+          packageRequiresApproval(pkg) && claimDescriptor != null
+            ? await getPendingSiteLicensePoolRequestForAccount({
+                pkg,
+                account_id,
+                canonical_identity: claimDescriptor.canonical_identity,
+                client,
+              })
+            : undefined;
+        const terms = await getSiteLicenseTermsForPackage({ pkg, client });
         claimables.set(pkg.id, {
           package_id: pkg.id,
           kind: pkg.kind,
@@ -1660,6 +1910,21 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
           available_seat_count,
           matched_email_address: matchedEmailAddress,
           reason: "domain-match",
+          requires_approval: packageRequiresApproval(pkg),
+          site_license_id: getPackageStringMetadata(pkg, "site_license_id"),
+          pool_name: getPackageStringMetadata(pkg, "pool_name"),
+          verification_policy: getPackageStringMetadata(
+            pkg,
+            "verification_policy",
+          ) as ClaimableMembershipPackage["verification_policy"],
+          exclusive_group: getPackageStringMetadata(pkg, "exclusive_group"),
+          pending_request_id: pendingRequest?.id,
+          pending_request_state:
+            pendingRequest?.state as ClaimableMembershipPackage["pending_request_state"],
+          custom_terms_url: terms.custom_terms_url ?? null,
+          custom_policy_url: terms.custom_policy_url ?? null,
+          terms_version_label: terms.terms_version_label ?? null,
+          requires_terms_acceptance: requiresTermsAcceptance(terms),
           metadata: normalizeMetadata(pkg.metadata),
         });
       }
@@ -1708,7 +1973,7 @@ async function listClaimableMembershipPackagesAcrossCluster({
   return sortClaimableMembershipPackages(Array.from(claimables.values()));
 }
 
-export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
+export async function resolveClaimableMembershipPackageOwnerBay({
   package_id,
   account_id,
   verified_email_addresses,
@@ -1717,6 +1982,27 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
   package_id: string;
   account_id: string;
   verified_email_addresses: string[];
+  client?: PoolClient;
+}): Promise<string | undefined> {
+  const claimables = await listClaimableMembershipPackagesAcrossCluster({
+    account_id,
+    verified_email_addresses,
+    client,
+  });
+  return claimables.find((row) => row.package_id === package_id)?.owner_bay_id;
+}
+
+export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
+  package_id,
+  account_id,
+  verified_email_addresses,
+  accepted_terms,
+  client,
+}: {
+  package_id: string;
+  account_id: string;
+  verified_email_addresses: string[];
+  accepted_terms?: boolean;
   client?: PoolClient;
 }): Promise<MembershipPackageAssignment> {
   let reservedInstitutionalClaim:
@@ -1734,6 +2020,14 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
         if (pkg.expires_at && pkg.expires_at <= new Date()) {
           throw Error("membership package has expired");
         }
+        if (packageRequiresApproval(pkg)) {
+          throw Error("this site-license pool requires manager approval");
+        }
+        const terms = await getSiteLicenseTermsForPackage({
+          pkg,
+          client: dbClient,
+        });
+        assertTermsAccepted({ terms, accepted_terms });
         const verifiedEmailAddresses = Array.from(
           new Set(
             verified_email_addresses
@@ -1754,6 +2048,18 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
         );
         if (existing) {
           return existing;
+        }
+        const existingSameGroup =
+          await getActiveSiteLicenseAssignmentInExclusiveGroup({
+            pkg,
+            account_id,
+            client: dbClient,
+            exclude_package_id: package_id,
+          });
+        if (existingSameGroup != null) {
+          throw Error(
+            `account already has an active site-license seat in this ${getPackageExclusiveGroup(pkg)} group`,
+          );
         }
 
         const emailSet = new Set(verifiedEmailAddresses);
@@ -1790,6 +2096,14 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
           };
         }
         if (pendingAssignment) {
+          const baseMetadata = {
+            ...normalizeMetadata(pendingAssignment.metadata),
+            ...getSiteLicenseAffiliationMetadata({
+              pkg,
+              matched_email_address: pendingAssignment.email_address!,
+              site_license: terms,
+            }),
+          };
           const grantInfo = await createGrantForAssignment({
             owner_account_id: pkg.owner_account_id,
             package_id,
@@ -1797,11 +2111,11 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
             assigned_by_account_id:
               pendingAssignment.assigned_by_account_id ?? null,
             assignment_id: pendingAssignment.id,
-            metadata: pendingAssignment.metadata,
+            metadata: baseMetadata,
             client: dbClient,
           });
           const nextMetadata = {
-            ...normalizeMetadata(pendingAssignment.metadata),
+            ...baseMetadata,
             grant_id: grantInfo.grant_id,
             grant_source: grantInfo.grant_source,
             grant_purchase_id: grantInfo.grant_purchase_id ?? null,
@@ -1919,6 +2233,12 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
             metadata: {
               claimed_from_domain: matchedEmailAddress.split("@")[1],
               claimed_email_address: matchedEmailAddress,
+              ...getSiteLicenseAffiliationMetadata({
+                pkg,
+                matched_email_address: matchedEmailAddress,
+                site_license: terms,
+              }),
+              ...getTermsAcceptanceMetadata({ terms, accepted_terms }),
               claim_scope_key: reservedInstitutionalClaim.scope_key,
               claim_scope_kind: reservedInstitutionalClaim.scope_kind,
               claim_identity_key: reservedInstitutionalClaim.canonical_identity,
@@ -1969,10 +2289,12 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
 export async function claimMembershipPackageSeat({
   package_id,
   account_id,
+  accepted_terms,
   client,
 }: {
   package_id: string;
   account_id: string;
+  accepted_terms?: boolean;
   client?: PoolClient;
 }): Promise<MembershipPackageAssignment> {
   const verifiedEmailAddresses = await getVerifiedEmailAddressesForAccount(
@@ -1996,6 +2318,7 @@ export async function claimMembershipPackageSeat({
       package_id,
       account_id,
       verified_email_addresses: verifiedEmailAddresses,
+      accepted_terms,
       client,
     });
   }
@@ -2006,5 +2329,6 @@ export async function claimMembershipPackageSeat({
     package_id,
     account_id,
     verified_email_addresses: verifiedEmailAddresses,
+    accepted_terms,
   });
 }

@@ -15,7 +15,6 @@ Password reset works as follows:
 5. Send response to user that email has been sent (or there was an error).
 */
 
-import isAccountAvailable from "@cocalc/server/auth/is-account-available";
 import {
   recentAttempts,
   createReset,
@@ -24,6 +23,7 @@ import sendPasswordResetEmail from "@cocalc/server/email/password-reset";
 import getRequiresToken from "@cocalc/server/auth/tokens/get-requires-token";
 import { getLogger } from "@cocalc/backend/logger";
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
 
 const logger = getLogger("auth:password-reset");
 const GENERIC_RESET_MESSAGE =
@@ -50,7 +50,8 @@ async function handle(
   ip: string,
   opts: { hideAccountDetails: boolean },
 ): Promise<object> {
-  if (await isAccountAvailable(email)) {
+  const account = await getClusterAccountByEmail(email);
+  if (!account) {
     // Bad -- email is *available*, which means no way to reset
     // the password for it, since it doesn't exist.
     if (opts.hideAccountDetails) {

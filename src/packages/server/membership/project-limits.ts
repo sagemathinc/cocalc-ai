@@ -183,6 +183,13 @@ function extractProjectCollaboratorInviteLimit(
     .project_max_collaborators_and_pending_invites;
 }
 
+function extractCourseStudentInviteLimit(
+  resolution: MembershipResolution,
+): number | undefined {
+  return getEffectiveMembershipUsageLimits(resolution)
+    .course_max_students_and_pending_invites;
+}
+
 export async function getProjectCollaboratorInviteLimit({
   project_id,
   resolution,
@@ -306,11 +313,58 @@ export async function getProjectCollaboratorsAndPendingInviteCount(
   return Number(row?.collaborators ?? 0) + Number(row?.pending_invites ?? 0);
 }
 
+export async function getCourseStudentsAndPendingInviteCount(
+  course_project_id: string,
+): Promise<number> {
+  const pool = getPool("medium");
+  const { rows } = await pool.query<{
+    students: string | number;
+    pending_invites: string | number;
+  }>(
+    `
+      SELECT
+        COALESCE((
+          SELECT COUNT(*)
+          FROM projects
+          WHERE deleted IS NULL
+            AND course ->> 'type' = 'student'
+            AND course ->> 'project_id' = $1
+        ), 0) AS students,
+        COALESCE((
+          SELECT COUNT(*)
+          FROM project_collab_invites
+          WHERE status = 'pending'
+            AND scope = 'course_student'
+            AND context ->> 'course_project_id' = $1
+        ), 0) AS pending_invites
+    `,
+    [course_project_id],
+  );
+  const row = rows[0];
+  return Number(row?.students ?? 0) + Number(row?.pending_invites ?? 0);
+}
+
 export async function getProjectCollaboratorInviteUsage(project_id: string) {
   const [current, limit] = await Promise.all([
     getProjectCollaboratorsAndPendingInviteCount(project_id),
     getProjectCollaboratorInviteLimit({ project_id }),
   ]);
+  return {
+    current,
+    limit: limit ?? null,
+    remaining: limit == null ? null : Math.max(0, limit - current),
+  };
+}
+
+export async function getCourseStudentInviteUsage(course_project_id: string) {
+  const account_id = await getProjectUsageAccountId(course_project_id);
+  const [current, resolution] = await Promise.all([
+    getCourseStudentsAndPendingInviteCount(course_project_id),
+    account_id ? resolveMembershipForAccount(account_id) : undefined,
+  ]);
+  const limit = resolution
+    ? extractCourseStudentInviteLimit(resolution)
+    : undefined;
   return {
     current,
     limit: limit ?? null,
@@ -342,6 +396,34 @@ export async function assertProjectCollaboratorInviteLimit({
   if (current + additional > limit) {
     throw new Error(
       `project collaborator limit reached (${current}/${limit}); revoke a pending invite, remove a collaborator, or upgrade membership`,
+    );
+  }
+}
+
+export async function assertCourseStudentInviteLimit({
+  course_project_id,
+  resolution,
+  additional = 1,
+}: {
+  course_project_id: string;
+  resolution?: MembershipResolution;
+  additional?: number;
+}): Promise<void> {
+  const account_id = await getProjectUsageAccountId(course_project_id);
+  if (!account_id) {
+    return;
+  }
+  const effectiveResolution =
+    resolution ?? (await resolveMembershipForAccount(account_id));
+  const limit = extractCourseStudentInviteLimit(effectiveResolution);
+  if (limit == null) {
+    return;
+  }
+  const current =
+    await getCourseStudentsAndPendingInviteCount(course_project_id);
+  if (current + additional > limit) {
+    throw new Error(
+      `course student limit reached (${current}/${limit}); revoke pending invites, remove students, or upgrade membership`,
     );
   }
 }

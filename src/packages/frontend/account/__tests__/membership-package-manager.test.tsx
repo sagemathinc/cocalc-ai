@@ -8,16 +8,26 @@ import {
 const getMembershipPackages = jest.fn();
 const getClaimableMembershipPackages = jest.fn();
 const claimMembershipPackageSeat = jest.fn();
+const requestSiteLicensePool = jest.fn();
+const getSiteLicenseOverview = jest.fn();
+const reviewSiteLicensePoolRequest = jest.fn();
 const getMembershipPackageQuote = jest.fn();
 const isPurchaseAllowed = jest.fn();
 const purchaseMembershipPackage = jest.fn();
 const processPaymentIntents = jest.fn();
+const adminProvisionSiteLicense = jest.fn();
 const adminProvisionMembershipPackage = jest.fn();
 const updateMembershipPackage = jest.fn();
 const assignMembershipPackageSeat = jest.fn();
 const revokeMembershipPackageSeat = jest.fn();
+const getSiteLicenseAffiliationReverificationStatus = jest.fn();
+const refreshSiteLicenseAffiliationVerification = jest.fn();
 const userSearch = jest.fn();
 const getNames = jest.fn();
+const runFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
+  await action();
+  return true;
+});
 
 let accountId = "owner-1";
 let isAdmin = false;
@@ -34,6 +44,14 @@ jest.mock("@cocalc/frontend/components", () => ({
 
 jest.mock("@cocalc/frontend/components/time-ago", () => ({
   TimeAgo: () => <span>time-ago</span>,
+}));
+
+jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
+  FreshAuthModal: () => <div data-testid="fresh-auth-modal" />,
+  useFreshAuthAction: () => ({
+    freshAuthModalProps: {},
+    runFreshAuthAction,
+  }),
 }));
 
 jest.mock("@cocalc/frontend/purchases/money-statistic", () => (props: any) => (
@@ -56,12 +74,18 @@ jest.mock("@cocalc/frontend/purchases/api", () => ({
     getClaimableMembershipPackages(...args),
   claimMembershipPackageSeat: (...args: any[]) =>
     claimMembershipPackageSeat(...args),
+  requestSiteLicensePool: (...args: any[]) => requestSiteLicensePool(...args),
+  getSiteLicenseOverview: (...args: any[]) => getSiteLicenseOverview(...args),
+  reviewSiteLicensePoolRequest: (...args: any[]) =>
+    reviewSiteLicensePoolRequest(...args),
   getMembershipPackageQuote: (...args: any[]) =>
     getMembershipPackageQuote(...args),
   isPurchaseAllowed: (...args: any[]) => isPurchaseAllowed(...args),
   purchaseMembershipPackage: (...args: any[]) =>
     purchaseMembershipPackage(...args),
   processPaymentIntents: (...args: any[]) => processPaymentIntents(...args),
+  adminProvisionSiteLicense: (...args: any[]) =>
+    adminProvisionSiteLicense(...args),
   adminProvisionMembershipPackage: (...args: any[]) =>
     adminProvisionMembershipPackage(...args),
   updateMembershipPackage: (...args: any[]) => updateMembershipPackage(...args),
@@ -69,10 +93,15 @@ jest.mock("@cocalc/frontend/purchases/api", () => ({
     assignMembershipPackageSeat(...args),
   revokeMembershipPackageSeat: (...args: any[]) =>
     revokeMembershipPackageSeat(...args),
+  getSiteLicenseAffiliationReverificationStatus: (...args: any[]) =>
+    getSiteLicenseAffiliationReverificationStatus(...args),
+  refreshSiteLicenseAffiliationVerification: (...args: any[]) =>
+    refreshSiteLicenseAffiliationVerification(...args),
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
+    browser_id: "browser-1",
     users_client: {
       user_search: (...args: any[]) => userSearch(...args),
       getNames: (...args: any[]) => getNames(...args),
@@ -83,7 +112,6 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 const TIERS = [
   { id: "member", label: "Member", store_visible: true },
   { id: "pro", label: "Pro", store_visible: true },
-  { id: "student", label: "Student", store_visible: false },
 ];
 
 describe("MembershipPackageManager", () => {
@@ -129,6 +157,7 @@ describe("MembershipPackageManager", () => {
     isAdmin = false;
     getClaimableMembershipPackages.mockResolvedValue([]);
     processPaymentIntents.mockResolvedValue({ count: 0 });
+    runFreshAuthAction.mockClear();
     getNames.mockResolvedValue({
       "user-1": { first_name: "Grace", last_name: "Hopper" },
     });
@@ -377,16 +406,17 @@ describe("MembershipPackageManager", () => {
   it("lets admins provision a site license without payment", async () => {
     isAdmin = true;
     getMembershipPackages.mockResolvedValue([]);
-    adminProvisionMembershipPackage.mockResolvedValue({
-      id: "site-1",
-      owner_account_id: "owner-1",
-      kind: "site",
-      membership_class: "pro",
-      seat_count: 25,
-      active_assignment_count: 0,
-      available_seat_count: 25,
-      assignments: [],
-      metadata: { allowed_domains: ["example.edu"] },
+    adminProvisionSiteLicense.mockResolvedValue({
+      site_license: {
+        id: "license-1",
+        name: "Campus site license",
+        organization_name: "Example University",
+        owner_account_id: "owner-1",
+        allowed_domains: ["example.edu"],
+      },
+      pools: [],
+      managers: [],
+      pending_requests: [],
     });
 
     render(<MembershipPackageManager tiers={TIERS} />);
@@ -398,7 +428,7 @@ describe("MembershipPackageManager", () => {
     fireEvent.click(screen.getByText("Provision site license"));
 
     await waitFor(() => {
-      expect(screen.getByText(/support-managed license/i)).toBeTruthy();
+      expect(screen.getByText(/real site license/i)).toBeTruthy();
     });
 
     const domainInput = screen.getByLabelText("Allowed email domains");
@@ -408,13 +438,39 @@ describe("MembershipPackageManager", () => {
     fireEvent.click(screen.getByText("Provision license"));
 
     await waitFor(() => {
-      expect(adminProvisionMembershipPackage).toHaveBeenCalledWith({
+      expect(runFreshAuthAction).toHaveBeenCalledTimes(1);
+      expect(adminProvisionSiteLicense).toHaveBeenCalledWith({
         owner_account_id: undefined,
-        kind: "site",
-        membership_class: "member",
-        seat_count: 25,
         allowed_domains: ["dept.example.edu", "example.edu"],
+        name: "Campus site license",
+        organization_name: "Example University",
+        custom_terms_url: null,
+        custom_policy_url: null,
+        terms_version_label: null,
+        renewal_policy: "annual",
+        overage_policy: "hard-cap",
+        starts_at: undefined,
         expires_at: undefined,
+        pools: expect.arrayContaining([
+          expect.objectContaining({
+            pool_name: "Students",
+            membership_class: "student",
+            requires_approval: false,
+            allowed_domains: ["dept.example.edu", "example.edu"],
+          }),
+          expect.objectContaining({
+            pool_name: "Instructors",
+            membership_class: "instructor",
+            requires_approval: true,
+            allowed_domains: ["dept.example.edu", "example.edu"],
+          }),
+          expect.objectContaining({
+            pool_name: "Researchers",
+            membership_class: "researcher",
+            requires_approval: true,
+            allowed_domains: ["dept.example.edu", "example.edu"],
+          }),
+        ]),
       });
     });
   });
@@ -503,7 +559,9 @@ describe("ClaimableMembershipPackagesPanel", () => {
     await waitFor(() => {
       expect(screen.getByText("Claim memberships")).toBeTruthy();
       expect(
-        screen.getByText(/Verified domain match via ada@example.edu/i),
+        screen.getByText(
+          /Verified domain match for site-license pool via ada@example.edu/i,
+        ),
       ).toBeTruthy();
     });
 
@@ -514,6 +572,96 @@ describe("ClaimableMembershipPackagesPanel", () => {
         package_id: "site-1",
       });
       expect(getClaimableMembershipPackages).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("requests manager approval for an approval-required site-license pool", async () => {
+    getClaimableMembershipPackages.mockResolvedValue([
+      {
+        package_id: "instructor-pool-1",
+        kind: "site",
+        membership_class: "pro",
+        owner_account_id: "owner-1",
+        available_seat_count: 3,
+        matched_email_address: "ada@example.edu",
+        reason: "domain-match",
+        requires_approval: true,
+        pool_name: "Instructors",
+      },
+    ]);
+    requestSiteLicensePool.mockResolvedValue({
+      id: "request-1",
+      package_id: "instructor-pool-1",
+      account_id: "account-1",
+      state: "pending",
+    });
+
+    render(<ClaimableMembershipPackagesPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Request access")).toBeTruthy();
+      expect(screen.getByText("Manager approval required")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Request access"));
+
+    await waitFor(() => {
+      expect(requestSiteLicensePool).toHaveBeenCalledWith({
+        owner_account_id: "owner-1",
+        package_id: "instructor-pool-1",
+      });
+      expect(claimMembershipPackageSeat).not.toHaveBeenCalled();
+    });
+  });
+
+  it("requires custom terms confirmation before claiming a site-license pool", async () => {
+    getClaimableMembershipPackages.mockResolvedValue([
+      {
+        package_id: "site-terms-1",
+        kind: "site",
+        membership_class: "member",
+        owner_account_id: "owner-1",
+        available_seat_count: 3,
+        matched_email_address: "ada@example.edu",
+        reason: "domain-match",
+        requires_terms_acceptance: true,
+        custom_terms_url: "https://example.edu/terms",
+        custom_policy_url: "https://example.edu/policy",
+        terms_version_label: "2026 pilot",
+      },
+    ]);
+    claimMembershipPackageSeat.mockResolvedValue({
+      id: "assignment-1",
+      package_id: "site-terms-1",
+      account_id: "account-1",
+    });
+
+    render(<ClaimableMembershipPackagesPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review required")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Claim seat"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Custom terms of service")).toBeTruthy();
+      expect(screen.getByText("Institution policy")).toBeTruthy();
+      expect(screen.getByText("Terms version: 2026 pilot")).toBeTruthy();
+    });
+    expect(claimMembershipPackageSeat).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByText(/I have reviewed the institution terms and policies/i),
+    );
+    const claimButtons = screen.getAllByText("Claim seat");
+    fireEvent.click(claimButtons[claimButtons.length - 1]);
+
+    await waitFor(() => {
+      expect(claimMembershipPackageSeat).toHaveBeenCalledWith({
+        package_id: "site-terms-1",
+        accepted_terms: true,
+      });
     });
   });
 });

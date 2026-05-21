@@ -94,12 +94,10 @@
       "@parcel/watcher",
       "bufferutil",
       "core-js",
-      "diskusage",
       "dtrace-provider",
       "electron",
       "es5-ext",
       "esbuild",
-      "fs-ext",
       "node-pty",
       "protobufjs",
       "sharp",
@@ -109,7 +107,8 @@
       "zeromq"
     ],
     "patchedDependencies": {
-      "@rc-component/portal@2.2.0": "patches/@rc-component__portal@2.2.0.patch"
+      "@rc-component/portal@2.2.0": "patches/@rc-component__portal@2.2.0.patch",
+      "fs-ext@2.1.1": "patches/fs-ext@2.1.1.patch"
     }
   }
 }

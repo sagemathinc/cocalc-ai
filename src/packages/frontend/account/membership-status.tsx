@@ -45,6 +45,7 @@ import MembershipPurchaseModal from "./membership-purchase-modal";
 import {
   ClaimableMembershipPackagesPanel,
   MembershipPackageManager,
+  SiteLicenseReverificationPanel,
 } from "./membership-package-manager";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
@@ -921,6 +922,10 @@ export function MembershipStatusPanel({
           <Divider style={{ margin: "8px 0" }} />
 
           <ClaimableMembershipPackagesPanel onChanged={handleChanged} />
+
+          <Divider style={{ margin: "8px 0" }} />
+
+          <SiteLicenseReverificationPanel onChanged={handleChanged} />
 
           <Divider style={{ margin: "8px 0" }} />
 

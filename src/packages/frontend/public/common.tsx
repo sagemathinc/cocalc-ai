@@ -84,12 +84,16 @@ export function PublicSectionShell({
   beforeTitle,
   children,
   config,
+  sider,
+  siderLabel,
   title,
 }: {
   active?: PublicTopNavActiveKey;
   beforeTitle?: ReactNode;
   children: ReactNode;
   config?: PublicConfig;
+  sider?: ReactNode;
+  siderLabel?: string;
   title?: ReactNode;
 }) {
   return (
@@ -97,6 +101,8 @@ export function PublicSectionShell({
       active={active}
       beforeTitle={beforeTitle}
       config={config}
+      sider={sider}
+      siderLabel={siderLabel}
       title={title}
     >
       {children}

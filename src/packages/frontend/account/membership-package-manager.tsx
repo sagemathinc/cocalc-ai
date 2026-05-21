@@ -7,6 +7,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   DatePicker,
   Descriptions,
   Divider,
@@ -34,15 +35,20 @@ import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import MoneyStatistic from "@cocalc/frontend/purchases/money-statistic";
 import Payments from "@cocalc/frontend/purchases/payments";
 import {
-  adminProvisionMembershipPackage,
+  adminProvisionSiteLicense,
   assignMembershipPackageSeat,
   claimMembershipPackageSeat,
+  getSiteLicenseAffiliationReverificationStatus,
   getClaimableMembershipPackages,
   getMembershipPackageQuote,
   getMembershipPackages,
+  getSiteLicenseOverview,
   isPurchaseAllowed,
   processPaymentIntents,
   purchaseMembershipPackage,
+  refreshSiteLicenseAffiliationVerification,
+  requestSiteLicensePool,
+  reviewSiteLicensePoolRequest,
   revokeMembershipPackageSeat,
   updateMembershipPackage,
 } from "@cocalc/frontend/purchases/api";
@@ -55,6 +61,11 @@ import type {
   MembershipPackageDetails,
   MembershipPackageKind,
   MembershipPackageQuote,
+  SiteLicenseAffiliationReverificationUserStatus,
+  SiteLicenseOverview,
+  SiteLicensePoolConfig,
+  SiteLicensePoolRequest,
+  SiteLicenseVerificationPolicy,
 } from "@cocalc/conat/hub/api/purchases";
 import { MEMBERSHIP_PACKAGE_PURCHASE } from "@cocalc/util/db-schema/purchases";
 import {
@@ -63,6 +74,7 @@ import {
   is_valid_email_address as isValidEmailAddress,
 } from "@cocalc/util/misc";
 import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
+import { COLORS } from "@cocalc/util/theme";
 import type { LineItem } from "@cocalc/util/stripe/types";
 
 const { Paragraph, Text, Title } = Typography;
@@ -73,6 +85,12 @@ interface MembershipTierLike {
   store_visible?: boolean;
   disabled?: boolean;
 }
+
+const SITE_LICENSE_TEMPLATE_TIERS: MembershipTierLike[] = [
+  { id: "student", label: "Student" },
+  { id: "instructor", label: "Instructor" },
+  { id: "researcher", label: "Researcher" },
+];
 
 interface Props {
   tiers: MembershipTierLike[];
@@ -132,6 +150,17 @@ function getTeamSeatTiers(tiers: MembershipTierLike[]): MembershipTierLike[] {
         tier.id !== "student",
     )
     .sort((a, b) => (a.label ?? a.id).localeCompare(b.label ?? b.id));
+}
+
+function mergeTierOptions(
+  ...tierLists: MembershipTierLike[][]
+): MembershipTierLike[] {
+  const options = new Map<string, MembershipTierLike>();
+  for (const tier of tierLists.flat()) {
+    if (tier.disabled) continue;
+    options.set(tier.id, { ...options.get(tier.id), ...tier });
+  }
+  return Array.from(options.values());
 }
 
 function getPackageDomains(
@@ -198,9 +227,49 @@ function getAccountSecondaryLabel(
 function getClaimReasonLabel(
   claimablePackage: ClaimableMembershipPackage,
 ): string {
-  return claimablePackage.reason === "email-assignment"
-    ? `Assigned to verified email ${claimablePackage.matched_email_address}`
-    : `Verified domain match via ${claimablePackage.matched_email_address}`;
+  if (claimablePackage.reason === "email-assignment") {
+    return `Assigned to verified email ${claimablePackage.matched_email_address}`;
+  }
+  const poolName = claimablePackage.pool_name
+    ? `${claimablePackage.pool_name} pool`
+    : "site-license pool";
+  return `Verified domain match for ${poolName} via ${claimablePackage.matched_email_address}`;
+}
+
+function dateLabel(value?: Date | string | null): string {
+  if (!value) return "none";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return `${value}`;
+  return date.toISOString().slice(0, 10);
+}
+
+function countPendingRequests(overview: SiteLicenseOverview): number {
+  return overview.pending_requests.filter(
+    (request) => request.state === "pending",
+  ).length;
+}
+
+function getPoolActiveSeats(
+  pool: SiteLicenseOverview["pools"][number],
+): number {
+  return pool.assignments.filter(isActiveAssignment).length;
+}
+
+function getPoolAvailableSeats(
+  pool: SiteLicenseOverview["pools"][number],
+): number {
+  return Math.max(0, pool.seat_count - getPoolActiveSeats(pool));
+}
+
+function getPolicyColor(policy: SiteLicenseVerificationPolicy): string {
+  switch (policy) {
+    case "email-domain":
+      return "green";
+    case "manager-approval":
+      return "gold";
+    case "sso-affiliation":
+      return "blue";
+  }
 }
 
 export function ClaimableMembershipPackagesPanel({
@@ -210,6 +279,10 @@ export function ClaimableMembershipPackagesPanel({
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [claimingPackageId, setClaimingPackageId] = useState<string>("");
+  const [requestingPackageId, setRequestingPackageId] = useState<string>("");
+  const [termsTarget, setTermsTarget] =
+    useState<ClaimableMembershipPackage | null>(null);
+  const [termsAccepted, setTermsAccepted] = useState<boolean>(false);
   const [claimables, setClaimables] = useState<ClaimableMembershipPackage[]>(
     [],
   );
@@ -235,6 +308,60 @@ export function ClaimableMembershipPackagesPanel({
   useEffect(() => {
     void refreshClaimables();
   }, [account_id]);
+
+  async function claimPackage(
+    claimablePackage: ClaimableMembershipPackage,
+    accepted_terms = false,
+  ) {
+    setClaimingPackageId(claimablePackage.package_id);
+    setError("");
+    try {
+      await claimMembershipPackageSeat({
+        package_id: claimablePackage.package_id,
+        ...(accepted_terms ? { accepted_terms: true } : {}),
+      });
+      await refreshClaimables();
+      onChanged?.();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setClaimingPackageId("");
+    }
+  }
+
+  async function requestPool(
+    claimablePackage: ClaimableMembershipPackage,
+    accepted_terms = false,
+  ) {
+    setRequestingPackageId(claimablePackage.package_id);
+    setError("");
+    try {
+      await requestSiteLicensePool({
+        owner_account_id: claimablePackage.owner_account_id,
+        package_id: claimablePackage.package_id,
+        ...(accepted_terms ? { accepted_terms: true } : {}),
+      });
+      await refreshClaimables();
+      onChanged?.();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setRequestingPackageId("");
+    }
+  }
+
+  function handlePrimaryAction(claimablePackage: ClaimableMembershipPackage) {
+    if (claimablePackage.requires_terms_acceptance) {
+      setTermsTarget(claimablePackage);
+      setTermsAccepted(false);
+      return;
+    }
+    if (claimablePackage.requires_approval) {
+      void requestPool(claimablePackage);
+    } else {
+      void claimPackage(claimablePackage);
+    }
+  }
 
   if (!account_id) {
     return null;
@@ -275,33 +402,53 @@ export function ClaimableMembershipPackagesPanel({
                 </Space>
               }
               extra={
-                <Button
-                  type="primary"
-                  loading={claimingPackageId === claimablePackage.package_id}
-                  onClick={async () => {
-                    setClaimingPackageId(claimablePackage.package_id);
-                    setError("");
-                    try {
-                      await claimMembershipPackageSeat({
-                        package_id: claimablePackage.package_id,
-                      });
-                      await refreshClaimables();
-                      onChanged?.();
-                    } catch (err) {
-                      setError(`${err}`);
-                    } finally {
-                      setClaimingPackageId("");
+                claimablePackage.requires_approval ? (
+                  <Button
+                    type="primary"
+                    loading={
+                      requestingPackageId === claimablePackage.package_id
                     }
-                  }}
-                >
-                  Claim seat
-                </Button>
+                    disabled={claimablePackage.pending_request_id != null}
+                    onClick={() => handlePrimaryAction(claimablePackage)}
+                  >
+                    {claimablePackage.pending_request_id
+                      ? "Request pending"
+                      : "Request access"}
+                  </Button>
+                ) : (
+                  <Button
+                    type="primary"
+                    loading={claimingPackageId === claimablePackage.package_id}
+                    onClick={() => handlePrimaryAction(claimablePackage)}
+                  >
+                    Claim seat
+                  </Button>
+                )
               }
             >
               <Descriptions size="small" column={1}>
                 <Descriptions.Item label="Eligibility">
                   {getClaimReasonLabel(claimablePackage)}
                 </Descriptions.Item>
+                {claimablePackage.pool_name ? (
+                  <Descriptions.Item label="Pool">
+                    {claimablePackage.pool_name}
+                  </Descriptions.Item>
+                ) : null}
+                {claimablePackage.requires_approval ? (
+                  <Descriptions.Item label="Approval">
+                    {claimablePackage.pending_request_id ? (
+                      <Tag color="gold">Pending manager review</Tag>
+                    ) : (
+                      <Tag color="blue">Manager approval required</Tag>
+                    )}
+                  </Descriptions.Item>
+                ) : null}
+                {claimablePackage.requires_terms_acceptance ? (
+                  <Descriptions.Item label="Terms">
+                    <Tag color="purple">Review required</Tag>
+                  </Descriptions.Item>
+                ) : null}
                 <Descriptions.Item label="Available seats">
                   {claimablePackage.available_seat_count}
                 </Descriptions.Item>
@@ -315,7 +462,195 @@ export function ClaimableMembershipPackagesPanel({
           ))}
         </Space>
       ) : null}
+      <Modal
+        open={termsTarget != null}
+        title="Review institution terms"
+        okText={
+          termsTarget?.requires_approval ? "Request access" : "Claim seat"
+        }
+        okButtonProps={{ disabled: !termsAccepted }}
+        onCancel={() => {
+          setTermsTarget(null);
+          setTermsAccepted(false);
+        }}
+        onOk={async () => {
+          const target = termsTarget;
+          if (!target) return;
+          setTermsTarget(null);
+          setTermsAccepted(false);
+          if (target.requires_approval) {
+            await requestPool(target, true);
+          } else {
+            await claimPackage(target, true);
+          }
+        }}
+        destroyOnHidden
+      >
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+          <Alert
+            type="info"
+            showIcon
+            title="Your institution requires custom terms or policies"
+            description="Review the configured links before using this institution-funded CoCalc membership."
+          />
+          {termsTarget?.custom_terms_url ? (
+            <a
+              href={termsTarget.custom_terms_url}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Custom terms of service
+            </a>
+          ) : null}
+          {termsTarget?.custom_policy_url ? (
+            <a
+              href={termsTarget.custom_policy_url}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Institution policy
+            </a>
+          ) : null}
+          {termsTarget?.terms_version_label ? (
+            <Text type="secondary">
+              Terms version: {termsTarget.terms_version_label}
+            </Text>
+          ) : null}
+          <Checkbox
+            checked={termsAccepted}
+            onChange={(event) => setTermsAccepted(event.target.checked)}
+          >
+            I have reviewed the institution terms and policies for this
+            membership.
+          </Checkbox>
+        </Space>
+      </Modal>
     </div>
+  );
+}
+
+export function SiteLicenseReverificationPanel({
+  onChanged,
+}: {
+  onChanged?: () => void;
+}) {
+  const account_id = useTypedRedux("account", "account_id");
+  const [loading, setLoading] = useState<boolean>(false);
+  const [refreshing, setRefreshing] = useState<string>("");
+  const [error, setError] = useState<string>("");
+  const [status, setStatus] =
+    useState<SiteLicenseAffiliationReverificationUserStatus | null>(null);
+
+  async function refreshStatus() {
+    if (!account_id) {
+      setStatus(null);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      setStatus(await getSiteLicenseAffiliationReverificationStatus());
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void refreshStatus();
+  }, [account_id]);
+
+  async function refreshAffiliation(site_license_id?: string) {
+    setRefreshing(site_license_id ?? "all");
+    setError("");
+    try {
+      await refreshSiteLicenseAffiliationVerification({ site_license_id });
+      await refreshStatus();
+      onChanged?.();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setRefreshing("");
+    }
+  }
+
+  if (!account_id) return null;
+  if (loading && status == null) return null;
+  if (!error && (!status || status.seats.length === 0)) return null;
+
+  return (
+    <Card
+      size="small"
+      title={
+        <Space>
+          <Icon name="refresh" />
+          <span>Site-license affiliation</span>
+          {status?.pending_count ? (
+            <Tag color="gold">{status.pending_count} need review</Tag>
+          ) : null}
+          {status?.grace_expired_count ? (
+            <Tag color="red">{status.grace_expired_count} grace expired</Tag>
+          ) : null}
+        </Space>
+      }
+      extra={
+        <Button
+          size="small"
+          loading={refreshing === "all"}
+          onClick={() => void refreshAffiliation()}
+        >
+          Refresh with verified email
+        </Button>
+      }
+    >
+      {error ? (
+        <Alert type="error" title={error} style={{ marginBottom: 12 }} />
+      ) : null}
+      <Space orientation="vertical" style={{ width: "100%" }}>
+        {(status?.seats ?? []).map((seat) => (
+          <div
+            key={`${seat.site_license_id}-${seat.package_id}`}
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 12,
+              borderBottom: `1px solid ${COLORS.GRAY_LLL}`,
+              paddingBottom: 8,
+            }}
+          >
+            <Space orientation="vertical" size={1}>
+              <Space wrap>
+                <Text strong>
+                  {seat.organization_name ||
+                    seat.site_license_name ||
+                    seat.site_license_id}
+                </Text>
+                <Tag color={seat.state === "current" ? "green" : "gold"}>
+                  {seat.state.replace(/_/g, " ")}
+                </Tag>
+                <Tag>{capitalize(seat.membership_class)}</Tag>
+                {seat.pool_name ? <Tag>{seat.pool_name}</Tag> : null}
+              </Space>
+              <Text type="secondary">
+                Verified {dateLabel(seat.affiliation_verified_at)} using{" "}
+                {seat.matched_email_address || seat.verification_policy}.
+                Reverify by {dateLabel(seat.reverification_due_at)}; grace ends{" "}
+                {dateLabel(seat.reverification_grace_expires_at)}.
+              </Text>
+            </Space>
+            <Button
+              size="small"
+              disabled={!seat.can_refresh_with_verified_email}
+              loading={refreshing === seat.site_license_id}
+              onClick={() => void refreshAffiliation(seat.site_license_id)}
+            >
+              Refresh
+            </Button>
+          </div>
+        ))}
+      </Space>
+    </Card>
   );
 }
 
@@ -346,6 +681,15 @@ export function MembershipPackageManager({
   const [accountNames, setAccountNames] = useState<
     Record<string, { first_name?: string; last_name?: string } | undefined>
   >({});
+  const [siteLicenseOverviews, setSiteLicenseOverviews] = useState<
+    SiteLicenseOverview[]
+  >([]);
+  const [siteLicenseReviewLoadingId, setSiteLicenseReviewLoadingId] =
+    useState<string>("");
+  const [siteLicenseOverviewLoading, setSiteLicenseOverviewLoading] =
+    useState<boolean>(false);
+  const [siteLicenseOverviewError, setSiteLicenseOverviewError] =
+    useState<string>("");
 
   const refreshPackages = async () => {
     setLoading(true);
@@ -425,6 +769,59 @@ export function MembershipPackageManager({
       ),
     [membershipPackages],
   );
+  const siteLicenseIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          sitePackages
+            .map((membershipPackage) =>
+              `${membershipPackage.metadata?.site_license_id ?? ""}`.trim(),
+            )
+            .filter((value) => value.length > 0),
+        ),
+      ).sort(),
+    [sitePackages],
+  );
+
+  useEffect(() => {
+    let canceled = false;
+    async function loadSiteLicenseOverviews() {
+      if (!ownerAccountId || siteLicenseIds.length === 0) {
+        setSiteLicenseOverviews([]);
+        setSiteLicenseOverviewError("");
+        setSiteLicenseOverviewLoading(false);
+        return;
+      }
+      setSiteLicenseOverviewLoading(true);
+      setSiteLicenseOverviewError("");
+      try {
+        const overviews = await Promise.all(
+          siteLicenseIds.map((site_license_id) =>
+            getSiteLicenseOverview({
+              owner_account_id: ownerAccountId,
+              site_license_id,
+            }),
+          ),
+        );
+        if (!canceled) {
+          setSiteLicenseOverviews(overviews);
+        }
+      } catch (err) {
+        if (!canceled) {
+          setSiteLicenseOverviews([]);
+          setSiteLicenseOverviewError(`${err}`);
+        }
+      } finally {
+        if (!canceled) {
+          setSiteLicenseOverviewLoading(false);
+        }
+      }
+    }
+    void loadSiteLicenseOverviews();
+    return () => {
+      canceled = true;
+    };
+  }, [ownerAccountId, siteLicenseIds.join("\n")]);
 
   const handleChanged = async () => {
     await refreshPackages();
@@ -510,6 +907,37 @@ export function MembershipPackageManager({
               await handleChanged();
             }}
           />
+          <SiteLicenseDashboard
+            overviews={siteLicenseOverviews}
+            loading={siteLicenseOverviewLoading}
+            error={siteLicenseOverviewError}
+            accountNames={accountNames}
+            reviewingRequestId={siteLicenseReviewLoadingId}
+            onReview={async (overview, request, action) => {
+              setSiteLicenseReviewLoadingId(request.id);
+              setError("");
+              try {
+                await reviewSiteLicensePoolRequest({
+                  owner_account_id: overview.site_license.owner_account_id,
+                  request_id: request.id,
+                  action,
+                });
+                await handleChanged();
+              } catch (err) {
+                setError(`${err}`);
+              } finally {
+                setSiteLicenseReviewLoadingId("");
+              }
+            }}
+            onRevokeSeat={async (pool, assignment) => {
+              await revokeMembershipPackageSeat({
+                package_id: pool.id,
+                target_account_id: assignment.account_id ?? undefined,
+                target_email_address: assignment.email_address ?? undefined,
+              });
+              await handleChanged();
+            }}
+          />
         </Space>
       )}
       <TeamPackagePurchaseModal
@@ -548,6 +976,351 @@ export function MembershipPackageManager({
         }}
       />
     </div>
+  );
+}
+
+function SiteLicenseDashboard({
+  overviews,
+  loading,
+  error,
+  accountNames,
+  reviewingRequestId,
+  onReview,
+  onRevokeSeat,
+}: {
+  overviews: SiteLicenseOverview[];
+  loading: boolean;
+  error: string;
+  accountNames: Record<
+    string,
+    { first_name?: string; last_name?: string } | undefined
+  >;
+  reviewingRequestId: string;
+  onReview: (
+    overview: SiteLicenseOverview,
+    request: SiteLicensePoolRequest,
+    action: "approve" | "reject",
+  ) => Promise<void>;
+  onRevokeSeat: (
+    pool: SiteLicenseOverview["pools"][number],
+    assignment: MembershipPackageAssignment,
+  ) => Promise<void>;
+}) {
+  const [revokingSeat, setRevokingSeat] = useState<string>("");
+  const requests = overviews.flatMap((overview) =>
+    overview.pending_requests.map((request) => ({
+      overview,
+      request,
+      pool: overview.pools.find((pool) => pool.id === request.package_id),
+    })),
+  );
+  if (loading) {
+    return (
+      <Card size="small">
+        <Spin /> <Text type="secondary">Loading site-license dashboard...</Text>
+      </Card>
+    );
+  }
+  if (error) {
+    return (
+      <Alert
+        type="warning"
+        showIcon
+        title="Could not load site-license dashboard"
+        description={error}
+      />
+    );
+  }
+  if (overviews.length === 0) {
+    return null;
+  }
+  return (
+    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+      <Title level={5} style={{ marginTop: 0 }}>
+        Site-license manager dashboard
+      </Title>
+      {overviews.map((overview) => (
+        <Card
+          key={overview.site_license.id}
+          size="small"
+          title={
+            <Space wrap>
+              <Icon name="users" />
+              <span>{overview.site_license.name}</span>
+              <Tag>{overview.site_license.organization_name}</Tag>
+              {countPendingRequests(overview) ? (
+                <Tag color="gold">
+                  {countPendingRequests(overview)} pending requests
+                </Tag>
+              ) : null}
+            </Space>
+          }
+        >
+          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+            <Descriptions size="small" column={1}>
+              <Descriptions.Item label="License id">
+                {overview.site_license.id}
+              </Descriptions.Item>
+              <Descriptions.Item label="Owner account">
+                {overview.site_license.owner_account_id}
+              </Descriptions.Item>
+              <Descriptions.Item label="Domains">
+                <Space wrap>
+                  {overview.site_license.allowed_domains.map((domain) => (
+                    <Tag key={domain}>{domain}</Tag>
+                  ))}
+                </Space>
+              </Descriptions.Item>
+              <Descriptions.Item label="Term">
+                {dateLabel(overview.site_license.starts_at)} to{" "}
+                {dateLabel(overview.site_license.expires_at)}
+              </Descriptions.Item>
+              <Descriptions.Item label="Policies">
+                renewal={overview.site_license.renewal_policy ?? "none"},{" "}
+                overage={overview.site_license.overage_policy ?? "none"}
+              </Descriptions.Item>
+              {(overview.site_license.custom_terms_url ||
+                overview.site_license.custom_policy_url) && (
+                <Descriptions.Item label="Custom links">
+                  <Space wrap>
+                    {overview.site_license.custom_terms_url ? (
+                      <a
+                        href={overview.site_license.custom_terms_url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        terms
+                      </a>
+                    ) : null}
+                    {overview.site_license.custom_policy_url ? (
+                      <a
+                        href={overview.site_license.custom_policy_url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        policy
+                      </a>
+                    ) : null}
+                    {overview.site_license.terms_version_label ? (
+                      <Tag>{overview.site_license.terms_version_label}</Tag>
+                    ) : null}
+                  </Space>
+                </Descriptions.Item>
+              )}
+            </Descriptions>
+
+            <div>
+              <Text strong>Pools</Text>
+              <Space
+                orientation="vertical"
+                size="small"
+                style={{ width: "100%", marginTop: 8 }}
+              >
+                {overview.pools.map((pool) => (
+                  <Card
+                    size="small"
+                    key={pool.id}
+                    title={
+                      <Space wrap>
+                        <span>{pool.pool_name}</span>
+                        <Tag>{capitalize(pool.membership_class)}</Tag>
+                        <Tag color={getPolicyColor(pool.verification_policy)}>
+                          {pool.verification_policy}
+                        </Tag>
+                        {pool.requires_approval ? (
+                          <Tag color="gold">approval required</Tag>
+                        ) : (
+                          <Tag color="green">self claim</Tag>
+                        )}
+                      </Space>
+                    }
+                  >
+                    <Space wrap style={{ marginBottom: 8 }}>
+                      <Tag>{pool.seat_count} seats</Tag>
+                      <Tag color="green">{getPoolActiveSeats(pool)} active</Tag>
+                      <Tag color="gold">
+                        {pool.pending_request_count} pending
+                      </Tag>
+                      <Tag color="blue">{getPoolAvailableSeats(pool)} free</Tag>
+                      <Tag>group: {pool.exclusive_group}</Tag>
+                      <Tag>
+                        reverify:{" "}
+                        {pool.affiliation_reverification_days ?? "off"}d / grace{" "}
+                        {pool.affiliation_reverification_grace_days ?? "off"}d
+                      </Tag>
+                    </Space>
+                    {pool.assignments.filter(isActiveAssignment).length ===
+                    0 ? (
+                      <Text type="secondary">No active seats.</Text>
+                    ) : (
+                      <Space
+                        orientation="vertical"
+                        size="small"
+                        style={{ width: "100%" }}
+                      >
+                        {pool.assignments
+                          .filter(isActiveAssignment)
+                          .map((assignment) => {
+                            const key = `${pool.id}-${assignment.id}`;
+                            return (
+                              <div
+                                key={key}
+                                style={{
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  gap: 12,
+                                  borderBottom: `1px solid ${COLORS.GRAY_LLL}`,
+                                  paddingBottom: 6,
+                                }}
+                              >
+                                <Space orientation="vertical" size={0}>
+                                  <Text>
+                                    {getAccountDisplayName(
+                                      assignment,
+                                      accountNames,
+                                    )}
+                                  </Text>
+                                  <Text type="secondary">
+                                    {assignment.email_address ||
+                                      assignment.account_id ||
+                                      "unknown account"}{" "}
+                                    assigned {dateLabel(assignment.assigned_at)}
+                                  </Text>
+                                </Space>
+                                <Button
+                                  size="small"
+                                  danger
+                                  loading={revokingSeat === key}
+                                  onClick={async () => {
+                                    setRevokingSeat(key);
+                                    try {
+                                      await onRevokeSeat(pool, assignment);
+                                    } finally {
+                                      setRevokingSeat("");
+                                    }
+                                  }}
+                                >
+                                  Revoke
+                                </Button>
+                              </div>
+                            );
+                          })}
+                      </Space>
+                    )}
+                  </Card>
+                ))}
+              </Space>
+            </div>
+
+            <div>
+              <Text strong>Managers</Text>
+              <div style={{ marginTop: 8 }}>
+                <Space wrap>
+                  {overview.managers.map((manager) => (
+                    <Tag key={manager.id}>
+                      {manager.account_id}: {manager.role}
+                    </Tag>
+                  ))}
+                </Space>
+              </div>
+            </div>
+
+            {requests.filter(
+              ({ overview: requestOverview }) =>
+                requestOverview.site_license.id === overview.site_license.id,
+            ).length ? (
+              <div>
+                <Text strong>Pending requests</Text>
+                <Space
+                  orientation="vertical"
+                  size="small"
+                  style={{ width: "100%", marginTop: 8 }}
+                >
+                  {requests
+                    .filter(
+                      ({ overview: requestOverview }) =>
+                        requestOverview.site_license.id ===
+                        overview.site_license.id,
+                    )
+                    .map(({ request, pool }) => (
+                      <div
+                        key={request.id}
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: 16,
+                          alignItems: "flex-start",
+                          borderBottom: `1px solid ${COLORS.GRAY_LLL}`,
+                          paddingBottom: 12,
+                        }}
+                      >
+                        <Space orientation="vertical" size={2}>
+                          <Space wrap>
+                            <Text strong>{request.matched_email_address}</Text>
+                            <Tag color="blue">
+                              {capitalize(request.requested_membership_class)}
+                            </Tag>
+                            {pool?.pool_name ? (
+                              <Tag>{pool.pool_name}</Tag>
+                            ) : null}
+                          </Space>
+                          <Text type="secondary">
+                            account {request.account_id}; requested{" "}
+                            <TimeAgo date={request.requested_at} />
+                          </Text>
+                          {request.requester_note ? (
+                            <Text>{request.requester_note}</Text>
+                          ) : null}
+                        </Space>
+                        <Space>
+                          <Button
+                            type="primary"
+                            loading={reviewingRequestId === request.id}
+                            onClick={() =>
+                              void onReview(overview, request, "approve")
+                            }
+                          >
+                            Approve
+                          </Button>
+                          <Button
+                            danger
+                            loading={reviewingRequestId === request.id}
+                            onClick={() =>
+                              void onReview(overview, request, "reject")
+                            }
+                          >
+                            Reject
+                          </Button>
+                        </Space>
+                      </div>
+                    ))}
+                </Space>
+              </div>
+            ) : null}
+
+            {overview.recent_audit_events?.length ? (
+              <div>
+                <Text strong>Recent activity</Text>
+                <Space
+                  orientation="vertical"
+                  size={2}
+                  style={{ width: "100%", marginTop: 8 }}
+                >
+                  {overview.recent_audit_events.map((event) => (
+                    <Text key={event.id} type="secondary">
+                      {dateLabel(event.created)}: {event.action}
+                      {event.target_account_id
+                        ? ` for ${event.target_account_id}`
+                        : ""}
+                    </Text>
+                  ))}
+                </Space>
+              </div>
+            ) : null}
+          </Space>
+        </Card>
+      ))}
+    </Space>
   );
 }
 
@@ -792,45 +1565,180 @@ function ProvisionSiteLicenseModal({
   onProvisioned: () => Promise<void>;
 }) {
   const provisionableTiers = useMemo(() => getTeamSeatTiers(tiers), [tiers]);
-  const [membershipClass, setMembershipClass] = useState<string>("");
-  const [seatCount, setSeatCount] = useState<number>(25);
+  const siteLicenseTierOptions = useMemo(
+    () =>
+      mergeTierOptions(
+        SITE_LICENSE_TEMPLATE_TIERS,
+        tiers.filter((tier) => !tier.disabled),
+      ),
+    [tiers],
+  );
+  const [name, setName] = useState<string>("Campus site license");
+  const [organizationName, setOrganizationName] =
+    useState<string>("Example University");
   const [domains, setDomains] = useState<string[]>([]);
   const [domainSearch, setDomainSearch] = useState<string>("");
+  const [customTermsUrl, setCustomTermsUrl] = useState<string>("");
+  const [customPolicyUrl, setCustomPolicyUrl] = useState<string>("");
+  const [termsVersionLabel, setTermsVersionLabel] = useState<string>("");
+  const [renewalPolicy, setRenewalPolicy] = useState<string>("annual");
+  const [overagePolicy, setOveragePolicy] = useState<string>("hard-cap");
+  const [startsAt, setStartsAt] = useState<Dayjs | null>(null);
   const [expiresAt, setExpiresAt] = useState<Dayjs | null>(null);
+  const [pools, setPools] = useState<SiteLicensePoolConfig[]>([]);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   useEffect(() => {
     if (!open) return;
-    setMembershipClass(provisionableTiers[0]?.id ?? "");
-    setSeatCount(25);
+    const studentTier = siteLicenseTierOptions.find(
+      (tier) => tier.id === "student",
+    );
+    const instructorTier =
+      siteLicenseTierOptions.find((tier) => tier.id === "instructor") ??
+      siteLicenseTierOptions.find((tier) => tier.id === "pro");
+    const researcherTier =
+      siteLicenseTierOptions.find((tier) => tier.id === "researcher") ??
+      siteLicenseTierOptions.find((tier) => tier.id === "pro");
+    setName("Campus site license");
+    setOrganizationName("Example University");
     setDomains([]);
     setDomainSearch("");
+    setCustomTermsUrl("");
+    setCustomPolicyUrl("");
+    setTermsVersionLabel("");
+    setRenewalPolicy("annual");
+    setOveragePolicy("hard-cap");
+    setStartsAt(null);
     setExpiresAt(null);
+    setPools(
+      [
+        {
+          pool_name: "Students",
+          membership_class: (studentTier?.id ?? "student") as MembershipClass,
+          seat_count: 5000,
+          requires_approval: false,
+          verification_policy: "email-domain" as SiteLicenseVerificationPolicy,
+          exclusive_group: "teaching",
+          affiliation_reverification_days: 180,
+          affiliation_reverification_grace_days: 30,
+        },
+        {
+          pool_name: "Instructors",
+          membership_class: (instructorTier?.id ??
+            "instructor") as MembershipClass,
+          seat_count: 200,
+          requires_approval: true,
+          verification_policy: "email-domain" as SiteLicenseVerificationPolicy,
+          exclusive_group: "teaching",
+          affiliation_reverification_days: 365,
+          affiliation_reverification_grace_days: 45,
+        },
+        {
+          pool_name: "Researchers",
+          membership_class: (researcherTier?.id ??
+            "researcher") as MembershipClass,
+          seat_count: 500,
+          requires_approval: true,
+          verification_policy: "email-domain" as SiteLicenseVerificationPolicy,
+          exclusive_group: "research",
+          affiliation_reverification_days: 365,
+          affiliation_reverification_grace_days: 45,
+        },
+      ].filter((pool) => !!pool.membership_class),
+    );
     setSubmitting(false);
     setError("");
-  }, [open, provisionableTiers]);
+  }, [open, siteLicenseTierOptions]);
+
+  function updatePool(index: number, patch: Partial<SiteLicensePoolConfig>) {
+    setPools((current) =>
+      current.map((pool, i) => (i === index ? { ...pool, ...patch } : pool)),
+    );
+  }
+
+  function addPool() {
+    setPools((current) => [
+      ...current,
+      {
+        pool_name: `Pool ${current.length + 1}`,
+        membership_class: (provisionableTiers[0]?.id ??
+          "member") as MembershipClass,
+        seat_count: 25,
+        requires_approval: true,
+        verification_policy: "email-domain",
+        exclusive_group: `group-${current.length + 1}`,
+        affiliation_reverification_days: 365,
+        affiliation_reverification_grace_days: 30,
+      },
+    ]);
+  }
 
   async function provision() {
     setSubmitting(true);
     setError("");
     try {
       const allowed_domains = normalizeDomainList([...domains, domainSearch]);
+      const cleanName = name.trim();
+      const cleanOrganizationName = organizationName.trim();
+      if (!cleanName) {
+        throw Error("Enter a site license name.");
+      }
+      if (!cleanOrganizationName) {
+        throw Error("Enter an organization name.");
+      }
       if (allowed_domains.length === 0) {
         throw Error("Enter at least one allowed email domain.");
       }
-      if (!membershipClass) {
-        throw Error("Select a membership tier.");
-      }
-      await adminProvisionMembershipPackage({
-        owner_account_id,
-        kind: "site",
-        membership_class: membershipClass,
-        seat_count: seatCount,
+      const cleanPools = pools.map((pool) => ({
+        ...pool,
+        pool_name: `${pool.pool_name ?? ""}`.trim(),
+        exclusive_group: `${pool.exclusive_group ?? ""}`.trim() || null,
+        seat_count: Math.max(1, Math.trunc(Number(pool.seat_count) || 1)),
         allowed_domains,
-        expires_at: expiresAt?.endOf("day").toDate() ?? undefined,
+        affiliation_reverification_days:
+          pool.affiliation_reverification_days == null
+            ? null
+            : Math.max(
+                1,
+                Math.trunc(Number(pool.affiliation_reverification_days) || 1),
+              ),
+        affiliation_reverification_grace_days:
+          pool.affiliation_reverification_grace_days == null
+            ? null
+            : Math.max(
+                1,
+                Math.trunc(
+                  Number(pool.affiliation_reverification_grace_days) || 1,
+                ),
+              ),
+      }));
+      if (cleanPools.length === 0) {
+        throw Error("Add at least one pool.");
+      }
+      if (cleanPools.some((pool) => !pool.pool_name)) {
+        throw Error("Every pool needs a name.");
+      }
+      await runFreshAuthAction(async () => {
+        await adminProvisionSiteLicense({
+          owner_account_id,
+          name: cleanName,
+          organization_name: cleanOrganizationName,
+          allowed_domains,
+          pools: cleanPools,
+          custom_terms_url: customTermsUrl.trim() || null,
+          custom_policy_url: customPolicyUrl.trim() || null,
+          terms_version_label: termsVersionLabel.trim() || null,
+          renewal_policy: renewalPolicy.trim() || null,
+          overage_policy: overagePolicy.trim() || null,
+          starts_at: startsAt?.startOf("day").toDate() ?? undefined,
+          expires_at: expiresAt?.endOf("day").toDate() ?? undefined,
+        });
+        await onProvisioned();
       });
-      await onProvisioned();
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -845,6 +1753,7 @@ function ProvisionSiteLicenseModal({
       onOk={provision}
       okButtonProps={{ loading: submitting }}
       okText="Provision license"
+      width={1000}
       destroyOnHidden
       title={
         <>
@@ -863,32 +1772,27 @@ function ProvisionSiteLicenseModal({
           />
         ) : null}
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          This creates a support-managed license without a payment flow. Users
-          can claim seats after verifying an email address at one of the allowed
-          domains, or an admin can assign seats directly.
+          This creates a real site license with one or more named pools. It is
+          intentionally basic UI for testing the full backend flow.
         </Paragraph>
-        <div>
-          <Text strong>Membership tier</Text>
-          <Select
-            value={membershipClass || undefined}
-            onChange={setMembershipClass}
-            style={{ width: "100%", marginTop: 6 }}
-            options={provisionableTiers.map((tier) => ({
-              label: tier.label ?? capitalize(tier.id),
-              value: tier.id,
-            }))}
-          />
-        </div>
-        <div>
-          <Text strong>Seats</Text>
-          <InputNumber
-            min={1}
-            precision={0}
-            value={seatCount}
-            onChange={(value) => setSeatCount(Number(value ?? 1))}
-            style={{ width: "100%", marginTop: 6 }}
-          />
-        </div>
+        <Space wrap style={{ width: "100%" }}>
+          <div style={{ flex: "1 1 280px" }}>
+            <Text strong>License name</Text>
+            <Input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              style={{ marginTop: 6 }}
+            />
+          </div>
+          <div style={{ flex: "1 1 280px" }}>
+            <Text strong>Organization</Text>
+            <Input
+              value={organizationName}
+              onChange={(event) => setOrganizationName(event.target.value)}
+              style={{ marginTop: 6 }}
+            />
+          </div>
+        </Space>
         <div>
           <Text strong>Allowed email domains</Text>
           <Select
@@ -916,13 +1820,219 @@ function ProvisionSiteLicenseModal({
           </Text>
         </div>
         <div>
-          <Text strong>Expires at</Text>
-          <DatePicker
-            value={expiresAt}
-            onChange={setExpiresAt}
-            style={{ width: "100%", marginTop: 6 }}
-          />
+          <Text strong>Terms and policy links</Text>
+          <Space wrap style={{ width: "100%", marginTop: 6 }}>
+            <Input
+              placeholder="Custom terms URL"
+              value={customTermsUrl}
+              onChange={(event) => setCustomTermsUrl(event.target.value)}
+              style={{ width: 260 }}
+            />
+            <Input
+              placeholder="Custom policy URL"
+              value={customPolicyUrl}
+              onChange={(event) => setCustomPolicyUrl(event.target.value)}
+              style={{ width: 260 }}
+            />
+            <Input
+              placeholder="Terms version label"
+              value={termsVersionLabel}
+              onChange={(event) => setTermsVersionLabel(event.target.value)}
+              style={{ width: 190 }}
+            />
+          </Space>
         </div>
+        <Space wrap>
+          <div>
+            <Text strong>Renewal policy</Text>
+            <Input
+              value={renewalPolicy}
+              onChange={(event) => setRenewalPolicy(event.target.value)}
+              style={{ width: 180, marginTop: 6 }}
+            />
+          </div>
+          <div>
+            <Text strong>Overage policy</Text>
+            <Input
+              value={overagePolicy}
+              onChange={(event) => setOveragePolicy(event.target.value)}
+              style={{ width: 180, marginTop: 6 }}
+            />
+          </div>
+          <div>
+            <Text strong>Starts at</Text>
+            <DatePicker
+              value={startsAt}
+              onChange={setStartsAt}
+              style={{ width: 180, marginTop: 6 }}
+            />
+          </div>
+          <div>
+            <Text strong>Expires at</Text>
+            <DatePicker
+              value={expiresAt}
+              onChange={setExpiresAt}
+              style={{ width: 180, marginTop: 6 }}
+            />
+          </div>
+        </Space>
+        <Divider style={{ margin: "8px 0" }} />
+        <Space style={{ width: "100%", justifyContent: "space-between" }}>
+          <Text strong>Pools</Text>
+          <Button onClick={addPool}>Add pool</Button>
+        </Space>
+        <Space orientation="vertical" style={{ width: "100%" }}>
+          {pools.map((pool, index) => (
+            <Card
+              size="small"
+              key={index}
+              title={
+                <Space>
+                  <span>{pool.pool_name || `Pool ${index + 1}`}</span>
+                  <Tag>{capitalize(pool.membership_class)}</Tag>
+                  {pool.requires_approval ? (
+                    <Tag color="gold">approval</Tag>
+                  ) : (
+                    <Tag color="green">self claim</Tag>
+                  )}
+                </Space>
+              }
+              extra={
+                <Button
+                  danger
+                  size="small"
+                  disabled={pools.length <= 1}
+                  onClick={() =>
+                    setPools((current) =>
+                      current.filter((_pool, i) => i !== index),
+                    )
+                  }
+                >
+                  Remove
+                </Button>
+              }
+            >
+              <Space wrap align="start">
+                <div>
+                  <Text strong>Name</Text>
+                  <Input
+                    value={pool.pool_name}
+                    onChange={(event) =>
+                      updatePool(index, { pool_name: event.target.value })
+                    }
+                    style={{ width: 170, marginTop: 6 }}
+                  />
+                </div>
+                <div>
+                  <Text strong>Tier</Text>
+                  <Select
+                    value={pool.membership_class}
+                    onChange={(value) =>
+                      updatePool(index, {
+                        membership_class: value as MembershipClass,
+                      })
+                    }
+                    style={{ width: 160, marginTop: 6 }}
+                    options={siteLicenseTierOptions.map((tier) => ({
+                      label: tier.label ?? capitalize(tier.id),
+                      value: tier.id,
+                    }))}
+                  />
+                </div>
+                <div>
+                  <Text strong>Seats</Text>
+                  <InputNumber
+                    min={1}
+                    precision={0}
+                    value={pool.seat_count}
+                    onChange={(value) =>
+                      updatePool(index, { seat_count: Number(value ?? 1) })
+                    }
+                    style={{ width: 100, marginTop: 6 }}
+                  />
+                </div>
+                <div>
+                  <Text strong>Approval</Text>
+                  <Radio.Group
+                    value={pool.requires_approval ? "yes" : "no"}
+                    onChange={(event) =>
+                      updatePool(index, {
+                        requires_approval: event.target.value === "yes",
+                      })
+                    }
+                    style={{ display: "block", marginTop: 6 }}
+                  >
+                    <Radio.Button value="no">No</Radio.Button>
+                    <Radio.Button value="yes">Yes</Radio.Button>
+                  </Radio.Group>
+                </div>
+                <div>
+                  <Text strong>Verification</Text>
+                  <Select
+                    value={pool.verification_policy}
+                    onChange={(value) =>
+                      updatePool(index, {
+                        verification_policy:
+                          value as SiteLicenseVerificationPolicy,
+                      })
+                    }
+                    style={{ width: 170, marginTop: 6 }}
+                    options={[
+                      { label: "Email domain", value: "email-domain" },
+                      { label: "Manager approval", value: "manager-approval" },
+                      { label: "SSO affiliation", value: "sso-affiliation" },
+                    ]}
+                  />
+                </div>
+                <div>
+                  <Text strong>Exclusive group</Text>
+                  <Input
+                    value={`${pool.exclusive_group ?? ""}`}
+                    onChange={(event) =>
+                      updatePool(index, {
+                        exclusive_group: event.target.value,
+                      })
+                    }
+                    style={{ width: 140, marginTop: 6 }}
+                  />
+                </div>
+                <div>
+                  <Text strong>Reverify days</Text>
+                  <InputNumber
+                    min={1}
+                    precision={0}
+                    value={pool.affiliation_reverification_days ?? undefined}
+                    onChange={(value) =>
+                      updatePool(index, {
+                        affiliation_reverification_days:
+                          value == null ? null : Number(value),
+                      })
+                    }
+                    style={{ width: 120, marginTop: 6 }}
+                  />
+                </div>
+                <div>
+                  <Text strong>Grace days</Text>
+                  <InputNumber
+                    min={1}
+                    precision={0}
+                    value={
+                      pool.affiliation_reverification_grace_days ?? undefined
+                    }
+                    onChange={(value) =>
+                      updatePool(index, {
+                        affiliation_reverification_grace_days:
+                          value == null ? null : Number(value),
+                      })
+                    }
+                    style={{ width: 120, marginTop: 6 }}
+                  />
+                </div>
+              </Space>
+            </Card>
+          ))}
+        </Space>
+        <FreshAuthModal {...freshAuthModalProps} />
       </Space>
     </Modal>
   );

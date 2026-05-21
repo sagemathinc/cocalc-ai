@@ -491,6 +491,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "admin membership entitlement mutation",
   },
+  "purchases.adminProvisionSiteLicense": {
+    decision: "fresh-auth-required",
+    reason: "admin site-license entitlement mutation",
+  },
   "purchases.assignMembershipPackageSeat": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
@@ -502,6 +506,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "purchases.purchaseMembershipPackage": {
     decision: "fresh-auth-required",
     reason: "browser purchase action",
+  },
+  "purchases.requestSiteLicensePool": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "user request is gated by verified email/domain and manager approval policy",
   },
   "purchases.revokeMembershipPackageSeat": {
     decision: "fresh-auth-not-required",
@@ -536,8 +545,16 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "system.adminResetPasswordLink": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "admin password reset link generation for another user",
+  },
+  "system.adminVerifyEmailAddress": {
+    decision: "fresh-auth-required",
+    reason: "admin email verification for another user",
+  },
+  "system.adminDisableTwoFactor": {
+    decision: "fresh-auth-required",
+    reason: "admin removal of two-factor authentication for another user",
   },
   "system.adminSalesloftSync": {
     decision: "fresh-auth-not-required",

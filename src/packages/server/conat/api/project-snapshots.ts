@@ -103,17 +103,20 @@ export async function createSnapshot({
 
 export async function deleteSnapshot({
   account_id,
+  browser_id,
   session_hash,
   project_id,
   name,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   project_id: string;
   name: string;
 }) {
   await requireDangerousProjectMutationAuth({
     account_id,
+    browser_id,
     session_hash,
   });
   await assertCanPerformDestructiveStorageAction({

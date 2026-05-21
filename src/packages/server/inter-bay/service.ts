@@ -10,6 +10,7 @@ import {
   createInterBayBayRegistryHandlers,
   createInterBayAccountDirectoryHandlers,
   createInterBayAccountLocalHandler,
+  createInterBayAccountLocalClient,
   createInterBayProjectCollabInviteHandlers,
   createInterBayProjectDetailsHandler,
   createInterBayProjectSecretsHandlers,
@@ -50,6 +51,7 @@ import {
   type InterBayProjectReferenceApi,
 } from "@cocalc/conat/inter-bay/api";
 import type { ConatService } from "@cocalc/conat/service/typed";
+import type { SiteLicenseAffiliationReverificationSeat } from "@cocalc/conat/hub/api/purchases";
 import getLogger from "@cocalc/backend/logger";
 import { db } from "@cocalc/database";
 import { callback2 } from "@cocalc/util/async-utils";
@@ -62,6 +64,14 @@ import {
 } from "@cocalc/server/auth/tokens/redeem";
 import { verifyLocalSignInPassword } from "@cocalc/server/auth/verify-sign-in-password";
 import { redeemVerifyEmailLocal } from "@cocalc/server/auth/redeem-verify-email";
+import {
+  createResetLocal as createPasswordResetLocal,
+  recentAttemptsLocal as recentPasswordResetAttemptsLocal,
+  redeemResetLocal as redeemPasswordResetLocal,
+} from "@cocalc/server/auth/password-reset";
+import adminVerifyEmailAddressLocal from "@cocalc/server/accounts/admin-verify-email-address";
+import setPasswordFromResetLocal from "@cocalc/server/accounts/set-password-from-reset";
+import { adminDisableTwoFactor as adminDisableTwoFactorLocal } from "@cocalc/server/auth/two-factor";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
 import {
@@ -117,10 +127,22 @@ import {
 import {
   claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay,
   createMembershipPackage,
+  claimMembershipPackageSeat as claimMembershipPackageSeatForAccount,
+  listClaimableMembershipPackagesForAccount,
   listLocalClaimableMembershipPackagesForVerifiedEmails,
   listMembershipPackageDetailsForOwner,
+  resolveClaimableMembershipPackageOwnerBay,
   updateMembershipPackage,
 } from "@cocalc/server/membership/packages";
+import {
+  adminProvisionSiteLicense,
+  getVerifiedEmailAddressesForAccount,
+  getSiteLicenseAffiliationReverificationStatusForAccount,
+  getSiteLicenseOverview,
+  requestSiteLicensePoolWithVerifiedEmailsOnLocalBay,
+  refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBay,
+  reviewSiteLicensePoolRequest,
+} from "@cocalc/server/membership/site-licenses";
 import {
   resolveMembershipDetailsForAccount,
   resolveMembershipForAccount,
@@ -501,6 +523,26 @@ async function startAccountDirectoryService(): Promise<void> {
       await updateClusterAccountApiKeysHomeBay(opts),
     touchApiKey: async (opts) =>
       await touchClusterAccountApiKeyDirectoryEntry(opts),
+    recentPasswordResetAttempts: async ({ email_address, ip_address }) => ({
+      count: await recentPasswordResetAttemptsLocal(email_address, ip_address),
+    }),
+    createPasswordReset: async ({ email_address, ip_address, ttl_s }) => ({
+      id: await createPasswordResetLocal(email_address, ip_address, ttl_s),
+    }),
+    redeemPasswordReset: async ({ password_reset_id }) => {
+      const { email_address } =
+        await redeemPasswordResetLocal(password_reset_id);
+      const account = await getClusterAccountByEmail(email_address);
+      const account_id = account?.account_id;
+      if (!account_id) {
+        throw Error("Password reset no longer valid.");
+      }
+      return {
+        account_id,
+        email_address,
+        home_bay_id: account.home_bay_id ?? null,
+      };
+    },
     getMembershipClaimIdentity: async (opts) =>
       await getMembershipClaimIdentityDirect(opts),
     reserveMembershipClaimIdentity: async (opts) =>
@@ -576,6 +618,13 @@ async function startAccountLocalService(): Promise<void> {
       await verifyLocalSignInPassword({ email_address, password }),
     redeemVerifyEmail: async ({ email_address, token }) => {
       await redeemVerifyEmailLocal(email_address, token);
+    },
+    adminVerifyEmailAddress: async ({ account_id }) =>
+      await adminVerifyEmailAddressLocal({ account_id }),
+    adminDisableTwoFactor: async ({ account_id }) =>
+      await adminDisableTwoFactorLocal({ account_id }),
+    setPasswordFromReset: async ({ account_id, password }) => {
+      await setPasswordFromResetLocal({ account_id, password });
     },
     assertProductAccessTrust: async ({ account_id, action }) => {
       await assertAccountTrustedForProductAccess(account_id, action);
@@ -681,6 +730,8 @@ async function startAccountLocalService(): Promise<void> {
       }
       return membershipPackage;
     },
+    adminProvisionSiteLicense: async (opts) =>
+      await adminProvisionSiteLicense({ ...opts, trusted_admin: true }),
     updateMembershipPackage: async ({
       package_id,
       seat_count,
@@ -701,15 +752,174 @@ async function startAccountLocalService(): Promise<void> {
         account_id,
         verified_email_addresses,
       }),
+    getClaimableMembershipPackagesForAccount: async ({ account_id }) =>
+      await listClaimableMembershipPackagesForAccount({
+        account_id,
+      }),
     claimMembershipPackageSeat: async ({
       package_id,
       account_id,
       verified_email_addresses,
+      accepted_terms,
     }) =>
       await claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
         package_id,
         account_id,
         verified_email_addresses,
+        accepted_terms,
+      }),
+    claimMembershipPackageSeatForAccount: async ({
+      package_id,
+      account_id,
+      accepted_terms,
+    }) => {
+      await assertAccountTrustedForProductAccess(
+        account_id,
+        "claim membership seats",
+      );
+      return await claimMembershipPackageSeatForAccount({
+        package_id,
+        account_id,
+        accepted_terms,
+      });
+    },
+    getSiteLicenseOverview: async ({ account_id, site_license_id }) =>
+      await getSiteLicenseOverview({ account_id, site_license_id }),
+    requestSiteLicensePool: async ({
+      account_id,
+      package_id,
+      verified_email_addresses,
+      requester_note,
+      accepted_terms,
+    }) =>
+      await requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
+        account_id,
+        package_id,
+        verified_email_addresses,
+        requester_note,
+        accepted_terms,
+      }),
+    requestSiteLicensePoolForAccount: async ({
+      account_id,
+      owner_account_id,
+      package_id,
+      requester_note,
+      accepted_terms,
+    }) => {
+      await assertAccountTrustedForProductAccess(
+        account_id,
+        "request site-license pool",
+      );
+      const verified_email_addresses =
+        await getVerifiedEmailAddressesForAccount(account_id);
+      const ownerAccountId = `${owner_account_id ?? ""}`.trim();
+      if (ownerAccountId) {
+        const ownerAccount = await getClusterAccountById(ownerAccountId);
+        const ownerBayId =
+          `${ownerAccount?.home_bay_id ?? ""}`.trim() ||
+          (await resolveClaimableMembershipPackageOwnerBay({
+            account_id,
+            package_id,
+            verified_email_addresses,
+          })) ||
+          getConfiguredBayId();
+        if (ownerBayId !== getConfiguredBayId()) {
+          return await createInterBayAccountLocalClient({
+            client: getInterBayFabricClient(),
+            dest_bay: ownerBayId,
+          }).requestSiteLicensePool({
+            account_id,
+            package_id,
+            verified_email_addresses,
+            requester_note,
+            accepted_terms,
+          });
+        }
+      }
+      return await requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
+        account_id,
+        package_id,
+        verified_email_addresses,
+        requester_note,
+        accepted_terms,
+      });
+    },
+    reviewSiteLicensePoolRequest: async (opts) =>
+      await reviewSiteLicensePoolRequest(opts),
+    refreshSiteLicenseAffiliationVerification: async ({
+      account_id,
+      site_license_id,
+      verified_email_addresses,
+    }) =>
+      await refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBay(
+        {
+          account_id,
+          site_license_id,
+          verified_email_addresses,
+        },
+      ),
+    refreshSiteLicenseAffiliationVerificationForAccount: async ({
+      account_id,
+      site_license_id,
+    }) => {
+      await assertAccountTrustedForProductAccess(
+        account_id,
+        "refresh site-license affiliation verification",
+      );
+      const verified_email_addresses =
+        await getVerifiedEmailAddressesForAccount(account_id);
+      const status =
+        await getSiteLicenseAffiliationReverificationStatusForAccount({
+          account_id,
+        });
+      const refreshed: SiteLicenseAffiliationReverificationSeat[] = [];
+      for (const seat of status.seats.filter(
+        (seat) =>
+          seat.can_refresh_with_verified_email &&
+          (site_license_id
+            ? seat.site_license_id === site_license_id
+            : seat.state === "pending_reverification" ||
+              seat.state === "grace_expired"),
+      )) {
+        const ownerAccountId =
+          `${seat.site_license_owner_account_id ?? ""}`.trim();
+        if (!ownerAccountId) continue;
+        const ownerAccount = await getClusterAccountById(ownerAccountId);
+        if (!ownerAccount) {
+          throw Error(`account ${ownerAccountId} not found`);
+        }
+        const ownerBayId =
+          `${ownerAccount.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+        if (ownerBayId !== getConfiguredBayId()) {
+          refreshed.push(
+            ...(await createInterBayAccountLocalClient({
+              client: getInterBayFabricClient(),
+              dest_bay: ownerBayId,
+            }).refreshSiteLicenseAffiliationVerification({
+              account_id,
+              site_license_id: seat.site_license_id,
+              verified_email_addresses,
+            })),
+          );
+          continue;
+        }
+        refreshed.push(
+          ...(await refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBay(
+            {
+              account_id,
+              site_license_id: seat.site_license_id,
+              verified_email_addresses,
+            },
+          )),
+        );
+      }
+      return refreshed;
+    },
+    getSiteLicenseAffiliationReverificationStatusForAccount: async ({
+      account_id,
+    }) =>
+      await getSiteLicenseAffiliationReverificationStatusForAccount({
+        account_id,
       }),
     getMembershipPortableState: async ({ account_id }) =>
       await getMembershipPortableState(account_id),

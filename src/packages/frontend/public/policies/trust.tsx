@@ -1,23 +1,8 @@
-/*
- *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
- *  License: MS-RSL – see LICENSE.md for details
- */
+import { Col, Row } from "antd";
 
-import {
-  A,
-  Customize,
-  Footer,
-  Head,
-  Header,
-  Icon,
-  Image,
-  Layout,
-  MAX_WIDTH,
-  POLICIES,
-  Paragraph,
-  Text,
-  Title,
-} from "./compat";
+import { A, policyHref, PolicySection, type PublicPolicy } from "./policy";
+
+const SOC2LOGO = "/public/soc2-aicpa-logo.png";
 
 const GDPR_BADGE_HTML = `
 <html>
@@ -47,87 +32,88 @@ const GDPR_BADGE_HTML = `
 </html>
 `;
 
-export default function TrustPage() {
-  return (
-    <Customize>
-      <Head title={POLICIES.trust.label} />
-      <Layout>
-        <Header page="policies" subPage="trust" />
-        <Layout.Content
-          style={{
-            backgroundColor: "white",
-          }}
-        >
-          <div
-            style={{
-              maxWidth: MAX_WIDTH,
-              margin: "15px auto",
-              padding: "15px",
-              backgroundColor: "white",
-            }}
-          >
-            <Title level={1} style={{ textAlign: "center" }}>
-              <Icon name="lock-outlined" /> CoCalc - Security and Compliance (
-              {POLICIES.trust.label})
-            </Title>
-            <Title level={2}>GDPR</Title>
-            <Paragraph>
-              SageMath, Inc. compliance with{" "}
-              <A href="https://gdpr-info.eu/">GDPR</A> has been verified by our
-              EU and UK representative{" "}
-              <A href="https://gdprlocal.com/">GDPR Local</A>.
-            </Paragraph>
-            <Paragraph>
-              <iframe
-                sandbox="allow-scripts"
-                srcDoc={GDPR_BADGE_HTML}
-                style={{
-                  width: "100%",
-                  height: "180px",
-                  border: "none",
-                  overflow: "auto",
-                }}
-              />
-            </Paragraph>
-            <Title level={2}>SOC 2</Title>
-            <Paragraph>
+export const trustPolicy: PublicPolicy = {
+  description: "Security, GDPR, SOC 2, and external trust resources.",
+  navLabel: "Trust",
+  slug: "trust",
+  title: "Trust and Compliance",
+  updated: "March 12, 2025",
+  content: (
+    <>
+      <PolicySection title="SOC 2">
+        <Row align="top" gutter={["middle", "middle"]}>
+          <Col sm={16} xs={24}>
+            <p style={{ marginTop: 0 }}>
               CoCalc by SageMath, Inc. is{" "}
-              <Text strong>
+              <strong>
                 <A href="https://www.vanta.com/collection/soc-2/what-is-soc-2">
                   SOC 2 compliant
                 </A>
-              </Text>
+              </strong>
               , meaning we meet rigorous standards for data security and
               operational integrity. This compliance is verified through
               independent audits, ensuring that we effectively protect customer
               information across security, availability, processing integrity,
               confidentiality, and privacy. Our commitment to these high
               standards enhances trust and reliability for our users.
-            </Paragraph>
-            <Paragraph strong>
-              Please learn more about the current status in{" "}
-              <A href="https://trust.cocalc.com/">
-                Sagemath, Inc.'s Trust Center
-              </A>
-              .
-            </Paragraph>
-            <Paragraph>
-              <Image
-                alt="SOC 2 Compliance Logo"
-                src="/public/soc2-aicpa-logo.png"
-                style={{ width: "150px", margin: "auto", height: "150px" }}
+            </p>
+            <p>
+              <strong>
+                Please learn more about the current status in{" "}
+                <A href="https://trust.cocalc.com/">
+                  Sagemath, Inc.'s Trust Center
+                </A>
+                .
+              </strong>
+            </p>
+          </Col>
+          <Col sm={8} xs={24}>
+            <div style={{ textAlign: "center" }}>
+              <img
+                style={{ maxWidth: "100%", width: "150px" }}
+                src={policyHref(SOC2LOGO)}
+                alt={"SOC 2 Compliance Logo"}
               />
-            </Paragraph>
-            <h2>Questions?</h2>
-            <Paragraph>
-              Please contact us at{" "}
-              <A href="mailto:office@sagemath.com">office@sagemath.com</A> if
-              you have any questions.
-            </Paragraph>
-          </div>
-          <Footer />
-        </Layout.Content>
-      </Layout>
-    </Customize>
-  );
-}
+            </div>
+          </Col>
+        </Row>
+      </PolicySection>
+      <PolicySection title="GDPR">
+        <Row align="top" gutter={["middle", "middle"]}>
+          <Col sm={16} xs={24}>
+            <p style={{ marginTop: 0 }}>
+              SageMath, Inc. compliance with{" "}
+              <A href={"https://gdpr-info.eu/"}>GDPR</A> has been verified by
+              our EU and UK representative{" "}
+              <A href={"https://gdprlocal.com/"}>GDPR Local</A>.
+            </p>
+          </Col>
+          <Col sm={8} xs={24}>
+            <div style={{ textAlign: "center" }}>
+              <iframe
+                srcDoc={GDPR_BADGE_HTML}
+                sandbox="allow-scripts"
+                style={{
+                  border: "none",
+                  height: "180px",
+                  maxWidth: "100%",
+                  overflow: "auto",
+                  width: "180px",
+                }}
+              />
+            </div>
+          </Col>
+        </Row>
+      </PolicySection>
+      <PolicySection title="Questions?">
+        <p>
+          Please contact us at{" "}
+          <A href="mailto:office@sagemath.com">office@sagemath.com</A> if you
+          have any questions.
+        </p>
+      </PolicySection>
+    </>
+  ),
+};
+
+export default trustPolicy;

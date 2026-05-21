@@ -29,6 +29,11 @@ import type {
   MembershipPackageAssignment,
   MembershipPackageDetails,
   MembershipResolution,
+  SiteLicenseAffiliationReverificationSeat,
+  SiteLicenseAffiliationReverificationUserStatus,
+  SiteLicenseOverview,
+  SiteLicensePoolConfig,
+  SiteLicensePoolRequest,
 } from "@cocalc/conat/hub/api/purchases";
 import type {
   AcpAdmissionDenialReport,
@@ -787,6 +792,61 @@ export interface AccountLocalRedeemVerifyEmailRequest {
   token: string;
 }
 
+export interface AccountLocalAdminVerifyEmailAddressRequest {
+  account_id: string;
+}
+
+export interface AccountLocalAdminVerifyEmailAddressResult {
+  account_id: string;
+  already_verified: boolean;
+  email_address: string;
+  verified_at: Date | string;
+}
+
+export interface AccountLocalAdminDisableTwoFactorRequest {
+  account_id: string;
+}
+
+export interface AccountLocalAdminDisableTwoFactorResult {
+  account_id: string;
+  disabled_factors: number;
+  deleted_recovery_codes: number;
+}
+
+export interface AccountLocalRecentPasswordResetAttemptsRequest {
+  email_address: string;
+  ip_address: string;
+}
+
+export interface AccountLocalRecentPasswordResetAttemptsResult {
+  count: number;
+}
+
+export interface AccountLocalCreatePasswordResetRequest {
+  email_address: string;
+  ip_address: string;
+  ttl_s: number;
+}
+
+export interface AccountLocalCreatePasswordResetResult {
+  id: string;
+}
+
+export interface AccountLocalRedeemPasswordResetRequest {
+  password_reset_id: string;
+}
+
+export interface AccountLocalRedeemPasswordResetResult {
+  account_id: string;
+  email_address: string;
+  home_bay_id?: string | null;
+}
+
+export interface AccountLocalSetPasswordFromResetRequest {
+  account_id: string;
+  password: string;
+}
+
 export interface AccountLocalAssertProductAccessTrustRequest {
   account_id: string;
   action: string;
@@ -808,6 +868,23 @@ export interface AccountLocalAdminProvisionMembershipPackageRequest {
   metadata?: Record<string, unknown> | null;
 }
 
+export interface AccountLocalAdminProvisionSiteLicenseRequest {
+  owner_account_id: string;
+  actor_account_id: string;
+  name: string;
+  organization_name: string;
+  allowed_domains: string[];
+  pools: SiteLicensePoolConfig[];
+  custom_terms_url?: string | null;
+  custom_policy_url?: string | null;
+  terms_version_label?: string | null;
+  renewal_policy?: string | null;
+  overage_policy?: string | null;
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
 export interface AccountLocalUpdateMembershipPackageRequest {
   package_id: string;
   actor_account_id: string;
@@ -821,10 +898,64 @@ export interface AccountLocalGetClaimableMembershipPackagesRequest {
   verified_email_addresses: string[];
 }
 
+export interface AccountLocalGetClaimableMembershipPackagesForAccountRequest {
+  account_id: string;
+}
+
 export interface AccountLocalClaimMembershipPackageSeatRequest {
   package_id: string;
   account_id: string;
   verified_email_addresses: string[];
+  accepted_terms?: boolean;
+}
+
+export interface AccountLocalClaimMembershipPackageSeatForAccountRequest {
+  package_id: string;
+  account_id: string;
+  accepted_terms?: boolean;
+}
+
+export interface AccountLocalGetSiteLicenseOverviewRequest {
+  account_id: string;
+  site_license_id: string;
+}
+
+export interface AccountLocalRequestSiteLicensePoolRequest {
+  account_id: string;
+  package_id: string;
+  verified_email_addresses: string[];
+  requester_note?: string | null;
+  accepted_terms?: boolean;
+}
+
+export interface AccountLocalRequestSiteLicensePoolForAccountRequest {
+  account_id: string;
+  owner_account_id?: string;
+  package_id: string;
+  requester_note?: string | null;
+  accepted_terms?: boolean;
+}
+
+export interface AccountLocalReviewSiteLicensePoolRequest {
+  actor_account_id: string;
+  request_id: string;
+  action: "approve" | "reject";
+  review_note?: string | null;
+}
+
+export interface AccountLocalRefreshSiteLicenseAffiliationVerificationRequest {
+  account_id: string;
+  site_license_id: string;
+  verified_email_addresses: string[];
+}
+
+export interface AccountLocalRefreshSiteLicenseAffiliationVerificationForAccountRequest {
+  account_id: string;
+  site_license_id?: string;
+}
+
+export interface AccountLocalGetSiteLicenseAffiliationReverificationStatusForAccountRequest {
+  account_id: string;
 }
 
 export interface AccountMembershipPortableState {
@@ -1270,6 +1401,9 @@ export type AccountDirectoryMethod =
   | "delete-api-key"
   | "update-api-keys-home-bay"
   | "touch-api-key"
+  | "recent-password-reset-attempts"
+  | "create-password-reset"
+  | "redeem-password-reset"
   | "get-membership-claim-identity"
   | "reserve-membership-claim-identity"
   | "activate-membership-claim-identity"
@@ -1286,6 +1420,9 @@ export type AccountLocalMethod =
   | "verify-sign-in-password"
   | "verify-fresh-auth-credentials"
   | "redeem-verify-email"
+  | "admin-verify-email-address"
+  | "admin-disable-two-factor"
+  | "set-password-from-reset"
   | "assert-product-access-trust"
   | "reconcile-dedicated-host-purchase-session"
   | "close-dedicated-host-purchase-session"
@@ -1306,7 +1443,17 @@ export type AccountLocalMethod =
   | "admin-provision-membership-package"
   | "update-membership-package"
   | "get-claimable-membership-packages"
+  | "get-claimable-membership-packages-for-account"
   | "claim-membership-package-seat"
+  | "claim-membership-package-seat-for-account"
+  | "admin-provision-site-license"
+  | "get-site-license-overview"
+  | "request-site-license-pool"
+  | "request-site-license-pool-for-account"
+  | "review-site-license-pool-request"
+  | "refresh-site-license-affiliation-verification"
+  | "refresh-site-license-affiliation-verification-for-account"
+  | "get-site-license-affiliation-reverification-status-for-account"
   | "get-membership-portable-state"
   | "replace-membership-portable-state";
 export type AuthTokenMethod =
@@ -2017,6 +2164,15 @@ export interface InterBayAccountDirectoryApi {
     opts: AccountApiKeyDirectoryUpdateHomeBayRequest,
   ) => Promise<void>;
   touchApiKey: (opts: AccountApiKeyDirectoryTouchRequest) => Promise<void>;
+  recentPasswordResetAttempts: (
+    opts: AccountLocalRecentPasswordResetAttemptsRequest,
+  ) => Promise<AccountLocalRecentPasswordResetAttemptsResult>;
+  createPasswordReset: (
+    opts: AccountLocalCreatePasswordResetRequest,
+  ) => Promise<AccountLocalCreatePasswordResetResult>;
+  redeemPasswordReset: (
+    opts: AccountLocalRedeemPasswordResetRequest,
+  ) => Promise<AccountLocalRedeemPasswordResetResult>;
   getMembershipClaimIdentity: (
     opts: MembershipClaimIdentityGetRequest,
   ) => Promise<MembershipClaimIdentityEntry | null>;
@@ -2062,6 +2218,15 @@ export interface InterBayAccountLocalApi {
   ) => Promise<AccountLocalVerifySignInPasswordResult>;
   redeemVerifyEmail: (
     opts: AccountLocalRedeemVerifyEmailRequest,
+  ) => Promise<void>;
+  adminVerifyEmailAddress: (
+    opts: AccountLocalAdminVerifyEmailAddressRequest,
+  ) => Promise<AccountLocalAdminVerifyEmailAddressResult>;
+  adminDisableTwoFactor: (
+    opts: AccountLocalAdminDisableTwoFactorRequest,
+  ) => Promise<AccountLocalAdminDisableTwoFactorResult>;
+  setPasswordFromReset: (
+    opts: AccountLocalSetPasswordFromResetRequest,
   ) => Promise<void>;
   assertProductAccessTrust: (
     opts: AccountLocalAssertProductAccessTrustRequest,
@@ -2117,15 +2282,45 @@ export interface InterBayAccountLocalApi {
   adminProvisionMembershipPackage: (
     opts: AccountLocalAdminProvisionMembershipPackageRequest,
   ) => Promise<MembershipPackageDetails>;
+  adminProvisionSiteLicense: (
+    opts: AccountLocalAdminProvisionSiteLicenseRequest,
+  ) => Promise<SiteLicenseOverview>;
   updateMembershipPackage: (
     opts: AccountLocalUpdateMembershipPackageRequest,
   ) => Promise<MembershipPackageDetails>;
   getClaimableMembershipPackages: (
     opts: AccountLocalGetClaimableMembershipPackagesRequest,
   ) => Promise<ClaimableMembershipPackage[]>;
+  getClaimableMembershipPackagesForAccount: (
+    opts: AccountLocalGetClaimableMembershipPackagesForAccountRequest,
+  ) => Promise<ClaimableMembershipPackage[]>;
   claimMembershipPackageSeat: (
     opts: AccountLocalClaimMembershipPackageSeatRequest,
   ) => Promise<MembershipPackageAssignment>;
+  claimMembershipPackageSeatForAccount: (
+    opts: AccountLocalClaimMembershipPackageSeatForAccountRequest,
+  ) => Promise<MembershipPackageAssignment>;
+  getSiteLicenseOverview: (
+    opts: AccountLocalGetSiteLicenseOverviewRequest,
+  ) => Promise<SiteLicenseOverview>;
+  requestSiteLicensePool: (
+    opts: AccountLocalRequestSiteLicensePoolRequest,
+  ) => Promise<SiteLicensePoolRequest>;
+  requestSiteLicensePoolForAccount: (
+    opts: AccountLocalRequestSiteLicensePoolForAccountRequest,
+  ) => Promise<SiteLicensePoolRequest>;
+  reviewSiteLicensePoolRequest: (
+    opts: AccountLocalReviewSiteLicensePoolRequest,
+  ) => Promise<SiteLicensePoolRequest>;
+  refreshSiteLicenseAffiliationVerification: (
+    opts: AccountLocalRefreshSiteLicenseAffiliationVerificationRequest,
+  ) => Promise<SiteLicenseAffiliationReverificationSeat[]>;
+  refreshSiteLicenseAffiliationVerificationForAccount: (
+    opts: AccountLocalRefreshSiteLicenseAffiliationVerificationForAccountRequest,
+  ) => Promise<SiteLicenseAffiliationReverificationSeat[]>;
+  getSiteLicenseAffiliationReverificationStatusForAccount: (
+    opts: AccountLocalGetSiteLicenseAffiliationReverificationStatusForAccountRequest,
+  ) => Promise<SiteLicenseAffiliationReverificationUserStatus>;
   getMembershipPortableState: (
     opts: AccountLocalGetMembershipPortableStateRequest,
   ) => Promise<AccountMembershipPortableState>;
@@ -3174,6 +3369,26 @@ export function createInterBayAccountDirectoryClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountDirectorySubject({ method: "touch-api-key" }),
   });
+  const recentPasswordResetAttemptsClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "recentPasswordResetAttempts">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({
+      method: "recent-password-reset-attempts",
+    }),
+  });
+  const createPasswordResetClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "createPasswordReset">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "create-password-reset" }),
+  });
+  const redeemPasswordResetClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "redeemPasswordReset">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "redeem-password-reset" }),
+  });
   const getMembershipClaimIdentityClient = createServiceClient<
     Pick<InterBayAccountDirectoryApi, "getMembershipClaimIdentity">
   >({
@@ -3225,6 +3440,12 @@ export function createInterBayAccountDirectoryClient({
     updateApiKeysHomeBay: async (opts) =>
       await updateApiKeysHomeBayClient.updateApiKeysHomeBay(opts),
     touchApiKey: async (opts) => await touchApiKeyClient.touchApiKey(opts),
+    recentPasswordResetAttempts: async (opts) =>
+      await recentPasswordResetAttemptsClient.recentPasswordResetAttempts(opts),
+    createPasswordReset: async (opts) =>
+      await createPasswordResetClient.createPasswordReset(opts),
+    redeemPasswordReset: async (opts) =>
+      await redeemPasswordResetClient.redeemPasswordReset(opts),
     getMembershipClaimIdentity: async (opts) =>
       await getMembershipClaimIdentityClient.getMembershipClaimIdentity(opts),
     reserveMembershipClaimIdentity: async (opts) =>
@@ -3369,6 +3590,41 @@ export function createInterBayAccountDirectoryHandlers({
       },
     }),
     createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "recentPasswordResetAttempts">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({
+        method: "recent-password-reset-attempts",
+      }),
+      impl: {
+        recentPasswordResetAttempts: async (opts) =>
+          await impl.recentPasswordResetAttempts(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "createPasswordReset">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "create-password-reset" }),
+      impl: {
+        createPasswordReset: async (opts) =>
+          await impl.createPasswordReset(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "redeemPasswordReset">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "redeem-password-reset" }),
+      impl: {
+        redeemPasswordReset: async (opts) =>
+          await impl.redeemPasswordReset(opts),
+      },
+    }),
+    createServiceHandler<
       Pick<InterBayAccountDirectoryApi, "getMembershipClaimIdentity">
     >({
       ...options,
@@ -3508,6 +3764,33 @@ export function createInterBayAccountLocalClient({
     subject: accountLocalSubject({
       dest_bay,
       method: "redeem-verify-email",
+    }),
+  });
+  const adminVerifyEmailAddressClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "adminVerifyEmailAddress">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "admin-verify-email-address",
+    }),
+  });
+  const adminDisableTwoFactorClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "adminDisableTwoFactor">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "admin-disable-two-factor",
+    }),
+  });
+  const setPasswordFromResetClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "setPasswordFromReset">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "set-password-from-reset",
     }),
   });
   const assertProductAccessTrustClient = createServiceClient<
@@ -3672,6 +3955,15 @@ export function createInterBayAccountLocalClient({
       method: "admin-provision-membership-package",
     }),
   });
+  const adminProvisionSiteLicenseClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "adminProvisionSiteLicense">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "admin-provision-site-license",
+    }),
+  });
   const updateMembershipPackageClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "updateMembershipPackage">
   >({
@@ -3690,6 +3982,15 @@ export function createInterBayAccountLocalClient({
       method: "get-claimable-membership-packages",
     }),
   });
+  const getClaimableMembershipPackagesForAccountClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getClaimableMembershipPackagesForAccount">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-claimable-membership-packages-for-account",
+    }),
+  });
   const claimMembershipPackageSeatClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "claimMembershipPackageSeat">
   >({
@@ -3699,6 +4000,87 @@ export function createInterBayAccountLocalClient({
       method: "claim-membership-package-seat",
     }),
   });
+  const claimMembershipPackageSeatForAccountClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "claimMembershipPackageSeatForAccount">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "claim-membership-package-seat-for-account",
+    }),
+  });
+  const getSiteLicenseOverviewClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getSiteLicenseOverview">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-site-license-overview",
+    }),
+  });
+  const requestSiteLicensePoolClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "requestSiteLicensePool">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "request-site-license-pool",
+    }),
+  });
+  const requestSiteLicensePoolForAccountClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "requestSiteLicensePoolForAccount">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "request-site-license-pool-for-account",
+    }),
+  });
+  const reviewSiteLicensePoolRequestClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "reviewSiteLicensePoolRequest">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "review-site-license-pool-request",
+    }),
+  });
+  const refreshSiteLicenseAffiliationVerificationClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "refreshSiteLicenseAffiliationVerification">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "refresh-site-license-affiliation-verification",
+    }),
+  });
+  const refreshSiteLicenseAffiliationVerificationForAccountClient =
+    createServiceClient<
+      Pick<
+        InterBayAccountLocalApi,
+        "refreshSiteLicenseAffiliationVerificationForAccount"
+      >
+    >({
+      ...serviceClientOptions({ client, timeout }),
+      subject: accountLocalSubject({
+        dest_bay,
+        method: "refresh-site-license-affiliation-verification-for-account",
+      }),
+    });
+  const getSiteLicenseAffiliationReverificationStatusForAccountClient =
+    createServiceClient<
+      Pick<
+        InterBayAccountLocalApi,
+        "getSiteLicenseAffiliationReverificationStatusForAccount"
+      >
+    >({
+      ...serviceClientOptions({ client, timeout }),
+      subject: accountLocalSubject({
+        dest_bay,
+        method:
+          "get-site-license-affiliation-reverification-status-for-account",
+      }),
+    });
   const getMembershipPortableStateClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "getMembershipPortableState">
   >({
@@ -3736,6 +4118,12 @@ export function createInterBayAccountLocalClient({
       await verifySignInPasswordClient.verifySignInPassword(opts),
     redeemVerifyEmail: async (opts) =>
       await redeemVerifyEmailClient.redeemVerifyEmail(opts),
+    adminVerifyEmailAddress: async (opts) =>
+      await adminVerifyEmailAddressClient.adminVerifyEmailAddress(opts),
+    adminDisableTwoFactor: async (opts) =>
+      await adminDisableTwoFactorClient.adminDisableTwoFactor(opts),
+    setPasswordFromReset: async (opts) =>
+      await setPasswordFromResetClient.setPasswordFromReset(opts),
     assertProductAccessTrust: async (opts) =>
       await assertProductAccessTrustClient.assertProductAccessTrust(opts),
     reconcileDedicatedHostPurchaseSession: async (opts) =>
@@ -3788,14 +4176,48 @@ export function createInterBayAccountLocalClient({
       await adminProvisionMembershipPackageClient.adminProvisionMembershipPackage(
         opts,
       ),
+    adminProvisionSiteLicense: async (opts) =>
+      await adminProvisionSiteLicenseClient.adminProvisionSiteLicense(opts),
     updateMembershipPackage: async (opts) =>
       await updateMembershipPackageClient.updateMembershipPackage(opts),
     getClaimableMembershipPackages: async (opts) =>
       await getClaimableMembershipPackagesClient.getClaimableMembershipPackages(
         opts,
       ),
+    getClaimableMembershipPackagesForAccount: async (opts) =>
+      await getClaimableMembershipPackagesForAccountClient.getClaimableMembershipPackagesForAccount(
+        opts,
+      ),
     claimMembershipPackageSeat: async (opts) =>
       await claimMembershipPackageSeatClient.claimMembershipPackageSeat(opts),
+    claimMembershipPackageSeatForAccount: async (opts) =>
+      await claimMembershipPackageSeatForAccountClient.claimMembershipPackageSeatForAccount(
+        opts,
+      ),
+    getSiteLicenseOverview: async (opts) =>
+      await getSiteLicenseOverviewClient.getSiteLicenseOverview(opts),
+    requestSiteLicensePool: async (opts) =>
+      await requestSiteLicensePoolClient.requestSiteLicensePool(opts),
+    requestSiteLicensePoolForAccount: async (opts) =>
+      await requestSiteLicensePoolForAccountClient.requestSiteLicensePoolForAccount(
+        opts,
+      ),
+    reviewSiteLicensePoolRequest: async (opts) =>
+      await reviewSiteLicensePoolRequestClient.reviewSiteLicensePoolRequest(
+        opts,
+      ),
+    refreshSiteLicenseAffiliationVerification: async (opts) =>
+      await refreshSiteLicenseAffiliationVerificationClient.refreshSiteLicenseAffiliationVerification(
+        opts,
+      ),
+    refreshSiteLicenseAffiliationVerificationForAccount: async (opts) =>
+      await refreshSiteLicenseAffiliationVerificationForAccountClient.refreshSiteLicenseAffiliationVerificationForAccount(
+        opts,
+      ),
+    getSiteLicenseAffiliationReverificationStatusForAccount: async (opts) =>
+      await getSiteLicenseAffiliationReverificationStatusForAccountClient.getSiteLicenseAffiliationReverificationStatusForAccount(
+        opts,
+      ),
     getMembershipPortableState: async (opts) =>
       await getMembershipPortableStateClient.getMembershipPortableState(opts),
     replaceMembershipPortableState: async (opts) =>
@@ -3935,6 +4357,48 @@ export function createInterBayAccountLocalHandler({
         redeemVerifyEmail: async (opts) => await impl.redeemVerifyEmail(opts),
       },
     }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "adminVerifyEmailAddress">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "admin-verify-email-address",
+      }),
+      impl: {
+        adminVerifyEmailAddress: async (opts) =>
+          await impl.adminVerifyEmailAddress(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "adminDisableTwoFactor">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "admin-disable-two-factor",
+      }),
+      impl: {
+        adminDisableTwoFactor: async (opts) =>
+          await impl.adminDisableTwoFactor(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "setPasswordFromReset">>(
+      {
+        ...options,
+        service: "inter-bay-account-local",
+        subject: accountLocalSubject({
+          dest_bay: bay_id,
+          method: "set-password-from-reset",
+        }),
+        impl: {
+          setPasswordFromReset: async (opts) =>
+            await impl.setPasswordFromReset(opts),
+        },
+      },
+    ),
     createServiceHandler<
       Pick<InterBayAccountLocalApi, "assertProductAccessTrust">
     >({
@@ -4185,6 +4649,20 @@ export function createInterBayAccountLocalHandler({
       },
     }),
     createServiceHandler<
+      Pick<InterBayAccountLocalApi, "adminProvisionSiteLicense">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "admin-provision-site-license",
+      }),
+      impl: {
+        adminProvisionSiteLicense: async (opts) =>
+          await impl.adminProvisionSiteLicense(opts),
+      },
+    }),
+    createServiceHandler<
       Pick<InterBayAccountLocalApi, "updateMembershipPackage">
     >({
       ...options,
@@ -4213,6 +4691,20 @@ export function createInterBayAccountLocalHandler({
       },
     }),
     createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getClaimableMembershipPackagesForAccount">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-claimable-membership-packages-for-account",
+      }),
+      impl: {
+        getClaimableMembershipPackagesForAccount: async (opts) =>
+          await impl.getClaimableMembershipPackagesForAccount(opts),
+      },
+    }),
+    createServiceHandler<
       Pick<InterBayAccountLocalApi, "claimMembershipPackageSeat">
     >({
       ...options,
@@ -4224,6 +4716,127 @@ export function createInterBayAccountLocalHandler({
       impl: {
         claimMembershipPackageSeat: async (opts) =>
           await impl.claimMembershipPackageSeat(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "claimMembershipPackageSeatForAccount">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "claim-membership-package-seat-for-account",
+      }),
+      impl: {
+        claimMembershipPackageSeatForAccount: async (opts) =>
+          await impl.claimMembershipPackageSeatForAccount(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getSiteLicenseOverview">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-site-license-overview",
+      }),
+      impl: {
+        getSiteLicenseOverview: async (opts) =>
+          await impl.getSiteLicenseOverview(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "requestSiteLicensePool">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "request-site-license-pool",
+      }),
+      impl: {
+        requestSiteLicensePool: async (opts) =>
+          await impl.requestSiteLicensePool(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "requestSiteLicensePoolForAccount">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "request-site-license-pool-for-account",
+      }),
+      impl: {
+        requestSiteLicensePoolForAccount: async (opts) =>
+          await impl.requestSiteLicensePoolForAccount(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "reviewSiteLicensePoolRequest">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "review-site-license-pool-request",
+      }),
+      impl: {
+        reviewSiteLicensePoolRequest: async (opts) =>
+          await impl.reviewSiteLicensePoolRequest(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "refreshSiteLicenseAffiliationVerification">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "refresh-site-license-affiliation-verification",
+      }),
+      impl: {
+        refreshSiteLicenseAffiliationVerification: async (opts) =>
+          await impl.refreshSiteLicenseAffiliationVerification(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<
+        InterBayAccountLocalApi,
+        "refreshSiteLicenseAffiliationVerificationForAccount"
+      >
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "refresh-site-license-affiliation-verification-for-account",
+      }),
+      impl: {
+        refreshSiteLicenseAffiliationVerificationForAccount: async (opts) =>
+          await impl.refreshSiteLicenseAffiliationVerificationForAccount(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<
+        InterBayAccountLocalApi,
+        "getSiteLicenseAffiliationReverificationStatusForAccount"
+      >
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method:
+          "get-site-license-affiliation-reverification-status-for-account",
+      }),
+      impl: {
+        getSiteLicenseAffiliationReverificationStatusForAccount: async (opts) =>
+          await impl.getSiteLicenseAffiliationReverificationStatusForAccount(
+            opts,
+          ),
       },
     }),
     createServiceHandler<

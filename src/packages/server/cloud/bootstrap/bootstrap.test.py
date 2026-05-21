@@ -1110,6 +1110,37 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             )
             self.assertIn('exec "$NODE_BIN"', script)
 
+    def test_install_node_uses_current_nvm_and_requested_node_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            recorded = []
+
+            original_run_cmd = bootstrap.run_cmd
+            try:
+                bootstrap.run_cmd = (
+                    lambda _cfg, args, desc, **kwargs: recorded.append(
+                        (args, desc, kwargs)
+                    )
+                )
+                bootstrap.install_node(cfg)
+            finally:
+                bootstrap.run_cmd = original_run_cmd
+
+            self.assertEqual(len(recorded), 1)
+            args, desc, kwargs = recorded[0]
+            self.assertEqual(desc, "install node")
+            self.assertEqual(kwargs.get("as_user"), cfg.ssh_user)
+            self.assertEqual(args[:2], ["bash", "-lc"])
+            script = args[2]
+            self.assertIn(
+                "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh",
+                script,
+            )
+            self.assertIn('PROFILE=/dev/null bash', script)
+            self.assertIn('nvm --version)" = "0.40.4"', script)
+            self.assertIn("nvm install 20", script)
+            self.assertIn("nvm alias default 20", script)
+
     def test_configure_autostart_only_writes_cron_and_enables_service(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)

@@ -5,6 +5,7 @@ export const TEMPLATE_PRIORITY = {
   student: 10,
   member: 20,
   instructor: 25,
+  researcher: 27,
   pro: 30,
 } as const;
 
@@ -417,6 +418,74 @@ export const TIER_TEMPLATES = {
       }),
     }),
   },
+  researcher: {
+    id: "researcher",
+    label: "Researcher",
+    store_visible: false,
+    course_store_visible: false,
+    priority: TEMPLATE_PRIORITY.researcher,
+    price_monthly: 100,
+    price_yearly: 100 * 9,
+    course_price: undefined,
+    course_duration_days: undefined,
+    course_grace_days: undefined,
+    project_defaults: quotaTemplate({
+      network: 1,
+      member_host: 1,
+      disk_quota: 100000,
+      memory: 16000,
+      cores: 4,
+      mintime: 12 * 3600,
+    }),
+    ai_limits: aiLimitsFromYearly(100 * 9),
+    features: {
+      create_hosts: true,
+      project_host_tier: 2,
+    },
+    usage_limits: usageLimitsTemplate(4, 15, {
+      max_projects: 150,
+      notification_email_send_limit_5h: 500,
+      notification_email_send_limit_7d: 2500,
+      prepaid_host_usage_limit_5h_usd: 750,
+      prepaid_host_usage_limit_7d_usd: 2500,
+      ...acpUsageLimits({
+        queuedPerAccount: 300,
+        queuedPerThread: 75,
+        created5hPerAccount: 300,
+        created7dPerAccount: 1200,
+        runningPerAccount: 35,
+        runningPerProject: 25,
+        activeAutomationsPerProject: 12,
+      }),
+      ...rootfsUsageLimits({
+        count: 100,
+        totalStorageGb: 150,
+        maxStorageGb: 30,
+        ociImages: true,
+      }),
+      ...blobUsageLimits({
+        accountStorageGb: 30,
+        accountCount: 50000,
+        projectStorageGb: 10,
+        projectCount: 5000,
+      }),
+      ...inviteUsageLimits({
+        sendEnabled: true,
+        dailyCount: 500,
+        hourlyCount: 200,
+        recipientsPerBatch: 200,
+        pendingPerProject: 250,
+        pendingPerCourse: 500,
+        resendCooldownMinutes: 15,
+        customMessageMaxChars: 800,
+        allowProjectTitle: true,
+        allowCourseTitle: true,
+        allowUrls: false,
+        projectCollaboratorsAndPendingInvites: 250,
+        courseStudentsAndPendingInvites: 500,
+      }),
+    }),
+  },
   pro: {
     id: "pro",
     label: "Pro",
@@ -509,6 +578,26 @@ type TierTemplateFields = {
   usage_limits?: unknown;
 };
 
+function mergeTemplateObject(
+  templateValue: unknown,
+  tierValue: unknown,
+): unknown {
+  if (
+    templateValue != null &&
+    typeof templateValue === "object" &&
+    !Array.isArray(templateValue) &&
+    tierValue != null &&
+    typeof tierValue === "object" &&
+    !Array.isArray(tierValue)
+  ) {
+    return {
+      ...(templateValue as Record<string, unknown>),
+      ...(tierValue as Record<string, unknown>),
+    };
+  }
+  return tierValue ?? templateValue;
+}
+
 export function applyMembershipTierTemplateFallbacks<
   T extends TierTemplateFields,
 >(tier: T): T {
@@ -527,17 +616,12 @@ export function applyMembershipTierTemplateFallbacks<
     priority: tier.priority ?? template.priority,
     price_monthly: tier.price_monthly ?? template.price_monthly,
     price_yearly: tier.price_yearly ?? template.price_yearly,
-    project_defaults: tier.project_defaults ?? template.project_defaults,
-    ai_limits: tier.ai_limits ?? template.ai_limits,
-    features: tier.features ?? template.features,
-    usage_limits:
-      tier.usage_limits != null &&
-      typeof tier.usage_limits === "object" &&
-      !Array.isArray(tier.usage_limits)
-        ? {
-            ...(template.usage_limits ?? {}),
-            ...(tier.usage_limits as Record<string, unknown>),
-          }
-        : (tier.usage_limits ?? template.usage_limits),
+    project_defaults: mergeTemplateObject(
+      template.project_defaults,
+      tier.project_defaults,
+    ),
+    ai_limits: mergeTemplateObject(template.ai_limits, tier.ai_limits),
+    features: mergeTemplateObject(template.features, tier.features),
+    usage_limits: mergeTemplateObject(template.usage_limits, tier.usage_limits),
   };
 }

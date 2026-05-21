@@ -50,6 +50,42 @@ test("buildCookieHeader skips project auth when project_id is invalid", () => {
   assert.equal(header, undefined);
 });
 
+test("buildCookieHeader includes account_id with hub password impersonation", () => {
+  const accountId = "00000000-1000-4000-8000-000000000056";
+  const header = buildCookieHeader(
+    "https://lite2.cocalc.ai",
+    {
+      hubPassword: "dev-hub-password",
+      accountId,
+      disableEnvAuthDefaults: true,
+    },
+    {},
+    {} as any,
+  );
+  assert.ok(header?.includes("hub_password=dev-hub-password"));
+  assert.ok(header?.includes(`account_id=${accountId}`));
+  assert.ok(
+    header?.includes(
+      `${cookieNameFor("https://lite2.cocalc.ai", "account_id")}=${accountId}`,
+    ),
+  );
+});
+
+test("buildCookieHeader includes env account_id with hub password impersonation", () => {
+  const accountId = "00000000-1000-4000-8000-000000000057";
+  const header = buildCookieHeader(
+    "https://lite2.cocalc.ai",
+    {},
+    {},
+    {
+      COCALC_HUB_PASSWORD: "dev-hub-password",
+      COCALC_ACCOUNT_ID: accountId,
+    } as any,
+  );
+  assert.ok(header?.includes("hub_password=dev-hub-password"));
+  assert.ok(header?.includes(`account_id=${accountId}`));
+});
+
 test("buildCookieHeader skips ambient project auth when direct cookie auth is present", () => {
   const dir = mkdtempSync(join(tmpdir(), "cocalc-cli-auth-cookie-"));
   const tokenPath = join(dir, "secret-token");

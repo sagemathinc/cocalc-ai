@@ -20,6 +20,11 @@ import type {
   MembershipPackageDetails,
   MembershipPackageKind,
   MembershipPackageQuote,
+  SiteLicenseAffiliationReverificationSeat,
+  SiteLicenseAffiliationReverificationUserStatus,
+  SiteLicenseOverview,
+  SiteLicensePoolConfig,
+  SiteLicensePoolRequest,
 } from "@cocalc/conat/hub/api/purchases";
 import { hoursInInterval } from "@cocalc/util/stripe/timecalcs";
 import { toDecimal, type MoneyValue } from "@cocalc/util/money";
@@ -455,6 +460,30 @@ export async function adminProvisionMembershipPackage(opts: {
   ).adminProvisionMembershipPackage(opts);
 }
 
+export async function adminProvisionSiteLicense(opts: {
+  owner_account_id?: string;
+  name: string;
+  organization_name: string;
+  allowed_domains: string[];
+  pools: SiteLicensePoolConfig[];
+  custom_terms_url?: string | null;
+  custom_policy_url?: string | null;
+  terms_version_label?: string | null;
+  renewal_policy?: string | null;
+  overage_policy?: string | null;
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+  metadata?: Record<string, unknown> | null;
+}): Promise<SiteLicenseOverview> {
+  const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+  return await (
+    await getPurchasesHubRpc()
+  ).adminProvisionSiteLicense({
+    ...opts,
+    browser_id: webapp_client.browser_id,
+  });
+}
+
 export async function updateMembershipPackage(opts: {
   package_id: string;
   owner_account_id?: string;
@@ -498,8 +527,50 @@ export async function getClaimableMembershipPackages(): Promise<
 
 export async function claimMembershipPackageSeat(opts: {
   package_id: string;
+  accepted_terms?: boolean;
 }): Promise<MembershipPackageAssignment> {
   return await (await getPurchasesHubRpc()).claimMembershipPackageSeat(opts);
+}
+
+export async function getSiteLicenseOverview(opts: {
+  owner_account_id?: string;
+  site_license_id: string;
+}): Promise<SiteLicenseOverview> {
+  return await (await getPurchasesHubRpc()).getSiteLicenseOverview(opts);
+}
+
+export async function requestSiteLicensePool(opts: {
+  owner_account_id?: string;
+  package_id: string;
+  requester_note?: string | null;
+  accepted_terms?: boolean;
+}): Promise<SiteLicensePoolRequest> {
+  return await (await getPurchasesHubRpc()).requestSiteLicensePool(opts);
+}
+
+export async function reviewSiteLicensePoolRequest(opts: {
+  owner_account_id?: string;
+  request_id: string;
+  action: "approve" | "reject";
+  review_note?: string | null;
+}): Promise<SiteLicensePoolRequest> {
+  return await (await getPurchasesHubRpc()).reviewSiteLicensePoolRequest(opts);
+}
+
+export async function getSiteLicenseAffiliationReverificationStatus(): Promise<SiteLicenseAffiliationReverificationUserStatus> {
+  return await (
+    await getPurchasesHubRpc()
+  ).getSiteLicenseAffiliationReverificationStatus({});
+}
+
+export async function refreshSiteLicenseAffiliationVerification(
+  opts: {
+    site_license_id?: string;
+  } = {},
+): Promise<SiteLicenseAffiliationReverificationSeat[]> {
+  return await (
+    await getPurchasesHubRpc()
+  ).refreshSiteLicenseAffiliationVerification(opts);
 }
 
 // Deprecated compatibility API; the effective minimum balance is always 0.

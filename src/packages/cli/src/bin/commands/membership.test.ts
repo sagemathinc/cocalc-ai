@@ -477,3 +477,307 @@ test("membership claimable and claim use the current account", async () => {
     package_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
   });
 });
+
+test("membership claim forwards accepted terms when requested", async () => {
+  let claimArgs: any;
+  const program = new Command();
+  registerMembershipCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "11111111-1111-1111-1111-111111111111",
+        hub: {
+          purchases: {
+            claimMembershipPackageSeat: async (opts) => {
+              claimArgs = opts;
+              return {
+                id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                package_id: opts.package_id,
+                account_id: opts.account_id,
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => {
+      throw new Error("should not resolve an account");
+    },
+    resolveProject: async () => {
+      throw new Error("should not resolve a project");
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "membership",
+    "claim",
+    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "--accepted-terms",
+  ]);
+
+  assert.deepEqual(claimArgs, {
+    account_id: "11111111-1111-1111-1111-111111111111",
+    package_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    accepted_terms: true,
+  });
+});
+
+test("membership site-license provision parses pools and owner", async () => {
+  let resolvedOwner: string | undefined;
+  let capturedArgs: any;
+  let captured: any;
+  const program = new Command();
+  registerMembershipCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "admin-1",
+        hub: {
+          purchases: {
+            adminProvisionSiteLicense: async (opts) => {
+              capturedArgs = opts;
+              return {
+                site_license: {
+                  id: "license-1",
+                  owner_account_id: opts.owner_account_id,
+                  name: opts.name,
+                  organization_name: opts.organization_name,
+                  allowed_domains: opts.allowed_domains,
+                },
+                pools: [],
+                managers: [],
+                pending_requests: [],
+              };
+            },
+          },
+        },
+      };
+      captured = await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async (_ctx, identifier) => {
+      resolvedOwner = identifier;
+      return { account_id: "owner-1" };
+    },
+    resolveProject: async () => {
+      throw new Error("should not resolve a project");
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "membership",
+    "site-license",
+    "provision",
+    "--owner",
+    "owner@example.edu",
+    "--name",
+    "Campus Pilot",
+    "--organization-name",
+    "Example University",
+    "--domain",
+    "Example.EDU,@dept.example.edu",
+    "--pools-json",
+    '[{"pool_name":"Students","membership_class":"student","seat_count":5000,"requires_approval":false,"verification_policy":"email-domain"},{"pool_name":"Instructors","membership_class":"instructor","seat_count":200,"requires_approval":true,"verification_policy":"manager-approval","exclusive_group":"teaching"}]',
+    "--custom-terms-url",
+    "https://example.edu/terms",
+  ]);
+
+  assert.equal(resolvedOwner, "owner@example.edu");
+  assert.equal(captured?.site_license?.id, "license-1");
+  assert.deepEqual(capturedArgs, {
+    account_id: "admin-1",
+    owner_account_id: "owner-1",
+    name: "Campus Pilot",
+    organization_name: "Example University",
+    allowed_domains: ["dept.example.edu", "example.edu"],
+    pools: [
+      {
+        pool_name: "Students",
+        membership_class: "student",
+        seat_count: 5000,
+        requires_approval: false,
+        verification_policy: "email-domain",
+        exclusive_group: undefined,
+        affiliation_reverification_days: undefined,
+        affiliation_reverification_grace_days: undefined,
+        allowed_domains: undefined,
+        metadata: undefined,
+      },
+      {
+        pool_name: "Instructors",
+        membership_class: "instructor",
+        seat_count: 200,
+        requires_approval: true,
+        verification_policy: "manager-approval",
+        exclusive_group: "teaching",
+        affiliation_reverification_days: undefined,
+        affiliation_reverification_grace_days: undefined,
+        allowed_domains: undefined,
+        metadata: undefined,
+      },
+    ],
+    custom_terms_url: "https://example.edu/terms",
+    custom_policy_url: undefined,
+    terms_version_label: undefined,
+    renewal_policy: undefined,
+    overage_policy: undefined,
+    starts_at: undefined,
+    expires_at: undefined,
+    metadata: null,
+  });
+});
+
+test("membership site-license overview routes by owner", async () => {
+  let capturedArgs: any;
+  let captured: any;
+  const program = new Command();
+  registerMembershipCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "manager-1",
+        hub: {
+          purchases: {
+            getSiteLicenseOverview: async (opts) => {
+              capturedArgs = opts;
+              return {
+                site_license: {
+                  id: opts.site_license_id,
+                  owner_account_id: opts.owner_account_id,
+                  name: "Campus",
+                  organization_name: "Example University",
+                  allowed_domains: ["example.edu"],
+                },
+                pools: [],
+                managers: [],
+                pending_requests: [],
+              };
+            },
+          },
+        },
+      };
+      captured = await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => ({ account_id: "owner-1" }),
+    resolveProject: async () => {
+      throw new Error("should not resolve a project");
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "membership",
+    "site-license",
+    "overview",
+    "license-1",
+    "--owner",
+    "owner@example.edu",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    account_id: "manager-1",
+    owner_account_id: "owner-1",
+    site_license_id: "license-1",
+  });
+  assert.equal(captured?.site_license?.id, "license-1");
+});
+
+test("membership site-license request and review call site-license APIs", async () => {
+  let requestArgs: any;
+  let reviewArgs: any;
+  const program = new Command();
+  registerMembershipCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "user-1",
+        hub: {
+          purchases: {
+            requestSiteLicensePool: async (opts) => {
+              requestArgs = opts;
+              return {
+                id: "request-1",
+                site_license_id: "license-1",
+                package_id: opts.package_id,
+                account_id: opts.account_id,
+                matched_email_address: "ada@example.edu",
+                canonical_identity: "ada@example.edu",
+                requested_membership_class: "instructor",
+                state: "pending",
+                requester_note: opts.requester_note,
+              };
+            },
+            reviewSiteLicensePoolRequest: async (opts) => {
+              reviewArgs = opts;
+              return {
+                id: opts.request_id,
+                site_license_id: "license-1",
+                package_id: "pool-1",
+                account_id: "user-1",
+                matched_email_address: "ada@example.edu",
+                canonical_identity: "ada@example.edu",
+                requested_membership_class: "instructor",
+                state: "approved",
+                review_note: opts.review_note,
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => ({ account_id: "owner-1" }),
+    resolveProject: async () => {
+      throw new Error("should not resolve a project");
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "membership",
+    "site-license",
+    "request",
+    "--owner",
+    "owner@example.edu",
+    "--package",
+    "pool-1",
+    "--note",
+    "Teaching Math 101",
+    "--accepted-terms",
+  ]);
+  assert.deepEqual(requestArgs, {
+    account_id: "user-1",
+    owner_account_id: "owner-1",
+    package_id: "pool-1",
+    requester_note: "Teaching Math 101",
+    accepted_terms: true,
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "membership",
+    "site-license",
+    "review",
+    "request-1",
+    "--owner",
+    "owner@example.edu",
+    "--action",
+    "approve",
+    "--note",
+    "Confirmed",
+  ]);
+  assert.deepEqual(reviewArgs, {
+    account_id: "user-1",
+    owner_account_id: "owner-1",
+    request_id: "request-1",
+    action: "approve",
+    review_note: "Confirmed",
+  });
+});

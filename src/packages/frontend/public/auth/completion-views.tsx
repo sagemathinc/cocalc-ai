@@ -8,7 +8,11 @@ import { useEffect, useState } from "react";
 import { Alert, Button, Flex, Input, Spin, Typography } from "antd";
 
 import type { ProjectCollabInviteRow } from "@cocalc/conat/hub/api/projects";
-import { signOutAuthSession } from "@cocalc/frontend/auth/api";
+import {
+  isWrongBayAuthResponse,
+  retryAuthOnHomeBay,
+  signOutAuthSession,
+} from "@cocalc/frontend/auth/api";
 import api from "@cocalc/frontend/client/api";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
@@ -77,7 +81,17 @@ export function PublicRedeemPasswordResetView({
     setSubmitting(true);
     setError("");
     try {
-      await api("auth/redeem-password-reset", { password, passwordResetId });
+      const result = await api("auth/redeem-password-reset", {
+        password,
+        passwordResetId,
+      });
+      if (isWrongBayAuthResponse(result)) {
+        await retryAuthOnHomeBay({
+          endpoint: "auth/redeem-password-reset",
+          wrongBay: result,
+          body: { passwordResetId },
+        });
+      }
       openPath(pathForPasswordResetDone());
     } catch (err) {
       setError(`${err}`);

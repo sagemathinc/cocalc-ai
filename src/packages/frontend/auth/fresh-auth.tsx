@@ -15,14 +15,27 @@ import {
   getSecondFactorPlaceholder,
   inferSecondFactorInputMethod,
 } from "@cocalc/frontend/auth/second-factor-input";
+import { COLORS } from "@cocalc/util/theme";
 
 type FreshAuthStatus = {
   mode: "account" | "impersonation_actor";
   enabled: boolean;
   methods?: SecondFactorMethod[];
+  email_address?: string | null;
   actor_name?: string | null;
   actor_email_address?: string | null;
 };
+
+function normalizeFreshAuthEmail(email: string): string {
+  return `${email ?? ""}`.trim().toLowerCase();
+}
+
+function getFreshAuthEmail(status: FreshAuthStatus | null): string {
+  if (status?.mode === "impersonation_actor") {
+    return `${status.actor_email_address ?? ""}`.trim();
+  }
+  return `${status?.email_address ?? ""}`.trim();
+}
 
 export function isFreshAuthRequiredError(err: unknown): boolean {
   const code = `${(err as any)?.code ?? ""}`.trim().toLowerCase();
@@ -42,6 +55,7 @@ export function FreshAuthModal({
   origin?: string;
 }) {
   const [currentPassword, setCurrentPassword] = useState("");
+  const [emailAddress, setEmailAddress] = useState("");
   const [code, setCode] = useState("");
   const [usePasskey, setUsePasskey] = useState(false);
   const [extended, setExtended] = useState(false);
@@ -50,12 +64,18 @@ export function FreshAuthModal({
   const [factorEnabled, setFactorEnabled] = useState<boolean | null>(null);
   const [status, setStatus] = useState<FreshAuthStatus | null>(null);
   const inferredMethod = inferSecondFactorInputMethod(code);
+  const expectedEmailAddress = getFreshAuthEmail(status);
+  const emailMismatch =
+    expectedEmailAddress.length > 0 &&
+    normalizeFreshAuthEmail(emailAddress) !==
+      normalizeFreshAuthEmail(expectedEmailAddress);
 
   useEffect(() => {
     let cancelled = false;
     async function loadStatus() {
       if (!open) {
         setStatus(null);
+        setEmailAddress("");
         return;
       }
       setError("");
@@ -68,6 +88,7 @@ export function FreshAuthModal({
         });
         if (!cancelled) {
           setStatus(next);
+          setEmailAddress(getFreshAuthEmail(next));
           setFactorEnabled(!!next?.enabled);
           setUsePasskey((next.methods ?? []).includes("passkey"));
         }
@@ -92,13 +113,18 @@ export function FreshAuthModal({
   }, [factorEnabled, inferredMethod, usePasskey]);
 
   async function submit() {
+    if (emailMismatch) {
+      setError(
+        "Use the signed-in account email address for this confirmation.",
+      );
+      return;
+    }
     setSaving(true);
     setError("");
     try {
       const requireSecondFactor = factorEnabled === true;
       if (requireSecondFactor && usePasskey) {
         await freshAuthWithPasskey({
-          current_password: currentPassword,
           duration: extended ? "extended" : "default",
           origin,
         });
@@ -139,6 +165,7 @@ export function FreshAuthModal({
         disabled:
           saving ||
           factorEnabled == null ||
+          emailMismatch ||
           (factorEnabled === true && !usePasskey && code.trim().length === 0),
       }}
     >
@@ -159,13 +186,36 @@ export function FreshAuthModal({
           />
         ) : undefined}
         <div>
-          <div>Current password</div>
-          <Input.Password
-            value={currentPassword}
-            placeholder="Leave blank if this account has no password"
-            onChange={(e) => setCurrentPassword(e.target.value)}
+          <div>Email address</div>
+          <Input
+            name="username"
+            autoComplete="username"
+            type="email"
+            value={emailAddress}
+            status={emailMismatch ? "error" : undefined}
+            placeholder="Signed-in account email"
+            onChange={(e) => setEmailAddress(e.target.value)}
+            onPressEnter={submit}
           />
+          {emailMismatch ? (
+            <div style={{ color: COLORS.ANTD_RED, marginTop: "4px" }}>
+              This must match the signed-in account email.
+            </div>
+          ) : undefined}
         </div>
+        {factorEnabled === false ? (
+          <div>
+            <div>Current password</div>
+            <Input.Password
+              name="current-password"
+              autoComplete="current-password"
+              value={currentPassword}
+              placeholder="Leave blank if this account has no password"
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              onPressEnter={submit}
+            />
+          </div>
+        ) : undefined}
         {factorEnabled === true ? (
           <>
             <div>

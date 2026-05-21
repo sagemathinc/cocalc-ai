@@ -8,6 +8,11 @@ import { getUser, isAllowed } from "./auth";
 import { inboxPrefix } from "@cocalc/conat/names";
 import { recordApiKeyAuditEventSoon } from "@cocalc/server/api/api-key-audit";
 
+jest.mock("@cocalc/backend/data", () => ({
+  ...jest.requireActual("@cocalc/backend/data"),
+  conatPassword: "hub-secret",
+}));
+
 jest.mock("@cocalc/server/api/api-key-audit", () => ({
   __esModule: true,
   recordApiKeyAuditEventSoon: jest.fn(),
@@ -101,6 +106,39 @@ describe("test isAllowed for hub", () => {
           await isAllowed({ user: { hub_id: "hub" }, type, subject }),
         ).toBe(true);
       }
+    }
+  });
+});
+
+describe("hub-password account impersonation", () => {
+  it("authenticates as the requested account in development", async () => {
+    const socket = {
+      handshake: {
+        headers: {
+          cookie: `hub_password=hub-secret; account_id=${account_id}`,
+        },
+      },
+    };
+    expect(await getUser(socket)).toEqual({ account_id });
+  });
+
+  it("rejects requested account impersonation in production", async () => {
+    const original = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      const socket = {
+        handshake: {
+          headers: {
+            cookie: `hub_password=hub-secret; account_id=${account_id}`,
+          },
+        },
+      };
+      await expect(getUser(socket)).rejects.toThrow(
+        "only available in development",
+      );
+    } finally {
+      if (original === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = original;
     }
   });
 });
