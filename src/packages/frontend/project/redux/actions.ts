@@ -2702,18 +2702,27 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   deleteFiles = async ({
     paths,
     sudo = false,
+    runFreshAuthAction,
   }: {
     paths: string[];
     sudo?: boolean;
+    runFreshAuthAction?: (action: () => Promise<void>) => Promise<boolean>;
   }): Promise<void> => {
-    await deleteFiles({
-      paths,
-      sudo,
-      projectId: this.project_id,
-      fs: () => this.fs(),
-      setActivity: (opts) => this.set_activity(opts),
-      log: (event) => this.log(event),
-    });
+    const action = async () => {
+      await deleteFiles({
+        paths,
+        sudo,
+        projectId: this.project_id,
+        fs: () => this.fs(),
+        setActivity: (opts) => this.set_activity(opts),
+        log: (event) => this.log(event),
+      });
+    };
+    if (runFreshAuthAction != null) {
+      await runFreshAuthAction(action);
+      return;
+    }
+    await action();
   };
 
   // remove all files in the given path (or subtree of that path)

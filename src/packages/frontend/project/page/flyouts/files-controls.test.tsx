@@ -34,6 +34,17 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: () => currentPathAbs,
 }));
 
+jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
+  FreshAuthModal: () => null,
+  useFreshAuthAction: () => ({
+    freshAuthModalProps: {},
+    runFreshAuthAction: async (action: () => Promise<void>) => {
+      await action();
+      return true;
+    },
+  }),
+}));
+
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: () => null,
   TimeAgo: () => null,
@@ -58,6 +69,7 @@ jest.mock("@cocalc/frontend/project/archive-info", () => ({
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
+    browser_id: "browser-1",
     conat_client: {
       hub: {
         projects: {
