@@ -9,7 +9,6 @@ import { useEffect, useState } from "react";
 import { Panel } from "@cocalc/frontend/antd-bootstrap";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
-import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import {
   COOKIE_CATEGORIES,
   getConsentSnapshot,
@@ -20,6 +19,12 @@ import {
 import { COLORS } from "@cocalc/util/theme";
 
 const { Text } = Typography;
+
+function formatTimestamp(timestamp: string): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.valueOf())) return timestamp;
+  return date.toLocaleString();
+}
 
 function CategoryStatus({
   accepted,
@@ -79,7 +84,7 @@ export function CookieConsentSettings(): React.JSX.Element | null {
             ))}
             {snap.timestamp && (
               <Text type="secondary">
-                Last updated: <TimeAgo date={snap.timestamp} />
+                Last updated: {formatTimestamp(snap.timestamp)}
               </Text>
             )}
           </Space>
