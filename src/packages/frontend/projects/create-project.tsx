@@ -466,10 +466,10 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     return (
       <Card
         size="small"
-        styles={{ body: { padding: "12px 14px" } }}
+        styles={{ body: { padding: "10px 12px" } }}
         style={{ borderColor: COLORS.GRAY_LL }}
       >
-        <Space orientation="vertical" size={8} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={6} style={{ width: "100%" }}>
           <Space
             align="center"
             style={{ width: "100%", justifyContent: "space-between" }}
@@ -483,9 +483,9 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                   borderRadius: 10,
                   color: COLORS.YELL_D,
                   display: "inline-flex",
-                  height: 36,
+                  height: 32,
                   justifyContent: "center",
-                  width: 36,
+                  width: 32,
                 }}
               >
                 <Icon name="cube" />
@@ -537,7 +537,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-          gap: 12,
+          gap: 10,
         }}
       >
         {PROJECT_PRESETS.map((preset) => {
@@ -549,8 +549,8 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
               disabled={saving}
               style={{
                 height: "auto",
-                minHeight: 124,
-                padding: "14px 12px",
+                minHeight: 96,
+                padding: "10px 9px",
                 textAlign: "center",
                 borderColor: active ? COLORS.BS_BLUE_BGRND : COLORS.GRAY_LL,
                 background: active ? COLORS.ANTD_BG_BLUE_L : "white",
@@ -559,7 +559,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                   : undefined,
               }}
             >
-              <Space orientation="vertical" align="center" size={8}>
+              <Space orientation="vertical" align="center" size={6}>
                 <span
                   style={{
                     alignItems: "center",
@@ -567,10 +567,10 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                     borderRadius: 12,
                     color: active ? COLORS.BS_BLUE_TEXT : COLORS.GRAY_M,
                     display: "inline-flex",
-                    fontSize: 22,
-                    height: 42,
+                    fontSize: 18,
+                    height: 34,
                     justifyContent: "center",
-                    width: 42,
+                    width: 34,
                   }}
                 >
                   <Icon name={preset.icon as any} />
@@ -583,7 +583,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                     style={{
                       color: COLORS.GRAY_M,
                       fontSize: 12,
-                      lineHeight: 1.25,
+                      lineHeight: 1.2,
                       whiteSpace: "normal",
                       maxWidth: 150,
                     }}
@@ -619,7 +619,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     return (
       <Card
         size="small"
-        styles={{ body: { padding: "14px 16px" } }}
+        styles={{ body: { padding: "10px 12px" } }}
         style={{ borderColor: COLORS.GRAY_LL, background: "white" }}
       >
         <Space orientation="vertical" size="small" style={{ width: "100%" }}>
@@ -698,7 +698,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     return (
       <Card
         size="small"
-        styles={{ body: { padding: 22 } }}
+        styles={{ body: { padding: 16 } }}
         style={{
           position: "sticky",
           top: 0,
@@ -706,12 +706,9 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
           background: "white",
         }}
       >
-        <Space orientation="vertical" size={18} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 18 }}>Project summary</div>
-            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              Everything here can be changed after creation.
-            </Paragraph>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>Project summary</div>
           </div>
           <Space orientation="vertical" size={0} style={{ width: "100%" }}>
             {summaryItems.map((item, index) => (
@@ -723,21 +720,21 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                       ? undefined
                       : `1px solid ${COLORS.GRAY_LL}`,
                   display: "grid",
-                  gap: 12,
-                  gridTemplateColumns: "42px minmax(0, 1fr)",
-                  padding: "12px 0",
+                  gap: 10,
+                  gridTemplateColumns: "30px minmax(0, 1fr)",
+                  padding: "6px 0",
                 }}
               >
                 <span
                   style={{
                     alignItems: "center",
                     background: item.color,
-                    borderRadius: 10,
+                    borderRadius: 8,
                     color: COLORS.BS_BLUE_TEXT,
                     display: "inline-flex",
-                    height: 42,
+                    height: 30,
                     justifyContent: "center",
-                    width: 42,
+                    width: 30,
                   }}
                 >
                   <Icon name={item.icon as any} />
@@ -749,6 +746,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                   <div
                     style={{
                       color: COLORS.GRAY_D,
+                      fontSize: 13,
                       fontWeight: 600,
                       overflowWrap: "anywhere",
                     }}
@@ -769,11 +767,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             {selectedRootfsEntry?.warning && <Tag color="orange">Review</Tag>}
             {!selectedRootfsEntry && <Tag color="orange">Advanced OCI</Tag>}
           </Space>
-          <Alert
-            type="info"
-            showIcon
-            message="All settings can be changed after creation."
-          />
           {summary.warnings.length > 0 && (
             <Alert
               type="warning"
@@ -785,7 +778,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             <Button
               type="primary"
               block
-              size="large"
               onClick={() => create_project({ openAfterCreate: true })}
               disabled={isDisabled()}
               loading={createAction === "open"}
@@ -795,7 +787,6 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             </Button>
             <Button
               block
-              size="large"
               onClick={() => create_project({ openAfterCreate: false })}
               disabled={isDisabled()}
               loading={createAction === "create"}
@@ -819,7 +810,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     });
 
     return (
-      <Space orientation="vertical" size={14} style={{ width: "100%" }}>
+      <Space orientation="vertical" size={10} style={{ width: "100%" }}>
         <Form form={form} layout="vertical">
           <Form.Item
             label={
@@ -849,7 +840,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
           </Form.Item>
         </Form>
         <div>
-          <div style={{ fontWeight: 700, marginBottom: 8 }}>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>
             Choose a preset
           </div>
           {renderPresetSection()}
@@ -938,19 +929,19 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             style={{
               alignItems: "center",
               background: COLORS.ANTD_BG_BLUE_L,
-              borderRadius: 12,
+              borderRadius: 10,
               color: COLORS.BS_BLUE_TEXT,
               display: "inline-flex",
-              height: 42,
+              height: 36,
               justifyContent: "center",
-              marginTop: 2,
-              width: 42,
+              marginTop: 1,
+              width: 36,
             }}
           >
             <Icon name="plus-circle" />
           </span>
           <span>
-            <div style={{ fontSize: 24, fontWeight: 700, lineHeight: 1.15 }}>
+            <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.1 }}>
               {intl.formatMessage(labels.create_project)}
             </div>
             <Typography.Text type="secondary" style={{ fontWeight: 400 }}>
@@ -971,13 +962,13 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
         },
       }}
     >
-      <Space orientation="vertical" size={16} style={{ width: "100%" }}>
+      <Space orientation="vertical" size={12} style={{ width: "100%" }}>
         <ProjectCreateHealthCard open={open} />
         <div
           style={{
             display: "grid",
             gridTemplateColumns: "minmax(0, 1fr) minmax(320px, 380px)",
-            gap: 28,
+            gap: 24,
             alignItems: "start",
           }}
         >
