@@ -441,34 +441,12 @@ export function CodexConfigButton({
           maxWidth: "min(760px, calc(100vw - 32px))",
         }}
       >
-        <Tooltip
-          title={
-            controlsCollapsed ? "Show Codex controls" : "Hide Codex controls"
-          }
-        >
-          <Button
-            size="small"
-            type="text"
-            aria-label={
-              controlsCollapsed ? "Show Codex controls" : "Hide Codex controls"
-            }
-            icon={
-              <Icon
-                name={controlsCollapsed ? "chevron-right" : "chevron-left"}
-              />
-            }
-            onClick={toggleControlsCollapsed}
-            style={{
-              background: "white",
-              border: `1px solid ${COLORS.GRAY_L}`,
-            }}
-          />
-        </Tooltip>
         {controlsCollapsed ? (
           <Tooltip title="Show Codex controls">
             <Button
               size="small"
               onClick={toggleControlsCollapsed}
+              icon={<Icon name="chevron-right" />}
               style={{
                 borderRadius: 999,
                 boxShadow: "0 1px 5px rgba(0,0,0,0.08)",
@@ -519,12 +497,12 @@ export function CodexConfigButton({
                 {summaryParts.join(" · ")}
               </Text>
             </Button>
-            <Tooltip title="Configure Codex session">
+            <Tooltip title="Hide Codex controls">
               <Button
                 size="small"
-                aria-label="Configure Codex session"
-                icon={<Icon name="gear" />}
-                onClick={() => setOpen(true)}
+                aria-label="Hide Codex controls"
+                icon={<Icon name="chevron-left" />}
+                onClick={toggleControlsCollapsed}
                 style={{ background: "white" }}
               />
             </Tooltip>
