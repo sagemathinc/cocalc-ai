@@ -1194,20 +1194,25 @@ export async function freshAuthSession({
   };
 }
 
-export async function disableTwoFactor({
-  req,
-  account_id,
-}: {
-  req: any;
+export type DisableTwoFactorResult = {
   account_id: string;
-}): Promise<void> {
+  disabled_factors: number;
+  deleted_recovery_codes: number;
+};
+
+async function disableTwoFactorForAccount({
+  account_id,
+  action,
+}: {
+  account_id: string;
+  action: string;
+}): Promise<DisableTwoFactorResult> {
   const accountId = ensureAccountId(account_id);
-  await requireFreshAuth({ req, account_id: accountId });
-  await withAccountRehomeWriteFence({
+  return await withAccountRehomeWriteFence({
     account_id: accountId,
-    action: "disable two-factor authentication",
+    action,
     fn: async (db) => {
-      await db.query(
+      const disabled = await db.query(
         `
           UPDATE account_second_factors
              SET status = $2::VARCHAR(32),
@@ -1222,11 +1227,42 @@ export async function disableTwoFactor({
           FACTOR_STATUS_PENDING,
         ],
       );
-      await db.query(
+      const deleted = await db.query(
         "DELETE FROM account_second_factor_recovery_codes WHERE account_id = $1::UUID",
         [accountId],
       );
+      return {
+        account_id: accountId,
+        disabled_factors: disabled.rowCount ?? 0,
+        deleted_recovery_codes: deleted.rowCount ?? 0,
+      };
     },
+  });
+}
+
+export async function adminDisableTwoFactor({
+  account_id,
+}: {
+  account_id: string;
+}): Promise<DisableTwoFactorResult> {
+  return await disableTwoFactorForAccount({
+    account_id,
+    action: "admin disable two-factor authentication",
+  });
+}
+
+export async function disableTwoFactor({
+  req,
+  account_id,
+}: {
+  req: any;
+  account_id: string;
+}): Promise<void> {
+  const accountId = ensureAccountId(account_id);
+  await requireFreshAuth({ req, account_id: accountId });
+  await disableTwoFactorForAccount({
+    account_id: accountId,
+    action: "disable two-factor authentication",
   });
 }
 

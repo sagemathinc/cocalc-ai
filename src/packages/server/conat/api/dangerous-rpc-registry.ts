@@ -552,6 +552,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "admin email verification for another user",
   },
+  "system.adminDisableTwoFactor": {
+    decision: "fresh-auth-required",
+    reason: "admin removal of two-factor authentication for another user",
+  },
   "system.adminSalesloftSync": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,

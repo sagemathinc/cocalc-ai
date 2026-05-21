@@ -803,6 +803,16 @@ export interface AccountLocalAdminVerifyEmailAddressResult {
   verified_at: Date | string;
 }
 
+export interface AccountLocalAdminDisableTwoFactorRequest {
+  account_id: string;
+}
+
+export interface AccountLocalAdminDisableTwoFactorResult {
+  account_id: string;
+  disabled_factors: number;
+  deleted_recovery_codes: number;
+}
+
 export interface AccountLocalAssertProductAccessTrustRequest {
   account_id: string;
   action: string;
@@ -1374,6 +1384,7 @@ export type AccountLocalMethod =
   | "verify-fresh-auth-credentials"
   | "redeem-verify-email"
   | "admin-verify-email-address"
+  | "admin-disable-two-factor"
   | "assert-product-access-trust"
   | "reconcile-dedicated-host-purchase-session"
   | "close-dedicated-host-purchase-session"
@@ -2164,6 +2175,9 @@ export interface InterBayAccountLocalApi {
   adminVerifyEmailAddress: (
     opts: AccountLocalAdminVerifyEmailAddressRequest,
   ) => Promise<AccountLocalAdminVerifyEmailAddressResult>;
+  adminDisableTwoFactor: (
+    opts: AccountLocalAdminDisableTwoFactorRequest,
+  ) => Promise<AccountLocalAdminDisableTwoFactorResult>;
   assertProductAccessTrust: (
     opts: AccountLocalAssertProductAccessTrustRequest,
   ) => Promise<void>;
@@ -3650,6 +3664,15 @@ export function createInterBayAccountLocalClient({
       method: "admin-verify-email-address",
     }),
   });
+  const adminDisableTwoFactorClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "adminDisableTwoFactor">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "admin-disable-two-factor",
+    }),
+  });
   const assertProductAccessTrustClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "assertProductAccessTrust">
   >({
@@ -3977,6 +4000,8 @@ export function createInterBayAccountLocalClient({
       await redeemVerifyEmailClient.redeemVerifyEmail(opts),
     adminVerifyEmailAddress: async (opts) =>
       await adminVerifyEmailAddressClient.adminVerifyEmailAddress(opts),
+    adminDisableTwoFactor: async (opts) =>
+      await adminDisableTwoFactorClient.adminDisableTwoFactor(opts),
     assertProductAccessTrust: async (opts) =>
       await assertProductAccessTrustClient.assertProductAccessTrust(opts),
     reconcileDedicatedHostPurchaseSession: async (opts) =>
@@ -4222,6 +4247,20 @@ export function createInterBayAccountLocalHandler({
       impl: {
         adminVerifyEmailAddress: async (opts) =>
           await impl.adminVerifyEmailAddress(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "adminDisableTwoFactor">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "admin-disable-two-factor",
+      }),
+      impl: {
+        adminDisableTwoFactor: async (opts) =>
+          await impl.adminDisableTwoFactor(opts),
       },
     }),
     createServiceHandler<

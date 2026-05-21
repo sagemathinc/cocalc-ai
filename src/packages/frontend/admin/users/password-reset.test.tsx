@@ -4,6 +4,7 @@ import { PasswordReset } from "./password-reset";
 
 const mockAdminResetPasswordLink = jest.fn();
 const mockAdminVerifyEmailAddress = jest.fn();
+const mockAdminDisableTwoFactor = jest.fn();
 const mockRunFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
   await action();
   return true;
@@ -46,6 +47,8 @@ jest.mock("../../webapp-client", () => ({
             mockAdminResetPasswordLink(...args),
           adminVerifyEmailAddress: (...args: any[]) =>
             mockAdminVerifyEmailAddress(...args),
+          adminDisableTwoFactor: (...args: any[]) =>
+            mockAdminDisableTwoFactor(...args),
         },
       },
     },
@@ -59,7 +62,13 @@ jest.mock("@cocalc/frontend/customize/app-base-path", () => ({
 beforeEach(() => {
   mockAdminResetPasswordLink.mockReset();
   mockAdminVerifyEmailAddress.mockReset();
+  mockAdminDisableTwoFactor.mockReset();
   mockRunFreshAuthAction.mockClear();
+  jest.spyOn(window, "confirm").mockReturnValue(true);
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
 });
 
 describe("PasswordReset profile actions", () => {
@@ -108,5 +117,31 @@ describe("PasswordReset profile actions", () => {
       });
     });
     expect(screen.getByText("ada@example.com is now verified.")).toBeTruthy();
+  });
+
+  it("fresh-auth wraps admin two-factor removal", async () => {
+    mockAdminDisableTwoFactor.mockResolvedValue({
+      account_id: "acct-1",
+      disabled_factors: 2,
+      deleted_recovery_codes: 10,
+    });
+
+    render(
+      <PasswordReset account_id="acct-1" email_address="ada@example.com" />,
+    );
+
+    fireEvent.click(screen.getByText("Remove 2FA from account..."));
+
+    await waitFor(() => {
+      expect(window.confirm).toHaveBeenCalled();
+      expect(mockRunFreshAuthAction).toHaveBeenCalledTimes(1);
+      expect(mockAdminDisableTwoFactor).toHaveBeenCalledWith({
+        browser_id: "browser-1",
+        user_account_id: "acct-1",
+      });
+    });
+    expect(
+      screen.getByText("Removed 2 2FA methods from this account."),
+    ).toBeTruthy();
   });
 });

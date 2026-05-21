@@ -65,6 +65,7 @@ import {
 import { verifyLocalSignInPassword } from "@cocalc/server/auth/verify-sign-in-password";
 import { redeemVerifyEmailLocal } from "@cocalc/server/auth/redeem-verify-email";
 import adminVerifyEmailAddressLocal from "@cocalc/server/accounts/admin-verify-email-address";
+import { adminDisableTwoFactor as adminDisableTwoFactorLocal } from "@cocalc/server/auth/two-factor";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
 import {
@@ -593,6 +594,8 @@ async function startAccountLocalService(): Promise<void> {
     },
     adminVerifyEmailAddress: async ({ account_id }) =>
       await adminVerifyEmailAddressLocal({ account_id }),
+    adminDisableTwoFactor: async ({ account_id }) =>
+      await adminDisableTwoFactorLocal({ account_id }),
     assertProductAccessTrust: async ({ account_id, action }) => {
       await assertAccountTrustedForProductAccess(account_id, action);
     },
