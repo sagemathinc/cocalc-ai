@@ -12,6 +12,7 @@ import {
   type AccountApiKeyDirectoryTouchRequest,
   type AccountApiKeyDirectoryUpdateHomeBayRequest,
   type AccountApiKeyDirectoryUpsertRequest,
+  type AccountLocalAdminVerifyEmailAddressResult,
   type AccountLocalVerifySignInPasswordRequest,
   type AccountLocalVerifySignInPasswordResult,
   type AccountDirectoryCreateRequest,
@@ -20,6 +21,7 @@ import {
   type AccountDirectoryEntry,
 } from "@cocalc/conat/inter-bay/api";
 import getPool from "@cocalc/database/pool";
+import adminVerifyEmailAddressLocal from "@cocalc/server/accounts/admin-verify-email-address";
 import createAccountLocal from "@cocalc/server/accounts/create-account";
 import deleteAccountLocal from "@cocalc/server/accounts/delete";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
@@ -246,6 +248,25 @@ export async function assertClusterAccountTrustedForProductAccess({
     client: getInterBayFabricClient(),
     dest_bay: account.home_bay_id,
   }).assertProductAccessTrust({ account_id, action });
+}
+
+export async function adminVerifyClusterAccountEmailAddress({
+  account_id,
+}: {
+  account_id: string;
+}): Promise<AccountLocalAdminVerifyEmailAddressResult> {
+  const account = await getClusterAccountById(account_id);
+  if (!account) {
+    throw Error(`account ${account_id} not found`);
+  }
+  const homeBayId = `${account.home_bay_id ?? ""}`.trim();
+  if (!homeBayId || homeBayId === currentBayId()) {
+    return await adminVerifyEmailAddressLocal({ account_id });
+  }
+  return await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: homeBayId,
+  }).adminVerifyEmailAddress({ account_id });
 }
 
 export async function provisionLocalClusterAccount(

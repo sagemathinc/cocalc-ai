@@ -792,6 +792,17 @@ export interface AccountLocalRedeemVerifyEmailRequest {
   token: string;
 }
 
+export interface AccountLocalAdminVerifyEmailAddressRequest {
+  account_id: string;
+}
+
+export interface AccountLocalAdminVerifyEmailAddressResult {
+  account_id: string;
+  already_verified: boolean;
+  email_address: string;
+  verified_at: Date | string;
+}
+
 export interface AccountLocalAssertProductAccessTrustRequest {
   account_id: string;
   action: string;
@@ -1362,6 +1373,7 @@ export type AccountLocalMethod =
   | "verify-sign-in-password"
   | "verify-fresh-auth-credentials"
   | "redeem-verify-email"
+  | "admin-verify-email-address"
   | "assert-product-access-trust"
   | "reconcile-dedicated-host-purchase-session"
   | "close-dedicated-host-purchase-session"
@@ -2149,6 +2161,9 @@ export interface InterBayAccountLocalApi {
   redeemVerifyEmail: (
     opts: AccountLocalRedeemVerifyEmailRequest,
   ) => Promise<void>;
+  adminVerifyEmailAddress: (
+    opts: AccountLocalAdminVerifyEmailAddressRequest,
+  ) => Promise<AccountLocalAdminVerifyEmailAddressResult>;
   assertProductAccessTrust: (
     opts: AccountLocalAssertProductAccessTrustRequest,
   ) => Promise<void>;
@@ -3626,6 +3641,15 @@ export function createInterBayAccountLocalClient({
       method: "redeem-verify-email",
     }),
   });
+  const adminVerifyEmailAddressClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "adminVerifyEmailAddress">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "admin-verify-email-address",
+    }),
+  });
   const assertProductAccessTrustClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "assertProductAccessTrust">
   >({
@@ -3951,6 +3975,8 @@ export function createInterBayAccountLocalClient({
       await verifySignInPasswordClient.verifySignInPassword(opts),
     redeemVerifyEmail: async (opts) =>
       await redeemVerifyEmailClient.redeemVerifyEmail(opts),
+    adminVerifyEmailAddress: async (opts) =>
+      await adminVerifyEmailAddressClient.adminVerifyEmailAddress(opts),
     assertProductAccessTrust: async (opts) =>
       await assertProductAccessTrustClient.assertProductAccessTrust(opts),
     reconcileDedicatedHostPurchaseSession: async (opts) =>
@@ -4182,6 +4208,20 @@ export function createInterBayAccountLocalHandler({
       }),
       impl: {
         redeemVerifyEmail: async (opts) => await impl.redeemVerifyEmail(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "adminVerifyEmailAddress">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "admin-verify-email-address",
+      }),
+      impl: {
+        adminVerifyEmailAddress: async (opts) =>
+          await impl.adminVerifyEmailAddress(opts),
       },
     }),
     createServiceHandler<

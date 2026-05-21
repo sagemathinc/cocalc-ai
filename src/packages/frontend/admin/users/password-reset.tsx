@@ -3,13 +3,19 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Component, Rendered } from "@cocalc/frontend/app-framework";
+import { Alert, Space } from "antd";
+
+import { useState } from "@cocalc/frontend/app-framework";
 import { Button } from "@cocalc/frontend/antd-bootstrap";
 import {
   CopyToClipBoard,
   Icon,
   ErrorDisplay,
 } from "@cocalc/frontend/components";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { webapp_client } from "../../webapp-client";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 
@@ -18,115 +24,147 @@ interface Props {
   email_address: string;
 }
 
-interface State {
-  error?: string;
-  running: boolean;
-  link?: string;
-}
+export function PasswordReset({ account_id, email_address }: Props) {
+  const [error, setError] = useState<string | undefined>(undefined);
+  const [running, setRunning] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [link, setLink] = useState<string | undefined>(undefined);
+  const [verifyMessage, setVerifyMessage] = useState<string | undefined>(
+    undefined,
+  );
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => {
+      setError(`${err}`);
+    },
+  });
 
-export class PasswordReset extends Component<Props, State> {
-  mounted: boolean = true;
-
-  constructor(props: any) {
-    super(props);
-    this.state = { running: false };
-  }
-
-  componentWillUnmount(): void {
-    this.mounted = false;
-  }
-
-  async do_request(): Promise<void> {
-    this.setState({ running: true });
-    let link: string;
+  async function requestPasswordReset(): Promise<void> {
+    setRunning(true);
+    setError(undefined);
     try {
-      link = await webapp_client.conat_client.hub.system.adminResetPasswordLink(
-        { user_account_id: this.props.account_id },
-      );
+      await runFreshAuthAction(async () => {
+        let nextLink =
+          await webapp_client.conat_client.hub.system.adminResetPasswordLink({
+            browser_id: webapp_client.browser_id,
+            user_account_id: account_id,
+          });
+        nextLink = `${document.location.origin}${
+          appBasePath.length <= 1 ? "" : appBasePath
+        }${nextLink}`;
+        setLink(nextLink);
+      });
     } catch (err) {
-      if (!this.mounted) return;
-      this.setState({ error: `${err}`, running: false });
-      return;
+      setError(`${err}`);
+      setLink(undefined);
+    } finally {
+      setRunning(false);
     }
-    if (!this.mounted) return;
-    link = `${document.location.origin}${
-      appBasePath.length <= 1 ? "" : appBasePath
-    }${link}`;
-    this.setState({ link, running: false });
   }
 
-  render_password_reset_button(): Rendered {
-    return (
-      <Button
-        disabled={this.state.running}
-        onClick={() => {
-          this.do_request();
-        }}
-      >
-        <Icon
-          name={this.state.running ? "sync" : "lock-open"}
-          spin={this.state.running}
-        />{" "}
-        Request Password Reset Link...
-      </Button>
-    );
+  async function verifyEmailAddress(): Promise<void> {
+    setVerifying(true);
+    setError(undefined);
+    setVerifyMessage(undefined);
+    try {
+      await runFreshAuthAction(async () => {
+        const result =
+          await webapp_client.conat_client.hub.system.adminVerifyEmailAddress({
+            browser_id: webapp_client.browser_id,
+            user_account_id: account_id,
+          });
+        setVerifyMessage(
+          result.already_verified
+            ? `${result.email_address} was already verified.`
+            : `${result.email_address} is now verified.`,
+        );
+      });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setVerifying(false);
+    }
   }
 
-  render_error(): Rendered {
-    if (!this.state.error) {
+  function renderError() {
+    if (!error) {
       return;
     }
     return (
       <ErrorDisplay
-        style={{ margin: "30px" }}
-        error={this.state.error}
+        style={{ margin: "15px 0" }}
+        error={error}
         onClose={() => {
-          this.setState({ error: undefined });
+          setError(undefined);
         }}
       />
     );
   }
 
-  render_password_reset_link(): Rendered {
-    if (!this.state.link) return;
+  function renderPasswordResetLink() {
+    if (!link) return;
     return (
-      <div>
-        <div style={{ marginTop: "20px" }}>
-          {" "}
-          Send this somehow to{" "}
-          <a
-            href={`mailto:${this.props.email_address}`}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {this.props.email_address}.
-          </a>
-          <br />
-          <CopyToClipBoard value={this.state.link} />
+      <div style={{ marginTop: "15px" }}>
+        Send this somehow to{" "}
+        <a
+          href={`mailto:${email_address}`}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {email_address}
+        </a>
+        .
+        <div style={{ marginTop: "10px" }}>
+          <CopyToClipBoard value={link} />
         </div>
       </div>
     );
   }
 
-  render(): Rendered {
-    if (!this.props.email_address) {
-      return (
-        <div>
-          User does not have an email address set, so password reset does not
-          make sense.
-        </div>
-      );
-    }
+  if (!email_address) {
     return (
       <div>
-        <b>Password Reset:</b>
-        <br />
-        {this.render_error()}
-        {this.render_password_reset_button()}
-        {this.render_password_reset_link()}
-        <br />
-        <br />
+        User does not have an email address set, so password reset and email
+        verification do not make sense.
       </div>
     );
   }
+
+  return (
+    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+      {renderError()}
+      {verifyMessage ? (
+        <Alert type="success" showIcon message={verifyMessage} />
+      ) : undefined}
+      <div>
+        <b>Password Reset:</b>
+        <div style={{ marginTop: "10px" }}>
+          <Button
+            disabled={running}
+            onClick={() => {
+              void requestPasswordReset();
+            }}
+          >
+            <Icon name={running ? "sync" : "lock-open"} spin={running} />{" "}
+            Request Password Reset Link...
+          </Button>
+        </div>
+        {renderPasswordResetLink()}
+      </div>
+      <div>
+        <b>Email Verification:</b>
+        <div style={{ marginTop: "10px" }}>
+          <Button
+            disabled={verifying}
+            onClick={() => {
+              void verifyEmailAddress();
+            }}
+          >
+            <Icon name={verifying ? "sync" : "check"} spin={verifying} />{" "}
+            Admin-verify email address
+          </Button>
+        </div>
+      </div>
+      <FreshAuthModal {...freshAuthModalProps} />
+    </Space>
+  );
 }

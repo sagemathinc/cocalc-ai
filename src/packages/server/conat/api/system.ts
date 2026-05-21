@@ -47,6 +47,7 @@ import {
   type AccountEntitlementOverrideInput,
 } from "@cocalc/server/membership/entitlement-overrides";
 import {
+  adminVerifyClusterAccountEmailAddress,
   createClusterAccount,
   deleteClusterAccount,
   searchClusterAccounts,
@@ -3077,6 +3078,31 @@ export async function adminResetPasswordLink({
   }
   const id = await createReset(email, "", 60 * 60 * 24); // 24 hour ttl seems reasonable for this.
   return `/auth/password-reset/${id}`;
+}
+
+export async function adminVerifyEmailAddress({
+  account_id,
+  browser_id,
+  session_hash,
+  user_account_id,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  user_account_id: string;
+}) {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
+  return await adminVerifyClusterAccountEmailAddress({
+    account_id: user_account_id,
+  });
 }
 
 function defaultUserNameFromEmail(email: string): {

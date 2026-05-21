@@ -545,8 +545,12 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "system.adminResetPasswordLink": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "admin password reset link generation for another user",
+  },
+  "system.adminVerifyEmailAddress": {
+    decision: "fresh-auth-required",
+    reason: "admin email verification for another user",
   },
   "system.adminSalesloftSync": {
     decision: "fresh-auth-not-required",

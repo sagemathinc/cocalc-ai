@@ -94,6 +94,7 @@ describe("UserResult egress entry points", () => {
     expect(screen.getByText("Egress history:acct-1")).toBeTruthy();
 
     fireEvent.click(screen.getByText(/Ada Lovelace/));
+    expect(screen.getByText("Profile")).toBeTruthy();
     fireEvent.click(screen.getByText("Egress"));
 
     expect(screen.getByText("recent-egress-summary:acct-1")).toBeTruthy();
