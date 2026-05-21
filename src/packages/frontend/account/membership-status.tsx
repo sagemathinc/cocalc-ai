@@ -6,6 +6,7 @@
 import {
   Alert,
   Button,
+  Card,
   Collapse,
   Descriptions,
   Divider,
@@ -42,12 +43,8 @@ import type {
   MembershipUsageStatus,
 } from "@cocalc/conat/hub/api/purchases";
 import MembershipPurchaseModal from "./membership-purchase-modal";
-import {
-  ClaimableMembershipPackagesPanel,
-  MembershipPackageManager,
-  SiteLicenseReverificationPanel,
-} from "./membership-package-manager";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { openAccountSettings } from "./settings-routing";
 
 const { Text } = Typography;
 
@@ -921,15 +918,32 @@ export function MembershipStatusPanel({
 
           <Divider style={{ margin: "8px 0" }} />
 
-          <ClaimableMembershipPackagesPanel onChanged={handleChanged} />
-
-          <Divider style={{ margin: "8px 0" }} />
-
-          <SiteLicenseReverificationPanel onChanged={handleChanged} />
-
-          <Divider style={{ margin: "8px 0" }} />
-
-          <MembershipPackageManager tiers={tiers} onChanged={handleChanged} />
+          <Card size="small">
+            <Space
+              wrap
+              align="center"
+              style={{ justifyContent: "space-between", width: "100%" }}
+            >
+              <Space orientation="vertical" size={2}>
+                <Text strong>Institutional and team licenses</Text>
+                <Text type="secondary">
+                  Claim site-license access, refresh institutional affiliation,
+                  or manage team and campus license seats from the Licenses
+                  page.
+                </Text>
+              </Space>
+              <Button
+                onClick={() =>
+                  openAccountSettings({
+                    kind: "tab",
+                    page: "licenses",
+                  })
+                }
+              >
+                <Icon name="key" /> Open Licenses
+              </Button>
+            </Space>
+          </Card>
 
           <Divider style={{ margin: "8px 0" }} />
 
