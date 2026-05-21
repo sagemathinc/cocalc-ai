@@ -23,7 +23,6 @@ import sendPasswordResetEmail from "@cocalc/server/email/password-reset";
 import getRequiresToken from "@cocalc/server/auth/tokens/get-requires-token";
 import { getLogger } from "@cocalc/backend/logger";
 import getParams from "@cocalc/http-api/lib/api/get-params";
-import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
 import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
 
 const logger = getLogger("auth:password-reset");
@@ -35,7 +34,7 @@ export default async function passwordReset(req, res) {
   const requiresToken = await getRequiresToken();
   let result;
   try {
-    result = await handle(email?.toLowerCase(), req.ip, req, {
+    result = await handle(email?.toLowerCase(), req.ip, {
       hideAccountDetails: requiresToken,
     });
   } catch (err) {
@@ -49,7 +48,6 @@ export default async function passwordReset(req, res) {
 async function handle(
   email: string,
   ip: string,
-  req: any,
   opts: { hideAccountDetails: boolean },
 ): Promise<object> {
   const account = await getClusterAccountByEmail(email);
@@ -74,16 +72,12 @@ async function handle(
   }
 
   const id = await createReset(email, ip, 60 * 60 * 4); // 4 hour ttl seems reasonable for this.
-  const homeBayId = `${account.home_bay_id ?? ""}`.trim();
-  const siteUrl = homeBayId
-    ? await getBayPublicOriginForRequest(req, homeBayId)
-    : null;
   // TODO:
   // - Send email with the id and link
   // - Link should be back to next.js server (i.e., a new password reset target)
   // - Implement that target and backend handling of it.
   try {
-    await sendPasswordResetEmail(email, id, { site_url: siteUrl });
+    await sendPasswordResetEmail(email, id);
   } catch (err) {
     logger.warn("password reset email send failed", {
       email,

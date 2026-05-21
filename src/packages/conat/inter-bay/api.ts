@@ -832,6 +832,21 @@ export interface AccountLocalCreatePasswordResetResult {
   id: string;
 }
 
+export interface AccountLocalRedeemPasswordResetRequest {
+  password_reset_id: string;
+}
+
+export interface AccountLocalRedeemPasswordResetResult {
+  account_id: string;
+  email_address: string;
+  home_bay_id?: string | null;
+}
+
+export interface AccountLocalSetPasswordFromResetRequest {
+  account_id: string;
+  password: string;
+}
+
 export interface AccountLocalAssertProductAccessTrustRequest {
   account_id: string;
   action: string;
@@ -1386,6 +1401,9 @@ export type AccountDirectoryMethod =
   | "delete-api-key"
   | "update-api-keys-home-bay"
   | "touch-api-key"
+  | "recent-password-reset-attempts"
+  | "create-password-reset"
+  | "redeem-password-reset"
   | "get-membership-claim-identity"
   | "reserve-membership-claim-identity"
   | "activate-membership-claim-identity"
@@ -1404,8 +1422,7 @@ export type AccountLocalMethod =
   | "redeem-verify-email"
   | "admin-verify-email-address"
   | "admin-disable-two-factor"
-  | "recent-password-reset-attempts"
-  | "create-password-reset"
+  | "set-password-from-reset"
   | "assert-product-access-trust"
   | "reconcile-dedicated-host-purchase-session"
   | "close-dedicated-host-purchase-session"
@@ -2147,6 +2164,15 @@ export interface InterBayAccountDirectoryApi {
     opts: AccountApiKeyDirectoryUpdateHomeBayRequest,
   ) => Promise<void>;
   touchApiKey: (opts: AccountApiKeyDirectoryTouchRequest) => Promise<void>;
+  recentPasswordResetAttempts: (
+    opts: AccountLocalRecentPasswordResetAttemptsRequest,
+  ) => Promise<AccountLocalRecentPasswordResetAttemptsResult>;
+  createPasswordReset: (
+    opts: AccountLocalCreatePasswordResetRequest,
+  ) => Promise<AccountLocalCreatePasswordResetResult>;
+  redeemPasswordReset: (
+    opts: AccountLocalRedeemPasswordResetRequest,
+  ) => Promise<AccountLocalRedeemPasswordResetResult>;
   getMembershipClaimIdentity: (
     opts: MembershipClaimIdentityGetRequest,
   ) => Promise<MembershipClaimIdentityEntry | null>;
@@ -2199,12 +2225,9 @@ export interface InterBayAccountLocalApi {
   adminDisableTwoFactor: (
     opts: AccountLocalAdminDisableTwoFactorRequest,
   ) => Promise<AccountLocalAdminDisableTwoFactorResult>;
-  recentPasswordResetAttempts: (
-    opts: AccountLocalRecentPasswordResetAttemptsRequest,
-  ) => Promise<AccountLocalRecentPasswordResetAttemptsResult>;
-  createPasswordReset: (
-    opts: AccountLocalCreatePasswordResetRequest,
-  ) => Promise<AccountLocalCreatePasswordResetResult>;
+  setPasswordFromReset: (
+    opts: AccountLocalSetPasswordFromResetRequest,
+  ) => Promise<void>;
   assertProductAccessTrust: (
     opts: AccountLocalAssertProductAccessTrustRequest,
   ) => Promise<void>;
@@ -3346,6 +3369,26 @@ export function createInterBayAccountDirectoryClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountDirectorySubject({ method: "touch-api-key" }),
   });
+  const recentPasswordResetAttemptsClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "recentPasswordResetAttempts">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({
+      method: "recent-password-reset-attempts",
+    }),
+  });
+  const createPasswordResetClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "createPasswordReset">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "create-password-reset" }),
+  });
+  const redeemPasswordResetClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "redeemPasswordReset">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "redeem-password-reset" }),
+  });
   const getMembershipClaimIdentityClient = createServiceClient<
     Pick<InterBayAccountDirectoryApi, "getMembershipClaimIdentity">
   >({
@@ -3397,6 +3440,12 @@ export function createInterBayAccountDirectoryClient({
     updateApiKeysHomeBay: async (opts) =>
       await updateApiKeysHomeBayClient.updateApiKeysHomeBay(opts),
     touchApiKey: async (opts) => await touchApiKeyClient.touchApiKey(opts),
+    recentPasswordResetAttempts: async (opts) =>
+      await recentPasswordResetAttemptsClient.recentPasswordResetAttempts(opts),
+    createPasswordReset: async (opts) =>
+      await createPasswordResetClient.createPasswordReset(opts),
+    redeemPasswordReset: async (opts) =>
+      await redeemPasswordResetClient.redeemPasswordReset(opts),
     getMembershipClaimIdentity: async (opts) =>
       await getMembershipClaimIdentityClient.getMembershipClaimIdentity(opts),
     reserveMembershipClaimIdentity: async (opts) =>
@@ -3538,6 +3587,41 @@ export function createInterBayAccountDirectoryHandlers({
       subject: accountDirectorySubject({ method: "touch-api-key" }),
       impl: {
         touchApiKey: async (opts) => await impl.touchApiKey(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "recentPasswordResetAttempts">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({
+        method: "recent-password-reset-attempts",
+      }),
+      impl: {
+        recentPasswordResetAttempts: async (opts) =>
+          await impl.recentPasswordResetAttempts(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "createPasswordReset">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "create-password-reset" }),
+      impl: {
+        createPasswordReset: async (opts) =>
+          await impl.createPasswordReset(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "redeemPasswordReset">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "redeem-password-reset" }),
+      impl: {
+        redeemPasswordReset: async (opts) =>
+          await impl.redeemPasswordReset(opts),
       },
     }),
     createServiceHandler<
@@ -3700,22 +3784,13 @@ export function createInterBayAccountLocalClient({
       method: "admin-disable-two-factor",
     }),
   });
-  const recentPasswordResetAttemptsClient = createServiceClient<
-    Pick<InterBayAccountLocalApi, "recentPasswordResetAttempts">
+  const setPasswordFromResetClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "setPasswordFromReset">
   >({
     ...serviceClientOptions({ client, timeout }),
     subject: accountLocalSubject({
       dest_bay,
-      method: "recent-password-reset-attempts",
-    }),
-  });
-  const createPasswordResetClient = createServiceClient<
-    Pick<InterBayAccountLocalApi, "createPasswordReset">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: accountLocalSubject({
-      dest_bay,
-      method: "create-password-reset",
+      method: "set-password-from-reset",
     }),
   });
   const assertProductAccessTrustClient = createServiceClient<
@@ -4047,10 +4122,8 @@ export function createInterBayAccountLocalClient({
       await adminVerifyEmailAddressClient.adminVerifyEmailAddress(opts),
     adminDisableTwoFactor: async (opts) =>
       await adminDisableTwoFactorClient.adminDisableTwoFactor(opts),
-    recentPasswordResetAttempts: async (opts) =>
-      await recentPasswordResetAttemptsClient.recentPasswordResetAttempts(opts),
-    createPasswordReset: async (opts) =>
-      await createPasswordResetClient.createPasswordReset(opts),
+    setPasswordFromReset: async (opts) =>
+      await setPasswordFromResetClient.setPasswordFromReset(opts),
     assertProductAccessTrust: async (opts) =>
       await assertProductAccessTrustClient.assertProductAccessTrust(opts),
     reconcileDedicatedHostPurchaseSession: async (opts) =>
@@ -4312,32 +4385,20 @@ export function createInterBayAccountLocalHandler({
           await impl.adminDisableTwoFactor(opts),
       },
     }),
-    createServiceHandler<
-      Pick<InterBayAccountLocalApi, "recentPasswordResetAttempts">
-    >({
-      ...options,
-      service: "inter-bay-account-local",
-      subject: accountLocalSubject({
-        dest_bay: bay_id,
-        method: "recent-password-reset-attempts",
-      }),
-      impl: {
-        recentPasswordResetAttempts: async (opts) =>
-          await impl.recentPasswordResetAttempts(opts),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "setPasswordFromReset">>(
+      {
+        ...options,
+        service: "inter-bay-account-local",
+        subject: accountLocalSubject({
+          dest_bay: bay_id,
+          method: "set-password-from-reset",
+        }),
+        impl: {
+          setPasswordFromReset: async (opts) =>
+            await impl.setPasswordFromReset(opts),
+        },
       },
-    }),
-    createServiceHandler<Pick<InterBayAccountLocalApi, "createPasswordReset">>({
-      ...options,
-      service: "inter-bay-account-local",
-      subject: accountLocalSubject({
-        dest_bay: bay_id,
-        method: "create-password-reset",
-      }),
-      impl: {
-        createPasswordReset: async (opts) =>
-          await impl.createPasswordReset(opts),
-      },
-    }),
+    ),
     createServiceHandler<
       Pick<InterBayAccountLocalApi, "assertProductAccessTrust">
     >({

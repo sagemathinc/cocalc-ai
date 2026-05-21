@@ -51,7 +51,6 @@ import {
   adminVerifyClusterAccountEmailAddress,
   createClusterAccount,
   deleteClusterAccount,
-  getClusterAccountById,
   searchClusterAccounts,
 } from "@cocalc/server/inter-bay/accounts";
 import {
@@ -3079,11 +3078,7 @@ export async function adminResetPasswordLink({
     throw Error("passwords are only defined for accounts with email");
   }
   const id = await createReset(email, "", 60 * 60 * 24); // 24 hour ttl seems reasonable for this.
-  const account = await getClusterAccountById(user_account_id);
-  const homeBayId = `${account?.home_bay_id ?? ""}`.trim();
-  const origin = homeBayId ? await getBayPublicOrigin(homeBayId) : null;
-  const path = `/auth/password-reset/${id}`;
-  return origin ? `${origin}${path}` : path;
+  return `/auth/password-reset/${id}`;
 }
 
 export async function adminVerifyEmailAddress({

@@ -6,14 +6,13 @@
 import { v4 } from "uuid";
 import getPool from "@cocalc/database/pool";
 import { expireTime } from "@cocalc/database/pool/util";
-import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
-import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { createInterBayAccountDirectoryClient } from "@cocalc/conat/inter-bay/api";
+import {
+  getConfiguredClusterRole,
+  isMultiBayCluster,
+} from "@cocalc/server/cluster-config";
 import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
-
-async function getAccountHomeBay(email_address: string) {
-  return await getClusterAccountByEmail(`${email_address ?? ""}`.trim());
-}
 
 // Returns number of "recent" attempts to reset the password with this
 // email from this ip address. By "recent" we mean, "in the last 10 minutes".
@@ -33,13 +32,10 @@ export async function recentAttempts(
   email_address: string,
   ip_address: string,
 ): Promise<number> {
-  const account = await getAccountHomeBay(email_address);
-  const homeBayId = `${account?.home_bay_id ?? ""}`.trim();
-  if (homeBayId && homeBayId !== getConfiguredBayId()) {
+  if (isMultiBayCluster() && getConfiguredClusterRole() === "attached") {
     return (
-      await createInterBayAccountLocalClient({
+      await createInterBayAccountDirectoryClient({
         client: getInterBayFabricClient(),
-        dest_bay: homeBayId,
       }).recentPasswordResetAttempts({
         email_address,
         ip_address,
@@ -79,13 +75,10 @@ export async function createReset(
   ip_address: string,
   ttl_s: number,
 ): Promise<string> {
-  const account = await getAccountHomeBay(email_address);
-  const homeBayId = `${account?.home_bay_id ?? ""}`.trim();
-  if (homeBayId && homeBayId !== getConfiguredBayId()) {
+  if (isMultiBayCluster() && getConfiguredClusterRole() === "attached") {
     return (
-      await createInterBayAccountLocalClient({
+      await createInterBayAccountDirectoryClient({
         client: getInterBayFabricClient(),
-        dest_bay: homeBayId,
       }).createPasswordReset({
         email_address,
         ip_address,
@@ -94,4 +87,45 @@ export async function createReset(
     ).id;
   }
   return await createResetLocal(email_address, ip_address, ttl_s);
+}
+
+export async function redeemResetLocal(password_reset_id: string): Promise<{
+  email_address: string;
+}> {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    "SELECT email_address FROM password_reset WHERE expire > NOW() AND id=$1::UUID",
+    [password_reset_id],
+  );
+  if (rows.length == 0) {
+    throw Error("Password reset no longer valid.");
+  }
+  const email_address = `${rows[0].email_address ?? ""}`.trim().toLowerCase();
+  await pool.query("UPDATE password_reset SET expire=NOW() WHERE id=$1::UUID", [
+    password_reset_id,
+  ]);
+  return { email_address };
+}
+
+export async function redeemReset(password_reset_id: string): Promise<{
+  email_address: string;
+  account_id: string;
+  home_bay_id?: string | null;
+}> {
+  if (isMultiBayCluster() && getConfiguredClusterRole() === "attached") {
+    return await createInterBayAccountDirectoryClient({
+      client: getInterBayFabricClient(),
+    }).redeemPasswordReset({ password_reset_id });
+  }
+  const { email_address } = await redeemResetLocal(password_reset_id);
+  const account = await getClusterAccountByEmail(email_address);
+  const account_id = account?.account_id;
+  if (!account_id) {
+    throw Error("Password reset no longer valid.");
+  }
+  return {
+    email_address,
+    account_id,
+    home_bay_id: account.home_bay_id ?? null,
+  };
 }
