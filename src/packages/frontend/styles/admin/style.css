@@ -1,0 +1,16 @@
+.cocalc-highlight-saved-token {
+  background-color: var(--cocalc-col-bs-green-ll);
+}
+.cocalc-highlight-saved-token > td.ant-table-column-sort {
+  background-color: var(--cocalc-col-bs-green-ll);
+}
+
+.admin-site-setting-popover-help table td,
+.admin-site-setting-popover-help table th {
+  padding: 2px 5px;
+  vertical-align: top;
+}
+.admin-site-setting-popover-help table td:first-child {
+  font-family: monospace;
+  font-weight: bold;
+}

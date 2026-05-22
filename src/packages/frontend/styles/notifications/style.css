@@ -1,0 +1,38 @@
+@charset /* *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
+ * *  License: MS-RSL – see LICENSE.md for details
+ * */
+.smc-notificationlist {
+  overflow: none;
+  display: flex;
+  flex-direction: column;
+}
+.smc-notificationlist ul {
+  margin: 0px;
+  padding: 0px;
+}
+.smc-notificationlist li {
+  border-bottom: 1px solid rgb(221, 221, 221);
+  cursor: pointer;
+  display: flex;
+  flex-direction: row;
+  padding: 6px 12px 5px 0px;
+  list-style: none;
+}
+.smc-notificationlist li:last-child {
+  border-bottom: 0px;
+}
+.smc-notificationlist .panel-body {
+  padding: 0px;
+}
+
+.cocalc-notification-row-entry {
+  padding: "10px 5px";
+}
+.cocalc-notification-row-entry:hover {
+  background: var(--cocalc-col-gray-ll);
+}
+
+.cocalc-notification-list .ant-collapse-content-box {
+  margin: 0;
+  padding: 0 !important;
+}

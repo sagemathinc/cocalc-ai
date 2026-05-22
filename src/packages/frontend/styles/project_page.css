@@ -1,0 +1,79 @@
+@charset /* *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
+ * *  License: MS-RSL – see LICENSE.md for details
+ * */
+.smc-project-files-dropdown > a {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.smc-project-files-dropdown > a {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.smc-project-files-dropdown > ul {
+  width: 100%;
+}
+
+dl.cc-project-settings-features > dt {
+  width: 20px;
+}
+dl.cc-project-settings-features > dd {
+  margin-left: 30px;
+}
+
+.cocalc-files-tabs-more {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+.cocalc-files-tabs-more .ant-tabs-dropdown-menu-item {
+  font-size: 14px;
+}
+.cocalc-files-tabs-more .ant-tabs-dropdown-menu-item .anticon {
+  font-size: 125%;
+  margin-right: 10px;
+}
+
+.cc-project-info-cgroup-table-flyout div.ant-descriptions-view {
+  border-left: 0 !important;
+  border-right: 0 !important;
+  border-radius: 0;
+}
+.cc-project-info-cgroup-table-flyout th.ant-descriptions-item-label {
+  width: 25%;
+}
+.cc-project-info-cgroup-table-flyout td.ant-descriptions-item-content {
+  width: 75%;
+}
+
+.cc-project-info-cgroup-table-page table td.ant-descriptions-item-content {
+  width: 250px;
+}
+
+.cc-project-info-procs-flyout-row-expanded td {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.cc-project-info-about-flyout div.ant-descriptions-header {
+  align-items: flex-start;
+  margin: 5px;
+}
+.cc-project-info-about-flyout
+  div.ant-descriptions-header
+  .ant-descriptions-title {
+  font-size: 14px;
+  line-height: 1.2;
+}
+.cc-project-info-about-flyout div.ant-descriptions-view {
+  border-radius: 0;
+}
+.cc-project-info-about-flyout div.ant-descriptions-view td,
+.cc-project-info-about-flyout div.ant-descriptions-view th {
+  padding: 5px !important;
+}
+.cc-project-info-about-flyout div.ant-descriptions-view code {
+  font-size: 90%;
+}
+
+.cc-project-expanded-row .ant-table-expanded-row-cell {
+  padding: 0 !important;
+}

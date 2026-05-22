@@ -1,0 +1,128 @@
+@charset /* *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
+ * *  License: MS-RSL – see LICENSE.md for details
+ * */
+.cocalc-jupyter-rendered img {
+  max-width: 100%;
+}
+.cocalc-jupyter-rendered table {
+  border: none;
+  border-collapse: collapse;
+  border-spacing: 0;
+  table-layout: fixed;
+  margin-top: 1em;
+}
+.cocalc-jupyter-rendered thead {
+  border-bottom: 1px solid #bdbdbd;
+  vertical-align: bottom;
+}
+.cocalc-jupyter-rendered tr,
+.cocalc-jupyter-rendered th,
+.cocalc-jupyter-rendered td {
+  text-align: right;
+  vertical-align: middle;
+  padding: 0.5em 0.5em;
+  line-height: normal;
+  white-space: normal;
+  max-width: none;
+  border: none;
+}
+.cocalc-jupyter-rendered th {
+  font-weight: bold;
+}
+.cocalc-jupyter-rendered tr:nth-child(odd) {
+  background: #f5f5f5;
+}
+.cocalc-jupyter-rendered tr:hover {
+  background: rgba(66, 165, 245, 0.2);
+}
+
+.cocalc-jupyter-rendered-md img {
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 100%;
+  height: auto;
+}
+
+.cocalc-jupyter-anchor-link {
+  visibility: hidden;
+}
+
+.cocalc-jupyter-header:hover .cocalc-jupyter-anchor-link {
+  text-decoration: none !important;
+  padding: 0px 20px;
+  visibility: visible;
+}
+
+.cocalc-jupyter-usage-info {
+  padding: 2px 2px 0px 2px;
+  margin-right: 1em;
+  border: 1px solid var(--cocalc-col-gray-l);
+  transition-property: background-color, color;
+  transition-timing-function: ease;
+  transition-duration: 0.1s;
+  transition-delay: 0s;
+}
+
+.cocalc-jupyter-btn-interrupt {
+  transition-property: background-color, color;
+  transition-timing-function: ease;
+  transition-duration: 0.1s;
+  transition-delay: 0s;
+}
+
+.cocalc-jupyter-insert-cell {
+  margin-bottom: 5px;
+  margin-top: 5px;
+  height: 8px;
+  cursor: pointer;
+  text-align: center;
+}
+.cocalc-jupyter-insert-cell:hover {
+  background-color: var(--cocalc-col-fg-blue);
+}
+.cocalc-jupyter-insert-cell:hover .cocalc-jupyter-insert-cell-controls {
+  visibility: visible;
+  opacity: 1;
+}
+.cocalc-jupyter-insert-cell.cocalc-jupyter-insert-cell-below {
+  margin-top: 20px;
+  height: 5px;
+  background-color: var(--cocalc-col-gray-l);
+}
+.cocalc-jupyter-insert-cell.cocalc-jupyter-insert-cell-below
+  > .cocalc-jupyter-insert-cell-controls {
+  top: -10px;
+}
+.cocalc-jupyter-insert-cell.cocalc-jupyter-insert-cell-below:hover {
+  background-color: var(--cocalc-col-fg-blue);
+}
+
+.cocalc-jupyter-insert-cell-controls {
+  visibility: hidden;
+  opacity: 0;
+  z-index: 1;
+  position: relative;
+  top: -8px;
+}
+
+.cocalc-jupyter-insert-cell-btn {
+  background-color: var(--cocalc-col-fg-blue);
+}
+.cocalc-jupyter-insert-cell-btn:hover {
+  background-color: var(--cocalc-col-blue-dd);
+}
+
+.cocalc-jupyter-insert-cell-btn-below {
+  background-color: var(--cocalc-col-gray-l);
+}
+.cocalc-jupyter-insert-cell-btn-below:hover {
+  background-color: var(--cocalc-col-blue-dd);
+}
+
+.cocalc-jupyter-menu .ant-dropdown-trigger:hover {
+  background-color: white;
+}
+
+cocalc-lumino-adapter {
+  position: relative;
+}

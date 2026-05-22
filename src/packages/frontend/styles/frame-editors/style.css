@@ -1,0 +1,50 @@
+@charset /* *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
+ * *  License: MS-RSL – see LICENSE.md for details
+ * */
+.cc-frame-tree-title-bar-buttons > div.btn-group,
+.cc-frame-tree-title-bar-buttons > button.btn {
+  margin-bottom: 20px;
+}
+
+.cocalc-latex-build-content .ant-tabs-tab {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+.cocalc-latex-build-content .ant-tabs-tab > div {
+  width: 100%;
+  padding: 5px 10px;
+  margin: 0 10px 0 0;
+  text-align: left;
+}
+.cocalc-latex-build-content .ant-tabs-content-holder {
+  display: flex;
+}
+.cocalc-latex-build-content .ant-tabs-content-holder .ant-tabs-content {
+  overflow-y: auto;
+}
+.cocalc-latex-build-content .ant-tabs-content-holder .ant-tabs-tabpane {
+  display: flex;
+  flex-direction: column;
+}
+
+.cocalc-latex-output-tabs {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.cocalc-latex-output-tabs .ant-tabs-content-holder {
+  flex: 1;
+  display: flex;
+}
+.cocalc-latex-output-tabs .ant-tabs-content {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.cocalc-latex-output-tabs .ant-tabs-tabpane {
+  height: 100%;
+}
+.cocalc-latex-output-tabs .ant-tabs-tabpane:not(.ant-tabs-tabpane-hidden) {
+  display: flex;
+  flex-direction: column;
+}

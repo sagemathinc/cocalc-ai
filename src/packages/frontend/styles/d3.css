@@ -1,0 +1,30 @@
+@charset /* *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
+ * *  License: MS-RSL – see LICENSE.md for details
+ * */
+.smc-d3-graph {
+  cursor: pointer;
+  border: 1px solid lightgrey;
+}
+
+.node {
+  stroke: #fff;
+  stroke-width: 1.5px;
+}
+
+.link {
+  fill: none;
+  stroke: #000;
+  stroke-opacity: 0.6;
+  opacity: 0.6;
+}
+
+.directed {
+  fill: none;
+  stroke: #000;
+  stroke-opacity: 0.6;
+  opacity: 0.6;
+}
+
+marker {
+  fill: #bbb;
+}

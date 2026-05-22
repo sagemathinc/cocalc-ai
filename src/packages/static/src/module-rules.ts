@@ -32,48 +32,6 @@ export default function moduleRules(): Configuration["module"] {
         ],
       },
       {
-        test: /\.less$/,
-        use: [
-          "style-loader",
-          {
-            loader: "css-loader",
-            options: {
-              importLoaders: 2,
-            },
-          },
-          {
-            loader: "less-loader",
-            options: { lessOptions: { javascriptEnabled: true } },
-          }, // javascriptEnabled needed for antd.
-        ],
-      },
-      {
-        test: /\.scss$/i,
-        use: [
-          "style-loader",
-          {
-            loader: "css-loader",
-            options: {
-              importLoaders: 2,
-            },
-          },
-          "sass-loader",
-        ],
-      },
-      {
-        test: /\.sass$/i,
-        use: [
-          "style-loader",
-          {
-            loader: "css-loader",
-            options: {
-              importLoaders: 2,
-            },
-          },
-          "sass-loader",
-        ],
-      },
-      {
         test: /\.png$/,
         type: "asset/resource",
       },
