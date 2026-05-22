@@ -8,6 +8,7 @@ import {
   clearStoredControlPlaneOrigin,
   getStoredControlPlaneOrigin,
   setStoredControlPlaneOrigin,
+  normalizeControlPlaneOrigin,
 } from "@cocalc/frontend/control-plane-origin";
 import { deleteRememberMe } from "@cocalc/frontend/misc/remember-me";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -132,6 +133,47 @@ export async function getAuthBootstrap(
     origin,
     body: {},
   });
+}
+
+export async function getControlPlaneAuthBootstrap(): Promise<AuthBootstrapResponse> {
+  const storedOrigin = getStoredControlPlaneOrigin();
+  if (storedOrigin) {
+    try {
+      const bootstrap = await getAuthBootstrap(storedOrigin);
+      const homeOrigin = normalizeControlPlaneOrigin(bootstrap.home_bay_url);
+      if (homeOrigin && homeOrigin !== storedOrigin) {
+        setStoredControlPlaneOrigin(homeOrigin);
+        try {
+          const redirectedBootstrap = await getAuthBootstrap(homeOrigin);
+          if (redirectedBootstrap.signed_in) {
+            return redirectedBootstrap;
+          }
+        } catch {}
+      }
+      if (bootstrap.signed_in) {
+        return bootstrap;
+      }
+    } catch {
+      // Fall through to same-origin bootstrap; the stored bay may be stale.
+    }
+  }
+
+  const bootstrap = await getAuthBootstrap();
+  const homeOrigin = normalizeControlPlaneOrigin(bootstrap.home_bay_url);
+  if (!homeOrigin) {
+    return bootstrap;
+  }
+  setStoredControlPlaneOrigin(homeOrigin);
+
+  if (bootstrap.signed_in) {
+    return bootstrap;
+  }
+
+  try {
+    return await getAuthBootstrap(homeOrigin);
+  } catch {
+    return bootstrap;
+  }
 }
 
 export async function signOutAuthSession({
