@@ -512,13 +512,27 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "user request is gated by verified email/domain and manager approval policy",
   },
+  "purchases.removeSiteLicenseManager": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "manager removal is scoped by site-license manager authorization and does not directly change entitlements",
+  },
   "purchases.revokeMembershipPackageSeat": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "purchases.setSiteLicenseManager": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "manager assignment is scoped by site-license manager authorization and does not directly change entitlements",
+  },
   "purchases.updateMembershipPackage": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
+  },
+  "purchases.updateSiteLicense": {
+    decision: "fresh-auth-required",
+    reason: "site-license commercial terms and domain entitlement mutation",
   },
   "software.createLicense": {
     decision: "fresh-auth-not-required",

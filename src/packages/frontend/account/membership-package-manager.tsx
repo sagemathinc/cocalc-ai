@@ -835,6 +835,9 @@ export function MembershipPackageManager({
     useState<boolean>(false);
   const [siteLicenseOverviewError, setSiteLicenseOverviewError] =
     useState<string>("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   const refreshPackages = async () => {
     setLoading(true);
@@ -1083,8 +1086,10 @@ export function MembershipPackageManager({
               await handleChanged();
             }}
             onUpdateLicense={async (site_license_id, updates) => {
-              await updateSiteLicense({ site_license_id, ...updates });
-              await handleChanged();
+              await runFreshAuthAction(async () => {
+                await updateSiteLicense({ site_license_id, ...updates });
+                await handleChanged();
+              });
             }}
             onSetManager={async (site_license_id, target_account_id, role) => {
               await setSiteLicenseManager({
@@ -1139,6 +1144,7 @@ export function MembershipPackageManager({
           await handleChanged();
         }}
       />
+      <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
 }
