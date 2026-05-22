@@ -130,9 +130,8 @@ interface Opts {
   extra?: (() => Promise<Check>)[]; // additional health checks
 }
 
-// this could be directly in setup_health_checks, but we also need it in proxy.coffee
-// proxy.coffee must be rewritten and restructured first – just wrapping it with a router
-// didn't work at all for me
+// This could be directly in setup_health_checks, but it is also used by proxy
+// health-check routing.
 export function process_alive(): HealthcheckData {
   let txt = "alive: YES";
   let is_dead = true;

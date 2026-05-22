@@ -6,7 +6,7 @@
 /*
 Mapping from file extension to what editor edits it.
 
-This is mainly used to support editor.coffee, which is legacy.
+This is mainly used to support legacy editor selection.
 
 The **complete** list of extensions --> what edits them is done
 via the newer registration system.

@@ -231,7 +231,7 @@ async function process_message(mesg) {
 }
 
 // this must be run to set this up
-// currently, this only happens for minimal/kiosk mode in @cocalc/frontend/entry-point.coffee
+// Currently, this only happens for minimal/kiosk mode.
 export function init() {
   if (initialized) return;
   initialized = true;

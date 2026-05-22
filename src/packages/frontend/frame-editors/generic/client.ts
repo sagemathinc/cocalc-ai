@@ -4,7 +4,7 @@
  */
 
 /*
-Typescript async/await rewrite of @cocalc/util/client.coffee...
+Typescript async/await file client implementation.
 */
 
 import { Map } from "immutable";

@@ -1,0 +1,20 @@
+label {
+  font-weight: normal;
+}
+
+.nav-tabs > .disabled > a,
+.nav-pills > .disabled > a {
+  color: #999;
+  cursor: pointer;
+  border: none;
+}
+
+.nav-tabs > .disabled > a:hover,
+.nav-pills > .disabled > a:hover {
+  background-color: transparent;
+}
+
+pre {
+  border: inherit;
+  background: inherit;
+}

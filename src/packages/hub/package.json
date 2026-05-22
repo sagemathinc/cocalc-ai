@@ -26,7 +26,6 @@
     "cookie-parser": "^1.4.3",
     "cookies": "^0.8.0",
     "cors": "^2.8.5",
-    "debug": "^4.4.0",
     "express": "^5.2.1",
     "formidable": "^3.5.4",
     "http-proxy-3": "^1.23.2",
@@ -51,7 +50,7 @@
     "app:pglite": "./bin/start.sh pglite",
     "app:postgres": "./bin/start.sh postgres",
     "test": "pnpm exec jest --config jest.config.js",
-    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores next | grep -Ev '\\.coffee|coffee$'",
+    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores next",
     "prepublishOnly": "test"
   },
   "repository": {

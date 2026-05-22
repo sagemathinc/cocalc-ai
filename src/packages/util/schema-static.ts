@@ -6,7 +6,7 @@
 // This file is purely to give HtmlWebpackPlugin an opportunity to pick up these const values
 // In any other place, import from the main schema file
 
-// these times in minutes are used for active/recently edited projects and accounts in postgres-server-queries.coffee's get_stats
+// These times in minutes are used for active/recently edited projects and accounts.
 export const RECENT_TIMES = Object.freeze({
   active: 5,
   last_hour: 60,

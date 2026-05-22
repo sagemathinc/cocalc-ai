@@ -12,8 +12,8 @@
 
 - set(map): Set the given keys of map to their values; one key must be
   the primary key for the table. NOTE: Computed primary keys will
-  get automatically filled in; these are keys in schema.coffee,
-  where the set query looks like this say:
+  get automatically filled in; these are schema keys where the set query
+  looks like this, say:
   (obj, db) -> db.sha1(obj.project_id, obj.path)
 - get(): Current value of the query, as an immutable.js Map from
   the primary key to the records, which are also immutable.js Maps.

@@ -1,0 +1,17 @@
+.smc-top-bar {
+  position: relative;
+  top: 0px;
+  right: 0px;
+  left: 0px;
+  display: flex;
+  padding: 0px;
+  margin: 0px;
+  z-index: 100;
+  border-radius: 0;
+  width: 100%;
+  background-color: var(--cocalc-col-gray-l0);
+}
+
+.cocalc-top-bar-element:hover {
+  background-color: var(--cocalc-col-top-bar-hover);
+}

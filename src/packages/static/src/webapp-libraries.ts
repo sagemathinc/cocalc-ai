@@ -23,9 +23,8 @@ import "@cocalc/frontend/set-version-cookie.js";
 
 import "./webapp-css";
 
-// SASS style file for CoCalc.  This must be at
-// the very end, and by using a dynamic import, it
-// is imported in another chunk, hence after antd.
+// CSS style file for CoCalc.  This must be at the very end, and by using a
+// dynamic import, it is imported in another chunk, hence after antd.
 // That's important so this overrides antd.
 // @ts-ignore -- handled by webpack but not typescirpt.
-import("@cocalc/frontend/index.sass"); // this is a dynamic import on purpose!
+import("@cocalc/frontend/styles/index.css"); // this is a dynamic import on purpose!
