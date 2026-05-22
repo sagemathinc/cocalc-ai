@@ -68,16 +68,16 @@ Do not ship public release until these are true:
 | Passkey password-save/autofill confusion           | auth UI         | fixed  | Showing the account email in the passkey modal solved the observed Chrome password-save/autofill confusion and gives useful context during passkey auth.                                                                                                                                                   |
 | SSO domain check row jumps during sign-in/up       | auth UI         | fixed  | The sign-in-method policy check now uses reserved inline status space under the email field instead of adding/removing a full alert row while typing.                                                                                                                                                      |
 | Project table stale after start                    | projects / sync | fixed  | No longer observed after the recent Conat socket/reconnect fixes. Treat as fixed by side effect, with dogfood monitoring rather than additional speculative work.                                                                                                                                          |
+| Tiny "Loading" forever after backend upgrade       | chat / sync     | fixed  | Fixed by commit `a003b54d95`, which typed recoverable SyncDoc tables explicitly and avoided treating recoverable backend reconnect state as a permanent loading state.                                                                                                                                     |
 
 ### P0: Release Blockers
 
 These should be worked before broad UI polish.
 
-| Item                                         | Area                   | Risk                          | First investigation                                                                    |
-| -------------------------------------------- | ---------------------- | ----------------------------- | -------------------------------------------------------------------------------------- |
-| Tiny "Loading" forever after backend upgrade | chat / sync / recovery | User stuck until close/reopen | Capture stuck component state; identify missing reconnect or stale load promise.       |
-| Chat scroll often near top                   | chat / UX              | Broken long-chat usability    | Audit scroll anchoring, initial load, archived hydration, active turn append behavior. |
-| Hide status security issue                   | privacy / security     | Sensitive status visibility   | Define exact policy; ensure UI and backend enforce hidden status, not UI-only.         |
+| Item                       | Area               | Risk                        | First investigation                                                                    |
+| -------------------------- | ------------------ | --------------------------- | -------------------------------------------------------------------------------------- |
+| Chat scroll often near top | chat / UX          | Broken long-chat usability  | Audit scroll anchoring, initial load, archived hydration, active turn append behavior. |
+| Hide status security issue | privacy / security | Sensitive status visibility | Define exact policy; ensure UI and backend enforce hidden status, not UI-only.         |
 
 ### P1: Launch-Critical UX And Correctness
 
@@ -161,7 +161,8 @@ Scope:
 - Browser FS client recovery after hub/project-host restart. **Fixed
   2026-05-22** for open editor SyncDocs; continue to watch chat/flyout listing
   recovery as separate components.
-- Tiny loading forever after backend upgrades.
+- Tiny loading forever after backend upgrades. **Fixed 2026-05-22** by
+  `a003b54d95`.
 - Project list stale lifecycle state. **Fixed 2026-05-22** by recent Conat
   reconnect/socket fixes; continue dogfooding.
 
@@ -173,7 +174,8 @@ Acceptance:
   2026-05-22** in live `host1` testing.
 - Project start/stop UI converges to real state. **Done 2026-05-22** by
   dogfood observation after recent reconnect fixes.
-- Stuck loading state has a timeout/recovery path and diagnostics.
+- Stuck loading state has a timeout/recovery path and diagnostics. **Done
+  2026-05-22** for the backend-upgrade loading repro.
 
 Notes:
 

@@ -13,6 +13,12 @@ export function isCodexPaymentSourceUsable(
   return paymentSource?.source != null && paymentSource.source !== "none";
 }
 
+export function isCodexPaymentSourceDefinitelyUnconfigured(
+  paymentSource?: CodexPaymentSourceInfo,
+): boolean {
+  return paymentSource?.source === "none";
+}
+
 export function isCodexSubmitTarget({
   newThreadAgentMode,
   existingThreadAgentKind,
