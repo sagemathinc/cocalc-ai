@@ -248,6 +248,41 @@ describe("appendStreamMessages", () => {
     expect(merged).toHaveLength(3);
     expect(getLiveResponseMarkdown(merged)).toBe("I'm testing");
   });
+
+  test("preserves paragraph boundaries while appending message-only preview deltas", () => {
+    const merged = appendStreamMessages(
+      [],
+      [
+        textEvent("message", "I checked the preview stream.", 1, {
+          delta: true,
+        }),
+        textEvent(
+          "message",
+          "The frontend should preserve this paragraph.",
+          2,
+          {
+            delta: true,
+          },
+        ),
+        textEvent(
+          "message",
+          "The completed activity log already formats it correctly.",
+          3,
+          { delta: true },
+        ),
+      ],
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(((merged[0] as any).event.text as string).split("\n\n")).toEqual([
+      "I checked the preview stream.",
+      "The frontend should preserve this paragraph.",
+      "The completed activity log already formats it correctly.",
+    ]);
+    expect(getLiveResponseMarkdown(merged)).toBe(
+      "I checked the preview stream.\n\nThe frontend should preserve this paragraph.\n\nThe completed activity log already formats it correctly.",
+    );
+  });
 });
 
 describe("response text helpers", () => {
@@ -459,6 +494,27 @@ describe("response text helpers", () => {
     ]);
     expect(getLiveResponseMarkdown(events)).toBe(
       "I traced the app-server path through the live activity renderer and confirmed the chunks are arriving as separate agent deltas.\n\nThe main chat row should preserve this as a new paragraph instead of collapsing everything into one long block of text.",
+    );
+  });
+
+  test("keeps message-only preview deltas as separate paragraphs", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "I checked the preview stream.", 1, { delta: true }),
+      textEvent("message", "The frontend should preserve this paragraph.", 2, {
+        delta: true,
+      }),
+      textEvent(
+        "message",
+        "The completed activity log already formats it correctly.",
+        3,
+        { delta: true },
+      ),
+    ];
+    expect(getAgentMessageTexts(events)).toEqual([
+      "I checked the preview stream.\n\nThe frontend should preserve this paragraph.\n\nThe completed activity log already formats it correctly.",
+    ]);
+    expect(getLiveResponseMarkdown(events)).toBe(
+      "I checked the preview stream.\n\nThe frontend should preserve this paragraph.\n\nThe completed activity log already formats it correctly.",
     );
   });
 
