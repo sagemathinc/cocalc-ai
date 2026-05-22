@@ -280,8 +280,13 @@ export async function createVirtualMachines(params: {
   };
   labels?: string[];
 }) {
-  // TODO/Worry -- params.user_data could contain an api_key, which shouldn't be logged...
-  log.debug("createVirtualMachines", params);
+  log.debug("createVirtualMachines", {
+    ...params,
+    user_data:
+      params.user_data == null
+        ? undefined
+        : `[redacted ${params.user_data.length} chars]`,
+  });
   if (!params.count) {
     params.count = 1;
   }

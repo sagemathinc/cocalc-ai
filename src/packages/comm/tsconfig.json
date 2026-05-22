@@ -8,6 +8,6 @@
   "references": [
     { "path": "../sync" },
     { "path": "../jupyter" },
-    { "path": "../util" },
+    { "path": "../util" }
   ]
 }

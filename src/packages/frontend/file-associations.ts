@@ -215,7 +215,7 @@ file_associations["noext-dockerfile"] = {
   ext: "",
 };
 
-file_associations["noext-dockerfile"] = {
+file_associations["noext-containerfile"] = {
   editor: "codemirror",
   icon: "docker",
   opts: { mode: "dockerfile", indent_unit: 2, tab_size: 2 },
