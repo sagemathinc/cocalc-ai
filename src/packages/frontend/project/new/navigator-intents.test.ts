@@ -1081,6 +1081,77 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     );
   });
 
+  it("uses the default Codex model when forceCodex has no explicit model", async () => {
+    mockListSessions.mockResolvedValue([]);
+    mockProcessAI.mockResolvedValue(undefined);
+    const save = jest.fn().mockResolvedValue(undefined);
+    const timeStamp = "2026-03-20T06:11:00.000Z";
+    const message = {
+      history: [
+        {
+          author_id: "00000000-1000-4000-8000-000000000001",
+          content: "Install the missing Jupyter kernel.",
+        },
+      ],
+      message_id: "msg-default-codex",
+      thread_id: "thread-default-codex",
+    };
+    const sendChat = jest.fn(() => timeStamp);
+    const createEmptyThread = jest.fn(() => "thread-default-codex");
+    const get_one = jest.fn((where: any) =>
+      where?.event === "chat" && where?.date === timeStamp
+        ? message
+        : undefined,
+    );
+    const actions = {
+      syncdb: { get_state: () => "ready", save, get_one },
+      messageCache: { getThreadIndex: () => new Map() },
+      sendChat,
+      createEmptyThread,
+      getMessageByDate: jest.fn(() => undefined),
+      store: {
+        get: () => undefined,
+      },
+    };
+    mockGetChatActions.mockReturnValue(actions);
+    mockInitChat.mockReturnValue(actions);
+
+    const ok = await submitNavigatorPromptInWorkspaceChat({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/home/wstein/notebook.ipynb",
+      prompt: "Detailed hidden kernel install prompt",
+      visiblePrompt: "Install the missing Jupyter kernel.",
+      title: "Install kernel",
+      tag: "intent:jupyter-install-kernel",
+      forceCodex: true,
+      openFloating: true,
+      waitForAgent: false,
+    });
+
+    expect(ok).toBe(true);
+    expect(createEmptyThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadAgent: expect.objectContaining({
+          mode: "codex",
+          model: "gpt-5.4",
+          codexConfig: expect.objectContaining({
+            model: "gpt-5.4",
+          }),
+        }),
+      }),
+    );
+    expect(mockProcessAI).toHaveBeenCalledWith({
+      actions,
+      message,
+      tag: "intent:jupyter-install-kernel",
+      threadModel: "gpt-5.4",
+      acpConfigOverride: expect.objectContaining({
+        model: "gpt-5.4",
+        workingDirectory: "/home/wstein",
+      }),
+    });
+  });
+
   it("can reveal the preferred workspace agent before detached Codex dispatch finishes", async () => {
     const workspaceChatPath =
       "/home/wstein/.local/share/cocalc/workspaces/acct/ws-fast.chat";

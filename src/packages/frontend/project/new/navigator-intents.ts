@@ -26,6 +26,7 @@ import { uuid } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { path_split, tab_to_path } from "@cocalc/util/misc";
 import { pathMatchesWorkspaceRoot } from "@cocalc/conat/workspaces";
+import { DEFAULT_CODEX_MODEL_NAME } from "@cocalc/util/ai/codex";
 
 const NAVIGATOR_INTENT_QUEUE_KEY = "cocalc:navigator:intent-queue";
 export const NAVIGATOR_SUBMIT_PROMPT_EVENT = "cocalc:navigator:submit-prompt";
@@ -63,6 +64,22 @@ export interface NavigatorSubmitPromptDetail {
 function normalizeOptionalTitle(value?: string): string | undefined {
   const title = `${value ?? ""}`.trim();
   return title || undefined;
+}
+
+function resolveNavigatorCodexModel({
+  requestedModel,
+  sessionModel,
+  forceCodex,
+}: {
+  requestedModel?: string;
+  sessionModel?: string;
+  forceCodex?: boolean;
+}): string | undefined {
+  return (
+    requestedModel ??
+    sessionModel ??
+    (forceCodex ? DEFAULT_CODEX_MODEL_NAME : undefined)
+  );
 }
 
 function getWorkspaceSharedThreadTitle(): string {
@@ -620,7 +637,11 @@ async function writeNavigatorPromptInWorkspaceChat(
           openedSession.model.trim().length > 0
             ? openedSession.model.trim()
             : undefined;
-        const model = requestedModel ?? sessionModel;
+        const model = resolveNavigatorCodexModel({
+          requestedModel,
+          sessionModel,
+          forceCodex: opts.forceCodex !== false,
+        });
         const threadAgentCodexConfig = {
           model,
           reasoning: openedSession.reasoning as any,
@@ -817,7 +838,11 @@ async function writeNavigatorPromptInWorkspaceChat(
       typeof session.model === "string" && session.model.trim().length > 0
         ? session.model.trim()
         : undefined;
-    const model = requestedModel ?? sessionModel;
+    const model = resolveNavigatorCodexModel({
+      requestedModel,
+      sessionModel,
+      forceCodex: opts.forceCodex !== false,
+    });
     const threadAgentCodexConfig = {
       model,
       reasoning: session.reasoning as any,
@@ -1146,7 +1171,11 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       typeof session.model === "string" && session.model.trim().length > 0
         ? session.model.trim()
         : undefined;
-    const model = requestedModel ?? sessionModel;
+    const model = resolveNavigatorCodexModel({
+      requestedModel,
+      sessionModel,
+      forceCodex: opts.forceCodex !== false,
+    });
     const threadAgentCodexConfig = {
       model,
       reasoning: session.reasoning as any,
