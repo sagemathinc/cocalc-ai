@@ -88,11 +88,13 @@ init -> ready -> closed
 
 `closed` should only mean:
 
-- user closed the editor/document,
+- all frontend consumers released the document,
 - application/session is intentionally shutting down,
 - permission or identity became unrecoverable,
 - document identity/history is corrupt in a way that cannot be merged safely,
 - explicit test/runtime disposal.
+
+The first point is subtle. A file can have more than one frontend consumer. For example, `a.md` can be open in one tab while TimeTravel for `a.md` is open in another tab. Closing one editor view must release one reference, not necessarily close the shared `SyncDoc`. The document lifecycle needs ownership/ref-count semantics: `SyncDoc.close()` should happen only after all consumers that depend on that sync identity have released it, unless there is an explicit fatal condition.
 
 `closed` should not mean:
 
@@ -119,6 +121,8 @@ This state may change often. It must not discard patchflow state. The editor sho
 
 `SyncDoc.init_table_close_handlers()` listens for table `"close"` and calls `SyncDoc.close()`. If a Conat-backed table emits `"close"` during a recoverable stream replacement, this immediately destroys the document object.
 
+This is currently the strongest hypothesis. It matches the design intent of the lower Conat stream layer: durable recovery appears to exist below `SyncDoc`, but `SyncDoc` may be converting a recoverable table/stream close into fatal document close before that recovery path can run.
+
 Expected fix direction:
 
 - Recoverable tables should emit `disconnected`/`connected`, not fatal close.
@@ -128,6 +132,8 @@ Expected fix direction:
 ### H2: Client Close Is Misclassified
 
 `SyncDoc` calls `this.client.once("closed", this.close)`. We need to confirm what `client.closed` means in the modern frontend. If it can happen during a transient Conat/project-host reconnect, this is another path that destroys the `SyncDoc`.
+
+Historically, on cocalc.com, client `closed` meant full app shutdown. That may no longer be true in this architecture because there are separate routed connections for project hosts. We should not assume the old semantics are still preserved.
 
 Expected fix direction:
 
@@ -241,6 +247,8 @@ Expected behavior:
 - When live connection returns, normal patchflow/sync catches up.
 - If the user explicitly requests save while disconnected, show a concise status like "Will save when connection returns" or "Cannot reach project host yet", not raw Conat callHub errors.
 
+Longer term, we can make this stronger by saving disconnected editor state to durable browser storage such as IndexedDB. Chat already has browser-side persistence, and the same idea could apply more generally: the UI could honestly say the document is saved to permanent browser storage, but not yet saved to project disk. That is out of scope for the first reconnect fix, but it fits the same state model and would make extended offline/restart cases safer.
+
 This may be a separate implementation pass, but it should be aligned with the same state model.
 
 ### Phase 6: Regression Tests
@@ -302,10 +310,11 @@ SyncDoc constructor
 - Does the Conat-backed table ever emit `"close"` for a recoverable stream replacement?
 - Is there a true fatal table-close case that currently relies on `SyncDoc` closing immediately?
 - Should recoverable table wrappers expose a typed close reason, or should `SyncDoc` identify recoverable wrappers by API shape?
-- What should the editor show for disconnected-but-editable status: `rtc_status: "loading"` is semantically wrong after initial load, so do we need a distinct `rtc_status: "disconnected" | "reconnecting"`?
+- What should the editor show for disconnected-but-editable status: `rtc_status: "loading"` is semantically wrong after initial load, so do we need a distinct `rtc_status: "disconnected" | "reconnecting"`? Answer: yes. We should not show "Loading" unless the editor is literally loading; otherwise the UI is misleading and reduces trust.
 
 ## Success Criteria
 
+- Closing one editor view does not close a shared `SyncDoc` that is still used by another consumer, such as TimeTravel.
 - Project-host restart never makes an already loaded editor read-only.
 - Project-host restart never replaces loaded document content with a full loading spinner.
 - Open markdown/chat/plain-text docs recover without closing and reopening the tab.
