@@ -282,6 +282,11 @@ export class BaseEditorActions<
       this.close();
       return;
     }
+    this.setState({
+      read_only: true,
+      rtc_status: "loading",
+      status: "Connection lost. Reconnecting...",
+    } as Partial<T>);
     void projectActions.recoverOpenFileRuntimeAfterUnexpectedSyncdocClose(
       this.path,
     );

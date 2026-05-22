@@ -157,7 +157,8 @@ describe("BaseEditorActions reconnect coordination", () => {
   });
 
   it("rebootstraps the open file runtime when a syncstring closes unexpectedly", () => {
-    const actions = new BaseEditorActions("test-recover", makeRedux()) as any;
+    const redux = makeRedux();
+    const actions = new BaseEditorActions("test-recover", redux) as any;
     const recover = jest.fn();
     actions.path = "/home/user/a.chat";
     actions.syncAdapter = { dispose: jest.fn() };
@@ -170,6 +171,16 @@ describe("BaseEditorActions reconnect coordination", () => {
     actions.handleSyncstringClosed();
 
     expect(actions.syncAdapter.dispose).toHaveBeenCalled();
+    expect(redux._set_state).toHaveBeenCalledWith(
+      {
+        "test-recover": {
+          read_only: true,
+          rtc_status: "loading",
+          status: "Connection lost. Reconnecting...",
+        },
+      },
+      "test-recover",
+    );
     expect(recover).toHaveBeenCalledWith("/home/user/a.chat");
     expect(actions.close).not.toHaveBeenCalled();
   });
