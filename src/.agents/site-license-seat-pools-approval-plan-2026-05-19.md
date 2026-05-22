@@ -1064,8 +1064,11 @@ Acceptance criteria:
   rows by treating each as a one-pool site license.
 - Add admin API/CLI commands for creating pools and managers.
   - Current CLI supports provisioning a site license with initial pools and
-    owner manager. Editing managers/pools after creation is still future
-    polished admin tooling.
+    owner manager.
+  - [x] Existing frontend pool edit actions route to the seed/global
+        site-license service, require writable site-license manager authority,
+        update seat count/expiry/domains, rebuild the seed domain index, and
+        record `pool-updated` audit events.
 - The admin panel for deleting membership tiers already blocks deleting a tier
   that has claims/users. It should also block deleting a tier that is attached
   to a site license, and ideally show how many site licenses use that tier.
@@ -1087,10 +1090,16 @@ Acceptance criteria:
 - [x] Add manager-scoped APIs.
 - [x] Add minimal manager review panel in the account membership package manager.
 - [ ] Add polished manager dashboard.
-- [ ] Add notifications for new requests and review outcomes.
+- [x] Add notifications for new requests and review outcomes.
 - Approval creates assignment and grant through existing membership package
   machinery.
 - Rejection records review state and reason.
+
+Implementation note: request creation now creates account-notice notifications
+for active owner/manager targets, and request approval/rejection creates
+account-notice notifications for the requester. Notification target home bays
+are resolved through the cluster account directory so this works when managers
+or requesters live off the seed bay.
 
 ### Phase 5: Seat Reconciliation
 
