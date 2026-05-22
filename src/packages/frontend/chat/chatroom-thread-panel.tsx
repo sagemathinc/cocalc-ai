@@ -278,6 +278,7 @@ interface ChatRoomThreadPanelProps {
   shortcutEnabled?: boolean;
   notifyOnTurnFinish?: boolean;
   onNotifyOnTurnFinishChange?: (checked: boolean) => void;
+  hideTopControls?: boolean;
   allowSidebarToggle?: boolean;
   sidebarHidden?: boolean;
   onToggleSidebar?: () => void;
@@ -319,6 +320,7 @@ export function ChatRoomThreadPanel({
   shortcutEnabled = true,
   notifyOnTurnFinish = false,
   onNotifyOnTurnFinishChange,
+  hideTopControls = false,
   allowSidebarToggle = false,
   sidebarHidden = false,
   onToggleSidebar,
@@ -1417,7 +1419,8 @@ export function ChatRoomThreadPanel({
       isCodexModelName(`${selectedThreadMeta?.agent_model ?? ""}`) ||
       actions?.getCodexConfig?.(selectedThreadId) != null),
   );
-  const showTopControls = shouldShowCodexConfig || allowSidebarToggle;
+  const showTopControls =
+    !hideTopControls && (shouldShowCodexConfig || allowSidebarToggle);
   const selectedThreadForLog = selectedThreadKey ?? undefined;
   const threadMeta =
     selectedThread && "displayLabel" in selectedThread

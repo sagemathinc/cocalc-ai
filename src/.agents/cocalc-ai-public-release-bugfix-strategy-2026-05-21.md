@@ -72,6 +72,7 @@ Do not ship public release until these are true:
 | Tiny "Loading" forever after backend upgrade       | chat / sync       | fixed  | Fixed by commit `a003b54d95`, which typed recoverable SyncDoc tables explicitly and avoided treating recoverable backend reconnect state as a permanent loading state.                                                                                                                                     |
 | Hide status security issue                         | public / security | fixed  | Deleted the public `/support/status` route, removed the footer/support index links to it, removed the frontend `/stats` fetch path, and stopped registering the public `/stats` Express route. Realtime monitoring/load information should not be public.                                                  |
 | Chat scroll often near top                         | chat / UX         | fixed  | Added chat-specific viewport anchors keyed by message date plus pixel offset, independent of Virtuoso snapshots. The chat now captures the top visible message while reading and reasserts that anchor across remounts, visibility changes, message list changes, image loads, and item resizes.           |
+| Agent view missing thread menu/config              | chat UI           | fixed  | Extracted the normal chat thread `...` menu into a reusable component and mounted it in inline agent chat. The agent flyout/home agent now expose appearance, behavior, export/import/fork, clear, pin/archive, and delete actions through the same handler stack as full chat.                            |
 
 ### P0: Release Blockers
 
@@ -88,7 +89,6 @@ possible after P0s are under control.
 | Backup time in storage overview appears random                | backups / storage UI | Users cannot trust backups        | Confirm latest backup source field; ensure overview and tooltip use same authoritative timestamp.      |
 | Bulk delete hits queued/running project delete limit          | projects / workers   | User cannot clean up projects     | Serialize user bulk delete one-at-a-time or raise limit with backpressure; show progress.              |
 | Delete files modal breaks with many files                     | file UI              | Simple operation looks broken     | Use scrollable file list and concise summary after first N files.                                      |
-| Agent view missing thread `...` menu/configuration            | chat UI              | Missing essential thread controls | Share thread action menu with normal chat view.                                                        |
 | Community support page stale                                  | support / content    | Launch support confusion          | Remove dead Discord/Google Group/GitHub Discussions references; verify Zendesk path.                   |
 | Project quota/memory should apply at start/restart            | projects / quotas    | Membership changes appear ignored | Confirm current runtime quota source on every start; invalidate stale cached limits.                   |
 
@@ -207,7 +207,8 @@ Scope:
   from that stream.
 - Chat scroll position starts near top. **Fixed 2026-05-22** with explicit
   viewport anchors rather than raw Virtuoso snapshot restoration.
-- Agent view missing thread menu/config.
+- Agent view missing thread menu/config. **Fixed 2026-05-22** by sharing the
+  normal chat thread menu with the agent inline chat surfaces.
 
 Acceptance:
 
@@ -219,7 +220,8 @@ Acceptance:
   **Done 2026-05-22** for live preview rendering.
 - Chat opens anchored to recent messages unless user explicitly scrolled. **Done
   2026-05-22** for virtualized chat remount/restore behavior.
-- Agent view has the same thread menu/config affordance as normal chat.
+- Agent view has the same thread menu/config affordance as normal chat. **Done
+  2026-05-22.**
 
 ### D. Storage, Backups, Quotas, And Deletes
 
@@ -288,20 +290,19 @@ Acceptance:
    that proves where output is filtered.
 8. Fix disk usage reload wording or recompute semantics.
 
-## Next P0 Picks
+## Next Release Picks
 
 Recommended next work order as of 2026-05-22:
 
-1. **Sign-in redirect plus passkey auth UX cluster.** Fix `/projects` redirect,
-   the passkey selector-vs-action confusion, browser password-save/autofill, and
-   SSO row jumping as one auth polish pass. These are first-run release issues
-   and probably smaller than the sync work we just completed.
-2. **Project table stale after start.** This is the next control-plane
-   correctness bug: the UI claiming a project is stopped while terminals work is
-   the kind of state divergence that undermines confidence and likely needs a
-   clear projection/refetch rule.
-3. **Chat scroll often near top.** **Fixed 2026-05-22** with message-date plus
-   pixel-offset viewport anchors.
+1. **Disk usage reload says "Updated just now" without recomputing.** This is a
+   bounded honesty bug and likely quick: separate cached-refresh from actual
+   recompute and label timestamps by what really happened.
+2. **Backup time in storage overview appears random.** This pairs naturally with
+   disk-usage honesty and should establish one authoritative backup timestamp
+   source for both overview and tooltip.
+3. **Bulk delete hits queued/running project delete limit.** This affects users
+   trying to clean up before launch; a sequential queue with progress is safer
+   than raising worker limits blindly.
 
 Good fallback tasks if the above stalls:
 
@@ -356,8 +357,8 @@ For each blocker:
 - Agent button no-explicit-model launch failure. **Done 2026-05-21.**
 - Agent button expired-auth/preflight guidance. **Done 2026-05-21.**
 - Live log dropped chunks. **Done 2026-05-22.**
-- Scroll anchoring.
-- Agent view thread menu.
+- Scroll anchoring. **Done 2026-05-22.**
+- Agent view thread menu. **Done 2026-05-22.**
 
 ### Batch 4: Storage And Quota Honesty
 

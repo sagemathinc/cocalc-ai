@@ -539,6 +539,9 @@ export function ChatPanel({
     "data-hideChatTypeSelector",
   );
   const hideChatTypeSelector = asBoolean(hideChatTypeSelectorRaw);
+  const hideTopControls = asBoolean(
+    getDescValue(desc, "data-hideChatTopControls"),
+  );
   const storedSidebarWidth = getDescValue(desc, "data-sidebarWidth");
   const storedSidebarHiddenRaw = getDescValue(desc, "data-sidebarHidden");
   const externalSideChatRaw = getDescValue(desc, "data-externalSideChat");
@@ -2047,6 +2050,7 @@ export function ChatPanel({
         onOpenGitBrowser={openGitBrowserFromMessage}
         notifyOnTurnFinish={notifyOnSelectedTurnFinish}
         onNotifyOnTurnFinishChange={setNotifyOnSelectedTurnFinish}
+        hideTopControls={hideTopControls}
         allowSidebarToggle={!hideSidebar && !isCompact && !isExternalSideChat}
         sidebarHidden={sidebarHidden}
         onToggleSidebar={() => setSidebarHidden((hidden) => !hidden)}
