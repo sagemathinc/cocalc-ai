@@ -55,7 +55,7 @@ export function resolveCodexSessionMode(
   return "auto";
 }
 
-export const DEFAULT_CODEX_MODEL_NAME = "gpt-5.4";
+export const DEFAULT_CODEX_MODEL_NAME = "gpt-5.5";
 
 const DEFAULT_REASONING_LEVELS: CodexReasoningLevel[] = [
   {
@@ -134,13 +134,13 @@ const GPT_5_2_REASONING_LEVELS: CodexReasoningLevel[] = [
 export const DEFAULT_CODEX_MODELS: CodexModelInfo[] = [
   {
     name: DEFAULT_CODEX_MODEL_NAME,
-    description: "Strong model for everyday coding.",
+    description:
+      "Frontier model for complex coding, research, and real-world work.",
     reasoning: DEFAULT_REASONING_LEVELS,
   },
   {
-    name: "gpt-5.5",
-    description:
-      "Frontier model for complex coding, research, and real-world work.",
+    name: "gpt-5.4",
+    description: "Strong model for everyday coding.",
     reasoning: DEFAULT_REASONING_LEVELS,
   },
   {

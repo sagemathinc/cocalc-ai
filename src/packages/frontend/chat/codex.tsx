@@ -607,7 +607,7 @@ export function CodexConfigButton({
                 <div style={gridTwoColStyle}>
                   <Form.Item label="Model" name="model" style={formItemStyle}>
                     <Select
-                      placeholder="e.g., gpt-5.4"
+                      placeholder="e.g., gpt-5.5"
                       options={models}
                       optionRender={(option) =>
                         renderOptionWithDescription({
