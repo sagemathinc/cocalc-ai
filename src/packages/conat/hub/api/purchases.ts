@@ -377,6 +377,9 @@ export interface SiteLicensePoolRequest {
 export type SiteLicenseAuditAction =
   | "site-license-provisioned"
   | "manager-added"
+  | "manager-updated"
+  | "manager-removed"
+  | "site-license-updated"
   | "pool-created"
   | "pool-updated"
   | "pool-request-created"
@@ -721,6 +724,31 @@ export interface Purchases {
     owner_account_id?: string;
     site_license_id?: string;
   }) => Promise<SiteLicenseOverview>;
+  updateSiteLicense: (opts?: {
+    account_id?: string;
+    site_license_id?: string;
+    name?: string;
+    organization_name?: string;
+    allowed_domains?: string[];
+    custom_terms_url?: string | null;
+    custom_policy_url?: string | null;
+    terms_version_label?: string | null;
+    renewal_policy?: string | null;
+    overage_policy?: string | null;
+    starts_at?: Date | string | null;
+    expires_at?: Date | string | null;
+  }) => Promise<SiteLicenseOverview>;
+  setSiteLicenseManager: (opts?: {
+    account_id?: string;
+    site_license_id?: string;
+    target_account_id?: string;
+    role?: SiteLicenseManagerRole;
+  }) => Promise<SiteLicenseOverview>;
+  removeSiteLicenseManager: (opts?: {
+    account_id?: string;
+    site_license_id?: string;
+    target_account_id?: string;
+  }) => Promise<SiteLicenseOverview>;
   requestSiteLicensePool: (opts?: {
     account_id?: string;
     owner_account_id?: string;
@@ -770,6 +798,9 @@ export const purchases = {
   claimMembershipPackageSeat: authFirst,
   adminProvisionSiteLicense: authFirst,
   getSiteLicenseOverview: authFirst,
+  updateSiteLicense: authFirst,
+  setSiteLicenseManager: authFirst,
+  removeSiteLicenseManager: authFirst,
   requestSiteLicensePool: authFirst,
   reviewSiteLicensePoolRequest: authFirst,
   getSiteLicenseAffiliationReverificationStatus: authFirst,

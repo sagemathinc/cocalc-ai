@@ -156,6 +156,9 @@ const SITE_LICENSE_POOL_REQUEST_STATES = new Set<SiteLicensePoolRequestState>([
 const SITE_LICENSE_AUDIT_ACTIONS = new Set<SiteLicenseAuditAction>([
   "site-license-provisioned",
   "manager-added",
+  "manager-updated",
+  "manager-removed",
+  "site-license-updated",
   "pool-created",
   "pool-updated",
   "pool-request-created",
@@ -2297,6 +2300,330 @@ export async function updateSiteLicensePool({
       client,
     });
     return updated;
+  });
+}
+
+export async function updateSiteLicense({
+  actor_account_id,
+  site_license_id,
+  name,
+  organization_name,
+  allowed_domains,
+  custom_terms_url,
+  custom_policy_url,
+  terms_version_label,
+  renewal_policy,
+  overage_policy,
+  starts_at,
+  expires_at,
+}: {
+  actor_account_id: string;
+  site_license_id: string;
+  name?: string;
+  organization_name?: string;
+  allowed_domains?: string[];
+  custom_terms_url?: string | null;
+  custom_policy_url?: string | null;
+  terms_version_label?: string | null;
+  renewal_policy?: string | null;
+  overage_policy?: string | null;
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+}): Promise<SiteLicenseOverview> {
+  const actorAccountId = normalizeAccountId(actor_account_id);
+  const siteLicenseId = normalizeAccountId(site_license_id, "site_license_id");
+  return await withLocalSiteLicenseTransaction(async (client) => {
+    const current = await getSiteLicense(siteLicenseId, client);
+    await assertSiteLicenseManager({
+      account_id: actorAccountId,
+      site_license_id: siteLicenseId,
+      write: true,
+      client,
+    });
+    const nextAllowedDomains =
+      allowed_domains === undefined
+        ? current.allowed_domains
+        : normalizeAllowedDomains(allowed_domains);
+    const nextStartsAt =
+      starts_at === undefined ? current.starts_at : asDate(starts_at);
+    const nextExpiresAt =
+      expires_at === undefined ? current.expires_at : asDate(expires_at);
+    if (
+      allowed_domains !== undefined ||
+      starts_at !== undefined ||
+      expires_at !== undefined
+    ) {
+      const { rows } = await client.query<{
+        metadata?: Record<string, unknown> | null;
+      }>(
+        `SELECT metadata
+           FROM membership_packages
+          WHERE kind='site'
+            AND metadata->>'site_license_id'=$1
+            AND (expires_at IS NULL OR expires_at > NOW())`,
+        [siteLicenseId],
+      );
+      const domains = collectSiteLicenseDomains({
+        allowed_domains: nextAllowedDomains,
+        pools: rows.map((row) => ({
+          allowed_domains: getPackageAllowedDomains(row.metadata),
+        })),
+      });
+      await acquireSiteLicenseDomainWriteLock(client);
+      await assertNoActiveSiteLicenseDomainIndexOverlap({
+        domains,
+        site_license_id: siteLicenseId,
+        starts_at: nextStartsAt,
+        expires_at: nextExpiresAt,
+        client,
+      });
+    }
+    await client.query(
+      `UPDATE site_licenses
+          SET name=$2,
+              organization_name=$3,
+              allowed_domains=$4,
+              custom_terms_url=$5,
+              custom_policy_url=$6,
+              terms_version_label=$7,
+              renewal_policy=$8,
+              overage_policy=$9,
+              starts_at=$10,
+              expires_at=$11,
+              updated=NOW()
+        WHERE id=$1`,
+      [
+        siteLicenseId,
+        name === undefined ? current.name : normalizeString(name, "name"),
+        organization_name === undefined
+          ? current.organization_name
+          : normalizeString(organization_name, "organization_name"),
+        nextAllowedDomains,
+        custom_terms_url === undefined
+          ? current.custom_terms_url
+          : normalizeOptionalString(custom_terms_url),
+        custom_policy_url === undefined
+          ? current.custom_policy_url
+          : normalizeOptionalString(custom_policy_url),
+        terms_version_label === undefined
+          ? current.terms_version_label
+          : normalizeOptionalString(terms_version_label),
+        renewal_policy === undefined
+          ? current.renewal_policy
+          : normalizeOptionalString(renewal_policy),
+        overage_policy === undefined
+          ? current.overage_policy
+          : normalizeOptionalString(overage_policy),
+        nextStartsAt,
+        nextExpiresAt,
+      ],
+    );
+    if (
+      allowed_domains !== undefined ||
+      starts_at !== undefined ||
+      expires_at !== undefined
+    ) {
+      await rebuildSiteLicenseDomainIndex({
+        site_license_id: siteLicenseId,
+        client,
+      });
+    }
+    await recordSiteLicenseAuditEvent({
+      site_license_id: siteLicenseId,
+      action: "site-license-updated",
+      actor_account_id: actorAccountId,
+      metadata: {
+        fields: Object.entries({
+          name,
+          organization_name,
+          allowed_domains,
+          custom_terms_url,
+          custom_policy_url,
+          terms_version_label,
+          renewal_policy,
+          overage_policy,
+          starts_at,
+          expires_at,
+        })
+          .filter(([, value]) => value !== undefined)
+          .map(([field]) => field),
+      },
+      client,
+    });
+    return await getSiteLicenseOverviewWithoutAuthorization({
+      site_license_id: siteLicenseId,
+      client,
+    });
+  });
+}
+
+async function assertTargetAccountExists(account_id: string): Promise<void> {
+  const entries = await getClusterAccountsByIdsDirect([account_id]);
+  if (!entries.some((entry) => entry.account_id === account_id)) {
+    throw Error(`account ${account_id} not found`);
+  }
+}
+
+export async function setSiteLicenseManager({
+  actor_account_id,
+  site_license_id,
+  target_account_id,
+  role,
+}: {
+  actor_account_id: string;
+  site_license_id: string;
+  target_account_id: string;
+  role: SiteLicenseManagerRole;
+}): Promise<SiteLicenseOverview> {
+  const actorAccountId = normalizeAccountId(actor_account_id);
+  const siteLicenseId = normalizeAccountId(site_license_id, "site_license_id");
+  const targetAccountId = normalizeAccountId(
+    target_account_id,
+    "target_account_id",
+  );
+  if (!SITE_LICENSE_MANAGER_ROLES.has(role)) {
+    throw Error(`unsupported manager role '${role}'`);
+  }
+  await assertTargetAccountExists(targetAccountId);
+  return await withLocalSiteLicenseTransaction(async (client) => {
+    await assertSiteLicenseManager({
+      account_id: actorAccountId,
+      site_license_id: siteLicenseId,
+      write: true,
+      client,
+    });
+    const { rows } = await client.query<RawSiteLicenseManager>(
+      `SELECT *
+         FROM site_license_managers
+        WHERE site_license_id=$1
+          AND account_id=$2
+          AND revoked_at IS NULL
+        ORDER BY created DESC
+        LIMIT 1`,
+      [siteLicenseId, targetAccountId],
+    );
+    const existing = rows[0] ? normalizeSiteLicenseManagerRow(rows[0]) : null;
+    if (existing?.role === "owner" && role !== "owner") {
+      const { rows: ownerRows } = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::TEXT AS count
+           FROM site_license_managers
+          WHERE site_license_id=$1
+            AND role='owner'
+            AND revoked_at IS NULL`,
+        [siteLicenseId],
+      );
+      if (Number(ownerRows[0]?.count ?? 0) <= 1) {
+        throw Error("cannot remove the last site-license owner");
+      }
+    }
+    if (existing) {
+      await client.query(
+        `UPDATE site_license_managers
+            SET role=$3,
+                updated=NOW()
+          WHERE id=$1
+            AND site_license_id=$2`,
+        [existing.id, siteLicenseId, role],
+      );
+    } else {
+      await client.query(
+        `INSERT INTO site_license_managers
+           (id, site_license_id, account_id, role, created_by_account_id,
+            metadata, created, updated)
+         VALUES ($1,$2,$3,$4,$5,$6::jsonb,NOW(),NOW())`,
+        [uuid(), siteLicenseId, targetAccountId, role, actorAccountId, {}],
+      );
+    }
+    await recordSiteLicenseAuditEvent({
+      site_license_id: siteLicenseId,
+      action: existing ? "manager-updated" : "manager-added",
+      actor_account_id: actorAccountId,
+      target_account_id: targetAccountId,
+      metadata: {
+        role,
+        previous_role: existing?.role ?? null,
+      },
+      client,
+    });
+    return await getSiteLicenseOverviewWithoutAuthorization({
+      site_license_id: siteLicenseId,
+      client,
+    });
+  });
+}
+
+export async function removeSiteLicenseManager({
+  actor_account_id,
+  site_license_id,
+  target_account_id,
+}: {
+  actor_account_id: string;
+  site_license_id: string;
+  target_account_id: string;
+}): Promise<SiteLicenseOverview> {
+  const actorAccountId = normalizeAccountId(actor_account_id);
+  const siteLicenseId = normalizeAccountId(site_license_id, "site_license_id");
+  const targetAccountId = normalizeAccountId(
+    target_account_id,
+    "target_account_id",
+  );
+  return await withLocalSiteLicenseTransaction(async (client) => {
+    await assertSiteLicenseManager({
+      account_id: actorAccountId,
+      site_license_id: siteLicenseId,
+      write: true,
+      client,
+    });
+    const { rows } = await client.query<RawSiteLicenseManager>(
+      `SELECT *
+         FROM site_license_managers
+        WHERE site_license_id=$1
+          AND account_id=$2
+          AND revoked_at IS NULL
+        ORDER BY created DESC
+        LIMIT 1`,
+      [siteLicenseId, targetAccountId],
+    );
+    const existing = rows[0] ? normalizeSiteLicenseManagerRow(rows[0]) : null;
+    if (!existing) {
+      return await getSiteLicenseOverviewWithoutAuthorization({
+        site_license_id: siteLicenseId,
+        client,
+      });
+    }
+    if (existing.role === "owner") {
+      const { rows: ownerRows } = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::TEXT AS count
+           FROM site_license_managers
+          WHERE site_license_id=$1
+            AND role='owner'
+            AND revoked_at IS NULL`,
+        [siteLicenseId],
+      );
+      if (Number(ownerRows[0]?.count ?? 0) <= 1) {
+        throw Error("cannot remove the last site-license owner");
+      }
+    }
+    await client.query(
+      `UPDATE site_license_managers
+          SET revoked_at=NOW(),
+              updated=NOW()
+        WHERE id=$1
+          AND site_license_id=$2`,
+      [existing.id, siteLicenseId],
+    );
+    await recordSiteLicenseAuditEvent({
+      site_license_id: siteLicenseId,
+      action: "manager-removed",
+      actor_account_id: actorAccountId,
+      target_account_id: targetAccountId,
+      metadata: { role: existing.role },
+      client,
+    });
+    return await getSiteLicenseOverviewWithoutAuthorization({
+      site_license_id: siteLicenseId,
+      client,
+    });
   });
 }
 

@@ -29,6 +29,9 @@ const refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBayMock 
   jest.fn();
 const reviewSiteLicensePoolRequestMock = jest.fn();
 const updateSiteLicensePoolMock = jest.fn();
+const updateSiteLicenseMock = jest.fn();
+const setSiteLicenseManagerMock = jest.fn();
+const removeSiteLicenseManagerMock = jest.fn();
 const purchaseMembershipPackageMock = jest.fn();
 const resolveAccountHomeBayMock = jest.fn();
 const getClusterAccountByIdDirectMock = jest.fn();
@@ -43,6 +46,9 @@ const interBayGetSiteLicenseOverviewMock = jest.fn();
 const interBayRequestSiteLicensePoolMock = jest.fn();
 const interBayRequestSiteLicensePoolForAccountMock = jest.fn();
 const interBayReviewSiteLicensePoolRequestMock = jest.fn();
+const interBayUpdateSiteLicenseMock = jest.fn();
+const interBaySetSiteLicenseManagerMock = jest.fn();
+const interBayRemoveSiteLicenseManagerMock = jest.fn();
 const interBayGetSiteLicenseAffiliationReverificationStatusForAccountMock =
   jest.fn();
 const interBayRefreshSiteLicenseAffiliationVerificationMock = jest.fn();
@@ -124,6 +130,10 @@ jest.mock("@cocalc/server/membership/site-licenses", () => ({
   reviewSiteLicensePoolRequest: (...args: any[]) =>
     reviewSiteLicensePoolRequestMock(...args),
   updateSiteLicensePool: (...args: any[]) => updateSiteLicensePoolMock(...args),
+  updateSiteLicense: (...args: any[]) => updateSiteLicenseMock(...args),
+  setSiteLicenseManager: (...args: any[]) => setSiteLicenseManagerMock(...args),
+  removeSiteLicenseManager: (...args: any[]) =>
+    removeSiteLicenseManagerMock(...args),
 }));
 
 jest.mock("@cocalc/server/ai/usage-status", () => ({
@@ -202,6 +212,12 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
       interBayRequestSiteLicensePoolForAccountMock(...args),
     reviewSiteLicensePoolRequest: (...args: any[]) =>
       interBayReviewSiteLicensePoolRequestMock(...args),
+    updateSiteLicense: (...args: any[]) =>
+      interBayUpdateSiteLicenseMock(...args),
+    setSiteLicenseManager: (...args: any[]) =>
+      interBaySetSiteLicenseManagerMock(...args),
+    removeSiteLicenseManager: (...args: any[]) =>
+      interBayRemoveSiteLicenseManagerMock(...args),
     getSiteLicenseAffiliationReverificationStatusForAccount: (...args: any[]) =>
       interBayGetSiteLicenseAffiliationReverificationStatusForAccountMock(
         ...args,
@@ -218,6 +234,12 @@ beforeEach(() => {
   requireFreshAuthForSessionHashMock.mockReset();
   assertAccountTrustedForProductAccessMock.mockReset();
   updateSiteLicensePoolMock.mockReset();
+  updateSiteLicenseMock.mockReset();
+  setSiteLicenseManagerMock.mockReset();
+  removeSiteLicenseManagerMock.mockReset();
+  interBayUpdateSiteLicenseMock.mockReset();
+  interBaySetSiteLicenseManagerMock.mockReset();
+  interBayRemoveSiteLicenseManagerMock.mockReset();
   getConfiguredClusterSeedBayIdMock.mockReset();
   resolveAccountHomeBayMock.mockReset();
   getClusterAccountByIdDirectMock.mockReset();
@@ -721,6 +743,71 @@ describe("purchases membership packages", () => {
     });
     expect(getSiteLicenseOverviewMock).not.toHaveBeenCalled();
     expect(result.site_license.id).toBe("license-remote-1");
+  });
+
+  it("routes site-license setting and manager edits to the seed bay", async () => {
+    getConfiguredClusterSeedBayIdMock.mockReturnValue("bay-2");
+    interBayUpdateSiteLicenseMock.mockResolvedValue({
+      site_license: { id: "license-remote-1", name: "Updated" },
+      pools: [],
+      managers: [],
+      pending_requests: [],
+    });
+    interBaySetSiteLicenseManagerMock.mockResolvedValue({
+      site_license: { id: "license-remote-1" },
+      pools: [],
+      managers: [{ account_id: "manager-2", role: "manager" }],
+      pending_requests: [],
+    });
+    interBayRemoveSiteLicenseManagerMock.mockResolvedValue({
+      site_license: { id: "license-remote-1" },
+      pools: [],
+      managers: [],
+      pending_requests: [],
+    });
+
+    const {
+      updateSiteLicense,
+      setSiteLicenseManager,
+      removeSiteLicenseManager,
+    } = await import("./purchases");
+    await updateSiteLicense({
+      account_id: "manager-1",
+      site_license_id: "license-remote-1",
+      name: "Updated",
+      allowed_domains: ["Example.EDU"],
+    });
+    await setSiteLicenseManager({
+      account_id: "manager-1",
+      site_license_id: "license-remote-1",
+      target_account_id: "manager-2",
+      role: "manager",
+    });
+    await removeSiteLicenseManager({
+      account_id: "manager-1",
+      site_license_id: "license-remote-1",
+      target_account_id: "manager-2",
+    });
+
+    expect(interBayUpdateSiteLicenseMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor_account_id: "manager-1",
+        site_license_id: "license-remote-1",
+        name: "Updated",
+        allowed_domains: ["example.edu"],
+      }),
+    );
+    expect(interBaySetSiteLicenseManagerMock).toHaveBeenCalledWith({
+      actor_account_id: "manager-1",
+      site_license_id: "license-remote-1",
+      target_account_id: "manager-2",
+      role: "manager",
+    });
+    expect(interBayRemoveSiteLicenseManagerMock).toHaveBeenCalledWith({
+      actor_account_id: "manager-1",
+      site_license_id: "license-remote-1",
+      target_account_id: "manager-2",
+    });
   });
 
   it("routes site-license pool requests to the seed bay with requester verified emails", async () => {

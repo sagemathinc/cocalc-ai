@@ -144,7 +144,10 @@ import {
   getSiteLicenseOverview,
   requestSiteLicensePoolWithVerifiedEmailsOnLocalBay,
   refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBay,
+  removeSiteLicenseManager,
   reviewSiteLicensePoolRequest,
+  setSiteLicenseManager,
+  updateSiteLicense,
   updateSiteLicensePool,
 } from "@cocalc/server/membership/site-licenses";
 import {
@@ -789,6 +792,18 @@ async function startAccountLocalService(): Promise<void> {
         allowed_domains,
       });
     },
+    updateSiteLicense: async (opts) =>
+      isSeedSiteLicenseBay()
+        ? await updateSiteLicense(opts)
+        : await getSeedSiteLicenseClient().updateSiteLicense(opts),
+    setSiteLicenseManager: async (opts) =>
+      isSeedSiteLicenseBay()
+        ? await setSiteLicenseManager(opts)
+        : await getSeedSiteLicenseClient().setSiteLicenseManager(opts),
+    removeSiteLicenseManager: async (opts) =>
+      isSeedSiteLicenseBay()
+        ? await removeSiteLicenseManager(opts)
+        : await getSeedSiteLicenseClient().removeSiteLicenseManager(opts),
     getClaimableMembershipPackages: async ({
       account_id,
       verified_email_addresses,

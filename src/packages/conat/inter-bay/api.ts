@@ -31,6 +31,7 @@ import type {
   MembershipResolution,
   SiteLicenseAffiliationReverificationSeat,
   SiteLicenseAffiliationReverificationUserStatus,
+  SiteLicenseManagerRole,
   SiteLicenseOverview,
   SiteLicensePoolConfig,
   SiteLicensePoolRequest,
@@ -913,6 +914,34 @@ export interface AccountLocalUpdateMembershipPackageRequest {
   allowed_domains?: string[];
 }
 
+export interface AccountLocalUpdateSiteLicenseRequest {
+  actor_account_id: string;
+  site_license_id: string;
+  name?: string;
+  organization_name?: string;
+  allowed_domains?: string[];
+  custom_terms_url?: string | null;
+  custom_policy_url?: string | null;
+  terms_version_label?: string | null;
+  renewal_policy?: string | null;
+  overage_policy?: string | null;
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+}
+
+export interface AccountLocalSetSiteLicenseManagerRequest {
+  actor_account_id: string;
+  site_license_id: string;
+  target_account_id: string;
+  role: SiteLicenseManagerRole;
+}
+
+export interface AccountLocalRemoveSiteLicenseManagerRequest {
+  actor_account_id: string;
+  site_license_id: string;
+  target_account_id: string;
+}
+
 export interface AccountLocalGetClaimableMembershipPackagesRequest {
   account_id: string;
   verified_email_addresses: string[];
@@ -1469,6 +1498,9 @@ export type AccountLocalMethod =
   | "claim-membership-package-seat"
   | "claim-membership-package-seat-for-account"
   | "admin-provision-site-license"
+  | "update-site-license"
+  | "set-site-license-manager"
+  | "remove-site-license-manager"
   | "get-site-license-overview"
   | "request-site-license-pool"
   | "request-site-license-pool-for-account"
@@ -2328,6 +2360,15 @@ export interface InterBayAccountLocalApi {
   updateMembershipPackage: (
     opts: AccountLocalUpdateMembershipPackageRequest,
   ) => Promise<MembershipPackageDetails>;
+  updateSiteLicense: (
+    opts: AccountLocalUpdateSiteLicenseRequest,
+  ) => Promise<SiteLicenseOverview>;
+  setSiteLicenseManager: (
+    opts: AccountLocalSetSiteLicenseManagerRequest,
+  ) => Promise<SiteLicenseOverview>;
+  removeSiteLicenseManager: (
+    opts: AccountLocalRemoveSiteLicenseManagerRequest,
+  ) => Promise<SiteLicenseOverview>;
   getClaimableMembershipPackages: (
     opts: AccountLocalGetClaimableMembershipPackagesRequest,
   ) => Promise<ClaimableMembershipPackage[]>;
@@ -4063,6 +4104,33 @@ export function createInterBayAccountLocalClient({
       method: "update-membership-package",
     }),
   });
+  const updateSiteLicenseClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "updateSiteLicense">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "update-site-license",
+    }),
+  });
+  const setSiteLicenseManagerClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "setSiteLicenseManager">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "set-site-license-manager",
+    }),
+  });
+  const removeSiteLicenseManagerClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "removeSiteLicenseManager">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "remove-site-license-manager",
+    }),
+  });
   const getClaimableMembershipPackagesClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "getClaimableMembershipPackages">
   >({
@@ -4270,6 +4338,12 @@ export function createInterBayAccountLocalClient({
       await adminProvisionSiteLicenseClient.adminProvisionSiteLicense(opts),
     updateMembershipPackage: async (opts) =>
       await updateMembershipPackageClient.updateMembershipPackage(opts),
+    updateSiteLicense: async (opts) =>
+      await updateSiteLicenseClient.updateSiteLicense(opts),
+    setSiteLicenseManager: async (opts) =>
+      await setSiteLicenseManagerClient.setSiteLicenseManager(opts),
+    removeSiteLicenseManager: async (opts) =>
+      await removeSiteLicenseManagerClient.removeSiteLicenseManager(opts),
     getClaimableMembershipPackages: async (opts) =>
       await getClaimableMembershipPackagesClient.getClaimableMembershipPackages(
         opts,
@@ -4764,6 +4838,45 @@ export function createInterBayAccountLocalHandler({
       impl: {
         updateMembershipPackage: async (opts) =>
           await impl.updateMembershipPackage(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "updateSiteLicense">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "update-site-license",
+      }),
+      impl: {
+        updateSiteLicense: async (opts) => await impl.updateSiteLicense(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "setSiteLicenseManager">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "set-site-license-manager",
+      }),
+      impl: {
+        setSiteLicenseManager: async (opts) =>
+          await impl.setSiteLicenseManager(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "removeSiteLicenseManager">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "remove-site-license-manager",
+      }),
+      impl: {
+        removeSiteLicenseManager: async (opts) =>
+          await impl.removeSiteLicenseManager(opts),
       },
     }),
     createServiceHandler<

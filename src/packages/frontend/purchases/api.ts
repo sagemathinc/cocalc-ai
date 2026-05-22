@@ -22,6 +22,7 @@ import type {
   MembershipPackageQuote,
   SiteLicenseAffiliationReverificationSeat,
   SiteLicenseAffiliationReverificationUserStatus,
+  SiteLicenseManagerRole,
   SiteLicenseOverview,
   SiteLicensePoolConfig,
   SiteLicensePoolRequest,
@@ -538,6 +539,37 @@ export async function getSiteLicenseOverview(opts: {
   site_license_id: string;
 }): Promise<SiteLicenseOverview> {
   return await (await getPurchasesHubRpc()).getSiteLicenseOverview(opts);
+}
+
+export async function updateSiteLicense(opts: {
+  site_license_id: string;
+  name?: string;
+  organization_name?: string;
+  allowed_domains?: string[];
+  custom_terms_url?: string | null;
+  custom_policy_url?: string | null;
+  terms_version_label?: string | null;
+  renewal_policy?: string | null;
+  overage_policy?: string | null;
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+}): Promise<SiteLicenseOverview> {
+  return await (await getPurchasesHubRpc()).updateSiteLicense(opts);
+}
+
+export async function setSiteLicenseManager(opts: {
+  site_license_id: string;
+  target_account_id: string;
+  role: SiteLicenseManagerRole;
+}): Promise<SiteLicenseOverview> {
+  return await (await getPurchasesHubRpc()).setSiteLicenseManager(opts);
+}
+
+export async function removeSiteLicenseManager(opts: {
+  site_license_id: string;
+  target_account_id: string;
+}): Promise<SiteLicenseOverview> {
+  return await (await getPurchasesHubRpc()).removeSiteLicenseManager(opts);
 }
 
 export async function requestSiteLicensePool(opts: {

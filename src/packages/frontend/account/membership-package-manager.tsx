@@ -57,10 +57,13 @@ import {
   processPaymentIntents,
   purchaseMembershipPackage,
   refreshSiteLicenseAffiliationVerification,
+  removeSiteLicenseManager,
   requestSiteLicensePool,
   reviewSiteLicensePoolRequest,
   revokeMembershipPackageSeat,
+  setSiteLicenseManager,
   updateMembershipPackage,
+  updateSiteLicense,
 } from "@cocalc/frontend/purchases/api";
 import StripePayment from "@cocalc/frontend/purchases/stripe-payment";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -71,6 +74,7 @@ import type {
   MembershipPackageDetails,
   MembershipPackageKind,
   MembershipPackageQuote,
+  SiteLicenseManagerRole,
   SiteLicenseAffiliationReverificationUserStatus,
   SiteLicenseOverview,
   SiteLicensePoolConfig,
@@ -1078,6 +1082,25 @@ export function MembershipPackageManager({
               });
               await handleChanged();
             }}
+            onUpdateLicense={async (site_license_id, updates) => {
+              await updateSiteLicense({ site_license_id, ...updates });
+              await handleChanged();
+            }}
+            onSetManager={async (site_license_id, target_account_id, role) => {
+              await setSiteLicenseManager({
+                site_license_id,
+                target_account_id,
+                role,
+              });
+              await handleChanged();
+            }}
+            onRemoveManager={async (site_license_id, target_account_id) => {
+              await removeSiteLicenseManager({
+                site_license_id,
+                target_account_id,
+              });
+              await handleChanged();
+            }}
           />
         </Space>
       )}
@@ -1164,6 +1187,9 @@ function SiteLicenseDashboard({
   reviewingRequestId,
   onReview,
   onRevokeSeat,
+  onUpdateLicense,
+  onSetManager,
+  onRemoveManager,
 }: {
   overviews: SiteLicenseOverview[];
   loading: boolean;
@@ -1182,8 +1208,34 @@ function SiteLicenseDashboard({
     pool: SiteLicenseOverview["pools"][number],
     assignment: MembershipPackageAssignment,
   ) => Promise<void>;
+  onUpdateLicense: (
+    site_license_id: string,
+    updates: {
+      name?: string;
+      organization_name?: string;
+      allowed_domains?: string[];
+      custom_terms_url?: string | null;
+      custom_policy_url?: string | null;
+      terms_version_label?: string | null;
+      renewal_policy?: string | null;
+      overage_policy?: string | null;
+      starts_at?: Date | string | null;
+      expires_at?: Date | string | null;
+    },
+  ) => Promise<void>;
+  onSetManager: (
+    site_license_id: string,
+    target_account_id: string,
+    role: SiteLicenseManagerRole,
+  ) => Promise<void>;
+  onRemoveManager: (
+    site_license_id: string,
+    target_account_id: string,
+  ) => Promise<void>;
 }) {
   const [revokingSeat, setRevokingSeat] = useState<string>("");
+  const [editingLicense, setEditingLicense] =
+    useState<SiteLicenseOverview | null>(null);
   const requests = overviews.flatMap((overview) =>
     overview.pending_requests.map((request) => ({
       overview,
@@ -1329,6 +1381,9 @@ function SiteLicenseDashboard({
                     value={totals.pendingRequests}
                     tone={totals.pendingRequests ? "gold" : "neutral"}
                   />
+                  <Button ghost onClick={() => setEditingLicense(overview)}>
+                    <Icon name="edit" /> Edit license
+                  </Button>
                 </Space>
               </Space>
             </div>
@@ -1617,17 +1672,11 @@ function SiteLicenseDashboard({
                   }
                   style={{ borderRadius: 14 }}
                 >
-                  {overview.managers.length ? (
-                    <Space wrap>
-                      {overview.managers.map((manager) => (
-                        <Tag key={manager.id}>
-                          {manager.account_id}: {manager.role}
-                        </Tag>
-                      ))}
-                    </Space>
-                  ) : (
-                    <Text type="secondary">No managers listed.</Text>
-                  )}
+                  <SiteLicenseManagersEditor
+                    overview={overview}
+                    onSetManager={onSetManager}
+                    onRemoveManager={onRemoveManager}
+                  />
                 </Card>
 
                 {overview.recent_audit_events?.length ? (
@@ -1667,6 +1716,319 @@ function SiteLicenseDashboard({
           </Card>
         );
       })}
+      <EditSiteLicenseSettingsModal
+        overview={editingLicense}
+        onClose={() => setEditingLicense(null)}
+        onSave={async (updates) => {
+          if (!editingLicense) return;
+          await onUpdateLicense(editingLicense.site_license.id, updates);
+          setEditingLicense(null);
+        }}
+      />
+    </Space>
+  );
+}
+
+function EditSiteLicenseSettingsModal({
+  overview,
+  onClose,
+  onSave,
+}: {
+  overview: SiteLicenseOverview | null;
+  onClose: () => void;
+  onSave: (updates: Parameters<typeof updateSiteLicense>[0]) => Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [organizationName, setOrganizationName] = useState("");
+  const [domains, setDomains] = useState<string[]>([]);
+  const [termsUrl, setTermsUrl] = useState("");
+  const [policyUrl, setPolicyUrl] = useState("");
+  const [termsVersion, setTermsVersion] = useState("");
+  const [renewalPolicy, setRenewalPolicy] = useState("");
+  const [overagePolicy, setOveragePolicy] = useState("");
+  const [startsAt, setStartsAt] = useState<Dayjs | null>(null);
+  const [expiresAt, setExpiresAt] = useState<Dayjs | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!overview) return;
+    const license = overview.site_license;
+    setName(license.name);
+    setOrganizationName(license.organization_name);
+    setDomains(normalizeDomainList(license.allowed_domains));
+    setTermsUrl(license.custom_terms_url ?? "");
+    setPolicyUrl(license.custom_policy_url ?? "");
+    setTermsVersion(license.terms_version_label ?? "");
+    setRenewalPolicy(license.renewal_policy ?? "");
+    setOveragePolicy(license.overage_policy ?? "");
+    setStartsAt(license.starts_at ? dayjs(license.starts_at) : null);
+    setExpiresAt(license.expires_at ? dayjs(license.expires_at) : null);
+    setSubmitting(false);
+    setError("");
+  }, [overview]);
+
+  async function save() {
+    if (!overview) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      const allowed_domains = normalizeDomainList(domains);
+      if (allowed_domains.length === 0) {
+        throw Error("Enter at least one allowed email domain.");
+      }
+      await onSave({
+        site_license_id: overview.site_license.id,
+        name,
+        organization_name: organizationName,
+        allowed_domains,
+        custom_terms_url: termsUrl || null,
+        custom_policy_url: policyUrl || null,
+        terms_version_label: termsVersion || null,
+        renewal_policy: renewalPolicy || null,
+        overage_policy: overagePolicy || null,
+        starts_at: startsAt?.startOf("day").toDate() ?? null,
+        expires_at: expiresAt?.endOf("day").toDate() ?? null,
+      });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal
+      open={overview != null}
+      onCancel={onClose}
+      onOk={save}
+      okButtonProps={{ loading: submitting }}
+      okText="Save license"
+      title="Edit site-license settings"
+      destroyOnHidden
+      width={760}
+    >
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+        {error ? <Alert type="error" showIcon title={error} /> : null}
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+          }}
+        >
+          <CompactField label="License name">
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          </CompactField>
+          <CompactField label="Organization">
+            <Input
+              value={organizationName}
+              onChange={(e) => setOrganizationName(e.target.value)}
+            />
+          </CompactField>
+        </div>
+        <CompactField label="Allowed domains">
+          <Select
+            mode="tags"
+            tokenSeparators={[",", " ", "\n", ";"]}
+            value={domains}
+            onChange={(values) => setDomains(normalizeDomainList(values))}
+            style={{ width: "100%" }}
+          />
+        </CompactField>
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          }}
+        >
+          <CompactField label="Starts">
+            <DatePicker
+              value={startsAt}
+              onChange={setStartsAt}
+              style={{ width: "100%" }}
+            />
+          </CompactField>
+          <CompactField label="Expires">
+            <DatePicker
+              value={expiresAt}
+              onChange={setExpiresAt}
+              style={{ width: "100%" }}
+            />
+          </CompactField>
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+          }}
+        >
+          <CompactField label="Terms URL">
+            <Input
+              value={termsUrl}
+              onChange={(e) => setTermsUrl(e.target.value)}
+            />
+          </CompactField>
+          <CompactField label="Policy URL">
+            <Input
+              value={policyUrl}
+              onChange={(e) => setPolicyUrl(e.target.value)}
+            />
+          </CompactField>
+          <CompactField label="Terms version">
+            <Input
+              value={termsVersion}
+              onChange={(e) => setTermsVersion(e.target.value)}
+            />
+          </CompactField>
+          <CompactField label="Renewal policy">
+            <Input
+              value={renewalPolicy}
+              onChange={(e) => setRenewalPolicy(e.target.value)}
+            />
+          </CompactField>
+          <CompactField label="Overage policy">
+            <Input
+              value={overagePolicy}
+              onChange={(e) => setOveragePolicy(e.target.value)}
+            />
+          </CompactField>
+        </div>
+      </Space>
+    </Modal>
+  );
+}
+
+function SiteLicenseManagersEditor({
+  overview,
+  onSetManager,
+  onRemoveManager,
+}: {
+  overview: SiteLicenseOverview;
+  onSetManager: (
+    site_license_id: string,
+    target_account_id: string,
+    role: SiteLicenseManagerRole,
+  ) => Promise<void>;
+  onRemoveManager: (
+    site_license_id: string,
+    target_account_id: string,
+  ) => Promise<void>;
+}) {
+  const [accountId, setAccountId] = useState("");
+  const [role, setRole] = useState<SiteLicenseManagerRole>("manager");
+  const [working, setWorking] = useState("");
+  const [error, setError] = useState("");
+
+  async function addOrUpdateManager() {
+    const target = accountId.trim();
+    if (!target) return;
+    setWorking(`set-${target}`);
+    setError("");
+    try {
+      await onSetManager(overview.site_license.id, target, role);
+      setAccountId("");
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setWorking("");
+    }
+  }
+
+  async function removeManager(target: string) {
+    setWorking(`remove-${target}`);
+    setError("");
+    try {
+      await onRemoveManager(overview.site_license.id, target);
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setWorking("");
+    }
+  }
+
+  return (
+    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+      {error ? <Alert type="error" showIcon title={error} /> : null}
+      {overview.managers.length ? (
+        <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+          {overview.managers.map((manager) => (
+            <div
+              key={manager.id}
+              style={{
+                alignItems: "center",
+                display: "flex",
+                gap: 10,
+                justifyContent: "space-between",
+              }}
+            >
+              <Space wrap>
+                <Text code>{manager.account_id}</Text>
+                <Tag color={manager.role === "owner" ? "blue" : undefined}>
+                  {manager.role}
+                </Tag>
+              </Space>
+              <Space>
+                <Select
+                  size="small"
+                  value={manager.role}
+                  style={{ width: 110 }}
+                  options={[
+                    { label: "Owner", value: "owner" },
+                    { label: "Manager", value: "manager" },
+                    { label: "Viewer", value: "viewer" },
+                  ]}
+                  onChange={(nextRole) =>
+                    void onSetManager(
+                      overview.site_license.id,
+                      manager.account_id,
+                      nextRole,
+                    )
+                  }
+                />
+                <Button
+                  size="small"
+                  danger
+                  loading={working === `remove-${manager.account_id}`}
+                  onClick={() => void removeManager(manager.account_id)}
+                >
+                  Remove
+                </Button>
+              </Space>
+            </div>
+          ))}
+        </Space>
+      ) : (
+        <Text type="secondary">No managers listed.</Text>
+      )}
+      <Divider style={{ margin: "4px 0" }} />
+      <Space wrap>
+        <Input
+          placeholder="Manager account id"
+          value={accountId}
+          onChange={(e) => setAccountId(e.target.value)}
+          style={{ minWidth: 300 }}
+        />
+        <Select
+          value={role}
+          style={{ width: 130 }}
+          options={[
+            { label: "Owner", value: "owner" },
+            { label: "Manager", value: "manager" },
+            { label: "Viewer", value: "viewer" },
+          ]}
+          onChange={setRole}
+        />
+        <Button
+          type="primary"
+          loading={working === `set-${accountId.trim()}`}
+          onClick={() => void addOrUpdateManager()}
+        >
+          Add manager
+        </Button>
+      </Space>
     </Space>
   );
 }

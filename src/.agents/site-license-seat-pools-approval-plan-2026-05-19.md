@@ -1069,6 +1069,9 @@ Acceptance criteria:
         site-license service, require writable site-license manager authority,
         update seat count/expiry/domains, rebuild the seed domain index, and
         record `pool-updated` audit events.
+  - [x] Existing dashboard can edit top-level license settings and active
+        managers after creation. Those writes also route through the seed/global
+        service and record site-license audit events.
 - The admin panel for deleting membership tiers already blocks deleting a tier
   that has claims/users. It should also block deleting a tier that is attached
   to a site license, and ideally show how many site licenses use that tier.

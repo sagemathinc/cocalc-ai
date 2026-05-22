@@ -30,7 +30,10 @@ import {
   getSiteLicenseOverview as getSiteLicenseOverview0,
   requestSiteLicensePool as requestSiteLicensePool0,
   refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBay,
+  removeSiteLicenseManager as removeSiteLicenseManager0,
   reviewSiteLicensePoolRequest as reviewSiteLicensePoolRequest0,
+  setSiteLicenseManager as setSiteLicenseManager0,
+  updateSiteLicense as updateSiteLicense0,
   updateSiteLicensePool as updateSiteLicensePool0,
 } from "@cocalc/server/membership/site-licenses";
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
@@ -50,6 +53,7 @@ import type {
   MembershipPackageDetails,
   SiteLicenseAffiliationReverificationSeat,
   SiteLicenseAffiliationReverificationUserStatus,
+  SiteLicenseManagerRole,
   SiteLicenseOverview,
   SiteLicensePoolConfig,
   SiteLicensePoolRequest,
@@ -868,6 +872,109 @@ export async function getSiteLicenseOverview({
     account_id: actorId,
     site_license_id: `${site_license_id ?? ""}`.trim(),
   });
+}
+
+export async function updateSiteLicense({
+  account_id,
+  site_license_id,
+  name,
+  organization_name,
+  allowed_domains,
+  custom_terms_url,
+  custom_policy_url,
+  terms_version_label,
+  renewal_policy,
+  overage_policy,
+  starts_at,
+  expires_at,
+}: {
+  account_id?: string;
+  site_license_id?: string;
+  name?: string;
+  organization_name?: string;
+  allowed_domains?: string[];
+  custom_terms_url?: string | null;
+  custom_policy_url?: string | null;
+  terms_version_label?: string | null;
+  renewal_policy?: string | null;
+  overage_policy?: string | null;
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+} = {}): Promise<SiteLicenseOverview> {
+  const actorId = requireAccount(account_id);
+  const siteLicenseId = `${site_license_id ?? ""}`.trim();
+  if (!siteLicenseId) {
+    throw Error("site_license_id required");
+  }
+  const opts = {
+    actor_account_id: actorId,
+    site_license_id: siteLicenseId,
+    name,
+    organization_name,
+    allowed_domains:
+      allowed_domains === undefined
+        ? undefined
+        : normalizeAllowedDomains(allowed_domains),
+    custom_terms_url,
+    custom_policy_url,
+    terms_version_label,
+    renewal_policy,
+    overage_policy,
+    starts_at,
+    expires_at,
+  };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().updateSiteLicense(opts);
+  }
+  return await updateSiteLicense0(opts);
+}
+
+export async function setSiteLicenseManager({
+  account_id,
+  site_license_id,
+  target_account_id,
+  role,
+}: {
+  account_id?: string;
+  site_license_id?: string;
+  target_account_id?: string;
+  role?: SiteLicenseManagerRole;
+} = {}): Promise<SiteLicenseOverview> {
+  const actorId = requireAccount(account_id);
+  const siteLicenseId = `${site_license_id ?? ""}`.trim();
+  const targetAccountId = `${target_account_id ?? ""}`.trim();
+  const normalizedRole = `${role ?? ""}`.trim() as SiteLicenseManagerRole;
+  const opts = {
+    actor_account_id: actorId,
+    site_license_id: siteLicenseId,
+    target_account_id: targetAccountId,
+    role: normalizedRole,
+  };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().setSiteLicenseManager(opts);
+  }
+  return await setSiteLicenseManager0(opts);
+}
+
+export async function removeSiteLicenseManager({
+  account_id,
+  site_license_id,
+  target_account_id,
+}: {
+  account_id?: string;
+  site_license_id?: string;
+  target_account_id?: string;
+} = {}): Promise<SiteLicenseOverview> {
+  const actorId = requireAccount(account_id);
+  const opts = {
+    actor_account_id: actorId,
+    site_license_id: `${site_license_id ?? ""}`.trim(),
+    target_account_id: `${target_account_id ?? ""}`.trim(),
+  };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().removeSiteLicenseManager(opts);
+  }
+  return await removeSiteLicenseManager0(opts);
 }
 
 export async function requestSiteLicensePool({

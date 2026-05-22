@@ -28,7 +28,10 @@ import {
   releaseGraceExpiredSiteLicenseAffiliationSeats,
   requestSiteLicensePool,
   refreshSiteLicenseAffiliationVerificationForAccount,
+  removeSiteLicenseManager,
   reviewSiteLicensePoolRequest,
+  setSiteLicenseManager,
+  updateSiteLicense,
   updateSiteLicensePool,
 } from "./site-licenses";
 
@@ -637,6 +640,84 @@ describe("site license seat pools", () => {
         ],
       }),
     ).rejects.toThrow(`site license domain '${updatedDomain}' overlaps`);
+  });
+
+  it("updates site-license settings and managers", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const manager_account_id = uuid();
+    const originalDomain = `settings-original-${uuid().slice(0, 8)}.edu`;
+    const updatedDomain = `settings-updated-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await createTestAccount(manager_account_id);
+    await markAdmin(admin_account_id);
+
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      owner_account_id,
+      name: "Settings Campus",
+      organization_name: "Example University",
+      allowed_domains: [originalDomain],
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 20,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+        },
+      ],
+    });
+
+    const updated = await updateSiteLicense({
+      actor_account_id: owner_account_id,
+      site_license_id: overview.site_license.id,
+      name: "Updated Settings Campus",
+      organization_name: "Updated University",
+      allowed_domains: [updatedDomain],
+      terms_version_label: "v2",
+    });
+    expect(updated.site_license).toMatchObject({
+      name: "Updated Settings Campus",
+      organization_name: "Updated University",
+      allowed_domains: [updatedDomain],
+      terms_version_label: "v2",
+    });
+
+    const withManager = await setSiteLicenseManager({
+      actor_account_id: owner_account_id,
+      site_license_id: overview.site_license.id,
+      target_account_id: manager_account_id,
+      role: "manager",
+    });
+    expect(withManager.managers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          account_id: manager_account_id,
+          role: "manager",
+        }),
+      ]),
+    );
+
+    const withoutManager = await removeSiteLicenseManager({
+      actor_account_id: owner_account_id,
+      site_license_id: overview.site_license.id,
+      target_account_id: manager_account_id,
+    });
+    expect(
+      withoutManager.managers.some(
+        (manager) => manager.account_id === manager_account_id,
+      ),
+    ).toBe(false);
+    await expect(
+      removeSiteLicenseManager({
+        actor_account_id: owner_account_id,
+        site_license_id: overview.site_license.id,
+        target_account_id: owner_account_id,
+      }),
+    ).rejects.toThrow("cannot remove the last site-license owner");
   });
 
   it("allows a new site license to reuse an expired site license domain", async () => {
