@@ -446,21 +446,6 @@ export async function purchaseMembershipPackage(opts: {
   });
 }
 
-export async function adminProvisionMembershipPackage(opts: {
-  owner_account_id?: string;
-  kind: "site";
-  membership_class: MembershipClass;
-  seat_count: number;
-  allowed_domains: string[];
-  starts_at?: Date | string | null;
-  expires_at?: Date | string | null;
-  metadata?: Record<string, unknown> | null;
-}): Promise<MembershipPackageDetails> {
-  return await (
-    await getPurchasesHubRpc()
-  ).adminProvisionMembershipPackage(opts);
-}
-
 export async function adminProvisionSiteLicense(opts: {
   owner_account_id?: string;
   name: string;

@@ -487,10 +487,6 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
   },
-  "purchases.adminProvisionMembershipPackage": {
-    decision: "fresh-auth-required",
-    reason: "admin membership entitlement mutation",
-  },
   "purchases.adminProvisionSiteLicense": {
     decision: "fresh-auth-required",
     reason: "admin site-license entitlement mutation",

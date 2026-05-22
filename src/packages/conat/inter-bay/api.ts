@@ -877,18 +877,6 @@ export interface AccountLocalGetMembershipPackagesRequest {
   owner_account_id: string;
 }
 
-export interface AccountLocalAdminProvisionMembershipPackageRequest {
-  owner_account_id: string;
-  actor_account_id: string;
-  kind: "site";
-  membership_class: string;
-  seat_count: number;
-  allowed_domains: string[];
-  starts_at?: Date | string | null;
-  expires_at?: Date | string | null;
-  metadata?: Record<string, unknown> | null;
-}
-
 export interface AccountLocalAdminProvisionSiteLicenseRequest {
   owner_account_id: string;
   actor_account_id: string;
@@ -1491,7 +1479,6 @@ export type AccountLocalMethod =
   | "clear-account-entitlement-override"
   | "get-dedicated-host-policy-snapshot"
   | "get-membership-packages"
-  | "admin-provision-membership-package"
   | "update-membership-package"
   | "get-claimable-membership-packages"
   | "get-claimable-membership-packages-for-account"
@@ -2351,9 +2338,6 @@ export interface InterBayAccountLocalApi {
   getMembershipPackages: (
     opts: AccountLocalGetMembershipPackagesRequest,
   ) => Promise<MembershipPackageDetails[]>;
-  adminProvisionMembershipPackage: (
-    opts: AccountLocalAdminProvisionMembershipPackageRequest,
-  ) => Promise<MembershipPackageDetails>;
   adminProvisionSiteLicense: (
     opts: AccountLocalAdminProvisionSiteLicenseRequest,
   ) => Promise<SiteLicenseOverview>;
@@ -4077,15 +4061,6 @@ export function createInterBayAccountLocalClient({
       method: "get-membership-packages",
     }),
   });
-  const adminProvisionMembershipPackageClient = createServiceClient<
-    Pick<InterBayAccountLocalApi, "adminProvisionMembershipPackage">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: accountLocalSubject({
-      dest_bay,
-      method: "admin-provision-membership-package",
-    }),
-  });
   const adminProvisionSiteLicenseClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "adminProvisionSiteLicense">
   >({
@@ -4330,10 +4305,6 @@ export function createInterBayAccountLocalClient({
       ),
     getMembershipPackages: async (opts) =>
       await getMembershipPackagesClient.getMembershipPackages(opts),
-    adminProvisionMembershipPackage: async (opts) =>
-      await adminProvisionMembershipPackageClient.adminProvisionMembershipPackage(
-        opts,
-      ),
     adminProvisionSiteLicense: async (opts) =>
       await adminProvisionSiteLicenseClient.adminProvisionSiteLicense(opts),
     updateMembershipPackage: async (opts) =>
@@ -4796,20 +4767,6 @@ export function createInterBayAccountLocalHandler({
       impl: {
         getMembershipPackages: async (opts) =>
           await impl.getMembershipPackages(opts),
-      },
-    }),
-    createServiceHandler<
-      Pick<InterBayAccountLocalApi, "adminProvisionMembershipPackage">
-    >({
-      ...options,
-      service: "inter-bay-account-local",
-      subject: accountLocalSubject({
-        dest_bay: bay_id,
-        method: "admin-provision-membership-package",
-      }),
-      impl: {
-        adminProvisionMembershipPackage: async (opts) =>
-          await impl.adminProvisionMembershipPackage(opts),
       },
     }),
     createServiceHandler<
