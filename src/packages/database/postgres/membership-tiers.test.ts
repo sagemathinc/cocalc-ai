@@ -14,9 +14,11 @@ type QueryCall = {
 function createDb({
   siteLicenseTablesExist = true,
   siteLicenseRows = [],
+  adminAssignedRows = [],
 }: {
   siteLicenseTablesExist?: boolean;
   siteLicenseRows?: { tier_id: string; site_license_count: number }[];
+  adminAssignedRows?: { tier_id: string; admin_assigned_count: number }[];
 } = {}) {
   const calls: QueryCall[] = [];
   const db = {
@@ -47,6 +49,8 @@ function createDb({
             },
           ],
         });
+      } else if (sql.includes("FROM admin_assigned_memberships")) {
+        opts.cb(null, { rows: adminAssignedRows });
       } else if (sql === "DELETE FROM membership_tiers WHERE id = $1") {
         opts.cb(null, { rows: [] });
       } else {
@@ -61,6 +65,10 @@ describe("membershipTiersQuery", () => {
   it("includes active site-license counts by membership tier", async () => {
     const { db } = createDb({
       siteLicenseRows: [{ tier_id: "instructor", site_license_count: 2 }],
+      adminAssignedRows: [
+        { tier_id: "student", admin_assigned_count: 1 },
+        { tier_id: "instructor", admin_assigned_count: 4 },
+      ],
     });
 
     const result = await membershipTiersQuery(db, [], { id: "*" });
@@ -70,14 +78,16 @@ describe("membershipTiersQuery", () => {
         id: "student",
         label: "Student",
         subscription_count: 3,
-        account_count: 2,
+        subscribed_account_count: 2,
+        admin_assigned_count: 1,
         site_license_count: 0,
       },
       {
         id: "instructor",
         label: "Instructor",
         subscription_count: 0,
-        account_count: 0,
+        subscribed_account_count: 0,
+        admin_assigned_count: 4,
         site_license_count: 2,
       },
     ]);

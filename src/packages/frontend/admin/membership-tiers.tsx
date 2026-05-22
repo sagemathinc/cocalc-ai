@@ -35,6 +35,7 @@ import {
 import { JsonObjectEditor } from "@cocalc/frontend/components/json-object-editor";
 import { labels } from "@cocalc/frontend/i18n";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
+import { currency } from "@cocalc/util/misc";
 import {
   applyMembershipTierTemplateFallbacks,
   TIER_TEMPLATES,
@@ -64,7 +65,8 @@ interface Tier {
   notes?: string;
   history?: any[];
   subscription_count?: number;
-  account_count?: number;
+  subscribed_account_count?: number;
+  admin_assigned_count?: number;
   site_license_count?: number;
   created?: dayjs.Dayjs;
   updated?: dayjs.Dayjs;
@@ -154,6 +156,10 @@ function useMembershipTiers() {
             disabled: null,
             notes: null,
             history: null,
+            subscription_count: null,
+            subscribed_account_count: null,
+            admin_assigned_count: null,
+            site_license_count: null,
             created: null,
             updated: null,
           },
@@ -913,12 +919,12 @@ export function MembershipTiers() {
           <Table.Column<Tier>
             title="Monthly"
             dataIndex="price_monthly"
-            render={(val) => (val != null ? val : "")}
+            render={(val) => (val != null ? currency(Number(val)) : "")}
           />
           <Table.Column<Tier>
             title="Yearly"
             dataIndex="price_yearly"
-            render={(val) => (val != null ? val : "")}
+            render={(val) => (val != null ? currency(Number(val)) : "")}
           />
           <Table.Column<Tier>
             title="Course price"
@@ -942,7 +948,12 @@ export function MembershipTiers() {
           />
           <Table.Column<Tier>
             title="Subscribed accounts"
-            dataIndex="account_count"
+            dataIndex="subscribed_account_count"
+            render={(val) => val ?? 0}
+          />
+          <Table.Column<Tier>
+            title="Admin assigned"
+            dataIndex="admin_assigned_count"
             render={(val) => val ?? 0}
           />
           <Table.Column<Tier>

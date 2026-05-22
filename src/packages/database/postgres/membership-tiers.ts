@@ -77,6 +77,23 @@ async function getActiveSiteLicenseTierCounts(
   }, {});
 }
 
+async function getActiveAdminAssignedTierCounts(
+  db: PostgreSQL,
+): Promise<Record<string, number>> {
+  const { rows } = await callback2(db._query, {
+    query: `SELECT membership_class AS tier_id,
+                   COUNT(*)::int AS admin_assigned_count
+            FROM admin_assigned_memberships
+            WHERE expires_at IS NULL OR expires_at > NOW()
+            GROUP BY membership_class`,
+  });
+  return (rows ?? []).reduce((acc, row) => {
+    if (!row?.tier_id) return acc;
+    acc[row.tier_id] = row.admin_assigned_count ?? 0;
+    return acc;
+  }, {});
+}
+
 async function assertTierNotUsedByActiveSiteLicenses(
   db: PostgreSQL,
   tier_id: string,
@@ -122,14 +139,19 @@ export default async function membershipTiersQuery(
       if (!row?.tier_id) return acc;
       acc[row.tier_id] = {
         subscription_count: row.subscription_count ?? 0,
-        account_count: row.account_count ?? 0,
+        subscribed_account_count: row.account_count ?? 0,
       };
       return acc;
     }, {});
     const siteLicenseByTier = await getActiveSiteLicenseTierCounts(db);
+    const adminAssignedByTier = await getActiveAdminAssignedTierCounts(db);
     return rows.map((row) => ({
       ...mapStorageRow(row),
-      ...(byTier[row.id] ?? { subscription_count: 0, account_count: 0 }),
+      ...(byTier[row.id] ?? {
+        subscription_count: 0,
+        subscribed_account_count: 0,
+      }),
+      admin_assigned_count: adminAssignedByTier[row.id] ?? 0,
       site_license_count: siteLicenseByTier[row.id] ?? 0,
     }));
   } else if (query.id) {
