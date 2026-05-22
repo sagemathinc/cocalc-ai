@@ -217,7 +217,7 @@ export interface CodeEditorState {
   formatError?: string;
   formatInput?: string;
   status: string;
-  rtc_status?: "loading" | "live" | "error";
+  rtc_status?: "loading" | "live" | "error" | "reconnecting";
   read_only: boolean;
   settings: Map<string, any>; // settings specific to this file (but **not** this user or browser), e.g., spell check language.
   complete: Map<string, any>;
@@ -272,24 +272,7 @@ export class BaseEditorActions<
   protected mergeCoordinator?: MergeCoordinator;
   protected syncAdapter?: SyncAdapter;
   private readonly recoverAfterUnexpectedSyncdocClose = () => {
-    const projectActions = this._get_project_actions();
-    if (
-      this.isClosed() ||
-      projectActions == null ||
-      typeof projectActions.recoverOpenFileRuntimeAfterUnexpectedSyncdocClose !==
-        "function"
-    ) {
-      this.close();
-      return;
-    }
-    this.setState({
-      read_only: true,
-      rtc_status: "loading",
-      status: "Connection lost. Reconnecting...",
-    } as Partial<T>);
-    void projectActions.recoverOpenFileRuntimeAfterUnexpectedSyncdocClose(
-      this.path,
-    );
+    this.close();
   };
   private readonly handleSyncstringClosed = () => {
     this.syncAdapter?.dispose();
@@ -300,7 +283,7 @@ export class BaseEditorActions<
   };
   private readonly handleSyncdocDisconnected = () => {
     if (this.tracksLiveSyncdocStatus()) {
-      this.setState({ rtc_status: "loading" });
+      this.setState({ rtc_status: this.disconnectedRtcStatus() });
     }
     this.reconnectResource?.requestReconnect({
       reason: "editor_syncdoc_disconnected",
@@ -311,12 +294,18 @@ export class BaseEditorActions<
       return;
     }
     this.setState({
-      rtc_status: this.areSyncdocsLiveConnected() ? "live" : "loading",
+      rtc_status: this.areSyncdocsLiveConnected()
+        ? "live"
+        : this.disconnectedRtcStatus(),
     });
   };
 
   private tracksLiveSyncdocStatus(): boolean {
     return this.doctype !== "none" && !this.isClosed();
+  }
+
+  private disconnectedRtcStatus(): "loading" | "reconnecting" {
+    return this.store?.get("is_loaded") ? "reconnecting" : "loading";
   }
 
   // Centralized merge state between local CM buffer and remote syncstring.
@@ -702,7 +691,9 @@ export class BaseEditorActions<
       this._syncstring_init = true;
       if (this.doctype !== "none") {
         this.setState({
-          rtc_status: this.areSyncdocsLiveConnected() ? "live" : "loading",
+          rtc_status: this.areSyncdocsLiveConnected()
+            ? "live"
+            : this.disconnectedRtcStatus(),
         });
       }
       this._syncstring_metadata();
@@ -3159,11 +3150,16 @@ export class BaseEditorActions<
   // super class!
   public async show(): Promise<void> {
     const liveConnected = this.areSyncdocsLiveConnected();
-    const nextState: { visible: boolean; rtc_status?: "loading" | "live" } = {
+    const nextState: {
+      visible: boolean;
+      rtc_status?: "loading" | "live" | "reconnecting";
+    } = {
       visible: true,
     };
     if (this.doctype !== "none") {
-      nextState.rtc_status = liveConnected ? "live" : "loading";
+      nextState.rtc_status = liveConnected
+        ? "live"
+        : (this.disconnectedRtcStatus?.() ?? "loading");
     }
     this.setState(nextState);
     if (!liveConnected) {

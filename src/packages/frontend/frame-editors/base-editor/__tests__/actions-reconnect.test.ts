@@ -93,16 +93,17 @@ describe("BaseEditorActions reconnect coordination", () => {
     expect(close).toHaveBeenCalled();
   });
 
-  it("marks structured syncdocs as reconnecting when their live stream disconnects", () => {
+  it("marks loaded structured syncdocs as reconnecting when their live stream disconnects", () => {
     const actions = new BaseEditorActions("test-syncdb", makeRedux()) as any;
     const requestReconnect = jest.fn();
     actions.doctype = "syncdb";
     actions.reconnectResource = { requestReconnect };
+    actions.store = { get: jest.fn((key) => key === "is_loaded") };
 
     actions.handleSyncdocDisconnected();
 
     expect(actions.redux._set_state).toHaveBeenCalledWith(
-      { "test-syncdb": { rtc_status: "loading" } },
+      { "test-syncdb": { rtc_status: "reconnecting" } },
       "test-syncdb",
     );
     expect(requestReconnect).toHaveBeenCalledWith({
@@ -156,33 +157,19 @@ describe("BaseEditorActions reconnect coordination", () => {
     expect(syncdoc.wait_until_live_connected).toHaveBeenCalled();
   });
 
-  it("rebootstraps the open file runtime when a syncstring closes unexpectedly", () => {
+  it("closes the editor action when a syncstring closes unexpectedly", () => {
     const redux = makeRedux();
     const actions = new BaseEditorActions("test-recover", redux) as any;
-    const recover = jest.fn();
     actions.path = "/home/user/a.chat";
     actions.syncAdapter = { dispose: jest.fn() };
     actions.isClosed = jest.fn(() => false);
-    actions._get_project_actions = () => ({
-      recoverOpenFileRuntimeAfterUnexpectedSyncdocClose: recover,
-    });
     actions.close = jest.fn();
 
     actions.handleSyncstringClosed();
 
     expect(actions.syncAdapter.dispose).toHaveBeenCalled();
-    expect(redux._set_state).toHaveBeenCalledWith(
-      {
-        "test-recover": {
-          read_only: true,
-          rtc_status: "loading",
-          status: "Connection lost. Reconnecting...",
-        },
-      },
-      "test-recover",
-    );
-    expect(recover).toHaveBeenCalledWith("/home/user/a.chat");
-    expect(actions.close).not.toHaveBeenCalled();
+    expect(redux._set_state).not.toHaveBeenCalled();
+    expect(actions.close).toHaveBeenCalled();
   });
 
   it("falls back to closing when no runtime recovery hook is available", () => {

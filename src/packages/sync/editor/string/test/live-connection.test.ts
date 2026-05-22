@@ -35,4 +35,38 @@ describe("SyncDoc live connection state", () => {
     expect(target.liveConnected).toBe(false);
     expect(emit).toHaveBeenCalledWith("disconnected");
   });
+
+  it("treats recoverable table close as a disconnect instead of closing SyncDoc", () => {
+    const recoverNow = jest.fn(async () => {});
+    const close = jest.fn();
+    const emit = jest.fn();
+    const target: any = Object.assign(new EventEmitter(), {
+      state: "ready",
+      liveConnected: true,
+      syncstring_table: { get_state: () => "connected" },
+      patches_table: {
+        get_state: () => "closed",
+        recoverNow,
+        getRecoveryState: () => "closed",
+      },
+      close,
+      emit,
+      dbg: () => () => undefined,
+      recoverNow,
+      connectedTables: SyncDoc.prototype["connectedTables"],
+      refreshLiveConnectionState:
+        SyncDoc.prototype["refreshLiveConnectionState"],
+      tableCanRecover: SyncDoc.prototype["tableCanRecover"],
+    });
+
+    SyncDoc.prototype["handleTableClose"].call(
+      target,
+      "patches",
+      target.patches_table,
+    );
+
+    expect(close).not.toHaveBeenCalled();
+    expect(target.liveConnected).toBe(false);
+    expect(emit).toHaveBeenCalledWith("disconnected");
+  });
 });
