@@ -60,18 +60,18 @@ Do not ship public release until these are true:
 | Offline editor switches to loading/read-only       | editor / sync   | fixed  | SyncDoc and editor state now treat routed project-host disconnects as recoverable transport loss instead of fatal document close. Existing editor content stays mounted and editable while reconnecting.                                                                                                   |
 | Project-host restart breaks open editors           | conat / sync    | fixed  | Same-address routed project-host reconnects preserve the Conat client and SyncDoc table state instead of rebuilding editor state. Repeated reconnect failures refresh auth/browser-session state in place. Verified with live `host1` stop/start dogfood.                                                  |
 | Node 26 fails on project hosts without libatomic   | host bootstrap  | fixed  | Added `libatomic1` to project-host bootstrap/install paths and verified Node 26 on `host1`. This was a release blocker because project-host daemons could fail before any frontend recovery logic mattered.                                                                                                |
+| Codex live chat log drops chunks                   | chat / codex    | fixed  | Fixed the efficient `acp_live_preview_stream` instead of bypassing it. The preview stream now carries lifecycle status, actual agent `message` events, summaries, and errors, but no `thinking` payloads or synthetic activity ticks that can split progressive agent output.                              |
 
 ### P0: Release Blockers
 
 These should be worked before broad UI polish.
 
-| Item                                         | Area                            | Risk                                      | First investigation                                                                                          |
-| -------------------------------------------- | ------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Project table stale after start              | hub changefeeds / projections   | User sees stopped project that is running | Trace project lifecycle event path; add watchdog/refetch when command succeeds but projection remains stale. |
-| Tiny "Loading" forever after backend upgrade | chat / sync / recovery          | User stuck until close/reopen             | Capture stuck component state; identify missing reconnect or stale load promise.                             |
-| Codex live chat log drops chunks             | chat / codex activity rendering | Users cannot trust agent output           | Compare activity drawer source with chat rendered source; find dropped grouping/render filter.               |
-| Chat scroll often near top                   | chat / UX                       | Broken long-chat usability                | Audit scroll anchoring, initial load, archived hydration, active turn append behavior.                       |
-| Hide status security issue                   | privacy / security              | Sensitive status visibility               | Define exact policy; ensure UI and backend enforce hidden status, not UI-only.                               |
+| Item                                         | Area                          | Risk                                      | First investigation                                                                                          |
+| -------------------------------------------- | ----------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Project table stale after start              | hub changefeeds / projections | User sees stopped project that is running | Trace project lifecycle event path; add watchdog/refetch when command succeeds but projection remains stale. |
+| Tiny "Loading" forever after backend upgrade | chat / sync / recovery        | User stuck until close/reopen             | Capture stuck component state; identify missing reconnect or stale load promise.                             |
+| Chat scroll often near top                   | chat / UX                     | Broken long-chat usability                | Audit scroll anchoring, initial load, archived hydration, active turn append behavior.                       |
+| Hide status security issue                   | privacy / security            | Sensitive status visibility               | Define exact policy; ensure UI and backend enforce hidden status, not UI-only.                               |
 
 ### P1: Launch-Critical UX And Correctness
 
@@ -197,7 +197,9 @@ Scope:
 - Codex auth expired should be surfaced before or immediately after action.
   **Fixed 2026-05-21** with retryable `not-sent` state and clearer credentials
   guidance.
-- Live chat log drops output chunks.
+- Live chat log drops output chunks. **Fixed 2026-05-22** by making the
+  efficient preview stream agent-output-only and removing non-message boundaries
+  from that stream.
 - Chat scroll position starts near top.
 - Agent view missing thread menu/config.
 
@@ -207,7 +209,8 @@ Acceptance:
   2026-05-21** for no-explicit-model submissions and expired-auth failures.
 - Expired Codex auth path links to payment/credentials configuration. **Done
   2026-05-21.**
-- Chat-rendered activity and activity drawer show the same chunks.
+- Chat-rendered activity and activity drawer show the same agent-message chunks.
+  **Done 2026-05-22** for live preview rendering.
 - Chat opens anchored to recent messages unless user explicitly scrolled.
 - Agent view has the same thread menu/config affordance as normal chat.
 
@@ -282,19 +285,17 @@ Acceptance:
 
 Recommended next work order as of 2026-05-22:
 
-1. **Codex live chat log drops chunks.** This is the highest remaining
-   trust-impact bug for `cocalc.ai`: users can see that the activity drawer has
-   the missing output, so the product looks internally inconsistent. It is also
-   likely frontend rendering/state aggregation rather than a distributed systems
-   problem.
-2. **Sign-in redirect plus passkey auth UX cluster.** Fix `/projects` redirect,
+1. **Sign-in redirect plus passkey auth UX cluster.** Fix `/projects` redirect,
    the passkey selector-vs-action confusion, browser password-save/autofill, and
    SSO row jumping as one auth polish pass. These are first-run release issues
    and probably smaller than the sync work we just completed.
-3. **Project table stale after start.** This is the next control-plane
+2. **Project table stale after start.** This is the next control-plane
    correctness bug: the UI claiming a project is stopped while terminals work is
    the kind of state divergence that undermines confidence and likely needs a
    clear projection/refetch rule.
+3. **Chat scroll often near top.** The content may all be present, but landing
+   users near the top of a long chat breaks the most common conversation review
+   workflow.
 
 Good fallback tasks if the above stalls:
 
@@ -348,7 +349,7 @@ For each blocker:
 
 - Agent button no-explicit-model launch failure. **Done 2026-05-21.**
 - Agent button expired-auth/preflight guidance. **Done 2026-05-21.**
-- Live log dropped chunks.
+- Live log dropped chunks. **Done 2026-05-22.**
 - Scroll anchoring.
 - Agent view thread menu.
 
