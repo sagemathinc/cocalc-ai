@@ -9,6 +9,9 @@ CoCalc-AI is a complete rewrite of CoCalc. This repository is the codebase for t
 
 The relaunch is AI-native: Codex is integrated as a first-class agent runtime, browser automation is built into the platform, and the same project/workspace concepts are intended to work across local, self-hosted, and large-scale deployments.
 
+Short illustrated guides for using CoCalc-AI are published at
+[sagemathinc.github.io/cocalc-guides](https://sagemathinc.github.io/cocalc-guides/).
+
 ```mermaid
 flowchart TD
     A["CoCalc-AI<br/>one codebase"]:::core
