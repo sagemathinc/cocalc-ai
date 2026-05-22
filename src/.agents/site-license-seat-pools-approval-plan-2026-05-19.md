@@ -869,7 +869,7 @@ Goals:
 
 Implementation steps:
 
-1. Add a seed/global site-license data access layer.
+1. [x] Add a seed/global site-license data access layer.
    - It should use the seed/global Postgres connection explicitly, not
      `withAccountRehomeWriteFence`.
    - It should expose create/update/list/claim/request/review/reverification
@@ -878,13 +878,14 @@ Implementation steps:
      `site_license_managers`, `site_license_pool_requests`, site-license audit,
      site-license domain rows, and site-license pool rows.
 
-2. Add `site_license_domains`.
-   - Backfill from existing `site_licenses.allowed_domains` and pool
-     `metadata.allowed_domains`.
-   - Enforce exact and parent/child overlap in seed/global transactions.
-   - Keep expired licenses from blocking new domain ownership.
+2. [x] Add `site_license_domains`.
+   - Local dev backfill was intentionally skipped; lite1b dev data should be
+     deleted instead.
+   - Exact and parent/child overlap are enforced in seed/global transactions
+     using a seed-side domain index and transaction-scoped write lock.
+   - Expired licenses do not block new domain ownership.
 
-3. Decide the pool storage shape.
+3. [x] Decide the pool storage shape.
    - Short-term acceptable: continue using `membership_packages.kind = "site"`
      rows, but ensure those rows are seed/global for site-license pools.
    - Long-term cleaner: introduce `site_license_pools` and make generic
@@ -893,21 +894,21 @@ Implementation steps:
      membership package APIs cannot create or mutate site-license pools outside
      the seed/global service.
 
-4. Change provisioning.
+4. [x] Change provisioning.
    - Admin provisioning always writes to seed/global state.
    - `owner_account_id` remains the first manager/contact, but does not decide
      storage location.
    - Fresh-auth protection still applies at the API layer.
    - Domain overlap checks become seed/global and supersede bay-local checks.
 
-5. Change claim discovery.
+5. [x] Change claim discovery.
    - Home bay gathers verified emails.
    - Home bay calls seed/global claim-discovery API with normalized domains and
      account id.
    - Seed/global returns matching pools and request status.
    - Remove static bay enumeration for site-license claim discovery.
 
-6. Change direct claim/request/review writes.
+6. [x] Change direct claim/request/review writes.
    - Seed/global validates eligibility, capacity, exclusive-group identity, and
      terms acceptance.
    - Seed/global records request/assignment/audit state.
@@ -915,20 +916,20 @@ Implementation steps:
      home bay.
    - User home bay remains authoritative for effective membership resolution.
 
-7. Change reverification and release.
+7. [x] Change reverification and release.
    - Seed/global finds seats due for reverification/release.
    - User-facing status can still be read from account-home grant metadata, but
      refresh/release decisions route through seed/global license state.
    - Release queues idempotent grant revocation to the user's home bay.
 
-8. Remove or constrain owner-home-bay assumptions.
+8. [x] Remove or constrain owner-home-bay assumptions.
    - Remove routing that sends site-license overview/provision/request/review to
      `owner_account_id` home bay.
    - Remove bay scans from `listClaimableMembershipPackagesAcrossCluster` for
      site-license pools.
    - Leave non-site membership package behavior unchanged.
 
-9. Account rehome audit.
+9. [x] Account rehome audit.
    - Confirm account rehome still moves `membership_grants` for site-license
      users.
    - Confirm account rehome does not move site-license records or pools.
@@ -936,10 +937,13 @@ Implementation steps:
    - Confirm stale source bays cannot approve, revoke, or mutate site-license
      state after rehome.
 
-10. Local dev cleanup.
+10. [x] Local dev cleanup.
     - On the current lite1b dev install, delete all existing site-license data
       manually from the database before switching to the seed/global authority
       model.
+    - Completed on lite1b dev seed database by deleting site-license packages,
+      assignments, grants, claims, requests, managers, audit rows, domain index
+      rows, outbox rows, and site-license rows.
     - Existing dev site-license rows do not matter and should not complicate the
       implementation.
     - A real production migration/backfill can be designed later if needed.
@@ -948,15 +952,15 @@ Validation:
 
 - Creating two active site licenses with overlapping domains fails globally even
   if the managers/owners live on different bays.
-- Claim discovery for a user on bay-2 finds a license whose manager account is
-  on bay-0 without scanning every bay.
-- Claiming a seed/global license creates the effective grant on the user's home
-  bay.
-- Approving a request as a manager whose account was rehomed still works.
-- Rehoming a user with a site-license grant preserves effective membership and
-  does not move the license.
-- Draining a non-seed bay with users and managers does not move site-license
-  records.
+- [x] Claim discovery for a user on bay-2 finds a license whose manager account is
+      on bay-0 without scanning every bay.
+- [x] Claiming a seed/global license creates the effective grant on the user's home
+      bay.
+- [x] Approving a request as a manager whose account was rehomed still works.
+- [ ] Rehoming a user with a site-license grant preserves effective membership and
+      does not move the license.
+- [ ] Draining a non-seed bay with users and managers does not move site-license
+      records.
 
 ### Phase 1 Vertical Slice: Ship the Core Invariant
 
@@ -979,8 +983,8 @@ Scope:
       e.g. `Students`, `Instructors`, and `Researchers`.
 - [x] Add CLI commands for provisioning, overview, requesting, and reviewing.
 - [x] Route site-license provisioning, overview, request, and review APIs to the
-      site-license owner's home bay, with requester verified emails collected on
-      the requester home bay.
+      seed/global site-license service, with requester verified emails collected
+      on the requester home bay.
 - [x] Add an explicit manager list with `owner`, `manager`, and `viewer` roles.
 - [x] Keep baseline student claim as explicit click-to-claim using verified
       institutional email and current package assignment machinery.
@@ -1004,7 +1008,9 @@ Scope:
 
 Explicitly out of the first slice:
 
-- Full polished manager dashboard.
+- Full polished manager dashboard. The current UI is already usable and
+  presentable enough for near-term testing, so backend notifications and admin
+  editing are higher priority.
 - CSV export.
 - Scheduled affiliation reverification jobs.
 - SSO affiliation enforcement beyond storing `verification_policy =
@@ -1081,7 +1087,7 @@ Acceptance criteria:
 - [x] Add manager-scoped APIs.
 - [x] Add minimal manager review panel in the account membership package manager.
 - [ ] Add polished manager dashboard.
-- Add notifications for new requests and review outcomes.
+- [ ] Add notifications for new requests and review outcomes.
 - Approval creates assignment and grant through existing membership package
   machinery.
 - Rejection records review state and reason.
@@ -1106,7 +1112,7 @@ distinct groups such as `research`.
       site-license grants or claim metadata.
 - [x] Store the verification policy that was satisfied.
 - [x] Add pending-affiliation-reverification query.
-- Add user notification/grace workflow.
+- [ ] Add user notification/grace workflow.
 - [x] Clear pending release when the user re-verifies institutional email.
 - Clear pending release when the user has a fresh qualifying SSO assertion.
 - [x] Add release path for seats that miss the grace deadline.
