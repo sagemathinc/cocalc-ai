@@ -2724,11 +2724,9 @@ export default function Message({
     if (acpStateToRender === "not-sent") {
       return (
         <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-          <Button size="small" type="text" disabled>
-            not sent
-          </Button>
-          <Button size="small" type="text" onClick={handleResendNotSent}>
-            Send
+          <Tag color="orange">not sent</Tag>
+          <Button size="small" type="primary" onClick={handleResendNotSent}>
+            Submit again
           </Button>
         </span>
       );

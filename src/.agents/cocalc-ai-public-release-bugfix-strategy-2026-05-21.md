@@ -55,6 +55,7 @@ Do not ship public release until these are true:
 | Impersonation banner disappears after refresh      | auth / admin UX | fixed  | The app now bootstraps auth state from the authoritative stored/home control-plane origin, so active impersonation sessions are read from the home bay and the banner persists after refresh. The impersonation grant URL also shows a non-consuming support confirmation page before session replacement. |
 | Markdown Slate collaborative editing loses content | editor / sync   | fixed  | Added Playwright coverage for full Slate and block-mode editors where a local unsaved edit is merged with a remote update before the local debounce fires. The merged value is now forced back to the shared markdown from the current editor, so the local contribution is not only visible locally.      |
 | Agent button creates message but no Codex turn     | chat / codex    | fixed  | `forceCodex: true` navigator/agent submissions now default to the standard Codex model when no explicit `codexConfig.model` is provided, so Jupyter/editor agent buttons launch ACP instead of writing an inert user message.                                                                              |
+| Agent button expired-auth path unclear             | chat / codex    | fixed  | Pre-ack Codex auth failures now leave the user message retryable, write one concise auth-expired reply, show a credentials action, and label the retry control `Submit again`. The Codex credentials panel now strongly recommends ChatGPT/Codex subscription auth while keeping API keys as fallback.     |
 
 ### P0: Release Blockers
 
@@ -66,7 +67,6 @@ These should be worked before broad UI polish.
 | Hub/project-host restart breaks browser FS client forever | conat / files / recovery        | Core files unusable until refresh            | Reproduce with controlled restart; inspect reconnect/recovery scheduler and file client state machine.                |
 | Project table stale after start                           | hub changefeeds / projections   | User sees stopped project that is running    | Trace project lifecycle event path; add watchdog/refetch when command succeeds but projection remains stale.          |
 | Tiny "Loading" forever after backend upgrade              | chat / sync / recovery          | User stuck until close/reopen                | Capture stuck component state; identify missing reconnect or stale load promise.                                      |
-| Agent button expired-auth path unclear                    | chat / codex / auth             | Core agent action can fail without guidance  | Ensure expired auth renders actionable payment/credentials guidance in the agent thread or launcher.                  |
 | Codex live chat log drops chunks                          | chat / codex activity rendering | Users cannot trust agent output              | Compare activity drawer source with chat rendered source; find dropped grouping/render filter.                        |
 | Chat scroll often near top                                | chat / UX                       | Broken long-chat usability                   | Audit scroll anchoring, initial load, archived hydration, active turn append behavior.                                |
 | Hide status security issue                                | privacy / security              | Sensitive status visibility                  | Define exact policy; ensure UI and backend enforce hidden status, not UI-only.                                        |
@@ -178,15 +178,18 @@ Scope:
 - Agent action creates message but turn does not start. **Fixed 2026-05-21**
   for the missing default Codex model path.
 - Codex auth expired should be surfaced before or immediately after action.
+  **Fixed 2026-05-21** with retryable `not-sent` state and clearer credentials
+  guidance.
 - Live chat log drops output chunks.
 - Chat scroll position starts near top.
 - Agent view missing thread menu/config.
 
 Acceptance:
 
-- Agent button either starts a turn or renders actionable failure. **Partly
-  done 2026-05-21** for no-explicit-model Codex agent submissions.
-- Expired Codex auth path links to payment/credentials configuration.
+- Agent button either starts a turn or renders actionable failure. **Done
+  2026-05-21** for no-explicit-model submissions and expired-auth failures.
+- Expired Codex auth path links to payment/credentials configuration. **Done
+  2026-05-21.**
 - Chat-rendered activity and activity drawer show the same chunks.
 - Chat opens anchored to recent messages unless user explicitly scrolled.
 - Agent view has the same thread menu/config affordance as normal chat.
@@ -252,7 +255,8 @@ Acceptance:
 4. Reproduce hub/project-host restart FS-client failure with a scripted smoke
    test.
 5. Fix sign-in redirect to `/projects` and passkey method/action confusion.
-6. Fix Codex agent-button silent failure path, especially expired auth.
+6. Fix Codex agent-button silent failure path, especially expired auth. **Done
+   2026-05-21.**
 7. Fix the Codex live-log dropped-output rendering bug or add instrumentation
    that proves where output is filtered.
 8. Fix disk usage reload wording or recompute semantics.
@@ -300,7 +304,7 @@ For each blocker:
 ### Batch 3: Codex/Chat Reliability
 
 - Agent button no-explicit-model launch failure. **Done 2026-05-21.**
-- Agent button expired-auth/preflight guidance.
+- Agent button expired-auth/preflight guidance. **Done 2026-05-21.**
 - Live log dropped chunks.
 - Scroll anchoring.
 - Agent view thread menu.

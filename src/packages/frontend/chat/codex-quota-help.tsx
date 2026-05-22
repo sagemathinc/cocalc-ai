@@ -42,7 +42,7 @@ export function classifyCodexAuthErrorMessage(
       kind: "expired-auth",
       title: "Codex authentication expired.",
       description:
-        "Sign in again with your ChatGPT Plan or update your OpenAI API key, then retry this message.",
+        "Reconnect your ChatGPT Plan or update your OpenAI API key. The failed Codex request can then be submitted again from the message controls.",
       actionLabel: "Sign in again",
     };
   }
@@ -55,7 +55,7 @@ export function classifyCodexAuthErrorMessage(
       kind: "missing-auth",
       title: "Codex is not configured.",
       description:
-        "Connect a ChatGPT Plan or add an OpenAI API key, then retry this message.",
+        "Connect a ChatGPT Plan or add an OpenAI API key. The failed Codex request can then be submitted again from the message controls.",
       actionLabel: "Configure Codex",
     };
   }
@@ -88,7 +88,7 @@ export function CodexQuotaHelp({
         {authError ? (
           <>
             <Paragraph type="secondary" style={{ marginBottom: 8 }}>
-              <Text strong>{authError.title}</Text> {authError.description}
+              {authError.description}
             </Paragraph>
             <Space wrap>
               <Button

@@ -35,6 +35,28 @@ function isRetryableAcpAckError(err: unknown): boolean {
   );
 }
 
+function getAcpFailureReply(err: unknown): string {
+  const raw = `${err}`;
+  const cleaned = raw.startsWith("Error: Error:")
+    ? raw.slice("Error: ".length)
+    : raw;
+  const normalized = cleaned.toLowerCase();
+  if (
+    normalized.includes("token_expired") ||
+    normalized.includes("provided authentication token is expired") ||
+    normalized.includes("please try signing in again")
+  ) {
+    return "Codex authentication expired.";
+  }
+  if (
+    normalized.includes("missing bearer or basic authentication") ||
+    normalized.includes("missing authentication in header")
+  ) {
+    return "Codex is not configured.";
+  }
+  return cleaned;
+}
+
 async function waitForAcpRetryDelay(attempt: number): Promise<void> {
   const delayMs = Math.min(
     30_000,
@@ -208,7 +230,10 @@ export async function processAcpLLM({
   // is fine, even if the response is very long.
   setTimeout(() => chatStreams.delete(id), 3 * 60 * 1000);
 
-  const setState = (state) => {
+  const setState = (
+    state: string,
+    { persist = false }: { persist?: boolean } = {},
+  ) => {
     const messageIdKey = `message:${user_message_id}`;
     let next = store.get("acpState");
     if (state) {
@@ -219,7 +244,10 @@ export async function processAcpLLM({
     store.setState({
       acpState: next,
     });
-    if (sendMode === "immediate" && typeof syncdb?.set === "function") {
+    if (
+      (sendMode === "immediate" || persist) &&
+      typeof syncdb?.set === "function"
+    ) {
       try {
         const nextMessage = { ...(message as any) };
         if (state) {
@@ -351,13 +379,9 @@ export async function processAcpLLM({
     // Backend owns the assistant reply row, but if we fail before the backend
     // can even enqueue the turn, we still want the user to see *something*.
     try {
-      const raw = `${err}`;
-      const cleaned = raw.startsWith("Error: Error:")
-        ? raw.slice("Error: ".length)
-        : raw;
       actions.sendReply({
         message,
-        reply: cleaned,
+        reply: getAcpFailureReply(err),
         from: sender_id,
         noNotification: true,
       });
@@ -365,7 +389,7 @@ export async function processAcpLLM({
     } catch (writeErr) {
       console.error("Failed to write ACP error reply", writeErr);
     }
-    setState("");
+    setState(acknowledged ? "" : "not-sent", { persist: !acknowledged });
   } finally {
     chatStreams.delete(id);
   }
