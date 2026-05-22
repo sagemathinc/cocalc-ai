@@ -173,13 +173,31 @@ export default function PublicApp({
     void (async () => {
       const nextConfig = await loadCustomize();
       if (!cancelled) {
-        setResolvedConfig(nextConfig);
+        setResolvedConfig(nextConfig ?? {});
       }
     })();
     return () => {
       cancelled = true;
     };
   }, [config]);
+
+  useEffect(() => {
+    if (resolvedConfig == null) return;
+    if (!resolvedConfig.cookie_banner_enabled) return;
+    let cancelled = false;
+    void import("@cocalc/frontend/cookie-consent/init").then(
+      ({ initCookieConsent }) => {
+        if (cancelled) return;
+        initCookieConsent({
+          enabled: true,
+          textMarkdown: resolvedConfig.cookie_banner_text,
+        });
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [resolvedConfig]);
 
   useEffect(() => {
     let cancelled = false;

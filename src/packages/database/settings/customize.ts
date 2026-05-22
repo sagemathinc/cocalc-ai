@@ -124,6 +124,8 @@ export default async function getCustomize(
       strategies,
 
       verifyEmailAddresses: settings.verify_emails && settings.email_enabled,
+      cookieBannerEnabled: settings.cookie_banner_enabled,
+      cookieBannerText: settings.cookie_banner_text,
 
       version: {
         min_browser: parseInt(settings.version_min_browser),

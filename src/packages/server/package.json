@@ -94,7 +94,7 @@
     "random-key": "^0.3.2",
     "safe-json-stringify": "^1.2.0",
     "stripe": "^17.5.0",
-    "uuid": "^8.3.2"
+    "uuid": "^11.1.1"
   },
   "homepage": "https://github.com/sagemathinc/cocalc/tree/master/src/packages/server",
   "repository": {
