@@ -192,6 +192,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     saveDebounceMs,
     setBlocksFromValue,
     getFullMarkdown,
+    isCurrent: is_current,
   });
 
   useEffect(() => {
