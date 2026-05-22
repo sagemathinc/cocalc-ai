@@ -26,12 +26,15 @@ blocked by issues that can cause:
 
 Do not ship public release until these are true:
 
-- Markdown/Slate collaborative editing is not known to lose content.
+- Markdown/Slate collaborative editing is not known to lose content. **Fixed
+  2026-05-21** for the reproduced unsaved-local-edit plus remote-merge data
+  loss path.
 - Browser file/project clients recover from hub/project-host restarts without
   requiring a page refresh.
 - Cross-bay impersonation works. **Fixed 2026-05-21** via central
   impersonation grant routing plus shared-domain bay identity cookies.
-- Impersonation state is persistently obvious after refresh.
+- Impersonation state is persistently obvious after refresh. **Fixed
+  2026-05-21** via home-bay auth bootstrap.
 - Sign-in redirects to `/projects` after success.
 - Passkey sign-in UI does not confuse "select passkey method" with "use
   passkey now".
@@ -46,26 +49,27 @@ Do not ship public release until these are true:
 
 ### Solved During This Push
 
-| Item                                    | Area            | Status | Resolution                                                                                                                                                                                                                     |
-| --------------------------------------- | --------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Cross-bay impersonation stopped working | auth / multibay | fixed  | Grants are routed through a central seed-bay directory and token-only URLs. Grant redemption on the subject home bay now sets shared-domain `account_id` and `home_bay_id` cookies before redirecting back to the site origin. |
+| Item                                               | Area            | Status | Resolution                                                                                                                                                                                                                                                                                                 |
+| -------------------------------------------------- | --------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cross-bay impersonation stopped working            | auth / multibay | fixed  | Grants are routed through a central seed-bay directory and token-only URLs. Grant redemption on the subject home bay now sets shared-domain `account_id` and `home_bay_id` cookies before redirecting back to the site origin.                                                                             |
+| Impersonation banner disappears after refresh      | auth / admin UX | fixed  | The app now bootstraps auth state from the authoritative stored/home control-plane origin, so active impersonation sessions are read from the home bay and the banner persists after refresh. The impersonation grant URL also shows a non-consuming support confirmation page before session replacement. |
+| Markdown Slate collaborative editing loses content | editor / sync   | fixed  | Added Playwright coverage for full Slate and block-mode editors where a local unsaved edit is merged with a remote update before the local debounce fires. The merged value is now forced back to the shared markdown from the current editor, so the local contribution is not only visible locally.      |
+| Agent button creates message but no Codex turn     | chat / codex    | fixed  | `forceCodex: true` navigator/agent submissions now default to the standard Codex model when no explicit `codexConfig.model` is provided, so Jupyter/editor agent buttons launch ACP instead of writing an inert user message.                                                                              |
 
 ### P0: Release Blockers
 
 These should be worked before broad UI polish.
 
-| Item                                                      | Area                            | Risk                                         | First investigation                                                                                                              |
-| --------------------------------------------------------- | ------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Impersonation banner disappears after refresh             | auth / admin UX                 | Admin can forget they are impersonating      | Find where impersonation state is stored; make banner derive from durable session/account state, not transient navigation state. |
-| Markdown Slate collaborative editing loses content        | editor / sync                   | Data loss                                    | Build a two-client regression harness; inspect Slate patch application and conflict handling under concurrent edits.             |
-| Offline editor switches to loading                        | editor / sync / offline         | Apparent data loss and unusable offline mode | Identify loading gate that hides existing document; keep last synced content visible and editable while reconnecting.            |
-| Hub/project-host restart breaks browser FS client forever | conat / files / recovery        | Core files unusable until refresh            | Reproduce with controlled restart; inspect reconnect/recovery scheduler and file client state machine.                           |
-| Project table stale after start                           | hub changefeeds / projections   | User sees stopped project that is running    | Trace project lifecycle event path; add watchdog/refetch when command succeeds but projection remains stale.                     |
-| Tiny "Loading" forever after backend upgrade              | chat / sync / recovery          | User stuck until close/reopen                | Capture stuck component state; identify missing reconnect or stale load promise.                                                 |
-| Agent button creates message but no Codex turn starts     | chat / codex / auth             | Core agent action silently fails             | Ensure preflight runs before message creation or immediately renders auth/action failure in-thread.                              |
-| Codex live chat log drops chunks                          | chat / codex activity rendering | Users cannot trust agent output              | Compare activity drawer source with chat rendered source; find dropped grouping/render filter.                                   |
-| Chat scroll often near top                                | chat / UX                       | Broken long-chat usability                   | Audit scroll anchoring, initial load, archived hydration, active turn append behavior.                                           |
-| Hide status security issue                                | privacy / security              | Sensitive status visibility                  | Define exact policy; ensure UI and backend enforce hidden status, not UI-only.                                                   |
+| Item                                                      | Area                            | Risk                                         | First investigation                                                                                                   |
+| --------------------------------------------------------- | ------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Offline editor switches to loading                        | editor / sync / offline         | Apparent data loss and unusable offline mode | Identify loading gate that hides existing document; keep last synced content visible and editable while reconnecting. |
+| Hub/project-host restart breaks browser FS client forever | conat / files / recovery        | Core files unusable until refresh            | Reproduce with controlled restart; inspect reconnect/recovery scheduler and file client state machine.                |
+| Project table stale after start                           | hub changefeeds / projections   | User sees stopped project that is running    | Trace project lifecycle event path; add watchdog/refetch when command succeeds but projection remains stale.          |
+| Tiny "Loading" forever after backend upgrade              | chat / sync / recovery          | User stuck until close/reopen                | Capture stuck component state; identify missing reconnect or stale load promise.                                      |
+| Agent button expired-auth path unclear                    | chat / codex / auth             | Core agent action can fail without guidance  | Ensure expired auth renders actionable payment/credentials guidance in the agent thread or launcher.                  |
+| Codex live chat log drops chunks                          | chat / codex activity rendering | Users cannot trust agent output              | Compare activity drawer source with chat rendered source; find dropped grouping/render filter.                        |
+| Chat scroll often near top                                | chat / UX                       | Broken long-chat usability                   | Audit scroll anchoring, initial load, archived hydration, active turn append behavior.                                |
+| Hide status security issue                                | privacy / security              | Sensitive status visibility                  | Define exact policy; ensure UI and backend enforce hidden status, not UI-only.                                        |
 
 ### P1: Launch-Critical UX And Correctness
 
@@ -115,7 +119,7 @@ Primary files/packages to inspect:
 Scope:
 
 - Cross-bay impersonation. **Fixed 2026-05-21.**
-- Persistent impersonation banner.
+- Persistent impersonation banner. **Fixed 2026-05-21.**
 - Sign-in redirect to `/projects`.
 - Passkey selector/action distinction.
 - Browser autocomplete/passkey password-save behavior.
@@ -125,7 +129,8 @@ Acceptance:
 
 - Manual cross-bay impersonation smoke test passes. **Done for
   `wstein+1@gmail.com`, home bay `bay-1`.**
-- Refresh while impersonating still shows obvious banner.
+- Refresh while impersonating still shows obvious banner. **Done for
+  cross-bay lite4b dogfood.**
 - Sign-in lands on `/projects`.
 - Passkey method choice and passkey submit are visually distinct.
 - Chrome no longer offers to save a password after passkey auth.
@@ -143,7 +148,9 @@ Primary files/packages to inspect:
 
 Scope:
 
-- Markdown Slate collaborative editing data loss.
+- Markdown Slate collaborative editing data loss. **Fixed 2026-05-21** for the
+  reproduced remote-merge write-back failure; remaining Slate caret/selection
+  flakiness is tracked separately.
 - Offline editor should remain visible/editable.
 - Browser FS client recovery after hub/project-host restart.
 - Tiny loading forever after backend upgrades.
@@ -168,7 +175,8 @@ Primary files/packages to inspect:
 
 Scope:
 
-- Agent action creates message but turn does not start.
+- Agent action creates message but turn does not start. **Fixed 2026-05-21**
+  for the missing default Codex model path.
 - Codex auth expired should be surfaced before or immediately after action.
 - Live chat log drops output chunks.
 - Chat scroll position starts near top.
@@ -176,7 +184,8 @@ Scope:
 
 Acceptance:
 
-- Agent button either starts a turn or renders actionable failure.
+- Agent button either starts a turn or renders actionable failure. **Partly
+  done 2026-05-21** for no-explicit-model Codex agent submissions.
 - Expired Codex auth path links to payment/credentials configuration.
 - Chat-rendered activity and activity drawer show the same chunks.
 - Chat opens anchored to recent messages unless user explicitly scrolled.
@@ -237,8 +246,9 @@ Acceptance:
 ## First 48 Hours Execution Plan
 
 1. Fix or disable cross-bay impersonation failure. **Done 2026-05-21.**
-2. Make impersonation banner persistent after refresh.
+2. Make impersonation banner persistent after refresh. **Done 2026-05-21.**
 3. Reproduce Markdown Slate collaborative data loss with a minimal harness.
+   **Done 2026-05-21.**
 4. Reproduce hub/project-host restart FS-client failure with a scripted smoke
    test.
 5. Fix sign-in redirect to `/projects` and passkey method/action confusion.
@@ -277,7 +287,7 @@ For each blocker:
 - Sign-in redirect to `/projects`.
 - Passkey selector visual fix.
 - SSO layout stability.
-- Impersonation banner persistence.
+- Impersonation banner persistence. **Done 2026-05-21.**
 - Cross-bay impersonation fix. **Done 2026-05-21.**
 
 ### Batch 2: Editor And Recovery Correctness
@@ -289,7 +299,8 @@ For each blocker:
 
 ### Batch 3: Codex/Chat Reliability
 
-- Agent button preflight/auth failure.
+- Agent button no-explicit-model launch failure. **Done 2026-05-21.**
+- Agent button expired-auth/preflight guidance.
 - Live log dropped chunks.
 - Scroll anchoring.
 - Agent view thread menu.

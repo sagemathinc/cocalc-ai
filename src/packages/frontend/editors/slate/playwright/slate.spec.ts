@@ -1673,6 +1673,214 @@ test("sync: remote change to other block while typing stays applied", async ({
   expect(md).toContain("3");
 });
 
+test("sync: overlapping edits from two editors are saved after merge", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as any).COCALC_SLATE_REMOTE_MERGE = {
+      blockPatch: true,
+      ignoreWhileFocused: false,
+      idleMs: 50,
+    };
+  });
+  await page.goto("http://127.0.0.1:4172/?collab=1&save=1&saveMs=50");
+  await waitForCollabHarness(page);
+  await waitForCollabMarkdownContains(page, "beta");
+
+  const editorA = page.locator('[data-testid="collab-editor-a"]');
+  const editorB = page.locator('[data-testid="collab-editor-b"]');
+
+  await editorA.click();
+  await page.evaluate(() => {
+    window.__slateCollabTest?.setSelectionFromMarkdownA?.({ line: 2, ch: 4 });
+  });
+  await page.keyboard.type("-A");
+
+  await editorB.click();
+  await page.evaluate(() => {
+    window.__slateCollabTest?.setSelectionFromMarkdownB?.({ line: 4, ch: 7 });
+  });
+  await page.keyboard.type("-B");
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(
+        () => window.__slateCollabTest?.getSharedMarkdown?.() ?? "",
+      );
+    })
+    .toContain("beta-A");
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(
+        () => window.__slateCollabTest?.getSharedMarkdown?.() ?? "",
+      );
+    })
+    .toContain("-B");
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(
+        () => window.__slateCollabTest?.getMarkdownA?.() ?? "",
+      );
+    })
+    .toContain("-B");
+});
+
+test("sync: local unsaved edit survives and saves after remote merge", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as any).COCALC_SLATE_REMOTE_MERGE = {
+      blockPatch: true,
+      ignoreWhileFocused: false,
+      idleMs: 50,
+    };
+  });
+  await page.goto("http://127.0.0.1:4172/?collab=1&save=1&saveMs=300");
+  await waitForCollabHarness(page);
+  await waitForCollabMarkdownContains(page, "beta");
+
+  const editorB = page.locator('[data-testid="collab-editor-b"]');
+  await editorB.click();
+  await page.evaluate(() => {
+    window.__slateCollabTest?.setSelectionFromMarkdownB?.({ line: 4, ch: 7 });
+  });
+  await page.keyboard.type("-B");
+
+  await page.evaluate(() => {
+    window.__slateCollabTest?.setRemote("alpha\n\nbeta-A\n\ncharlie\n");
+  });
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(
+        () => window.__slateCollabTest?.getMarkdownB?.() ?? "",
+      );
+    })
+    .toContain("charlie-B");
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(
+        () => window.__slateCollabTest?.getSharedMarkdown?.() ?? "",
+      );
+    })
+    .toContain("beta-A");
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(
+        () => window.__slateCollabTest?.getSharedMarkdown?.() ?? "",
+      );
+    })
+    .toContain("-B");
+});
+
+test("sync:block editor overlapping edits from two editors are saved after merge", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as any).COCALC_SLATE_REMOTE_MERGE = {
+      blockPatch: true,
+      ignoreWhileFocused: false,
+      idleMs: 50,
+    };
+  });
+  await page.goto("http://127.0.0.1:4172/?collabBlock=1&save=1&saveMs=300");
+  await waitForCollabHarness(page);
+  await waitForCollabMarkdownContains(page, "beta");
+
+  const editorA = page.locator('[data-testid="collab-editor-a"]');
+  const editorB = page.locator('[data-testid="collab-editor-b"]');
+
+  await editorA.click();
+  await page.evaluate(() => {
+    window.__slateCollabTest?.setSelectionFromMarkdownA?.({ line: 2, ch: 4 });
+  });
+  await page.keyboard.type("-A");
+
+  await editorB.click();
+  await page.evaluate(() => {
+    window.__slateCollabTest?.setSelectionFromMarkdownB?.({ line: 4, ch: 7 });
+  });
+  await page.keyboard.type("-B");
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(
+        () => window.__slateCollabTest?.getSharedMarkdown?.() ?? "",
+      );
+    })
+    .toContain("beta-A");
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(
+        () => window.__slateCollabTest?.getSharedMarkdown?.() ?? "",
+      );
+    })
+    .toContain("-B");
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(
+        () => window.__slateCollabTest?.getMarkdownA?.() ?? "",
+      );
+    })
+    .toContain("-B");
+});
+
+test("sync:block editor local unsaved edit survives and saves after remote merge", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as any).COCALC_SLATE_REMOTE_MERGE = {
+      blockPatch: true,
+      ignoreWhileFocused: false,
+      idleMs: 50,
+    };
+  });
+  await page.goto("http://127.0.0.1:4172/?collabBlock=1&save=1&saveMs=300");
+  await waitForCollabHarness(page);
+  await waitForCollabMarkdownContains(page, "beta");
+
+  const editorB = page.locator('[data-testid="collab-editor-b"]');
+  await editorB.click();
+  await page.evaluate(() => {
+    window.__slateCollabTest?.setSelectionFromMarkdownB?.({ line: 4, ch: 7 });
+  });
+  await page.keyboard.type("-B");
+
+  await page.evaluate(() => {
+    window.__slateCollabTest?.setRemote("alpha\n\nbeta-A\n\ncharlie\n");
+  });
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(
+        () => window.__slateCollabTest?.getMarkdownB?.() ?? "",
+      );
+    })
+    .toContain("-B");
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(
+        () => window.__slateCollabTest?.getSharedMarkdown?.() ?? "",
+      );
+    })
+    .toContain("beta-A");
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(
+        () => window.__slateCollabTest?.getSharedMarkdown?.() ?? "",
+      );
+    })
+    .toContain("-B");
+});
+
 test("sync: remote edit in active line keeps caret at end", async ({
   page,
 }) => {

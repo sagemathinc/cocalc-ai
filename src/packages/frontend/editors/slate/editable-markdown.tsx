@@ -804,8 +804,20 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     mergeHelperRef.current.handleRemote({
       remote: pending,
       getLocal: () => editor.getMarkdownValue(),
-      applyMerged: setEditorToValue,
+      applyMerged: (merged) => applyMergedRemoteValue(merged, pending),
     });
+  }
+
+  function applyMergedRemoteValue(merged: string, remote: string) {
+    setEditorToValue(merged);
+    if (merged === remote || !is_current) return;
+    window.setTimeout(() => {
+      if (!isMountedRef.current) return;
+      // The merge contains local edits rebased onto a remote update. Persist it
+      // even though setEditorToValue marks external updates as clean.
+      editor._hasUnsavedChanges = {};
+      editor.saveValue(true);
+    }, 0);
   }
 
   useEffect(() => {
@@ -834,7 +846,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       mergeHelperRef.current.handleRemote({
         remote,
         getLocal: () => editor.getMarkdownValue(),
-        applyMerged: setEditorToValue,
+        applyMerged: (merged) => applyMergedRemoteValue(merged, remote),
       });
     };
     actions._syncstring.on("change", change);

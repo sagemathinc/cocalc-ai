@@ -26,6 +26,7 @@ type UseBlockSyncArgs = {
   saveDebounceMs?: number;
   setBlocksFromValue: (markdown: string) => void;
   getFullMarkdown: () => string;
+  isCurrent?: boolean;
 };
 
 type UseBlockSyncResult = {
@@ -35,7 +36,7 @@ type UseBlockSyncResult = {
   markLocalEdit: () => void;
   pendingRemoteIndicator: boolean;
   saveBlocksDebounced: () => void;
-  saveBlocksNow: () => void;
+  saveBlocksNow: (force?: boolean) => void;
   lastLocalEditAtRef: React.MutableRefObject<number>;
   lastRemoteMergeAtRef: React.MutableRefObject<number>;
 };
@@ -52,6 +53,7 @@ export function useBlockSync({
   saveDebounceMs,
   setBlocksFromValue,
   getFullMarkdown,
+  isCurrent,
 }: UseBlockSyncArgs): UseBlockSyncResult {
   const lastSetValueRef = useRef<string | null>(null);
   const lastObservedValueRef = useRef<string | null>(null);
@@ -210,6 +212,25 @@ export function useBlockSync({
     return Date.now() - lastLocalEditAtRef.current < idleMs;
   }
 
+  const saveBlocksNow = useCallback(
+    (force = false) => {
+      if (actions?.set_value == null) return;
+      const markdown = getFullMarkdown();
+      if (!force && markdown === valueRef.current) return;
+      lastSetValueRef.current = markdown;
+      valueRef.current = markdown;
+      mergeHelperRef.current.noteSaved(markdown);
+      actions.set_value(markdown);
+      actions.syncstring_commit?.();
+    },
+    [actions, getFullMarkdown, valueRef],
+  );
+
+  const saveBlocksDebounced = useMemo(
+    () => debounce(saveBlocksNow, saveDebounceMs ?? DEFAULT_SAVE_DEBOUNCE_MS),
+    [saveBlocksNow, saveDebounceMs],
+  );
+
   function clearPendingRemoteState(reason: string, remote?: string) {
     if (pendingRemoteTimerRef.current != null) {
       window.clearTimeout(pendingRemoteTimerRef.current);
@@ -256,8 +277,16 @@ export function useBlockSync({
     mergeHelperRef.current.handleRemote({
       remote: pending,
       getLocal: getFullMarkdown,
-      applyMerged: applyBlocksFromValue,
+      applyMerged: (merged) => applyMergedRemoteValue(merged, pending),
     });
+  }
+
+  function applyMergedRemoteValue(merged: string, remote: string) {
+    applyBlocksFromValue(merged);
+    if (merged === remote || !isCurrent) return;
+    window.setTimeout(() => {
+      saveBlocksNow(true);
+    }, 0);
   }
 
   useEffect(() => {
@@ -292,7 +321,7 @@ export function useBlockSync({
       mergeHelperRef.current.handleRemote({
         remote,
         getLocal: getFullMarkdown,
-        applyMerged: applyBlocksFromValue,
+        applyMerged: (merged) => applyMergedRemoteValue(merged, remote),
       });
     };
     actions._syncstring.on("change", change);
@@ -314,22 +343,6 @@ export function useBlockSync({
       flushPendingRemoteMerge(true);
     }
   }, [focusedIndex, ignoreRemoteWhileFocused]);
-
-  const saveBlocksNow = useCallback(() => {
-    if (actions?.set_value == null) return;
-    const markdown = getFullMarkdown();
-    if (markdown === valueRef.current) return;
-    lastSetValueRef.current = markdown;
-    valueRef.current = markdown;
-    mergeHelperRef.current.noteSaved(markdown);
-    actions.set_value(markdown);
-    actions.syncstring_commit?.();
-  }, [actions, getFullMarkdown, valueRef]);
-
-  const saveBlocksDebounced = useMemo(
-    () => debounce(saveBlocksNow, saveDebounceMs ?? DEFAULT_SAVE_DEBOUNCE_MS),
-    [saveBlocksNow, saveDebounceMs],
-  );
 
   useEffect(() => {
     return () => {

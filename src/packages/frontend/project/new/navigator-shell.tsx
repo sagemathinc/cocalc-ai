@@ -56,6 +56,7 @@ import {
   loadNavigatorSelectedThreadKey,
   saveNavigatorSelectedThreadKey,
 } from "./navigator-state";
+import { DEFAULT_CODEX_MODEL_NAME } from "@cocalc/util/ai/codex";
 
 interface NavigatorShellProps {
   project_id: string;
@@ -968,7 +969,10 @@ export function NavigatorShell({
         launchAcpConfig.model.trim().length > 0
           ? launchAcpConfig.model.trim()
           : undefined;
-      const model = requestedModel ?? selectedModel;
+      const model =
+        requestedModel ??
+        selectedModel ??
+        (isCodex ? DEFAULT_CODEX_MODEL_NAME : undefined);
       const nextCodexConfig = {
         ...launchAcpConfig,
         ...(intent.codexConfig ?? {}),
