@@ -41,7 +41,9 @@ Do not ship public release until these are true:
   passkey now". **Fixed 2026-05-22.**
 - Codex/agent entry points either start a turn or show a clear actionable auth
   or runtime error.
-- Project list/lifecycle state does not remain stale after start/stop.
+- Project list/lifecycle state does not remain stale after start/stop. **Fixed
+  2026-05-22**; likely resolved by recent Conat socket/reconnect fixes and not
+  observed in several days.
 - Storage/backup timestamps and reload buttons do not knowingly lie.
 - Security/status visibility issues are resolved or explicitly scoped as admin
   only.
@@ -65,17 +67,17 @@ Do not ship public release until these are true:
 | Passkey selector looks like primary action         | auth UI         | fixed  | Second-factor method selection now renders as a small chooser group (`Passkey` / `Code`) while the primary submit button remains the actual passkey action.                                                                                                                                                |
 | Passkey password-save/autofill confusion           | auth UI         | fixed  | Showing the account email in the passkey modal solved the observed Chrome password-save/autofill confusion and gives useful context during passkey auth.                                                                                                                                                   |
 | SSO domain check row jumps during sign-in/up       | auth UI         | fixed  | The sign-in-method policy check now uses reserved inline status space under the email field instead of adding/removing a full alert row while typing.                                                                                                                                                      |
+| Project table stale after start                    | projects / sync | fixed  | No longer observed after the recent Conat socket/reconnect fixes. Treat as fixed by side effect, with dogfood monitoring rather than additional speculative work.                                                                                                                                          |
 
 ### P0: Release Blockers
 
 These should be worked before broad UI polish.
 
-| Item                                         | Area                          | Risk                                      | First investigation                                                                                          |
-| -------------------------------------------- | ----------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Project table stale after start              | hub changefeeds / projections | User sees stopped project that is running | Trace project lifecycle event path; add watchdog/refetch when command succeeds but projection remains stale. |
-| Tiny "Loading" forever after backend upgrade | chat / sync / recovery        | User stuck until close/reopen             | Capture stuck component state; identify missing reconnect or stale load promise.                             |
-| Chat scroll often near top                   | chat / UX                     | Broken long-chat usability                | Audit scroll anchoring, initial load, archived hydration, active turn append behavior.                       |
-| Hide status security issue                   | privacy / security            | Sensitive status visibility               | Define exact policy; ensure UI and backend enforce hidden status, not UI-only.                               |
+| Item                                         | Area                   | Risk                          | First investigation                                                                    |
+| -------------------------------------------- | ---------------------- | ----------------------------- | -------------------------------------------------------------------------------------- |
+| Tiny "Loading" forever after backend upgrade | chat / sync / recovery | User stuck until close/reopen | Capture stuck component state; identify missing reconnect or stale load promise.       |
+| Chat scroll often near top                   | chat / UX              | Broken long-chat usability    | Audit scroll anchoring, initial load, archived hydration, active turn append behavior. |
+| Hide status security issue                   | privacy / security     | Sensitive status visibility   | Define exact policy; ensure UI and backend enforce hidden status, not UI-only.         |
 
 ### P1: Launch-Critical UX And Correctness
 
@@ -160,7 +162,8 @@ Scope:
   2026-05-22** for open editor SyncDocs; continue to watch chat/flyout listing
   recovery as separate components.
 - Tiny loading forever after backend upgrades.
-- Project list stale lifecycle state.
+- Project list stale lifecycle state. **Fixed 2026-05-22** by recent Conat
+  reconnect/socket fixes; continue dogfooding.
 
 Acceptance:
 
@@ -168,7 +171,8 @@ Acceptance:
 - Simulated offline keeps editor content visible and editable.
 - Restarting project-host recovers open editors without browser refresh. **Done
   2026-05-22** in live `host1` testing.
-- Project start/stop UI converges to real state.
+- Project start/stop UI converges to real state. **Done 2026-05-22** by
+  dogfood observation after recent reconnect fixes.
 - Stuck loading state has a timeout/recovery path and diagnostics.
 
 Notes:
