@@ -71,14 +71,11 @@ Do not ship public release until these are true:
 | Project table stale after start                    | projects / sync   | fixed  | No longer observed after the recent Conat socket/reconnect fixes. Treat as fixed by side effect, with dogfood monitoring rather than additional speculative work.                                                                                                                                          |
 | Tiny "Loading" forever after backend upgrade       | chat / sync       | fixed  | Fixed by commit `a003b54d95`, which typed recoverable SyncDoc tables explicitly and avoided treating recoverable backend reconnect state as a permanent loading state.                                                                                                                                     |
 | Hide status security issue                         | public / security | fixed  | Deleted the public `/support/status` route, removed the footer/support index links to it, removed the frontend `/stats` fetch path, and stopped registering the public `/stats` Express route. Realtime monitoring/load information should not be public.                                                  |
+| Chat scroll often near top                         | chat / UX         | fixed  | Added chat-specific viewport anchors keyed by message date plus pixel offset, independent of Virtuoso snapshots. The chat now captures the top visible message while reading and reasserts that anchor across remounts, visibility changes, message list changes, image loads, and item resizes.           |
 
 ### P0: Release Blockers
 
-These should be worked before broad UI polish.
-
-| Item                       | Area      | Risk                       | First investigation                                                                    |
-| -------------------------- | --------- | -------------------------- | -------------------------------------------------------------------------------------- |
-| Chat scroll often near top | chat / UX | Broken long-chat usability | Audit scroll anchoring, initial load, archived hydration, active turn append behavior. |
+No known P0 release blockers remain in this tracker.
 
 ### P1: Launch-Critical UX And Correctness
 
@@ -208,7 +205,8 @@ Scope:
 - Live chat log drops output chunks. **Fixed 2026-05-22** by making the
   efficient preview stream agent-output-only and removing non-message boundaries
   from that stream.
-- Chat scroll position starts near top.
+- Chat scroll position starts near top. **Fixed 2026-05-22** with explicit
+  viewport anchors rather than raw Virtuoso snapshot restoration.
 - Agent view missing thread menu/config.
 
 Acceptance:
@@ -219,7 +217,8 @@ Acceptance:
   2026-05-21.**
 - Chat-rendered activity and activity drawer show the same agent-message chunks.
   **Done 2026-05-22** for live preview rendering.
-- Chat opens anchored to recent messages unless user explicitly scrolled.
+- Chat opens anchored to recent messages unless user explicitly scrolled. **Done
+  2026-05-22** for virtualized chat remount/restore behavior.
 - Agent view has the same thread menu/config affordance as normal chat.
 
 ### D. Storage, Backups, Quotas, And Deletes
@@ -301,9 +300,8 @@ Recommended next work order as of 2026-05-22:
    correctness bug: the UI claiming a project is stopped while terminals work is
    the kind of state divergence that undermines confidence and likely needs a
    clear projection/refetch rule.
-3. **Chat scroll often near top.** The content may all be present, but landing
-   users near the top of a long chat breaks the most common conversation review
-   workflow.
+3. **Chat scroll often near top.** **Fixed 2026-05-22** with message-date plus
+   pixel-offset viewport anchors.
 
 Good fallback tasks if the above stalls:
 

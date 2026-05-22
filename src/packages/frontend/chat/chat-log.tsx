@@ -45,6 +45,13 @@ import {
   orderLinearThreadMessages,
 } from "./utils";
 import { dateValue, field, parentMessageId } from "./access";
+import {
+  captureChatViewportAnchor,
+  loadChatViewportAnchor,
+  resolveChatViewportAnchorIndex,
+  restoreChatViewportAnchorOffset,
+  saveChatViewportAnchor,
+} from "./chat-scroll-anchor";
 
 // you can use this to quickly disabled virtuoso, but rendering large chatrooms will
 // become basically impossible.
@@ -544,7 +551,9 @@ export function ChatLog({
           numChildren,
           singleThreadView,
           scrollCacheId,
+          scrollToDate,
           scrollToBottomRef,
+          scrollToIndex,
           keepBottomAnchoredRef,
           acpState,
           attachedSteersByParentMessageId:
@@ -552,6 +561,8 @@ export function ChatLog({
           activitySteersByAssistantMessageId:
             steerCollections.byAssistantMessageId,
           searchQuery,
+          searchJumpDate,
+          searchJumpToken,
           onAtTopStateChange,
           activityJumpDate,
           activityJumpToken,
@@ -735,12 +746,16 @@ export function MessageList({
   numChildren,
   singleThreadView,
   scrollCacheId,
+  scrollToDate,
   scrollToBottomRef,
+  scrollToIndex,
   keepBottomAnchoredRef,
   acpState,
   attachedSteersByParentMessageId,
   activitySteersByAssistantMessageId,
   searchQuery,
+  searchJumpDate,
+  searchJumpToken,
   onAtTopStateChange,
   activityJumpDate,
   activityJumpToken,
@@ -768,12 +783,16 @@ export function MessageList({
   numChildren?: NumChildren;
   singleThreadView?: boolean;
   scrollCacheId?: string;
+  scrollToDate?: null | string;
   scrollToBottomRef?: MutableRefObject<(force?: boolean) => void>;
+  scrollToIndex?: null | number;
   keepBottomAnchoredRef?: MutableRefObject<boolean>;
   acpState?;
   attachedSteersByParentMessageId?: Map<string, AttachedSteerMessage[]>;
   activitySteersByAssistantMessageId?: Map<string, AttachedSteerMessage[]>;
   searchQuery?: string;
+  searchJumpDate?: string;
+  searchJumpToken?: number;
   onAtTopStateChange?: (atTop: boolean) => void;
   activityJumpDate?: string;
   activityJumpToken?: number;
@@ -790,9 +809,21 @@ export function MessageList({
 }) {
   const virtuosoHeightsRef = useRef<{ [index: number]: number }>({});
   const listContainerRef = useRef<HTMLDivElement | null>(null);
+  const scrollerRef = useRef<HTMLElement | null>(null);
   const [atBottom, setAtBottom] = useState(true);
   const cacheId = scrollCacheId ?? `${project_id}${path}`;
-  const initialIndex = Math.max(sortedDates.length - 1, 0); // start at newest
+  const initialAnchor = useMemo(
+    () => loadChatViewportAnchor(cacheId),
+    [cacheId],
+  );
+  const initialAnchorIndex =
+    initialAnchor?.atBottom === false
+      ? resolveChatViewportAnchorIndex(initialAnchor, sortedDates)
+      : undefined;
+  const initialIndex = Math.max(
+    initialAnchorIndex ?? sortedDates.length - 1,
+    0,
+  ); // start at newest unless we have a saved viewport anchor
   const endRef = useRef<HTMLDivElement | null>(null);
   const blockScrollInput = anyOverlayOpen === true;
   const showNewestMessagesButton =
@@ -815,6 +846,51 @@ export function MessageList({
   const userScrollIntentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+  const sortedDatesRef = useRef(sortedDates);
+  const anchorCaptureFrameRef = useRef<number | undefined>(undefined);
+  const anchorRestoreTokenRef = useRef(0);
+  const anchorRestoreTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const suppressAnchorCaptureUntilRef = useRef(0);
+  const suppressAnchorRestoreUntilRef = useRef(0);
+
+  sortedDatesRef.current = sortedDates;
+
+  const clearAnchorRestoreTimers = () => {
+    anchorRestoreTokenRef.current += 1;
+    for (const timer of anchorRestoreTimersRef.current) {
+      clearTimeout(timer);
+    }
+    anchorRestoreTimersRef.current = [];
+  };
+
+  const scheduleAnchorCapture = useCallback(
+    (forceAtBottom?: boolean) => {
+      if (!USE_VIRTUOSO) return;
+      if (!forceAtBottom && Date.now() < suppressAnchorCaptureUntilRef.current)
+        return;
+      if (anchorCaptureFrameRef.current != null) return;
+      const capture = () => {
+        anchorCaptureFrameRef.current = undefined;
+        if (
+          !forceAtBottom &&
+          Date.now() < suppressAnchorCaptureUntilRef.current
+        )
+          return;
+        const anchor = captureChatViewportAnchor({
+          forceAtBottom,
+          scroller: scrollerRef.current,
+          sortedDates: sortedDatesRef.current,
+        });
+        saveChatViewportAnchor(cacheId, anchor);
+      };
+      if (typeof requestAnimationFrame === "function") {
+        anchorCaptureFrameRef.current = requestAnimationFrame(capture);
+      } else {
+        anchorCaptureFrameRef.current = window.setTimeout(capture, 0);
+      }
+    },
+    [cacheId],
+  );
 
   const clearUserScrollIntentLater = () => {
     if (userScrollIntentTimerRef.current != null) {
@@ -836,6 +912,7 @@ export function MessageList({
   };
 
   const markUserScrollIntent = () => {
+    clearAnchorRestoreTimers();
     userScrollIntentRef.current = true;
     clearUserScrollIntentLater();
   };
@@ -845,6 +922,14 @@ export function MessageList({
       if (userScrollIntentTimerRef.current != null) {
         clearTimeout(userScrollIntentTimerRef.current);
       }
+      if (anchorCaptureFrameRef.current != null) {
+        if (typeof cancelAnimationFrame === "function") {
+          cancelAnimationFrame(anchorCaptureFrameRef.current);
+        } else {
+          clearTimeout(anchorCaptureFrameRef.current);
+        }
+      }
+      clearAnchorRestoreTimers();
     };
   }, []);
 
@@ -938,6 +1023,7 @@ export function MessageList({
   };
 
   const forceScrollToBottom = useCallback(() => {
+    scheduleAnchorCapture(true);
     if (keepBottomAnchoredRef) {
       keepBottomAnchoredRef.current = true;
     }
@@ -949,9 +1035,119 @@ export function MessageList({
   }, [
     keepBottomAnchoredRef,
     manualScrollRef,
+    scheduleAnchorCapture,
     scrollToBottomRef,
     setManualScroll,
   ]);
+
+  const restoreSavedAnchor = useCallback(
+    (anchor = loadChatViewportAnchor(cacheId)) => {
+      if (!USE_VIRTUOSO || !anchor) return;
+      if (Date.now() < suppressAnchorRestoreUntilRef.current) return;
+      if (scrollToDate != null || scrollToIndex != null) return;
+      if (activityJumpDate != null || activityJumpToken != null) return;
+      if (searchJumpDate != null || searchJumpToken != null) return;
+      const dates = sortedDatesRef.current;
+      if (dates.length === 0) return;
+
+      clearAnchorRestoreTimers();
+      suppressAnchorCaptureUntilRef.current = Date.now() + 1200;
+
+      if (anchor.atBottom) {
+        if (keepBottomAnchoredRef) {
+          keepBottomAnchoredRef.current = true;
+        }
+        if (manualScrollRef) {
+          manualScrollRef.current = false;
+        }
+        setManualScroll?.(false);
+        setAtBottom(true);
+        virtuosoRef.current?.scrollToIndex({ index: Number.MAX_SAFE_INTEGER });
+        scrollToBottomRef?.current?.(true);
+        return;
+      }
+
+      const index = resolveChatViewportAnchorIndex(anchor, dates);
+      if (index == null) return;
+      if (keepBottomAnchoredRef) {
+        keepBottomAnchoredRef.current = false;
+      }
+      if (manualScrollRef) {
+        manualScrollRef.current = true;
+      }
+      setManualScroll?.(true);
+      setAtBottom(false);
+      virtuosoRef.current?.scrollToIndex({ index, align: "start" });
+
+      const token = ++anchorRestoreTokenRef.current;
+      for (const delayMs of [0, 16, 75, 200, 500, 1000]) {
+        const timer = setTimeout(() => {
+          if (anchorRestoreTokenRef.current !== token) return;
+          restoreChatViewportAnchorOffset({
+            anchor,
+            scroller: scrollerRef.current,
+            sortedDates: sortedDatesRef.current,
+          });
+        }, delayMs);
+        anchorRestoreTimersRef.current.push(timer);
+      }
+    },
+    [
+      activityJumpDate,
+      activityJumpToken,
+      cacheId,
+      keepBottomAnchoredRef,
+      manualScrollRef,
+      scrollToBottomRef,
+      scrollToDate,
+      scrollToIndex,
+      searchJumpDate,
+      searchJumpToken,
+      setManualScroll,
+    ],
+  );
+
+  useEffect(() => {
+    if (
+      scrollToDate == null &&
+      scrollToIndex == null &&
+      activityJumpDate == null &&
+      activityJumpToken == null &&
+      searchJumpDate == null &&
+      searchJumpToken == null
+    ) {
+      return;
+    }
+    clearAnchorRestoreTimers();
+    suppressAnchorRestoreUntilRef.current = Date.now() + 1500;
+  }, [
+    activityJumpDate,
+    activityJumpToken,
+    scrollToDate,
+    scrollToIndex,
+    searchJumpDate,
+    searchJumpToken,
+  ]);
+
+  useEffect(() => {
+    if (!USE_VIRTUOSO) return;
+    if (!sortedDates.length) return;
+    restoreSavedAnchor();
+  }, [cacheId, restoreSavedAnchor, sortedDates.length]);
+
+  useEffect(() => {
+    if (!USE_VIRTUOSO) return;
+    const restoreIfVisible = () => {
+      if (document.visibilityState === "hidden") return;
+      restoreSavedAnchor();
+    };
+    document.addEventListener("visibilitychange", restoreIfVisible);
+    window.addEventListener("focus", restoreIfVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", restoreIfVisible);
+      window.removeEventListener("focus", restoreIfVisible);
+    };
+  }, [restoreSavedAnchor]);
 
   const scrollToNewestMessages = useCallback(() => {
     forceScrollToBottom();
@@ -1137,7 +1333,12 @@ export function MessageList({
     const host = listContainerRef.current;
     if (!host || !scrollToBottomRef || !keepBottomAnchoredRef) return;
     let frameId: number | undefined;
-    const scheduleBottomRestore = () => {
+    const scheduleLayoutRestore = () => {
+      const anchor = loadChatViewportAnchor(cacheId);
+      if (anchor && !anchor.atBottom) {
+        restoreSavedAnchor(anchor);
+        return;
+      }
       if (manualScrollRef?.current) return;
       if (!keepBottomAnchoredRef.current) return;
       if (anyOverlayOpen) return;
@@ -1154,7 +1355,7 @@ export function MessageList({
     };
     const onLoad = (event: Event) => {
       if (!(event.target instanceof HTMLImageElement)) return;
-      scheduleBottomRestore();
+      scheduleLayoutRestore();
     };
     const resizeObserver =
       typeof ResizeObserver === "undefined"
@@ -1163,7 +1364,7 @@ export function MessageList({
             for (const entry of entries) {
               const target = entry.target as HTMLElement | undefined;
               if (target?.dataset?.itemIndex == null) continue;
-              scheduleBottomRestore();
+              scheduleLayoutRestore();
               break;
             }
           });
@@ -1194,8 +1395,10 @@ export function MessageList({
     };
   }, [
     anyOverlayOpen,
+    cacheId,
     keepBottomAnchoredRef,
     manualScrollRef,
+    restoreSavedAnchor,
     scrollToBottomRef,
   ]);
 
@@ -1252,6 +1455,9 @@ export function MessageList({
       <StatefulVirtuoso
         style={{ flex: "1 1 0", minHeight: 0 }}
         ref={virtuosoRef}
+        scrollerRef={(node) => {
+          scrollerRef.current = node instanceof HTMLElement ? node : null;
+        }}
         totalCount={sortedDates.length + 1}
         cacheId={cacheId}
         persistState={false}
@@ -1275,6 +1481,7 @@ export function MessageList({
         rangeChanged={
           manualScrollRef
             ? ({ endIndex }) => {
+                scheduleAnchorCapture();
                 if (
                   endIndex < sortedDates.length - 1 &&
                   userScrollIntentRef.current
@@ -1288,6 +1495,7 @@ export function MessageList({
           manualScrollRef
             ? (atBottom: boolean) => {
                 if (atBottom) {
+                  scheduleAnchorCapture(true);
                   if (keepBottomAnchoredRef) {
                     keepBottomAnchoredRef.current = true;
                   }
@@ -1295,12 +1503,14 @@ export function MessageList({
                   setManualScroll?.(false);
                 } else if (!atBottom && userScrollIntentRef.current) {
                   markManualScrollAway();
+                  scheduleAnchorCapture();
                 }
                 setAtBottom(atBottom);
               }
             : undefined
         }
         atTopStateChange={onAtTopStateChange}
+        onScroll={() => scheduleAnchorCapture()}
         followOutput={
           !manualScroll && atBottom && !anyOverlayOpen ? "smooth" : false
         }
