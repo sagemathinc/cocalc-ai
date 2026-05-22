@@ -1030,8 +1030,9 @@ Acceptance criteria:
 - [x] Cap checks prevent claiming or approval past the pool limit.
 - [x] Custom terms/policy links, if configured, are shown before claim/request and
       acceptance is recorded.
-- [x] Existing one-pool site packages still resolve as before or are treated as
-      backward-compatible single-pool licenses.
+- [x] The legacy one-pool/simple site-license path has been removed. New
+      site-license state is managed through `site_licenses` plus linked
+      seed/global site pool packages.
 - [x] Focused tests cover claim, request, approval, rejection, cap recheck,
       one-active-pool upgrade, manager authorization, and custom terms metadata.
 
@@ -1072,9 +1073,9 @@ Acceptance criteria:
   - [x] Existing dashboard can edit top-level license settings and active
         managers after creation. Those writes also route through the seed/global
         service and record site-license audit events.
-- The admin panel for deleting membership tiers already blocks deleting a tier
-  that has claims/users. It should also block deleting a tier that is attached
-  to a site license, and ideally show how many site licenses use that tier.
+- [x] The admin panel for deleting membership tiers blocks deleting a tier that
+      has active subscriptions or active site-license pool usage, and shows an
+      active site-license count per tier.
 
 ### Phase 3: Claimable and Requestable User Flow
 

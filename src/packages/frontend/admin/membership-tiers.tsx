@@ -65,6 +65,7 @@ interface Tier {
   history?: any[];
   subscription_count?: number;
   account_count?: number;
+  site_license_count?: number;
   created?: dayjs.Dayjs;
   updated?: dayjs.Dayjs;
 }
@@ -426,6 +427,9 @@ function useMembershipTiers() {
       if ((data[id]?.subscription_count ?? 0) > 0) {
         throw Error("cannot delete a tier with active subscriptions");
       }
+      if ((data[id]?.site_license_count ?? 0) > 0) {
+        throw Error("cannot delete a tier used by active site licenses");
+      }
       await query({
         query: {
           membership_tiers: { id },
@@ -455,7 +459,17 @@ function useMembershipTiers() {
           `Cannot delete tiers with active subscriptions: ${blocked.join(", ")}`,
         );
       }
-      await sel_rows.map(async (id) => await delete_tier(id));
+      const siteLicenseBlocked = sel_rows.filter(
+        (id) => (data[id]?.site_license_count ?? 0) > 0,
+      );
+      if (siteLicenseBlocked.length > 0) {
+        throw Error(
+          `Cannot delete tiers used by active site licenses: ${siteLicenseBlocked.join(
+            ", ",
+          )}`,
+        );
+      }
+      await Promise.all(sel_rows.map(async (id) => await delete_tier(id)));
       set_sel_rows([]);
       load();
     } catch (err) {
@@ -820,7 +834,9 @@ export function MembershipTiers() {
   function render_buttons() {
     const any_selected = sel_rows.length > 0;
     const selected_has_usage = sel_rows.some(
-      (id) => (data[id]?.subscription_count ?? 0) > 0,
+      (id) =>
+        (data[id]?.subscription_count ?? 0) > 0 ||
+        (data[id]?.site_license_count ?? 0) > 0,
     );
     return (
       <Space.Compact style={{ margin: "10px 0" }}>
@@ -925,8 +941,13 @@ export function MembershipTiers() {
             render={(val) => val ?? 0}
           />
           <Table.Column<Tier>
-            title="Accounts"
+            title="Subscribed accounts"
             dataIndex="account_count"
+            render={(val) => val ?? 0}
+          />
+          <Table.Column<Tier>
+            title="Site licenses"
+            dataIndex="site_license_count"
             render={(val) => val ?? 0}
           />
           <Table.Column<Tier>
@@ -960,7 +981,9 @@ export function MembershipTiers() {
             title="Delete"
             dataIndex="delete"
             render={(_text, tier) => {
-              const inUse = (tier.subscription_count ?? 0) > 0;
+              const inUse =
+                (tier.subscription_count ?? 0) > 0 ||
+                (tier.site_license_count ?? 0) > 0;
               if (inUse) {
                 return (
                   <Text type="secondary" title="Tier in use">

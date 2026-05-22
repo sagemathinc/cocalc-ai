@@ -41,12 +41,64 @@ function toJsonParam(value: unknown): string | null {
   return JSON.stringify(value);
 }
 
+async function hasSiteLicenseUsageTables(db: PostgreSQL): Promise<boolean> {
+  const { rows } = await callback2(db._query, {
+    query: `SELECT to_regclass('public.site_licenses') IS NOT NULL
+                     AND to_regclass('public.membership_packages') IS NOT NULL
+                     AS exists`,
+  });
+  return rows?.[0]?.exists === true;
+}
+
+async function getActiveSiteLicenseTierCounts(
+  db: PostgreSQL,
+): Promise<Record<string, number>> {
+  if (!(await hasSiteLicenseUsageTables(db))) {
+    return {};
+  }
+  const { rows } = await callback2(db._query, {
+    query: `SELECT p.membership_class AS tier_id,
+                   COUNT(DISTINCT s.id)::int AS site_license_count
+            FROM membership_packages p
+            JOIN site_licenses s
+              ON p.metadata->>'site_license_id' = s.id::text
+            WHERE p.kind = 'site'
+              AND p.metadata->>'site_license_id' IS NOT NULL
+              AND (s.starts_at IS NULL OR s.starts_at <= NOW())
+              AND (s.expires_at IS NULL OR s.expires_at > NOW())
+              AND (p.starts_at IS NULL OR p.starts_at <= NOW())
+              AND (p.expires_at IS NULL OR p.expires_at > NOW())
+            GROUP BY p.membership_class`,
+  });
+  return (rows ?? []).reduce((acc, row) => {
+    if (!row?.tier_id) return acc;
+    acc[row.tier_id] = row.site_license_count ?? 0;
+    return acc;
+  }, {});
+}
+
+async function assertTierNotUsedByActiveSiteLicenses(
+  db: PostgreSQL,
+  tier_id: string,
+): Promise<void> {
+  const siteLicenseCount =
+    (await getActiveSiteLicenseTierCounts(db))[tier_id] ?? 0;
+  if (siteLicenseCount > 0) {
+    throw Error(
+      `cannot delete membership tier "${tier_id}" because it is used by ${siteLicenseCount} active site license${
+        siteLicenseCount === 1 ? "" : "s"
+      }`,
+    );
+  }
+}
+
 export default async function membershipTiersQuery(
   db: PostgreSQL,
   options: { delete?: boolean }[],
   query: Query,
 ) {
   if (isDelete(options) && query.id) {
+    await assertTierNotUsedByActiveSiteLicenses(db, query.id);
     await callback2(db._query, {
       query: "DELETE FROM membership_tiers WHERE id = $1",
       params: [query.id],
@@ -74,9 +126,11 @@ export default async function membershipTiersQuery(
       };
       return acc;
     }, {});
+    const siteLicenseByTier = await getActiveSiteLicenseTierCounts(db);
     return rows.map((row) => ({
       ...mapStorageRow(row),
       ...(byTier[row.id] ?? { subscription_count: 0, account_count: 0 }),
+      site_license_count: siteLicenseByTier[row.id] ?? 0,
     }));
   } else if (query.id) {
     const {
