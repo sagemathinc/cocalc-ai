@@ -726,6 +726,8 @@ export interface Purchases {
   }) => Promise<SiteLicenseOverview>;
   updateSiteLicense: (opts?: {
     account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
     site_license_id?: string;
     name?: string;
     organization_name?: string;
