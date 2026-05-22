@@ -1,6 +1,6 @@
 # CoCalc.ai Public Release Bug-Fixing Strategy
 
-Last updated: 2026-05-21
+Last updated: 2026-05-22
 
 Source blocker list: `/home/user/wstein.tasks.md`
 
@@ -30,7 +30,8 @@ Do not ship public release until these are true:
   2026-05-21** for the reproduced unsaved-local-edit plus remote-merge data
   loss path.
 - Browser file/project clients recover from hub/project-host restarts without
-  requiring a page refresh.
+  requiring a page refresh. **Fixed 2026-05-22** for the reproduced project-host
+  stop/start editor path; continue dogfooding chat/flyout variants.
 - Cross-bay impersonation works. **Fixed 2026-05-21** via central
   impersonation grant routing plus shared-domain bay identity cookies.
 - Impersonation state is persistently obvious after refresh. **Fixed
@@ -56,20 +57,21 @@ Do not ship public release until these are true:
 | Markdown Slate collaborative editing loses content | editor / sync   | fixed  | Added Playwright coverage for full Slate and block-mode editors where a local unsaved edit is merged with a remote update before the local debounce fires. The merged value is now forced back to the shared markdown from the current editor, so the local contribution is not only visible locally.      |
 | Agent button creates message but no Codex turn     | chat / codex    | fixed  | `forceCodex: true` navigator/agent submissions now default to the standard Codex model when no explicit `codexConfig.model` is provided, so Jupyter/editor agent buttons launch ACP instead of writing an inert user message.                                                                              |
 | Agent button expired-auth path unclear             | chat / codex    | fixed  | Pre-ack Codex auth failures now leave the user message retryable, write one concise auth-expired reply, show a credentials action, and label the retry control `Submit again`. The Codex credentials panel now strongly recommends ChatGPT/Codex subscription auth while keeping API keys as fallback.     |
+| Offline editor switches to loading/read-only       | editor / sync   | fixed  | SyncDoc and editor state now treat routed project-host disconnects as recoverable transport loss instead of fatal document close. Existing editor content stays mounted and editable while reconnecting.                                                                                                   |
+| Project-host restart breaks open editors           | conat / sync    | fixed  | Same-address routed project-host reconnects preserve the Conat client and SyncDoc table state instead of rebuilding editor state. Repeated reconnect failures refresh auth/browser-session state in place. Verified with live `host1` stop/start dogfood.                                                  |
+| Node 26 fails on project hosts without libatomic   | host bootstrap  | fixed  | Added `libatomic1` to project-host bootstrap/install paths and verified Node 26 on `host1`. This was a release blocker because project-host daemons could fail before any frontend recovery logic mattered.                                                                                                |
 
 ### P0: Release Blockers
 
 These should be worked before broad UI polish.
 
-| Item                                                      | Area                            | Risk                                         | First investigation                                                                                                   |
-| --------------------------------------------------------- | ------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Offline editor switches to loading                        | editor / sync / offline         | Apparent data loss and unusable offline mode | Identify loading gate that hides existing document; keep last synced content visible and editable while reconnecting. |
-| Hub/project-host restart breaks browser FS client forever | conat / files / recovery        | Core files unusable until refresh            | Reproduce with controlled restart; inspect reconnect/recovery scheduler and file client state machine.                |
-| Project table stale after start                           | hub changefeeds / projections   | User sees stopped project that is running    | Trace project lifecycle event path; add watchdog/refetch when command succeeds but projection remains stale.          |
-| Tiny "Loading" forever after backend upgrade              | chat / sync / recovery          | User stuck until close/reopen                | Capture stuck component state; identify missing reconnect or stale load promise.                                      |
-| Codex live chat log drops chunks                          | chat / codex activity rendering | Users cannot trust agent output              | Compare activity drawer source with chat rendered source; find dropped grouping/render filter.                        |
-| Chat scroll often near top                                | chat / UX                       | Broken long-chat usability                   | Audit scroll anchoring, initial load, archived hydration, active turn append behavior.                                |
-| Hide status security issue                                | privacy / security              | Sensitive status visibility                  | Define exact policy; ensure UI and backend enforce hidden status, not UI-only.                                        |
+| Item                                         | Area                            | Risk                                      | First investigation                                                                                          |
+| -------------------------------------------- | ------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Project table stale after start              | hub changefeeds / projections   | User sees stopped project that is running | Trace project lifecycle event path; add watchdog/refetch when command succeeds but projection remains stale. |
+| Tiny "Loading" forever after backend upgrade | chat / sync / recovery          | User stuck until close/reopen             | Capture stuck component state; identify missing reconnect or stale load promise.                             |
+| Codex live chat log drops chunks             | chat / codex activity rendering | Users cannot trust agent output           | Compare activity drawer source with chat rendered source; find dropped grouping/render filter.               |
+| Chat scroll often near top                   | chat / UX                       | Broken long-chat usability                | Audit scroll anchoring, initial load, archived hydration, active turn append behavior.                       |
+| Hide status security issue                   | privacy / security              | Sensitive status visibility               | Define exact policy; ensure UI and backend enforce hidden status, not UI-only.                               |
 
 ### P1: Launch-Critical UX And Correctness
 
@@ -151,8 +153,11 @@ Scope:
 - Markdown Slate collaborative editing data loss. **Fixed 2026-05-21** for the
   reproduced remote-merge write-back failure; remaining Slate caret/selection
   flakiness is tracked separately.
-- Offline editor should remain visible/editable.
-- Browser FS client recovery after hub/project-host restart.
+- Offline editor should remain visible/editable. **Fixed 2026-05-22** for the
+  reproduced project-host daemon stop/start path.
+- Browser FS client recovery after hub/project-host restart. **Fixed
+  2026-05-22** for open editor SyncDocs; continue to watch chat/flyout listing
+  recovery as separate components.
 - Tiny loading forever after backend upgrades.
 - Project list stale lifecycle state.
 
@@ -160,9 +165,21 @@ Acceptance:
 
 - Two-browser concurrent Markdown editing test does not delete content.
 - Simulated offline keeps editor content visible and editable.
-- Restarting hub/project-host recovers without browser refresh.
+- Restarting project-host recovers open editors without browser refresh. **Done
+  2026-05-22** in live `host1` testing.
 - Project start/stop UI converges to real state.
 - Stuck loading state has a timeout/recovery path and diagnostics.
+
+Notes:
+
+- The SyncDoc design rule is now explicit: a SyncDoc close means intentional
+  disposal or unrecoverable identity/permission failure, not ordinary network,
+  host, or Conat transport reconnect. Recoverable tables are typed explicitly
+  instead of detected by loose `any` checks.
+- A one-off Slate content-doubling observation after reconnect was not
+  reproduced after clean daemon stop/start. Treat future doubling as a separate
+  Slate internal/external state-sync bug, not as part of the transport recovery
+  fix.
 
 ### C. Chat And Codex Reliability
 
@@ -253,13 +270,39 @@ Acceptance:
 3. Reproduce Markdown Slate collaborative data loss with a minimal harness.
    **Done 2026-05-21.**
 4. Reproduce hub/project-host restart FS-client failure with a scripted smoke
-   test.
+   test. **Done 2026-05-22** for open editor SyncDocs.
 5. Fix sign-in redirect to `/projects` and passkey method/action confusion.
 6. Fix Codex agent-button silent failure path, especially expired auth. **Done
    2026-05-21.**
 7. Fix the Codex live-log dropped-output rendering bug or add instrumentation
    that proves where output is filtered.
 8. Fix disk usage reload wording or recompute semantics.
+
+## Next P0 Picks
+
+Recommended next work order as of 2026-05-22:
+
+1. **Codex live chat log drops chunks.** This is the highest remaining
+   trust-impact bug for `cocalc.ai`: users can see that the activity drawer has
+   the missing output, so the product looks internally inconsistent. It is also
+   likely frontend rendering/state aggregation rather than a distributed systems
+   problem.
+2. **Sign-in redirect plus passkey auth UX cluster.** Fix `/projects` redirect,
+   the passkey selector-vs-action confusion, browser password-save/autofill, and
+   SSO row jumping as one auth polish pass. These are first-run release issues
+   and probably smaller than the sync work we just completed.
+3. **Project table stale after start.** This is the next control-plane
+   correctness bug: the UI claiming a project is stopped while terminals work is
+   the kind of state divergence that undermines confidence and likely needs a
+   clear projection/refetch rule.
+
+Good fallback tasks if the above stalls:
+
+- Fix the disk usage reload lie, since it is contained and high-confidence.
+- Hide or replace the stale community support page before public traffic.
+- Investigate the tiny chat "Loading" forever state if it recurs during
+  backend upgrade dogfood; it may share enough with the SyncDoc reconnect work
+  to be quick, but needs a fresh reproduction.
 
 ## Bug Fix Workflow
 
@@ -296,9 +339,9 @@ For each blocker:
 
 ### Batch 2: Editor And Recovery Correctness
 
-- Markdown Slate collaborative editing fix.
-- Offline editor visibility.
-- FS client restart recovery.
+- Markdown Slate collaborative editing fix. **Done 2026-05-21.**
+- Offline editor visibility. **Done 2026-05-22.**
+- FS client restart recovery for open editors. **Done 2026-05-22.**
 - Project table stale-state convergence.
 
 ### Batch 3: Codex/Chat Reliability
