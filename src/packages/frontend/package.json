@@ -8,6 +8,8 @@
     "./app-framework/syncdb": "./dist/app-framework/syncdb/index.js",
     "./components": "./dist/components/index.js",
     "./components/run-button": "./dist/components/run-button/index.js",
+    "./cookie-consent": "./dist/cookie-consent/index.js",
+    "./cookie-consent/init": "./dist/cookie-consent/init.js",
     "./markdown": "./dist/markdown/index.js",
     "./misc": "./dist/misc/index.js",
     "./i18n": "./dist/i18n/index.js",
@@ -115,7 +117,7 @@
     "immutable": "^4.3.8",
     "jest-environment-jsdom": "^30.0.2",
     "jquery": "^3.6.0",
-    "js-cookie": "^2.2.1",
+    "js-cookie": "^3.0.7",
     "json-stable-stringify": "^1.0.1",
     "jsonic": "^1.0.1",
     "katex": "^0.16.21",
@@ -205,6 +207,7 @@
     "@cocalc/app-tasks": "workspace:*",
     "@jitl/quickjs-wasmfile-release-asyncify": "0.32.0",
     "immer": "^11.1.0",
-    "quickjs-emscripten-core": "0.32.0"
+    "quickjs-emscripten-core": "0.32.0",
+    "vanilla-cookieconsent": "^3.1.0"
   }
 }

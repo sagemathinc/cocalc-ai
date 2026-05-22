@@ -3,13 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import type { CSSProperties } from "react";
 
 import { Alert, Button, Card, Col, Flex, Row, Spin, Typography } from "antd";
 import MarkdownIt from "markdown-it";
 
 import api from "@cocalc/frontend/client/api";
+import { requireEssentialConsent } from "@cocalc/frontend/cookie-consent";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { to_human_list } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -123,11 +124,19 @@ function useStrategies(initialStrategies?: PublicSSOStrategy[]): {
 }
 
 export function PublicSSOIndexView({
+  cookieBannerEnabled = false,
   initialStrategies,
 }: {
+  cookieBannerEnabled?: boolean;
   initialStrategies?: PublicSSOStrategy[];
 }) {
   const { error, loading, strategies } = useStrategies(initialStrategies);
+
+  function requireConsent(event: MouseEvent<HTMLElement>) {
+    if (cookieBannerEnabled && !requireEssentialConsent()) {
+      event.preventDefault();
+    }
+  }
 
   if (loading) {
     return (
@@ -189,7 +198,11 @@ export function PublicSSOIndexView({
                 </div>
               </Flex>
               <Flex wrap gap={12}>
-                <Button href={strategyHref(strategy.id)} type="primary">
+                <Button
+                  href={strategyHref(strategy.id)}
+                  type="primary"
+                  onClick={requireConsent}
+                >
                   Continue
                 </Button>
                 <Button href={pathForSSO(strategy.id)}>More</Button>
@@ -203,9 +216,11 @@ export function PublicSSOIndexView({
 }
 
 export function PublicSSODetailView({
+  cookieBannerEnabled = false,
   id,
   initialStrategies,
 }: {
+  cookieBannerEnabled?: boolean;
   id: string;
   initialStrategies?: PublicSSOStrategy[];
 }) {
@@ -248,6 +263,12 @@ export function PublicSSODetailView({
 
   const fallback = `If you have an account with ${strategy.display}, you can continue here to access this CoCalc deployment.`;
 
+  function requireConsent(event: MouseEvent<HTMLElement>) {
+    if (cookieBannerEnabled && !requireEssentialConsent()) {
+      event.preventDefault();
+    }
+  }
+
   return (
     <Flex vertical gap={16}>
       <Flex align="center" gap={16}>
@@ -273,7 +294,12 @@ export function PublicSSODetailView({
         />
       ) : null}
       <Flex wrap gap={12}>
-        <Button href={strategyHref(strategy.id)} size="large" type="primary">
+        <Button
+          href={strategyHref(strategy.id)}
+          size="large"
+          type="primary"
+          onClick={requireConsent}
+        >
           Continue with {strategy.display}
         </Button>
         <Button href={pathForSSO()}>All providers</Button>

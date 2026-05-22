@@ -41,10 +41,7 @@
   "devDependenicesNotes": "For license and size reasons, we make @cocalc/crm a dev dependency so it is NOT installed unless explicitly installed as a separate step.",
   "devDependencies": {
     "@types/express": "^5.0.6",
-    "@types/node": "^22.10.10",
-    "webpack": "^5.106.2",
-    "webpack-dev-middleware": "^7.4.2",
-    "webpack-hot-middleware": "^2.26.1"
+    "@types/node": "^22.10.10"
   },
   "scripts": {
     "preinstall": "npx only-allow pnpm",
@@ -54,7 +51,7 @@
     "app:pglite": "./bin/start.sh pglite",
     "app:postgres": "./bin/start.sh postgres",
     "test": "pnpm exec jest --config jest.config.js",
-    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores next,webpack-dev-middleware,webpack-hot-middleware | grep -Ev '\\.coffee|coffee$'",
+    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores next | grep -Ev '\\.coffee|coffee$'",
     "prepublishOnly": "test"
   },
   "repository": {

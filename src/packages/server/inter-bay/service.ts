@@ -174,6 +174,10 @@ import {
   resolveProjectBayDirect,
 } from "@cocalc/server/inter-bay/directory";
 import {
+  resolveAccountImpersonationGrantDirectoryDirect,
+  upsertAccountImpersonationGrantDirectoryDirect,
+} from "@cocalc/server/auth/impersonation-grant-directory";
+import {
   resolveProjectCollabInviteDirectoryDirect,
   upsertProjectCollabInviteDirectoryDirect,
 } from "@cocalc/server/projects/collab-invite-directory";
@@ -469,6 +473,10 @@ async function startDirectoryService(): Promise<void> {
       await resolveProjectCollabInviteDirectoryDirect(opts),
     upsertProjectCollabInvite: async (opts) =>
       await upsertProjectCollabInviteDirectoryDirect(opts),
+    resolveAccountImpersonationGrant: async (opts) =>
+      await resolveAccountImpersonationGrantDirectoryDirect(opts),
+    upsertAccountImpersonationGrant: async (opts) =>
+      await upsertAccountImpersonationGrantDirectoryDirect(opts),
   };
   services.push(
     ...createInterBayBayDirectoryHandlers({
@@ -497,6 +505,10 @@ async function startDirectoryService(): Promise<void> {
           await resolveProjectCollabInviteDirectoryDirect(opts),
         upsertProjectCollabInvite: async (opts) =>
           await upsertProjectCollabInviteDirectoryDirect(opts),
+        resolveAccountImpersonationGrant: async (opts) =>
+          await resolveAccountImpersonationGrantDirectoryDirect(opts),
+        upsertAccountImpersonationGrant: async (opts) =>
+          await upsertAccountImpersonationGrantDirectoryDirect(opts),
       },
     }),
   );

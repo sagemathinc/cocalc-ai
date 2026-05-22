@@ -4,8 +4,7 @@
   "description": "CoCalc's static frontend Webpack-based build system and framework",
   "main": "./dist-ts/src/index.js",
   "exports": {
-    ".": "./dist-ts/src/index.js",
-    "./rspack-compiler": "./dist-ts/src/rspack-compiler.js"
+    ".": "./dist-ts/src/index.js"
   },
   "scripts": {
     "preinstall": "npx only-allow pnpm",
@@ -23,7 +22,7 @@
     "check-entry-budgets": "pnpm build && node ./scripts/check-entry-budgets.mjs",
     "check-entry-module-guards": "pnpm run analyze && node ./scripts/check-entry-module-guards.mjs",
     "check-bundle-guards": "pnpm run check-entry-budgets && pnpm run check-entry-module-guards",
-    "watch": "NO_RSPACK_DEV_SERVER=yes NODE_ENV=development pnpm rspack build -w",
+    "watch": "NODE_ENV=development pnpm rspack build -w",
     "watch:low-mem": "node ./scripts/watch-low-memory-rspack.mjs",
     "test": "pnpm exec jest",
     "prepublishOnly": "pnpm test"
@@ -55,9 +54,8 @@
     "@cocalc/cdn": "workspace:*",
     "@cocalc/frontend": "workspace:*",
     "@cocalc/util": "workspace:*",
-    "@rspack/cli": "^1.7.10",
-    "@rspack/core": "^1.7.10",
-    "@rspack/plugin-react-refresh": "^1.6.1",
+    "@rspack/cli": "^2.0.4",
+    "@rspack/core": "^2.0.4",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
     "@types/jquery": "^3.5.5",
@@ -72,25 +70,18 @@
     "entities": "^2.2.0",
     "handlebars": "^4.7.9",
     "handlebars-loader": "^1.7.1",
-    "html-loader": "^2.1.2",
-    "html-webpack-plugin": "^5.5.3",
     "identity-obj-proxy": "^3.0.0",
-    "imports-loader": "^3.0.0",
     "jquery": "^3.6.0",
     "jquery-tooltip": "^0.2.1",
     "jquery.scrollintoview": "^1.9",
-    "json-loader": "^0.5.7",
     "less": "^4.1.1",
     "less-loader": "^11.0.0",
     "path-browserify": "^1.0.1",
-    "raw-loader": "^4.0.2",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
-    "react-refresh": "^0.17.0",
     "react-test-renderer": "^19.1.0",
     "sass": "^1.89.2",
     "sass-loader": "^16.0.5",
-    "script-loader": "^0.7.2",
     "source-map-loader": "^3.0.0",
     "stream-browserify": "^3.0.0",
     "style-loader": "^2.0.0",
@@ -98,7 +89,6 @@
     "tsd": "^0.22.0",
     "util": "^0.12.3",
     "webpack": "^5.106.2",
-    "webpack-hot-middleware": "^2.26.1",
-    "webpack-path-rewriter": "^1.1.4"
+    "webpack-bundle-analyzer": "^5.3.0"
   }
 }

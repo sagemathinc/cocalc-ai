@@ -12,6 +12,14 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import {
+  enableForceConsent,
+  hasEssentialConsent,
+  onConsentChange,
+  restoreConsentCookieFromSnapshot,
+  type ConsentSnapshot,
+} from "@cocalc/frontend/cookie-consent";
+import { initCookieConsent } from "@cocalc/frontend/cookie-consent/init";
+import {
   getLocale,
   LOCALIZATIONS,
   OTHER_SETTINGS_LOCALE_KEY,
@@ -27,6 +35,110 @@ function CocalcApp({ children }) {
   const appState = useAppContextProvider();
   const { setLocale } = useLocalizationCtx();
   const other_settings = useTypedRedux("account", "other_settings");
+  const customizeReady = useTypedRedux("customize", "_is_configured");
+  const cookieBannerEnabled = useTypedRedux(
+    "customize",
+    "cookie_banner_enabled",
+  );
+  const cookieBannerText = useTypedRedux("customize", "cookie_banner_text");
+  const isLoggedIn = useTypedRedux("account", "is_logged_in");
+
+  useEffect(() => {
+    if (!customizeReady) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const accountStore = redux.getStore("account");
+
+    const proceed = () => {
+      if (cancelled) return;
+      if (cookieBannerEnabled) {
+        const stored: any = accountStore.getIn([
+          "other_settings",
+          "cookie_consent",
+        ]);
+        const snap = stored?.toJS?.() ?? stored;
+        restoreConsentCookieFromSnapshot(snap as ConsentSnapshot | null);
+      }
+      initCookieConsent({
+        enabled: !!cookieBannerEnabled,
+        textMarkdown: cookieBannerText,
+      });
+    };
+
+    if (accountStore.get("is_ready")) {
+      proceed();
+    } else {
+      let done = false;
+      const onReady = () => {
+        if (done) return;
+        done = true;
+        if (timer != null) window.clearTimeout(timer);
+        proceed();
+      };
+      accountStore.once("is_ready", onReady);
+      timer = window.setTimeout(() => {
+        if (done) return;
+        done = true;
+        accountStore.removeListener("is_ready", onReady);
+        proceed();
+      }, 2000);
+    }
+
+    return () => {
+      cancelled = true;
+      if (timer != null) window.clearTimeout(timer);
+    };
+  }, [customizeReady, cookieBannerEnabled, cookieBannerText]);
+
+  useEffect(() => {
+    if (!customizeReady || !cookieBannerEnabled) return;
+    let cancelled = false;
+    let cleanup: (() => void) | undefined;
+    let timer: number | undefined;
+    (async () => {
+      const accountStore = redux.getStore("account");
+      const ready =
+        accountStore.get("is_ready") ||
+        (await accountStore
+          .async_wait({
+            until: (store) => store.get("is_ready"),
+            timeout: 5,
+          })
+          .then(() => true)
+          .catch(() => false));
+      if (cancelled || !ready) return;
+      if (!accountStore.get("is_logged_in")) return;
+      if (hasEssentialConsent()) return;
+      timer = window.setTimeout(() => {
+        if (cancelled || hasEssentialConsent()) return;
+        cleanup = enableForceConsent();
+      }, 0);
+    })();
+    return () => {
+      cancelled = true;
+      if (timer != null) window.clearTimeout(timer);
+      cleanup?.();
+    };
+  }, [customizeReady, cookieBannerEnabled]);
+
+  useEffect(() => {
+    if (!cookieBannerEnabled || !isLoggedIn) return;
+    return onConsentChange((snap: ConsentSnapshot | null) => {
+      if (snap == null) return;
+      const stored: any = redux
+        .getStore("account")
+        .getIn(["other_settings", "cookie_consent"]);
+      if (
+        stored != null &&
+        typeof stored?.get === "function" &&
+        stored.get("timestamp") === snap.timestamp &&
+        stored.get("revision") === snap.revision
+      ) {
+        return;
+      }
+      redux.getActions("account").set_other_settings("cookie_consent", snap);
+    });
+  }, [cookieBannerEnabled, isLoggedIn]);
 
   // setting via ?lang=[locale] takes precedence over account settings
   // additionally ?lang_temp=[locale] temporarily changes it, used by these impersonation admin links

@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import type { AuthView } from "@cocalc/frontend/auth/types";
+import { enableForceConsent } from "@cocalc/frontend/cookie-consent";
 import { PublicPage } from "@cocalc/frontend/public/layout/shell";
 import { getSiteName, type PublicConfig } from "../common";
 import { navigatePublic } from "../navigation";
@@ -154,6 +155,12 @@ export default function PublicAuthApp({
     document.title = title;
   }, [title]);
 
+  useEffect(() => {
+    if (!config?.cookie_banner_enabled) return;
+    if (route.kind !== "sso-detail" && route.kind !== "sso-index") return;
+    return enableForceConsent();
+  }, [config?.cookie_banner_enabled, route.kind]);
+
   function onNavigate(next: AuthView) {
     const nextRoute: PublicAuthRoute = { kind: "auth-form", view: next };
     setRoute(nextRoute);
@@ -168,6 +175,7 @@ export default function PublicAuthApp({
       >
         {route.kind === "auth-form" && route.view === "sign-in" && (
           <PublicSignInForm
+            cookieBannerEnabled={!!config?.cookie_banner_enabled}
             onNavigate={onNavigate}
             redirectToPath={
               redirectToPath ??
@@ -177,6 +185,7 @@ export default function PublicAuthApp({
         )}
         {route.kind === "auth-second-factor" && (
           <PublicSignInForm
+            cookieBannerEnabled={!!config?.cookie_banner_enabled}
             initialChallengeId={route.challengeId}
             initialInfo="Single sign-on succeeded. Enter your CoCalc second factor to finish signing in."
             onNavigate={onNavigate}
@@ -185,6 +194,7 @@ export default function PublicAuthApp({
         )}
         {route.kind === "auth-form" && route.view === "sign-up" && (
           <PublicSignUpForm
+            cookieBannerEnabled={!!config?.cookie_banner_enabled}
             onNavigate={onNavigate}
             redirectToPath={redirectToPath}
           />
@@ -205,6 +215,7 @@ export default function PublicAuthApp({
             />
             {!config?.is_authenticated ? (
               <PublicSignInForm
+                cookieBannerEnabled={!!config?.cookie_banner_enabled}
                 onNavigate={onNavigate}
                 redirectToPath={() =>
                   window.location.pathname + window.location.search
@@ -221,6 +232,7 @@ export default function PublicAuthApp({
             />
             {!config?.is_authenticated ? (
               <PublicSignInForm
+                cookieBannerEnabled={!!config?.cookie_banner_enabled}
                 onNavigate={onNavigate}
                 redirectToPath={() =>
                   window.location.pathname + window.location.search
@@ -259,6 +271,7 @@ export default function PublicAuthApp({
             />
             {!config?.is_authenticated ? (
               <PublicSignInForm
+                cookieBannerEnabled={!!config?.cookie_banner_enabled}
                 onNavigate={onNavigate}
                 redirectToPath={() =>
                   window.location.pathname + window.location.search
@@ -268,10 +281,14 @@ export default function PublicAuthApp({
           </>
         )}
         {route.kind === "sso-index" && (
-          <PublicSSOIndexView initialStrategies={initialSSOStrategies} />
+          <PublicSSOIndexView
+            cookieBannerEnabled={!!config?.cookie_banner_enabled}
+            initialStrategies={initialSSOStrategies}
+          />
         )}
         {route.kind === "sso-detail" && (
           <PublicSSODetailView
+            cookieBannerEnabled={!!config?.cookie_banner_enabled}
             id={route.id}
             initialStrategies={initialSSOStrategies}
           />

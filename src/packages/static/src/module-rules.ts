@@ -11,11 +11,9 @@ and weird surprises can pop up.  We have to exclude transpiling jquery since oth
 we get an infinite recursion on startup, but of course jquery is fine.
 */
 
-import { Configuration } from "@rspack/cli";
+import type { Configuration } from "@rspack/cli";
 
-export default function moduleRules(
-  devServer?: boolean,
-): Configuration["module"] {
+export default function moduleRules(): Configuration["module"] {
   return {
     rules: [
       {
@@ -30,18 +28,6 @@ export default function moduleRules(
         use: [
           {
             loader: "builtin:swc-loader",
-            options: devServer
-              ? {
-                  jsc: {
-                    transform: {
-                      react: {
-                        development: true,
-                        refresh: true,
-                      },
-                    },
-                  },
-                }
-              : undefined,
           },
         ],
       },

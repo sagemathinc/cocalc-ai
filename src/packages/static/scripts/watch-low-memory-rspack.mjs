@@ -271,7 +271,6 @@ async function runBuild(targetMtimeMs) {
   const env = {
     ...process.env,
     NODE_ENV: process.env.NODE_ENV || "development",
-    NO_RSPACK_DEV_SERVER: process.env.NO_RSPACK_DEV_SERVER || "yes",
   };
   await runStep({
     label: "tsc",

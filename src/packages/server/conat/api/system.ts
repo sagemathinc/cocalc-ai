@@ -31,6 +31,7 @@ import {
   getAccountNotificationIndexProjectionBacklogStatus,
 } from "@cocalc/database/postgres/account-notification-index-projector";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { recordBrowserAutomationAuditEvent } from "./browser-automation-audit";
 import { db } from "@cocalc/database";
 import manageApiKeys from "@cocalc/server/api/manage";
@@ -172,6 +173,7 @@ import {
 } from "@cocalc/server/auth/auth-sessions";
 import { hasActiveSecondFactor } from "@cocalc/server/auth/two-factor";
 import { createImpersonationGrantLocal } from "@cocalc/server/auth/impersonation";
+import { upsertAccountImpersonationGrantDirectory } from "@cocalc/server/auth/impersonation-grant-directory";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import {
   getProjectAppPublicPolicy as getProjectAppPublicPolicyRaw,
@@ -2988,13 +2990,22 @@ export async function createImpersonationGrant({
     }
     throw err;
   }
+  await upsertAccountImpersonationGrantDirectory({
+    grant_id: grant.grant_id,
+    subject_account_id: subjectAccountId,
+    subject_home_bay_id,
+    status: "pending",
+    expires_at: grant.expires_at,
+  });
   const home_bay_url = await getBayPublicOrigin(subject_home_bay_id);
+  const seed_bay_url = await getBayPublicOrigin(
+    getConfiguredClusterSeedBayId(),
+  );
   const target = new URL(
     basePath === "/" ? "/auth/impersonate" : `${basePath}/auth/impersonate`,
-    home_bay_url ?? "http://localhost",
+    seed_bay_url ?? home_bay_url ?? "http://localhost",
   );
   target.searchParams.set("grant_id", grant.grant_id);
-  target.searchParams.set("account_id", subjectAccountId);
   if (`${lang_temp ?? ""}`.trim()) {
     target.searchParams.set("lang_temp", `${lang_temp}`.trim());
   }
