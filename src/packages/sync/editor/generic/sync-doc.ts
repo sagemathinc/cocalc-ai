@@ -61,6 +61,7 @@ import {
   type PresenceAdapter as PatchflowPresenceAdapter,
   MemoryPresenceAdapter as PatchflowMemoryPresenceAdapter,
 } from "patchflow";
+import type { RecoveryState } from "@cocalc/conat/sync/core-stream";
 import type {
   Client,
   CompressedPatch,
@@ -82,6 +83,15 @@ const BACKEND_FS_WATCH_DISABLED_EXTENSIONS = new Set(["chat", "sage-chat"]);
 
 export type State = "init" | "ready" | "closed";
 export type DataServer = "project" | "database";
+type SyncDocTableRecoverOptions = {
+  epoch?: number;
+  priority?: "foreground" | "background";
+  reason?: string;
+};
+type RecoverableSyncTable = SyncTable & {
+  recoverNow: (opts?: SyncDocTableRecoverOptions) => Promise<void>;
+  getRecoveryState: () => RecoveryState;
+};
 export type SyncDocOpenPhase =
   | "open_start"
   | "canonicalize_identity_start"
@@ -103,6 +113,16 @@ export type SyncDocOpenPhase =
   | "cursors_start"
   | "cursors_done"
   | "sync_ready";
+
+function isRecoverableSyncTable(
+  table: SyncTable,
+): table is RecoverableSyncTable {
+  const candidate = table as unknown as Partial<RecoverableSyncTable>;
+  return (
+    typeof candidate.recoverNow === "function" &&
+    typeof candidate.getRecoveryState === "function"
+  );
+}
 
 export interface SyncOpts0 {
   project_id: string;
@@ -1203,17 +1223,15 @@ export class SyncDoc extends EventEmitter {
     }
   }
 
-  private tableCanRecover(table: SyncTable): boolean {
-    return (
-      typeof (table as any).recoverNow === "function" ||
-      typeof (table as any).getRecoveryState === "function"
-    );
+  private tableCanRecover(table: SyncTable): table is RecoverableSyncTable {
+    return isRecoverableSyncTable(table);
   }
 
   private handleTableClose(tableName: string, table: SyncTable): void {
     if (this.tableCanRecover(table)) {
+      const recoveryState = table.getRecoveryState();
       this.dbg("handleTableClose")(
-        `${tableName} table closed, treating as recoverable disconnect`,
+        `${tableName} table closed with recoveryState=${recoveryState}, treating as recoverable disconnect`,
       );
       this.refreshLiveConnectionState();
       void this.recoverNow({

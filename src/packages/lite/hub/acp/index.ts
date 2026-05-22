@@ -357,10 +357,6 @@ const ACP_LIVE_LOG_MAX_BYTES = envNumber(
   8 * 1024 * 1024,
 );
 const ACP_LIVE_LOG_MAX_MSGS = envNumber("COCALC_ACP_LIVE_LOG_MAX_MSGS", 5_000);
-const ACP_PREVIEW_ACTIVITY_TICK_MIN_MS = envNumber(
-  "COCALC_ACP_PREVIEW_ACTIVITY_TICK_MS",
-  2_000,
-);
 const ACP_PATCHFLOW_COMMIT_TARGET = envNumber(
   "COCALC_ACP_PATCHFLOW_COMMIT_TARGET",
   6,
@@ -1593,7 +1589,6 @@ export class ChatStreamWriter {
     AStream<AcpStreamMessage | AcpStreamMessage[]>
   >;
   private livePreviewBatcher!: AdaptiveAsyncBatcher<AcpStreamMessage>;
-  private lastPreviewActivityTickMs = 0;
   private client: ConatClient;
   private timeTravel?: AgentTimeTravelRecorder;
   private integritySnapshot: ChatIntegritySnapshot = {
@@ -3361,44 +3356,13 @@ export class ChatStreamWriter {
       this.livePreviewBatcher.add(event, { flush: true });
       return;
     }
-    if (
-      event.type === "event" &&
-      (event.event.type === "message" || event.event.type === "thinking")
-    ) {
+    // The preview stream is the small, authoritative source for inline chat
+    // rendering. Keep it to actual agent output; non-message activity belongs
+    // in the full activity log and can split progressive message snapshots.
+    if (event.type === "event" && event.event.type === "message") {
       this.livePreviewBatcher.add(event);
       return;
     }
-    if (event.type === "event" && this.shouldEmitPreviewActivityTick(event)) {
-      this.livePreviewBatcher.add(
-        {
-          type: "status",
-          state: "running",
-          threadId: this.threadId ?? undefined,
-          seq: event.seq,
-          time: event.time,
-        },
-        { flush: true },
-      );
-    }
-  }
-
-  private shouldEmitPreviewActivityTick(event: AcpStreamMessage): boolean {
-    if (event.type !== "event") return false;
-    if (event.event.type === "message" || event.event.type === "thinking") {
-      return false;
-    }
-    const nowMs =
-      typeof event.time === "number" && Number.isFinite(event.time)
-        ? event.time
-        : Date.now();
-    if (
-      nowMs - this.lastPreviewActivityTickMs <
-      ACP_PREVIEW_ACTIVITY_TICK_MIN_MS
-    ) {
-      return false;
-    }
-    this.lastPreviewActivityTickMs = nowMs;
-    return true;
   }
 
   private async waitForLiveLogFlush(): Promise<void> {
