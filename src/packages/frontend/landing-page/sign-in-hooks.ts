@@ -18,6 +18,11 @@ async function analytics_send(mesg: SignedIn): Promise<void> {
   if (!customizeStore.get("is_commercial")) {
     return;
   }
+  if (customizeStore.get("cookie_banner_enabled")) {
+    const { hasTrackingConsent } =
+      await import("@cocalc/frontend/cookie-consent");
+    if (!hasTrackingConsent()) return;
+  }
   window
     .fetch(join(appBasePath, "analytics.js"), {
       method: "POST",

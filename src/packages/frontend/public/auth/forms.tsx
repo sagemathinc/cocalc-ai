@@ -8,6 +8,10 @@ import { useEffect, useMemo, useState } from "react";
 
 import api from "@cocalc/frontend/client/api";
 import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
+import {
+  requireEssentialConsent,
+  useEssentialConsent,
+} from "@cocalc/frontend/cookie-consent";
 import type { AuthView } from "@cocalc/frontend/auth/types";
 import {
   isMfaRequiredAuthResponse,
@@ -201,11 +205,13 @@ function ssoLoginHref(strategyName: string): string {
 export function PublicSignInForm({
   initialChallengeId,
   initialInfo,
+  cookieBannerEnabled = false,
   onNavigate,
   redirectToPath,
 }: {
   initialChallengeId?: string;
   initialInfo?: string;
+  cookieBannerEnabled?: boolean;
   onNavigate: (view: AuthView) => void;
   redirectToPath?: string | (() => string);
 }) {
@@ -221,6 +227,8 @@ export function PublicSignInForm({
   const [signInMethod, setSignInMethod] = useState<SignInMethod>();
   const [error, setError] = useState("");
   const codeFactorMethod = inferSecondFactorInputMethod(factorCode);
+  const consentReady = useEssentialConsent();
+  const cookieConsentReady = !cookieBannerEnabled || consentReady;
   const ssoStrategy =
     !challengeId && signInMethod?.sso_required
       ? signInMethod.sso_strategy
@@ -418,6 +426,15 @@ export function PublicSignInForm({
                   textAlign: "center",
                   textDecoration: "none",
                 }}
+                onClick={(event) => {
+                  if (
+                    cookieBannerEnabled &&
+                    !cookieConsentReady &&
+                    !requireEssentialConsent()
+                  ) {
+                    event.preventDefault();
+                  }
+                }}
               >
                 Continue with {ssoStrategy.display}
               </a>
@@ -599,9 +616,11 @@ export function PublicPasswordResetForm({
 }
 
 export function PublicSignUpForm({
+  cookieBannerEnabled = false,
   onNavigate,
   redirectToPath,
 }: {
+  cookieBannerEnabled?: boolean;
   onNavigate: (view: AuthView) => void;
   redirectToPath?: string | (() => string);
 }) {
@@ -616,6 +635,8 @@ export function PublicSignUpForm({
   const [signingUp, setSigningUp] = useState(false);
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
+  const consentReady = useEssentialConsent();
+  const cookieConsentReady = !cookieBannerEnabled || consentReady;
 
   const bootstrap = useMemo(
     () => new URL(window.location.href).searchParams.get("bootstrap") === "1",
@@ -649,8 +670,9 @@ export function PublicSignUpForm({
     if (requiresToken && !registrationToken.trim()) {
       return false;
     }
-    return !signingUp;
+    return cookieConsentReady && !signingUp;
   }, [
+    cookieConsentReady,
     email,
     firstName,
     lastName,
@@ -662,6 +684,12 @@ export function PublicSignUpForm({
 
   async function signUp() {
     if (!canSubmit) {
+      if (!cookieConsentReady) {
+        requireEssentialConsent();
+      }
+      return;
+    }
+    if (cookieBannerEnabled && !requireEssentialConsent()) {
       return;
     }
     setIssues({});
@@ -791,7 +819,11 @@ export function PublicSignUpForm({
         />
       </div>
       <ActionButton disabled={!canSubmit} onClick={signUp}>
-        {signingUp ? "Creating account..." : "Create account"}
+        {signingUp
+          ? "Creating account..."
+          : !cookieConsentReady
+            ? "Acknowledge cookie banner to continue"
+            : "Create account"}
       </ActionButton>
       <div style={{ textAlign: "center" }}>
         Already have an account?{" "}

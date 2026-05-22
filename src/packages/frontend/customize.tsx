@@ -106,6 +106,8 @@ export interface CustomizeState {
   email_enabled: false;
   email_signup: boolean;
   public_signup_without_registration_token: boolean;
+  cookie_banner_enabled?: boolean;
+  cookie_banner_text?: string;
   google_analytics: string;
   help_email: string;
   zendesk?: boolean;
@@ -619,8 +621,22 @@ async function init_analytics() {
     return;
   }
 
+  if (store.get("cookie_banner_enabled")) {
+    const { hasTrackingConsent, onConsentChange } =
+      await import("@cocalc/frontend/cookie-consent");
+    let started = false;
+    onConsentChange(() => {
+      if (started) return;
+      if (!hasTrackingConsent()) return;
+      started = true;
+      void setup_google_analytics(w);
+      setup_cocalc_analytics(w);
+    });
+    return;
+  }
+
   await setup_google_analytics(w);
-  await setup_cocalc_analytics(w);
+  setup_cocalc_analytics(w);
 }
 
 init_analytics();

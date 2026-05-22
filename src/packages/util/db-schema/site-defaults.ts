@@ -48,6 +48,7 @@ export const TAGS = [
   "SSH",
   "Support",
   "SSO",
+  "Cookie Banner",
 ] as const;
 
 export type Tag = (typeof TAGS)[number];
@@ -67,6 +68,8 @@ export type SiteSettingsKeys =
   | "policies"
   | "support"
   | "support_video_call"
+  | "cookie_banner_enabled"
+  | "cookie_banner_text"
   | "openai_enabled"
   | "agent_openai_codex_enabled"
   | "google_vertexai_enabled"
@@ -616,6 +619,27 @@ export const site_settings_conf: SiteSettings = {
     tags: ["Theme"],
     group: "Branding & UI",
     subgroup: "Support",
+  },
+  cookie_banner_enabled: {
+    name: "Cookie banner",
+    desc: "Show a GDPR-style cookie consent banner with strictly necessary cookies, optional analytics cookies, and first-party usage metrics.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["Cookie Banner"],
+    group: "Branding & UI",
+    subgroup: "Legal",
+  },
+  cookie_banner_text: {
+    name: "Cookie banner text",
+    desc: "Markdown body shown in the cookie banner and preferences modal. Links to the privacy policy and terms of service are rendered separately and do not need to be repeated here.",
+    default:
+      "We use cookies that are strictly necessary for sign-in and session management. With your consent, we use optional analytics cookies and first-party usage metrics to understand how the site is used. Signed-in users can manage these preferences in Account settings; signed-out visitors can manage cookie choices from the footer.",
+    clearable: true,
+    multiline: 5,
+    tags: ["Cookie Banner"],
+    group: "Branding & UI",
+    subgroup: "Legal",
   },
   // ============== END THEMING ============
 

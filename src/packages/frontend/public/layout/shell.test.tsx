@@ -1,10 +1,25 @@
 /** @jest-environment jsdom */
 
-import { render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
+import { showPreferences } from "@cocalc/frontend/cookie-consent";
 import { PublicCard, PublicGrid, PublicPage, PublicSection } from "./shell";
 
+jest.mock("@cocalc/frontend/cookie-consent", () => ({
+  showPreferences: jest.fn(),
+}));
+
 describe("PublicPage", () => {
+  beforeEach(() => {
+    jest.mocked(showPreferences).mockClear();
+  });
+
   it("renders the shared page title when provided", () => {
     render(
       <PublicPage config={{ site_name: "Launchpad" }} title="About Launchpad">
@@ -150,6 +165,21 @@ describe("PublicPage", () => {
     expect(
       within(footer).getByRole("link", { name: "Policies" }),
     ).toHaveAttribute("href", "https://example.com/policies");
+  });
+
+  it("opens cookie preferences from the footer when the banner is enabled", async () => {
+    render(
+      <PublicPage
+        config={{ cookie_banner_enabled: true, site_name: "Launchpad" }}
+      >
+        Body
+      </PublicPage>,
+    );
+
+    const footer = screen.getByRole("contentinfo");
+    fireEvent.click(within(footer).getByRole("link", { name: "Cookies" }));
+
+    await waitFor(() => expect(showPreferences).toHaveBeenCalledTimes(1));
   });
 });
 
