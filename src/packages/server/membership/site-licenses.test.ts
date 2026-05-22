@@ -232,6 +232,23 @@ describe("site license seat pools", () => {
       state: "pending",
       canonical_identity: `ada@${domain}`,
     });
+    const managerNotice = await getPool().query(
+      `SELECT t.target_account_id, t.dedupe_key, e.payload_json
+         FROM notification_targets t
+         JOIN notification_events e ON e.event_id=t.event_id
+        WHERE t.dedupe_key=$1`,
+      [`site-license-pool-request:${request.id}:created:${owner_account_id}`],
+    );
+    expect(managerNotice.rows).toEqual([
+      expect.objectContaining({
+        target_account_id: owner_account_id,
+        payload_json: expect.objectContaining({
+          title: "New Math Department Launch request",
+          request_id: request.id,
+          package_id: instructorPool.id,
+        }),
+      }),
+    ]);
     let refreshedOverview = await getSiteLicenseOverview({
       account_id: owner_account_id,
       site_license_id: overview.site_license.id,
@@ -256,6 +273,25 @@ describe("site license seat pools", () => {
       review_note: "Instructor confirmed.",
     });
     expect(approved.state).toBe("approved");
+    const requesterNotice = await getPool().query(
+      `SELECT t.target_account_id, t.dedupe_key, e.payload_json
+         FROM notification_targets t
+         JOIN notification_events e ON e.event_id=t.event_id
+        WHERE t.dedupe_key=$1`,
+      [
+        `site-license-pool-request:${request.id}:approved:${student_account_id}`,
+      ],
+    );
+    expect(requesterNotice.rows).toEqual([
+      expect.objectContaining({
+        target_account_id: student_account_id,
+        payload_json: expect.objectContaining({
+          title: "Math Department Launch request approved",
+          request_id: request.id,
+          package_id: instructorPool.id,
+        }),
+      }),
+    ]);
     refreshedOverview = await getSiteLicenseOverview({
       account_id: owner_account_id,
       site_license_id: overview.site_license.id,

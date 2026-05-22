@@ -5,11 +5,15 @@
 
 import dayjs from "dayjs";
 
+import { getLogger } from "@cocalc/backend/logger";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import getPool, { type PoolClient } from "@cocalc/database/pool";
+import { createNotificationEventGraph } from "@cocalc/database/postgres/notifications-core";
+import { getClusterAccountsByIdsDirect } from "@cocalc/server/accounts/cluster-directory";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import type {
   MembershipPackageAssignment,
-  MembershipPackageDetails,
+  MembershipPackageRecord,
   SiteLicenseAffiliationReverificationUserSeat,
   SiteLicenseAffiliationReverificationUserStatus,
   SiteLicenseAffiliationReverificationSeat,
@@ -53,6 +57,14 @@ import {
 } from "./side-effects";
 
 type Queryable = PoolClient | ReturnType<typeof getPool>;
+type SiteLicenseMembershipPackage = NonNullable<
+  Awaited<ReturnType<typeof getMembershipPackage>>
+>;
+
+const logger = getLogger("server:membership:site-licenses");
+const SITE_LICENSE_NOTIFICATION_ORIGIN_LABEL = "Site licenses";
+const SITE_LICENSE_NOTIFICATION_ACTION_LINK = "/settings/licenses";
+const SITE_LICENSE_NOTIFICATION_ACTION_LABEL = "Open licenses";
 
 interface RawSiteLicenseRecord {
   id: string;
@@ -539,7 +551,7 @@ function getPackageAllowedDomains(
 }
 
 function getPackagePoolName(
-  pkg: MembershipPackageDetails,
+  pkg: Pick<MembershipPackageRecord, "metadata">,
   fallback = "Site license pool",
 ): string {
   const poolName = `${pkg.metadata?.pool_name ?? ""}`.trim();
@@ -991,6 +1003,187 @@ async function listSiteLicenseAuditEvents({
   return rows.map(normalizeSiteLicenseAuditEventRow);
 }
 
+async function resolveSiteLicenseNotificationTargets(
+  account_ids: string[],
+): Promise<Array<{ account_id: string; home_bay_id: string }>> {
+  const uniqueAccountIds = Array.from(
+    new Set(account_ids.map((id) => `${id ?? ""}`.trim()).filter(Boolean)),
+  );
+  if (uniqueAccountIds.length === 0) {
+    return [];
+  }
+  const entries = await getClusterAccountsByIdsDirect(uniqueAccountIds);
+  const byAccountId = new Map(
+    entries.map((entry) => [
+      entry.account_id,
+      `${entry.home_bay_id ?? ""}`.trim() || getConfiguredBayId(),
+    ]),
+  );
+  return uniqueAccountIds
+    .map((account_id) => ({
+      account_id,
+      home_bay_id: byAccountId.get(account_id),
+    }))
+    .filter(
+      (target): target is { account_id: string; home_bay_id: string } =>
+        !!target.home_bay_id,
+    );
+}
+
+async function createSiteLicenseAccountNoticeBestEffort({
+  actor_account_id,
+  target_account_ids,
+  title,
+  body_markdown,
+  severity = "info",
+  dedupe_key,
+  metadata = {},
+}: {
+  actor_account_id?: string | null;
+  target_account_ids: string[];
+  title: string;
+  body_markdown: string;
+  severity?: "info" | "warning" | "error";
+  dedupe_key: string;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  try {
+    const targets =
+      await resolveSiteLicenseNotificationTargets(target_account_ids);
+    if (targets.length === 0) {
+      logger.warn("skipping site-license notification with no valid targets", {
+        dedupe_key,
+        target_account_ids,
+      });
+      return;
+    }
+    await createNotificationEventGraph({
+      kind: "account_notice",
+      source_bay_id: getConfiguredBayId(),
+      actor_account_id: actor_account_id ?? null,
+      origin_kind: "admin",
+      payload_json: {
+        severity,
+        title,
+        body_markdown,
+        origin_label: SITE_LICENSE_NOTIFICATION_ORIGIN_LABEL,
+        action_link: SITE_LICENSE_NOTIFICATION_ACTION_LINK,
+        action_label: SITE_LICENSE_NOTIFICATION_ACTION_LABEL,
+        dedupe_key,
+        ...metadata,
+      },
+      targets: targets.map((target) => ({
+        target_account_id: target.account_id,
+        target_home_bay_id: target.home_bay_id,
+        dedupe_key: `${dedupe_key}:${target.account_id}`,
+        summary_json: {
+          title,
+          body_markdown,
+          severity,
+          origin_label: SITE_LICENSE_NOTIFICATION_ORIGIN_LABEL,
+          action_link: SITE_LICENSE_NOTIFICATION_ACTION_LINK,
+          action_label: SITE_LICENSE_NOTIFICATION_ACTION_LABEL,
+          ...metadata,
+        },
+      })),
+    });
+  } catch (err) {
+    logger.warn("failed to create site-license notification", {
+      dedupe_key,
+      target_account_ids,
+      error: `${(err as Error)?.message ?? err}`,
+    });
+  }
+}
+
+async function notifySiteLicensePoolRequestCreatedBestEffort({
+  siteLicense,
+  pkg,
+  request,
+}: {
+  siteLicense: SiteLicenseRecord;
+  pkg: SiteLicenseMembershipPackage;
+  request: SiteLicensePoolRequest;
+}): Promise<void> {
+  try {
+    const managers = await listSiteLicenseManagers(siteLicense.id);
+    const targetAccountIds = managers
+      .filter(
+        (manager) => manager.role === "owner" || manager.role === "manager",
+      )
+      .map((manager) => manager.account_id);
+    const poolName = getPackagePoolName(pkg);
+    await createSiteLicenseAccountNoticeBestEffort({
+      actor_account_id: request.account_id,
+      target_account_ids: targetAccountIds,
+      title: `New ${siteLicense.name} request`,
+      body_markdown: [
+        `A user requested access to **${poolName}** for ${siteLicense.organization_name}.`,
+        request.requester_note
+          ? `Requester note: ${request.requester_note}`
+          : undefined,
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+      severity: "info",
+      dedupe_key: `site-license-pool-request:${request.id}:created`,
+      metadata: {
+        site_license_id: siteLicense.id,
+        package_id: pkg.id,
+        request_id: request.id,
+        pool_name: poolName,
+        request_state: request.state,
+      },
+    });
+  } catch (err) {
+    logger.warn("failed to prepare site-license request notification", {
+      site_license_id: siteLicense.id,
+      package_id: pkg.id,
+      request_id: request.id,
+      error: `${(err as Error)?.message ?? err}`,
+    });
+  }
+}
+
+async function notifySiteLicensePoolRequestReviewedBestEffort({
+  actor_account_id,
+  siteLicense,
+  pkg,
+  request,
+}: {
+  actor_account_id: string;
+  siteLicense: SiteLicenseRecord;
+  pkg: SiteLicenseMembershipPackage;
+  request: SiteLicensePoolRequest;
+}): Promise<void> {
+  const poolName = getPackagePoolName(pkg);
+  const approved = request.state === "approved";
+  await createSiteLicenseAccountNoticeBestEffort({
+    actor_account_id,
+    target_account_ids: [request.account_id],
+    title: approved
+      ? `${siteLicense.name} request approved`
+      : `${siteLicense.name} request rejected`,
+    body_markdown: [
+      approved
+        ? `Your request for **${poolName}** at ${siteLicense.organization_name} was approved.`
+        : `Your request for **${poolName}** at ${siteLicense.organization_name} was rejected.`,
+      request.review_note ? `Review note: ${request.review_note}` : undefined,
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+    severity: approved ? "info" : "warning",
+    dedupe_key: `site-license-pool-request:${request.id}:${request.state}`,
+    metadata: {
+      site_license_id: siteLicense.id,
+      package_id: pkg.id,
+      request_id: request.id,
+      pool_name: poolName,
+      request_state: request.state,
+    },
+  });
+}
+
 export async function getVerifiedEmailAddressesForAccount(
   account_id: string,
   client?: PoolClient,
@@ -1072,7 +1265,7 @@ async function getSiteLicenseForPackage(
   client?: PoolClient,
 ): Promise<{
   siteLicense: SiteLicenseRecord;
-  pkg: NonNullable<Awaited<ReturnType<typeof getMembershipPackage>>>;
+  pkg: SiteLicenseMembershipPackage;
 }> {
   const pkg = await getMembershipPackage({ package_id, client });
   if (!pkg || pkg.kind !== "site") {
@@ -2209,7 +2402,13 @@ export async function requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
     },
     client: pool,
   });
-  return normalizeSiteLicensePoolRequestRow(rows[0])!;
+  const request = normalizeSiteLicensePoolRequestRow(rows[0])!;
+  await notifySiteLicensePoolRequestCreatedBestEffort({
+    siteLicense,
+    pkg,
+    request,
+  });
+  return request;
 }
 
 export async function reviewSiteLicensePoolRequest({
@@ -2240,7 +2439,7 @@ export async function reviewSiteLicensePoolRequest({
       }
     | undefined;
   try {
-    return await withSiteLicenseRequestTransaction({
+    const reviewed = await withSiteLicenseRequestTransaction({
       request_id: requestId,
       action: "review site-license pool request",
       fn: async ({ client, request, siteLicense, pkg }) => {
@@ -2406,6 +2605,24 @@ export async function reviewSiteLicensePoolRequest({
         return approved;
       },
     });
+    try {
+      const { siteLicense, pkg } = await getSiteLicenseForPackage(
+        reviewed.package_id,
+      );
+      await notifySiteLicensePoolRequestReviewedBestEffort({
+        actor_account_id: actorAccountId,
+        siteLicense,
+        pkg,
+        request: reviewed,
+      });
+    } catch (err) {
+      logger.warn("failed to prepare site-license review notification", {
+        request_id: reviewed.id,
+        package_id: reviewed.package_id,
+        error: `${(err as Error)?.message ?? err}`,
+      });
+    }
+    return reviewed;
   } catch (err) {
     if (reservedInstitutionalClaim) {
       await revokeMembershipClaimIdentity({
