@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>From Notebook to Paper - CoCalc-AI Guide</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">A CoCalc-AI field guide for math grad students</p>
+          <h1>From Notebook to Paper</h1>
+          <p class="dek">
+            Polish a LaTeX draft, regenerate the evidence behind a result, and
+            keep every change reviewable with Codex, Jupyter, and project
+            history working in the same place.
+          </p>
+        </div>
+        <figure class="hero-figure" aria-label="Workflow sketch">
+          <svg viewBox="0 0 720 460" role="img">
+            <title>Paper workflow sketch</title>
+            <defs>
+              <linearGradient id="paperGlow" x1="0" x2="1" y1="0" y2="1">
+                <stop offset="0" stop-color="#eef7f4" />
+                <stop offset="1" stop-color="#f7efe2" />
+              </linearGradient>
+            </defs>
+            <rect
+              x="38"
+              y="38"
+              width="644"
+              height="384"
+              rx="28"
+              fill="url(#paperGlow)"
+            />
+            <path class="sketch" d="M160 115h170M160 152h240M160 189h132" />
+            <rect
+              class="paper"
+              x="105"
+              y="82"
+              width="278"
+              height="260"
+              rx="16"
+            />
+            <path class="paper-line" d="M145 245h190M145 276h150M145 307h170" />
+            <path class="arrow" d="M397 209c51-55 112-58 172-9" />
+            <path class="arrow" d="M548 257c-54 58-119 59-177 5" />
+            <circle class="node codex" cx="575" cy="190" r="62" />
+            <text class="node-label" x="575" y="184" text-anchor="middle">
+              Codex
+            </text>
+            <text class="node-note" x="575" y="210" text-anchor="middle">
+              review + patch
+            </text>
+            <rect
+              class="notebook"
+              x="445"
+              y="280"
+              width="178"
+              height="78"
+              rx="16"
+            />
+            <path class="notebook-line" d="M472 310h116M472 332h86" />
+            <text class="mini-label" x="534" y="386" text-anchor="middle">
+              Jupyter evidence
+            </text>
+          </svg>
+        </figure>
+      </section>
+
+      <nav class="toc" aria-label="Guide sections">
+        <a href="#setup">Set up the paper desk</a>
+        <a href="#draft">Ask for a structural read</a>
+        <a href="#evidence">Regenerate the evidence</a>
+        <a href="#patch">Apply precise edits</a>
+        <a href="#review">Review the trail</a>
+      </nav>
+
+      <section class="intro">
+        <p>
+          This guide follows Maya, a second-year math graduate student turning a
+          rough note into a paper draft. She already has the usual pieces:
+          <code>paper.tex</code>, a bibliography, a few figures, and a notebook
+          that produced one important table.
+        </p>
+        <p>
+          The point is not to let an agent write the mathematics. The point is
+          to keep the paper, computations, and review loop close enough that
+          good judgment stays cheap.
+        </p>
+      </section>
+
+      <section id="setup" class="chapter">
+        <div class="chapter-number">01</div>
+        <div class="chapter-copy">
+          <h2>Set up the paper desk</h2>
+          <p>
+            Maya opens one CoCalc project and creates a workspace rooted at
+            <code>/papers/spectral-gap</code>. That workspace becomes the
+            boundary for the files, terminals, notebooks, and Codex thread for
+            this paper.
+          </p>
+          <div class="callout">
+            <strong>Working rule:</strong> one workspace, one argument, one
+            review thread. Codex should see the same tree Maya is thinking
+            about.
+          </div>
+        </div>
+        <figure class="panel workspace-panel" aria-label="Workspace diagram">
+          <svg viewBox="0 0 660 320" role="img">
+            <title>Workspace with files and agent thread</title>
+            <rect
+              class="frame"
+              x="28"
+              y="32"
+              width="604"
+              height="248"
+              rx="20"
+            />
+            <rect class="side" x="55" y="62" width="170" height="188" rx="12" />
+            <path
+              class="file-line"
+              d="M82 94h105M82 126h86M82 158h118M82 190h96M82 222h112"
+            />
+            <rect
+              class="tab active"
+              x="250"
+              y="62"
+              width="132"
+              height="42"
+              rx="12"
+            />
+            <rect class="tab" x="396" y="62" width="132" height="42" rx="12" />
+            <rect
+              class="doc-body"
+              x="250"
+              y="122"
+              width="278"
+              height="128"
+              rx="14"
+            />
+            <path class="paper-line" d="M278 154h206M278 184h168M278 214h190" />
+            <circle class="agent-dot" cx="566" cy="92" r="27" />
+            <path class="thin" d="M548 128c-45 28-76 42-116 50" />
+            <text class="svg-text" x="140" y="274" text-anchor="middle">
+              paper files
+            </text>
+            <text class="svg-text" x="390" y="274" text-anchor="middle">
+              open draft
+            </text>
+            <text class="svg-text" x="566" y="142" text-anchor="middle">
+              agent
+            </text>
+          </svg>
+        </figure>
+      </section>
+
+      <section id="draft" class="chapter reverse">
+        <div class="chapter-number">02</div>
+        <div class="chapter-copy">
+          <h2>Ask for a structural read, not a rewrite</h2>
+          <p>
+            She opens the workspace Agent and asks Codex to read the draft like
+            a careful collaborator:
+          </p>
+          <blockquote>
+            Read <code>paper.tex</code> and tell me where the narrative breaks.
+            Do not rewrite the paper yet. Focus on missing definitions,
+            unsupported claims, theorem order, and places where notation changes
+            meaning.
+          </blockquote>
+          <p>
+            Codex can inspect the project and respond in the workspace thread.
+            Maya keeps the first pass diagnostic: it becomes the checklist for
+            the editing session.
+          </p>
+        </div>
+        <figure class="panel checklist-panel" aria-label="Checklist diagram">
+          <svg viewBox="0 0 660 330" role="img">
+            <title>Codex checklist</title>
+            <rect class="note" x="74" y="48" width="512" height="236" rx="18" />
+            <path class="check" d="M124 106l16 16 31-39" />
+            <path class="list-line" d="M198 106h294" />
+            <path class="check" d="M124 166l16 16 31-39" />
+            <path class="list-line" d="M198 166h240" />
+            <path class="check open" d="M124 226l16 16 31-39" />
+            <path class="list-line" d="M198 226h268" />
+          </svg>
+        </figure>
+      </section>
+
+      <section id="evidence" class="chapter">
+        <div class="chapter-number">03</div>
+        <div class="chapter-copy">
+          <h2>Regenerate the evidence</h2>
+          <p>
+            One theorem depends on a table from <code>experiments.ipynb</code>.
+            Maya opens the notebook beside the paper, reruns the relevant cells,
+            and asks the Agent to explain a failing cell instead of pasting an
+            error into a separate chat.
+          </p>
+          <p>
+            When the notebook produces a new table, Codex updates the LaTeX
+            around it: caption, label, paragraph reference, and the short
+            explanation after the table.
+          </p>
+        </div>
+        <figure
+          class="panel notebook-panel"
+          aria-label="Notebook to paper diagram"
+        >
+          <svg viewBox="0 0 660 340" role="img">
+            <title>Notebook output feeding paper</title>
+            <rect
+              class="notebook-big"
+              x="58"
+              y="58"
+              width="244"
+              height="206"
+              rx="18"
+            />
+            <rect
+              class="paper-small"
+              x="386"
+              y="58"
+              width="216"
+              height="206"
+              rx="18"
+            />
+            <path class="code-line" d="M88 104h150M88 132h120M88 160h164" />
+            <rect
+              class="table-cell"
+              x="88"
+              y="190"
+              width="156"
+              height="42"
+              rx="8"
+            />
+            <path
+              class="paper-line"
+              d="M418 104h134M418 134h104M418 164h142M418 210h118"
+            />
+            <path class="arrow strong" d="M313 162c28-18 44-18 69 0" />
+            <text class="svg-text" x="180" y="292" text-anchor="middle">
+              notebook result
+            </text>
+            <text class="svg-text" x="494" y="292" text-anchor="middle">
+              paper context
+            </text>
+          </svg>
+        </figure>
+      </section>
+
+      <section id="patch" class="chapter reverse">
+        <div class="chapter-number">04</div>
+        <div class="chapter-copy">
+          <h2>Apply precise edits</h2>
+          <p>
+            Now Maya asks for small patches, one at a time. A good prompt names
+            the file, the goal, and the constraint.
+          </p>
+          <blockquote>
+            In <code>paper.tex</code>, improve the paragraph before Theorem 3.2.
+            Keep the theorem statement unchanged. Add one sentence explaining
+            why the numerical evidence in Table 1 supports the conjecture, but
+            do not overclaim.
+          </blockquote>
+          <p>
+            This keeps Codex in the role of editor and build assistant. The math
+            remains Maya's responsibility; the patch is easy to inspect.
+          </p>
+        </div>
+        <figure class="panel patch-panel" aria-label="Patch diagram">
+          <svg viewBox="0 0 660 330" role="img">
+            <title>Reviewable patch</title>
+            <rect class="diff" x="76" y="58" width="508" height="214" rx="18" />
+            <path class="minus" d="M116 116h390" />
+            <path class="plus" d="M116 166h330" />
+            <path class="plus" d="M116 206h360" />
+            <text class="diff-mark" x="104" y="121">-</text>
+            <text class="diff-mark" x="104" y="171">+</text>
+            <text class="diff-mark" x="104" y="211">+</text>
+          </svg>
+        </figure>
+      </section>
+
+      <section class="strip">
+        <h2>The useful loop</h2>
+        <div class="loop">
+          <div>
+            <span>1</span>
+            <strong>Ask narrowly</strong>
+            <p>Name the file, the target section, and what must not change.</p>
+          </div>
+          <div>
+            <span>2</span>
+            <strong>Run the evidence</strong>
+            <p>Use Jupyter for the claims that depend on computation.</p>
+          </div>
+          <div>
+            <span>3</span>
+            <strong>Build the paper</strong>
+            <p>Let warnings and failed references become concrete tasks.</p>
+          </div>
+          <div>
+            <span>4</span>
+            <strong>Review the patch</strong>
+            <p>Accept only changes whose mathematical intent you can defend.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="review" class="chapter">
+        <div class="chapter-number">05</div>
+        <div class="chapter-copy">
+          <h2>Review the trail</h2>
+          <p>
+            Before sending the draft to her advisor, Maya reviews the edited
+            files and the Agent thread. Project history gives her a way to walk
+            back through the session instead of treating AI output as a pile of
+            anonymous text.
+          </p>
+          <p>
+            The final pass is deliberately boring: rebuild the PDF, check the
+            bibliography, open every figure, and read the statements aloud.
+          </p>
+        </div>
+        <figure
+          class="panel timeline-panel"
+          aria-label="Review timeline diagram"
+        >
+          <svg viewBox="0 0 660 320" role="img">
+            <title>Review timeline</title>
+            <path class="timeline" d="M104 166h452" />
+            <circle class="time-dot" cx="150" cy="166" r="17" />
+            <circle class="time-dot" cx="280" cy="166" r="17" />
+            <circle class="time-dot" cx="410" cy="166" r="17" />
+            <circle class="time-dot final" cx="540" cy="166" r="20" />
+            <text class="svg-text" x="150" y="218" text-anchor="middle">
+              draft
+            </text>
+            <text class="svg-text" x="280" y="218" text-anchor="middle">
+              notebook
+            </text>
+            <text class="svg-text" x="410" y="218" text-anchor="middle">
+              patch
+            </text>
+            <text class="svg-text" x="540" y="218" text-anchor="middle">
+              PDF
+            </text>
+          </svg>
+        </figure>
+      </section>
+
+      <section class="closing">
+        <h2>What changes about the work?</h2>
+        <p>
+          The paper is still written by a mathematician. The difference is that
+          the editing loop becomes local, inspectable, and reproducible: the
+          draft, computation, agent thread, terminal, PDF build, and project
+          history are all part of the same workspace.
+        </p>
+        <p>
+          CoCalc-AI is most useful when it shortens the distance between a
+          question and a checked change.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>
