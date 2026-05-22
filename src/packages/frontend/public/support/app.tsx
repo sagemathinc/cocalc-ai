@@ -7,10 +7,8 @@ import type { ReactNode } from "react";
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 
 import { Button, Flex, Typography } from "antd";
-import type { HistoricCounts, Stats } from "@cocalc/util/db-schema/stats";
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { EmptySection, fetchJson, LoadingSection } from "../common";
 import {
   PublicGrid,
   PublicPage,
@@ -19,7 +17,6 @@ import {
 import { navigatePublic } from "../navigation";
 import type { PublicSupportRoute, SupportView } from "./routes";
 import { COLORS, HELP_EMAIL, SITE_NAME } from "@cocalc/util/theme";
-import { formatDateTime } from "../news/utils";
 
 const { Paragraph } = Typography;
 
@@ -43,10 +40,6 @@ interface PublicSupportAppProps {
   initialRoute: PublicSupportRoute;
 }
 
-interface StatsPayload extends Partial<Stats> {
-  error?: string;
-}
-
 function appPath(path: string): string {
   const base = appBasePath === "/" ? "" : appBasePath;
   return `${base}${path}`;
@@ -60,8 +53,6 @@ function supportPath(view: SupportView): string {
       return appPath("/support/tickets");
     case "community":
       return appPath("/support/community");
-    case "status":
-      return appPath("/support/status");
     default:
       return appPath("/support");
   }
@@ -75,8 +66,6 @@ function titleForView(view: SupportView, siteName: string): string {
       return `${siteName} Support Tickets`;
     case "community":
       return `${siteName} Community Support`;
-    case "status":
-      return `${siteName} Status`;
     default:
       return `${siteName} Support`;
   }
@@ -183,12 +172,6 @@ function SupportIndex({
           </Button>
         </SupportCard>
         <SupportCard
-          description="See current activity and high-level public usage metrics."
-          title="System status"
-        >
-          <Button onClick={() => onNavigate("status")}>Open status</Button>
-        </SupportCard>
-        <SupportCard
           description="Browse user and admin documentation."
           title="Documentation"
         >
@@ -204,107 +187,6 @@ function SupportIndex({
             {helpEmail}
           </a>
         </SupportCard>
-      </PublicGrid>
-    </div>
-  );
-}
-
-function historicCount(
-  counts: HistoricCounts | undefined,
-  key: keyof HistoricCounts,
-): number {
-  const value = counts?.[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function StatusMetricCard({
-  detail,
-  title,
-  value,
-}: {
-  detail: string;
-  title: string;
-  value: string;
-}) {
-  return (
-    <PublicSection>
-      <div style={{ color: COLORS.GRAY, fontSize: "13px", fontWeight: 700 }}>
-        {title}
-      </div>
-      <div style={{ fontSize: "2rem", fontWeight: 700, lineHeight: 1.1 }}>
-        {value}
-      </div>
-      <Paragraph style={{ margin: 0 }}>{detail}</Paragraph>
-    </PublicSection>
-  );
-}
-
-function SupportStatusPage({ siteName }: { siteName: string }) {
-  const [loading, setLoading] = useState(true);
-  const [payload, setPayload] = useState<StatsPayload>({});
-
-  useEffect(() => {
-    let canceled = false;
-    void fetchJson<StatsPayload>(appPath("/stats"))
-      .then((value) => {
-        if (!canceled) setPayload(value ?? {});
-      })
-      .finally(() => {
-        if (!canceled) setLoading(false);
-      });
-    return () => {
-      canceled = true;
-    };
-  }, []);
-
-  if (loading) {
-    return <LoadingSection label="Loading system status…" />;
-  }
-
-  if (payload.error) {
-    return <EmptySection label={`Status unavailable: ${payload.error}`} />;
-  }
-
-  const connectedClients = (payload.hub_servers ?? []).reduce(
-    (sum, server) => sum + (server.clients ?? 0),
-    0,
-  );
-
-  return (
-    <div style={{ display: "grid", gap: 24 }}>
-      <PublicSection>
-        <Typography.Title level={3} style={{ margin: 0 }}>
-          Live activity snapshot
-        </Typography.Title>
-        <Paragraph style={{ margin: 0 }}>
-          This is the current high-level activity view for {siteName}. It is
-          intended as a public system monitor rather than a full admin console.
-        </Paragraph>
-        <Paragraph style={{ margin: 0 }}>
-          Last updated: {formatDateTime(payload.time)}
-        </Paragraph>
-      </PublicSection>
-      <PublicGrid columns={3}>
-        <StatusMetricCard
-          detail={`Active in 5 minutes: ${historicCount(payload.accounts_active, "5min")} · Active in 1 day: ${historicCount(payload.accounts_active, "1d")}`}
-          title="Accounts"
-          value={`${payload.accounts ?? 0}`}
-        />
-        <StatusMetricCard
-          detail={`Edited in 5 minutes: ${historicCount(payload.projects_edited, "5min")} · Edited in 1 day: ${historicCount(payload.projects_edited, "1d")}`}
-          title="Projects"
-          value={`${payload.projects ?? 0}`}
-        />
-        <StatusMetricCard
-          detail={`Free: ${payload.running_projects?.free ?? 0} · Member: ${payload.running_projects?.member ?? 0}`}
-          title="Running projects"
-          value={`${(payload.running_projects?.free ?? 0) + (payload.running_projects?.member ?? 0)}`}
-        />
-        <StatusMetricCard
-          detail={`Connected browser sessions: ${connectedClients}`}
-          title="Hub servers"
-          value={`${payload.hub_servers?.length ?? 0}`}
-        />
       </PublicGrid>
     </div>
   );
@@ -360,12 +242,6 @@ export default function PublicSupportApp({
           >
             Community
           </Button>
-          <Button
-            type={view === "status" ? "primary" : "default"}
-            onClick={() => navigate("status")}
-          >
-            Status
-          </Button>
         </Flex>
       ) : null}
       <div style={{ marginTop: 24 }}>
@@ -390,9 +266,6 @@ export default function PublicSupportApp({
           >
             <CommunityView />
           </Suspense>
-        ) : null}
-        {view === "status" ? (
-          <SupportStatusPage siteName={config.site_name ?? SITE_NAME} />
         ) : null}
       </div>
     </PublicPage>

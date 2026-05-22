@@ -33,7 +33,6 @@ import initProjectHostBootstrap from "./app/project-host-bootstrap";
 import initProjectHostSoftware from "./app/project-host-software";
 import initSelfHostConnector from "./app/self-host-connector";
 import initRootfsManifest from "./app/rootfs-manifest";
-import initStats from "./app/stats";
 import { getDatabase } from "./database";
 import initHttpServer from "./http";
 import initRobots from "./robots";
@@ -270,7 +269,6 @@ export default async function init(opts: Options): Promise<{
   initBlobUpload(router);
   initUpload(router);
   initCustomize(router, opts.isPersonal);
-  initStats(router);
   initLegacyCommerceRedirects(router);
   initLanding(router);
   initPublicAuth(router);

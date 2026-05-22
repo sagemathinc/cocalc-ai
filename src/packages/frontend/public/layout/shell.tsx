@@ -195,7 +195,6 @@ function getFooterColumns(config?: PublicConfig) {
           target: "_blank" as const,
         },
         { href: appPath("support"), label: "Support" },
-        { href: appPath("support/status"), label: "Status" },
       ],
       title: "Resources",
     },
