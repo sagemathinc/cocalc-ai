@@ -497,19 +497,13 @@ describe("MembershipPackageManager", () => {
         pools: expect.arrayContaining([
           expect.objectContaining({
             pool_name: "Students",
-            membership_class: "student",
+            membership_class: "member",
             requires_approval: false,
             allowed_domains: ["dept.example.edu", "example.edu"],
           }),
           expect.objectContaining({
             pool_name: "Instructors",
-            membership_class: "instructor",
-            requires_approval: true,
-            allowed_domains: ["dept.example.edu", "example.edu"],
-          }),
-          expect.objectContaining({
-            pool_name: "Researchers",
-            membership_class: "researcher",
+            membership_class: "pro",
             requires_approval: true,
             allowed_domains: ["dept.example.edu", "example.edu"],
           }),

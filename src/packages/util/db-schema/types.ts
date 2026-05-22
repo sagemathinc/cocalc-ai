@@ -350,6 +350,10 @@ export type MembershipTierSetFields =
 export type MembershipTierGetFields =
   | MembershipTierSetFields
   | "history"
+  | "subscription_count"
+  | "subscribed_account_count"
+  | "admin_assigned_count"
+  | "site_license_count"
   | "created"
   | "updated";
 

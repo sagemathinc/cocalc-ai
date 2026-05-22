@@ -68,6 +68,10 @@ Table({
           disabled: null,
           notes: null,
           history: null,
+          subscription_count: null,
+          subscribed_account_count: null,
+          admin_assigned_count: null,
+          site_license_count: null,
           created: null,
           updated: null,
         } as { [key in MembershipTierGetFields]: null },
@@ -145,6 +149,22 @@ Table({
     history: {
       type: "map",
       desc: "JSON array of previous versions of this tier.",
+    },
+    subscription_count: {
+      type: "number",
+      desc: "Number of active paid subscriptions using this tier.",
+    },
+    subscribed_account_count: {
+      type: "number",
+      desc: "Number of accounts with active paid subscriptions using this tier.",
+    },
+    admin_assigned_count: {
+      type: "number",
+      desc: "Number of active admin-assigned memberships using this tier.",
+    },
+    site_license_count: {
+      type: "number",
+      desc: "Number of active site licenses with pools using this tier.",
     },
     created: {
       type: "timestamp",

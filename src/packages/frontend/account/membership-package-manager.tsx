@@ -101,12 +101,6 @@ interface MembershipTierLike {
   disabled?: boolean;
 }
 
-const SITE_LICENSE_TEMPLATE_TIERS: MembershipTierLike[] = [
-  { id: "student", label: "Student" },
-  { id: "instructor", label: "Instructor" },
-  { id: "researcher", label: "Researcher" },
-];
-
 interface Props {
   tiers: MembershipTierLike[];
   onChanged?: () => void;
@@ -238,15 +232,33 @@ function getTeamSeatTiers(tiers: MembershipTierLike[]): MembershipTierLike[] {
     .sort((a, b) => (a.label ?? a.id).localeCompare(b.label ?? b.id));
 }
 
-function mergeTierOptions(
-  ...tierLists: MembershipTierLike[][]
+function getSiteLicenseProvisioningTiers(
+  tiers: MembershipTierLike[],
 ): MembershipTierLike[] {
-  const options = new Map<string, MembershipTierLike>();
-  for (const tier of tierLists.flat()) {
-    if (tier.disabled) continue;
-    options.set(tier.id, { ...options.get(tier.id), ...tier });
-  }
-  return Array.from(options.values());
+  return tiers
+    .filter(
+      (tier) => !tier.disabled && tier.id !== "free" && tier.id !== "admin",
+    )
+    .sort((a, b) => (a.label ?? a.id).localeCompare(b.label ?? b.id));
+}
+
+function findSiteLicenseTier({
+  tiers,
+  used,
+  keywords,
+  fallbackIndex,
+}: {
+  tiers: MembershipTierLike[];
+  used: Set<string>;
+  keywords: string[];
+  fallbackIndex: number;
+}): MembershipTierLike | undefined {
+  const available = tiers.filter((tier) => !used.has(tier.id));
+  const keywordMatch = available.find((tier) => {
+    const text = `${tier.id} ${tier.label ?? ""}`.toLowerCase();
+    return keywords.some((keyword) => text.includes(keyword));
+  });
+  return keywordMatch ?? available[fallbackIndex] ?? available[0];
 }
 
 function getPackageDomains(
@@ -2258,11 +2270,7 @@ function ProvisionSiteLicenseModal({
 }) {
   const provisionableTiers = useMemo(() => getTeamSeatTiers(tiers), [tiers]);
   const siteLicenseTierOptions = useMemo(
-    () =>
-      mergeTierOptions(
-        SITE_LICENSE_TEMPLATE_TIERS,
-        tiers.filter((tier) => !tier.disabled),
-      ),
+    () => getSiteLicenseProvisioningTiers(tiers),
     [tiers],
   );
   const [name, setName] = useState<string>("Campus site license");
@@ -2287,15 +2295,27 @@ function ProvisionSiteLicenseModal({
 
   useEffect(() => {
     if (!open) return;
-    const studentTier = siteLicenseTierOptions.find(
-      (tier) => tier.id === "student",
-    );
-    const instructorTier =
-      siteLicenseTierOptions.find((tier) => tier.id === "instructor") ??
-      siteLicenseTierOptions.find((tier) => tier.id === "pro");
-    const researcherTier =
-      siteLicenseTierOptions.find((tier) => tier.id === "researcher") ??
-      siteLicenseTierOptions.find((tier) => tier.id === "pro");
+    const usedTierIds = new Set<string>();
+    const studentTier = findSiteLicenseTier({
+      tiers: siteLicenseTierOptions,
+      used: usedTierIds,
+      keywords: ["student"],
+      fallbackIndex: 0,
+    });
+    if (studentTier) usedTierIds.add(studentTier.id);
+    const instructorTier = findSiteLicenseTier({
+      tiers: siteLicenseTierOptions,
+      used: usedTierIds,
+      keywords: ["instructor", "teacher", "faculty", "pro"],
+      fallbackIndex: 0,
+    });
+    if (instructorTier) usedTierIds.add(instructorTier.id);
+    const researcherTier = findSiteLicenseTier({
+      tiers: siteLicenseTierOptions,
+      used: usedTierIds,
+      keywords: ["research"],
+      fallbackIndex: 0,
+    });
     setName("Campus site license");
     setOrganizationName("Example University");
     setDomains([]);
@@ -2307,42 +2327,44 @@ function ProvisionSiteLicenseModal({
     setOveragePolicy("hard-cap");
     setStartsAt(null);
     setExpiresAt(null);
-    setPools(
-      [
-        {
-          pool_name: "Students",
-          membership_class: (studentTier?.id ?? "student") as MembershipClass,
-          seat_count: 5000,
-          requires_approval: false,
-          verification_policy: "email-domain" as SiteLicenseVerificationPolicy,
-          exclusive_group: "teaching",
-          affiliation_reverification_days: 180,
-          affiliation_reverification_grace_days: 30,
-        },
-        {
-          pool_name: "Instructors",
-          membership_class: (instructorTier?.id ??
-            "instructor") as MembershipClass,
-          seat_count: 200,
-          requires_approval: true,
-          verification_policy: "email-domain" as SiteLicenseVerificationPolicy,
-          exclusive_group: "teaching",
-          affiliation_reverification_days: 365,
-          affiliation_reverification_grace_days: 45,
-        },
-        {
-          pool_name: "Researchers",
-          membership_class: (researcherTier?.id ??
-            "researcher") as MembershipClass,
-          seat_count: 500,
-          requires_approval: true,
-          verification_policy: "email-domain" as SiteLicenseVerificationPolicy,
-          exclusive_group: "research",
-          affiliation_reverification_days: 365,
-          affiliation_reverification_grace_days: 45,
-        },
-      ].filter((pool) => !!pool.membership_class),
-    );
+    const defaultPools: SiteLicensePoolConfig[] = [];
+    if (studentTier) {
+      defaultPools.push({
+        pool_name: "Students",
+        membership_class: studentTier.id as MembershipClass,
+        seat_count: 5000,
+        requires_approval: false,
+        verification_policy: "email-domain",
+        exclusive_group: "teaching",
+        affiliation_reverification_days: 180,
+        affiliation_reverification_grace_days: 30,
+      });
+    }
+    if (instructorTier) {
+      defaultPools.push({
+        pool_name: "Instructors",
+        membership_class: instructorTier.id as MembershipClass,
+        seat_count: 200,
+        requires_approval: true,
+        verification_policy: "email-domain",
+        exclusive_group: "teaching",
+        affiliation_reverification_days: 365,
+        affiliation_reverification_grace_days: 45,
+      });
+    }
+    if (researcherTier) {
+      defaultPools.push({
+        pool_name: "Researchers",
+        membership_class: researcherTier.id as MembershipClass,
+        seat_count: 500,
+        requires_approval: true,
+        verification_policy: "email-domain",
+        exclusive_group: "research",
+        affiliation_reverification_days: 365,
+        affiliation_reverification_grace_days: 45,
+      });
+    }
+    setPools(defaultPools);
     setEditingPoolIndex(null);
     setSubmitting(false);
     setError("");

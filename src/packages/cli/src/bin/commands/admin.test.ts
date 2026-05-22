@@ -18,10 +18,12 @@ function adminDeps(overrides: Record<string, any> = {}) {
         hub: {
           system: {},
           messages: {},
+          db: {},
         },
       };
       Object.assign(ctx.hub.system, overrides.system ?? {});
       Object.assign(ctx.hub.messages, overrides.messages ?? {});
+      Object.assign(ctx.hub.db, overrides.db ?? {});
       return await fn(ctx);
     },
     resolveAccountByIdentifier: async (_ctx: unknown, identifier: string) => ({
@@ -267,6 +269,191 @@ test("admin acp-denials forwards filters to the hub report endpoint", async () =
     denial_limit: "queued_per_account",
     source: "chat",
   });
+});
+
+test("admin membership-tiers queries tier usage counts and formats rows", async () => {
+  let captured: any;
+  let formatted: any;
+  const program = new Command();
+  registerAdminCommand(program, {
+    ...adminDeps(),
+    withContext: async (_command: unknown, _label: string, fn: any) => {
+      formatted = await fn({
+        hub: {
+          db: {
+            userQuery: async (opts: any) => {
+              captured = opts;
+              return {
+                membership_tiers: [
+                  {
+                    id: "student",
+                    label: "Student",
+                    store_visible: true,
+                    course_store_visible: false,
+                    priority: 10,
+                    price_monthly: "5",
+                    price_yearly: "50",
+                    course_price: "20",
+                    course_duration_days: 180,
+                    course_grace_days: 7,
+                    disabled: false,
+                    subscription_count: "3",
+                    subscribed_account_count: "2",
+                    admin_assigned_count: "4",
+                    site_license_count: "1",
+                    updated: "2026-05-22T00:00:00.000Z",
+                  },
+                ],
+              };
+            },
+          },
+        },
+      });
+    },
+  } as any);
+
+  await program.parseAsync(["node", "test", "admin", "membership-tiers"]);
+
+  assert.deepEqual(captured.query.membership_tiers, {
+    id: "*",
+    label: null,
+    store_visible: null,
+    course_store_visible: null,
+    priority: null,
+    price_monthly: null,
+    price_yearly: null,
+    course_price: null,
+    course_duration_days: null,
+    course_grace_days: null,
+    disabled: null,
+    subscription_count: null,
+    subscribed_account_count: null,
+    admin_assigned_count: null,
+    site_license_count: null,
+    updated: null,
+  });
+  assert.deepEqual(formatted, [
+    {
+      id: "student",
+      label: "Student",
+      monthly: "$5.00",
+      yearly: "$50.00",
+      subs: 3,
+      accounts: 2,
+      admin: 4,
+      licenses: 1,
+      active: "yes",
+    },
+  ]);
+});
+
+test("admin membership-tiers --wide includes diagnostic columns", async () => {
+  let formatted: any;
+  const program = new Command();
+  registerAdminCommand(program, {
+    ...adminDeps(),
+    withContext: async (_command: unknown, _label: string, fn: any) => {
+      formatted = await fn({
+        hub: {
+          db: {
+            userQuery: async () => ({
+              membership_tiers: [
+                {
+                  id: "student",
+                  label: "Student",
+                  store_visible: true,
+                  course_store_visible: false,
+                  priority: 10,
+                  price_monthly: "5",
+                  price_yearly: "50",
+                  course_price: "20",
+                  course_duration_days: 180,
+                  course_grace_days: 7,
+                  disabled: false,
+                  subscription_count: "3",
+                  subscribed_account_count: "2",
+                  admin_assigned_count: "4",
+                  site_license_count: "1",
+                  updated: "2026-05-22T00:00:00.000Z",
+                },
+              ],
+            }),
+          },
+        },
+      });
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "membership-tiers",
+    "--wide",
+  ]);
+
+  assert.deepEqual(formatted, [
+    {
+      id: "student",
+      label: "Student",
+      visible: "yes",
+      course: "no",
+      priority: 10,
+      monthly: "$5.00",
+      yearly: "$50.00",
+      course_price: "$20.00",
+      course_days: 180,
+      grace_days: 7,
+      subscriptions: 3,
+      subscribed_accounts: 2,
+      admin_assigned: 4,
+      site_licenses: 1,
+      active: "yes",
+      updated: "2026-05-22T00:00:00.000Z",
+    },
+  ]);
+});
+
+test("admin membership-tiers can emit prometheus gauges", async () => {
+  let output = "";
+  const program = new Command();
+  registerAdminCommand(program, {
+    ...adminDeps(),
+    withContext: async (_command: unknown, _label: string, fn: any) => {
+      output = await fn({
+        hub: {
+          db: {
+            userQuery: async () => ({
+              membership_tiers: [
+                {
+                  id: "instructor",
+                  label: "Instructor",
+                  subscription_count: 8,
+                  subscribed_account_count: 7,
+                  admin_assigned_count: 2,
+                  site_license_count: 3,
+                },
+              ],
+            }),
+          },
+        },
+      });
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "membership-tiers",
+    "--prometheus",
+  ]);
+
+  assert.match(output, /cocalc_membership_tier_subscriptions/);
+  assert.match(output, /tier_id="instructor"/);
+  assert.match(output, /cocalc_membership_tier_subscribed_accounts.* 7/);
+  assert.match(output, /cocalc_membership_tier_admin_assigned.* 2/);
+  assert.match(output, /cocalc_membership_tier_site_licenses.* 3/);
 });
 
 test("admin acp-denials can emit prometheus text", async () => {
