@@ -19,7 +19,7 @@ The column separate is the first occurence in the first line of
 one of '=' or ':'.  Selected lines that don't contain either symbol
 are ignored.
 
-NOTE: This is a nonstandard extension motivated mostly by coffeescript.
+NOTE: This is a nonstandard extension motivated mostly by assignment-heavy languages.
 **Thus consider it on the way to being deprecated.**  Prettier and its
 ilk solves the same sort of problem for all the languages we plan to
 use longterm in a vastly better way.

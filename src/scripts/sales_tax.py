@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Prints a CoffeeScript map from zip codes to tax rates based on
+# Prints a TypeScript object initializer from zip codes to tax rates based on
 # http://dor.wa.gov/Content/FindTaxesAndRates/RetailSalesTax/DestinationBased/ClientInterface.aspx
 # only for the State of Washington.
 # Output is large. Pipe into a file.

@@ -104,7 +104,7 @@ export class FileSystemClient {
   // TODO and HUGE AWARNING: Despite this function being async, it DOES NOT
   // RETURN ANYTHING AND DOES NOT THROW EXCEPTIONS!  Just use it like any
   // other old cb function.  Todo: rewrite this and anything that uses it.
-  // This is just a halfway step toward rewriting project away from callbacks and coffeescript.
+  // This is just a halfway step toward rewriting project away from callbacks.
   path_read = async (opts: {
     path: string;
     maxsize_MB?: number; // in megabytes; if given and file would be larger than this, then cb(err)

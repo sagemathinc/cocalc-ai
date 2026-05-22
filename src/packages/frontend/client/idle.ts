@@ -59,7 +59,7 @@ export class IdleClient {
     If so, the user is 'idle'.
     To keep 'active', call webapp_client.idle_reset as often as you like:
     A document.body event listener here and one for each
-    jupyter iframe.body (see jupyter.coffee).
+    jupyter iframe.body.
     */
 
     this.idle_reset();

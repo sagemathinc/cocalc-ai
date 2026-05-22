@@ -4,7 +4,7 @@
  */
 
 // RECENT_TIMES = these times in minutes are used for active/recently edited
-// projects and accounts in postgres-server-queries.coffee's get_stats.
+// projects and accounts.
 // This translates the semantic meanings to the keys used in the DB, also
 // prevents typos!
 

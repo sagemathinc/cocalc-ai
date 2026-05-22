@@ -44,7 +44,7 @@ export function init() {
       }
     }
   }
-  // loading a possible target is done after restoring a session -- see session.coffee
+  // Loading a possible target is done after restoring a session.
 
   // Listen for pushed sign_in events from the server.  This is one way that
   // the sign_in function above can be activated, but not the only way.

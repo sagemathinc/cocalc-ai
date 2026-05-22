@@ -1985,7 +1985,7 @@ export function seconds2hm(secs: number, longform: boolean = false): string {
   return seconds2hms(secs, longform, false);
 }
 
-// dear future developer: look into test/misc-test.coffee to see how the expected output is defined.
+// dear future developer: look into test/misc-test.test.ts to see how the expected output is defined.
 export function seconds2hms(
   secs: number,
   longform: boolean = false,

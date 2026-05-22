@@ -228,8 +228,7 @@ message({
 
 // This message tells the client to execute the given Javascript code
 // in the browser.  (For safety, the client may choose to ignore this
-// message.)  If coffeescript==true, then the code is assumed to be
-// coffeescript and is first compiled to Javascript.  This message is
+// message.)  This message is
 // "out of band", i.e., not meant to be part of any particular output
 // cell.  That is why there is no id key.
 
@@ -239,7 +238,6 @@ message({
   session_uuid: undefined, // set by the hub, since sage_server doesn't (need to) know the session_uuid.
   code: required,
   obj: undefined,
-  coffeescript: false,
   cell_id: undefined,
 }); // if set, eval scope contains an object cell that refers to the cell in the worksheet with this id.
 
