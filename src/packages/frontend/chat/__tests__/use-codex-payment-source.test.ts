@@ -13,6 +13,9 @@ describe("lite codex payment source labels", () => {
       getCodexPaymentSourceTooltip,
     } = require("../use-codex-payment-source");
 
+    expect(getCodexPaymentSourceShortLabel(undefined)).toBe("Unknown");
+    expect(getCodexPaymentSourceLongLabel(undefined)).toBe("Unknown source");
+
     expect(getCodexPaymentSourceShortLabel("shared-home")).toBe(
       "Local Codex auth",
     );

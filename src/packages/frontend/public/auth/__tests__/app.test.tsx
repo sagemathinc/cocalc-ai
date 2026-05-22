@@ -1,16 +1,28 @@
 /** @jest-environment jsdom */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import api from "@cocalc/frontend/client/api";
-import { postAuthApi, signOutAuthSession } from "@cocalc/frontend/auth/api";
+import {
+  isMfaRequiredAuthResponse,
+  postAuthApi,
+  signOutAuthSession,
+} from "@cocalc/frontend/auth/api";
 import type { PublicConfig } from "@cocalc/frontend/public/common";
 import PublicAuthApp, { getPublicAuthRouteFromPath } from "../app";
 import { getPublicAuthRedirectTargetFromSearch } from "../routes";
+import { resolveAuthRedirectPath } from "../forms";
 
 jest.mock("@cocalc/frontend/client/api", () => jest.fn());
 jest.mock("@cocalc/frontend/auth/api", () => ({
   postAuthApi: jest.fn(),
   signOutAuthSession: jest.fn(),
+  isMfaRequiredAuthResponse: jest.fn(() => false),
   isWrongBayAuthResponse: jest.fn(() => false),
   retryAuthOnHomeBay: jest.fn(),
 }));
@@ -18,6 +30,7 @@ jest.mock("@cocalc/frontend/auth/api", () => ({
 const mockedApi = jest.mocked(api);
 const mockedPostAuthApi = jest.mocked(postAuthApi);
 const mockedSignOutAuthSession = jest.mocked(signOutAuthSession);
+const mockedIsMfaRequiredAuthResponse = jest.mocked(isMfaRequiredAuthResponse);
 const config = (overrides: Partial<PublicConfig> = {}): PublicConfig => ({
   site_name: "Launchpad",
   ...overrides,
@@ -43,6 +56,8 @@ beforeEach(() => {
   mockedApi.mockReset();
   mockedPostAuthApi.mockReset();
   mockedSignOutAuthSession.mockReset();
+  mockedIsMfaRequiredAuthResponse.mockReset();
+  mockedIsMfaRequiredAuthResponse.mockReturnValue(false);
 });
 
 describe("getPublicAuthRouteFromPath", () => {
@@ -154,6 +169,16 @@ describe("getPublicAuthRedirectTargetFromSearch", () => {
 });
 
 describe("PublicAuthApp", () => {
+  it("uses projects as the default post-auth redirect target", () => {
+    expect(resolveAuthRedirectPath()).toBe("/projects");
+    expect(resolveAuthRedirectPath("/projects/project-id")).toBe(
+      "/projects/project-id",
+    );
+    expect(resolveAuthRedirectPath(() => "/projects/project-id/files")).toBe(
+      "/projects/project-id/files",
+    );
+  });
+
   it("renders the sign-up view without the app redux shell", async () => {
     mockedApi.mockResolvedValueOnce(true);
 
@@ -300,6 +325,50 @@ describe("PublicAuthApp", () => {
       true,
     );
     expect(mockedPostAuthApi).not.toHaveBeenCalled();
+  });
+
+  it("keeps passkey selection visually separate from passkey submission", async () => {
+    mockedApi.mockResolvedValue({
+      email: "ada@example.com",
+      password_allowed: true,
+      sso_required: false,
+    });
+    mockedIsMfaRequiredAuthResponse.mockImplementation(
+      (value: unknown): value is any =>
+        !!value && typeof value === "object" && (value as any).mfa_required,
+    );
+    mockedPostAuthApi.mockResolvedValueOnce({
+      mfa_required: true,
+      challenge_id: "challenge-1",
+      methods: ["passkey", "totp"],
+      home_bay_id: "bay-1",
+    } as any);
+
+    render(
+      <PublicAuthApp
+        config={config()}
+        initialRoute={{ kind: "auth-form", view: "sign-in" }}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("you@example.com"), {
+      target: { value: "ada@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Password"), {
+      target: { value: "correct horse battery staple" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    const chooser = await screen.findByRole("group", {
+      name: "Choose second factor method",
+    });
+    expect(within(chooser).getByRole("button", { name: "Passkey" })).not.toBe(
+      null,
+    );
+    expect(screen.getByRole("button", { name: "Use passkey" })).not.toBeNull();
+    expect(
+      within(chooser).queryByRole("button", { name: "Use passkey" }),
+    ).toBeNull();
   });
 
   it("renders an SSO second-factor challenge route", async () => {

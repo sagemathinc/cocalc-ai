@@ -27,7 +27,7 @@ function deferred<T>() {
 }
 
 function TestComponent({ projectId }: { projectId?: string }) {
-  const { paymentSource, error, loading } = useCodexPaymentSource({
+  const { paymentSource, error, loading, refresh } = useCodexPaymentSource({
     projectId,
     enabled: true,
     pollMs: 60_000,
@@ -37,6 +37,7 @@ function TestComponent({ projectId }: { projectId?: string }) {
       <span data-testid="source">{paymentSource?.source ?? ""}</span>
       <span data-testid="error">{error}</span>
       <span data-testid="loading">{loading ? "yes" : "no"}</span>
+      <button onClick={refresh}>refresh</button>
     </div>
   );
 }
@@ -76,5 +77,26 @@ describe("useCodexPaymentSource", () => {
     await waitFor(() => {
       expect(screen.getByTestId("source").textContent).toBe("project-api-key");
     });
+  });
+
+  it("keeps the last known source during a transient refresh failure", async () => {
+    getCodexPaymentSourceMock
+      .mockResolvedValueOnce({ source: "subscription" })
+      .mockRejectedValueOnce(new Error("network down"));
+
+    render(<TestComponent projectId="project-transient" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("source").textContent).toBe("subscription");
+    });
+
+    await act(async () => {
+      screen.getByRole("button", { name: "refresh" }).click();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("error").textContent).toContain("network down");
+    });
+    expect(screen.getByTestId("source").textContent).toBe("subscription");
   });
 });

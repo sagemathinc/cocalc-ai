@@ -1,5 +1,6 @@
 import {
   ensureProjectRunningForCodex,
+  isCodexPaymentSourceDefinitelyUnconfigured,
   isCodexPaymentSourceUsable,
   isCodexSubmitTarget,
 } from "../codex-submit-preflight";
@@ -15,6 +16,18 @@ describe("Codex submit preflight", () => {
     expect(isCodexPaymentSourceUsable({ source: "subscription" } as any)).toBe(
       true,
     );
+  });
+
+  it("only blocks submit preflight when the source is definitely unconfigured", () => {
+    expect(isCodexPaymentSourceDefinitelyUnconfigured(undefined)).toBe(false);
+    expect(
+      isCodexPaymentSourceDefinitelyUnconfigured({ source: "none" } as any),
+    ).toBe(true);
+    expect(
+      isCodexPaymentSourceDefinitelyUnconfigured({
+        source: "subscription",
+      } as any),
+    ).toBe(false);
   });
 
   it("detects new and existing Codex thread sends", () => {

@@ -98,7 +98,7 @@ import {
 import { CodexPaymentCredentialsModal } from "./codex";
 import {
   ensureProjectRunningForCodex,
-  isCodexPaymentSourceUsable,
+  isCodexPaymentSourceDefinitelyUnconfigured,
   isCodexSubmitTarget,
 } from "./codex-submit-preflight";
 import { getProjectStartPolicyBlockFromError } from "@cocalc/frontend/projects/runtime-start-policy";
@@ -1443,7 +1443,10 @@ export function ChatPanel({
         existingThreadMetadata?.agent_model ??
         existingThreadMetadata?.acp_config?.model,
     });
-    if (isCodexSubmit && !isCodexPaymentSourceUsable(codexPaymentSource)) {
+    if (
+      isCodexSubmit &&
+      isCodexPaymentSourceDefinitelyUnconfigured(codexPaymentSource)
+    ) {
       refreshCodexPaymentSource?.();
       setCodexPaymentConfigOpen(true);
       return;
