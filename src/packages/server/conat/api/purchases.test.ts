@@ -771,8 +771,10 @@ describe("purchases membership packages", () => {
       setSiteLicenseManager,
       removeSiteLicenseManager,
     } = await import("./purchases");
+    getBrowserAuthSessionHashMock.mockReturnValueOnce("fresh-session-1");
     await updateSiteLicense({
       account_id: "manager-1",
+      browser_id: "browser-1",
       site_license_id: "license-remote-1",
       name: "Updated",
       allowed_domains: ["Example.EDU"],
@@ -797,6 +799,15 @@ describe("purchases membership packages", () => {
         allowed_domains: ["example.edu"],
       }),
     );
+    expect(getBrowserAuthSessionHashMock).toHaveBeenCalledWith({
+      account_id: "manager-1",
+      browser_id: "browser-1",
+    });
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "manager-1",
+      session_hash: "fresh-session-1",
+      allow_actor_impersonation: true,
+    });
     expect(interBaySetSiteLicenseManagerMock).toHaveBeenCalledWith({
       actor_account_id: "manager-1",
       site_license_id: "license-remote-1",

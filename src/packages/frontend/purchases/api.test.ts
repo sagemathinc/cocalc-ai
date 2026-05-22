@@ -4,6 +4,7 @@
  */
 
 const adminProvisionSiteLicense = jest.fn();
+const updateSiteLicense = jest.fn();
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
@@ -13,6 +14,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
         purchases: {
           adminProvisionSiteLicense: (...args: any[]) =>
             adminProvisionSiteLicense(...args),
+          updateSiteLicense: (...args: any[]) => updateSiteLicense(...args),
         },
       },
     },
@@ -49,5 +51,21 @@ describe("purchases api", () => {
         name: "Campus",
       }),
     );
+  });
+
+  it("passes browser_id when updating a site license", async () => {
+    updateSiteLicense.mockResolvedValue({ site_license: { id: "s1" } });
+    const { updateSiteLicense: update } = await import("./api");
+
+    await update({
+      site_license_id: "s1",
+      name: "Updated Campus",
+    });
+
+    expect(updateSiteLicense).toHaveBeenCalledWith({
+      browser_id: "browser-1",
+      site_license_id: "s1",
+      name: "Updated Campus",
+    });
   });
 });

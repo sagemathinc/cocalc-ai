@@ -554,7 +554,13 @@ export async function updateSiteLicense(opts: {
   starts_at?: Date | string | null;
   expires_at?: Date | string | null;
 }): Promise<SiteLicenseOverview> {
-  return await (await getPurchasesHubRpc()).updateSiteLicense(opts);
+  const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+  return await (
+    await getPurchasesHubRpc()
+  ).updateSiteLicense({
+    ...opts,
+    browser_id: webapp_client.browser_id,
+  });
 }
 
 export async function setSiteLicenseManager(opts: {

@@ -876,6 +876,8 @@ export async function getSiteLicenseOverview({
 
 export async function updateSiteLicense({
   account_id,
+  browser_id,
+  session_hash,
   site_license_id,
   name,
   organization_name,
@@ -889,6 +891,8 @@ export async function updateSiteLicense({
   expires_at,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
   site_license_id?: string;
   name?: string;
   organization_name?: string;
@@ -906,6 +910,11 @@ export async function updateSiteLicense({
   if (!siteLicenseId) {
     throw Error("site_license_id required");
   }
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+  });
   const opts = {
     actor_account_id: actorId,
     site_license_id: siteLicenseId,
