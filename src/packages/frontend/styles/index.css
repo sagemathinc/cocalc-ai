@@ -1,4 +1,3 @@
-@import "./colors.css";
 @import "./codemirror_plugins.css";
 @import "./bootstrap.css";
 @import "./idle.css";
@@ -20,4 +19,5 @@
 @import "./account-button.css";
 @import "./admin/style.css";
 @import "./antd_fix.css";
+@import "./colors.css";
 @import "./index-base.css";

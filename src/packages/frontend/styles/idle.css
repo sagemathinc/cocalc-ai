@@ -1,6 +1,3 @@
-@charset /* *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
- * *  License: MS-RSL – see LICENSE.md for details
- * */
 #cocalc-idle-notification {
   z-index: 9999;
   position: fixed;
