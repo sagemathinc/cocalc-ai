@@ -50,7 +50,6 @@ import bannerPlugin from "./plugins/banner";
 import chunkStatsPlugin from "./plugins/chunk-stats";
 import cleanPlugin from "./plugins/clean";
 import defineConstantsPlugin from "./plugins/define-constants";
-import hotModuleReplacementPlugin, { getHotMiddlewareUrl } from "./plugins/hot";
 
 const logger = getLogger("rspack.config");
 
@@ -58,10 +57,6 @@ const logger = getLogger("rspack.config");
 // relative to "src/packages/static".
 function resolve(...args): string {
   return path_resolve(__dirname, "..", "..", ...args);
-}
-
-interface Options {
-  middleware?: boolean;
 }
 
 // NOTE: the JSDoc below is necessary, because otherwise the import in rspack.config.js causes
@@ -72,11 +67,9 @@ interface Options {
 /**
  * Gets the configuration for RSPack.
  *
- * @param {Object} [options={}] - The options for configuring RSPack.
- * @param {boolean} [options.middleware] - Indicates whether to enable middleware.
  * @returns {Configuration} The RSPack configuration object.
  */
-export default function getConfig({ middleware }: Options = {}): Configuration {
+export default function getConfig(): Configuration {
   // Determine the git revision hash:
   let COCALC_GIT_REVISION;
   try {
@@ -102,8 +95,6 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
   const frontendSourceFingerprint = getFrontendSourceFingerprintSync({
     now: date,
   });
-  const RSPACK_DEV_SERVER =
-    NODE_ENV != "production" && !process.env.NO_RSPACK_DEV_SERVER;
 
   // output build variables
   console.log(`SMC_VERSION         = ${SMC_VERSION}`);
@@ -111,7 +102,6 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
   console.log(`NODE_ENV            = ${NODE_ENV}`);
   console.log(`MEASURE             = ${MEASURE}`);
   console.log(`OUTPUT              = ${OUTPUT}`);
-  console.log(`RSPACK_DEV_SERVER   = ${RSPACK_DEV_SERVER}`);
   console.log(
     `FRONTEND_BUILD_FP    = ${frontendSourceFingerprint.fingerprint}`,
   );
@@ -139,9 +129,7 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
     COCALC_LICENSE,
   });
 
-  if (!middleware) {
-    cleanPlugin(registerPlugin, OUTPUT);
-  }
+  cleanPlugin(registerPlugin, OUTPUT);
 
   appLoaderPlugin(registerPlugin, PRODMODE, TITLE);
 
@@ -191,84 +179,51 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
     chunkStatsPlugin(registerPlugin);
   }
 
-  if (RSPACK_DEV_SERVER) {
-    hotModuleReplacementPlugin(registerPlugin);
-  }
-
-  function insertHotMiddlewareUrl(v: string[]): string[] {
-    const hotMiddlewareUrl = getHotMiddlewareUrl();
-    if (RSPACK_DEV_SERVER) {
-      v.unshift(hotMiddlewareUrl);
-    }
-    return v;
-  }
-
   const config: Configuration = {
-    // this makes things 10x slower:
-    //cache: RSPACK_DEV_SERVER || PRODMODE ? false : true,
     ignoreWarnings: [
       /Failed to parse source map/,
       /formItemNode = ReactDOM.findDOMNode/,
     ],
     devtool: PRODMODE ? undefined : "eval-cheap-module-source-map",
-    profile: MEASURE_ENABLED,
     mode: PRODMODE
       ? ("production" as "production")
       : ("development" as "development"),
     entry: {
-      load: insertHotMiddlewareUrl([resolve("dist-ts/src/load.js")]),
+      load: [resolve("dist-ts/src/load.js")],
       app: {
-        import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-cocalc.js"),
-        ]),
+        import: [resolve("dist-ts/src/webapp-cocalc.js")],
         dependOn: "load",
       },
       embed: {
-        import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-embed.js"),
-        ]),
+        import: [resolve("dist-ts/src/webapp-embed.js")],
         dependOn: "load",
       },
       "public-viewer": {
-        import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-public-viewer.js"),
-        ]),
+        import: [resolve("dist-ts/src/webapp-public-viewer.js")],
         dependOn: "load",
       },
       "public-viewer-md": {
-        import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-public-viewer-markdown.js"),
-        ]),
+        import: [resolve("dist-ts/src/webapp-public-viewer-markdown.js")],
         dependOn: "load",
       },
       "public-viewer-ipynb": {
-        import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-public-viewer-ipynb.js"),
-        ]),
+        import: [resolve("dist-ts/src/webapp-public-viewer-ipynb.js")],
         dependOn: "load",
       },
       "public-viewer-board": {
-        import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-public-viewer-board.js"),
-        ]),
+        import: [resolve("dist-ts/src/webapp-public-viewer-board.js")],
         dependOn: "load",
       },
       "public-viewer-slides": {
-        import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-public-viewer-slides.js"),
-        ]),
+        import: [resolve("dist-ts/src/webapp-public-viewer-slides.js")],
         dependOn: "load",
       },
       "public-viewer-chat": {
-        import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-public-viewer-chat.js"),
-        ]),
+        import: [resolve("dist-ts/src/webapp-public-viewer-chat.js")],
         dependOn: "load",
       },
       public: {
-        import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-public.js"),
-        ]),
+        import: [resolve("dist-ts/src/webapp-public.js")],
         dependOn: "load",
       },
     },
@@ -281,7 +236,7 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
       filename: PRODMODE ? "[name]-[chunkhash].js" : "[id]-[chunkhash].js",
       chunkFilename: PRODMODE ? "[chunkhash].js" : "[id]-[chunkhash].js",
     },
-    module: moduleRules(RSPACK_DEV_SERVER),
+    module: moduleRules(),
     resolve: {
       alias: {
         // @cocalc/frontend  alias so we can write `import "@cocalc/frontend/..."`
@@ -312,9 +267,6 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
       modules: [resolve("node_modules")],
     },
     plugins,
-    devServer: {
-      hot: true,
-    },
   };
 
   logger.debug(config);

@@ -470,82 +470,46 @@ async function initStatic(router) {
       express.static(publicAssetsPath, { setHeaders: cacheLongTerm }),
     );
   }
-  let compiler: any = null;
-  if (
-    process.env.NODE_ENV != "production" &&
-    !process.env.NO_RSPACK_DEV_SERVER
-  ) {
-    // Try to use the integrated rspack dev server, if it is installed.
-    // It might not be installed at all, e.g., in production, and there
-    // @cocalc/static can't even be imported.
-    try {
-      const rspackCompiler = (
-        lazyRequire("@cocalc/static/rspack-compiler") as {
-          rspackCompiler?: () => any;
-        }
-      ).rspackCompiler;
-      if (typeof rspackCompiler === "function") {
-        compiler = rspackCompiler();
-      }
-    } catch (err) {
-      console.warn("rspack is not available", err);
-    }
-  }
-
-  if (compiler != null) {
-    console.warn(
-      "\n-----------\n| RSPACK: Running rspack dev server for frontend /static app.\n| Set env variable NO_RSPACK_DEV_SERVER to disable.\n-----------\n",
-    );
-    const webpackDevMiddleware = lazyRequire("webpack-dev-middleware") as any;
-    const webpackHotMiddleware = lazyRequire("webpack-hot-middleware") as any;
-    router.use(
-      "/static",
-      staticCompression,
-      webpackDevMiddleware(compiler, {}),
-    );
-    router.use("/static", webpackHotMiddleware(compiler, {}));
-  } else {
-    router.use(
-      "/static/app.html",
-      staticCompression,
-      express.static(join(staticPath, "app.html"), {
-        setHeaders: cacheShortTerm,
-      }),
-    );
-    router.use(
-      "/static/embed.html",
-      staticCompression,
-      express.static(join(staticPath, "embed.html"), {
-        setHeaders: cacheShortTerm,
-      }),
-    );
-    router.use(
-      [
-        "/static/public-viewer.html",
-        "/static/public-viewer-md.html",
-        "/static/public-viewer-ipynb.html",
-        "/static/public-viewer-board.html",
-        "/static/public-viewer-slides.html",
-        "/static/public-viewer-chat.html",
-      ],
-      staticCompression,
-      express.static(staticPath, {
-        setHeaders: setPublicViewerShellHeaders,
-      }),
-    );
-    router.use(
-      "/static/public.html",
-      staticCompression,
-      express.static(join(staticPath, "public.html"), {
-        setHeaders: cacheShortTerm,
-      }),
-    );
-    router.use(
-      "/static",
-      staticCompression,
-      express.static(staticPath, { setHeaders: cacheLongTerm }),
-    );
-  }
+  router.use(
+    "/static/app.html",
+    staticCompression,
+    express.static(join(staticPath, "app.html"), {
+      setHeaders: cacheShortTerm,
+    }),
+  );
+  router.use(
+    "/static/embed.html",
+    staticCompression,
+    express.static(join(staticPath, "embed.html"), {
+      setHeaders: cacheShortTerm,
+    }),
+  );
+  router.use(
+    [
+      "/static/public-viewer.html",
+      "/static/public-viewer-md.html",
+      "/static/public-viewer-ipynb.html",
+      "/static/public-viewer-board.html",
+      "/static/public-viewer-slides.html",
+      "/static/public-viewer-chat.html",
+    ],
+    staticCompression,
+    express.static(staticPath, {
+      setHeaders: setPublicViewerShellHeaders,
+    }),
+  );
+  router.use(
+    "/static/public.html",
+    staticCompression,
+    express.static(join(staticPath, "public.html"), {
+      setHeaders: cacheShortTerm,
+    }),
+  );
+  router.use(
+    "/static",
+    staticCompression,
+    express.static(staticPath, { setHeaders: cacheLongTerm }),
+  );
 
   // Also, immediately 404 if anything else under static is requested
   // which isn't handled above, rather than passing this on to the next app
