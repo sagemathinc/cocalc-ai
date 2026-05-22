@@ -528,6 +528,30 @@ function formatMembershipTierRow(row: MembershipTierRow) {
   };
 }
 
+function formatMembershipTierCompactRow(row: MembershipTierRow) {
+  return {
+    id: row.id ?? "",
+    label: row.label ?? "",
+    monthly: formatCurrencyValue(row.price_monthly),
+    yearly: formatCurrencyValue(row.price_yearly),
+    subs: numericCount(row.subscription_count),
+    accounts: numericCount(row.subscribed_account_count),
+    admin: numericCount(row.admin_assigned_count),
+    licenses: numericCount(row.site_license_count),
+    active: row.disabled ? "no" : "yes",
+  };
+}
+
+function sortMembershipTierRows(
+  rows: MembershipTierRow[],
+): MembershipTierRow[] {
+  return [...rows].sort((a, b) => {
+    const priorityDelta = Number(b.priority ?? 0) - Number(a.priority ?? 0);
+    if (priorityDelta !== 0) return priorityDelta;
+    return `${a.id ?? ""}`.localeCompare(`${b.id ?? ""}`);
+  });
+}
+
 function formatMembershipTiersPrometheus(rows: MembershipTierRow[]): string {
   const lines = [
     "# HELP cocalc_membership_tier_subscriptions Active membership subscription records by tier.",
@@ -880,21 +904,34 @@ export function registerAdminCommand(
       "--prometheus",
       "emit Prometheus text exposition for command-based scraping",
     )
-    .action(async (opts: { prometheus?: boolean }, command: Command) => {
-      await withContext(command, "admin membership-tiers", async (ctx) => {
-        const result = (await ctx.hub.db.userQuery({
-          query: {
-            membership_tiers: MEMBERSHIP_TIER_FIELDS,
-          },
-          options: [],
-        })) as { membership_tiers?: MembershipTierRow[] };
-        const rows = result.membership_tiers ?? [];
-        if (opts.prometheus) {
-          return formatMembershipTiersPrometheus(rows);
-        }
-        return rows.map(formatMembershipTierRow);
-      });
-    });
+    .option("--wide", "show all tier inspection columns in table output")
+    .action(
+      async (
+        opts: { prometheus?: boolean; wide?: boolean },
+        command: Command,
+      ) => {
+        await withContext(command, "admin membership-tiers", async (ctx) => {
+          const result = (await ctx.hub.db.userQuery({
+            query: {
+              membership_tiers: MEMBERSHIP_TIER_FIELDS,
+            },
+            options: [],
+          })) as { membership_tiers?: MembershipTierRow[] };
+          const rows = sortMembershipTierRows(result.membership_tiers ?? []);
+          if (opts.prometheus) {
+            return formatMembershipTiersPrometheus(rows);
+          }
+          const wide =
+            opts.wide ||
+            ctx.globals?.json ||
+            ctx.globals?.output === "json" ||
+            ctx.globals?.output === "yaml";
+          return wide
+            ? rows.map(formatMembershipTierRow)
+            : rows.map(formatMembershipTierCompactRow);
+        });
+      },
+    );
 
   adminMasterKey
     .command("status")

@@ -336,6 +336,66 @@ test("admin membership-tiers queries tier usage counts and formats rows", async 
     {
       id: "student",
       label: "Student",
+      monthly: "$5.00",
+      yearly: "$50.00",
+      subs: 3,
+      accounts: 2,
+      admin: 4,
+      licenses: 1,
+      active: "yes",
+    },
+  ]);
+});
+
+test("admin membership-tiers --wide includes diagnostic columns", async () => {
+  let formatted: any;
+  const program = new Command();
+  registerAdminCommand(program, {
+    ...adminDeps(),
+    withContext: async (_command: unknown, _label: string, fn: any) => {
+      formatted = await fn({
+        hub: {
+          db: {
+            userQuery: async () => ({
+              membership_tiers: [
+                {
+                  id: "student",
+                  label: "Student",
+                  store_visible: true,
+                  course_store_visible: false,
+                  priority: 10,
+                  price_monthly: "5",
+                  price_yearly: "50",
+                  course_price: "20",
+                  course_duration_days: 180,
+                  course_grace_days: 7,
+                  disabled: false,
+                  subscription_count: "3",
+                  subscribed_account_count: "2",
+                  admin_assigned_count: "4",
+                  site_license_count: "1",
+                  updated: "2026-05-22T00:00:00.000Z",
+                },
+              ],
+            }),
+          },
+        },
+      });
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "membership-tiers",
+    "--wide",
+  ]);
+
+  assert.deepEqual(formatted, [
+    {
+      id: "student",
+      label: "Student",
       visible: "yes",
       course: "no",
       priority: 10,
