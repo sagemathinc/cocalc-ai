@@ -3077,10 +3077,12 @@ function EditSiteLicenseModal({
       if (allowed_domains.length === 0) {
         throw Error("Enter at least one allowed email domain.");
       }
+      const siteLicenseId =
+        `${membershipPackage.metadata?.site_license_id ?? ""}`.trim();
       await updateMembershipPackage({
         package_id: membershipPackage.id,
         owner_account_id: membershipPackage.owner_account_id,
-        site_license_id: `${membershipPackage.metadata?.site_license_id ?? ""}`,
+        ...(siteLicenseId ? { site_license_id: siteLicenseId } : {}),
         seat_count: seatCount,
         allowed_domains,
         expires_at: expiresAt?.endOf("day").toDate() ?? null,
