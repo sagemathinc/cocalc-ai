@@ -177,10 +177,7 @@ export default function PublicAuthApp({
           <PublicSignInForm
             cookieBannerEnabled={!!config?.cookie_banner_enabled}
             onNavigate={onNavigate}
-            redirectToPath={
-              redirectToPath ??
-              (() => window.location.pathname + window.location.search)
-            }
+            redirectToPath={redirectToPath}
           />
         )}
         {route.kind === "auth-second-factor" && (

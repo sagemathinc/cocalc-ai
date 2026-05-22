@@ -4,6 +4,7 @@ import { useState } from "react";
 import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
 import { MAX_PASSWORD_LENGTH } from "@cocalc/util/auth";
+import { COLORS } from "@cocalc/util/theme";
 import type { AuthView } from "./types";
 import {
   isMfaRequiredAuthResponse,
@@ -17,6 +18,10 @@ import { appUrl } from "./util";
 
 interface SignInProps {
   onNavigate: (view: AuthView) => void;
+}
+
+function signedInRedirectUrl(): string {
+  return appUrl("projects");
 }
 
 export default function SignInForm({ onNavigate }: SignInProps) {
@@ -71,7 +76,7 @@ export default function SignInForm({ onNavigate }: SignInProps) {
         throw new Error("Sign in failed. Please try again.");
       }
       setStoredControlPlaneOrigin(result?.home_bay_url);
-      window.location.href = appUrl("app?sign-in");
+      window.location.href = signedInRedirectUrl();
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -105,7 +110,7 @@ export default function SignInForm({ onNavigate }: SignInProps) {
         throw new Error("Second factor verification failed. Please try again.");
       }
       setStoredControlPlaneOrigin(result?.home_bay_url);
-      window.location.href = appUrl("app?sign-in");
+      window.location.href = signedInRedirectUrl();
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -145,29 +150,46 @@ export default function SignInForm({ onNavigate }: SignInProps) {
         <>
           <div>
             <div>Second factor</div>
-            <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+            <div
+              aria-label="Choose second factor method"
+              role="group"
+              style={{ display: "flex", gap: "8px", marginBottom: "8px" }}
+            >
               {factorMethods.includes("passkey") ? (
                 <Button
-                  type={factorMethod === "passkey" ? "primary" : "default"}
+                  type="default"
                   onClick={() => setFactorMethod("passkey")}
+                  style={
+                    factorMethod === "passkey"
+                      ? { borderColor: COLORS.BLUE_D, color: COLORS.BLUE_DD }
+                      : undefined
+                  }
                 >
-                  Use passkey
+                  Passkey
                 </Button>
               ) : undefined}
               {factorMethods.includes("totp") ? (
                 <Button
-                  type={factorMethod === "totp" ? "primary" : "default"}
+                  type="default"
                   onClick={() => setFactorMethod("totp")}
+                  style={
+                    factorMethod === "totp"
+                      ? { borderColor: COLORS.BLUE_D, color: COLORS.BLUE_DD }
+                      : undefined
+                  }
                 >
                   Authenticator code
                 </Button>
               ) : undefined}
               {factorMethods.includes("recovery_code") ? (
                 <Button
-                  type={
-                    factorMethod === "recovery_code" ? "primary" : "default"
-                  }
+                  type="default"
                   onClick={() => setFactorMethod("recovery_code")}
+                  style={
+                    factorMethod === "recovery_code"
+                      ? { borderColor: COLORS.BLUE_D, color: COLORS.BLUE_DD }
+                      : undefined
+                  }
                 >
                   Recovery code
                 </Button>

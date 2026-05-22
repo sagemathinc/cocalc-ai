@@ -36,9 +36,9 @@ Do not ship public release until these are true:
   impersonation grant routing plus shared-domain bay identity cookies.
 - Impersonation state is persistently obvious after refresh. **Fixed
   2026-05-21** via home-bay auth bootstrap.
-- Sign-in redirects to `/projects` after success.
+- Sign-in redirects to `/projects` after success. **Fixed 2026-05-22.**
 - Passkey sign-in UI does not confuse "select passkey method" with "use
-  passkey now".
+  passkey now". **Fixed 2026-05-22.**
 - Codex/agent entry points either start a turn or show a clear actionable auth
   or runtime error.
 - Project list/lifecycle state does not remain stale after start/stop.
@@ -61,6 +61,10 @@ Do not ship public release until these are true:
 | Project-host restart breaks open editors           | conat / sync    | fixed  | Same-address routed project-host reconnects preserve the Conat client and SyncDoc table state instead of rebuilding editor state. Repeated reconnect failures refresh auth/browser-session state in place. Verified with live `host1` stop/start dogfood.                                                  |
 | Node 26 fails on project hosts without libatomic   | host bootstrap  | fixed  | Added `libatomic1` to project-host bootstrap/install paths and verified Node 26 on `host1`. This was a release blocker because project-host daemons could fail before any frontend recovery logic mattered.                                                                                                |
 | Codex live chat log drops chunks                   | chat / codex    | fixed  | Fixed the efficient `acp_live_preview_stream` instead of bypassing it. The preview stream now carries lifecycle status, actual agent `message` events, summaries, and errors, but no `thinking` payloads or synthetic activity ticks that can split progressive agent output.                              |
+| Sign-in success leaves user on sign-in page        | auth / routing  | fixed  | Default public and legacy auth completion now redirects to `/projects`; explicit safe redirect targets are still preserved for flows that need them.                                                                                                                                                       |
+| Passkey selector looks like primary action         | auth UI         | fixed  | Second-factor method selection now renders as a small chooser group (`Passkey` / `Code`) while the primary submit button remains the actual passkey action.                                                                                                                                                |
+| Passkey password-save/autofill confusion           | auth UI         | fixed  | Showing the account email in the passkey modal solved the observed Chrome password-save/autofill confusion and gives useful context during passkey auth.                                                                                                                                                   |
+| SSO domain check row jumps during sign-in/up       | auth UI         | fixed  | The sign-in-method policy check now uses reserved inline status space under the email field instead of adding/removing a full alert row while typing.                                                                                                                                                      |
 
 ### P0: Release Blockers
 
@@ -78,20 +82,15 @@ These should be worked before broad UI polish.
 These are important for first impression and support load. Fix as many as
 possible after P0s are under control.
 
-| Item                                                          | Area                           | Risk                              | First investigation                                                                                     |
-| ------------------------------------------------------------- | ------------------------------ | --------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Disk usage reload says "Updated just now" without recomputing | storage UI / quota             | Misleading quota data             | Separate "refresh cached state" from "recompute usage"; show recompute pending/running/completed time.  |
-| Backup time in storage overview appears random                | backups / storage UI           | Users cannot trust backups        | Confirm latest backup source field; ensure overview and tooltip use same authoritative timestamp.       |
-| Sign-in success leaves user on sign-in page                   | auth / routing                 | First-run confusion               | Fix post-auth redirect target to `/projects`; preserve intended redirect only when safe.                |
-| Right after sign-in load `/projects`, not `/`                 | auth / routing                 | First-run confusion               | Same as above; add regression around auth completion.                                                   |
-| Passkey selector looks like primary action                    | auth UI                        | User confusion                    | Make auth method selection look like segmented/radio choice; reserve primary button for actual sign-in. |
-| Passkey triggers password save/autofill into unrelated fields | auth UI / browser autocomplete | Bad auth UX                       | Review form names/autocomplete attributes; avoid username-like fields leaking to host search.           |
-| SSO domain check row jumps during sign-in/up                  | auth UI                        | Visual instability                | Reserve space or use inline spinner without adding/removing rows.                                       |
-| Bulk delete hits queued/running project delete limit          | projects / workers             | User cannot clean up projects     | Serialize user bulk delete one-at-a-time or raise limit with backpressure; show progress.               |
-| Delete files modal breaks with many files                     | file UI                        | Simple operation looks broken     | Use scrollable file list and concise summary after first N files.                                       |
-| Agent view missing thread `...` menu/configuration            | chat UI                        | Missing essential thread controls | Share thread action menu with normal chat view.                                                         |
-| Community support page stale                                  | support / content              | Launch support confusion          | Remove dead Discord/Google Group/GitHub Discussions references; verify Zendesk path.                    |
-| Project quota/memory should apply at start/restart            | projects / quotas              | Membership changes appear ignored | Confirm current runtime quota source on every start; invalidate stale cached limits.                    |
+| Item                                                          | Area                 | Risk                              | First investigation                                                                                    |
+| ------------------------------------------------------------- | -------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Disk usage reload says "Updated just now" without recomputing | storage UI / quota   | Misleading quota data             | Separate "refresh cached state" from "recompute usage"; show recompute pending/running/completed time. |
+| Backup time in storage overview appears random                | backups / storage UI | Users cannot trust backups        | Confirm latest backup source field; ensure overview and tooltip use same authoritative timestamp.      |
+| Bulk delete hits queued/running project delete limit          | projects / workers   | User cannot clean up projects     | Serialize user bulk delete one-at-a-time or raise limit with backpressure; show progress.              |
+| Delete files modal breaks with many files                     | file UI              | Simple operation looks broken     | Use scrollable file list and concise summary after first N files.                                      |
+| Agent view missing thread `...` menu/configuration            | chat UI              | Missing essential thread controls | Share thread action menu with normal chat view.                                                        |
+| Community support page stale                                  | support / content    | Launch support confusion          | Remove dead Discord/Google Group/GitHub Discussions references; verify Zendesk path.                   |
+| Project quota/memory should apply at start/restart            | projects / quotas    | Membership changes appear ignored | Confirm current runtime quota source on every start; invalidate stale cached limits.                   |
 
 ### P2: Important But Can Ship With Known Notes
 
@@ -122,10 +121,10 @@ Scope:
 
 - Cross-bay impersonation. **Fixed 2026-05-21.**
 - Persistent impersonation banner. **Fixed 2026-05-21.**
-- Sign-in redirect to `/projects`.
-- Passkey selector/action distinction.
-- Browser autocomplete/passkey password-save behavior.
-- SSO domain-check layout stability.
+- Sign-in redirect to `/projects`. **Fixed 2026-05-22.**
+- Passkey selector/action distinction. **Fixed 2026-05-22.**
+- Browser autocomplete/passkey password-save behavior. **Fixed 2026-05-22.**
+- SSO domain-check layout stability. **Fixed 2026-05-22.**
 
 Acceptance:
 
@@ -133,10 +132,12 @@ Acceptance:
   `wstein+1@gmail.com`, home bay `bay-1`.**
 - Refresh while impersonating still shows obvious banner. **Done for
   cross-bay lite4b dogfood.**
-- Sign-in lands on `/projects`.
-- Passkey method choice and passkey submit are visually distinct.
-- Chrome no longer offers to save a password after passkey auth.
-- SSO check does not shift the form vertically.
+- Sign-in lands on `/projects`. **Done 2026-05-22.**
+- Passkey method choice and passkey submit are visually distinct. **Done
+  2026-05-22.**
+- Chrome no longer offers to save a password after passkey auth. **Done
+  2026-05-22.**
+- SSO check does not shift the form vertically. **Done 2026-05-22.**
 
 ### B. Sync, Recovery, And Data Safety
 
