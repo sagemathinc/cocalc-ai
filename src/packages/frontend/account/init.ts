@@ -21,7 +21,7 @@ import { initAccountTable } from "./table-bootstrap";
 import Cookies from "js-cookie";
 import { ACCOUNT_ID_COOKIE } from "@cocalc/frontend/client/client";
 import { parseManagedEgressBlockedError } from "@cocalc/frontend/purchases/managed-egress-blocked";
-import { getAuthBootstrap } from "@cocalc/frontend/auth/api";
+import { getControlPlaneAuthBootstrap } from "@cocalc/frontend/auth/api";
 import { waitForAccountTableConnectedForSignIn } from "./wait-for-account-table-connected";
 
 export function init(redux) {
@@ -74,7 +74,7 @@ export function init(redux) {
     }
     authBootstrapLoadingFor = account_id;
     try {
-      const bootstrap = await getAuthBootstrap();
+      const bootstrap = await getControlPlaneAuthBootstrap();
       actions.setState({
         home_bay_id: bootstrap.home_bay_id,
         home_bay_source: bootstrap.home_bay_id

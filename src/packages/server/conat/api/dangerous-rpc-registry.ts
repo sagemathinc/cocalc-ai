@@ -487,10 +487,6 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
   },
-  "purchases.adminProvisionMembershipPackage": {
-    decision: "fresh-auth-required",
-    reason: "admin membership entitlement mutation",
-  },
   "purchases.adminProvisionSiteLicense": {
     decision: "fresh-auth-required",
     reason: "admin site-license entitlement mutation",
@@ -512,13 +508,27 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "user request is gated by verified email/domain and manager approval policy",
   },
+  "purchases.removeSiteLicenseManager": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "manager removal is scoped by site-license manager authorization and does not directly change entitlements",
+  },
   "purchases.revokeMembershipPackageSeat": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "purchases.setSiteLicenseManager": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "manager assignment is scoped by site-license manager authorization and does not directly change entitlements",
+  },
   "purchases.updateMembershipPackage": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
+  },
+  "purchases.updateSiteLicense": {
+    decision: "fresh-auth-required",
+    reason: "site-license commercial terms and domain entitlement mutation",
   },
   "software.createLicense": {
     decision: "fresh-auth-not-required",
@@ -551,6 +561,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "system.adminVerifyEmailAddress": {
     decision: "fresh-auth-required",
     reason: "admin email verification for another user",
+  },
+  "system.adminDisableTwoFactor": {
+    decision: "fresh-auth-required",
+    reason: "admin removal of two-factor authentication for another user",
   },
   "system.adminSalesloftSync": {
     decision: "fresh-auth-not-required",

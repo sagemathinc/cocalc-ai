@@ -56,6 +56,7 @@ import {
   loadNavigatorSelectedThreadKey,
   saveNavigatorSelectedThreadKey,
 } from "./navigator-state";
+import { getDefaultCodexNewChatDefaults } from "@cocalc/frontend/chat/codex-defaults";
 
 interface NavigatorShellProps {
   project_id: string;
@@ -968,8 +969,13 @@ export function NavigatorShell({
         launchAcpConfig.model.trim().length > 0
           ? launchAcpConfig.model.trim()
           : undefined;
-      const model = requestedModel ?? selectedModel;
+      const defaultCodexConfig = isCodex
+        ? getDefaultCodexNewChatDefaults()
+        : undefined;
+      const model =
+        requestedModel ?? selectedModel ?? defaultCodexConfig?.model;
       const nextCodexConfig = {
+        ...(defaultCodexConfig ?? {}),
         ...launchAcpConfig,
         ...(intent.codexConfig ?? {}),
         model,

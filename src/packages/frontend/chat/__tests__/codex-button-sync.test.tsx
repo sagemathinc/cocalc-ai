@@ -98,7 +98,7 @@ describe("CodexConfigButton", () => {
       />,
     );
 
-    expect(screen.getByText("workspace-write")).not.toBeNull();
+    expect(screen.getByText(/Workspace write/)).not.toBeNull();
 
     rerender(
       <CodexConfigButton
@@ -115,9 +115,9 @@ describe("CodexConfigButton", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("gpt-5.4")).not.toBeNull();
-      expect(screen.getByText("full-access")).not.toBeNull();
-      expect(screen.getByText("high")).not.toBeNull();
+      expect(screen.getByText(/gpt-5.4/)).not.toBeNull();
+      expect(screen.getByText(/Full access/)).not.toBeNull();
+      expect(screen.getByText(/High/)).not.toBeNull();
     });
   });
 

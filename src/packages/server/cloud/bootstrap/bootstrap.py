@@ -61,6 +61,7 @@ APT_RETRIES = 5
 APT_ACQUIRE_TIMEOUT_S = 60
 APT_UPDATE_TIMEOUT_S = 180
 APT_INSTALL_TIMEOUT_S = 600
+NODE_RUNTIME_APT_PACKAGES = ("libatomic1",)
 GCE_UBUNTU_MIRROR_RE = re.compile(
     r"https?://[A-Za-z0-9.-]*gce(?:\.clouds)?\.archive\.ubuntu\.com/ubuntu/?"
 )
@@ -981,7 +982,11 @@ def apt_update_install(cfg: BootstrapConfig) -> None:
         timeout=APT_UPDATE_TIMEOUT_S,
     )
     log_line(cfg, "bootstrap: installing base packages")
-    apt_install_opts = apt_opts + ["--no-install-recommends", "install"] + cfg.apt_packages
+    apt_install_opts = (
+        apt_opts
+        + ["--no-install-recommends", "install"]
+        + effective_apt_packages(cfg)
+    )
     apt_run(
         cfg,
         ["apt-get", *apt_install_opts],
@@ -989,6 +994,24 @@ def apt_update_install(cfg: BootstrapConfig) -> None:
         retries=APT_RETRIES,
         timeout=APT_INSTALL_TIMEOUT_S,
     )
+
+
+def node_major_version(node_version: str) -> int:
+    match = re.match(r"^v?(\d+)(?:\.|$)", node_version.strip())
+    if not match:
+        return 0
+    return int(match.group(1))
+
+
+def effective_apt_packages(cfg: BootstrapConfig) -> list[str]:
+    packages = list(cfg.apt_packages)
+    if node_major_version(cfg.node_version) >= 26:
+        existing = set(packages)
+        for package in NODE_RUNTIME_APT_PACKAGES:
+            if package not in existing:
+                packages.append(package)
+                existing.add(package)
+    return packages
 
 
 def configure_chrony(cfg: BootstrapConfig) -> None:

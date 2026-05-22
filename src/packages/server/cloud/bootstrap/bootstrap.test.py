@@ -1693,7 +1693,9 @@ Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 
     def test_apt_update_install_uses_more_tolerant_network_timeouts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            cfg = replace(make_cfg(tmpdir), apt_packages=["curl", "git"])
+            cfg = replace(
+                make_cfg(tmpdir), apt_packages=["curl", "git"], node_version="24.15.0"
+            )
             recorded = []
 
             original_apt_run = bootstrap.apt_run
@@ -1755,6 +1757,39 @@ Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
                     bootstrap.APT_RETRIES,
                     bootstrap.APT_INSTALL_TIMEOUT_S,
                 ),
+            )
+
+    def test_apt_update_install_adds_node26_runtime_library(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(make_cfg(tmpdir), apt_packages=["curl"], node_version="26.2.0")
+            recorded = []
+
+            original_apt_run = bootstrap.apt_run
+            try:
+                bootstrap.apt_run = (
+                    lambda _cfg, args, desc, retries, timeout: recorded.append(
+                        (args, desc, retries, timeout)
+                    )
+                )
+                bootstrap.apt_update_install(cfg)
+            finally:
+                bootstrap.apt_run = original_apt_run
+
+            self.assertIn("curl", recorded[1][0])
+            self.assertIn("libatomic1", recorded[1][0])
+            self.assertEqual(recorded[1][0].count("libatomic1"), 1)
+
+    def test_apt_update_install_deduplicates_node_runtime_library(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(
+                make_cfg(tmpdir),
+                apt_packages=["curl", "libatomic1"],
+                node_version="26.2.0",
+            )
+
+            self.assertEqual(
+                bootstrap.effective_apt_packages(cfg),
+                ["curl", "libatomic1"],
             )
 
 

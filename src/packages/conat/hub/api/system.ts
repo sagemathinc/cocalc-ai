@@ -91,6 +91,7 @@ export const system = {
   repairAccountMembershipPortability: authFirstRequireAccount,
   adminResetPasswordLink: authFirst,
   adminVerifyEmailAddress: authFirst,
+  adminDisableTwoFactor: authFirst,
   sendTestEmail: authFirst,
   setSiteSettings: authFirst,
   syncSiteSettingsToBays: authFirst,
@@ -1790,6 +1791,17 @@ export interface System {
     already_verified: boolean;
     email_address: string;
     verified_at: Date | string;
+  }>;
+
+  adminDisableTwoFactor: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    user_account_id: string;
+  }) => Promise<{
+    account_id: string;
+    disabled_factors: number;
+    deleted_recovery_codes: number;
   }>;
 
   sendTestEmail: (opts: {

@@ -442,7 +442,6 @@ export async function putR2ObjectFromFile({
         for (const [name, value] of Object.entries(signed.headers)) {
           args.push("-H", `${name}: ${value}`);
         }
-        args.push("-H", `content-length: ${bytes}`);
         args.push(`${signed.parsed.origin}${signed.canonicalUri}`);
         try {
           await execFile("curl", args, { maxBuffer: 10 * 1024 * 1024 });

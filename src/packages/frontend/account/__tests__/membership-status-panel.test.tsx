@@ -28,6 +28,7 @@ jest.mock("antd", () => {
   return {
     Alert: Div,
     Button,
+    Card: Div,
     Collapse: Div,
     Descriptions: Object.assign(Div, { Item: Div }),
     Divider: Div,

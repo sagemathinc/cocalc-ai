@@ -1212,6 +1212,7 @@ fi
     "crun",
     "cron",
     "chrony",
+    "libatomic1",
   ]);
   const envLinesJson = JSON.stringify(scripts.envLines);
   const cloudflaredJson = JSON.stringify(

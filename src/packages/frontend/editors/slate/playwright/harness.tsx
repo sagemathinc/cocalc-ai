@@ -83,6 +83,7 @@ declare global {
     __slateCollabTest?: {
       getMarkdownA: () => string;
       getMarkdownB: () => string;
+      getSharedMarkdown?: () => string;
       setRemote: (value: string) => void;
       setSelectionA: (
         range: Range | number,
@@ -163,6 +164,8 @@ function Harness(): React.JSX.Element {
   const editableMode = params.get("editable") === "1";
   const collabBlockMode = params.get("collabBlock") === "1";
   const collabMode = params.get("collab") === "1";
+  const saveMode = params.get("save") === "1";
+  const saveDebounceMs = Number(params.get("saveMs") ?? 150);
   const autoformatMode = params.get("autoformat") === "1";
   const searchParams =
     typeof window === "undefined"
@@ -177,13 +180,17 @@ function Harness(): React.JSX.Element {
     return <BlockHarness initialMarkdown={initialMarkdown} />;
   }
   if (collabBlockMode) {
-    return <CollabBlockHarness />;
+    return (
+      <CollabBlockHarness saveMode={saveMode} saveDebounceMs={saveDebounceMs} />
+    );
   }
   if (editableMode) {
     return <EditableHarness initialMarkdown={initialMarkdown} />;
   }
   if (collabMode) {
-    return <CollabHarness />;
+    return (
+      <CollabHarness saveMode={saveMode} saveDebounceMs={saveDebounceMs} />
+    );
   }
   return <DefaultHarness autoformatMode={autoformatMode} />;
 }
@@ -286,7 +293,13 @@ function BlockHarness({
   );
 }
 
-function CollabBlockHarness(): React.JSX.Element {
+function CollabBlockHarness({
+  saveMode,
+  saveDebounceMs,
+}: {
+  saveMode: boolean;
+  saveDebounceMs: number;
+}): React.JSX.Element {
   const [markdown, setMarkdown] = useState<string>(
     "alpha\n\nbeta\n\ncharlie\n",
   );
@@ -300,6 +313,7 @@ function CollabBlockHarness(): React.JSX.Element {
     window.__slateCollabTest = {
       getMarkdownA: () => getValueRefA.current?.() ?? "",
       getMarkdownB: () => getValueRefB.current?.() ?? "",
+      getSharedMarkdown: () => syncRef.current.to_str(),
       setRemote: (value) => {
         syncRef.current.set(value);
       },
@@ -311,6 +325,16 @@ function CollabBlockHarness(): React.JSX.Element {
       setSelectionB: (index, position = "start") => {
         return (
           controlRefB.current?.setSelectionInBlock?.(index, position) ?? false
+        );
+      },
+      setSelectionFromMarkdownA: (pos) => {
+        return (
+          controlRefA.current?.setSelectionFromMarkdownPosition?.(pos) ?? false
+        );
+      },
+      setSelectionFromMarkdownB: (pos) => {
+        return (
+          controlRefB.current?.setSelectionFromMarkdownPosition?.(pos) ?? false
         );
       },
       getBlocksA: () => controlRefA.current?.getBlocks?.() ?? [],
@@ -351,6 +375,8 @@ function CollabBlockHarness(): React.JSX.Element {
               height="320px"
               noVfill={true}
               hidePath={true}
+              is_current={saveMode}
+              saveDebounceMs={saveDebounceMs}
               ignoreRemoteMergesWhileFocused={false}
               remoteMergeIdleMs={150}
               getValueRef={getValueRefA}
@@ -365,6 +391,8 @@ function CollabBlockHarness(): React.JSX.Element {
               height="320px"
               noVfill={true}
               hidePath={true}
+              is_current={saveMode}
+              saveDebounceMs={saveDebounceMs}
               ignoreRemoteMergesWhileFocused={false}
               remoteMergeIdleMs={150}
               getValueRef={getValueRefB}
@@ -444,7 +472,13 @@ function EditableHarness({
   );
 }
 
-function CollabHarness(): React.JSX.Element {
+function CollabHarness({
+  saveMode,
+  saveDebounceMs,
+}: {
+  saveMode: boolean;
+  saveDebounceMs: number;
+}): React.JSX.Element {
   const [markdown, setMarkdown] = useState<string>(
     "alpha\n\nbeta\n\ncharlie\n",
   );
@@ -466,6 +500,7 @@ function CollabHarness(): React.JSX.Element {
     window.__slateCollabTest = {
       getMarkdownA: () => getValueRefA.current?.() ?? "",
       getMarkdownB: () => getValueRefB.current?.() ?? "",
+      getSharedMarkdown: () => syncRef.current.to_str(),
       setRemote: (value) => {
         syncRef.current.set(value);
       },
@@ -523,6 +558,8 @@ function CollabHarness(): React.JSX.Element {
               height="300px"
               noVfill={true}
               hidePath={true}
+              is_current={saveMode}
+              saveDebounceMs={saveDebounceMs}
               disableWindowing={true}
               ignoreRemoteMergesWhileFocused={false}
               remoteMergeIdleMs={150}
@@ -539,6 +576,8 @@ function CollabHarness(): React.JSX.Element {
               height="300px"
               noVfill={true}
               hidePath={true}
+              is_current={saveMode}
+              saveDebounceMs={saveDebounceMs}
               disableWindowing={true}
               ignoreRemoteMergesWhileFocused={false}
               remoteMergeIdleMs={150}

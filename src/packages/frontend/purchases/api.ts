@@ -22,6 +22,7 @@ import type {
   MembershipPackageQuote,
   SiteLicenseAffiliationReverificationSeat,
   SiteLicenseAffiliationReverificationUserStatus,
+  SiteLicenseManagerRole,
   SiteLicenseOverview,
   SiteLicensePoolConfig,
   SiteLicensePoolRequest,
@@ -445,21 +446,6 @@ export async function purchaseMembershipPackage(opts: {
   });
 }
 
-export async function adminProvisionMembershipPackage(opts: {
-  owner_account_id?: string;
-  kind: "site";
-  membership_class: MembershipClass;
-  seat_count: number;
-  allowed_domains: string[];
-  starts_at?: Date | string | null;
-  expires_at?: Date | string | null;
-  metadata?: Record<string, unknown> | null;
-}): Promise<MembershipPackageDetails> {
-  return await (
-    await getPurchasesHubRpc()
-  ).adminProvisionMembershipPackage(opts);
-}
-
 export async function adminProvisionSiteLicense(opts: {
   owner_account_id?: string;
   name: string;
@@ -475,12 +461,19 @@ export async function adminProvisionSiteLicense(opts: {
   expires_at?: Date | string | null;
   metadata?: Record<string, unknown> | null;
 }): Promise<SiteLicenseOverview> {
-  return await (await getPurchasesHubRpc()).adminProvisionSiteLicense(opts);
+  const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+  return await (
+    await getPurchasesHubRpc()
+  ).adminProvisionSiteLicense({
+    ...opts,
+    browser_id: webapp_client.browser_id,
+  });
 }
 
 export async function updateMembershipPackage(opts: {
   package_id: string;
   owner_account_id?: string;
+  site_license_id?: string;
   seat_count?: number;
   expires_at?: Date | string | null;
   allowed_domains?: string[];
@@ -531,6 +524,43 @@ export async function getSiteLicenseOverview(opts: {
   site_license_id: string;
 }): Promise<SiteLicenseOverview> {
   return await (await getPurchasesHubRpc()).getSiteLicenseOverview(opts);
+}
+
+export async function updateSiteLicense(opts: {
+  site_license_id: string;
+  name?: string;
+  organization_name?: string;
+  allowed_domains?: string[];
+  custom_terms_url?: string | null;
+  custom_policy_url?: string | null;
+  terms_version_label?: string | null;
+  renewal_policy?: string | null;
+  overage_policy?: string | null;
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+}): Promise<SiteLicenseOverview> {
+  const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+  return await (
+    await getPurchasesHubRpc()
+  ).updateSiteLicense({
+    ...opts,
+    browser_id: webapp_client.browser_id,
+  });
+}
+
+export async function setSiteLicenseManager(opts: {
+  site_license_id: string;
+  target_account_id: string;
+  role: SiteLicenseManagerRole;
+}): Promise<SiteLicenseOverview> {
+  return await (await getPurchasesHubRpc()).setSiteLicenseManager(opts);
+}
+
+export async function removeSiteLicenseManager(opts: {
+  site_license_id: string;
+  target_account_id: string;
+}): Promise<SiteLicenseOverview> {
+  return await (await getPurchasesHubRpc()).removeSiteLicenseManager(opts);
 }
 
 export async function requestSiteLicensePool(opts: {

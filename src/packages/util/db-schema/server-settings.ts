@@ -114,6 +114,8 @@ export interface Customize {
   policies_html?: string;
   reCaptchaKey?: string;
   verifyEmailAddresses?: boolean;
+  cookieBannerEnabled?: boolean;
+  cookieBannerText?: string;
   strategies?: Strategy[];
   openaiEnabled?: boolean;
   googleVertexaiEnabled?: boolean;

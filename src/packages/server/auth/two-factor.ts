@@ -17,6 +17,7 @@ import getPool from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
+import getEmailAddress from "@cocalc/server/accounts/get-email-address";
 import hasPassword from "@cocalc/server/auth/has-password";
 import {
   getImpersonationBootstrapInfo,
@@ -435,7 +436,8 @@ async function verifyFreshAuthInputs({
   code?: string;
   db: Queryable;
 }): Promise<AuthSessionFactorLevel> {
-  if (await hasPassword(account_id)) {
+  const hasSecondFactor = await hasActiveSecondFactor(account_id);
+  if (!hasSecondFactor && (await hasPassword(account_id))) {
     const ok = await isPasswordCorrect({
       account_id,
       password: current_password,
@@ -445,7 +447,7 @@ async function verifyFreshAuthInputs({
     }
   }
 
-  if (!(await hasActiveSecondFactor(account_id))) {
+  if (!hasSecondFactor) {
     return "none";
   }
 
@@ -654,6 +656,7 @@ export async function getFreshAuthStatus({
   mode: "account" | "impersonation_actor";
   enabled: boolean;
   methods: SecondFactorMethod[];
+  email_address?: string | null;
   actor_account_id?: string;
   actor_email_address?: string | null;
   actor_name?: string | null;
@@ -681,6 +684,7 @@ export async function getFreshAuthStatus({
     mode: "account",
     enabled: methods.length > 0,
     methods,
+    email_address: (await getEmailAddress(accountId)) ?? null,
   };
 }
 
@@ -1190,20 +1194,25 @@ export async function freshAuthSession({
   };
 }
 
-export async function disableTwoFactor({
-  req,
-  account_id,
-}: {
-  req: any;
+export type DisableTwoFactorResult = {
   account_id: string;
-}): Promise<void> {
+  disabled_factors: number;
+  deleted_recovery_codes: number;
+};
+
+async function disableTwoFactorForAccount({
+  account_id,
+  action,
+}: {
+  account_id: string;
+  action: string;
+}): Promise<DisableTwoFactorResult> {
   const accountId = ensureAccountId(account_id);
-  await requireFreshAuth({ req, account_id: accountId });
-  await withAccountRehomeWriteFence({
+  return await withAccountRehomeWriteFence({
     account_id: accountId,
-    action: "disable two-factor authentication",
+    action,
     fn: async (db) => {
-      await db.query(
+      const disabled = await db.query(
         `
           UPDATE account_second_factors
              SET status = $2::VARCHAR(32),
@@ -1218,11 +1227,42 @@ export async function disableTwoFactor({
           FACTOR_STATUS_PENDING,
         ],
       );
-      await db.query(
+      const deleted = await db.query(
         "DELETE FROM account_second_factor_recovery_codes WHERE account_id = $1::UUID",
         [accountId],
       );
+      return {
+        account_id: accountId,
+        disabled_factors: disabled.rowCount ?? 0,
+        deleted_recovery_codes: deleted.rowCount ?? 0,
+      };
     },
+  });
+}
+
+export async function adminDisableTwoFactor({
+  account_id,
+}: {
+  account_id: string;
+}): Promise<DisableTwoFactorResult> {
+  return await disableTwoFactorForAccount({
+    account_id,
+    action: "admin disable two-factor authentication",
+  });
+}
+
+export async function disableTwoFactor({
+  req,
+  account_id,
+}: {
+  req: any;
+  account_id: string;
+}): Promise<void> {
+  const accountId = ensureAccountId(account_id);
+  await requireFreshAuth({ req, account_id: accountId });
+  await disableTwoFactorForAccount({
+    account_id: accountId,
+    action: "disable two-factor authentication",
   });
 }
 

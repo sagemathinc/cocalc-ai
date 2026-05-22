@@ -99,6 +99,18 @@ describe("freshAuthSession", () => {
       freshAuthSession({
         req,
         account_id,
+        current_password: "wrong-password",
+        method: "totp",
+        code: createTotpCode(setup.secret),
+      }),
+    ).resolves.toMatchObject({
+      factor_level: "totp",
+    });
+
+    await expect(
+      freshAuthSession({
+        req,
+        account_id,
         current_password: password,
         method: "recovery_code",
         code: recovery_code,
@@ -119,6 +131,41 @@ describe("freshAuthSession", () => {
     ).resolves.toMatchObject({
       factor_level: "recovery_code",
     });
+  });
+
+  it("still requires a valid password when no second factor is enabled", async () => {
+    const account_id = uuid();
+    const email = `${uuid()}@test.com`;
+    const password = "cocalcrulez";
+
+    await createAccount({
+      email,
+      password,
+      firstName: "Test",
+      lastName: "User",
+      account_id,
+    });
+
+    const remember = await createRememberMeCookie(account_id, 3600);
+    const authenticated_at = new Date();
+    await recordNewAuthSession({
+      account_id,
+      session_hash: remember.hash,
+      expire: remember.expire,
+      authenticated_at,
+      password_verified_at: authenticated_at,
+      factor_level: "none",
+    });
+
+    const req = createRequest(remember.value);
+
+    await expect(
+      freshAuthSession({
+        req,
+        account_id,
+        current_password: "wrong-password",
+      }),
+    ).rejects.toThrow("current password is incorrect");
   });
 });
 

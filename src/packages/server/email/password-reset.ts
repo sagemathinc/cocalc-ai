@@ -7,9 +7,10 @@ import sendEmail from "./send-email";
 export default async function sendPasswordResetEmail(
   email_address: string, // target email_address of user who will receive the password reset email
   id: string, // the secret code that they must supply to reset their password
+  opts: { site_url?: string | null } = {},
 ): Promise<void> {
   const subject = "Password Reset";
-  const { html, text } = await getMessage(email_address, id);
+  const { html, text } = await getMessage(email_address, id, opts);
   const message = { to: email_address, subject, html, text };
   await sendEmail(message, undefined, "critical");
 }
@@ -17,9 +18,10 @@ export default async function sendPasswordResetEmail(
 async function getMessage(
   email_address: string,
   id: string,
+  opts: { site_url?: string | null } = {},
 ): Promise<{ html: string; text: string }> {
   const { help_email, site_name } = await getServerSettings();
-  const site_url = await siteURL();
+  const site_url = `${opts.site_url ?? ""}`.trim() || (await siteURL());
   const reset_url = `${site_url}/auth/password-reset/${id}`;
 
   let html = `

@@ -20,7 +20,6 @@ import {
 import passwordHash from "@cocalc/backend/auth/password-hash";
 import getPool from "@cocalc/database/pool";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
-import hasPassword from "@cocalc/server/auth/has-password";
 import {
   FRESH_AUTH_DEFAULT_MS,
   getCurrentAuthSession,
@@ -31,7 +30,6 @@ import {
   setSessionFreshAuth,
   type FreshAuthDuration,
 } from "@cocalc/server/auth/auth-sessions";
-import isPasswordCorrect from "@cocalc/server/auth/is-password-correct";
 import {
   deleteOtherRememberMe,
   getRememberMeHash,
@@ -146,26 +144,6 @@ function cleanLabel(value: unknown): string {
 
 function cleanFreshAuthDuration(value: unknown): FreshAuthDuration {
   return value === "extended" ? "extended" : "default";
-}
-
-async function verifyCurrentPassword({
-  account_id,
-  current_password,
-}: {
-  account_id: string;
-  current_password: string;
-}): Promise<void> {
-  if (!(await hasPassword(account_id))) {
-    return;
-  }
-  if (
-    !(await isPasswordCorrect({
-      account_id,
-      password: current_password,
-    }))
-  ) {
-    throw new Error("current password is incorrect");
-  }
 }
 
 function toBase64Url(value: Uint8Array): string {
@@ -828,14 +806,13 @@ export async function finishSignInPasskeyAuthentication({
 export async function startFreshAuthPasskeyAuthentication({
   req,
   account_id,
-  current_password,
   duration,
   target_session_hash,
   metadata,
 }: {
   req: Request;
   account_id: string;
-  current_password: string;
+  current_password?: string;
   duration?: FreshAuthDuration;
   target_session_hash?: string;
   metadata?: Record<string, unknown>;
@@ -847,10 +824,6 @@ export async function startFreshAuthPasskeyAuthentication({
     throw new Error("browser sign-in is required");
   }
   const targetSessionHash = `${target_session_hash ?? session.session_hash ?? sessionHash}`;
-  await verifyCurrentPassword({
-    account_id: accountId,
-    current_password,
-  });
   const passkeys = await listActivePasskeyRows(accountId);
   if (passkeys.length === 0) {
     throw new Error("no active passkeys");

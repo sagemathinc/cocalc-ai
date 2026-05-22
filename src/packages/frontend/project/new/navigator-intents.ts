@@ -26,6 +26,7 @@ import { uuid } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { path_split, tab_to_path } from "@cocalc/util/misc";
 import { pathMatchesWorkspaceRoot } from "@cocalc/conat/workspaces";
+import { getDefaultCodexNewChatDefaults } from "@cocalc/frontend/chat/codex-defaults";
 
 const NAVIGATOR_INTENT_QUEUE_KEY = "cocalc:navigator:intent-queue";
 export const NAVIGATOR_SUBMIT_PROMPT_EVENT = "cocalc:navigator:submit-prompt";
@@ -63,6 +64,34 @@ export interface NavigatorSubmitPromptDetail {
 function normalizeOptionalTitle(value?: string): string | undefined {
   const title = `${value ?? ""}`.trim();
   return title || undefined;
+}
+
+function resolveNavigatorCodexModel({
+  requestedModel,
+  sessionModel,
+  defaultModel,
+  forceCodex,
+}: {
+  requestedModel?: string;
+  sessionModel?: string;
+  defaultModel?: string;
+  forceCodex?: boolean;
+}): string | undefined {
+  return (
+    requestedModel ?? sessionModel ?? (forceCodex ? defaultModel : undefined)
+  );
+}
+
+function getNavigatorDefaultCodexConfig(
+  forceCodex: boolean,
+): Partial<CodexThreadConfig> {
+  if (!forceCodex) return {};
+  const defaults = getDefaultCodexNewChatDefaults();
+  return {
+    model: defaults.model,
+    reasoning: defaults.reasoning,
+    sessionMode: defaults.sessionMode,
+  };
 }
 
 function getWorkspaceSharedThreadTitle(): string {
@@ -510,6 +539,8 @@ async function writeNavigatorPromptInWorkspaceChat(
       opts.codexConfig.model.trim().length > 0
         ? opts.codexConfig.model.trim()
         : undefined;
+    const forceCodex = opts.forceCodex !== false;
+    const defaultCodexConfig = getNavigatorDefaultCodexConfig(forceCodex);
     if (!project_id || !basePrompt) return false;
 
     const account_id =
@@ -620,16 +651,24 @@ async function writeNavigatorPromptInWorkspaceChat(
           openedSession.model.trim().length > 0
             ? openedSession.model.trim()
             : undefined;
-        const model = requestedModel ?? sessionModel;
+        const model = resolveNavigatorCodexModel({
+          requestedModel,
+          sessionModel,
+          defaultModel: defaultCodexConfig.model,
+          forceCodex,
+        });
         const threadAgentCodexConfig = {
+          ...defaultCodexConfig,
           model,
-          reasoning: openedSession.reasoning as any,
-          sessionMode: openedSession.mode as any,
+          reasoning: (openedSession.reasoning ??
+            defaultCodexConfig.reasoning) as any,
+          sessionMode: (openedSession.mode ??
+            defaultCodexConfig.sessionMode) as any,
           workingDirectory:
             openedSession.working_directory ?? fallbackWorkingDirectory,
           ...(opts.codexConfig ?? {}),
         };
-        if (opts.forceCodex !== false) {
+        if (forceCodex) {
           actions.setThreadAgentMode?.(
             replyThreadKey,
             "codex",
@@ -739,7 +778,7 @@ async function writeNavigatorPromptInWorkspaceChat(
       requestedModel ??
       (typeof session.model === "string" && session.model.trim().length > 0
         ? session.model.trim()
-        : undefined);
+        : defaultCodexConfig.model);
 
     if (
       opts.openFloating === true &&
@@ -817,22 +856,27 @@ async function writeNavigatorPromptInWorkspaceChat(
       typeof session.model === "string" && session.model.trim().length > 0
         ? session.model.trim()
         : undefined;
-    const model = requestedModel ?? sessionModel;
+    const model = resolveNavigatorCodexModel({
+      requestedModel,
+      sessionModel,
+      defaultModel: defaultCodexConfig.model,
+      forceCodex,
+    });
     const threadAgentCodexConfig = {
+      ...defaultCodexConfig,
       model,
-      reasoning: session.reasoning as any,
-      sessionMode: session.mode as any,
+      reasoning: (session.reasoning ?? defaultCodexConfig.reasoning) as any,
+      sessionMode: (session.mode ?? defaultCodexConfig.sessionMode) as any,
       workingDirectory: session.working_directory,
       ...(opts.codexConfig ?? {}),
     };
-    const newThreadAgent =
-      opts.forceCodex !== false
-        ? {
-            mode: "codex" as const,
-            model,
-            codexConfig: threadAgentCodexConfig,
-          }
-        : undefined;
+    const newThreadAgent = forceCodex
+      ? {
+          mode: "codex" as const,
+          model,
+          codexConfig: threadAgentCodexConfig,
+        }
+      : undefined;
 
     let createdThreadNow = false;
     if (!replyThreadKey) {
@@ -849,7 +893,7 @@ async function writeNavigatorPromptInWorkspaceChat(
       replyThreadKey = createdThreadKey;
       replyThreadId = createdThreadKey;
       createdThreadNow = true;
-    } else if (opts.forceCodex !== false) {
+    } else if (forceCodex) {
       actions.setThreadAgentMode?.(
         replyThreadKey,
         "codex",
@@ -993,6 +1037,8 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       opts.codexConfig.model.trim().length > 0
         ? opts.codexConfig.model.trim()
         : undefined;
+    const forceCodex = opts.forceCodex !== false;
+    const defaultCodexConfig = getNavigatorDefaultCodexConfig(forceCodex);
     if (!project_id || !basePrompt) return false;
     const input = visiblePrompt ?? basePrompt;
     const account_id =
@@ -1146,22 +1192,27 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       typeof session.model === "string" && session.model.trim().length > 0
         ? session.model.trim()
         : undefined;
-    const model = requestedModel ?? sessionModel;
+    const model = resolveNavigatorCodexModel({
+      requestedModel,
+      sessionModel,
+      defaultModel: defaultCodexConfig.model,
+      forceCodex,
+    });
     const threadAgentCodexConfig = {
+      ...defaultCodexConfig,
       model,
-      reasoning: session.reasoning as any,
-      sessionMode: session.mode as any,
+      reasoning: (session.reasoning ?? defaultCodexConfig.reasoning) as any,
+      sessionMode: (session.mode ?? defaultCodexConfig.sessionMode) as any,
       workingDirectory: session.working_directory,
       ...(opts.codexConfig ?? {}),
     };
-    const newThreadAgent =
-      opts.forceCodex !== false
-        ? {
-            mode: "codex" as const,
-            model,
-            codexConfig: threadAgentCodexConfig,
-          }
-        : undefined;
+    const newThreadAgent = forceCodex
+      ? {
+          mode: "codex" as const,
+          model,
+          codexConfig: threadAgentCodexConfig,
+        }
+      : undefined;
     let createdThreadNow = false;
     if (opts.createNewThread === true) {
       const createdThreadKey = actions.createEmptyThread?.({
@@ -1213,8 +1264,12 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     if (createdThreadTitle && replyThreadKey) {
       actions.renameThread?.(replyThreadKey, createdThreadTitle);
     }
-    if (replyThreadKey && opts.forceCodex !== false && opts.codexConfig) {
-      actions.setThreadAgentMode?.(replyThreadKey, "codex", opts.codexConfig);
+    if (replyThreadKey && forceCodex) {
+      actions.setThreadAgentMode?.(
+        replyThreadKey,
+        "codex",
+        threadAgentCodexConfig,
+      );
     }
     const timeStamp = actions.sendChat({
       input,
@@ -1223,10 +1278,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       reply_thread_id: replyThreadId,
       tag: opts.tag ?? "intent:navigator",
       noNotification: true,
-      threadAgent:
-        !replyThreadId && opts.forceCodex !== false
-          ? newThreadAgent
-          : undefined,
+      threadAgent: !replyThreadId && forceCodex ? newThreadAgent : undefined,
     });
     if (!timeStamp) {
       return queueFallbackIntent();

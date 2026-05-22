@@ -5,6 +5,10 @@
 
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import {
+  ROOTFS_PROJECT_PRESET_TAGS,
+  type RootfsProjectPreset,
+} from "@cocalc/frontend/rootfs/project-presets";
+import {
   DEFAULT_R2_REGION,
   mapCloudRegionToR2Region,
   type R2Region,
@@ -26,7 +30,6 @@ export type ProjectCreateDraft = {
   rootfs_image: string;
   rootfs_image_id?: string;
   start: boolean;
-  advanced_open: boolean;
   rootfs_touched: boolean;
   host_touched: boolean;
 };
@@ -75,6 +78,79 @@ function clean(value: string | undefined): string {
   return `${value ?? ""}`.trim();
 }
 
+function normalizedRootfsTags(entry: RootfsImageEntry): Set<string> {
+  return new Set(
+    (entry.tags ?? [])
+      .map((tag) => tag.trim().toLowerCase())
+      .filter((tag) => tag.length > 0),
+  );
+}
+
+function isRootfsProjectPreset(
+  mode: ProjectCreateMode,
+): mode is RootfsProjectPreset {
+  return mode === "standard" || mode === "gpu" || mode === "teaching";
+}
+
+function rootfsPresetTagRank(
+  entry: RootfsImageEntry,
+  mode: ProjectCreateMode,
+): number | undefined {
+  if (!isRootfsProjectPreset(mode)) return;
+  const tags = normalizedRootfsTags(entry);
+  const presetTags = ROOTFS_PROJECT_PRESET_TAGS[mode];
+  const rank = presetTags.findIndex((tag) => tags.has(tag));
+  if (rank >= 0) return rank;
+  if (mode === "gpu" && entry.gpu === true) return presetTags.length;
+  return;
+}
+
+function compareTaggedRootfsEntry(
+  a: { entry: RootfsImageEntry; rank: number },
+  b: { entry: RootfsImageEntry; rank: number },
+): number {
+  if (a.rank !== b.rank) return a.rank - b.rank;
+  const aPriority = a.entry.priority ?? 0;
+  const bPriority = b.entry.priority ?? 0;
+  if (aPriority !== bPriority) return bPriority - aPriority;
+  if (!!a.entry.official !== !!b.entry.official) {
+    return a.entry.official ? -1 : 1;
+  }
+  const aTime = Date.parse(a.entry.created ?? "") || 0;
+  const bTime = Date.parse(b.entry.created ?? "") || 0;
+  if (aTime !== bTime) return bTime - aTime;
+  return a.entry.id.localeCompare(b.entry.id);
+}
+
+function preferredTaggedRootfsImages({
+  context,
+  mode,
+  gpu,
+}: {
+  context: ProjectCreateContext;
+  mode: ProjectCreateMode;
+  gpu: boolean;
+}): string[] {
+  if (mode === "custom") return [];
+  return context.rootfsImages
+    .map((entry) => ({
+      entry,
+      rank: rootfsPresetTagRank(entry, mode),
+    }))
+    .filter(
+      (
+        item,
+      ): item is {
+        entry: RootfsImageEntry;
+        rank: number;
+      } =>
+        item.rank != null &&
+        isNewProjectRootfsSelectable({ entry: item.entry, isGpu: gpu }),
+    )
+    .sort(compareTaggedRootfsEntry)
+    .map(({ entry }) => entry.image);
+}
+
 function selectedHostForDraft(
   draft: ProjectCreateDraft,
   context: ProjectCreateContext,
@@ -98,9 +174,11 @@ function wantsGpu(
 }
 
 function preferredRootfsImages({
+  draft,
   context,
   gpu,
 }: {
+  draft: ProjectCreateDraft;
   context: ProjectCreateContext;
   gpu: boolean;
 }): Array<string | undefined> {
@@ -108,9 +186,18 @@ function preferredRootfsImages({
   const siteGpu = clean(context.siteDefaultRootfsGpu);
   const accountDefault = clean(context.accountDefaultRootfs);
   const accountDefaultGpu = clean(context.accountDefaultRootfsGpu);
-  return gpu
-    ? [accountDefaultGpu, siteGpu, accountDefault, siteDefault]
-    : [accountDefault, siteDefault];
+  const tagged = preferredTaggedRootfsImages({
+    context,
+    mode: draft.mode,
+    gpu,
+  });
+  if (draft.mode === "teaching") {
+    return [...tagged, accountDefault, siteDefault];
+  }
+  if (gpu) {
+    return [accountDefaultGpu, siteGpu, ...tagged, accountDefault, siteDefault];
+  }
+  return [accountDefault, siteDefault, ...tagged];
 }
 
 function defaultRootfsForDraft({
@@ -124,7 +211,7 @@ function defaultRootfsForDraft({
   const entry = chooseNewProjectRootfsDefault({
     images: context.rootfsImages,
     isGpu: gpu,
-    preferredImages: preferredRootfsImages({ context, gpu }),
+    preferredImages: preferredRootfsImages({ draft, context, gpu }),
     fallbackImage: DEFAULT_PROJECT_IMAGE,
   });
   return {
@@ -182,7 +269,6 @@ export function createInitialProjectDraft(
     mode: "standard",
     region: context.preferredRegion || DEFAULT_R2_REGION,
     start: true,
-    advanced_open: false,
     rootfs_image: DEFAULT_PROJECT_IMAGE,
     rootfs_touched: false,
     host_touched: false,
@@ -231,7 +317,6 @@ export function applyProjectPreset(
     {
       ...draft,
       mode,
-      advanced_open: mode === "custom" ? true : draft.advanced_open,
       rootfs_touched: false,
     },
     context,
@@ -289,13 +374,6 @@ export function setProjectDraftStart(
   start: boolean,
 ): ProjectCreateDraft {
   return { ...draft, start };
-}
-
-export function setProjectDraftAdvancedOpen(
-  draft: ProjectCreateDraft,
-  advanced_open: boolean,
-): ProjectCreateDraft {
-  return { ...draft, advanced_open };
 }
 
 export function projectDraftToCreateOptions(

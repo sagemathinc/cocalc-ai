@@ -31,6 +31,7 @@ import type {
   MembershipResolution,
   SiteLicenseAffiliationReverificationSeat,
   SiteLicenseAffiliationReverificationUserStatus,
+  SiteLicenseManagerRole,
   SiteLicenseOverview,
   SiteLicensePoolConfig,
   SiteLicensePoolRequest,
@@ -145,6 +146,26 @@ export interface UpsertProjectCollabInviteDirectoryRequest {
 export interface ResolveProjectCollabInviteDirectoryRequest {
   invite_id?: string;
   token_hash?: string;
+}
+
+export interface AccountImpersonationGrantDirectoryEntry {
+  grant_id: string;
+  subject_account_id: string;
+  subject_home_bay_id: string;
+  status?: string | null;
+  expires_at?: Date | string | null;
+}
+
+export interface UpsertAccountImpersonationGrantDirectoryRequest {
+  grant_id: string;
+  subject_account_id: string;
+  subject_home_bay_id: string;
+  status?: string | null;
+  expires_at?: Date | string | null;
+}
+
+export interface ResolveAccountImpersonationGrantDirectoryRequest {
+  grant_id: string;
 }
 
 export interface ProjectControlStartRequest {
@@ -803,6 +824,50 @@ export interface AccountLocalAdminVerifyEmailAddressResult {
   verified_at: Date | string;
 }
 
+export interface AccountLocalAdminDisableTwoFactorRequest {
+  account_id: string;
+}
+
+export interface AccountLocalAdminDisableTwoFactorResult {
+  account_id: string;
+  disabled_factors: number;
+  deleted_recovery_codes: number;
+}
+
+export interface AccountLocalRecentPasswordResetAttemptsRequest {
+  email_address: string;
+  ip_address: string;
+}
+
+export interface AccountLocalRecentPasswordResetAttemptsResult {
+  count: number;
+}
+
+export interface AccountLocalCreatePasswordResetRequest {
+  email_address: string;
+  ip_address: string;
+  ttl_s: number;
+}
+
+export interface AccountLocalCreatePasswordResetResult {
+  id: string;
+}
+
+export interface AccountLocalRedeemPasswordResetRequest {
+  password_reset_id: string;
+}
+
+export interface AccountLocalRedeemPasswordResetResult {
+  account_id: string;
+  email_address: string;
+  home_bay_id?: string | null;
+}
+
+export interface AccountLocalSetPasswordFromResetRequest {
+  account_id: string;
+  password: string;
+}
+
 export interface AccountLocalAssertProductAccessTrustRequest {
   account_id: string;
   action: string;
@@ -810,18 +875,6 @@ export interface AccountLocalAssertProductAccessTrustRequest {
 
 export interface AccountLocalGetMembershipPackagesRequest {
   owner_account_id: string;
-}
-
-export interface AccountLocalAdminProvisionMembershipPackageRequest {
-  owner_account_id: string;
-  actor_account_id: string;
-  kind: "site";
-  membership_class: string;
-  seat_count: number;
-  allowed_domains: string[];
-  starts_at?: Date | string | null;
-  expires_at?: Date | string | null;
-  metadata?: Record<string, unknown> | null;
 }
 
 export interface AccountLocalAdminProvisionSiteLicenseRequest {
@@ -847,6 +900,34 @@ export interface AccountLocalUpdateMembershipPackageRequest {
   seat_count?: number;
   expires_at?: Date | string | null;
   allowed_domains?: string[];
+}
+
+export interface AccountLocalUpdateSiteLicenseRequest {
+  actor_account_id: string;
+  site_license_id: string;
+  name?: string;
+  organization_name?: string;
+  allowed_domains?: string[];
+  custom_terms_url?: string | null;
+  custom_policy_url?: string | null;
+  terms_version_label?: string | null;
+  renewal_policy?: string | null;
+  overage_policy?: string | null;
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+}
+
+export interface AccountLocalSetSiteLicenseManagerRequest {
+  actor_account_id: string;
+  site_license_id: string;
+  target_account_id: string;
+  role: SiteLicenseManagerRole;
+}
+
+export interface AccountLocalRemoveSiteLicenseManagerRequest {
+  actor_account_id: string;
+  site_license_id: string;
+  target_account_id: string;
 }
 
 export interface AccountLocalGetClaimableMembershipPackagesRequest {
@@ -1250,7 +1331,9 @@ export type DirectoryMethod =
   | "resolve-project-bay"
   | "resolve-host-bay"
   | "resolve-project-collab-invite"
-  | "upsert-project-collab-invite";
+  | "upsert-project-collab-invite"
+  | "resolve-account-impersonation-grant"
+  | "upsert-account-impersonation-grant";
 export type BayDirectoryMethod = DirectoryMethod;
 export type ProjectReferenceMethod = "get";
 export type ProjectDetailsMethod = "get";
@@ -1357,6 +1440,9 @@ export type AccountDirectoryMethod =
   | "delete-api-key"
   | "update-api-keys-home-bay"
   | "touch-api-key"
+  | "recent-password-reset-attempts"
+  | "create-password-reset"
+  | "redeem-password-reset"
   | "get-membership-claim-identity"
   | "reserve-membership-claim-identity"
   | "activate-membership-claim-identity"
@@ -1374,6 +1460,8 @@ export type AccountLocalMethod =
   | "verify-fresh-auth-credentials"
   | "redeem-verify-email"
   | "admin-verify-email-address"
+  | "admin-disable-two-factor"
+  | "set-password-from-reset"
   | "assert-product-access-trust"
   | "reconcile-dedicated-host-purchase-session"
   | "close-dedicated-host-purchase-session"
@@ -1391,13 +1479,15 @@ export type AccountLocalMethod =
   | "clear-account-entitlement-override"
   | "get-dedicated-host-policy-snapshot"
   | "get-membership-packages"
-  | "admin-provision-membership-package"
   | "update-membership-package"
   | "get-claimable-membership-packages"
   | "get-claimable-membership-packages-for-account"
   | "claim-membership-package-seat"
   | "claim-membership-package-seat-for-account"
   | "admin-provision-site-license"
+  | "update-site-license"
+  | "set-site-license-manager"
+  | "remove-site-license-manager"
   | "get-site-license-overview"
   | "request-site-license-pool"
   | "request-site-license-pool-for-account"
@@ -1468,6 +1558,18 @@ interface UpsertProjectCollabInviteDirectoryApi {
   ) => Promise<void>;
 }
 
+interface ResolveAccountImpersonationGrantDirectoryApi {
+  resolveAccountImpersonationGrant: (
+    opts: ResolveAccountImpersonationGrantDirectoryRequest,
+  ) => Promise<AccountImpersonationGrantDirectoryEntry | null>;
+}
+
+interface UpsertAccountImpersonationGrantDirectoryApi {
+  upsertAccountImpersonationGrant: (
+    opts: UpsertAccountImpersonationGrantDirectoryRequest,
+  ) => Promise<void>;
+}
+
 export interface InterBayDirectoryApi {
   resolveProjectBay: (
     opts: ResolveProjectBayRequest,
@@ -1478,6 +1580,12 @@ export interface InterBayDirectoryApi {
   ) => Promise<ProjectCollabInviteDirectoryEntry | null>;
   upsertProjectCollabInvite: (
     opts: UpsertProjectCollabInviteDirectoryRequest,
+  ) => Promise<void>;
+  resolveAccountImpersonationGrant: (
+    opts: ResolveAccountImpersonationGrantDirectoryRequest,
+  ) => Promise<AccountImpersonationGrantDirectoryEntry | null>;
+  upsertAccountImpersonationGrant: (
+    opts: UpsertAccountImpersonationGrantDirectoryRequest,
   ) => Promise<void>;
 }
 
@@ -2115,6 +2223,15 @@ export interface InterBayAccountDirectoryApi {
     opts: AccountApiKeyDirectoryUpdateHomeBayRequest,
   ) => Promise<void>;
   touchApiKey: (opts: AccountApiKeyDirectoryTouchRequest) => Promise<void>;
+  recentPasswordResetAttempts: (
+    opts: AccountLocalRecentPasswordResetAttemptsRequest,
+  ) => Promise<AccountLocalRecentPasswordResetAttemptsResult>;
+  createPasswordReset: (
+    opts: AccountLocalCreatePasswordResetRequest,
+  ) => Promise<AccountLocalCreatePasswordResetResult>;
+  redeemPasswordReset: (
+    opts: AccountLocalRedeemPasswordResetRequest,
+  ) => Promise<AccountLocalRedeemPasswordResetResult>;
   getMembershipClaimIdentity: (
     opts: MembershipClaimIdentityGetRequest,
   ) => Promise<MembershipClaimIdentityEntry | null>;
@@ -2164,6 +2281,12 @@ export interface InterBayAccountLocalApi {
   adminVerifyEmailAddress: (
     opts: AccountLocalAdminVerifyEmailAddressRequest,
   ) => Promise<AccountLocalAdminVerifyEmailAddressResult>;
+  adminDisableTwoFactor: (
+    opts: AccountLocalAdminDisableTwoFactorRequest,
+  ) => Promise<AccountLocalAdminDisableTwoFactorResult>;
+  setPasswordFromReset: (
+    opts: AccountLocalSetPasswordFromResetRequest,
+  ) => Promise<void>;
   assertProductAccessTrust: (
     opts: AccountLocalAssertProductAccessTrustRequest,
   ) => Promise<void>;
@@ -2215,15 +2338,21 @@ export interface InterBayAccountLocalApi {
   getMembershipPackages: (
     opts: AccountLocalGetMembershipPackagesRequest,
   ) => Promise<MembershipPackageDetails[]>;
-  adminProvisionMembershipPackage: (
-    opts: AccountLocalAdminProvisionMembershipPackageRequest,
-  ) => Promise<MembershipPackageDetails>;
   adminProvisionSiteLicense: (
     opts: AccountLocalAdminProvisionSiteLicenseRequest,
   ) => Promise<SiteLicenseOverview>;
   updateMembershipPackage: (
     opts: AccountLocalUpdateMembershipPackageRequest,
   ) => Promise<MembershipPackageDetails>;
+  updateSiteLicense: (
+    opts: AccountLocalUpdateSiteLicenseRequest,
+  ) => Promise<SiteLicenseOverview>;
+  setSiteLicenseManager: (
+    opts: AccountLocalSetSiteLicenseManagerRequest,
+  ) => Promise<SiteLicenseOverview>;
+  removeSiteLicenseManager: (
+    opts: AccountLocalRemoveSiteLicenseManagerRequest,
+  ) => Promise<SiteLicenseOverview>;
   getClaimableMembershipPackages: (
     opts: AccountLocalGetClaimableMembershipPackagesRequest,
   ) => Promise<ClaimableMembershipPackage[]>;
@@ -2675,6 +2804,20 @@ export function createInterBayDirectoryClient({
       ...serviceClientOptions({ client, timeout }),
       subject: directorySubject({ method: "upsert-project-collab-invite" }),
     });
+  const resolveAccountImpersonationGrantClient =
+    createServiceClient<ResolveAccountImpersonationGrantDirectoryApi>({
+      ...serviceClientOptions({ client, timeout }),
+      subject: directorySubject({
+        method: "resolve-account-impersonation-grant",
+      }),
+    });
+  const upsertAccountImpersonationGrantClient =
+    createServiceClient<UpsertAccountImpersonationGrantDirectoryApi>({
+      ...serviceClientOptions({ client, timeout }),
+      subject: directorySubject({
+        method: "upsert-account-impersonation-grant",
+      }),
+    });
   return {
     resolveProjectBay: async (opts) =>
       await resolveProjectBayClient.resolveProjectBay(opts),
@@ -2684,6 +2827,14 @@ export function createInterBayDirectoryClient({
       await resolveProjectCollabInviteClient.resolveProjectCollabInvite(opts),
     upsertProjectCollabInvite: async (opts) =>
       await upsertProjectCollabInviteClient.upsertProjectCollabInvite(opts),
+    resolveAccountImpersonationGrant: async (opts) =>
+      await resolveAccountImpersonationGrantClient.resolveAccountImpersonationGrant(
+        opts,
+      ),
+    upsertAccountImpersonationGrant: async (opts) =>
+      await upsertAccountImpersonationGrantClient.upsertAccountImpersonationGrant(
+        opts,
+      ),
   };
 }
 
@@ -2728,6 +2879,28 @@ export function createInterBayDirectoryHandlers({
           await impl.upsertProjectCollabInvite(opts),
       },
     }),
+    createServiceHandler<ResolveAccountImpersonationGrantDirectoryApi>({
+      ...options,
+      service: "inter-bay-directory",
+      subject: directorySubject({
+        method: "resolve-account-impersonation-grant",
+      }),
+      impl: {
+        resolveAccountImpersonationGrant: async (opts) =>
+          await impl.resolveAccountImpersonationGrant(opts),
+      },
+    }),
+    createServiceHandler<UpsertAccountImpersonationGrantDirectoryApi>({
+      ...options,
+      service: "inter-bay-directory",
+      subject: directorySubject({
+        method: "upsert-account-impersonation-grant",
+      }),
+      impl: {
+        upsertAccountImpersonationGrant: async (opts) =>
+          await impl.upsertAccountImpersonationGrant(opts),
+      },
+    }),
   ];
 }
 
@@ -2764,6 +2937,12 @@ export function createInterBayBayDirectoryClient({
     },
     upsertProjectCollabInvite: async () => {
       throw new Error("project collab invite directory is global-only");
+    },
+    resolveAccountImpersonationGrant: async () => {
+      throw new Error("account impersonation grant directory is global-only");
+    },
+    upsertAccountImpersonationGrant: async () => {
+      throw new Error("account impersonation grant directory is global-only");
     },
   };
 }
@@ -3305,6 +3484,26 @@ export function createInterBayAccountDirectoryClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountDirectorySubject({ method: "touch-api-key" }),
   });
+  const recentPasswordResetAttemptsClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "recentPasswordResetAttempts">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({
+      method: "recent-password-reset-attempts",
+    }),
+  });
+  const createPasswordResetClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "createPasswordReset">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "create-password-reset" }),
+  });
+  const redeemPasswordResetClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "redeemPasswordReset">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "redeem-password-reset" }),
+  });
   const getMembershipClaimIdentityClient = createServiceClient<
     Pick<InterBayAccountDirectoryApi, "getMembershipClaimIdentity">
   >({
@@ -3356,6 +3555,12 @@ export function createInterBayAccountDirectoryClient({
     updateApiKeysHomeBay: async (opts) =>
       await updateApiKeysHomeBayClient.updateApiKeysHomeBay(opts),
     touchApiKey: async (opts) => await touchApiKeyClient.touchApiKey(opts),
+    recentPasswordResetAttempts: async (opts) =>
+      await recentPasswordResetAttemptsClient.recentPasswordResetAttempts(opts),
+    createPasswordReset: async (opts) =>
+      await createPasswordResetClient.createPasswordReset(opts),
+    redeemPasswordReset: async (opts) =>
+      await redeemPasswordResetClient.redeemPasswordReset(opts),
     getMembershipClaimIdentity: async (opts) =>
       await getMembershipClaimIdentityClient.getMembershipClaimIdentity(opts),
     reserveMembershipClaimIdentity: async (opts) =>
@@ -3497,6 +3702,41 @@ export function createInterBayAccountDirectoryHandlers({
       subject: accountDirectorySubject({ method: "touch-api-key" }),
       impl: {
         touchApiKey: async (opts) => await impl.touchApiKey(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "recentPasswordResetAttempts">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({
+        method: "recent-password-reset-attempts",
+      }),
+      impl: {
+        recentPasswordResetAttempts: async (opts) =>
+          await impl.recentPasswordResetAttempts(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "createPasswordReset">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "create-password-reset" }),
+      impl: {
+        createPasswordReset: async (opts) =>
+          await impl.createPasswordReset(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "redeemPasswordReset">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "redeem-password-reset" }),
+      impl: {
+        redeemPasswordReset: async (opts) =>
+          await impl.redeemPasswordReset(opts),
       },
     }),
     createServiceHandler<
@@ -3648,6 +3888,24 @@ export function createInterBayAccountLocalClient({
     subject: accountLocalSubject({
       dest_bay,
       method: "admin-verify-email-address",
+    }),
+  });
+  const adminDisableTwoFactorClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "adminDisableTwoFactor">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "admin-disable-two-factor",
+    }),
+  });
+  const setPasswordFromResetClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "setPasswordFromReset">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "set-password-from-reset",
     }),
   });
   const assertProductAccessTrustClient = createServiceClient<
@@ -3803,15 +4061,6 @@ export function createInterBayAccountLocalClient({
       method: "get-membership-packages",
     }),
   });
-  const adminProvisionMembershipPackageClient = createServiceClient<
-    Pick<InterBayAccountLocalApi, "adminProvisionMembershipPackage">
-  >({
-    ...serviceClientOptions({ client, timeout }),
-    subject: accountLocalSubject({
-      dest_bay,
-      method: "admin-provision-membership-package",
-    }),
-  });
   const adminProvisionSiteLicenseClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "adminProvisionSiteLicense">
   >({
@@ -3828,6 +4077,33 @@ export function createInterBayAccountLocalClient({
     subject: accountLocalSubject({
       dest_bay,
       method: "update-membership-package",
+    }),
+  });
+  const updateSiteLicenseClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "updateSiteLicense">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "update-site-license",
+    }),
+  });
+  const setSiteLicenseManagerClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "setSiteLicenseManager">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "set-site-license-manager",
+    }),
+  });
+  const removeSiteLicenseManagerClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "removeSiteLicenseManager">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "remove-site-license-manager",
     }),
   });
   const getClaimableMembershipPackagesClient = createServiceClient<
@@ -3977,6 +4253,10 @@ export function createInterBayAccountLocalClient({
       await redeemVerifyEmailClient.redeemVerifyEmail(opts),
     adminVerifyEmailAddress: async (opts) =>
       await adminVerifyEmailAddressClient.adminVerifyEmailAddress(opts),
+    adminDisableTwoFactor: async (opts) =>
+      await adminDisableTwoFactorClient.adminDisableTwoFactor(opts),
+    setPasswordFromReset: async (opts) =>
+      await setPasswordFromResetClient.setPasswordFromReset(opts),
     assertProductAccessTrust: async (opts) =>
       await assertProductAccessTrustClient.assertProductAccessTrust(opts),
     reconcileDedicatedHostPurchaseSession: async (opts) =>
@@ -4025,14 +4305,16 @@ export function createInterBayAccountLocalClient({
       ),
     getMembershipPackages: async (opts) =>
       await getMembershipPackagesClient.getMembershipPackages(opts),
-    adminProvisionMembershipPackage: async (opts) =>
-      await adminProvisionMembershipPackageClient.adminProvisionMembershipPackage(
-        opts,
-      ),
     adminProvisionSiteLicense: async (opts) =>
       await adminProvisionSiteLicenseClient.adminProvisionSiteLicense(opts),
     updateMembershipPackage: async (opts) =>
       await updateMembershipPackageClient.updateMembershipPackage(opts),
+    updateSiteLicense: async (opts) =>
+      await updateSiteLicenseClient.updateSiteLicense(opts),
+    setSiteLicenseManager: async (opts) =>
+      await setSiteLicenseManagerClient.setSiteLicenseManager(opts),
+    removeSiteLicenseManager: async (opts) =>
+      await removeSiteLicenseManagerClient.removeSiteLicenseManager(opts),
     getClaimableMembershipPackages: async (opts) =>
       await getClaimableMembershipPackagesClient.getClaimableMembershipPackages(
         opts,
@@ -4224,6 +4506,34 @@ export function createInterBayAccountLocalHandler({
           await impl.adminVerifyEmailAddress(opts),
       },
     }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "adminDisableTwoFactor">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "admin-disable-two-factor",
+      }),
+      impl: {
+        adminDisableTwoFactor: async (opts) =>
+          await impl.adminDisableTwoFactor(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "setPasswordFromReset">>(
+      {
+        ...options,
+        service: "inter-bay-account-local",
+        subject: accountLocalSubject({
+          dest_bay: bay_id,
+          method: "set-password-from-reset",
+        }),
+        impl: {
+          setPasswordFromReset: async (opts) =>
+            await impl.setPasswordFromReset(opts),
+        },
+      },
+    ),
     createServiceHandler<
       Pick<InterBayAccountLocalApi, "assertProductAccessTrust">
     >({
@@ -4460,20 +4770,6 @@ export function createInterBayAccountLocalHandler({
       },
     }),
     createServiceHandler<
-      Pick<InterBayAccountLocalApi, "adminProvisionMembershipPackage">
-    >({
-      ...options,
-      service: "inter-bay-account-local",
-      subject: accountLocalSubject({
-        dest_bay: bay_id,
-        method: "admin-provision-membership-package",
-      }),
-      impl: {
-        adminProvisionMembershipPackage: async (opts) =>
-          await impl.adminProvisionMembershipPackage(opts),
-      },
-    }),
-    createServiceHandler<
       Pick<InterBayAccountLocalApi, "adminProvisionSiteLicense">
     >({
       ...options,
@@ -4499,6 +4795,45 @@ export function createInterBayAccountLocalHandler({
       impl: {
         updateMembershipPackage: async (opts) =>
           await impl.updateMembershipPackage(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "updateSiteLicense">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "update-site-license",
+      }),
+      impl: {
+        updateSiteLicense: async (opts) => await impl.updateSiteLicense(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "setSiteLicenseManager">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "set-site-license-manager",
+      }),
+      impl: {
+        setSiteLicenseManager: async (opts) =>
+          await impl.setSiteLicenseManager(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "removeSiteLicenseManager">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "remove-site-license-manager",
+      }),
+      impl: {
+        removeSiteLicenseManager: async (opts) =>
+          await impl.removeSiteLicenseManager(opts),
       },
     }),
     createServiceHandler<

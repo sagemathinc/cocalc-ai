@@ -48,7 +48,10 @@ import {
   resolveProjectBayAcrossCluster,
   resolveProjectBayDirect,
 } from "@cocalc/server/inter-bay/directory";
-import { getConfiguredClusterBayIdsForStaticEnumerationOnly } from "@cocalc/server/cluster-config";
+import {
+  getConfiguredClusterBayIdsForStaticEnumerationOnly,
+  getConfiguredClusterSeedBayId,
+} from "@cocalc/server/cluster-config";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 
@@ -115,6 +118,20 @@ const MEMBERSHIP_PACKAGE_KINDS = new Set<MembershipPackageKind>([
 
 function getQueryClient(client?: PoolClient): Queryable {
   return client ?? getPool();
+}
+
+function getSeedBayId(): string {
+  return getConfiguredClusterSeedBayId();
+}
+
+function isSeedBay(): boolean {
+  return getConfiguredBayId() === getSeedBayId();
+}
+
+function isSeedAuthoritativeSitePackage(
+  pkg: Pick<MembershipPackageRecord, "kind" | "metadata">,
+): boolean {
+  return pkg.kind === "site" && getSiteLicenseId(pkg.metadata) != null;
 }
 
 async function assertAccountPackageWriteAllowed({
@@ -277,6 +294,136 @@ function getPackageDomains(
     }
   }
   return [];
+}
+
+function normalizeSitePackageDomain(domain: string): string {
+  const value = `${domain ?? ""}`.trim().toLowerCase().replace(/^@+/, "");
+  if (
+    !value ||
+    value.includes("@") ||
+    value.includes("/") ||
+    value.includes(":") ||
+    !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(
+      value,
+    )
+  ) {
+    throw Error(`invalid allowed domain '${domain}'`);
+  }
+  return value;
+}
+
+function normalizeSitePackageDomains(allowed_domains?: string[]): string[] {
+  return Array.from(
+    new Set((allowed_domains ?? []).map(normalizeSitePackageDomain)),
+  ).sort();
+}
+
+function sitePackageDomainsOverlap(left: string, right: string): boolean {
+  return (
+    left === right || left.endsWith(`.${right}`) || right.endsWith(`.${left}`)
+  );
+}
+
+function findSitePackageDomainOverlap({
+  candidate_domains,
+  existing_domains,
+}: {
+  candidate_domains: string[];
+  existing_domains: string[];
+}): { candidate_domain: string; existing_domain: string } | undefined {
+  for (const candidate_domain of candidate_domains) {
+    for (const existing_domain of existing_domains) {
+      if (sitePackageDomainsOverlap(candidate_domain, existing_domain)) {
+        return { candidate_domain, existing_domain };
+      }
+    }
+  }
+}
+
+function formatSitePackageDomainConflictTarget(
+  pkg: MembershipPackageRecord,
+): string {
+  const poolName = `${pkg.metadata?.pool_name ?? ""}`.trim();
+  const siteLicenseId = getSiteLicenseId(pkg.metadata);
+  if (poolName && siteLicenseId) {
+    return `${poolName} (${siteLicenseId})`;
+  }
+  if (siteLicenseId) {
+    return siteLicenseId;
+  }
+  return pkg.id;
+}
+
+export async function assertNoActiveSiteLicenseDomainOverlap({
+  allowed_domains,
+  site_license_id,
+  exclude_package_id,
+  starts_at,
+  expires_at,
+  client,
+}: {
+  allowed_domains: string[];
+  site_license_id?: string | null;
+  exclude_package_id?: string | null;
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+  client?: PoolClient;
+}): Promise<void> {
+  const candidateDomains = normalizeSitePackageDomains(allowed_domains);
+  if (candidateDomains.length === 0) {
+    return;
+  }
+  const candidateStartsAt = asDate(starts_at) ?? null;
+  const candidateExpiresAt = asDate(expires_at) ?? null;
+  if (
+    candidateExpiresAt != null &&
+    candidateExpiresAt.getTime() <= Date.now()
+  ) {
+    return;
+  }
+  const { rows } = await getQueryClient(
+    client,
+  ).query<RawMembershipPackageRecord>(
+    `
+      SELECT id, owner_account_id, kind, membership_class, seat_count,
+             purchase_id, starts_at, expires_at, metadata, created, updated
+      FROM membership_packages
+      WHERE kind = 'site'
+        AND ($1::uuid IS NULL OR id != $1::uuid)
+        AND (expires_at IS NULL OR expires_at > NOW())
+        AND (expires_at IS NULL OR $2::timestamptz IS NULL OR expires_at > $2::timestamptz)
+        AND (starts_at IS NULL OR $3::timestamptz IS NULL OR starts_at < $3::timestamptz)
+    `,
+    [exclude_package_id ?? null, candidateStartsAt, candidateExpiresAt],
+  );
+  const candidateSiteLicenseId = `${site_license_id ?? ""}`.trim();
+  for (const row of rows) {
+    const pkg = normalizePackageRecord(row);
+    if (!pkg) {
+      continue;
+    }
+    const existingSiteLicenseId = getSiteLicenseId(pkg.metadata);
+    if (
+      candidateSiteLicenseId &&
+      existingSiteLicenseId === candidateSiteLicenseId
+    ) {
+      continue;
+    }
+    const overlap = findSitePackageDomainOverlap({
+      candidate_domains: candidateDomains,
+      existing_domains: normalizeSitePackageDomains(
+        getPackageDomains(pkg.metadata),
+      ),
+    });
+    if (overlap == null) {
+      continue;
+    }
+    throw Error(
+      `site license domain '${overlap.candidate_domain}' overlaps active site license domain '${overlap.existing_domain}' in ${formatSitePackageDomainConflictTarget(
+        pkg,
+      )}`,
+    );
+  }
 }
 
 function getInstitutionalClaimScopeKey(
@@ -771,6 +918,23 @@ async function withPackageOwnerWriteFence<T>({
   if (!pkg) {
     throw Error("membership package not found");
   }
+  if (isSeedBay() && isSeedAuthoritativeSitePackage(pkg)) {
+    if (client != null) {
+      return await fn({ client, pkg });
+    }
+    const dbClient = await getPool().connect();
+    try {
+      await dbClient.query("BEGIN");
+      const result = await fn({ client: dbClient, pkg });
+      await dbClient.query("COMMIT");
+      return result;
+    } catch (err) {
+      await dbClient.query("ROLLBACK");
+      throw err;
+    } finally {
+      dbClient.release();
+    }
+  }
   if (client != null) {
     await assertAccountPackageWriteAllowed({
       account_id: pkg.owner_account_id,
@@ -1039,7 +1203,40 @@ export async function createMembershipPackage(
   },
   client?: PoolClient,
 ): Promise<string> {
+  const normalizedKind = normalizePackageKind(kind);
+  const normalizedMetadata = normalizeMetadata(metadata);
   if (client == null) {
+    if (
+      normalizedKind === "site" &&
+      isSeedBay() &&
+      getSiteLicenseId(normalizedMetadata) != null
+    ) {
+      const dbClient = await getPool().connect();
+      try {
+        await dbClient.query("BEGIN");
+        const result = await createMembershipPackage(
+          {
+            id,
+            owner_account_id,
+            kind,
+            membership_class,
+            seat_count,
+            purchase_id,
+            starts_at,
+            expires_at,
+            metadata,
+          },
+          dbClient,
+        );
+        await dbClient.query("COMMIT");
+        return result;
+      } catch (err) {
+        await dbClient.query("ROLLBACK");
+        throw err;
+      } finally {
+        dbClient.release();
+      }
+    }
     return await withAccountRehomeWriteFence({
       account_id: owner_account_id,
       action: "create membership package",
@@ -1060,11 +1257,34 @@ export async function createMembershipPackage(
         ),
     });
   }
-  await assertAccountPackageWriteAllowed({
-    account_id: owner_account_id,
-    action: "create membership package",
-    client,
-  });
+  if (
+    !(
+      normalizedKind === "site" &&
+      isSeedBay() &&
+      getSiteLicenseId(normalizedMetadata) != null
+    )
+  ) {
+    await assertAccountPackageWriteAllowed({
+      account_id: owner_account_id,
+      action: "create membership package",
+      client,
+    });
+  }
+  if (normalizedKind === "site") {
+    const allowedDomains = normalizeSitePackageDomains(
+      getPackageDomains(normalizedMetadata),
+    );
+    if (allowedDomains.length > 0) {
+      normalizedMetadata!.allowed_domains = allowedDomains;
+      await assertNoActiveSiteLicenseDomainOverlap({
+        allowed_domains: allowedDomains,
+        site_license_id: getSiteLicenseId(normalizedMetadata),
+        starts_at,
+        expires_at,
+        client,
+      });
+    }
+  }
   await getQueryClient(client).query(
     `
       INSERT INTO membership_packages
@@ -1076,13 +1296,13 @@ export async function createMembershipPackage(
     [
       id,
       owner_account_id,
-      normalizePackageKind(kind),
+      normalizedKind,
       membership_class,
       normalizeSeatCount(seat_count),
       purchase_id ?? null,
       starts_at ?? null,
       expires_at ?? null,
-      normalizeMetadata(metadata),
+      normalizedMetadata,
     ],
   );
   return id;
@@ -1232,12 +1452,33 @@ export async function updateMembershipPackage({
       if (allowed_domains !== undefined && pkg.kind !== "site") {
         throw Error("allowed_domains can only be updated for site packages");
       }
+      const normalizedAllowedDomains =
+        allowed_domains === undefined
+          ? undefined
+          : normalizeSitePackageDomains(allowed_domains);
+      const nextPackageDomains =
+        normalizedAllowedDomains ?? getPackageDomains(pkg.metadata);
+      if (
+        pkg.kind === "site" &&
+        nextPackageDomains.length > 0 &&
+        (allowed_domains !== undefined || expires_at !== undefined)
+      ) {
+        await assertNoActiveSiteLicenseDomainOverlap({
+          allowed_domains: nextPackageDomains,
+          site_license_id: getSiteLicenseId(pkg.metadata),
+          exclude_package_id: package_id,
+          starts_at: pkg.starts_at,
+          expires_at:
+            expires_at === undefined ? pkg.expires_at : (nextExpiresAt ?? null),
+          client: dbClient,
+        });
+      }
       const nextMetadata =
         allowed_domains === undefined
           ? undefined
           : {
               ...normalizeMetadata(pkg.metadata),
-              allowed_domains,
+              allowed_domains: normalizedAllowedDomains,
             };
       const { rows } = await getQueryClient(
         dbClient,
@@ -1946,11 +2187,16 @@ async function listClaimableMembershipPackagesAcrossCluster({
   const addClaimables = (
     rows: ClaimableMembershipPackage[],
     owner_bay_id: string,
+    include?: (row: ClaimableMembershipPackage) => boolean,
   ) => {
     for (const row of rows) {
+      if (include != null && !include(row)) {
+        continue;
+      }
       claimables.set(row.package_id, { ...row, owner_bay_id });
     }
   };
+  const seedBayId = getSeedBayId();
   addClaimables(
     await listLocalClaimableMembershipPackagesForVerifiedEmails({
       account_id,
@@ -1958,9 +2204,20 @@ async function listClaimableMembershipPackagesAcrossCluster({
       client,
     }),
     getConfiguredBayId(),
+    (row) => row.kind !== "site" || isSeedBay(),
   );
+  if (!isSeedBay()) {
+    const seedRows = await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: seedBayId,
+    }).getClaimableMembershipPackages({
+      account_id,
+      verified_email_addresses,
+    });
+    addClaimables(seedRows, seedBayId, (row) => row.kind === "site");
+  }
   for (const bay_id of getConfiguredClusterBayIdsForStaticEnumerationOnly()) {
-    if (bay_id === getConfiguredBayId()) continue;
+    if (bay_id === getConfiguredBayId() || bay_id === seedBayId) continue;
     const remoteRows = await createInterBayAccountLocalClient({
       client: getInterBayFabricClient(),
       dest_bay: bay_id,
@@ -1968,9 +2225,28 @@ async function listClaimableMembershipPackagesAcrossCluster({
       account_id,
       verified_email_addresses,
     });
-    addClaimables(remoteRows, bay_id);
+    addClaimables(remoteRows, bay_id, (row) => row.kind !== "site");
   }
   return sortClaimableMembershipPackages(Array.from(claimables.values()));
+}
+
+export async function resolveClaimableMembershipPackageOwnerBay({
+  package_id,
+  account_id,
+  verified_email_addresses,
+  client,
+}: {
+  package_id: string;
+  account_id: string;
+  verified_email_addresses: string[];
+  client?: PoolClient;
+}): Promise<string | undefined> {
+  const claimables = await listClaimableMembershipPackagesAcrossCluster({
+    account_id,
+    verified_email_addresses,
+    client,
+  });
+  return claimables.find((row) => row.package_id === package_id)?.owner_bay_id;
 }
 
 export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({

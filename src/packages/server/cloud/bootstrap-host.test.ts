@@ -144,6 +144,15 @@ describe("bootstrap-host shell templates", () => {
     expect(source).not.toContain(`-o "$BOOTSTRAP_DIR/bootstrap.sh"`);
   });
 
+  it("installs libatomic for the Node 26 runtime", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "bootstrap-host.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain(`"libatomic1"`);
+  });
+
   it("supports inlining the rendered bootstrap payload for ssh reconcile", () => {
     const source = fs.readFileSync(
       path.join(__dirname, "bootstrap-host.ts"),

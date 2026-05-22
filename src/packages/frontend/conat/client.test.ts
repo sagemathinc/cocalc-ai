@@ -3103,7 +3103,7 @@ describe("ConatClient routed project-host reconnect", () => {
     jest.useRealTimers();
   });
 
-  it("rebuilds the routed host client after a host session change", async () => {
+  it("keeps the routed host client after a same-address host session change", async () => {
     jest.useFakeTimers();
 
     const hubConnHandlers: Record<string, Function> = {};
@@ -3333,15 +3333,16 @@ describe("ConatClient routed project-host reconnect", () => {
     await Promise.resolve();
 
     expect(ensureHostInfo).toHaveBeenCalledWith("host-1", true);
-    expect(close1).toHaveBeenCalledTimes(1);
+    expect(close1).not.toHaveBeenCalled();
     expect(client.routedHubClients["host-1"].host_session_id).toBe("session-2");
     jest.advanceTimersByTime(50);
-    expect(reconnectSpy).toHaveBeenCalledTimes(1);
+    expect(reconnectSpy).not.toHaveBeenCalled();
+    expect(client.routedHubClients["host-1"].client).toBe(routedClient1);
 
     jest.useRealTimers();
   });
 
-  it("rebuilds the routed host client after repeated same-session reconnect failures", async () => {
+  it("refreshes routed host auth after repeated same-session reconnect failures", async () => {
     jest.useFakeTimers();
 
     const hubClient = {
@@ -3552,10 +3553,10 @@ describe("ConatClient routed project-host reconnect", () => {
     await jest.advanceTimersByTimeAsync(10_000);
 
     expect(ensureHostInfo).toHaveBeenCalledWith("host-1", true);
-    expect(connect1).toHaveBeenCalledTimes(2);
-    expect(close1).toHaveBeenCalledTimes(1);
-    expect(connect2).toHaveBeenCalledTimes(1);
-    expect(client.routedHubClients["host-1"].client).toBe(routedClient2);
+    expect(connect1).toHaveBeenCalledTimes(3);
+    expect(close1).not.toHaveBeenCalled();
+    expect(connect2).not.toHaveBeenCalled();
+    expect(client.routedHubClients["host-1"].client).toBe(routedClient1);
     expect(client.routedHubClients["host-1"].host_session_id).toBe("session-1");
 
     jest.useRealTimers();

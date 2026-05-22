@@ -140,7 +140,7 @@ const PROJECT_HOST_TOKEN_FAILURE_BACKOFF_MS = [1_000, 3_000, 7_000] as const;
 const PROJECT_HOST_ROUTING_REFRESH_TIMEOUT_MS = 5_000;
 const PROJECT_HOST_BROWSER_SESSION_SETTLE_MS = 100;
 const ROUTED_HOST_RECONNECT_DELAYS_MS = [750, 2_000, 5_000] as const;
-const ROUTED_HOST_REBUILD_AFTER_ATTEMPTS = 3;
+const ROUTED_HOST_REFRESH_AUTH_AFTER_ATTEMPTS = 3;
 const FOREGROUND_WAKE_RECONNECT_THRESHOLD_MS = 60_000;
 const FOREGROUND_WAKE_PING_TIMEOUT_MS = 3_000;
 const STALE_HUB_FORCE_RECONNECT_GRACE_MS = 5_000;
@@ -1565,11 +1565,7 @@ export class ConatClient extends EventEmitter {
     if (!this.isCurrentRoutedHostState(host_id, state)) {
       return;
     }
-    if (
-      refreshed &&
-      (refreshed.address !== state.address ||
-        refreshed.host_session_id !== state.host_session_id)
-    ) {
+    if (refreshed && refreshed.address !== state.address) {
       this.invalidateProjectHostToken(host_id, {
         resetFailureState: true,
       });
@@ -1580,22 +1576,27 @@ export class ConatClient extends EventEmitter {
         project_ids: state.project_ids,
       });
       // Long-lived terminal/file sockets are attached to the main browser
-      // client and only rebuild when that client reconnects. Trigger that
-      // rebuild when the routed host endpoint/session changed.
+      // client and only rebuild when the routed host endpoint changes.
       this.scheduleRoutedHostRecovery();
       return;
     }
-    if (state.reconnectAttempts >= ROUTED_HOST_REBUILD_AFTER_ATTEMPTS) {
-      this.invalidateProjectHostToken(host_id);
-      this.removeRoutedHubClient(host_id, { expectedClient: state.client });
-      this.getOrCreateRoutedHubClient({
-        host_id,
-        address: refreshed?.address ?? state.address,
-        host_session_id: refreshed?.host_session_id ?? state.host_session_id,
-        project_id,
-        project_ids: state.project_ids,
+    if (
+      refreshed?.host_session_id != null &&
+      refreshed.host_session_id !== state.host_session_id
+    ) {
+      state.host_session_id = refreshed.host_session_id;
+      this.invalidateProjectHostToken(host_id, {
+        resetFailureState: true,
       });
-      return;
+      this.invalidateProjectHostBrowserSession(host_id);
+    }
+    if (state.reconnectAttempts >= ROUTED_HOST_REFRESH_AUTH_AFTER_ATTEMPTS) {
+      const tokenState = this.projectHostTokens[host_id];
+      if (!(tokenState?.retryAfter != null && tokenState.lastError != null)) {
+        this.invalidateProjectHostToken(host_id);
+        this.invalidateProjectHostBrowserSession(host_id);
+      }
+      state.reconnectAttempts = 0;
     }
     if (state.client.conn?.connected) {
       return;
@@ -1781,11 +1782,15 @@ export class ConatClient extends EventEmitter {
     project_ids?: Iterable<string>;
   }): ReturnType<typeof connectToConat> => {
     const current = this.routedHubClients[host_id];
-    if (
-      current &&
-      current.address === address &&
-      current.host_session_id === host_session_id
-    ) {
+    if (current && current.address === address) {
+      if (
+        host_session_id != null &&
+        current.host_session_id !== host_session_id
+      ) {
+        current.host_session_id = host_session_id;
+        this.invalidateProjectHostToken(host_id, { resetFailureState: true });
+        this.invalidateProjectHostBrowserSession(host_id);
+      }
       this.registerTrackedProjectForHost(host_id, current, project_id);
       if (project_ids) {
         for (const id of project_ids) {

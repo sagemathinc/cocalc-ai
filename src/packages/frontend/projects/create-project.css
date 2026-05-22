@@ -1,0 +1,190 @@
+.cc-project-create-title-icon {
+  align-items: center;
+  border-radius: 10px;
+  display: inline-flex;
+  height: 36px;
+  justify-content: center;
+  margin-top: 1px;
+  width: 36px;
+}
+
+.cc-project-create-title {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.cc-project-create-subtitle {
+  font-weight: 400;
+}
+
+.cc-project-create-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.cc-project-create-content-grid {
+  align-items: start;
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+}
+
+.cc-project-create-form-column {
+  width: 100%;
+}
+
+.cc-project-create-preset-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.cc-project-create-preset-button {
+  height: auto;
+  min-height: 96px;
+  padding: 10px 9px;
+  text-align: center;
+  white-space: normal;
+}
+
+.cc-project-create-preset-icon {
+  align-items: center;
+  border-radius: 12px;
+  display: inline-flex;
+  font-size: 18px;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+
+.cc-project-create-preset-description {
+  font-size: 12px;
+  line-height: 1.2;
+  max-width: 150px;
+  white-space: normal;
+}
+
+.cc-project-create-summary-card {
+  position: sticky;
+  top: 0;
+}
+
+.cc-project-create-summary-row {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 30px minmax(0, 1fr);
+  padding: 6px 0;
+}
+
+.cc-project-create-summary-icon {
+  align-items: center;
+  border-radius: 8px;
+  display: inline-flex;
+  height: 30px;
+  justify-content: center;
+  width: 30px;
+}
+
+@media (max-width: 760px) {
+  .cc-project-create-modal {
+    max-width: calc(100vw - 10px);
+    top: 5px;
+    width: calc(100vw - 10px) !important;
+  }
+
+  .cc-project-create-modal .ant-modal-content {
+    border-radius: 12px;
+  }
+
+  .cc-project-create-modal .ant-modal-header {
+    padding: 12px 40px 8px 12px;
+  }
+
+  .cc-project-create-modal .ant-modal-close {
+    top: 8px;
+  }
+
+  .cc-project-create-modal .ant-modal-body {
+    max-height: calc(100vh - 82px) !important;
+    padding: 10px !important;
+  }
+
+  .cc-project-create-title-icon {
+    display: none;
+  }
+
+  .cc-project-create-title {
+    font-size: 18px;
+  }
+
+  .cc-project-create-subtitle {
+    display: block;
+    font-size: 12px;
+    line-height: 1.2;
+    white-space: normal;
+  }
+
+  .cc-project-create-body {
+    gap: 10px;
+  }
+
+  .cc-project-create-content-grid {
+    gap: 10px;
+    grid-template-columns: 1fr;
+  }
+
+  .cc-project-create-preset-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cc-project-create-preset-button {
+    min-height: 86px;
+    padding: 8px 7px;
+  }
+
+  .cc-project-create-preset-icon {
+    font-size: 16px;
+    height: 28px;
+    width: 28px;
+  }
+
+  .cc-project-create-preset-description {
+    font-size: 11px;
+  }
+
+  .cc-project-create-health-card .ant-card-body {
+    padding: 8px !important;
+  }
+
+  .cc-project-create-health-grid {
+    gap: 8px !important;
+    grid-template-columns: 1fr 1fr !important;
+  }
+
+  .cc-project-create-health-gauge {
+    border-right: 0 !important;
+    padding: 0 !important;
+  }
+
+  .cc-project-create-health-grid > .ant-btn {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+  }
+
+  .cc-project-create-summary-card {
+    position: static;
+  }
+
+  .cc-project-create-summary-row {
+    grid-template-columns: 26px minmax(0, 1fr);
+    padding: 5px 0;
+  }
+
+  .cc-project-create-summary-icon {
+    height: 26px;
+    width: 26px;
+  }
+}

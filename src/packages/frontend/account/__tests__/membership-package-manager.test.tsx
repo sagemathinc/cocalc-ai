@@ -16,7 +16,6 @@ const isPurchaseAllowed = jest.fn();
 const purchaseMembershipPackage = jest.fn();
 const processPaymentIntents = jest.fn();
 const adminProvisionSiteLicense = jest.fn();
-const adminProvisionMembershipPackage = jest.fn();
 const updateMembershipPackage = jest.fn();
 const assignMembershipPackageSeat = jest.fn();
 const revokeMembershipPackageSeat = jest.fn();
@@ -24,6 +23,10 @@ const getSiteLicenseAffiliationReverificationStatus = jest.fn();
 const refreshSiteLicenseAffiliationVerification = jest.fn();
 const userSearch = jest.fn();
 const getNames = jest.fn();
+const runFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
+  await action();
+  return true;
+});
 
 let accountId = "owner-1";
 let isAdmin = false;
@@ -40,6 +43,14 @@ jest.mock("@cocalc/frontend/components", () => ({
 
 jest.mock("@cocalc/frontend/components/time-ago", () => ({
   TimeAgo: () => <span>time-ago</span>,
+}));
+
+jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
+  FreshAuthModal: () => <div data-testid="fresh-auth-modal" />,
+  useFreshAuthAction: () => ({
+    freshAuthModalProps: {},
+    runFreshAuthAction,
+  }),
 }));
 
 jest.mock("@cocalc/frontend/purchases/money-statistic", () => (props: any) => (
@@ -74,8 +85,6 @@ jest.mock("@cocalc/frontend/purchases/api", () => ({
   processPaymentIntents: (...args: any[]) => processPaymentIntents(...args),
   adminProvisionSiteLicense: (...args: any[]) =>
     adminProvisionSiteLicense(...args),
-  adminProvisionMembershipPackage: (...args: any[]) =>
-    adminProvisionMembershipPackage(...args),
   updateMembershipPackage: (...args: any[]) => updateMembershipPackage(...args),
   assignMembershipPackageSeat: (...args: any[]) =>
     assignMembershipPackageSeat(...args),
@@ -89,6 +98,7 @@ jest.mock("@cocalc/frontend/purchases/api", () => ({
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
+    browser_id: "browser-1",
     users_client: {
       user_search: (...args: any[]) => userSearch(...args),
       getNames: (...args: any[]) => getNames(...args),
@@ -99,7 +109,6 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 const TIERS = [
   { id: "member", label: "Member", store_visible: true },
   { id: "pro", label: "Pro", store_visible: true },
-  { id: "student", label: "Student", store_visible: false },
 ];
 
 describe("MembershipPackageManager", () => {
@@ -145,12 +154,13 @@ describe("MembershipPackageManager", () => {
     isAdmin = false;
     getClaimableMembershipPackages.mockResolvedValue([]);
     processPaymentIntents.mockResolvedValue({ count: 0 });
+    runFreshAuthAction.mockClear();
     getNames.mockResolvedValue({
       "user-1": { first_name: "Grace", last_name: "Hopper" },
     });
   });
 
-  it("renders team and site package sections", async () => {
+  it("renders team packages and the site-license dashboard", async () => {
     getMembershipPackages.mockResolvedValue([
       {
         id: "team-1",
@@ -179,15 +189,61 @@ describe("MembershipPackageManager", () => {
         active_assignment_count: 0,
         available_seat_count: 50,
         assignments: [],
-        metadata: { allowed_domains: ["example.edu"] },
+        metadata: {
+          allowed_domains: ["example.edu"],
+          pool_name: "Students",
+          site_license_id: "license-1",
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "student",
+        },
       },
     ]);
+    getSiteLicenseOverview.mockResolvedValue({
+      site_license: {
+        id: "license-1",
+        name: "Campus License",
+        organization_name: "Example University",
+        owner_account_id: "owner-1",
+        allowed_domains: ["example.edu"],
+        metadata: {},
+      },
+      pools: [
+        {
+          id: "site-1",
+          owner_account_id: "owner-1",
+          kind: "site",
+          membership_class: "pro",
+          seat_count: 50,
+          active_assignment_count: 0,
+          available_seat_count: 50,
+          assignments: [],
+          metadata: {
+            allowed_domains: ["example.edu"],
+            pool_name: "Students",
+            site_license_id: "license-1",
+            requires_approval: false,
+            verification_policy: "email-domain",
+            exclusive_group: "student",
+          },
+          pool_name: "Students",
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "student",
+          pending_request_count: 0,
+        },
+      ],
+      managers: [],
+      pending_requests: [],
+      recent_audit_events: [],
+    });
 
     render(<MembershipPackageManager tiers={TIERS} />);
 
     await waitFor(() => {
       expect(screen.getByText("Team packages")).toBeTruthy();
-      expect(screen.getByText("Site licenses")).toBeTruthy();
+      expect(screen.getByText("Site-license manager dashboard")).toBeTruthy();
+      expect(screen.getByText("Example University")).toBeTruthy();
       expect(screen.getByText("example.edu")).toBeTruthy();
       expect(screen.getByText("Grace Hopper")).toBeTruthy();
     });
@@ -425,6 +481,7 @@ describe("MembershipPackageManager", () => {
     fireEvent.click(screen.getByText("Provision license"));
 
     await waitFor(() => {
+      expect(runFreshAuthAction).toHaveBeenCalledTimes(1);
       expect(adminProvisionSiteLicense).toHaveBeenCalledWith({
         owner_account_id: undefined,
         allowed_domains: ["dept.example.edu", "example.edu"],
@@ -440,16 +497,19 @@ describe("MembershipPackageManager", () => {
         pools: expect.arrayContaining([
           expect.objectContaining({
             pool_name: "Students",
+            membership_class: "student",
             requires_approval: false,
             allowed_domains: ["dept.example.edu", "example.edu"],
           }),
           expect.objectContaining({
             pool_name: "Instructors",
+            membership_class: "instructor",
             requires_approval: true,
             allowed_domains: ["dept.example.edu", "example.edu"],
           }),
           expect.objectContaining({
             pool_name: "Researchers",
+            membership_class: "researcher",
             requires_approval: true,
             allowed_domains: ["dept.example.edu", "example.edu"],
           }),
@@ -458,21 +518,46 @@ describe("MembershipPackageManager", () => {
     });
   });
 
-  it("lets admins update a site license seat count and allowed domains", async () => {
+  it("lets admins update a site-license pool from the dashboard", async () => {
     isAdmin = true;
-    getMembershipPackages.mockResolvedValue([
-      {
-        id: "site-1",
-        owner_account_id: "owner-1",
-        kind: "site",
-        membership_class: "pro",
-        seat_count: 50,
-        active_assignment_count: 2,
-        available_seat_count: 48,
-        assignments: [],
-        metadata: { allowed_domains: ["example.edu"] },
+    const sitePackage = {
+      id: "site-1",
+      owner_account_id: "owner-1",
+      kind: "site",
+      membership_class: "pro",
+      seat_count: 50,
+      active_assignment_count: 2,
+      available_seat_count: 48,
+      assignments: [],
+      metadata: {
+        allowed_domains: ["example.edu"],
+        pool_name: "Students",
+        site_license_id: "license-1",
+        requires_approval: false,
+        verification_policy: "email-domain",
+        exclusive_group: "student",
       },
-    ]);
+      pool_name: "Students",
+      requires_approval: false,
+      verification_policy: "email-domain",
+      exclusive_group: "student",
+      pending_request_count: 0,
+    };
+    getMembershipPackages.mockResolvedValue([sitePackage]);
+    getSiteLicenseOverview.mockResolvedValue({
+      site_license: {
+        id: "license-1",
+        name: "Campus License",
+        organization_name: "Example University",
+        owner_account_id: "owner-1",
+        allowed_domains: ["example.edu"],
+        metadata: {},
+      },
+      pools: [sitePackage],
+      managers: [],
+      pending_requests: [],
+      recent_audit_events: [],
+    });
     updateMembershipPackage.mockResolvedValue({
       id: "site-1",
       owner_account_id: "owner-1",
@@ -488,25 +573,21 @@ describe("MembershipPackageManager", () => {
     render(<MembershipPackageManager tiers={TIERS} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Edit license")).toBeTruthy();
+      expect(screen.getByText("Edit pool")).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByText("Edit license"));
+    fireEvent.click(screen.getByText("Edit pool"));
     const seats = await screen.findByDisplayValue("50");
     fireEvent.change(seats, { target: { value: "75" } });
-    const domainInput = screen.getAllByRole("combobox")[0];
-    fireEvent.change(domainInput!, {
-      target: { value: "Example.EDU, dept.example.edu" },
-    });
-    fireEvent.blur(domainInput!);
-    fireEvent.click(screen.getByText("Save license"));
+    fireEvent.click(screen.getByText("Save pool"));
 
     await waitFor(() => {
       expect(updateMembershipPackage).toHaveBeenCalledWith({
         package_id: "site-1",
         owner_account_id: "owner-1",
+        site_license_id: "license-1",
         seat_count: 75,
-        allowed_domains: ["dept.example.edu", "example.edu"],
+        allowed_domains: ["example.edu"],
         expires_at: null,
       });
     });

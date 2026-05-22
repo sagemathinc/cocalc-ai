@@ -377,7 +377,11 @@ export interface SiteLicensePoolRequest {
 export type SiteLicenseAuditAction =
   | "site-license-provisioned"
   | "manager-added"
+  | "manager-updated"
+  | "manager-removed"
+  | "site-license-updated"
   | "pool-created"
+  | "pool-updated"
   | "pool-request-created"
   | "pool-request-approved"
   | "pool-request-rejected"
@@ -652,21 +656,11 @@ export interface Purchases {
     expires_at?: Date | string;
     metadata?: Record<string, unknown> | null;
   }) => Promise<{ package_id: string; purchase_id: number }>;
-  adminProvisionMembershipPackage: (opts?: {
-    account_id?: string;
-    owner_account_id?: string;
-    kind?: "site";
-    membership_class?: MembershipClass;
-    seat_count?: number;
-    allowed_domains?: string[];
-    starts_at?: Date | string | null;
-    expires_at?: Date | string | null;
-    metadata?: Record<string, unknown> | null;
-  }) => Promise<MembershipPackageDetails>;
   updateMembershipPackage: (opts?: {
     account_id?: string;
     package_id?: string;
     owner_account_id?: string;
+    site_license_id?: string;
     seat_count?: number;
     expires_at?: Date | string | null;
     allowed_domains?: string[];
@@ -719,6 +713,33 @@ export interface Purchases {
     owner_account_id?: string;
     site_license_id?: string;
   }) => Promise<SiteLicenseOverview>;
+  updateSiteLicense: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    site_license_id?: string;
+    name?: string;
+    organization_name?: string;
+    allowed_domains?: string[];
+    custom_terms_url?: string | null;
+    custom_policy_url?: string | null;
+    terms_version_label?: string | null;
+    renewal_policy?: string | null;
+    overage_policy?: string | null;
+    starts_at?: Date | string | null;
+    expires_at?: Date | string | null;
+  }) => Promise<SiteLicenseOverview>;
+  setSiteLicenseManager: (opts?: {
+    account_id?: string;
+    site_license_id?: string;
+    target_account_id?: string;
+    role?: SiteLicenseManagerRole;
+  }) => Promise<SiteLicenseOverview>;
+  removeSiteLicenseManager: (opts?: {
+    account_id?: string;
+    site_license_id?: string;
+    target_account_id?: string;
+  }) => Promise<SiteLicenseOverview>;
   requestSiteLicensePool: (opts?: {
     account_id?: string;
     owner_account_id?: string;
@@ -759,7 +780,6 @@ export const purchases = {
   getMembershipDetails: authFirst,
   getMembershipPackageQuote: authFirst,
   purchaseMembershipPackage: authFirst,
-  adminProvisionMembershipPackage: authFirst,
   updateMembershipPackage: authFirst,
   getMembershipPackages: authFirst,
   assignMembershipPackageSeat: authFirst,
@@ -768,6 +788,9 @@ export const purchases = {
   claimMembershipPackageSeat: authFirst,
   adminProvisionSiteLicense: authFirst,
   getSiteLicenseOverview: authFirst,
+  updateSiteLicense: authFirst,
+  setSiteLicenseManager: authFirst,
+  removeSiteLicenseManager: authFirst,
   requestSiteLicensePool: authFirst,
   reviewSiteLicensePoolRequest: authFirst,
   getSiteLicenseAffiliationReverificationStatus: authFirst,

@@ -28,7 +28,12 @@ export interface HomeBayRetryClaims {
   email?: string;
   account_id?: string;
   home_bay_id: string;
-  purpose: "sign-in" | "sign-up" | "impersonate" | "cli-login";
+  purpose:
+    | "sign-in"
+    | "sign-up"
+    | "impersonate"
+    | "cli-login"
+    | "password-reset";
 }
 
 function base64UrlEncode(input: Buffer | string): string {
@@ -102,7 +107,12 @@ export function issueHomeBayRetryToken({
   email?: string;
   account_id?: string;
   home_bay_id: string;
-  purpose: "sign-in" | "sign-up" | "impersonate" | "cli-login";
+  purpose:
+    | "sign-in"
+    | "sign-up"
+    | "impersonate"
+    | "cli-login"
+    | "password-reset";
   ttl_seconds?: number;
   now_ms?: number;
 }): {
@@ -116,7 +126,7 @@ export function issueHomeBayRetryToken({
   if (!normalizedBay) {
     throw new Error("home_bay_id is required");
   }
-  if (purpose === "impersonate") {
+  if (purpose === "impersonate" || purpose === "password-reset") {
     if (!normalizedAccountId) {
       throw new Error("account_id is required");
     }
@@ -162,7 +172,12 @@ export function verifyHomeBayRetryToken({
   home_bay_id: string;
   email?: string;
   account_id?: string;
-  purpose?: "sign-in" | "sign-up" | "impersonate" | "cli-login";
+  purpose?:
+    | "sign-in"
+    | "sign-up"
+    | "impersonate"
+    | "cli-login"
+    | "password-reset";
   now_ms?: number;
 }): HomeBayRetryClaims {
   const { header, claims, signingInput, signature } = parseClaims(token);

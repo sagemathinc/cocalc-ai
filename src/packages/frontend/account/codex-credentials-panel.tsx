@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Alert,
   Button,
@@ -19,12 +26,34 @@ import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { lite } from "@cocalc/frontend/lite";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
+import { COLORS } from "@cocalc/util/theme";
 import type {
   CodexPaymentSourceInfo,
   ExternalCredentialInfo,
 } from "@cocalc/conat/hub/api/system";
 
 const { Text } = Typography;
+const CODEX_USAGE_URL = "https://chatgpt.com/codex/settings/usage";
+
+const recommendedCardStyle: CSSProperties = {
+  border: `1px solid ${COLORS.BLUE_LLL}`,
+  borderRadius: 14,
+  background: `linear-gradient(135deg, ${COLORS.BLUE_LLLL} 0%, white 58%, ${COLORS.BS_GREEN_LL} 100%)`,
+  padding: 16,
+};
+
+const optionGridStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+  gap: 12,
+};
+
+const optionCardStyle: CSSProperties = {
+  border: `1px solid ${COLORS.GRAY_LL}`,
+  borderRadius: 12,
+  background: "white",
+  padding: 14,
+};
 
 function sourceLabel(source: CodexPaymentSourceInfo["source"]): string {
   if (lite) {
@@ -413,6 +442,34 @@ function CodexCredentialsPanelBody({
 
   const content = (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+      <div style={recommendedCardStyle}>
+        <Space orientation="vertical" size={10} style={{ width: "100%" }}>
+          <Space wrap>
+            <Tag color="green">Recommended</Tag>
+            <Text strong style={{ fontSize: 18 }}>
+              Use your ChatGPT Codex subscription
+            </Text>
+          </Space>
+          <Text type="secondary">
+            This is the best default for Codex in CoCalc: no shared billing
+            surprises, clear usage limits in ChatGPT, and the same Codex account
+            you use elsewhere.
+          </Text>
+          <Space wrap>
+            <Button
+              type="primary"
+              onClick={() => void startDeviceAuth()}
+              loading={deviceAuthActionPending}
+              disabled={!authProjectId || deviceAuth?.state === "pending"}
+            >
+              Sign in with ChatGPT
+            </Button>
+            <Button href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
+              View Codex usage
+            </Button>
+          </Space>
+        </Space>
+      </div>
       {loading && <Loading />}
       {!loading && error && <Alert type="error" title={error} />}
       {!loading && !error && paymentSource && (
@@ -431,8 +488,8 @@ function CodexCredentialsPanelBody({
           description={
             lite ? (
               <Text type="secondary">
-                In Lite mode, Codex uses either your ChatGPT Plan or one OpenAI
-                API key.
+                Codex will prefer your ChatGPT Plan. Use an OpenAI API key only
+                as a fallback.
               </Text>
             ) : (
               <>
@@ -465,11 +522,7 @@ function CodexCredentialsPanelBody({
                 </Space>
                 {paymentSource.hasSubscription ? (
                   <div style={{ marginTop: 8 }}>
-                    <a
-                      href="https://chatgpt.com/codex/settings/usage"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
+                    <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
                       Check ChatGPT Codex usage
                     </a>
                   </div>
@@ -479,6 +532,38 @@ function CodexCredentialsPanelBody({
           }
         />
       )}
+      <div style={optionGridStyle}>
+        <div
+          style={{
+            ...optionCardStyle,
+            borderColor: COLORS.BLUE_LLL,
+            background: COLORS.BLUE_LLLL,
+          }}
+        >
+          <Space orientation="vertical" size={6}>
+            <Space wrap>
+              <Tag color="green">Best choice</Tag>
+              <Text strong>ChatGPT Plan</Text>
+            </Space>
+            <Text type="secondary">
+              Recommended for support, teaching, and normal Codex use. Sign in
+              once, then retry the failed request.
+            </Text>
+          </Space>
+        </div>
+        <div style={optionCardStyle}>
+          <Space orientation="vertical" size={6}>
+            <Space wrap>
+              <Tag>Fallback</Tag>
+              <Text strong>OpenAI API key</Text>
+            </Space>
+            <Text type="secondary">
+              Useful for account or project-specific billing. In hosted CoCalc,
+              keys are lower priority than a ChatGPT Plan.
+            </Text>
+          </Space>
+        </div>
+      </div>
       <Collapse
         size="small"
         defaultActiveKey={[]}

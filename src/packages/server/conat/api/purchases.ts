@@ -15,7 +15,6 @@ import { getClusterAccountByIdDirect } from "@cocalc/server/accounts/cluster-dir
 import {
   assignMembershipPackageSeat as assignMembershipPackageSeat0,
   claimMembershipPackageSeat as claimMembershipPackageSeat0,
-  createMembershipPackage,
   getMembershipPackage,
   listClaimableMembershipPackagesForAccount,
   listMembershipPackageDetailsForOwner,
@@ -29,9 +28,12 @@ import {
   getSiteLicenseAffiliationReverificationStatusForAccount,
   getSiteLicenseOverview as getSiteLicenseOverview0,
   requestSiteLicensePool as requestSiteLicensePool0,
-  refreshSiteLicenseAffiliationVerificationForAccount as refreshSiteLicenseAffiliationVerificationForAccount0,
   refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBay,
+  removeSiteLicenseManager as removeSiteLicenseManager0,
   reviewSiteLicensePoolRequest as reviewSiteLicensePoolRequest0,
+  setSiteLicenseManager as setSiteLicenseManager0,
+  updateSiteLicense as updateSiteLicense0,
+  updateSiteLicensePool as updateSiteLicensePool0,
 } from "@cocalc/server/membership/site-licenses";
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 import type { MoneyValue } from "@cocalc/util/money";
@@ -39,22 +41,38 @@ import isAdmin from "@cocalc/server/accounts/is-admin";
 import type { MembershipPackageProduct } from "@cocalc/util/db-schema/shopping-cart-items";
 import purchaseMembershipPackage0 from "@cocalc/server/purchases/membership-package";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-sessions";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import type {
-  MembershipClass,
   MembershipPackageDetails,
   SiteLicenseAffiliationReverificationSeat,
   SiteLicenseAffiliationReverificationUserStatus,
+  SiteLicenseManagerRole,
   SiteLicenseOverview,
   SiteLicensePoolConfig,
   SiteLicensePoolRequest,
 } from "@cocalc/conat/hub/api/purchases";
 
 export { getBalance };
+
+function getSeedBayId(): string {
+  return getConfiguredClusterSeedBayId();
+}
+
+function isSeedBay(): boolean {
+  return getConfiguredBayId() === getSeedBayId();
+}
+
+function getSeedSiteLicenseClient() {
+  return createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: getSeedBayId(),
+  });
+}
 
 export async function getMinBalance({
   account_id,
@@ -107,13 +125,6 @@ function requireAccount(account_id?: string): string {
   return owner;
 }
 
-function normalizeSiteLicenseKind(kind?: string): "site" {
-  if (kind == null || kind === "site") {
-    return "site";
-  }
-  throw Error("kind must be 'site'");
-}
-
 function normalizeAllowedDomain(domain: string): string {
   const value = `${domain ?? ""}`.trim().toLowerCase().replace(/^@+/, "");
   if (
@@ -138,23 +149,6 @@ function normalizeAllowedDomains(allowed_domains?: string[]): string[] {
     throw Error("at least one allowed domain is required");
   }
   return domains;
-}
-
-async function getCreatedMembershipPackageDetails({
-  owner_account_id,
-  package_id,
-}: {
-  owner_account_id: string;
-  package_id: string;
-}): Promise<MembershipPackageDetails> {
-  const packages = await listMembershipPackageDetailsForOwner({
-    owner_account_id,
-  });
-  const membershipPackage = packages.find(({ id }) => id === package_id);
-  if (!membershipPackage) {
-    throw Error("created membership package not found");
-  }
-  return membershipPackage;
 }
 
 async function validatePurchaseFreshAuth({
@@ -412,91 +406,11 @@ export async function getMembershipPackages({
   });
 }
 
-export async function adminProvisionMembershipPackage({
-  account_id,
-  owner_account_id,
-  kind,
-  membership_class,
-  seat_count,
-  allowed_domains,
-  starts_at,
-  expires_at,
-  metadata,
-}: {
-  account_id?: string;
-  owner_account_id?: string;
-  kind?: "site";
-  membership_class?: MembershipClass;
-  seat_count?: number;
-  allowed_domains?: string[];
-  starts_at?: Date | string | null;
-  expires_at?: Date | string | null;
-  metadata?: Record<string, unknown> | null;
-} = {}): Promise<MembershipPackageDetails> {
-  const actorId = requireAccount(account_id);
-  if (!(await isAdmin(actorId))) {
-    throw Error("must be an admin");
-  }
-  const targetId = `${owner_account_id ?? actorId}`.trim();
-  if (!targetId) {
-    throw Error("owner_account_id required");
-  }
-  const normalizedKind = normalizeSiteLicenseKind(kind);
-  const membershipClass = `${membership_class ?? ""}`.trim();
-  if (!membershipClass) {
-    throw Error("membership_class is required");
-  }
-  if (!Number.isInteger(seat_count) || (seat_count ?? 0) <= 0) {
-    throw Error("seat_count must be a positive integer");
-  }
-  const domains = normalizeAllowedDomains(allowed_domains);
-  if (targetId !== actorId) {
-    const home_bay_id = await resolveTargetAccountHomeBay({
-      account_id: actorId,
-      user_account_id: targetId,
-    });
-    if (home_bay_id !== getConfiguredBayId()) {
-      return await createInterBayAccountLocalClient({
-        client: getInterBayFabricClient(),
-        dest_bay: home_bay_id,
-      }).adminProvisionMembershipPackage({
-        owner_account_id: targetId,
-        actor_account_id: actorId,
-        kind: normalizedKind,
-        membership_class: membershipClass,
-        seat_count: seat_count!,
-        allowed_domains: domains,
-        starts_at,
-        expires_at,
-        metadata: metadata ?? null,
-      });
-    }
-  }
-  const package_id = await createMembershipPackage({
-    owner_account_id: targetId,
-    kind: normalizedKind,
-    membership_class: membershipClass,
-    seat_count: seat_count!,
-    starts_at,
-    expires_at,
-    metadata: {
-      ...(metadata ?? {}),
-      allowed_domains: domains,
-      provisioned_by_account_id: actorId,
-      provisioned_at: new Date().toISOString(),
-      provisioned_via: "admin",
-    },
-  });
-  return await getCreatedMembershipPackageDetails({
-    owner_account_id: targetId,
-    package_id,
-  });
-}
-
 export async function updateMembershipPackage({
   account_id,
   package_id,
   owner_account_id,
+  site_license_id,
   seat_count,
   expires_at,
   allowed_domains,
@@ -504,19 +418,45 @@ export async function updateMembershipPackage({
   account_id?: string;
   package_id?: string;
   owner_account_id?: string;
+  site_license_id?: string;
   seat_count?: number;
   expires_at?: Date | string | null;
   allowed_domains?: string[];
 } = {}): Promise<MembershipPackageDetails> {
   const actorId = requireAccount(account_id);
-  await assertAccountTrustedForProductAccess(
-    actorId,
-    "update membership packages",
-  );
   if (!package_id) {
     throw Error("package_id required");
   }
   const isAdminActor = await isAdmin(actorId);
+  const siteLicenseId = `${site_license_id ?? ""}`.trim();
+  if (siteLicenseId) {
+    if (!isSeedBay()) {
+      return await getSeedSiteLicenseClient().updateMembershipPackage({
+        package_id,
+        actor_account_id: actorId,
+        seat_count,
+        expires_at,
+        allowed_domains:
+          allowed_domains === undefined
+            ? undefined
+            : normalizeAllowedDomains(allowed_domains),
+      });
+    }
+    return await updateSiteLicensePool0({
+      actor_account_id: actorId,
+      package_id,
+      seat_count,
+      expires_at,
+      allowed_domains:
+        allowed_domains === undefined
+          ? undefined
+          : normalizeAllowedDomains(allowed_domains),
+    });
+  }
+  await assertAccountTrustedForProductAccess(
+    actorId,
+    "update membership packages",
+  );
   const targetOwnerId = `${owner_account_id ?? ""}`.trim();
   const home_bay_id = targetOwnerId
     ? await resolveTargetAccountHomeBay({
@@ -549,6 +489,18 @@ export async function updateMembershipPackage({
   }
   if (pkg.owner_account_id !== actorId && !isAdminActor) {
     throw Error("must own membership package");
+  }
+  if (pkg.kind === "site") {
+    return await updateSiteLicensePool0({
+      actor_account_id: actorId,
+      package_id,
+      seat_count,
+      expires_at,
+      allowed_domains:
+        allowed_domains === undefined
+          ? undefined
+          : normalizeAllowedDomains(allowed_domains),
+    });
   }
   if (targetOwnerId && pkg.owner_account_id !== targetOwnerId) {
     throw Error("membership package does not belong to owner_account_id");
@@ -758,33 +710,23 @@ export async function adminProvisionSiteLicense({
   if (!ownerAccountId) {
     throw Error("owner_account_id required");
   }
-  if (ownerAccountId !== actorId) {
-    const home_bay_id = await resolveTargetAccountHomeBay({
-      account_id: actorId,
-      user_account_id: ownerAccountId,
-      allow_cross_account_routing: true,
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().adminProvisionSiteLicense({
+      actor_account_id: actorId,
+      owner_account_id: ownerAccountId,
+      name: `${name ?? ""}`,
+      organization_name: `${organization_name ?? ""}`,
+      allowed_domains: allowed_domains ?? [],
+      pools: pools ?? [],
+      custom_terms_url,
+      custom_policy_url,
+      terms_version_label,
+      renewal_policy,
+      overage_policy,
+      starts_at,
+      expires_at,
+      metadata,
     });
-    if (home_bay_id !== getConfiguredBayId()) {
-      return await createInterBayAccountLocalClient({
-        client: getInterBayFabricClient(),
-        dest_bay: home_bay_id,
-      }).adminProvisionSiteLicense({
-        actor_account_id: actorId,
-        owner_account_id: ownerAccountId,
-        name: `${name ?? ""}`,
-        organization_name: `${organization_name ?? ""}`,
-        allowed_domains: allowed_domains ?? [],
-        pools: pools ?? [],
-        custom_terms_url,
-        custom_policy_url,
-        terms_version_label,
-        renewal_policy,
-        overage_policy,
-        starts_at,
-        expires_at,
-        metadata,
-      });
-    }
   }
   return await adminProvisionSiteLicense0({
     actor_account_id: actorId,
@@ -806,7 +748,6 @@ export async function adminProvisionSiteLicense({
 
 export async function getSiteLicenseOverview({
   account_id,
-  owner_account_id,
   site_license_id,
 }: {
   account_id?: string;
@@ -814,27 +755,128 @@ export async function getSiteLicenseOverview({
   site_license_id?: string;
 } = {}): Promise<SiteLicenseOverview> {
   const actorId = requireAccount(account_id);
-  const ownerAccountId = `${owner_account_id ?? ""}`.trim();
-  if (ownerAccountId) {
-    const home_bay_id = await resolveTargetAccountHomeBay({
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().getSiteLicenseOverview({
       account_id: actorId,
-      user_account_id: ownerAccountId,
-      allow_cross_account_routing: true,
+      site_license_id: `${site_license_id ?? ""}`.trim(),
     });
-    if (home_bay_id !== getConfiguredBayId()) {
-      return await createInterBayAccountLocalClient({
-        client: getInterBayFabricClient(),
-        dest_bay: home_bay_id,
-      }).getSiteLicenseOverview({
-        account_id: actorId,
-        site_license_id: `${site_license_id ?? ""}`.trim(),
-      });
-    }
   }
   return await getSiteLicenseOverview0({
     account_id: actorId,
     site_license_id: `${site_license_id ?? ""}`.trim(),
   });
+}
+
+export async function updateSiteLicense({
+  account_id,
+  browser_id,
+  session_hash,
+  site_license_id,
+  name,
+  organization_name,
+  allowed_domains,
+  custom_terms_url,
+  custom_policy_url,
+  terms_version_label,
+  renewal_policy,
+  overage_policy,
+  starts_at,
+  expires_at,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  site_license_id?: string;
+  name?: string;
+  organization_name?: string;
+  allowed_domains?: string[];
+  custom_terms_url?: string | null;
+  custom_policy_url?: string | null;
+  terms_version_label?: string | null;
+  renewal_policy?: string | null;
+  overage_policy?: string | null;
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+} = {}): Promise<SiteLicenseOverview> {
+  const actorId = requireAccount(account_id);
+  const siteLicenseId = `${site_license_id ?? ""}`.trim();
+  if (!siteLicenseId) {
+    throw Error("site_license_id required");
+  }
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+  });
+  const opts = {
+    actor_account_id: actorId,
+    site_license_id: siteLicenseId,
+    name,
+    organization_name,
+    allowed_domains:
+      allowed_domains === undefined
+        ? undefined
+        : normalizeAllowedDomains(allowed_domains),
+    custom_terms_url,
+    custom_policy_url,
+    terms_version_label,
+    renewal_policy,
+    overage_policy,
+    starts_at,
+    expires_at,
+  };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().updateSiteLicense(opts);
+  }
+  return await updateSiteLicense0(opts);
+}
+
+export async function setSiteLicenseManager({
+  account_id,
+  site_license_id,
+  target_account_id,
+  role,
+}: {
+  account_id?: string;
+  site_license_id?: string;
+  target_account_id?: string;
+  role?: SiteLicenseManagerRole;
+} = {}): Promise<SiteLicenseOverview> {
+  const actorId = requireAccount(account_id);
+  const siteLicenseId = `${site_license_id ?? ""}`.trim();
+  const targetAccountId = `${target_account_id ?? ""}`.trim();
+  const normalizedRole = `${role ?? ""}`.trim() as SiteLicenseManagerRole;
+  const opts = {
+    actor_account_id: actorId,
+    site_license_id: siteLicenseId,
+    target_account_id: targetAccountId,
+    role: normalizedRole,
+  };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().setSiteLicenseManager(opts);
+  }
+  return await setSiteLicenseManager0(opts);
+}
+
+export async function removeSiteLicenseManager({
+  account_id,
+  site_license_id,
+  target_account_id,
+}: {
+  account_id?: string;
+  site_license_id?: string;
+  target_account_id?: string;
+} = {}): Promise<SiteLicenseOverview> {
+  const actorId = requireAccount(account_id);
+  const opts = {
+    actor_account_id: actorId,
+    site_license_id: `${site_license_id ?? ""}`.trim(),
+    target_account_id: `${target_account_id ?? ""}`.trim(),
+  };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().removeSiteLicenseManager(opts);
+  }
+  return await removeSiteLicenseManager0(opts);
 }
 
 export async function requestSiteLicensePool({
@@ -852,6 +894,7 @@ export async function requestSiteLicensePool({
 } = {}): Promise<SiteLicensePoolRequest> {
   const actorId = requireAccount(account_id);
   const ownerAccountId = `${owner_account_id ?? ""}`.trim();
+  const packageId = `${package_id ?? ""}`.trim();
   const actorHomeBayId = await resolveTargetAccountHomeBay({
     account_id: actorId,
     user_account_id: actorId,
@@ -863,7 +906,7 @@ export async function requestSiteLicensePool({
     }).requestSiteLicensePoolForAccount({
       account_id: actorId,
       owner_account_id: ownerAccountId || undefined,
-      package_id: `${package_id ?? ""}`.trim(),
+      package_id: packageId,
       requester_note,
       accepted_terms,
     });
@@ -872,29 +915,19 @@ export async function requestSiteLicensePool({
     actorId,
     "request site-license pool",
   );
-  if (ownerAccountId) {
-    const home_bay_id = await resolveTargetAccountHomeBay({
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().requestSiteLicensePool({
       account_id: actorId,
-      user_account_id: ownerAccountId,
-      allow_cross_account_routing: true,
+      package_id: packageId,
+      verified_email_addresses:
+        await getVerifiedEmailAddressesForAccount(actorId),
+      requester_note,
+      accepted_terms,
     });
-    if (home_bay_id !== getConfiguredBayId()) {
-      return await createInterBayAccountLocalClient({
-        client: getInterBayFabricClient(),
-        dest_bay: home_bay_id,
-      }).requestSiteLicensePool({
-        account_id: actorId,
-        package_id: `${package_id ?? ""}`.trim(),
-        verified_email_addresses:
-          await getVerifiedEmailAddressesForAccount(actorId),
-        requester_note,
-        accepted_terms,
-      });
-    }
   }
   return await requestSiteLicensePool0({
     account_id: actorId,
-    package_id: `${package_id ?? ""}`.trim(),
+    package_id: packageId,
     requester_note,
     accepted_terms,
   });
@@ -902,7 +935,6 @@ export async function requestSiteLicensePool({
 
 export async function reviewSiteLicensePoolRequest({
   account_id,
-  owner_account_id,
   request_id,
   action,
   review_note,
@@ -914,23 +946,13 @@ export async function reviewSiteLicensePoolRequest({
   review_note?: string | null;
 } = {}): Promise<SiteLicensePoolRequest> {
   const actorId = requireAccount(account_id);
-  const ownerAccountId = `${owner_account_id ?? ""}`.trim();
-  if (ownerAccountId) {
-    const home_bay_id = await resolveTargetAccountHomeBay({
-      account_id: actorId,
-      user_account_id: ownerAccountId,
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().reviewSiteLicensePoolRequest({
+      actor_account_id: actorId,
+      request_id: `${request_id ?? ""}`.trim(),
+      action: action ?? "reject",
+      review_note,
     });
-    if (home_bay_id !== getConfiguredBayId()) {
-      return await createInterBayAccountLocalClient({
-        client: getInterBayFabricClient(),
-        dest_bay: home_bay_id,
-      }).reviewSiteLicensePoolRequest({
-        actor_account_id: actorId,
-        request_id: `${request_id ?? ""}`.trim(),
-        action: action ?? "reject",
-        review_note,
-      });
-    }
   }
   return await reviewSiteLicensePoolRequest0({
     actor_account_id: actorId,
@@ -1007,33 +1029,15 @@ export async function refreshSiteLicenseAffiliationVerification({
   );
   const refreshed: SiteLicenseAffiliationReverificationSeat[] = [];
   for (const seat of bySiteLicense.values()) {
-    const ownerAccountId = `${seat.site_license_owner_account_id ?? ""}`.trim();
-    if (!ownerAccountId) {
-      if (requestedSiteLicenseId) {
-        refreshed.push(
-          ...(await refreshSiteLicenseAffiliationVerificationForAccount0({
+    if (!isSeedBay()) {
+      refreshed.push(
+        ...(await getSeedSiteLicenseClient().refreshSiteLicenseAffiliationVerification(
+          {
             account_id: actorId,
             site_license_id: seat.site_license_id,
-          })),
-        );
-      }
-      continue;
-    }
-    const ownerHomeBayId = await resolveTargetAccountHomeBay({
-      account_id: actorId,
-      user_account_id: ownerAccountId,
-      allow_cross_account_routing: true,
-    });
-    if (ownerHomeBayId !== getConfiguredBayId()) {
-      refreshed.push(
-        ...(await createInterBayAccountLocalClient({
-          client: getInterBayFabricClient(),
-          dest_bay: ownerHomeBayId,
-        }).refreshSiteLicenseAffiliationVerification({
-          account_id: actorId,
-          site_license_id: seat.site_license_id,
-          verified_email_addresses,
-        })),
+            verified_email_addresses,
+          },
+        )),
       );
       continue;
     }

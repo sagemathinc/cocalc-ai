@@ -90,7 +90,11 @@ import {
   acquireSharedProjectDStream,
   type SharedProjectDStreamRelease,
 } from "@cocalc/frontend/conat/project-dstream";
-import { once, retry_until_success } from "@cocalc/util/async-utils";
+import {
+  once,
+  retry_until_success,
+  withTimeout,
+} from "@cocalc/util/async-utils";
 import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
 import * as misc from "@cocalc/util/misc";
 import { reduxNameToProjectId } from "@cocalc/util/redux/name";
@@ -2545,35 +2549,94 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
   };
 
-  recoverOpenFileRuntimeAfterUnexpectedSyncdocClose = reuseInFlight(
-    async (syncPath: string): Promise<boolean> => {
+  private recoverOpenFileRuntimeInFlight = new globalThis.Map<
+    string,
+    Promise<boolean>
+  >();
+
+  recoverOpenFileRuntimeAfterUnexpectedSyncdocClose = (
+    syncPath: string,
+  ): Promise<boolean> => {
+    const canonicalSyncPath = this.get_sync_path(syncPath);
+    const existing = this.recoverOpenFileRuntimeInFlight.get(canonicalSyncPath);
+    if (existing != null) {
+      return existing;
+    }
+    const promise =
+      this.recoverOpenFileRuntimeAfterUnexpectedSyncdocCloseForPath(
+        canonicalSyncPath,
+      ).finally(() => {
+        this.recoverOpenFileRuntimeInFlight.delete(canonicalSyncPath);
+      });
+    this.recoverOpenFileRuntimeInFlight.set(canonicalSyncPath, promise);
+    return promise;
+  };
+
+  private recoverOpenFileRuntimeAfterUnexpectedSyncdocCloseForPath = async (
+    canonicalSyncPath: string,
+  ): Promise<boolean> => {
+    const selectMatchingOpenFiles = () => {
       const store = this.get_store();
-      const canonicalSyncPathValue = this.get_sync_path(syncPath);
-      const matchingOpenFiles = selectOpenFilesForSyncPath({
+      return selectOpenFilesForSyncPath({
         openFiles: store?.get("open_files"),
-        targetSyncPath: canonicalSyncPathValue,
+        targetSyncPath: canonicalSyncPath,
         getSyncPath: (path) => this.get_sync_path(path),
       });
-      if (matchingOpenFiles.size === 0) {
+    };
+    if (selectMatchingOpenFiles().size === 0) {
+      return false;
+    }
+
+    if (!(await this.waitForProjectRuntimeReadyAfterSyncdocClose())) {
+      return false;
+    }
+
+    const store = this.get_store();
+    const matchingOpenFiles = selectMatchingOpenFiles();
+    if (matchingOpenFiles.size === 0) {
+      return false;
+    }
+    await resetOpenFileRuntimeAfterHostReset({
+      openFiles: matchingOpenFiles,
+      activeProjectTab: store?.get("active_project_tab"),
+      getSyncPath: (path) => this.get_sync_path(path),
+      getComponent: (path) => this.open_files?.get(path, "component"),
+      setComponent: (path, component) =>
+        this.open_files?.set(path, "component", component),
+      removeRuntime: async (path) => {
+        await project_file.remove(path, this.redux, this.project_id);
+      },
+      rebootstrapPath: async (path, opts) => {
+        this.ensureOpenFileComponent(path, opts);
+      },
+    });
+    return true;
+  };
+
+  private waitForProjectRuntimeReadyAfterSyncdocClose =
+    async (): Promise<boolean> => {
+      try {
+        await retry_until_success({
+          f: async () => {
+            if (this.isClosed()) {
+              throw Error("project actions closed");
+            }
+            await withTimeout(this.fs().exists("."), 3000);
+          },
+          start_delay: 500,
+          max_delay: 5000,
+          max_time: 5 * 60 * 1000,
+          desc: `waiting for project ${this.project_id} runtime after syncdoc close`,
+        });
+        return !this.isClosed();
+      } catch (err) {
+        console.warn(
+          `unable to recover open file runtime for project ${this.project_id}: `,
+          err,
+        );
         return false;
       }
-      await resetOpenFileRuntimeAfterHostReset({
-        openFiles: matchingOpenFiles,
-        activeProjectTab: store?.get("active_project_tab"),
-        getSyncPath: (path) => this.get_sync_path(path),
-        getComponent: (path) => this.open_files?.get(path, "component"),
-        setComponent: (path, component) =>
-          this.open_files?.set(path, "component", component),
-        removeRuntime: async (path) => {
-          await project_file.remove(path, this.redux, this.project_id);
-        },
-        rebootstrapPath: async (path, opts) => {
-          this.ensureOpenFileComponent(path, opts);
-        },
-      });
-      return true;
-    },
-  );
+    };
 
   private getFilesystemClient = async (
     forceRefresh: boolean = false,

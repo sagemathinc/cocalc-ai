@@ -11,6 +11,7 @@ const mockEnsureWorkspaceChatPath = jest.fn();
 const mockOpenFile = jest.fn();
 let mockAccountId = "00000000-1000-4000-8000-000000000001";
 let mockProjectStoreState: Record<string, any> = {};
+let mockOtherSettings: Record<string, any> = {};
 
 jest.mock("@cocalc/frontend/chat/agent-session-index", () => ({
   listAgentSessionsForProject: (...args: any[]) => mockListSessions(...args),
@@ -46,6 +47,12 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
         return {
           get: (key: string) =>
             key === "account_id" ? mockAccountId : undefined,
+          getIn: (path: string[]) => {
+            if (path.join(".") === "other_settings.codex_new_chat_defaults") {
+              return mockOtherSettings.codex_new_chat_defaults;
+            }
+            return undefined;
+          },
         };
       }
       return undefined;
@@ -82,6 +89,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     jest.clearAllMocks();
     mockAccountId = "00000000-1000-4000-8000-000000000001";
     mockProjectStoreState = {};
+    mockOtherSettings = {};
     mockOpenFile.mockReset();
     mockLoadOpenedAgentSessionSelection.mockReset();
     mockLoadOpenedAgentSessionSelection.mockReturnValue(null);
@@ -1079,6 +1087,86 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     expect(mockOpenFloating.mock.invocationCallOrder[0]).toBeLessThan(
       mockProcessAI.mock.invocationCallOrder[0],
     );
+  });
+
+  it("uses account Codex defaults when forceCodex has no explicit model", async () => {
+    mockOtherSettings.codex_new_chat_defaults = {
+      model: "gpt-5.3-codex",
+      reasoning: "high",
+      sessionMode: "full-access",
+    };
+    mockListSessions.mockResolvedValue([]);
+    mockProcessAI.mockResolvedValue(undefined);
+    const save = jest.fn().mockResolvedValue(undefined);
+    const timeStamp = "2026-03-20T06:11:00.000Z";
+    const message = {
+      history: [
+        {
+          author_id: "00000000-1000-4000-8000-000000000001",
+          content: "Install the missing Jupyter kernel.",
+        },
+      ],
+      message_id: "msg-default-codex",
+      thread_id: "thread-default-codex",
+    };
+    const sendChat = jest.fn(() => timeStamp);
+    const createEmptyThread = jest.fn(() => "thread-default-codex");
+    const get_one = jest.fn((where: any) =>
+      where?.event === "chat" && where?.date === timeStamp
+        ? message
+        : undefined,
+    );
+    const actions = {
+      syncdb: { get_state: () => "ready", save, get_one },
+      messageCache: { getThreadIndex: () => new Map() },
+      sendChat,
+      createEmptyThread,
+      getMessageByDate: jest.fn(() => undefined),
+      store: {
+        get: () => undefined,
+      },
+    };
+    mockGetChatActions.mockReturnValue(actions);
+    mockInitChat.mockReturnValue(actions);
+
+    const ok = await submitNavigatorPromptInWorkspaceChat({
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/home/wstein/notebook.ipynb",
+      prompt: "Detailed hidden kernel install prompt",
+      visiblePrompt: "Install the missing Jupyter kernel.",
+      title: "Install kernel",
+      tag: "intent:jupyter-install-kernel",
+      forceCodex: true,
+      openFloating: true,
+      waitForAgent: false,
+    });
+
+    expect(ok).toBe(true);
+    expect(createEmptyThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadAgent: expect.objectContaining({
+          mode: "codex",
+          model: "gpt-5.3-codex",
+          codexConfig: expect.objectContaining({
+            model: "gpt-5.3-codex",
+            reasoning: "high",
+            sessionMode: "full-access",
+          }),
+        }),
+      }),
+    );
+    expect(mockProcessAI).toHaveBeenCalledWith({
+      actions,
+      message,
+      tag: "intent:jupyter-install-kernel",
+      threadModel: "gpt-5.3-codex",
+      acpConfigOverride: expect.objectContaining({
+        model: "gpt-5.3-codex",
+        reasoning: "high",
+        sessionMode: "full-access",
+        workingDirectory: "/home/wstein",
+      }),
+    });
   });
 
   it("can reveal the preferred workspace agent before detached Codex dispatch finishes", async () => {

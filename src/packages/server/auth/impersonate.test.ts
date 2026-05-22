@@ -10,6 +10,7 @@ let verifyHomeBayRetryTokenMock: jest.Mock;
 let clearAuthCookiesMock: jest.Mock;
 let consumeImpersonationGrantLocalMock: jest.Mock;
 let createImpersonationSessionLocalMock: jest.Mock;
+let resolveAccountImpersonationGrantDirectoryMock: jest.Mock;
 
 jest.mock("@cocalc/server/auth/set-sign-in-cookies", () => ({
   __esModule: true,
@@ -55,6 +56,12 @@ jest.mock("@cocalc/server/auth/impersonation", () => ({
     createImpersonationSessionLocalMock(...args),
 }));
 
+jest.mock("@cocalc/server/auth/impersonation-grant-directory", () => ({
+  __esModule: true,
+  resolveAccountImpersonationGrantDirectory: (...args: any[]) =>
+    resolveAccountImpersonationGrantDirectoryMock(...args),
+}));
+
 describe("auth/impersonate", () => {
   let prevBayId: string | undefined;
 
@@ -87,6 +94,12 @@ describe("auth/impersonate", () => {
       actor_account_id: "33333333-3333-4333-8333-333333333333",
     }));
     createImpersonationSessionLocalMock = jest.fn(async () => undefined);
+    resolveAccountImpersonationGrantDirectoryMock = jest.fn(async () => ({
+      grant_id: "22222222-2222-4222-8222-222222222222",
+      subject_account_id: "11111111-1111-1111-1111-111111111111",
+      subject_home_bay_id: "bay-2",
+      status: "pending",
+    }));
   });
 
   afterEach(() => {
@@ -103,6 +116,7 @@ describe("auth/impersonate", () => {
       query: {
         grant_id: "22222222-2222-4222-8222-222222222222",
         account_id: "11111111-1111-1111-1111-111111111111",
+        confirm: "1",
         lang_temp: "en",
       },
       protocol: "https",
@@ -126,8 +140,104 @@ describe("auth/impersonate", () => {
     expect(clientSideRedirectMock).toHaveBeenCalledWith({
       res,
       target:
-        "https://bay-2-lite4b.cocalc.ai/auth/impersonate?retry_token=retry-token&grant_id=22222222-2222-4222-8222-222222222222&account_id=11111111-1111-1111-1111-111111111111&lang_temp=en",
+        "https://bay-2-lite4b.cocalc.ai/auth/impersonate?retry_token=retry-token&grant_id=22222222-2222-4222-8222-222222222222&confirm=1&lang_temp=en",
     });
+  });
+
+  it("resolves token-only impersonation grants through the central directory", async () => {
+    const { signInUsingImpersonateToken } = await import("./impersonate");
+    const req = {
+      query: {
+        grant_id: "22222222-2222-4222-8222-222222222222",
+        confirm: "1",
+        lang_temp: "en",
+      },
+      protocol: "https",
+      headers: { host: "lite4b.cocalc.ai" },
+    };
+    const res = { send: jest.fn() };
+
+    await signInUsingImpersonateToken({ req, res });
+
+    expect(resolveAccountImpersonationGrantDirectoryMock).toHaveBeenCalledWith({
+      grant_id: "22222222-2222-4222-8222-222222222222",
+    });
+    expect(getClusterAccountByIdMock).toHaveBeenCalledWith(
+      "11111111-1111-1111-1111-111111111111",
+    );
+    expect(clientSideRedirectMock).toHaveBeenCalledWith({
+      res,
+      target:
+        "https://bay-2-lite4b.cocalc.ai/auth/impersonate?retry_token=retry-token&grant_id=22222222-2222-4222-8222-222222222222&confirm=1&lang_temp=en",
+    });
+  });
+
+  it("trusts token-only grant directory routing over stale account directory state", async () => {
+    getClusterAccountByIdMock = jest.fn(async () => ({
+      account_id: "11111111-1111-1111-1111-111111111111",
+      home_bay_id: "bay-0",
+    }));
+    const { signInUsingImpersonateToken } = await import("./impersonate");
+    const req = {
+      query: {
+        grant_id: "22222222-2222-4222-8222-222222222222",
+        confirm: "1",
+        lang_temp: "en",
+      },
+      protocol: "https",
+      headers: { host: "lite4b.cocalc.ai" },
+    };
+    const res = { send: jest.fn() };
+
+    await signInUsingImpersonateToken({ req, res });
+
+    expect(resolveAccountImpersonationGrantDirectoryMock).toHaveBeenCalledWith({
+      grant_id: "22222222-2222-4222-8222-222222222222",
+    });
+    expect(issueHomeBayRetryTokenMock).toHaveBeenCalledWith({
+      account_id: "11111111-1111-1111-1111-111111111111",
+      home_bay_id: "bay-2",
+      purpose: "impersonate",
+    });
+    expect(consumeImpersonationGrantLocalMock).not.toHaveBeenCalled();
+    expect(clientSideRedirectMock).toHaveBeenCalledWith({
+      res,
+      target:
+        "https://bay-2-lite4b.cocalc.ai/auth/impersonate?retry_token=retry-token&grant_id=22222222-2222-4222-8222-222222222222&confirm=1&lang_temp=en",
+    });
+  });
+
+  it("renders a non-consuming landing page before confirming impersonation", async () => {
+    const { signInUsingImpersonateToken } = await import("./impersonate");
+    const req = {
+      query: {
+        grant_id: "22222222-2222-4222-8222-222222222222",
+        lang_temp: "en",
+      },
+      protocol: "https",
+      headers: { host: "lite4b.cocalc.ai" },
+    };
+    const res = { send: jest.fn(), setHeader: jest.fn() };
+
+    await signInUsingImpersonateToken({ req, res });
+
+    expect(resolveAccountImpersonationGrantDirectoryMock).toHaveBeenCalledWith({
+      grant_id: "22222222-2222-4222-8222-222222222222",
+    });
+    expect(consumeImpersonationGrantLocalMock).not.toHaveBeenCalled();
+    expect(clearAuthCookiesMock).not.toHaveBeenCalled();
+    expect(clientSideRedirectMock).not.toHaveBeenCalled();
+    expect(res.setHeader).toHaveBeenCalledWith(
+      "Content-Type",
+      "text/html; charset=utf-8",
+    );
+    expect(`${res.send.mock.calls[0]?.[0]}`).toContain(
+      "Confirm support impersonation",
+    );
+    expect(`${res.send.mock.calls[0]?.[0]}`).toContain("confirm=1");
+    expect(`${res.send.mock.calls[0]?.[0]}`).toContain(
+      "https://bay-2-lite4b.cocalc.ai",
+    );
   });
 
   it("sets cookies locally when redeeming an impersonation retry token", async () => {
@@ -169,6 +279,7 @@ describe("auth/impersonate", () => {
       res,
       account_id: "11111111-1111-1111-1111-111111111111",
       maxAge: 12 * 3600 * 1000,
+      home_bay_id: "bay-2",
       session: expect.objectContaining({
         metadata: expect.objectContaining({
           session_mode: "impersonation",
@@ -185,6 +296,43 @@ describe("auth/impersonate", () => {
       }),
       metadata: { lang_temp: "en" },
     });
+    expect(clientSideRedirectMock).toHaveBeenCalledWith({
+      res,
+      target: "https://lite4b.cocalc.ai/app?lang_temp=en",
+    });
+  });
+
+  it("trusts impersonation retry token routing over stale account directory state", async () => {
+    process.env.COCALC_BAY_ID = "bay-2";
+    getClusterAccountByIdMock = jest.fn(async () => ({
+      account_id: "11111111-1111-1111-1111-111111111111",
+      home_bay_id: "bay-0",
+    }));
+    verifyHomeBayRetryTokenMock = jest.fn(() => ({
+      account_id: "11111111-1111-1111-1111-111111111111",
+      home_bay_id: "bay-2",
+      purpose: "impersonate",
+    }));
+    const { signInUsingImpersonateToken } = await import("./impersonate");
+    const req = {
+      query: {
+        retry_token: "retry-token",
+        grant_id: "22222222-2222-4222-8222-222222222222",
+        lang_temp: "en",
+      },
+      protocol: "https",
+      headers: { host: "bay-2-lite4b.cocalc.ai" },
+    };
+    const res = { send: jest.fn() };
+
+    await signInUsingImpersonateToken({ req, res });
+
+    expect(consumeImpersonationGrantLocalMock).toHaveBeenCalledWith({
+      grant_id: "22222222-2222-4222-8222-222222222222",
+      subject_account_id: "11111111-1111-1111-1111-111111111111",
+    });
+    expect(setSignInCookiesMock).toHaveBeenCalled();
+    expect(issueHomeBayRetryTokenMock).not.toHaveBeenCalled();
     expect(clientSideRedirectMock).toHaveBeenCalledWith({
       res,
       target: "https://lite4b.cocalc.ai/app?lang_temp=en",
