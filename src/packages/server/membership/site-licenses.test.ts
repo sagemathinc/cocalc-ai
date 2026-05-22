@@ -92,6 +92,33 @@ describe("site license seat pools", () => {
     );
   }
 
+  it("rejects site-license pools that reference missing membership tiers", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await markAdmin(admin_account_id);
+
+    await expect(
+      adminProvisionSiteLicense({
+        actor_account_id: admin_account_id,
+        owner_account_id,
+        name: "Invalid Tier License",
+        organization_name: "Example University",
+        allowed_domains: [`missing-tier-${uuid().slice(0, 8)}.edu`],
+        pools: [
+          {
+            pool_name: "Students",
+            membership_class: `missing-tier-${uuid()}`,
+            seat_count: 20,
+            requires_approval: false,
+            verification_policy: "email-domain",
+          },
+        ],
+      }),
+    ).rejects.toThrow(/membership tier not found or disabled/);
+  });
+
   it("provisions pools and requires manager approval for higher tier seats", async () => {
     const admin_account_id = uuid();
     const owner_account_id = uuid();

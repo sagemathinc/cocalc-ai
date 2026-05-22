@@ -2089,6 +2089,10 @@ export async function adminProvisionSiteLicense({
   try {
     await client.query("BEGIN");
     await ensureSiteLicenseSchema(client);
+    await assertSiteLicensePoolMembershipClassesAvailable(
+      normalizedPools,
+      client,
+    );
     await acquireSiteLicenseDomainWriteLock(client);
     await assertNoActiveSiteLicenseDomainIndexOverlap({
       domains: indexedDomains,
@@ -2676,6 +2680,32 @@ function normalizePools(
           : normalizeAllowedDomains(pool.allowed_domains),
     };
   });
+}
+
+async function assertSiteLicensePoolMembershipClassesAvailable(
+  pools: Array<{ membership_class: string }>,
+  client: PoolClient,
+): Promise<void> {
+  const membershipClasses = Array.from(
+    new Set(pools.map((pool) => pool.membership_class).filter(Boolean)),
+  );
+  if (membershipClasses.length === 0) {
+    throw Error("at least one site-license pool membership tier is required");
+  }
+  const { rows } = await client.query<{ id: string }>(
+    `SELECT id
+       FROM membership_tiers
+      WHERE id = ANY($1::text[])
+        AND NOT COALESCE(disabled, false)`,
+    [membershipClasses],
+  );
+  const available = new Set(rows.map((row) => row.id));
+  const missing = membershipClasses.filter((id) => !available.has(id));
+  if (missing.length > 0) {
+    throw Error(
+      `site-license pool membership tier not found or disabled: ${missing.join(", ")}`,
+    );
+  }
 }
 
 export async function requestSiteLicensePool({

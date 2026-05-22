@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { ADMIN_SEARCH_LIMIT } from "@cocalc/util/db-schema/accounts";
 import { MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS } from "@cocalc/util/membership-entitlement-overrides";
+import { currency } from "@cocalc/util/misc";
 import {
   createSiteMasterKeyBackup,
   getOrCreateSiteMasterKey,
@@ -48,6 +49,44 @@ Example:
   JSON
   cocalc admin entitlement-override set user@example.com --file /tmp/override.json --reason "temporary support increase" --expires-at 2026-05-17T00:00:00Z
 `;
+
+const MEMBERSHIP_TIER_FIELDS = {
+  id: "*",
+  label: null,
+  store_visible: null,
+  course_store_visible: null,
+  priority: null,
+  price_monthly: null,
+  price_yearly: null,
+  course_price: null,
+  course_duration_days: null,
+  course_grace_days: null,
+  disabled: null,
+  subscription_count: null,
+  subscribed_account_count: null,
+  admin_assigned_count: null,
+  site_license_count: null,
+  updated: null,
+} as const;
+
+type MembershipTierRow = {
+  id?: string | null;
+  label?: string | null;
+  store_visible?: boolean | null;
+  course_store_visible?: boolean | null;
+  priority?: number | null;
+  price_monthly?: number | string | null;
+  price_yearly?: number | string | null;
+  course_price?: number | string | null;
+  course_duration_days?: number | null;
+  course_grace_days?: number | null;
+  disabled?: boolean | null;
+  subscription_count?: number | string | null;
+  subscribed_account_count?: number | string | null;
+  admin_assigned_count?: number | string | null;
+  site_license_count?: number | string | null;
+  updated?: string | Date | null;
+};
 
 function fieldDoc({
   path,
@@ -447,6 +486,104 @@ function requireReason(value: string | undefined): string {
   return reason;
 }
 
+function formatCurrencyValue(value: unknown): string {
+  if (value == null || value === "") return "";
+  const amount = Number(value);
+  return Number.isFinite(amount) ? currency(amount) : `${value}`;
+}
+
+function numericCount(value: unknown): number {
+  const count = Number(value ?? 0);
+  return Number.isFinite(count) ? count : 0;
+}
+
+function yesNo(value: unknown): string {
+  return value ? "yes" : "no";
+}
+
+function formatDate(value: unknown): string {
+  if (value == null || value === "") return "";
+  if (value instanceof Date) return value.toISOString();
+  return `${value}`;
+}
+
+function formatMembershipTierRow(row: MembershipTierRow) {
+  return {
+    id: row.id ?? "",
+    label: row.label ?? "",
+    visible: yesNo(row.store_visible),
+    course: yesNo(row.course_store_visible),
+    priority: row.priority ?? "",
+    monthly: formatCurrencyValue(row.price_monthly),
+    yearly: formatCurrencyValue(row.price_yearly),
+    course_price: formatCurrencyValue(row.course_price),
+    course_days: row.course_duration_days ?? "",
+    grace_days: row.course_grace_days ?? "",
+    subscriptions: numericCount(row.subscription_count),
+    subscribed_accounts: numericCount(row.subscribed_account_count),
+    admin_assigned: numericCount(row.admin_assigned_count),
+    site_licenses: numericCount(row.site_license_count),
+    active: row.disabled ? "no" : "yes",
+    updated: formatDate(row.updated),
+  };
+}
+
+function formatMembershipTiersPrometheus(rows: MembershipTierRow[]): string {
+  const lines = [
+    "# HELP cocalc_membership_tier_subscriptions Active membership subscription records by tier.",
+    "# TYPE cocalc_membership_tier_subscriptions gauge",
+  ];
+  for (const row of rows) {
+    const labels = prometheusLabels({
+      tier_id: row.id ?? "",
+      label: row.label ?? "",
+    });
+    lines.push(
+      `cocalc_membership_tier_subscriptions{${labels}} ${numericCount(row.subscription_count)}`,
+    );
+  }
+  lines.push(
+    "# HELP cocalc_membership_tier_subscribed_accounts Distinct accounts with active membership subscriptions by tier.",
+    "# TYPE cocalc_membership_tier_subscribed_accounts gauge",
+  );
+  for (const row of rows) {
+    const labels = prometheusLabels({
+      tier_id: row.id ?? "",
+      label: row.label ?? "",
+    });
+    lines.push(
+      `cocalc_membership_tier_subscribed_accounts{${labels}} ${numericCount(row.subscribed_account_count)}`,
+    );
+  }
+  lines.push(
+    "# HELP cocalc_membership_tier_admin_assigned Active admin-assigned memberships by tier.",
+    "# TYPE cocalc_membership_tier_admin_assigned gauge",
+  );
+  for (const row of rows) {
+    const labels = prometheusLabels({
+      tier_id: row.id ?? "",
+      label: row.label ?? "",
+    });
+    lines.push(
+      `cocalc_membership_tier_admin_assigned{${labels}} ${numericCount(row.admin_assigned_count)}`,
+    );
+  }
+  lines.push(
+    "# HELP cocalc_membership_tier_site_licenses Active site licenses with at least one pool using the tier.",
+    "# TYPE cocalc_membership_tier_site_licenses gauge",
+  );
+  for (const row of rows) {
+    const labels = prometheusLabels({
+      tier_id: row.id ?? "",
+      label: row.label ?? "",
+    });
+    lines.push(
+      `cocalc_membership_tier_site_licenses{${labels}} ${numericCount(row.site_license_count)}`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 function parsePositiveIntegerOption({
   name,
   value,
@@ -733,6 +870,31 @@ export function registerAdminCommand(
         });
       },
     );
+
+  admin
+    .command("membership-tiers")
+    .description(
+      "list membership tiers with pricing and usage counts (admin-only)",
+    )
+    .option(
+      "--prometheus",
+      "emit Prometheus text exposition for command-based scraping",
+    )
+    .action(async (opts: { prometheus?: boolean }, command: Command) => {
+      await withContext(command, "admin membership-tiers", async (ctx) => {
+        const result = (await ctx.hub.db.userQuery({
+          query: {
+            membership_tiers: MEMBERSHIP_TIER_FIELDS,
+          },
+          options: [],
+        })) as { membership_tiers?: MembershipTierRow[] };
+        const rows = result.membership_tiers ?? [];
+        if (opts.prometheus) {
+          return formatMembershipTiersPrometheus(rows);
+        }
+        return rows.map(formatMembershipTierRow);
+      });
+    });
 
   adminMasterKey
     .command("status")
