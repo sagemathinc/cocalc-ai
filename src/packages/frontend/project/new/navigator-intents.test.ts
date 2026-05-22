@@ -11,6 +11,7 @@ const mockEnsureWorkspaceChatPath = jest.fn();
 const mockOpenFile = jest.fn();
 let mockAccountId = "00000000-1000-4000-8000-000000000001";
 let mockProjectStoreState: Record<string, any> = {};
+let mockOtherSettings: Record<string, any> = {};
 
 jest.mock("@cocalc/frontend/chat/agent-session-index", () => ({
   listAgentSessionsForProject: (...args: any[]) => mockListSessions(...args),
@@ -46,6 +47,12 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
         return {
           get: (key: string) =>
             key === "account_id" ? mockAccountId : undefined,
+          getIn: (path: string[]) => {
+            if (path.join(".") === "other_settings.codex_new_chat_defaults") {
+              return mockOtherSettings.codex_new_chat_defaults;
+            }
+            return undefined;
+          },
         };
       }
       return undefined;
@@ -82,6 +89,7 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     jest.clearAllMocks();
     mockAccountId = "00000000-1000-4000-8000-000000000001";
     mockProjectStoreState = {};
+    mockOtherSettings = {};
     mockOpenFile.mockReset();
     mockLoadOpenedAgentSessionSelection.mockReset();
     mockLoadOpenedAgentSessionSelection.mockReturnValue(null);
@@ -1081,7 +1089,12 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     );
   });
 
-  it("uses the default Codex model when forceCodex has no explicit model", async () => {
+  it("uses account Codex defaults when forceCodex has no explicit model", async () => {
+    mockOtherSettings.codex_new_chat_defaults = {
+      model: "gpt-5.3-codex",
+      reasoning: "high",
+      sessionMode: "full-access",
+    };
     mockListSessions.mockResolvedValue([]);
     mockProcessAI.mockResolvedValue(undefined);
     const save = jest.fn().mockResolvedValue(undefined);
@@ -1133,9 +1146,11 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       expect.objectContaining({
         threadAgent: expect.objectContaining({
           mode: "codex",
-          model: "gpt-5.4",
+          model: "gpt-5.3-codex",
           codexConfig: expect.objectContaining({
-            model: "gpt-5.4",
+            model: "gpt-5.3-codex",
+            reasoning: "high",
+            sessionMode: "full-access",
           }),
         }),
       }),
@@ -1144,9 +1159,11 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       actions,
       message,
       tag: "intent:jupyter-install-kernel",
-      threadModel: "gpt-5.4",
+      threadModel: "gpt-5.3-codex",
       acpConfigOverride: expect.objectContaining({
-        model: "gpt-5.4",
+        model: "gpt-5.3-codex",
+        reasoning: "high",
+        sessionMode: "full-access",
         workingDirectory: "/home/wstein",
       }),
     });
