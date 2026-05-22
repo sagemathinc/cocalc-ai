@@ -18,8 +18,9 @@ If you change the colors in this file, you MUST run
 
    pnpm run update-color-theme
 
-in the src/packages/frontend, then explicitly checkin the updated _colors.sass file.
-No part of the CoCalc build process will autogenerate _colors.sass -- you must do
+in the src/packages/frontend, then explicitly check in the updated
+styles/colors.css file.
+No part of the CoCalc build process will autogenerate styles/colors.css -- you must do
 so manually when updating this file.  Why? Because "pnpm run build" on a clean
 checkout should not result in any files under revision control changing.
 */
