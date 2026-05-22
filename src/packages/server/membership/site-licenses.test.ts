@@ -81,6 +81,13 @@ describe("site license seat pools", () => {
     );
   }
 
+  async function setAccountHomeBay(account_id: string, home_bay_id: string) {
+    await getPool().query(
+      "UPDATE accounts SET home_bay_id=$2 WHERE account_id=$1",
+      [account_id, home_bay_id],
+    );
+  }
+
   it("provisions pools and requires manager approval for higher tier seats", async () => {
     const admin_account_id = uuid();
     const owner_account_id = uuid();
@@ -241,6 +248,7 @@ describe("site license seat pools", () => {
       ]),
     );
 
+    await setAccountHomeBay(owner_account_id, "bay-1");
     const approved = await reviewSiteLicensePoolRequest({
       actor_account_id: owner_account_id,
       request_id: request.id,
@@ -954,6 +962,7 @@ describe("site license seat pools", () => {
       }),
     ]);
 
+    await setAccountHomeBay(owner_account_id, "bay-1");
     const released = await releaseGraceExpiredSiteLicenseAffiliationSeats({
       account_id: owner_account_id,
       site_license_id: overview.site_license.id,

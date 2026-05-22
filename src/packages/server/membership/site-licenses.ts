@@ -7,7 +7,6 @@ import dayjs from "dayjs";
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import isAdmin from "@cocalc/server/accounts/is-admin";
-import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import type {
   MembershipPackageAssignment,
   MembershipPackageDetails,
@@ -156,6 +155,23 @@ let schemaEnsured: Promise<void> | undefined;
 
 function getQueryClient(client?: PoolClient): Queryable {
   return client ?? getPool();
+}
+
+async function withLocalSiteLicenseTransaction<T>(
+  fn: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function ensureSiteLicenseSchema(client?: PoolClient): Promise<void> {
@@ -1550,11 +1566,7 @@ export async function refreshSiteLicenseAffiliationVerificationWithVerifiedEmail
   if (client != null) {
     return await refreshWithClient(client);
   }
-  return await withAccountRehomeWriteFence({
-    account_id: siteLicense.owner_account_id,
-    action: "refresh site-license affiliation verification",
-    fn: async (db) => await refreshWithClient(db as PoolClient),
-  });
+  return await withLocalSiteLicenseTransaction(refreshWithClient);
 }
 
 export async function releaseGraceExpiredSiteLicenseAffiliationSeats({
@@ -1689,11 +1701,7 @@ async function releaseGraceExpiredSiteLicenseAffiliationSeatsInternal({
   if (client != null) {
     return await releaseWithClient(client);
   }
-  return await withAccountRehomeWriteFence({
-    account_id: siteLicense.owner_account_id,
-    action: "release grace-expired site-license affiliation seats",
-    fn: async (db) => await releaseWithClient(db as PoolClient),
-  });
+  return await withLocalSiteLicenseTransaction(releaseWithClient);
 }
 
 export async function listSiteLicenseIdsWithAffiliationReverification({
@@ -2527,7 +2535,6 @@ async function revokeOtherSiteLicenseAssignments({
 
 async function withSiteLicenseRequestTransaction<T>({
   request_id,
-  action,
   fn,
 }: {
   request_id: string;
@@ -2543,27 +2550,19 @@ async function withSiteLicenseRequestTransaction<T>({
   const { siteLicense } = await getSiteLicenseForPackage(
     initialRequest.package_id,
   );
-  return await withAccountRehomeWriteFence({
-    account_id: siteLicense.owner_account_id,
-    action,
-    fn: async (db) => {
-      const client = db as PoolClient;
-      const { rows } = await client.query<RawSiteLicensePoolRequest>(
-        `SELECT *
+  return await withLocalSiteLicenseTransaction(async (client) => {
+    const { rows } = await client.query<RawSiteLicensePoolRequest>(
+      `SELECT *
            FROM site_license_pool_requests
            WHERE id=$1
            FOR UPDATE`,
-        [request_id],
-      );
-      const request = normalizeSiteLicensePoolRequestRow(rows[0]);
-      if (!request) {
-        throw Error("site-license request not found");
-      }
-      const { pkg } = await getSiteLicenseForPackage(
-        request.package_id,
-        client,
-      );
-      return await fn({ client, request, siteLicense, pkg });
-    },
+      [request_id],
+    );
+    const request = normalizeSiteLicensePoolRequestRow(rows[0]);
+    if (!request) {
+      throw Error("site-license request not found");
+    }
+    const { pkg } = await getSiteLicenseForPackage(request.package_id, client);
+    return await fn({ client, request, siteLicense, pkg });
   });
 }
