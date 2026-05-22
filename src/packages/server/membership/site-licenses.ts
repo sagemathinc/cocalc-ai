@@ -117,6 +117,11 @@ interface RawSiteLicenseAuditEvent {
   created?: Date | string;
 }
 
+interface RawSiteLicenseDomain {
+  site_license_id: string;
+  domain: string;
+}
+
 const SITE_LICENSE_MANAGER_ROLES = new Set<SiteLicenseManagerRole>([
   "owner",
   "manager",
@@ -187,6 +192,32 @@ async function ensureSiteLicenseSchemaWithClient(db: Queryable): Promise<void> {
   );
   await db.query(
     "CREATE INDEX IF NOT EXISTS site_licenses_updated_idx ON site_licenses (updated)",
+  );
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS site_license_domains (
+      site_license_id UUID NOT NULL,
+      domain TEXT NOT NULL,
+      starts_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      created TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (site_license_id, domain)
+    )
+  `);
+  await db.query(
+    "CREATE INDEX IF NOT EXISTS site_license_domains_domain_idx ON site_license_domains (domain)",
+  );
+  await db.query(
+    "CREATE INDEX IF NOT EXISTS site_license_domains_active_idx ON site_license_domains (expires_at, starts_at)",
+  );
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS site_license_domain_locks (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL
+    )
+  `);
+  await db.query(
+    "INSERT INTO site_license_domain_locks (id, name) VALUES (1, 'site-license-domain-write-lock') ON CONFLICT (id) DO NOTHING",
   );
   await db.query(`
     CREATE TABLE IF NOT EXISTS site_license_managers (
@@ -330,6 +361,122 @@ function normalizeAllowedDomains(allowed_domains?: string[]): string[] {
     throw Error("at least one allowed domain is required");
   }
   return domains;
+}
+
+function siteLicenseDomainsOverlap(left: string, right: string): boolean {
+  return (
+    left === right || left.endsWith(`.${right}`) || right.endsWith(`.${left}`)
+  );
+}
+
+function findSiteLicenseDomainOverlap({
+  candidate_domains,
+  existing_domains,
+}: {
+  candidate_domains: string[];
+  existing_domains: string[];
+}): { candidate_domain: string; existing_domain: string } | undefined {
+  for (const candidate_domain of candidate_domains) {
+    for (const existing_domain of existing_domains) {
+      if (siteLicenseDomainsOverlap(candidate_domain, existing_domain)) {
+        return { candidate_domain, existing_domain };
+      }
+    }
+  }
+}
+
+function collectSiteLicenseDomains({
+  allowed_domains,
+  pools,
+}: {
+  allowed_domains: string[];
+  pools: Array<{ allowed_domains: string[] }>;
+}): string[] {
+  return Array.from(
+    new Set([
+      ...allowed_domains,
+      ...pools.flatMap((pool) => pool.allowed_domains),
+    ]),
+  ).sort();
+}
+
+async function assertNoActiveSiteLicenseDomainIndexOverlap({
+  domains,
+  site_license_id,
+  starts_at,
+  expires_at,
+  client,
+}: {
+  domains: string[];
+  site_license_id: string;
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+  client: PoolClient;
+}): Promise<void> {
+  const candidateDomains = normalizeAllowedDomains(domains);
+  const candidateStartsAt = asDate(starts_at) ?? null;
+  const candidateExpiresAt = asDate(expires_at) ?? null;
+  if (
+    candidateExpiresAt != null &&
+    candidateExpiresAt.getTime() <= Date.now()
+  ) {
+    return;
+  }
+  const { rows } = await client.query<RawSiteLicenseDomain>(
+    `SELECT site_license_id, domain
+       FROM site_license_domains
+      WHERE site_license_id != $1::uuid
+        AND (expires_at IS NULL OR expires_at > NOW())
+        AND (expires_at IS NULL OR $2::timestamptz IS NULL OR expires_at > $2::timestamptz)
+        AND (starts_at IS NULL OR $3::timestamptz IS NULL OR starts_at < $3::timestamptz)`,
+    [site_license_id, candidateStartsAt, candidateExpiresAt],
+  );
+  const overlap = findSiteLicenseDomainOverlap({
+    candidate_domains: candidateDomains,
+    existing_domains: rows.map((row) => row.domain),
+  });
+  if (overlap == null) {
+    return;
+  }
+  const owner = rows.find((row) => row.domain === overlap.existing_domain);
+  throw Error(
+    `site license domain '${overlap.candidate_domain}' overlaps active site license domain '${overlap.existing_domain}' in ${owner?.site_license_id ?? "site_license_domains"}`,
+  );
+}
+
+async function acquireSiteLicenseDomainWriteLock(
+  client: PoolClient,
+): Promise<void> {
+  await client.query(
+    "SELECT id FROM site_license_domain_locks WHERE id=1 FOR UPDATE",
+  );
+}
+
+async function upsertSiteLicenseDomainIndex({
+  site_license_id,
+  domains,
+  starts_at,
+  expires_at,
+  client,
+}: {
+  site_license_id: string;
+  domains: string[];
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+  client: PoolClient;
+}): Promise<void> {
+  const normalizedDomains = normalizeAllowedDomains(domains);
+  await client.query(
+    `INSERT INTO site_license_domains
+        (site_license_id, domain, starts_at, expires_at, created, updated)
+     SELECT $1::uuid, domain, $3::timestamptz, $4::timestamptz, NOW(), NOW()
+       FROM UNNEST($2::text[]) AS domain
+     ON CONFLICT (site_license_id, domain) DO UPDATE
+       SET starts_at=EXCLUDED.starts_at,
+           expires_at=EXCLUDED.expires_at,
+           updated=NOW()`,
+    [site_license_id, normalizedDomains, starts_at ?? null, expires_at ?? null],
+  );
 }
 
 function normalizeSeatCount(seat_count: number): number {
@@ -1681,11 +1828,23 @@ export async function adminProvisionSiteLicense({
   );
   const normalizedDomains = normalizeAllowedDomains(allowed_domains);
   const normalizedPools = normalizePools(pools, normalizedDomains);
+  const indexedDomains = collectSiteLicenseDomains({
+    allowed_domains: normalizedDomains,
+    pools: normalizedPools,
+  });
   const site_license_id = uuid();
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
     await ensureSiteLicenseSchema(client);
+    await acquireSiteLicenseDomainWriteLock(client);
+    await assertNoActiveSiteLicenseDomainIndexOverlap({
+      domains: indexedDomains,
+      site_license_id,
+      starts_at,
+      expires_at,
+      client,
+    });
     for (const pool of normalizedPools) {
       await assertNoActiveSiteLicenseDomainOverlap({
         allowed_domains: pool.allowed_domains,
@@ -1719,6 +1878,13 @@ export async function adminProvisionSiteLicense({
         normalizeMetadata(metadata),
       ],
     );
+    await upsertSiteLicenseDomainIndex({
+      site_license_id,
+      domains: indexedDomains,
+      starts_at,
+      expires_at,
+      client,
+    });
     await client.query(
       `INSERT INTO site_license_managers
            (id, site_license_id, account_id, role, created_by_account_id,

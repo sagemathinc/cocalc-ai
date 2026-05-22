@@ -455,6 +455,75 @@ describe("site license seat pools", () => {
     ).rejects.toThrow(`site license domain 'dept.${domain}' overlaps`);
   });
 
+  it("indexes active site license domains for seed-global conflict checks", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const second_owner_account_id = uuid();
+    const domain = `domain-index-${uuid().slice(0, 8)}.edu`;
+    const indexOnlyDomain = `index-only-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await createTestAccount(second_owner_account_id);
+    await markAdmin(admin_account_id);
+
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      owner_account_id,
+      name: "Indexed Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 20,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+        },
+      ],
+    });
+
+    await expect(
+      getPool().query(
+        `SELECT domain
+           FROM site_license_domains
+          WHERE site_license_id=$1
+          ORDER BY domain`,
+        [overview.site_license.id],
+      ),
+    ).resolves.toMatchObject({
+      rows: [{ domain }],
+    });
+
+    await getPool().query(
+      `INSERT INTO site_license_domains
+          (site_license_id, domain, starts_at, expires_at)
+       VALUES ($1, $2, NULL, NULL)`,
+      [uuid(), indexOnlyDomain],
+    );
+
+    await expect(
+      adminProvisionSiteLicense({
+        actor_account_id: admin_account_id,
+        owner_account_id: second_owner_account_id,
+        name: "Index Conflict Campus",
+        organization_name: "Other University",
+        allowed_domains: [`dept.${indexOnlyDomain}`],
+        pools: [
+          {
+            pool_name: "Students",
+            membership_class: studentTier,
+            seat_count: 20,
+            requires_approval: false,
+            verification_policy: "email-domain",
+            exclusive_group: "teaching",
+          },
+        ],
+      }),
+    ).rejects.toThrow(`site license domain 'dept.${indexOnlyDomain}' overlaps`);
+  });
+
   it("allows a new site license to reuse an expired site license domain", async () => {
     const admin_account_id = uuid();
     const expired_owner_account_id = uuid();
