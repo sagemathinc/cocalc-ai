@@ -1031,36 +1031,13 @@ export function MembershipPackageManager({
               await handleChanged();
             }}
           />
-          <PackageGroup
-            title="Site licenses"
-            emptyTitle="No site licenses provisioned"
-            emptyDescription="Site licenses are provisioned by support or admins. Once they exist, assign seats from here to the accounts that should receive access."
-            membershipPackages={sitePackages}
-            tiers={tiers}
-            accountNames={accountNames}
-            onAssignSeat={(membershipPackage) =>
-              setAssignmentTarget(membershipPackage)
-            }
-            onEditPackage={
-              is_admin
-                ? (membershipPackage) => setEditTarget(membershipPackage)
-                : undefined
-            }
-            onRevokeSeat={async (membershipPackage, assignment) => {
-              await revokeMembershipPackageSeat({
-                package_id: membershipPackage.id,
-                target_account_id: assignment.account_id ?? undefined,
-                target_email_address: assignment.email_address ?? undefined,
-              });
-              await handleChanged();
-            }}
-          />
           <SiteLicenseDashboard
             overviews={siteLicenseOverviews}
             loading={siteLicenseOverviewLoading}
             error={siteLicenseOverviewError}
             accountNames={accountNames}
             reviewingRequestId={siteLicenseReviewLoadingId}
+            onEditPool={is_admin ? (pool) => setEditTarget(pool) : undefined}
             onReview={async (overview, request, action) => {
               setSiteLicenseReviewLoadingId(request.id);
               setError("");
@@ -1191,6 +1168,7 @@ function SiteLicenseDashboard({
   error,
   accountNames,
   reviewingRequestId,
+  onEditPool,
   onReview,
   onRevokeSeat,
   onUpdateLicense,
@@ -1205,6 +1183,7 @@ function SiteLicenseDashboard({
     { first_name?: string; last_name?: string } | undefined
   >;
   reviewingRequestId: string;
+  onEditPool?: (pool: SiteLicenseOverview["pools"][number]) => void;
   onReview: (
     overview: SiteLicenseOverview,
     request: SiteLicensePoolRequest,
@@ -1596,6 +1575,14 @@ function SiteLicenseDashboard({
                                   "off"}
                                 d
                               </Tag>
+                              {onEditPool ? (
+                                <Button
+                                  size="small"
+                                  onClick={() => onEditPool(pool)}
+                                >
+                                  <Icon name="edit" /> Edit pool
+                                </Button>
+                              ) : null}
                             </Space>
 
                             {pool.assignments.filter(isActiveAssignment)
@@ -2048,7 +2035,6 @@ function PackageGroup({
   accountNames,
   onAddSeats,
   onAssignSeat,
-  onEditPackage,
   onRevokeSeat,
 }: {
   title: string;
@@ -2062,7 +2048,6 @@ function PackageGroup({
   >;
   onAddSeats?: (membershipPackage: MembershipPackageDetails) => void;
   onAssignSeat: (membershipPackage: MembershipPackageDetails) => void;
-  onEditPackage?: (membershipPackage: MembershipPackageDetails) => void;
   onRevokeSeat: (
     membershipPackage: MembershipPackageDetails,
     assignment: MembershipPackageAssignment,
@@ -2096,7 +2081,6 @@ function PackageGroup({
             accountNames={accountNames}
             onAddSeats={onAddSeats}
             onAssignSeat={onAssignSeat}
-            onEditPackage={onEditPackage}
             onRevokeSeat={onRevokeSeat}
           />
         ))}
@@ -2111,7 +2095,6 @@ function MembershipPackageCard({
   accountNames,
   onAddSeats,
   onAssignSeat,
-  onEditPackage,
   onRevokeSeat,
 }: {
   membershipPackage: MembershipPackageDetails;
@@ -2122,7 +2105,6 @@ function MembershipPackageCard({
   >;
   onAddSeats?: (membershipPackage: MembershipPackageDetails) => void;
   onAssignSeat: (membershipPackage: MembershipPackageDetails) => void;
-  onEditPackage?: (membershipPackage: MembershipPackageDetails) => void;
   onRevokeSeat: (
     membershipPackage: MembershipPackageDetails,
     assignment: MembershipPackageAssignment,
@@ -2161,11 +2143,6 @@ function MembershipPackageCard({
           {membershipPackage.kind === "team" && onAddSeats ? (
             <Button onClick={() => onAddSeats(membershipPackage)}>
               Add seats
-            </Button>
-          ) : null}
-          {membershipPackage.kind === "site" && onEditPackage ? (
-            <Button onClick={() => onEditPackage(membershipPackage)}>
-              Edit license
             </Button>
           ) : null}
         </Space>
@@ -3108,9 +3085,9 @@ function EditSiteLicenseModal({
       onCancel={onClose}
       onOk={save}
       okButtonProps={{ loading: submitting }}
-      okText="Save license"
+      okText="Save pool"
       destroyOnHidden
-      title="Edit site license"
+      title="Edit seat pool"
     >
       <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
         {error ? (

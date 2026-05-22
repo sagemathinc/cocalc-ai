@@ -656,17 +656,6 @@ export interface Purchases {
     expires_at?: Date | string;
     metadata?: Record<string, unknown> | null;
   }) => Promise<{ package_id: string; purchase_id: number }>;
-  adminProvisionMembershipPackage: (opts?: {
-    account_id?: string;
-    owner_account_id?: string;
-    kind?: "site";
-    membership_class?: MembershipClass;
-    seat_count?: number;
-    allowed_domains?: string[];
-    starts_at?: Date | string | null;
-    expires_at?: Date | string | null;
-    metadata?: Record<string, unknown> | null;
-  }) => Promise<MembershipPackageDetails>;
   updateMembershipPackage: (opts?: {
     account_id?: string;
     package_id?: string;
@@ -791,7 +780,6 @@ export const purchases = {
   getMembershipDetails: authFirst,
   getMembershipPackageQuote: authFirst,
   purchaseMembershipPackage: authFirst,
-  adminProvisionMembershipPackage: authFirst,
   updateMembershipPackage: authFirst,
   getMembershipPackages: authFirst,
   assignMembershipPackageSeat: authFirst,
