@@ -592,6 +592,90 @@ describe("processAcpLLM", () => {
 
     expect(acpState.get("message:user-msg-4")).toBe("queue");
   });
+
+  it("marks pre-ack Codex auth failures as retryable", async () => {
+    jest.spyOn(Date, "now").mockReturnValue(4100);
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+    mockStreamAcp.mockRejectedValue(
+      new Error(
+        "unexpected status 401 Unauthorized: Provided authentication token is expired. Please try signing in again. auth error code: token_expired",
+      ),
+    );
+
+    const acpState = new FakeAcpState();
+    const store: any = {
+      get: (key: string) => {
+        if (key === "project_id") return "proj";
+        if (key === "path") return "x.chat";
+        if (key === "acpState") return acpState;
+        return undefined;
+      },
+      setState: jest.fn(),
+    };
+
+    const actions: any = {
+      syncdb: {
+        set: jest.fn(),
+        commit: jest.fn(),
+      },
+      store,
+      chatStreams: new Set<string>(),
+      getAllMessages: () =>
+        new Map<string, any>([
+          [
+            "4100",
+            {
+              date: new Date(4100),
+              message_id: "root-msg-41",
+              thread_id: "thread-41",
+            },
+          ],
+        ]),
+      getThreadMetadata: jest.fn(() => undefined),
+      getMessagesInThread: jest.fn(() => []),
+      getCodexConfig: jest.fn(() => undefined),
+      sendReply: jest.fn(),
+    };
+
+    const message: any = {
+      event: "chat",
+      sender_id: "user-1",
+      date: new Date(4100),
+      message_id: "user-msg-41",
+      thread_id: "thread-41",
+      history: [
+        {
+          author_id: "user-1",
+          content: "install a kernel",
+          date: new Date(4100).toISOString(),
+        },
+      ],
+    };
+
+    await processAcpLLM({
+      message,
+      model: "codex-agent",
+      input: "install a kernel",
+      actions,
+    });
+
+    expect(console.error).toHaveBeenCalledWith(
+      "ACP turn failed",
+      expect.any(Error),
+    );
+    expect(actions.sendReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reply: "Codex authentication expired.",
+      }),
+    );
+    expect(acpState.get("message:user-msg-41")).toBe("not-sent");
+    expect(actions.syncdb.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message_id: "user-msg-41",
+        acp_state: "not-sent",
+      }),
+    );
+  });
 });
 
 describe("queued ACP controls", () => {

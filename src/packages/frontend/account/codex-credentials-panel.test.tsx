@@ -128,13 +128,14 @@ describe("CodexCredentialsPanel", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("ChatGPT Plan")).toBeTruthy();
+      expect(screen.getAllByText("ChatGPT Plan").length).toBeGreaterThan(0);
+      expect(screen.getByText("Current Codex payment source:")).toBeTruthy();
     });
 
     rerender(<CodexCredentialsPanel embedded defaultProjectId="project-2" />);
 
     await waitFor(() => {
-      expect(screen.queryByText("ChatGPT Plan")).toBeNull();
+      expect(screen.queryByText("Current Codex payment source:")).toBeNull();
       expect(screen.getByText("loading")).toBeTruthy();
     });
 

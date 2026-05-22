@@ -1198,9 +1198,38 @@ export class SyncDoc extends EventEmitter {
     for (const x of ["syncstring", "patches"]) {
       const t = this[x + "_table"];
       if (t != null) {
-        t.on("close", this.close);
+        t.on("close", () => this.handleTableClose(x, t));
       }
     }
+  }
+
+  private tableCanRecover(table: SyncTable): boolean {
+    return (
+      typeof (table as any).recoverNow === "function" ||
+      typeof (table as any).getRecoveryState === "function"
+    );
+  }
+
+  private handleTableClose(tableName: string, table: SyncTable): void {
+    if (this.tableCanRecover(table)) {
+      this.dbg("handleTableClose")(
+        `${tableName} table closed, treating as recoverable disconnect`,
+      );
+      this.refreshLiveConnectionState();
+      void this.recoverNow({
+        reason: `${tableName}_table_close`,
+      }).catch((err) => {
+        this.dbg("handleTableClose")(
+          `${tableName} recoverNow after close failed`,
+          err,
+        );
+      });
+      return;
+    }
+    this.dbg("handleTableClose")(
+      `${tableName} table closed without recovery support; closing SyncDoc`,
+    );
+    this.close();
   }
 
   private tableConnectionStateChanged = (): void => {

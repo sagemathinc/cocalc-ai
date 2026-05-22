@@ -167,7 +167,7 @@ main() {
 
   if [[ "$INSTALL_PACKAGES" -eq 1 ]]; then
     run apt-get update
-    run apt-get install -y openssl rsync jq postgresql postgresql-client sqlite3 zstd
+    run apt-get install -y openssl rsync jq postgresql postgresql-client sqlite3 zstd libatomic1
   fi
 
   ensure_node
