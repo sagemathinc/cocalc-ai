@@ -1586,6 +1586,114 @@ describe("site license seat pools", () => {
     );
   });
 
+  it("notifies users during site-license affiliation reverification grace", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const pending_account_id = uuid();
+    const domain = `notify-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await createTestAccount(pending_account_id);
+    await markAdmin(admin_account_id);
+    await markVerifiedEmail(pending_account_id, `pending@${domain}`);
+
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      owner_account_id,
+      name: "Notification Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 10,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+          affiliation_reverification_days: 30,
+          affiliation_reverification_grace_days: 10,
+        },
+      ],
+    });
+    const studentPool = overview.pools[0]!;
+    await claimMembershipPackageSeat({
+      account_id: pending_account_id,
+      package_id: studentPool.id,
+    });
+    await getPool().query(
+      `UPDATE membership_package_assignments
+          SET metadata=jsonb_set(
+                COALESCE(metadata, '{}'::jsonb),
+                '{affiliation_verified_at}',
+                to_jsonb('2026-04-15T00:00:00.000Z'::text),
+                true
+              )
+        WHERE package_id=$1
+          AND account_id=$2`,
+      [studentPool.id, pending_account_id],
+    );
+    const assignments = await listMembershipPackageAssignments({
+      package_id: studentPool.id,
+      include_revoked: false,
+    });
+    const assignment = assignments.find(
+      (row) => row.account_id === pending_account_id,
+    )!;
+
+    await expect(
+      runSiteLicenseAffiliationReleaseMaintenancePass({
+        now: new Date("2026-05-20T00:00:00.000Z"),
+        site_license_limit: 10_000,
+        seat_limit: 100,
+        list_site_license_ids: async () => [overview.site_license.id],
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        scanned_site_licenses: 1,
+        site_licenses_with_notifications: 1,
+        notified_seats: 1,
+        released_seats: 0,
+        failed_site_licenses: 0,
+      }),
+    );
+
+    const dedupeKey = `site-license-affiliation-reverification:${assignment.id}:warning-14d:2026-05-25T00:00:00.000Z:${pending_account_id}`;
+    const notice = await getPool().query(
+      `SELECT t.target_account_id, t.dedupe_key, e.payload_json
+         FROM notification_targets t
+         JOIN notification_events e ON e.event_id=t.event_id
+        WHERE t.dedupe_key=$1`,
+      [dedupeKey],
+    );
+    expect(notice.rows).toEqual([
+      expect.objectContaining({
+        target_account_id: pending_account_id,
+        payload_json: expect.objectContaining({
+          title: "Notification Campus membership reverification reminder",
+          site_license_id: overview.site_license.id,
+          package_id: studentPool.id,
+          assignment_id: assignment.id,
+          stage: "warning-14d",
+        }),
+      }),
+    ]);
+
+    await runSiteLicenseAffiliationReleaseMaintenancePass({
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      site_license_limit: 10_000,
+      seat_limit: 100,
+      list_site_license_ids: async () => [overview.site_license.id],
+    });
+    const duplicateCheck = await getPool().query(
+      `SELECT COUNT(*)::int AS count
+         FROM notification_targets
+        WHERE dedupe_key=$1`,
+      [dedupeKey],
+    );
+    expect(duplicateCheck.rows[0].count).toBe(1);
+  });
+
   it("rechecks approval-required pool capacity at review time", async () => {
     const admin_account_id = uuid();
     const owner_account_id = uuid();

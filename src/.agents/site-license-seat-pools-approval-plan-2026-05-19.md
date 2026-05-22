@@ -961,6 +961,10 @@ Validation:
       does not move the license.
 - [ ] Draining a non-seed bay with users and managers does not move site-license
       records.
+- [x] Focused Conat/API tests cover seed routing for provisioning, overview,
+      updates, requests, reviews, claim discovery, and affiliation refresh.
+- [x] Repo-built CLI smoke validates seed-backed membership tier/site-license
+      usage counts against the live hub environment.
 
 ### Phase 1 Vertical Slice: Ship the Core Invariant
 
@@ -1061,8 +1065,9 @@ Acceptance criteria:
 
 - Extend existing site-package provisioning to create a site license plus one
   or more pool packages.
-- Keep backward compatibility for existing single-pool `kind = "site"` package
-  rows by treating each as a one-pool site license.
+- The legacy simple one-pool site-license path has been removed; site-license
+  state now goes through `site_licenses` plus linked seed/global site pool
+  packages.
 - Add admin API/CLI commands for creating pools and managers.
   - Current CLI supports provisioning a site license with initial pools and
     owner manager.
@@ -1093,7 +1098,9 @@ Acceptance criteria:
 
 - [x] Add manager-scoped APIs.
 - [x] Add minimal manager review panel in the account membership package manager.
-- [ ] Add polished manager dashboard.
+- [ ] Add polished manager dashboard. Deferred for now because the current
+      manager UI is usable and backend correctness, notifications, and editing
+      are higher priority.
 - [x] Add notifications for new requests and review outcomes.
 - Approval creates assignment and grant through existing membership package
   machinery.
@@ -1125,9 +1132,10 @@ distinct groups such as `research`.
       site-license grants or claim metadata.
 - [x] Store the verification policy that was satisfied.
 - [x] Add pending-affiliation-reverification query.
-- [ ] Add user notification/grace workflow.
+- [x] Add user notification/grace workflow.
 - [x] Clear pending release when the user re-verifies institutional email.
-- Clear pending release when the user has a fresh qualifying SSO assertion.
+- [ ] Clear pending release when the user has a fresh qualifying SSO assertion.
+      Deferred until SSO affiliation enforcement is implemented.
 - [x] Add release path for seats that miss the grace deadline.
 - [x] Add scheduled job to invoke grace-expired seat release.
 
@@ -1150,8 +1158,12 @@ per tick, and records `seat-released-after-reverification-grace` with
 maintenance metadata.
 The user-facing backend contract now exposes a signed-in account's
 reverification status from account-home grant metadata and a refresh RPC that
-routes directly to the site-license owner bay using grant routing metadata.
-Actual in-app/email notification delivery and UI presentation are still pending.
+routes to the seed/global site-license service using grant routing metadata.
+The maintenance pass now sends account-notice notifications at the start of the
+reverification grace period, about 14 days before release, about 3 days before
+release, and after automatic release. Notification state is recorded per
+assignment and grace deadline so daily maintenance does not spam users.
+Email transport for these account notices is deferred.
 
 ### Phase 7: Invite Limit Integration
 
@@ -1168,21 +1180,34 @@ course state.
 
 ### Phase 8: Tests and Validation
 
-- Unit tests for claimable/requestable pool logic.
-- Unit tests for approval/rejection and cap rechecks.
-- Unit tests for canonical identity duplicate prevention.
-- Unit tests for one-active-pool/revoke-on-upgrade behavior.
-- Unit tests for verification-policy enforcement.
-- Unit tests for custom terms acceptance metadata.
-- Unit tests for reverification grace/release behavior.
-- Unit tests for site-license term expiration and renewal extension behavior.
-- Inter-bay tests for license/package authority routing.
+- [x] Unit tests for claimable/requestable pool logic.
+- [x] Unit tests for approval/rejection and cap rechecks.
+- [x] Unit tests for canonical identity duplicate prevention.
+- [x] Unit tests for one-active-pool/revoke-on-upgrade behavior.
+- [x] Unit tests for verification-policy enforcement.
+- [x] Unit tests for custom terms acceptance metadata.
+- [x] Unit tests for reverification grace/release behavior.
+- [ ] Unit tests for site-license term expiration and renewal extension behavior.
+      Deferred; term fields exist, but full renewal behavior is not part of the
+      current critical path.
+- [x] Inter-bay tests for license/package authority routing.
 - Browser smoke test for:
   - student claim
   - instructor request
   - manager approval
   - effective tier upgrade
   - invite quota change
+
+Current validation status:
+
+- [x] Focused site-license server test suite passes.
+- [x] Focused Conat purchases routing test suite passes.
+- [x] Dangerous RPC fresh-auth registry test passes.
+- [x] Full repo TypeScript build passes.
+- [x] Live repo-built CLI smoke for `admin membership-tiers` passes against the
+      refreshed hub environment.
+- [ ] Full browser smoke pass for the complete claim/request/approve/tier-upgrade
+      flow remains manual.
 
 ## Suggested Defaults
 

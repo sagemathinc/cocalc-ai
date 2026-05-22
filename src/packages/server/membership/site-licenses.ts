@@ -67,6 +67,12 @@ const logger = getLogger("server:membership:site-licenses");
 const SITE_LICENSE_NOTIFICATION_ORIGIN_LABEL = "Site licenses";
 const SITE_LICENSE_NOTIFICATION_ACTION_LINK = "/settings/licenses";
 const SITE_LICENSE_NOTIFICATION_ACTION_LABEL = "Open licenses";
+const SITE_LICENSE_REVERIFICATION_WARNING_DAYS = [14, 3] as const;
+
+type SiteLicenseAffiliationNotificationStage =
+  | "pending"
+  | "warning-14d"
+  | "warning-3d";
 
 interface RawSiteLicenseRecord {
   id: string;
@@ -1097,7 +1103,7 @@ async function createSiteLicenseAccountNoticeBestEffort({
   severity?: "info" | "warning" | "error";
   dedupe_key: string;
   metadata?: Record<string, unknown>;
-}): Promise<void> {
+}): Promise<boolean> {
   try {
     const targets =
       await resolveSiteLicenseNotificationTargets(target_account_ids);
@@ -1106,7 +1112,7 @@ async function createSiteLicenseAccountNoticeBestEffort({
         dedupe_key,
         target_account_ids,
       });
-      return;
+      return false;
     }
     await createNotificationEventGraph({
       kind: "account_notice",
@@ -1138,12 +1144,14 @@ async function createSiteLicenseAccountNoticeBestEffort({
         },
       })),
     });
+    return true;
   } catch (err) {
     logger.warn("failed to create site-license notification", {
       dedupe_key,
       target_account_ids,
       error: `${(err as Error)?.message ?? err}`,
     });
+    return false;
   }
 }
 
@@ -1233,6 +1241,266 @@ async function notifySiteLicensePoolRequestReviewedBestEffort({
       request_state: request.state,
     },
   });
+}
+
+function formatNotificationDate(date?: Date | null): string {
+  if (date == null) return "the scheduled deadline";
+  return dayjs(date).format("MMM D, YYYY");
+}
+
+function getAffiliationNotificationStage({
+  seat,
+  now,
+}: {
+  seat: SiteLicenseAffiliationReverificationSeat;
+  now: Date;
+}): SiteLicenseAffiliationNotificationStage {
+  const graceExpiresAt = seat.reverification_grace_expires_at;
+  if (graceExpiresAt == null) return "pending";
+  const daysUntilGraceExpires = dayjs(graceExpiresAt).diff(now, "day", true);
+  if (daysUntilGraceExpires <= SITE_LICENSE_REVERIFICATION_WARNING_DAYS[1]) {
+    return "warning-3d";
+  }
+  if (daysUntilGraceExpires <= SITE_LICENSE_REVERIFICATION_WARNING_DAYS[0]) {
+    return "warning-14d";
+  }
+  return "pending";
+}
+
+function getAffiliationNotificationState(
+  metadata?: Record<string, unknown> | null,
+): Record<string, unknown> {
+  const state = metadata?.affiliation_reverification_notifications;
+  return state != null && typeof state === "object" && !Array.isArray(state)
+    ? { ...(state as Record<string, unknown>) }
+    : {};
+}
+
+async function alreadySentAffiliationNotification({
+  assignment_id,
+  stage,
+  grace_key,
+  client,
+}: {
+  assignment_id: string;
+  stage: SiteLicenseAffiliationNotificationStage;
+  grace_key: string;
+  client?: PoolClient;
+}): Promise<boolean> {
+  const { rows } = await getQueryClient(client).query<{
+    metadata?: Record<string, unknown> | null;
+  }>(
+    `SELECT metadata
+       FROM membership_package_assignments
+      WHERE id=$1
+        AND revoked_at IS NULL`,
+    [assignment_id],
+  );
+  const metadata = normalizeMetadata(rows[0]?.metadata) ?? {};
+  return getAffiliationNotificationState(metadata)[stage] === grace_key;
+}
+
+async function markAffiliationNotificationSent({
+  assignment_id,
+  stage,
+  grace_key,
+  sent_at,
+  client,
+}: {
+  assignment_id: string;
+  stage: SiteLicenseAffiliationNotificationStage;
+  grace_key: string;
+  sent_at: Date;
+  client?: PoolClient;
+}): Promise<void> {
+  const db = getQueryClient(client);
+  const { rows } = await db.query<{
+    metadata?: Record<string, unknown> | null;
+  }>(
+    `SELECT metadata
+       FROM membership_package_assignments
+      WHERE id=$1
+        AND revoked_at IS NULL`,
+    [assignment_id],
+  );
+  if (rows.length === 0) return;
+  const metadata = normalizeMetadata(rows[0]?.metadata) ?? {};
+  const notifications = getAffiliationNotificationState(metadata);
+  notifications[stage] = grace_key;
+  notifications[`${stage}_sent_at`] = sent_at.toISOString();
+  await db.query(
+    `UPDATE membership_package_assignments
+        SET metadata=$2::jsonb,
+            updated=NOW()
+      WHERE id=$1
+        AND revoked_at IS NULL`,
+    [
+      assignment_id,
+      {
+        ...metadata,
+        affiliation_reverification_notifications: notifications,
+      },
+    ],
+  );
+}
+
+function getAffiliationReverificationNotificationCopy({
+  siteLicense,
+  seat,
+  stage,
+}: {
+  siteLicense: SiteLicenseRecord;
+  seat: SiteLicenseAffiliationReverificationSeat;
+  stage: SiteLicenseAffiliationNotificationStage;
+}): {
+  title: string;
+  body_markdown: string;
+  severity: "info" | "warning";
+} {
+  const poolName = seat.pool_name || seat.membership_class;
+  const dueDate = formatNotificationDate(seat.reverification_due_at);
+  const graceDate = formatNotificationDate(
+    seat.reverification_grace_expires_at,
+  );
+  const body = [
+    `Your **${poolName}** membership for ${siteLicense.organization_name} needs affiliation reverification.`,
+    `Reverify by confirming a matching institutional email address before **${graceDate}**. Your CoCalc account and projects remain available, but this site-license membership will end if it is not reverified.`,
+  ];
+  if (stage === "pending") {
+    return {
+      title: `${siteLicense.name} membership needs reverification`,
+      body_markdown: [
+        `Reverification was due on **${dueDate}**.`,
+        ...body,
+      ].join("\n\n"),
+      severity: "info",
+    };
+  }
+  return {
+    title:
+      stage === "warning-3d"
+        ? `${siteLicense.name} membership grace period ends soon`
+        : `${siteLicense.name} membership reverification reminder`,
+    body_markdown: body.join("\n\n"),
+    severity: "warning",
+  };
+}
+
+export async function notifySiteLicenseAffiliationReverificationSeatsForSystem({
+  site_license_id,
+  now = new Date(),
+  limit = 500,
+  client,
+}: {
+  site_license_id: string;
+  now?: Date;
+  limit?: number;
+  client?: PoolClient;
+}): Promise<SiteLicenseAffiliationReverificationSeat[]> {
+  const normalizedSiteLicenseId = normalizeAccountId(
+    site_license_id,
+    "site_license_id",
+  );
+  const siteLicense = await getSiteLicense(normalizedSiteLicenseId, client);
+  const seats =
+    await listSiteLicenseAffiliationReverificationSeatsForSiteLicense({
+      site_license: siteLicense,
+      states: ["pending_reverification"],
+      now,
+      client,
+    });
+  const notified: SiteLicenseAffiliationReverificationSeat[] = [];
+  for (const seat of seats.slice(0, Math.max(1, Math.min(500, limit)))) {
+    const graceKey =
+      seat.reverification_grace_expires_at?.toISOString() ?? "no-grace-date";
+    const stage = getAffiliationNotificationStage({ seat, now });
+    if (
+      await alreadySentAffiliationNotification({
+        assignment_id: seat.assignment_id,
+        stage,
+        grace_key: graceKey,
+        client,
+      })
+    ) {
+      continue;
+    }
+    const copy = getAffiliationReverificationNotificationCopy({
+      siteLicense,
+      seat,
+      stage,
+    });
+    const sent = await createSiteLicenseAccountNoticeBestEffort({
+      actor_account_id: null,
+      target_account_ids: [seat.account_id],
+      title: copy.title,
+      body_markdown: copy.body_markdown,
+      severity: copy.severity,
+      dedupe_key: `site-license-affiliation-reverification:${seat.assignment_id}:${stage}:${graceKey}`,
+      metadata: {
+        site_license_id: normalizedSiteLicenseId,
+        package_id: seat.package_id,
+        assignment_id: seat.assignment_id,
+        pool_name: seat.pool_name,
+        membership_class: seat.membership_class,
+        stage,
+        reverification_due_at:
+          seat.reverification_due_at?.toISOString() ?? null,
+        reverification_grace_expires_at:
+          seat.reverification_grace_expires_at?.toISOString() ?? null,
+      },
+    });
+    if (!sent) {
+      continue;
+    }
+    await markAffiliationNotificationSent({
+      assignment_id: seat.assignment_id,
+      stage,
+      grace_key: graceKey,
+      sent_at: now,
+      client,
+    });
+    notified.push(seat);
+  }
+  return notified;
+}
+
+export async function notifySiteLicenseAffiliationSeatReleasesForSystem({
+  site_license_id,
+  seats,
+}: {
+  site_license_id: string;
+  seats: SiteLicenseAffiliationReverificationSeat[];
+}): Promise<void> {
+  if (seats.length === 0) return;
+  const normalizedSiteLicenseId = normalizeAccountId(
+    site_license_id,
+    "site_license_id",
+  );
+  const siteLicense = await getSiteLicense(normalizedSiteLicenseId);
+  for (const seat of seats) {
+    await createSiteLicenseAccountNoticeBestEffort({
+      actor_account_id: null,
+      target_account_ids: [seat.account_id],
+      title: `${siteLicense.name} membership ended`,
+      body_markdown: [
+        `Your **${seat.pool_name || seat.membership_class}** membership for ${siteLicense.organization_name} ended because the affiliation reverification grace period expired.`,
+        "Your CoCalc account and projects remain available. Open Licenses to see any other memberships or request access again if you are still eligible.",
+      ].join("\n\n"),
+      severity: "warning",
+      dedupe_key: `site-license-affiliation-release:${seat.assignment_id}:${seat.reverification_grace_expires_at?.toISOString() ?? "expired"}`,
+      metadata: {
+        site_license_id: normalizedSiteLicenseId,
+        package_id: seat.package_id,
+        assignment_id: seat.assignment_id,
+        pool_name: seat.pool_name,
+        membership_class: seat.membership_class,
+        reverification_due_at:
+          seat.reverification_due_at?.toISOString() ?? null,
+        reverification_grace_expires_at:
+          seat.reverification_grace_expires_at?.toISOString() ?? null,
+      },
+    });
+  }
 }
 
 export async function getVerifiedEmailAddressesForAccount(
