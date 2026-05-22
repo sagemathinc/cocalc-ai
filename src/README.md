@@ -158,11 +158,11 @@ The Hub is CoCalc's backend node.js server. You can start it from its package di
 ~/cocalc/src/packages/hub$ pnpm hub-project-dev
 ```
 
-That will ensure the latest version of the hub Typescript and Coffeescript gets compiled, and start a new hub running in the foreground logging what is happening to the console _**and also logging to files in**_ `cocalc/src/data/logs/hub` . Hit Control\+C to terminate this server. If you change any code in `packages/hub`, you have to stop the hub, then start it again as above in order for the changes to take effect.
+That will ensure the latest version of the hub Typescript gets compiled, and start a new hub running in the foreground logging what is happening to the console _**and also logging to files in**_ `cocalc/src/data/logs/hub` . Hit Control\+C to terminate this server. If you change any code in `packages/hub`, you have to stop the hub, then start it again as above in order for the changes to take effect.
 
 The hub serves the `/static` bundles directly, including the public web entry
 points built from `packages/static` and `packages/frontend`. In development,
-Rspack hot reloading is provided through that integrated static pipeline.
+rebuild the static bundles and refresh the browser to pick up changes.
 
 ### 3. Building only what has changed
 

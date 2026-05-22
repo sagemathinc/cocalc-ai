@@ -29,7 +29,6 @@ Actions are called to make state changes. They do not directly manipulate the UI
 
 ## Q and A
 
-
 The following questions are specific for projects, but are meant to be general:
 
 - not project related, maybe callback, maybe return value, doesn't change store → misc
@@ -42,7 +41,7 @@ No. The methods of the store should all be "pure" functions of the immutable js 
 
 - project related, maybe callback, has return value, doesn't change store → somewhere else ?
 
-Somewhere else, e.g,. a module scope function or class or function in client.coffee. We want to minimize these as much as possible, as they are harder to reason about, but obviously sometimes they are necessary. Example: synctables involve tons of such methods.
+Somewhere else, e.g. a module scope function or class. We want to minimize these as much as possible, as they are harder to reason about, but obviously sometimes they are necessary. Example: synctables involve tons of such methods.
 
 - project related, no callback, no return value, changes store → action
 

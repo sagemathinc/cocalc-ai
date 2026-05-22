@@ -110,8 +110,8 @@ export function new_histogram(
   });
 }
 
-// This is modified by the Client class (in client.coffee) when metrics
-// get pushed from browsers.  It's a map from client_id to
+// This is modified by the browser client when metrics get pushed from
+// browsers. It's a map from client_id to
 // an array of metrics objects, which are already labeled with extra
 // information about the client_id and account_id.
 export const client_metrics: Record<string, any> = {};

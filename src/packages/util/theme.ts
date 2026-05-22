@@ -47,7 +47,7 @@ export const sign_up_id = "44ZfCImosncQhP3jwQM";
 // documentation
 export const JUPYTER_CLASSIC_MODERN = "https://doc.cocalc.com/jupyter.html";
 
-// this is used in packages/hub/email.coffee and hub.coffee to specify the template and ASM groups for sendgrid
+// This is used by hub email code to specify the SendGrid template and ASM groups.
 export const SENDGRID_TEMPLATE_ID = "0375d02c-945f-4415-a611-7dc3411e2a78";
 // asm_group: 699 is for invites https://app.sendgrid.com/suppressions/advanced_suppression_manager
 export const SENDGRID_ASM_INVITES = 699;

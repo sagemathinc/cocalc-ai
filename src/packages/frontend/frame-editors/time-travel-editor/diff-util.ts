@@ -7,7 +7,7 @@
 // is useful when showing a diff between two states.
 import { computeLineDiff } from "@cocalc/util/line-diff";
 import * as CodeMirror from "codemirror";
-import "./style.sass";
+import "../../styles/frame-editors/time-travel-editor/style.css";
 
 export function set_cm_line_diff(
   cm: CodeMirror.Editor,

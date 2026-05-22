@@ -90,6 +90,6 @@ export default async function adminAlert({
 }
 
 export function enableDbAdminAlerts() {
-  // Set adminAlerts on the db singleton (which is implemented in coffeescript).
+  // Set adminAlerts on the db singleton.
   db().adminAlert = adminAlert;
 }

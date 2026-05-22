@@ -7,7 +7,7 @@ import { defineMessage } from "react-intl";
 
 import { IntlMessage } from "./i18n/types";
 
-// Compute related schema stuff (see compute.coffee)
+// Compute related schema stuff.
 //
 // Here's a picture of the finite state machine defined below:
 //

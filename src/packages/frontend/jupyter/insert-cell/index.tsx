@@ -6,7 +6,7 @@
 /*
 Divider between cells, which allows inserting a new cell.
 
-NOTE: the hover logic is in CSS (_jupyter.sass).
+NOTE: the hover logic is in CSS (styles/jupyter/jupyter.css).
 Event based onMouseOver/Out leaves too often
 buttons in the hover state (even when tacking mouse moves!),
 which is confusing.

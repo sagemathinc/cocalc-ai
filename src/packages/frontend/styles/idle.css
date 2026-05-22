@@ -1,0 +1,58 @@
+#cocalc-idle-notification {
+  z-index: 9999;
+  position: fixed;
+  margin: 0;
+  padding: 0;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(150, 150, 150, 0.5);
+  cursor: pointer;
+}
+#cocalc-idle-notification div {
+  color: white;
+  position: absolute;
+  background-color: var(--cocalc-col-blue-d);
+  min-height: 100px;
+  width: 350px;
+  border-radius: 5px;
+  padding: 15px;
+  text-align: center;
+  position: absolute;
+  margin: auto;
+  top: 100px;
+  left: 0;
+  right: 0;
+  cursor: pointer;
+}
+#cocalc-idle-notification div h1,
+#cocalc-idle-notification div h2,
+#cocalc-idle-notification div h3,
+#cocalc-idle-notification div h4 {
+  color: white;
+}
+#cocalc-idle-notification div h1,
+#cocalc-idle-notification div h2 {
+  font-size: 22px;
+}
+#cocalc-idle-notification div h3 {
+  font-size: 20px;
+}
+#cocalc-idle-notification div h4 {
+  font-size: 16px;
+}
+#cocalc-idle-notification div img.logo-square,
+#cocalc-idle-notification div img.logo-rectangular {
+  display: block;
+  margin: 0 auto 10px auto;
+  padding: 0;
+}
+#cocalc-idle-notification div img.logo-square {
+  width: 200px;
+  height: 200px;
+}
+#cocalc-idle-notification div img.logo-rectangular {
+  width: 150px;
+  height: auto;
+}

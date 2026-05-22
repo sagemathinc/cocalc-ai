@@ -251,7 +251,7 @@ export default function getConfig(): Configuration {
         "entities/maps": resolve("node_modules/entities/lib/maps"),
       },
       // So we can "import 'file'" instead of "import 'file.tsx'"
-      extensions: [".js", ".jsx", ".ts", ".tsx", ".json", ".scss", ".sass"],
+      extensions: [".js", ".jsx", ".ts", ".tsx", ".json"],
       symlinks: true,
       modules: ["node_modules"],
       fallback: {
