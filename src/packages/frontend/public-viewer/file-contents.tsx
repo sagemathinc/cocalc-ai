@@ -100,7 +100,7 @@ export default function PublicViewerFileContents({
           content={content}
           fontSize={fontSize}
           lineNumbers={lineNumbers}
-          mode={codemirrorMode(ext)}
+          mode={codemirrorMode(ext)?.name}
         />
       </Suspense>
     );

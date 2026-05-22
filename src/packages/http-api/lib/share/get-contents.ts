@@ -4,7 +4,7 @@
  */
 
 import { sortBy } from "lodash";
-import { hasSpecialViewer } from "@cocalc/frontend/file-extensions";
+import { hasSpecialViewer } from "@cocalc/util/file-extensions";
 import { getExtension } from "./util";
 import { fsClient, fsSubject } from "@cocalc/conat/files/fs";
 import { conat } from "@cocalc/backend/conat";

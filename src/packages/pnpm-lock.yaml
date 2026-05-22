@@ -981,9 +981,6 @@ importers:
       '@cocalc/database':
         specifier: workspace:*
         version: link:../database
-      '@cocalc/frontend':
-        specifier: workspace:*
-        version: link:../frontend
       '@cocalc/server':
         specifier: workspace:*
         version: link:../server
