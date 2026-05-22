@@ -487,6 +487,7 @@ export async function adminProvisionSiteLicense(opts: {
 export async function updateMembershipPackage(opts: {
   package_id: string;
   owner_account_id?: string;
+  site_license_id?: string;
   seat_count?: number;
   expires_at?: Date | string | null;
   allowed_domains?: string[];

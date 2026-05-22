@@ -2718,6 +2718,7 @@ function EditSiteLicenseModal({
       await updateMembershipPackage({
         package_id: membershipPackage.id,
         owner_account_id: membershipPackage.owner_account_id,
+        site_license_id: `${membershipPackage.metadata?.site_license_id ?? ""}`,
         seat_count: seatCount,
         allowed_domains,
         expires_at: expiresAt?.endOf("day").toDate() ?? null,

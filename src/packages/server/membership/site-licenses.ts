@@ -13,6 +13,7 @@ import { getClusterAccountsByIdsDirect } from "@cocalc/server/accounts/cluster-d
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import type {
   MembershipPackageAssignment,
+  MembershipPackageDetails,
   MembershipPackageRecord,
   SiteLicenseAffiliationReverificationUserSeat,
   SiteLicenseAffiliationReverificationUserStatus,
@@ -49,6 +50,7 @@ import {
   listMembershipPackageAssignments,
   listMembershipPackageDetailsForOwner,
   revokeMembershipPackageSeat,
+  updateMembershipPackage as updateMembershipPackageRecord,
 } from "./packages";
 import { listActiveMembershipGrantsForAccount } from "./grants";
 import {
@@ -155,6 +157,7 @@ const SITE_LICENSE_AUDIT_ACTIONS = new Set<SiteLicenseAuditAction>([
   "site-license-provisioned",
   "manager-added",
   "pool-created",
+  "pool-updated",
   "pool-request-created",
   "pool-request-approved",
   "pool-request-rejected",
@@ -505,6 +508,51 @@ async function upsertSiteLicenseDomainIndex({
            updated=NOW()`,
     [site_license_id, normalizedDomains, starts_at ?? null, expires_at ?? null],
   );
+}
+
+async function rebuildSiteLicenseDomainIndex({
+  site_license_id,
+  client,
+}: {
+  site_license_id: string;
+  client: PoolClient;
+}): Promise<void> {
+  const siteLicense = await getSiteLicense(site_license_id, client);
+  const { rows } = await client.query<{
+    metadata?: Record<string, unknown> | null;
+  }>(
+    `SELECT metadata
+       FROM membership_packages
+      WHERE kind='site'
+        AND metadata->>'site_license_id'=$1
+        AND (expires_at IS NULL OR expires_at > NOW())`,
+    [site_license_id],
+  );
+  const domains = collectSiteLicenseDomains({
+    allowed_domains: siteLicense.allowed_domains,
+    pools: rows.map((row) => ({
+      allowed_domains: getPackageAllowedDomains(row.metadata),
+    })),
+  });
+  await acquireSiteLicenseDomainWriteLock(client);
+  await assertNoActiveSiteLicenseDomainIndexOverlap({
+    domains,
+    site_license_id,
+    starts_at: siteLicense.starts_at,
+    expires_at: siteLicense.expires_at,
+    client,
+  });
+  await client.query(
+    "DELETE FROM site_license_domains WHERE site_license_id=$1",
+    [site_license_id],
+  );
+  await upsertSiteLicenseDomainIndex({
+    site_license_id,
+    domains,
+    starts_at: siteLicense.starts_at,
+    expires_at: siteLicense.expires_at,
+    client,
+  });
 }
 
 function normalizeSeatCount(seat_count: number): number {
@@ -2188,6 +2236,68 @@ export async function adminProvisionSiteLicense({
   } finally {
     client.release();
   }
+}
+
+export async function updateSiteLicensePool({
+  actor_account_id,
+  package_id,
+  seat_count,
+  expires_at,
+  allowed_domains,
+}: {
+  actor_account_id: string;
+  package_id: string;
+  seat_count?: number;
+  expires_at?: Date | string | null;
+  allowed_domains?: string[];
+}): Promise<MembershipPackageDetails> {
+  const actorAccountId = normalizeAccountId(actor_account_id);
+  const packageId = normalizePackageId(package_id);
+  return await withLocalSiteLicenseTransaction(async (client) => {
+    const { siteLicense, pkg } = await getSiteLicenseForPackage(
+      packageId,
+      client,
+    );
+    await assertSiteLicenseManager({
+      account_id: actorAccountId,
+      site_license_id: siteLicense.id,
+      write: true,
+      client,
+    });
+    const updated = await updateMembershipPackageRecord({
+      package_id: packageId,
+      seat_count,
+      expires_at,
+      allowed_domains:
+        allowed_domains === undefined
+          ? undefined
+          : normalizeAllowedDomains(allowed_domains),
+      client,
+    });
+    if (allowed_domains !== undefined) {
+      await rebuildSiteLicenseDomainIndex({
+        site_license_id: siteLicense.id,
+        client,
+      });
+    }
+    await recordSiteLicenseAuditEvent({
+      site_license_id: siteLicense.id,
+      action: "pool-updated",
+      actor_account_id: actorAccountId,
+      package_id: packageId,
+      metadata: {
+        pool_name: getPackagePoolName(pkg),
+        seat_count: seat_count ?? null,
+        expires_at: expires_at ?? null,
+        allowed_domains:
+          allowed_domains === undefined
+            ? undefined
+            : normalizeAllowedDomains(allowed_domains),
+      },
+      client,
+    });
+    return updated;
+  });
 }
 
 function normalizePools(

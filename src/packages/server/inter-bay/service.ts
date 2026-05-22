@@ -131,6 +131,7 @@ import {
   claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay,
   createMembershipPackage,
   claimMembershipPackageSeat as claimMembershipPackageSeatForAccount,
+  getMembershipPackage,
   listClaimableMembershipPackagesForAccount,
   listLocalClaimableMembershipPackagesForVerifiedEmails,
   listMembershipPackageDetailsForOwner,
@@ -144,6 +145,7 @@ import {
   requestSiteLicensePoolWithVerifiedEmailsOnLocalBay,
   refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBay,
   reviewSiteLicensePoolRequest,
+  updateSiteLicensePool,
 } from "@cocalc/server/membership/site-licenses";
 import {
   resolveMembershipDetailsForAccount,
@@ -765,16 +767,28 @@ async function startAccountLocalService(): Promise<void> {
         : await getSeedSiteLicenseClient().adminProvisionSiteLicense(opts),
     updateMembershipPackage: async ({
       package_id,
+      actor_account_id,
       seat_count,
       expires_at,
       allowed_domains,
-    }) =>
-      await updateMembershipPackage({
+    }) => {
+      const pkg = await getMembershipPackage({ package_id });
+      if (isSeedSiteLicenseBay() && pkg?.kind === "site") {
+        return await updateSiteLicensePool({
+          actor_account_id,
+          package_id,
+          seat_count,
+          expires_at,
+          allowed_domains,
+        });
+      }
+      return await updateMembershipPackage({
         package_id,
         seat_count,
         expires_at,
         allowed_domains,
-      }),
+      });
+    },
     getClaimableMembershipPackages: async ({
       account_id,
       verified_email_addresses,

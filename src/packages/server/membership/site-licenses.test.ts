@@ -29,6 +29,7 @@ import {
   requestSiteLicensePool,
   refreshSiteLicenseAffiliationVerificationForAccount,
   reviewSiteLicensePoolRequest,
+  updateSiteLicensePool,
 } from "./site-licenses";
 
 beforeAll(async () => {
@@ -566,6 +567,76 @@ describe("site license seat pools", () => {
         ],
       }),
     ).rejects.toThrow(`site license domain 'dept.${indexOnlyDomain}' overlaps`);
+  });
+
+  it("updates site-license pool domains through the seed domain index", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const second_owner_account_id = uuid();
+    const originalDomain = `edit-original-${uuid().slice(0, 8)}.edu`;
+    const updatedDomain = `edit-updated-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await createTestAccount(second_owner_account_id);
+    await markAdmin(admin_account_id);
+
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      owner_account_id,
+      name: "Editable Campus",
+      organization_name: "Example University",
+      allowed_domains: [originalDomain],
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 20,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+          allowed_domains: [originalDomain],
+        },
+      ],
+    });
+
+    await updateSiteLicensePool({
+      actor_account_id: owner_account_id,
+      package_id: overview.pools[0].id,
+      seat_count: 25,
+      allowed_domains: [updatedDomain],
+    });
+
+    await expect(
+      getPool().query(
+        `SELECT domain
+           FROM site_license_domains
+          WHERE site_license_id=$1
+          ORDER BY domain`,
+        [overview.site_license.id],
+      ),
+    ).resolves.toMatchObject({
+      rows: [{ domain: originalDomain }, { domain: updatedDomain }],
+    });
+
+    await expect(
+      adminProvisionSiteLicense({
+        actor_account_id: admin_account_id,
+        owner_account_id: second_owner_account_id,
+        name: "Conflict Campus",
+        organization_name: "Other University",
+        allowed_domains: [updatedDomain],
+        pools: [
+          {
+            pool_name: "Students",
+            membership_class: studentTier,
+            seat_count: 20,
+            requires_approval: false,
+            verification_policy: "email-domain",
+            exclusive_group: "teaching",
+          },
+        ],
+      }),
+    ).rejects.toThrow(`site license domain '${updatedDomain}' overlaps`);
   });
 
   it("allows a new site license to reuse an expired site license domain", async () => {

@@ -31,6 +31,7 @@ import {
   requestSiteLicensePool as requestSiteLicensePool0,
   refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBay,
   reviewSiteLicensePoolRequest as reviewSiteLicensePoolRequest0,
+  updateSiteLicensePool as updateSiteLicensePool0,
 } from "@cocalc/server/membership/site-licenses";
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 import type { MoneyValue } from "@cocalc/util/money";
@@ -512,6 +513,7 @@ export async function updateMembershipPackage({
   account_id,
   package_id,
   owner_account_id,
+  site_license_id,
   seat_count,
   expires_at,
   allowed_domains,
@@ -519,19 +521,45 @@ export async function updateMembershipPackage({
   account_id?: string;
   package_id?: string;
   owner_account_id?: string;
+  site_license_id?: string;
   seat_count?: number;
   expires_at?: Date | string | null;
   allowed_domains?: string[];
 } = {}): Promise<MembershipPackageDetails> {
   const actorId = requireAccount(account_id);
-  await assertAccountTrustedForProductAccess(
-    actorId,
-    "update membership packages",
-  );
   if (!package_id) {
     throw Error("package_id required");
   }
   const isAdminActor = await isAdmin(actorId);
+  const siteLicenseId = `${site_license_id ?? ""}`.trim();
+  if (siteLicenseId) {
+    if (!isSeedBay()) {
+      return await getSeedSiteLicenseClient().updateMembershipPackage({
+        package_id,
+        actor_account_id: actorId,
+        seat_count,
+        expires_at,
+        allowed_domains:
+          allowed_domains === undefined
+            ? undefined
+            : normalizeAllowedDomains(allowed_domains),
+      });
+    }
+    return await updateSiteLicensePool0({
+      actor_account_id: actorId,
+      package_id,
+      seat_count,
+      expires_at,
+      allowed_domains:
+        allowed_domains === undefined
+          ? undefined
+          : normalizeAllowedDomains(allowed_domains),
+    });
+  }
+  await assertAccountTrustedForProductAccess(
+    actorId,
+    "update membership packages",
+  );
   const targetOwnerId = `${owner_account_id ?? ""}`.trim();
   const home_bay_id = targetOwnerId
     ? await resolveTargetAccountHomeBay({
@@ -564,6 +592,18 @@ export async function updateMembershipPackage({
   }
   if (pkg.owner_account_id !== actorId && !isAdminActor) {
     throw Error("must own membership package");
+  }
+  if (pkg.kind === "site") {
+    return await updateSiteLicensePool0({
+      actor_account_id: actorId,
+      package_id,
+      seat_count,
+      expires_at,
+      allowed_domains:
+        allowed_domains === undefined
+          ? undefined
+          : normalizeAllowedDomains(allowed_domains),
+    });
   }
   if (targetOwnerId && pkg.owner_account_id !== targetOwnerId) {
     throw Error("membership package does not belong to owner_account_id");

@@ -28,6 +28,7 @@ const refreshSiteLicenseAffiliationVerificationForAccountMock = jest.fn();
 const refreshSiteLicenseAffiliationVerificationWithVerifiedEmailsOnLocalBayMock =
   jest.fn();
 const reviewSiteLicensePoolRequestMock = jest.fn();
+const updateSiteLicensePoolMock = jest.fn();
 const purchaseMembershipPackageMock = jest.fn();
 const resolveAccountHomeBayMock = jest.fn();
 const getClusterAccountByIdDirectMock = jest.fn();
@@ -122,6 +123,7 @@ jest.mock("@cocalc/server/membership/site-licenses", () => ({
     ),
   reviewSiteLicensePoolRequest: (...args: any[]) =>
     reviewSiteLicensePoolRequestMock(...args),
+  updateSiteLicensePool: (...args: any[]) => updateSiteLicensePoolMock(...args),
 }));
 
 jest.mock("@cocalc/server/ai/usage-status", () => ({
@@ -215,6 +217,7 @@ beforeEach(() => {
   getBrowserAuthSessionHashMock.mockReset();
   requireFreshAuthForSessionHashMock.mockReset();
   assertAccountTrustedForProductAccessMock.mockReset();
+  updateSiteLicensePoolMock.mockReset();
   getConfiguredClusterSeedBayIdMock.mockReset();
   resolveAccountHomeBayMock.mockReset();
   getClusterAccountByIdDirectMock.mockReset();
@@ -1019,22 +1022,9 @@ describe("purchases membership packages", () => {
     ]);
   });
 
-  it("updates site-license allowed domains", async () => {
+  it("updates seed site-license pool domains", async () => {
     isAdminMock.mockResolvedValue(true);
-    resolveAccountHomeBayMock.mockResolvedValue({
-      account_id: "owner-1",
-      home_bay_id: "bay-0",
-      source: "cluster-directory",
-    });
-    getMembershipPackageMock.mockResolvedValue({
-      id: "site-1",
-      owner_account_id: "owner-1",
-      kind: "site",
-      membership_class: "member",
-      seat_count: 10,
-      metadata: { allowed_domains: ["example.edu"] },
-    });
-    updateMembershipPackageMock.mockResolvedValue({
+    updateSiteLicensePoolMock.mockResolvedValue({
       id: "site-1",
       owner_account_id: "owner-1",
       kind: "site",
@@ -1050,12 +1040,14 @@ describe("purchases membership packages", () => {
     const result = await updateMembershipPackage({
       account_id: "admin-1",
       owner_account_id: "owner-1",
+      site_license_id: "license-1",
       package_id: "site-1",
       seat_count: 12,
       allowed_domains: ["Example.EDU", "@dept.example.edu"],
     });
 
-    expect(updateMembershipPackageMock).toHaveBeenCalledWith({
+    expect(updateSiteLicensePoolMock).toHaveBeenCalledWith({
+      actor_account_id: "admin-1",
       package_id: "site-1",
       seat_count: 12,
       expires_at: undefined,
@@ -1067,8 +1059,9 @@ describe("purchases membership packages", () => {
     ]);
   });
 
-  it("routes site-license allowed domain updates to the owner's home bay", async () => {
+  it("routes site-license pool updates to the seed bay", async () => {
     isAdminMock.mockResolvedValue(true);
+    getConfiguredClusterSeedBayIdMock.mockReturnValue("bay-9");
     resolveAccountHomeBayMock.mockResolvedValue({
       account_id: "owner-1",
       home_bay_id: "bay-2",
@@ -1090,6 +1083,7 @@ describe("purchases membership packages", () => {
     await updateMembershipPackage({
       account_id: "admin-1",
       owner_account_id: "owner-1",
+      site_license_id: "license-1",
       package_id: "site-remote-1",
       allowed_domains: ["Example.EDU", "@dept.example.edu"],
     });
@@ -1101,6 +1095,7 @@ describe("purchases membership packages", () => {
       expires_at: undefined,
       allowed_domains: ["dept.example.edu", "example.edu"],
     });
+    expect(resolveAccountHomeBayMock).not.toHaveBeenCalled();
     expect(updateMembershipPackageMock).not.toHaveBeenCalled();
   });
 

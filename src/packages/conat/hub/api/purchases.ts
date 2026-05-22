@@ -378,6 +378,7 @@ export type SiteLicenseAuditAction =
   | "site-license-provisioned"
   | "manager-added"
   | "pool-created"
+  | "pool-updated"
   | "pool-request-created"
   | "pool-request-approved"
   | "pool-request-rejected"
@@ -667,6 +668,7 @@ export interface Purchases {
     account_id?: string;
     package_id?: string;
     owner_account_id?: string;
+    site_license_id?: string;
     seat_count?: number;
     expires_at?: Date | string | null;
     allowed_domains?: string[];
