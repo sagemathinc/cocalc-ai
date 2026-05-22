@@ -96,8 +96,12 @@ export function getPublicRouteFromPath(
   }
 
   if (routeParts[0] === "support") {
+    const view = getSupportViewFromPath(pathname);
+    if (view == null) {
+      return { section: "not-found" };
+    }
     return {
-      route: { view: getSupportViewFromPath(pathname) },
+      route: { view },
       section: "support",
     };
   }

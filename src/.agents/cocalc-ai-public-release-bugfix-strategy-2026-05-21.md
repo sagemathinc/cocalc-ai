@@ -45,39 +45,37 @@ Do not ship public release until these are true:
   2026-05-22**; likely resolved by recent Conat socket/reconnect fixes and not
   observed in several days.
 - Storage/backup timestamps and reload buttons do not knowingly lie.
-- Security/status visibility issues are resolved or explicitly scoped as admin
-  only.
+- Security/status visibility issues are resolved. **Fixed 2026-05-22** by
+  deleting the public status page/footer link and unregistering the public
+  `/stats` endpoint.
 
 ## Triage Buckets
 
 ### Solved During This Push
 
-| Item                                               | Area            | Status | Resolution                                                                                                                                                                                                                                                                                                 |
-| -------------------------------------------------- | --------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cross-bay impersonation stopped working            | auth / multibay | fixed  | Grants are routed through a central seed-bay directory and token-only URLs. Grant redemption on the subject home bay now sets shared-domain `account_id` and `home_bay_id` cookies before redirecting back to the site origin.                                                                             |
-| Impersonation banner disappears after refresh      | auth / admin UX | fixed  | The app now bootstraps auth state from the authoritative stored/home control-plane origin, so active impersonation sessions are read from the home bay and the banner persists after refresh. The impersonation grant URL also shows a non-consuming support confirmation page before session replacement. |
-| Markdown Slate collaborative editing loses content | editor / sync   | fixed  | Added Playwright coverage for full Slate and block-mode editors where a local unsaved edit is merged with a remote update before the local debounce fires. The merged value is now forced back to the shared markdown from the current editor, so the local contribution is not only visible locally.      |
-| Agent button creates message but no Codex turn     | chat / codex    | fixed  | `forceCodex: true` navigator/agent submissions now default to the standard Codex model when no explicit `codexConfig.model` is provided, so Jupyter/editor agent buttons launch ACP instead of writing an inert user message.                                                                              |
-| Agent button expired-auth path unclear             | chat / codex    | fixed  | Pre-ack Codex auth failures now leave the user message retryable, write one concise auth-expired reply, show a credentials action, and label the retry control `Submit again`. The Codex credentials panel now strongly recommends ChatGPT/Codex subscription auth while keeping API keys as fallback.     |
-| Offline editor switches to loading/read-only       | editor / sync   | fixed  | SyncDoc and editor state now treat routed project-host disconnects as recoverable transport loss instead of fatal document close. Existing editor content stays mounted and editable while reconnecting.                                                                                                   |
-| Project-host restart breaks open editors           | conat / sync    | fixed  | Same-address routed project-host reconnects preserve the Conat client and SyncDoc table state instead of rebuilding editor state. Repeated reconnect failures refresh auth/browser-session state in place. Verified with live `host1` stop/start dogfood.                                                  |
-| Node 26 fails on project hosts without libatomic   | host bootstrap  | fixed  | Added `libatomic1` to project-host bootstrap/install paths and verified Node 26 on `host1`. This was a release blocker because project-host daemons could fail before any frontend recovery logic mattered.                                                                                                |
-| Codex live chat log drops chunks                   | chat / codex    | fixed  | Fixed the efficient `acp_live_preview_stream` instead of bypassing it. The preview stream now carries lifecycle status, actual agent `message` events, summaries, and errors, but no `thinking` payloads or synthetic activity ticks that can split progressive agent output.                              |
-| Sign-in success leaves user on sign-in page        | auth / routing  | fixed  | Default public and legacy auth completion now redirects to `/projects`; explicit safe redirect targets are still preserved for flows that need them.                                                                                                                                                       |
-| Passkey selector looks like primary action         | auth UI         | fixed  | Second-factor method selection now renders as a small chooser group (`Passkey` / `Code`) while the primary submit button remains the actual passkey action.                                                                                                                                                |
-| Passkey password-save/autofill confusion           | auth UI         | fixed  | Showing the account email in the passkey modal solved the observed Chrome password-save/autofill confusion and gives useful context during passkey auth.                                                                                                                                                   |
-| SSO domain check row jumps during sign-in/up       | auth UI         | fixed  | The sign-in-method policy check now uses reserved inline status space under the email field instead of adding/removing a full alert row while typing.                                                                                                                                                      |
-| Project table stale after start                    | projects / sync | fixed  | No longer observed after the recent Conat socket/reconnect fixes. Treat as fixed by side effect, with dogfood monitoring rather than additional speculative work.                                                                                                                                          |
-| Tiny "Loading" forever after backend upgrade       | chat / sync     | fixed  | Fixed by commit `a003b54d95`, which typed recoverable SyncDoc tables explicitly and avoided treating recoverable backend reconnect state as a permanent loading state.                                                                                                                                     |
+| Item                                               | Area              | Status | Resolution                                                                                                                                                                                                                                                                                                 |
+| -------------------------------------------------- | ----------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cross-bay impersonation stopped working            | auth / multibay   | fixed  | Grants are routed through a central seed-bay directory and token-only URLs. Grant redemption on the subject home bay now sets shared-domain `account_id` and `home_bay_id` cookies before redirecting back to the site origin.                                                                             |
+| Impersonation banner disappears after refresh      | auth / admin UX   | fixed  | The app now bootstraps auth state from the authoritative stored/home control-plane origin, so active impersonation sessions are read from the home bay and the banner persists after refresh. The impersonation grant URL also shows a non-consuming support confirmation page before session replacement. |
+| Markdown Slate collaborative editing loses content | editor / sync     | fixed  | Added Playwright coverage for full Slate and block-mode editors where a local unsaved edit is merged with a remote update before the local debounce fires. The merged value is now forced back to the shared markdown from the current editor, so the local contribution is not only visible locally.      |
+| Agent button creates message but no Codex turn     | chat / codex      | fixed  | `forceCodex: true` navigator/agent submissions now default to the standard Codex model when no explicit `codexConfig.model` is provided, so Jupyter/editor agent buttons launch ACP instead of writing an inert user message.                                                                              |
+| Agent button expired-auth path unclear             | chat / codex      | fixed  | Pre-ack Codex auth failures now leave the user message retryable, write one concise auth-expired reply, show a credentials action, and label the retry control `Submit again`. The Codex credentials panel now strongly recommends ChatGPT/Codex subscription auth while keeping API keys as fallback.     |
+| Offline editor switches to loading/read-only       | editor / sync     | fixed  | SyncDoc and editor state now treat routed project-host disconnects as recoverable transport loss instead of fatal document close. Existing editor content stays mounted and editable while reconnecting.                                                                                                   |
+| Project-host restart breaks open editors           | conat / sync      | fixed  | Same-address routed project-host reconnects preserve the Conat client and SyncDoc table state instead of rebuilding editor state. Repeated reconnect failures refresh auth/browser-session state in place. Verified with live `host1` stop/start dogfood.                                                  |
+| Node 26 fails on project hosts without libatomic   | host bootstrap    | fixed  | Added `libatomic1` to project-host bootstrap/install paths and verified Node 26 on `host1`. This was a release blocker because project-host daemons could fail before any frontend recovery logic mattered.                                                                                                |
+| Codex live chat log drops chunks                   | chat / codex      | fixed  | Fixed the efficient `acp_live_preview_stream` instead of bypassing it. The preview stream now carries lifecycle status, actual agent `message` events, summaries, and errors, but no `thinking` payloads or synthetic activity ticks that can split progressive agent output.                              |
+| Sign-in success leaves user on sign-in page        | auth / routing    | fixed  | Default public and legacy auth completion now redirects to `/projects`; explicit safe redirect targets are still preserved for flows that need them.                                                                                                                                                       |
+| Passkey selector looks like primary action         | auth UI           | fixed  | Second-factor method selection now renders as a small chooser group (`Passkey` / `Code`) while the primary submit button remains the actual passkey action.                                                                                                                                                |
+| Passkey password-save/autofill confusion           | auth UI           | fixed  | Showing the account email in the passkey modal solved the observed Chrome password-save/autofill confusion and gives useful context during passkey auth.                                                                                                                                                   |
+| SSO domain check row jumps during sign-in/up       | auth UI           | fixed  | The sign-in-method policy check now uses reserved inline status space under the email field instead of adding/removing a full alert row while typing.                                                                                                                                                      |
+| Project table stale after start                    | projects / sync   | fixed  | No longer observed after the recent Conat socket/reconnect fixes. Treat as fixed by side effect, with dogfood monitoring rather than additional speculative work.                                                                                                                                          |
+| Tiny "Loading" forever after backend upgrade       | chat / sync       | fixed  | Fixed by commit `a003b54d95`, which typed recoverable SyncDoc tables explicitly and avoided treating recoverable backend reconnect state as a permanent loading state.                                                                                                                                     |
+| Hide status security issue                         | public / security | fixed  | Deleted the public `/support/status` route, removed the footer/support index links to it, removed the frontend `/stats` fetch path, and stopped registering the public `/stats` Express route. Realtime monitoring/load information should not be public.                                                  |
+| Chat scroll often near top                         | chat / UX         | fixed  | Added chat-specific viewport anchors keyed by message date plus pixel offset, independent of Virtuoso snapshots. The chat now captures the top visible message while reading and reasserts that anchor across remounts, visibility changes, message list changes, image loads, and item resizes.           |
 
 ### P0: Release Blockers
 
-These should be worked before broad UI polish.
-
-| Item                       | Area               | Risk                        | First investigation                                                                    |
-| -------------------------- | ------------------ | --------------------------- | -------------------------------------------------------------------------------------- |
-| Chat scroll often near top | chat / UX          | Broken long-chat usability  | Audit scroll anchoring, initial load, archived hydration, active turn append behavior. |
-| Hide status security issue | privacy / security | Sensitive status visibility | Define exact policy; ensure UI and backend enforce hidden status, not UI-only.         |
+No known P0 release blockers remain in this tracker.
 
 ### P1: Launch-Critical UX And Correctness
 
@@ -207,7 +205,8 @@ Scope:
 - Live chat log drops output chunks. **Fixed 2026-05-22** by making the
   efficient preview stream agent-output-only and removing non-message boundaries
   from that stream.
-- Chat scroll position starts near top.
+- Chat scroll position starts near top. **Fixed 2026-05-22** with explicit
+  viewport anchors rather than raw Virtuoso snapshot restoration.
 - Agent view missing thread menu/config.
 
 Acceptance:
@@ -218,7 +217,8 @@ Acceptance:
   2026-05-21.**
 - Chat-rendered activity and activity drawer show the same agent-message chunks.
   **Done 2026-05-22** for live preview rendering.
-- Chat opens anchored to recent messages unless user explicitly scrolled.
+- Chat opens anchored to recent messages unless user explicitly scrolled. **Done
+  2026-05-22** for virtualized chat remount/restore behavior.
 - Agent view has the same thread menu/config affordance as normal chat.
 
 ### D. Storage, Backups, Quotas, And Deletes
@@ -300,9 +300,8 @@ Recommended next work order as of 2026-05-22:
    correctness bug: the UI claiming a project is stopped while terminals work is
    the kind of state divergence that undermines confidence and likely needs a
    clear projection/refetch rule.
-3. **Chat scroll often near top.** The content may all be present, but landing
-   users near the top of a long chat breaks the most common conversation review
-   workflow.
+3. **Chat scroll often near top.** **Fixed 2026-05-22** with message-date plus
+   pixel-offset viewport anchors.
 
 Good fallback tasks if the above stalls:
 

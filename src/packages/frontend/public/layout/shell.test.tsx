@@ -71,9 +71,7 @@ describe("PublicPage", () => {
     expect(
       within(footer).getByRole("link", { name: "Support" }),
     ).toHaveAttribute("href", "/support");
-    expect(
-      within(footer).getByRole("link", { name: "Status" }),
-    ).toHaveAttribute("href", "/support/status");
+    expect(within(footer).queryByRole("link", { name: "Status" })).toBeNull();
     expect(within(footer).getByRole("link", { name: "About" })).toHaveAttribute(
       "href",
       "/about",
