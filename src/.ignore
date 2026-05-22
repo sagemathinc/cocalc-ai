@@ -1,0 +1,6 @@
+# Generated package outputs.  This file is intentionally under src/ so ripgrep
+# respects it even when commands are run from /home/user/cocalc-ai/src.
+packages/*/build/
+packages/*/dist/
+packages/*/dist-*/
+packages/*/dist-ts/
