@@ -21,6 +21,7 @@ import { resolveMembershipForAccount } from "./resolve";
 import { runMembershipSideEffectsPass } from "./side-effects";
 import { runSiteLicenseAffiliationReleaseMaintenancePass } from "./site-license-affiliation-maintenance";
 import {
+  addSiteLicensePool,
   adminProvisionSiteLicense,
   getSiteLicenseAffiliationReverificationStatusForAccount,
   getSiteLicenseOverview,
@@ -745,6 +746,88 @@ describe("site license seat pools", () => {
         target_account_id: owner_account_id,
       }),
     ).rejects.toThrow("cannot remove the last site-license owner");
+  });
+
+  it("adds site-license pools after creation", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const domain = `add-pool-${uuid().slice(0, 8)}.edu`;
+    const researchDomain = `research-${domain}`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await markAdmin(admin_account_id);
+
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      owner_account_id,
+      name: "Add Pool Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 20,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+        },
+      ],
+    });
+
+    const updated = await addSiteLicensePool({
+      actor_account_id: owner_account_id,
+      site_license_id: overview.site_license.id,
+      pool: {
+        pool_name: "Researchers",
+        membership_class: researcherTier,
+        seat_count: 5,
+        requires_approval: true,
+        verification_policy: "email-domain",
+        exclusive_group: "research",
+        allowed_domains: [researchDomain],
+        affiliation_reverification_days: 365,
+        affiliation_reverification_grace_days: 45,
+      },
+    });
+    expect(updated.pools.map((pool) => pool.pool_name).sort()).toEqual([
+      "Researchers",
+      "Students",
+    ]);
+    expect(
+      updated.pools.find((pool) => pool.pool_name === "Researchers"),
+    ).toEqual(
+      expect.objectContaining({
+        membership_class: researcherTier,
+        seat_count: 5,
+        requires_approval: true,
+        verification_policy: "email-domain",
+        exclusive_group: "research",
+      }),
+    );
+    await expect(
+      getPool().query(
+        `SELECT domain
+           FROM site_license_domains
+          WHERE site_license_id=$1
+          ORDER BY domain`,
+        [overview.site_license.id],
+      ),
+    ).resolves.toMatchObject({
+      rows: [{ domain }, { domain: researchDomain }],
+    });
+    expect(updated.recent_audit_events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "pool-created",
+          actor_account_id: owner_account_id,
+          metadata: expect.objectContaining({
+            pool_name: "Researchers",
+            source: "add-site-license-pool",
+          }),
+        }),
+      ]),
+    );
   });
 
   it("allows a new site license to reuse an expired site license domain", async () => {

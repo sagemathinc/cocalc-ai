@@ -23,6 +23,7 @@ import {
   updateMembershipPackage as updateMembershipPackage0,
 } from "@cocalc/server/membership/packages";
 import {
+  addSiteLicensePool as addSiteLicensePool0,
   adminProvisionSiteLicense as adminProvisionSiteLicense0,
   getVerifiedEmailAddressesForAccount,
   getSiteLicenseAffiliationReverificationStatusForAccount,
@@ -829,6 +830,43 @@ export async function updateSiteLicense({
     return await getSeedSiteLicenseClient().updateSiteLicense(opts);
   }
   return await updateSiteLicense0(opts);
+}
+
+export async function addSiteLicensePool({
+  account_id,
+  browser_id,
+  session_hash,
+  site_license_id,
+  pool,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  site_license_id?: string;
+  pool?: SiteLicensePoolConfig;
+} = {}): Promise<SiteLicenseOverview> {
+  const actorId = requireAccount(account_id);
+  const siteLicenseId = `${site_license_id ?? ""}`.trim();
+  if (!siteLicenseId) {
+    throw Error("site_license_id required");
+  }
+  if (pool == null) {
+    throw Error("pool required");
+  }
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+  });
+  const opts = {
+    actor_account_id: actorId,
+    site_license_id: siteLicenseId,
+    pool,
+  };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().addSiteLicensePool(opts);
+  }
+  return await addSiteLicensePool0(opts);
 }
 
 export async function setSiteLicenseManager({

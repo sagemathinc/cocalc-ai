@@ -957,14 +957,21 @@ Validation:
 - [x] Claiming a seed/global license creates the effective grant on the user's home
       bay.
 - [x] Approving a request as a manager whose account was rehomed still works.
-- [ ] Rehoming a user with a site-license grant preserves effective membership and
+- [x] Rehoming a user with a site-license grant preserves effective membership and
       does not move the license.
 - [ ] Draining a non-seed bay with users and managers does not move site-license
       records.
+      Not yet marked complete from this agent pass: the public CLI drain command
+      requires browser-approved fresh auth, and the direct helper must be run in
+      the real source-bay process/database environment to be a valid live drain
+      smoke.
 - [x] Focused Conat/API tests cover seed routing for provisioning, overview,
       updates, requests, reviews, claim discovery, and affiliation refresh.
 - [x] Repo-built CLI smoke validates seed-backed membership tier/site-license
       usage counts against the live hub environment.
+      2026-05-22 update: live CLI/API smoke also validated student claim,
+      instructor request, manager approval from a rehomed manager account, and
+      effective tier upgrade for a rehomed user.
 
 ### Phase 1 Vertical Slice: Ship the Core Invariant
 
@@ -1191,7 +1198,7 @@ course state.
       Deferred; term fields exist, but full renewal behavior is not part of the
       current critical path.
 - [x] Inter-bay tests for license/package authority routing.
-- Browser smoke test for:
+- Browser/CLI smoke test for:
   - student claim
   - instructor request
   - manager approval
@@ -1206,6 +1213,10 @@ Current validation status:
 - [x] Full repo TypeScript build passes.
 - [x] Live repo-built CLI smoke for `admin membership-tiers` passes against the
       refreshed hub environment.
+- [x] Live repo-built CLI/API smoke for the complete site-license
+      claim/request/approve/tier-upgrade flow passes across a 3-bay local hub
+      cluster, including rehoming manager/user accounts while keeping seed
+      site-license pool packages authoritative.
 - [ ] Full browser smoke pass for the complete claim/request/approve/tier-upgrade
       flow remains manual.
 

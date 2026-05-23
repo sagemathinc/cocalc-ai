@@ -2575,6 +2575,112 @@ export async function updateSiteLicensePool({
   });
 }
 
+export async function addSiteLicensePool({
+  actor_account_id,
+  site_license_id,
+  pool,
+}: {
+  actor_account_id: string;
+  site_license_id: string;
+  pool: SiteLicensePoolConfig;
+}): Promise<SiteLicenseOverview> {
+  const actorAccountId = normalizeAccountId(actor_account_id);
+  const siteLicenseId = normalizeAccountId(site_license_id, "site_license_id");
+  return await withLocalSiteLicenseTransaction(async (client) => {
+    const siteLicense = await getSiteLicense(siteLicenseId, client);
+    await assertSiteLicenseManager({
+      account_id: actorAccountId,
+      site_license_id: siteLicenseId,
+      write: true,
+      client,
+    });
+    const [normalizedPool] = normalizePools(
+      [pool],
+      siteLicense.allowed_domains,
+    );
+    await assertSiteLicensePoolMembershipClassesAvailable(
+      [normalizedPool],
+      client,
+    );
+    const existingPools = await listSiteLicensePoolSummaries({
+      site_license: siteLicense,
+      client,
+    });
+    const indexedDomains = collectSiteLicenseDomains({
+      allowed_domains: siteLicense.allowed_domains,
+      pools: [
+        ...existingPools.map((existingPool) => ({
+          allowed_domains: getPackageAllowedDomains(existingPool.metadata),
+        })),
+        { allowed_domains: normalizedPool.allowed_domains },
+      ],
+    });
+    await acquireSiteLicenseDomainWriteLock(client);
+    await assertNoActiveSiteLicenseDomainIndexOverlap({
+      domains: indexedDomains,
+      site_license_id: siteLicenseId,
+      starts_at: siteLicense.starts_at,
+      expires_at: siteLicense.expires_at,
+      client,
+    });
+    const packageId = await createMembershipPackage(
+      {
+        owner_account_id: siteLicense.owner_account_id,
+        kind: "site",
+        membership_class: normalizedPool.membership_class,
+        seat_count: normalizedPool.seat_count,
+        starts_at: siteLicense.starts_at,
+        expires_at: siteLicense.expires_at,
+        metadata: {
+          ...normalizeMetadata(normalizedPool.metadata),
+          site_license_id: siteLicenseId,
+          pool_name: normalizedPool.pool_name,
+          allowed_domains: normalizedPool.allowed_domains,
+          requires_approval: normalizedPool.requires_approval,
+          verification_policy: normalizedPool.verification_policy,
+          exclusive_group: normalizedPool.exclusive_group,
+          claim_scope_key: getClaimScopeKey(
+            siteLicenseId,
+            normalizedPool.exclusive_group,
+          ),
+          claim_scope_kind: "site-license-exclusive-group",
+          affiliation_reverification_days:
+            normalizedPool.affiliation_reverification_days,
+          affiliation_reverification_grace_days:
+            normalizedPool.affiliation_reverification_grace_days,
+          provisioned_by_account_id: actorAccountId,
+          provisioned_via: "site-license-pool-add",
+        },
+      },
+      client,
+    );
+    await rebuildSiteLicenseDomainIndex({
+      site_license_id: siteLicenseId,
+      client,
+    });
+    await recordSiteLicenseAuditEvent({
+      site_license_id: siteLicenseId,
+      action: "pool-created",
+      actor_account_id: actorAccountId,
+      package_id: packageId,
+      metadata: {
+        pool_name: normalizedPool.pool_name,
+        membership_class: normalizedPool.membership_class,
+        seat_count: normalizedPool.seat_count,
+        requires_approval: normalizedPool.requires_approval,
+        verification_policy: normalizedPool.verification_policy,
+        exclusive_group: normalizedPool.exclusive_group,
+        source: "add-site-license-pool",
+      },
+      client,
+    });
+    return await getSiteLicenseOverviewWithoutAuthorization({
+      site_license_id: siteLicenseId,
+      client,
+    });
+  });
+}
+
 export async function updateSiteLicense({
   actor_account_id,
   site_license_id,

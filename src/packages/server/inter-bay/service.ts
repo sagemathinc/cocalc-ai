@@ -137,6 +137,7 @@ import {
   updateMembershipPackage,
 } from "@cocalc/server/membership/packages";
 import {
+  addSiteLicensePool,
   adminProvisionSiteLicense,
   getVerifiedEmailAddressesForAccount,
   getSiteLicenseAffiliationReverificationStatusForAccount,
@@ -760,6 +761,10 @@ async function startAccountLocalService(): Promise<void> {
       isSeedSiteLicenseBay()
         ? await updateSiteLicense(opts)
         : await getSeedSiteLicenseClient().updateSiteLicense(opts),
+    addSiteLicensePool: async (opts) =>
+      isSeedSiteLicenseBay()
+        ? await addSiteLicensePool(opts)
+        : await getSeedSiteLicenseClient().addSiteLicensePool(opts),
     setSiteLicenseManager: async (opts) =>
       isSeedSiteLicenseBay()
         ? await setSiteLicenseManager(opts)
