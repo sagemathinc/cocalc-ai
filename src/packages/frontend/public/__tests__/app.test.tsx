@@ -251,8 +251,8 @@ describe("PublicApp", () => {
     );
 
     expect(
-      await screen.findByRole("link", { name: "Open projects" }),
-    ).not.toBeNull();
+      (await screen.findAllByRole("link", { name: "Open projects" })).length,
+    ).toBeGreaterThan(0);
   });
 
   it("falls back to same-origin auth bootstrap when stored home bay is stale", async () => {
@@ -291,8 +291,8 @@ describe("PublicApp", () => {
     );
 
     expect(
-      await screen.findByRole("link", { name: "Open projects" }),
-    ).not.toBeNull();
+      (await screen.findAllByRole("link", { name: "Open projects" })).length,
+    ).toBeGreaterThan(0);
   });
 
   it("renders the pricing page from live membership tier data", async () => {
