@@ -9,7 +9,6 @@ import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { getFeaturePage } from "@cocalc/frontend/public/features/catalog";
-import { FeatureImage } from "@cocalc/frontend/public/features/page-components";
 import {
   PublicCard,
   PublicGrid,
@@ -131,11 +130,28 @@ function HeroImage() {
         style={{
           height: "100%",
           objectFit: "cover",
-          transform: "scale(1.16)",
+          transform: "scale(1.1)",
+          transformOrigin: "center top",
           width: "100%",
         }}
       />
     </div>
+  );
+}
+
+function HomeInfographic({ alt, src }: { alt: string; src: string }) {
+  return (
+    <img
+      alt={alt}
+      src={src}
+      style={{
+        aspectRatio: "16 / 9",
+        background: "#fff",
+        borderRadius: 14,
+        objectFit: "contain",
+        width: "100%",
+      }}
+    />
   );
 }
 
@@ -229,7 +245,7 @@ function ProjectStorySection() {
     <section>
       <Row align="middle" gutter={[32, 32]}>
         <Col lg={12} xs={24}>
-          <FeatureImage
+          <HomeInfographic
             alt="One CoCalc project containing Jupyter, LaTeX, terminal, chat, whiteboard, git review, backups, and collaboration"
             src="/public/landing/project-workflows.jpg"
           />
@@ -335,7 +351,7 @@ function ProductOptionsSection() {
           </PublicSection>
         </Col>
         <Col lg={14} xs={24}>
-          <FeatureImage
+          <HomeInfographic
             alt="CoCalc product options: Hosted CoCalc, CoCalc Plus, Launchpad, and Rocket"
             src="/public/landing/product-options.jpg"
           />
