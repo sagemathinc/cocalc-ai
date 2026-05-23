@@ -32,7 +32,6 @@ export const VALID_SETTINGS_PAGES = [
   "licenses",
   "store",
   "vouchers",
-  "payg",
   "purchases",
   "payments",
   "payment-methods",

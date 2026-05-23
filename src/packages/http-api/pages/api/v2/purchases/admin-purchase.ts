@@ -5,6 +5,7 @@
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import adminPurchase from "@cocalc/server/purchases/admin-purchase";
 
 export default async function handle(req, res) {
@@ -13,6 +14,11 @@ export default async function handle(req, res) {
     if (account_id == null) {
       throw Error("must be signed in");
     }
+    await requireFreshAuth({
+      req,
+      account_id,
+      allow_actor_impersonation: true,
+    });
     const {
       comment,
       interval,
@@ -43,6 +49,9 @@ export default async function handle(req, res) {
       }),
     );
   } catch (err) {
-    res.json({ error: `${err.message}` });
+    res.json({
+      error: `${err.message}`,
+      ...(err?.code != null ? { code: err.code } : {}),
+    });
   }
 }

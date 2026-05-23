@@ -610,6 +610,50 @@ Validation:
 - Full TypeScript build.
 - Frontend lint.
 
+### Admin refund/manual purchase mutations lacked fresh auth
+
+The admin refund and admin-assisted purchase HTTP routes were admin-gated but
+did not require fresh auth. These routes can create Stripe refunds, debit a
+user's CoCalc balance with a refund purchase, grant admin-assigned memberships,
+create free offsetting credit, or create vouchers for another user.
+
+Fix:
+
+- `/api/v2/purchases/create-refund` now requires fresh auth after the admin
+  check and before creating the refund.
+- `/api/v2/purchases/admin-purchase` now requires fresh auth before creating
+  the admin-assisted purchase.
+- The admin refund modal and admin-assisted purchase panel now use
+  `useFreshAuthAction/FreshAuthModal` so stale admin sessions prompt and retry.
+
+Validation:
+
+- `packages/http-api`: `pages/api/v2/purchases-admin-fresh-auth.test.ts`
+- Full TypeScript build.
+- Frontend lint.
+
+### Spending-limit and statement-date controls lacked fresh auth
+
+The user-facing spending-limit and statement closing-date routes used only the
+existing signed-in session. Raising a pay-as-you-go spending limit can enable
+future metered usage to continue without warning, and resetting the closing
+date shifts subscription periods and statement timing.
+
+Fix:
+
+- `/api/v2/purchases/set-quota` now requires fresh auth before changing a
+  service spending limit.
+- `/api/v2/purchases/reset-closing-date` now requires fresh auth before shifting
+  the statement closing date and subscription periods.
+- The quota configuration views and closing-date modal now use
+  `useFreshAuthAction/FreshAuthModal` so stale sessions prompt and retry.
+
+Validation:
+
+- `packages/http-api`: `pages/api/v2/purchases-spending-controls-fresh-auth.test.ts`
+- Full TypeScript build.
+- Frontend lint.
+
 ## Reviewed Surfaces
 
 - Public hub dangerous RPC registry and name-based coverage.
@@ -633,6 +677,8 @@ Validation:
 - Active Stripe payment-method mutation routes.
 - Active Stripe subscription-renewal payment route.
 - User-facing subscription cancel/resume state mutation routes.
+- Admin refund and admin-assisted purchase money-moving routes.
+- User-facing spending-limit and statement closing-date control routes.
 
 ## Residual Follow-Up
 

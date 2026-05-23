@@ -10,8 +10,6 @@ for different account related information
 and configuration.
 */
 
-// cSpell:ignore payg
-
 import type {
   PreferencesSubTabKey,
   PreferencesSubTabType,
@@ -34,7 +32,6 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { labels } from "@cocalc/frontend/i18n";
 import BalanceButton from "@cocalc/frontend/purchases/balance-button";
-import PayAsYouGoPage from "@cocalc/frontend/purchases/payg-page";
 import PaymentMethodsPage from "@cocalc/frontend/purchases/payment-methods-page";
 import PaymentsPage from "@cocalc/frontend/purchases/payments-page";
 import PurchasesPage from "@cocalc/frontend/purchases/purchases-page";
@@ -348,16 +345,6 @@ export const AccountPage: React.FC = () => {
     }
 
     if (is_commercial) {
-      items.push({
-        key: "payg",
-        label: (
-          <span>
-            <Icon name="line-chart" />{" "}
-            {intl.formatMessage(labels.pay_as_you_go)}
-          </span>
-        ),
-        children: active_page === "payg" && <PayAsYouGoPage />,
-      });
       items.push({
         key: "purchases",
         label: (

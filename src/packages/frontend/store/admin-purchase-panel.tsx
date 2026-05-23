@@ -18,6 +18,10 @@ import {
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
 
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import api from "@cocalc/frontend/client/api";
 import {
   user_search,
@@ -67,6 +71,9 @@ export default function AdminPurchasePanel() {
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   const [resultMessage, setResultMessage] = useState<string>("");
   const [voucherCodes, setVoucherCodes] = useState<string[]>([]);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setActionError(`${err}`),
+  });
 
   useEffect(() => {
     let canceled = false;
@@ -194,38 +201,43 @@ export default function AdminPurchasePanel() {
     setActionError("");
     setResultMessage("");
     setVoucherCodes([]);
-    setActionLoading(true);
     try {
-      const result = await adminPurchase({
-        comment: comment.trim() || undefined,
-        interval: product === "membership" ? interval : undefined,
-        membership_class:
-          product === "membership" ? membershipClass : undefined,
-        price: finalPrice.toNumber(),
-        pricing_note: pricingNote,
-        product,
-        source,
-        user_account_id: targetUser.account_id,
-        voucher_amount: product === "voucher" ? voucherAmount : undefined,
-        voucher_count: product === "voucher" ? voucherCount : undefined,
-        voucher_title: product === "voucher" ? voucherTitle.trim() : undefined,
+      await runFreshAuthAction(async () => {
+        setActionLoading(true);
+        try {
+          const result = await adminPurchase({
+            comment: comment.trim() || undefined,
+            interval: product === "membership" ? interval : undefined,
+            membership_class:
+              product === "membership" ? membershipClass : undefined,
+            price: finalPrice.toNumber(),
+            pricing_note: pricingNote,
+            product,
+            source,
+            user_account_id: targetUser.account_id,
+            voucher_amount: product === "voucher" ? voucherAmount : undefined,
+            voucher_count: product === "voucher" ? voucherCount : undefined,
+            voucher_title:
+              product === "voucher" ? voucherTitle.trim() : undefined,
+          });
+          if (product === "voucher") {
+            setVoucherCodes(result.voucher_codes ?? []);
+            setResultMessage("Voucher purchase created.");
+          } else {
+            setResultMessage(
+              result.expires_at
+                ? `Membership assigned until ${new Date(
+                    result.expires_at,
+                  ).toLocaleDateString()}`
+                : "Membership assigned.",
+            );
+          }
+        } finally {
+          setActionLoading(false);
+        }
       });
-      if (product === "voucher") {
-        setVoucherCodes(result.voucher_codes ?? []);
-        setResultMessage("Voucher purchase created.");
-      } else {
-        setResultMessage(
-          result.expires_at
-            ? `Membership assigned until ${new Date(
-                result.expires_at,
-              ).toLocaleDateString()}`
-            : "Membership assigned.",
-        );
-      }
     } catch (err) {
       setActionError(`${err}`);
-    } finally {
-      setActionLoading(false);
     }
   }
 
@@ -419,6 +431,7 @@ export default function AdminPurchasePanel() {
           Create admin purchase
         </Button>
       </Space>
+      <FreshAuthModal {...freshAuthModalProps} />
     </Card>
   );
 }

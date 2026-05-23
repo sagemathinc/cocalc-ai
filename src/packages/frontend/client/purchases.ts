@@ -1,17 +1,6 @@
-/*
-Functions for interfacing with the purchases functionality.
-
-TODO/DEPRECATE: this module is mostly pointless since I moved essentially
-all of this code to @cocalc/frontend/purchases/api, which is much better
-since it can also be used directly by our nextjs app, and also is
-scoped better.  That said quotaModal is here.
-*/
-
 import type { Service } from "@cocalc/util/db-schema/purchases";
-import { redux } from "@cocalc/frontend/app-framework";
-import { once } from "@cocalc/util/async-utils";
 import * as purchasesApi from "@cocalc/frontend/purchases/api";
-import { moneyRound2Up, type MoneyValue } from "@cocalc/util/money";
+import type { MoneyValue } from "@cocalc/util/money";
 import type { WebappClient } from "./client";
 
 export class PurchasesClient {
@@ -22,33 +11,12 @@ export class PurchasesClient {
     this.api = purchasesApi;
     this.client = client;
   }
-  async getQuotas(): Promise<{
-    minBalance: MoneyValue;
-    services: { [service: string]: MoneyValue };
-  }> {
-    return await purchasesApi.getQuotas();
-  }
-
   async getBalance(): Promise<MoneyValue> {
     return await this.client.conat_client.hub.purchases.getBalance();
   }
 
-  async getSpendRate(): Promise<MoneyValue> {
-    return await purchasesApi.getSpendRate();
-  }
-
   async getClosingDates(): Promise<{ last: Date; next: Date }> {
     return await purchasesApi.getClosingDates();
-  }
-
-  async setQuota(
-    service: Service,
-    value: number,
-  ): Promise<{
-    minBalance: MoneyValue;
-    services: { [service: string]: MoneyValue };
-  }> {
-    return await purchasesApi.setQuota(service, value);
   }
 
   async isPurchaseAllowed(
@@ -77,45 +45,12 @@ export class PurchasesClient {
     return await purchasesApi.getCostPerDay(opts);
   }
 
-  async quotaModal({
-    service,
-    cost,
-    allowed,
-    reason,
-    cost_per_hour,
-  }: {
-    service?: Service;
-    // cost = how much you have to have available in your account
-    cost?: MoneyValue;
-    allowed?: boolean;
-    reason?: string;
-    // the rate if this is a pay-as-you-go metered purchase.
-    cost_per_hour?: number;
-  } = {}): Promise<void> {
-    const actions = redux.getActions("billing");
-    actions.setState({
-      pay_as_you_go: {
-        showModal: true,
-        service,
-        cost: cost != null ? moneyRound2Up(cost).toNumber() : cost,
-        reason,
-        allowed,
-        cost_per_hour,
-      } as any,
-    });
-    await waitUntilPayAsYouGoModalCloses();
-  }
-
   async getCustomer() {
     return await purchasesApi.getCustomer();
   }
 
   async getChargesByService(): Promise<{ [service: string]: MoneyValue }> {
     return await purchasesApi.getChargesByService();
-  }
-
-  async getCurrentCheckoutSession() {
-    return await purchasesApi.getCurrentCheckoutSession();
   }
 
   async getUnpaidInvoices(): Promise<any[]> {
@@ -128,11 +63,6 @@ export class PurchasesClient {
 
   async getMinimumPayment(): Promise<number> {
     return await purchasesApi.getMinimumPayment();
-  }
-
-  // this is only used in the nextjs store app right now...
-  async getShoppingCartCheckoutParams() {
-    return await purchasesApi.getShoppingCartCheckoutParams();
   }
 
   async adminGetMinBalance(account_id: string): Promise<MoneyValue> {
@@ -151,15 +81,5 @@ export class PurchasesClient {
 
   async getLiveSubscriptions() {
     return await purchasesApi.getLiveSubscriptions();
-  }
-}
-
-async function waitUntilPayAsYouGoModalCloses() {
-  const store = redux.getStore("billing");
-  while (true) {
-    await once(store, "change");
-    if (!store.getIn(["pay_as_you_go", "showModal"])) {
-      return;
-    }
   }
 }

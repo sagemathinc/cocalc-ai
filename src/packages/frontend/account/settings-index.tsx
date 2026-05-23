@@ -3,8 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// cSpell:ignore payg
-
 import { Card, Divider, Flex } from "antd";
 import { defineMessages, useIntl } from "react-intl";
 
@@ -89,10 +87,6 @@ const MESSAGES = defineMessages({
   licenses: {
     id: "account.settings.overview.licenses",
     defaultMessage: "Manage your software licenses.",
-  },
-  payg: {
-    id: "account.settings.overview.payg",
-    defaultMessage: "Configure pay-as-you-go usage and billing.",
   },
   purchases: {
     id: "account.settings.overview.purchases",
@@ -304,16 +298,6 @@ export function SettingsOverview() {
             </Card>
             {is_commercial && (
               <>
-                <Card
-                  {...CARD_PROPS}
-                  onClick={() => handleNavigate("settings/payg")}
-                >
-                  <Card.Meta
-                    avatar={<Icon name="line-chart" />}
-                    title={intl.formatMessage(labels.pay_as_you_go)}
-                    description={intl.formatMessage(MESSAGES.payg)}
-                  />
-                </Card>
                 <Card
                   {...CARD_PROPS}
                   onClick={() => handleNavigate("settings/purchases")}

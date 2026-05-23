@@ -5,7 +5,7 @@
 
 import { Map, Set } from "immutable";
 
-import { redux, Store, TypedMap } from "@cocalc/frontend/app-framework";
+import { redux, Store } from "@cocalc/frontend/app-framework";
 import { AppliedCoupons, CoursePay, CustomerMap, InvoicesMap } from "./types";
 
 export interface BillingStoreState {
@@ -21,13 +21,6 @@ export interface BillingStoreState {
   continue_first_purchase?: boolean;
   selected_plan?: string;
   course_pay: CoursePay;
-  pay_as_you_go?: TypedMap<{
-    showModal?: boolean;
-    service?: string;
-    cost?: number;
-    reason?: string;
-    allowed?: boolean;
-  }>;
 }
 
 export class BillingStore extends Store<BillingStoreState> {}
