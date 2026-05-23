@@ -634,6 +634,14 @@ function FeatureDetail({
       />
     );
   }
+  if (slug === "linux") {
+    return (
+      <LinuxFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
   if (CustomPage) {
     return <CustomPage helpEmail={helpEmail} />;
   }
