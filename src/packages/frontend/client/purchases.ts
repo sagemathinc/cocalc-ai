@@ -53,10 +53,6 @@ export class PurchasesClient {
     return await purchasesApi.getChargesByService();
   }
 
-  async getCurrentCheckoutSession() {
-    return await purchasesApi.getCurrentCheckoutSession();
-  }
-
   async getUnpaidInvoices(): Promise<any[]> {
     return await purchasesApi.getUnpaidInvoices();
   }
@@ -67,11 +63,6 @@ export class PurchasesClient {
 
   async getMinimumPayment(): Promise<number> {
     return await purchasesApi.getMinimumPayment();
-  }
-
-  // this is only used in the nextjs store app right now...
-  async getShoppingCartCheckoutParams() {
-    return await purchasesApi.getShoppingCartCheckoutParams();
   }
 
   async adminGetMinBalance(account_id: string): Promise<MoneyValue> {
