@@ -72,7 +72,16 @@ describe("PublicTopNav", () => {
       within(screen.getByRole("menu", { name: "Public pages" }))
         .getAllByRole("menuitem")
         .map((item) => item.textContent),
-    ).toEqual(["Projects", "Features", "Field guides", "Support"]);
+    ).toEqual([
+      "Projects",
+      "Features",
+      "Field guides",
+      "Products",
+      "Pricing",
+      "News",
+      "About",
+      "Support",
+    ]);
   });
 
   it("uses sign-in and sign-up links for anonymous visitors", async () => {

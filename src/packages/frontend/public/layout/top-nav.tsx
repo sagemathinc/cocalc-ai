@@ -145,15 +145,7 @@ export default function PublicTopNav({
   });
   const signedInItems: typeof publicInfoItems = [
     { href: appPath("projects"), key: "projects", label: "Projects" },
-    { href: appPath("features"), key: "features", label: "Features" },
-    {
-      href: FIELD_GUIDES_URL,
-      key: "field-guides",
-      label: "Field guides",
-      rel: "noreferrer",
-      target: "_blank",
-    },
-    { href: appPath("support"), key: "support", label: "Support" },
+    ...publicInfoItems,
   ];
   const items = isAuthenticated ? signedInItems : publicInfoItems;
   const visibleMenuItems =
@@ -200,7 +192,7 @@ export default function PublicTopNav({
         />
         <Space>
           {isAuthenticated ? (
-            <Button href={appPath("projects")} size="small" type="primary">
+            <Button href={appPath("projects")} size="small">
               Projects
             </Button>
           ) : (
