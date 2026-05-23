@@ -7,9 +7,8 @@ import { useEffect } from "react";
 
 import { Button, Col, Empty, Flex, Row, Tag, Typography } from "antd";
 
+import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import {
-  PublicCard,
-  PublicGrid,
   PublicPage,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
@@ -17,7 +16,11 @@ import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { SITE_NAME } from "@cocalc/util/theme";
 import AIFeaturePage from "./ai-page";
 import ApiFeaturePage from "./api-page";
-import { getFeatureIndexPages, getFeaturePage } from "./catalog";
+import {
+  getFeatureIndexPages,
+  getFeaturePage,
+  type FeaturePage,
+} from "./catalog";
 import CompareFeaturePage from "./compare-page";
 import JupyterNotebookFeaturePage from "./jupyter-notebook-page";
 import JuliaFeaturePage from "./julia-page";
@@ -36,7 +39,7 @@ import TerminalFeaturePage from "./terminal-page";
 import WhiteboardFeaturePage from "./whiteboard-page";
 import X11FeaturePage from "./x11-page";
 
-const { Paragraph, Title } = Typography;
+const { Paragraph, Text, Title } = Typography;
 
 interface FeaturesConfig {
   help_email?: string;
@@ -82,14 +85,18 @@ const FEATURE_INDEX_PRIORITY = [
 
 const FEATURE_GROUPS = [
   {
+    accent: "#2f6fda",
     description:
       "Notebooks, papers, whiteboards, slides, and technical writing in one collaborative project.",
+    icon: "jupyter",
     slugs: ["jupyter-notebook", "latex-editor", "whiteboard", "slides"],
     title: "Documents",
   },
   {
+    accent: "#096dd9",
     description:
       "A real Linux environment with terminals, language stacks, graphical apps, and installable software.",
+    icon: "terminal",
     slugs: [
       "terminal",
       "linux",
@@ -103,24 +110,255 @@ const FEATURE_GROUPS = [
     title: "Compute",
   },
   {
+    accent: "#7c3aed",
     description:
       "Codex and AI assistance where files, notebooks, terminals, and chat already live.",
+    icon: "robot",
     slugs: ["ai", "compare", "api"],
     title: "AI and automation",
   },
   {
+    accent: "#389e0d",
     description:
       "Course workflows, grading, shared environments, and collaborative help for technical classes.",
+    icon: "graduation-cap",
     slugs: ["teaching"],
     title: "Teaching",
   },
 ] as const;
+
+const FEATURE_META = {
+  ai: { accent: "#7c3aed", icon: "robot", label: "Agents" },
+  api: { accent: "#096dd9", icon: "api", label: "API" },
+  compare: { accent: "#2f6fda", icon: "swap", label: "Positioning" },
+  "jupyter-notebook": {
+    accent: "#2f6fda",
+    icon: "jupyter",
+    label: "Notebook",
+  },
+  julia: { accent: "#9558b2", icon: "julia", label: "Language" },
+  "latex-editor": { accent: "#ad6800", icon: "tex", label: "Writing" },
+  linux: { accent: "#096dd9", icon: "linux", label: "Environment" },
+  octave: { accent: "#d4380d", icon: "octave", label: "Language" },
+  python: { accent: "#2f6fda", icon: "python", label: "Language" },
+  "r-statistical-software": { accent: "#386cb0", icon: "r", label: "Stats" },
+  sage: { accent: "#389e0d", icon: "sagemath", label: "Math" },
+  slides: { accent: "#d46b08", icon: "slides", label: "Present" },
+  teaching: { accent: "#389e0d", icon: "graduation-cap", label: "Courses" },
+  terminal: { accent: "#096dd9", icon: "terminal", label: "Shell" },
+  whiteboard: { accent: "#d4380d", icon: "layout", label: "Canvas" },
+  x11: { accent: "#455a64", icon: "desktop", label: "Desktop" },
+} satisfies Record<string, { accent: string; icon: IconName; label: string }>;
+
+function featureMeta(slug: string) {
+  return (
+    FEATURE_META[slug as keyof typeof FEATURE_META] ?? {
+      accent: PUBLIC_COLORS.brand,
+      icon: "star",
+      label: "Feature",
+    }
+  );
+}
 
 function titleForRoute(route: PublicFeaturesRoute, siteName: string): string {
   if (route.view === "detail" && route.slug) {
     return `${getFeaturePage(route.slug)?.title ?? "Features"} – ${siteName}`;
   }
   return `${siteName} Features`;
+}
+
+function FeatureLinkCard({ page }: { page: FeaturePage }) {
+  const meta = featureMeta(page.slug);
+  return (
+    <a
+      href={featurePath(page.slug)}
+      style={{
+        background: "#fff",
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 22,
+        boxShadow: "0 14px 38px rgba(33, 49, 57, 0.07)",
+        color: "inherit",
+        display: "block",
+        height: "100%",
+        minHeight: 188,
+        padding: 20,
+        textDecoration: "none",
+      }}
+    >
+      <Flex vertical gap={12}>
+        <Flex align="center" justify="space-between">
+          <div
+            style={{
+              alignItems: "center",
+              background: `${meta.accent}14`,
+              border: `1px solid ${meta.accent}33`,
+              borderRadius: 16,
+              color: meta.accent,
+              display: "flex",
+              fontSize: 24,
+              height: 50,
+              justifyContent: "center",
+              width: 50,
+            }}
+          >
+            <Icon name={meta.icon} />
+          </div>
+          <Icon name="arrow-right" style={{ color: meta.accent }} />
+        </Flex>
+        <Tag
+          style={{
+            alignSelf: "flex-start",
+            background: `${meta.accent}12`,
+            borderColor: `${meta.accent}2e`,
+            color: meta.accent,
+            marginInlineEnd: 0,
+          }}
+        >
+          {meta.label}
+        </Tag>
+        <div>
+          <Title level={4} style={{ margin: "0 0 8px" }}>
+            {page.title}
+          </Title>
+          <Paragraph style={{ margin: 0 }}>{page.summary}</Paragraph>
+        </div>
+      </Flex>
+    </a>
+  );
+}
+
+function CapabilityCard({
+  body,
+  icon,
+  title,
+}: {
+  body: string;
+  icon: IconName;
+  title: string;
+}) {
+  return (
+    <div
+      style={{
+        background: "#fff",
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 24,
+        boxShadow: "0 16px 44px rgba(33, 49, 57, 0.07)",
+        padding: 24,
+      }}
+    >
+      <Flex gap={14}>
+        <div
+          style={{
+            alignItems: "center",
+            background: "#eef5ff",
+            border: `1px solid ${PUBLIC_COLORS.border}`,
+            borderRadius: 16,
+            color: PUBLIC_COLORS.brand,
+            display: "flex",
+            flex: "0 0 auto",
+            fontSize: 24,
+            height: 52,
+            justifyContent: "center",
+            width: 52,
+          }}
+        >
+          <Icon name={icon} />
+        </div>
+        <div>
+          <Title level={3} style={{ margin: "0 0 8px" }}>
+            {title}
+          </Title>
+          <Paragraph style={{ margin: 0 }}>{body}</Paragraph>
+        </div>
+      </Flex>
+    </div>
+  );
+}
+
+function FeatureGroupSection({
+  group,
+  pages,
+}: {
+  group: (typeof FEATURE_GROUPS)[number];
+  pages: FeaturePage[];
+}) {
+  const groupPages = group.slugs
+    .map((slug) => pages.find((page) => page.slug === slug))
+    .filter((page) => page != null);
+  if (!groupPages.length) return null;
+
+  return (
+    <section>
+      <Row gutter={[18, 18]}>
+        <Col lg={6} xs={24}>
+          <div
+            style={{
+              background:
+                "linear-gradient(145deg, #ffffff 0%, #f7fbff 58%, #fff8e8 100%)",
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: 28,
+              boxShadow: "0 16px 44px rgba(33, 49, 57, 0.07)",
+              padding: 24,
+            }}
+          >
+            <Flex vertical gap={16}>
+              <div
+                style={{
+                  alignItems: "center",
+                  background: `${group.accent}14`,
+                  border: `1px solid ${group.accent}33`,
+                  borderRadius: 18,
+                  color: group.accent,
+                  display: "flex",
+                  fontSize: 28,
+                  height: 58,
+                  justifyContent: "center",
+                  width: 58,
+                }}
+              >
+                <Icon name={group.icon} />
+              </div>
+              <div>
+                <Title level={2} style={{ margin: "0 0 8px" }}>
+                  {group.title}
+                </Title>
+                <Paragraph
+                  style={{
+                    color: PUBLIC_COLORS.mutedText,
+                    margin: 0,
+                  }}
+                >
+                  {group.description}
+                </Paragraph>
+              </div>
+              <div
+                aria-hidden="true"
+                style={{
+                  background: `linear-gradient(180deg, ${group.accent}66 0%, ${group.accent}12 100%)`,
+                  borderRadius: 999,
+                  height: 90,
+                  width: 4,
+                }}
+              />
+            </Flex>
+          </div>
+        </Col>
+        <Col lg={18} xs={24}>
+          <div
+            style={{
+              display: "grid",
+              gap: 16,
+              gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+            }}
+          >
+            {groupPages.map((page) => (
+              <FeatureLinkCard key={page.slug} page={page} />
+            ))}
+          </div>
+        </Col>
+      </Row>
+    </section>
+  );
 }
 
 function FeaturesIndex({ siteName }: { siteName: string }) {
@@ -188,79 +426,152 @@ function FeaturesIndex({ siteName }: { siteName: string }) {
         </Row>
       </section>
 
-      <PublicGrid columns={2}>
-        <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
-            Durable collaborative projects
-          </Title>
-          <Paragraph style={{ margin: 0 }}>
-            CoCalc projects keep files, notebooks, terminals, chat, agents,
-            snapshots, backups, and history together instead of splitting work
-            across unrelated tools.
-          </Paragraph>
-        </PublicSection>
-        <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
-            Agent-aware by design
-          </Title>
-          <Paragraph style={{ margin: 0 }}>
-            Codex can work in the same project context as humans: reading files,
-            using terminals, interacting with notebooks, writing documents, and
-            participating in durable chat threads.
-          </Paragraph>
-        </PublicSection>
-      </PublicGrid>
+      <section>
+        <Row gutter={[18, 18]}>
+          <Col lg={8} xs={24}>
+            <div
+              style={{
+                background:
+                  "linear-gradient(145deg, #f4f9ff 0%, #ffffff 58%, #fff8e8 100%)",
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: 28,
+                boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
+                height: "100%",
+                padding: 26,
+              }}
+            >
+              <Flex vertical gap={18}>
+                <Flex align="center" gap={14}>
+                  <div
+                    style={{
+                      alignItems: "center",
+                      background: "#e9f2ff",
+                      border: `1px solid ${PUBLIC_COLORS.border}`,
+                      borderRadius: 18,
+                      color: PUBLIC_COLORS.brand,
+                      display: "flex",
+                      fontSize: 28,
+                      height: 60,
+                      justifyContent: "center",
+                      width: 60,
+                    }}
+                  >
+                    <Icon name="project-outlined" />
+                  </div>
+                  <div>
+                    <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+                      One project
+                    </Text>
+                    <Title level={3} style={{ margin: "4px 0 0" }}>
+                      The shared unit of work.
+                    </Title>
+                  </div>
+                </Flex>
+                <Paragraph style={{ margin: 0 }}>
+                  Files, compute, documents, chat, agents, history, snapshots,
+                  backups, and collaborators stay together.
+                </Paragraph>
+                <Flex gap={8} wrap>
+                  {["Files", "Runtime", "History", "People", "Agents"].map(
+                    (label) => (
+                      <Tag
+                        key={label}
+                        color="blue"
+                        style={{ marginInlineEnd: 0 }}
+                      >
+                        {label}
+                      </Tag>
+                    ),
+                  )}
+                </Flex>
+              </Flex>
+            </div>
+          </Col>
+          <Col lg={8} xs={24}>
+            <CapabilityCard
+              body="CoCalc projects keep files, notebooks, terminals, chat, agents, snapshots, backups, and history together instead of splitting work across unrelated tools."
+              icon="history"
+              title="Durable collaborative projects"
+            />
+          </Col>
+          <Col lg={8} xs={24}>
+            <CapabilityCard
+              body="Codex can work in the same project context as humans: reading files, using terminals, interacting with notebooks, writing documents, and participating in durable chat threads."
+              icon="robot"
+              title="Agent-aware by design"
+            />
+          </Col>
+        </Row>
+      </section>
 
       {FEATURE_GROUPS.map((group) => (
-        <section key={group.title}>
-          <Flex vertical gap={8}>
+        <FeatureGroupSection group={group} key={group.title} pages={pages} />
+      ))}
+
+      <section>
+        <Flex align="end" justify="space-between" wrap gap={14}>
+          <div>
             <Title level={2} style={{ margin: 0 }}>
-              {group.title}
+              Full feature index
             </Title>
             <Paragraph
               style={{
                 color: PUBLIC_COLORS.mutedText,
-                margin: 0,
-                maxWidth: "68ch",
+                margin: "8px 0 0",
+                maxWidth: "70ch",
               }}
             >
-              {group.description}
+              Prefer the alphabetical view? Every feature page is still one
+              click away.
             </Paragraph>
-          </Flex>
-          <PublicGrid columns={3}>
-            {group.slugs
-              .map((slug) => pages.find((page) => page.slug === slug))
-              .filter(Boolean)
-              .map((page) =>
-                page ? (
-                  <PublicCard
-                    href={featurePath(page.slug)}
-                    key={page.slug}
-                    title={page.title}
-                  >
-                    <Paragraph style={{ margin: 0 }}>{page.summary}</Paragraph>
-                  </PublicCard>
-                ) : null,
-              )}
-          </PublicGrid>
-        </section>
-      ))}
-
-      <section>
-        <Title level={2} style={{ margin: 0 }}>
-          Full feature index
-        </Title>
-        <PublicGrid columns={3}>
-          {pages.map((page) => (
-            <PublicCard
-              href={featurePath(page.slug)}
-              key={page.slug}
-              title={page.title}
-            >
-              <Paragraph style={{ margin: 0 }}>{page.summary}</Paragraph>
-            </PublicCard>
-          ))}
-        </PublicGrid>
+          </div>
+        </Flex>
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+            marginTop: 18,
+          }}
+        >
+          {pages.map((page) => {
+            const meta = featureMeta(page.slug);
+            return (
+              <a
+                href={featurePath(page.slug)}
+                key={page.slug}
+                style={{
+                  alignItems: "center",
+                  background: "#fff",
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: 18,
+                  color: "inherit",
+                  display: "flex",
+                  gap: 12,
+                  padding: "12px 14px",
+                  textDecoration: "none",
+                }}
+              >
+                <span
+                  style={{
+                    alignItems: "center",
+                    background: `${meta.accent}12`,
+                    borderRadius: 12,
+                    color: meta.accent,
+                    display: "flex",
+                    flex: "0 0 auto",
+                    height: 36,
+                    justifyContent: "center",
+                    width: 36,
+                  }}
+                >
+                  <Icon name={meta.icon} />
+                </span>
+                <Text strong>{page.title}</Text>
+              </a>
+            );
+          })}
+        </div>
       </section>
     </>
   );
