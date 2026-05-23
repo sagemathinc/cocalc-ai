@@ -81,14 +81,35 @@ describe("PublicFeaturesApp", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "Coding Agents and AI Assistance",
+        name: "Codex Agent Chat",
         level: 1,
       }),
     ).not.toBeNull();
     expect(
-      screen.getByText("Code, explain, and fix in context"),
+      screen.getByText("Codex agent chat where the project already lives."),
     ).not.toBeNull();
+    expect(screen.getByText("One AI path")).not.toBeNull();
     expect(screen.getByText("Create account")).not.toBeNull();
+  });
+
+  it("uses projects as the ai CTA for authenticated users", () => {
+    render(
+      <PublicFeaturesApp
+        config={{
+          help_email: "help@example.com",
+          is_authenticated: true,
+          site_name: "Launchpad",
+        }}
+        initialRoute={{ slug: "ai", view: "detail" }}
+      />,
+    );
+
+    const projectLinks = screen.getAllByRole("link", { name: "Open projects" });
+    expect(projectLinks.length).toBeGreaterThan(0);
+    for (const link of projectLinks) {
+      expect(link.getAttribute("href")).toBe("/projects");
+    }
+    expect(screen.queryByText("Create account")).toBeNull();
   });
 
   it("renders the richer jupyter feature page", () => {

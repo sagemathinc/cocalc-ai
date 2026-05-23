@@ -598,6 +598,11 @@ function FeatureDetail({
 
   const CustomPage =
     FEATURE_DETAIL_COMPONENTS[slug as keyof typeof FEATURE_DETAIL_COMPONENTS];
+  if (slug === "ai") {
+    return (
+      <AIFeaturePage helpEmail={helpEmail} isAuthenticated={isAuthenticated} />
+    );
+  }
   if (slug === "jupyter-notebook") {
     return (
       <JupyterNotebookFeaturePage

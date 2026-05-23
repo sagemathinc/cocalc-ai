@@ -65,24 +65,24 @@ export const FEATURE_PAGES: FeaturePage[] = [
   {
     slug: "ai",
     aliases: ["openai-chatgpt"],
-    title: "Coding Agents and AI Assistance",
-    tagline: "Use coding agents and AI help directly in the workspace.",
+    title: "Codex Agent Chat",
+    tagline: "Use Codex in durable project chat threads.",
     summary:
-      "Work with coding agents inside chat and project workflows to explain code, fix errors, generate files, and help move technical work forward.",
+      "Work with Codex inside collaborative chat threads that stay close to project files, notebooks, terminals, images, and review context.",
     image: "/public/features/chatgpt-fix-code.png",
-    docsUrl: "https://doc.cocalc.com/chat.html",
+    docsUrl: "https://sagemathinc.github.io/cocalc-guides/codex-agent-chat/",
     index: true,
     sections: [
       {
-        title: "Agent-native workflows",
+        title: "Codex in project threads",
         paragraphs: [
-          "The current direction is not generic chat boxes. It is coding agents that can inspect context, write code, and participate in the same collaborative environment as the rest of the team.",
+          "CoCalc-AI uses AI through Codex chat threads. Human @mentions notify collaborators; they do not invoke models.",
         ],
         bullets: [
-          "Understand and fix code or notebook errors",
-          "Generate or rewrite project files",
-          "Help with shell commands, environments, and debugging",
-          "Stay embedded in the same chat and document workflows as the rest of CoCalc",
+          "Use OpenAI API keys or OpenAI subscription plans for native Codex support",
+          "Keep prompts, images, patches, and review notes in one durable thread",
+          "Let Codex work with files, terminals, and live notebook state",
+          "Run other command-line agents in project terminals as normal Linux tools",
         ],
       },
     ],
