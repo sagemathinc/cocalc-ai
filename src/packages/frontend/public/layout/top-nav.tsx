@@ -19,6 +19,7 @@ import {
   usePublicConfig,
   usesDefaultCoCalcBranding,
 } from "@cocalc/frontend/public/config";
+import { FIELD_GUIDES_URL } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 type PublicInfoPageKey =
@@ -108,14 +109,26 @@ export default function PublicTopNav({
   const logoSquare = getLogoSquare(config);
   const showPolicies = arePublicPoliciesVisible(config);
   const siteName = getSiteName(config);
-  const items: Array<{ href: string; key: PublicInfoPageKey; label: string }> =
-    [
-      { href: appPath("features"), key: "features", label: "Features" },
-      { href: appPath("products"), key: "products", label: "Products" },
-      { href: appPath("pricing"), key: "pricing", label: "Pricing" },
-      { href: appPath("news"), key: "news", label: "News" },
-      { href: appPath("about"), key: "about", label: "About" },
-    ];
+  const items: Array<{
+    href: string;
+    key: PublicInfoPageKey | "field-guides";
+    label: string;
+    rel?: string;
+    target?: string;
+  }> = [
+    { href: appPath("features"), key: "features", label: "Features" },
+    {
+      href: FIELD_GUIDES_URL,
+      key: "field-guides",
+      label: "Field guides",
+      rel: "noreferrer",
+      target: "_blank",
+    },
+    { href: appPath("products"), key: "products", label: "Products" },
+    { href: appPath("pricing"), key: "pricing", label: "Pricing" },
+    { href: appPath("news"), key: "news", label: "News" },
+    { href: appPath("about"), key: "about", label: "About" },
+  ];
   if (showPolicies) {
     items.push({
       href: appPath("policies"),
@@ -130,7 +143,11 @@ export default function PublicTopNav({
   });
   const menuItems: MenuProps["items"] = items.map((item) => ({
     key: item.key,
-    label: <a href={item.href}>{item.label}</a>,
+    label: (
+      <a href={item.href} rel={item.rel} target={item.target}>
+        {item.label}
+      </a>
+    ),
   }));
   const selectedKeys =
     active != null && active !== "auth" && active !== "home" ? [active] : [];

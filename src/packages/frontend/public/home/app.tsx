@@ -7,9 +7,9 @@ import { type ReactNode, useEffect, useState } from "react";
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
+import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { getFeaturePage } from "@cocalc/frontend/public/features/catalog";
-import { FeatureImage } from "@cocalc/frontend/public/features/page-components";
 import {
   PublicCard,
   PublicGrid,
@@ -17,7 +17,7 @@ import {
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { SITE_NAME } from "@cocalc/util/theme";
+import { FIELD_GUIDES_URL, SITE_NAME } from "@cocalc/util/theme";
 import { slugURL } from "@cocalc/util/news";
 import type { NewsItem } from "@cocalc/util/types/news";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -131,11 +131,28 @@ function HeroImage() {
         style={{
           height: "100%",
           objectFit: "cover",
-          transform: "scale(1.16)",
+          transform: "scale(1.1)",
+          transformOrigin: "center top",
           width: "100%",
         }}
       />
     </div>
+  );
+}
+
+function HomeInfographic({ alt, src }: { alt: string; src: string }) {
+  return (
+    <img
+      alt={alt}
+      src={src}
+      style={{
+        aspectRatio: "16 / 9",
+        background: "#fff",
+        borderRadius: 14,
+        objectFit: "contain",
+        width: "100%",
+      }}
+    />
   );
 }
 
@@ -229,7 +246,7 @@ function ProjectStorySection() {
     <section>
       <Row align="middle" gutter={[32, 32]}>
         <Col lg={12} xs={24}>
-          <FeatureImage
+          <HomeInfographic
             alt="One CoCalc project containing Jupyter, LaTeX, terminal, chat, whiteboard, git review, backups, and collaboration"
             src="/public/landing/project-workflows.jpg"
           />
@@ -274,38 +291,219 @@ function ProjectStorySection() {
 }
 
 function WorkflowsSection() {
-  const pages = PRIMARY_WORKFLOWS.map((slug) => getFeaturePage(slug)).filter(
-    Boolean,
-  );
+  const workflowMeta = {
+    ai: { accent: "#7c3aed", icon: "robot", label: "Agent help" },
+    "jupyter-notebook": {
+      accent: "#2f6fda",
+      icon: "jupyter",
+      label: "Compute",
+    },
+    "latex-editor": { accent: "#ad6800", icon: "tex", label: "Writing" },
+    teaching: {
+      accent: "#389e0d",
+      icon: "graduation-cap",
+      label: "Courses",
+    },
+    terminal: { accent: "#096dd9", icon: "terminal", label: "Linux" },
+    whiteboard: { accent: "#d4380d", icon: "layout", label: "Visual work" },
+  } satisfies Record<string, { accent: string; icon: IconName; label: string }>;
+  const pages = PRIMARY_WORKFLOWS.map((slug) => {
+    const page = getFeaturePage(slug);
+    return page == null ? undefined : { ...workflowMeta[slug], page };
+  }).filter((item) => item != null);
+
   return (
     <section>
-      <Flex align="baseline" justify="space-between" wrap gap={12}>
-        <div>
+      <Flex align="end" justify="space-between" wrap gap={16}>
+        <div style={{ maxWidth: 760 }}>
           <Eyebrow>Core workflows</Eyebrow>
-          <Title level={2} style={{ margin: "8px 0 0" }}>
+          <Title level={2} style={{ margin: "8px 0 10px" }}>
             Use the tools you already understand, together.
           </Title>
+          <Paragraph style={{ fontSize: 18, margin: 0 }}>
+            CoCalc keeps notebooks, papers, terminals, agents, classes, and
+            visual thinking inside one shared project instead of scattering them
+            across disconnected tools.
+          </Paragraph>
         </div>
         <Button href={appPath("features")}>All features</Button>
       </Flex>
-      <PublicGrid columns={3}>
-        {pages.map((page) =>
-          page ? (
-            <PublicCard
-              href={appPath(`features/${page.slug}`)}
-              key={page.slug}
-              title={page.title}
-            >
-              <Paragraph style={{ margin: 0 }}>{page.summary}</Paragraph>
-            </PublicCard>
-          ) : null,
-        )}
-      </PublicGrid>
+      <Row gutter={[18, 18]} style={{ marginTop: 26 }}>
+        <Col lg={6} xs={24}>
+          <div
+            style={{
+              background:
+                "linear-gradient(145deg, #f4f9ff 0%, #ffffff 54%, #fff8e8 100%)",
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: 28,
+              boxShadow: "0 18px 50px rgba(33, 49, 57, 0.08)",
+              height: "100%",
+              padding: 22,
+            }}
+          >
+            <Flex vertical gap={18}>
+              <Flex align="center" gap={12}>
+                <div
+                  style={{
+                    alignItems: "center",
+                    background: "#e9f2ff",
+                    border: `1px solid ${PUBLIC_COLORS.border}`,
+                    borderRadius: 18,
+                    color: PUBLIC_COLORS.brand,
+                    display: "flex",
+                    fontSize: 26,
+                    height: 58,
+                    justifyContent: "center",
+                    width: 58,
+                  }}
+                >
+                  <Icon name="project-outlined" />
+                </div>
+                <div>
+                  <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+                    One project
+                  </Text>
+                  <Paragraph style={{ margin: "3px 0 0" }}>
+                    Shared files, compute, history, and collaboration.
+                  </Paragraph>
+                </div>
+              </Flex>
+              <div
+                style={{
+                  display: "grid",
+                  gap: 10,
+                  gridTemplateColumns: "repeat(auto-fit, minmax(128px, 1fr))",
+                }}
+              >
+                {[
+                  { icon: "files", label: "Files" },
+                  { icon: "history", label: "TimeTravel" },
+                  { icon: "users", label: "People" },
+                  { icon: "disk-snapshot", label: "Recovery" },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    style={{
+                      alignItems: "center",
+                      background: "#fff",
+                      border: `1px solid ${PUBLIC_COLORS.border}`,
+                      borderRadius: 16,
+                      color: PUBLIC_COLORS.brand,
+                      display: "flex",
+                      gap: 8,
+                      padding: "10px 12px",
+                    }}
+                  >
+                    <Icon name={item.icon as IconName} />
+                    <Text>{item.label}</Text>
+                  </div>
+                ))}
+              </div>
+            </Flex>
+          </div>
+        </Col>
+        <Col lg={18} xs={24}>
+          <div
+            style={{
+              display: "grid",
+              gap: 14,
+              gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+            }}
+          >
+            {pages.map(({ accent, icon, label, page }) => (
+              <a
+                href={appPath(`features/${page.slug}`)}
+                key={page.slug}
+                style={{
+                  background: "#fff",
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: 22,
+                  boxShadow: "0 14px 38px rgba(33, 49, 57, 0.07)",
+                  color: "inherit",
+                  minHeight: 178,
+                  padding: 18,
+                  textDecoration: "none",
+                }}
+              >
+                <Flex vertical gap={12}>
+                  <Flex align="center" justify="space-between">
+                    <div
+                      style={{
+                        alignItems: "center",
+                        background: `${accent}14`,
+                        border: `1px solid ${accent}33`,
+                        borderRadius: 16,
+                        color: accent,
+                        display: "flex",
+                        fontSize: 24,
+                        height: 50,
+                        justifyContent: "center",
+                        width: 50,
+                      }}
+                    >
+                      <Icon name={icon} />
+                    </div>
+                    <Icon name="arrow-right" style={{ color: accent }} />
+                  </Flex>
+                  <Tag
+                    style={{
+                      alignSelf: "flex-start",
+                      background: `${accent}12`,
+                      borderColor: `${accent}2e`,
+                      color: accent,
+                      marginInlineEnd: 0,
+                    }}
+                  >
+                    {label}
+                  </Tag>
+                  <div>
+                    <Title level={4} style={{ margin: "0 0 8px" }}>
+                      {page.title}
+                    </Title>
+                    <Paragraph style={{ margin: 0 }}>{page.summary}</Paragraph>
+                  </div>
+                </Flex>
+              </a>
+            ))}
+          </div>
+        </Col>
+      </Row>
     </section>
   );
 }
 
 function ProductOptionsSection() {
+  const options = [
+    {
+      body: "Use CoCalc in the public cloud with a minimal free tier and a path to standard plans.",
+      icon: "cloud",
+      tag: "Hosted",
+      title: "Hosted CoCalc",
+    },
+    {
+      body: "Install the free single-user app on your own Linux or Mac computer.",
+      icon: "laptop",
+      tag: "Local",
+      title: "CoCalc Plus",
+    },
+    {
+      body: "Run a compact self-hosted site for a class, lab, or small team.",
+      icon: "rocket",
+      tag: "Self-hosted",
+      title: "Launchpad",
+    },
+    {
+      body: "Step up to a larger deployment model for organizations with more active users.",
+      icon: "servers",
+      tag: "Enterprise",
+      title: "Rocket",
+    },
+  ] satisfies {
+    body: string;
+    icon: IconName;
+    tag: string;
+    title: string;
+  }[];
   return (
     <section>
       <Row align="middle" gutter={[32, 32]}>
@@ -335,10 +533,117 @@ function ProductOptionsSection() {
           </PublicSection>
         </Col>
         <Col lg={14} xs={24}>
-          <FeatureImage
-            alt="CoCalc product options: Hosted CoCalc, CoCalc Plus, Launchpad, and Rocket"
-            src="/public/landing/product-options.jpg"
-          />
+          <div
+            style={{
+              background:
+                "linear-gradient(135deg, #ffffff 0%, #f7fbff 55%, #fff8e8 100%)",
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: 28,
+              boxShadow: "0 18px 54px rgba(33, 49, 57, 0.08)",
+              padding: 24,
+            }}
+          >
+            <Flex vertical gap={18}>
+              <Flex align="center" justify="space-between" wrap gap={12}>
+                <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+                  Same CoCalc workspace model
+                </Text>
+                <Flex gap={8} wrap>
+                  {["Files", "Notebooks", "Terminals", "Chat", "Agents"].map(
+                    (item) => (
+                      <Tag
+                        key={item}
+                        color="blue"
+                        style={{ marginInlineEnd: 0 }}
+                      >
+                        {item}
+                      </Tag>
+                    ),
+                  )}
+                </Flex>
+              </Flex>
+              <div
+                style={{
+                  display: "grid",
+                  gap: 12,
+                  gridTemplateColumns: "repeat(auto-fit, minmax(128px, 1fr))",
+                }}
+              >
+                {options.map((option, index) => (
+                  <div
+                    key={option.title}
+                    style={{
+                      background: "#fff",
+                      border: `1px solid ${PUBLIC_COLORS.border}`,
+                      borderRadius: 20,
+                      minHeight: 230,
+                      padding: 16,
+                    }}
+                  >
+                    <Flex align="center" justify="space-between">
+                      <div
+                        style={{
+                          alignItems: "center",
+                          background: index === 2 ? "#fff7e6" : "#eef5ff",
+                          border:
+                            index === 2
+                              ? "1px solid #ffd591"
+                              : `1px solid ${PUBLIC_COLORS.border}`,
+                          borderRadius: 16,
+                          color: index === 2 ? "#ad6800" : PUBLIC_COLORS.brand,
+                          display: "flex",
+                          fontSize: 23,
+                          height: 52,
+                          justifyContent: "center",
+                          width: 52,
+                        }}
+                      >
+                        <Icon name={option.icon} />
+                      </div>
+                      {index < options.length - 1 && (
+                        <Text
+                          aria-hidden="true"
+                          style={{ color: PUBLIC_COLORS.brand, fontSize: 20 }}
+                        >
+                          <Icon name="arrow-right" />
+                        </Text>
+                      )}
+                    </Flex>
+                    <Tag
+                      color={index === 2 ? "gold" : "blue"}
+                      style={{ margin: "18px 0 10px" }}
+                    >
+                      {option.tag}
+                    </Tag>
+                    <Title level={4} style={{ margin: "0 0 10px" }}>
+                      {option.title}
+                    </Title>
+                    <Paragraph style={{ margin: 0 }}>{option.body}</Paragraph>
+                  </div>
+                ))}
+              </div>
+              <div
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  display: "grid",
+                  gap: 12,
+                  gridTemplateColumns: "auto 1fr auto",
+                }}
+              >
+                <Text type="secondary">Individual</Text>
+                <div
+                  style={{
+                    background:
+                      "linear-gradient(90deg, #4b7bd8 0%, #68b36b 50%, #d48806 100%)",
+                    borderRadius: 999,
+                    height: 4,
+                  }}
+                />
+                <Text type="secondary">Organization</Text>
+              </div>
+            </Flex>
+          </div>
         </Col>
       </Row>
     </section>
@@ -349,37 +654,183 @@ function DifferenceSection() {
   const items = [
     {
       body: "Run cells, commands, terminals, and agent turns without tying the useful state to one browser tab.",
+      icon: "history",
+      kicker: "State survives",
       title: "Durable execution",
     },
     {
       body: "Use sudo, apt, Python packages, RootFS images, SSH, and project snapshots instead of pretending technical work has no environment.",
+      icon: "linux",
+      kicker: "Real environment",
       title: "Real Linux projects",
     },
     {
       body: "Chat, notebooks, terminals, files, whiteboards, git review, and support workflows are designed for more than one person.",
+      icon: "users",
+      kicker: "Shared by default",
       title: "Realtime collaboration",
     },
     {
       body: "Snapshots, backups, TimeTravel, project movement, and RootFS versions make project state recoverable and reusable.",
+      icon: "disk-snapshot",
+      kicker: "Recoverable work",
       title: "Operational safety",
     },
-  ];
+  ] satisfies {
+    body: string;
+    icon: IconName;
+    kicker: string;
+    title: string;
+  }[];
+  const evidence = [
+    { icon: "ipynb", label: "Notebook output" },
+    { icon: "folder-open", label: "Linux filesystem" },
+    { icon: "users", label: "Team activity" },
+    { icon: "disk-snapshot", label: "Snapshots and backups" },
+  ] satisfies { icon: IconName; label: string }[];
   return (
-    <section>
-      <Eyebrow>Why CoCalc is different</Eyebrow>
-      <Title level={2} style={{ margin: "8px 0 0" }}>
-        Built for real computational work, not only polished demos.
-      </Title>
-      <PublicGrid columns={2}>
-        {items.map((item) => (
-          <GlassPanel key={item.title}>
-            <Title level={3} style={{ marginTop: 0 }}>
-              {item.title}
-            </Title>
-            <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
-          </GlassPanel>
-        ))}
-      </PublicGrid>
+    <section
+      style={{
+        background: "#f7fbff",
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 28,
+        overflow: "hidden",
+        padding: "40px 42px",
+      }}
+    >
+      <Row align="middle" gutter={[36, 36]}>
+        <Col lg={9} xs={24}>
+          <Flex vertical gap={22}>
+            <div>
+              <Eyebrow>Why CoCalc is different</Eyebrow>
+              <Title level={2} style={{ margin: "8px 0 0" }}>
+                Built for real computational work, not only polished demos.
+              </Title>
+            </div>
+            <Paragraph
+              style={{
+                color: PUBLIC_COLORS.mutedText,
+                fontSize: 17,
+                margin: 0,
+              }}
+            >
+              CoCalc treats a project as a durable technical environment: files,
+              running work, collaboration, history, and recovery all belong
+              together.
+            </Paragraph>
+            <div
+              aria-hidden="true"
+              style={{
+                background: "#fff",
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: 22,
+                padding: 18,
+              }}
+            >
+              <Flex vertical gap={14}>
+                {evidence.map((item) => (
+                  <Flex align="center" gap={12} key={item.label}>
+                    <div
+                      style={{
+                        alignItems: "center",
+                        background: "#eef5ff",
+                        borderRadius: 999,
+                        color: PUBLIC_COLORS.brand,
+                        display: "flex",
+                        flex: "0 0 32px",
+                        height: 32,
+                        justifyContent: "center",
+                        width: 32,
+                      }}
+                    >
+                      <Icon name={item.icon} />
+                    </div>
+                    <Text strong>{item.label}</Text>
+                  </Flex>
+                ))}
+              </Flex>
+            </div>
+          </Flex>
+        </Col>
+        <Col lg={15} xs={24}>
+          <div
+            style={{
+              display: "grid",
+              gap: 18,
+              gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+            }}
+          >
+            {items.map((item, index) => (
+              <div
+                key={item.title}
+                style={{
+                  background: "#fff",
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: 22,
+                  boxShadow: "0 18px 44px rgba(33, 49, 57, 0.08)",
+                  minHeight: 190,
+                  padding: 24,
+                }}
+              >
+                <Flex align="center" justify="space-between">
+                  <div
+                    style={{
+                      alignItems: "center",
+                      background: "#eef5ff",
+                      border: `1px solid ${PUBLIC_COLORS.border}`,
+                      borderRadius: 16,
+                      color: PUBLIC_COLORS.brand,
+                      display: "flex",
+                      fontSize: 24,
+                      height: 52,
+                      justifyContent: "center",
+                      width: 52,
+                    }}
+                  >
+                    <Icon name={item.icon} />
+                  </div>
+                  {index < items.length - 1 && (
+                    <div
+                      aria-hidden="true"
+                      style={{
+                        alignItems: "center",
+                        background: "#fff7e6",
+                        border: "1px solid #ffd591",
+                        borderRadius: 999,
+                        color: "#ad6800",
+                        display: "flex",
+                        height: 34,
+                        justifyContent: "center",
+                        width: 34,
+                      }}
+                    >
+                      <Icon name={index === 1 ? "arrow-down" : "arrow-right"} />
+                    </div>
+                  )}
+                </Flex>
+                <Text
+                  strong
+                  style={{
+                    color: PUBLIC_COLORS.brand,
+                    display: "block",
+                    fontSize: 13,
+                    letterSpacing: 0,
+                    marginBottom: 12,
+                    marginTop: 18,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {item.kicker}
+                </Text>
+                <Title level={3} style={{ margin: "0 0 12px" }}>
+                  {item.title}
+                </Title>
+                <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
+              </div>
+            ))}
+          </div>
+        </Col>
+      </Row>
     </section>
   );
 }
@@ -417,60 +868,164 @@ function NewsSection({ initialNews }: { initialNews?: NewsItem[] }) {
   );
 }
 
-function BottomCallout({
-  config,
-  siteName,
-}: {
-  config?: HomeConfig;
-  siteName: string;
-}) {
+function BottomCallout({ config }: { config?: HomeConfig }) {
+  const paths = [
+    {
+      body: "Use the public CoCalc site with the minimal free tier, then move up to a standard plan when you need more.",
+      button: config?.is_authenticated ? "Open projects" : "Create account",
+      href: config?.is_authenticated
+        ? appPath("projects")
+        : appPath("auth/sign-up"),
+      icon: "cloud",
+      title: "Hosted CoCalc",
+    },
+    {
+      body: "Install the free single-user CoCalc app on your own Linux or Mac computer.",
+      button: "Download CoCalc Plus",
+      href: "https://software.cocalc.ai/software/cocalc-plus/index.html",
+      icon: "laptop",
+      title: "CoCalc Plus",
+    },
+    {
+      body: "Run a compact self-hosted CoCalc site for a lab, class, or small team.",
+      button: "Download Launchpad",
+      href: "https://software.cocalc.ai/software/cocalc-launchpad/index.html",
+      icon: "rocket",
+      title: "CoCalc Launchpad",
+    },
+  ] satisfies {
+    body: string;
+    button: string;
+    href: string;
+    icon: IconName;
+    title: string;
+  }[];
   return (
     <section>
-      <PublicSection>
-        <Row align="middle" gutter={[24, 24]}>
-          <Col md={15} xs={24}>
-            <Title level={2} style={{ margin: 0 }}>
-              {config?.organization_name
-                ? `Hosted by ${config.organization_name}`
-                : `Start using ${siteName}`}
-            </Title>
-            <Paragraph style={{ fontSize: 18, margin: 0 }}>
-              {config?.organization_name && config?.organization_url ? (
-                <>
-                  This deployment is operated by{" "}
-                  <a href={config.organization_url}>
-                    {config.organization_name}
-                  </a>
-                  . Use the public pages to understand the platform, then move
-                  into the app when you are ready.
-                </>
-              ) : (
-                <>
-                  Create a hosted account, install CoCalc Plus for free, or run
-                  your own CoCalc site with Launchpad.
-                </>
-              )}
-            </Paragraph>
-          </Col>
-          <Col md={9} xs={24}>
-            <Flex gap={12} justify="end" wrap>
-              {config?.is_authenticated ? (
-                <Button href={appPath("projects")} type="primary">
-                  Projects
+      <div
+        style={{
+          background:
+            "linear-gradient(135deg, #eef6ff 0%, #ffffff 46%, #fff8e8 100%)",
+          border: `1px solid ${PUBLIC_COLORS.border}`,
+          borderRadius: 30,
+          overflow: "hidden",
+          padding: "42px",
+        }}
+      >
+        <Flex vertical gap={28}>
+          <Row align="bottom" gutter={[32, 24]}>
+            <Col lg={15} xs={24}>
+              <Eyebrow>Choose your path</Eyebrow>
+              <Title level={2} style={{ margin: "8px 0 0" }}>
+                Start using CoCalc
+              </Title>
+              <Paragraph
+                style={{
+                  color: PUBLIC_COLORS.mutedText,
+                  fontSize: 18,
+                  margin: "12px 0 0",
+                  maxWidth: 760,
+                }}
+              >
+                Start hosted, install the free local app, or run your own CoCalc
+                site. The workspace model stays familiar across all three.
+              </Paragraph>
+            </Col>
+            <Col lg={9} xs={24}>
+              <Flex gap={10} justify="end" wrap>
+                <Tag color="blue">Notebooks</Tag>
+                <Tag color="green">Terminals</Tag>
+                <Tag color="gold">Agents</Tag>
+                <Tag color="purple">TimeTravel</Tag>
+              </Flex>
+            </Col>
+          </Row>
+          <div
+            style={{
+              display: "grid",
+              gap: 18,
+              gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+            }}
+          >
+            {paths.map((path, index) => (
+              <div
+                key={path.title}
+                style={{
+                  background: "#fff",
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: 22,
+                  boxShadow: "0 16px 44px rgba(33, 49, 57, 0.08)",
+                  display: "flex",
+                  flexDirection: "column",
+                  minHeight: 245,
+                  padding: 24,
+                }}
+              >
+                <Flex align="center" justify="space-between">
+                  <div
+                    style={{
+                      alignItems: "center",
+                      background: index === 2 ? "#fff7e6" : "#eef5ff",
+                      border:
+                        index === 2
+                          ? "1px solid #ffd591"
+                          : `1px solid ${PUBLIC_COLORS.border}`,
+                      borderRadius: 18,
+                      color: index === 2 ? "#ad6800" : PUBLIC_COLORS.brand,
+                      display: "flex",
+                      fontSize: 26,
+                      height: 58,
+                      justifyContent: "center",
+                      width: 58,
+                    }}
+                  >
+                    <Icon name={path.icon} />
+                  </div>
+                  {index < paths.length - 1 && (
+                    <div
+                      aria-hidden="true"
+                      style={{
+                        color: PUBLIC_COLORS.brand,
+                        fontSize: 22,
+                        opacity: 0.65,
+                      }}
+                    >
+                      <Icon name="arrow-right" />
+                    </div>
+                  )}
+                </Flex>
+                <Title level={3} style={{ margin: "22px 0 10px" }}>
+                  {path.title}
+                </Title>
+                <Paragraph style={{ flex: 1, margin: 0 }}>
+                  {path.body}
+                </Paragraph>
+                <Button
+                  href={path.href}
+                  rel={path.href.startsWith("http") ? "noreferrer" : undefined}
+                  target={path.href.startsWith("http") ? "_blank" : undefined}
+                  type={index === 0 ? "primary" : "default"}
+                  style={{ marginTop: 22, width: "fit-content" }}
+                >
+                  {path.button}
                 </Button>
-              ) : (
-                <>
-                  <Button href={appPath("auth/sign-up")} type="primary">
-                    Sign up
-                  </Button>
-                  <Button href={appPath("auth/sign-in")}>Sign in</Button>
-                </>
-              )}
+              </div>
+            ))}
+          </div>
+          <Flex align="center" justify="space-between" wrap gap={14}>
+            <Text type="secondary">
+              Want help choosing? Compare products or contact support.
+            </Text>
+            <Flex gap={10} wrap>
+              <Button href={appPath("products")}>Compare products</Button>
+              <Button href={FIELD_GUIDES_URL} rel="noreferrer" target="_blank">
+                Field guides
+              </Button>
               <Button href={appPath("support")}>Support</Button>
             </Flex>
-          </Col>
-        </Row>
-      </PublicSection>
+          </Flex>
+        </Flex>
+      </div>
     </section>
   );
 }
@@ -501,7 +1056,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       <ProductOptionsSection />
       <DifferenceSection />
       <NewsSection initialNews={news} />
-      <BottomCallout config={config} siteName={siteName} />
+      <BottomCallout config={config} />
     </PublicPage>
   );
 }

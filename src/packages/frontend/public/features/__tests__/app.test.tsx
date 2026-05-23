@@ -99,13 +99,78 @@ describe("PublicFeaturesApp", () => {
       />,
     );
 
+    expect(screen.getByText("Durable execution")).not.toBeNull();
     expect(
-      screen.getByText("Jupyter notebooks made for teaching"),
+      screen.getByText(
+        "Let the agent work with the notebook you actually have open",
+      ),
     ).not.toBeNull();
     expect(
-      screen.getByText("Managed kernels and practical compatibility"),
+      screen.getByText(
+        "Put notebook cells on a whiteboard when the idea is a graph",
+      ),
     ).not.toBeNull();
-    expect(screen.getByText("Publishing notebooks")).not.toBeNull();
+  });
+
+  it("uses projects as the jupyter CTA for authenticated users", () => {
+    render(
+      <PublicFeaturesApp
+        config={{
+          help_email: "help@example.com",
+          is_authenticated: true,
+          site_name: "Launchpad",
+        }}
+        initialRoute={{ slug: "jupyter-notebook", view: "detail" }}
+      />,
+    );
+
+    const projectLinks = screen.getAllByRole("link", { name: "Open projects" });
+    expect(projectLinks.length).toBeGreaterThan(0);
+    for (const link of projectLinks) {
+      expect(link.getAttribute("href")).toBe("/projects");
+    }
+    expect(screen.queryByText("Start using Jupyter on CoCalc")).toBeNull();
+  });
+
+  it("renders the richer latex feature page", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug: "latex-editor", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "Write the paper where the code, figures, and review live",
+      ),
+    ).not.toBeNull();
+    expect(screen.getByText("When the paper becomes a project")).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Use Codex as an editor and build assistant, not an author",
+      ),
+    ).not.toBeNull();
+  });
+
+  it("uses projects as the latex CTA for authenticated users", () => {
+    render(
+      <PublicFeaturesApp
+        config={{
+          help_email: "help@example.com",
+          is_authenticated: true,
+          site_name: "Launchpad",
+        }}
+        initialRoute={{ slug: "latex-editor", view: "detail" }}
+      />,
+    );
+
+    const projectLinks = screen.getAllByRole("link", { name: "Open projects" });
+    expect(projectLinks.length).toBeGreaterThan(0);
+    for (const link of projectLinks) {
+      expect(link.getAttribute("href")).toBe("/projects");
+    }
+    expect(screen.queryByText("Start writing LaTeX on CoCalc")).toBeNull();
   });
 
   it("renders the richer terminal feature page", () => {
