@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Space } from "antd";
+import { Alert, Popconfirm, Space } from "antd";
 
 import { useState } from "@cocalc/frontend/app-framework";
 import { Button } from "@cocalc/frontend/antd-bootstrap";
@@ -92,13 +92,6 @@ export function PasswordReset({ account_id, email_address }: Props) {
   }
 
   async function disableTwoFactor(): Promise<void> {
-    if (
-      !window.confirm(
-        "Remove all 2FA methods for this account? Only do this after independently verifying the user's identity.",
-      )
-    ) {
-      return;
-    }
     setDisablingTwoFactor(true);
     setError(undefined);
     setTwoFactorMessage(undefined);
@@ -216,19 +209,24 @@ export function PasswordReset({ account_id, email_address }: Props) {
       <div>
         <b>Two-Factor Authentication Recovery:</b>
         <div style={{ marginTop: "10px" }}>
-          <Button
-            bsStyle="danger"
+          <Popconfirm
+            title="Remove all 2FA methods for this account?"
+            description="Only do this after independently verifying the user's identity."
+            okText="Remove 2FA"
+            okButtonProps={{ danger: true }}
             disabled={disablingTwoFactor}
-            onClick={() => {
+            onConfirm={() => {
               void disableTwoFactor();
             }}
           >
-            <Icon
-              name={disablingTwoFactor ? "sync" : "lock-open"}
-              spin={disablingTwoFactor}
-            />{" "}
-            Remove 2FA from account...
-          </Button>
+            <Button bsStyle="danger" disabled={disablingTwoFactor}>
+              <Icon
+                name={disablingTwoFactor ? "sync" : "lock-open"}
+                spin={disablingTwoFactor}
+              />{" "}
+              Remove 2FA from account...
+            </Button>
+          </Popconfirm>
         </div>
       </div>
       <FreshAuthModal {...freshAuthModalProps} />

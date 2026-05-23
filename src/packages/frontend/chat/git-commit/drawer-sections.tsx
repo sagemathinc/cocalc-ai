@@ -979,8 +979,8 @@ export function GitChangedFilesPanel({
       <div
         style={{
           display: "flex",
-          flexWrap: "wrap",
-          gap: 8,
+          flexDirection: "column",
+          gap: 6,
         }}
       >
         {files.map((file, idx) => {
@@ -992,8 +992,12 @@ export function GitChangedFilesPanel({
               key={`file-index-${sectionId}`}
               size="small"
               style={{
+                alignSelf: "flex-start",
                 fontFamily: "monospace",
                 maxWidth: "100%",
+                overflow: "hidden",
+                textAlign: "left",
+                textOverflow: "ellipsis",
               }}
               onClick={() => onOpenFileDiff(idx)}
             >

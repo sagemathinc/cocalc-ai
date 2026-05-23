@@ -12,6 +12,10 @@ const mockRunFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
 
 jest.mock("antd", () => ({
   Alert: ({ message }: any) => <div>{message}</div>,
+  Popconfirm: ({ children, onConfirm }: any) => {
+    const React = require("react");
+    return React.cloneElement(children, { onClick: onConfirm });
+  },
   Space: ({ children }: any) => <div>{children}</div>,
 }));
 
@@ -64,7 +68,6 @@ beforeEach(() => {
   mockAdminVerifyEmailAddress.mockReset();
   mockAdminDisableTwoFactor.mockReset();
   mockRunFreshAuthAction.mockClear();
-  jest.spyOn(window, "confirm").mockReturnValue(true);
 });
 
 afterEach(() => {
@@ -153,7 +156,6 @@ describe("PasswordReset profile actions", () => {
     fireEvent.click(screen.getByText("Remove 2FA from account..."));
 
     await waitFor(() => {
-      expect(window.confirm).toHaveBeenCalled();
       expect(mockRunFreshAuthAction).toHaveBeenCalledTimes(1);
       expect(mockAdminDisableTwoFactor).toHaveBeenCalledWith({
         browser_id: "browser-1",
