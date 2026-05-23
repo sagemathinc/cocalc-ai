@@ -1,15 +1,17 @@
 import { Alert, Button, Popconfirm, Spin, Tag } from "antd";
-import { CSSProperties, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { CancelText } from "@cocalc/frontend/i18n/components";
 import { currency, plural } from "@cocalc/util/misc";
 import { toDecimal } from "@cocalc/util/money";
-import {
-  getLiveSubscriptions,
-  LiveSubscription,
-  renewSubscription,
-} from "./api";
+import { getLiveSubscriptions, renewSubscription } from "./api";
+import type { LiveSubscription } from "./api";
 
 interface Props {
   style?: CSSProperties;
@@ -32,6 +34,9 @@ export default function UnpaidSubscriptions({
     LiveSubscription[] | null
   >(null);
   const [numActive, setNumActive] = useState<number | null>(null);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   const update = async () => {
     try {
@@ -70,17 +75,23 @@ export default function UnpaidSubscriptions({
     ) {
       return;
     }
-    try {
+    const renewAll = async () => {
       setLoading(true);
       setError("");
-      for (const { id } of unpaidSubscriptions) {
-        await renewSubscription(id);
+      try {
+        for (const { id } of unpaidSubscriptions) {
+          await renewSubscription(id);
+        }
+      } finally {
+        await update();
+        refresh?.();
+        setLoading(false);
       }
+    };
+    try {
+      await runFreshAuthAction(renewAll);
     } catch (error) {
       setError(`${error}`);
-    } finally {
-      update();
-      refresh?.();
     }
   };
 
@@ -107,42 +118,45 @@ export default function UnpaidSubscriptions({
   }
 
   return (
-    <div style={style}>
-      {loading && <Spin />}
-      {error && !loading && (
-        <Alert
-          type="error"
-          description={error}
-          style={{ marginBottom: "15px" }}
-          closable
-          onClose={() => setError("")}
-        />
-      )}
-      <Popconfirm
-        title={
-          <>
-            Are you sure you want to pay for your{" "}
-            {plural(unpaidSubscriptions?.length, "subscription")}?
-          </>
-        }
-        description={
-          <div style={{ maxWidth: "450px" }}>
-            Your subscriptions will be renewed and your balance will be reduced
-            by {currency(cost)}. You can also cancel or edit any subscriptions
-            in order to change the amount due.
-          </div>
-        }
-        onConfirm={handleRenewSubscriptions}
-        okText="Renew Subscriptions"
-        cancelText={<CancelText />}
-      >
-        <Button type="primary" size={size} onClick={update}>
-          <Icon name="credit-card" />
-          Payment of {currency(cost)} is due to renew{" "}
-          {unpaidSubscriptions?.length}{" "}
-          {plural(unpaidSubscriptions?.length, "subscription")}...
-        </Button>
-      </Popconfirm>
-    </div>
+    <>
+      <div style={style}>
+        {loading && <Spin />}
+        {error && !loading && (
+          <Alert
+            type="error"
+            description={error}
+            style={{ marginBottom: "15px" }}
+            closable
+            onClose={() => setError("")}
+          />
+        )}
+        <Popconfirm
+          title={
+            <>
+              Are you sure you want to pay for your{" "}
+              {plural(unpaidSubscriptions?.length, "subscription")}?
+            </>
+          }
+          description={
+            <div style={{ maxWidth: "450px" }}>
+              Your subscriptions will be renewed and your balance will be
+              reduced by {currency(cost)}. You can also cancel or edit any
+              subscriptions in order to change the amount due.
+            </div>
+          }
+          onConfirm={handleRenewSubscriptions}
+          okText="Renew Subscriptions"
+          cancelText={<CancelText />}
+        >
+          <Button type="primary" size={size} onClick={update}>
+            <Icon name="credit-card" />
+            Payment of {currency(cost)} is due to renew{" "}
+            {unpaidSubscriptions?.length}{" "}
+            {plural(unpaidSubscriptions?.length, "subscription")}...
+          </Button>
+        </Popconfirm>
+      </div>
+      <FreshAuthModal {...freshAuthModalProps} />
+    </>
   );
 }

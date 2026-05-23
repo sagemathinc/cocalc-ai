@@ -577,10 +577,14 @@ Fix:
 - The route now requires fresh auth before calling `createSubscriptionPayment`.
 - Fresh-auth error codes are propagated to the frontend like the other Stripe
   payment mutation routes.
+- The user-facing unpaid-subscription renewal flow now also requires fresh auth
+  on `/api/v2/purchases/renew-subscription` and opens the standard React fresh
+  auth modal when needed.
 
 Validation:
 
 - `packages/http-api`: `pages/api/v2/purchases-stripe-fresh-auth.test.ts`
+- `packages/http-api`: `pages/api/v2/purchases-renew-subscription-fresh-auth.test.ts`
 - Full TypeScript build.
 
 ## Reviewed Surfaces
