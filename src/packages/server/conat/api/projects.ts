@@ -2716,6 +2716,7 @@ export async function hardDeleteProject({
   await assertProjectHardDeleteAdmission({
     project_id,
     account_id,
+    is_admin: await isAdmin(account_id),
   });
   const op = await createLro({
     kind: "project-hard-delete",
