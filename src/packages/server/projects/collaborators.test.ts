@@ -255,6 +255,57 @@ describe("project collaborators local bay access", () => {
     expect(callback2Mock).not.toHaveBeenCalled();
   });
 
+  it("cancels pending invites created by a removed collaborator", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("UPDATE project_collab_invites") &&
+        sql.includes("inviter_account_id=$2")
+      ) {
+        return {
+          rows: [
+            {
+              invite_id: "77777777-7777-4777-8777-777777777777",
+              invitee_account_id: ACCOUNT_ID,
+            },
+            {
+              invite_id: "88888888-8888-4888-8888-888888888888",
+              invitee_account_id: null,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { removeCollaborator } = await import("./collaborators");
+    await expect(
+      removeCollaborator({
+        account_id: ACCOUNT_ID,
+        opts: {
+          account_id: TARGET_ACCOUNT_ID,
+          project_id: PROJECT_ID,
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(removeCollaboratorFromProject).toHaveBeenCalledWith({
+      account_id: TARGET_ACCOUNT_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("SET status='canceled'"),
+      [PROJECT_ID, TARGET_ACCOUNT_ID],
+    );
+    expect(deleteProjectedInboundCollabInviteMock).toHaveBeenCalledWith({
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      invitee_account_id: ACCOUNT_ID,
+    });
+    expect(deleteProjectedInboundCollabInviteMock).toHaveBeenCalledWith({
+      invite_id: "88888888-8888-4888-8888-888888888888",
+      invitee_account_id: null,
+    });
+  });
+
   it("loads collaborators only for local projects", async () => {
     queryMock = jest.fn(async () => ({
       rows: [

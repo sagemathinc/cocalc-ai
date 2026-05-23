@@ -420,6 +420,26 @@ Validation:
 - `packages/frontend`: `lint:frontend`
 - Full TypeScript build.
 
+### Removed collaborators could retain self-rejoin invite links
+
+A collaborator could create an email invite link for a project, copy it, then be
+removed from the project. Since collaborator removal did not revoke pending
+invites created by the removed account, the copied email invite token remained
+pending and could be redeemed later. That allowed a removed collaborator to
+re-add themselves if they had kept a valid invite link.
+
+Fix:
+
+- Removing a collaborator now cancels all pending invites that account created
+  for the project.
+- The cleanup applies to both account-targeted and email-token invites.
+- Projected inbound invite rows are deleted for the canceled invites so remote
+  account inboxes stop showing them.
+
+Validation:
+
+- `packages/server`: `projects/collaborators.test.ts`
+
 ## Reviewed Surfaces
 
 - Public hub dangerous RPC registry and name-based coverage.
@@ -433,6 +453,7 @@ Validation:
   policy gates.
 - Project email invite token preview, redemption, response, and copy-link
   authorization.
+- Project collaborator removal and pending-invite revocation.
 
 ## Residual Follow-Up
 

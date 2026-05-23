@@ -661,9 +661,48 @@ export async function removeCollaborator({
     database.remove_collaborator_from_project.bind(database),
     opts,
   );
+  await cancelPendingInvitesFromRemovedCollaborator({
+    inviter_account_id: opts.account_id,
+    project_id: opts.project_id,
+  });
   await publishProjectAccountFeedEventsBestEffort({
     project_id: opts.project_id,
   });
+}
+
+async function cancelPendingInvitesFromRemovedCollaborator({
+  inviter_account_id,
+  project_id,
+}: {
+  inviter_account_id: string;
+  project_id: string;
+}): Promise<void> {
+  ensureUuid(inviter_account_id, "inviter_account_id");
+  ensureUuid(project_id, "project_id");
+  await ensureProjectCollabInviteEmailTokenSchema();
+  const { rows } = await getPool().query<{
+    invite_id: string;
+    invitee_account_id: string | null;
+  }>(
+    `UPDATE project_collab_invites
+        SET status='canceled',
+            responder_action='revoke',
+            responded=NOW(),
+            updated=NOW()
+      WHERE project_id=$1
+        AND inviter_account_id=$2
+        AND status='pending'
+      RETURNING invite_id, invitee_account_id`,
+    [project_id, inviter_account_id],
+  );
+  await Promise.all(
+    rows.map(async (row) => {
+      await deleteProjectedInboundCollabInvite({
+        invite_id: row.invite_id,
+        invitee_account_id: row.invitee_account_id,
+      });
+    }),
+  );
 }
 
 export async function addCollaborator({
