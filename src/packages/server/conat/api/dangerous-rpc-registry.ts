@@ -515,7 +515,7 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "purchases.removeSiteLicenseManager": {
     decision: "fresh-auth-not-required",
     reason:
-      "manager removal is scoped by site-license manager authorization and does not directly change entitlements",
+      "manager removal is scoped to site-license owners/admins and does not directly change entitlements",
   },
   "purchases.revokeMembershipPackageSeat": {
     decision: "fresh-auth-not-required",
@@ -524,11 +524,12 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "purchases.setSiteLicenseManager": {
     decision: "fresh-auth-not-required",
     reason:
-      "manager assignment is scoped by site-license manager authorization and does not directly change entitlements",
+      "manager assignment is scoped to site-license owners/admins and does not directly change entitlements",
   },
   "purchases.updateMembershipPackage": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason:
+      "site-license pool edits change commercial/domain entitlements; ordinary non-site package edits remain ordinary authz",
   },
   "purchases.updateSiteLicense": {
     decision: "fresh-auth-required",

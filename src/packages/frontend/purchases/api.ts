@@ -478,7 +478,16 @@ export async function updateMembershipPackage(opts: {
   expires_at?: Date | string | null;
   allowed_domains?: string[];
 }): Promise<MembershipPackageDetails> {
-  return await (await getPurchasesHubRpc()).updateMembershipPackage(opts);
+  if (!opts.site_license_id) {
+    return await (await getPurchasesHubRpc()).updateMembershipPackage(opts);
+  }
+  const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+  return await (
+    await getPurchasesHubRpc()
+  ).updateMembershipPackage({
+    ...opts,
+    browser_id: webapp_client.browser_id,
+  });
 }
 
 export async function getMembershipPackages(

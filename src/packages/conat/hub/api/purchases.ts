@@ -658,6 +658,8 @@ export interface Purchases {
   }) => Promise<{ package_id: string; purchase_id: number }>;
   updateMembershipPackage: (opts?: {
     account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
     package_id?: string;
     owner_account_id?: string;
     site_license_id?: string;

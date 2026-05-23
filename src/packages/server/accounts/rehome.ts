@@ -364,9 +364,34 @@ async function replaceOwnedPortableRows({
   rows: Record<string, unknown>[];
 }): Promise<void> {
   const primaryKey = table === "membership_packages" ? ["id"] : ["effect_key"];
-  await getPool().query(`DELETE FROM "${table}" WHERE owner_account_id=$1`, [
-    account_id,
-  ]);
+  if (table === "membership_packages") {
+    await getPool().query(
+      `
+        DELETE FROM membership_packages
+         WHERE owner_account_id=$1
+           AND ${NON_SITE_MEMBERSHIP_PACKAGE_FILTER}
+      `,
+      [account_id],
+    );
+  } else if (table === "membership_side_effects_outbox") {
+    await getPool().query(
+      `
+        DELETE FROM membership_side_effects_outbox
+         WHERE owner_account_id=$1
+           AND package_id IN (
+             SELECT id
+               FROM membership_packages
+              WHERE owner_account_id=$1
+                AND ${NON_SITE_MEMBERSHIP_PACKAGE_FILTER}
+           )
+      `,
+      [account_id],
+    );
+  } else {
+    await getPool().query(`DELETE FROM "${table}" WHERE owner_account_id=$1`, [
+      account_id,
+    ]);
+  }
   for (const row of rows) {
     await upsertJsonRow({
       table,
@@ -390,6 +415,7 @@ async function replaceOwnedMembershipPackageAssignments({
          SELECT id
            FROM membership_packages
           WHERE owner_account_id=$1
+            AND ${NON_SITE_MEMBERSHIP_PACKAGE_FILTER}
        )
     `,
     [account_id],

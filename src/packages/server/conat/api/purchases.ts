@@ -409,6 +409,8 @@ export async function getMembershipPackages({
 
 export async function updateMembershipPackage({
   account_id,
+  browser_id,
+  session_hash,
   package_id,
   owner_account_id,
   site_license_id,
@@ -417,6 +419,8 @@ export async function updateMembershipPackage({
   allowed_domains,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
   package_id?: string;
   owner_account_id?: string;
   site_license_id?: string;
@@ -431,6 +435,11 @@ export async function updateMembershipPackage({
   const isAdminActor = await isAdmin(actorId);
   const siteLicenseId = `${site_license_id ?? ""}`.trim();
   if (siteLicenseId) {
+    await validatePurchaseFreshAuth({
+      account_id: actorId,
+      browser_id,
+      session_hash,
+    });
     if (!isSeedBay()) {
       return await getSeedSiteLicenseClient().updateMembershipPackage({
         package_id,
@@ -492,6 +501,11 @@ export async function updateMembershipPackage({
     throw Error("must own membership package");
   }
   if (pkg.kind === "site") {
+    await validatePurchaseFreshAuth({
+      account_id: actorId,
+      browser_id,
+      session_hash,
+    });
     return await updateSiteLicensePool0({
       actor_account_id: actorId,
       package_id,

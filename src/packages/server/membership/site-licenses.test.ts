@@ -23,6 +23,7 @@ import { runSiteLicenseAffiliationReleaseMaintenancePass } from "./site-license-
 import {
   addSiteLicensePool,
   adminProvisionSiteLicense,
+  getVerifiedEmailAddressesForAccount,
   getSiteLicenseAffiliationReverificationStatusForAccount,
   getSiteLicenseOverview,
   listSiteLicenseAffiliationReverificationSeats,
@@ -92,6 +93,29 @@ describe("site license seat pools", () => {
       [account_id, home_bay_id],
     );
   }
+
+  it("only treats positive email verification markers as verified", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    await getPool().query(
+      `UPDATE accounts
+       SET email_address=$2,
+           email_address_verified=$3::jsonb
+       WHERE account_id=$1`,
+      [
+        account_id,
+        "student@example.edu",
+        {
+          "student@example.edu": false,
+          "Verified@Example.edu": new Date().toISOString(),
+        },
+      ],
+    );
+
+    await expect(
+      getVerifiedEmailAddressesForAccount(account_id),
+    ).resolves.toEqual(["verified@example.edu"]);
+  });
 
   it("rejects site-license pools that reference missing membership tiers", async () => {
     const admin_account_id = uuid();
@@ -728,6 +752,14 @@ describe("site license seat pools", () => {
         }),
       ]),
     );
+    await expect(
+      setSiteLicenseManager({
+        actor_account_id: manager_account_id,
+        site_license_id: overview.site_license.id,
+        target_account_id: manager_account_id,
+        role: "owner",
+      }),
+    ).rejects.toThrow("must own site license");
 
     const withoutManager = await removeSiteLicenseManager({
       actor_account_id: owner_account_id,

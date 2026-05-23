@@ -950,4 +950,42 @@ describe("account rehome", () => {
       applied: true,
     });
   });
+
+  it("does not delete seed-owned site-license packages when replacing membership portability state", async () => {
+    queryMock = jest.fn(async () => ({ rows: [], rowCount: 0 }));
+
+    const { replaceMembershipPortableState } = await import("./rehome");
+    await replaceMembershipPortableState({
+      account_id: TARGET_ACCOUNT_ID,
+      membership_grants: [],
+      membership_packages: [],
+      membership_package_assignments: [],
+      membership_side_effects_outbox: [],
+    });
+
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("DELETE FROM membership_packages"),
+      [TARGET_ACCOUNT_ID],
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("COALESCE(kind, '') <> 'site'"),
+      [TARGET_ACCOUNT_ID],
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("DELETE FROM membership_package_assignments"),
+      [TARGET_ACCOUNT_ID],
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("COALESCE(kind, '') <> 'site'"),
+      [TARGET_ACCOUNT_ID],
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("DELETE FROM membership_side_effects_outbox"),
+      [TARGET_ACCOUNT_ID],
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("COALESCE(kind, '') <> 'site'"),
+      [TARGET_ACCOUNT_ID],
+    );
+  });
 });

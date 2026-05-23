@@ -1518,13 +1518,14 @@ export async function getVerifiedEmailAddressesForAccount(
     throw Error("account not found");
   }
   const verified = row.email_address_verified ?? {};
-  const emails = Object.keys(verified)
-    .map((email) => normalizeEmailAddress(email))
-    .filter((email) => !!verified[email]);
+  const emails = Object.entries(verified)
+    .filter(([, verified_at]) => verified_at != null && verified_at !== false)
+    .map(([email]) => normalizeEmailAddress(email));
   if (
     emails.length === 0 &&
     row.email_address &&
-    verified?.[row.email_address] != null
+    verified?.[row.email_address] != null &&
+    verified?.[row.email_address] !== false
   ) {
     return [normalizeEmailAddress(row.email_address)];
   }
@@ -1644,6 +1645,34 @@ async function assertSiteLicenseManager({
   );
   if (!rows[0]) {
     throw Error(write ? "must manage site license" : "must view site license");
+  }
+}
+
+async function assertSiteLicenseOwner({
+  account_id,
+  site_license_id,
+  client,
+}: {
+  account_id: string;
+  site_license_id: string;
+  client?: PoolClient;
+}): Promise<void> {
+  await ensureSiteLicenseSchema(client);
+  if (await isAdmin(account_id)) {
+    return;
+  }
+  const { rows } = await getQueryClient(client).query(
+    `SELECT 1
+     FROM site_license_managers
+     WHERE site_license_id=$1
+       AND account_id=$2
+       AND role='owner'
+       AND revoked_at IS NULL
+     LIMIT 1`,
+    [site_license_id, account_id],
+  );
+  if (!rows[0]) {
+    throw Error("must own site license");
   }
 }
 
@@ -2864,10 +2893,9 @@ export async function setSiteLicenseManager({
   }
   await assertTargetAccountExists(targetAccountId);
   return await withLocalSiteLicenseTransaction(async (client) => {
-    await assertSiteLicenseManager({
+    await assertSiteLicenseOwner({
       account_id: actorAccountId,
       site_license_id: siteLicenseId,
-      write: true,
       client,
     });
     const { rows } = await client.query<RawSiteLicenseManager>(
@@ -2946,10 +2974,9 @@ export async function removeSiteLicenseManager({
     "target_account_id",
   );
   return await withLocalSiteLicenseTransaction(async (client) => {
-    await assertSiteLicenseManager({
+    await assertSiteLicenseOwner({
       account_id: actorAccountId,
       site_license_id: siteLicenseId,
-      write: true,
       client,
     });
     const { rows } = await client.query<RawSiteLicenseManager>(

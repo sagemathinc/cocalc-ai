@@ -1062,6 +1062,7 @@ describe("purchases membership packages", () => {
 
   it("updates seed site-license pool domains", async () => {
     isAdminMock.mockResolvedValue(true);
+    getBrowserAuthSessionHashMock.mockReturnValue("fresh-session-1");
     updateSiteLicensePoolMock.mockResolvedValue({
       id: "site-1",
       owner_account_id: "owner-1",
@@ -1077,6 +1078,7 @@ describe("purchases membership packages", () => {
     const { updateMembershipPackage } = await import("./purchases");
     const result = await updateMembershipPackage({
       account_id: "admin-1",
+      browser_id: "browser-1",
       owner_account_id: "owner-1",
       site_license_id: "license-1",
       package_id: "site-1",
@@ -1091,10 +1093,35 @@ describe("purchases membership packages", () => {
       expires_at: undefined,
       allowed_domains: ["dept.example.edu", "example.edu"],
     });
+    expect(getBrowserAuthSessionHashMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      browser_id: "browser-1",
+    });
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      session_hash: "fresh-session-1",
+      allow_actor_impersonation: true,
+    });
     expect(result.metadata?.allowed_domains).toEqual([
       "dept.example.edu",
       "example.edu",
     ]);
+  });
+
+  it("requires fresh auth for seed site-license pool updates", async () => {
+    isAdminMock.mockResolvedValue(true);
+
+    const { updateMembershipPackage } = await import("./purchases");
+    await expect(
+      updateMembershipPackage({
+        account_id: "admin-1",
+        owner_account_id: "owner-1",
+        site_license_id: "license-1",
+        package_id: "site-1",
+        seat_count: 12,
+      }),
+    ).rejects.toMatchObject({ code: "fresh_auth_required" });
+    expect(updateSiteLicensePoolMock).not.toHaveBeenCalled();
   });
 
   it("routes site-license pool updates to the seed bay", async () => {
@@ -1120,6 +1147,7 @@ describe("purchases membership packages", () => {
     const { updateMembershipPackage } = await import("./purchases");
     await updateMembershipPackage({
       account_id: "admin-1",
+      session_hash: "fresh-session-1",
       owner_account_id: "owner-1",
       site_license_id: "license-1",
       package_id: "site-remote-1",
@@ -1132,6 +1160,11 @@ describe("purchases membership packages", () => {
       seat_count: undefined,
       expires_at: undefined,
       allowed_domains: ["dept.example.edu", "example.edu"],
+    });
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      session_hash: "fresh-session-1",
+      allow_actor_impersonation: true,
     });
     expect(resolveAccountHomeBayMock).not.toHaveBeenCalled();
     expect(updateMembershipPackageMock).not.toHaveBeenCalled();

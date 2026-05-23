@@ -1,0 +1,80 @@
+# Security Audit Pass - 2026-05-23
+
+Scope: fresh audit pass after site-license seed-bay architecture, admin editing, notification, and account-rehome work. Focused on high-risk launch surfaces rather than broad code style:
+
+- Dangerous public hub RPCs and fresh-auth coverage.
+- Site-license and membership-package entitlement mutation paths.
+- Multibay authority boundaries for seed-global site licenses and account rehome.
+- Verified-email trust boundaries for site-license claims.
+
+## Findings Fixed
+
+### Site-license pool edits bypassed fresh auth through `updateMembershipPackage`
+
+The public `purchases.updateMembershipPackage` RPC could update site-license pool domains, seat counts, and expiration via the generic membership package path without passing `browser_id` or `session_hash`. This was inconsistent with `adminProvisionSiteLicense`, `updateSiteLicense`, and `addSiteLicensePool`.
+
+Fix:
+
+- Site-license pool edits now require fresh auth in both the explicit `site_license_id` path and the local `pkg.kind === "site"` fallback path.
+- The frontend wrapper now attaches `webapp_client.browser_id` for site-license pool edits.
+- The dangerous RPC registry now classifies `purchases.updateMembershipPackage` as requiring fresh auth for the site-license pool case.
+
+Validation:
+
+- `packages/server`: `conat/api/purchases.test.ts`
+- `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
+- `packages/frontend`: `account/__tests__/membership-package-manager.test.tsx`
+
+### Site-license managers could administer owner/manager roles
+
+The role-admin path used write-manager authorization, which meant a site-license manager could promote themselves or others to owner, demote owners, or remove managers. That is too broad for an administrative control plane.
+
+Fix:
+
+- `setSiteLicenseManager` and `removeSiteLicenseManager` now require site-license owner or platform admin.
+- Ordinary managers still retain write access for operational site-license actions such as request review and pool/license management.
+
+Validation:
+
+- `packages/server`: `membership/site-licenses.test.ts`
+
+### False email verification markers could be treated as verified
+
+`getVerifiedEmailAddressesForAccount` normalized keys but then looked up values using the normalized key. It also had a fallback that could treat a non-null false marker as verified. This mattered because site-license claims rely on verified institutional email addresses.
+
+Fix:
+
+- Verified email extraction now iterates entries directly, normalizes email keys, and only accepts non-null, non-false verification values.
+
+Validation:
+
+- `packages/server`: `membership/site-licenses.test.ts`
+
+### Account rehome destination could delete seed site-license packages
+
+The source-side account rehome cleanup already excluded `membership_packages.kind='site'`, but the destination-side replacement path deleted all owned `membership_packages`, `membership_package_assignments`, and `membership_side_effects_outbox` rows before restoring portable state. If an account was rehomed onto the seed bay, this could delete seed-global site-license pools for that owner.
+
+Fix:
+
+- Destination replacement now deletes only non-site membership packages.
+- Assignment and side-effect replacement deletes only rows belonging to non-site owned packages.
+
+Validation:
+
+- `packages/server`: `accounts/rehome.test.ts`
+
+## Reviewed Surfaces
+
+- Public hub dangerous RPC registry and name-based coverage.
+- Purchase/site-license RPC wrappers and seed-bay routing.
+- Site-license membership package creation, update, request, review, and manager mutation logic.
+- Inter-bay account-local site-license routing to the configured seed bay.
+- Account membership portability filters for rehome and repair.
+- Site-license verified-email extraction and request trust boundary.
+
+## Residual Follow-Up
+
+- Do another focused pass on non-site purchase flows. `purchaseMembershipPackage` still only requires fresh auth when browser/session context is provided; this may be intentional for CLI/server flows, but it is worth explicitly documenting or tightening before launch.
+- Review software-license admin RPCs separately. They are admin-only but not fresh-auth-gated.
+- Re-run live multibay smoke after rebuild/restart, especially account rehome onto seed and away from seed with active site-license grants.
+- Add a periodic security audit checklist item for new `membership_packages` owners: any new account-owned table must decide whether site-license rows are portable or seed-global.
