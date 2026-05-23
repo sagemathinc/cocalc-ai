@@ -219,11 +219,34 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
-      screen.getByText("A real Linux shell inside every project"),
+      screen.getByText("A terminal is a live project document."),
     ).not.toBeNull();
     expect(
-      screen.getByText("Realtime collaboration in the shell"),
+      screen.getAllByText("A .term file gives the shell an address").length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getByText("Collaborate in one terminal stream"),
     ).not.toBeNull();
+  });
+
+  it("uses projects as the terminal CTA for authenticated users", () => {
+    render(
+      <PublicFeaturesApp
+        config={{
+          help_email: "help@example.com",
+          is_authenticated: true,
+          site_name: "Launchpad",
+        }}
+        initialRoute={{ slug: "terminal", view: "detail" }}
+      />,
+    );
+
+    const projectLinks = screen.getAllByRole("link", { name: "Open projects" });
+    expect(projectLinks.length).toBeGreaterThan(0);
+    for (const link of projectLinks) {
+      expect(link.getAttribute("href")).toBe("/projects");
+    }
+    expect(screen.queryByText("Start using CoCalc terminals")).toBeNull();
   });
 
   it("renders the richer linux environment page", () => {
@@ -235,13 +258,34 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
-      screen.getByText(
-        "A browser-based Linux workspace for real technical projects",
-      ),
+      screen.getByText("A Linux workspace you can actually administer."),
     ).not.toBeNull();
     expect(
       screen.getByText("Learn and use Linux without risking your own machine"),
     ).not.toBeNull();
+    expect(
+      screen.getByText("RootFS images make setup reusable"),
+    ).not.toBeNull();
+  });
+
+  it("uses projects as the linux CTA for authenticated users", () => {
+    render(
+      <PublicFeaturesApp
+        config={{
+          help_email: "help@example.com",
+          is_authenticated: true,
+          site_name: "Launchpad",
+        }}
+        initialRoute={{ slug: "linux", view: "detail" }}
+      />,
+    );
+
+    const projectLinks = screen.getAllByRole("link", { name: "Open projects" });
+    expect(projectLinks.length).toBeGreaterThan(0);
+    for (const link of projectLinks) {
+      expect(link.getAttribute("href")).toBe("/projects");
+    }
+    expect(screen.queryByText("Start using CoCalc Linux")).toBeNull();
   });
 
   it("renders the richer python feature page", () => {
