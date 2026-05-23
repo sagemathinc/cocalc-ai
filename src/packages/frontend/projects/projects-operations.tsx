@@ -578,20 +578,23 @@ export function ProjectsOperations({
             >
               Archive...
             </Button>
-            <Button
-              size="small"
-              icon={<Icon name="eye-slash" />}
-              onClick={() => confirmSelectedHide(true)}
-            >
-              Hide
-            </Button>
-            <Button
-              size="small"
-              icon={<Icon name="eye" />}
-              onClick={() => confirmSelectedHide(false)}
-            >
-              Unhide
-            </Button>
+            {hidden ? (
+              <Button
+                size="small"
+                icon={<Icon name="eye" />}
+                onClick={() => confirmSelectedHide(false)}
+              >
+                Unhide
+              </Button>
+            ) : (
+              <Button
+                size="small"
+                icon={<Icon name="eye-slash" />}
+                onClick={() => confirmSelectedHide(true)}
+              >
+                Hide
+              </Button>
+            )}
             <Button
               size="small"
               icon={<Icon name="user-times" />}
