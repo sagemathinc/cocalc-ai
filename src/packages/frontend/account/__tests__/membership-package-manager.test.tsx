@@ -17,6 +17,7 @@ const purchaseMembershipPackage = jest.fn();
 const processPaymentIntents = jest.fn();
 const adminProvisionSiteLicense = jest.fn();
 const addSiteLicensePool = jest.fn();
+const updateSiteLicense = jest.fn();
 const updateMembershipPackage = jest.fn();
 const assignMembershipPackageSeat = jest.fn();
 const revokeMembershipPackageSeat = jest.fn();
@@ -87,6 +88,7 @@ jest.mock("@cocalc/frontend/purchases/api", () => ({
   adminProvisionSiteLicense: (...args: any[]) =>
     adminProvisionSiteLicense(...args),
   addSiteLicensePool: (...args: any[]) => addSiteLicensePool(...args),
+  updateSiteLicense: (...args: any[]) => updateSiteLicense(...args),
   updateMembershipPackage: (...args: any[]) => updateMembershipPackage(...args),
   assignMembershipPackageSeat: (...args: any[]) =>
     assignMembershipPackageSeat(...args),
@@ -587,6 +589,70 @@ describe("MembershipPackageManager", () => {
         expires_at: null,
       });
     });
+  });
+
+  it("hides site-license structural edit controls from non-admin managers", async () => {
+    const sitePackage = {
+      id: "site-1",
+      owner_account_id: "owner-1",
+      kind: "site",
+      membership_class: "pro",
+      seat_count: 50,
+      active_assignment_count: 2,
+      available_seat_count: 48,
+      assignments: [],
+      metadata: {
+        allowed_domains: ["example.edu"],
+        pool_name: "Students",
+        site_license_id: "license-1",
+        requires_approval: false,
+        verification_policy: "email-domain",
+        exclusive_group: "student",
+      },
+      pool_name: "Students",
+      requires_approval: false,
+      verification_policy: "email-domain",
+      exclusive_group: "student",
+      pending_request_count: 0,
+    };
+    getMembershipPackages.mockResolvedValue([sitePackage]);
+    getSiteLicenseOverview.mockResolvedValue({
+      site_license: {
+        id: "license-1",
+        name: "Campus License",
+        organization_name: "Example University",
+        owner_account_id: "owner-1",
+        allowed_domains: ["example.edu"],
+        metadata: {},
+      },
+      pools: [sitePackage],
+      managers: [
+        {
+          id: "manager-1",
+          site_license_id: "license-1",
+          account_id: "owner-1",
+          role: "manager",
+        },
+      ],
+      pending_requests: [],
+      recent_audit_events: [],
+    });
+
+    render(<MembershipPackageManager tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Site-license manager dashboard")).toBeTruthy();
+    });
+
+    expect(screen.queryByText("Edit license")).toBeNull();
+    expect(screen.queryByText("Edit pool")).toBeNull();
+    expect(screen.queryByText("Add pool")).toBeNull();
+    expect(screen.queryByText("Add manager")).toBeNull();
+    expect(
+      screen.getByText(
+        "Only site-license owners and CoCalc admins can change manager roles.",
+      ),
+    ).toBeTruthy();
   });
 
   it("lets admins add a site-license pool from the dashboard", async () => {

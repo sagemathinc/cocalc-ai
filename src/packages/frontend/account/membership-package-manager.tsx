@@ -1069,6 +1069,8 @@ export function MembershipPackageManager({
             error={siteLicenseOverviewError}
             tiers={tiers}
             accountNames={accountNames}
+            accountId={account_id}
+            isAdmin={is_admin}
             reviewingRequestId={siteLicenseReviewLoadingId}
             onEditPool={is_admin ? (pool) => setEditTarget(pool) : undefined}
             onAddPool={
@@ -1105,12 +1107,16 @@ export function MembershipPackageManager({
               });
               await handleChanged();
             }}
-            onUpdateLicense={async (site_license_id, updates) => {
-              await runFreshAuthAction(async () => {
-                await updateSiteLicense({ site_license_id, ...updates });
-                await handleChanged();
-              });
-            }}
+            onUpdateLicense={
+              is_admin
+                ? async (site_license_id, updates) => {
+                    await runFreshAuthAction(async () => {
+                      await updateSiteLicense({ site_license_id, ...updates });
+                      await handleChanged();
+                    });
+                  }
+                : undefined
+            }
             onSetManager={async (site_license_id, target_account_id, role) => {
               await setSiteLicenseManager({
                 site_license_id,
@@ -1211,6 +1217,8 @@ function SiteLicenseDashboard({
   error,
   tiers,
   accountNames,
+  accountId,
+  isAdmin,
   reviewingRequestId,
   onEditPool,
   onAddPool,
@@ -1228,6 +1236,8 @@ function SiteLicenseDashboard({
     string,
     { first_name?: string; last_name?: string } | undefined
   >;
+  accountId?: string;
+  isAdmin: boolean;
   reviewingRequestId: string;
   onEditPool?: (pool: SiteLicenseOverview["pools"][number]) => void;
   onAddPool?: (
@@ -1243,7 +1253,7 @@ function SiteLicenseDashboard({
     pool: SiteLicenseOverview["pools"][number],
     assignment: MembershipPackageAssignment,
   ) => Promise<void>;
-  onUpdateLicense: (
+  onUpdateLicense?: (
     site_license_id: string,
     updates: {
       name?: string;
@@ -1326,6 +1336,12 @@ function SiteLicenseDashboard({
             requestOverview.site_license.id === overview.site_license.id &&
             request.state === "pending",
         );
+        const canEditManagers =
+          isAdmin ||
+          overview.managers.some(
+            (manager) =>
+              manager.account_id === accountId && manager.role === "owner",
+          );
         return (
           <Card
             key={overview.site_license.id}
@@ -1426,9 +1442,11 @@ function SiteLicenseDashboard({
                     value={totals.pendingRequests}
                     tone={totals.pendingRequests ? "gold" : "neutral"}
                   />
-                  <Button ghost onClick={() => setEditingLicense(overview)}>
-                    <Icon name="edit" /> Edit license
-                  </Button>
+                  {onUpdateLicense ? (
+                    <Button ghost onClick={() => setEditingLicense(overview)}>
+                      <Icon name="edit" /> Edit license
+                    </Button>
+                  ) : null}
                 </Space>
               </Space>
             </div>
@@ -1742,6 +1760,7 @@ function SiteLicenseDashboard({
                 >
                   <SiteLicenseManagersEditor
                     overview={overview}
+                    canEdit={canEditManagers}
                     onSetManager={onSetManager}
                     onRemoveManager={onRemoveManager}
                   />
@@ -1788,7 +1807,7 @@ function SiteLicenseDashboard({
         overview={editingLicense}
         onClose={() => setEditingLicense(null)}
         onSave={async (updates) => {
-          if (!editingLicense) return;
+          if (!editingLicense || !onUpdateLicense) return;
           await onUpdateLicense(editingLicense.site_license.id, updates);
           setEditingLicense(null);
         }}
@@ -2007,10 +2026,12 @@ function EditSiteLicenseSettingsModal({
 
 function SiteLicenseManagersEditor({
   overview,
+  canEdit,
   onSetManager,
   onRemoveManager,
 }: {
   overview: SiteLicenseOverview;
+  canEdit: boolean;
   onSetManager: (
     site_license_id: string,
     target_account_id: string,
@@ -2075,31 +2096,35 @@ function SiteLicenseManagersEditor({
                 </Tag>
               </Space>
               <Space>
-                <Select
-                  size="small"
-                  value={manager.role}
-                  style={{ width: 110 }}
-                  options={[
-                    { label: "Owner", value: "owner" },
-                    { label: "Manager", value: "manager" },
-                    { label: "Viewer", value: "viewer" },
-                  ]}
-                  onChange={(nextRole) =>
-                    void onSetManager(
-                      overview.site_license.id,
-                      manager.account_id,
-                      nextRole,
-                    )
-                  }
-                />
-                <Button
-                  size="small"
-                  danger
-                  loading={working === `remove-${manager.account_id}`}
-                  onClick={() => void removeManager(manager.account_id)}
-                >
-                  Remove
-                </Button>
+                {canEdit ? (
+                  <>
+                    <Select
+                      size="small"
+                      value={manager.role}
+                      style={{ width: 110 }}
+                      options={[
+                        { label: "Owner", value: "owner" },
+                        { label: "Manager", value: "manager" },
+                        { label: "Viewer", value: "viewer" },
+                      ]}
+                      onChange={(nextRole) =>
+                        void onSetManager(
+                          overview.site_license.id,
+                          manager.account_id,
+                          nextRole,
+                        )
+                      }
+                    />
+                    <Button
+                      size="small"
+                      danger
+                      loading={working === `remove-${manager.account_id}`}
+                      onClick={() => void removeManager(manager.account_id)}
+                    >
+                      Remove
+                    </Button>
+                  </>
+                ) : null}
               </Space>
             </div>
           ))}
@@ -2107,32 +2132,40 @@ function SiteLicenseManagersEditor({
       ) : (
         <Text type="secondary">No managers listed.</Text>
       )}
-      <Divider style={{ margin: "4px 0" }} />
-      <Space wrap>
-        <Input
-          placeholder="Manager account id"
-          value={accountId}
-          onChange={(e) => setAccountId(e.target.value)}
-          style={{ minWidth: 300 }}
-        />
-        <Select
-          value={role}
-          style={{ width: 130 }}
-          options={[
-            { label: "Owner", value: "owner" },
-            { label: "Manager", value: "manager" },
-            { label: "Viewer", value: "viewer" },
-          ]}
-          onChange={setRole}
-        />
-        <Button
-          type="primary"
-          loading={working === `set-${accountId.trim()}`}
-          onClick={() => void addOrUpdateManager()}
-        >
-          Add manager
-        </Button>
-      </Space>
+      {canEdit ? (
+        <>
+          <Divider style={{ margin: "4px 0" }} />
+          <Space wrap>
+            <Input
+              placeholder="Manager account id"
+              value={accountId}
+              onChange={(e) => setAccountId(e.target.value)}
+              style={{ minWidth: 300 }}
+            />
+            <Select
+              value={role}
+              style={{ width: 130 }}
+              options={[
+                { label: "Owner", value: "owner" },
+                { label: "Manager", value: "manager" },
+                { label: "Viewer", value: "viewer" },
+              ]}
+              onChange={setRole}
+            />
+            <Button
+              type="primary"
+              loading={working === `set-${accountId.trim()}`}
+              onClick={() => void addOrUpdateManager()}
+            >
+              Add manager
+            </Button>
+          </Space>
+        </>
+      ) : (
+        <Text type="secondary">
+          Only site-license owners and CoCalc admins can change manager roles.
+        </Text>
+      )}
     </Space>
   );
 }
