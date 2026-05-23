@@ -1,6 +1,10 @@
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useState } from "react";
 import { Button, Divider, Modal, Spin } from "antd";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { resetClosingDate } from "./api";
 import ShowError from "@cocalc/frontend/components/error";
@@ -31,6 +35,9 @@ function ClosingDateModal({ onClose }) {
   const day = resetDay(webapp_client.server_time());
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
   const purchase_closing_day: number | undefined = useTypedRedux(
     "account",
     "purchase_closing_day",
@@ -42,12 +49,16 @@ function ClosingDateModal({ onClose }) {
       return;
     }
     try {
-      setLoading(true);
-      await resetClosingDate();
+      await runFreshAuthAction(async () => {
+        setLoading(true);
+        try {
+          await resetClosingDate();
+        } finally {
+          setLoading(false);
+        }
+      });
     } catch (err) {
       setError(`${err}`);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -107,6 +118,7 @@ function ClosingDateModal({ onClose }) {
         </div>
         <Divider />
       </div>
+      <FreshAuthModal {...freshAuthModalProps} />
     </Modal>
   );
 }

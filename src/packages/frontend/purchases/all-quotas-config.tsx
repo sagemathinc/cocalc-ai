@@ -19,6 +19,10 @@ import {
 import { cloneDeep, isEqual } from "lodash";
 import { useEffect, useRef, useState } from "react";
 
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { Icon, IconName } from "@cocalc/frontend/components/icon";
 import { getServiceCosts } from "@cocalc/frontend/purchases/api";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -55,6 +59,9 @@ export default function AllQuotasConfig() {
   );
   const lastFetchedQuotasRef = useRef<ServiceQuota[] | null>(null);
   const [changed, setChanged] = useState<boolean>(false);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   const getQuotas = async () => {
     let quotas, charges;
@@ -113,27 +120,33 @@ export default function AllQuotasConfig() {
   const handleSave = async () => {
     if (lastFetchedQuotasRef.current == null || serviceQuotas == null) return;
     try {
-      setSaving(true);
-      for (let i = 0; i < lastFetchedQuotasRef.current.length; i++) {
-        if (!isEqual(lastFetchedQuotasRef.current[i], serviceQuotas[i])) {
-          try {
-            const quotaValue = toDecimal(
-              serviceQuotas[i].quota ??
-                lastFetchedQuotasRef.current[i]?.quota ??
-                0,
-            ).toNumber();
-            await webapp_client.purchases_client.setQuota(
-              serviceQuotas[i].service,
-              quotaValue,
-            );
-          } catch (err) {
-            setError(`${err}`);
+      await runFreshAuthAction(async () => {
+        setSaving(true);
+        try {
+          for (let i = 0; i < lastFetchedQuotasRef.current!.length; i++) {
+            if (!isEqual(lastFetchedQuotasRef.current![i], serviceQuotas[i])) {
+              try {
+                const quotaValue = toDecimal(
+                  serviceQuotas[i].quota ??
+                    lastFetchedQuotasRef.current![i]?.quota ??
+                    0,
+                ).toNumber();
+                await webapp_client.purchases_client.setQuota(
+                  serviceQuotas[i].service,
+                  quotaValue,
+                );
+              } catch (err) {
+                setError(`${err}`);
+              }
+            }
           }
+          getQuotas();
+        } finally {
+          setSaving(false);
         }
-      }
-      getQuotas();
-    } finally {
-      setSaving(false);
+      });
+    } catch (err) {
+      setError(`${err}`);
     }
   };
 
@@ -295,6 +308,7 @@ export default function AllQuotasConfig() {
           <Spin size="large" delay={500} />
         </div>
       )}
+      <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
 }

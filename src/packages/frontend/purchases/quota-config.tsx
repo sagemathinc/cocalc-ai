@@ -7,6 +7,10 @@ have sufficient quota.
 import { Alert, Button, Card, InputNumber, Space, Spin } from "antd";
 import { useEffect, useState } from "react";
 
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { SettingBox } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
@@ -47,6 +51,9 @@ export default function QuotaConfig({
     services: { [service: string]: MoneyValue };
   } | null>(null);
   const [balance, setBalance] = useState<MoneyValue | null>(null);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   const updateQuotas = async () => {
     setBalance(await webapp_client.purchases_client.getBalance());
@@ -72,9 +79,11 @@ export default function QuotaConfig({
     }
     try {
       setError("");
-      await webapp_client.purchases_client.setQuota(service, inputValue);
-      setSavedValue(inputValue);
-      await update();
+      await runFreshAuthAction(async () => {
+        await webapp_client.purchases_client.setQuota(service, inputValue);
+        setSavedValue(inputValue);
+        await update();
+      });
     } catch (err) {
       setError(`${err}`);
     }
@@ -175,6 +184,7 @@ export default function QuotaConfig({
           </SettingBox>
         )}
       </div>
+      <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
 }
