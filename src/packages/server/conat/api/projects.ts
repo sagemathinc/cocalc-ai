@@ -676,7 +676,7 @@ export async function importPublicUrl({
   public_url: string;
   path?: string;
 }): Promise<ImportPublicUrlResult> {
-  await assertCollab({ account_id, project_id });
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
   const { parsed } = await resolvePublicImportSource({ public_url });
 
   const response = await fetch(parsed.rawUrl, {
@@ -760,7 +760,7 @@ export async function importPublicPath({
   mode: "file" | "directory";
   path?: string;
 }): Promise<ImportPublicPathResult> {
-  await assertCollab({ account_id, project_id });
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
   const inspection = await inspectPublicPath({ account_id, public_url });
   const source =
     mode === "directory"
@@ -2924,7 +2924,7 @@ export async function setProjectHidden({
   if (typeof hide !== "boolean") {
     throw Error("hide must be a boolean");
   }
-  await assertCollab({ account_id, project_id });
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
   const pool = getPool();
   const client = await pool.connect();
   try {

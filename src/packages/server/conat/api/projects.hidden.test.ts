@@ -1,6 +1,6 @@
 export {};
 
-let assertCollabMock: jest.Mock;
+let assertCollabAllowRemoteProjectAccessMock: jest.Mock;
 let appendOutboxMock: jest.Mock;
 let publishProjectFeedMock: jest.Mock;
 let poolConnectMock: jest.Mock;
@@ -9,7 +9,9 @@ let releaseMock: jest.Mock;
 
 jest.mock("./util", () => ({
   __esModule: true,
-  assertCollab: (...args: any[]) => assertCollabMock(...args),
+  assertCollab: jest.fn(),
+  assertCollabAllowRemoteProjectAccess: (...args: any[]) =>
+    assertCollabAllowRemoteProjectAccessMock(...args),
 }));
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -35,7 +37,7 @@ describe("setProjectHidden bay-aware update", () => {
 
   beforeEach(() => {
     jest.resetModules();
-    assertCollabMock = jest.fn(async () => undefined);
+    assertCollabAllowRemoteProjectAccessMock = jest.fn(async () => undefined);
     appendOutboxMock = jest.fn(async () => "event-id");
     publishProjectFeedMock = jest.fn(async () => undefined);
     releaseMock = jest.fn();
@@ -82,7 +84,7 @@ describe("setProjectHidden bay-aware update", () => {
         hide: true,
       }),
     ).rejects.toThrow("user must be a collaborator");
-    expect(assertCollabMock).toHaveBeenCalledWith({
+    expect(assertCollabAllowRemoteProjectAccessMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       project_id: PROJECT_ID,
     });
