@@ -220,6 +220,7 @@ export function ProjectsTable({
   const columns = getProjectTableColumns(
     handleToggleStar,
     renderActionsMenu,
+    handleOpenProject,
     sortState,
     handleToggleExpand,
     expandedRowKeys,
@@ -229,7 +230,10 @@ export function ProjectsTable({
     intl,
   );
 
-  function handleRowClick(record: ProjectTableRecord, e?: React.MouseEvent) {
+  function handleOpenProject(record: ProjectTableRecord, e?: React.MouseEvent) {
+    if (record.deletionBlocked) {
+      return;
+    }
     actions.open_project({
       project_id: record.project_id,
       target: "project-home",
@@ -281,15 +285,7 @@ export function ProjectsTable({
       // this makes the table toggle between ascend/descend only, skipping the "not sorted" state
       sortDirections={["ascend", "descend", "ascend"]}
       onRow={(record) => ({
-        onClick: (e) => handleRowClick(record, e),
-        onMouseDown: (e) => {
-          // Support middle-click to open in background
-          if (e.button === 1) {
-            handleRowClick(record, e);
-          }
-        },
         style: {
-          cursor: "pointer",
           opacity: record.deletionBlocked ? 0.72 : undefined,
           outlineLeft: `4px solid ${record.color ?? "transparent"}`,
         },

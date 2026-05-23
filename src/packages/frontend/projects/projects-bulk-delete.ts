@@ -28,6 +28,12 @@ export type BulkLeaveOrDeleteProgress = {
   failed: number;
 };
 
+function isFreshAuthRequiredError(err: unknown): boolean {
+  const code = `${(err as any)?.code ?? ""}`.trim().toLowerCase();
+  const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  return code === "fresh_auth_required" || message.includes("fresh auth");
+}
+
 export async function runLeaveOrDeleteProjectsSequentially({
   project_ids,
   submitProject,
@@ -60,6 +66,16 @@ export async function runLeaveOrDeleteProjectsSequentially({
     try {
       projectResults = await submitProject(project_id);
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        results.push({
+          project_id,
+          action: "error",
+          error:
+            "Fresh authentication expired before this project was processed. Confirm again to continue with the remaining selected projects.",
+        });
+        stopped = true;
+        break;
+      }
       results.push({
         project_id,
         action: "error",
@@ -94,11 +110,14 @@ export async function runLeaveOrDeleteProjectsSequentially({
         await waitForQueuedDelete({ project_id, op_id: result.op_id });
         results.push(result);
       } catch (err) {
+        const freshAuthExpired = isFreshAuthRequiredError(err);
         results.push({
           project_id,
           action: "error",
           op_id: result.op_id,
-          error: `${err}`,
+          error: freshAuthExpired
+            ? "Fresh authentication expired while waiting for this delete to finish. Confirm again to continue with the remaining selected projects."
+            : `${err}`,
         });
         stopped = true;
         break;

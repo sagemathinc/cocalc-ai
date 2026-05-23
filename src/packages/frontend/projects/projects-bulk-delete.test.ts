@@ -68,4 +68,34 @@ describe("runLeaveOrDeleteProjectsSequentially", () => {
       },
     ]);
   });
+
+  it("stops with a retryable message when fresh auth expires mid-run", async () => {
+    const submitted: string[] = [];
+    const freshAuthError = new Error("fresh auth required");
+    (freshAuthError as any).code = "fresh_auth_required";
+
+    const result = await runLeaveOrDeleteProjectsSequentially({
+      project_ids: ["p1", "p2", "p3"],
+      submitProject: async (project_id) => {
+        submitted.push(project_id);
+        if (project_id === "p2") {
+          throw freshAuthError;
+        }
+        return [{ project_id, action: "removed_self" }];
+      },
+      waitForQueuedDelete: async () => undefined,
+    });
+
+    expect(result.stopped).toBe(true);
+    expect(submitted).toEqual(["p1", "p2"]);
+    expect(result.results).toEqual([
+      { project_id: "p1", action: "removed_self" },
+      {
+        project_id: "p2",
+        action: "error",
+        error:
+          "Fresh authentication expired before this project was processed. Confirm again to continue with the remaining selected projects.",
+      },
+    ]);
+  });
 });

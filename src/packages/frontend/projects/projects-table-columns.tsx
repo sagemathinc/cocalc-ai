@@ -105,6 +105,10 @@ export interface ProjectTableRecord {
 export function getProjectTableColumns(
   onToggleStar: (project_id: string, e: React.MouseEvent) => void,
   renderActionsMenu: (record: ProjectTableRecord) => React.ReactNode,
+  onOpenProject: (
+    record: ProjectTableRecord,
+    e?: React.MouseEvent<HTMLElement>,
+  ) => void,
   sortState: SortState,
   onToggleExpand: (record: ProjectTableRecord) => void,
   expandedRowKeys: string[],
@@ -210,6 +214,19 @@ export function getProjectTableColumns(
       },
       sortDirections: SORT_DIRECTIONS,
       sortOrder: sortState.columnKey === "title" ? sortState.order : null,
+      onCell: (record: ProjectTableRecord) => ({
+        onClick: (e: React.MouseEvent<HTMLElement>) => {
+          onOpenProject(record, e);
+        },
+        onMouseDown: (e: React.MouseEvent<HTMLElement>) => {
+          if (e.button === 1) {
+            onOpenProject(record, e);
+          }
+        },
+        style: {
+          cursor: record.deletionBlocked ? "not-allowed" : "pointer",
+        },
+      }),
       render: (_: any, record: ProjectTableRecord) => {
         const stateIcon = getStateIcon(record.state);
         const strong = record.state?.get("state") === "running";
