@@ -560,6 +560,29 @@ Validation:
 - `packages/server`: `purchases/stripe/payment-method-mutations.test.ts`
 - Full TypeScript build.
 
+### Subscription-renewal payment creation lacked fresh auth
+
+`/api/v2/purchases/stripe/create-subscription-payment` can start renewal of an
+existing membership subscription. When the user does not have enough account
+balance, the server creates a Stripe invoice/payment intent and immediately
+attempts to pay it using a saved default or attached payment method.
+
+The route required a signed-in account and subscription ownership, but did not
+require fresh auth. A stale browser session or XSS in an authenticated browser
+could therefore trigger early renewal/payment for an existing subscription
+without a recent user verification.
+
+Fix:
+
+- The route now requires fresh auth before calling `createSubscriptionPayment`.
+- Fresh-auth error codes are propagated to the frontend like the other Stripe
+  payment mutation routes.
+
+Validation:
+
+- `packages/http-api`: `pages/api/v2/purchases-stripe-fresh-auth.test.ts`
+- Full TypeScript build.
+
 ## Reviewed Surfaces
 
 - Public hub dangerous RPC registry and name-based coverage.
@@ -581,6 +604,7 @@ Validation:
 - Legacy HTTP account-security routes that use `getAccountId(req)`.
 - Legacy billing API namespace and active purchases replacements.
 - Active Stripe payment-method mutation routes.
+- Active Stripe subscription-renewal payment route.
 
 ## Residual Follow-Up
 
