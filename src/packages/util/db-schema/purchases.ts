@@ -58,12 +58,9 @@ export type Reason =
   | "requested_by_customer"
   | "other";
 
-// The general categories of services we offer.  These must
-// be at most 127 characters, and users can set an individual
-// monthly quota on each one in purchase-quotas.
-// The service names are user-facing purchase categories.
-
-// Services we bill for.
+// The service names are user-facing purchase categories and must be at most
+// 127 characters. Spending limits are encoded in membership-tier entitlements,
+// not user-editable per-service purchase quotas.
 export type ComputeService =
   | "credit"
   | "auto-credit"

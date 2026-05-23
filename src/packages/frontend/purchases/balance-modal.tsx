@@ -110,7 +110,6 @@ const LINKS = [
   { label: "Payments", value: "payments" },
   { label: "Methods", value: "payment-methods" },
   { label: "Statements", value: "statements" },
-  { label: "Pay As You Go", value: "payg" },
 ];
 
 function openPage(value) {

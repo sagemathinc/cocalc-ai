@@ -103,33 +103,12 @@ export async function getBalanceAdmin(account_id: string): Promise<MoneyValue> {
   return await api("purchases/get-balance-admin", { account_id });
 }
 
-export async function getSpendRate(): Promise<MoneyValue> {
-  return await api("purchases/get-spend-rate");
-}
-
-export async function getQuotas(): Promise<{
-  minBalance: MoneyValue;
-  services: { [service: string]: MoneyValue };
-}> {
-  return await api("purchases/get-quotas");
-}
-
 export async function getClosingDates(): Promise<{ last: Date; next: Date }> {
   return await api("purchases/get-closing-dates");
 }
 
 export async function resetClosingDate() {
   return await api("purchases/reset-closing-date");
-}
-
-export async function setQuota(
-  service: Service,
-  value: number,
-): Promise<{
-  minBalance: MoneyValue;
-  services: { [service: string]: MoneyValue };
-}> {
-  return await api("purchases/set-quota", { service, value });
 }
 
 export async function isPurchaseAllowed(
@@ -339,13 +318,6 @@ export async function getUnpaidInvoices(): Promise<any[]> {
 export const getServiceCost = longCache(async (service: Service) => {
   return await api("purchases/get-service-cost", { service });
 }, "get-service-cost");
-
-export const getServiceCosts = longCache(
-  async (services: Service[]): Promise<{ [service: string]: any }> => {
-    return await api("purchases/get-service-cost", { service: services });
-  },
-  "get-service-cost",
-);
 
 export const getMinimumPayment = longCache(
   async () => (await getServiceCost("credit")) as number,
