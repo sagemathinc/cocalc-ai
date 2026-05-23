@@ -11,7 +11,6 @@ import {
   BulletList,
   FeatureImage,
   featureAppPath as appPath,
-  LinkButton,
 } from "./page-components";
 
 const { Paragraph, Title } = Typography;
@@ -28,12 +27,12 @@ export default function OctaveFeaturePage({
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
               <Title level={2} style={{ margin: 0 }}>
-                Run Octave online in notebooks, terminals, or a graphical
-                desktop
+                Run Octave online in notebooks and terminals
               </Title>
               <Paragraph style={{ fontSize: 17, margin: 0 }}>
                 CoCalc supports Octave through collaborative notebooks,
-                terminals, and X11-based graphical workflows.
+                terminals, shared files, and the surrounding Linux project
+                environment.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
                 That makes Octave practical for teaching and exploratory work,
@@ -69,7 +68,7 @@ export default function OctaveFeaturePage({
               items={[
                 "Collaborative notebook workflows with remote kernels.",
                 "Terminal-based Octave usage next to edited source files.",
-                "Graphical Octave workflows via X11 when a GUI is the better fit.",
+                "Shared project context around scripts, data, notebooks, and results.",
               ]}
             />
             <Paragraph style={{ margin: 0 }}>
@@ -134,42 +133,34 @@ export default function OctaveFeaturePage({
         </Row>
       </PublicSection>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} xl={12}>
-          <PublicSection>
+      <PublicSection>
+        <Row gutter={[24, 24]} align="middle">
+          <Col xs={24} lg={11}>
             <FeatureImage
-              alt="Octave GUI running through X11"
-              src="/public/features/cocalc-octave-x11-20200511.png"
+              alt="Octave numerical workflow in a CoCalc notebook"
+              src="/public/features/cocalc-octave-jupyter-20200511.png"
             />
-            <Title level={3} style={{ margin: 0 }}>
-              GUI workflows through X11
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              When you need a more graphical Octave workflow, CoCalc&apos;s X11
-              support can expose traditional GUI applications in the browser.
-            </Paragraph>
-            <LinkButton href={appPath("features/x11")}>X11 desktop</LinkButton>
-          </PublicSection>
-        </Col>
-        <Col xs={24} xl={12}>
-          <PublicSection>
-            <FeatureImage
-              alt="Interactive Octave graphics in an X11 terminal"
-              src="/public/features/octave-x11-terminal.png"
-            />
-            <Title level={3} style={{ margin: 0 }}>
-              Interactive graphics when needed
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              X11 terminal workflows can also make interactive graphical Octave
-              sessions possible from within the same remote project.
-            </Paragraph>
-            <Paragraph style={{ margin: 0 }}>
-              That extends what you can do beyond a plain shell or notebook.
-            </Paragraph>
-          </PublicSection>
-        </Col>
-      </Row>
+          </Col>
+          <Col xs={24} lg={13}>
+            <Flex vertical gap={12}>
+              <Title level={3} style={{ margin: 0 }}>
+                Keep numerical work connected to the project
+              </Title>
+              <Paragraph style={{ margin: 0 }}>
+                Octave notebooks, scripts, data files, terminal output, and
+                course material can live together in one project. That is the
+                useful part of using Octave online: the numerical work stays
+                near the files and collaborators around it.
+              </Paragraph>
+              <Paragraph style={{ margin: 0 }}>
+                Use terminals for command-line Octave workflows, notebooks for
+                interactive exploration, and project history when you need to
+                recover or compare earlier work.
+              </Paragraph>
+            </Flex>
+          </Col>
+        </Row>
+      </PublicSection>
 
       <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
@@ -177,7 +168,7 @@ export default function OctaveFeaturePage({
         </Title>
         <BulletList
           items={[
-            "Notebook, terminal, and X11 workflows in one project.",
+            "Notebook and terminal workflows in one project.",
             "Lower setup friction for teaching and collaboration.",
             "A practical browser-based path for numerical computing work.",
             "Shared files, history, and chat around Octave workflows.",

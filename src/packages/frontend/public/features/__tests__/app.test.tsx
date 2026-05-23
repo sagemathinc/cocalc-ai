@@ -360,14 +360,8 @@ describe("PublicFeaturesApp", () => {
     },
     {
       slug: "octave",
-      title:
-        "Run Octave online in notebooks, terminals, or a graphical desktop",
+      title: "Run Octave online in notebooks and terminals",
       section: "Flexible Octave workflows",
-    },
-    {
-      slug: "x11",
-      title: "Run graphical Linux applications remotely in the browser",
-      section: "Why X11 matters",
     },
   ])(
     "renders the richer $slug feature page",

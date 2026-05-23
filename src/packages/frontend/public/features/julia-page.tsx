@@ -68,8 +68,8 @@ export default function JuliaFeaturePage({
               items={[
                 "CoCalc's collaborative Jupyter notebooks.",
                 "Terminal-based Julia workflows in the same project.",
-                "Graphical or richer workflows through X11 when needed.",
                 "Pluto notebooks for reactive Julia-specific work.",
+                "Shared files, packages, and project history around the Julia environment.",
               ]}
             />
             <Paragraph style={{ margin: 0 }}>
@@ -186,7 +186,7 @@ export default function JuliaFeaturePage({
           ]}
         />
         <Flex wrap gap={12}>
-          <Button href={appPath("features/x11")}>Graphical desktop</Button>
+          <Button href={appPath("features/terminal")}>Linux terminal</Button>
           <Button href={appPath("features/teaching")}>Teaching</Button>
           {helpEmail ? (
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>

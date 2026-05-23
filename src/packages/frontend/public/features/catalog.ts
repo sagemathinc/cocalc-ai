@@ -203,16 +203,6 @@ export const FEATURE_PAGES: FeaturePage[] = [
     ],
   },
   {
-    slug: "x11",
-    title: "Linux Graphical Desktop",
-    tagline: "Run graphical Linux applications remotely in the browser.",
-    summary:
-      "Use remote graphical applications alongside terminals, notebooks, and project files when you need more than a text shell.",
-    image: "/public/features/x11-01.png",
-    docsUrl: "https://doc.cocalc.com/x11.html",
-    index: true,
-  },
-  {
     slug: "api",
     title: "HTTP API",
     tagline: "Automate and integrate CoCalc from external systems.",
