@@ -99,6 +99,64 @@ describe("project storage info service", () => {
     });
   });
 
+  it("force samples bypass cached scans but rate limits repeated recomputes", async () => {
+    const stream = makeStream();
+    const duMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: Buffer.from("100 /root\n"),
+        stderr: Buffer.alloc(0),
+        code: 0,
+      })
+      .mockRejectedValueOnce(new Error("not found"))
+      .mockResolvedValueOnce({
+        stdout: Buffer.from("200 /root\n"),
+        stderr: Buffer.alloc(0),
+        code: 0,
+      })
+      .mockRejectedValueOnce(new Error("not found"));
+    const getQuota = jest.fn(async () => ({
+      used: 250,
+      size: 1_000,
+      qgroupid: "0/2",
+      scope: "subvolume",
+    }));
+    dstreamMock.mockResolvedValue(stream);
+    fileServerClientMock.mockReturnValue({ getQuota });
+    fsClientMock.mockReturnValue({ du: duMock });
+
+    const { handleProjectStorageOverviewRequest } =
+      await import("./storage-info-service");
+    const subject =
+      "project.11111111-1111-4111-8111-111111111111.storage-info.-";
+
+    const cached = await handleProjectStorageOverviewRequest.call(
+      { subject },
+      { home: "/root" },
+      {} as any,
+    );
+    const sampled = await handleProjectStorageOverviewRequest.call(
+      { subject },
+      { home: "/root", force_sample: true },
+      {} as any,
+    );
+    const rateLimited = await handleProjectStorageOverviewRequest.call(
+      { subject },
+      { home: "/root", force_sample: true },
+      {} as any,
+    );
+
+    expect(cached.live.bytes).toBe(100);
+    expect(cached.refresh).toBeUndefined();
+    expect(sampled.live.bytes).toBe(200);
+    expect(sampled.refresh?.status).toBe("sampled");
+    expect(rateLimited.live.bytes).toBe(200);
+    expect(rateLimited.refresh?.status).toBe("rate_limited");
+    expect(rateLimited.refresh?.next_allowed_at).toBeTruthy();
+    expect(duMock).toHaveBeenCalledTimes(4);
+    expect(getQuota).toHaveBeenCalledTimes(2);
+  });
+
   it("shares concurrent storage breakdown scans for the same path", async () => {
     let resolveScan!: (value: any) => void;
     const scan = new Promise((resolve) => {

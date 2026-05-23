@@ -1099,6 +1099,7 @@ export function NavigatorShell({
       "data-preferLatestThread": true,
       "data-showThreadImagePreview": false,
       "data-hideChatTypeSelector": true,
+      "data-hideCompactThreadHeader": true,
       "data-newThreadTitleDefault": NAVIGATOR_DEFAULT_THREAD_TITLE,
       "data-newThreadIconDefault": NAVIGATOR_DEFAULT_THREAD_ICON,
       "data-newThreadColorDefault": NAVIGATOR_DEFAULT_THREAD_COLOR,
@@ -1229,7 +1230,6 @@ export function NavigatorShell({
         }}
       >
         <Space size={[6, 6]} wrap style={{ minWidth: 0 }}>
-          <Typography.Text strong>{threadTitle}</Typography.Text>
           {threadOptions.length > 0 ? (
             <Select
               size="small"
