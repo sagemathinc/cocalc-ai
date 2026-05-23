@@ -440,6 +440,10 @@ describe("test isAllowed for account API keys", () => {
     capabilities: ["project:exec" as const],
     allowed_project_ids: [project_id],
   };
+  const fileWriteApiKeyUser = {
+    ...apiKeyUser,
+    capabilities: ["file:write" as const],
+  };
 
   it("denies hub account API subjects because function-level policy is required", async () => {
     expect(
@@ -501,6 +505,74 @@ describe("test isAllowed for account API keys", () => {
         project_id,
         reason: "API keys cannot use hub project RPC subjects",
         code: "api_key_hub_project_subject_denied",
+      },
+    });
+  });
+
+  it("denies project fs subjects without file write scope", async () => {
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
+      true,
+    );
+    expect(
+      await isAllowed({
+        user: apiKeyUser,
+        type: "pub",
+        subject: `fs.project-${project_id}`,
+      }),
+    ).toBe(false);
+    expect(mockRecordApiKeyAuditEventSoon).toHaveBeenCalledWith({
+      event: "api_key_denied",
+      value: {
+        account_id,
+        api_key_id: 1,
+        key_id: "key-1",
+        source: "conat-websocket",
+        subject: `fs.project-${project_id}`,
+        conat_operation: "pub",
+        project_id,
+        reason: "API key lacks file:write capability for project",
+        code: "api_key_project_capability_denied",
+      },
+    });
+  });
+
+  it("allows project fs subjects with file write scope and collaborator access", async () => {
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
+      true,
+    );
+    expect(
+      await isAllowed({
+        user: fileWriteApiKeyUser,
+        type: "pub",
+        subject: `fs.project-${project_id}`,
+      }),
+    ).toBe(true);
+  });
+
+  it("denies project-host file-server management subjects for API keys", async () => {
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
+      true,
+    );
+    expect(
+      await isAllowed({
+        user: fileWriteApiKeyUser,
+        type: "pub",
+        subject: `file-server.${project_id}.api`,
+      }),
+    ).toBe(false);
+    expect(mockRecordApiKeyAuditEventSoon).toHaveBeenCalledWith({
+      event: "api_key_denied",
+      value: {
+        account_id,
+        api_key_id: 1,
+        key_id: "key-1",
+        source: "conat-websocket",
+        subject: `file-server.${project_id}.api`,
+        conat_operation: "pub",
+        project_id,
+        reason:
+          "API keys cannot use project-host file-server management subjects",
+        code: "api_key_file_server_subject_denied",
       },
     });
   });

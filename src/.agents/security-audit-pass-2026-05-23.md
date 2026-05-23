@@ -462,6 +462,28 @@ Validation:
 
 - `packages/server`: `conat/socketio/auth.test.ts`
 
+### Project exec API keys could access file-server subjects
+
+The same subject-level API-key gate also treated file-server subjects as normal
+project subjects. A key with only `project:exec` could therefore publish to
+`fs.project-<project_id>` / `watch-fs.project-<project_id>` and reach the
+project filesystem RPC surface, which includes writes and destructive file
+operations. It could also reach `file-server.<project_id>.*`, the project-host
+file-server management subject that is intended for trusted hub/host processes.
+
+Fix:
+
+- Direct fs/watch-fs project subjects now require `file:write` plus the existing
+  allowed-project and collaborator checks.
+- Project-host `file-server.<project_id>.*` management subjects are denied for
+  API keys entirely.
+- Denials are audit-recorded with either `api_key_project_capability_denied` or
+  `api_key_file_server_subject_denied`.
+
+Validation:
+
+- `packages/server`: `conat/socketio/auth.test.ts`
+
 ## Reviewed Surfaces
 
 - Public hub dangerous RPC registry and name-based coverage.
@@ -477,6 +499,8 @@ Validation:
   authorization.
 - Project collaborator removal and pending-invite revocation.
 - API-key Conat subject policy for hub account, hub project, and direct project
+  subjects.
+- API-key Conat subject policy for fs/watch-fs and project-host file-server
   subjects.
 
 ## Residual Follow-Up

@@ -35,6 +35,7 @@ import {
   hasApiKeyProjectCapability,
   type ApiKeyPrincipal,
 } from "@cocalc/server/api/api-key-scope";
+import type { ApiKeyCapability } from "@cocalc/util/db-schema/api-keys";
 import { recordApiKeyAuditEventSoon } from "@cocalc/server/api/api-key-audit";
 import { getHubManagedEgressBlockedMessage } from "./managed-egress-runtime";
 import { recordBrowserAuthSession } from "./browser-auth-sessions";
@@ -503,13 +504,29 @@ async function isApiKeyAllowed({
     });
     return false;
   }
+  if (isProjectHostFileServerSubject({ subject, project_id })) {
+    recordConatApiKeyDenial({
+      user,
+      subject,
+      type,
+      project_id,
+      reason:
+        "API keys cannot use project-host file-server management subjects",
+      code: "api_key_file_server_subject_denied",
+    });
+    return false;
+  }
+  const requiredCapability = getApiKeyProjectSubjectCapability({
+    subject,
+    project_id,
+  });
   if (
     !hasApiKeyProjectCapability(
       {
         capabilities: user.capabilities ?? [],
         allowed_project_ids: user.allowed_project_ids ?? [],
       },
-      "project:exec",
+      requiredCapability,
       project_id,
     )
   ) {
@@ -518,7 +535,7 @@ async function isApiKeyAllowed({
       subject,
       type,
       project_id,
-      reason: "API key lacks project:exec capability for project",
+      reason: `API key lacks ${requiredCapability} capability for project`,
       code: "api_key_project_capability_denied",
     });
     return false;
@@ -538,6 +555,45 @@ async function isApiKeyAllowed({
     });
   }
   return allowed;
+}
+
+function getApiKeyProjectSubjectCapability({
+  subject,
+  project_id,
+}: {
+  subject: string;
+  project_id: string;
+}): ApiKeyCapability {
+  return isProjectFsSubject({ subject, project_id })
+    ? "file:write"
+    : "project:exec";
+}
+
+function isProjectHostFileServerSubject({
+  subject,
+  project_id,
+}: {
+  subject: string;
+  project_id: string;
+}): boolean {
+  return (
+    subject === `file-server.${project_id}` ||
+    subject.startsWith(`file-server.${project_id}.`)
+  );
+}
+
+function isProjectFsSubject({
+  subject,
+  project_id,
+}: {
+  subject: string;
+  project_id: string;
+}): boolean {
+  const [service, projectPart] = subject.split(".");
+  return (
+    (service === "fs" || service === "watch-fs") &&
+    projectPart === `project-${project_id}`
+  );
 }
 
 function recordConatApiKeyDenial({
