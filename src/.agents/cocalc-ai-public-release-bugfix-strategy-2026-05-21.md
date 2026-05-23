@@ -73,6 +73,7 @@ Do not ship public release until these are true:
 | Hide status security issue                         | public / security | fixed  | Deleted the public `/support/status` route, removed the footer/support index links to it, removed the frontend `/stats` fetch path, and stopped registering the public `/stats` Express route. Realtime monitoring/load information should not be public.                                                  |
 | Chat scroll often near top                         | chat / UX         | fixed  | Added chat-specific viewport anchors keyed by message date plus pixel offset, independent of Virtuoso snapshots. The chat now captures the top visible message while reading and reasserts that anchor across remounts, visibility changes, message list changes, image loads, and item resizes.           |
 | Agent view missing thread menu/config              | chat UI           | fixed  | Extracted the normal chat thread `...` menu into a reusable component and mounted it in inline agent chat. The agent flyout/home agent now expose appearance, behavior, export/import/fork, clear, pin/archive, and delete actions through the same handler stack as full chat.                            |
+| Backup timestamp source consistency                | backups / hosts   | fixed  | Scheduled/automatic rustic backups now report the actual created backup snapshot time through `hosts.recordProjectBackup`, keeping `projects.last_backup` aligned with backup indexes and host backup health/needs-backup accounting.                                                                      |
 
 ### P0: Release Blockers
 
@@ -245,7 +246,9 @@ Scope:
 Acceptance:
 
 - Disk usage UI distinguishes cached values from recompute jobs.
-- Backup overview and tooltip use authoritative latest backup timestamp.
+- Backup overview and host health use the same authoritative latest backup
+  timestamp. **Done 2026-05-22** by fixing scheduled backup reporting at the
+  source instead of papering over stale `projects.last_backup` in the UI.
 - Start/restart uses current membership/default quotas.
 - Bulk delete completes sequentially with progress or clear queuing.
 - File delete modal remains readable for large selections.
@@ -297,12 +300,12 @@ Recommended next work order as of 2026-05-22:
 1. **Disk usage reload says "Updated just now" without recomputing.** This is a
    bounded honesty bug and likely quick: separate cached-refresh from actual
    recompute and label timestamps by what really happened.
-2. **Backup time in storage overview appears random.** This pairs naturally with
-   disk-usage honesty and should establish one authoritative backup timestamp
-   source for both overview and tooltip.
-3. **Bulk delete hits queued/running project delete limit.** This affects users
+2. **Bulk delete hits queued/running project delete limit.** This affects users
    trying to clean up before launch; a sequential queue with progress is safer
    than raising worker limits blindly.
+3. **Project runtime quotas at start/restart.** This is another source-of-truth
+   bug class: verify start/restart uses current membership/default quotas instead
+   of stale project rows.
 
 Good fallback tasks if the above stalls:
 
@@ -359,11 +362,11 @@ For each blocker:
 - Live log dropped chunks. **Done 2026-05-22.**
 - Scroll anchoring. **Done 2026-05-22.**
 - Agent view thread menu. **Done 2026-05-22.**
+- Backup timestamp source. **Done 2026-05-22.**
 
 ### Batch 4: Storage And Quota Honesty
 
 - Disk usage reload/recompute.
-- Backup timestamp source.
 - Runtime quotas on start/restart.
 - Bulk delete behavior.
 - Delete modal overflow.
