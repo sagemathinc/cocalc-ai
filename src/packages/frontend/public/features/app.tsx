@@ -618,6 +618,14 @@ function FeatureDetail({
       />
     );
   }
+  if (slug === "teaching") {
+    return (
+      <TeachingFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
   if (CustomPage) {
     return <CustomPage helpEmail={helpEmail} />;
   }

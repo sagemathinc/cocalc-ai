@@ -173,6 +173,43 @@ describe("PublicFeaturesApp", () => {
     expect(screen.queryByText("Start writing LaTeX on CoCalc")).toBeNull();
   });
 
+  it("renders the richer teaching feature page", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug: "teaching", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByText("Teach in the same environment where students work"),
+    ).not.toBeNull();
+    expect(screen.getByText("Assign, collect, grade, return")).not.toBeNull();
+    expect(
+      screen.getByText("Grade in the same environment students used"),
+    ).not.toBeNull();
+  });
+
+  it("uses projects as the teaching CTA for authenticated users", () => {
+    render(
+      <PublicFeaturesApp
+        config={{
+          help_email: "help@example.com",
+          is_authenticated: true,
+          site_name: "Launchpad",
+        }}
+        initialRoute={{ slug: "teaching", view: "detail" }}
+      />,
+    );
+
+    const projectLinks = screen.getAllByRole("link", { name: "Open projects" });
+    expect(projectLinks.length).toBeGreaterThan(0);
+    for (const link of projectLinks) {
+      expect(link.getAttribute("href")).toBe("/projects");
+    }
+    expect(screen.queryByText("Start teaching with CoCalc")).toBeNull();
+  });
+
   it("renders the richer terminal feature page", () => {
     render(
       <PublicFeaturesApp
