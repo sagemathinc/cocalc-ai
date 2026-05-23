@@ -560,8 +560,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "system.adminCreateUser": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "admin account creation with password issuance",
   },
   "system.adminResetPasswordLink": {
     decision: "fresh-auth-required",

@@ -1634,6 +1634,8 @@ export interface System {
 
   adminCreateUser: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     email: string;
     password?: string;
     first_name?: string;

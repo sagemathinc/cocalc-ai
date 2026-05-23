@@ -3141,6 +3141,8 @@ function defaultUserNameFromEmail(email: string): {
 
 export async function adminCreateUser({
   account_id,
+  browser_id,
+  session_hash,
   email,
   password,
   first_name,
@@ -3148,6 +3150,8 @@ export async function adminCreateUser({
   tags,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   email: string;
   password?: string;
   first_name?: string;
@@ -3165,6 +3169,12 @@ export async function adminCreateUser({
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
 
   const emailAddress = `${email ?? ""}`.trim().toLowerCase();
   if (!is_valid_email_address(emailAddress)) {

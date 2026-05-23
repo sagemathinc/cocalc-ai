@@ -181,6 +181,28 @@ Validation:
 
 - `packages/server`: `conat/api/purchases.test.ts`
 
+### Admin account creation lacked fresh auth
+
+`system.adminCreateUser` can create an account with an explicit or generated
+password, but it only required ordinary admin authorization. A stolen admin
+session without recent verification could mint a new durable account and retain
+access after the original session was revoked.
+
+Fix:
+
+- `system.adminCreateUser` now requires recent second-factor-backed fresh auth
+  before password generation or account creation.
+- Hub API types accept `browser_id` and `session_hash`; CLI callers continue to
+  work through the existing Conat `auth_session_hash` injection after
+  `cocalc auth elevate` or `cocalc auth elevate --dev`.
+- The dangerous RPC registry now classifies admin account creation as
+  fresh-auth-required.
+
+Validation:
+
+- `packages/server`: `conat/api/system.admin-maintenance-auth.test.ts`
+- `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
+
 ### False email verification markers could be treated as verified
 
 `getVerifiedEmailAddressesForAccount` normalized keys but then looked up values using the normalized key. It also had a fallback that could treat a non-null false marker as verified. This mattered because site-license claims rely on verified institutional email addresses.
