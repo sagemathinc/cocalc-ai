@@ -580,60 +580,161 @@ function NewsSection({ initialNews }: { initialNews?: NewsItem[] }) {
   );
 }
 
-function BottomCallout({
-  config,
-  siteName,
-}: {
-  config?: HomeConfig;
-  siteName: string;
-}) {
+function BottomCallout({ config }: { config?: HomeConfig }) {
+  const paths = [
+    {
+      body: "Use the public CoCalc site with the minimal free tier, then move up to a standard plan when you need more.",
+      button: config?.is_authenticated ? "Open projects" : "Create account",
+      href: config?.is_authenticated
+        ? appPath("projects")
+        : appPath("auth/sign-up"),
+      icon: "cloud",
+      title: "Hosted CoCalc",
+    },
+    {
+      body: "Install the free single-user CoCalc app on your own Linux or Mac computer.",
+      button: "Download CoCalc Plus",
+      href: "https://software.cocalc.ai/software/cocalc-plus/index.html",
+      icon: "laptop",
+      title: "CoCalc Plus",
+    },
+    {
+      body: "Run a compact self-hosted CoCalc site for a lab, class, or small team.",
+      button: "Download Launchpad",
+      href: "https://software.cocalc.ai/software/cocalc-launchpad/index.html",
+      icon: "rocket",
+      title: "CoCalc Launchpad",
+    },
+  ] satisfies {
+    body: string;
+    button: string;
+    href: string;
+    icon: IconName;
+    title: string;
+  }[];
   return (
     <section>
-      <PublicSection>
-        <Row align="middle" gutter={[24, 24]}>
-          <Col md={15} xs={24}>
-            <Title level={2} style={{ margin: 0 }}>
-              {config?.organization_name
-                ? `Hosted by ${config.organization_name}`
-                : `Start using ${siteName}`}
-            </Title>
-            <Paragraph style={{ fontSize: 18, margin: 0 }}>
-              {config?.organization_name && config?.organization_url ? (
-                <>
-                  This deployment is operated by{" "}
-                  <a href={config.organization_url}>
-                    {config.organization_name}
-                  </a>
-                  . Use the public pages to understand the platform, then move
-                  into the app when you are ready.
-                </>
-              ) : (
-                <>
-                  Create a hosted account, install CoCalc Plus for free, or run
-                  your own CoCalc site with Launchpad.
-                </>
-              )}
-            </Paragraph>
-          </Col>
-          <Col md={9} xs={24}>
-            <Flex gap={12} justify="end" wrap>
-              {config?.is_authenticated ? (
-                <Button href={appPath("projects")} type="primary">
-                  Projects
+      <div
+        style={{
+          background:
+            "linear-gradient(135deg, #eef6ff 0%, #ffffff 46%, #fff8e8 100%)",
+          border: `1px solid ${PUBLIC_COLORS.border}`,
+          borderRadius: 30,
+          overflow: "hidden",
+          padding: "42px",
+        }}
+      >
+        <Flex vertical gap={28}>
+          <Row align="bottom" gutter={[32, 24]}>
+            <Col lg={15} xs={24}>
+              <Eyebrow>Choose your path</Eyebrow>
+              <Title level={2} style={{ margin: "8px 0 0" }}>
+                Start using CoCalc
+              </Title>
+              <Paragraph
+                style={{
+                  color: PUBLIC_COLORS.mutedText,
+                  fontSize: 18,
+                  margin: "12px 0 0",
+                  maxWidth: 760,
+                }}
+              >
+                Start hosted, install the free local app, or run your own CoCalc
+                site. The workspace model stays familiar across all three.
+              </Paragraph>
+            </Col>
+            <Col lg={9} xs={24}>
+              <Flex gap={10} justify="end" wrap>
+                <Tag color="blue">Notebooks</Tag>
+                <Tag color="green">Terminals</Tag>
+                <Tag color="gold">Agents</Tag>
+                <Tag color="purple">TimeTravel</Tag>
+              </Flex>
+            </Col>
+          </Row>
+          <div
+            style={{
+              display: "grid",
+              gap: 18,
+              gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+            }}
+          >
+            {paths.map((path, index) => (
+              <div
+                key={path.title}
+                style={{
+                  background: "#fff",
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: 22,
+                  boxShadow: "0 16px 44px rgba(33, 49, 57, 0.08)",
+                  display: "flex",
+                  flexDirection: "column",
+                  minHeight: 245,
+                  padding: 24,
+                }}
+              >
+                <Flex align="center" justify="space-between">
+                  <div
+                    style={{
+                      alignItems: "center",
+                      background: index === 2 ? "#fff7e6" : "#eef5ff",
+                      border:
+                        index === 2
+                          ? "1px solid #ffd591"
+                          : `1px solid ${PUBLIC_COLORS.border}`,
+                      borderRadius: 18,
+                      color: index === 2 ? "#ad6800" : PUBLIC_COLORS.brand,
+                      display: "flex",
+                      fontSize: 26,
+                      height: 58,
+                      justifyContent: "center",
+                      width: 58,
+                    }}
+                  >
+                    <Icon name={path.icon} />
+                  </div>
+                  {index < paths.length - 1 && (
+                    <div
+                      aria-hidden="true"
+                      style={{
+                        color: PUBLIC_COLORS.brand,
+                        fontSize: 22,
+                        opacity: 0.65,
+                      }}
+                    >
+                      <Icon name="arrow-right" />
+                    </div>
+                  )}
+                </Flex>
+                <Title level={3} style={{ margin: "22px 0 10px" }}>
+                  {path.title}
+                </Title>
+                <Paragraph style={{ flex: 1, margin: 0 }}>
+                  {path.body}
+                </Paragraph>
+                <Button
+                  href={path.href}
+                  rel={path.href.startsWith("http") ? "noreferrer" : undefined}
+                  target={path.href.startsWith("http") ? "_blank" : undefined}
+                  type={index === 0 ? "primary" : "default"}
+                  style={{ marginTop: 22, width: "fit-content" }}
+                >
+                  {path.button}
                 </Button>
-              ) : (
-                <>
-                  <Button href={appPath("auth/sign-up")} type="primary">
-                    Sign up
-                  </Button>
-                  <Button href={appPath("auth/sign-in")}>Sign in</Button>
-                </>
-              )}
+              </div>
+            ))}
+          </div>
+          <Flex align="center" justify="space-between" wrap gap={14}>
+            <Text type="secondary">
+              Want help choosing? Compare products or contact support.
+            </Text>
+            <Flex gap={10} wrap>
+              <Button href={appPath("products")}>Compare products</Button>
               <Button href={appPath("support")}>Support</Button>
             </Flex>
-          </Col>
-        </Row>
-      </PublicSection>
+          </Flex>
+        </Flex>
+      </div>
     </section>
   );
 }
@@ -664,7 +765,7 @@ export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
       <ProductOptionsSection />
       <DifferenceSection />
       <NewsSection initialNews={news} />
-      <BottomCallout config={config} siteName={siteName} />
+      <BottomCallout config={config} />
     </PublicPage>
   );
 }

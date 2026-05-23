@@ -73,6 +73,16 @@ describe("PublicHomeApp", () => {
     ).toBe("/products/cocalc-plus");
     expect(
       screen
+        .getByRole("link", { name: "Download CoCalc Plus" })
+        .getAttribute("href"),
+    ).toBe("https://software.cocalc.ai/software/cocalc-plus/index.html");
+    expect(
+      screen
+        .getByRole("link", { name: "Download Launchpad" })
+        .getAttribute("href"),
+    ).toBe("https://software.cocalc.ai/software/cocalc-launchpad/index.html");
+    expect(
+      screen
         .getAllByRole("link", { name: "Launchpad" })
         .some(
           (link) =>
@@ -99,9 +109,9 @@ describe("PublicHomeApp", () => {
       />,
     );
 
-    expect(screen.getAllByRole("link", { name: "Open projects" })).toHaveLength(
-      1,
-    );
+    expect(
+      screen.getAllByRole("link", { name: "Open projects" }).length,
+    ).toBeGreaterThan(0);
     expect(
       screen.getAllByRole("link", { name: "Support" }).length,
     ).toBeGreaterThan(0);
