@@ -403,7 +403,11 @@ export function AccountSettings(props: Readonly<Props>) {
           <DeleteAccount
             style={{ marginTop: "1ex" }}
             initial_click={() => set_show_delete_confirmation(true)}
-            confirm_click={() => actions().delete_account()}
+            confirm_click={() =>
+              runFreshAuthAction(async () => {
+                await actions().delete_account();
+              })
+            }
             cancel_click={() => set_show_delete_confirmation(false)}
             user_name={(props.first_name + " " + props.last_name).trim()}
             show_confirmation={show_delete_confirmation}

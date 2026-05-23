@@ -1292,6 +1292,7 @@ export interface ProjectCollabInviteListRequest {
   direction?: ProjectCollabInviteDirection;
   status?: ProjectCollabInviteStatus;
   limit?: number;
+  projectWide?: boolean;
 }
 
 export interface ProjectRemoveCollaboratorRequest {

@@ -1617,12 +1617,14 @@ export async function listCollabInvites({
   direction,
   status,
   limit,
+  projectWide,
 }: {
   account_id?: string;
   project_id?: string;
   direction?: ProjectCollabInviteDirection;
   status?: ProjectCollabInviteStatus;
   limit?: number;
+  projectWide?: boolean;
 }) {
   if (!project_id) {
     return await listCollabInvitesLocal({
@@ -1630,6 +1632,7 @@ export async function listCollabInvites({
       direction,
       status,
       limit,
+      projectWide,
     });
   }
   const ownership = await resolveProjectBay(project_id);
@@ -1640,6 +1643,7 @@ export async function listCollabInvites({
       direction,
       status,
       limit,
+      projectWide,
     });
   }
   const result = await getInterBayBridge()
@@ -1650,6 +1654,7 @@ export async function listCollabInvites({
       direction,
       status,
       limit,
+      projectWide,
     });
   return result.map((invite) => collabInviteFromWire(invite));
 }

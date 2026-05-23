@@ -255,6 +255,57 @@ describe("project collaborators local bay access", () => {
     expect(callback2Mock).not.toHaveBeenCalled();
   });
 
+  it("cancels pending invites created by a removed collaborator", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("UPDATE project_collab_invites") &&
+        sql.includes("inviter_account_id=$2")
+      ) {
+        return {
+          rows: [
+            {
+              invite_id: "77777777-7777-4777-8777-777777777777",
+              invitee_account_id: ACCOUNT_ID,
+            },
+            {
+              invite_id: "88888888-8888-4888-8888-888888888888",
+              invitee_account_id: null,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { removeCollaborator } = await import("./collaborators");
+    await expect(
+      removeCollaborator({
+        account_id: ACCOUNT_ID,
+        opts: {
+          account_id: TARGET_ACCOUNT_ID,
+          project_id: PROJECT_ID,
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(removeCollaboratorFromProject).toHaveBeenCalledWith({
+      account_id: TARGET_ACCOUNT_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("SET status='canceled'"),
+      [PROJECT_ID, TARGET_ACCOUNT_ID],
+    );
+    expect(deleteProjectedInboundCollabInviteMock).toHaveBeenCalledWith({
+      invite_id: "77777777-7777-4777-8777-777777777777",
+      invitee_account_id: ACCOUNT_ID,
+    });
+    expect(deleteProjectedInboundCollabInviteMock).toHaveBeenCalledWith({
+      invite_id: "88888888-8888-4888-8888-888888888888",
+      invitee_account_id: null,
+    });
+  });
+
   it("loads collaborators only for local projects", async () => {
     queryMock = jest.fn(async () => ({
       rows: [
@@ -460,6 +511,123 @@ describe("project collaborators local bay access", () => {
       project_id: undefined,
       status: "pending",
       limit: 20,
+    });
+  });
+
+  it("lists project-wide pending invites for project collaborators", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_collab_invites i")) {
+        return {
+          rows: [
+            {
+              invite_id: "77777777-7777-4777-8777-777777777777",
+              project_id: PROJECT_ID,
+              project_title: "Test Project",
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              inviter_name: "Other Sender",
+              invitee_account_id: null,
+              invite_source: "email",
+              status: "pending",
+              created: new Date("2026-04-08T21:00:00Z"),
+              updated: new Date("2026-04-08T21:00:00Z"),
+              responded: null,
+              expires: new Date("2026-04-22T21:00:00Z"),
+              shared_projects_count: 0,
+              shared_projects_sample: [],
+              prior_invites_accepted: 0,
+              prior_invites_declined: 0,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { listCollabInvites } = await import("./collaborators");
+    await expect(
+      listCollabInvites({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        projectWide: true,
+        status: "pending",
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        invite_id: "77777777-7777-4777-8777-777777777777",
+        inviter_account_id: TARGET_ACCOUNT_ID,
+        status: "pending",
+      }),
+    ]);
+    expect(assertLocalProjectCollaboratorMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(listProjectedInboundCollabInvitesMock).not.toHaveBeenCalled();
+  });
+
+  it("lets a project collaborator revoke another sender's pending invite", async () => {
+    const inviteId = "77777777-7777-4777-8777-777777777777";
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "SELECT invite_id, project_id, inviter_account_id, invitee_account_id",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              invitee_account_id: null,
+              invite_source: "email",
+              status: "pending",
+            },
+          ],
+        };
+      }
+      if (sql.includes("UPDATE project_collab_invites")) {
+        return { rows: [] };
+      }
+      if (sql.includes("FROM project_collab_invites i")) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              invitee_account_id: null,
+              invite_source: "email",
+              status: "canceled",
+              responder_action: "revoke",
+              created: new Date("2026-04-08T21:00:00Z"),
+              updated: new Date("2026-04-08T21:01:00Z"),
+              responded: new Date("2026-04-08T21:01:00Z"),
+              expires: new Date("2026-04-22T21:00:00Z"),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { respondCollabInvite } = await import("./collaborators");
+    await expect(
+      respondCollabInvite({
+        account_id: ACCOUNT_ID,
+        invite_id: inviteId,
+        action: "revoke",
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        invite_id: inviteId,
+        status: "canceled",
+        responder_action: "revoke",
+      }),
+    );
+    expect(assertLocalProjectCollaboratorMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
     });
   });
 
@@ -869,6 +1037,51 @@ describe("project collaborators local bay access", () => {
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining("INSERT INTO project_collab_invite_directory"),
       expect.arrayContaining([inviteId, PROJECT_ID, inviteTokenHash(token)]),
+    );
+  });
+
+  it("does not let a non-owner collaborator copy another sender's email invite link", async () => {
+    const inviteId = "77777777-7777-4777-8777-777777777777";
+    const tokenCiphertext = encryptSecretSettingValue(
+      "project_collab_invites.token",
+      "leaked-token",
+      Buffer.alloc(32, 1),
+    );
+
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "SELECT project_id, inviter_account_id, token_hash, token_ciphertext",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              token_hash: inviteTokenHash("leaked-token"),
+              token_ciphertext: tokenCiphertext,
+              scope: "project_collab",
+              status: "pending",
+              created: new Date("2026-04-01T00:00:00Z"),
+            },
+          ],
+        };
+      }
+      if (sql.includes("AS is_owner")) {
+        return { rows: [{ is_owner: false }] };
+      }
+      return { rows: [] };
+    });
+
+    const { copyEmailProjectInviteLink } = await import("./collaborators");
+    await expect(
+      copyEmailProjectInviteLink({
+        account_id: ACCOUNT_ID,
+        invite_id: inviteId,
+      }),
+    ).rejects.toThrow(
+      "only the invite sender or a project owner can copy this invite link",
     );
   });
 

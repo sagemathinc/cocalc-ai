@@ -661,9 +661,48 @@ export async function removeCollaborator({
     database.remove_collaborator_from_project.bind(database),
     opts,
   );
+  await cancelPendingInvitesFromRemovedCollaborator({
+    inviter_account_id: opts.account_id,
+    project_id: opts.project_id,
+  });
   await publishProjectAccountFeedEventsBestEffort({
     project_id: opts.project_id,
   });
+}
+
+async function cancelPendingInvitesFromRemovedCollaborator({
+  inviter_account_id,
+  project_id,
+}: {
+  inviter_account_id: string;
+  project_id: string;
+}): Promise<void> {
+  ensureUuid(inviter_account_id, "inviter_account_id");
+  ensureUuid(project_id, "project_id");
+  await ensureProjectCollabInviteEmailTokenSchema();
+  const { rows } = await getPool().query<{
+    invite_id: string;
+    invitee_account_id: string | null;
+  }>(
+    `UPDATE project_collab_invites
+        SET status='canceled',
+            responder_action='revoke',
+            responded=NOW(),
+            updated=NOW()
+      WHERE project_id=$1
+        AND inviter_account_id=$2
+        AND status='pending'
+      RETURNING invite_id, invitee_account_id`,
+    [project_id, inviter_account_id],
+  );
+  await Promise.all(
+    rows.map(async (row) => {
+      await deleteProjectedInboundCollabInvite({
+        invite_id: row.invite_id,
+        invitee_account_id: row.invitee_account_id,
+      });
+    }),
+  );
 }
 
 export async function addCollaborator({
@@ -887,15 +926,20 @@ export async function listCollabInvites({
   direction,
   status,
   limit,
+  projectWide,
 }: {
   account_id?: string;
   project_id?: string;
   direction?: ProjectCollabInviteDirection;
   status?: ProjectCollabInviteStatus;
   limit?: number;
+  projectWide?: boolean;
 }): Promise<ProjectCollabInviteRow[]> {
   if (!account_id) {
     throw new Error("user must be signed in");
+  }
+  if (projectWide && !project_id) {
+    throw new Error("project_id is required for project-wide invites");
   }
   const includeEmail = await isAdmin(account_id);
   const normalizedDirection = normalizeInviteDirection(direction);
@@ -908,6 +952,9 @@ export async function listCollabInvites({
   const where: string[] = [];
   if (project_id) {
     ensureUuid(project_id, "project_id");
+    if (projectWide) {
+      await assertLocalProjectCollaborator({ account_id, project_id });
+    }
     params.push(project_id);
     where.push(`i.project_id=$${params.length}`);
   }
@@ -915,7 +962,10 @@ export async function listCollabInvites({
   params.push(account_id);
   const accountParam = `$${params.length}`;
   const otherAccountExpr = `CASE WHEN i.inviter_account_id=${accountParam}::uuid THEN i.invitee_account_id ELSE i.inviter_account_id END`;
-  if (normalizedDirection === "inbound") {
+  if (projectWide) {
+    // Project-wide mode is for the project pending-invites panel. The project
+    // collaborator check above replaces per-account invite ownership filters.
+  } else if (normalizedDirection === "inbound") {
     where.push(`i.invitee_account_id=${accountParam}`);
   } else if (normalizedDirection === "outbound") {
     where.push(`i.inviter_account_id=${accountParam}`);
@@ -1011,7 +1061,7 @@ export async function listCollabInvites({
 
   const { rows } = await pool.query<ProjectCollabInviteRow>(sql, params);
   const projectedRows =
-    normalizedDirection === "outbound"
+    projectWide || normalizedDirection === "outbound"
       ? []
       : await listProjectedInboundCollabInvites({
           account_id,
@@ -1160,7 +1210,10 @@ export async function respondCollabInviteCanonical({
 
   if (normalizedAction === "revoke") {
     if (invite.inviter_account_id !== account_id && !admin) {
-      throw new Error("only invite sender can revoke");
+      await assertLocalProjectCollaborator({
+        account_id,
+        project_id: invite.project_id,
+      });
     }
     await pool.query(
       `UPDATE project_collab_invites
@@ -1833,7 +1886,7 @@ export async function copyEmailProjectInviteLink({
     throw new Error(`invite '${invite_id}' not found`);
   }
   if (row.inviter_account_id !== account_id) {
-    await assertLocalProjectCollaborator({
+    await assertCanCopyEmailInviteLink({
       account_id,
       project_id: row.project_id,
     });
@@ -1864,6 +1917,31 @@ export async function copyEmailProjectInviteLink({
         EMAIL_ONLY_INVITE_TTL_DAYS * 24 * 60 * 60 * 1000,
     ),
   };
+}
+
+async function assertCanCopyEmailInviteLink({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<void> {
+  if (await isAdmin(account_id)) {
+    return;
+  }
+  const { rows } = await getPool().query<{ is_owner: boolean }>(
+    `SELECT (users -> $2::text ->> 'group') = 'owner' AS is_owner
+       FROM projects
+      WHERE project_id=$1
+      LIMIT 1`,
+    [project_id, account_id],
+  );
+  if (rows[0]?.is_owner) {
+    return;
+  }
+  throw new Error(
+    "only the invite sender or a project owner can copy this invite link",
+  );
 }
 
 export async function redeemEmailProjectInvite({

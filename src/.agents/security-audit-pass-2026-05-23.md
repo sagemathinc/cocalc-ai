@@ -382,6 +382,162 @@ Validation:
 
 - `packages/http-api`: `pages/api/v2/auth/sign-up.test.ts`
 
+### Project collaborators could copy another sender's email invite link
+
+`copyEmailProjectInviteLink` returned the bearer-token URL for a pending email
+invite to any collaborator on the target project when the caller was not the
+original inviter. That leaked the redemption token for invites created by other
+people on the project. A collaborator who could see or guess a pending invite id
+could recover the link and forward it outside the sender's intended delivery
+channel.
+
+Fix:
+
+- Copying an email invite link is now allowed only for the original inviter, a
+  project owner, or a site admin.
+- Non-owner collaborators can no longer recover another sender's pending invite
+  token URL.
+
+Validation:
+
+- `packages/server`: `projects/collaborators.test.ts`
+
+Follow-up:
+
+- The project pending-invites UI now loads project-wide pending invites instead
+  of only the current user's outgoing invites.
+- Each pending invite shows who created it.
+- Non-owner collaborators can revoke stale or mistaken pending invites created
+  by other collaborators, but they do not see a copy-link control for another
+  sender's email invite token. The UI tells them to create their own invite when
+  they need a sendable link.
+- Backend revoke authorization now permits any current project collaborator to
+  revoke a pending invite on that project.
+
+Validation:
+
+- `packages/server`: `projects/collaborators.test.ts`
+- `packages/frontend`: `lint:frontend`
+- Full TypeScript build.
+
+### Removed collaborators could retain self-rejoin invite links
+
+A collaborator could create an email invite link for a project, copy it, then be
+removed from the project. Since collaborator removal did not revoke pending
+invites created by the removed account, the copied email invite token remained
+pending and could be redeemed later. That allowed a removed collaborator to
+re-add themselves if they had kept a valid invite link.
+
+Fix:
+
+- Removing a collaborator now cancels all pending invites that account created
+  for the project.
+- The cleanup applies to both account-targeted and email-token invites.
+- Projected inbound invite rows are deleted for the canceled invites so remote
+  account inboxes stop showing them.
+
+Validation:
+
+- `packages/server`: `projects/collaborators.test.ts`
+
+### Project API keys could publish to hub project RPC subjects
+
+The Conat websocket API-key gate treated any project-scoped subject as allowed
+when the key had `project:exec` for that project and the owning account was a
+collaborator. That included `hub.project.<project_id>.api`, which is the named
+hub RPC dispatch subject. Most named project RPCs still require account auth at
+the function layer, but some project/host-auth RPCs do not, e.g. public-app
+policy/subdomain helpers and service-admission/egress recording. A scoped exec
+key should not be able to call that hub project RPC surface.
+
+Fix:
+
+- API-key websocket authorization now denies `hub.project.<project_id>.*`
+  subjects explicitly.
+- Direct project/file-server subjects remain governed by the existing
+  `project:exec` plus allowed-project and collaborator checks.
+- Denials are audit-recorded with `api_key_hub_project_subject_denied`.
+
+Validation:
+
+- `packages/server`: `conat/socketio/auth.test.ts`
+
+### Project exec API keys could access file-server subjects
+
+The same subject-level API-key gate also treated file-server subjects as normal
+project subjects. A key with only `project:exec` could therefore publish to
+`fs.project-<project_id>` / `watch-fs.project-<project_id>` and reach the
+project filesystem RPC surface, which includes writes and destructive file
+operations. It could also reach `file-server.<project_id>.*`, the project-host
+file-server management subject that is intended for trusted hub/host processes.
+
+Fix:
+
+- Direct fs/watch-fs project subjects now require `file:write` plus the existing
+  allowed-project and collaborator checks.
+- Project-host `file-server.<project_id>.*` management subjects are denied for
+  API keys entirely.
+- Denials are audit-recorded with either `api_key_project_capability_denied` or
+  `api_key_file_server_subject_denied`.
+
+Validation:
+
+- `packages/server`: `conat/socketio/auth.test.ts`
+
+### API keys could reach destructive account-security HTTP routes
+
+Legacy HTTP account routes use `getAccountId(req)`, which accepts both browser
+remember-me cookies and API-key `Authorization` headers. Two destructive
+account-security routes relied only on that generic account identity:
+
+- `/api/v2/accounts/delete`
+- `/api/v2/auth/unlink-strategy`
+
+That meant an API key for an account could delete the account or unlink one of
+its SSO strategies, even though API keys are not intended to act as an
+interactive browser session for account security changes.
+
+Fix:
+
+- Account deletion now requires a browser remember-me session and fresh auth
+  before deletion.
+- SSO unlinking now requires a browser remember-me session and fresh auth before
+  unlinking.
+- Both routes now also run the impersonation guard used by the other account
+  security routes.
+
+Validation:
+
+- `packages/http-api`: `pages/api/v2/account-security-browser-session.test.ts`
+- Full TypeScript build.
+
+### Legacy billing API namespace was obsolete
+
+The newer `/api/v2/purchases/*` and `/api/v2/purchases/stripe/*` routes replaced
+the old `/api/v2/billing/*` namespace. The legacy billing namespace still
+exposed duplicate payment, subscription, customer, invoice, and receipt routes.
+The payment-method mutation routes were especially risky because they duplicated
+newer fresh-auth-protected Stripe endpoints:
+
+- `/api/v2/billing/create-payment-method`
+- `/api/v2/billing/delete-payment-method`
+
+Other billing routes were either unused, had direct purchases replacements, or
+were only used by the current frontend for invoice and receipt lookup.
+
+Fix:
+
+- Removed the entire `/api/v2/billing/*` namespace.
+- Moved remaining invoice and receipt reads to `/api/v2/purchases/stripe/*`.
+- The replacement invoice/receipt helpers now verify the Stripe invoice or
+  legacy payment intent belongs to the signed-in account's Stripe customer.
+- Removed obsolete `@cocalc/server/billing/*` helpers.
+
+Validation:
+
+- `packages/server`: `purchases/stripe/invoices.test.ts`
+- Full TypeScript build.
+
 ## Reviewed Surfaces
 
 - Public hub dangerous RPC registry and name-based coverage.
@@ -393,6 +549,15 @@ Validation:
 - Account API-key management through Conat and legacy HTTP API routes.
 - Account creation through password signup, registration-token signup, and SSO
   policy gates.
+- Project email invite token preview, redemption, response, and copy-link
+  authorization.
+- Project collaborator removal and pending-invite revocation.
+- API-key Conat subject policy for hub account, hub project, and direct project
+  subjects.
+- API-key Conat subject policy for fs/watch-fs and project-host file-server
+  subjects.
+- Legacy HTTP account-security routes that use `getAccountId(req)`.
+- Legacy billing API namespace and active purchases replacements.
 
 ## Residual Follow-Up
 
