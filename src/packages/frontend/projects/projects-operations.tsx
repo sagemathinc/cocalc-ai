@@ -35,6 +35,10 @@ import {
   type BulkLeaveOrDeleteProgress,
 } from "./projects-bulk-delete";
 import {
+  scheduleProjectDeletes,
+  unscheduleProjectDeletes,
+} from "./project-delete-queue";
+import {
   ArchiveProjectModal,
   type ArchiveProjectModalItem,
 } from "./archive-project-modal";
@@ -43,8 +47,6 @@ interface Props {
   visible_projects: string[];
   selected_project_ids: string[];
   onSelectionChange: (project_ids: string[]) => void;
-  onScheduleDelete?: (project_ids: string[]) => void;
-  onUnscheduleDelete?: (project_ids: string[]) => void;
   filteredCollaborators?: string[] | null;
   onClearCollaboratorFilter?: () => void;
 }
@@ -55,8 +57,6 @@ export function ProjectsOperations({
   visible_projects,
   selected_project_ids,
   onSelectionChange,
-  onScheduleDelete,
-  onUnscheduleDelete,
   filteredCollaborators,
   onClearCollaboratorFilter,
 }: Props) {
@@ -405,7 +405,7 @@ export function ProjectsOperations({
       });
       setLeaveDeleteModalOpen(false);
       setBulkLeaveDeleteProgress(null);
-      onScheduleDelete?.(plan.deleteIds);
+      scheduleProjectDeletes(plan.deleteIds);
       onSelectionChange(
         selected_project_ids.filter((id) => !plan.actionableIds.includes(id)),
       );
@@ -431,7 +431,7 @@ export function ProjectsOperations({
         waitForQueuedDelete: waitForHardDeleteToLeaveActiveSet,
       });
       const errors = results.filter((result) => result.action === "error");
-      onUnscheduleDelete?.(
+      unscheduleProjectDeletes(
         errors
           .map((result) => result.project_id)
           .filter((project_id) => plan.deleteIds.includes(project_id)),
@@ -465,7 +465,7 @@ export function ProjectsOperations({
         });
       }
     } catch (err) {
-      onUnscheduleDelete?.(plan.deleteIds);
+      unscheduleProjectDeletes(plan.deleteIds);
       Modal.error({
         title: "Unable to leave or delete projects",
         content: `${err}`,

@@ -34,6 +34,7 @@ import {
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
 import { normalizeProjectStateForDisplay } from "./host-operational";
 import { projectThemeColor, projectThemeFromProject } from "./theme";
+import { useProjectDeleteQueue } from "./project-delete-queue";
 
 interface Props {
   visible_projects: string[];
@@ -43,7 +44,6 @@ interface Props {
   onFilteredCollaboratorsChange: (collaborators: string[] | null) => void;
   selectedProjectIds: string[];
   onSelectedProjectIdsChange: (project_ids: string[]) => void;
-  scheduledDeleteProjectIds?: string[];
 }
 
 const PROJECTS_TABLE_SORT_KEY = "projects-table-sort";
@@ -56,7 +56,6 @@ export function ProjectsTable({
   onFilteredCollaboratorsChange,
   selectedProjectIds,
   onSelectedProjectIdsChange,
-  scheduledDeleteProjectIds = [],
 }: Props) {
   const intl = useIntl();
   const actions = useActions("projects");
@@ -66,6 +65,7 @@ export function ProjectsTable({
   const user_map = useTypedRedux("users", "user_map");
   const expanded_project_id = useTypedRedux("projects", "expanded_project_id");
   const { isProjectBookmarked, setProjectBookmarked } = useBookmarkedProjects();
+  const { scheduledDeleteProjectIds } = useProjectDeleteQueue();
   const scheduledDeleteProjectIdSet = useMemo(
     () => new Set(scheduledDeleteProjectIds),
     [scheduledDeleteProjectIds],
