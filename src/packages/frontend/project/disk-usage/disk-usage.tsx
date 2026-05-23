@@ -22,6 +22,7 @@ import { TimeAgo } from "@cocalc/frontend/components";
 import type {
   ProjectStorageHistory,
   ProjectStorageHistoryPoint,
+  ProjectStorageOverviewRefresh,
 } from "@cocalc/conat/project/storage-info";
 import { human_readable_size } from "@cocalc/util/misc";
 import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
@@ -73,6 +74,25 @@ const HISTORY_WINDOW_OPTIONS = [
   { label: "24h", value: 24 * 60 },
   { label: "7d", value: 7 * 24 * 60 },
 ] as const;
+
+function describeStorageRefresh(
+  refresh?: ProjectStorageOverviewRefresh,
+): string {
+  switch (refresh?.status) {
+    case "sampled":
+      return "Recomputed storage usage just now.";
+    case "rate_limited":
+      return refresh.next_allowed_at
+        ? `Recompute skipped to protect the backend; try again after ${new Date(refresh.next_allowed_at).toLocaleTimeString()}.`
+        : "Recompute skipped to protect the backend; showing the latest cached usage.";
+    case "inflight":
+      return "Another recompute was already running; showing that result.";
+    case "cached":
+      return "Showing cached usage.";
+    default:
+      return "Storage usage refreshed.";
+  }
+}
 
 function asDate(value: unknown): Date | undefined {
   if (value == null) return undefined;
@@ -647,10 +667,19 @@ export default function DiskUsage({
   const [activePanel, setActivePanel] = useState<"overview" | "history">(
     "overview",
   );
-  const { visible, live, retained, loading, error, setError, refresh, quotas } =
-    useDiskUsage({
-      project_id,
-    });
+  const {
+    visible,
+    live,
+    retained,
+    collectedAt,
+    loading,
+    error,
+    setError,
+    applyOverview,
+    quotas,
+  } = useDiskUsage({
+    project_id,
+  });
   const [selectedBucketKey, setSelectedBucketKey] =
     useState<VisibleBucketKey>("home");
   const [drillPathByBucket, setDrillPathByBucket] = useState<
@@ -916,16 +945,16 @@ export default function DiskUsage({
       const homePath =
         visible.find((bucket) => bucket.key === "home")?.path ??
         DEFAULT_PROJECT_RUNTIME_HOME;
-      await getStorageOverview({
+      const overview = await getStorageOverview({
         project_id,
         home: homePath,
         cache: false,
         force_sample: true,
       });
-      refresh();
+      applyOverview(overview);
       setDrillCounter((prev) => prev + 1);
       setHistoryCounter((prev) => prev + 1);
-      setReloadStatus("Updated just now.");
+      setReloadStatus(describeStorageRefresh(overview.refresh));
       reloadStatusTimeoutRef.current = setTimeout(() => {
         setReloadStatus("");
         reloadStatusTimeoutRef.current = null;
@@ -1090,7 +1119,7 @@ export default function DiskUsage({
                   loading={reloadPending}
                   onClick={() => void handleReload()}
                 >
-                  Reload
+                  Recompute
                 </Button>
                 <Button
                   aria-label="Close storage overview"
@@ -1102,6 +1131,11 @@ export default function DiskUsage({
               {reloadStatus ? (
                 <Text type="secondary" style={{ fontSize: "12px" }}>
                   {reloadStatus}
+                </Text>
+              ) : null}
+              {collectedAt ? (
+                <Text type="secondary" style={{ fontSize: "12px" }}>
+                  Measured <TimeAgo date={collectedAt} />.
                 </Text>
               ) : null}
             </div>
@@ -1147,8 +1181,9 @@ export default function DiskUsage({
               </div>
               <div style={{ color: COLORS.GRAY_M, marginBottom: "12px" }}>
                 Storage history is sampled when the backend refreshes project
-                storage overview data, so quiet projects may have gaps. Reload
-                also forces a fresh sample immediately.
+                storage overview data, so quiet projects may have gaps.
+                Recompute requests can add a fresh sample, but are rate-limited
+                to protect the project host.
               </div>
               {historyLoading && history == null ? (
                 <div style={{ padding: "24px 0", textAlign: "center" }}>

@@ -49,10 +49,17 @@ export interface ProjectStorageRetainedSummary {
 
 export interface ProjectStorageOverview {
   collected_at: string;
+  refresh?: ProjectStorageOverviewRefresh;
   quotas: ProjectStorageQuotaSummary[];
   live: ProjectStorageLiveSummary;
   retained: ProjectStorageRetainedSummary;
   visible: ProjectStorageVisibleSummary[];
+}
+
+export interface ProjectStorageOverviewRefresh {
+  status: "sampled" | "cached" | "rate_limited" | "inflight";
+  requested_at: string;
+  next_allowed_at?: string;
 }
 
 export interface ProjectStorageHistoryPoint {
