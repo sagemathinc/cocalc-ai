@@ -484,6 +484,31 @@ Validation:
 
 - `packages/server`: `conat/socketio/auth.test.ts`
 
+### API keys could reach destructive account-security HTTP routes
+
+Legacy HTTP account routes use `getAccountId(req)`, which accepts both browser
+remember-me cookies and API-key `Authorization` headers. Two destructive
+account-security routes relied only on that generic account identity:
+
+- `/api/v2/accounts/delete`
+- `/api/v2/auth/unlink-strategy`
+
+That meant an API key for an account could delete the account or unlink one of
+its SSO strategies, even though API keys are not intended to act as an
+interactive browser session for account security changes.
+
+Fix:
+
+- Account deletion now requires a browser remember-me session before deletion.
+- SSO unlinking now requires a browser remember-me session before unlinking.
+- Both routes now also run the impersonation guard used by the other account
+  security routes.
+
+Validation:
+
+- `packages/http-api`: `pages/api/v2/account-security-browser-session.test.ts`
+- Full TypeScript build.
+
 ## Reviewed Surfaces
 
 - Public hub dangerous RPC registry and name-based coverage.
@@ -502,6 +527,7 @@ Validation:
   subjects.
 - API-key Conat subject policy for fs/watch-fs and project-host file-server
   subjects.
+- Legacy HTTP account-security routes that use `getAccountId(req)`.
 
 ## Residual Follow-Up
 
