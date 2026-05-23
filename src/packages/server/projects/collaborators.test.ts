@@ -872,6 +872,51 @@ describe("project collaborators local bay access", () => {
     );
   });
 
+  it("does not let a non-owner collaborator copy another sender's email invite link", async () => {
+    const inviteId = "77777777-7777-4777-8777-777777777777";
+    const tokenCiphertext = encryptSecretSettingValue(
+      "project_collab_invites.token",
+      "leaked-token",
+      Buffer.alloc(32, 1),
+    );
+
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "SELECT project_id, inviter_account_id, token_hash, token_ciphertext",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              token_hash: inviteTokenHash("leaked-token"),
+              token_ciphertext: tokenCiphertext,
+              scope: "project_collab",
+              status: "pending",
+              created: new Date("2026-04-01T00:00:00Z"),
+            },
+          ],
+        };
+      }
+      if (sql.includes("AS is_owner")) {
+        return { rows: [{ is_owner: false }] };
+      }
+      return { rows: [] };
+    });
+
+    const { copyEmailProjectInviteLink } = await import("./collaborators");
+    await expect(
+      copyEmailProjectInviteLink({
+        account_id: ACCOUNT_ID,
+        invite_id: inviteId,
+      }),
+    ).rejects.toThrow(
+      "only the invite sender or a project owner can copy this invite link",
+    );
+  });
+
   it("binds accepted course email invites to the student project course field", async () => {
     const inviteId = "77777777-7777-4777-8777-777777777777";
     const token = "course-invite-token";

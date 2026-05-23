@@ -382,6 +382,26 @@ Validation:
 
 - `packages/http-api`: `pages/api/v2/auth/sign-up.test.ts`
 
+### Project collaborators could copy another sender's email invite link
+
+`copyEmailProjectInviteLink` returned the bearer-token URL for a pending email
+invite to any collaborator on the target project when the caller was not the
+original inviter. That leaked the redemption token for invites created by other
+people on the project. A collaborator who could see or guess a pending invite id
+could recover the link and forward it outside the sender's intended delivery
+channel.
+
+Fix:
+
+- Copying an email invite link is now allowed only for the original inviter, a
+  project owner, or a site admin.
+- Non-owner collaborators can no longer recover another sender's pending invite
+  token URL.
+
+Validation:
+
+- `packages/server`: `projects/collaborators.test.ts`
+
 ## Reviewed Surfaces
 
 - Public hub dangerous RPC registry and name-based coverage.
@@ -393,6 +413,8 @@ Validation:
 - Account API-key management through Conat and legacy HTTP API routes.
 - Account creation through password signup, registration-token signup, and SSO
   policy gates.
+- Project email invite token preview, redemption, response, and copy-link
+  authorization.
 
 ## Residual Follow-Up
 

@@ -1833,7 +1833,7 @@ export async function copyEmailProjectInviteLink({
     throw new Error(`invite '${invite_id}' not found`);
   }
   if (row.inviter_account_id !== account_id) {
-    await assertLocalProjectCollaborator({
+    await assertCanCopyEmailInviteLink({
       account_id,
       project_id: row.project_id,
     });
@@ -1864,6 +1864,31 @@ export async function copyEmailProjectInviteLink({
         EMAIL_ONLY_INVITE_TTL_DAYS * 24 * 60 * 60 * 1000,
     ),
   };
+}
+
+async function assertCanCopyEmailInviteLink({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<void> {
+  if (await isAdmin(account_id)) {
+    return;
+  }
+  const { rows } = await getPool().query<{ is_owner: boolean }>(
+    `SELECT (users -> $2::text ->> 'group') = 'owner' AS is_owner
+       FROM projects
+      WHERE project_id=$1
+      LIMIT 1`,
+    [project_id, account_id],
+  );
+  if (rows[0]?.is_owner) {
+    return;
+  }
+  throw new Error(
+    "only the invite sender or a project owner can copy this invite link",
+  );
 }
 
 export async function redeemEmailProjectInvite({
