@@ -106,7 +106,6 @@ export function buildProjectRecordFromFeedRow(
     project_id: row.project_id,
     title: row.title,
     description: row.description,
-    name: row.name ?? undefined,
     theme: row.theme ?? null,
     host_id: row.host_id,
     owning_bay_id: row.owning_bay_id,
@@ -199,7 +198,6 @@ type DirectProjectBootstrapRow = {
   project_id: string;
   title?: string | null;
   description?: string | null;
-  name?: string | null;
   theme?: Record<string, any> | null;
   host_id?: string | null;
   owning_bay_id?: string | null;
@@ -549,7 +547,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
           project_id: row.project_id,
           title: row.title ?? "",
           description: row.description ?? "",
-          name: null,
           theme: row.theme ?? null,
           host_id: row.host_id ?? null,
           owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
@@ -1196,7 +1193,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
               project_id,
               title: null,
               description: null,
-              name: null,
               theme: null,
               host_id: null,
               owning_bay_id: null,
@@ -1226,7 +1222,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
       project_id: row.project_id,
       title: row.title ?? "",
       description: row.description ?? "",
-      name: row.name ?? null,
       theme: row.theme ?? null,
       host_id: row.host_id ?? null,
       owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
@@ -1469,7 +1464,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
 
   private setProjectLocalScalarField = (
     project_id: string,
-    field: "title" | "description" | "name",
+    field: "title" | "description",
     value: string | undefined,
   ): void => {
     const project_map = store.get("project_map");
@@ -1544,7 +1539,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
 
   private updateProjectScalarField = async (
     project_id: string,
-    field: "title" | "description" | "name",
+    field: "title" | "description",
     value: string,
     before: string | undefined,
   ): Promise<void> => {
@@ -1613,21 +1608,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
       description,
       before,
     );
-  };
-
-  set_project_name = async (
-    project_id: string,
-    name: string,
-  ): Promise<void> => {
-    if (!(await this.have_project(project_id))) {
-      console.warn(
-        `Can't set project name -- you are not a collaborator on project '${project_id}'.`,
-      );
-      return;
-    }
-    const before = store.getIn(["project_map", project_id, "name"]);
-    if (before == name) return;
-    await this.updateProjectScalarField(project_id, "name", name, before);
   };
 
   set_project_settings = async (
@@ -3158,35 +3138,84 @@ export class ProjectsActions extends Actions<ProjectsState> {
     },
   );
 
-  // Explcitly set whether or not project is hidden for the given account
+  // Explicitly set whether or not project is hidden for the given account
   // (hide=true means hidden)
+  public async set_projects_hide(
+    account_id: string,
+    project_ids: string[],
+    hide: boolean,
+  ): Promise<void> {
+    const projectIds = Array.from(
+      new globalThis.Set(project_ids.map((id) => `${id ?? ""}`.trim())),
+    ).filter(Boolean);
+    const before = new globalThis.Map<string, boolean | undefined>();
+    for (const project_id of projectIds) {
+      before.set(
+        project_id,
+        store.getIn(["project_map", project_id, "users", account_id, "hide"]),
+      );
+      this.setProjectLocalUserHide(project_id, account_id, hide);
+    }
+
+    let results: Awaited<
+      ReturnType<
+        typeof webapp_client.conat_client.hub.projects.setProjectsHidden
+      >
+    >;
+    try {
+      results = await webapp_client.conat_client.hub.projects.setProjectsHidden(
+        {
+          project_ids: projectIds,
+          hide,
+        },
+      );
+    } catch (err) {
+      for (const project_id of projectIds) {
+        this.setProjectLocalUserHide(
+          project_id,
+          account_id,
+          before.get(project_id),
+        );
+      }
+      const message = `Error ${hide ? "hiding" : "unhiding"} projects -- ${err}`;
+      alert_message({ type: "error", message });
+      throw err;
+    }
+
+    const failures = results.filter((result) => !result.success);
+    for (const result of failures) {
+      this.setProjectLocalUserHide(
+        result.project_id,
+        account_id,
+        before.get(result.project_id),
+      );
+    }
+    for (const result of results) {
+      if (result.success) {
+        void this.project_log(result.project_id, {
+          event: hide ? "hide_project" : "unhide_project",
+        });
+      }
+    }
+    if (failures.length > 0) {
+      const details = failures
+        .map(
+          (result) =>
+            `${result.project_id}: ${result.error ?? "unknown error"}`,
+        )
+        .join("\n");
+      const message = `Some projects could not be ${hide ? "hidden" : "unhidden"}:\n${details}`;
+      alert_message({ type: "error", message });
+      throw new Error(message);
+    }
+  }
+
   public async set_project_hide(
     account_id: string,
     project_id: string,
     hide: boolean,
   ): Promise<void> {
-    const before = store.getIn([
-      "project_map",
-      project_id,
-      "users",
-      account_id,
-      "hide",
-    ]);
-    this.setProjectLocalUserHide(project_id, account_id, hide);
-    try {
-      await webapp_client.conat_client.hub.projects.setProjectHidden({
-        project_id,
-        hide,
-      });
-      await this.project_log(project_id, {
-        event: hide ? "hide_project" : "unhide_project",
-      });
-    } catch (err) {
-      this.setProjectLocalUserHide(project_id, account_id, before);
-      const message = `Error ${hide ? "hiding" : "unhiding"} project ${project_id} -- ${err}`;
-      alert_message({ type: "error", message });
-      throw err;
-    }
+    await this.set_projects_hide(account_id, [project_id], hide);
   }
 
   // Toggle whether or not project is hidden project

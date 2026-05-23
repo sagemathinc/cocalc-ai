@@ -11,7 +11,6 @@ interface Props {
 export default function SavingProjectSettingsError({ project_id }: Props) {
   const intl = useIntl();
   const projectLabelLower = intl.formatMessage(labels.project).toLowerCase();
-  const projectsLabelLower = intl.formatMessage(labels.projects).toLowerCase();
   const tableError = useRedux(["projects", "tableError"]);
   if (!tableError) return null;
   const { error, query } = tableError.toJS();
@@ -36,21 +35,16 @@ export default function SavingProjectSettingsError({ project_id }: Props) {
     const title = redux.getStore("projects").get_title(obj["project_id"]);
     description = `There is a problem saving settings for the ${projectLabelLower} "${title}". Please open that ${projectLabelLower} and fix the problem.`;
   } else {
-    if (obj["name"] != null) {
-      // Issue trying to set the project name.
-      description = `Please try a different ${projectLabelLower} name. Names can be between 1 and 100 characters, contain upper and lower case letters, numbers, dashes and periods, and must be unique across all ${projectsLabelLower} that you own. Only the owner of a ${projectLabelLower} can currently change the name.`;
-    } else {
-      description = (
-        <>
-          There was an error trying to save a {projectLabelLower} setting to the
-          server. In particular, the following change failed:
-          <pre style={{ margin: "30px" }}>
-            {JSON.stringify(obj, undefined, 2)}
-          </pre>
-          Try modifying the relevant field below.
-        </>
-      );
-    }
+    description = (
+      <>
+        There was an error trying to save a {projectLabelLower} setting to the
+        server. In particular, the following change failed:
+        <pre style={{ margin: "30px" }}>
+          {JSON.stringify(obj, undefined, 2)}
+        </pre>
+        Try modifying the relevant field below.
+      </>
+    );
   }
 
   return (

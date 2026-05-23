@@ -1166,7 +1166,8 @@ export function MessageList({
     }
     const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
     const messageAcpState = messageId
-      ? acpState?.get?.(`message:${messageId}`)
+      ? (acpState?.get?.(`message:${messageId}`) ??
+        field<string>(message, "acp_state"))
       : undefined;
     const activitySteers = messageId
       ? activitySteersByAssistantMessageId?.get(messageId)

@@ -27,7 +27,7 @@ Table({
     name: {
       type: "string",
       pg_type: "VARCHAR(39)",
-      desc: "The name of this organization (used for URL's).  This is optional but globally unique across all organizations *and* accounts.  It can be between 1 and 39 characters from a-z A-Z 0-9 - and must not start with a dash.",
+      desc: "The name of this organization. This is optional but globally unique across all organizations. It can be between 1 and 39 characters from a-z A-Z 0-9 - and must not start with a dash.",
     },
     title: {
       type: "string",
@@ -79,9 +79,7 @@ Table({
       "(lower(description)  text_pattern_ops)",
       "api_key",
     ],
-    pg_unique_indexes: [
-      "LOWER(name)", // see comments for accounts table.
-    ],
+    pg_unique_indexes: ["LOWER(name)"],
     user_query: {
       get: {
         throttle_changes: 500,
@@ -133,7 +131,7 @@ Table({
             const id = await db.nameToAccountOrOrganization(obj["name"]);
             if (id != null && id != account_id) {
               cb(
-                `name "${obj["name"]}" is already taken by another organization or account`,
+                `name "${obj["name"]}" is already taken by another organization`,
               );
               return;
             }

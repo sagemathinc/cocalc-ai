@@ -21,7 +21,6 @@ interface Props {
   open: boolean;
   project_id: string;
   title?: string | null;
-  name?: string | null;
   onCancel: () => void;
   onDeleted?: () => void;
 }
@@ -30,7 +29,6 @@ export function HardDeleteProjectModal({
   open,
   project_id,
   title,
-  name,
   onCancel,
   onDeleted,
 }: Readonly<Props>) {
@@ -38,8 +36,7 @@ export function HardDeleteProjectModal({
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
   const projectTitle = `${title ?? ""}`.trim();
-  const projectName = `${name ?? ""}`.trim();
-  const confirmationTarget = projectTitle || projectName || project_id;
+  const confirmationTarget = projectTitle || project_id;
   const [confirmation, setConfirmation] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
@@ -189,7 +186,7 @@ export function HardDeleteProjectModal({
             <Input
               value={confirmation}
               disabled={deleting}
-              placeholder="Project name"
+              placeholder="Project title"
               style={{ marginTop: 10 }}
               onChange={(e) => setConfirmation(e.target.value)}
               onPressEnter={() => {

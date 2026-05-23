@@ -46,7 +46,6 @@ export function HideDeleteBox(props: Readonly<Props>) {
   const projectLabelLower = projectLabel.toLowerCase();
   const project_id = project.get("project_id");
   const projectTitle = `${project.get("title") ?? ""}`.trim();
-  const projectName = `${project.get("name") ?? ""}`.trim();
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
 
   function toggle_hide_project(): void {
@@ -156,7 +155,6 @@ export function HideDeleteBox(props: Readonly<Props>) {
           open={deleteModalOpen}
           project_id={project_id}
           title={projectTitle}
-          name={projectName}
           onCancel={() => setDeleteModalOpen(false)}
           onDeleted={() => {
             redux.getActions("page").close_project_tab(project_id);

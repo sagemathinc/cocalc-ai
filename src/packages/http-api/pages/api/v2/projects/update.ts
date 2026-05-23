@@ -32,7 +32,7 @@ async function get(req) {
     throw Error("Must be signed in to update project.");
   }
 
-  const { account_id, project_id, title, description, name } = getParams(req);
+  const { account_id, project_id, title, description } = getParams(req);
 
   // If the API client is an admin, they may act on any project on behalf of any account.
   // Otherwise, the client may only update projects for which they are listed as
@@ -50,7 +50,6 @@ async function get(req) {
     project_update: {
       title,
       description,
-      name,
     },
   });
 }

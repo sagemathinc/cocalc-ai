@@ -238,9 +238,7 @@ export function ProjectsOperations({
       ),
       okText: hide ? "Hide" : "Unhide",
       onOk: async () => {
-        for (const project_id of selected_project_ids) {
-          await actions.set_project_hide(account_id, project_id, hide);
-        }
+        await actions.set_projects_hide(account_id, selected_project_ids, hide);
       },
     });
   }
@@ -580,20 +578,23 @@ export function ProjectsOperations({
             >
               Archive...
             </Button>
-            <Button
-              size="small"
-              icon={<Icon name="eye-slash" />}
-              onClick={() => confirmSelectedHide(true)}
-            >
-              Hide
-            </Button>
-            <Button
-              size="small"
-              icon={<Icon name="eye" />}
-              onClick={() => confirmSelectedHide(false)}
-            >
-              Unhide
-            </Button>
+            {hidden ? (
+              <Button
+                size="small"
+                icon={<Icon name="eye" />}
+                onClick={() => confirmSelectedHide(false)}
+              >
+                Unhide
+              </Button>
+            ) : (
+              <Button
+                size="small"
+                icon={<Icon name="eye-slash" />}
+                onClick={() => confirmSelectedHide(true)}
+              >
+                Hide
+              </Button>
+            )}
             <Button
               size="small"
               icon={<Icon name="user-times" />}

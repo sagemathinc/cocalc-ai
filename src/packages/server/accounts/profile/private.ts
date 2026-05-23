@@ -14,7 +14,7 @@ export default async function getPrivateProfile(
 ): Promise<Profile> {
   const pool = getPool(noCache ? undefined : "medium");
   const { rows } = await pool.query(
-    "SELECT first_name, last_name, profile, name, groups, email_address FROM accounts WHERE account_id=$1",
+    "SELECT first_name, last_name, profile, groups, email_address FROM accounts WHERE account_id=$1",
     [account_id],
   );
   if (rows.length == 0) {
@@ -30,7 +30,6 @@ export default async function getPrivateProfile(
     last_name: rows[0].last_name ?? "User",
     image: rows[0].profile?.image,
     color: rows[0].profile?.color,
-    name: rows[0].name,
     is_admin,
     is_partner,
     email_address: rows[0].email_address,

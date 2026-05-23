@@ -25,13 +25,12 @@ function hasGlobChars(p: string): boolean {
   return /[\*\?\{]/.test(p);
 }
 
-async function pathExists(p: string): Promise<boolean> {
+async function pathStat(p: string): Promise<fs.Stats | undefined> {
   try {
-    await fsp.lstat(p);
-    return true;
+    return await fsp.lstat(p);
   } catch (err: unknown) {
     const e = err as NodeJS.ErrnoException;
-    if (e && e.code === "ENOENT") return false;
+    if (e && e.code === "ENOENT") return;
     throw err;
   }
 }
@@ -43,8 +42,7 @@ function resolveAbsPreservePWD(p: string): string {
   return path.resolve(p);
 }
 
-async function classifyPath(absPath: string): Promise<"file" | "directory"> {
-  const st = await fsp.lstat(absPath);
+function classifyPath(st: fs.Stats): "file" | "directory" {
   return st.isDirectory() ? "directory" : "file";
 }
 
@@ -146,17 +144,17 @@ async function main(): Promise<void> {
 
   for (const p of inputs) {
     const abs = resolveAbsPreservePWD(p);
-    const exists = await pathExists(abs);
-    if (!exists && hasGlobChars(p)) {
+    const st = await pathStat(abs);
+    if (st == null && hasGlobChars(p)) {
       console.error(`no match for '${p}', so not creating`);
       continue;
     }
-    if (!exists) {
+    if (st == null) {
       console.error(`open: '${p}' does not exist`);
       process.exit(1);
     }
 
-    const kind = await classifyPath(abs);
+    const kind = classifyPath(st);
     if (kind === "directory") out.push({ directory: abs });
     else out.push({ file: abs });
   }

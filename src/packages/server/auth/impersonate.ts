@@ -88,7 +88,6 @@ async function doIt({ req, res }) {
         account_id: `${account_id_param ?? ""}`.trim() || undefined,
         subject_email_address: account?.email_address,
         subject_name:
-          `${account?.name ?? ""}`.trim() ||
           `${account?.first_name ?? ""} ${account?.last_name ?? ""}`.trim() ||
           undefined,
         home_bay_id,

@@ -56,9 +56,10 @@ const FILES_SUBMENU_LIST_STYLE: CSS = {
 
 interface Props {
   record: ProjectTableRecord;
+  onToggleDetails: () => void;
 }
 
-export function ProjectActionsMenu({ record }: Props) {
+export function ProjectActionsMenu({ record, onToggleDetails }: Props) {
   const [open, setOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -166,6 +167,9 @@ export function ProjectActionsMenu({ record }: Props) {
     domEvent.stopPropagation(); // Don't trigger row click
 
     switch (key) {
+      case "details":
+        onToggleDetails();
+        break;
       case "open":
         actions.open_project({
           project_id: record.project_id,
@@ -237,6 +241,14 @@ export function ProjectActionsMenu({ record }: Props) {
   };
 
   const menuItems: MenuProps["items"] = [
+    {
+      key: "details",
+      label: "Details",
+      icon: <Icon name="info-circle" />,
+    },
+    {
+      type: "divider",
+    },
     ...(deletionBlocked
       ? [
           {

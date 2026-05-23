@@ -421,7 +421,6 @@ function buildLiteProjectFeedRow(
     project_id: `${row.project_id ?? ""}`.trim(),
     title: `${row.title ?? ""}`,
     description: `${row.description ?? ""}`,
-    name: row.name ?? null,
     theme: row.theme ?? null,
     host_id: row.host_id ?? null,
     owning_bay_id: row.owning_bay_id ?? DEFAULT_BAY_ID,
