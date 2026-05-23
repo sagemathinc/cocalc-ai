@@ -323,6 +323,37 @@ function WorkflowsSection() {
 }
 
 function ProductOptionsSection() {
+  const options = [
+    {
+      body: "Use CoCalc in the public cloud with a minimal free tier and a path to standard plans.",
+      icon: "cloud",
+      tag: "Hosted",
+      title: "Hosted CoCalc",
+    },
+    {
+      body: "Install the free single-user app on your own Linux or Mac computer.",
+      icon: "laptop",
+      tag: "Local",
+      title: "CoCalc Plus",
+    },
+    {
+      body: "Run a compact self-hosted site for a class, lab, or small team.",
+      icon: "rocket",
+      tag: "Self-hosted",
+      title: "Launchpad",
+    },
+    {
+      body: "Step up to a larger deployment model for organizations with more active users.",
+      icon: "servers",
+      tag: "Enterprise",
+      title: "Rocket",
+    },
+  ] satisfies {
+    body: string;
+    icon: IconName;
+    tag: string;
+    title: string;
+  }[];
   return (
     <section>
       <Row align="middle" gutter={[32, 32]}>
@@ -352,10 +383,117 @@ function ProductOptionsSection() {
           </PublicSection>
         </Col>
         <Col lg={14} xs={24}>
-          <HomeInfographic
-            alt="CoCalc product options: Hosted CoCalc, CoCalc Plus, Launchpad, and Rocket"
-            src="/public/landing/product-options.jpg"
-          />
+          <div
+            style={{
+              background:
+                "linear-gradient(135deg, #ffffff 0%, #f7fbff 55%, #fff8e8 100%)",
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: 28,
+              boxShadow: "0 18px 54px rgba(33, 49, 57, 0.08)",
+              padding: 24,
+            }}
+          >
+            <Flex vertical gap={18}>
+              <Flex align="center" justify="space-between" wrap gap={12}>
+                <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+                  Same CoCalc workspace model
+                </Text>
+                <Flex gap={8} wrap>
+                  {["Files", "Notebooks", "Terminals", "Chat", "Agents"].map(
+                    (item) => (
+                      <Tag
+                        key={item}
+                        color="blue"
+                        style={{ marginInlineEnd: 0 }}
+                      >
+                        {item}
+                      </Tag>
+                    ),
+                  )}
+                </Flex>
+              </Flex>
+              <div
+                style={{
+                  display: "grid",
+                  gap: 12,
+                  gridTemplateColumns: "repeat(auto-fit, minmax(128px, 1fr))",
+                }}
+              >
+                {options.map((option, index) => (
+                  <div
+                    key={option.title}
+                    style={{
+                      background: "#fff",
+                      border: `1px solid ${PUBLIC_COLORS.border}`,
+                      borderRadius: 20,
+                      minHeight: 230,
+                      padding: 16,
+                    }}
+                  >
+                    <Flex align="center" justify="space-between">
+                      <div
+                        style={{
+                          alignItems: "center",
+                          background: index === 2 ? "#fff7e6" : "#eef5ff",
+                          border:
+                            index === 2
+                              ? "1px solid #ffd591"
+                              : `1px solid ${PUBLIC_COLORS.border}`,
+                          borderRadius: 16,
+                          color: index === 2 ? "#ad6800" : PUBLIC_COLORS.brand,
+                          display: "flex",
+                          fontSize: 23,
+                          height: 52,
+                          justifyContent: "center",
+                          width: 52,
+                        }}
+                      >
+                        <Icon name={option.icon} />
+                      </div>
+                      {index < options.length - 1 && (
+                        <Text
+                          aria-hidden="true"
+                          style={{ color: PUBLIC_COLORS.brand, fontSize: 20 }}
+                        >
+                          <Icon name="arrow-right" />
+                        </Text>
+                      )}
+                    </Flex>
+                    <Tag
+                      color={index === 2 ? "gold" : "blue"}
+                      style={{ margin: "18px 0 10px" }}
+                    >
+                      {option.tag}
+                    </Tag>
+                    <Title level={4} style={{ margin: "0 0 10px" }}>
+                      {option.title}
+                    </Title>
+                    <Paragraph style={{ margin: 0 }}>{option.body}</Paragraph>
+                  </div>
+                ))}
+              </div>
+              <div
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  display: "grid",
+                  gap: 12,
+                  gridTemplateColumns: "auto 1fr auto",
+                }}
+              >
+                <Text type="secondary">Individual</Text>
+                <div
+                  style={{
+                    background:
+                      "linear-gradient(90deg, #4b7bd8 0%, #68b36b 50%, #d48806 100%)",
+                    borderRadius: 999,
+                    height: 4,
+                  }}
+                />
+                <Text type="secondary">Organization</Text>
+              </div>
+            </Flex>
+          </div>
         </Col>
       </Row>
     </section>
