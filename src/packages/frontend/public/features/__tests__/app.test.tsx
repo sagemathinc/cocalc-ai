@@ -81,14 +81,35 @@ describe("PublicFeaturesApp", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "Coding Agents and AI Assistance",
+        name: "Codex Agent Chat",
         level: 1,
       }),
     ).not.toBeNull();
     expect(
-      screen.getByText("Code, explain, and fix in context"),
+      screen.getByText("Codex agent chat where the project already lives."),
     ).not.toBeNull();
+    expect(screen.getByText("One AI path")).not.toBeNull();
     expect(screen.getByText("Create account")).not.toBeNull();
+  });
+
+  it("uses projects as the ai CTA for authenticated users", () => {
+    render(
+      <PublicFeaturesApp
+        config={{
+          help_email: "help@example.com",
+          is_authenticated: true,
+          site_name: "Launchpad",
+        }}
+        initialRoute={{ slug: "ai", view: "detail" }}
+      />,
+    );
+
+    const projectLinks = screen.getAllByRole("link", { name: "Open projects" });
+    expect(projectLinks.length).toBeGreaterThan(0);
+    for (const link of projectLinks) {
+      expect(link.getAttribute("href")).toBe("/projects");
+    }
+    expect(screen.queryByText("Create account")).toBeNull();
   });
 
   it("renders the richer jupyter feature page", () => {
@@ -297,13 +318,30 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
-      screen.getByText(
-        "Run Python notebooks, scripts, and experiments in one shared environment",
-      ),
+      screen.getByText("Python that moves from notebook to script to paper."),
     ).not.toBeNull();
-    expect(
-      screen.getByText("Zero-setup Python for technical work"),
-    ).not.toBeNull();
+    expect(screen.getByText("From notebook to script to paper")).not.toBeNull();
+    expect(screen.getByText("Real Python on real Linux")).not.toBeNull();
+  });
+
+  it("uses projects as the python CTA for authenticated users", () => {
+    render(
+      <PublicFeaturesApp
+        config={{
+          help_email: "help@example.com",
+          is_authenticated: true,
+          site_name: "Launchpad",
+        }}
+        initialRoute={{ slug: "python", view: "detail" }}
+      />,
+    );
+
+    const projectLinks = screen.getAllByRole("link", { name: "Open projects" });
+    expect(projectLinks.length).toBeGreaterThan(0);
+    for (const link of projectLinks) {
+      expect(link.getAttribute("href")).toBe("/projects");
+    }
+    expect(screen.queryByText("Start using Python on CoCalc")).toBeNull();
   });
 
   it("renders the richer whiteboard feature page", () => {
@@ -316,41 +354,40 @@ describe("PublicFeaturesApp", () => {
 
     expect(
       screen.getByText(
-        "An infinite collaborative canvas with code, math, and sketching",
+        "A Miro-like whiteboard rebuilt for computational work.",
       ),
     ).not.toBeNull();
     expect(
-      screen.getByText("Built for interactive explanation"),
+      screen.getByText("Put Jupyter cells in a directed graph."),
     ).not.toBeNull();
+    expect(screen.getByText("Transparent format")).not.toBeNull();
   });
 
   it.each([
     {
       slug: "sage",
-      title: "Use SageMath online in the environment built by the same team",
-      section: "Why SageMath fits naturally in CoCalc",
+      title: "Use SageMath where its history and future meet.",
+      section: "Build, test, and develop Sage from source.",
     },
     {
       slug: "julia",
-      title: "Use Julia in notebooks, terminals, and project workflows",
-      section: "Multiple ways to work with Julia",
+      title: "Use Julia in notebooks, terminals, Pluto, and source files.",
+      section: "Julia works best in CoCalc when the project matters.",
     },
     {
       slug: "r-statistical-software",
-      title:
-        "Use R in notebooks, terminals, and reproducible document workflows",
-      section: "Zero-setup R for teaching and analysis",
+      title: "Use R when statistics is part of a larger workflow.",
+      section: "CoCalc is not trying to be RStudio.",
     },
     {
       slug: "octave",
-      title:
-        "Run Octave online in notebooks, terminals, or a graphical desktop",
-      section: "Flexible Octave workflows",
+      title: "Run Octave in notebooks, scripts, and terminals.",
+      section: "A browser-based path for MATLAB-style teaching and scripts.",
     },
     {
-      slug: "x11",
-      title: "Run graphical Linux applications remotely in the browser",
-      section: "Why X11 matters",
+      slug: "slides",
+      title: "Present from the same canvas where technical ideas are built.",
+      section: "Slides are structured whiteboards.",
     },
   ])(
     "renders the richer $slug feature page",
@@ -372,6 +409,38 @@ describe("PublicFeaturesApp", () => {
 
       expect(screen.getByText(title)).not.toBeNull();
       expect(screen.getByText(section)).not.toBeNull();
+    },
+  );
+
+  it.each([
+    { finalCta: "Start using SageMath on CoCalc", slug: "sage" },
+    { finalCta: "Start using CoCalc whiteboards", slug: "whiteboard" },
+    { finalCta: "Start making slides", slug: "slides" },
+    { finalCta: "Start using R", slug: "r-statistical-software" },
+    { finalCta: "Start using Octave", slug: "octave" },
+    { finalCta: "Start using Julia", slug: "julia" },
+  ])(
+    "uses projects as the $slug CTA for authenticated users",
+    ({ finalCta, slug }) => {
+      render(
+        <PublicFeaturesApp
+          config={{
+            help_email: "help@example.com",
+            is_authenticated: true,
+            site_name: "Launchpad",
+          }}
+          initialRoute={{ slug, view: "detail" }}
+        />,
+      );
+
+      const projectLinks = screen.getAllByRole("link", {
+        name: "Open projects",
+      });
+      expect(projectLinks.length).toBeGreaterThan(0);
+      for (const link of projectLinks) {
+        expect(link.getAttribute("href")).toBe("/projects");
+      }
+      expect(screen.queryByText(finalCta)).toBeNull();
     },
   );
 

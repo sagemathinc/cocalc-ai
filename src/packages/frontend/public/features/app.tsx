@@ -37,7 +37,6 @@ import SlidesFeaturePage from "./slides-page";
 import TeachingFeaturePage from "./teaching-page";
 import TerminalFeaturePage from "./terminal-page";
 import WhiteboardFeaturePage from "./whiteboard-page";
-import X11FeaturePage from "./x11-page";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -69,7 +68,6 @@ const FEATURE_DETAIL_COMPONENTS = {
   teaching: TeachingFeaturePage,
   terminal: TerminalFeaturePage,
   whiteboard: WhiteboardFeaturePage,
-  x11: X11FeaturePage,
 } as const;
 
 const FEATURE_INDEX_PRIORITY = [
@@ -105,7 +103,6 @@ const FEATURE_GROUPS = [
       "julia",
       "sage",
       "octave",
-      "x11",
     ],
     title: "Compute",
   },
@@ -147,7 +144,6 @@ const FEATURE_META = {
   teaching: { accent: "#389e0d", icon: "graduation-cap", label: "Courses" },
   terminal: { accent: "#096dd9", icon: "terminal", label: "Shell" },
   whiteboard: { accent: "#d4380d", icon: "layout", label: "Canvas" },
-  x11: { accent: "#455a64", icon: "desktop", label: "Desktop" },
 } satisfies Record<string, { accent: string; icon: IconName; label: string }>;
 
 function featureMeta(slug: string) {
@@ -602,6 +598,11 @@ function FeatureDetail({
 
   const CustomPage =
     FEATURE_DETAIL_COMPONENTS[slug as keyof typeof FEATURE_DETAIL_COMPONENTS];
+  if (slug === "ai") {
+    return (
+      <AIFeaturePage helpEmail={helpEmail} isAuthenticated={isAuthenticated} />
+    );
+  }
   if (slug === "jupyter-notebook") {
     return (
       <JupyterNotebookFeaturePage
@@ -637,6 +638,62 @@ function FeatureDetail({
   if (slug === "linux") {
     return (
       <LinuxFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
+  if (slug === "python") {
+    return (
+      <PythonFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
+  if (slug === "sage") {
+    return (
+      <SageFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
+  if (slug === "whiteboard") {
+    return (
+      <WhiteboardFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
+  if (slug === "slides") {
+    return (
+      <SlidesFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
+  if (slug === "r-statistical-software") {
+    return (
+      <RStatisticalSoftwareFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
+  if (slug === "octave") {
+    return (
+      <OctaveFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
+  if (slug === "julia") {
+    return (
+      <JuliaFeaturePage
         helpEmail={helpEmail}
         isAuthenticated={isAuthenticated}
       />
