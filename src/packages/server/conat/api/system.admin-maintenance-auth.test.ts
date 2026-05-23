@@ -7,6 +7,7 @@ export {};
 
 let isAdminMock: jest.Mock;
 let requireDangerousSessionAuthMock: jest.Mock;
+let manageApiKeysMock: jest.Mock;
 
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
   __esModule: true,
@@ -17,6 +18,11 @@ jest.mock("./dangerous-session-auth", () => ({
   __esModule: true,
   requireDangerousSessionAuth: (...args: any[]) =>
     requireDangerousSessionAuthMock(...args),
+}));
+
+jest.mock("@cocalc/server/api/manage", () => ({
+  __esModule: true,
+  default: (...args: any[]) => manageApiKeysMock(...args),
 }));
 
 describe("admin maintenance dangerous-session auth", () => {
@@ -31,6 +37,7 @@ describe("admin maintenance dangerous-session auth", () => {
         code: "fresh_auth_required",
       });
     });
+    manageApiKeysMock = jest.fn(async () => []);
   });
 
   it("requires centralized recent 2FA fresh auth before creating impersonation grants", async () => {
@@ -244,6 +251,51 @@ describe("admin maintenance dangerous-session auth", () => {
       browser_id: "browser-1",
       session_hash: undefined,
       require_second_factor: true,
+    });
+  });
+
+  it("requires recent 2FA fresh auth before creating account API keys", async () => {
+    const { manageApiKeys } = await import("./system");
+
+    await expect(
+      manageApiKeys({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        action: "create",
+        name: "automation",
+        capabilities: ["account:read"],
+      }),
+    ).rejects.toThrow("fresh auth is required");
+
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      session_hash: undefined,
+      require_second_factor: true,
+    });
+    expect(manageApiKeysMock).not.toHaveBeenCalled();
+  });
+
+  it("allows listing account API keys without fresh auth", async () => {
+    requireDangerousSessionAuthMock = jest.fn(async () => undefined);
+    const { manageApiKeys } = await import("./system");
+
+    await expect(
+      manageApiKeys({
+        account_id: ACCOUNT_ID,
+        action: "get",
+      }),
+    ).resolves.toEqual([]);
+
+    expect(requireDangerousSessionAuthMock).not.toHaveBeenCalled();
+    expect(manageApiKeysMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      action: "get",
+      name: undefined,
+      expire: undefined,
+      capabilities: undefined,
+      allowed_project_ids: undefined,
+      id: undefined,
     });
   });
 });

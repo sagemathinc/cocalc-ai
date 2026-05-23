@@ -333,6 +333,33 @@ Validation:
 
 - `packages/server`: `accounts/rehome.test.ts`
 
+### API-key management could bypass fresh-auth and capability checks
+
+The account API-key management helper is also exposed through the legacy
+`/api/v2/api-keys` route. That HTTP route authenticated through `getAccountId`,
+which accepts account API keys, then called the low-level API-key management
+helper directly. As a result, a valid API key could manage sibling API keys
+without an explicit capability check. Separately, the browser Conat API-key
+management path could create/edit/delete durable account API keys with only a
+live browser session and no fresh-auth confirmation.
+
+Fix:
+
+- Conat `system.manageApiKeys` now requires recent second-factor-backed fresh
+  auth for `create`, `edit`, and `delete`; read-only listing remains ordinary
+  signed-in account auth.
+- The account settings API-key UI passes browser context and retries mutating
+  operations through the standard fresh-auth modal.
+- The legacy `/api/v2/api-keys` route now rejects API-key authentication and
+  disables legacy HTTP mutations, closing the API-key-to-API-key privilege
+  escalation path.
+
+Validation:
+
+- `packages/server`: `conat/api/system.admin-maintenance-auth.test.ts`
+- `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
+- `packages/http-api`: `pages/api/v2/api-keys.test.ts`
+
 ## Reviewed Surfaces
 
 - Public hub dangerous RPC registry and name-based coverage.
@@ -341,6 +368,7 @@ Validation:
 - Inter-bay account-local site-license routing to the configured seed bay.
 - Account membership portability filters for rehome and repair.
 - Site-license verified-email extraction and request trust boundary.
+- Account API-key management through Conat and legacy HTTP API routes.
 
 ## Residual Follow-Up
 

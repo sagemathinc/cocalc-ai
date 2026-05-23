@@ -34,9 +34,13 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { recordBrowserAutomationAuditEvent } from "./browser-automation-audit";
 import { db } from "@cocalc/database";
-import manageApiKeys from "@cocalc/server/api/manage";
-export { manageApiKeys };
+import manageApiKeys0 from "@cocalc/server/api/manage";
 import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
+import type {
+  ApiKey,
+  Action as ApiKeyAction,
+  ApiKeyCapability,
+} from "@cocalc/util/db-schema/api-keys";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import getName from "@cocalc/server/accounts/get-name";
 import { searchRelatedClusterAccounts } from "@cocalc/server/accounts/search-policy";
@@ -656,6 +660,49 @@ export async function setSiteSettings({
     await setSiteSettingLocal(update);
   }
   return await propagateSiteSettingsToBays(updates);
+}
+
+export async function manageApiKeys({
+  account_id,
+  browser_id,
+  session_hash,
+  action,
+  name,
+  expire,
+  capabilities,
+  allowed_project_ids,
+  id,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  action: ApiKeyAction;
+  name?: string;
+  expire?: Date;
+  capabilities?: ApiKeyCapability[];
+  allowed_project_ids?: string[];
+  id?: number;
+}): Promise<ApiKey[] | undefined> {
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  if (action !== "get") {
+    await requireDangerousSessionAuth({
+      account_id,
+      browser_id,
+      session_hash,
+      require_second_factor: true,
+    });
+  }
+  return await manageApiKeys0({
+    account_id,
+    action,
+    name,
+    expire,
+    capabilities,
+    allowed_project_ids,
+    id,
+  });
 }
 
 export async function syncSiteSettingsToBays({

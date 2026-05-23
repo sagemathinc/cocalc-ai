@@ -1598,6 +1598,8 @@ export interface System {
 
   manageApiKeys: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     action: ApiKeyAction;
     name?: string;
     expire?: Date;
