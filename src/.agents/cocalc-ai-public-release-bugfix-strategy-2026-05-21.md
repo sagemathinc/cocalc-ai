@@ -250,10 +250,15 @@ Acceptance:
 - Backup overview and host health use the same authoritative latest backup
   timestamp. **Done 2026-05-22** by fixing scheduled backup reporting at the
   source instead of papering over stale `projects.last_backup` in the UI.
-- Start/restart uses current membership/default quotas.
+- Start/restart uses current membership/default quotas. **Done 2026-05-22**
+  by making quota recomputation share the same membership/sponsor-aware
+  `run_quota` path used by project starts, and by updating stopped projects'
+  stored `run_quota` during admin quota changes instead of leaving stale rows.
+  Host restart operations also recompute before re-starting projects.
 - Bulk delete completes sequentially with progress or clear queuing. **Done
   2026-05-22.**
-- File delete modal remains readable for large selections.
+- File delete modal remains readable for large selections. **Done 2026-05-22**
+  with a bounded, wrapping selected-file list and explicit overflow count.
 - WAL retention is bounded and documented.
 
 ### E. Launch Content And GPU Acceptance
@@ -302,11 +307,6 @@ Recommended next work order as of 2026-05-22:
 1. **Disk usage reload says "Updated just now" without recomputing.** This is a
    bounded honesty bug and likely quick: separate cached-refresh from actual
    recompute and label timestamps by what really happened.
-2. **Project runtime quotas at start/restart.** This is another source-of-truth
-   bug class: verify start/restart uses current membership/default quotas instead
-   of stale project rows.
-3. **Delete modal overflow.** This is contained UI polish that prevents
-   destructive actions from becoming unreadable for large selections.
 
 Good fallback tasks if the above stalls:
 
