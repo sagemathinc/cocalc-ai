@@ -651,6 +651,14 @@ function FeatureDetail({
       />
     );
   }
+  if (slug === "sage") {
+    return (
+      <SageFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
   if (CustomPage) {
     return <CustomPage helpEmail={helpEmail} />;
   }

@@ -365,8 +365,8 @@ describe("PublicFeaturesApp", () => {
   it.each([
     {
       slug: "sage",
-      title: "Use SageMath online in the environment built by the same team",
-      section: "Why SageMath fits naturally in CoCalc",
+      title: "Use SageMath where its history and future meet.",
+      section: "Build, test, and develop Sage from source.",
     },
     {
       slug: "julia",
@@ -406,6 +406,26 @@ describe("PublicFeaturesApp", () => {
       expect(screen.getByText(section)).not.toBeNull();
     },
   );
+
+  it("uses projects as the sage CTA for authenticated users", () => {
+    render(
+      <PublicFeaturesApp
+        config={{
+          help_email: "help@example.com",
+          is_authenticated: true,
+          site_name: "Launchpad",
+        }}
+        initialRoute={{ slug: "sage", view: "detail" }}
+      />,
+    );
+
+    const projectLinks = screen.getAllByRole("link", { name: "Open projects" });
+    expect(projectLinks.length).toBeGreaterThan(0);
+    for (const link of projectLinks) {
+      expect(link.getAttribute("href")).toBe("/projects");
+    }
+    expect(screen.queryByText("Start using SageMath on CoCalc")).toBeNull();
+  });
 
   it("renders the compare feature page", () => {
     render(

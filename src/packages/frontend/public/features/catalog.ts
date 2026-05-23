@@ -118,9 +118,10 @@ export const FEATURE_PAGES: FeaturePage[] = [
   {
     slug: "sage",
     title: "SageMath",
-    tagline: "Use SageMath online in the environment built by the same team.",
+    tagline:
+      "Use SageMath in the collaborative environment with deep roots in Sage.",
     summary:
-      "CoCalc has deep SageMath support, including notebooks, terminals, and integration with the broader collaborative workspace.",
+      "Use SageMath for teaching, notebooks, SageTeX documents, source development, and long-running mathematics computations in a real collaborative Linux project.",
     image: "/public/features/sagemath-jupyter.png",
     index: true,
   },
