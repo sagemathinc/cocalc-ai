@@ -63,7 +63,6 @@ export function ProjectsTable({
   const project_map = useTypedRedux("projects", "project_map");
   const host_info = useTypedRedux("projects", "host_info");
   const user_map = useTypedRedux("users", "user_map");
-  const expanded_project_id = useTypedRedux("projects", "expanded_project_id");
   const { isProjectBookmarked, setProjectBookmarked } = useBookmarkedProjects();
   const { scheduledDeleteProjectIds } = useProjectDeleteQueue();
   const scheduledDeleteProjectIdSet = useMemo(
@@ -170,12 +169,17 @@ export function ProjectsTable({
     setProjectBookmarked(project_id, !isStarred);
   };
 
-  const renderActionsMenu = (record: ProjectTableRecord) => {
-    return <ProjectActionsMenu record={record} />;
-  };
-
   const handleToggleExpand = (record: ProjectTableRecord) => {
     actions.toggle_expanded_project(record.project_id);
+  };
+
+  const renderActionsMenu = (record: ProjectTableRecord) => {
+    return (
+      <ProjectActionsMenu
+        record={record}
+        onToggleDetails={() => handleToggleExpand(record)}
+      />
+    );
   };
 
   // Compute all unique collaborators and their information for filtering
@@ -232,16 +236,11 @@ export function ProjectsTable({
     return filters;
   }, [visible_projects, project_map, user_map]);
 
-  // Use expanded_project_id to drive the drawer and icon state
-  const expandedRowKeys = expanded_project_id ? [expanded_project_id] : [];
-
   const columns = getProjectTableColumns(
     handleToggleStar,
     renderActionsMenu,
     handleOpenProject,
     sortState,
-    handleToggleExpand,
-    expandedRowKeys,
     collaboratorFilters,
     narrow,
     filteredCollaborators,
