@@ -287,6 +287,27 @@ Validation:
 - `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
 - `packages/frontend`: `admin/site-settings/cloudflare-config-wizard.test.tsx`
 
+### Cloudflare R2 audit scan lacked fresh auth
+
+`system.startCloudflareR2Audit` starts a potentially long-running bucket scan
+LRO against Cloudflare R2. The operation is not destructive, but it can consume
+cloud/API resources and operational capacity, so ordinary admin authorization is
+too weak for a compromised admin browser session.
+
+Fix:
+
+- Starting a Cloudflare R2 audit scan now requires recent
+  second-factor-backed fresh auth.
+- CLI callers continue to work through the existing Conat `auth_session_hash`
+  injection after `cocalc auth elevate` or `cocalc auth elevate --dev`.
+- The dangerous RPC registry now classifies the scan-start RPC as
+  fresh-auth-required.
+
+Validation:
+
+- `packages/server`: `conat/api/system.admin-maintenance-auth.test.ts`
+- `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
+
 ### False email verification markers could be treated as verified
 
 `getVerifiedEmailAddressesForAccount` normalized keys but then looked up values using the normalized key. It also had a fallback that could treat a non-null false marker as verified. This mattered because site-license claims rely on verified institutional email addresses.

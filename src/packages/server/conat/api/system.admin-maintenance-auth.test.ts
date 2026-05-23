@@ -190,6 +190,26 @@ describe("admin maintenance dangerous-session auth", () => {
     });
   });
 
+  it("requires recent 2FA fresh auth before starting Cloudflare R2 audit scans", async () => {
+    const { startCloudflareR2Audit } = await import("./system");
+
+    await expect(
+      startCloudflareR2Audit({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        bucket: "audit-bucket",
+        refresh: true,
+      }),
+    ).rejects.toThrow("fresh auth is required");
+
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      session_hash: undefined,
+      require_second_factor: true,
+    });
+  });
+
   it("requires recent 2FA fresh auth before materialized bay restores", async () => {
     const { runBayRestore } = await import("./system");
 

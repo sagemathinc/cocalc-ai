@@ -4831,12 +4831,16 @@ const CLOUDFLARE_TEARDOWN_APPLY_LRO_KIND = "cloudflare-teardown-apply";
 
 export async function startCloudflareR2Audit({
   account_id,
+  browser_id,
+  session_hash,
   bucket,
   prefix,
   refresh,
   max_age_minutes,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   bucket: string;
   prefix?: string;
   refresh?: boolean;
@@ -4851,6 +4855,12 @@ export async function startCloudflareR2Audit({
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
   const op = await createLro({
     kind: CLOUDFLARE_R2_AUDIT_LRO_KIND,
     scope_type: "account",

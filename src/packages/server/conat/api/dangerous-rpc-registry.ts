@@ -761,8 +761,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "system.startCloudflareR2Audit": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "resource-consuming Cloudflare R2 bucket scan LRO",
   },
   "system.startCloudflareR2BayBackupCleanup": {
     decision: "fresh-auth-required",
