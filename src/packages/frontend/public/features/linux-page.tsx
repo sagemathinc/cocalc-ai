@@ -455,7 +455,10 @@ export default function LinuxFeaturePage({
               </Paragraph>
               <BulletList
                 items={[
-                  "Use `sudo apt-get update` and `sudo apt-get install` for system packages.",
+                  <>
+                    Use <code>sudo apt-get update</code> and{" "}
+                    <code>sudo apt-get install</code> for system packages.
+                  </>,
                   "Install language packages where the notebook or script actually runs.",
                   "Take a snapshot before risky system-level changes.",
                 ]}
