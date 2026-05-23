@@ -297,13 +297,30 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
-      screen.getByText(
-        "Run Python notebooks, scripts, and experiments in one shared environment",
-      ),
+      screen.getByText("Python that moves from notebook to script to paper."),
     ).not.toBeNull();
-    expect(
-      screen.getByText("Zero-setup Python for technical work"),
-    ).not.toBeNull();
+    expect(screen.getByText("From notebook to script to paper")).not.toBeNull();
+    expect(screen.getByText("Real Python on real Linux")).not.toBeNull();
+  });
+
+  it("uses projects as the python CTA for authenticated users", () => {
+    render(
+      <PublicFeaturesApp
+        config={{
+          help_email: "help@example.com",
+          is_authenticated: true,
+          site_name: "Launchpad",
+        }}
+        initialRoute={{ slug: "python", view: "detail" }}
+      />,
+    );
+
+    const projectLinks = screen.getAllByRole("link", { name: "Open projects" });
+    expect(projectLinks.length).toBeGreaterThan(0);
+    for (const link of projectLinks) {
+      expect(link.getAttribute("href")).toBe("/projects");
+    }
+    expect(screen.queryByText("Start using Python on CoCalc")).toBeNull();
   });
 
   it("renders the richer whiteboard feature page", () => {

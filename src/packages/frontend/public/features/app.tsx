@@ -642,6 +642,14 @@ function FeatureDetail({
       />
     );
   }
+  if (slug === "python") {
+    return (
+      <PythonFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
   if (CustomPage) {
     return <CustomPage helpEmail={helpEmail} />;
   }
