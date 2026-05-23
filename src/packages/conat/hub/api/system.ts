@@ -1930,11 +1930,15 @@ export interface System {
 
   revokeExternalCredential: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     id: string;
   }) => Promise<{ revoked: boolean }>;
 
   setOpenAiApiKey: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     api_key: string;
     project_id?: string;
   }) => Promise<{
@@ -1946,6 +1950,8 @@ export interface System {
 
   deleteOpenAiApiKey: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     project_id?: string;
   }) => Promise<{
     revoked: boolean;

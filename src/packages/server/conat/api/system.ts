@@ -3800,9 +3800,13 @@ export async function listExternalCredentials({
 
 export async function revokeExternalCredential({
   account_id,
+  browser_id,
+  session_hash,
   id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   id: string;
 }) {
   if (!account_id) {
@@ -3811,6 +3815,12 @@ export async function revokeExternalCredential({
   if (!id) {
     throw Error("id must be specified");
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: false,
+  });
   const revoked = await revokeExternalCredentialStore({
     id,
     owner_account_id: account_id,
@@ -3820,10 +3830,14 @@ export async function revokeExternalCredential({
 
 export async function setOpenAiApiKey({
   account_id,
+  browser_id,
+  session_hash,
   api_key,
   project_id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   api_key: string;
   project_id?: string;
 }) {
@@ -3837,6 +3851,12 @@ export async function setOpenAiApiKey({
 
   if (project_id) {
     await assertProjectCollaborator(account_id, project_id);
+    await requireDangerousSessionAuth({
+      account_id,
+      browser_id,
+      session_hash,
+      require_second_factor: false,
+    });
     const result = await upsertExternalCredential({
       selector: {
         provider: "openai",
@@ -3853,6 +3873,12 @@ export async function setOpenAiApiKey({
     return { ...result, scope: "project" as const, project_id };
   }
 
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: false,
+  });
   const result = await upsertExternalCredential({
     selector: {
       provider: "openai",
@@ -3871,9 +3897,13 @@ export async function setOpenAiApiKey({
 
 export async function deleteOpenAiApiKey({
   account_id,
+  browser_id,
+  session_hash,
   project_id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   project_id?: string;
 }) {
   if (!account_id) {
@@ -3894,6 +3924,12 @@ export async function deleteOpenAiApiKey({
     if (!existing) {
       return { revoked: false, scope: "project" as const, project_id };
     }
+    await requireDangerousSessionAuth({
+      account_id,
+      browser_id,
+      session_hash,
+      require_second_factor: false,
+    });
     const revoked = await revokeExternalCredentialStore({
       id: existing.id,
     });
@@ -3912,6 +3948,12 @@ export async function deleteOpenAiApiKey({
   if (!existing) {
     return { revoked: false, scope: "account" as const };
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: false,
+  });
   const revoked = await revokeExternalCredentialStore({
     id: existing.id,
     owner_account_id: account_id,

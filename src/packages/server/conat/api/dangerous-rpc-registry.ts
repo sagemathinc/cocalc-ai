@@ -612,8 +612,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: "account deletion",
   },
   "system.deleteOpenAiApiKey": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "OpenAI external credential revocation",
   },
   "system.deletePassport": {
     decision: "fresh-auth-not-required",
@@ -685,8 +685,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "system.revokeExternalCredential": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "external credential revocation",
   },
   "system.runBayBackup": {
     decision: "fresh-auth-not-required",
@@ -729,8 +729,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "system.setOpenAiApiKey": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "OpenAI external credential mutation",
   },
   "system.setParallelOpsLimit": {
     decision: "fresh-auth-not-required",

@@ -20,6 +20,10 @@ import {
 } from "antd";
 import { Panel } from "@cocalc/frontend/antd-bootstrap";
 import { useAsyncEffect, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import Password from "@cocalc/frontend/components/password";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
@@ -163,6 +167,9 @@ function CodexCredentialsPanelBody({
   } | null>(null);
   const authFileInputRef = useRef<HTMLInputElement | null>(null);
   const previousProjectKeyRef = useRef(selectedProjectId.trim());
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   const refresh = () => setRefreshToken((x) => x + 1);
   const refreshAfterPaymentSourceChange = useCallback(() => {
@@ -283,11 +290,17 @@ function CodexCredentialsPanelBody({
             onConfirm={async () => {
               setRevokingId(row.id);
               try {
-                await webapp_client.conat_client.hub.system.revokeExternalCredential(
-                  {
-                    id: row.id,
-                  },
-                );
+                const completed = await runFreshAuthAction(async () => {
+                  await webapp_client.conat_client.hub.system.revokeExternalCredential(
+                    {
+                      id: row.id,
+                      browser_id: webapp_client.browser_id,
+                    },
+                  );
+                });
+                if (!completed) {
+                  return;
+                }
                 refreshAfterPaymentSourceChange();
               } catch (err) {
                 setError(`${err}`);
@@ -861,11 +874,19 @@ function CodexCredentialsPanelBody({
                               setSavingScope("account");
                               setError("");
                               try {
-                                await (
-                                  webapp_client.conat_client.hub.system as any
-                                ).setOpenAiApiKey({
-                                  api_key: key,
-                                });
+                                const completed = await runFreshAuthAction(
+                                  async () => {
+                                    await webapp_client.conat_client.hub.system.setOpenAiApiKey(
+                                      {
+                                        api_key: key,
+                                        browser_id: webapp_client.browser_id,
+                                      },
+                                    );
+                                  },
+                                );
+                                if (!completed) {
+                                  return;
+                                }
                                 setAccountApiKey("");
                                 refreshAfterPaymentSourceChange();
                               } catch (err) {
@@ -885,9 +906,18 @@ function CodexCredentialsPanelBody({
                               setDeletingScope("account");
                               setError("");
                               try {
-                                await (
-                                  webapp_client.conat_client.hub.system as any
-                                ).deleteOpenAiApiKey({});
+                                const completed = await runFreshAuthAction(
+                                  async () => {
+                                    await webapp_client.conat_client.hub.system.deleteOpenAiApiKey(
+                                      {
+                                        browser_id: webapp_client.browser_id,
+                                      },
+                                    );
+                                  },
+                                );
+                                if (!completed) {
+                                  return;
+                                }
                                 refreshAfterPaymentSourceChange();
                               } catch (err) {
                                 setError(`${err}`);
@@ -962,12 +992,20 @@ function CodexCredentialsPanelBody({
                               setSavingScope("project");
                               setError("");
                               try {
-                                await (
-                                  webapp_client.conat_client.hub.system as any
-                                ).setOpenAiApiKey({
-                                  project_id: selectedProjectId,
-                                  api_key: key,
-                                });
+                                const completed = await runFreshAuthAction(
+                                  async () => {
+                                    await webapp_client.conat_client.hub.system.setOpenAiApiKey(
+                                      {
+                                        project_id: selectedProjectId,
+                                        api_key: key,
+                                        browser_id: webapp_client.browser_id,
+                                      },
+                                    );
+                                  },
+                                );
+                                if (!completed) {
+                                  return;
+                                }
                                 setProjectApiKey("");
                                 refreshAfterPaymentSourceChange();
                               } catch (err) {
@@ -988,11 +1026,19 @@ function CodexCredentialsPanelBody({
                               setDeletingScope("project");
                               setError("");
                               try {
-                                await (
-                                  webapp_client.conat_client.hub.system as any
-                                ).deleteOpenAiApiKey({
-                                  project_id: selectedProjectId,
-                                });
+                                const completed = await runFreshAuthAction(
+                                  async () => {
+                                    await webapp_client.conat_client.hub.system.deleteOpenAiApiKey(
+                                      {
+                                        project_id: selectedProjectId,
+                                        browser_id: webapp_client.browser_id,
+                                      },
+                                    );
+                                  },
+                                );
+                                if (!completed) {
+                                  return;
+                                }
                                 refreshAfterPaymentSourceChange();
                               } catch (err) {
                                 setError(`${err}`);
@@ -1040,6 +1086,7 @@ function CodexCredentialsPanelBody({
               ]),
         ]}
       />
+      <FreshAuthModal {...freshAuthModalProps} />
     </Space>
   );
 

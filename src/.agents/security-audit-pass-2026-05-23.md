@@ -104,6 +104,28 @@ Validation:
 - `packages/server`: `conat/api/system.admin-maintenance-auth.test.ts`
 - `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
 
+### OpenAI/Codex external credential mutations lacked fresh auth
+
+Users could store or revoke encrypted OpenAI API keys and other external
+credentials with ordinary account auth. The credential payloads were not exposed
+by listing/status APIs, but mutation of a credential that can spend money or
+affect project execution should require a recent verification.
+
+Fix:
+
+- `system.setOpenAiApiKey`, `system.deleteOpenAiApiKey`, and
+  `system.revokeExternalCredential` now require fresh auth before mutating an
+  existing credential.
+- The Codex credentials UI now passes browser session context and retries these
+  actions through the standard fresh-auth modal.
+- Hub API types and the dangerous RPC registry now classify these credential
+  mutations as fresh-auth-required.
+
+Validation:
+
+- `packages/server`: `conat/api/system.external-credentials-auth.test.ts`
+- `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
+
 ### Site-license pool edits bypassed fresh auth through `updateMembershipPackage`
 
 The public `purchases.updateMembershipPackage` RPC could update site-license pool domains, seat counts, and expiration via the generic membership package path without passing `browser_id` or `session_hash`. This was inconsistent with `adminProvisionSiteLicense`, `updateSiteLicense`, and `addSiteLicensePool`.
