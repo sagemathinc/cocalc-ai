@@ -76,13 +76,15 @@ describe("ActionBox delete modal", () => {
   });
 
   it("keeps large selected-file lists bounded and readable", () => {
-    const checkedFiles = ImmutableSet(
-      Array.from(
-        { length: 505 },
-        (_, i) =>
-          `/home/user/deep/path/${i}/very-long-file-name-that-should-wrap-${i}.txt`,
+    const checkedFiles = ImmutableSet([
+      "/home/user/deep/path/zeta.txt",
+      "/home/user/deep/path/Alpha.txt",
+      "/home/user/deep/path/beta.txt",
+      ...Array.from(
+        { length: 502 },
+        (_, i) => `/home/user/deep/path/selected-file-${i}.txt`,
       ),
-    );
+    ]);
 
     render(
       <IntlProvider locale="en">
@@ -104,8 +106,14 @@ describe("ActionBox delete modal", () => {
       whiteSpace: "normal",
     });
     expect(screen.getByText("... and 5 more selected items")).toBeTruthy();
-    expect(
-      screen.getByText("very-long-file-name-that-should-wrap-0.txt"),
-    ).toBeTruthy();
+    expect(screen.getByText("selected-file-0.txt")).toBeTruthy();
+    const renderedNames = Array.from(list.querySelectorAll("div")).map(
+      (node) => node.textContent,
+    );
+    expect(renderedNames.slice(0, 3)).toEqual([
+      "Alpha.txt",
+      "beta.txt",
+      "selected-file-0.txt",
+    ]);
   });
 });
