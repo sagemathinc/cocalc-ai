@@ -417,6 +417,7 @@ export function PublicPage({
                   sider != null && !siderHiddenByBreakpoint
                     ? token.paddingSM
                     : undefined,
+                paddingBottom: token.paddingXL,
               }}
             >
               {sider != null ? (

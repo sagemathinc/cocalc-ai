@@ -558,13 +558,13 @@ PY`}</code>
             </Title>
             <Paragraph style={{ margin: 0 }}>
               The shell, notebooks, LaTeX builds, local services, app previews,
-              SSH workflows, X11 apps, project secrets, snapshots, and backups
-              all live around the same Linux environment.
+              SSH workflows, project secrets, snapshots, and backups all live
+              around the same Linux environment.
             </Paragraph>
             <BulletList
               items={[
                 "Run databases and local services beside notebooks.",
-                "Use terminals and X11 apps from the browser.",
+                "Use terminals and SSH workflows from the browser.",
                 "Let Codex inspect files and terminal context while it helps.",
               ]}
             />
@@ -580,7 +580,7 @@ PY`}</code>
             </Title>
             <Paragraph style={{ margin: 0 }}>
               Notebooks, LaTeX, course workflows, coding agents, terminals, and
-              graphical apps become more useful because they sit on top of a
+              local services become more useful because they sit on top of a
               real project-local Linux system rather than a fixed single-purpose
               UI.
             </Paragraph>
@@ -591,7 +591,6 @@ PY`}</code>
               <Button href={appPath("features/jupyter-notebook")}>
                 Jupyter notebooks
               </Button>
-              <Button href={appPath("features/x11")}>Graphical desktop</Button>
               {helpEmail ? (
                 <Button href={`mailto:${helpEmail}`}>Contact support</Button>
               ) : null}
