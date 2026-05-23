@@ -1589,6 +1589,7 @@ export class ChatStreamWriter {
     AStream<AcpStreamMessage | AcpStreamMessage[]>
   >;
   private livePreviewBatcher!: AdaptiveAsyncBatcher<AcpStreamMessage>;
+  private livePreviewNeedsBoundary = false;
   private client: ConatClient;
   private timeTravel?: AgentTimeTravelRecorder;
   private integritySnapshot: ChatIntegritySnapshot = {
@@ -3349,19 +3350,35 @@ export class ChatStreamWriter {
   private publishLivePreview(event: AcpStreamMessage): void {
     if (this.closed) return;
     if (event.type === "summary" || event.type === "error") {
+      this.livePreviewNeedsBoundary = false;
       this.livePreviewBatcher.add(event, { flush: true });
       return;
     }
     if (event.type === "status") {
+      this.livePreviewNeedsBoundary = false;
       this.livePreviewBatcher.add(event, { flush: true });
       return;
     }
     // The preview stream is the small, authoritative source for inline chat
-    // rendering. Keep it to actual agent output; non-message activity belongs
-    // in the full activity log and can split progressive message snapshots.
+    // rendering. Keep it to actual agent output plus lightweight ordering
+    // boundaries; non-message payloads belong in the full activity log.
     if (event.type === "event" && event.event.type === "message") {
+      this.livePreviewNeedsBoundary = true;
       this.livePreviewBatcher.add(event);
       return;
+    }
+    if (event.type === "event" && this.livePreviewNeedsBoundary) {
+      this.livePreviewNeedsBoundary = false;
+      this.livePreviewBatcher.add(
+        {
+          type: "status",
+          state: "running",
+          threadId: this.threadId ?? undefined,
+          seq: event.seq,
+          time: event.time,
+        },
+        { flush: true },
+      );
     }
   }
 

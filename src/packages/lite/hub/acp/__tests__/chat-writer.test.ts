@@ -8,7 +8,11 @@ import type {
   AcpStreamMessage,
 } from "@cocalc/conat/ai/acp/types";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
-import { CHAT_THREAD_META_ROW_DATE, threadConfigSenderId } from "@cocalc/chat";
+import {
+  CHAT_THREAD_META_ROW_DATE,
+  getLiveResponseBlocks,
+  threadConfigSenderId,
+} from "@cocalc/chat";
 import {
   ChatStreamWriter,
   disposeAllChatWritersForTests,
@@ -1116,6 +1120,11 @@ describe("ChatStreamWriter", () => {
         }),
       }),
       expect.objectContaining({
+        type: "status",
+        state: "running",
+        seq: 2,
+      }),
+      expect.objectContaining({
         type: "event",
         seq: 4,
         event: expect.objectContaining({
@@ -1128,6 +1137,30 @@ describe("ChatStreamWriter", () => {
         seq: 5,
         finalResponse: "done",
       }),
+    ]);
+    expect(
+      getLiveResponseBlocks(previewEvents, [
+        { date: 2500, text: "please verify the file write", state: "sent" },
+      ]),
+    ).toEqual([
+      {
+        kind: "agent",
+        text: "Checking the code path.",
+        time: 1100,
+        state: undefined,
+      },
+      {
+        kind: "guidance",
+        text: "please verify the file write",
+        time: 2500,
+        state: "sent",
+      },
+      {
+        kind: "agent",
+        text: "The file write completed.",
+        time: 3575,
+        state: undefined,
+      },
     ]);
     (writer as any).dispose?.(true);
   });

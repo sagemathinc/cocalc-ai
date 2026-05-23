@@ -542,6 +542,9 @@ export function ChatPanel({
   const hideTopControls = asBoolean(
     getDescValue(desc, "data-hideChatTopControls"),
   );
+  const hideCompactThreadHeader = asBoolean(
+    getDescValue(desc, "data-hideCompactThreadHeader"),
+  );
   const storedSidebarWidth = getDescValue(desc, "data-sidebarWidth");
   const storedSidebarHiddenRaw = getDescValue(desc, "data-sidebarHidden");
   const externalSideChatRaw = getDescValue(desc, "data-externalSideChat");
@@ -2051,6 +2054,7 @@ export function ChatPanel({
         notifyOnTurnFinish={notifyOnSelectedTurnFinish}
         onNotifyOnTurnFinishChange={setNotifyOnSelectedTurnFinish}
         hideTopControls={hideTopControls}
+        hideCompactThreadHeader={hideCompactThreadHeader}
         allowSidebarToggle={!hideSidebar && !isCompact && !isExternalSideChat}
         sidebarHidden={sidebarHidden}
         onToggleSidebar={() => setSidebarHidden((hidden) => !hidden)}

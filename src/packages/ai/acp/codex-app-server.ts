@@ -2077,6 +2077,11 @@ export class CodexAppServerAgent implements AcpAgent {
             break;
           }
           case "item/completed":
+            if (notification.params?.item?.type === "agentMessage") {
+              await stream({ type: "status", state: "running" });
+            }
+            await handleItem(notification.params?.item);
+            break;
           case "item/started":
           case "item/updated":
             await handleItem(notification.params?.item);
