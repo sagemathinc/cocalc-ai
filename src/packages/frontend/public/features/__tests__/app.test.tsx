@@ -99,13 +99,17 @@ describe("PublicFeaturesApp", () => {
       />,
     );
 
+    expect(screen.getByText("Durable execution")).not.toBeNull();
     expect(
-      screen.getByText("Jupyter notebooks made for teaching"),
+      screen.getByText(
+        "Let the agent work with the notebook you actually have open",
+      ),
     ).not.toBeNull();
     expect(
-      screen.getByText("Managed kernels and practical compatibility"),
+      screen.getByText(
+        "Put notebook cells on a whiteboard when the idea is a graph",
+      ),
     ).not.toBeNull();
-    expect(screen.getByText("Publishing notebooks")).not.toBeNull();
   });
 
   it("renders the richer terminal feature page", () => {
