@@ -511,6 +511,30 @@ Validation:
 - `packages/http-api`: `pages/api/v2/account-security-browser-session.test.ts`
 - Full TypeScript build.
 
+### Legacy billing payment-method routes bypassed fresh auth
+
+The newer `/api/v2/purchases/stripe/*` payment-method mutation routes require
+fresh auth before creating, deleting, or changing payment methods. The older
+legacy billing routes still existed and only required `getAccountId(req)`:
+
+- `/api/v2/billing/create-payment-method`
+- `/api/v2/billing/delete-payment-method`
+
+Because `getAccountId(req)` accepts both browser sessions and API-key
+authorization, those legacy endpoints were weaker than the newer purchase
+surface for the same class of payment-method mutation.
+
+Fix:
+
+- Both legacy billing payment-method mutation routes now call
+  `requireFreshAuth({ req, account_id, allow_actor_impersonation: true })`
+  before invoking the Stripe helper.
+
+Validation:
+
+- `packages/http-api`: `pages/api/v2/billing-payment-method-fresh-auth.test.ts`
+- Full TypeScript build.
+
 ## Reviewed Surfaces
 
 - Public hub dangerous RPC registry and name-based coverage.
@@ -530,6 +554,7 @@ Validation:
 - API-key Conat subject policy for fs/watch-fs and project-host file-server
   subjects.
 - Legacy HTTP account-security routes that use `getAccountId(req)`.
+- Legacy billing payment-method mutation routes.
 
 ## Residual Follow-Up
 
