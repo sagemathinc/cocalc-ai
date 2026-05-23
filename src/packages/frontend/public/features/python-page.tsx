@@ -11,11 +11,7 @@ import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
-import {
-  BulletList,
-  featureAppPath as appPath,
-  LinkButton,
-} from "./page-components";
+import { featureAppPath as appPath, LinkButton } from "./page-components";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -243,146 +239,397 @@ function PythonProjectMock() {
   );
 }
 
-function WorkflowStrip() {
-  const steps = [
-    ["Explore", "Start in a notebook with data, plots, and quick checks."],
-    ["Factor", "Move stable code into scripts, modules, and tests."],
-    ["Run", "Use terminals for packages, jobs, Git, and automation."],
-    ["Publish", "Bring results into LaTeX, markdown, reports, or classes."],
-  ];
+function WorkflowNode({
+  accent,
+  body,
+  icon,
+  label,
+  title,
+}: {
+  accent: string;
+  body: string;
+  icon: IconName;
+  label: string;
+  title: string;
+}) {
   return (
     <div
       style={{
-        background:
-          "linear-gradient(135deg, rgba(16,33,63,0.97), rgba(34,92,116,0.94))",
-        borderRadius: 28,
-        color: "#fff",
-        padding: 34,
-      }}
-    >
-      <Title level={3} style={{ color: "#fff", margin: "0 0 18px" }}>
-        From notebook to script to paper
-      </Title>
-      <Row gutter={[14, 14]}>
-        {steps.map(([title, body], index) => (
-          <Col key={title} xs={24} md={6}>
-            <div
-              style={{
-                background: "rgba(255,255,255,0.1)",
-                border: "1px solid rgba(255,255,255,0.16)",
-                borderRadius: 20,
-                height: "100%",
-                padding: 18,
-              }}
-            >
-              <Flex vertical gap={12}>
-                <span
-                  style={{
-                    alignItems: "center",
-                    background: COLORS.ANTD_YELL_M,
-                    borderRadius: 999,
-                    color: "#10213f",
-                    display: "inline-flex",
-                    fontWeight: 800,
-                    height: 28,
-                    justifyContent: "center",
-                    width: 28,
-                  }}
-                >
-                  {index + 1}
-                </span>
-                <Text strong style={{ color: "#fff", fontSize: 16 }}>
-                  {title}
-                </Text>
-                <Paragraph
-                  style={{ color: "rgba(255,255,255,0.76)", margin: 0 }}
-                >
-                  {body}
-                </Paragraph>
-              </Flex>
-            </div>
-          </Col>
-        ))}
-      </Row>
-    </div>
-  );
-}
-
-function EnvironmentDiagram() {
-  const layers = [
-    {
-      body: "Use the normal Python tools people already know.",
-      icon: "python",
-      title: "pip, uv, conda, venv",
-    },
-    {
-      body: "Install native libraries, compilers, and system packages.",
-      icon: "linux",
-      title: "Ubuntu with sudo",
-    },
-    {
-      body: "Share exact setup across a class, team, or future project.",
-      icon: "history",
-      title: "Snapshots and RootFS",
-    },
-  ] satisfies { body: string; icon: IconName; title: string }[];
-  return (
-    <div
-      style={{
-        background:
-          "linear-gradient(145deg, #fff 0%, #f6fbff 55%, #fff8e8 100%)",
+        background: "#fff",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 26,
-        boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
-        padding: 24,
+        borderRadius: 18,
+        boxShadow: "0 12px 34px rgba(33, 49, 57, 0.07)",
+        height: "100%",
+        padding: 18,
       }}
     >
-      <Flex vertical gap={14}>
-        {layers.map((layer, index) => (
-          <Flex
-            align="center"
-            gap={14}
-            key={layer.title}
+      <Flex vertical gap={12}>
+        <Flex align="center" justify="space-between" gap={12}>
+          <IconBadge accent={accent} icon={icon} />
+          <Tag
             style={{
-              background: "#fff",
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 18,
-              padding: 16,
+              background: `${accent}12`,
+              borderColor: `${accent}2e`,
+              color: accent,
+              marginInlineEnd: 0,
             }}
           >
-            <span
-              style={{
-                alignItems: "center",
-                background: index === 1 ? COLORS.ANTD_BG_BLUE_L : "#fff8e8",
-                borderRadius: 999,
-                color: index === 1 ? COLORS.BLUE_D : "#ad6800",
-                display: "inline-flex",
-                flex: "0 0 auto",
-                fontWeight: 800,
-                height: 30,
-                justifyContent: "center",
-                width: 30,
-              }}
-            >
-              {index + 1}
-            </span>
-            <IconBadge
-              accent={
-                index === 1 ? "#096dd9" : index === 0 ? "#278c83" : "#ad6800"
-              }
-              icon={layer.icon}
-            />
-            <div>
-              <Text strong>{layer.title}</Text>
-              <div style={{ color: PUBLIC_COLORS.mutedText }}>{layer.body}</div>
-            </div>
-          </Flex>
-        ))}
+            {label}
+          </Tag>
+        </Flex>
+        <div>
+          <Title level={4} style={{ margin: "0 0 6px" }}>
+            {title}
+          </Title>
+          <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
+            {body}
+          </Paragraph>
+        </div>
       </Flex>
     </div>
   );
 }
 
+function MiniTerminal() {
+  return (
+    <div
+      style={{
+        background: "#0b1522",
+        borderRadius: 18,
+        color: "#dbeafe",
+        height: "100%",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          alignItems: "center",
+          background: "rgba(255,255,255,0.08)",
+          display: "flex",
+          gap: 8,
+          padding: "10px 12px",
+        }}
+      >
+        {["#ff6b6b", "#ffd166", "#06d6a0"].map((color) => (
+          <span
+            aria-hidden="true"
+            key={color}
+            style={{
+              background: color,
+              borderRadius: "50%",
+              height: 9,
+              width: 9,
+            }}
+          />
+        ))}
+        <Text style={{ color: "#dbeafe", marginLeft: 6 }}>terminal</Text>
+      </div>
+      <Flex
+        vertical
+        gap={8}
+        style={{
+          fontFamily:
+            "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+          fontSize: 13,
+          padding: 14,
+        }}
+      >
+        <Text style={{ color: "#bfdbfe" }}>$ uv pip install pandas pytest</Text>
+        <Text style={{ color: "#86efac" }}>resolved 18 packages</Text>
+        <Text style={{ color: "#bfdbfe" }}>$ pytest && python model.py</Text>
+        <Text style={{ color: "#86efac" }}>3 passed, wrote figure.pdf</Text>
+      </Flex>
+    </div>
+  );
+}
+
+function PackageRail() {
+  return (
+    <div
+      style={{
+        background: "#fff",
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 18,
+        height: "100%",
+        padding: 16,
+      }}
+    >
+      <Flex vertical gap={14}>
+        <Flex align="center" gap={12}>
+          <IconBadge accent="#278c83" icon="linux" />
+          <div>
+            <Text strong>Real Python on real Linux</Text>
+            <div style={{ color: PUBLIC_COLORS.mutedText }}>
+              use normal project tools
+            </div>
+          </div>
+        </Flex>
+        <Flex gap={8} wrap>
+          {["sudo", "apt", "uv", "pip", "conda", "venv", "RootFS"].map(
+            (label) => (
+              <Tag
+                key={label}
+                style={{
+                  background: COLORS.ANTD_BG_BLUE_L,
+                  borderColor: "#91caff",
+                  color: COLORS.BLUE_D,
+                  marginInlineEnd: 0,
+                }}
+              >
+                {label}
+              </Tag>
+            ),
+          )}
+        </Flex>
+      </Flex>
+    </div>
+  );
+}
+
+function CodexPanel() {
+  return (
+    <div
+      style={{
+        background: "#fff",
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 18,
+        height: "100%",
+        padding: 16,
+      }}
+    >
+      <Flex vertical gap={12}>
+        <Flex align="center" gap={12}>
+          <IconBadge accent="#7c3aed" icon="robot" />
+          <div>
+            <Text strong>Codex at the boundaries</Text>
+            <div style={{ color: PUBLIC_COLORS.mutedText }}>
+              files + notebooks + terminals
+            </div>
+          </div>
+        </Flex>
+        <div
+          style={{
+            background: "#f7f9fc",
+            border: `1px solid ${PUBLIC_COLORS.border}`,
+            borderRadius: 14,
+            padding: 12,
+          }}
+        >
+          <Text style={{ color: PUBLIC_COLORS.mutedText }}>
+            Diagnose the import error, pin the dependency, move notebook code
+            into <code>model.py</code>, and update the paper figure.
+          </Text>
+        </div>
+      </Flex>
+    </div>
+  );
+}
+
+function PythonWorkflowMap() {
+  const top = [
+    {
+      accent: "#2f6fda",
+      body: "Explore data, plots, widgets, and rough ideas in the live notebook.",
+      icon: "jupyter",
+      label: "analysis.ipynb",
+      title: "Notebook",
+    },
+    {
+      accent: "#278c83",
+      body: "Move stable code into modules, scripts, tests, and reusable functions.",
+      icon: "python",
+      label: "model.py",
+      title: "Script",
+    },
+    {
+      accent: "#ad6800",
+      body: "Use generated figures, tables, and checked results in writing.",
+      icon: "tex",
+      label: "paper.tex",
+      title: "Paper",
+    },
+  ] satisfies {
+    accent: string;
+    body: string;
+    icon: IconName;
+    label: string;
+    title: string;
+  }[];
+
+  return (
+    <PublicSection>
+      <Flex vertical gap={22}>
+        <Flex align="end" justify="space-between" wrap gap={16}>
+          <div>
+            <Tag color="gold" style={{ marginBottom: 12 }}>
+              Workflow map
+            </Tag>
+            <Title level={3} style={{ margin: 0 }}>
+              From notebook to script to paper
+            </Title>
+          </div>
+          <Paragraph
+            style={{
+              color: PUBLIC_COLORS.mutedText,
+              margin: 0,
+              maxWidth: 520,
+            }}
+          >
+            The point is not one perfect Python interface. It is one project
+            where the right interface is available at each stage.
+          </Paragraph>
+        </Flex>
+
+        <div
+          style={{
+            background:
+              "linear-gradient(145deg, #ffffff 0%, #f5fbff 58%, #fff8e8 100%)",
+            border: `1px solid ${PUBLIC_COLORS.border}`,
+            borderRadius: 28,
+            boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
+            padding: 22,
+          }}
+        >
+          <Flex vertical gap={16}>
+            <Row gutter={[14, 14]} align="stretch">
+              {top.map((node, index) => (
+                <Col key={node.title} xs={24} lg={8}>
+                  <Flex align="center" gap={12} style={{ height: "100%" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <WorkflowNode {...node} />
+                    </div>
+                    {index < top.length - 1 ? (
+                      <Icon
+                        name="arrow-right"
+                        style={{
+                          color: "#d29c3c",
+                          display: "block",
+                          flex: "0 0 auto",
+                          fontSize: 22,
+                        }}
+                      />
+                    ) : null}
+                  </Flex>
+                </Col>
+              ))}
+            </Row>
+
+            <div
+              aria-hidden="true"
+              style={{
+                background:
+                  "linear-gradient(90deg, transparent, rgba(42,143,130,0.55), transparent)",
+                height: 2,
+              }}
+            />
+
+            <Row gutter={[14, 14]} align="stretch">
+              <Col xs={24} lg={8}>
+                <MiniTerminal />
+              </Col>
+              <Col xs={24} lg={8}>
+                <PackageRail />
+              </Col>
+              <Col xs={24} lg={8}>
+                <CodexPanel />
+              </Col>
+            </Row>
+          </Flex>
+        </div>
+      </Flex>
+    </PublicSection>
+  );
+}
+
+function CompactUseCard({
+  accent,
+  body,
+  icon,
+  title,
+}: {
+  accent: string;
+  body: ReactNode;
+  icon: IconName;
+  title: string;
+}) {
+  return (
+    <div
+      style={{
+        background: "#fff",
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 20,
+        height: "100%",
+        padding: 20,
+      }}
+    >
+      <Flex vertical gap={12}>
+        <IconBadge accent={accent} icon={icon} />
+        <Title level={4} style={{ margin: 0 }}>
+          {title}
+        </Title>
+        <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
+          {body}
+        </Paragraph>
+      </Flex>
+    </div>
+  );
+}
+
+function PythonUseCases() {
+  return (
+    <PublicSection>
+      <Flex vertical gap={18}>
+        <div>
+          <Title level={3} style={{ margin: 0 }}>
+            Where this workflow pays off
+          </Title>
+          <Paragraph
+            style={{
+              color: PUBLIC_COLORS.mutedText,
+              margin: "8px 0 0",
+              maxWidth: "72ch",
+            }}
+          >
+            The same project can be exploratory, reproducible, teachable, and
+            publishable without copying work between disconnected tools.
+          </Paragraph>
+        </div>
+        <Row gutter={[14, 14]}>
+          <Col xs={24} lg={8}>
+            <CompactUseCard
+              accent="#389e0d"
+              icon="graduation-cap"
+              title="Teaching and teams"
+              body="RootFS images, shared notebooks, side chat, TimeTravel, and snapshots help everyone use the same Python stack."
+            />
+          </Col>
+          <Col xs={24} lg={8}>
+            <CompactUseCard
+              accent="#2f6fda"
+              icon="terminal"
+              title="Package-heavy work"
+              body={
+                <>
+                  Use <code>sudo</code>, <code>apt</code>, <code>uv</code>,{" "}
+                  <code>pip</code>, <code>conda</code>, and virtual environments
+                  where the code actually runs.
+                </>
+              }
+            />
+          </Col>
+          <Col xs={24} lg={8}>
+            <CompactUseCard
+              accent="#ad6800"
+              icon="tex"
+              title="Papers and reports"
+              body="Keep the notebook, script, generated figure, terminal setup, and LaTeX or markdown explanation in one shared workspace."
+            />
+          </Col>
+        </Row>
+      </Flex>
+    </PublicSection>
+  );
+}
 export default function PythonFeaturePage({
   helpEmail,
   isAuthenticated,
@@ -418,13 +665,13 @@ export default function PythonFeaturePage({
                 Python that moves from notebook to script to paper.
               </Title>
               <Paragraph style={{ fontSize: 18, margin: 0 }}>
-                CoCalc is not just a browser notebook. It is a real Linux
-                project where Python can live in Jupyter notebooks,{" "}
+                CoCalc is not only a browser notebook, it is a full Linux
+                environment where Python lives in Jupyter notebooks,{" "}
                 <code>.py</code> files, terminals, LaTeX workflows, package
                 environments, courses, and Codex conversations at the same time.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                That matters when exploratory work becomes reusable code, when a
+                That helps when exploratory work becomes reusable code, when a
                 figure must land in a paper, or when a class needs everyone to
                 share the same working Python stack.
               </Paragraph>
@@ -470,143 +717,9 @@ export default function PythonFeaturePage({
         </Col>
       </Row>
 
-      <WorkflowStrip />
+      <PythonWorkflowMap />
 
-      <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={11}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                Real Python on real Linux
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                CoCalc Python runs in a full project Linux environment. Use
-                system packages, native libraries, virtual environments,
-                multiple Python versions, and the same package managers you
-                would use on a server or workstation.
-              </Paragraph>
-              <BulletList
-                items={[
-                  <>
-                    Install Python packages with <code>pip</code>,{" "}
-                    <code>uv</code>, <code>conda</code>, or project-specific
-                    tools.
-                  </>,
-                  <>
-                    Use <code>sudo apt-get install</code> for native libraries,
-                    compilers, and command-line dependencies.
-                  </>,
-                  "Use snapshots and reusable RootFS images when an environment should be shared or recovered.",
-                ]}
-              />
-            </Flex>
-          </Col>
-          <Col xs={24} lg={13}>
-            <EnvironmentDiagram />
-          </Col>
-        </Row>
-      </PublicSection>
-
-      <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={13}>
-            <div
-              style={{
-                background: "#fff",
-                border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 26,
-                boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
-                padding: 24,
-              }}
-            >
-              <pre
-                style={{
-                  background: "#0b1522",
-                  borderRadius: 18,
-                  color: "#dbeafe",
-                  margin: 0,
-                  overflowX: "auto",
-                  padding: 18,
-                }}
-              >
-                <code>{`uv venv
-uv pip install pandas matplotlib pytest
-python model.py
-pytest
-
-# use the result in a paper or notebook
-ls figures/model-fit.pdf`}</code>
-              </pre>
-            </div>
-          </Col>
-          <Col xs={24} lg={11}>
-            <Flex vertical gap={12}>
-              <Title level={3} style={{ margin: 0 }}>
-                Codex can help at the environment boundary
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                Python errors often cross boundaries: a missing system library,
-                a stale virtual environment, a notebook state problem, a test
-                failure, or a figure path that does not match the paper. Codex
-                can inspect the project files and terminal output together.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                Ask it to diagnose an import error, create a virtual
-                environment, pin dependencies, move notebook code into a module,
-                write tests, or make a setup note that another collaborator can
-                follow.
-              </Paragraph>
-            </Flex>
-          </Col>
-        </Row>
-      </PublicSection>
-
-      <Row gutter={[16, 16]}>
-        <Col xs={24} xl={12}>
-          <PublicSection>
-            <Title level={3} style={{ margin: 0 }}>
-              Python for teaching and teams
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              In a course or research group, the hard part is rarely "can Python
-              run?" The hard part is making sure everyone has the same packages,
-              data, notebooks, scripts, and help context.
-            </Paragraph>
-            <BulletList
-              items={[
-                "Use RootFS images to give a class or team a known-good Python stack.",
-                "Collaborate in the same notebook, script, terminal, and side chat.",
-                "Use TimeTravel and snapshots when experiments or assignments go sideways.",
-              ]}
-            />
-            <Button href={appPath("features/teaching")}>
-              Teaching workflows
-            </Button>
-          </PublicSection>
-        </Col>
-        <Col xs={24} xl={12}>
-          <PublicSection>
-            <Title level={3} style={{ margin: 0 }}>
-              Python belongs in documents too
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              A project can contain the notebook that found the result, the
-              script that reproduces it, the terminal commands that installed
-              dependencies, and the LaTeX or markdown document that explains it.
-            </Paragraph>
-            <BulletList
-              items={[
-                "Generate figures and tables where the paper can use them.",
-                "Use PythonTeX-style workflows when the project is configured for them.",
-                "Keep computation, code review, and writing in one shared workspace.",
-              ]}
-            />
-            <Button href={appPath("features/latex-editor")}>
-              LaTeX workflows
-            </Button>
-          </PublicSection>
-        </Col>
-      </Row>
+      <PythonUseCases />
 
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
