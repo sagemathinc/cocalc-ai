@@ -7,6 +7,7 @@ import { type ReactNode, useEffect, useState } from "react";
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
+import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { getFeaturePage } from "@cocalc/frontend/public/features/catalog";
 import {
@@ -365,25 +366,40 @@ function DifferenceSection() {
   const items = [
     {
       body: "Run cells, commands, terminals, and agent turns without tying the useful state to one browser tab.",
+      icon: "history",
       kicker: "State survives",
       title: "Durable execution",
     },
     {
       body: "Use sudo, apt, Python packages, RootFS images, SSH, and project snapshots instead of pretending technical work has no environment.",
+      icon: "linux",
       kicker: "Real environment",
       title: "Real Linux projects",
     },
     {
       body: "Chat, notebooks, terminals, files, whiteboards, git review, and support workflows are designed for more than one person.",
+      icon: "users",
       kicker: "Shared by default",
       title: "Realtime collaboration",
     },
     {
       body: "Snapshots, backups, TimeTravel, project movement, and RootFS versions make project state recoverable and reusable.",
+      icon: "disk-snapshot",
       kicker: "Recoverable work",
       title: "Operational safety",
     },
-  ];
+  ] satisfies {
+    body: string;
+    icon: IconName;
+    kicker: string;
+    title: string;
+  }[];
+  const evidence = [
+    { icon: "ipynb", label: "Notebook output" },
+    { icon: "folder-open", label: "Linux filesystem" },
+    { icon: "users", label: "Team activity" },
+    { icon: "disk-snapshot", label: "Snapshots and backups" },
+  ] satisfies { icon: IconName; label: string }[];
   return (
     <section
       style={{
@@ -424,32 +440,24 @@ function DifferenceSection() {
               }}
             >
               <Flex vertical gap={14}>
-                {[
-                  "Notebook output",
-                  "Linux filesystem",
-                  "Team activity",
-                  "Snapshots and backups",
-                ].map((label, index) => (
-                  <Flex align="center" gap={12} key={label}>
+                {evidence.map((item) => (
+                  <Flex align="center" gap={12} key={item.label}>
                     <div
                       style={{
                         alignItems: "center",
-                        background:
-                          index === 0 ? PUBLIC_COLORS.brand : "#eef5ff",
+                        background: "#eef5ff",
                         borderRadius: 999,
-                        color: index === 0 ? "#fff" : PUBLIC_COLORS.brand,
+                        color: PUBLIC_COLORS.brand,
                         display: "flex",
                         flex: "0 0 32px",
-                        fontSize: 13,
-                        fontWeight: 700,
                         height: 32,
                         justifyContent: "center",
                         width: 32,
                       }}
                     >
-                      {index + 1}
+                      <Icon name={item.icon} />
                     </div>
-                    <Text strong>{label}</Text>
+                    <Text strong>{item.label}</Text>
                   </Flex>
                 ))}
               </Flex>
@@ -474,10 +482,44 @@ function DifferenceSection() {
                   boxShadow: "0 18px 44px rgba(33, 49, 57, 0.08)",
                   minHeight: 190,
                   padding: 24,
-                  transform:
-                    index === 1 || index === 2 ? "translateY(18px)" : undefined,
                 }}
               >
+                <Flex align="center" justify="space-between">
+                  <div
+                    style={{
+                      alignItems: "center",
+                      background: "#eef5ff",
+                      border: `1px solid ${PUBLIC_COLORS.border}`,
+                      borderRadius: 16,
+                      color: PUBLIC_COLORS.brand,
+                      display: "flex",
+                      fontSize: 24,
+                      height: 52,
+                      justifyContent: "center",
+                      width: 52,
+                    }}
+                  >
+                    <Icon name={item.icon} />
+                  </div>
+                  {index < items.length - 1 && (
+                    <div
+                      aria-hidden="true"
+                      style={{
+                        alignItems: "center",
+                        background: "#fff7e6",
+                        border: "1px solid #ffd591",
+                        borderRadius: 999,
+                        color: "#ad6800",
+                        display: "flex",
+                        height: 34,
+                        justifyContent: "center",
+                        width: 34,
+                      }}
+                    >
+                      <Icon name={index === 1 ? "arrow-down" : "arrow-right"} />
+                    </div>
+                  )}
+                </Flex>
                 <Text
                   strong
                   style={{
@@ -486,6 +528,7 @@ function DifferenceSection() {
                     fontSize: 13,
                     letterSpacing: 0,
                     marginBottom: 12,
+                    marginTop: 18,
                     textTransform: "uppercase",
                   }}
                 >
