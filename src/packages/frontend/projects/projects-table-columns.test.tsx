@@ -99,4 +99,31 @@ describe("getProjectTableColumns", () => {
     render(<>{titleColumn.render(null, scheduledRecord)}</>);
     expect(screen.getByText("Scheduled for deletion")).toBeTruthy();
   });
+
+  it("shows failed deletes as retryable with the backend error", () => {
+    const columns = getProjectTableColumns(
+      jest.fn(),
+      () => null,
+      jest.fn(),
+      { columnKey: "last_edited", order: "descend" },
+      jest.fn(),
+      [],
+      [],
+      false,
+      null,
+      intl,
+    );
+
+    const titleColumn = columns.find((column) => column.key === "title") as any;
+    const failedRecord = record({
+      deleteFailed: true,
+      deletionBlocked: true,
+      deleteError: "project not found",
+    });
+
+    render(<>{titleColumn.render(null, failedRecord)}</>);
+
+    expect(screen.getByText("Deletion failed - retry delete")).toBeTruthy();
+    expect(screen.getByText("Error: project not found")).toBeTruthy();
+  });
 });

@@ -86,13 +86,12 @@ No known P0 release blockers remain in this tracker.
 These are important for first impression and support load. Fix as many as
 possible after P0s are under control.
 
-| Item                                                          | Area                 | Risk                          | First investigation                                                                                    |
-| ------------------------------------------------------------- | -------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Disk usage reload says "Updated just now" without recomputing | storage UI / quota   | Misleading quota data         | Separate "refresh cached state" from "recompute usage"; show recompute pending/running/completed time. |
-| Backup time in storage overview appears random                | backups / storage UI | Users cannot trust backups    | Confirm latest backup source field; ensure overview and tooltip use same authoritative timestamp.      |
-| Bulk delete hits queued/running project delete limit          | projects / workers   | User cannot clean up projects | Serialize user bulk delete one-at-a-time or raise limit with backpressure; show progress.              |
-| Delete files modal breaks with many files                     | file UI              | Simple operation looks broken | Use scrollable file list and concise summary after first N files.                                      |
-| Community support page stale                                  | support / content    | Launch support confusion      | Remove dead Discord/Google Group/GitHub Discussions references; verify Zendesk path.                   |
+| Item                                                 | Area                 | Risk                          | First investigation                                                                               |
+| ---------------------------------------------------- | -------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------- |
+| Backup time in storage overview appears random       | backups / storage UI | Users cannot trust backups    | Confirm latest backup source field; ensure overview and tooltip use same authoritative timestamp. |
+| Bulk delete hits queued/running project delete limit | projects / workers   | User cannot clean up projects | Serialize user bulk delete one-at-a-time or raise limit with backpressure; show progress.         |
+| Delete files modal breaks with many files            | file UI              | Simple operation looks broken | Use scrollable file list and concise summary after first N files.                                 |
+| Community support page stale                         | support / content    | Launch support confusion      | Remove dead Discord/Google Group/GitHub Discussions references; verify Zendesk path.              |
 
 ### P2: Important But Can Ship With Known Notes
 
@@ -237,7 +236,6 @@ Primary files/packages to inspect:
 
 Scope:
 
-- Disk usage reload lie.
 - Backup timestamp randomness.
 - Project runtime quotas at start/restart.
 - Bulk project delete queue limit.
@@ -246,7 +244,8 @@ Scope:
 
 Acceptance:
 
-- Disk usage UI distinguishes cached values from recompute jobs.
+- Disk usage UI distinguishes cached values from recompute jobs. **Done
+  2026-05-23.**
 - Backup overview and host health use the same authoritative latest backup
   timestamp. **Done 2026-05-22** by fixing scheduled backup reporting at the
   source instead of papering over stale `projects.last_backup` in the UI.
@@ -298,19 +297,18 @@ Acceptance:
    2026-05-21.**
 7. Fix the Codex live-log dropped-output rendering bug or add instrumentation
    that proves where output is filtered.
-8. Fix disk usage reload wording or recompute semantics.
+8. Fix disk usage reload wording or recompute semantics. **Done
+   2026-05-23.**
 
 ## Next Release Picks
 
-Recommended next work order as of 2026-05-22:
+Recommended next work order as of 2026-05-23:
 
-1. **Disk usage reload says "Updated just now" without recomputing.** This is a
-   bounded honesty bug and likely quick: separate cached-refresh from actual
-   recompute and label timestamps by what really happened.
+1. Finish bulk project delete progress/status polish so multi-project cleanup
+   remains understandable after the confirmation modal closes.
 
 Good fallback tasks if the above stalls:
 
-- Fix the disk usage reload lie, since it is contained and high-confidence.
 - Hide or replace the stale community support page before public traffic.
 - Investigate the tiny chat "Loading" forever state if it recurs during
   backend upgrade dogfood; it may share enough with the SyncDoc reconnect work
@@ -365,10 +363,10 @@ For each blocker:
 - Agent view thread menu. **Done 2026-05-22.**
 - Backup timestamp source. **Done 2026-05-22.**
 - Bulk delete behavior. **Done 2026-05-22.**
+- Disk usage reload/recompute. **Done 2026-05-23.**
 
 ### Batch 4: Storage And Quota Honesty
 
-- Disk usage reload/recompute.
 - Runtime quotas on start/restart.
 - Delete modal overflow.
 

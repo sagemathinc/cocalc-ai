@@ -130,9 +130,7 @@ export function ProjectsTable({
           : rawState;
       const stateName = `${state?.get?.("state") ?? ""}`;
       const deletionScheduled =
-        scheduledDeleteProjectIdSet.has(project_id) &&
-        stateName !== "deleting" &&
-        stateName !== "delete_failed";
+        scheduledDeleteProjectIdSet.has(project_id) && stateName !== "deleting";
       return {
         project_id,
         starred: isProjectBookmarked(project_id),
@@ -149,6 +147,7 @@ export function ProjectsTable({
         deleting: stateName === "deleting",
         deletionScheduled,
         deleteFailed: stateName === "delete_failed",
+        deleteError: state?.get?.("hard_delete_error"),
         deletionBlocked:
           deletionScheduled ||
           stateName === "deleting" ||
@@ -295,7 +294,7 @@ export function ProjectsTable({
         onChange: (keys) =>
           onSelectedProjectIdsChange(keys.map((key) => `${key}`)),
         getCheckboxProps: (record) => ({
-          disabled: record.deletionBlocked,
+          disabled: record.deleting || record.deletionScheduled,
         }),
       }}
       pagination={false}
