@@ -34,6 +34,8 @@ type PublicInfoPageKey =
 
 export type PublicTopNavActiveKey = PublicInfoPageKey | "auth";
 
+type PublicTopNavItemKey = PublicInfoPageKey | "field-guides" | "projects";
+
 function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
 }
@@ -109,9 +111,9 @@ export default function PublicTopNav({
   const logoSquare = getLogoSquare(config);
   const showPolicies = arePublicPoliciesVisible(config);
   const siteName = getSiteName(config);
-  const items: Array<{
+  const publicInfoItems: Array<{
     href: string;
-    key: PublicInfoPageKey | "field-guides";
+    key: PublicTopNavItemKey;
     label: string;
     rel?: string;
     target?: string;
@@ -130,18 +132,35 @@ export default function PublicTopNav({
     { href: appPath("about"), key: "about", label: "About" },
   ];
   if (showPolicies) {
-    items.push({
+    publicInfoItems.push({
       href: appPath("policies"),
       key: "policies",
       label: "Policies",
     });
   }
-  items.push({
+  publicInfoItems.push({
     href: appPath("support"),
     key: "support",
     label: "Support",
   });
-  const menuItems: MenuProps["items"] = items.map((item) => ({
+  const signedInItems: typeof publicInfoItems = [
+    { href: appPath("projects"), key: "projects", label: "Projects" },
+    { href: appPath("features"), key: "features", label: "Features" },
+    {
+      href: FIELD_GUIDES_URL,
+      key: "field-guides",
+      label: "Field guides",
+      rel: "noreferrer",
+      target: "_blank",
+    },
+    { href: appPath("support"), key: "support", label: "Support" },
+  ];
+  const items = isAuthenticated ? signedInItems : publicInfoItems;
+  const visibleMenuItems =
+    isCompact && isAuthenticated
+      ? items.filter((item) => item.key !== "projects")
+      : items;
+  const menuItems: MenuProps["items"] = visibleMenuItems.map((item) => ({
     key: item.key,
     label: (
       <a href={item.href} rel={item.rel} target={item.target}>
@@ -151,15 +170,7 @@ export default function PublicTopNav({
   }));
   const selectedKeys =
     active != null && active !== "auth" && active !== "home" ? [active] : [];
-  const authActions = isAuthenticated ? (
-    <Button
-      href={appPath("projects")}
-      size={isCompact ? "small" : "middle"}
-      type="primary"
-    >
-      Projects
-    </Button>
-  ) : (
+  const authActions = isAuthenticated ? null : (
     <>
       <Button
         href={appPath("auth/sign-in")}
@@ -187,7 +198,15 @@ export default function PublicTopNav({
           logoSquare={logoSquare}
           siteName={siteName}
         />
-        <Space>{authActions}</Space>
+        <Space>
+          {isAuthenticated ? (
+            <Button href={appPath("projects")} size="small" type="primary">
+              Projects
+            </Button>
+          ) : (
+            authActions
+          )}
+        </Space>
         <Button
           aria-label="Open navigation menu"
           aria-haspopup="menu"
