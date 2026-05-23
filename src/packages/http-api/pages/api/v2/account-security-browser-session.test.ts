@@ -9,6 +9,7 @@ import { createMocks } from "@cocalc/http-api/lib/api/test-framework";
 
 const mockGetAccountId = jest.fn();
 const mockGetRememberMeHash = jest.fn();
+const mockRequireFreshAuth = jest.fn();
 const mockAssertNoImpersonation = jest.fn();
 const mockDeleteAccount = jest.fn();
 const mockClearAuthCookies = jest.fn();
@@ -22,6 +23,10 @@ jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
 
 jest.mock("@cocalc/server/auth/remember-me", () => ({
   getRememberMeHash: (...args: any[]) => mockGetRememberMeHash(...args),
+}));
+
+jest.mock("@cocalc/server/auth/auth-sessions", () => ({
+  requireFreshAuth: (...args: any[]) => mockRequireFreshAuth(...args),
 }));
 
 jest.mock("@cocalc/server/auth/impersonation", () => ({
@@ -53,6 +58,7 @@ describe("browser-session-only account security routes", () => {
   beforeEach(() => {
     mockGetAccountId.mockReset().mockResolvedValue("acct-1");
     mockGetRememberMeHash.mockReset().mockReturnValue("remember-me-hash");
+    mockRequireFreshAuth.mockReset().mockResolvedValue(undefined);
     mockAssertNoImpersonation.mockReset().mockResolvedValue(undefined);
     mockDeleteAccount.mockReset().mockResolvedValue(undefined);
     mockClearAuthCookies.mockReset().mockResolvedValue(undefined);
@@ -77,6 +83,20 @@ describe("browser-session-only account security routes", () => {
     expect(mockClearAuthCookies).not.toHaveBeenCalled();
   });
 
+  it("rejects account deletion without fresh auth", async () => {
+    mockRequireFreshAuth.mockRejectedValue(new Error("fresh auth is required"));
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } = await import("./accounts/delete");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "fresh auth is required",
+    });
+    expect(mockDeleteAccount).not.toHaveBeenCalled();
+    expect(mockClearAuthCookies).not.toHaveBeenCalled();
+  });
+
   it("allows browser-authenticated account deletion", async () => {
     const { req, res } = createMocks({ method: "POST" });
 
@@ -84,6 +104,10 @@ describe("browser-session-only account security routes", () => {
     await handler(req, res);
 
     expect(res._getJSONData()).toEqual({ status: "success" });
+    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
+      req,
+      account_id: "acct-1",
+    });
     expect(mockAssertNoImpersonation).toHaveBeenCalledWith({
       req,
       account_id: "acct-1",
@@ -109,6 +133,19 @@ describe("browser-session-only account security routes", () => {
     expect(mockUnlinkStrategy).not.toHaveBeenCalled();
   });
 
+  it("rejects SSO unlinking without fresh auth", async () => {
+    mockRequireFreshAuth.mockRejectedValue(new Error("fresh auth is required"));
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } = await import("./auth/unlink-strategy");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "fresh auth is required",
+    });
+    expect(mockUnlinkStrategy).not.toHaveBeenCalled();
+  });
+
   it("allows browser-authenticated SSO unlinking", async () => {
     const { req, res } = createMocks({ method: "POST" });
 
@@ -116,6 +153,10 @@ describe("browser-session-only account security routes", () => {
     await handler(req, res);
 
     expect(res._getJSONData()).toEqual({ status: "ok" });
+    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
+      req,
+      account_id: "acct-1",
+    });
     expect(mockAssertNoImpersonation).toHaveBeenCalledWith({
       req,
       account_id: "acct-1",

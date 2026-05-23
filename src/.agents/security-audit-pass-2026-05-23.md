@@ -499,8 +499,10 @@ interactive browser session for account security changes.
 
 Fix:
 
-- Account deletion now requires a browser remember-me session before deletion.
-- SSO unlinking now requires a browser remember-me session before unlinking.
+- Account deletion now requires a browser remember-me session and fresh auth
+  before deletion.
+- SSO unlinking now requires a browser remember-me session and fresh auth before
+  unlinking.
 - Both routes now also run the impersonation guard used by the other account
   security routes.
 
