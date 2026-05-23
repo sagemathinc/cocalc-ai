@@ -210,7 +210,6 @@ async function loadProjectForUpdate(
         runtime_sponsor_account_id::text AS runtime_sponsor_account_id
       FROM projects
       WHERE project_id=$1
-        AND deleted IS NOT TRUE
       FOR UPDATE
     `,
     [project_id],
@@ -459,7 +458,6 @@ async function loadProject(
         runtime_sponsor_account_id::text AS runtime_sponsor_account_id
       FROM projects
       WHERE project_id=$1
-        AND deleted IS NOT TRUE
       LIMIT 1
     `,
     [project_id],
