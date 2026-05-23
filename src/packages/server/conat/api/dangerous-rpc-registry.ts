@@ -693,12 +693,12 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "system.runBayRestore": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "materialized bay database restore",
   },
   "system.runBayRestoreTest": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "materialized bay restore test workspace",
   },
   "system.runRootfsReleaseGc": {
     decision: "fresh-auth-required",

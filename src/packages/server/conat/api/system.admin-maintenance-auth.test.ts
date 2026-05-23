@@ -169,4 +169,41 @@ describe("admin maintenance dangerous-session auth", () => {
       require_second_factor: true,
     });
   });
+
+  it("requires recent 2FA fresh auth before materialized bay restores", async () => {
+    const { runBayRestore } = await import("./system");
+
+    await expect(
+      runBayRestore({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        dry_run: false,
+      }),
+    ).rejects.toThrow("fresh auth is required");
+
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: undefined,
+      session_hash: "session-hash",
+      require_second_factor: true,
+    });
+  });
+
+  it("requires recent 2FA fresh auth before bay restore tests", async () => {
+    const { runBayRestoreTest } = await import("./system");
+
+    await expect(
+      runBayRestoreTest({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+      }),
+    ).rejects.toThrow("fresh auth is required");
+
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      session_hash: undefined,
+      require_second_factor: true,
+    });
+  });
 });

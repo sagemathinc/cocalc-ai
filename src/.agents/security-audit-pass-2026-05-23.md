@@ -243,6 +243,29 @@ Validation:
 - `packages/server`: `conat/api/system.admin-maintenance-auth.test.ts`
 - `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
 
+### Materialized bay restore operations lacked fresh auth
+
+`system.runBayRestore` can materialize a database restore when `dry_run=false`,
+and `system.runBayRestoreTest` materializes a fenced restore workspace for
+backup verification. Both operations can write substantial restored database
+state to disk, but previously only required ordinary admin authorization.
+
+Fix:
+
+- `runBayRestore` now requires recent second-factor-backed fresh auth when the
+  call is not a dry-run.
+- `runBayRestoreTest` now requires recent second-factor-backed fresh auth.
+- Dry-run restore planning and normal backup execution remain ordinary
+  admin-authorized operational reads/runs.
+- The dangerous RPC registry now classifies materialized bay restore RPCs as
+  fresh-auth-required.
+
+Validation:
+
+- `packages/server`: `conat/api/system.admin-maintenance-auth.test.ts`
+- `packages/server`: `conat/api/system.bay-load.test.ts`
+- `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
+
 ### False email verification markers could be treated as verified
 
 `getVerifiedEmailAddressesForAccount` normalized keys but then looked up values using the normalized key. It also had a fallback that could treat a non-null false marker as verified. This mattered because site-license claims rely on verified institutional email addresses.

@@ -1509,6 +1509,8 @@ export interface System {
 
   runBayRestore: (opts?: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     bay_id?: string;
     backup_set_id?: string;
     target_dir?: string;
@@ -1519,6 +1521,8 @@ export interface System {
 
   runBayRestoreTest: (opts?: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     bay_id?: string;
     backup_set_id?: string;
     target_dir?: string;

@@ -2030,6 +2030,8 @@ export async function runBayBackup({
 
 export async function runBayRestore({
   account_id,
+  browser_id,
+  session_hash,
   bay_id,
   backup_set_id,
   target_dir,
@@ -2038,6 +2040,8 @@ export async function runBayRestore({
   target_time,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   bay_id?: string;
   backup_set_id?: string;
   target_dir?: string;
@@ -2046,6 +2050,14 @@ export async function runBayRestore({
   target_time?: string;
 }): Promise<BayRestoreRunResult> {
   await assertAdmin(account_id);
+  if (dry_run !== true) {
+    await requireDangerousSessionAuth({
+      account_id,
+      browser_id,
+      session_hash,
+      require_second_factor: true,
+    });
+  }
   // This RPC is an admin convenience wrapper around bay restore while the hub
   // is already running. Each backup set also carries its own offline restore
   // helper so disaster recovery does not depend on the hub being alive first.
@@ -2061,6 +2073,8 @@ export async function runBayRestore({
 
 export async function runBayRestoreTest({
   account_id,
+  browser_id,
+  session_hash,
   bay_id,
   backup_set_id,
   target_dir,
@@ -2068,6 +2082,8 @@ export async function runBayRestoreTest({
   remote_only = false,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   bay_id?: string;
   backup_set_id?: string;
   target_dir?: string;
@@ -2075,6 +2091,12 @@ export async function runBayRestoreTest({
   remote_only?: boolean;
 }): Promise<BayRestoreTestRunResult> {
   await assertAdmin(account_id);
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
   return await runBayRestoreTest0({
     bay_id,
     backup_set_id,
