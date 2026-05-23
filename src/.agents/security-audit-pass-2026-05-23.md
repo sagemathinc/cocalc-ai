@@ -511,28 +511,31 @@ Validation:
 - `packages/http-api`: `pages/api/v2/account-security-browser-session.test.ts`
 - Full TypeScript build.
 
-### Legacy billing payment-method routes bypassed fresh auth
+### Legacy billing API namespace was obsolete
 
-The newer `/api/v2/purchases/stripe/*` payment-method mutation routes require
-fresh auth before creating, deleting, or changing payment methods. The older
-legacy billing routes still existed and only required `getAccountId(req)`:
+The newer `/api/v2/purchases/*` and `/api/v2/purchases/stripe/*` routes replaced
+the old `/api/v2/billing/*` namespace. The legacy billing namespace still
+exposed duplicate payment, subscription, customer, invoice, and receipt routes.
+The payment-method mutation routes were especially risky because they duplicated
+newer fresh-auth-protected Stripe endpoints:
 
 - `/api/v2/billing/create-payment-method`
 - `/api/v2/billing/delete-payment-method`
 
-Because `getAccountId(req)` accepts both browser sessions and API-key
-authorization, those legacy endpoints were weaker than the newer purchase
-surface for the same class of payment-method mutation.
+Other billing routes were either unused, had direct purchases replacements, or
+were only used by the current frontend for invoice and receipt lookup.
 
 Fix:
 
-- Both legacy billing payment-method mutation routes now call
-  `requireFreshAuth({ req, account_id, allow_actor_impersonation: true })`
-  before invoking the Stripe helper.
+- Removed the entire `/api/v2/billing/*` namespace.
+- Moved remaining invoice and receipt reads to `/api/v2/purchases/stripe/*`.
+- The replacement invoice/receipt helpers now verify the Stripe invoice or
+  legacy payment intent belongs to the signed-in account's Stripe customer.
+- Removed obsolete `@cocalc/server/billing/*` helpers.
 
 Validation:
 
-- `packages/http-api`: `pages/api/v2/billing-payment-method-fresh-auth.test.ts`
+- `packages/server`: `purchases/stripe/invoices.test.ts`
 - Full TypeScript build.
 
 ## Reviewed Surfaces
@@ -554,7 +557,7 @@ Validation:
 - API-key Conat subject policy for fs/watch-fs and project-host file-server
   subjects.
 - Legacy HTTP account-security routes that use `getAccountId(req)`.
-- Legacy billing payment-method mutation routes.
+- Legacy billing API namespace and active purchases replacements.
 
 ## Residual Follow-Up
 

@@ -262,13 +262,15 @@ export async function emailStatement(statement_id: number) {
 }
 
 export async function getInvoice(invoice_id: string) {
-  return await api("billing/get-invoice", { invoice_id });
+  return await api("purchases/stripe/get-invoice", { invoice_id });
 }
 
 export async function getInvoiceUrl(
   invoice_id: string,
 ): Promise<string | null> {
-  const { url } = await api("billing/get-invoice-url", { invoice_id });
+  const { url } = await api("purchases/stripe/get-invoice-url", {
+    invoice_id,
+  });
   return url ?? null;
 }
 
@@ -281,7 +283,7 @@ export async function getCostPerDay(opts: { limit?: number; offset?: number }) {
 
 // Get all the stripe information about a given user.
 export async function getCustomer() {
-  return await api("billing/get-customer");
+  return await api("purchases/stripe/get-customer");
 }
 
 // Get this month's outstanding charges by service.
