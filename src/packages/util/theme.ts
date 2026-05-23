@@ -34,6 +34,7 @@ export const DOMAIN_URL = `https://${DNS}`;
 export const DISCUSSION_GROUP =
   "https://groups.google.com/forum/#!forum/cocalc";
 export const DOC_URL = "https://doc.cocalc.com/";
+export const FIELD_GUIDES_URL = "https://sagemathinc.github.io/cocalc-guides/";
 export const BLOG_URL = "https://blog.sagemath.com/";
 export const LIVE_DEMO_REQUEST =
   "https://docs.google.com/forms/d/e/1FAIpQLSesDZkGD2XVu8BHKd_sPwn5g7MrLAA8EYRTpB6daedGVMTpkA/viewform";

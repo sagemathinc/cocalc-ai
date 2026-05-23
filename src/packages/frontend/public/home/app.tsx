@@ -17,7 +17,7 @@ import {
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { SITE_NAME } from "@cocalc/util/theme";
+import { FIELD_GUIDES_URL, SITE_NAME } from "@cocalc/util/theme";
 import { slugURL } from "@cocalc/util/news";
 import type { NewsItem } from "@cocalc/util/types/news";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -868,6 +868,9 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
             </Text>
             <Flex gap={10} wrap>
               <Button href={appPath("products")}>Compare products</Button>
+              <Button href={FIELD_GUIDES_URL} rel="noreferrer" target="_blank">
+                Field guides
+              </Button>
               <Button href={appPath("support")}>Support</Button>
             </Flex>
           </Flex>

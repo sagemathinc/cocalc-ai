@@ -101,6 +101,7 @@ describe("PublicTopNav", () => {
         .map((item) => item.textContent),
     ).toEqual([
       "Features",
+      "Field guides",
       "Products",
       "Pricing",
       "News",
@@ -234,6 +235,7 @@ describe("PublicTopNav", () => {
         .map((item) => item.textContent),
     ).toEqual([
       "Features",
+      "Field guides",
       "Products",
       "Pricing",
       "News",
