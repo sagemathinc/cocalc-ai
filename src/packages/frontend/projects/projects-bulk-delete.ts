@@ -67,14 +67,7 @@ export async function runLeaveOrDeleteProjectsSequentially({
       projectResults = await submitProject(project_id);
     } catch (err) {
       if (isFreshAuthRequiredError(err)) {
-        results.push({
-          project_id,
-          action: "error",
-          error:
-            "Fresh authentication expired before this project was processed. Confirm again to continue with the remaining selected projects.",
-        });
-        stopped = true;
-        break;
+        throw err;
       }
       results.push({
         project_id,
@@ -110,14 +103,14 @@ export async function runLeaveOrDeleteProjectsSequentially({
         await waitForQueuedDelete({ project_id, op_id: result.op_id });
         results.push(result);
       } catch (err) {
-        const freshAuthExpired = isFreshAuthRequiredError(err);
+        if (isFreshAuthRequiredError(err)) {
+          throw err;
+        }
         results.push({
           project_id,
           action: "error",
           op_id: result.op_id,
-          error: freshAuthExpired
-            ? "Fresh authentication expired while waiting for this delete to finish. Confirm again to continue with the remaining selected projects."
-            : `${err}`,
+          error: `${err}`,
         });
         stopped = true;
         break;
