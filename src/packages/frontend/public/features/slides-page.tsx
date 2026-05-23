@@ -5,146 +5,282 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
+import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
+import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
-import {
-  BulletList,
-  FeatureImage,
-  featureAppPath as appPath,
-} from "./page-components";
+import { BulletList, featureAppPath as appPath } from "./page-components";
+import { IconBadge, StartCard, StoryCard } from "./feature-visuals";
 
-const { Paragraph, Title } = Typography;
+const { Paragraph, Text, Title } = Typography;
+
+function SlideDeckMock() {
+  const slides = [
+    ["1", "Problem", "markdown + math"],
+    ["2", "Computation", "Jupyter cell"],
+    ["3", "Result", "plot + explanation"],
+    ["4", "Discussion", "questions"],
+  ];
+
+  return (
+    <div
+      aria-label="Illustration of CoCalc slides as slide-sized whiteboard pages"
+      style={{
+        background:
+          "linear-gradient(145deg, #ffffff 0%, #f7fbff 56%, #fff8e8 100%)",
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 28,
+        boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
+        padding: 20,
+      }}
+    >
+      <Flex vertical gap={16}>
+        <Flex align="center" justify="space-between" wrap gap={10}>
+          <Flex align="center" gap={10}>
+            <IconBadge accent="#d46b08" icon="slides" />
+            <div>
+              <Text strong>talk.slides</Text>
+              <div style={{ color: PUBLIC_COLORS.mutedText }}>
+                a sequence of slide-sized whiteboards
+              </div>
+            </div>
+          </Flex>
+          <Tag color="gold" style={{ marginInlineEnd: 0 }}>
+            presets
+          </Tag>
+        </Flex>
+
+        <Row gutter={[12, 12]}>
+          {slides.map(([number, title, body]) => (
+            <Col key={number} xs={24} sm={12}>
+              <div
+                style={{
+                  aspectRatio: "16 / 9",
+                  background: "#fff",
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: 18,
+                  boxShadow: "0 12px 30px rgba(33, 49, 57, 0.08)",
+                  padding: 14,
+                }}
+              >
+                <Flex
+                  vertical
+                  justify="space-between"
+                  style={{ height: "100%" }}
+                >
+                  <Flex justify="space-between" align="center">
+                    <Text strong>{title}</Text>
+                    <Text style={{ color: "#d46b08" }} strong>
+                      {number}
+                    </Text>
+                  </Flex>
+                  <div
+                    style={{
+                      background: "#fff7e6",
+                      border: "1px solid #ffd591",
+                      borderRadius: 14,
+                      padding: 12,
+                    }}
+                  >
+                    <Text>{body}</Text>
+                  </div>
+                </Flex>
+              </div>
+            </Col>
+          ))}
+        </Row>
+      </Flex>
+    </div>
+  );
+}
+
+function SlideFlow() {
+  const steps = [
+    ["layout", "Choose slide size"],
+    ["markdown", "Write the story"],
+    ["jupyter", "Add code or math"],
+    ["slides", "Present"],
+  ] satisfies [IconName, string][];
+
+  return (
+    <PublicSection>
+      <Flex vertical gap={18}>
+        <div>
+          <Tag
+            color="blue"
+            style={{
+              background: COLORS.ANTD_BG_BLUE_L,
+              color: COLORS.BLUE_D,
+              marginBottom: 12,
+            }}
+          >
+            Presentation workflow
+          </Tag>
+          <Title level={3} style={{ margin: 0 }}>
+            Slides are structured whiteboards.
+          </Title>
+          <Paragraph
+            style={{
+              color: PUBLIC_COLORS.mutedText,
+              margin: "8px 0 0",
+              maxWidth: "72ch",
+            }}
+          >
+            CoCalc slides use the same technical canvas ideas as whiteboards,
+            but organize them into a sequence of slide-sized pages with useful
+            presets for talks, lectures, and demos.
+          </Paragraph>
+        </div>
+        <div
+          style={{
+            background: "#fff",
+            border: `1px solid ${PUBLIC_COLORS.border}`,
+            borderRadius: 26,
+            boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
+            padding: 22,
+          }}
+        >
+          <Row gutter={[12, 12]} align="middle">
+            {steps.map(([icon, label], index) => (
+              <Col key={label} xs={24} lg={6}>
+                <Flex align="center" gap={12}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <Flex
+                      align="center"
+                      gap={12}
+                      style={{
+                        background: "#f7fbff",
+                        border: `1px solid ${PUBLIC_COLORS.border}`,
+                        borderRadius: 16,
+                        height: "100%",
+                        padding: 14,
+                      }}
+                    >
+                      <IconBadge accent="#d46b08" icon={icon} />
+                      <Text strong>{label}</Text>
+                    </Flex>
+                  </div>
+                  {index < steps.length - 1 ? (
+                    <Icon name="arrow-right" style={{ color: "#d29c3c" }} />
+                  ) : null}
+                </Flex>
+              </Col>
+            ))}
+          </Row>
+        </div>
+      </Flex>
+    </PublicSection>
+  );
+}
 
 export default function SlidesFeaturePage({
   helpEmail,
+  isAuthenticated,
 }: {
   helpEmail?: string;
+  isAuthenticated?: boolean;
 }) {
+  const primaryHref = isAuthenticated
+    ? appPath("projects")
+    : appPath("auth/sign-up");
+  const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
+  const finalLabel = isAuthenticated ? "Open projects" : "Start making slides";
+
   return (
-    <Flex vertical gap={18}>
+    <Flex vertical gap={22}>
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={12}>
-            <Flex vertical gap={12}>
+        <Row gutter={[28, 28]} align="middle">
+          <Col xs={24} lg={11}>
+            <Flex vertical gap={14}>
+              <Tag color="gold" style={{ alignSelf: "flex-start" }}>
+                Technical presentations
+              </Tag>
               <Title level={2} style={{ margin: 0 }}>
-                Present technical work with code, math, and collaboration built
-                in
+                Present from the same canvas where technical ideas are built.
               </Title>
-              <Paragraph style={{ fontSize: 17, margin: 0 }}>
-                CoCalc slides bring together presentation structure, executable
-                content, mathematical notation, and collaborative editing in one
-                browser-based workflow.
+              <Paragraph style={{ fontSize: 18, margin: 0 }}>
+                CoCalc slides are a sequence of slide-sized whiteboards. They
+                keep markdown, math, diagrams, Jupyter cells, drawings, and
+                collaborative editing in the same project as the files and
+                notebooks behind the presentation.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                They are useful when a presentation needs more than static text
-                and images, especially in teaching and technical communication.
+                Use them for lectures, research talks, demos, and presentations
+                that need more than static text and exported screenshots.
               </Paragraph>
               <Flex wrap gap={12}>
-                <Button type="primary" href={appPath("auth/sign-up")}>
-                  Create account
+                <Button type="primary" href={primaryHref}>
+                  {primaryLabel}
                 </Button>
                 <Button href={appPath("features/whiteboard")}>
                   Whiteboard
                 </Button>
+                <Button href={appPath("features/jupyter-notebook")}>
+                  Jupyter notebooks
+                </Button>
               </Flex>
             </Flex>
           </Col>
-          <Col xs={24} lg={12}>
-            <FeatureImage
-              alt="Computational slides in CoCalc"
-              src="/public/features/slides-sage.png"
-            />
+          <Col xs={24} lg={13}>
+            <SlideDeckMock />
           </Col>
         </Row>
       </PublicSection>
 
       <Row gutter={[16, 16]}>
-        <Col xs={24} lg={12}>
-          <PublicSection>
-            <Title level={3} style={{ margin: 0 }}>
-              Slides for technical subjects
-            </Title>
-            <BulletList
-              items={[
-                "Collaborative markdown and LaTeX mathematics.",
-                "Jupyter code cells and widgets inside the presentation workflow.",
-                "Drawing, notes, frames, and structured slide sections.",
-                "Chat and collaboration in the same project as the presentation.",
-              ]}
-            />
-            <Paragraph style={{ margin: 0 }}>
-              This makes CoCalc slides much better suited to technical teaching
-              and live explanation than a conventional slide deck disconnected
-              from the rest of the workflow.
-            </Paragraph>
-          </PublicSection>
+        <Col xs={24} lg={8}>
+          <StoryCard accent="#d46b08" icon="slides" title="Slide-sized pages">
+            Use presentation-sized canvases and presets instead of trying to
+            force a huge whiteboard into a linear talk.
+          </StoryCard>
         </Col>
-        <Col xs={24} lg={12}>
-          <PublicSection>
-            <Title level={3} style={{ margin: 0 }}>
-              Present and edit from the same workspace
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              Because the slides live inside a project, you can keep notebooks,
-              code, data, and supporting notes nearby. That is especially
-              helpful for teaching, live demos, and talks that evolve alongside
-              technical material.
-            </Paragraph>
-            <Paragraph style={{ margin: 0 }}>
-              Coauthors can also work on the same presentation in real time.
-            </Paragraph>
-          </PublicSection>
+        <Col xs={24} lg={8}>
+          <StoryCard accent="#2f6fda" icon="tex" title="Math and code">
+            Combine equations, markdown, diagrams, and executable examples in
+            the same presentation workflow.
+          </StoryCard>
+        </Col>
+        <Col xs={24} lg={8}>
+          <StoryCard accent="#389e0d" icon="users" title="Collaborative talks">
+            Coauthors and teaching assistants can edit the same deck in the same
+            project where supporting material lives.
+          </StoryCard>
         </Col>
       </Row>
 
-      <PublicSection>
-        <Tag
-          color="blue"
-          style={{
-            alignSelf: "flex-start",
-            background: COLORS.ANTD_BG_BLUE_L,
-            color: COLORS.BLUE_D,
-          }}
-        >
-          Structured presentations
-        </Tag>
-        <Title level={3} style={{ margin: 0 }}>
-          A presentation workflow, not just a drawing surface
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          Slides use many of the same capabilities as the whiteboard, but with
-          more structure around pages and presentation flow. That makes them a
-          better fit when you are preparing a talk or teaching sequence instead
-          of sketching on an open canvas.
-        </Paragraph>
-        <Paragraph style={{ margin: 0 }}>
-          TimeTravel and collaboration history also apply here, which makes it
-          easier to evolve presentations over time without losing earlier
-          versions.
-        </Paragraph>
-      </PublicSection>
+      <SlideFlow />
 
       <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          Why use slides in CoCalc
-        </Title>
-        <BulletList
-          items={[
-            "Mix code, math, and explanation in one presentation workflow.",
-            "Edit collaboratively with coauthors and teaching assistants.",
-            "Keep the presentation next to the notebooks and files it depends on.",
-            "Use a browser-native presentation tool designed for technical content.",
-          ]}
-        />
-        <Flex wrap gap={12}>
-          <Button href={appPath("features/whiteboard")}>Whiteboard</Button>
-          <Button href={appPath("features/jupyter-notebook")}>
-            Jupyter notebooks
-          </Button>
-          {helpEmail ? (
-            <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-          ) : null}
-        </Flex>
+        <Row gutter={[24, 24]} align="middle">
+          <Col xs={24} lg={13}>
+            <Title level={3} style={{ margin: 0 }}>
+              Why use slides in CoCalc
+            </Title>
+            <BulletList
+              items={[
+                "Build presentations from slide-sized whiteboard pages.",
+                "Keep slides close to notebooks, files, data, and terminal work.",
+                "Use math, diagrams, markdown, and code in technical talks.",
+                "Collaborate on the deck and keep TimeTravel history around it.",
+              ]}
+            />
+            <Flex wrap gap={12}>
+              <Button href={appPath("features/whiteboard")}>Whiteboard</Button>
+              <Button href={appPath("features/teaching")}>Teaching</Button>
+              {helpEmail ? (
+                <Button href={`mailto:${helpEmail}`}>Contact support</Button>
+              ) : null}
+            </Flex>
+          </Col>
+          <Col xs={24} lg={11}>
+            <StartCard
+              body="Open a project and create a slide deck for a lecture, demo, or research presentation."
+              href={primaryHref}
+              label={finalLabel}
+              title="Start with a deck"
+            />
+          </Col>
+        </Row>
       </PublicSection>
     </Flex>
   );

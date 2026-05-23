@@ -659,6 +659,46 @@ function FeatureDetail({
       />
     );
   }
+  if (slug === "whiteboard") {
+    return (
+      <WhiteboardFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
+  if (slug === "slides") {
+    return (
+      <SlidesFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
+  if (slug === "r-statistical-software") {
+    return (
+      <RStatisticalSoftwareFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
+  if (slug === "octave") {
+    return (
+      <OctaveFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
+  if (slug === "julia") {
+    return (
+      <JuliaFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
   if (CustomPage) {
     return <CustomPage helpEmail={helpEmail} />;
   }
