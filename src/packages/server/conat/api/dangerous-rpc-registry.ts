@@ -761,12 +761,12 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "system.startCloudflareR2BayBackupCleanup": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "destructive Cloudflare R2 bay-backup object cleanup",
   },
   "system.startCloudflareTeardownApply": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "destructive Cloudflare teardown apply",
   },
   "system.upsertBrowserSession": {
     decision: "fresh-auth-not-required",

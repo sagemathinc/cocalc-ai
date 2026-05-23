@@ -2128,6 +2128,8 @@ export interface System {
 
   startCloudflareR2BayBackupCleanup: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     bucket: string;
     prefix?: string;
     confirm: string;

@@ -65,6 +65,45 @@ Validation:
 - `packages/server`: `conat/api/system.site-settings-auth.test.ts`
 - `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
 
+### Destructive Cloudflare R2 backup cleanup lacked fresh auth
+
+`system.startCloudflareR2BayBackupCleanup` can enqueue deletion of Cloudflare R2
+bay-backup objects, but it only required ordinary admin authorization.
+
+Fix:
+
+- `startCloudflareR2BayBackupCleanup` now requires recent second-factor-backed
+  fresh auth before creating the cleanup LRO.
+- The hub API type accepts `browser_id` and `session_hash` for browser and CLI
+  callers.
+- The dangerous RPC registry now classifies the cleanup start RPC as requiring
+  fresh auth.
+
+Validation:
+
+- `packages/server`: `conat/api/system.admin-maintenance-auth.test.ts`
+- `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
+
+### Hand-rolled admin fresh-auth checks diverged from the central helper
+
+`createImpersonationGrant` and `startCloudflareTeardownApply` each implemented
+their own fresh-auth/2FA checks. The custom code checked only that some factor
+was present on the auth session, instead of using the centralized
+`requireDangerousSessionAuth` helper that also handles second-factor recency,
+dev CLI fresh-auth, and impersonation semantics consistently.
+
+Fix:
+
+- Both RPCs now use `requireDangerousSessionAuth` with
+  `require_second_factor: true`.
+- The dangerous RPC registry now explicitly marks Cloudflare teardown apply as
+  fresh-auth-required.
+
+Validation:
+
+- `packages/server`: `conat/api/system.admin-maintenance-auth.test.ts`
+- `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
+
 ### Site-license pool edits bypassed fresh auth through `updateMembershipPackage`
 
 The public `purchases.updateMembershipPackage` RPC could update site-license pool domains, seat counts, and expiration via the generic membership package path without passing `browser_id` or `session_hash`. This was inconsistent with `adminProvisionSiteLicense`, `updateSiteLicense`, and `addSiteLicensePool`.

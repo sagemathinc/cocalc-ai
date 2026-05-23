@@ -167,14 +167,9 @@ import {
 } from "./browser-sessions";
 import { getLiveBrowserSessionInfo } from "./browser-sessions-live";
 import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
-import {
-  recordNewAuthSession,
-  requireFreshAuthForSessionHash,
-} from "@cocalc/server/auth/auth-sessions";
-import { hasActiveSecondFactor } from "@cocalc/server/auth/two-factor";
+import { recordNewAuthSession } from "@cocalc/server/auth/auth-sessions";
 import { createImpersonationGrantLocal } from "@cocalc/server/auth/impersonation";
 import { upsertAccountImpersonationGrantDirectory } from "@cocalc/server/auth/impersonation-grant-directory";
-import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import {
   getProjectAppPublicPolicy as getProjectAppPublicPolicyRaw,
   getPublicAppRouteByHostname as getPublicAppRouteByHostnameRaw,
@@ -2916,41 +2911,14 @@ export async function createImpersonationGrant({
   if (!subjectAccountId) {
     throw Error("subject_account_id is required");
   }
+  const session = await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
   const cleanedSessionHash = `${session_hash ?? ""}`.trim();
   const cleanedBrowserId = `${browser_id ?? ""}`.trim();
-  const resolvedSessionHash =
-    cleanedSessionHash ||
-    getBrowserAuthSessionHash({
-      account_id,
-      browser_id: cleanedBrowserId,
-    });
-  if (!resolvedSessionHash) {
-    throw Object.assign(new Error("fresh auth is required"), {
-      code: "fresh_auth_required",
-    });
-  }
-  const session = await requireFreshAuthForSessionHash({
-    account_id,
-    session_hash: resolvedSessionHash,
-  });
-  if (!(await hasActiveSecondFactor(account_id))) {
-    throw Object.assign(
-      new Error(
-        "admins must enable two-factor authentication before impersonating users",
-      ),
-      {
-        code: "two_factor_required",
-      },
-    );
-  }
-  if ((session.factor_level ?? "none") === "none") {
-    throw Object.assign(
-      new Error("recent admin two-factor verification is required"),
-      {
-        code: "fresh_auth_required",
-      },
-    );
-  }
   const location = await resolveAccountHomeBay({
     account_id,
     user_account_id: subjectAccountId,
@@ -2960,7 +2928,7 @@ export async function createImpersonationGrant({
   const createOpts = {
     actor_account_id: account_id,
     subject_account_id: subjectAccountId,
-    actor_session_hash: resolvedSessionHash,
+    actor_session_hash: session.session_hash,
     subject_home_bay_id,
     actor_authenticated_at: session.authenticated_at ?? null,
     actor_password_verified_at: session.password_verified_at ?? null,
@@ -4653,35 +4621,12 @@ export async function startCloudflareTeardownApply({
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
-  const cleanedSessionHash =
-    `${session_hash ?? ""}`.trim() ||
-    getBrowserAuthSessionHash({
-      account_id,
-      browser_id: `${browser_id ?? ""}`.trim(),
-    });
-  if (!cleanedSessionHash) {
-    throw Object.assign(new Error("fresh auth is required"), {
-      code: "fresh_auth_required",
-    });
-  }
-  const session = await requireFreshAuthForSessionHash({
+  await requireDangerousSessionAuth({
     account_id,
-    session_hash: cleanedSessionHash,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
   });
-  if (!(await hasActiveSecondFactor(account_id))) {
-    throw Object.assign(
-      new Error(
-        "admins must enable two-factor authentication before applying Cloudflare teardown",
-      ),
-      { code: "two_factor_required" },
-    );
-  }
-  if ((session.factor_level ?? "none") === "none") {
-    throw Object.assign(
-      new Error("recent admin two-factor verification is required"),
-      { code: "fresh_auth_required" },
-    );
-  }
   const op = await createLro({
     kind: CLOUDFLARE_TEARDOWN_APPLY_LRO_KIND,
     scope_type: "account",
@@ -4847,11 +4792,15 @@ export async function getCloudflareR2BayBackupCleanupPlan({
 
 export async function startCloudflareR2BayBackupCleanup({
   account_id,
+  browser_id,
+  session_hash,
   bucket,
   prefix,
   confirm,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   bucket: string;
   prefix?: string;
   confirm: string;
@@ -4865,6 +4814,12 @@ export async function startCloudflareR2BayBackupCleanup({
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
   const op = await createLro({
     kind: CLOUDFLARE_R2_BAY_BACKUP_CLEANUP_LRO_KIND,
     scope_type: "account",
