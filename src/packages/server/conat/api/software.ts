@@ -8,15 +8,38 @@ import {
 } from "@cocalc/util/software-licenses/token";
 import getLogger from "@cocalc/backend/logger";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 
 const logger = getLogger("server:conat:api:software");
 const PRIVATE_KEY_SETTING = "software_license_private_key";
+const ADMIN_LICENSE_LIST_COLUMNS =
+  "id, tier_id, owner_account_id, created, expires_at, revoked_at, limits, features, notes, created_by, last_refresh_at";
 
 function requireAdmin(account_id?: string) {
   if (!account_id) {
     throw Error("must be signed in");
   }
   return isAdmin(account_id);
+}
+
+async function requireAdminDangerousAuth({
+  account_id,
+  browser_id,
+  session_hash,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+}) {
+  if (!(await requireAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
 }
 
 async function getPrivateKey(): Promise<string> {
@@ -68,9 +91,13 @@ export async function listLicenseTiers({
 
 export async function upsertLicenseTier({
   account_id,
+  browser_id,
+  session_hash,
   tier,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   tier: {
     id: string;
     label?: string;
@@ -84,9 +111,7 @@ export async function upsertLicenseTier({
     notes?: string;
   };
 }) {
-  if (!(await requireAdmin(account_id))) {
-    throw Error("must be an admin");
-  }
+  await requireAdminDangerousAuth({ account_id, browser_id, session_hash });
   if (!tier?.id) {
     throw Error("tier.id must be set");
   }
@@ -146,7 +171,7 @@ export async function listLicenses({
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   const cap = Math.min(Math.max(limit ?? 200, 1), 1000);
   const { rows } = await pool.query(
-    `SELECT * FROM software_licenses ${where} ORDER BY created DESC LIMIT ${cap}`,
+    `SELECT ${ADMIN_LICENSE_LIST_COLUMNS} FROM software_licenses ${where} ORDER BY created DESC LIMIT ${cap}`,
     params,
   );
   return rows;
@@ -154,6 +179,8 @@ export async function listLicenses({
 
 export async function createLicense({
   account_id,
+  browser_id,
+  session_hash,
   tier_id,
   owner_account_id,
   product = "launchpad",
@@ -163,6 +190,8 @@ export async function createLicense({
   notes,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   tier_id: string;
   owner_account_id?: string;
   product?: "launchpad" | "rocket";
@@ -171,9 +200,7 @@ export async function createLicense({
   features?: Record<string, any>;
   notes?: string;
 }) {
-  if (!(await requireAdmin(account_id))) {
-    throw Error("must be an admin");
-  }
+  await requireAdminDangerousAuth({ account_id, browser_id, session_hash });
   const pool = getPool();
   const { rows: tiers } = await pool.query(
     "SELECT * FROM software_license_tiers WHERE id=$1",
@@ -250,16 +277,18 @@ export async function createLicense({
 
 export async function revokeLicense({
   account_id,
+  browser_id,
+  session_hash,
   license_id,
   reason,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   license_id: string;
   reason?: string;
 }) {
-  if (!(await requireAdmin(account_id))) {
-    throw Error("must be an admin");
-  }
+  await requireAdminDangerousAuth({ account_id, browser_id, session_hash });
   const pool = getPool();
   await pool.query(
     "UPDATE software_licenses SET revoked_at=NOW() WHERE id=$1",
@@ -275,14 +304,16 @@ export async function revokeLicense({
 
 export async function restoreLicense({
   account_id,
+  browser_id,
+  session_hash,
   license_id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   license_id: string;
 }) {
-  if (!(await requireAdmin(account_id))) {
-    throw Error("must be an admin");
-  }
+  await requireAdminDangerousAuth({ account_id, browser_id, session_hash });
   const pool = getPool();
   await pool.query("UPDATE software_licenses SET revoked_at=NULL WHERE id=$1", [
     license_id,

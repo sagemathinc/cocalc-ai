@@ -640,12 +640,22 @@ async function propagateSiteSettingsToBays(
 
 export async function setSiteSettings({
   account_id,
+  browser_id,
+  session_hash,
   settings,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   settings: SiteSettingUpdate[];
 }): Promise<SiteSettingsSyncResult> {
   await assertAdmin(account_id);
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
   const updates = settings.map(normalizeSiteSettingUpdate);
   for (const update of updates) {
     await setSiteSettingLocal(update);

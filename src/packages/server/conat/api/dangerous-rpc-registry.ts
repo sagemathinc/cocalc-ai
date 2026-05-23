@@ -536,20 +536,24 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: "site-license commercial terms and domain entitlement mutation",
   },
   "software.createLicense": {
-    decision: "fresh-auth-not-required",
-    reason: "admin-only software license mutation",
+    decision: "fresh-auth-required",
+    reason:
+      "admin software license minting changes signed commercial entitlements",
   },
   "software.restoreLicense": {
-    decision: "fresh-auth-not-required",
-    reason: "admin-only software license mutation",
+    decision: "fresh-auth-required",
+    reason:
+      "admin software license restoration changes signed commercial entitlements",
   },
   "software.revokeLicense": {
-    decision: "fresh-auth-not-required",
-    reason: "admin-only software license mutation",
+    decision: "fresh-auth-required",
+    reason:
+      "admin software license revocation changes signed commercial entitlements",
   },
   "software.upsertLicenseTier": {
-    decision: "fresh-auth-not-required",
-    reason: "admin-only software license tier mutation",
+    decision: "fresh-auth-required",
+    reason:
+      "admin software license tier edits change signed commercial entitlement templates",
   },
   "sync.purgeHistory": {
     decision: "fresh-auth-not-required",
@@ -737,8 +741,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: "RootFS catalog/project mutation",
   },
   "system.setSiteSettings": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "global site settings mutation propagates across bays",
   },
   "system.sendEmailVerification": {
     decision: "fresh-auth-not-required",

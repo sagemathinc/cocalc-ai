@@ -9,6 +9,62 @@ Scope: fresh audit pass after site-license seed-bay architecture, admin editing,
 
 ## Findings Fixed
 
+### Software-license admin mutations lacked fresh auth
+
+The admin software-license RPCs could create, revoke, restore, and edit tier
+templates with ordinary admin authorization only. These actions mint or change
+signed commercial entitlements, so a stolen admin browser session without recent
+verification was enough.
+
+Fix:
+
+- `software.createLicense`, `software.revokeLicense`,
+  `software.restoreLicense`, and `software.upsertLicenseTier` now require recent
+  second-factor-backed fresh auth.
+- The frontend software-license admin panel now attaches browser session context
+  and retries through the standard fresh-auth modal.
+- The dangerous RPC registry now classifies these RPCs as requiring fresh auth.
+
+Validation:
+
+- `packages/server`: `conat/api/software.dangerous-auth.test.ts`
+- `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
+
+### Admin license listings exposed bearer software-license tokens
+
+The broad admin software-license listing used `SELECT *`, which returned the
+signed bearer license token for every license. The UI only needs tokens at
+creation time; broad listings should not put all tokens on the wire.
+
+Fix:
+
+- `software.listLicenses` now selects explicit non-token columns.
+- License creation still returns the newly created token once, and owner-facing
+  license views can still show the owner's own token.
+
+Validation:
+
+- `packages/server`: `conat/api/software.dangerous-auth.test.ts`
+
+### Global site-settings edits lacked fresh auth
+
+`system.setSiteSettings` can change global configuration and propagate it to all
+bays, including sensitive operational settings, but previously only required
+ordinary admin authorization.
+
+Fix:
+
+- `system.setSiteSettings` now requires recent second-factor-backed fresh auth.
+- The admin site-settings UI now passes browser context and uses the standard
+  fresh-auth modal for single-setting and save-all flows.
+- The dangerous RPC registry now classifies site-settings mutation as requiring
+  fresh auth.
+
+Validation:
+
+- `packages/server`: `conat/api/system.site-settings-auth.test.ts`
+- `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
+
 ### Site-license pool edits bypassed fresh auth through `updateMembershipPackage`
 
 The public `purchases.updateMembershipPackage` RPC could update site-license pool domains, seat counts, and expiration via the generic membership package path without passing `browser_id` or `session_hash`. This was inconsistent with `adminProvisionSiteLicense`, `updateSiteLicense`, and `addSiteLicensePool`.
@@ -75,6 +131,5 @@ Validation:
 ## Residual Follow-Up
 
 - Do another focused pass on non-site purchase flows. `purchaseMembershipPackage` still only requires fresh auth when browser/session context is provided; this may be intentional for CLI/server flows, but it is worth explicitly documenting or tightening before launch.
-- Review software-license admin RPCs separately. They are admin-only but not fresh-auth-gated.
 - Re-run live multibay smoke after rebuild/restart, especially account rehome onto seed and away from seed with active site-license grants.
 - Add a periodic security audit checklist item for new `membership_packages` owners: any new account-owned table must decide whether site-license rows are portable or seed-global.

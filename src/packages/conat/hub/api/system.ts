@@ -1835,6 +1835,8 @@ export interface System {
 
   setSiteSettings: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     settings: { name: string; value: string }[];
   }) => Promise<SiteSettingsSyncResult>;
 
