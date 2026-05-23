@@ -3138,35 +3138,84 @@ export class ProjectsActions extends Actions<ProjectsState> {
     },
   );
 
-  // Explcitly set whether or not project is hidden for the given account
+  // Explicitly set whether or not project is hidden for the given account
   // (hide=true means hidden)
+  public async set_projects_hide(
+    account_id: string,
+    project_ids: string[],
+    hide: boolean,
+  ): Promise<void> {
+    const projectIds = Array.from(
+      new globalThis.Set(project_ids.map((id) => `${id ?? ""}`.trim())),
+    ).filter(Boolean);
+    const before = new globalThis.Map<string, boolean | undefined>();
+    for (const project_id of projectIds) {
+      before.set(
+        project_id,
+        store.getIn(["project_map", project_id, "users", account_id, "hide"]),
+      );
+      this.setProjectLocalUserHide(project_id, account_id, hide);
+    }
+
+    let results: Awaited<
+      ReturnType<
+        typeof webapp_client.conat_client.hub.projects.setProjectsHidden
+      >
+    >;
+    try {
+      results = await webapp_client.conat_client.hub.projects.setProjectsHidden(
+        {
+          project_ids: projectIds,
+          hide,
+        },
+      );
+    } catch (err) {
+      for (const project_id of projectIds) {
+        this.setProjectLocalUserHide(
+          project_id,
+          account_id,
+          before.get(project_id),
+        );
+      }
+      const message = `Error ${hide ? "hiding" : "unhiding"} projects -- ${err}`;
+      alert_message({ type: "error", message });
+      throw err;
+    }
+
+    const failures = results.filter((result) => !result.success);
+    for (const result of failures) {
+      this.setProjectLocalUserHide(
+        result.project_id,
+        account_id,
+        before.get(result.project_id),
+      );
+    }
+    for (const result of results) {
+      if (result.success) {
+        void this.project_log(result.project_id, {
+          event: hide ? "hide_project" : "unhide_project",
+        });
+      }
+    }
+    if (failures.length > 0) {
+      const details = failures
+        .map(
+          (result) =>
+            `${result.project_id}: ${result.error ?? "unknown error"}`,
+        )
+        .join("\n");
+      const message = `Some projects could not be ${hide ? "hidden" : "unhidden"}:\n${details}`;
+      alert_message({ type: "error", message });
+      throw new Error(message);
+    }
+  }
+
   public async set_project_hide(
     account_id: string,
     project_id: string,
     hide: boolean,
   ): Promise<void> {
-    const before = store.getIn([
-      "project_map",
-      project_id,
-      "users",
-      account_id,
-      "hide",
-    ]);
-    this.setProjectLocalUserHide(project_id, account_id, hide);
-    try {
-      await webapp_client.conat_client.hub.projects.setProjectHidden({
-        project_id,
-        hide,
-      });
-      await this.project_log(project_id, {
-        event: hide ? "hide_project" : "unhide_project",
-      });
-    } catch (err) {
-      this.setProjectLocalUserHide(project_id, account_id, before);
-      const message = `Error ${hide ? "hiding" : "unhiding"} project ${project_id} -- ${err}`;
-      alert_message({ type: "error", message });
-      throw err;
-    }
+    await this.set_projects_hide(account_id, [project_id], hide);
   }
 
   // Toggle whether or not project is hidden project

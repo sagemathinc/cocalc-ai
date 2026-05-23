@@ -55,6 +55,7 @@ import {
   isAllowedPublicViewerSourceHost,
   resolvePublicViewerDns,
 } from "@cocalc/util/public-viewer-origin";
+import { isValidUUID } from "@cocalc/util/misc";
 import {
   cancelCopy as cancelCopyDb,
   listCopiesByOpId,
@@ -114,6 +115,7 @@ import type {
   ProjectCopyRow,
   ProjectRuntimeSponsorActiveProject,
   ProjectRuntimeLog,
+  ProjectHiddenResult,
   ProjectRuntimeSponsorStatus,
   ProjectAddress,
   ProjectRegion,
@@ -2921,52 +2923,319 @@ export async function setProjectHidden({
   project_id: string;
   hide: boolean;
 }): Promise<void> {
-  if (typeof hide !== "boolean") {
-    throw Error("hide must be a boolean");
+  const [result] = await setProjectsHidden({
+    account_id,
+    project_ids: [project_id],
+    hide,
+  });
+  if (!result?.success) {
+    throw new Error(result?.error ?? "unable to set project hidden state");
   }
-  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
-  const pool = getPool();
-  const client = await pool.connect();
+}
+
+function dedupeProjectIds(project_ids: string[]): string[] {
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const project_id of project_ids) {
+    const normalized = `${project_id ?? ""}`.trim();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    deduped.push(normalized);
+  }
+  return deduped;
+}
+
+export async function setLocalProjectsHidden({
+  account_id,
+  project_ids,
+  hide,
+}: {
+  account_id: string;
+  project_ids: string[];
+  hide: boolean;
+}): Promise<ProjectHiddenResult[]> {
+  const results = new Map<string, ProjectHiddenResult>();
+  const validProjectIds: string[] = [];
+  for (const project_id of dedupeProjectIds(project_ids)) {
+    if (!isValidUUID(project_id)) {
+      results.set(project_id, {
+        project_id,
+        success: false,
+        error: "invalid project_id",
+      });
+      continue;
+    }
+    validProjectIds.push(project_id);
+  }
+  if (validProjectIds.length === 0) {
+    return dedupeProjectIds(project_ids).map(
+      (project_id) =>
+        results.get(project_id) ?? {
+          project_id,
+          success: false,
+          error: "invalid project_id",
+        },
+    );
+  }
+
+  const client = await getPool().connect();
+  const default_bay_id = getConfiguredBayId();
   try {
     await client.query("BEGIN");
-    await assertProjectNotRehoming({
-      db: client,
-      project_id,
-      action: "set project hidden state",
-    });
-    const result = await client.query(
-      `UPDATE projects
+    await client.query(
+      `
+        SELECT pg_advisory_xact_lock(hashtext('project-rehome'), hashtext(project_id::text))
+        FROM unnest($1::uuid[]) AS project_id
+      `,
+      [validProjectIds],
+    );
+
+    const tableExists = await client.query(
+      "SELECT to_regclass('public.project_rehome_operations') AS table_name",
+    );
+    const blocked = new Set<string>();
+    if (tableExists.rows[0]?.table_name != null) {
+      const activeRehomes = await client.query<{
+        project_id: string;
+        op_id: string;
+        source_bay_id: string;
+        dest_bay_id: string;
+        stage: string;
+      }>(
+        `
+          SELECT project_id::text AS project_id, op_id, source_bay_id, dest_bay_id, stage
+          FROM project_rehome_operations
+          WHERE project_id = ANY($1::uuid[])
+            AND status = 'running'
+          ORDER BY created_at DESC
+        `,
+        [validProjectIds],
+      );
+      for (const row of activeRehomes.rows) {
+        blocked.add(row.project_id);
+        results.set(row.project_id, {
+          project_id: row.project_id,
+          success: false,
+          error: `cannot set project hidden state for project ${row.project_id}; project rehome ${row.op_id} is running from ${row.source_bay_id} to ${row.dest_bay_id} at stage ${row.stage}`,
+        });
+      }
+    }
+
+    const updateIds = validProjectIds.filter(
+      (project_id) => !blocked.has(project_id),
+    );
+    const updatedIds = new Set<string>();
+    if (updateIds.length > 0) {
+      const updated = await client.query<{ project_id: string }>(
+        `
+          UPDATE projects
           SET users = jsonb_set(
             COALESCE(users, '{}'::jsonb),
             ARRAY[$2::text, 'hide'],
             to_jsonb($3::boolean),
             true
           )
-        WHERE project_id = $1
-          AND COALESCE(owning_bay_id, $4) = $4
-          AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')`,
-      [project_id, account_id, hide, getConfiguredBayId()],
-    );
-    if ((result.rowCount ?? 0) === 0) {
-      throw Error("user must be a collaborator");
+          WHERE project_id = ANY($1::uuid[])
+            AND COALESCE(owning_bay_id, $4) = $4
+            AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')
+          RETURNING project_id::text AS project_id
+        `,
+        [updateIds, account_id, hide, default_bay_id],
+      );
+      for (const row of updated.rows) {
+        updatedIds.add(row.project_id);
+        results.set(row.project_id, {
+          project_id: row.project_id,
+          success: true,
+        });
+      }
+      for (const project_id of updatedIds) {
+        await appendProjectOutboxEventForProject({
+          db: client,
+          event_type: "project.membership_changed",
+          project_id,
+          default_bay_id,
+        });
+      }
     }
-    await appendProjectOutboxEventForProject({
-      db: client,
-      event_type: "project.membership_changed",
-      project_id,
-      default_bay_id: getConfiguredBayId(),
-    });
+
+    for (const project_id of updateIds) {
+      if (!updatedIds.has(project_id)) {
+        results.set(project_id, {
+          project_id,
+          success: false,
+          error: "user must be a collaborator",
+        });
+      }
+    }
     await client.query("COMMIT");
+
+    await Promise.all(
+      [...updatedIds].map(async (project_id) => {
+        try {
+          await publishProjectAccountFeedEventsBestEffort({
+            project_id,
+            default_bay_id,
+          });
+        } catch (err) {
+          log.warn("setProjectsHidden: failed to publish project feed", {
+            project_id,
+            err: `${err}`,
+          });
+        }
+      }),
+    );
   } catch (err) {
     await client.query("ROLLBACK");
-    throw err;
+    for (const project_id of validProjectIds) {
+      if (!results.has(project_id)) {
+        results.set(project_id, {
+          project_id,
+          success: false,
+          error: `${err}`,
+        });
+      }
+    }
   } finally {
     client.release();
   }
-  await publishProjectAccountFeedEventsBestEffort({
-    project_id,
-    default_bay_id: getConfiguredBayId(),
-  });
+
+  return dedupeProjectIds(project_ids).map(
+    (project_id) =>
+      results.get(project_id) ?? {
+        project_id,
+        success: false,
+        error: "unknown project hidden state error",
+      },
+  );
+}
+
+async function groupProjectIdsForHiddenUpdate({
+  project_ids,
+}: {
+  project_ids: string[];
+}): Promise<{
+  localProjectIds: string[];
+  remoteProjectIdsByBay: Map<string, string[]>;
+}> {
+  const localProjectIds: string[] = [];
+  const remoteProjectIdsByBay = new Map<string, string[]>();
+  const default_bay_id = getConfiguredBayId();
+  const locallyResolved = new Map<string, string>();
+  if (project_ids.length > 0) {
+    const { rows } = await getPool().query<{
+      project_id: string;
+      bay_id: string | null;
+    }>(
+      `
+        SELECT project_id::text AS project_id, COALESCE(owning_bay_id, $2) AS bay_id
+        FROM projects
+        WHERE project_id = ANY($1::uuid[])
+      `,
+      [project_ids, default_bay_id],
+    );
+    for (const row of rows) {
+      locallyResolved.set(row.project_id, `${row.bay_id ?? ""}`.trim());
+    }
+  }
+
+  for (const project_id of project_ids) {
+    const localBayId = locallyResolved.get(project_id);
+    const bay_id =
+      localBayId == null
+        ? (await resolveProjectBay(project_id))?.bay_id
+        : localBayId;
+    if (!bay_id || bay_id === default_bay_id) {
+      localProjectIds.push(project_id);
+      continue;
+    }
+    remoteProjectIdsByBay.set(bay_id, [
+      ...(remoteProjectIdsByBay.get(bay_id) ?? []),
+      project_id,
+    ]);
+  }
+  return { localProjectIds, remoteProjectIdsByBay };
+}
+
+export async function setProjectsHidden({
+  account_id,
+  project_ids,
+  hide,
+}: {
+  account_id?: string;
+  project_ids: string[];
+  hide: boolean;
+}): Promise<ProjectHiddenResult[]> {
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  if (typeof hide !== "boolean") {
+    throw Error("hide must be a boolean");
+  }
+  if (!Array.isArray(project_ids)) {
+    throw Error("project_ids must be an array");
+  }
+
+  const dedupedProjectIds = dedupeProjectIds(project_ids);
+  const results = new Map<string, ProjectHiddenResult>();
+  const validProjectIds: string[] = [];
+
+  for (const project_id of dedupedProjectIds) {
+    if (!isValidUUID(project_id)) {
+      results.set(project_id, {
+        project_id,
+        success: false,
+        error: "invalid project_id",
+      });
+      continue;
+    }
+    validProjectIds.push(project_id);
+  }
+
+  const { localProjectIds, remoteProjectIdsByBay } =
+    await groupProjectIdsForHiddenUpdate({ project_ids: validProjectIds });
+
+  for (const result of await setLocalProjectsHidden({
+    account_id,
+    project_ids: localProjectIds,
+    hide,
+  })) {
+    results.set(result.project_id, result);
+  }
+
+  for (const [bay_id, remoteProjectIds] of remoteProjectIdsByBay.entries()) {
+    try {
+      const remoteResults = await getInterBayBridge()
+        .projectCollabInvite(bay_id)
+        .setProjectsHidden({
+          account_id,
+          project_ids: remoteProjectIds,
+          hide,
+        });
+      for (const result of remoteResults) {
+        results.set(result.project_id, result);
+      }
+    } catch (err) {
+      for (const project_id of remoteProjectIds) {
+        results.set(project_id, {
+          project_id,
+          success: false,
+          error: `${err}`,
+        });
+      }
+    }
+  }
+
+  return dedupedProjectIds.map(
+    (project_id) =>
+      results.get(project_id) ?? {
+        project_id,
+        success: false,
+        error: "unknown project hidden state error",
+      },
+  );
 }
 
 export async function setProjectSshKey({

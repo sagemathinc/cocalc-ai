@@ -300,6 +300,7 @@ import {
   getRootfsQuotaReport,
   getServiceAdmissionDenialReport,
 } from "@cocalc/server/conat/api/system";
+import { setLocalProjectsHidden } from "@cocalc/server/conat/api/projects";
 
 const logger = getLogger("server:inter-bay:service");
 
@@ -1219,6 +1220,12 @@ async function startProjectCollabInviteService(): Promise<void> {
       await leaveOrDeleteProjectsForAccount({
         account_id,
         project_ids,
+      }),
+    setProjectsHidden: async ({ account_id, project_ids, hide }) =>
+      await setLocalProjectsHidden({
+        account_id,
+        project_ids,
+        hide,
       }),
     respond: async ({
       account_id,
