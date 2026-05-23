@@ -144,6 +144,10 @@ import {
   checkManagedBackupAllowedBestEffort,
   recordManagedBackupEgressBestEffort,
 } from "./backup-egress";
+import {
+  newestBackupTimeForIds,
+  parseCreatedBackupSnapshot,
+} from "./backup-created";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import { subvolume } from "@cocalc/file-server/btrfs/subvolume";
 import { ensureRootfsRusticRepoProfile } from "./rootfs-rustic";
@@ -3401,6 +3405,8 @@ async function updateBackups({
   counts?: Partial<SnapshotCounts>;
   limit?: number;
 }): Promise<void> {
+  const createdBackupIds = new Set<string>();
+  let newestCreatedBackupTime: Date | undefined;
   const vol = await withBackupConfigRefreshOnMissingBucket({
     project_id,
     op: "updateBackups",
@@ -3418,29 +3424,35 @@ async function updateBackups({
           }
         },
         afterCreate: async (created) => {
-          const backup =
-            created &&
-            typeof created === "object" &&
-            "id" in created &&
-            "summary" in created
-              ? (created as {
-                  id: string;
-                  summary: Record<string, string | number>;
-                })
-              : undefined;
+          const backup = parseCreatedBackupSnapshot(created);
           if (!backup?.id) return;
-          await recordManagedBackupEgressBestEffort({
-            project_id,
-            backup_id: backup.id,
-            summary: backup.summary,
-          });
+          createdBackupIds.add(backup.id);
+          if (
+            backup.time &&
+            (!newestCreatedBackupTime || backup.time > newestCreatedBackupTime)
+          ) {
+            newestCreatedBackupTime = backup.time;
+          }
+          if (backup.summary) {
+            await recordManagedBackupEgressBestEffort({
+              project_id,
+              backup_id: backup.id,
+              summary: backup.summary,
+            });
+          }
         },
       });
       return refreshed;
     },
   });
+  let reportTime = newestCreatedBackupTime;
   try {
     const backups = await vol.rustic.snapshots();
+    reportTime = newestBackupTimeForIds({
+      backups,
+      backupIds: createdBackupIds,
+      fallback: reportTime,
+    });
     const directIndexStore = await getBackupIndexStoreConfig(project_id).catch(
       () => null,
     );
@@ -3456,6 +3468,16 @@ async function updateBackups({
     });
   } catch (err) {
     logger.warn("backup index update failed", { project_id, err });
+  }
+  if (createdBackupIds.size > 0 && reportTime) {
+    try {
+      await reportBackupSuccess(project_id, reportTime);
+    } catch (err) {
+      logger.warn("scheduled backup success report failed", {
+        project_id,
+        err,
+      });
+    }
   }
 }
 
