@@ -788,6 +788,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       "data-preferLatestThread": false,
       "data-showThreadImagePreview": false,
       "data-hideChatTopControls": true,
+      "data-hideCompactThreadHeader": true,
     };
   }, [inlineSession?.thread_key]);
 
@@ -1085,26 +1086,39 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     );
   }
 
-  function renderFontSizeControls(minimal = false): React.JSX.Element {
+  function renderFontSizeControls(): React.JSX.Element {
     return (
-      <Space size={[4, 0]} wrap>
-        {!minimal ? (
-          <Typography.Text type="secondary">Font</Typography.Text>
-        ) : null}
+      <div
+        aria-label="Agent chat text size"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 2,
+          height: 28,
+          padding: "0 3px",
+          border: "1px solid #d9d9d9",
+          borderRadius: 7,
+          background: "#fff",
+          whiteSpace: "nowrap",
+        }}
+      >
         <Tooltip title="Decrease chat font size">
           <Button
             size="small"
             type="text"
             disabled={!canDecreaseFontSize}
             onClick={decreaseFontSize}
-            style={{ minWidth: 24, padding: "0 4px" }}
+            style={{ minWidth: 24, height: 22, padding: "0 4px" }}
           >
             <Icon name="minus" />
           </Button>
         </Tooltip>
         <Tooltip title={`Agent chat font size: ${fontSize}px`}>
-          <Typography.Text style={{ minWidth: 28, textAlign: "center" }}>
-            {fontSize}
+          <Typography.Text
+            type="secondary"
+            style={{ fontSize: 12, padding: "0 4px" }}
+          >
+            Text {fontSize}
           </Typography.Text>
         </Tooltip>
         <Tooltip title="Increase chat font size">
@@ -1113,12 +1127,12 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             type="text"
             disabled={!canIncreaseFontSize}
             onClick={increaseFontSize}
-            style={{ minWidth: 24, padding: "0 4px" }}
+            style={{ minWidth: 24, height: 22, padding: "0 4px" }}
           >
             <Icon name="plus" />
           </Button>
         </Tooltip>
-      </Space>
+      </div>
     );
   }
 
@@ -1640,33 +1654,79 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               }
         }
       >
-        <Space
-          wrap
-          size={[8, 8]}
+        <div
           style={{
-            marginBottom: 8,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 10,
             width: "100%",
             justifyContent: "space-between",
+            minWidth: 0,
           }}
         >
-          <Space size={[6, 6]} wrap style={{ minWidth: 0 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              minWidth: 0,
+              flex: "1 1 auto",
+            }}
+          >
             <Button
               size="small"
-              type="link"
-              style={{ paddingLeft: 0 }}
+              type="text"
+              icon={<Icon name="chevron-left" />}
+              style={{ padding: "0 6px", flex: "0 0 auto" }}
               onClick={closeInlineSession}
+              aria-label="Back to agents"
             >
-              Back
+              Agents
             </Button>
-            <Typography.Text strong title={inlineTitle}>
-              {ellipsize(inlineTitle, isFlyout ? 42 : 90)}
-            </Typography.Text>
-          </Space>
-          <Space size={[4, 4]} wrap>
-            {renderFontSizeControls(true)}
+            <div style={{ minWidth: 0, flex: "1 1 auto" }}>
+              <Typography.Text
+                strong
+                title={inlineTitle}
+                style={{
+                  display: "block",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  lineHeight: "18px",
+                }}
+              >
+                {ellipsize(inlineTitle, isFlyout ? 34 : 72)}
+              </Typography.Text>
+              {inlineSession.model ? (
+                <Typography.Text
+                  type="secondary"
+                  style={{
+                    display: "block",
+                    fontSize: 11,
+                    lineHeight: "14px",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {ellipsize(inlineSession.model, isFlyout ? 30 : 54)}
+                </Typography.Text>
+              ) : null}
+            </div>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              flex: "0 0 auto",
+            }}
+          >
+            {renderFontSizeControls()}
             {renderInlineSessionMenu(inlineSession)}
-          </Space>
-        </Space>
+          </div>
+        </div>
         {error ? (
           <Alert
             type="error"

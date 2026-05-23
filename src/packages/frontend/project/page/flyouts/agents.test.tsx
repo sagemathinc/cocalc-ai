@@ -482,7 +482,7 @@ describe("AgentsPanel session cards", () => {
     await waitFor(() =>
       expect(screen.getByTestId("agents-inline-chat")).toBeTruthy(),
     );
-    fireEvent.click(screen.getByText("Back"));
+    fireEvent.click(screen.getByText("Agents"));
 
     await waitFor(() =>
       expect(screen.queryByTestId("agents-inline-chat")).toBeNull(),
