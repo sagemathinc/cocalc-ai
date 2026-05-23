@@ -626,6 +626,14 @@ function FeatureDetail({
       />
     );
   }
+  if (slug === "terminal") {
+    return (
+      <TerminalFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
   if (CustomPage) {
     return <CustomPage helpEmail={helpEmail} />;
   }
