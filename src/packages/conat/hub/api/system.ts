@@ -1598,6 +1598,8 @@ export interface System {
 
   manageApiKeys: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     action: ApiKeyAction;
     name?: string;
     expire?: Date;
@@ -2086,6 +2088,8 @@ export interface System {
 
   bootstrapCloudflareConfiguration: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     domain: string;
     token: string;
     tunnelPrefix?: string;
@@ -2132,6 +2136,8 @@ export interface System {
 
   startCloudflareR2Audit: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     bucket: string;
     prefix?: string;
     refresh?: boolean;

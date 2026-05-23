@@ -24,6 +24,10 @@ import dayjs from "dayjs";
 import { useEffect, useMemo, useState } from "react";
 const { Text, Paragraph } = Typography; // so can use from nextjs
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { CancelText } from "@cocalc/frontend/i18n/components";
 import {
   API_KEY_CAPABILITIES,
@@ -138,6 +142,9 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
     : [];
   const allowedProjectsRequired = needsAllowedProjects(selectedCapabilities);
   const [projectFilter, setProjectFilter] = useState<string>("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   const projectOptions = useMemo<ProjectOption[]>(() => {
     const selected = new Set(selectedProjectIds);
@@ -199,16 +206,27 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
 
   const deleteApiKey = async (id: number) => {
     try {
-      await manage({ action: "delete", id });
-      getAllApiKeys();
+      const completed = await runFreshAuthAction(async () => {
+        await manage({ action: "delete", id });
+        await getAllApiKeys();
+      });
+      if (!completed) return;
     } catch (err) {
       setError(`${err}`);
     }
   };
 
   const deleteAllApiKeys = async () => {
-    for (const { id } of apiKeys) {
-      await deleteApiKey(id);
+    try {
+      const completed = await runFreshAuthAction(async () => {
+        for (const { id } of apiKeys) {
+          await manage({ action: "delete", id });
+        }
+        await getAllApiKeys();
+      });
+      if (!completed) return;
+    } catch (err) {
+      setError(`${err}`);
     }
   };
 
@@ -220,15 +238,18 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
     allowed_project_ids?: string[],
   ) => {
     try {
-      await manage({
-        action: "edit",
-        id,
-        name,
-        expire,
-        capabilities,
-        allowed_project_ids,
+      const completed = await runFreshAuthAction(async () => {
+        await manage({
+          action: "edit",
+          id,
+          name,
+          expire,
+          capabilities,
+          allowed_project_ids,
+        });
+        await getAllApiKeys();
       });
-      getAllApiKeys();
+      if (!completed) return;
     } catch (err) {
       setError(`${err}`);
     }
@@ -241,55 +262,58 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
     allowed_project_ids?: string[],
   ) => {
     try {
-      const response = await manage({
-        action: "create",
-        name,
-        expire,
-        capabilities,
-        allowed_project_ids,
-      });
-      setAddModalVisible(false);
-      getAllApiKeys();
+      const completed = await runFreshAuthAction(async () => {
+        const response = await manage({
+          action: "create",
+          name,
+          expire,
+          capabilities,
+          allowed_project_ids,
+        });
+        setAddModalVisible(false);
+        await getAllApiKeys();
 
-      Modal.success({
-        width: 760,
-        title: "New Secret API Key",
-        content: (() => {
-          const secret = response?.[0].secret ?? "failed to get secret";
-          return (
-            <>
-              <div>
-                Save this secret key somewhere safe.{" "}
-                <b>You won't be able to view it again here.</b> If you lose this
-                secret key, you'll need to generate a new one.
-              </div>
-              <div style={{ marginTop: 16 }}>
-                <strong>Secret API Key</strong>{" "}
-                <CopyToClipBoard
-                  style={{ marginTop: "16px" }}
-                  outerStyle={{ width: "100%" }}
-                  inputWidth="100%"
-                  value={secret}
-                />
-              </div>
-              <div style={{ marginTop: 16 }}>
-                <strong>Test with curl</strong>
-                <Paragraph type="secondary" style={{ marginTop: 5 }}>
-                  This calls <Text code>system.ping</Text>, which only verifies
-                  that the key is valid.
-                </Paragraph>
-                <CopyToClipBoard
-                  outerStyle={{ width: "100%" }}
-                  inputStyle={{ fontSize: "12px" }}
-                  inputWidth="100%"
-                  value={apiKeyTestCurl(secret)}
-                />
-              </div>
-            </>
-          );
-        })(),
+        Modal.success({
+          width: 760,
+          title: "New Secret API Key",
+          content: (() => {
+            const secret = response?.[0].secret ?? "failed to get secret";
+            return (
+              <>
+                <div>
+                  Save this secret key somewhere safe.{" "}
+                  <b>You won't be able to view it again here.</b> If you lose
+                  this secret key, you'll need to generate a new one.
+                </div>
+                <div style={{ marginTop: 16 }}>
+                  <strong>Secret API Key</strong>{" "}
+                  <CopyToClipBoard
+                    style={{ marginTop: "16px" }}
+                    outerStyle={{ width: "100%" }}
+                    inputWidth="100%"
+                    value={secret}
+                  />
+                </div>
+                <div style={{ marginTop: 16 }}>
+                  <strong>Test with curl</strong>
+                  <Paragraph type="secondary" style={{ marginTop: 5 }}>
+                    This calls <Text code>system.ping</Text>, which only
+                    verifies that the key is valid.
+                  </Paragraph>
+                  <CopyToClipBoard
+                    outerStyle={{ width: "100%" }}
+                    inputStyle={{ fontSize: "12px" }}
+                    inputWidth="100%"
+                    value={apiKeyTestCurl(secret)}
+                  />
+                </div>
+              </>
+            );
+          })(),
+        });
+        setError(null);
       });
-      setError(null);
+      if (!completed) return;
     } catch (err) {
       setError(`${err}`);
     }
@@ -585,6 +609,7 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
           </Form>
         </Modal>
       </div>
+      <FreshAuthModal {...freshAuthModalProps} />
     </>
   );
 }

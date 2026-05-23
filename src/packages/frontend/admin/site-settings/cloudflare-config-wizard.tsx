@@ -21,6 +21,7 @@ interface WizardProps {
   data: Record<string, string>;
   isSet: Record<string, boolean>;
   onApply: (values: Record<string, string>) => Promise<void> | void;
+  runFreshAuthAction?: (action: () => Promise<void>) => Promise<boolean>;
 }
 
 function trimOrEmpty(val: string | undefined): string {
@@ -124,6 +125,7 @@ export default function CloudflareConfigWizard({
   data,
   isSet,
   onApply,
+  runFreshAuthAction,
 }: WizardProps) {
   const [accountId, setAccountId] = useState("");
   const [apiToken, setApiToken] = useState("");
@@ -361,19 +363,35 @@ export default function CloudflareConfigWizard({
     setBootstrapError("");
     setBootstrapResult(null);
     try {
-      const result =
-        await webapp_client.conat_client.hub.system.bootstrapCloudflareConfiguration(
-          {
-            domain: externalDomain,
-            token: bootstrapToken,
-            tunnelPrefix,
-            hostSuffix,
-            r2BucketPrefix,
-            invalidateBootstrapToken: true,
-          },
-        );
-      setBootstrapResult(result);
-      const values = result.values ?? {};
+      let result: CloudflareBootstrapResult | null = null;
+      const action = async () => {
+        result =
+          await webapp_client.conat_client.hub.system.bootstrapCloudflareConfiguration(
+            {
+              browser_id: webapp_client.browser_id,
+              domain: externalDomain,
+              token: bootstrapToken,
+              tunnelPrefix,
+              hostSuffix,
+              r2BucketPrefix,
+              invalidateBootstrapToken: true,
+            },
+          );
+      };
+      if (runFreshAuthAction != null) {
+        const completed = await runFreshAuthAction(action);
+        if (!completed) {
+          return;
+        }
+      } else {
+        await action();
+      }
+      if (result == null) {
+        throw Error("Cloudflare bootstrap did not return a result");
+      }
+      const bootstrapResult = result as CloudflareBootstrapResult;
+      setBootstrapResult(bootstrapResult);
+      const values = bootstrapResult.values ?? {};
       setMode(values.cloudflare_mode ?? "self");
       setExternalDomain(values.dns ?? externalDomain);
       setAccountId(
@@ -396,7 +414,7 @@ export default function CloudflareConfigWizard({
       }
       setBootstrapToken("");
       setNotice(
-        result.bootstrap_token_invalidated
+        bootstrapResult.bootstrap_token_invalidated
           ? "Cloudflare bootstrap completed and the bootstrap token was invalidated."
           : "Cloudflare bootstrap completed. Review the results below.",
       );

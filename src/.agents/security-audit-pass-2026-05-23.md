@@ -266,6 +266,48 @@ Validation:
 - `packages/server`: `conat/api/system.bay-load.test.ts`
 - `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
 
+### Cloudflare bootstrap lacked fresh auth
+
+`system.bootstrapCloudflareConfiguration` accepts a high-privilege Cloudflare
+bootstrap token and can write Cloudflare tunnel and R2 settings. It previously
+required only ordinary admin authorization, so a stolen admin session without
+recent verification could reconfigure cloud infrastructure secrets.
+
+Fix:
+
+- Cloudflare bootstrap now requires recent second-factor-backed fresh auth.
+- The Cloudflare site-settings wizard passes browser context and retries the
+  bootstrap through the standard fresh-auth modal.
+- The dangerous RPC registry now classifies Cloudflare bootstrap as
+  fresh-auth-required.
+
+Validation:
+
+- `packages/server`: `conat/api/system.admin-maintenance-auth.test.ts`
+- `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
+- `packages/frontend`: `admin/site-settings/cloudflare-config-wizard.test.tsx`
+
+### Cloudflare R2 audit scan lacked fresh auth
+
+`system.startCloudflareR2Audit` starts a potentially long-running bucket scan
+LRO against Cloudflare R2. The operation is not destructive, but it can consume
+cloud/API resources and operational capacity, so ordinary admin authorization is
+too weak for a compromised admin browser session.
+
+Fix:
+
+- Starting a Cloudflare R2 audit scan now requires recent
+  second-factor-backed fresh auth.
+- CLI callers continue to work through the existing Conat `auth_session_hash`
+  injection after `cocalc auth elevate` or `cocalc auth elevate --dev`.
+- The dangerous RPC registry now classifies the scan-start RPC as
+  fresh-auth-required.
+
+Validation:
+
+- `packages/server`: `conat/api/system.admin-maintenance-auth.test.ts`
+- `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
+
 ### False email verification markers could be treated as verified
 
 `getVerifiedEmailAddressesForAccount` normalized keys but then looked up values using the normalized key. It also had a fallback that could treat a non-null false marker as verified. This mattered because site-license claims rely on verified institutional email addresses.
@@ -291,6 +333,55 @@ Validation:
 
 - `packages/server`: `accounts/rehome.test.ts`
 
+### API-key management could bypass fresh-auth and capability checks
+
+The account API-key management helper is also exposed through the legacy
+`/api/v2/api-keys` route. That HTTP route authenticated through `getAccountId`,
+which accepts account API keys, then called the low-level API-key management
+helper directly. As a result, a valid API key could manage sibling API keys
+without an explicit capability check. Separately, the browser Conat API-key
+management path could create/edit/delete durable account API keys with only a
+live browser session and no fresh-auth confirmation.
+
+Fix:
+
+- Conat `system.manageApiKeys` now requires recent second-factor-backed fresh
+  auth for `create`, `edit`, and `delete`; read-only listing remains ordinary
+  signed-in account auth.
+- The account settings API-key UI passes browser context and retries mutating
+  operations through the standard fresh-auth modal.
+- The legacy `/api/v2/api-keys` route now rejects API-key authentication and
+  disables legacy HTTP mutations, closing the API-key-to-API-key privilege
+  escalation path.
+
+Validation:
+
+- `packages/server`: `conat/api/system.admin-maintenance-auth.test.ts`
+- `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
+- `packages/http-api`: `pages/api/v2/api-keys.test.ts`
+
+### API keys could create accounts through the sign-up route
+
+`/api/v2/auth/sign-up` still documented API-key usage and used `getAccountId`
+to decide whether to skip reCAPTCHA and treat the call as authenticated account
+creation. Since `getAccountId` accepts account API keys, any valid API key for
+an admin account could create accounts through this legacy route without a
+purpose-built `account:create` capability or fresh-auth check. This exceeded the
+visible authority of scoped API keys.
+
+Fix:
+
+- The sign-up route now rejects requests that include an `Authorization` header
+  before account lookup, reCAPTCHA, registration-token validation, or account
+  creation.
+- The route documentation no longer advertises API-key authenticated account
+  creation. Browser/cookie signup and the fresh-auth-protected admin-created
+  account RPC remain the supported paths.
+
+Validation:
+
+- `packages/http-api`: `pages/api/v2/auth/sign-up.test.ts`
+
 ## Reviewed Surfaces
 
 - Public hub dangerous RPC registry and name-based coverage.
@@ -299,6 +390,9 @@ Validation:
 - Inter-bay account-local site-license routing to the configured seed bay.
 - Account membership portability filters for rehome and repair.
 - Site-license verified-email extraction and request trust boundary.
+- Account API-key management through Conat and legacy HTTP API routes.
+- Account creation through password signup, registration-token signup, and SSO
+  policy gates.
 
 ## Residual Follow-Up
 

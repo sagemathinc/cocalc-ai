@@ -579,6 +579,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "system.bootstrapCloudflareConfiguration": {
+    decision: "fresh-auth-required",
+    reason: "Cloudflare tunnel/R2 configuration bootstrap with cloud token",
+  },
   "system.clearAccountEntitlementOverride": {
     decision: "fresh-auth-required",
     reason: "admin entitlement mutation",
@@ -757,8 +761,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "system.startCloudflareR2Audit": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "resource-consuming Cloudflare R2 bucket scan LRO",
   },
   "system.startCloudflareR2BayBackupCleanup": {
     decision: "fresh-auth-required",
