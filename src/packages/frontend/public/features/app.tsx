@@ -610,6 +610,14 @@ function FeatureDetail({
       />
     );
   }
+  if (slug === "latex-editor") {
+    return (
+      <LatexEditorFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
   if (CustomPage) {
     return <CustomPage helpEmail={helpEmail} />;
   }
