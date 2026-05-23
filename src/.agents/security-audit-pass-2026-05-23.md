@@ -440,6 +440,28 @@ Validation:
 
 - `packages/server`: `projects/collaborators.test.ts`
 
+### Project API keys could publish to hub project RPC subjects
+
+The Conat websocket API-key gate treated any project-scoped subject as allowed
+when the key had `project:exec` for that project and the owning account was a
+collaborator. That included `hub.project.<project_id>.api`, which is the named
+hub RPC dispatch subject. Most named project RPCs still require account auth at
+the function layer, but some project/host-auth RPCs do not, e.g. public-app
+policy/subdomain helpers and service-admission/egress recording. A scoped exec
+key should not be able to call that hub project RPC surface.
+
+Fix:
+
+- API-key websocket authorization now denies `hub.project.<project_id>.*`
+  subjects explicitly.
+- Direct project/file-server subjects remain governed by the existing
+  `project:exec` plus allowed-project and collaborator checks.
+- Denials are audit-recorded with `api_key_hub_project_subject_denied`.
+
+Validation:
+
+- `packages/server`: `conat/socketio/auth.test.ts`
+
 ## Reviewed Surfaces
 
 - Public hub dangerous RPC registry and name-based coverage.
@@ -454,6 +476,8 @@ Validation:
 - Project email invite token preview, redemption, response, and copy-link
   authorization.
 - Project collaborator removal and pending-invite revocation.
+- API-key Conat subject policy for hub account, hub project, and direct project
+  subjects.
 
 ## Residual Follow-Up
 

@@ -478,6 +478,33 @@ describe("test isAllowed for account API keys", () => {
     ).toBe(true);
   });
 
+  it("denies hub project API subjects because function-level policy is required", async () => {
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
+      true,
+    );
+    expect(
+      await isAllowed({
+        user: apiKeyUser,
+        type: "pub",
+        subject: `hub.project.${project_id}.api`,
+      }),
+    ).toBe(false);
+    expect(mockRecordApiKeyAuditEventSoon).toHaveBeenCalledWith({
+      event: "api_key_denied",
+      value: {
+        account_id,
+        api_key_id: 1,
+        key_id: "key-1",
+        source: "conat-websocket",
+        subject: `hub.project.${project_id}.api`,
+        conat_operation: "pub",
+        project_id,
+        reason: "API keys cannot use hub project RPC subjects",
+        code: "api_key_hub_project_subject_denied",
+      },
+    });
+  });
+
   it("denies project subjects outside the API key project allowlist", async () => {
     (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
       true,

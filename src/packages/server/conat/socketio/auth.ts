@@ -492,6 +492,17 @@ async function isApiKeyAllowed({
     });
     return false;
   }
+  if (subject.startsWith(`hub.project.${project_id}.`)) {
+    recordConatApiKeyDenial({
+      user,
+      subject,
+      type,
+      project_id,
+      reason: "API keys cannot use hub project RPC subjects",
+      code: "api_key_hub_project_subject_denied",
+    });
+    return false;
+  }
   if (
     !hasApiKeyProjectCapability(
       {
