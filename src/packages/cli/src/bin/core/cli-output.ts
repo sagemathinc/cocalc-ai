@@ -32,7 +32,7 @@ function freshAuthHint(code: string, message: string): string | undefined {
   ) {
     return undefined;
   }
-  return "Run `cocalc auth elevate` and complete the browser passkey/TOTP challenge, then retry the command. Fresh-auth CLI actions require a browser-approved cookie profile; API keys, bearer tokens, and hub-password automation cannot provide human 2FA.";
+  return "Run `cocalc auth elevate` and complete the browser passkey/TOTP challenge, then retry the command. In local dev with the hub password and database available, `cocalc auth elevate --dev` can bootstrap an equivalent dev fresh-auth cookie. Fresh-auth CLI actions require a cookie-backed session; API keys, bearer tokens, and raw hub-password automation cannot provide human 2FA.";
 }
 
 function parseHardDeleteRateLimitDetails(

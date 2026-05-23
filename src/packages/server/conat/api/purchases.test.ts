@@ -21,6 +21,7 @@ const claimMembershipPackageSeatMock = jest.fn();
 const adminProvisionSiteLicenseMock = jest.fn();
 const getVerifiedEmailAddressesForAccountMock = jest.fn();
 const getSiteLicenseOverviewMock = jest.fn();
+const addSiteLicensePoolMock = jest.fn();
 const requestSiteLicensePoolMock = jest.fn();
 const getSiteLicenseAffiliationReverificationStatusForAccountMock = jest.fn();
 const refreshSiteLicenseAffiliationVerificationForAccountMock = jest.fn();
@@ -41,6 +42,7 @@ const interBayGetClaimableMembershipPackagesForAccountMock = jest.fn();
 const interBayClaimMembershipPackageSeatForAccountMock = jest.fn();
 const interBayAdminProvisionSiteLicenseMock = jest.fn();
 const interBayGetSiteLicenseOverviewMock = jest.fn();
+const interBayAddSiteLicensePoolMock = jest.fn();
 const interBayRequestSiteLicensePoolMock = jest.fn();
 const interBayRequestSiteLicensePoolForAccountMock = jest.fn();
 const interBayReviewSiteLicensePoolRequestMock = jest.fn();
@@ -111,6 +113,7 @@ jest.mock("@cocalc/server/membership/site-licenses", () => ({
     getVerifiedEmailAddressesForAccountMock(...args),
   getSiteLicenseOverview: (...args: any[]) =>
     getSiteLicenseOverviewMock(...args),
+  addSiteLicensePool: (...args: any[]) => addSiteLicensePoolMock(...args),
   requestSiteLicensePool: (...args: any[]) =>
     requestSiteLicensePoolMock(...args),
   getSiteLicenseAffiliationReverificationStatusForAccount: (...args: any[]) =>
@@ -200,6 +203,8 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
       interBayAdminProvisionSiteLicenseMock(...args),
     getSiteLicenseOverview: (...args: any[]) =>
       interBayGetSiteLicenseOverviewMock(...args),
+    addSiteLicensePool: (...args: any[]) =>
+      interBayAddSiteLicensePoolMock(...args),
     requestSiteLicensePool: (...args: any[]) =>
       interBayRequestSiteLicensePoolMock(...args),
     requestSiteLicensePoolForAccount: (...args: any[]) =>
@@ -229,9 +234,11 @@ beforeEach(() => {
   assertAccountTrustedForProductAccessMock.mockReset();
   updateSiteLicensePoolMock.mockReset();
   updateSiteLicenseMock.mockReset();
+  addSiteLicensePoolMock.mockReset();
   setSiteLicenseManagerMock.mockReset();
   removeSiteLicenseManagerMock.mockReset();
   interBayUpdateSiteLicenseMock.mockReset();
+  interBayAddSiteLicensePoolMock.mockReset();
   interBaySetSiteLicenseManagerMock.mockReset();
   interBayRemoveSiteLicenseManagerMock.mockReset();
   getConfiguredClusterSeedBayIdMock.mockReset();
@@ -710,6 +717,48 @@ describe("purchases membership packages", () => {
       site_license_id: "license-remote-1",
       target_account_id: "manager-2",
     });
+  });
+
+  it("routes site-license pool creation to the seed bay with fresh auth", async () => {
+    getConfiguredClusterSeedBayIdMock.mockReturnValue("bay-2");
+    interBayAddSiteLicensePoolMock.mockResolvedValue({
+      site_license: { id: "license-remote-1" },
+      pools: [{ id: "pool-2", pool_name: "Researchers" }],
+      managers: [],
+      pending_requests: [],
+    });
+
+    const { addSiteLicensePool } = await import("./purchases");
+    getBrowserAuthSessionHashMock.mockReturnValueOnce("fresh-session-2");
+    await addSiteLicensePool({
+      account_id: "manager-1",
+      browser_id: "browser-1",
+      site_license_id: "license-remote-1",
+      pool: {
+        pool_name: "Researchers",
+        membership_class: "researcher",
+        seat_count: 5,
+        requires_approval: true,
+        verification_policy: "email-domain",
+        exclusive_group: "research",
+      },
+    });
+
+    expect(interBayAddSiteLicensePoolMock).toHaveBeenCalledWith({
+      actor_account_id: "manager-1",
+      site_license_id: "license-remote-1",
+      pool: expect.objectContaining({
+        pool_name: "Researchers",
+        membership_class: "researcher",
+        seat_count: 5,
+      }),
+    });
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "manager-1",
+      session_hash: "fresh-session-2",
+      allow_actor_impersonation: true,
+    });
+    expect(addSiteLicensePoolMock).not.toHaveBeenCalled();
   });
 
   it("routes site-license pool requests to the seed bay with requester verified emails", async () => {

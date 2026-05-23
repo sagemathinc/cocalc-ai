@@ -917,6 +917,12 @@ export interface AccountLocalUpdateSiteLicenseRequest {
   expires_at?: Date | string | null;
 }
 
+export interface AccountLocalAddSiteLicensePoolRequest {
+  actor_account_id: string;
+  site_license_id: string;
+  pool: SiteLicensePoolConfig;
+}
+
 export interface AccountLocalSetSiteLicenseManagerRequest {
   actor_account_id: string;
   site_license_id: string;
@@ -1486,6 +1492,7 @@ export type AccountLocalMethod =
   | "claim-membership-package-seat-for-account"
   | "admin-provision-site-license"
   | "update-site-license"
+  | "add-site-license-pool"
   | "set-site-license-manager"
   | "remove-site-license-manager"
   | "get-site-license-overview"
@@ -2346,6 +2353,9 @@ export interface InterBayAccountLocalApi {
   ) => Promise<MembershipPackageDetails>;
   updateSiteLicense: (
     opts: AccountLocalUpdateSiteLicenseRequest,
+  ) => Promise<SiteLicenseOverview>;
+  addSiteLicensePool: (
+    opts: AccountLocalAddSiteLicensePoolRequest,
   ) => Promise<SiteLicenseOverview>;
   setSiteLicenseManager: (
     opts: AccountLocalSetSiteLicenseManagerRequest,
@@ -4088,6 +4098,15 @@ export function createInterBayAccountLocalClient({
       method: "update-site-license",
     }),
   });
+  const addSiteLicensePoolClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "addSiteLicensePool">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "add-site-license-pool",
+    }),
+  });
   const setSiteLicenseManagerClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "setSiteLicenseManager">
   >({
@@ -4311,6 +4330,8 @@ export function createInterBayAccountLocalClient({
       await updateMembershipPackageClient.updateMembershipPackage(opts),
     updateSiteLicense: async (opts) =>
       await updateSiteLicenseClient.updateSiteLicense(opts),
+    addSiteLicensePool: async (opts) =>
+      await addSiteLicensePoolClient.addSiteLicensePool(opts),
     setSiteLicenseManager: async (opts) =>
       await setSiteLicenseManagerClient.setSiteLicenseManager(opts),
     removeSiteLicenseManager: async (opts) =>
@@ -4806,6 +4827,17 @@ export function createInterBayAccountLocalHandler({
       }),
       impl: {
         updateSiteLicense: async (opts) => await impl.updateSiteLicense(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "addSiteLicensePool">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "add-site-license-pool",
+      }),
+      impl: {
+        addSiteLicensePool: async (opts) => await impl.addSiteLicensePool(opts),
       },
     }),
     createServiceHandler<

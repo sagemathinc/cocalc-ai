@@ -729,6 +729,13 @@ export interface Purchases {
     starts_at?: Date | string | null;
     expires_at?: Date | string | null;
   }) => Promise<SiteLicenseOverview>;
+  addSiteLicensePool: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    site_license_id?: string;
+    pool?: SiteLicensePoolConfig;
+  }) => Promise<SiteLicenseOverview>;
   setSiteLicenseManager: (opts?: {
     account_id?: string;
     site_license_id?: string;
@@ -789,6 +796,7 @@ export const purchases = {
   adminProvisionSiteLicense: authFirst,
   getSiteLicenseOverview: authFirst,
   updateSiteLicense: authFirst,
+  addSiteLicensePool: authFirst,
   setSiteLicenseManager: authFirst,
   removeSiteLicenseManager: authFirst,
   requestSiteLicensePool: authFirst,

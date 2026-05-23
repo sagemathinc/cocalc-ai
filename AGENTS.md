@@ -30,6 +30,7 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
   - `cd src && eval "$(pnpm -s dev:hub:env)"`
 - Do this again after restarting the hub, switching between local hub instances, or resuming a stale shell. Otherwise `cocalc` can silently use outdated credentials and fail with misleading auth/control-plane errors.
 - When a task depends on upgrading hosts or validating live project-host behavior, assume this step is required unless the current shell definitely just ran it.
+- For dangerous CLI operations that require fresh auth in local dev, use `cocalc auth elevate --dev` when the local hub password and database are available. This bootstraps a cookie-backed dev fresh-auth session; raw bearer, API-key, or hub-password auth alone will still fail fresh-auth checks.
 
 ## Live Lite / Browser Env
 
