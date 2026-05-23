@@ -27,6 +27,6 @@ async function set(req): Promise<{ success: true }> {
   if (!payment_method) {
     throw Error("must specify the payment method to delete");
   }
-  await deletePaymentMethod({ payment_method });
+  await deletePaymentMethod({ account_id, payment_method });
   return { success: true };
 }

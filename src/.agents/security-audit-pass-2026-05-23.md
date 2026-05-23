@@ -538,6 +538,28 @@ Validation:
 - `packages/server`: `purchases/stripe/invoices.test.ts`
 - Full TypeScript build.
 
+### Stripe payment-method mutations did not verify ownership
+
+The active `purchases/stripe` payment-method mutation routes require fresh auth,
+but the delete helper accepted a raw Stripe payment method id and detached it
+directly. The set-default helper updated the signed-in account's Stripe customer
+with a supplied payment method id without first verifying that payment method
+was attached to that customer.
+
+Fix:
+
+- Deleting a payment method now first resolves the signed-in account's Stripe
+  customer and retrieves the payment method through that customer.
+- Setting a default payment method now performs the same customer-scoped
+  retrieval before updating invoice settings.
+- If Stripe cannot retrieve the payment method for that customer, the mutation
+  does not run.
+
+Validation:
+
+- `packages/server`: `purchases/stripe/payment-method-mutations.test.ts`
+- Full TypeScript build.
+
 ## Reviewed Surfaces
 
 - Public hub dangerous RPC registry and name-based coverage.
@@ -558,6 +580,7 @@ Validation:
   subjects.
 - Legacy HTTP account-security routes that use `getAccountId(req)`.
 - Legacy billing API namespace and active purchases replacements.
+- Active Stripe payment-method mutation routes.
 
 ## Residual Follow-Up
 
