@@ -135,6 +135,7 @@ test("emitError preserves fresh-auth code and prints CLI elevation hint", () => 
 
   assert.match(output, /fresh auth is required/);
   assert.match(output, /cocalc auth elevate/);
+  assert.match(output, /cocalc auth elevate --dev/);
   assert.match(output, /passkey\/TOTP/);
 });
 
@@ -158,6 +159,7 @@ test("emitError emits structured fresh-auth hint in json mode", () => {
   assert.equal(parsed.ok, false);
   assert.equal(parsed.error.code, "fresh_auth_required");
   assert.match(parsed.error.hint, /cocalc auth elevate/);
+  assert.match(parsed.error.hint, /cocalc auth elevate --dev/);
 });
 
 test("emitError emits structured project hard-delete rate-limit details in json mode", () => {
