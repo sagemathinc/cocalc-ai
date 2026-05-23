@@ -48,7 +48,6 @@ export async function markProjectHardDeleteAccepted({
            'hard_delete_op_id', $2::text
          )
        WHERE project_id = $1
-         AND deleted IS NOT TRUE
     `,
     [project_id, op_id],
   );
@@ -78,7 +77,6 @@ export async function markProjectHardDeleteFailed({
            'hard_delete_error', $3::text
          )
        WHERE project_id = $1
-         AND deleted IS NOT TRUE
          AND state ->> 'hard_delete_op_id' = $2::text
     `,
     [project_id, op_id, error],

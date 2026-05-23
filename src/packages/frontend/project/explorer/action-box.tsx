@@ -146,7 +146,12 @@ export function ActionBox({
   function render_selected_files_list({
     large = false,
   }: { large?: boolean } = {}) {
-    const selectedFiles = checked_files.toArray();
+    const selectedFiles = checked_files.toArray().sort((a, b) =>
+      a.localeCompare(b, undefined, {
+        sensitivity: "base",
+        numeric: true,
+      }),
+    );
     const visibleFiles = selectedFiles.slice(0, MAX_RENDERED_SELECTED_FILES);
     const hiddenCount = selectedFiles.length - visibleFiles.length;
     return (

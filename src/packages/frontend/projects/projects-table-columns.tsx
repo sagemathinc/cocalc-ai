@@ -82,6 +82,7 @@ export interface ProjectTableRecord {
   color?: string;
   state?: any; // immutable Map
   deleting?: boolean;
+  deletionScheduled?: boolean;
   deleteFailed?: boolean;
   deletionBlocked?: boolean;
   hidden: boolean;
@@ -105,6 +106,10 @@ export interface ProjectTableRecord {
 export function getProjectTableColumns(
   onToggleStar: (project_id: string, e: React.MouseEvent) => void,
   renderActionsMenu: (record: ProjectTableRecord) => React.ReactNode,
+  onOpenProject: (
+    record: ProjectTableRecord,
+    e?: React.MouseEvent<HTMLElement>,
+  ) => void,
   sortState: SortState,
   onToggleExpand: (record: ProjectTableRecord) => void,
   expandedRowKeys: string[],
@@ -210,11 +215,25 @@ export function getProjectTableColumns(
       },
       sortDirections: SORT_DIRECTIONS,
       sortOrder: sortState.columnKey === "title" ? sortState.order : null,
+      onCell: (record: ProjectTableRecord) => ({
+        onClick: (e: React.MouseEvent<HTMLElement>) => {
+          onOpenProject(record, e);
+        },
+        onMouseDown: (e: React.MouseEvent<HTMLElement>) => {
+          if (e.button === 1) {
+            onOpenProject(record, e);
+          }
+        },
+        style: {
+          cursor: record.deletionBlocked ? "not-allowed" : "pointer",
+        },
+      }),
       render: (_: any, record: ProjectTableRecord) => {
         const stateIcon = getStateIcon(record.state);
         const strong = record.state?.get("state") === "running";
         const archived = record.state?.get("state") === "archived";
         const deleting = record.deleting === true;
+        const deletionScheduled = record.deletionScheduled === true;
         const deleteFailed = record.deleteFailed === true;
         return (
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -242,9 +261,14 @@ export function getProjectTableColumns(
                     }}
                   />
                 )}
-                <Text strong={strong} disabled={deleting}>
+                <Text strong={strong} disabled={deleting || deletionScheduled}>
                   {record.title || "Untitled"}
                 </Text>
+                {deletionScheduled && (
+                  <Tag color="orange" style={{ marginLeft: "8px" }}>
+                    Scheduled for deletion
+                  </Tag>
+                )}
                 {archived && (
                   <Tag color="purple" style={{ marginLeft: "8px" }}>
                     Archived

@@ -11,10 +11,11 @@
  */
 
 import type { SelectProps } from "antd";
+import type { ChangeEvent, ReactNode } from "react";
 
-import { Input, Select, Space, Switch } from "antd";
+import { Input, Select, Space, Switch, Typography } from "antd";
 import { Set } from "immutable";
-import { ReactNode, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useIntl } from "react-intl";
 
 import { CSS, useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -32,6 +33,8 @@ const CONTROLS_STYLE: CSS = {
   flexDirection: "row",
   justifyContent: "space-between",
 } as const;
+
+const SEARCH_DEBOUNCE_MS = 250;
 
 interface Props {
   visible_projects: string[];
@@ -54,6 +57,20 @@ export function ProjectsTableControls({
   const hidden = useTypedRedux("projects", "hidden");
   const selected_hashtags = useTypedRedux("projects", "selected_hashtags");
   const project_map = useTypedRedux("projects", "project_map");
+  const [searchDraft, setSearchDraft] = useState(search ?? "");
+  const searchUpdating = searchDraft !== (search ?? "");
+
+  useEffect(() => {
+    setSearchDraft(search ?? "");
+  }, [search]);
+
+  useEffect(() => {
+    if (!searchUpdating) return;
+    const timeout = setTimeout(() => {
+      actions.setState({ search: searchDraft });
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timeout);
+  }, [actions, searchDraft, searchUpdating]);
 
   // Get filter key for current state
   const filter = useMemo(() => {
@@ -85,11 +102,19 @@ export function ProjectsTableControls({
     });
   }
 
-  function handleSearchChange(e: React.ChangeEvent<HTMLInputElement>) {
-    actions.setState({ search: e.target.value });
+  function commitSearch() {
+    if (searchUpdating) {
+      actions.setState({ search: searchDraft });
+    }
+  }
+
+  function handleSearchChange(e: ChangeEvent<HTMLInputElement>) {
+    setSearchDraft(e.target.value);
   }
 
   function handlePressEnter() {
+    commitSearch();
+    if (searchUpdating) return;
     if (visible_projects.length > 0) {
       actions.open_project({
         project_id: visible_projects[0],
@@ -108,12 +133,17 @@ export function ProjectsTableControls({
             defaultMessage: "Filter projects...",
           })}
           autoFocus
-          value={search}
+          value={searchDraft}
           onChange={handleSearchChange}
           onPressEnter={handlePressEnter}
           style={{ width: IS_MOBILE ? 125 : 250 }}
           allowClear
         />
+        {searchUpdating && (
+          <Typography.Text type="secondary" style={{ whiteSpace: "nowrap" }}>
+            Updating...
+          </Typography.Text>
+        )}
 
         <Select
           mode="multiple"

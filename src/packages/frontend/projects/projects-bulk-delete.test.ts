@@ -68,4 +68,26 @@ describe("runLeaveOrDeleteProjectsSequentially", () => {
       },
     ]);
   });
+
+  it("propagates fresh auth errors so the caller can open the fresh-auth modal", async () => {
+    const submitted: string[] = [];
+    const freshAuthError = new Error("fresh auth required");
+    (freshAuthError as any).code = "fresh_auth_required";
+
+    await expect(
+      runLeaveOrDeleteProjectsSequentially({
+        project_ids: ["p1", "p2", "p3"],
+        submitProject: async (project_id) => {
+          submitted.push(project_id);
+          if (project_id === "p1") {
+            throw freshAuthError;
+          }
+          return [{ project_id, action: "removed_self" }];
+        },
+        waitForQueuedDelete: async () => undefined,
+      }),
+    ).rejects.toMatchObject({ code: "fresh_auth_required" });
+
+    expect(submitted).toEqual(["p1"]);
+  });
 });

@@ -28,6 +28,12 @@ export type BulkLeaveOrDeleteProgress = {
   failed: number;
 };
 
+function isFreshAuthRequiredError(err: unknown): boolean {
+  const code = `${(err as any)?.code ?? ""}`.trim().toLowerCase();
+  const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  return code === "fresh_auth_required" || message.includes("fresh auth");
+}
+
 export async function runLeaveOrDeleteProjectsSequentially({
   project_ids,
   submitProject,
@@ -60,6 +66,9 @@ export async function runLeaveOrDeleteProjectsSequentially({
     try {
       projectResults = await submitProject(project_id);
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
       results.push({
         project_id,
         action: "error",
@@ -94,6 +103,9 @@ export async function runLeaveOrDeleteProjectsSequentially({
         await waitForQueuedDelete({ project_id, op_id: result.op_id });
         results.push(result);
       } catch (err) {
+        if (isFreshAuthRequiredError(err)) {
+          throw err;
+        }
         results.push({
           project_id,
           action: "error",
