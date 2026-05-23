@@ -71,6 +71,8 @@ import {
 } from "@cocalc/frontend/chat/chatroom-thread-actions";
 import { GitCommitDrawer } from "@cocalc/frontend/chat/git-commit-drawer";
 import { ChatRoomThreadMenu } from "@cocalc/frontend/chat/chatroom-thread-menu";
+import CodexConfigButton from "@cocalc/frontend/chat/codex";
+import { useCodexPaymentSource } from "@cocalc/frontend/chat/use-codex-payment-source";
 import { groupThreadsByRecency } from "@cocalc/frontend/chat/threads";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import {
@@ -506,6 +508,14 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       null
     );
   }, [inlineSessionId, openedSelection, sessionsWithExistingChat]);
+  const {
+    paymentSource: codexPaymentSource,
+    loading: codexPaymentSourceLoading,
+    refresh: refreshCodexPaymentSource,
+  } = useCodexPaymentSource({
+    projectId: project_id,
+    enabled: inlineSession != null,
+  });
 
   const scopedSessions = useMemo(() => {
     let filtered = sessionsWithExistingChat;
@@ -1050,7 +1060,15 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       isCodexModelName(`${model ?? record.model ?? ""}`),
     );
     if (!inlineActions || !threadKey) {
-      return <Button size="small">Actions</Button>;
+      return (
+        <Button
+          size="small"
+          type="text"
+          icon={<Icon name="ellipsis" />}
+          aria-label="Chat thread actions"
+          disabled
+        />
+      );
     }
     return (
       <ChatRoomThreadMenu
@@ -1635,6 +1653,25 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
 
   if (inlineSession) {
     const inlineTitle = normalizedTitle(inlineSession);
+    const inlineThreadKey = `${inlineSession.thread_key ?? ""}`.trim();
+    const inlineThreadMetadata =
+      inlineThreadKey && inlineActions
+        ? inlineActions.getThreadMetadata?.(inlineThreadKey, {
+            threadId: inlineThreadKey,
+          })
+        : undefined;
+    const inlineThreadModel =
+      inlineThreadMetadata?.agent_model?.trim() ||
+      inlineThreadMetadata?.acp_config?.model?.trim() ||
+      inlineSession.model?.trim();
+    const showInlineCodexConfig = Boolean(
+      inlineActions &&
+      inlineThreadKey &&
+      (inlineThreadMetadata?.agent_kind === "acp" ||
+        inlineThreadMetadata?.acp_config != null ||
+        inlineActions.getCodexConfig?.(inlineThreadKey) != null ||
+        isCodexModelName(`${inlineThreadModel ?? ""}`)),
+    );
     return (
       <div
         ref={panelRef}
@@ -1657,11 +1694,10 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         <div
           style={{
             display: "flex",
-            alignItems: "center",
+            flexDirection: "column",
             gap: 8,
             marginBottom: 10,
             width: "100%",
-            justifyContent: "space-between",
             minWidth: 0,
           }}
         >
@@ -1670,8 +1706,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               display: "flex",
               alignItems: "center",
               gap: 8,
+              width: "100%",
               minWidth: 0,
-              flex: "1 1 auto",
             }}
           >
             <Button
@@ -1698,21 +1734,9 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               >
                 {ellipsize(inlineTitle, isFlyout ? 34 : 72)}
               </Typography.Text>
-              {inlineSession.model ? (
-                <Typography.Text
-                  type="secondary"
-                  style={{
-                    display: "block",
-                    fontSize: 11,
-                    lineHeight: "14px",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {ellipsize(inlineSession.model, isFlyout ? 30 : 54)}
-                </Typography.Text>
-              ) : null}
+            </div>
+            <div style={{ flex: "0 0 auto" }}>
+              {renderInlineSessionMenu(inlineSession)}
             </div>
           </div>
           <div
@@ -1720,11 +1744,29 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               display: "flex",
               alignItems: "center",
               gap: 6,
-              flex: "0 0 auto",
+              width: "100%",
+              minWidth: 0,
+              justifyContent: "space-between",
+              flexWrap: "wrap",
             }}
           >
+            {showInlineCodexConfig ? (
+              <div style={{ minWidth: 0, flex: "1 1 260px" }}>
+                <CodexConfigButton
+                  threadKey={inlineThreadKey}
+                  chatPath={inlineSession.chat_path}
+                  projectId={project_id}
+                  actions={inlineActions ?? undefined}
+                  threadConfig={inlineThreadMetadata?.acp_config ?? null}
+                  paymentSource={codexPaymentSource}
+                  paymentSourceLoading={codexPaymentSourceLoading}
+                  refreshPaymentSource={refreshCodexPaymentSource}
+                />
+              </div>
+            ) : (
+              <span />
+            )}
             {renderFontSizeControls()}
-            {renderInlineSessionMenu(inlineSession)}
           </div>
         </div>
         {error ? (

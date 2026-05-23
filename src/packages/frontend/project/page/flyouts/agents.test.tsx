@@ -218,6 +218,23 @@ jest.mock("@cocalc/frontend/chat/side-chat", () => ({
   default: () => <div data-testid="agents-inline-chat" />,
 }));
 
+jest.mock("@cocalc/frontend/chat/codex", () => ({
+  __esModule: true,
+  default: ({ threadKey }: any) => (
+    <button data-testid="agents-inline-codex-controls" type="button">
+      Codex controls {threadKey}
+    </button>
+  ),
+}));
+
+jest.mock("@cocalc/frontend/chat/use-codex-payment-source", () => ({
+  useCodexPaymentSource: () => ({
+    paymentSource: { source: "subscription" },
+    loading: false,
+    refresh: jest.fn(),
+  }),
+}));
+
 jest.mock("@cocalc/frontend/chat/acp-api", () => ({
   upsertThreadAutomation: (...args: any[]) =>
     mockUpsertThreadAutomation(...args),
@@ -501,6 +518,7 @@ describe("AgentsPanel session cards", () => {
     await waitFor(() =>
       expect(screen.getByTestId("agents-inline-thread-menu")).toBeTruthy(),
     );
+    expect(screen.getByTestId("agents-inline-codex-controls")).toBeTruthy();
     expect(screen.getByText("Appearance...")).toBeTruthy();
     expect(screen.getByText("Behavior...")).toBeTruthy();
     expect(screen.getByText("Open Chat File")).toBeTruthy();
