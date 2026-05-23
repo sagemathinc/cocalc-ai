@@ -266,6 +266,27 @@ Validation:
 - `packages/server`: `conat/api/system.bay-load.test.ts`
 - `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
 
+### Cloudflare bootstrap lacked fresh auth
+
+`system.bootstrapCloudflareConfiguration` accepts a high-privilege Cloudflare
+bootstrap token and can write Cloudflare tunnel and R2 settings. It previously
+required only ordinary admin authorization, so a stolen admin session without
+recent verification could reconfigure cloud infrastructure secrets.
+
+Fix:
+
+- Cloudflare bootstrap now requires recent second-factor-backed fresh auth.
+- The Cloudflare site-settings wizard passes browser context and retries the
+  bootstrap through the standard fresh-auth modal.
+- The dangerous RPC registry now classifies Cloudflare bootstrap as
+  fresh-auth-required.
+
+Validation:
+
+- `packages/server`: `conat/api/system.admin-maintenance-auth.test.ts`
+- `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
+- `packages/frontend`: `admin/site-settings/cloudflare-config-wizard.test.tsx`
+
 ### False email verification markers could be treated as verified
 
 `getVerifiedEmailAddressesForAccount` normalized keys but then looked up values using the normalized key. It also had a fallback that could treat a non-null false marker as verified. This mattered because site-license claims rely on verified institutional email addresses.

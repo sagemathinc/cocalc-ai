@@ -111,6 +111,26 @@ describe("admin maintenance dangerous-session auth", () => {
     });
   });
 
+  it("requires centralized recent 2FA fresh auth before Cloudflare bootstrap", async () => {
+    const { bootstrapCloudflareConfiguration } = await import("./system");
+
+    await expect(
+      bootstrapCloudflareConfiguration({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        domain: "example.com",
+        token: "cloudflare-token",
+      }),
+    ).rejects.toThrow("fresh auth is required");
+
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      session_hash: undefined,
+      require_second_factor: true,
+    });
+  });
+
   it("requires recent 2FA fresh auth before setting parallel worker limits", async () => {
     const { setParallelOpsLimit } = await import("./system");
 

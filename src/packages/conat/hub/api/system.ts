@@ -2086,6 +2086,8 @@ export interface System {
 
   bootstrapCloudflareConfiguration: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     domain: string;
     token: string;
     tunnelPrefix?: string;

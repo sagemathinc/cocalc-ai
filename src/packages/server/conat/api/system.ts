@@ -4640,6 +4640,8 @@ export async function testR2Credentials({
 
 export async function bootstrapCloudflareConfiguration({
   account_id,
+  browser_id,
+  session_hash,
   domain,
   token,
   tunnelPrefix,
@@ -4648,6 +4650,8 @@ export async function bootstrapCloudflareConfiguration({
   invalidateBootstrapToken,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   domain: string;
   token: string;
   tunnelPrefix?: string;
@@ -4658,6 +4662,12 @@ export async function bootstrapCloudflareConfiguration({
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
   return await bootstrapCloudflareConfiguration0({
     domain,
     token,
