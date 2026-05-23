@@ -203,6 +203,26 @@ Validation:
 - `packages/server`: `conat/api/system.admin-maintenance-auth.test.ts`
 - `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
 
+### SSO/passport unlink lacked fresh auth
+
+`system.deletePassport` removes a linked SSO/passport login method from the
+signed-in account, but it only required ordinary account authorization. A stolen
+browser session could weaken the account's future sign-in posture by unlinking a
+federated login method without any recent verification.
+
+Fix:
+
+- `system.deletePassport` now requires recent second-factor-backed fresh auth.
+- The account settings UI passes browser context and retries unlinking through
+  the standard fresh-auth modal.
+- The dangerous RPC registry now classifies passport unlinking as
+  fresh-auth-required.
+
+Validation:
+
+- `packages/server`: `conat/api/system.admin-maintenance-auth.test.ts`
+- `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
+
 ### False email verification markers could be treated as verified
 
 `getVerifiedEmailAddressesForAccount` normalized keys but then looked up values using the normalized key. It also had a fallback that could treat a non-null false marker as verified. This mattered because site-license claims rely on verified institutional email addresses.

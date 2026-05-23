@@ -1861,6 +1861,8 @@ export interface System {
 
   deletePassport: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     strategy: string;
     id: string;
   }) => Promise<void>;

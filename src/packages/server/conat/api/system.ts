@@ -3448,9 +3448,17 @@ export async function sendEmailVerification({
 import { delete_passport } from "@cocalc/server/auth/sso/delete-passport";
 export async function deletePassport(opts: {
   account_id: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   strategy: string;
   id: string;
 }): Promise<void> {
+  await requireDangerousSessionAuth({
+    account_id: opts.account_id,
+    browser_id: opts.browser_id,
+    session_hash: opts.session_hash,
+    require_second_factor: true,
+  });
   await delete_passport(db(), opts);
 }
 

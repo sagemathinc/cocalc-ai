@@ -71,6 +71,26 @@ describe("admin maintenance dangerous-session auth", () => {
     });
   });
 
+  it("requires centralized recent 2FA fresh auth before unlinking a passport login method", async () => {
+    const { deletePassport } = await import("./system");
+
+    await expect(
+      deletePassport({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        strategy: "github",
+        id: "github-user-1",
+      }),
+    ).rejects.toThrow("fresh auth is required");
+
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      session_hash: undefined,
+      require_second_factor: true,
+    });
+  });
+
   it("requires centralized recent 2FA fresh auth before Cloudflare teardown apply", async () => {
     const { startCloudflareTeardownApply } = await import("./system");
 

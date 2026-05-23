@@ -616,8 +616,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: "OpenAI external credential revocation",
   },
   "system.deletePassport": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "account SSO/passport login method unlink",
   },
   "system.drainAccountCollaboratorIndexProjection": {
     decision: "fresh-auth-not-required",
