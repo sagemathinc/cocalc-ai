@@ -559,7 +559,7 @@ export default function TerminalFeaturePage({
                 agent to find again.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                That file anchor makes terminal work part of the project record
+                That file anchor makes terminal work part of the project context
                 instead of a private browser tab that vanishes from view.
               </Paragraph>
               <BulletList
@@ -639,7 +639,7 @@ export default function TerminalFeaturePage({
               items={[
                 "Pause output when the scrollback is moving too fast.",
                 "Preserve enough terminal history for later inspection.",
-                "Let agents read the terminal record instead of guessing from a final error.",
+                "Let agents read the terminal context instead of guessing from a final error.",
               ]}
             />
           </PublicSection>
