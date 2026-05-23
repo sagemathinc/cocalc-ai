@@ -2404,6 +2404,8 @@ async function assertAdmin(account_id?: string): Promise<void> {
 
 export async function setParallelOpsLimit({
   account_id,
+  browser_id,
+  session_hash,
   worker_kind,
   scope_type,
   scope_id,
@@ -2411,6 +2413,8 @@ export async function setParallelOpsLimit({
   note,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   worker_kind: string;
   scope_type?: string;
   scope_id?: string;
@@ -2418,6 +2422,12 @@ export async function setParallelOpsLimit({
   note?: string;
 }) {
   await assertAdmin(account_id);
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
   const worker = getParallelOpsWorkerRegistration(worker_kind);
   if (!worker) {
     throw Error(`unknown worker_kind '${worker_kind}'`);
@@ -2473,16 +2483,26 @@ export async function setParallelOpsLimit({
 
 export async function clearParallelOpsLimit({
   account_id,
+  browser_id,
+  session_hash,
   worker_kind,
   scope_type,
   scope_id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   worker_kind: string;
   scope_type?: string;
   scope_id?: string;
 }) {
   await assertAdmin(account_id);
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
   const worker = getParallelOpsWorkerRegistration(worker_kind);
   if (!worker) {
     throw Error(`unknown worker_kind '${worker_kind}'`);

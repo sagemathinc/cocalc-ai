@@ -223,6 +223,26 @@ Validation:
 - `packages/server`: `conat/api/system.admin-maintenance-auth.test.ts`
 - `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
 
+### Parallel worker limit mutations lacked fresh auth
+
+`system.setParallelOpsLimit` and `system.clearParallelOpsLimit` can change
+global, provider, or project-host worker concurrency caps. These limits affect
+availability, operational throughput, and potentially spend, but previously only
+required ordinary admin authorization.
+
+Fix:
+
+- Parallel worker limit set/clear RPCs now require recent
+  second-factor-backed fresh auth.
+- The Hosts admin UI passes browser context and retries limit changes through
+  the standard fresh-auth modal.
+- The dangerous RPC registry now classifies both RPCs as fresh-auth-required.
+
+Validation:
+
+- `packages/server`: `conat/api/system.admin-maintenance-auth.test.ts`
+- `packages/server`: `conat/api/dangerous-rpc-registry.test.ts`
+
 ### False email verification markers could be treated as verified
 
 `getVerifiedEmailAddressesForAccount` normalized keys but then looked up values using the normalized key. It also had a fallback that could treat a non-null false marker as verified. This mattered because site-license claims rely on verified institutional email addresses.

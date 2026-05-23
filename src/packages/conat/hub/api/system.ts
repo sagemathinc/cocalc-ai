@@ -1560,6 +1560,8 @@ export interface System {
 
   setParallelOpsLimit: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     worker_kind: string;
     scope_type?: "global" | "provider" | "project_host";
     scope_id?: string;
@@ -1569,6 +1571,8 @@ export interface System {
 
   clearParallelOpsLimit: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     worker_kind: string;
     scope_type?: "global" | "provider" | "project_host";
     scope_id?: string;
