@@ -291,33 +291,183 @@ function ProjectStorySection() {
 }
 
 function WorkflowsSection() {
-  const pages = PRIMARY_WORKFLOWS.map((slug) => getFeaturePage(slug)).filter(
-    Boolean,
-  );
+  const workflowMeta = {
+    ai: { accent: "#7c3aed", icon: "robot", label: "Agent help" },
+    "jupyter-notebook": {
+      accent: "#2f6fda",
+      icon: "jupyter",
+      label: "Compute",
+    },
+    "latex-editor": { accent: "#ad6800", icon: "tex", label: "Writing" },
+    teaching: {
+      accent: "#389e0d",
+      icon: "graduation-cap",
+      label: "Courses",
+    },
+    terminal: { accent: "#096dd9", icon: "terminal", label: "Linux" },
+    whiteboard: { accent: "#d4380d", icon: "layout", label: "Visual work" },
+  } satisfies Record<string, { accent: string; icon: IconName; label: string }>;
+  const pages = PRIMARY_WORKFLOWS.map((slug) => {
+    const page = getFeaturePage(slug);
+    return page == null ? undefined : { ...workflowMeta[slug], page };
+  }).filter((item) => item != null);
+
   return (
     <section>
-      <Flex align="baseline" justify="space-between" wrap gap={12}>
-        <div>
+      <Flex align="end" justify="space-between" wrap gap={16}>
+        <div style={{ maxWidth: 760 }}>
           <Eyebrow>Core workflows</Eyebrow>
-          <Title level={2} style={{ margin: "8px 0 0" }}>
+          <Title level={2} style={{ margin: "8px 0 10px" }}>
             Use the tools you already understand, together.
           </Title>
+          <Paragraph style={{ fontSize: 18, margin: 0 }}>
+            CoCalc keeps notebooks, papers, terminals, agents, classes, and
+            visual thinking inside one shared project instead of scattering them
+            across disconnected tools.
+          </Paragraph>
         </div>
         <Button href={appPath("features")}>All features</Button>
       </Flex>
-      <PublicGrid columns={3}>
-        {pages.map((page) =>
-          page ? (
-            <PublicCard
-              href={appPath(`features/${page.slug}`)}
-              key={page.slug}
-              title={page.title}
-            >
-              <Paragraph style={{ margin: 0 }}>{page.summary}</Paragraph>
-            </PublicCard>
-          ) : null,
-        )}
-      </PublicGrid>
+      <Row gutter={[18, 18]} style={{ marginTop: 26 }}>
+        <Col lg={6} xs={24}>
+          <div
+            style={{
+              background:
+                "linear-gradient(145deg, #f4f9ff 0%, #ffffff 54%, #fff8e8 100%)",
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: 28,
+              boxShadow: "0 18px 50px rgba(33, 49, 57, 0.08)",
+              height: "100%",
+              padding: 22,
+            }}
+          >
+            <Flex vertical gap={18}>
+              <Flex align="center" gap={12}>
+                <div
+                  style={{
+                    alignItems: "center",
+                    background: "#e9f2ff",
+                    border: `1px solid ${PUBLIC_COLORS.border}`,
+                    borderRadius: 18,
+                    color: PUBLIC_COLORS.brand,
+                    display: "flex",
+                    fontSize: 26,
+                    height: 58,
+                    justifyContent: "center",
+                    width: 58,
+                  }}
+                >
+                  <Icon name="project-outlined" />
+                </div>
+                <div>
+                  <Text strong style={{ color: PUBLIC_COLORS.brand }}>
+                    One project
+                  </Text>
+                  <Paragraph style={{ margin: "3px 0 0" }}>
+                    Shared files, compute, history, and collaboration.
+                  </Paragraph>
+                </div>
+              </Flex>
+              <div
+                style={{
+                  display: "grid",
+                  gap: 10,
+                  gridTemplateColumns: "repeat(auto-fit, minmax(128px, 1fr))",
+                }}
+              >
+                {[
+                  { icon: "files", label: "Files" },
+                  { icon: "history", label: "TimeTravel" },
+                  { icon: "users", label: "People" },
+                  { icon: "disk-snapshot", label: "Recovery" },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    style={{
+                      alignItems: "center",
+                      background: "#fff",
+                      border: `1px solid ${PUBLIC_COLORS.border}`,
+                      borderRadius: 16,
+                      color: PUBLIC_COLORS.brand,
+                      display: "flex",
+                      gap: 8,
+                      padding: "10px 12px",
+                    }}
+                  >
+                    <Icon name={item.icon as IconName} />
+                    <Text>{item.label}</Text>
+                  </div>
+                ))}
+              </div>
+            </Flex>
+          </div>
+        </Col>
+        <Col lg={18} xs={24}>
+          <div
+            style={{
+              display: "grid",
+              gap: 14,
+              gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+            }}
+          >
+            {pages.map(({ accent, icon, label, page }) => (
+              <a
+                href={appPath(`features/${page.slug}`)}
+                key={page.slug}
+                style={{
+                  background: "#fff",
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: 22,
+                  boxShadow: "0 14px 38px rgba(33, 49, 57, 0.07)",
+                  color: "inherit",
+                  minHeight: 178,
+                  padding: 18,
+                  textDecoration: "none",
+                }}
+              >
+                <Flex vertical gap={12}>
+                  <Flex align="center" justify="space-between">
+                    <div
+                      style={{
+                        alignItems: "center",
+                        background: `${accent}14`,
+                        border: `1px solid ${accent}33`,
+                        borderRadius: 16,
+                        color: accent,
+                        display: "flex",
+                        fontSize: 24,
+                        height: 50,
+                        justifyContent: "center",
+                        width: 50,
+                      }}
+                    >
+                      <Icon name={icon} />
+                    </div>
+                    <Icon name="arrow-right" style={{ color: accent }} />
+                  </Flex>
+                  <Tag
+                    style={{
+                      alignSelf: "flex-start",
+                      background: `${accent}12`,
+                      borderColor: `${accent}2e`,
+                      color: accent,
+                      marginInlineEnd: 0,
+                    }}
+                  >
+                    {label}
+                  </Tag>
+                  <div>
+                    <Title level={4} style={{ margin: "0 0 8px" }}>
+                      {page.title}
+                    </Title>
+                    <Paragraph style={{ margin: 0 }}>{page.summary}</Paragraph>
+                  </div>
+                </Flex>
+              </a>
+            ))}
+          </div>
+        </Col>
+      </Row>
     </section>
   );
 }
