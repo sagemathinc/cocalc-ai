@@ -577,7 +577,7 @@ export default function AIFeaturePage({
             </Title>
             <Paragraph style={{ margin: "12px 0 0" }}>
               CoCalc projects are real Linux environments with persistent
-              terminals. Command-line agents such as Claude Code, opencode, or
+              terminals. Command-line agents such as Claude Code, OpenCode, or
               similar tools can be installed and run there like ordinary Linux
               programs. That is terminal use, not a native CoCalc AI provider
               integration.
