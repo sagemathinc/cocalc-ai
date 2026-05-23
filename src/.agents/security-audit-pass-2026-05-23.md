@@ -587,6 +587,29 @@ Validation:
 - `packages/http-api`: `pages/api/v2/purchases-renew-subscription-fresh-auth.test.ts`
 - Full TypeScript build.
 
+### Subscription cancel/resume mutations lacked fresh auth
+
+The user-facing subscription actions could cancel an active subscription or
+directly resume a canceled subscription using only the existing signed-in
+session. Canceling disrupts paid service renewal, and direct resume can spend
+account balance or re-enable recurring renewal for a membership subscription.
+
+Fix:
+
+- `/api/v2/purchases/cancel-subscription` now requires fresh auth before
+  canceling the subscription.
+- `/api/v2/purchases/resume-subscription` now requires fresh auth before
+  directly resuming the subscription.
+- The React cancel and direct-resume flows now use
+  `useFreshAuthAction/FreshAuthModal` so stale browser sessions prompt and
+  retry instead of showing a raw API error.
+
+Validation:
+
+- `packages/http-api`: `pages/api/v2/purchases-subscription-state-fresh-auth.test.ts`
+- Full TypeScript build.
+- Frontend lint.
+
 ## Reviewed Surfaces
 
 - Public hub dangerous RPC registry and name-based coverage.
@@ -609,6 +632,7 @@ Validation:
 - Legacy billing API namespace and active purchases replacements.
 - Active Stripe payment-method mutation routes.
 - Active Stripe subscription-renewal payment route.
+- User-facing subscription cancel/resume state mutation routes.
 
 ## Residual Follow-Up
 

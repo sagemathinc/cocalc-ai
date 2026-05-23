@@ -35,6 +35,10 @@ import {
 } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { SettingBox } from "@cocalc/frontend/components/setting-box";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
@@ -74,15 +78,20 @@ function SubscriptionActions({
   const [modalOpen, setModalOpen] = useState<boolean>(false);
   const [showResume, setShowResume] = useState<boolean>(false);
   const reasonRef = useRef<string>("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
   const handleCancel = async () => {
     try {
       setLoading(true);
       setError("");
-      await cancelSubscription({
-        subscription_id,
-        reason: `Requested by the user: ${reasonRef.current}`,
+      await runFreshAuthAction(async () => {
+        await cancelSubscription({
+          subscription_id,
+          reason: `Requested by the user: ${reasonRef.current}`,
+        });
+        refresh();
       });
-      refresh();
     } catch (error) {
       setError(`${error}`);
     } finally {
@@ -211,6 +220,7 @@ function SubscriptionActions({
           />
         </>
       )}
+      <FreshAuthModal {...freshAuthModalProps} />
     </Space>
   );
 }
