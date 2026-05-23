@@ -654,8 +654,17 @@ describe("site license seat pools", () => {
       ],
     });
 
+    await expect(
+      updateSiteLicensePool({
+        actor_account_id: owner_account_id,
+        package_id: overview.pools[0].id,
+        seat_count: 25,
+        allowed_domains: [updatedDomain],
+      }),
+    ).rejects.toThrow("must be an admin");
+
     await updateSiteLicensePool({
-      actor_account_id: owner_account_id,
+      actor_account_id: admin_account_id,
       package_id: overview.pools[0].id,
       seat_count: 25,
       allowed_domains: [updatedDomain],
@@ -723,8 +732,16 @@ describe("site license seat pools", () => {
       ],
     });
 
+    await expect(
+      updateSiteLicense({
+        actor_account_id: owner_account_id,
+        site_license_id: overview.site_license.id,
+        name: "Owner Edited Campus",
+      }),
+    ).rejects.toThrow("must be an admin");
+
     const updated = await updateSiteLicense({
-      actor_account_id: owner_account_id,
+      actor_account_id: admin_account_id,
       site_license_id: overview.site_license.id,
       name: "Updated Settings Campus",
       organization_name: "Updated University",
@@ -807,8 +824,26 @@ describe("site license seat pools", () => {
       ],
     });
 
+    await expect(
+      addSiteLicensePool({
+        actor_account_id: owner_account_id,
+        site_license_id: overview.site_license.id,
+        pool: {
+          pool_name: "Researchers",
+          membership_class: researcherTier,
+          seat_count: 5,
+          requires_approval: true,
+          verification_policy: "email-domain",
+          exclusive_group: "research",
+          allowed_domains: [researchDomain],
+          affiliation_reverification_days: 365,
+          affiliation_reverification_grace_days: 45,
+        },
+      }),
+    ).rejects.toThrow("must be an admin");
+
     const updated = await addSiteLicensePool({
-      actor_account_id: owner_account_id,
+      actor_account_id: admin_account_id,
       site_license_id: overview.site_license.id,
       pool: {
         pool_name: "Researchers",
@@ -852,7 +887,7 @@ describe("site license seat pools", () => {
       expect.arrayContaining([
         expect.objectContaining({
           action: "pool-created",
-          actor_account_id: owner_account_id,
+          actor_account_id: admin_account_id,
           metadata: expect.objectContaining({
             pool_name: "Researchers",
             source: "add-site-license-pool",

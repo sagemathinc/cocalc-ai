@@ -155,6 +155,19 @@ Validation:
 
 - `packages/server`: `membership/site-licenses.test.ts`
 
+### Site-license structural edits were available to customer managers/owners
+
+`updateSiteLicense`, `updateSiteLicensePool`, and `addSiteLicensePool` used the same write-manager authorization as operational request workflows. That meant a customer site-license owner or manager could change structural/commercial license terms such as allowed domains, pool seat counts, expiration, and newly available pools.
+
+Fix:
+
+- Site-license creation, site-license settings edits, pool edits, and pool creation now require platform admin authorization.
+- Customer owners/managers still retain the intended operational paths such as request review and owner-only manager administration.
+
+Validation:
+
+- `packages/server`: `membership/site-licenses.test.ts`
+
 ### False email verification markers could be treated as verified
 
 `getVerifiedEmailAddressesForAccount` normalized keys but then looked up values using the normalized key. It also had a fallback that could treat a non-null false marker as verified. This mattered because site-license claims rely on verified institutional email addresses.

@@ -1676,6 +1676,16 @@ async function assertSiteLicenseOwner({
   }
 }
 
+async function assertSiteLicenseAdmin({
+  account_id,
+}: {
+  account_id: string;
+}): Promise<void> {
+  if (!(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+}
+
 async function listSiteLicensePoolRequests({
   site_license_id,
   states,
@@ -2562,12 +2572,7 @@ export async function updateSiteLicensePool({
       packageId,
       client,
     );
-    await assertSiteLicenseManager({
-      account_id: actorAccountId,
-      site_license_id: siteLicense.id,
-      write: true,
-      client,
-    });
+    await assertSiteLicenseAdmin({ account_id: actorAccountId });
     const updated = await updateMembershipPackageRecord({
       package_id: packageId,
       seat_count,
@@ -2617,12 +2622,7 @@ export async function addSiteLicensePool({
   const siteLicenseId = normalizeAccountId(site_license_id, "site_license_id");
   return await withLocalSiteLicenseTransaction(async (client) => {
     const siteLicense = await getSiteLicense(siteLicenseId, client);
-    await assertSiteLicenseManager({
-      account_id: actorAccountId,
-      site_license_id: siteLicenseId,
-      write: true,
-      client,
-    });
+    await assertSiteLicenseAdmin({ account_id: actorAccountId });
     const [normalizedPool] = normalizePools(
       [pool],
       siteLicense.allowed_domains,
@@ -2741,12 +2741,7 @@ export async function updateSiteLicense({
   const siteLicenseId = normalizeAccountId(site_license_id, "site_license_id");
   return await withLocalSiteLicenseTransaction(async (client) => {
     const current = await getSiteLicense(siteLicenseId, client);
-    await assertSiteLicenseManager({
-      account_id: actorAccountId,
-      site_license_id: siteLicenseId,
-      write: true,
-      client,
-    });
+    await assertSiteLicenseAdmin({ account_id: actorAccountId });
     const nextAllowedDomains =
       allowed_domains === undefined
         ? current.allowed_domains
