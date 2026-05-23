@@ -1160,21 +1160,37 @@ export function NavigatorShell({
   }
 
   const fontControls = (
-    <Space size={[4, 0]} wrap>
+    <div
+      aria-label="Agent chat text size"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 2,
+        height: 28,
+        padding: "0 3px",
+        border: "1px solid #d9d9d9",
+        borderRadius: 7,
+        background: "#fff",
+        whiteSpace: "nowrap",
+      }}
+    >
       <Tooltip title="Decrease chat font size">
         <Button
           size="small"
           type="text"
           disabled={!canDecreaseFontSize}
           onClick={decreaseFontSize}
-          style={{ minWidth: 24, padding: "0 4px" }}
+          style={{ minWidth: 24, height: 22, padding: "0 4px" }}
         >
           <Icon name="minus" />
         </Button>
       </Tooltip>
       <Tooltip title={`Agent chat font size: ${fontSize}px`}>
-        <Typography.Text style={{ minWidth: 28, textAlign: "center" }}>
-          {fontSize}
+        <Typography.Text
+          type="secondary"
+          style={{ fontSize: 12, padding: "0 4px" }}
+        >
+          Text {fontSize}
         </Typography.Text>
       </Tooltip>
       <Tooltip title="Increase chat font size">
@@ -1183,12 +1199,12 @@ export function NavigatorShell({
           type="text"
           disabled={!canIncreaseFontSize}
           onClick={increaseFontSize}
-          style={{ minWidth: 24, padding: "0 4px" }}
+          style={{ minWidth: 24, height: 22, padding: "0 4px" }}
         >
           <Icon name="plus" />
         </Button>
       </Tooltip>
-    </Space>
+    </div>
   );
   const selectedThreadModel =
     selectedThreadMetadata?.agent_model?.trim() ||
