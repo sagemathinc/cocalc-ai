@@ -13,14 +13,14 @@ Sign up for a new account:
 4. Write account to the database.
 5. Sign user in (if not being used via the API).
 
-This can also be used via the API by an already authenticated admin account,
-which skips the captcha flow.
+This can also be used by an already signed-in admin browser session, which skips
+the captcha flow. API-key authenticated account creation is intentionally not
+allowed; use the fresh-auth-protected admin account-creation RPC instead.
 
 
 API Usage:
 
-curl -u sk_abcdefQWERTY090900000000: \
-  -d firstName=John00 \
+curl -d firstName=John00 \
   -d lastName=Doe00 \
   -d email=jd@example.com \
   -d password=xyzabc09090 \
@@ -109,6 +109,15 @@ export async function signUp(req, res) {
   const issues = checkObviousConditions({ terms, email, password });
   if (len(issues) > 0) {
     res.json({ issues });
+    return;
+  }
+
+  if (req.header("Authorization")) {
+    res.json({
+      issues: {
+        api: "API keys cannot create accounts through sign-up.",
+      },
+    });
     return;
   }
 

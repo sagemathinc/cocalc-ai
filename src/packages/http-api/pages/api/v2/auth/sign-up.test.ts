@@ -159,6 +159,37 @@ describe("/api/v2/auth/sign-up", () => {
     expect(mockCreateClusterAccount).not.toHaveBeenCalled();
   });
 
+  it("rejects API-key authenticated account creation before captcha or trust checks", async () => {
+    mockGetAccountId.mockResolvedValue("admin-account-id");
+    const { req, res } = createMocks({
+      method: "POST",
+      url: "/api/v2/auth/sign-up",
+      headers: { authorization: "Bearer sk-cc-v2.key.secret" },
+      body: {
+        terms: true,
+        email: "new@example.com",
+        password: "correct horse battery staple 12345!",
+        firstName: "New",
+        lastName: "User",
+        registrationToken: "valid-token",
+      },
+    });
+
+    const { signUp } = await import("./sign-up");
+    await signUp(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res._getJSONData()).toEqual({
+      issues: {
+        api: "API keys cannot create accounts through sign-up.",
+      },
+    });
+    expect(mockGetAccountId).not.toHaveBeenCalled();
+    expect(mockReCaptcha).not.toHaveBeenCalled();
+    expect(mockValidateRegistrationToken).not.toHaveBeenCalled();
+    expect(mockCreateClusterAccount).not.toHaveBeenCalled();
+  });
+
   it("validates a required registration token before checking account availability", async () => {
     mockValidateRegistrationToken.mockRejectedValue(
       new Error("Registration token is wrong."),
