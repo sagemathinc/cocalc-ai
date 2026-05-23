@@ -52,6 +52,45 @@ describe("admin maintenance dangerous-session auth", () => {
     });
   });
 
+  it("requires centralized recent 2FA fresh auth before admin-created accounts", async () => {
+    const { adminCreateUser } = await import("./system");
+
+    await expect(
+      adminCreateUser({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        email: "created@example.com",
+      }),
+    ).rejects.toThrow("fresh auth is required");
+
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      session_hash: undefined,
+      require_second_factor: true,
+    });
+  });
+
+  it("requires centralized recent 2FA fresh auth before unlinking a passport login method", async () => {
+    const { deletePassport } = await import("./system");
+
+    await expect(
+      deletePassport({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        strategy: "github",
+        id: "github-user-1",
+      }),
+    ).rejects.toThrow("fresh auth is required");
+
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      session_hash: undefined,
+      require_second_factor: true,
+    });
+  });
+
   it("requires centralized recent 2FA fresh auth before Cloudflare teardown apply", async () => {
     const { startCloudflareTeardownApply } = await import("./system");
 
@@ -61,6 +100,45 @@ describe("admin maintenance dangerous-session auth", () => {
         browser_id: "browser-1",
         plan_id: "plan-1",
         confirm: "DELETE",
+      }),
+    ).rejects.toThrow("fresh auth is required");
+
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      session_hash: undefined,
+      require_second_factor: true,
+    });
+  });
+
+  it("requires recent 2FA fresh auth before setting parallel worker limits", async () => {
+    const { setParallelOpsLimit } = await import("./system");
+
+    await expect(
+      setParallelOpsLimit({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        worker_kind: "project-rootfs-publish",
+        limit_value: 2,
+      }),
+    ).rejects.toThrow("fresh auth is required");
+
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: undefined,
+      session_hash: "session-hash",
+      require_second_factor: true,
+    });
+  });
+
+  it("requires recent 2FA fresh auth before clearing parallel worker limits", async () => {
+    const { clearParallelOpsLimit } = await import("./system");
+
+    await expect(
+      clearParallelOpsLimit({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        worker_kind: "project-rootfs-publish",
       }),
     ).rejects.toThrow("fresh auth is required");
 

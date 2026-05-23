@@ -560,8 +560,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "system.adminCreateUser": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "admin account creation with password issuance",
   },
   "system.adminResetPasswordLink": {
     decision: "fresh-auth-required",
@@ -588,8 +588,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: "admin membership mutation",
   },
   "system.clearParallelOpsLimit": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "admin worker concurrency limit mutation",
   },
   "system.clearProviderSetupChallenge": {
     decision: "fresh-auth-not-required",
@@ -616,8 +616,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: "OpenAI external credential revocation",
   },
   "system.deletePassport": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "account SSO/passport login method unlink",
   },
   "system.drainAccountCollaboratorIndexProjection": {
     decision: "fresh-auth-not-required",
@@ -733,8 +733,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: "OpenAI external credential mutation",
   },
   "system.setParallelOpsLimit": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "admin worker concurrency limit mutation",
   },
   "system.setProjectRootfsImage": {
     decision: "fresh-auth-required",

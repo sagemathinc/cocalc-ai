@@ -1560,6 +1560,8 @@ export interface System {
 
   setParallelOpsLimit: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     worker_kind: string;
     scope_type?: "global" | "provider" | "project_host";
     scope_id?: string;
@@ -1569,6 +1571,8 @@ export interface System {
 
   clearParallelOpsLimit: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     worker_kind: string;
     scope_type?: "global" | "provider" | "project_host";
     scope_id?: string;
@@ -1634,6 +1638,8 @@ export interface System {
 
   adminCreateUser: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     email: string;
     password?: string;
     first_name?: string;
@@ -1859,6 +1865,8 @@ export interface System {
 
   deletePassport: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     strategy: string;
     id: string;
   }) => Promise<void>;

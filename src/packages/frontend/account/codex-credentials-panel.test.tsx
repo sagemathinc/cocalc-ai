@@ -68,6 +68,16 @@ jest.mock("@cocalc/frontend/components", () => ({
 }));
 
 jest.mock("@cocalc/frontend/components/password", () => () => null);
+jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
+  FreshAuthModal: () => <div data-testid="fresh-auth-modal" />,
+  useFreshAuthAction: () => ({
+    freshAuthModalProps: {},
+    runFreshAuthAction: async (action: () => Promise<void>) => {
+      await action();
+      return true;
+    },
+  }),
+}));
 jest.mock("@cocalc/frontend/components/time-ago", () => ({
   TimeAgo: () => null,
 }));

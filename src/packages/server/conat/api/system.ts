@@ -2404,6 +2404,8 @@ async function assertAdmin(account_id?: string): Promise<void> {
 
 export async function setParallelOpsLimit({
   account_id,
+  browser_id,
+  session_hash,
   worker_kind,
   scope_type,
   scope_id,
@@ -2411,6 +2413,8 @@ export async function setParallelOpsLimit({
   note,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   worker_kind: string;
   scope_type?: string;
   scope_id?: string;
@@ -2418,6 +2422,12 @@ export async function setParallelOpsLimit({
   note?: string;
 }) {
   await assertAdmin(account_id);
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
   const worker = getParallelOpsWorkerRegistration(worker_kind);
   if (!worker) {
     throw Error(`unknown worker_kind '${worker_kind}'`);
@@ -2473,16 +2483,26 @@ export async function setParallelOpsLimit({
 
 export async function clearParallelOpsLimit({
   account_id,
+  browser_id,
+  session_hash,
   worker_kind,
   scope_type,
   scope_id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   worker_kind: string;
   scope_type?: string;
   scope_id?: string;
 }) {
   await assertAdmin(account_id);
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
   const worker = getParallelOpsWorkerRegistration(worker_kind);
   if (!worker) {
     throw Error(`unknown worker_kind '${worker_kind}'`);
@@ -3141,6 +3161,8 @@ function defaultUserNameFromEmail(email: string): {
 
 export async function adminCreateUser({
   account_id,
+  browser_id,
+  session_hash,
   email,
   password,
   first_name,
@@ -3148,6 +3170,8 @@ export async function adminCreateUser({
   tags,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   email: string;
   password?: string;
   first_name?: string;
@@ -3165,6 +3189,12 @@ export async function adminCreateUser({
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
 
   const emailAddress = `${email ?? ""}`.trim().toLowerCase();
   if (!is_valid_email_address(emailAddress)) {
@@ -3438,9 +3468,17 @@ export async function sendEmailVerification({
 import { delete_passport } from "@cocalc/server/auth/sso/delete-passport";
 export async function deletePassport(opts: {
   account_id: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   strategy: string;
   id: string;
 }): Promise<void> {
+  await requireDangerousSessionAuth({
+    account_id: opts.account_id,
+    browser_id: opts.browser_id,
+    session_hash: opts.session_hash,
+    require_second_factor: true,
+  });
   await delete_passport(db(), opts);
 }
 

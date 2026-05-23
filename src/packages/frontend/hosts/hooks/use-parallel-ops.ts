@@ -1,12 +1,14 @@
 import { React } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
 import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 type ParallelOpsLimitScopeType = "global" | "provider" | "project_host";
 
 type HubSystemApi = {
   getParallelOpsStatus: () => Promise<ParallelOpsWorkerStatus[]>;
   setParallelOpsLimit: (opts: {
+    browser_id?: string;
     worker_kind: string;
     scope_type?: ParallelOpsLimitScopeType;
     scope_id?: string;
@@ -14,6 +16,7 @@ type HubSystemApi = {
     note?: string;
   }) => Promise<unknown>;
   clearParallelOpsLimit: (opts: {
+    browser_id?: string;
     worker_kind: string;
     scope_type?: ParallelOpsLimitScopeType;
     scope_id?: string;
@@ -30,9 +33,13 @@ function scopeKey(
 
 export function useParallelOps(
   hub: { system: HubSystemApi },
-  opts: { enabled: boolean; pollMs?: number },
+  opts: {
+    enabled: boolean;
+    pollMs?: number;
+    runFreshAuthAction?: (action: () => Promise<void>) => Promise<boolean>;
+  },
 ) {
-  const { enabled, pollMs = 15000 } = opts;
+  const { enabled, pollMs = 15000, runFreshAuthAction } = opts;
   const [status, setStatus] = React.useState<ParallelOpsWorkerStatus[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string>();
@@ -82,7 +89,20 @@ export function useParallelOps(
       );
       setSavingKey(key);
       try {
-        await hub.system.setParallelOpsLimit(opts);
+        const action = async () => {
+          await hub.system.setParallelOpsLimit({
+            ...opts,
+            browser_id: webapp_client.browser_id,
+          });
+        };
+        if (runFreshAuthAction) {
+          const completed = await runFreshAuthAction(action);
+          if (!completed) {
+            return;
+          }
+        } else {
+          await action();
+        }
         await refresh();
       } catch (err) {
         alert_message({
@@ -94,7 +114,7 @@ export function useParallelOps(
         setSavingKey(undefined);
       }
     },
-    [hub, refresh],
+    [hub, refresh, runFreshAuthAction],
   );
 
   const clearLimit = React.useCallback(
@@ -110,7 +130,20 @@ export function useParallelOps(
       );
       setSavingKey(key);
       try {
-        await hub.system.clearParallelOpsLimit(opts);
+        const action = async () => {
+          await hub.system.clearParallelOpsLimit({
+            ...opts,
+            browser_id: webapp_client.browser_id,
+          });
+        };
+        if (runFreshAuthAction) {
+          const completed = await runFreshAuthAction(action);
+          if (!completed) {
+            return;
+          }
+        } else {
+          await action();
+        }
         await refresh();
       } catch (err) {
         alert_message({
@@ -124,7 +157,7 @@ export function useParallelOps(
         setSavingKey(undefined);
       }
     },
-    [hub, refresh],
+    [hub, refresh, runFreshAuthAction],
   );
 
   return {
