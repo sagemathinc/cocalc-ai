@@ -17,6 +17,7 @@ let getProjectBackupInfrastructureStatusMock: jest.Mock;
 let getBayBackupStatusMock: jest.Mock;
 let runBayBackupMock: jest.Mock;
 let runBayRestoreMock: jest.Mock;
+let requireDangerousSessionAuthMock: jest.Mock;
 let assertAccountTrustedForProductAccessMock: jest.Mock;
 let reserveProjectAppPublicSubdomainMock: jest.Mock;
 
@@ -140,6 +141,12 @@ jest.mock("@cocalc/server/bay-backup", () => ({
   getBayBackupStatus: (...args: any[]) => getBayBackupStatusMock(...args),
   runBayBackup: (...args: any[]) => runBayBackupMock(...args),
   runBayRestore: (...args: any[]) => runBayRestoreMock(...args),
+}));
+
+jest.mock("./dangerous-session-auth", () => ({
+  __esModule: true,
+  requireDangerousSessionAuth: (...args: any[]) =>
+    requireDangerousSessionAuthMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/trusted-product-access", () => ({
@@ -513,6 +520,7 @@ describe("getBayLoad", () => {
       recovery_ready: true,
       notes: ["Dry run only; no restore files were written."],
     }));
+    requireDangerousSessionAuthMock = jest.fn(async () => ({}));
     assertAccountTrustedForProductAccessMock = jest.fn(async () => undefined);
     reserveProjectAppPublicSubdomainMock = jest.fn(async () => ({
       hostname: "host.example.com",
@@ -708,6 +716,7 @@ describe("getBayLoad", () => {
     await expect(
       runBayRestore({
         account_id: "11111111-1111-4111-8111-111111111111",
+        session_hash: "session-hash",
         backup_set_id: "backup-1",
         target_dir: "/tmp/restore-target",
         dry_run: false,
@@ -725,6 +734,12 @@ describe("getBayLoad", () => {
       dry_run: false,
       remote_only: false,
       target_time: undefined,
+    });
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+      account_id: "11111111-1111-4111-8111-111111111111",
+      browser_id: undefined,
+      session_hash: "session-hash",
+      require_second_factor: true,
     });
   });
 });
