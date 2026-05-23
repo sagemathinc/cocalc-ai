@@ -11,7 +11,7 @@
 // cSpell:ignore undoable
 
 import { Alert, Button, Modal, Space, Typography } from "antd";
-import { Map, Set } from "immutable";
+import { Map, Set as ImmutableSet } from "immutable";
 import { useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
@@ -30,6 +30,10 @@ import {
   LeaveOrDeleteProjectsModal,
   type LeaveOrDeleteProjectsPlan,
 } from "./leave-or-delete-projects-modal";
+import {
+  runLeaveOrDeleteProjectsSequentially,
+  type BulkLeaveOrDeleteProgress,
+} from "./projects-bulk-delete";
 import {
   ArchiveProjectModal,
   type ArchiveProjectModalItem,
@@ -63,6 +67,8 @@ export function ProjectsOperations({
   const project_map = useTypedRedux("projects", "project_map");
   const account_id = useTypedRedux("account", "account_id");
   const isAdmin = !!useTypedRedux("account", "is_admin");
+  const [bulkLeaveDeleteProgress, setBulkLeaveDeleteProgress] =
+    useState<BulkLeaveOrDeleteProgress | null>(null);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) =>
       Modal.error({
@@ -73,7 +79,7 @@ export function ProjectsOperations({
 
   const hidden = useTypedRedux("projects", "hidden");
   const search: string = useTypedRedux("projects", "search");
-  const selected_hashtags: Map<string, Set<string>> = useTypedRedux(
+  const selected_hashtags: Map<string, ImmutableSet<string>> = useTypedRedux(
     "projects",
     "selected_hashtags",
   );
@@ -123,7 +129,7 @@ export function ProjectsOperations({
     // Clear hashtags for current filter state
     if (selected_hashtags && selected_hashtags_for_filter.length > 0) {
       actions.setState({
-        selected_hashtags: selected_hashtags.set(filter, Set()),
+        selected_hashtags: selected_hashtags.set(filter, ImmutableSet()),
       });
     }
 
@@ -382,17 +388,23 @@ export function ProjectsOperations({
       });
       return;
     }
+    setBulkLeaveDeleteProgress(null);
     setLeaveDeleteModalOpen(true);
   }
 
   async function leaveOrDeleteSelected() {
     const plan = selectedPlan;
     await runFreshAuthAction(async () => {
-      const results =
-        await webapp_client.conat_client.hub.projects.leaveOrDeleteProjects({
-          project_ids: plan.actionableIds,
-          browser_id: webapp_client.browser_id,
-        });
+      const { results, stopped } = await runLeaveOrDeleteProjectsSequentially({
+        project_ids: plan.actionableIds,
+        onProgress: setBulkLeaveDeleteProgress,
+        submitProject: async (project_id) =>
+          await webapp_client.conat_client.hub.projects.leaveOrDeleteProjects({
+            project_ids: [project_id],
+            browser_id: webapp_client.browser_id,
+          }),
+        waitForQueuedDelete: waitForHardDeleteToLeaveActiveSet,
+      });
       const errors = results.filter((result) => result.action === "error");
       const succeeded = results
         .filter((result) => result.action !== "error")
@@ -406,8 +418,9 @@ export function ProjectsOperations({
       setLeaveDeleteModalOpen(false);
       alert_message({
         type: errors.length > 0 ? "warning" : "success",
-        message:
-          errors.length > 0
+        message: stopped
+          ? `Processed ${succeeded.length} project(s); stopped before queuing the remaining project delete(s).`
+          : errors.length > 0
             ? `Processed ${succeeded.length} project(s); ${errors.length} failed.`
             : `Processed ${succeeded.length} selected project(s).`,
       });
@@ -425,6 +438,7 @@ export function ProjectsOperations({
           ),
         });
       }
+      setBulkLeaveDeleteProgress(null);
     });
   }
 
@@ -549,6 +563,7 @@ export function ProjectsOperations({
         projectTitle={selectedTitle}
         onCancel={() => setLeaveDeleteModalOpen(false)}
         onConfirm={leaveOrDeleteSelected}
+        progress={bulkLeaveDeleteProgress}
       />
       <ArchiveProjectModal
         open={archiveModalOpen}
@@ -606,4 +621,38 @@ function archiveAllowedByAdminOnly(
     group !== "owner" &&
     project.get?.("allow_collaborator_destructive_storage_actions") !== true
   );
+}
+
+const HARD_DELETE_ACTIVE_STATUSES = new Set(["queued", "running"]);
+const HARD_DELETE_POLL_MS = 1500;
+const HARD_DELETE_WAIT_TIMEOUT_MS = 30 * 60 * 1000;
+
+async function waitForHardDeleteToLeaveActiveSet({
+  project_id,
+  op_id,
+}: {
+  project_id: string;
+  op_id: string;
+}): Promise<void> {
+  const started = Date.now();
+  while (Date.now() - started < HARD_DELETE_WAIT_TIMEOUT_MS) {
+    const summary = await webapp_client.conat_client.hub.lro.get({ op_id });
+    if (summary && !HARD_DELETE_ACTIVE_STATUSES.has(summary.status)) {
+      if (summary.status === "succeeded") {
+        return;
+      }
+      throw new Error(
+        summary.error ??
+          `Project delete ${op_id} for ${project_id} finished with status ${summary.status}`,
+      );
+    }
+    await delay(HARD_DELETE_POLL_MS);
+  }
+  throw new Error(
+    `Timed out waiting for project delete ${op_id} for ${project_id} to leave queued/running state.`,
+  );
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
