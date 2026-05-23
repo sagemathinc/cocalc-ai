@@ -22,7 +22,7 @@ import type {
   MembershipPackageRecord,
 } from "@cocalc/conat/hub/api/purchases";
 import type { CourseInfo } from "@cocalc/util/db-schema/projects";
-import type { MembershipPackageProduct } from "@cocalc/util/db-schema/shopping-cart-items";
+import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
 import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
 import {
   is_valid_email_address as isValidEmailAddress,

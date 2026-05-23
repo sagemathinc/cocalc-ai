@@ -5,12 +5,7 @@ import createCredit from "@cocalc/server/purchases/create-credit";
 import { LineItem } from "@cocalc/util/stripe/types";
 import { stripeToDecimal } from "@cocalc/util/stripe/calc";
 import {
-  shoppingCartCheckout,
-  shoppingCartPutItemsBack,
-} from "@cocalc/server/purchases/shopping-cart-checkout";
-import {
   AUTO_CREDIT,
-  SHOPPING_CART_CHECKOUT,
   SUBSCRIPTION_RENEWAL,
   RESUME_SUBSCRIPTION,
   MEMBERSHIP_CHANGE,
@@ -38,7 +33,7 @@ import { getTransactionClient } from "@cocalc/database/pool";
 import { recordPaymentIntent } from "./create-payment-intent";
 import createVouchers from "@cocalc/server/vouchers/create-vouchers";
 import purchaseMembershipPackage from "@cocalc/server/purchases/membership-package";
-import type { MembershipPackageProduct } from "@cocalc/util/db-schema/shopping-cart-items";
+import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
 
 const logger = getLogger("purchases:stripe:process-payment-intents");
 
@@ -244,19 +239,7 @@ customer.  So we don't know what to do with this.  Please manually investigate.
 
       let result = "we did NOT add credit to your account";
       try {
-        if (paymentIntent.metadata.purpose == SHOPPING_CART_CHECKOUT) {
-          result = "the items you were buying were put back in your cart";
-          // free up the items so they can be purchased again.
-          // The purpose of this payment was to buy certain items from the store.  We use the credit we just got above
-          // to provision each of those items.
-          const cart_ids =
-            paymentIntent.metadata.cart_ids != null
-              ? JSON.parse(paymentIntent.metadata.cart_ids)
-              : undefined;
-          if (cart_ids != null) {
-            await shoppingCartPutItemsBack({ cart_ids });
-          }
-        } else if (paymentIntent.metadata.purpose == SUBSCRIPTION_RENEWAL) {
+        if (paymentIntent.metadata.purpose == SUBSCRIPTION_RENEWAL) {
           result = `we did NOT renew subscription (id=${paymentIntent.metadata.subscription_id})`;
           await processSubscriptionRenewalFailure({
             paymentIntent,
@@ -365,21 +348,7 @@ ${await support()}`;
 
     let reason = "add credit to your account";
     try {
-      if (paymentIntent.metadata.purpose == SHOPPING_CART_CHECKOUT) {
-        reason = "purchase items in your shopping cart";
-        // The purpose of this payment was to buy certain items from the store.
-        // We use the credit we just got above to provision each of those items.
-        await shoppingCartCheckout({
-          account_id,
-          payment_intent: paymentIntent.id,
-          amount,
-          credit_id,
-          cart_ids:
-            paymentIntent.metadata.cart_ids != null
-              ? JSON.parse(paymentIntent.metadata.cart_ids)
-              : undefined,
-        });
-      } else if (paymentIntent.metadata.purpose == SUBSCRIPTION_RENEWAL) {
+      if (paymentIntent.metadata.purpose == SUBSCRIPTION_RENEWAL) {
         reason = `renew a subscription (id=${paymentIntent.metadata.subscription_id})`;
         await processSubscriptionRenewal({ account_id, paymentIntent, amount });
       } else if (paymentIntent.metadata.purpose == RESUME_SUBSCRIPTION) {

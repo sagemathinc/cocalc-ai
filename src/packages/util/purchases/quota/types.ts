@@ -4,7 +4,13 @@
  */
 
 import type { Uptime } from "@cocalc/util/consts/quota-uptime";
-import type { CustomDescription, Period } from "@cocalc/util/upgrades/shopping";
+
+export type Period = "range" | "monthly" | "yearly";
+
+export interface CustomDescription {
+  title?: string;
+  description?: string;
+}
 
 export type User = "academic" | "business";
 export type Upgrade = "basic" | "standard" | "max" | "custom";
@@ -30,17 +36,6 @@ export interface Cost {
   // on the closing statement date of the user.
   cost_sub_first_period?: number;
   period: Period;
-}
-
-export type CostInput =
-  | (Partial<PurchaseInfo> & {
-      type: "quota";
-      subscription: Subscription;
-    })
-  | { type: "cash-voucher"; amount: number; subscription: Subscription };
-
-export interface CostInputPeriod extends Cost {
-  input: CostInput;
 }
 
 export interface StartEndDates {

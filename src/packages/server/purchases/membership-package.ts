@@ -5,7 +5,7 @@
 
 import { getTransactionClient, type PoolClient } from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
-import type { MembershipPackageProduct } from "@cocalc/util/db-schema/shopping-cart-items";
+import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
 import {
   assertAccountNotRehoming,
   assertAccountWriteOnHomeBay,

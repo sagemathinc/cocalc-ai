@@ -19,7 +19,7 @@ export default async function handle(req, res) {
 async function get(req): Promise<Voucher[]> {
   const account_id = await getAccountId(req);
   if (account_id == null) {
-    throw Error("must be signed in to get shopping cart information");
+    throw Error("must be signed in to get recent vouchers");
   }
   // recent = postgresql time, e.g., "1 day".  Can be omitted, in which case default is "1 week".
   const { recent } = getParams(req);

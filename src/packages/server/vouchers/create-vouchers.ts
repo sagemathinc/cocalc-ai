@@ -85,8 +85,7 @@ export default async function createVouchers({
     credit_id,
   });
   if (!count || count < 1 || !isFinite(count)) {
-    // default to 1 -- this wasn't specified at all in some cases with
-    // older vouchers that might be in user shopping carts still
+    // default to 1 -- older voucher creation paths did not always specify this
     count = 1;
   }
   if (

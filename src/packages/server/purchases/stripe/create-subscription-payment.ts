@@ -8,7 +8,7 @@ import {
   toDecimal,
 } from "@cocalc/util/money";
 import dayjs from "dayjs";
-import { ALLOWED_SLACK } from "@cocalc/server/purchases/shopping-cart-checkout";
+import { ALLOWED_SLACK } from "@cocalc/server/purchases/allowed-slack";
 import type { Subscription } from "@cocalc/util/db-schema/subscriptions";
 import createPaymentIntent from "./create-payment-intent";
 import {
