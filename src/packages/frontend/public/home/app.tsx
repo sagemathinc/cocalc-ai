@@ -365,37 +365,141 @@ function DifferenceSection() {
   const items = [
     {
       body: "Run cells, commands, terminals, and agent turns without tying the useful state to one browser tab.",
+      kicker: "State survives",
       title: "Durable execution",
     },
     {
       body: "Use sudo, apt, Python packages, RootFS images, SSH, and project snapshots instead of pretending technical work has no environment.",
+      kicker: "Real environment",
       title: "Real Linux projects",
     },
     {
       body: "Chat, notebooks, terminals, files, whiteboards, git review, and support workflows are designed for more than one person.",
+      kicker: "Shared by default",
       title: "Realtime collaboration",
     },
     {
       body: "Snapshots, backups, TimeTravel, project movement, and RootFS versions make project state recoverable and reusable.",
+      kicker: "Recoverable work",
       title: "Operational safety",
     },
   ];
   return (
-    <section>
-      <Eyebrow>Why CoCalc is different</Eyebrow>
-      <Title level={2} style={{ margin: "8px 0 0" }}>
-        Built for real computational work, not only polished demos.
-      </Title>
-      <PublicGrid columns={2}>
-        {items.map((item) => (
-          <GlassPanel key={item.title}>
-            <Title level={3} style={{ marginTop: 0 }}>
-              {item.title}
-            </Title>
-            <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
-          </GlassPanel>
-        ))}
-      </PublicGrid>
+    <section
+      style={{
+        background: "#f7fbff",
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 28,
+        overflow: "hidden",
+        padding: "40px 42px",
+      }}
+    >
+      <Row align="middle" gutter={[36, 36]}>
+        <Col lg={9} xs={24}>
+          <Flex vertical gap={22}>
+            <div>
+              <Eyebrow>Why CoCalc is different</Eyebrow>
+              <Title level={2} style={{ margin: "8px 0 0" }}>
+                Built for real computational work, not only polished demos.
+              </Title>
+            </div>
+            <Paragraph
+              style={{
+                color: PUBLIC_COLORS.mutedText,
+                fontSize: 17,
+                margin: 0,
+              }}
+            >
+              CoCalc treats a project as a durable technical environment: files,
+              running work, collaboration, history, and recovery all belong
+              together.
+            </Paragraph>
+            <div
+              aria-hidden="true"
+              style={{
+                background: "#fff",
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: 22,
+                padding: 18,
+              }}
+            >
+              <Flex vertical gap={14}>
+                {[
+                  "Notebook output",
+                  "Linux filesystem",
+                  "Team activity",
+                  "Snapshots and backups",
+                ].map((label, index) => (
+                  <Flex align="center" gap={12} key={label}>
+                    <div
+                      style={{
+                        alignItems: "center",
+                        background:
+                          index === 0 ? PUBLIC_COLORS.brand : "#eef5ff",
+                        borderRadius: 999,
+                        color: index === 0 ? "#fff" : PUBLIC_COLORS.brand,
+                        display: "flex",
+                        flex: "0 0 32px",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        height: 32,
+                        justifyContent: "center",
+                        width: 32,
+                      }}
+                    >
+                      {index + 1}
+                    </div>
+                    <Text strong>{label}</Text>
+                  </Flex>
+                ))}
+              </Flex>
+            </div>
+          </Flex>
+        </Col>
+        <Col lg={15} xs={24}>
+          <div
+            style={{
+              display: "grid",
+              gap: 18,
+              gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+            }}
+          >
+            {items.map((item, index) => (
+              <div
+                key={item.title}
+                style={{
+                  background: "#fff",
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: 22,
+                  boxShadow: "0 18px 44px rgba(33, 49, 57, 0.08)",
+                  minHeight: 190,
+                  padding: 24,
+                  transform:
+                    index === 1 || index === 2 ? "translateY(18px)" : undefined,
+                }}
+              >
+                <Text
+                  strong
+                  style={{
+                    color: PUBLIC_COLORS.brand,
+                    display: "block",
+                    fontSize: 13,
+                    letterSpacing: 0,
+                    marginBottom: 12,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {item.kicker}
+                </Text>
+                <Title level={3} style={{ margin: "0 0 12px" }}>
+                  {item.title}
+                </Title>
+                <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
+              </div>
+            ))}
+          </div>
+        </Col>
+      </Row>
     </section>
   );
 }
