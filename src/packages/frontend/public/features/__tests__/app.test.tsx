@@ -41,17 +41,20 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Launchpad Features" }),
+      screen.getByRole("heading", {
+        name: "Everything starts in a project.",
+      }),
     ).not.toBeNull();
-    expect(
-      screen.getByText("The new direction is increasingly agent-first"),
-    ).not.toBeNull();
-    expect(screen.getByText("Jupyter Notebooks")).not.toBeNull();
-    expect(screen.getByText("Linux Terminal")).not.toBeNull();
+    expect(screen.getByText("Durable collaborative projects")).not.toBeNull();
+    expect(screen.getByText("Documents")).not.toBeNull();
+    expect(screen.getByText("Compute")).not.toBeNull();
+    expect(screen.getByText("AI and automation")).not.toBeNull();
+    expect(screen.getAllByText("Jupyter Notebooks").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Linux Terminal").length).toBeGreaterThan(0);
     expect(screen.queryByText("Open page")).toBeNull();
     expect(
       screen
-        .getByRole("link", { name: /Jupyter Notebooks/i })
+        .getAllByRole("link", { name: /Jupyter Notebooks/i })[0]
         .getAttribute("href"),
     ).toBe("/features/jupyter-notebook");
   });
