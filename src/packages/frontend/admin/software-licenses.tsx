@@ -26,6 +26,10 @@ import {
   Loading,
   TimeAgo,
 } from "@cocalc/frontend/components";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import CopyToClipBoard from "@cocalc/frontend/components/copy-to-clipboard";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
@@ -73,6 +77,12 @@ export function SoftwareLicensesAdmin() {
 
   const [tierForm] = Form.useForm();
   const [licenseForm] = Form.useForm();
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) =>
+      message.error(
+        `Security confirmation succeeded, but action failed: ${err}`,
+      ),
+  });
 
   const loadTiers = React.useCallback(async () => {
     setLoadingTiers(true);
@@ -148,7 +158,15 @@ export function SoftwareLicensesAdmin() {
         disabled: values.disabled,
         notes: values.notes,
       };
-      await hub.software.upsertLicenseTier({ tier });
+      const completed = await runFreshAuthAction(async () => {
+        await hub.software.upsertLicenseTier({
+          tier,
+          browser_id: webapp_client.browser_id,
+        });
+      });
+      if (!completed) {
+        return;
+      }
       message.success("Tier saved");
       setTierModalOpen(false);
       await loadTiers();
@@ -163,17 +181,24 @@ export function SoftwareLicensesAdmin() {
     const values = await licenseForm.validateFields();
     setCreatingLicense(true);
     try {
-      const license = await hub.software.createLicense({
-        tier_id: values.tier_id,
-        owner_account_id: values.owner_account_id || undefined,
-        product: values.product || "launchpad",
-        expires_at: values.expires_at
-          ? dayjs(values.expires_at).toISOString()
-          : undefined,
-        limits: toJsonValue(values.limits),
-        features: toJsonValue(values.features),
-        notes: values.notes,
+      let license: SoftwareLicense | undefined;
+      await runFreshAuthAction(async () => {
+        license = await hub.software.createLicense({
+          tier_id: values.tier_id,
+          owner_account_id: values.owner_account_id || undefined,
+          product: values.product || "launchpad",
+          expires_at: values.expires_at
+            ? dayjs(values.expires_at).toISOString()
+            : undefined,
+          limits: toJsonValue(values.limits),
+          features: toJsonValue(values.features),
+          notes: values.notes,
+          browser_id: webapp_client.browser_id,
+        });
       });
+      if (!license) {
+        return;
+      }
       setCreatedLicense(license);
       setLicenseModalOpen(false);
       licenseForm.resetFields();
@@ -188,7 +213,15 @@ export function SoftwareLicensesAdmin() {
 
   const revokeLicense = async (license_id: string) => {
     try {
-      await hub.software.revokeLicense({ license_id });
+      const completed = await runFreshAuthAction(async () => {
+        await hub.software.revokeLicense({
+          license_id,
+          browser_id: webapp_client.browser_id,
+        });
+      });
+      if (!completed) {
+        return;
+      }
       message.success("License revoked");
       await loadLicenses();
     } catch (err) {
@@ -198,7 +231,15 @@ export function SoftwareLicensesAdmin() {
 
   const restoreLicense = async (license_id: string) => {
     try {
-      await hub.software.restoreLicense({ license_id });
+      const completed = await runFreshAuthAction(async () => {
+        await hub.software.restoreLicense({
+          license_id,
+          browser_id: webapp_client.browser_id,
+        });
+      });
+      if (!completed) {
+        return;
+      }
       message.success("License restored");
       await loadLicenses();
     } catch (err) {
@@ -441,6 +482,7 @@ export function SoftwareLicensesAdmin() {
           </Paragraph>
         )}
       </Modal>
+      <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
 }

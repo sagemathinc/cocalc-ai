@@ -68,6 +68,10 @@ type AccountOwnedMembershipPortableTable =
   | "membership_packages"
   | "membership_side_effects_outbox";
 
+const NON_SITE_MEMBERSHIP_PACKAGE_FILTER = `
+  COALESCE(kind, '') <> 'site'
+`;
+
 type AccountRehomeOperationRow = AccountRehomeOperationSummary & {
   account: Record<string, unknown> | null;
 };
@@ -360,9 +364,34 @@ async function replaceOwnedPortableRows({
   rows: Record<string, unknown>[];
 }): Promise<void> {
   const primaryKey = table === "membership_packages" ? ["id"] : ["effect_key"];
-  await getPool().query(`DELETE FROM "${table}" WHERE owner_account_id=$1`, [
-    account_id,
-  ]);
+  if (table === "membership_packages") {
+    await getPool().query(
+      `
+        DELETE FROM membership_packages
+         WHERE owner_account_id=$1
+           AND ${NON_SITE_MEMBERSHIP_PACKAGE_FILTER}
+      `,
+      [account_id],
+    );
+  } else if (table === "membership_side_effects_outbox") {
+    await getPool().query(
+      `
+        DELETE FROM membership_side_effects_outbox
+         WHERE owner_account_id=$1
+           AND package_id IN (
+             SELECT id
+               FROM membership_packages
+              WHERE owner_account_id=$1
+                AND ${NON_SITE_MEMBERSHIP_PACKAGE_FILTER}
+           )
+      `,
+      [account_id],
+    );
+  } else {
+    await getPool().query(`DELETE FROM "${table}" WHERE owner_account_id=$1`, [
+      account_id,
+    ]);
+  }
   for (const row of rows) {
     await upsertJsonRow({
       table,
@@ -386,6 +415,7 @@ async function replaceOwnedMembershipPackageAssignments({
          SELECT id
            FROM membership_packages
           WHERE owner_account_id=$1
+            AND ${NON_SITE_MEMBERSHIP_PACKAGE_FILTER}
        )
     `,
     [account_id],
@@ -434,6 +464,17 @@ async function clearOwnedPortableRows({
   table: AccountOwnedMembershipPortableTable;
   account_id: string;
 }): Promise<void> {
+  if (table === "membership_packages") {
+    await getPool().query(
+      `
+        DELETE FROM membership_packages
+         WHERE owner_account_id=$1
+           AND ${NON_SITE_MEMBERSHIP_PACKAGE_FILTER}
+      `,
+      [account_id],
+    );
+    return;
+  }
   await getPool().query(`DELETE FROM "${table}" WHERE owner_account_id=$1`, [
     account_id,
   ]);
@@ -449,6 +490,24 @@ async function clearOwnedMembershipPackageAssignments(
          SELECT id
            FROM membership_packages
           WHERE owner_account_id=$1
+            AND ${NON_SITE_MEMBERSHIP_PACKAGE_FILTER}
+       )
+    `,
+    [account_id],
+  );
+}
+
+async function clearOwnedMembershipSideEffects(
+  account_id: string,
+): Promise<void> {
+  await getPool().query(
+    `
+      DELETE FROM membership_side_effects_outbox
+       WHERE package_id IN (
+         SELECT id
+           FROM membership_packages
+          WHERE owner_account_id=$1
+            AND ${NON_SITE_MEMBERSHIP_PACKAGE_FILTER}
        )
     `,
     [account_id],
@@ -460,12 +519,9 @@ async function clearPortableState(account_id: string): Promise<void> {
     await clearPortableRows({ table, account_id });
   }
   await clearOwnedMembershipPackageAssignments(account_id);
+  await clearOwnedMembershipSideEffects(account_id);
   await clearOwnedPortableRows({
     table: "membership_packages",
-    account_id,
-  });
-  await clearOwnedPortableRows({
-    table: "membership_side_effects_outbox",
     account_id,
   });
 }
@@ -495,6 +551,10 @@ async function loadOwnedPortableRows(
   table: AccountOwnedMembershipPortableTable,
   account_id: string,
 ): Promise<Record<string, unknown>[]> {
+  const packageFilter =
+    table === "membership_packages"
+      ? `AND ${NON_SITE_MEMBERSHIP_PACKAGE_FILTER}`
+      : "";
   const { rows } = await getPool().query<{
     rows: Record<string, unknown>[] | null;
   }>(
@@ -504,6 +564,7 @@ async function loadOwnedPortableRows(
           SELECT *
             FROM "${table}"
            WHERE owner_account_id=$1
+           ${packageFilter}
         ) t
     `,
     [account_id],
@@ -525,6 +586,29 @@ async function loadOwnedMembershipPackageAssignmentRows(
             JOIN membership_packages p
               ON p.id = a.package_id
            WHERE p.owner_account_id=$1
+             AND ${NON_SITE_MEMBERSHIP_PACKAGE_FILTER.replaceAll("kind", "p.kind")}
+        ) t
+    `,
+    [account_id],
+  );
+  return Array.isArray(rows[0]?.rows) ? rows[0].rows! : [];
+}
+
+async function loadOwnedMembershipSideEffectRows(
+  account_id: string,
+): Promise<Record<string, unknown>[]> {
+  const { rows } = await getPool().query<{
+    rows: Record<string, unknown>[] | null;
+  }>(
+    `
+      SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) AS rows
+        FROM (
+          SELECT o.*
+            FROM membership_side_effects_outbox o
+            JOIN membership_packages p
+              ON p.id = o.package_id
+           WHERE o.owner_account_id=$1
+             AND ${NON_SITE_MEMBERSHIP_PACKAGE_FILTER.replaceAll("kind", "p.kind")}
         ) t
     `,
     [account_id],
@@ -544,7 +628,7 @@ export async function getMembershipPortableState(
     loadPortableRows("membership_grants", account_id),
     loadOwnedPortableRows("membership_packages", account_id),
     loadOwnedMembershipPackageAssignmentRows(account_id),
-    loadOwnedPortableRows("membership_side_effects_outbox", account_id),
+    loadOwnedMembershipSideEffectRows(account_id),
   ]);
   return {
     membership_grants,

@@ -8,7 +8,11 @@ import type {
   AcpStreamMessage,
 } from "@cocalc/conat/ai/acp/types";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
-import { CHAT_THREAD_META_ROW_DATE, threadConfigSenderId } from "@cocalc/chat";
+import {
+  CHAT_THREAD_META_ROW_DATE,
+  getLiveResponseBlocks,
+  threadConfigSenderId,
+} from "@cocalc/chat";
 import {
   ChatStreamWriter,
   disposeAllChatWritersForTests,
@@ -1061,9 +1065,27 @@ describe("ChatStreamWriter", () => {
       time: 3500,
     } as AcpStreamMessage);
     await writer.handle({
+      type: "event",
+      event: {
+        type: "thinking",
+        text: "The file write completed.",
+      } as any,
+      seq: 3,
+      time: 3550,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "event",
+      event: {
+        type: "message",
+        text: "Checking the code path.\n\nThe file write completed.",
+      } as any,
+      seq: 4,
+      time: 3575,
+    } as AcpStreamMessage);
+    await writer.handle({
       type: "summary",
       finalResponse: "done",
-      seq: 3,
+      seq: 5,
       time: 3600,
     } as AcpStreamMessage);
     await flush(writer);
@@ -1076,6 +1098,11 @@ describe("ChatStreamWriter", () => {
     expect(
       previewEvents.some(
         (event) => event.type === "event" && event.event.type === "file",
+      ),
+    ).toBe(false);
+    expect(
+      previewEvents.some(
+        (event) => event.type === "event" && event.event.type === "thinking",
       ),
     ).toBe(false);
     expect(previewEvents).toEqual([
@@ -1098,10 +1125,42 @@ describe("ChatStreamWriter", () => {
         seq: 2,
       }),
       expect.objectContaining({
+        type: "event",
+        seq: 4,
+        event: expect.objectContaining({
+          type: "message",
+          text: "Checking the code path.\n\nThe file write completed.",
+        }),
+      }),
+      expect.objectContaining({
         type: "summary",
-        seq: 3,
+        seq: 5,
         finalResponse: "done",
       }),
+    ]);
+    expect(
+      getLiveResponseBlocks(previewEvents, [
+        { date: 2500, text: "please verify the file write", state: "sent" },
+      ]),
+    ).toEqual([
+      {
+        kind: "agent",
+        text: "Checking the code path.",
+        time: 1100,
+        state: undefined,
+      },
+      {
+        kind: "guidance",
+        text: "please verify the file write",
+        time: 2500,
+        state: "sent",
+      },
+      {
+        kind: "agent",
+        text: "The file write completed.",
+        time: 3575,
+        state: undefined,
+      },
     ]);
     (writer as any).dispose?.(true);
   });

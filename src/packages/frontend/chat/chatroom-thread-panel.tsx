@@ -278,6 +278,8 @@ interface ChatRoomThreadPanelProps {
   shortcutEnabled?: boolean;
   notifyOnTurnFinish?: boolean;
   onNotifyOnTurnFinishChange?: (checked: boolean) => void;
+  hideTopControls?: boolean;
+  hideCompactThreadHeader?: boolean;
   allowSidebarToggle?: boolean;
   sidebarHidden?: boolean;
   onToggleSidebar?: () => void;
@@ -319,6 +321,8 @@ export function ChatRoomThreadPanel({
   shortcutEnabled = true,
   notifyOnTurnFinish = false,
   onNotifyOnTurnFinishChange,
+  hideTopControls = false,
+  hideCompactThreadHeader = false,
   allowSidebarToggle = false,
   sidebarHidden = false,
   onToggleSidebar,
@@ -1417,7 +1421,8 @@ export function ChatRoomThreadPanel({
       isCodexModelName(`${selectedThreadMeta?.agent_model ?? ""}`) ||
       actions?.getCodexConfig?.(selectedThreadId) != null),
   );
-  const showTopControls = shouldShowCodexConfig || allowSidebarToggle;
+  const showTopControls =
+    !hideTopControls && (shouldShowCodexConfig || allowSidebarToggle);
   const selectedThreadForLog = selectedThreadKey ?? undefined;
   const threadMeta =
     selectedThread && "displayLabel" in selectedThread
@@ -1570,38 +1575,40 @@ export function ChatRoomThreadPanel({
           />
         </div>
       ) : null}
-      {variant === "compact" && compactThreadLabel && (
-        <div
-          style={{
-            padding: "8px 12px",
-            borderBottom: "1px solid #e5e5e5",
-            background: "#f7f7f7",
-            color: "#555",
-            fontWeight: 600,
-            fontSize: "12px",
-            letterSpacing: "0.02em",
-            textTransform: "uppercase",
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            borderLeft: compactThreadThemeLineColor
-              ? `3px solid ${compactThreadThemeLineColor}`
-              : undefined,
-            paddingLeft: compactThreadThemeLineColor ? 10 : 12,
-          }}
-        >
-          {compactThreadHasAppearance && (
-            <ThreadBadge
-              icon={compactThreadIcon}
-              color={compactThreadBadgeColor}
-              accentColor={threadMeta?.threadAccentColor}
-              image={compactThreadImage}
-              size={compactThreadBadgeSize}
-            />
-          )}
-          {compactThreadLabel}
-        </div>
-      )}
+      {variant === "compact" &&
+        !hideCompactThreadHeader &&
+        compactThreadLabel && (
+          <div
+            style={{
+              padding: "8px 12px",
+              borderBottom: "1px solid #e5e5e5",
+              background: "#f7f7f7",
+              color: "#555",
+              fontWeight: 600,
+              fontSize: "12px",
+              letterSpacing: "0.02em",
+              textTransform: "uppercase",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              borderLeft: compactThreadThemeLineColor
+                ? `3px solid ${compactThreadThemeLineColor}`
+                : undefined,
+              paddingLeft: compactThreadThemeLineColor ? 10 : 12,
+            }}
+          >
+            {compactThreadHasAppearance && (
+              <ThreadBadge
+                icon={compactThreadIcon}
+                color={compactThreadBadgeColor}
+                accentColor={threadMeta?.threadAccentColor}
+                image={compactThreadImage}
+                size={compactThreadBadgeSize}
+              />
+            )}
+            {compactThreadLabel}
+          </div>
+        )}
       <div
         style={{
           position: "absolute",

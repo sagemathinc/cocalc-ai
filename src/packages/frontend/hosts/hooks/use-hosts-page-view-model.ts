@@ -314,6 +314,7 @@ export const useHostsPageViewModel = () => {
   });
   const parallelOps = useParallelOps(hub, {
     enabled: isAdmin && showParallelLimits,
+    runFreshAuthAction,
   });
 
   React.useEffect(() => {

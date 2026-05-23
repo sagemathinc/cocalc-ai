@@ -55,7 +55,9 @@ async function fetchPaymentSourceCached({
       paymentSourceCache.set(key, entry);
       return entry;
     } catch (err) {
+      const previousPaymentSource = paymentSourceCache.get(key)?.paymentSource;
       const entry: PaymentSourceCacheEntry = {
+        paymentSource: previousPaymentSource,
         error: `${err}`,
         fetchedAt: Date.now(),
       };
@@ -73,6 +75,9 @@ async function fetchPaymentSourceCached({
 export function getCodexPaymentSourceShortLabel(
   source: CodexPaymentSourceInfo["source"] | undefined,
 ): string {
+  if (source == null) {
+    return "Unknown";
+  }
   if (lite) {
     if (source === "subscription") return "ChatGPT Plan";
     if (
@@ -106,6 +111,9 @@ export function getCodexPaymentSourceShortLabel(
 export function getCodexPaymentSourceLongLabel(
   source: CodexPaymentSourceInfo["source"] | undefined,
 ): string {
+  if (source == null) {
+    return "Unknown source";
+  }
   if (lite) {
     if (source === "subscription") return "ChatGPT Plan";
     if (
@@ -195,7 +203,7 @@ export function useCodexPaymentSource({
     const cached = getCachedPaymentSource(projectId);
     if (cached?.paymentSource) {
       setPaymentSource(cached.paymentSource);
-      setError("");
+      setError(cached.error ?? "");
     } else if (cached?.error) {
       setPaymentSource(undefined);
       setError(cached.error);
@@ -213,7 +221,7 @@ export function useCodexPaymentSource({
         if (cancelled) return;
         if (entry.paymentSource) {
           setPaymentSource(entry.paymentSource);
-          setError("");
+          setError(entry.error ?? "");
         } else {
           setPaymentSource(undefined);
           setError(entry.error ?? "");

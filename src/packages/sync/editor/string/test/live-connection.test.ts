@@ -66,7 +66,23 @@ describe("SyncDoc live connection state", () => {
     );
 
     expect(close).not.toHaveBeenCalled();
+    expect(recoverNow).toHaveBeenCalledWith({ reason: "patches_table_close" });
     expect(target.liveConnected).toBe(false);
     expect(emit).toHaveBeenCalledWith("disconnected");
+  });
+
+  it("closes SyncDoc when a table closes without recovery support", () => {
+    const close = jest.fn();
+    const target: any = Object.assign(new EventEmitter(), {
+      close,
+      dbg: () => () => undefined,
+      tableCanRecover: SyncDoc.prototype["tableCanRecover"],
+    });
+
+    SyncDoc.prototype["handleTableClose"].call(target, "patches", {
+      get_state: () => "closed",
+    });
+
+    expect(close).toHaveBeenCalled();
   });
 });

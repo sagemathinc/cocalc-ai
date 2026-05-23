@@ -23,6 +23,7 @@ import {
   updateMembershipPackage as updateMembershipPackage0,
 } from "@cocalc/server/membership/packages";
 import {
+  addSiteLicensePool as addSiteLicensePool0,
   adminProvisionSiteLicense as adminProvisionSiteLicense0,
   getVerifiedEmailAddressesForAccount,
   getSiteLicenseAffiliationReverificationStatusForAccount,
@@ -408,6 +409,8 @@ export async function getMembershipPackages({
 
 export async function updateMembershipPackage({
   account_id,
+  browser_id,
+  session_hash,
   package_id,
   owner_account_id,
   site_license_id,
@@ -416,6 +419,8 @@ export async function updateMembershipPackage({
   allowed_domains,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
   package_id?: string;
   owner_account_id?: string;
   site_license_id?: string;
@@ -430,6 +435,11 @@ export async function updateMembershipPackage({
   const isAdminActor = await isAdmin(actorId);
   const siteLicenseId = `${site_license_id ?? ""}`.trim();
   if (siteLicenseId) {
+    await validatePurchaseFreshAuth({
+      account_id: actorId,
+      browser_id,
+      session_hash,
+    });
     if (!isSeedBay()) {
       return await getSeedSiteLicenseClient().updateMembershipPackage({
         package_id,
@@ -491,6 +501,11 @@ export async function updateMembershipPackage({
     throw Error("must own membership package");
   }
   if (pkg.kind === "site") {
+    await validatePurchaseFreshAuth({
+      account_id: actorId,
+      browser_id,
+      session_hash,
+    });
     return await updateSiteLicensePool0({
       actor_account_id: actorId,
       package_id,
@@ -548,6 +563,11 @@ export async function assignMembershipPackageSeat({
   const pkg = await getMembershipPackage({ package_id });
   if (!pkg) {
     throw Error("membership package not found");
+  }
+  if (pkg.kind === "site") {
+    throw Error(
+      "site-license seats must be claimed or approved through site-license workflows",
+    );
   }
   if (pkg.owner_account_id !== account_id && !(await isAdmin(account_id))) {
     throw Error("must own membership package");
@@ -829,6 +849,43 @@ export async function updateSiteLicense({
     return await getSeedSiteLicenseClient().updateSiteLicense(opts);
   }
   return await updateSiteLicense0(opts);
+}
+
+export async function addSiteLicensePool({
+  account_id,
+  browser_id,
+  session_hash,
+  site_license_id,
+  pool,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  site_license_id?: string;
+  pool?: SiteLicensePoolConfig;
+} = {}): Promise<SiteLicenseOverview> {
+  const actorId = requireAccount(account_id);
+  const siteLicenseId = `${site_license_id ?? ""}`.trim();
+  if (!siteLicenseId) {
+    throw Error("site_license_id required");
+  }
+  if (pool == null) {
+    throw Error("pool required");
+  }
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+  });
+  const opts = {
+    actor_account_id: actorId,
+    site_license_id: siteLicenseId,
+    pool,
+  };
+  if (!isSeedBay()) {
+    return await getSeedSiteLicenseClient().addSiteLicensePool(opts);
+  }
+  return await addSiteLicensePool0(opts);
 }
 
 export async function setSiteLicenseManager({

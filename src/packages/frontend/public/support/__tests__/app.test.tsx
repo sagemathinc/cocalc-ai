@@ -10,8 +10,8 @@ describe("getSupportViewFromPath", () => {
     expect(getSupportViewFromPath("/support")).toBe("index");
     expect(getSupportViewFromPath("/base/support/community")).toBe("community");
     expect(getSupportViewFromPath("/base/support/new")).toBe("new");
-    expect(getSupportViewFromPath("/base/support/status")).toBe("status");
     expect(getSupportViewFromPath("/base/support/tickets")).toBe("tickets");
+    expect(getSupportViewFromPath("/base/support/status")).toBeUndefined();
   });
 });
 
@@ -29,7 +29,7 @@ describe("PublicSupportApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("New support ticket")).not.toBeNull();
     expect(screen.getByText("Ticket status")).not.toBeNull();
-    expect(screen.getByText("System status")).not.toBeNull();
+    expect(screen.queryByText("System status")).toBeNull();
   });
 
   it("does not advertise ticket actions when zendesk is disabled", () => {
@@ -56,31 +56,5 @@ describe("PublicSupportApp", () => {
       screen.getByRole("heading", { name: "Launchpad Community Support" }),
     ).not.toBeNull();
     expect(await screen.findByText("GitHub discussions")).not.toBeNull();
-  });
-
-  it("renders the public status view", async () => {
-    global.fetch = jest.fn().mockResolvedValue({
-      json: async () => ({
-        accounts: 12,
-        accounts_active: { "1d": 5, "5min": 2 },
-        hub_servers: [{ clients: 3 }],
-        projects: 7,
-        projects_edited: { "1d": 4, "5min": 1 },
-        running_projects: { free: 2, member: 1 },
-        time: "2026-05-01T12:00:00Z",
-      }),
-    }) as typeof fetch;
-
-    render(
-      <PublicSupportApp
-        config={{ site_name: "Launchpad", zendesk: true }}
-        initialRoute={{ view: "status" }}
-      />,
-    );
-
-    expect(
-      screen.getByRole("heading", { name: "Launchpad Status" }),
-    ).not.toBeNull();
-    expect(await screen.findByText("Live activity snapshot")).not.toBeNull();
   });
 });

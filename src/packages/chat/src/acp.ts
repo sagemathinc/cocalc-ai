@@ -66,7 +66,10 @@ function appendStreamMessageMutable(
       ...last,
       event: {
         ...last.event,
-        text: joinStreamText(last.event.text, nextEvent.text),
+        text: joinStreamText(last.event.text, nextEvent.text, {
+          preferParagraphBreaks:
+            isDeltaTextEvent(last.event) || isDeltaTextEvent(nextEvent),
+        }),
         ...(isDeltaTextEvent(last.event) || isDeltaTextEvent(nextEvent)
           ? { delta: true }
           : {}),
@@ -97,9 +100,17 @@ function isDeltaTextEvent(event: Extract<AcpStreamEvent, { text: string }>) {
   return "delta" in event && event.delta === true;
 }
 
-function joinStreamText(previousText: string, nextText: string): string {
+interface StreamJoinOptions {
+  preferParagraphBreaks?: boolean;
+}
+
+function joinStreamText(
+  previousText: string,
+  nextText: string,
+  options?: StreamJoinOptions,
+): string {
   if (!previousText || !nextText) return previousText + nextText;
-  const separator = streamJoinSeparator(previousText, nextText);
+  const separator = streamJoinSeparator(previousText, nextText, options);
   if (!separator) {
     return previousText + nextText;
   }
@@ -111,9 +122,11 @@ function joinStreamText(previousText: string, nextText: string): string {
 function streamJoinSeparator(
   previousText: string,
   nextText: string,
+  options?: StreamJoinOptions,
 ): "" | " " | "\n\n" {
   if (hasOpenMarkdownCodeFence(previousText)) return "";
-  if (needsTextBoundaryParagraph(previousText, nextText)) return "\n\n";
+  if (needsTextBoundaryParagraph(previousText, nextText, options))
+    return "\n\n";
   if (needsTextBoundarySpace(previousText, nextText)) return " ";
   return "";
 }
@@ -131,6 +144,7 @@ function hasOpenMarkdownCodeFence(text: string): boolean {
 function needsTextBoundaryParagraph(
   previousText: string,
   nextText: string,
+  options?: StreamJoinOptions,
 ): boolean {
   if (/\s$/.test(previousText) || /^\s/.test(nextText)) return false;
   const left = previousText.replace(/\s+$/, "");
@@ -138,9 +152,20 @@ function needsTextBoundaryParagraph(
   if (!left || !right) return false;
   if (!/[.!?]$/.test(left)) return false;
   if (isLikelyMarkdownSectionStart(right)) return true;
+  if (
+    options?.preferParagraphBreaks &&
+    isLikelyCompleteSentenceParagraph(right)
+  ) {
+    return true;
+  }
   if (left.length < 60 || right.length < 30) return false;
   if (!/^(?:[#>*-]|\d+\.|[A-Z`])/.test(right)) return false;
   return true;
+}
+
+function isLikelyCompleteSentenceParagraph(text: string): boolean {
+  if (!/^(?:[A-Z`"]|[#>*-]|\d+\.)/.test(text)) return false;
+  return /[.!?][)"'`*]*$/.test(text);
 }
 
 function isLikelyMarkdownSectionStart(text: string): boolean {
@@ -231,6 +256,7 @@ export function eventHasText(
 function mergeResponseText(
   previous: string | undefined,
   next: string | undefined,
+  options?: StreamJoinOptions,
 ): string | undefined {
   const prev = typeof previous === "string" ? previous : "";
   const cur = typeof next === "string" ? next : "";
@@ -239,7 +265,7 @@ function mergeResponseText(
   if (cur.startsWith(prev)) return cur;
   if (prev.startsWith(cur)) return prev;
   if (prev.endsWith(cur)) return prev;
-  return joinStreamText(prev, cur);
+  return joinStreamText(prev, cur, options);
 }
 
 export function getLatestMessageText(
@@ -584,7 +610,7 @@ export function mergeProgressiveMessageText(
   const cur = typeof next === "string" ? next : "";
   if (!prev || !cur) return undefined;
   if (opts?.nextIsDelta) {
-    return mergeResponseText(prev, cur);
+    return mergeResponseText(prev, cur, { preferParagraphBreaks: true });
   }
   if (cur.startsWith(prev)) return cur;
   if (prev.startsWith(cur)) return prev;
@@ -598,7 +624,7 @@ export function mergeProgressiveMessageText(
     return cur.length >= prev.length ? cur : prev;
   }
   if (opts?.previousHasDelta) {
-    return mergeResponseText(prev, cur);
+    return mergeResponseText(prev, cur, { preferParagraphBreaks: true });
   }
   return undefined;
 }

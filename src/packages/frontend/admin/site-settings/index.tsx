@@ -18,6 +18,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Well } from "@cocalc/frontend/antd-bootstrap";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import useCounter from "@cocalc/frontend/app-framework/counter-hook";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { Gap, Icon, Loading, Paragraph } from "@cocalc/frontend/components";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -68,6 +72,12 @@ export default function SiteSettings({ close }) {
     useState<boolean>(false);
   const [settingsSyncResult, setSettingsSyncResult] = useState<any>(null);
   const [settingsSyncError, setSettingsSyncError] = useState<string>("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => {
+      setState("error");
+      setError(`${err}`);
+    },
+  });
   const [data, setData] = useState<Data | null>(null);
   const [isSet, setIsSet] = useState<IsSet | null>(null);
   const [filterStr, setFilterStr] = useState<string>("");
@@ -267,6 +277,7 @@ export default function SiteSettings({ close }) {
   ): Promise<void> {
     const result = await webapp_client.conat_client.hub.system.setSiteSettings({
       settings,
+      browser_id: webapp_client.browser_id,
     });
     assertSettingsSyncSucceeded(result);
   }
@@ -299,7 +310,7 @@ export default function SiteSettings({ close }) {
     } catch (err) {
       setState("error");
       setError(err);
-      return;
+      throw err;
     }
     for (const { name, value: outgoingValue } of updates) {
       const spec = site_settings_conf[name] ?? EXTRAS[name];
@@ -350,9 +361,14 @@ export default function SiteSettings({ close }) {
       width: 700,
       content,
       async onOk() {
-        await store();
-        setState("edit");
-        await load();
+        const completed = await runFreshAuthAction(async () => {
+          await store();
+          setState("edit");
+          await load();
+        });
+        if (!completed) {
+          setState("edit");
+        }
       },
       onCancel() {
         close();
@@ -364,24 +380,31 @@ export default function SiteSettings({ close }) {
   async function saveSingleSetting(name: string): Promise<void> {
     if (data == null || editedRef.current == null || savedRef.current == null)
       return;
+    const saved = savedRef.current;
+    const clearSecrets = clearSecretsRef.current;
     const spec = site_settings_conf[name] ?? EXTRAS[name];
     const value = editedRef.current[name];
-    const clearing = !!clearSecretsRef.current?.[name];
+    const clearing = !!clearSecrets?.[name];
     const outgoingValue = clearing ? "" : value;
     setState("save");
     try {
-      await saveSiteSettings([{ name, value: outgoingValue }]);
-      savedRef.current[name] = outgoingValue;
-      if (clearing) {
-        clearSecretsRef.current[name] = false;
+      const completed = await runFreshAuthAction(async () => {
+        await saveSiteSettings([{ name, value: outgoingValue }]);
+        saved[name] = outgoingValue;
+        if (clearing) {
+          clearSecrets[name] = false;
+        }
+        if (spec?.password && isSet != null) {
+          setIsSet((prev) => ({
+            ...(prev ?? {}),
+            [name]: outgoingValue !== "",
+          }));
+        }
+        setState("edit");
+      });
+      if (!completed) {
+        setState("edit");
       }
-      if (spec?.password && isSet != null) {
-        setIsSet((prev) => ({
-          ...(prev ?? {}),
-          [name]: outgoingValue !== "",
-        }));
-      }
-      setState("edit");
     } catch (err) {
       setState("error");
       setError(err);
@@ -1175,6 +1198,7 @@ export default function SiteSettings({ close }) {
             title={`Some items may be hidden by the search filter or a selected tag.`}
           />
         ) : undefined}
+        <FreshAuthModal {...freshAuthModalProps} />
       </Well>
     </div>
   );

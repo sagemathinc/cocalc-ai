@@ -67,6 +67,12 @@ const logger = getLogger("server:membership:site-licenses");
 const SITE_LICENSE_NOTIFICATION_ORIGIN_LABEL = "Site licenses";
 const SITE_LICENSE_NOTIFICATION_ACTION_LINK = "/settings/licenses";
 const SITE_LICENSE_NOTIFICATION_ACTION_LABEL = "Open licenses";
+const SITE_LICENSE_REVERIFICATION_WARNING_DAYS = [14, 3] as const;
+
+type SiteLicenseAffiliationNotificationStage =
+  | "pending"
+  | "warning-14d"
+  | "warning-3d";
 
 interface RawSiteLicenseRecord {
   id: string;
@@ -1097,7 +1103,7 @@ async function createSiteLicenseAccountNoticeBestEffort({
   severity?: "info" | "warning" | "error";
   dedupe_key: string;
   metadata?: Record<string, unknown>;
-}): Promise<void> {
+}): Promise<boolean> {
   try {
     const targets =
       await resolveSiteLicenseNotificationTargets(target_account_ids);
@@ -1106,7 +1112,7 @@ async function createSiteLicenseAccountNoticeBestEffort({
         dedupe_key,
         target_account_ids,
       });
-      return;
+      return false;
     }
     await createNotificationEventGraph({
       kind: "account_notice",
@@ -1138,12 +1144,14 @@ async function createSiteLicenseAccountNoticeBestEffort({
         },
       })),
     });
+    return true;
   } catch (err) {
     logger.warn("failed to create site-license notification", {
       dedupe_key,
       target_account_ids,
       error: `${(err as Error)?.message ?? err}`,
     });
+    return false;
   }
 }
 
@@ -1235,6 +1243,266 @@ async function notifySiteLicensePoolRequestReviewedBestEffort({
   });
 }
 
+function formatNotificationDate(date?: Date | null): string {
+  if (date == null) return "the scheduled deadline";
+  return dayjs(date).format("MMM D, YYYY");
+}
+
+function getAffiliationNotificationStage({
+  seat,
+  now,
+}: {
+  seat: SiteLicenseAffiliationReverificationSeat;
+  now: Date;
+}): SiteLicenseAffiliationNotificationStage {
+  const graceExpiresAt = seat.reverification_grace_expires_at;
+  if (graceExpiresAt == null) return "pending";
+  const daysUntilGraceExpires = dayjs(graceExpiresAt).diff(now, "day", true);
+  if (daysUntilGraceExpires <= SITE_LICENSE_REVERIFICATION_WARNING_DAYS[1]) {
+    return "warning-3d";
+  }
+  if (daysUntilGraceExpires <= SITE_LICENSE_REVERIFICATION_WARNING_DAYS[0]) {
+    return "warning-14d";
+  }
+  return "pending";
+}
+
+function getAffiliationNotificationState(
+  metadata?: Record<string, unknown> | null,
+): Record<string, unknown> {
+  const state = metadata?.affiliation_reverification_notifications;
+  return state != null && typeof state === "object" && !Array.isArray(state)
+    ? { ...(state as Record<string, unknown>) }
+    : {};
+}
+
+async function alreadySentAffiliationNotification({
+  assignment_id,
+  stage,
+  grace_key,
+  client,
+}: {
+  assignment_id: string;
+  stage: SiteLicenseAffiliationNotificationStage;
+  grace_key: string;
+  client?: PoolClient;
+}): Promise<boolean> {
+  const { rows } = await getQueryClient(client).query<{
+    metadata?: Record<string, unknown> | null;
+  }>(
+    `SELECT metadata
+       FROM membership_package_assignments
+      WHERE id=$1
+        AND revoked_at IS NULL`,
+    [assignment_id],
+  );
+  const metadata = normalizeMetadata(rows[0]?.metadata) ?? {};
+  return getAffiliationNotificationState(metadata)[stage] === grace_key;
+}
+
+async function markAffiliationNotificationSent({
+  assignment_id,
+  stage,
+  grace_key,
+  sent_at,
+  client,
+}: {
+  assignment_id: string;
+  stage: SiteLicenseAffiliationNotificationStage;
+  grace_key: string;
+  sent_at: Date;
+  client?: PoolClient;
+}): Promise<void> {
+  const db = getQueryClient(client);
+  const { rows } = await db.query<{
+    metadata?: Record<string, unknown> | null;
+  }>(
+    `SELECT metadata
+       FROM membership_package_assignments
+      WHERE id=$1
+        AND revoked_at IS NULL`,
+    [assignment_id],
+  );
+  if (rows.length === 0) return;
+  const metadata = normalizeMetadata(rows[0]?.metadata) ?? {};
+  const notifications = getAffiliationNotificationState(metadata);
+  notifications[stage] = grace_key;
+  notifications[`${stage}_sent_at`] = sent_at.toISOString();
+  await db.query(
+    `UPDATE membership_package_assignments
+        SET metadata=$2::jsonb,
+            updated=NOW()
+      WHERE id=$1
+        AND revoked_at IS NULL`,
+    [
+      assignment_id,
+      {
+        ...metadata,
+        affiliation_reverification_notifications: notifications,
+      },
+    ],
+  );
+}
+
+function getAffiliationReverificationNotificationCopy({
+  siteLicense,
+  seat,
+  stage,
+}: {
+  siteLicense: SiteLicenseRecord;
+  seat: SiteLicenseAffiliationReverificationSeat;
+  stage: SiteLicenseAffiliationNotificationStage;
+}): {
+  title: string;
+  body_markdown: string;
+  severity: "info" | "warning";
+} {
+  const poolName = seat.pool_name || seat.membership_class;
+  const dueDate = formatNotificationDate(seat.reverification_due_at);
+  const graceDate = formatNotificationDate(
+    seat.reverification_grace_expires_at,
+  );
+  const body = [
+    `Your **${poolName}** membership for ${siteLicense.organization_name} needs affiliation reverification.`,
+    `Reverify by confirming a matching institutional email address before **${graceDate}**. Your CoCalc account and projects remain available, but this site-license membership will end if it is not reverified.`,
+  ];
+  if (stage === "pending") {
+    return {
+      title: `${siteLicense.name} membership needs reverification`,
+      body_markdown: [
+        `Reverification was due on **${dueDate}**.`,
+        ...body,
+      ].join("\n\n"),
+      severity: "info",
+    };
+  }
+  return {
+    title:
+      stage === "warning-3d"
+        ? `${siteLicense.name} membership grace period ends soon`
+        : `${siteLicense.name} membership reverification reminder`,
+    body_markdown: body.join("\n\n"),
+    severity: "warning",
+  };
+}
+
+export async function notifySiteLicenseAffiliationReverificationSeatsForSystem({
+  site_license_id,
+  now = new Date(),
+  limit = 500,
+  client,
+}: {
+  site_license_id: string;
+  now?: Date;
+  limit?: number;
+  client?: PoolClient;
+}): Promise<SiteLicenseAffiliationReverificationSeat[]> {
+  const normalizedSiteLicenseId = normalizeAccountId(
+    site_license_id,
+    "site_license_id",
+  );
+  const siteLicense = await getSiteLicense(normalizedSiteLicenseId, client);
+  const seats =
+    await listSiteLicenseAffiliationReverificationSeatsForSiteLicense({
+      site_license: siteLicense,
+      states: ["pending_reverification"],
+      now,
+      client,
+    });
+  const notified: SiteLicenseAffiliationReverificationSeat[] = [];
+  for (const seat of seats.slice(0, Math.max(1, Math.min(500, limit)))) {
+    const graceKey =
+      seat.reverification_grace_expires_at?.toISOString() ?? "no-grace-date";
+    const stage = getAffiliationNotificationStage({ seat, now });
+    if (
+      await alreadySentAffiliationNotification({
+        assignment_id: seat.assignment_id,
+        stage,
+        grace_key: graceKey,
+        client,
+      })
+    ) {
+      continue;
+    }
+    const copy = getAffiliationReverificationNotificationCopy({
+      siteLicense,
+      seat,
+      stage,
+    });
+    const sent = await createSiteLicenseAccountNoticeBestEffort({
+      actor_account_id: null,
+      target_account_ids: [seat.account_id],
+      title: copy.title,
+      body_markdown: copy.body_markdown,
+      severity: copy.severity,
+      dedupe_key: `site-license-affiliation-reverification:${seat.assignment_id}:${stage}:${graceKey}`,
+      metadata: {
+        site_license_id: normalizedSiteLicenseId,
+        package_id: seat.package_id,
+        assignment_id: seat.assignment_id,
+        pool_name: seat.pool_name,
+        membership_class: seat.membership_class,
+        stage,
+        reverification_due_at:
+          seat.reverification_due_at?.toISOString() ?? null,
+        reverification_grace_expires_at:
+          seat.reverification_grace_expires_at?.toISOString() ?? null,
+      },
+    });
+    if (!sent) {
+      continue;
+    }
+    await markAffiliationNotificationSent({
+      assignment_id: seat.assignment_id,
+      stage,
+      grace_key: graceKey,
+      sent_at: now,
+      client,
+    });
+    notified.push(seat);
+  }
+  return notified;
+}
+
+export async function notifySiteLicenseAffiliationSeatReleasesForSystem({
+  site_license_id,
+  seats,
+}: {
+  site_license_id: string;
+  seats: SiteLicenseAffiliationReverificationSeat[];
+}): Promise<void> {
+  if (seats.length === 0) return;
+  const normalizedSiteLicenseId = normalizeAccountId(
+    site_license_id,
+    "site_license_id",
+  );
+  const siteLicense = await getSiteLicense(normalizedSiteLicenseId);
+  for (const seat of seats) {
+    await createSiteLicenseAccountNoticeBestEffort({
+      actor_account_id: null,
+      target_account_ids: [seat.account_id],
+      title: `${siteLicense.name} membership ended`,
+      body_markdown: [
+        `Your **${seat.pool_name || seat.membership_class}** membership for ${siteLicense.organization_name} ended because the affiliation reverification grace period expired.`,
+        "Your CoCalc account and projects remain available. Open Licenses to see any other memberships or request access again if you are still eligible.",
+      ].join("\n\n"),
+      severity: "warning",
+      dedupe_key: `site-license-affiliation-release:${seat.assignment_id}:${seat.reverification_grace_expires_at?.toISOString() ?? "expired"}`,
+      metadata: {
+        site_license_id: normalizedSiteLicenseId,
+        package_id: seat.package_id,
+        assignment_id: seat.assignment_id,
+        pool_name: seat.pool_name,
+        membership_class: seat.membership_class,
+        reverification_due_at:
+          seat.reverification_due_at?.toISOString() ?? null,
+        reverification_grace_expires_at:
+          seat.reverification_grace_expires_at?.toISOString() ?? null,
+      },
+    });
+  }
+}
+
 export async function getVerifiedEmailAddressesForAccount(
   account_id: string,
   client?: PoolClient,
@@ -1250,13 +1518,14 @@ export async function getVerifiedEmailAddressesForAccount(
     throw Error("account not found");
   }
   const verified = row.email_address_verified ?? {};
-  const emails = Object.keys(verified)
-    .map((email) => normalizeEmailAddress(email))
-    .filter((email) => !!verified[email]);
+  const emails = Object.entries(verified)
+    .filter(([, verified_at]) => verified_at != null && verified_at !== false)
+    .map(([email]) => normalizeEmailAddress(email));
   if (
     emails.length === 0 &&
     row.email_address &&
-    verified?.[row.email_address] != null
+    verified?.[row.email_address] != null &&
+    verified?.[row.email_address] !== false
   ) {
     return [normalizeEmailAddress(row.email_address)];
   }
@@ -1376,6 +1645,44 @@ async function assertSiteLicenseManager({
   );
   if (!rows[0]) {
     throw Error(write ? "must manage site license" : "must view site license");
+  }
+}
+
+async function assertSiteLicenseOwner({
+  account_id,
+  site_license_id,
+  client,
+}: {
+  account_id: string;
+  site_license_id: string;
+  client?: PoolClient;
+}): Promise<void> {
+  await ensureSiteLicenseSchema(client);
+  if (await isAdmin(account_id)) {
+    return;
+  }
+  const { rows } = await getQueryClient(client).query(
+    `SELECT 1
+     FROM site_license_managers
+     WHERE site_license_id=$1
+       AND account_id=$2
+       AND role='owner'
+       AND revoked_at IS NULL
+     LIMIT 1`,
+    [site_license_id, account_id],
+  );
+  if (!rows[0]) {
+    throw Error("must own site license");
+  }
+}
+
+async function assertSiteLicenseAdmin({
+  account_id,
+}: {
+  account_id: string;
+}): Promise<void> {
+  if (!(await isAdmin(account_id))) {
+    throw Error("must be an admin");
   }
 }
 
@@ -2089,6 +2396,10 @@ export async function adminProvisionSiteLicense({
   try {
     await client.query("BEGIN");
     await ensureSiteLicenseSchema(client);
+    await assertSiteLicensePoolMembershipClassesAvailable(
+      normalizedPools,
+      client,
+    );
     await acquireSiteLicenseDomainWriteLock(client);
     await assertNoActiveSiteLicenseDomainIndexOverlap({
       domains: indexedDomains,
@@ -2261,12 +2572,7 @@ export async function updateSiteLicensePool({
       packageId,
       client,
     );
-    await assertSiteLicenseManager({
-      account_id: actorAccountId,
-      site_license_id: siteLicense.id,
-      write: true,
-      client,
-    });
+    await assertSiteLicenseAdmin({ account_id: actorAccountId });
     const updated = await updateMembershipPackageRecord({
       package_id: packageId,
       seat_count,
@@ -2303,6 +2609,107 @@ export async function updateSiteLicensePool({
   });
 }
 
+export async function addSiteLicensePool({
+  actor_account_id,
+  site_license_id,
+  pool,
+}: {
+  actor_account_id: string;
+  site_license_id: string;
+  pool: SiteLicensePoolConfig;
+}): Promise<SiteLicenseOverview> {
+  const actorAccountId = normalizeAccountId(actor_account_id);
+  const siteLicenseId = normalizeAccountId(site_license_id, "site_license_id");
+  return await withLocalSiteLicenseTransaction(async (client) => {
+    const siteLicense = await getSiteLicense(siteLicenseId, client);
+    await assertSiteLicenseAdmin({ account_id: actorAccountId });
+    const [normalizedPool] = normalizePools(
+      [pool],
+      siteLicense.allowed_domains,
+    );
+    await assertSiteLicensePoolMembershipClassesAvailable(
+      [normalizedPool],
+      client,
+    );
+    const existingPools = await listSiteLicensePoolSummaries({
+      site_license: siteLicense,
+      client,
+    });
+    const indexedDomains = collectSiteLicenseDomains({
+      allowed_domains: siteLicense.allowed_domains,
+      pools: [
+        ...existingPools.map((existingPool) => ({
+          allowed_domains: getPackageAllowedDomains(existingPool.metadata),
+        })),
+        { allowed_domains: normalizedPool.allowed_domains },
+      ],
+    });
+    await acquireSiteLicenseDomainWriteLock(client);
+    await assertNoActiveSiteLicenseDomainIndexOverlap({
+      domains: indexedDomains,
+      site_license_id: siteLicenseId,
+      starts_at: siteLicense.starts_at,
+      expires_at: siteLicense.expires_at,
+      client,
+    });
+    const packageId = await createMembershipPackage(
+      {
+        owner_account_id: siteLicense.owner_account_id,
+        kind: "site",
+        membership_class: normalizedPool.membership_class,
+        seat_count: normalizedPool.seat_count,
+        starts_at: siteLicense.starts_at,
+        expires_at: siteLicense.expires_at,
+        metadata: {
+          ...normalizeMetadata(normalizedPool.metadata),
+          site_license_id: siteLicenseId,
+          pool_name: normalizedPool.pool_name,
+          allowed_domains: normalizedPool.allowed_domains,
+          requires_approval: normalizedPool.requires_approval,
+          verification_policy: normalizedPool.verification_policy,
+          exclusive_group: normalizedPool.exclusive_group,
+          claim_scope_key: getClaimScopeKey(
+            siteLicenseId,
+            normalizedPool.exclusive_group,
+          ),
+          claim_scope_kind: "site-license-exclusive-group",
+          affiliation_reverification_days:
+            normalizedPool.affiliation_reverification_days,
+          affiliation_reverification_grace_days:
+            normalizedPool.affiliation_reverification_grace_days,
+          provisioned_by_account_id: actorAccountId,
+          provisioned_via: "site-license-pool-add",
+        },
+      },
+      client,
+    );
+    await rebuildSiteLicenseDomainIndex({
+      site_license_id: siteLicenseId,
+      client,
+    });
+    await recordSiteLicenseAuditEvent({
+      site_license_id: siteLicenseId,
+      action: "pool-created",
+      actor_account_id: actorAccountId,
+      package_id: packageId,
+      metadata: {
+        pool_name: normalizedPool.pool_name,
+        membership_class: normalizedPool.membership_class,
+        seat_count: normalizedPool.seat_count,
+        requires_approval: normalizedPool.requires_approval,
+        verification_policy: normalizedPool.verification_policy,
+        exclusive_group: normalizedPool.exclusive_group,
+        source: "add-site-license-pool",
+      },
+      client,
+    });
+    return await getSiteLicenseOverviewWithoutAuthorization({
+      site_license_id: siteLicenseId,
+      client,
+    });
+  });
+}
+
 export async function updateSiteLicense({
   actor_account_id,
   site_license_id,
@@ -2334,12 +2741,7 @@ export async function updateSiteLicense({
   const siteLicenseId = normalizeAccountId(site_license_id, "site_license_id");
   return await withLocalSiteLicenseTransaction(async (client) => {
     const current = await getSiteLicense(siteLicenseId, client);
-    await assertSiteLicenseManager({
-      account_id: actorAccountId,
-      site_license_id: siteLicenseId,
-      write: true,
-      client,
-    });
+    await assertSiteLicenseAdmin({ account_id: actorAccountId });
     const nextAllowedDomains =
       allowed_domains === undefined
         ? current.allowed_domains
@@ -2486,10 +2888,9 @@ export async function setSiteLicenseManager({
   }
   await assertTargetAccountExists(targetAccountId);
   return await withLocalSiteLicenseTransaction(async (client) => {
-    await assertSiteLicenseManager({
+    await assertSiteLicenseOwner({
       account_id: actorAccountId,
       site_license_id: siteLicenseId,
-      write: true,
       client,
     });
     const { rows } = await client.query<RawSiteLicenseManager>(
@@ -2568,10 +2969,9 @@ export async function removeSiteLicenseManager({
     "target_account_id",
   );
   return await withLocalSiteLicenseTransaction(async (client) => {
-    await assertSiteLicenseManager({
+    await assertSiteLicenseOwner({
       account_id: actorAccountId,
       site_license_id: siteLicenseId,
-      write: true,
       client,
     });
     const { rows } = await client.query<RawSiteLicenseManager>(
@@ -2676,6 +3076,32 @@ function normalizePools(
           : normalizeAllowedDomains(pool.allowed_domains),
     };
   });
+}
+
+async function assertSiteLicensePoolMembershipClassesAvailable(
+  pools: Array<{ membership_class: string }>,
+  client: PoolClient,
+): Promise<void> {
+  const membershipClasses = Array.from(
+    new Set(pools.map((pool) => pool.membership_class).filter(Boolean)),
+  );
+  if (membershipClasses.length === 0) {
+    throw Error("at least one site-license pool membership tier is required");
+  }
+  const { rows } = await client.query<{ id: string }>(
+    `SELECT id
+       FROM membership_tiers
+      WHERE id = ANY($1::text[])
+        AND NOT COALESCE(disabled, false)`,
+    [membershipClasses],
+  );
+  const available = new Set(rows.map((row) => row.id));
+  const missing = membershipClasses.filter((id) => !available.has(id));
+  if (missing.length > 0) {
+    throw Error(
+      `site-license pool membership tier not found or disabled: ${missing.join(", ")}`,
+    );
+  }
 }
 
 export async function requestSiteLicensePool({

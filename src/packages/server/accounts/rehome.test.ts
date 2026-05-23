@@ -245,16 +245,14 @@ describe("account rehome", () => {
         return { rows: [], rowCount: 0 };
       }
       if (
-        sql.includes(
-          'DELETE FROM "membership_packages" WHERE owner_account_id=$1',
-        )
+        sql.includes("DELETE FROM membership_packages") &&
+        sql.includes("owner_account_id=$1")
       ) {
         return { rows: [], rowCount: 0 };
       }
       if (
-        sql.includes(
-          'DELETE FROM "membership_side_effects_outbox" WHERE owner_account_id=$1',
-        )
+        sql.includes("DELETE FROM membership_side_effects_outbox") &&
+        sql.includes("package_id IN")
       ) {
         return { rows: [], rowCount: 0 };
       }
@@ -503,7 +501,7 @@ describe("account rehome", () => {
           ],
         };
       }
-      if (sql.includes('FROM "membership_side_effects_outbox"')) {
+      if (sql.includes("FROM membership_side_effects_outbox o")) {
         return {
           rows: [
             {
@@ -609,16 +607,14 @@ describe("account rehome", () => {
         return { rows: [], rowCount: 0 };
       }
       if (
-        sql.includes(
-          'DELETE FROM "membership_packages" WHERE owner_account_id=$1',
-        )
+        sql.includes("DELETE FROM membership_packages") &&
+        sql.includes("owner_account_id=$1")
       ) {
         return { rows: [], rowCount: 0 };
       }
       if (
-        sql.includes(
-          'DELETE FROM "membership_side_effects_outbox" WHERE owner_account_id=$1',
-        )
+        sql.includes("DELETE FROM membership_side_effects_outbox") &&
+        sql.includes("package_id IN")
       ) {
         return { rows: [], rowCount: 0 };
       }
@@ -721,15 +717,19 @@ describe("account rehome", () => {
       [TARGET_ACCOUNT_ID],
     );
     expect(queryMock).toHaveBeenCalledWith(
-      expect.stringContaining(
-        'DELETE FROM "membership_packages" WHERE owner_account_id=$1',
-      ),
+      expect.stringContaining("DELETE FROM membership_packages"),
       [TARGET_ACCOUNT_ID],
     );
     expect(queryMock).toHaveBeenCalledWith(
-      expect.stringContaining(
-        'DELETE FROM "membership_side_effects_outbox" WHERE owner_account_id=$1',
-      ),
+      expect.stringContaining("DELETE FROM membership_side_effects_outbox"),
+      [TARGET_ACCOUNT_ID],
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("COALESCE(kind, '') <> 'site'"),
+      [TARGET_ACCOUNT_ID],
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("COALESCE(p.kind, '') <> 'site'"),
       [TARGET_ACCOUNT_ID],
     );
   });
@@ -759,8 +759,8 @@ describe("account rehome", () => {
         return { rows: [{ rows: [] }] };
       }
       if (
-        sql.includes('FROM "membership_side_effects_outbox"') &&
-        sql.includes("WHERE owner_account_id=$1")
+        sql.includes("FROM membership_side_effects_outbox o") &&
+        sql.includes("WHERE o.owner_account_id=$1")
       ) {
         return { rows: [{ rows: [] }] };
       }
@@ -768,9 +768,8 @@ describe("account rehome", () => {
         return { rows: [], rowCount: 0 };
       }
       if (
-        sql.includes(
-          'DELETE FROM "membership_packages" WHERE owner_account_id=$1',
-        )
+        sql.includes("DELETE FROM membership_packages") &&
+        sql.includes("owner_account_id=$1")
       ) {
         return { rows: [], rowCount: 0 };
       }
@@ -781,9 +780,8 @@ describe("account rehome", () => {
         return { rows: [], rowCount: 0 };
       }
       if (
-        sql.includes(
-          'DELETE FROM "membership_side_effects_outbox" WHERE owner_account_id=$1',
-        )
+        sql.includes("DELETE FROM membership_side_effects_outbox") &&
+        sql.includes("package_id IN")
       ) {
         return { rows: [], rowCount: 0 };
       }
@@ -951,5 +949,43 @@ describe("account rehome", () => {
       },
       applied: true,
     });
+  });
+
+  it("does not delete seed-owned site-license packages when replacing membership portability state", async () => {
+    queryMock = jest.fn(async () => ({ rows: [], rowCount: 0 }));
+
+    const { replaceMembershipPortableState } = await import("./rehome");
+    await replaceMembershipPortableState({
+      account_id: TARGET_ACCOUNT_ID,
+      membership_grants: [],
+      membership_packages: [],
+      membership_package_assignments: [],
+      membership_side_effects_outbox: [],
+    });
+
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("DELETE FROM membership_packages"),
+      [TARGET_ACCOUNT_ID],
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("COALESCE(kind, '') <> 'site'"),
+      [TARGET_ACCOUNT_ID],
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("DELETE FROM membership_package_assignments"),
+      [TARGET_ACCOUNT_ID],
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("COALESCE(kind, '') <> 'site'"),
+      [TARGET_ACCOUNT_ID],
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("DELETE FROM membership_side_effects_outbox"),
+      [TARGET_ACCOUNT_ID],
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("COALESCE(kind, '') <> 'site'"),
+      [TARGET_ACCOUNT_ID],
+    );
   });
 });

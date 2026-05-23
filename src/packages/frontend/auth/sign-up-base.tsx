@@ -21,6 +21,10 @@ function getQueryParam(name: string): string | null {
   return new URL(window.location.href).searchParams.get(name);
 }
 
+function signedInRedirectUrl(): string {
+  return appUrl("projects");
+}
+
 export default function SignUpFormBase({
   onNavigate,
   initialRequiresToken,
@@ -127,7 +131,7 @@ export default function SignUpFormBase({
         throw new Error("Sign up failed. Please try again.");
       }
       setStoredControlPlaneOrigin(result?.home_bay_url);
-      window.location.href = appUrl("app?sign-in");
+      window.location.href = signedInRedirectUrl();
     } catch (err) {
       setError(`${err}`);
     } finally {

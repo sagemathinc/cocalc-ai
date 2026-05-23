@@ -45,6 +45,7 @@ import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import MoneyStatistic from "@cocalc/frontend/purchases/money-statistic";
 import Payments from "@cocalc/frontend/purchases/payments";
 import {
+  addSiteLicensePool,
   adminProvisionSiteLicense,
   assignMembershipPackageSeat,
   claimMembershipPackageSeat,
@@ -100,12 +101,6 @@ interface MembershipTierLike {
   store_visible?: boolean;
   disabled?: boolean;
 }
-
-const SITE_LICENSE_TEMPLATE_TIERS: MembershipTierLike[] = [
-  { id: "student", label: "Student" },
-  { id: "instructor", label: "Instructor" },
-  { id: "researcher", label: "Researcher" },
-];
 
 interface Props {
   tiers: MembershipTierLike[];
@@ -238,15 +233,52 @@ function getTeamSeatTiers(tiers: MembershipTierLike[]): MembershipTierLike[] {
     .sort((a, b) => (a.label ?? a.id).localeCompare(b.label ?? b.id));
 }
 
-function mergeTierOptions(
-  ...tierLists: MembershipTierLike[][]
+function getSiteLicenseProvisioningTiers(
+  tiers: MembershipTierLike[],
 ): MembershipTierLike[] {
-  const options = new Map<string, MembershipTierLike>();
-  for (const tier of tierLists.flat()) {
-    if (tier.disabled) continue;
-    options.set(tier.id, { ...options.get(tier.id), ...tier });
-  }
-  return Array.from(options.values());
+  return tiers
+    .filter(
+      (tier) => !tier.disabled && tier.id !== "free" && tier.id !== "admin",
+    )
+    .sort((a, b) => (a.label ?? a.id).localeCompare(b.label ?? b.id));
+}
+
+function findSiteLicenseTier({
+  tiers,
+  used,
+  keywords,
+  fallbackIndex,
+}: {
+  tiers: MembershipTierLike[];
+  used: Set<string>;
+  keywords: string[];
+  fallbackIndex: number;
+}): MembershipTierLike | undefined {
+  const available = tiers.filter((tier) => !used.has(tier.id));
+  const keywordMatch = available.find((tier) => {
+    const text = `${tier.id} ${tier.label ?? ""}`.toLowerCase();
+    return keywords.some((keyword) => text.includes(keyword));
+  });
+  return keywordMatch ?? available[fallbackIndex] ?? available[0];
+}
+
+function makeDefaultSiteLicensePool({
+  tiers,
+  index,
+}: {
+  tiers: MembershipTierLike[];
+  index: number;
+}): SiteLicensePoolConfig {
+  return {
+    pool_name: `Pool ${index + 1}`,
+    membership_class: (tiers[0]?.id ?? "member") as MembershipClass,
+    seat_count: 25,
+    requires_approval: true,
+    verification_policy: "email-domain",
+    exclusive_group: `group-${index + 1}`,
+    affiliation_reverification_days: 365,
+    affiliation_reverification_grace_days: 30,
+  };
 }
 
 function getPackageDomains(
@@ -1035,9 +1067,22 @@ export function MembershipPackageManager({
             overviews={siteLicenseOverviews}
             loading={siteLicenseOverviewLoading}
             error={siteLicenseOverviewError}
+            tiers={tiers}
             accountNames={accountNames}
+            accountId={account_id}
+            isAdmin={is_admin}
             reviewingRequestId={siteLicenseReviewLoadingId}
             onEditPool={is_admin ? (pool) => setEditTarget(pool) : undefined}
+            onAddPool={
+              is_admin
+                ? async (site_license_id, pool) => {
+                    await runFreshAuthAction(async () => {
+                      await addSiteLicensePool({ site_license_id, pool });
+                      await handleChanged();
+                    });
+                  }
+                : undefined
+            }
             onReview={async (overview, request, action) => {
               setSiteLicenseReviewLoadingId(request.id);
               setError("");
@@ -1062,12 +1107,16 @@ export function MembershipPackageManager({
               });
               await handleChanged();
             }}
-            onUpdateLicense={async (site_license_id, updates) => {
-              await runFreshAuthAction(async () => {
-                await updateSiteLicense({ site_license_id, ...updates });
-                await handleChanged();
-              });
-            }}
+            onUpdateLicense={
+              is_admin
+                ? async (site_license_id, updates) => {
+                    await runFreshAuthAction(async () => {
+                      await updateSiteLicense({ site_license_id, ...updates });
+                      await handleChanged();
+                    });
+                  }
+                : undefined
+            }
             onSetManager={async (site_license_id, target_account_id, role) => {
               await setSiteLicenseManager({
                 site_license_id,
@@ -1166,9 +1215,13 @@ function SiteLicenseDashboard({
   overviews,
   loading,
   error,
+  tiers,
   accountNames,
+  accountId,
+  isAdmin,
   reviewingRequestId,
   onEditPool,
+  onAddPool,
   onReview,
   onRevokeSeat,
   onUpdateLicense,
@@ -1178,12 +1231,19 @@ function SiteLicenseDashboard({
   overviews: SiteLicenseOverview[];
   loading: boolean;
   error: string;
+  tiers: MembershipTierLike[];
   accountNames: Record<
     string,
     { first_name?: string; last_name?: string } | undefined
   >;
+  accountId?: string;
+  isAdmin: boolean;
   reviewingRequestId: string;
   onEditPool?: (pool: SiteLicenseOverview["pools"][number]) => void;
+  onAddPool?: (
+    site_license_id: string,
+    pool: SiteLicensePoolConfig,
+  ) => Promise<void>;
   onReview: (
     overview: SiteLicenseOverview,
     request: SiteLicensePoolRequest,
@@ -1193,7 +1253,7 @@ function SiteLicenseDashboard({
     pool: SiteLicenseOverview["pools"][number],
     assignment: MembershipPackageAssignment,
   ) => Promise<void>;
-  onUpdateLicense: (
+  onUpdateLicense?: (
     site_license_id: string,
     updates: {
       name?: string;
@@ -1221,6 +1281,16 @@ function SiteLicenseDashboard({
   const [revokingSeat, setRevokingSeat] = useState<string>("");
   const [editingLicense, setEditingLicense] =
     useState<SiteLicenseOverview | null>(null);
+  const [addingPool, setAddingPool] = useState<{
+    overview: SiteLicenseOverview;
+    pool: SiteLicensePoolConfig;
+  } | null>(null);
+  const [addingPoolSubmitting, setAddingPoolSubmitting] = useState(false);
+  const [addingPoolError, setAddingPoolError] = useState("");
+  const siteLicenseTierOptions = useMemo(
+    () => getSiteLicenseProvisioningTiers(tiers),
+    [tiers],
+  );
   const requests = overviews.flatMap((overview) =>
     overview.pending_requests.map((request) => ({
       overview,
@@ -1266,6 +1336,12 @@ function SiteLicenseDashboard({
             requestOverview.site_license.id === overview.site_license.id &&
             request.state === "pending",
         );
+        const canEditManagers =
+          isAdmin ||
+          overview.managers.some(
+            (manager) =>
+              manager.account_id === accountId && manager.role === "owner",
+          );
         return (
           <Card
             key={overview.site_license.id}
@@ -1366,9 +1442,11 @@ function SiteLicenseDashboard({
                     value={totals.pendingRequests}
                     tone={totals.pendingRequests ? "gold" : "neutral"}
                   />
-                  <Button ghost onClick={() => setEditingLicense(overview)}>
-                    <Icon name="edit" /> Edit license
-                  </Button>
+                  {onUpdateLicense ? (
+                    <Button ghost onClick={() => setEditingLicense(overview)}>
+                      <Icon name="edit" /> Edit license
+                    </Button>
+                  ) : null}
                 </Space>
               </Space>
             </div>
@@ -1476,6 +1554,21 @@ function SiteLicenseDashboard({
                       Pools can have distinct policies for students,
                       instructors, researchers, or other campus groups.
                     </Text>
+                    {onAddPool ? (
+                      <Button
+                        onClick={() =>
+                          setAddingPool({
+                            overview,
+                            pool: makeDefaultSiteLicensePool({
+                              tiers: siteLicenseTierOptions,
+                              index: overview.pools.length,
+                            }),
+                          })
+                        }
+                      >
+                        <Icon name="plus-circle" /> Add pool
+                      </Button>
+                    ) : null}
                   </Space>
                   <div
                     style={{
@@ -1667,6 +1760,7 @@ function SiteLicenseDashboard({
                 >
                   <SiteLicenseManagersEditor
                     overview={overview}
+                    canEdit={canEditManagers}
                     onSetManager={onSetManager}
                     onRemoveManager={onRemoveManager}
                   />
@@ -1713,9 +1807,45 @@ function SiteLicenseDashboard({
         overview={editingLicense}
         onClose={() => setEditingLicense(null)}
         onSave={async (updates) => {
-          if (!editingLicense) return;
+          if (!editingLicense || !onUpdateLicense) return;
           await onUpdateLicense(editingLicense.site_license.id, updates);
           setEditingLicense(null);
+        }}
+      />
+      <ProvisionPoolEditModal
+        open={addingPool != null}
+        pool={addingPool?.pool}
+        poolIndex={addingPool?.overview.pools.length ?? 0}
+        siteLicenseTierOptions={siteLicenseTierOptions}
+        onChange={(patch) =>
+          setAddingPool((current) =>
+            current == null
+              ? null
+              : { ...current, pool: { ...current.pool, ...patch } },
+          )
+        }
+        onClose={() => {
+          setAddingPool(null);
+          setAddingPoolError("");
+        }}
+        mode="add"
+        error={addingPoolError}
+        submitting={addingPoolSubmitting}
+        onSubmit={async () => {
+          if (addingPool == null || onAddPool == null) return;
+          setAddingPoolSubmitting(true);
+          setAddingPoolError("");
+          try {
+            await onAddPool(
+              addingPool.overview.site_license.id,
+              addingPool.pool,
+            );
+            setAddingPool(null);
+          } catch (err) {
+            setAddingPoolError(`${err}`);
+          } finally {
+            setAddingPoolSubmitting(false);
+          }
         }}
       />
     </Space>
@@ -1896,10 +2026,12 @@ function EditSiteLicenseSettingsModal({
 
 function SiteLicenseManagersEditor({
   overview,
+  canEdit,
   onSetManager,
   onRemoveManager,
 }: {
   overview: SiteLicenseOverview;
+  canEdit: boolean;
   onSetManager: (
     site_license_id: string,
     target_account_id: string,
@@ -1964,31 +2096,35 @@ function SiteLicenseManagersEditor({
                 </Tag>
               </Space>
               <Space>
-                <Select
-                  size="small"
-                  value={manager.role}
-                  style={{ width: 110 }}
-                  options={[
-                    { label: "Owner", value: "owner" },
-                    { label: "Manager", value: "manager" },
-                    { label: "Viewer", value: "viewer" },
-                  ]}
-                  onChange={(nextRole) =>
-                    void onSetManager(
-                      overview.site_license.id,
-                      manager.account_id,
-                      nextRole,
-                    )
-                  }
-                />
-                <Button
-                  size="small"
-                  danger
-                  loading={working === `remove-${manager.account_id}`}
-                  onClick={() => void removeManager(manager.account_id)}
-                >
-                  Remove
-                </Button>
+                {canEdit ? (
+                  <>
+                    <Select
+                      size="small"
+                      value={manager.role}
+                      style={{ width: 110 }}
+                      options={[
+                        { label: "Owner", value: "owner" },
+                        { label: "Manager", value: "manager" },
+                        { label: "Viewer", value: "viewer" },
+                      ]}
+                      onChange={(nextRole) =>
+                        void onSetManager(
+                          overview.site_license.id,
+                          manager.account_id,
+                          nextRole,
+                        )
+                      }
+                    />
+                    <Button
+                      size="small"
+                      danger
+                      loading={working === `remove-${manager.account_id}`}
+                      onClick={() => void removeManager(manager.account_id)}
+                    >
+                      Remove
+                    </Button>
+                  </>
+                ) : null}
               </Space>
             </div>
           ))}
@@ -1996,32 +2132,40 @@ function SiteLicenseManagersEditor({
       ) : (
         <Text type="secondary">No managers listed.</Text>
       )}
-      <Divider style={{ margin: "4px 0" }} />
-      <Space wrap>
-        <Input
-          placeholder="Manager account id"
-          value={accountId}
-          onChange={(e) => setAccountId(e.target.value)}
-          style={{ minWidth: 300 }}
-        />
-        <Select
-          value={role}
-          style={{ width: 130 }}
-          options={[
-            { label: "Owner", value: "owner" },
-            { label: "Manager", value: "manager" },
-            { label: "Viewer", value: "viewer" },
-          ]}
-          onChange={setRole}
-        />
-        <Button
-          type="primary"
-          loading={working === `set-${accountId.trim()}`}
-          onClick={() => void addOrUpdateManager()}
-        >
-          Add manager
-        </Button>
-      </Space>
+      {canEdit ? (
+        <>
+          <Divider style={{ margin: "4px 0" }} />
+          <Space wrap>
+            <Input
+              placeholder="Manager account id"
+              value={accountId}
+              onChange={(e) => setAccountId(e.target.value)}
+              style={{ minWidth: 300 }}
+            />
+            <Select
+              value={role}
+              style={{ width: 130 }}
+              options={[
+                { label: "Owner", value: "owner" },
+                { label: "Manager", value: "manager" },
+                { label: "Viewer", value: "viewer" },
+              ]}
+              onChange={setRole}
+            />
+            <Button
+              type="primary"
+              loading={working === `set-${accountId.trim()}`}
+              onClick={() => void addOrUpdateManager()}
+            >
+              Add manager
+            </Button>
+          </Space>
+        </>
+      ) : (
+        <Text type="secondary">
+          Only site-license owners and CoCalc admins can change manager roles.
+        </Text>
+      )}
     </Space>
   );
 }
@@ -2258,11 +2402,7 @@ function ProvisionSiteLicenseModal({
 }) {
   const provisionableTiers = useMemo(() => getTeamSeatTiers(tiers), [tiers]);
   const siteLicenseTierOptions = useMemo(
-    () =>
-      mergeTierOptions(
-        SITE_LICENSE_TEMPLATE_TIERS,
-        tiers.filter((tier) => !tier.disabled),
-      ),
+    () => getSiteLicenseProvisioningTiers(tiers),
     [tiers],
   );
   const [name, setName] = useState<string>("Campus site license");
@@ -2287,15 +2427,27 @@ function ProvisionSiteLicenseModal({
 
   useEffect(() => {
     if (!open) return;
-    const studentTier = siteLicenseTierOptions.find(
-      (tier) => tier.id === "student",
-    );
-    const instructorTier =
-      siteLicenseTierOptions.find((tier) => tier.id === "instructor") ??
-      siteLicenseTierOptions.find((tier) => tier.id === "pro");
-    const researcherTier =
-      siteLicenseTierOptions.find((tier) => tier.id === "researcher") ??
-      siteLicenseTierOptions.find((tier) => tier.id === "pro");
+    const usedTierIds = new Set<string>();
+    const studentTier = findSiteLicenseTier({
+      tiers: siteLicenseTierOptions,
+      used: usedTierIds,
+      keywords: ["student"],
+      fallbackIndex: 0,
+    });
+    if (studentTier) usedTierIds.add(studentTier.id);
+    const instructorTier = findSiteLicenseTier({
+      tiers: siteLicenseTierOptions,
+      used: usedTierIds,
+      keywords: ["instructor", "teacher", "faculty", "pro"],
+      fallbackIndex: 0,
+    });
+    if (instructorTier) usedTierIds.add(instructorTier.id);
+    const researcherTier = findSiteLicenseTier({
+      tiers: siteLicenseTierOptions,
+      used: usedTierIds,
+      keywords: ["research"],
+      fallbackIndex: 0,
+    });
     setName("Campus site license");
     setOrganizationName("Example University");
     setDomains([]);
@@ -2307,42 +2459,44 @@ function ProvisionSiteLicenseModal({
     setOveragePolicy("hard-cap");
     setStartsAt(null);
     setExpiresAt(null);
-    setPools(
-      [
-        {
-          pool_name: "Students",
-          membership_class: (studentTier?.id ?? "student") as MembershipClass,
-          seat_count: 5000,
-          requires_approval: false,
-          verification_policy: "email-domain" as SiteLicenseVerificationPolicy,
-          exclusive_group: "teaching",
-          affiliation_reverification_days: 180,
-          affiliation_reverification_grace_days: 30,
-        },
-        {
-          pool_name: "Instructors",
-          membership_class: (instructorTier?.id ??
-            "instructor") as MembershipClass,
-          seat_count: 200,
-          requires_approval: true,
-          verification_policy: "email-domain" as SiteLicenseVerificationPolicy,
-          exclusive_group: "teaching",
-          affiliation_reverification_days: 365,
-          affiliation_reverification_grace_days: 45,
-        },
-        {
-          pool_name: "Researchers",
-          membership_class: (researcherTier?.id ??
-            "researcher") as MembershipClass,
-          seat_count: 500,
-          requires_approval: true,
-          verification_policy: "email-domain" as SiteLicenseVerificationPolicy,
-          exclusive_group: "research",
-          affiliation_reverification_days: 365,
-          affiliation_reverification_grace_days: 45,
-        },
-      ].filter((pool) => !!pool.membership_class),
-    );
+    const defaultPools: SiteLicensePoolConfig[] = [];
+    if (studentTier) {
+      defaultPools.push({
+        pool_name: "Students",
+        membership_class: studentTier.id as MembershipClass,
+        seat_count: 5000,
+        requires_approval: false,
+        verification_policy: "email-domain",
+        exclusive_group: "teaching",
+        affiliation_reverification_days: 180,
+        affiliation_reverification_grace_days: 30,
+      });
+    }
+    if (instructorTier) {
+      defaultPools.push({
+        pool_name: "Instructors",
+        membership_class: instructorTier.id as MembershipClass,
+        seat_count: 200,
+        requires_approval: true,
+        verification_policy: "email-domain",
+        exclusive_group: "teaching",
+        affiliation_reverification_days: 365,
+        affiliation_reverification_grace_days: 45,
+      });
+    }
+    if (researcherTier) {
+      defaultPools.push({
+        pool_name: "Researchers",
+        membership_class: researcherTier.id as MembershipClass,
+        seat_count: 500,
+        requires_approval: true,
+        verification_policy: "email-domain",
+        exclusive_group: "research",
+        affiliation_reverification_days: 365,
+        affiliation_reverification_grace_days: 45,
+      });
+    }
+    setPools(defaultPools);
     setEditingPoolIndex(null);
     setSubmitting(false);
     setError("");
@@ -2358,17 +2512,10 @@ function ProvisionSiteLicenseModal({
     const newPoolIndex = pools.length;
     setPools((current) => [
       ...current,
-      {
-        pool_name: `Pool ${current.length + 1}`,
-        membership_class: (provisionableTiers[0]?.id ??
-          "member") as MembershipClass,
-        seat_count: 25,
-        requires_approval: true,
-        verification_policy: "email-domain",
-        exclusive_group: `group-${current.length + 1}`,
-        affiliation_reverification_days: 365,
-        affiliation_reverification_grace_days: 30,
-      },
+      makeDefaultSiteLicensePool({
+        tiers: provisionableTiers,
+        index: current.length,
+      }),
     ]);
     setEditingPoolIndex(newPoolIndex);
   }
@@ -2833,6 +2980,10 @@ function ProvisionPoolEditModal({
   siteLicenseTierOptions,
   onChange,
   onClose,
+  mode = "edit",
+  error,
+  submitting,
+  onSubmit,
 }: {
   open: boolean;
   pool?: SiteLicensePoolConfig;
@@ -2840,6 +2991,10 @@ function ProvisionPoolEditModal({
   siteLicenseTierOptions: MembershipTierLike[];
   onChange: (patch: Partial<SiteLicensePoolConfig>) => void;
   onClose: () => void;
+  mode?: "edit" | "add";
+  error?: string;
+  submitting?: boolean;
+  onSubmit?: () => Promise<void>;
 }) {
   if (pool == null) return null;
   const theme = getProvisionPoolTheme(pool, poolIndex);
@@ -2848,22 +3003,31 @@ function ProvisionPoolEditModal({
     <Modal
       open={open}
       onCancel={onClose}
-      onOk={onClose}
-      okText="Done"
+      onOk={onSubmit ?? onClose}
+      okButtonProps={{ loading: submitting }}
+      okText={mode === "add" ? "Add pool" : "Done"}
       width={760}
       title={
         <Space>
           <Icon name={theme.icon} style={{ color: theme.accent }} />
-          <span>Edit {pool.pool_name || `Pool ${poolIndex + 1}`}</span>
+          <span>
+            {mode === "add" ? "Add" : "Edit"}{" "}
+            {pool.pool_name || `Pool ${poolIndex + 1}`}
+          </span>
         </Space>
       }
     >
       <Space orientation="vertical" size="large" style={{ width: "100%" }}>
+        {error ? <Alert type="error" showIcon title={error} /> : null}
         <Alert
           type="info"
           showIcon
           title={theme.description}
-          description="Changes are applied immediately to the provisioning draft. They are not saved until you provision the site license."
+          description={
+            mode === "add"
+              ? "This creates a new seed/global site-license pool after fresh auth. Existing pools and assignments are unchanged."
+              : "Changes are applied immediately to the provisioning draft. They are not saved until you provision the site license."
+          }
         />
         <div
           style={{

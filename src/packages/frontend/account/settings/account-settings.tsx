@@ -43,6 +43,10 @@ import { keys, startswith } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { PassportStrategyFrontend } from "@cocalc/util/types/passport-types";
 import { AccountState } from "../types";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { DeleteAccount } from "../delete-account";
 import { ACCOUNT_PROFILE_ICON_NAME } from "../account-preferences-profile";
 import { SignOut } from "../sign-out";
@@ -86,6 +90,9 @@ export function AccountSettings(props: Readonly<Props>) {
   const [show_delete_confirmation, set_show_delete_confirmation] =
     useState<boolean>(false);
   const [username, set_username] = useState<boolean>(false);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: ugly_error,
+  });
 
   const actions = () => redux.getActions("account");
 
@@ -156,7 +163,9 @@ export function AccountSettings(props: Readonly<Props>) {
       return;
     }
     try {
-      await webapp_client.account_client.unlink_passport(strategy, id);
+      await runFreshAuthAction(async () => {
+        await webapp_client.account_client.unlink_passport(strategy, id);
+      });
       // console.log("ret:", x);
     } catch (err) {
       ugly_error(err);
@@ -590,6 +599,7 @@ will no longer work (automatic redirects are not implemented), so change with ca
       {render_available_to_link()}
       {render_sign_out_buttons()}
       {render_sign_out_error()}
+      <FreshAuthModal {...freshAuthModalProps} />
     </Panel>
   );
 }

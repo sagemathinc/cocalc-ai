@@ -21,6 +21,7 @@ const claimMembershipPackageSeatMock = jest.fn();
 const adminProvisionSiteLicenseMock = jest.fn();
 const getVerifiedEmailAddressesForAccountMock = jest.fn();
 const getSiteLicenseOverviewMock = jest.fn();
+const addSiteLicensePoolMock = jest.fn();
 const requestSiteLicensePoolMock = jest.fn();
 const getSiteLicenseAffiliationReverificationStatusForAccountMock = jest.fn();
 const refreshSiteLicenseAffiliationVerificationForAccountMock = jest.fn();
@@ -41,6 +42,7 @@ const interBayGetClaimableMembershipPackagesForAccountMock = jest.fn();
 const interBayClaimMembershipPackageSeatForAccountMock = jest.fn();
 const interBayAdminProvisionSiteLicenseMock = jest.fn();
 const interBayGetSiteLicenseOverviewMock = jest.fn();
+const interBayAddSiteLicensePoolMock = jest.fn();
 const interBayRequestSiteLicensePoolMock = jest.fn();
 const interBayRequestSiteLicensePoolForAccountMock = jest.fn();
 const interBayReviewSiteLicensePoolRequestMock = jest.fn();
@@ -111,6 +113,7 @@ jest.mock("@cocalc/server/membership/site-licenses", () => ({
     getVerifiedEmailAddressesForAccountMock(...args),
   getSiteLicenseOverview: (...args: any[]) =>
     getSiteLicenseOverviewMock(...args),
+  addSiteLicensePool: (...args: any[]) => addSiteLicensePoolMock(...args),
   requestSiteLicensePool: (...args: any[]) =>
     requestSiteLicensePoolMock(...args),
   getSiteLicenseAffiliationReverificationStatusForAccount: (...args: any[]) =>
@@ -200,6 +203,8 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
       interBayAdminProvisionSiteLicenseMock(...args),
     getSiteLicenseOverview: (...args: any[]) =>
       interBayGetSiteLicenseOverviewMock(...args),
+    addSiteLicensePool: (...args: any[]) =>
+      interBayAddSiteLicensePoolMock(...args),
     requestSiteLicensePool: (...args: any[]) =>
       interBayRequestSiteLicensePoolMock(...args),
     requestSiteLicensePoolForAccount: (...args: any[]) =>
@@ -229,9 +234,11 @@ beforeEach(() => {
   assertAccountTrustedForProductAccessMock.mockReset();
   updateSiteLicensePoolMock.mockReset();
   updateSiteLicenseMock.mockReset();
+  addSiteLicensePoolMock.mockReset();
   setSiteLicenseManagerMock.mockReset();
   removeSiteLicenseManagerMock.mockReset();
   interBayUpdateSiteLicenseMock.mockReset();
+  interBayAddSiteLicensePoolMock.mockReset();
   interBaySetSiteLicenseManagerMock.mockReset();
   interBayRemoveSiteLicenseManagerMock.mockReset();
   getConfiguredClusterSeedBayIdMock.mockReset();
@@ -712,6 +719,48 @@ describe("purchases membership packages", () => {
     });
   });
 
+  it("routes site-license pool creation to the seed bay with fresh auth", async () => {
+    getConfiguredClusterSeedBayIdMock.mockReturnValue("bay-2");
+    interBayAddSiteLicensePoolMock.mockResolvedValue({
+      site_license: { id: "license-remote-1" },
+      pools: [{ id: "pool-2", pool_name: "Researchers" }],
+      managers: [],
+      pending_requests: [],
+    });
+
+    const { addSiteLicensePool } = await import("./purchases");
+    getBrowserAuthSessionHashMock.mockReturnValueOnce("fresh-session-2");
+    await addSiteLicensePool({
+      account_id: "manager-1",
+      browser_id: "browser-1",
+      site_license_id: "license-remote-1",
+      pool: {
+        pool_name: "Researchers",
+        membership_class: "researcher",
+        seat_count: 5,
+        requires_approval: true,
+        verification_policy: "email-domain",
+        exclusive_group: "research",
+      },
+    });
+
+    expect(interBayAddSiteLicensePoolMock).toHaveBeenCalledWith({
+      actor_account_id: "manager-1",
+      site_license_id: "license-remote-1",
+      pool: expect.objectContaining({
+        pool_name: "Researchers",
+        membership_class: "researcher",
+        seat_count: 5,
+      }),
+    });
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "manager-1",
+      session_hash: "fresh-session-2",
+      allow_actor_impersonation: true,
+    });
+    expect(addSiteLicensePoolMock).not.toHaveBeenCalled();
+  });
+
   it("routes site-license pool requests to the seed bay with requester verified emails", async () => {
     getConfiguredClusterSeedBayIdMock.mockReturnValue("bay-2");
     resolveAccountHomeBayMock.mockResolvedValueOnce({
@@ -1013,6 +1062,7 @@ describe("purchases membership packages", () => {
 
   it("updates seed site-license pool domains", async () => {
     isAdminMock.mockResolvedValue(true);
+    getBrowserAuthSessionHashMock.mockReturnValue("fresh-session-1");
     updateSiteLicensePoolMock.mockResolvedValue({
       id: "site-1",
       owner_account_id: "owner-1",
@@ -1028,6 +1078,7 @@ describe("purchases membership packages", () => {
     const { updateMembershipPackage } = await import("./purchases");
     const result = await updateMembershipPackage({
       account_id: "admin-1",
+      browser_id: "browser-1",
       owner_account_id: "owner-1",
       site_license_id: "license-1",
       package_id: "site-1",
@@ -1042,10 +1093,35 @@ describe("purchases membership packages", () => {
       expires_at: undefined,
       allowed_domains: ["dept.example.edu", "example.edu"],
     });
+    expect(getBrowserAuthSessionHashMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      browser_id: "browser-1",
+    });
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      session_hash: "fresh-session-1",
+      allow_actor_impersonation: true,
+    });
     expect(result.metadata?.allowed_domains).toEqual([
       "dept.example.edu",
       "example.edu",
     ]);
+  });
+
+  it("requires fresh auth for seed site-license pool updates", async () => {
+    isAdminMock.mockResolvedValue(true);
+
+    const { updateMembershipPackage } = await import("./purchases");
+    await expect(
+      updateMembershipPackage({
+        account_id: "admin-1",
+        owner_account_id: "owner-1",
+        site_license_id: "license-1",
+        package_id: "site-1",
+        seat_count: 12,
+      }),
+    ).rejects.toMatchObject({ code: "fresh_auth_required" });
+    expect(updateSiteLicensePoolMock).not.toHaveBeenCalled();
   });
 
   it("routes site-license pool updates to the seed bay", async () => {
@@ -1071,6 +1147,7 @@ describe("purchases membership packages", () => {
     const { updateMembershipPackage } = await import("./purchases");
     await updateMembershipPackage({
       account_id: "admin-1",
+      session_hash: "fresh-session-1",
       owner_account_id: "owner-1",
       site_license_id: "license-1",
       package_id: "site-remote-1",
@@ -1083,6 +1160,11 @@ describe("purchases membership packages", () => {
       seat_count: undefined,
       expires_at: undefined,
       allowed_domains: ["dept.example.edu", "example.edu"],
+    });
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      session_hash: "fresh-session-1",
+      allow_actor_impersonation: true,
     });
     expect(resolveAccountHomeBayMock).not.toHaveBeenCalled();
     expect(updateMembershipPackageMock).not.toHaveBeenCalled();
@@ -1169,7 +1251,7 @@ describe("purchases membership packages", () => {
     getMembershipPackageMock.mockResolvedValue({
       id: "package-1",
       owner_account_id: "owner-1",
-      kind: "site",
+      kind: "team",
       membership_class: "member",
       seat_count: 3,
     });
@@ -1195,6 +1277,33 @@ describe("purchases membership packages", () => {
       metadata: null,
     });
     expect(result.email_address).toBe("student@example.com");
+  });
+
+  it("blocks direct public assignment into site-license pools", async () => {
+    getMembershipPackageMock.mockResolvedValue({
+      id: "site-package-1",
+      owner_account_id: "owner-1",
+      kind: "site",
+      membership_class: "member",
+      seat_count: 3,
+      metadata: {
+        site_license_id: "site-license-1",
+        allowed_domains: ["example.edu"],
+      },
+    });
+
+    const { assignMembershipPackageSeat } = await import("./purchases");
+    await expect(
+      assignMembershipPackageSeat({
+        account_id: "owner-1",
+        package_id: "site-package-1",
+        target_email_address: "student@example.edu",
+      }),
+    ).rejects.toThrow(
+      "site-license seats must be claimed or approved through site-license workflows",
+    );
+
+    expect(assignMembershipPackageSeatMock).not.toHaveBeenCalled();
   });
 
   it("purchases a course package for the owner", async () => {

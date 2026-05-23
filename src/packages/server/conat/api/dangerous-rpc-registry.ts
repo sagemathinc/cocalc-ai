@@ -491,6 +491,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "admin site-license entitlement mutation",
   },
+  "purchases.addSiteLicensePool": {
+    decision: "fresh-auth-required",
+    reason: "site-license commercial terms and domain entitlement mutation",
+  },
   "purchases.assignMembershipPackageSeat": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
@@ -511,7 +515,7 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "purchases.removeSiteLicenseManager": {
     decision: "fresh-auth-not-required",
     reason:
-      "manager removal is scoped by site-license manager authorization and does not directly change entitlements",
+      "manager removal is scoped to site-license owners/admins and does not directly change entitlements",
   },
   "purchases.revokeMembershipPackageSeat": {
     decision: "fresh-auth-not-required",
@@ -520,39 +524,44 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "purchases.setSiteLicenseManager": {
     decision: "fresh-auth-not-required",
     reason:
-      "manager assignment is scoped by site-license manager authorization and does not directly change entitlements",
+      "manager assignment is scoped to site-license owners/admins and does not directly change entitlements",
   },
   "purchases.updateMembershipPackage": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason:
+      "site-license pool edits change commercial/domain entitlements; ordinary non-site package edits remain ordinary authz",
   },
   "purchases.updateSiteLicense": {
     decision: "fresh-auth-required",
     reason: "site-license commercial terms and domain entitlement mutation",
   },
   "software.createLicense": {
-    decision: "fresh-auth-not-required",
-    reason: "admin-only software license mutation",
+    decision: "fresh-auth-required",
+    reason:
+      "admin software license minting changes signed commercial entitlements",
   },
   "software.restoreLicense": {
-    decision: "fresh-auth-not-required",
-    reason: "admin-only software license mutation",
+    decision: "fresh-auth-required",
+    reason:
+      "admin software license restoration changes signed commercial entitlements",
   },
   "software.revokeLicense": {
-    decision: "fresh-auth-not-required",
-    reason: "admin-only software license mutation",
+    decision: "fresh-auth-required",
+    reason:
+      "admin software license revocation changes signed commercial entitlements",
   },
   "software.upsertLicenseTier": {
-    decision: "fresh-auth-not-required",
-    reason: "admin-only software license tier mutation",
+    decision: "fresh-auth-required",
+    reason:
+      "admin software license tier edits change signed commercial entitlement templates",
   },
   "sync.purgeHistory": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
   "system.adminCreateUser": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "admin account creation with password issuance",
   },
   "system.adminResetPasswordLink": {
     decision: "fresh-auth-required",
@@ -579,8 +588,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: "admin membership mutation",
   },
   "system.clearParallelOpsLimit": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "admin worker concurrency limit mutation",
   },
   "system.clearProviderSetupChallenge": {
     decision: "fresh-auth-not-required",
@@ -603,12 +612,12 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: "account deletion",
   },
   "system.deleteOpenAiApiKey": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "OpenAI external credential revocation",
   },
   "system.deletePassport": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "account SSO/passport login method unlink",
   },
   "system.drainAccountCollaboratorIndexProjection": {
     decision: "fresh-auth-not-required",
@@ -676,8 +685,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "system.revokeExternalCredential": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "external credential revocation",
   },
   "system.runBayBackup": {
     decision: "fresh-auth-not-required",
@@ -720,20 +729,20 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "system.setOpenAiApiKey": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "OpenAI external credential mutation",
   },
   "system.setParallelOpsLimit": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "admin worker concurrency limit mutation",
   },
   "system.setProjectRootfsImage": {
     decision: "fresh-auth-required",
     reason: "RootFS catalog/project mutation",
   },
   "system.setSiteSettings": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "global site settings mutation propagates across bays",
   },
   "system.sendEmailVerification": {
     decision: "fresh-auth-not-required",
@@ -752,12 +761,12 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "system.startCloudflareR2BayBackupCleanup": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "destructive Cloudflare R2 bay-backup object cleanup",
   },
   "system.startCloudflareTeardownApply": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "destructive Cloudflare teardown apply",
   },
   "system.upsertBrowserSession": {
     decision: "fresh-auth-not-required",

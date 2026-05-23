@@ -117,17 +117,6 @@ async function reset_password(email_address: string): Promise<void> {
 // Ensure the global conat client routes project traffic to the correct host.
 setConatClient({ conat: conatWithProjectRouting, getLogger });
 
-// This calculates and updates the statistics for the /stats endpoint.
-// It's important that we call this periodically, because otherwise the /stats data is outdated.
-async function init_update_stats(): Promise<void> {
-  logger.info("init updating stats periodically");
-  const update = () => callback2(getDatabase().get_stats);
-  // Do it every minute:
-  setInterval(() => update(), 60000);
-  // Also do it once now:
-  await update();
-}
-
 function initDeleteExpiredLoop(): void {
   if (!isLaunchpadProduct()) {
     return;
@@ -289,12 +278,6 @@ async function startServer(): Promise<void> {
     startCloudVmReconciler();
   }
 
-  if (program.conatServer) {
-    if (program.mode != "kucalc") {
-      await init_update_stats();
-    }
-  }
-
   if (program.conatServer || program.proxyServer || program.conatApi) {
     const { router, httpServer } = await initExpressApp({
       isPersonal: program.personal,
@@ -423,7 +406,7 @@ async function main(): Promise<void> {
     )
     .option(
       "--update-stats",
-      "Calculates the statistics for the /stats endpoint and stores them in the database",
+      "Calculates aggregate database statistics and stores them in the database",
     )
     .option("--delete-expired", "Delete expired data from the database")
     .option(

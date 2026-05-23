@@ -92,6 +92,37 @@ const ALERT_STYLE: CSSProperties = {
   fontSize: "14px",
 } as const;
 
+const METHOD_CHOOSER_STYLE: CSSProperties = {
+  display: "flex",
+  gap: "8px",
+  flexWrap: "wrap",
+} as const;
+
+const METHOD_BUTTON_STYLE: CSSProperties = {
+  borderRadius: "999px",
+  border: `1px solid ${COLORS.GRAY_LL}`,
+  background: "white",
+  color: COLORS.GRAY_D,
+  fontSize: "14px",
+  fontWeight: 600,
+  padding: "7px 12px",
+  cursor: "pointer",
+} as const;
+
+const SELECTED_METHOD_BUTTON_STYLE: CSSProperties = {
+  ...METHOD_BUTTON_STYLE,
+  borderColor: COLORS.BLUE_D,
+  background: COLORS.BLUE_LLL,
+  color: COLORS.BLUE_DD,
+} as const;
+
+const POLICY_STATUS_STYLE: CSSProperties = {
+  minHeight: "20px",
+  color: COLORS.GRAY_M,
+  fontSize: "13px",
+  lineHeight: "20px",
+} as const;
+
 type SignInMethod = {
   email: string;
   password_allowed: boolean;
@@ -200,6 +231,18 @@ function NavLink(props: { children: ReactNode; onClick: () => void }) {
 
 function ssoLoginHref(strategyName: string): string {
   return joinUrlPath(appBasePath, "auth", strategyName);
+}
+
+export function defaultAuthRedirectPath(): string {
+  return appUrl("projects");
+}
+
+export function resolveAuthRedirectPath(
+  redirectToPath?: string | (() => string),
+): string {
+  const target =
+    typeof redirectToPath === "function" ? redirectToPath() : redirectToPath;
+  return target ?? defaultAuthRedirectPath();
 }
 
 export function PublicSignInForm({
@@ -337,11 +380,7 @@ export function PublicSignInForm({
         throw new Error("Sign in failed. Please try again.");
       }
       setStoredControlPlaneOrigin(result?.home_bay_url);
-      const redirectTarget =
-        typeof redirectToPath === "function"
-          ? redirectToPath()
-          : redirectToPath;
-      window.location.href = redirectTarget ?? appUrl("app?sign-in");
+      window.location.href = resolveAuthRedirectPath(redirectToPath);
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -375,11 +414,7 @@ export function PublicSignInForm({
         throw new Error("Second factor verification failed. Please try again.");
       }
       setStoredControlPlaneOrigin(result?.home_bay_url);
-      const redirectTarget =
-        typeof redirectToPath === "function"
-          ? redirectToPath()
-          : redirectToPath;
-      window.location.href = redirectTarget ?? appUrl("app?sign-in");
+      window.location.href = resolveAuthRedirectPath(redirectToPath);
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -406,10 +441,10 @@ export function PublicSignInForm({
               }}
               onPressEnter={signIn}
             />
+            <div aria-live="polite" style={POLICY_STATUS_STYLE}>
+              {checkingSignInMethod ? "Checking sign-in policy..." : "\u00a0"}
+            </div>
           </div>
-          {checkingSignInMethod && (
-            <Alert kind="info">Checking sign-in policy...</Alert>
-          )}
           {ssoStrategy && (
             <Alert kind="info">
               <div style={{ fontWeight: 600, marginBottom: "6px" }}>
@@ -456,27 +491,31 @@ export function PublicSignInForm({
       ) : (
         <div style={FIELD_STYLE}>
           <div style={LABEL_STYLE}>Second factor</div>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <div
+            aria-label="Choose second factor method"
+            role="group"
+            style={METHOD_CHOOSER_STYLE}
+          >
             {factorMethods.includes("passkey") ? (
               <button
+                type="button"
                 style={{
-                  ...BUTTON_STYLE,
-                  width: "auto",
-                  background:
-                    factorMethod === "passkey" ? COLORS.BLUE_D : COLORS.GRAY_L,
+                  ...(factorMethod === "passkey"
+                    ? SELECTED_METHOD_BUTTON_STYLE
+                    : METHOD_BUTTON_STYLE),
                 }}
                 onClick={() => setFactorMethod("passkey")}
               >
-                Use passkey
+                Passkey
               </button>
             ) : undefined}
             {factorMethods.some((method) => method !== "passkey") ? (
               <button
+                type="button"
                 style={{
-                  ...BUTTON_STYLE,
-                  width: "auto",
-                  background:
-                    factorMethod !== "passkey" ? COLORS.BLUE_D : COLORS.GRAY_L,
+                  ...(factorMethod !== "passkey"
+                    ? SELECTED_METHOD_BUTTON_STYLE
+                    : METHOD_BUTTON_STYLE),
                 }}
                 onClick={() =>
                   setFactorMethod(
@@ -484,7 +523,7 @@ export function PublicSignInForm({
                   )
                 }
               >
-                Use code
+                Code
               </button>
             ) : undefined}
           </div>
@@ -732,11 +771,7 @@ export function PublicSignUpForm({
         throw new Error("Sign up failed. Please try again.");
       }
       setStoredControlPlaneOrigin(result?.home_bay_url);
-      const redirectTarget =
-        typeof redirectToPath === "function"
-          ? redirectToPath()
-          : redirectToPath;
-      window.location.href = redirectTarget ?? appUrl("app?sign-in");
+      window.location.href = resolveAuthRedirectPath(redirectToPath);
     } catch (err) {
       setError(`${err}`);
     } finally {

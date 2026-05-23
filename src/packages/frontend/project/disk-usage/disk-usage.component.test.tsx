@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Map as ImmutableMap } from "immutable";
 import DiskUsage from "./disk-usage";
 import useDiskUsage from "./use-disk-usage";
+import getStorageOverview from "./storage-overview";
 
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: ({ name }: { name: string }) => <span>{name}</span>,
@@ -56,11 +57,13 @@ jest.mock("@cocalc/frontend/app-framework", () => {
 });
 
 const useDiskUsageMock = useDiskUsage as jest.Mock;
+const getStorageOverviewMock = getStorageOverview as jest.Mock;
 const { useTypedRedux } = jest.requireMock(
   "@cocalc/frontend/app-framework",
 ) as {
   useTypedRedux: jest.Mock;
 };
+const applyOverviewMock = jest.fn();
 
 describe("DiskUsage backup UI", () => {
   const originalGetComputedStyle = window.getComputedStyle;
@@ -82,6 +85,7 @@ describe("DiskUsage backup UI", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    applyOverviewMock.mockClear();
     useDiskUsageMock.mockReturnValue({
       visible: [
         {
@@ -104,6 +108,7 @@ describe("DiskUsage backup UI", () => {
         path: "/home/user",
         bytes: 111,
       },
+      collectedAt: "2026-05-05T18:00:00.000Z",
       retained: {
         key: "retained",
         label: "Retained snapshot/history data",
@@ -112,7 +117,7 @@ describe("DiskUsage backup UI", () => {
       loading: false,
       error: null,
       setError: jest.fn(),
-      refresh: jest.fn(),
+      applyOverview: applyOverviewMock,
       quotas: [{ key: "project", label: "Project quota", used: 17, size: 100 }],
     });
   });
@@ -136,7 +141,57 @@ describe("DiskUsage backup UI", () => {
       expect(screen.getByText("Last backup:")).toBeInTheDocument();
     });
     expect(
-      screen.getByText("ago:2026-05-05T18:00:00.000Z"),
-    ).toBeInTheDocument();
+      screen.getAllByText("ago:2026-05-05T18:00:00.000Z").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("labels recompute status without doing a second hook refresh", async () => {
+    useTypedRedux.mockReturnValue(ImmutableMap());
+    const overview = {
+      collected_at: "2026-05-05T19:00:00.000Z",
+      refresh: {
+        status: "sampled",
+        requested_at: "2026-05-05T19:00:00.000Z",
+      },
+      quotas: [{ key: "project", label: "Project quota", used: 22, size: 100 }],
+      live: {
+        key: "live",
+        label: "Live files",
+        path: "/home/user",
+        bytes: 222,
+      },
+      retained: {
+        key: "retained",
+        label: "Retained snapshot/history data",
+        bytes: 0,
+      },
+      visible: [
+        {
+          key: "home",
+          label: "/home/user",
+          summaryLabel: "Home",
+          path: "/home/user",
+          summaryBytes: 222,
+          usage: {
+            path: "/home/user",
+            bytes: 222,
+            children: [],
+            collected_at: "2026-05-05T19:00:00.000Z",
+          },
+        },
+      ],
+    };
+    getStorageOverviewMock.mockResolvedValueOnce(overview);
+
+    render(<DiskUsage compact project_id="project-1" />);
+    fireEvent.click(screen.getByRole("button"));
+    fireEvent.click(screen.getByText("Recompute"));
+
+    await waitFor(() => {
+      expect(applyOverviewMock).toHaveBeenCalledWith(overview);
+      expect(
+        screen.getByText("Recomputed storage usage just now."),
+      ).toBeInTheDocument();
+    });
   });
 });

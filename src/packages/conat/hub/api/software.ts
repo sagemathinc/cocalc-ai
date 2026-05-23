@@ -21,6 +21,8 @@ export interface Software {
   }) => Promise<SoftwareLicenseTier[]>;
   upsertLicenseTier: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     tier: SoftwareLicenseTier;
   }) => Promise<void>;
   listLicenses: (opts: {
@@ -30,6 +32,8 @@ export interface Software {
   }) => Promise<SoftwareLicense[]>;
   createLicense: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     tier_id: string;
     owner_account_id?: string;
     product?: "launchpad" | "rocket";
@@ -40,11 +44,15 @@ export interface Software {
   }) => Promise<SoftwareLicense>;
   revokeLicense: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     license_id: string;
     reason?: string;
   }) => Promise<void>;
   restoreLicense: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     license_id: string;
   }) => Promise<void>;
   listMyLicenses: (opts: { account_id?: string }) => Promise<SoftwareLicense[]>;

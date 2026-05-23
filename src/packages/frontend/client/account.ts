@@ -71,6 +71,7 @@ export class AccountClient {
   // forget about a given passport authentication strategy for this user
   unlink_passport = async (strategy: string, id: string): Promise<void> => {
     await this.client.conat_client.hub.system.deletePassport({
+      browser_id: this.client.browser_id,
       strategy,
       id,
     });

@@ -1,14 +1,4 @@
-import {
-  Alert,
-  Button,
-  Dropdown,
-  Modal,
-  Select,
-  Space,
-  Typography,
-  message as antdMessage,
-} from "antd";
-import type { MenuProps } from "antd";
+import { Alert, Button, Modal, Select, Space, Typography } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   redux,
@@ -22,8 +12,15 @@ import {
   type AgentSessionStatus,
 } from "@cocalc/frontend/chat/agent-session-index";
 import type { CodexThreadConfig } from "@cocalc/chat";
-import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
-import { Loading, ThemeEditorModal } from "@cocalc/frontend/components";
+import { ChatRoomModals } from "@cocalc/frontend/chat/chatroom-modals";
+import type { ChatRoomModalHandlers } from "@cocalc/frontend/chat/chatroom-modals";
+import {
+  ChatRoomThreadActions,
+  type ChatRoomThreadActionHandlers,
+} from "@cocalc/frontend/chat/chatroom-thread-actions";
+import { ChatRoomThreadMenu } from "@cocalc/frontend/chat/chatroom-thread-menu";
+import { GitCommitDrawer } from "@cocalc/frontend/chat/git-commit-drawer";
+import { Loading } from "@cocalc/frontend/components";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
@@ -42,6 +39,7 @@ import SideChat from "@cocalc/frontend/chat/side-chat";
 import { CodexCredentialsPanel } from "@cocalc/frontend/account/codex-credentials-panel";
 import { path_split } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import { isCodexModelName } from "@cocalc/util/ai/codex";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { StartButton } from "@cocalc/frontend/project/start-button";
 import {
@@ -485,20 +483,11 @@ export function NavigatorShell({
     null,
   );
   const [cacheVersion, setCacheVersion] = useState(0);
-  const [isArchiving, setIsArchiving] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSaving, setSettingsSaving] = useState(false);
-  const [settingsName, setSettingsName] = useState("");
-  const [settingsColor, setSettingsColor] = useState<string | undefined>(
-    undefined,
-  );
-  const [settingsAccentColor, setSettingsAccentColor] = useState<
-    string | undefined
-  >(undefined);
-  const [settingsIcon, setSettingsIcon] = useState<string | undefined>(
-    undefined,
-  );
-  const [settingsImage, setSettingsImage] = useState("");
+  const [modalHandlers, setModalHandlers] =
+    useState<ChatRoomModalHandlers | null>(null);
+  const [threadActionHandlers, setThreadActionHandlers] =
+    useState<ChatRoomThreadActionHandlers | null>(null);
+  const [gitBrowserOpen, setGitBrowserOpen] = useState(false);
   const [codexAuthOpen, setCodexAuthOpen] = useState(false);
   const [sessionIndexRetry, setSessionIndexRetry] = useState(0);
   const [intentRetryTick, setIntentRetryTick] = useState(0);
@@ -1110,6 +1099,7 @@ export function NavigatorShell({
       "data-preferLatestThread": true,
       "data-showThreadImagePreview": false,
       "data-hideChatTypeSelector": true,
+      "data-hideCompactThreadHeader": true,
       "data-newThreadTitleDefault": NAVIGATOR_DEFAULT_THREAD_TITLE,
       "data-newThreadIconDefault": NAVIGATOR_DEFAULT_THREAD_ICON,
       "data-newThreadColorDefault": NAVIGATOR_DEFAULT_THREAD_COLOR,
@@ -1149,100 +1139,10 @@ export function NavigatorShell({
     return summarizeTitle(selectedRootMessage);
   }, [selectedRootMessage, selectedThreadKey, selectedThreadMetadata]);
 
-  function openThreadSettings(): void {
-    if (!selectedThreadKey) return;
-    const name =
-      typeof selectedThreadMetadata?.name === "string"
-        ? selectedThreadMetadata.name
-        : "";
-    setSettingsName(name || "");
-    setSettingsColor(
-      typeof selectedThreadMetadata?.thread_color === "string"
-        ? selectedThreadMetadata.thread_color
-        : undefined,
-    );
-    setSettingsAccentColor(
-      typeof selectedThreadMetadata?.thread_accent_color === "string"
-        ? selectedThreadMetadata.thread_accent_color
-        : undefined,
-    );
-    setSettingsIcon(
-      typeof selectedThreadMetadata?.thread_icon === "string"
-        ? selectedThreadMetadata.thread_icon
-        : undefined,
-    );
-    setSettingsImage(
-      typeof selectedThreadMetadata?.thread_image === "string"
-        ? selectedThreadMetadata.thread_image
-        : "",
-    );
-    setSettingsOpen(true);
-  }
-
-  async function saveThreadSettings(): Promise<void> {
-    if (!actions || !selectedThreadKey) return;
-    setSettingsSaving(true);
-    try {
-      const ok = actions.setThreadAppearance(selectedThreadKey, {
-        name: settingsName,
-        color: settingsColor,
-        accentColor: settingsAccentColor,
-        icon: settingsIcon,
-        image: settingsImage,
-      });
-      if (!ok) {
-        antdMessage.error("Unable to save thread appearance.");
-        return;
-      }
-      antdMessage.success("Thread appearance saved.");
-      setSettingsOpen(false);
-    } finally {
-      setSettingsSaving(false);
-    }
-  }
-
-  async function archiveCurrentSession(): Promise<void> {
-    if (!selectedSessionRecord) return;
-    setIsArchiving(true);
-    setError("");
-    try {
-      await upsertAgentSessionRecord({
-        ...selectedSessionRecord,
-        status: "archived",
-        updated_at: new Date().toISOString(),
-      });
-      setSelectedThreadKey(null);
-      actions?.setSelectedThread?.(null);
-    } catch (err) {
-      setError(`${err}`);
-    } finally {
-      setIsArchiving(false);
-    }
-  }
-
   function startNewThread(): void {
     pendingNewThreadDefaultsRef.current = true;
     setSelectedThreadKey("");
     actions?.setSelectedThread?.(null);
-  }
-
-  function clearCurrentThread(): void {
-    if (!actions || !selectedThreadKey) return;
-    const sourceLabel =
-      typeof selectedThreadMetadata?.name === "string" &&
-      selectedThreadMetadata.name.trim().length > 0
-        ? selectedThreadMetadata.name.trim()
-        : "Codex";
-    const next = actions.resetThread(selectedThreadKey, {
-      name: "Codex",
-      renameSourceTo: `Previous ${sourceLabel}`,
-      pinNewThread: true,
-      unpinSourceThread: true,
-    });
-    if (!next) return;
-    setSelectedThreadKey(next);
-    actions.setSelectedThread?.(next);
-    saveNavigatorSelectedThreadKey(next, navigatorPath);
   }
 
   function openChatFile(): void {
@@ -1251,72 +1151,6 @@ export function NavigatorShell({
       foreground: true,
     });
   }
-
-  const actionItems = useMemo<MenuProps["items"]>(
-    () => [
-      { key: "new", label: "New Thread" },
-      {
-        key: "settings",
-        label: "Thread Appearance...",
-        disabled: !selectedThreadKey,
-      },
-      { type: "divider" },
-      {
-        key: "clear",
-        label: "Clear Thread",
-        disabled: !selectedThreadKey,
-      },
-      {
-        key: "archive",
-        label:
-          selectedSessionRecord?.status === "archived"
-            ? "Archived"
-            : "Archive Thread",
-        disabled: !selectedSessionRecord || isArchiving,
-      },
-      { type: "divider" },
-      { key: "open-chat-file", label: "Open Chat File" },
-    ],
-    [isArchiving, selectedSessionRecord, selectedThreadKey],
-  );
-
-  const onActionMenuClick = useCallback<NonNullable<MenuProps["onClick"]>>(
-    ({ key }) => {
-      if (key === "new") {
-        startNewThread();
-        return;
-      }
-      if (key === "settings") {
-        openThreadSettings();
-        return;
-      }
-      if (key === "clear") {
-        Modal.confirm({
-          title: "Clear the current thread?",
-          content:
-            "This starts a fresh empty thread, keeps the current thread as history, and selects the fresh thread.",
-          okText: "Clear",
-          cancelText: "Cancel",
-          onOk: clearCurrentThread,
-        });
-        return;
-      }
-      if (key === "archive") {
-        void archiveCurrentSession();
-        return;
-      }
-      if (key === "open-chat-file") {
-        openChatFile();
-      }
-    },
-    [
-      archiveCurrentSession,
-      clearCurrentThread,
-      openChatFile,
-      openThreadSettings,
-      startNewThread,
-    ],
-  );
 
   if (!navigatorPath) {
     return <Loading theme="medium" />;
@@ -1327,21 +1161,37 @@ export function NavigatorShell({
   }
 
   const fontControls = (
-    <Space size={[4, 0]} wrap>
+    <div
+      aria-label="Agent chat text size"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 2,
+        height: 28,
+        padding: "0 3px",
+        border: "1px solid #d9d9d9",
+        borderRadius: 7,
+        background: "#fff",
+        whiteSpace: "nowrap",
+      }}
+    >
       <Tooltip title="Decrease chat font size">
         <Button
           size="small"
           type="text"
           disabled={!canDecreaseFontSize}
           onClick={decreaseFontSize}
-          style={{ minWidth: 24, padding: "0 4px" }}
+          style={{ minWidth: 24, height: 22, padding: "0 4px" }}
         >
           <Icon name="minus" />
         </Button>
       </Tooltip>
       <Tooltip title={`Agent chat font size: ${fontSize}px`}>
-        <Typography.Text style={{ minWidth: 28, textAlign: "center" }}>
-          {fontSize}
+        <Typography.Text
+          type="secondary"
+          style={{ fontSize: 12, padding: "0 4px" }}
+        >
+          Text {fontSize}
         </Typography.Text>
       </Tooltip>
       <Tooltip title="Increase chat font size">
@@ -1350,12 +1200,22 @@ export function NavigatorShell({
           type="text"
           disabled={!canIncreaseFontSize}
           onClick={increaseFontSize}
-          style={{ minWidth: 24, padding: "0 4px" }}
+          style={{ minWidth: 24, height: 22, padding: "0 4px" }}
         >
           <Icon name="plus" />
         </Button>
       </Tooltip>
-    </Space>
+    </div>
+  );
+  const selectedThreadModel =
+    selectedThreadMetadata?.agent_model?.trim() ||
+    selectedThreadMetadata?.acp_config?.model?.trim() ||
+    selectedRootMessage?.acp_config?.model?.trim();
+  const selectedThreadIsAI = Boolean(
+    selectedThreadMetadata?.agent_kind === "acp" ||
+    selectedThreadMetadata?.acp_config != null ||
+    selectedRootMessage?.acp_config != null ||
+    isCodexModelName(`${selectedThreadModel ?? ""}`),
   );
 
   return (
@@ -1370,7 +1230,6 @@ export function NavigatorShell({
         }}
       >
         <Space size={[6, 6]} wrap style={{ minWidth: 0 }}>
-          <Typography.Text strong>{threadTitle}</Typography.Text>
           {threadOptions.length > 0 ? (
             <Select
               size="small"
@@ -1393,63 +1252,95 @@ export function NavigatorShell({
         </Space>
         <Space size={[4, 4]} wrap>
           {fontControls}
-          <Dropdown
-            trigger={["click"]}
-            menu={{ items: actionItems, onClick: onActionMenuClick }}
-          >
-            <Button size="small">Actions</Button>
-          </Dropdown>
+          <Tooltip title="New agent thread">
+            <Button
+              size="small"
+              type="text"
+              icon={<Icon name="plus" />}
+              onClick={startNewThread}
+              aria-label="New agent thread"
+            />
+          </Tooltip>
+          {actions && selectedThreadKey ? (
+            <ChatRoomThreadMenu
+              actions={actions}
+              threadKey={selectedThreadKey}
+              plainLabel={threadTitle}
+              hasCustomName={Boolean(selectedThreadMetadata?.name?.trim())}
+              isPinned={selectedThreadMetadata?.pin ?? false}
+              isAI={selectedThreadIsAI}
+              isCodexThread={isCodexModelName(`${selectedThreadModel ?? ""}`)}
+              threadColor={selectedThreadMetadata?.thread_color}
+              threadIcon={selectedThreadMetadata?.thread_icon}
+              openAppearanceModal={
+                modalHandlers?.openAppearanceModal ?? (() => undefined)
+              }
+              openBehaviorModal={
+                modalHandlers?.openBehaviorModal ?? (() => undefined)
+              }
+              openExportModal={
+                modalHandlers?.openExportModal ?? (() => undefined)
+              }
+              openImportModal={
+                modalHandlers?.openImportModal ?? (() => undefined)
+              }
+              openForkModal={modalHandlers?.openForkModal ?? (() => undefined)}
+              confirmResetThread={
+                threadActionHandlers?.confirmResetThread ?? (() => undefined)
+              }
+              confirmDeleteThread={
+                threadActionHandlers?.confirmDeleteThread ?? (() => undefined)
+              }
+              openChatFile={openChatFile}
+              openGitBrowser={() => setGitBrowserOpen(true)}
+              buttonType="text"
+              buttonAriaLabel="Agent thread actions"
+              buttonTestId="navigator-thread-menu"
+            />
+          ) : (
+            <Button
+              size="small"
+              type="text"
+              icon={<Icon name="ellipsis" />}
+              aria-label="Agent thread actions"
+              disabled
+            />
+          )}
         </Space>
       </Space>
-      <ThemeEditorModal
-        open={settingsOpen}
-        title="Edit Thread Appearance"
-        value={{
-          title: settingsName,
-          description: "",
-          color: settingsColor ?? null,
-          accent_color: settingsAccentColor ?? null,
-          icon: settingsIcon ?? "",
-          image_blob: settingsImage,
-        }}
-        onChange={(patch) => {
-          if (patch.title != null) setSettingsName(patch.title);
-          if (patch.color !== undefined) {
-            setSettingsColor(patch.color ?? undefined);
-          }
-          if (patch.accent_color !== undefined) {
-            setSettingsAccentColor(patch.accent_color ?? undefined);
-          }
-          if (patch.icon != null) {
-            setSettingsIcon(patch.icon || undefined);
-          }
-          if (patch.image_blob != null) {
-            setSettingsImage(patch.image_blob);
-          }
-        }}
-        onCancel={() => setSettingsOpen(false)}
-        onSave={saveThreadSettings}
-        confirmLoading={settingsSaving}
-        defaultIcon="comment"
-        showDescription={false}
-        previewImageUrl={settingsImage}
-        extraBeforeTheme={
-          <Typography.Text type="secondary">
-            Customize this navigator thread appearance.
-          </Typography.Text>
-        }
-        renderImageInput={() => (
-          <div>
-            <ThreadImageUpload
-              projectId={project_id}
-              value={settingsImage}
-              onChange={setSettingsImage}
-              modalTitle="Select Thread Image"
-              uploadText="Click or drag image"
-            />
-          </div>
-        )}
-      />
+      {actions ? (
+        <>
+          <ChatRoomModals
+            actions={actions}
+            project_id={project_id}
+            path={navigatorPath}
+            selectedThreadKey={selectedThreadKey}
+            selectedThreadLabel={threadTitle}
+            onHandlers={setModalHandlers}
+          />
+          <ChatRoomThreadActions
+            actions={actions}
+            path={navigatorPath}
+            selectedThreadKey={selectedThreadKey}
+            setSelectedThreadKey={(key) => {
+              setSelectedThreadKey(key);
+              actions.setSelectedThread?.(key);
+              if (key) {
+                saveNavigatorSelectedThreadKey(key, navigatorPath);
+              }
+            }}
+            onHandlers={setThreadActionHandlers}
+          />
+          <GitCommitDrawer
+            projectId={project_id}
+            sourcePath={navigatorPath}
+            cwdOverride={homeDirectory}
+            open={gitBrowserOpen}
+            onClose={() => setGitBrowserOpen(false)}
+            fontSize={fontSize}
+          />
+        </>
+      ) : null}
       {initRetrying && !actions && !error ? (
         <Alert
           type="info"

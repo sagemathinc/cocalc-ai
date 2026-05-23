@@ -167,14 +167,9 @@ import {
 } from "./browser-sessions";
 import { getLiveBrowserSessionInfo } from "./browser-sessions-live";
 import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
-import {
-  recordNewAuthSession,
-  requireFreshAuthForSessionHash,
-} from "@cocalc/server/auth/auth-sessions";
-import { hasActiveSecondFactor } from "@cocalc/server/auth/two-factor";
+import { recordNewAuthSession } from "@cocalc/server/auth/auth-sessions";
 import { createImpersonationGrantLocal } from "@cocalc/server/auth/impersonation";
 import { upsertAccountImpersonationGrantDirectory } from "@cocalc/server/auth/impersonation-grant-directory";
-import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import {
   getProjectAppPublicPolicy as getProjectAppPublicPolicyRaw,
   getPublicAppRouteByHostname as getPublicAppRouteByHostnameRaw,
@@ -640,12 +635,22 @@ async function propagateSiteSettingsToBays(
 
 export async function setSiteSettings({
   account_id,
+  browser_id,
+  session_hash,
   settings,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   settings: SiteSettingUpdate[];
 }): Promise<SiteSettingsSyncResult> {
   await assertAdmin(account_id);
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
   const updates = settings.map(normalizeSiteSettingUpdate);
   for (const update of updates) {
     await setSiteSettingLocal(update);
@@ -2399,6 +2404,8 @@ async function assertAdmin(account_id?: string): Promise<void> {
 
 export async function setParallelOpsLimit({
   account_id,
+  browser_id,
+  session_hash,
   worker_kind,
   scope_type,
   scope_id,
@@ -2406,6 +2413,8 @@ export async function setParallelOpsLimit({
   note,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   worker_kind: string;
   scope_type?: string;
   scope_id?: string;
@@ -2413,6 +2422,12 @@ export async function setParallelOpsLimit({
   note?: string;
 }) {
   await assertAdmin(account_id);
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
   const worker = getParallelOpsWorkerRegistration(worker_kind);
   if (!worker) {
     throw Error(`unknown worker_kind '${worker_kind}'`);
@@ -2468,16 +2483,26 @@ export async function setParallelOpsLimit({
 
 export async function clearParallelOpsLimit({
   account_id,
+  browser_id,
+  session_hash,
   worker_kind,
   scope_type,
   scope_id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   worker_kind: string;
   scope_type?: string;
   scope_id?: string;
 }) {
   await assertAdmin(account_id);
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
   const worker = getParallelOpsWorkerRegistration(worker_kind);
   if (!worker) {
     throw Error(`unknown worker_kind '${worker_kind}'`);
@@ -2906,41 +2931,14 @@ export async function createImpersonationGrant({
   if (!subjectAccountId) {
     throw Error("subject_account_id is required");
   }
+  const session = await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
   const cleanedSessionHash = `${session_hash ?? ""}`.trim();
   const cleanedBrowserId = `${browser_id ?? ""}`.trim();
-  const resolvedSessionHash =
-    cleanedSessionHash ||
-    getBrowserAuthSessionHash({
-      account_id,
-      browser_id: cleanedBrowserId,
-    });
-  if (!resolvedSessionHash) {
-    throw Object.assign(new Error("fresh auth is required"), {
-      code: "fresh_auth_required",
-    });
-  }
-  const session = await requireFreshAuthForSessionHash({
-    account_id,
-    session_hash: resolvedSessionHash,
-  });
-  if (!(await hasActiveSecondFactor(account_id))) {
-    throw Object.assign(
-      new Error(
-        "admins must enable two-factor authentication before impersonating users",
-      ),
-      {
-        code: "two_factor_required",
-      },
-    );
-  }
-  if ((session.factor_level ?? "none") === "none") {
-    throw Object.assign(
-      new Error("recent admin two-factor verification is required"),
-      {
-        code: "fresh_auth_required",
-      },
-    );
-  }
   const location = await resolveAccountHomeBay({
     account_id,
     user_account_id: subjectAccountId,
@@ -2950,7 +2948,7 @@ export async function createImpersonationGrant({
   const createOpts = {
     actor_account_id: account_id,
     subject_account_id: subjectAccountId,
-    actor_session_hash: resolvedSessionHash,
+    actor_session_hash: session.session_hash,
     subject_home_bay_id,
     actor_authenticated_at: session.authenticated_at ?? null,
     actor_password_verified_at: session.password_verified_at ?? null,
@@ -3163,6 +3161,8 @@ function defaultUserNameFromEmail(email: string): {
 
 export async function adminCreateUser({
   account_id,
+  browser_id,
+  session_hash,
   email,
   password,
   first_name,
@@ -3170,6 +3170,8 @@ export async function adminCreateUser({
   tags,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   email: string;
   password?: string;
   first_name?: string;
@@ -3187,6 +3189,12 @@ export async function adminCreateUser({
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
 
   const emailAddress = `${email ?? ""}`.trim().toLowerCase();
   if (!is_valid_email_address(emailAddress)) {
@@ -3460,9 +3468,17 @@ export async function sendEmailVerification({
 import { delete_passport } from "@cocalc/server/auth/sso/delete-passport";
 export async function deletePassport(opts: {
   account_id: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   strategy: string;
   id: string;
 }): Promise<void> {
+  await requireDangerousSessionAuth({
+    account_id: opts.account_id,
+    browser_id: opts.browser_id,
+    session_hash: opts.session_hash,
+    require_second_factor: true,
+  });
   await delete_passport(db(), opts);
 }
 
@@ -3822,9 +3838,13 @@ export async function listExternalCredentials({
 
 export async function revokeExternalCredential({
   account_id,
+  browser_id,
+  session_hash,
   id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   id: string;
 }) {
   if (!account_id) {
@@ -3833,6 +3853,12 @@ export async function revokeExternalCredential({
   if (!id) {
     throw Error("id must be specified");
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: false,
+  });
   const revoked = await revokeExternalCredentialStore({
     id,
     owner_account_id: account_id,
@@ -3842,10 +3868,14 @@ export async function revokeExternalCredential({
 
 export async function setOpenAiApiKey({
   account_id,
+  browser_id,
+  session_hash,
   api_key,
   project_id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   api_key: string;
   project_id?: string;
 }) {
@@ -3859,6 +3889,12 @@ export async function setOpenAiApiKey({
 
   if (project_id) {
     await assertProjectCollaborator(account_id, project_id);
+    await requireDangerousSessionAuth({
+      account_id,
+      browser_id,
+      session_hash,
+      require_second_factor: false,
+    });
     const result = await upsertExternalCredential({
       selector: {
         provider: "openai",
@@ -3875,6 +3911,12 @@ export async function setOpenAiApiKey({
     return { ...result, scope: "project" as const, project_id };
   }
 
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: false,
+  });
   const result = await upsertExternalCredential({
     selector: {
       provider: "openai",
@@ -3893,9 +3935,13 @@ export async function setOpenAiApiKey({
 
 export async function deleteOpenAiApiKey({
   account_id,
+  browser_id,
+  session_hash,
   project_id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   project_id?: string;
 }) {
   if (!account_id) {
@@ -3916,6 +3962,12 @@ export async function deleteOpenAiApiKey({
     if (!existing) {
       return { revoked: false, scope: "project" as const, project_id };
     }
+    await requireDangerousSessionAuth({
+      account_id,
+      browser_id,
+      session_hash,
+      require_second_factor: false,
+    });
     const revoked = await revokeExternalCredentialStore({
       id: existing.id,
     });
@@ -3934,6 +3986,12 @@ export async function deleteOpenAiApiKey({
   if (!existing) {
     return { revoked: false, scope: "account" as const };
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: false,
+  });
   const revoked = await revokeExternalCredentialStore({
     id: existing.id,
     owner_account_id: account_id,
@@ -4643,35 +4701,12 @@ export async function startCloudflareTeardownApply({
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
-  const cleanedSessionHash =
-    `${session_hash ?? ""}`.trim() ||
-    getBrowserAuthSessionHash({
-      account_id,
-      browser_id: `${browser_id ?? ""}`.trim(),
-    });
-  if (!cleanedSessionHash) {
-    throw Object.assign(new Error("fresh auth is required"), {
-      code: "fresh_auth_required",
-    });
-  }
-  const session = await requireFreshAuthForSessionHash({
+  await requireDangerousSessionAuth({
     account_id,
-    session_hash: cleanedSessionHash,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
   });
-  if (!(await hasActiveSecondFactor(account_id))) {
-    throw Object.assign(
-      new Error(
-        "admins must enable two-factor authentication before applying Cloudflare teardown",
-      ),
-      { code: "two_factor_required" },
-    );
-  }
-  if ((session.factor_level ?? "none") === "none") {
-    throw Object.assign(
-      new Error("recent admin two-factor verification is required"),
-      { code: "fresh_auth_required" },
-    );
-  }
   const op = await createLro({
     kind: CLOUDFLARE_TEARDOWN_APPLY_LRO_KIND,
     scope_type: "account",
@@ -4837,11 +4872,15 @@ export async function getCloudflareR2BayBackupCleanupPlan({
 
 export async function startCloudflareR2BayBackupCleanup({
   account_id,
+  browser_id,
+  session_hash,
   bucket,
   prefix,
   confirm,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   bucket: string;
   prefix?: string;
   confirm: string;
@@ -4855,6 +4894,12 @@ export async function startCloudflareR2BayBackupCleanup({
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
   const op = await createLro({
     kind: CLOUDFLARE_R2_BAY_BACKUP_CLEANUP_LRO_KIND,
     scope_type: "account",

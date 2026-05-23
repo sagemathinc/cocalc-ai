@@ -98,7 +98,7 @@ import {
 import { CodexPaymentCredentialsModal } from "./codex";
 import {
   ensureProjectRunningForCodex,
-  isCodexPaymentSourceUsable,
+  isCodexPaymentSourceDefinitelyUnconfigured,
   isCodexSubmitTarget,
 } from "./codex-submit-preflight";
 import { getProjectStartPolicyBlockFromError } from "@cocalc/frontend/projects/runtime-start-policy";
@@ -539,6 +539,12 @@ export function ChatPanel({
     "data-hideChatTypeSelector",
   );
   const hideChatTypeSelector = asBoolean(hideChatTypeSelectorRaw);
+  const hideTopControls = asBoolean(
+    getDescValue(desc, "data-hideChatTopControls"),
+  );
+  const hideCompactThreadHeader = asBoolean(
+    getDescValue(desc, "data-hideCompactThreadHeader"),
+  );
   const storedSidebarWidth = getDescValue(desc, "data-sidebarWidth");
   const storedSidebarHiddenRaw = getDescValue(desc, "data-sidebarHidden");
   const externalSideChatRaw = getDescValue(desc, "data-externalSideChat");
@@ -1443,7 +1449,10 @@ export function ChatPanel({
         existingThreadMetadata?.agent_model ??
         existingThreadMetadata?.acp_config?.model,
     });
-    if (isCodexSubmit && !isCodexPaymentSourceUsable(codexPaymentSource)) {
+    if (
+      isCodexSubmit &&
+      isCodexPaymentSourceDefinitelyUnconfigured(codexPaymentSource)
+    ) {
       refreshCodexPaymentSource?.();
       setCodexPaymentConfigOpen(true);
       return;
@@ -2044,6 +2053,8 @@ export function ChatPanel({
         onOpenGitBrowser={openGitBrowserFromMessage}
         notifyOnTurnFinish={notifyOnSelectedTurnFinish}
         onNotifyOnTurnFinishChange={setNotifyOnSelectedTurnFinish}
+        hideTopControls={hideTopControls}
+        hideCompactThreadHeader={hideCompactThreadHeader}
         allowSidebarToggle={!hideSidebar && !isCompact && !isExternalSideChat}
         sidebarHidden={sidebarHidden}
         onToggleSidebar={() => setSidebarHidden((hidden) => !hidden)}

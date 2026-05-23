@@ -21,7 +21,9 @@ import { resolveMembershipForAccount } from "./resolve";
 import { runMembershipSideEffectsPass } from "./side-effects";
 import { runSiteLicenseAffiliationReleaseMaintenancePass } from "./site-license-affiliation-maintenance";
 import {
+  addSiteLicensePool,
   adminProvisionSiteLicense,
+  getVerifiedEmailAddressesForAccount,
   getSiteLicenseAffiliationReverificationStatusForAccount,
   getSiteLicenseOverview,
   listSiteLicenseAffiliationReverificationSeats,
@@ -91,6 +93,56 @@ describe("site license seat pools", () => {
       [account_id, home_bay_id],
     );
   }
+
+  it("only treats positive email verification markers as verified", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    await getPool().query(
+      `UPDATE accounts
+       SET email_address=$2,
+           email_address_verified=$3::jsonb
+       WHERE account_id=$1`,
+      [
+        account_id,
+        "student@example.edu",
+        {
+          "student@example.edu": false,
+          "Verified@Example.edu": new Date().toISOString(),
+        },
+      ],
+    );
+
+    await expect(
+      getVerifiedEmailAddressesForAccount(account_id),
+    ).resolves.toEqual(["verified@example.edu"]);
+  });
+
+  it("rejects site-license pools that reference missing membership tiers", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await markAdmin(admin_account_id);
+
+    await expect(
+      adminProvisionSiteLicense({
+        actor_account_id: admin_account_id,
+        owner_account_id,
+        name: "Invalid Tier License",
+        organization_name: "Example University",
+        allowed_domains: [`missing-tier-${uuid().slice(0, 8)}.edu`],
+        pools: [
+          {
+            pool_name: "Students",
+            membership_class: `missing-tier-${uuid()}`,
+            seat_count: 20,
+            requires_approval: false,
+            verification_policy: "email-domain",
+          },
+        ],
+      }),
+    ).rejects.toThrow(/membership tier not found or disabled/);
+  });
 
   it("provisions pools and requires manager approval for higher tier seats", async () => {
     const admin_account_id = uuid();
@@ -602,8 +654,17 @@ describe("site license seat pools", () => {
       ],
     });
 
+    await expect(
+      updateSiteLicensePool({
+        actor_account_id: owner_account_id,
+        package_id: overview.pools[0].id,
+        seat_count: 25,
+        allowed_domains: [updatedDomain],
+      }),
+    ).rejects.toThrow("must be an admin");
+
     await updateSiteLicensePool({
-      actor_account_id: owner_account_id,
+      actor_account_id: admin_account_id,
       package_id: overview.pools[0].id,
       seat_count: 25,
       allowed_domains: [updatedDomain],
@@ -671,8 +732,16 @@ describe("site license seat pools", () => {
       ],
     });
 
+    await expect(
+      updateSiteLicense({
+        actor_account_id: owner_account_id,
+        site_license_id: overview.site_license.id,
+        name: "Owner Edited Campus",
+      }),
+    ).rejects.toThrow("must be an admin");
+
     const updated = await updateSiteLicense({
-      actor_account_id: owner_account_id,
+      actor_account_id: admin_account_id,
       site_license_id: overview.site_license.id,
       name: "Updated Settings Campus",
       organization_name: "Updated University",
@@ -700,6 +769,14 @@ describe("site license seat pools", () => {
         }),
       ]),
     );
+    await expect(
+      setSiteLicenseManager({
+        actor_account_id: manager_account_id,
+        site_license_id: overview.site_license.id,
+        target_account_id: manager_account_id,
+        role: "owner",
+      }),
+    ).rejects.toThrow("must own site license");
 
     const withoutManager = await removeSiteLicenseManager({
       actor_account_id: owner_account_id,
@@ -718,6 +795,106 @@ describe("site license seat pools", () => {
         target_account_id: owner_account_id,
       }),
     ).rejects.toThrow("cannot remove the last site-license owner");
+  });
+
+  it("adds site-license pools after creation", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const domain = `add-pool-${uuid().slice(0, 8)}.edu`;
+    const researchDomain = `research-${domain}`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await markAdmin(admin_account_id);
+
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      owner_account_id,
+      name: "Add Pool Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 20,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+        },
+      ],
+    });
+
+    await expect(
+      addSiteLicensePool({
+        actor_account_id: owner_account_id,
+        site_license_id: overview.site_license.id,
+        pool: {
+          pool_name: "Researchers",
+          membership_class: researcherTier,
+          seat_count: 5,
+          requires_approval: true,
+          verification_policy: "email-domain",
+          exclusive_group: "research",
+          allowed_domains: [researchDomain],
+          affiliation_reverification_days: 365,
+          affiliation_reverification_grace_days: 45,
+        },
+      }),
+    ).rejects.toThrow("must be an admin");
+
+    const updated = await addSiteLicensePool({
+      actor_account_id: admin_account_id,
+      site_license_id: overview.site_license.id,
+      pool: {
+        pool_name: "Researchers",
+        membership_class: researcherTier,
+        seat_count: 5,
+        requires_approval: true,
+        verification_policy: "email-domain",
+        exclusive_group: "research",
+        allowed_domains: [researchDomain],
+        affiliation_reverification_days: 365,
+        affiliation_reverification_grace_days: 45,
+      },
+    });
+    expect(updated.pools.map((pool) => pool.pool_name).sort()).toEqual([
+      "Researchers",
+      "Students",
+    ]);
+    expect(
+      updated.pools.find((pool) => pool.pool_name === "Researchers"),
+    ).toEqual(
+      expect.objectContaining({
+        membership_class: researcherTier,
+        seat_count: 5,
+        requires_approval: true,
+        verification_policy: "email-domain",
+        exclusive_group: "research",
+      }),
+    );
+    await expect(
+      getPool().query(
+        `SELECT domain
+           FROM site_license_domains
+          WHERE site_license_id=$1
+          ORDER BY domain`,
+        [overview.site_license.id],
+      ),
+    ).resolves.toMatchObject({
+      rows: [{ domain }, { domain: researchDomain }],
+    });
+    expect(updated.recent_audit_events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "pool-created",
+          actor_account_id: admin_account_id,
+          metadata: expect.objectContaining({
+            pool_name: "Researchers",
+            source: "add-site-license-pool",
+          }),
+        }),
+      ]),
+    );
   });
 
   it("allows a new site license to reuse an expired site license domain", async () => {
@@ -1557,6 +1734,114 @@ describe("site license seat pools", () => {
         }),
       ]),
     );
+  });
+
+  it("notifies users during site-license affiliation reverification grace", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const pending_account_id = uuid();
+    const domain = `notify-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await createTestAccount(pending_account_id);
+    await markAdmin(admin_account_id);
+    await markVerifiedEmail(pending_account_id, `pending@${domain}`);
+
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      owner_account_id,
+      name: "Notification Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Students",
+          membership_class: studentTier,
+          seat_count: 10,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+          affiliation_reverification_days: 30,
+          affiliation_reverification_grace_days: 10,
+        },
+      ],
+    });
+    const studentPool = overview.pools[0]!;
+    await claimMembershipPackageSeat({
+      account_id: pending_account_id,
+      package_id: studentPool.id,
+    });
+    await getPool().query(
+      `UPDATE membership_package_assignments
+          SET metadata=jsonb_set(
+                COALESCE(metadata, '{}'::jsonb),
+                '{affiliation_verified_at}',
+                to_jsonb('2026-04-15T00:00:00.000Z'::text),
+                true
+              )
+        WHERE package_id=$1
+          AND account_id=$2`,
+      [studentPool.id, pending_account_id],
+    );
+    const assignments = await listMembershipPackageAssignments({
+      package_id: studentPool.id,
+      include_revoked: false,
+    });
+    const assignment = assignments.find(
+      (row) => row.account_id === pending_account_id,
+    )!;
+
+    await expect(
+      runSiteLicenseAffiliationReleaseMaintenancePass({
+        now: new Date("2026-05-20T00:00:00.000Z"),
+        site_license_limit: 10_000,
+        seat_limit: 100,
+        list_site_license_ids: async () => [overview.site_license.id],
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        scanned_site_licenses: 1,
+        site_licenses_with_notifications: 1,
+        notified_seats: 1,
+        released_seats: 0,
+        failed_site_licenses: 0,
+      }),
+    );
+
+    const dedupeKey = `site-license-affiliation-reverification:${assignment.id}:warning-14d:2026-05-25T00:00:00.000Z:${pending_account_id}`;
+    const notice = await getPool().query(
+      `SELECT t.target_account_id, t.dedupe_key, e.payload_json
+         FROM notification_targets t
+         JOIN notification_events e ON e.event_id=t.event_id
+        WHERE t.dedupe_key=$1`,
+      [dedupeKey],
+    );
+    expect(notice.rows).toEqual([
+      expect.objectContaining({
+        target_account_id: pending_account_id,
+        payload_json: expect.objectContaining({
+          title: "Notification Campus membership reverification reminder",
+          site_license_id: overview.site_license.id,
+          package_id: studentPool.id,
+          assignment_id: assignment.id,
+          stage: "warning-14d",
+        }),
+      }),
+    ]);
+
+    await runSiteLicenseAffiliationReleaseMaintenancePass({
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      site_license_limit: 10_000,
+      seat_limit: 100,
+      list_site_license_ids: async () => [overview.site_license.id],
+    });
+    const duplicateCheck = await getPool().query(
+      `SELECT COUNT(*)::int AS count
+         FROM notification_targets
+        WHERE dedupe_key=$1`,
+      [dedupeKey],
+    );
+    expect(duplicateCheck.rows[0].count).toBe(1);
   });
 
   it("rechecks approval-required pool capacity at review time", async () => {

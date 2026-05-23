@@ -131,8 +131,7 @@ describe("section route parsers", () => {
       view: "products-cocalc-rocket",
     });
     expect(getPublicRouteFromPath(publicPath("support/status"))).toEqual({
-      route: { view: "status" },
-      section: "support",
+      section: "not-found",
     });
   });
 
