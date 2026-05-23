@@ -79,6 +79,23 @@ const projectCache: { [project_id: string]: WeakRef<BaseProject> } = {};
 const ROOTFS_SEAL_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const FILE_SERVER_READY_TIMEOUT_MS = 60_000;
 
+function isActiveProjectState(state?: string | null): boolean {
+  return state === "running" || state === "starting" || state === "pending";
+}
+
+function runQuotaForRestartComparison(
+  run_quota?: Quota | null,
+): Record<string, unknown> {
+  if (run_quota == null || typeof run_quota !== "object") {
+    return {};
+  }
+  const { idle_timeout: _idle_timeout, ...rest } = run_quota as Record<
+    string,
+    unknown
+  >;
+  return rest;
+}
+
 function getProjectControlConatClient() {
   // This one-bay control path is intentionally choosing the current backend
   // hub client. Shared runner helpers must not silently make that routing
@@ -373,27 +390,31 @@ export class BaseProject extends EventEmitter {
     await this.ensureLocalOwnership();
     const dbg = this.dbg("set_all_quotas");
     dbg();
-    // 1. Get data about project from the database, namely:
-    //     - is project currently running (if not, nothing to do)
-    //     - if running, what quotas it was started with and what its quotas are now
-    // 2. If quotas differ *AND* project is running, restarts project.
-    // There is also a fix for https://github.com/sagemathinc/cocalc/issues/5633
-    // in here, because we get the site_settings as well.
-    const x = await callback2(db().get_project, {
-      project_id: this.project_id,
-      columns: ["state", "users", "settings", "run_quota"],
+    const current = await query({
+      db: db(),
+      select: ["state", "run_quota"],
+      table: "projects",
+      where: { project_id: this.project_id },
+      one: true,
     });
-    if (!["running", "starting", "pending"].includes(x.state?.state)) {
-      dbg("project not active so nothing to do");
+
+    const nextRunQuota = await this.setRunQuota(null);
+    const state = current?.state?.state;
+    if (!isActiveProjectState(state)) {
+      dbg("project not active; updated stored run_quota without restart");
       return;
     }
-    const site_settings = await getQuotaSiteSettings(); // this is quick, usually cached
-    const cur = quota(x.settings, undefined, site_settings);
-    if (isEqual(x.run_quota, cur)) {
+
+    if (
+      isEqual(
+        runQuotaForRestartComparison(current.run_quota),
+        runQuotaForRestartComparison(nextRunQuota),
+      )
+    ) {
       dbg("running, but no quotas changed");
       return;
     } else {
-      dbg("running and a quota changed; restart");
+      dbg("running and a non-idle quota changed; restart");
       // CRITICAL: do NOT await on this restart!  The set_all_quotas call must
       // complete quickly (in an HTTP request), whereas restart can easily take 20s,
       // and there is no reason to wait on this.  Wrapping this as below calls the
@@ -420,12 +441,13 @@ export class BaseProject extends EventEmitter {
   setRunQuota = async (
     run_quota: Quota | null,
     account_id?: string,
-  ): Promise<void> => {
+  ): Promise<Quota> => {
     await this.ensureLocalOwnership();
+    let nextRunQuota = run_quota;
     // If null we compute it based on membership + settings. Runtime capacity
     // comes from the runtime sponsor, while disk quota stays with the storage
     // sponsor so self-sponsoring cannot shrink an existing project volume.
-    if (run_quota == null) {
+    if (nextRunQuota == null) {
       const {
         settings,
         users,
@@ -473,7 +495,7 @@ export class BaseProject extends EventEmitter {
         runtimeDefaults,
       );
       const site_settings = await getQuotaSiteSettings(); // quick, usually cached
-      run_quota = quota(runtimeSettings, undefined, site_settings);
+      nextRunQuota = quota(runtimeSettings, undefined, site_settings);
 
       if (storage_account_id && storage_account_id !== runtime_account_id) {
         const storageDefaults =
@@ -484,12 +506,16 @@ export class BaseProject extends EventEmitter {
         );
         const storageQuota = quota(storageSettings, undefined, site_settings);
         if (storageQuota.disk_quota != null) {
-          run_quota.disk_quota = storageQuota.disk_quota;
+          nextRunQuota.disk_quota = storageQuota.disk_quota;
         }
       }
     }
 
-    const set: Record<string, unknown> = { run_quota };
+    if (nextRunQuota == null) {
+      throw new Error("unable to compute project run_quota");
+    }
+
+    const set: Record<string, unknown> = { run_quota: nextRunQuota };
     if (account_id) {
       set.last_started_by = account_id;
     }
@@ -501,7 +527,8 @@ export class BaseProject extends EventEmitter {
       set,
     });
 
-    logger.debug("updated run_quota=", JSON.stringify(run_quota));
+    logger.debug("updated run_quota=", JSON.stringify(nextRunQuota));
+    return nextRunQuota;
   };
 }
 

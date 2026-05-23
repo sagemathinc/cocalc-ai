@@ -35,6 +35,7 @@ import {
   startProjectOnHost,
   stopProjectOnHost,
 } from "@cocalc/server/project-host/control";
+import { getProject } from "@cocalc/server/projects/control/base";
 import { stopSelfHostReverseTunnel } from "@cocalc/server/self-host/ssh-target";
 
 const logger = getLogger("server:hosts:ops-worker");
@@ -518,6 +519,7 @@ async function runHostProjectsAction({
         } else {
           await stopProjectOnHost(project_id);
           await waitForProjectStopped(project_id);
+          await getProject(project_id).computeQuota();
           await startProjectOnHost(project_id);
         }
         completed += 1;
