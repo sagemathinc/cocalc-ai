@@ -249,7 +249,7 @@ export default function JuliaFeaturePage({
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={13}>
-            <Title level={3} style={{ margin: 0 }}>
+            <Title level={3}>
               Why use Julia on CoCalc
             </Title>
             <BulletList
