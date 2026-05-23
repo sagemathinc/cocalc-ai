@@ -86,11 +86,7 @@ No known P0 release blockers remain in this tracker.
 These are important for first impression and support load. Fix as many as
 possible after P0s are under control.
 
-| Item                                                 | Area                 | Risk                          | First investigation                                                                               |
-| ---------------------------------------------------- | -------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------- |
-| Backup time in storage overview appears random       | backups / storage UI | Users cannot trust backups    | Confirm latest backup source field; ensure overview and tooltip use same authoritative timestamp. |
-| Bulk delete hits queued/running project delete limit | projects / workers   | User cannot clean up projects | Serialize user bulk delete one-at-a-time or raise limit with backpressure; show progress.         |
-| Community support page stale                         | support / content    | Launch support confusion      | Remove dead Discord/Google Group/GitHub Discussions references; verify Zendesk path.              |
+No known P1 launch-critical UX and correctness bugs remain in this tracker.
 
 ### P2: Important But Can Ship With Known Notes
 
@@ -237,7 +233,6 @@ Scope:
 
 - Backup timestamp randomness.
 - Project runtime quotas at start/restart.
-- Bulk project delete queue limit.
 - WAL retention.
 
 Acceptance:
@@ -253,7 +248,8 @@ Acceptance:
   stored `run_quota` during admin quota changes instead of leaving stale rows.
   Host restart operations also recompute before re-starting projects.
 - Bulk delete completes sequentially with progress or clear queuing. **Done
-  2026-05-22.**
+  2026-05-22.** Bulk delete progress/status polish was finished
+  2026-05-23.
 - File delete modal remains readable for large selections. **Done 2026-05-22**
   with a bounded, wrapping selected-file list and explicit overflow count.
 - WAL retention is bounded and documented.
@@ -269,14 +265,15 @@ Primary files/packages to inspect:
 
 Scope:
 
-- Community support page stale links.
 - Zendesk path verification.
 - Nebius H200 image GPU usability.
 - Backup and disk throughput on GPU hosts.
 
 Acceptance:
 
-- Support page contains only active support channels.
+- Support page contains only active support channels. **Done 2026-05-23** by
+  removing stale Discord, GitHub Discussions, and Google Groups links and
+  pointing source code users at `sagemathinc/cocalc-ai`.
 - Zendesk support path is tested.
 - `nvidia-smi`, PyTorch CUDA, and TensorFlow CUDA expectations are documented
   and tested for H200 images.
@@ -363,6 +360,7 @@ For each blocker:
 - Bulk delete behavior. **Done 2026-05-22.**
 - Disk usage reload/recompute. **Done 2026-05-23.**
 - Delete files modal overflow. **Done 2026-05-23.**
+- Community support page. **Done 2026-05-23.**
 
 ### Batch 4: Storage And Quota Honesty
 
@@ -370,7 +368,6 @@ For each blocker:
 
 ### Batch 5: Launch Polish And Infra Cleanup
 
-- Community support page.
 - WAL retention.
 - Project/account name deprecation decision.
 - Nebius H200 acceptance notes/fixes.
