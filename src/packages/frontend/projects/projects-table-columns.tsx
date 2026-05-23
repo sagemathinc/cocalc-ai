@@ -82,6 +82,7 @@ export interface ProjectTableRecord {
   color?: string;
   state?: any; // immutable Map
   deleting?: boolean;
+  deletionScheduled?: boolean;
   deleteFailed?: boolean;
   deletionBlocked?: boolean;
   hidden: boolean;
@@ -232,6 +233,7 @@ export function getProjectTableColumns(
         const strong = record.state?.get("state") === "running";
         const archived = record.state?.get("state") === "archived";
         const deleting = record.deleting === true;
+        const deletionScheduled = record.deletionScheduled === true;
         const deleteFailed = record.deleteFailed === true;
         return (
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -259,9 +261,14 @@ export function getProjectTableColumns(
                     }}
                   />
                 )}
-                <Text strong={strong} disabled={deleting}>
+                <Text strong={strong} disabled={deleting || deletionScheduled}>
                   {record.title || "Untitled"}
                 </Text>
+                {deletionScheduled && (
+                  <Tag color="orange" style={{ marginLeft: "8px" }}>
+                    Scheduled for deletion
+                  </Tag>
+                )}
                 {archived && (
                   <Tag color="purple" style={{ marginLeft: "8px" }}>
                     Archived

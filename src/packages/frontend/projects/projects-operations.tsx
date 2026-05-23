@@ -43,6 +43,8 @@ interface Props {
   visible_projects: string[];
   selected_project_ids: string[];
   onSelectionChange: (project_ids: string[]) => void;
+  onScheduleDelete?: (project_ids: string[]) => void;
+  onUnscheduleDelete?: (project_ids: string[]) => void;
   filteredCollaborators?: string[] | null;
   onClearCollaboratorFilter?: () => void;
 }
@@ -53,6 +55,8 @@ export function ProjectsOperations({
   visible_projects,
   selected_project_ids,
   onSelectionChange,
+  onScheduleDelete,
+  onUnscheduleDelete,
   filteredCollaborators,
   onClearCollaboratorFilter,
 }: Props) {
@@ -394,7 +398,28 @@ export function ProjectsOperations({
 
   async function leaveOrDeleteSelected() {
     const plan = selectedPlan;
-    await runFreshAuthAction(async () => {
+    const started = await runFreshAuthAction(async () => {
+      await webapp_client.conat_client.hub.projects.leaveOrDeleteProjects({
+        project_ids: [],
+        browser_id: webapp_client.browser_id,
+      });
+      setLeaveDeleteModalOpen(false);
+      setBulkLeaveDeleteProgress(null);
+      onScheduleDelete?.(plan.deleteIds);
+      onSelectionChange(
+        selected_project_ids.filter((id) => !plan.actionableIds.includes(id)),
+      );
+      void runLeaveOrDeleteProjectsInBackground(plan);
+    });
+    if (!started) {
+      setBulkLeaveDeleteProgress(null);
+    }
+  }
+
+  async function runLeaveOrDeleteProjectsInBackground(
+    plan: LeaveOrDeleteProjectsPlan,
+  ) {
+    try {
       const { results, stopped } = await runLeaveOrDeleteProjectsSequentially({
         project_ids: plan.actionableIds,
         onProgress: setBulkLeaveDeleteProgress,
@@ -406,16 +431,17 @@ export function ProjectsOperations({
         waitForQueuedDelete: waitForHardDeleteToLeaveActiveSet,
       });
       const errors = results.filter((result) => result.action === "error");
+      onUnscheduleDelete?.(
+        errors
+          .map((result) => result.project_id)
+          .filter((project_id) => plan.deleteIds.includes(project_id)),
+      );
       const succeeded = results
         .filter((result) => result.action !== "error")
         .map((result) => result.project_id);
       for (const project_id of succeeded) {
         actions.redux.getActions("page").close_project_tab(project_id);
       }
-      onSelectionChange(
-        selected_project_ids.filter((id) => !succeeded.includes(id)),
-      );
-      setLeaveDeleteModalOpen(false);
       alert_message({
         type: errors.length > 0 ? "warning" : "success",
         message: stopped
@@ -438,8 +464,15 @@ export function ProjectsOperations({
           ),
         });
       }
+    } catch (err) {
+      onUnscheduleDelete?.(plan.deleteIds);
+      Modal.error({
+        title: "Unable to leave or delete projects",
+        content: `${err}`,
+      });
+    } finally {
       setBulkLeaveDeleteProgress(null);
-    });
+    }
   }
 
   return (

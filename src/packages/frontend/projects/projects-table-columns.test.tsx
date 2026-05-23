@@ -2,6 +2,7 @@ import {
   getProjectTableColumns,
   type ProjectTableRecord,
 } from "./projects-table-columns";
+import { render, screen } from "@testing-library/react";
 
 jest.mock("@cocalc/frontend/feature", () => ({
   IS_MOBILE: false,
@@ -71,5 +72,31 @@ describe("getProjectTableColumns", () => {
 
     expect(onOpenProject).toHaveBeenCalledTimes(1);
     expect(onOpenProject.mock.calls[0][0].project_id).toBe("project-1");
+  });
+
+  it("marks scheduled deletes as not openable from the title column", () => {
+    const columns = getProjectTableColumns(
+      jest.fn(),
+      () => null,
+      jest.fn(),
+      { columnKey: "last_edited", order: "descend" },
+      jest.fn(),
+      [],
+      [],
+      false,
+      null,
+      intl,
+    );
+
+    const titleColumn = columns.find((column) => column.key === "title") as any;
+    const scheduledRecord = record({
+      deletionScheduled: true,
+      deletionBlocked: true,
+    });
+    const titleCell = titleColumn.onCell(scheduledRecord);
+
+    expect(titleCell.style.cursor).toBe("not-allowed");
+    render(<>{titleColumn.render(null, scheduledRecord)}</>);
+    expect(screen.getByText("Scheduled for deletion")).toBeTruthy();
   });
 });

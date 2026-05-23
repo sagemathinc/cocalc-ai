@@ -43,6 +43,7 @@ interface Props {
   onFilteredCollaboratorsChange: (collaborators: string[] | null) => void;
   selectedProjectIds: string[];
   onSelectedProjectIdsChange: (project_ids: string[]) => void;
+  scheduledDeleteProjectIds?: string[];
 }
 
 const PROJECTS_TABLE_SORT_KEY = "projects-table-sort";
@@ -55,6 +56,7 @@ export function ProjectsTable({
   onFilteredCollaboratorsChange,
   selectedProjectIds,
   onSelectedProjectIdsChange,
+  scheduledDeleteProjectIds = [],
 }: Props) {
   const intl = useIntl();
   const actions = useActions("projects");
@@ -64,6 +66,10 @@ export function ProjectsTable({
   const user_map = useTypedRedux("users", "user_map");
   const expanded_project_id = useTypedRedux("projects", "expanded_project_id");
   const { isProjectBookmarked, setProjectBookmarked } = useBookmarkedProjects();
+  const scheduledDeleteProjectIdSet = useMemo(
+    () => new Set(scheduledDeleteProjectIds),
+    [scheduledDeleteProjectIds],
+  );
   const [sortState, setSortState] = useState<SortState>({
     columnKey: "last_edited",
     order: "descend",
@@ -123,6 +129,10 @@ export function ProjectsTable({
           ? rawState.set("state", displayState)
           : rawState;
       const stateName = `${state?.get?.("state") ?? ""}`;
+      const deletionScheduled =
+        scheduledDeleteProjectIdSet.has(project_id) &&
+        stateName !== "deleting" &&
+        stateName !== "delete_failed";
       return {
         project_id,
         starred: isProjectBookmarked(project_id),
@@ -137,14 +147,23 @@ export function ProjectsTable({
         color: projectThemeColor(project),
         state,
         deleting: stateName === "deleting",
+        deletionScheduled,
         deleteFailed: stateName === "delete_failed",
         deletionBlocked:
-          stateName === "deleting" || stateName === "delete_failed",
+          deletionScheduled ||
+          stateName === "deleting" ||
+          stateName === "delete_failed",
         hidden: !!project.getIn(["users", current_account_id, "hide"]),
         collaborators,
       };
     });
-  }, [visible_projects, project_map, host_info, isProjectBookmarked]);
+  }, [
+    visible_projects,
+    project_map,
+    host_info,
+    isProjectBookmarked,
+    scheduledDeleteProjectIdSet,
+  ]);
 
   const handleToggleStar = (project_id: string, e: React.MouseEvent) => {
     e.stopPropagation();

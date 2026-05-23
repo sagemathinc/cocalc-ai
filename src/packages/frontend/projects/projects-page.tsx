@@ -116,6 +116,9 @@ export const ProjectsPage: React.FC = () => {
 
   const [tableHeight, setTableHeight] = useState<number>(400);
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
+  const [scheduledDeleteProjectIds, setScheduledDeleteProjectIds] = useState<
+    string[]
+  >([]);
 
   // Track filtered collaborators from table
   const [filteredCollaborators, setFilteredCollaborators] = useState<
@@ -169,15 +172,24 @@ export const ProjectsPage: React.FC = () => {
 
   useEffect(() => {
     const visible = new Set(visible_projects);
+    const scheduled = new Set(scheduledDeleteProjectIds);
     setSelectedProjectIds((ids) =>
       ids.filter((id) => {
         const state = `${project_map?.getIn([id, "state", "state"]) ?? ""}`;
         return (
-          visible.has(id) && state !== "deleting" && state !== "delete_failed"
+          visible.has(id) &&
+          !scheduled.has(id) &&
+          state !== "deleting" &&
+          state !== "delete_failed"
         );
       }),
     );
-  }, [project_map, visible_projects]);
+  }, [project_map, visible_projects, scheduledDeleteProjectIds]);
+
+  useEffect(() => {
+    const visible = new Set(visible_projects);
+    setScheduledDeleteProjectIds((ids) => ids.filter((id) => visible.has(id)));
+  }, [visible_projects]);
 
   useEffect(() => {
     if (!project_map) return;
@@ -297,6 +309,19 @@ export const ProjectsPage: React.FC = () => {
 
   function handleClearCollaboratorFilter() {
     setFilteredCollaborators(null);
+  }
+
+  function scheduleProjectDeletes(project_ids: string[]) {
+    if (project_ids.length === 0) return;
+    setScheduledDeleteProjectIds((ids) =>
+      Array.from(new Set([...ids, ...project_ids])),
+    );
+  }
+
+  function unscheduleProjectDeletes(project_ids: string[]) {
+    if (project_ids.length === 0) return;
+    const remove = new Set(project_ids);
+    setScheduledDeleteProjectIds((ids) => ids.filter((id) => !remove.has(id)));
   }
 
   if (project_map == null) {
@@ -459,6 +484,8 @@ export const ProjectsPage: React.FC = () => {
                       visible_projects={visible_projects}
                       selected_project_ids={selectedProjectIds}
                       onSelectionChange={setSelectedProjectIds}
+                      onScheduleDelete={scheduleProjectDeletes}
+                      onUnscheduleDelete={unscheduleProjectDeletes}
                       filteredCollaborators={filteredCollaborators}
                       onClearCollaboratorFilter={handleClearCollaboratorFilter}
                     />
@@ -473,6 +500,7 @@ export const ProjectsPage: React.FC = () => {
                       onFilteredCollaboratorsChange={setFilteredCollaborators}
                       selectedProjectIds={selectedProjectIds}
                       onSelectedProjectIdsChange={setSelectedProjectIds}
+                      scheduledDeleteProjectIds={scheduledDeleteProjectIds}
                     />
                   </div>
 
