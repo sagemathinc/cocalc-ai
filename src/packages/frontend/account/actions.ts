@@ -20,6 +20,7 @@ import { show_announce_end, show_announce_start } from "./dates";
 import { AccountStore } from "./store";
 import { AccountState } from "./types";
 import { lite } from "@cocalc/frontend/lite";
+import { isFreshAuthRequiredError } from "@cocalc/frontend/auth/fresh-auth";
 import {
   getAccountSettingsRouteFromState,
   getSettingsPushStatePath,
@@ -104,10 +105,14 @@ export class AccountActions extends Actions<AccountState> {
   // deletes the account and then locally tears down this signed-in session.
   public async delete_account(): Promise<void> {
     try {
+      this.setState({ account_deletion_error: undefined });
       // actually request to delete the account
       // this should return {status: "success"}
       await api("/accounts/delete");
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
       this.setState({
         account_deletion_error: `Error trying to delete the account: ${err.message}`,
       });
