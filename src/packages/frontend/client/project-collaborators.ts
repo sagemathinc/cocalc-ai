@@ -82,6 +82,7 @@ export class ProjectCollaborators {
     direction?: ProjectCollabInviteDirection;
     status?: ProjectCollabInviteStatus;
     limit?: number;
+    projectWide?: boolean;
   }): Promise<ProjectCollabInviteRow[]> {
     return await this.conat.hub.projects.listCollabInvites(opts);
   }

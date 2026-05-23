@@ -402,6 +402,24 @@ Validation:
 
 - `packages/server`: `projects/collaborators.test.ts`
 
+Follow-up:
+
+- The project pending-invites UI now loads project-wide pending invites instead
+  of only the current user's outgoing invites.
+- Each pending invite shows who created it.
+- Non-owner collaborators can revoke stale or mistaken pending invites created
+  by other collaborators, but they do not see a copy-link control for another
+  sender's email invite token. The UI tells them to create their own invite when
+  they need a sendable link.
+- Backend revoke authorization now permits any current project collaborator to
+  revoke a pending invite on that project.
+
+Validation:
+
+- `packages/server`: `projects/collaborators.test.ts`
+- `packages/frontend`: `lint:frontend`
+- Full TypeScript build.
+
 ## Reviewed Surfaces
 
 - Public hub dangerous RPC registry and name-based coverage.

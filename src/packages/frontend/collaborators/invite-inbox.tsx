@@ -57,6 +57,7 @@ type UseInviteInboxStateOptions = {
   includeIncoming?: boolean;
   includeOutgoing?: boolean;
   includeBlocks?: boolean;
+  projectWideOutgoing?: boolean;
 };
 
 export type InviteInboxState = {
@@ -159,6 +160,7 @@ export function useInviteInboxState({
   includeIncoming = true,
   includeOutgoing = true,
   includeBlocks = true,
+  projectWideOutgoing = false,
 }: UseInviteInboxStateOptions): InviteInboxState {
   const account_id = useTypedRedux("account", "account_id");
   const [loading, set_loading] = useState<boolean>(false);
@@ -195,9 +197,10 @@ export function useInviteInboxState({
         includeOutgoing
           ? webapp_client.project_collaborators.list_invites({
               project_id,
-              direction: "outbound",
+              direction: projectWideOutgoing ? "all" : "outbound",
               status: "pending",
               limit: 200,
+              projectWide: projectWideOutgoing,
             })
           : Promise.resolve([]),
         includeBlocks
@@ -218,7 +221,14 @@ export function useInviteInboxState({
     } finally {
       set_loading(false);
     }
-  }, [account_id, includeBlocks, includeIncoming, includeOutgoing, project_id]);
+  }, [
+    account_id,
+    includeBlocks,
+    includeIncoming,
+    includeOutgoing,
+    project_id,
+    projectWideOutgoing,
+  ]);
 
   useEffect(() => {
     void load();
@@ -242,6 +252,7 @@ export function useInviteInboxState({
     try {
       await webapp_client.project_collaborators.respond_invite({
         invite_id,
+        project_id,
         action,
       });
       await load();
@@ -519,6 +530,13 @@ export const InviteInboxPanel: React.FC<Props> = ({
 }) => {
   const [expanded, set_expanded] = useState<boolean | undefined>(undefined);
   const projectMode = mode === "project";
+  const account_id = useTypedRedux("account", "account_id");
+  const project_map = useTypedRedux("projects", "project_map");
+  const projectGroup =
+    project_id && account_id
+      ? project_map?.getIn([project_id, "users", account_id, "group"])
+      : undefined;
+  const isProjectOwner = projectGroup === "owner";
   const {
     loading,
     error,
@@ -535,6 +553,7 @@ export const InviteInboxPanel: React.FC<Props> = ({
     includeIncoming: !projectMode,
     includeOutgoing: true,
     includeBlocks: !projectMode,
+    projectWideOutgoing: projectMode,
   });
 
   const total = useMemo(() => {
@@ -570,7 +589,21 @@ export const InviteInboxPanel: React.FC<Props> = ({
     return (
       <div>
         {outgoing.map((invite) => {
-          const invitee = inviteeLabel(invite);
+          const createdByMe = invite.inviter_account_id === account_id;
+          const canCopyEmailLink =
+            invite.invite_source === "email" && (createdByMe || isProjectOwner);
+          const invitee =
+            invite.invite_source === "email" &&
+            !invite.target_email &&
+            !invite.invitee_email_address
+              ? "Email invite"
+              : inviteeLabel(invite);
+          const inviter = userName({
+            name: invite.inviter_name,
+            first: invite.inviter_first_name,
+            last: invite.inviter_last_name,
+            account_id: invite.inviter_account_id,
+          });
           const project = `${invite.project_title ?? invite.project_id}`;
           return (
             <Card
@@ -592,6 +625,9 @@ export const InviteInboxPanel: React.FC<Props> = ({
                   </div>
                   <div>
                     To <strong>{invitee}</strong>
+                  </div>
+                  <div style={{ fontSize: "12px", opacity: 0.75 }}>
+                    Created by <strong>{createdByMe ? "you" : inviter}</strong>
                   </div>
                   {invite.invite_source === "email" && (
                     <div style={{ fontSize: "12px", opacity: 0.75 }}>
@@ -627,36 +663,51 @@ export const InviteInboxPanel: React.FC<Props> = ({
                       Expires <TimeAgo date={invite.expires} />
                     </div>
                   )}
+                  {invite.invite_source === "email" && !canCopyEmailLink && (
+                    <div
+                      style={{
+                        color: COLORS.GRAY_M,
+                        fontSize: "12px",
+                        marginTop: "4px",
+                      }}
+                    >
+                      To send your own link to this person, create a new invite.
+                      Only the invite creator or a project owner can copy this
+                      link.
+                    </div>
+                  )}
                 </div>
-                <Popconfirm
-                  title="Revoke this pending invitation?"
-                  description={
-                    invite.invite_source === "email"
-                      ? "The invite link will stop working."
-                      : "The invitee will no longer be able to accept this invitation."
-                  }
-                  okText="Revoke"
-                  cancelText="Cancel"
-                  okButtonProps={{ danger: true }}
-                  onConfirm={() => void respond(invite.invite_id, "revoke")}
-                >
-                  <Button
-                    danger
-                    size="small"
-                    loading={busy === `${invite.invite_id}:revoke`}
+                <Space size={6} wrap>
+                  <Popconfirm
+                    title="Revoke this pending invitation?"
+                    description={
+                      invite.invite_source === "email"
+                        ? "The invite link will stop working."
+                        : "The invitee will no longer be able to accept this invitation."
+                    }
+                    okText="Revoke"
+                    cancelText="Cancel"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => void respond(invite.invite_id, "revoke")}
                   >
-                    Revoke
-                  </Button>
-                </Popconfirm>
-                {invite.invite_source === "email" && (
-                  <Button
-                    size="small"
-                    loading={busy === `${invite.invite_id}:copy`}
-                    onClick={() => void copyInviteLink(invite.invite_id)}
-                  >
-                    <Icon name="copy" /> Copy Link
-                  </Button>
-                )}
+                    <Button
+                      danger
+                      size="small"
+                      loading={busy === `${invite.invite_id}:revoke`}
+                    >
+                      Revoke
+                    </Button>
+                  </Popconfirm>
+                  {canCopyEmailLink && (
+                    <Button
+                      size="small"
+                      loading={busy === `${invite.invite_id}:copy`}
+                      onClick={() => void copyInviteLink(invite.invite_id)}
+                    >
+                      <Icon name="copy" /> Copy Link
+                    </Button>
+                  )}
+                </Space>
               </div>
             </Card>
           );
@@ -723,7 +774,7 @@ export const InviteInboxPanel: React.FC<Props> = ({
   const titleCount = projectMode ? outgoing.length : incoming.length;
   const title = `${titleBase} (${titleCount})`;
   const subtitle = projectMode
-    ? "Track pending invitations for this project and revoke them when needed."
+    ? "Track pending invitations for this project. Any collaborator can revoke stale or mistaken invites; only the creator or a project owner can copy an email invite link."
     : "Accept, decline, block, or revoke pending collaboration invitations. Pending invites expire automatically.";
   const titleNode = (
     <Button

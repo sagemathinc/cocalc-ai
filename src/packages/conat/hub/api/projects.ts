@@ -830,6 +830,7 @@ export interface Projects {
     direction?: ProjectCollabInviteDirection;
     status?: ProjectCollabInviteStatus;
     limit?: number;
+    projectWide?: boolean;
   }) => Promise<ProjectCollabInviteRow[]>;
 
   respondCollabInvite: (opts: {

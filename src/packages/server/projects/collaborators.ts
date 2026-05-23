@@ -887,15 +887,20 @@ export async function listCollabInvites({
   direction,
   status,
   limit,
+  projectWide,
 }: {
   account_id?: string;
   project_id?: string;
   direction?: ProjectCollabInviteDirection;
   status?: ProjectCollabInviteStatus;
   limit?: number;
+  projectWide?: boolean;
 }): Promise<ProjectCollabInviteRow[]> {
   if (!account_id) {
     throw new Error("user must be signed in");
+  }
+  if (projectWide && !project_id) {
+    throw new Error("project_id is required for project-wide invites");
   }
   const includeEmail = await isAdmin(account_id);
   const normalizedDirection = normalizeInviteDirection(direction);
@@ -908,6 +913,9 @@ export async function listCollabInvites({
   const where: string[] = [];
   if (project_id) {
     ensureUuid(project_id, "project_id");
+    if (projectWide) {
+      await assertLocalProjectCollaborator({ account_id, project_id });
+    }
     params.push(project_id);
     where.push(`i.project_id=$${params.length}`);
   }
@@ -915,7 +923,10 @@ export async function listCollabInvites({
   params.push(account_id);
   const accountParam = `$${params.length}`;
   const otherAccountExpr = `CASE WHEN i.inviter_account_id=${accountParam}::uuid THEN i.invitee_account_id ELSE i.inviter_account_id END`;
-  if (normalizedDirection === "inbound") {
+  if (projectWide) {
+    // Project-wide mode is for the project pending-invites panel. The project
+    // collaborator check above replaces per-account invite ownership filters.
+  } else if (normalizedDirection === "inbound") {
     where.push(`i.invitee_account_id=${accountParam}`);
   } else if (normalizedDirection === "outbound") {
     where.push(`i.inviter_account_id=${accountParam}`);
@@ -1011,7 +1022,7 @@ export async function listCollabInvites({
 
   const { rows } = await pool.query<ProjectCollabInviteRow>(sql, params);
   const projectedRows =
-    normalizedDirection === "outbound"
+    projectWide || normalizedDirection === "outbound"
       ? []
       : await listProjectedInboundCollabInvites({
           account_id,
@@ -1160,7 +1171,10 @@ export async function respondCollabInviteCanonical({
 
   if (normalizedAction === "revoke") {
     if (invite.inviter_account_id !== account_id && !admin) {
-      throw new Error("only invite sender can revoke");
+      await assertLocalProjectCollaborator({
+        account_id,
+        project_id: invite.project_id,
+      });
     }
     await pool.query(
       `UPDATE project_collab_invites
