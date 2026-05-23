@@ -15,12 +15,11 @@ import { IconBadge, StartCard, StoryCard } from "./feature-visuals";
 const { Paragraph, Text, Title } = Typography;
 
 function WhiteboardMock() {
-  const nodes = [
-    ["markdown", "Markdown note", "Proof idea + checklist"],
-    ["tex", "KaTeX math", "∫ sin(x²) dx"],
-    ["jupyter", "Jupyter cell", "run after prerequisites"],
-    ["layout", "Frame", "lecture page 2"],
-  ] satisfies [IconName, string, string][];
+  const inputs = [
+    ["markdown", "Markdown note", "Proof idea + checklist", "#d4380d"],
+    ["tex", "KaTeX math", "∫ sin(x²) dx", "#2f6fda"],
+    ["jupyter", "Jupyter cell", "run after prerequisites", "#389e0d"],
+  ] satisfies [IconName, string, string, string][];
 
   return (
     <div
@@ -55,48 +54,108 @@ function WhiteboardMock() {
             background: "#fff",
             border: `1px dashed ${PUBLIC_COLORS.border}`,
             borderRadius: 22,
-            minHeight: 310,
             padding: 18,
-            position: "relative",
           }}
         >
-          {nodes.map(([icon, title, body], index) => (
-            <div
-              key={title}
-              style={{
-                background: "#fff",
-                border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: 16,
-                boxShadow: "0 12px 30px rgba(33, 49, 57, 0.08)",
-                left: `${8 + (index % 2) * 45}%`,
-                padding: 12,
-                position: "absolute",
-                top: `${8 + Math.floor(index / 2) * 43}%`,
-                width: "44%",
-              }}
-            >
-              <Flex align="center" gap={10}>
-                <IconBadge
-                  accent={index % 2 ? "#2f6fda" : "#d4380d"}
-                  icon={icon}
-                />
-                <div>
-                  <Text strong>{title}</Text>
-                  <div style={{ color: PUBLIC_COLORS.mutedText }}>{body}</div>
+          <Row align="middle" gutter={[14, 14]}>
+            <Col xs={24} md={10}>
+              <Flex vertical gap={10}>
+                {inputs.map(([icon, title, body, accent]) => (
+                  <div
+                    key={title}
+                    style={{
+                      background: "#fff",
+                      border: `1px solid ${PUBLIC_COLORS.border}`,
+                      borderRadius: 16,
+                      boxShadow: "0 10px 24px rgba(33, 49, 57, 0.07)",
+                      padding: 12,
+                    }}
+                  >
+                    <Flex align="center" gap={10}>
+                      <IconBadge accent={accent} icon={icon} />
+                      <div>
+                        <Text strong>{title}</Text>
+                        <div style={{ color: PUBLIC_COLORS.mutedText }}>
+                          {body}
+                        </div>
+                      </div>
+                    </Flex>
+                  </div>
+                ))}
+              </Flex>
+            </Col>
+            <Col xs={24} md={3}>
+              <Flex align="center" justify="center">
+                <div
+                  aria-hidden="true"
+                  style={{
+                    alignItems: "center",
+                    background: "#fff7e6",
+                    border: "1px solid #ffd591",
+                    borderRadius: 999,
+                    color: "#ad6800",
+                    display: "flex",
+                    height: 46,
+                    justifyContent: "center",
+                    width: 46,
+                  }}
+                >
+                  <Icon name="arrow-right" />
                 </div>
               </Flex>
-            </div>
-          ))}
-          <Icon
-            name="arrow-right"
-            style={{
-              color: "#d29c3c",
-              fontSize: 30,
-              left: "47%",
-              position: "absolute",
-              top: "45%",
-            }}
-          />
+            </Col>
+            <Col xs={24} md={11}>
+              <div
+                style={{
+                  background:
+                    "linear-gradient(145deg, #f7fbff 0%, #ffffff 58%, #fff8e8 100%)",
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: 20,
+                  boxShadow: "0 12px 30px rgba(33, 49, 57, 0.08)",
+                  minHeight: 224,
+                  padding: 16,
+                }}
+              >
+                <Flex vertical gap={12}>
+                  <Flex align="center" gap={10}>
+                    <IconBadge accent="#d4380d" icon="layout" />
+                    <div>
+                      <Text strong>lecture page 2</Text>
+                      <div style={{ color: PUBLIC_COLORS.mutedText }}>
+                        one canvas frame
+                      </div>
+                    </div>
+                  </Flex>
+                  <div
+                    style={{
+                      background: "#fff",
+                      border: `1px solid ${PUBLIC_COLORS.border}`,
+                      borderRadius: 14,
+                      padding: 12,
+                    }}
+                  >
+                    <Text strong>Connected explanation</Text>
+                    <Paragraph
+                      style={{
+                        color: PUBLIC_COLORS.mutedText,
+                        margin: "4px 0 0",
+                      }}
+                    >
+                      Text, math, and executable cells stay editable on the
+                      board.
+                    </Paragraph>
+                  </div>
+                  <Flex gap={8} wrap>
+                    {["page", "frame", "jsonl"].map((label) => (
+                      <Tag key={label} style={{ marginInlineEnd: 0 }}>
+                        {label}
+                      </Tag>
+                    ))}
+                  </Flex>
+                </Flex>
+              </div>
+            </Col>
+          </Row>
         </div>
       </Flex>
     </div>
@@ -278,7 +337,7 @@ export default function WhiteboardFeaturePage({
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={13}>
-            <Title level={3} style={{ margin: 0 }}>
+            <Title level={3}>
               Why use whiteboards in CoCalc
             </Title>
             <BulletList
