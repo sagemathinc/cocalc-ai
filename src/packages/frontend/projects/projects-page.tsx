@@ -178,12 +178,7 @@ export const ProjectsPage: React.FC = () => {
     setSelectedProjectIds((ids) =>
       ids.filter((id) => {
         const state = `${project_map?.getIn([id, "state", "state"]) ?? ""}`;
-        return (
-          visible.has(id) &&
-          !scheduled.has(id) &&
-          state !== "deleting" &&
-          state !== "delete_failed"
-        );
+        return visible.has(id) && !scheduled.has(id) && state !== "deleting";
       }),
     );
   }, [project_map, visible_projects, scheduledDeleteProjectIds]);

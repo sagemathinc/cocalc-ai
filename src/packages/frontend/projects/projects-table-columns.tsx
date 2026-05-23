@@ -84,6 +84,7 @@ export interface ProjectTableRecord {
   deleting?: boolean;
   deletionScheduled?: boolean;
   deleteFailed?: boolean;
+  deleteError?: string;
   deletionBlocked?: boolean;
   hidden: boolean;
   collaborators: string[]; // Array of collaborator account_ids (excluding current user)
@@ -234,7 +235,8 @@ export function getProjectTableColumns(
         const archived = record.state?.get("state") === "archived";
         const deleting = record.deleting === true;
         const deletionScheduled = record.deletionScheduled === true;
-        const deleteFailed = record.deleteFailed === true;
+        const deleteFailed =
+          record.deleteFailed === true && deletionScheduled !== true;
         return (
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
             {/* Avatar or placeholder */}
@@ -281,11 +283,27 @@ export function getProjectTableColumns(
                 )}
                 {deleteFailed && (
                   <Tag color="red" style={{ marginLeft: "8px" }}>
-                    Deletion failed
+                    Deletion failed - retry delete
                   </Tag>
                 )}
               </div>
-              {record.description && (
+              {deleteFailed && (
+                <Text
+                  type={record.deleteError ? "danger" : "secondary"}
+                  style={{
+                    fontSize: "12px",
+                    display: "block",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {record.deleteError
+                    ? `Error: ${record.deleteError}`
+                    : "Select this row and choose Leave or Delete to retry."}
+                </Text>
+              )}
+              {record.description && !deleteFailed && (
                 <Text
                   type="secondary"
                   style={{

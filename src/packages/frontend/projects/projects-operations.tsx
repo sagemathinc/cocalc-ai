@@ -10,7 +10,7 @@
 
 // cSpell:ignore undoable
 
-import { Alert, Button, Modal, Space, Typography } from "antd";
+import { Alert, Button, Modal, Progress, Space, Typography } from "antd";
 import { Map, Set as ImmutableSet } from "immutable";
 import { useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -35,8 +35,14 @@ import {
   type BulkLeaveOrDeleteProgress,
 } from "./projects-bulk-delete";
 import {
+  beginProjectDeleteQueue,
+  clearProjectDeleteQueueStatus,
+  failProjectDeleteQueue,
+  finishProjectDeleteQueue,
   scheduleProjectDeletes,
+  setProjectDeleteQueueProgress,
   unscheduleProjectDeletes,
+  useProjectDeleteQueue,
 } from "./project-delete-queue";
 import {
   ArchiveProjectModal,
@@ -73,6 +79,7 @@ export function ProjectsOperations({
   const isAdmin = !!useTypedRedux("account", "is_admin");
   const [bulkLeaveDeleteProgress, setBulkLeaveDeleteProgress] =
     useState<BulkLeaveOrDeleteProgress | null>(null);
+  const deleteQueue = useProjectDeleteQueue();
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) =>
       Modal.error({
@@ -405,6 +412,7 @@ export function ProjectsOperations({
       });
       setLeaveDeleteModalOpen(false);
       setBulkLeaveDeleteProgress(null);
+      beginProjectDeleteQueue();
       scheduleProjectDeletes(plan.deleteIds);
       onSelectionChange(
         selected_project_ids.filter((id) => !plan.actionableIds.includes(id)),
@@ -422,13 +430,21 @@ export function ProjectsOperations({
     try {
       const { results, stopped } = await runLeaveOrDeleteProjectsSequentially({
         project_ids: plan.actionableIds,
-        onProgress: setBulkLeaveDeleteProgress,
+        onProgress: (progress) => {
+          setBulkLeaveDeleteProgress(progress);
+          setProjectDeleteQueueProgress(progress);
+        },
         submitProject: async (project_id) =>
           await webapp_client.conat_client.hub.projects.leaveOrDeleteProjects({
             project_ids: [project_id],
             browser_id: webapp_client.browser_id,
           }),
         waitForQueuedDelete: waitForHardDeleteToLeaveActiveSet,
+      });
+      finishProjectDeleteQueue({
+        results,
+        stopped,
+        total: plan.actionableIds.length,
       });
       const errors = results.filter((result) => result.action === "error");
       unscheduleProjectDeletes(
@@ -466,6 +482,10 @@ export function ProjectsOperations({
       }
     } catch (err) {
       unscheduleProjectDeletes(plan.deleteIds);
+      failProjectDeleteQueue({
+        project_ids: plan.actionableIds,
+        error: `${err}`,
+      });
       Modal.error({
         title: "Unable to leave or delete projects",
         content: `${err}`,
@@ -518,6 +538,10 @@ export function ProjectsOperations({
           }
         />
       )}
+      <BulkProjectDeleteStatus
+        queue={deleteQueue}
+        projectTitle={selectedTitle}
+      />
       {selected_project_ids.length > 0 && (
         <div
           style={{
@@ -607,6 +631,116 @@ export function ProjectsOperations({
       />
       <FreshAuthModal {...freshAuthModalProps} />
     </>
+  );
+}
+
+function BulkProjectDeleteStatus({
+  queue,
+  projectTitle,
+}: {
+  queue: ReturnType<typeof useProjectDeleteQueue>;
+  projectTitle: (project_id: string) => string;
+}) {
+  if (queue.status === "idle") {
+    return null;
+  }
+
+  if (queue.status === "running") {
+    const progress = queue.progress;
+    const completed = progress ? progress.completed + progress.failed : 0;
+    const total = progress?.total ?? queue.scheduledDeleteProjectIds.length;
+    const percent =
+      total > 0 ? Math.max(0, Math.min(100, (completed / total) * 100)) : 0;
+    const currentProject =
+      progress?.project_id != null ? projectTitle(progress.project_id) : null;
+
+    return (
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginTop: 8 }}
+        message="Bulk project delete is running"
+        description={
+          <Space direction="vertical" size={4} style={{ width: "100%" }}>
+            <Text>
+              {progress
+                ? `${completed} of ${progress.total} processed${
+                    currentProject
+                      ? `; ${
+                          progress.phase === "waiting"
+                            ? "waiting for"
+                            : "submitting"
+                        } ${currentProject}`
+                      : ""
+                  }.`
+                : "Preparing delete queue."}
+            </Text>
+            <Progress percent={Math.round(percent)} size="small" />
+            <Text type="secondary">
+              This browser tab is driving the queue. Closing or refreshing the
+              page stops further deletes; already submitted deletes continue on
+              the server.
+            </Text>
+          </Space>
+        }
+      />
+    );
+  }
+
+  const summary = queue.summary;
+  const failed = summary?.failed ?? 0;
+  const succeeded = summary?.succeeded ?? 0;
+  const unprocessed = summary?.unprocessed ?? 0;
+  const total = summary?.total ?? succeeded + failed;
+  const alertType =
+    queue.status === "error" || unprocessed > 0
+      ? "error"
+      : failed > 0
+        ? "warning"
+        : "success";
+
+  return (
+    <Alert
+      type={alertType}
+      showIcon
+      closable
+      style={{ marginTop: 8 }}
+      onClose={() => clearProjectDeleteQueueStatus()}
+      message={
+        failed > 0 || unprocessed > 0
+          ? `Bulk project delete finished with ${failed + unprocessed} issue(s)`
+          : "Bulk project delete finished"
+      }
+      description={
+        <Space direction="vertical" size={4}>
+          <Text>
+            {succeeded} of {total} project(s) succeeded
+            {failed > 0 ? `; ${failed} failed` : ""}
+            {unprocessed > 0 ? `; ${unprocessed} not processed` : ""}.
+            {failed > 0 || unprocessed > 0
+              ? " Failed or unprocessed rows remain selectable so you can retry delete."
+              : ""}
+          </Text>
+          {summary?.stopped && failed > 0 && (
+            <Text type="secondary">
+              The queue stopped after a blocking failure; retry failed rows once
+              the issue is resolved.
+            </Text>
+          )}
+          {summary?.errors.slice(0, 3).map((error) => (
+            <Text key={error.project_id} type="danger">
+              {projectTitle(error.project_id)}: {error.error}
+            </Text>
+          ))}
+          {(summary?.errors.length ?? 0) > 3 && (
+            <Text type="secondary">
+              {summary!.errors.length - 3} more failure(s) are shown on their
+              project rows.
+            </Text>
+          )}
+        </Space>
+      }
+    />
   );
 }
 
