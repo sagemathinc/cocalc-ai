@@ -211,7 +211,6 @@ describe("publishProjectAccountFeedEventsBestEffort", () => {
                 host_id: null,
                 title: "Remote Project",
                 description: "shared",
-                name: null,
                 theme: null,
                 users_summary: {
                   [REMOTE_ACCOUNT_ID]: { group: "collaborator" },

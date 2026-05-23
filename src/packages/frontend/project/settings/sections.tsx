@@ -109,14 +109,13 @@ export function useProjectSettingsSections({
       icon: "file-alt",
       label: "Overview",
       title: "Overview",
-      description: "Name, appearance, description, and project identity.",
+      description: "Appearance, description, and project identity.",
       children: (
         <AboutBox
           mode={componentMode}
           project_id={project_id}
           project_title={project.get("title") ?? ""}
           description={project.get("description") ?? ""}
-          name={project.get("name")}
           actions={redux.getActions("projects")}
           embedded={embeddedInSection}
         />

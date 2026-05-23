@@ -248,7 +248,11 @@ export default function AdminPurchasePanel() {
         />
         {targetUser && (
           <Alert
-            title={`Target: ${targetUser.name ?? targetUser.email_address ?? targetUser.account_id}`}
+            title={`Target: ${
+              `${targetUser.first_name ?? ""} ${targetUser.last_name ?? ""}`.trim() ||
+              targetUser.email_address ||
+              targetUser.account_id
+            }`}
             type="success"
           />
         )}

@@ -4,7 +4,6 @@ export interface Profile {
   last_name: string;
   color?: string;
   image?: string;
-  name?: string;
   is_admin?: boolean;
   is_partner?: boolean;
   email_address?: string;

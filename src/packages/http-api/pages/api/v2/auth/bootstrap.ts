@@ -27,7 +27,6 @@ export default async function bootstrap(req, res) {
   const home_bay_id =
     `${account?.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
   const display_name =
-    `${account?.name ?? ""}`.trim() ||
     `${account?.first_name ?? ""} ${account?.last_name ?? ""}`.trim() ||
     undefined;
   res.json({

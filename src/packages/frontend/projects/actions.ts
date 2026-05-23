@@ -106,7 +106,6 @@ export function buildProjectRecordFromFeedRow(
     project_id: row.project_id,
     title: row.title,
     description: row.description,
-    name: row.name ?? undefined,
     theme: row.theme ?? null,
     host_id: row.host_id,
     owning_bay_id: row.owning_bay_id,
@@ -199,7 +198,6 @@ type DirectProjectBootstrapRow = {
   project_id: string;
   title?: string | null;
   description?: string | null;
-  name?: string | null;
   theme?: Record<string, any> | null;
   host_id?: string | null;
   owning_bay_id?: string | null;
@@ -549,7 +547,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
           project_id: row.project_id,
           title: row.title ?? "",
           description: row.description ?? "",
-          name: null,
           theme: row.theme ?? null,
           host_id: row.host_id ?? null,
           owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
@@ -1196,7 +1193,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
               project_id,
               title: null,
               description: null,
-              name: null,
               theme: null,
               host_id: null,
               owning_bay_id: null,
@@ -1226,7 +1222,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
       project_id: row.project_id,
       title: row.title ?? "",
       description: row.description ?? "",
-      name: row.name ?? null,
       theme: row.theme ?? null,
       host_id: row.host_id ?? null,
       owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
@@ -1469,7 +1464,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
 
   private setProjectLocalScalarField = (
     project_id: string,
-    field: "title" | "description" | "name",
+    field: "title" | "description",
     value: string | undefined,
   ): void => {
     const project_map = store.get("project_map");
@@ -1544,7 +1539,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
 
   private updateProjectScalarField = async (
     project_id: string,
-    field: "title" | "description" | "name",
+    field: "title" | "description",
     value: string,
     before: string | undefined,
   ): Promise<void> => {
@@ -1613,21 +1608,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
       description,
       before,
     );
-  };
-
-  set_project_name = async (
-    project_id: string,
-    name: string,
-  ): Promise<void> => {
-    if (!(await this.have_project(project_id))) {
-      console.warn(
-        `Can't set project name -- you are not a collaborator on project '${project_id}'.`,
-      );
-      return;
-    }
-    const before = store.getIn(["project_map", project_id, "name"]);
-    if (before == name) return;
-    await this.updateProjectScalarField(project_id, "name", name, before);
   };
 
   set_project_settings = async (

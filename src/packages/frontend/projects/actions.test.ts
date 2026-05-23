@@ -47,7 +47,6 @@ describe("ProjectsActions project metadata updates", () => {
       ImmutableMap({
         title: "Old title",
         description: "Old description",
-        name: "old-name",
       }),
     ],
   ]);
@@ -87,7 +86,6 @@ describe("ProjectsActions project metadata updates", () => {
   it.each([
     ["set_project_title", "title", "New title"],
     ["set_project_description", "description", "New description"],
-    ["set_project_name", "name", "new-name"],
   ] as const)(
     "%s bypasses synced table writes that can carry unrelated row state",
     async (method, field, value) => {
@@ -343,7 +341,6 @@ describe("ProjectsActions project metadata updates", () => {
             project_id: "project-created-2",
             title: "Recovered project",
             description: "Recovered description",
-            name: null,
             theme: null,
             host_id: "host-1",
             owning_bay_id: "bay-0",
@@ -413,7 +410,6 @@ describe("ProjectsActions project metadata updates", () => {
               project_id: "project-created-4",
               title: "Recovered project",
               description: "Recovered description",
-              name: null,
               theme: null,
               host_id: "host-1",
               owning_bay_id: "bay-0",
@@ -480,7 +476,6 @@ describe("ProjectsActions project metadata updates", () => {
               project_id: "project-created-5",
               title: "Recovered project",
               description: "Recovered description",
-              name: null,
               theme: null,
               host_id: "host-1",
               owning_bay_id: "bay-0",

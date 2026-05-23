@@ -47,31 +47,3 @@ test("checkAccountName", () => {
   // not be "compute"
   expect(() => checkAccountName("compute")).toThrow(/.*reserved.*/);
 });
-
-test("checkProjectName", () => {
-  const { checkProjectName } = NR;
-
-  // at most 100 characters
-  expect(() =>
-    checkProjectName(
-      "12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901",
-    ),
-  ).toThrow(/.*100.*/);
-
-  // not less than 1 character
-  expect(() => checkProjectName("")).toThrow(/.*1.*/);
-
-  // not start with hyphen
-  expect(() => checkProjectName("-foo")).toThrow(/.*hyphen.*/);
-
-  // name must contain only a-z,A-Z,0-9, . or -, and not start with hyphen or have spaces
-  expect(() => checkProjectName("foo bar")).toThrow(/.*spaces.*/);
-  expect(() => checkProjectName("foo_bar")).toThrow(/.*spaces.*/);
-  expect(() => checkProjectName("foo-bar")).not.toThrow(/.*spaces.*/);
-  expect(() => checkProjectName("foo.bar")).not.toThrow(/.*spaces.*/);
-
-  // allow v4 UUID
-  expect(() =>
-    checkProjectName("3b38dd9c-f8bf-48c0-9d26-7cad4bac08eb"),
-  ).not.toThrow(/.*UUID.*/);
-});

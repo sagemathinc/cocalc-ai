@@ -89,7 +89,6 @@ Table({
         throttle_changes: THROTTLE_CHANGES,
         fields: {
           project_id: null,
-          name: null,
           title: "",
           description: "",
           users: {},
@@ -114,7 +113,6 @@ Table({
         fields: {
           project_id: "project_write",
           title: true,
-          name: true,
           description: true,
           invite_requests: true, // project collabs can modify this (e.g., to remove from it once user added or rejected)
           manage_users_owner_only(obj, db) {
@@ -321,12 +319,6 @@ Table({
     project_id: {
       type: "uuid",
       desc: "The project id, which is the primary key that determines the project.",
-    },
-    name: {
-      type: "string",
-      pg_type: "VARCHAR(100)",
-      desc: "The optional name of this project.  Must be globally unique (up to case) across all projects with a given *owner*.  It can be between 1 and 100 characters from a-z A-Z 0-9 period and dash.",
-      render: { type: "text", maxLen: 100, editable: true },
     },
     title: {
       type: "string",
@@ -791,7 +783,6 @@ Table({
         admin: true,
         fields: {
           project_id: true,
-          name: true,
           title: true,
           description: true,
           notes: true,

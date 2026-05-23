@@ -16,7 +16,6 @@ import {
   LabeledRow,
   Paragraph,
   SettingBox,
-  TextInput,
   ThemeEditorModal,
   TimeAgo,
 } from "@cocalc/frontend/components";
@@ -40,7 +39,6 @@ import {
 interface Props {
   project_title: string;
   project_id: string;
-  name?: string;
   description: string;
   actions: ProjectsActions;
   mode?: "project" | "flyout";
@@ -49,7 +47,6 @@ interface Props {
 
 export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
   const {
-    name,
     project_title,
     project_id,
     description,
@@ -131,35 +128,6 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
   }
 
   function renderBody() {
-    const nameLabel = (
-      <>
-        {intl.formatMessage({
-          id: "project.settings.about-box.name.label",
-          defaultMessage: "Name (optional)",
-          description: "Optional name of that project",
-        })}{" "}
-        <HelpIcon title={`${projectLabel} Name`} placement="right">
-          <p style={{ marginTop: 0 }}>
-            The {projectLabelLower} name is currently only used to provide
-            better URLs for publicly shared documents. It can be at most 100
-            characters long and must be unique among all {projectsLabelLower}{" "}
-            you own.
-          </p>
-          <p>
-            Only the {projectLabelLower} owner can change the name. To be
-            useful, the owner should also set their username in Account
-            Preferences.
-          </p>
-          {name ? (
-            <p style={{ marginBottom: 0 }}>
-              If you change the {projectLabelLower} name, existing links using
-              the previous name will no longer work.
-            </p>
-          ) : undefined}
-        </HelpIcon>
-      </>
-    );
-
     return (
       <>
         <ShowError error={error} setError={setError} />
@@ -196,21 +164,6 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
               Edit appearance
             </Button>
           </div>
-        </LabeledRow>
-        <LabeledRow label={nameLabel} vertical={isFlyout}>
-          <TextInput
-            style={{ width: "100%" }}
-            type="textarea"
-            rows={1}
-            text={name ?? ""}
-            on_change={async (name) => {
-              try {
-                await actions.set_project_name(project_id, name);
-              } catch (err) {
-                setError(`${err}`);
-              }
-            }}
-          />
         </LabeledRow>
         <LabeledRow
           label={intl.formatMessage(labels.starred)}

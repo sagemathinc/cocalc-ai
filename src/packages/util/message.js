@@ -1072,7 +1072,7 @@ Get info on all projects for the account whose security key is provided.
 The information returned may be any of the api-accessible fields in the
 \`projects\` table. These fields are listed in CoCalc source directory
 src/packages/util/db-schema, under \`schema.projects.user_query\`.
-In this example, project name and description are returned.
+In this example, project title and description are returned.
 
 \`\`\`
   curl -u sk_abcdefQWERTY090900000000: -H "Content-Type: application/json" \\
