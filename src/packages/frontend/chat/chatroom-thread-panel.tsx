@@ -8,6 +8,7 @@ import {
   Input,
   message as antdMessage,
   Modal,
+  Popconfirm,
   Popover,
   Select,
   Space,
@@ -371,6 +372,9 @@ export function ChatRoomThreadPanel({
   const [maintenanceStats, setMaintenanceStats] =
     useState<ChatStoreStats | null>(null);
   const [maintenanceDeleteDays, setMaintenanceDeleteDays] = useState("30");
+  const [deleteOlderConfirmOpen, setDeleteOlderConfirmOpen] = useState(false);
+  const maintenanceDeleteDaysNumber = Number(maintenanceDeleteDays);
+  const maintenanceDeleteDaysInteger = Math.floor(maintenanceDeleteDaysNumber);
   const [threadNearTop, setThreadNearTop] = useState(false);
   const anyOverlayOpen = useAnyChatOverlayOpen();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -2017,24 +2021,18 @@ export function ChatRoomThreadPanel({
             >
               Vacuum
             </Button>
-            <Button
-              size="small"
-              danger
-              loading={maintenanceBusy === "Delete Thread Scope"}
+            <Popconfirm
+              title="Delete stored rows for the current chat?"
+              description="This deletes backend-stored rows for the selected chat only."
+              okText="Delete"
+              okButtonProps={{ danger: true }}
               disabled={
                 !project_id ||
                 !path ||
                 !selectedThreadId ||
                 maintenanceBusy != null
               }
-              onClick={() => {
-                if (
-                  !window.confirm(
-                    "Delete backend-stored rows for the current chat only?",
-                  )
-                ) {
-                  return;
-                }
+              onConfirm={() => {
                 const hubProjects = webapp_client.conat_client?.hub?.projects;
                 if (!hubProjects || !selectedThreadId) return;
                 void runMaintenanceAction("Delete Thread Scope", () =>
@@ -2047,8 +2045,20 @@ export function ChatRoomThreadPanel({
                 );
               }}
             >
-              Delete This Chat (Stored)
-            </Button>
+              <Button
+                size="small"
+                danger
+                loading={maintenanceBusy === "Delete Thread Scope"}
+                disabled={
+                  !project_id ||
+                  !path ||
+                  !selectedThreadId ||
+                  maintenanceBusy != null
+                }
+              >
+                Delete This Chat (Stored)
+              </Button>
+            </Popconfirm>
           </div>
           <div
             style={{
@@ -2065,30 +2075,37 @@ export function ChatRoomThreadPanel({
               style={{ width: 120 }}
               placeholder="Days"
             />
-            <Button
-              size="small"
-              danger
-              loading={maintenanceBusy === "Delete Older Scope"}
+            <Popconfirm
+              title="Delete older stored rows?"
+              description={`Delete backend-stored rows older than ${maintenanceDeleteDaysInteger} days.`}
+              okText="Delete"
+              okButtonProps={{ danger: true }}
+              open={deleteOlderConfirmOpen}
               disabled={!project_id || !path || maintenanceBusy != null}
-              onClick={() => {
-                const days = Number(maintenanceDeleteDays);
-                if (!Number.isFinite(days) || days <= 0) {
+              onOpenChange={(open) => {
+                if (!open) {
+                  setDeleteOlderConfirmOpen(false);
+                  return;
+                }
+                if (
+                  !Number.isFinite(maintenanceDeleteDaysNumber) ||
+                  maintenanceDeleteDaysNumber <= 0
+                ) {
                   setMaintenanceError(
                     "Delete older: days must be a positive number.",
                   );
                   return;
                 }
-                if (
-                  !window.confirm(
-                    `Delete backend-stored rows older than ${Math.floor(days)} days?`,
-                  )
-                ) {
-                  return;
-                }
+                setMaintenanceError("");
+                setDeleteOlderConfirmOpen(true);
+              }}
+              onConfirm={() => {
+                setDeleteOlderConfirmOpen(false);
                 const hubProjects = webapp_client.conat_client?.hub?.projects;
                 if (!hubProjects) return;
                 const before_date_ms =
-                  Date.now() - Math.floor(days) * 24 * 60 * 60 * 1000;
+                  Date.now() -
+                  maintenanceDeleteDaysInteger * 24 * 60 * 60 * 1000;
                 void runMaintenanceAction("Delete Older Scope", () =>
                   hubProjects.chatStoreDelete({
                     project_id: project_id!,
@@ -2099,21 +2116,22 @@ export function ChatRoomThreadPanel({
                 );
               }}
             >
-              Delete Older Than N Days
-            </Button>
-            <Button
-              size="small"
-              danger
-              loading={maintenanceBusy === "Delete All Stored"}
+              <Button
+                size="small"
+                danger
+                loading={maintenanceBusy === "Delete Older Scope"}
+                disabled={!project_id || !path || maintenanceBusy != null}
+              >
+                Delete Older Than N Days
+              </Button>
+            </Popconfirm>
+            <Popconfirm
+              title="Delete all stored rows for this chat file?"
+              description="This deletes every backend-stored row for the current chat file."
+              okText="Delete All"
+              okButtonProps={{ danger: true }}
               disabled={!project_id || !path || maintenanceBusy != null}
-              onClick={() => {
-                if (
-                  !window.confirm(
-                    "Delete all backend-stored rows for this chat file?",
-                  )
-                ) {
-                  return;
-                }
+              onConfirm={() => {
                 const hubProjects = webapp_client.conat_client?.hub?.projects;
                 if (!hubProjects) return;
                 void runMaintenanceAction("Delete All Stored", () =>
@@ -2125,8 +2143,15 @@ export function ChatRoomThreadPanel({
                 );
               }}
             >
-              Delete All Stored Rows
-            </Button>
+              <Button
+                size="small"
+                danger
+                loading={maintenanceBusy === "Delete All Stored"}
+                disabled={!project_id || !path || maintenanceBusy != null}
+              >
+                Delete All Stored Rows
+              </Button>
+            </Popconfirm>
           </div>
           {maintenanceStatus ? (
             <div style={{ color: "#1b5e20", fontSize: 12 }}>
