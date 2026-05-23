@@ -8,6 +8,8 @@ import getParams from "@cocalc/http-api/lib/api/get-params";
 import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import renewSubscription from "@cocalc/server/purchases/renew-subscription";
 
+// User-facing unpaid subscription renewal route. Keep the frontend caller wired
+// through useFreshAuthAction/FreshAuthModal when this requires fresh auth.
 export default async function handle(req, res) {
   try {
     res.json(await get(req));

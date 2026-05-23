@@ -4,6 +4,8 @@ import getParams from "@cocalc/http-api/lib/api/get-params";
 import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import throttle from "@cocalc/util/api/throttle";
 
+// Legacy/manual Stripe subscription-payment route. The user-facing React unpaid
+// subscription banner calls /api/v2/purchases/renew-subscription instead.
 export default async function handle(req, res) {
   try {
     res.json(await get(req));
