@@ -257,7 +257,8 @@ Acceptance:
   Host restart operations also recompute before re-starting projects.
 - Bulk delete completes sequentially with progress or clear queuing. **Done
   2026-05-22.**
-- File delete modal remains readable for large selections.
+- File delete modal remains readable for large selections. **Done 2026-05-22**
+  with a bounded, wrapping selected-file list and explicit overflow count.
 - WAL retention is bounded and documented.
 
 ### E. Launch Content And GPU Acceptance
@@ -306,8 +307,6 @@ Recommended next work order as of 2026-05-22:
 1. **Disk usage reload says "Updated just now" without recomputing.** This is a
    bounded honesty bug and likely quick: separate cached-refresh from actual
    recompute and label timestamps by what really happened.
-2. **Delete modal overflow.** This is contained UI polish that prevents
-   destructive actions from becoming unreadable for large selections.
 
 Good fallback tasks if the above stalls:
 
