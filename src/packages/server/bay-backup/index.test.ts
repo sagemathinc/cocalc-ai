@@ -21,6 +21,7 @@ let whichMock: jest.Mock;
 let listObjectsMock: jest.Mock;
 let deleteObjectsMock: jest.Mock;
 let issueSignedObjectDownloadMock: jest.Mock;
+let uploadObjectFromBufferMock: jest.Mock;
 let uploadObjectFromFileMock: jest.Mock;
 let oldFetch: typeof global.fetch | undefined;
 
@@ -86,7 +87,8 @@ jest.mock("@cocalc/server/project-backup/r2", () => ({
   listObjects: (...args: any[]) => listObjectsMock(...args),
   issueSignedObjectDownload: (...args: any[]) =>
     issueSignedObjectDownloadMock(...args),
-  uploadObjectFromBuffer: jest.fn(),
+  uploadObjectFromBuffer: (...args: any[]) =>
+    uploadObjectFromBufferMock(...args),
   uploadObjectFromFile: (...args: any[]) => uploadObjectFromFileMock(...args),
 }));
 
@@ -236,6 +238,7 @@ describe("bay-backup runner", () => {
     whichMock = jest.fn(async (binary: string) => `/usr/bin/${binary}`);
     listObjectsMock = jest.fn(async () => []);
     deleteObjectsMock = jest.fn(async () => undefined);
+    uploadObjectFromBufferMock = jest.fn(async () => undefined);
     uploadObjectFromFileMock = jest.fn(async () => undefined);
     issueSignedObjectDownloadMock = jest.fn(({ key }: { key: string }) => ({
       url: `https://example.invalid/${key}`,
@@ -1709,6 +1712,25 @@ describe("bay-backup runner", () => {
       "0000000100000000000000E2",
     );
     expect(status.bay_backup.pending_wal_count).toBe(2);
+    const metadataKeys = uploadObjectFromBufferMock.mock.calls.map(
+      (call) => call[0].key,
+    );
+    expect(metadataKeys).toContain("bay-backups/bay-0/README.md");
+    expect(metadataKeys).toContain("bay-backups/bay-0/events.log");
+    const readmeUpload = uploadObjectFromBufferMock.mock.calls
+      .map((call) => call[0])
+      .reverse()
+      .find((call) => call.key === "bay-backups/bay-0/README.md");
+    expect(readmeUpload?.body).toContain("# CoCalc bay backup: bay-0");
+    expect(readmeUpload?.body).toContain(
+      "Remote WAL retention floor: latest `2` recovery-ready backup(s)",
+    );
+    expect(readFileSync(join(bayRoot, "README.md"), "utf8")).toContain(
+      "Pending WAL upload count: `2`",
+    );
+    const events = readFileSync(join(bayRoot, "events.log"), "utf8");
+    expect(events).toContain('"event":"wal-sync"');
+    expect(events).toContain('"event":"full-backup"');
   });
 
   it("prunes remote WAL older than the latest two recovery-ready backups", async () => {

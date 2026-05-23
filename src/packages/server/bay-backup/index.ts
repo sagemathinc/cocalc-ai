@@ -40,6 +40,7 @@ import { createReadStream, createWriteStream } from "node:fs";
 import {
   cp,
   copyFile,
+  appendFile,
   mkdir,
   mkdtemp,
   readFile,
@@ -96,6 +97,7 @@ import {
   issueSignedObjectDownload,
   listObjects,
   listBuckets,
+  uploadObjectFromBuffer,
   uploadObjectFromFile,
 } from "@cocalc/server/project-backup/r2";
 import {
@@ -410,6 +412,8 @@ function getBayBackupPaths(bay_id: string) {
     staging_dir: join(bay_root, "staging"),
     wal_dir,
     wal_archive_dir: join(wal_dir, "archive"),
+    readme_file: join(bay_root, "README.md"),
+    events_log_file: join(bay_root, "events.log"),
     state_file: join(bay_root, "state.json"),
   };
 }
@@ -2644,6 +2648,190 @@ function limitWalFilesForUpload(files: WalArchiveFile[]): WalArchiveFile[] {
   return selected;
 }
 
+type BayBackupMetadataEvent = {
+  event: "wal-sync" | "full-backup";
+  force_switch?: boolean;
+  backup_set_id?: string;
+  uploaded_wal_count?: number;
+  pruned_local_wal_count?: number;
+  pruned_remote_wal_count?: number;
+};
+
+function formatNullable(value: unknown): string {
+  if (value == null || value === "") {
+    return "none";
+  }
+  return `${value}`;
+}
+
+function formatIntervalMs(ms: number | null): string {
+  if (ms == null) {
+    return "disabled";
+  }
+  const hours = ms / (60 * 60 * 1000);
+  if (hours >= 1) {
+    return `${ms} ms (${hours.toFixed(hours >= 10 ? 0 : 1)} hours)`;
+  }
+  const minutes = ms / (60 * 1000);
+  return `${ms} ms (${minutes.toFixed(minutes >= 10 ? 0 : 1)} minutes)`;
+}
+
+function renderBayBackupReadme({
+  generated_at,
+  bay_id,
+  paths,
+  state,
+  snapshot,
+  config,
+}: {
+  generated_at: string;
+  bay_id: string;
+  paths: ReturnType<typeof getBayBackupPaths>;
+  state: StoredBayBackupState;
+  snapshot: WalArchiveSnapshot;
+  config: BayBackupMaintenanceConfig;
+}): string {
+  const objectPrefix = state.object_prefix_root ?? `bay-backups/${bay_id}`;
+  const walPrefix = snapshot.wal_object_prefix ?? `${objectPrefix}/wal`;
+  return [
+    `# CoCalc bay backup: ${bay_id}`,
+    "",
+    `Generated: ${generated_at}`,
+    "",
+    "This prefix contains CoCalc bay control-plane recovery data. It is written",
+    "by the bay backup maintenance worker and is intended for operators during",
+    "restore drills, PITR debugging, and storage-retention audits.",
+    "",
+    "## Layout",
+    "",
+    `- \`${objectPrefix}/README.md\`: this operator summary, refreshed after backup/WAL maintenance.`,
+    `- \`${objectPrefix}/events.log\`: JSON-lines maintenance history, best-effort and compact.`,
+    `- \`${walPrefix}/\`: archived PostgreSQL WAL segments used with full snapshots for point-in-time recovery.`,
+    "- Full snapshot payloads are stored in the configured rustic repository when remote backup is enabled.",
+    "- Local inspection data lives on the bay host under:",
+    `  - \`${paths.bay_root}\``,
+    `  - \`${paths.manifests_dir}\``,
+    `  - \`${paths.wal_archive_dir}\``,
+    "",
+    "## Current Status",
+    "",
+    `- Bay id: \`${bay_id}\``,
+    `- Storage backend: \`${state.current_storage_backend}\``,
+    `- R2 bucket: \`${formatNullable(state.bucket_name)}\``,
+    `- R2 region: \`${formatNullable(state.bucket_region)}\``,
+    `- Object prefix: \`${formatNullable(state.object_prefix_root)}\``,
+    `- Rustic repo selector: \`${formatNullable(state.rustic_repo_selector)}\``,
+    `- Latest backup set: \`${formatNullable(state.latest_backup_set_id)}\``,
+    `- Latest backup finished: \`${formatNullable(state.last_successful_backup_at)}\``,
+    `- Latest remote backup: \`${formatNullable(state.last_successful_remote_backup_at)}\``,
+    `- Last WAL archive: \`${formatNullable(state.last_successful_wal_archive_at)}\``,
+    `- Last archived WAL segment: \`${formatNullable(snapshot.last_archived_wal_segment ?? state.last_archived_wal_segment)}\``,
+    `- Last uploaded WAL segment: \`${formatNullable(state.last_uploaded_wal_segment)}\``,
+    `- Local archived WAL count: \`${snapshot.archived_wal_count}\``,
+    `- Pending WAL upload count: \`${snapshot.pending_wal_count}\``,
+    `- Last local WAL prune count: \`${state.last_pruned_wal_count}\``,
+    `- Last remote WAL prune count: \`${state.last_pruned_remote_wal_count}\``,
+    `- Last error: \`${formatNullable(state.last_error)}\``,
+    "",
+    "## Retention Parameters",
+    "",
+    `- Full snapshot interval: \`${formatIntervalMs(config.full_snapshot_interval_ms)}\``,
+    `- Full snapshot retry interval: \`${formatIntervalMs(config.full_snapshot_retry_interval_ms)}\``,
+    `- Full snapshot keep-last count: \`${config.full_snapshot_retention_count}\``,
+    `- Restore workspace retention: \`${config.restore_workspace_retention_days} days\``,
+    `- Local WAL tail retention: \`${config.local_wal_retention_count} segments\``,
+    `- Remote WAL retention floor: latest \`${config.remote_wal_retention_backups}\` recovery-ready backup(s)`,
+    `- WAL upload segment cap per sync: \`${getWalArchiveMaxUploadSegments()}\``,
+    `- WAL upload byte cap per sync: \`${getWalArchiveMaxUploadBytes()}\``,
+    "",
+    "## Recovery Model",
+    "",
+    "A restore starts from a full snapshot and replays archived WAL. Remote WAL",
+    "is pruned from the oldest retained recovery-ready backup needed by the",
+    "configured backup-count retention floor; it is not intended to be retained",
+    "forever. If full backups stop succeeding, investigate before reducing WAL",
+    "retention, because WAL may be the only path to recent point-in-time recovery.",
+    "",
+  ].join("\n");
+}
+
+async function publishBayBackupMetadata({
+  bay_id,
+  paths,
+  r2,
+  state,
+  snapshot,
+  config,
+  event,
+}: {
+  bay_id: string;
+  paths: ReturnType<typeof getBayBackupPaths>;
+  r2: R2Target;
+  state: StoredBayBackupState;
+  snapshot: WalArchiveSnapshot;
+  config: BayBackupMaintenanceConfig;
+  event: BayBackupMetadataEvent;
+}): Promise<void> {
+  const generated_at = new Date().toISOString();
+  const readme = renderBayBackupReadme({
+    generated_at,
+    bay_id,
+    paths,
+    state,
+    snapshot,
+    config,
+  });
+  await ensureDir(paths.bay_root);
+  await writeFile(paths.readme_file, readme, "utf8");
+  await appendFile(
+    paths.events_log_file,
+    `${JSON.stringify({
+      time: generated_at,
+      ...event,
+      bay_id,
+      latest_backup_set_id: state.latest_backup_set_id,
+      last_archived_wal_segment:
+        snapshot.last_archived_wal_segment ?? state.last_archived_wal_segment,
+      last_uploaded_wal_segment: state.last_uploaded_wal_segment,
+      archived_wal_count: snapshot.archived_wal_count,
+      pending_wal_count: snapshot.pending_wal_count,
+      last_error: state.last_error,
+    })}\n`,
+    "utf8",
+  );
+  const objectPrefix = r2.object_prefix_root ?? state.object_prefix_root;
+  if (
+    !r2.configured ||
+    !r2.bucket_name ||
+    !r2.bucket_endpoint ||
+    !r2.access_key ||
+    !r2.secret_key ||
+    !objectPrefix
+  ) {
+    return;
+  }
+  await ensureR2Bucket(r2);
+  const uploadCommon = {
+    endpoint: r2.bucket_endpoint,
+    accessKey: r2.access_key,
+    secretKey: r2.secret_key,
+    bucket: r2.bucket_name,
+    cacheControl: "no-store",
+  };
+  await uploadObjectFromBuffer({
+    ...uploadCommon,
+    key: `${objectPrefix}/README.md`,
+    body: readme,
+    contentType: "text/markdown; charset=utf-8",
+  });
+  await uploadObjectFromBuffer({
+    ...uploadCommon,
+    key: `${objectPrefix}/events.log`,
+    body: await readFile(paths.events_log_file, "utf8"),
+    contentType: "text/plain; charset=utf-8",
+  });
+}
+
 async function waitForWalArchiveAdvance({
   paths,
   state,
@@ -2772,6 +2960,7 @@ async function syncBayWalArchive({
   const walErrorPrefix = "wal archive:";
   let last_pruned_wal_count = state.last_pruned_wal_count ?? 0;
   let last_pruned_remote_wal_count = state.last_pruned_remote_wal_count ?? 0;
+  let uploaded_wal_count = 0;
   if (forceSwitch) {
     try {
       await getPool().query("SELECT pg_switch_wal()");
@@ -2843,6 +3032,7 @@ async function syncBayWalArchive({
         }
         last_uploaded_wal_segment = file.name;
         remote_object_keys?.add(object_key);
+        uploaded_wal_count += 1;
       }
       state = {
         ...state,
@@ -2898,6 +3088,26 @@ async function syncBayWalArchive({
 
   await writeJson(paths.state_file, state);
   snapshot = await getWalArchiveSnapshot({ paths, state });
+  await publishBayBackupMetadata({
+    bay_id: resolvedBayId,
+    paths,
+    r2,
+    state,
+    snapshot,
+    config,
+    event: {
+      event: "wal-sync",
+      force_switch: forceSwitch,
+      uploaded_wal_count,
+      pruned_local_wal_count: last_pruned_wal_count,
+      pruned_remote_wal_count: last_pruned_remote_wal_count,
+    },
+  }).catch((err) => {
+    logger.warn("failed to publish bay backup metadata", {
+      bay_id: resolvedBayId,
+      err,
+    });
+  });
   return { state, snapshot };
 }
 
@@ -3628,6 +3838,24 @@ export async function runBayBackup({
         }
       }
       const wal = await getWalArchiveSnapshot({ paths, state });
+      await publishBayBackupMetadata({
+        bay_id: resolvedBayId,
+        paths,
+        r2,
+        state,
+        snapshot: wal,
+        config: getBayBackupMaintenanceConfig(),
+        event: {
+          event: "full-backup",
+          backup_set_id,
+        },
+      }).catch((err) => {
+        logger.warn("failed to publish bay backup metadata", {
+          bay_id: resolvedBayId,
+          backup_set_id,
+          err,
+        });
+      });
       return {
         ...currentBay,
         started_at,
