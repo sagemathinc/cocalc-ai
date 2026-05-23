@@ -234,6 +234,8 @@ export async function getSubscription(
   };
 }
 
+// This is the legacy/manual Stripe renewal-payment path. The React unpaid
+// subscription banner does NOT use this; it uses renewSubscription below.
 export async function createSubscriptionPayment(subscription_id: number) {
   return await api("purchases/stripe/create-subscription-payment", {
     subscription_id,
@@ -676,6 +678,8 @@ export async function costToResumeSubscription(
   });
 }
 
+// User-facing unpaid subscription renewal path. If the backend requires fresh
+// auth, the React caller must wrap this in useFreshAuthAction/FreshAuthModal.
 export async function renewSubscription(
   subscription_id: number,
 ): Promise<{ purchase_id: number | null }> {

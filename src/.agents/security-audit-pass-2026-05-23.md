@@ -538,6 +538,78 @@ Validation:
 - `packages/server`: `purchases/stripe/invoices.test.ts`
 - Full TypeScript build.
 
+### Stripe payment-method mutations did not verify ownership
+
+The active `purchases/stripe` payment-method mutation routes require fresh auth,
+but the delete helper accepted a raw Stripe payment method id and detached it
+directly. The set-default helper updated the signed-in account's Stripe customer
+with a supplied payment method id without first verifying that payment method
+was attached to that customer.
+
+Fix:
+
+- Deleting a payment method now first resolves the signed-in account's Stripe
+  customer and retrieves the payment method through that customer.
+- Setting a default payment method now performs the same customer-scoped
+  retrieval before updating invoice settings.
+- If Stripe cannot retrieve the payment method for that customer, the mutation
+  does not run.
+
+Validation:
+
+- `packages/server`: `purchases/stripe/payment-method-mutations.test.ts`
+- Full TypeScript build.
+
+### Subscription-renewal payment creation lacked fresh auth
+
+`/api/v2/purchases/stripe/create-subscription-payment` can start renewal of an
+existing membership subscription. When the user does not have enough account
+balance, the server creates a Stripe invoice/payment intent and immediately
+attempts to pay it using a saved default or attached payment method.
+
+The route required a signed-in account and subscription ownership, but did not
+require fresh auth. A stale browser session or XSS in an authenticated browser
+could therefore trigger early renewal/payment for an existing subscription
+without a recent user verification.
+
+Fix:
+
+- The route now requires fresh auth before calling `createSubscriptionPayment`.
+- Fresh-auth error codes are propagated to the frontend like the other Stripe
+  payment mutation routes.
+- The user-facing unpaid-subscription renewal flow now also requires fresh auth
+  on `/api/v2/purchases/renew-subscription` and opens the standard React fresh
+  auth modal when needed.
+
+Validation:
+
+- `packages/http-api`: `pages/api/v2/purchases-stripe-fresh-auth.test.ts`
+- `packages/http-api`: `pages/api/v2/purchases-renew-subscription-fresh-auth.test.ts`
+- Full TypeScript build.
+
+### Subscription cancel/resume mutations lacked fresh auth
+
+The user-facing subscription actions could cancel an active subscription or
+directly resume a canceled subscription using only the existing signed-in
+session. Canceling disrupts paid service renewal, and direct resume can spend
+account balance or re-enable recurring renewal for a membership subscription.
+
+Fix:
+
+- `/api/v2/purchases/cancel-subscription` now requires fresh auth before
+  canceling the subscription.
+- `/api/v2/purchases/resume-subscription` now requires fresh auth before
+  directly resuming the subscription.
+- The React cancel and direct-resume flows now use
+  `useFreshAuthAction/FreshAuthModal` so stale browser sessions prompt and
+  retry instead of showing a raw API error.
+
+Validation:
+
+- `packages/http-api`: `pages/api/v2/purchases-subscription-state-fresh-auth.test.ts`
+- Full TypeScript build.
+- Frontend lint.
+
 ## Reviewed Surfaces
 
 - Public hub dangerous RPC registry and name-based coverage.
@@ -558,6 +630,9 @@ Validation:
   subjects.
 - Legacy HTTP account-security routes that use `getAccountId(req)`.
 - Legacy billing API namespace and active purchases replacements.
+- Active Stripe payment-method mutation routes.
+- Active Stripe subscription-renewal payment route.
+- User-facing subscription cancel/resume state mutation routes.
 
 ## Residual Follow-Up
 

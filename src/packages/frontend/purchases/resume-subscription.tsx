@@ -1,5 +1,9 @@
 import { Alert, Button, Divider, Modal, Space, Spin } from "antd";
 import { useEffect, useRef, useState } from "react";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { Icon } from "@cocalc/frontend/components";
 import { zIndexPayAsGo } from "./zindex";
 import {
@@ -48,6 +52,12 @@ export default function ResumeSubscription({
     undefined,
   );
   const [loading, setLoading] = useState<boolean>(false);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => {
+      setPlace("checkout");
+      setError(`${err}`);
+    },
+  });
 
   const directResume = async () => {
     // user is paying entirely using their credit on file, so we need to get
@@ -58,10 +68,15 @@ export default function ResumeSubscription({
       setError("");
       setDisabled(true);
       setPlace("buying");
-      await resumeSubscription(subscription_id);
-      setPlace("congrats");
-      const { status } = await getSubscription(subscription_id);
-      setStatus(status);
+      const completed = await runFreshAuthAction(async () => {
+        await resumeSubscription(subscription_id);
+        setPlace("congrats");
+        const { status } = await getSubscription(subscription_id);
+        setStatus(status);
+      });
+      if (!completed) {
+        setPlace("checkout");
+      }
     } catch (err) {
       setPlace("checkout");
       setError(`${err}`);
@@ -257,6 +272,7 @@ export default function ResumeSubscription({
     >
       {body}
       {loading && <BigSpin />}
+      <FreshAuthModal {...freshAuthModalProps} />
     </Modal>
   );
 }
