@@ -55,6 +55,9 @@ describe("PublicSupportApp", () => {
     expect(
       screen.getByRole("heading", { name: "Launchpad Community Support" }),
     ).not.toBeNull();
-    expect(await screen.findByText("GitHub discussions")).not.toBeNull();
+    expect(await screen.findByText("GitHub source code")).not.toBeNull();
+    expect(screen.queryByText("Discord")).toBeNull();
+    expect(screen.queryByText("GitHub discussions")).toBeNull();
+    expect(screen.queryByText("Google Groups mailing list")).toBeNull();
   });
 });

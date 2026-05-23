@@ -90,7 +90,6 @@ possible after P0s are under control.
 | ---------------------------------------------------- | -------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------- |
 | Backup time in storage overview appears random       | backups / storage UI | Users cannot trust backups    | Confirm latest backup source field; ensure overview and tooltip use same authoritative timestamp. |
 | Bulk delete hits queued/running project delete limit | projects / workers   | User cannot clean up projects | Serialize user bulk delete one-at-a-time or raise limit with backpressure; show progress.         |
-| Delete files modal breaks with many files            | file UI              | Simple operation looks broken | Use scrollable file list and concise summary after first N files.                                 |
 | Community support page stale                         | support / content    | Launch support confusion      | Remove dead Discord/Google Group/GitHub Discussions references; verify Zendesk path.              |
 
 ### P2: Important But Can Ship With Known Notes
@@ -239,7 +238,6 @@ Scope:
 - Backup timestamp randomness.
 - Project runtime quotas at start/restart.
 - Bulk project delete queue limit.
-- File delete modal overflow.
 - WAL retention.
 
 Acceptance:
@@ -364,11 +362,11 @@ For each blocker:
 - Backup timestamp source. **Done 2026-05-22.**
 - Bulk delete behavior. **Done 2026-05-22.**
 - Disk usage reload/recompute. **Done 2026-05-23.**
+- Delete files modal overflow. **Done 2026-05-23.**
 
 ### Batch 4: Storage And Quota Honesty
 
 - Runtime quotas on start/restart.
-- Delete modal overflow.
 
 ### Batch 5: Launch Polish And Infra Cleanup
 
