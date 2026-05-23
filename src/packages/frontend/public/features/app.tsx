@@ -5,7 +5,7 @@
 
 import { useEffect } from "react";
 
-import { Button, Empty, Flex, Typography } from "antd";
+import { Button, Col, Empty, Flex, Row, Tag, Typography } from "antd";
 
 import {
   PublicCard,
@@ -13,6 +13,7 @@ import {
   PublicPage,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
+import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { SITE_NAME } from "@cocalc/util/theme";
 import AIFeaturePage from "./ai-page";
 import ApiFeaturePage from "./api-page";
@@ -70,10 +71,49 @@ const FEATURE_DETAIL_COMPONENTS = {
 
 const FEATURE_INDEX_PRIORITY = [
   "ai",
-  "compare",
   "jupyter-notebook",
+  "latex-editor",
   "terminal",
+  "linux",
+  "whiteboard",
   "teaching",
+  "compare",
+] as const;
+
+const FEATURE_GROUPS = [
+  {
+    description:
+      "Notebooks, papers, whiteboards, slides, and technical writing in one collaborative project.",
+    slugs: ["jupyter-notebook", "latex-editor", "whiteboard", "slides"],
+    title: "Documents",
+  },
+  {
+    description:
+      "A real Linux environment with terminals, language stacks, graphical apps, and installable software.",
+    slugs: [
+      "terminal",
+      "linux",
+      "python",
+      "r-statistical-software",
+      "julia",
+      "sage",
+      "octave",
+      "x11",
+    ],
+    title: "Compute",
+  },
+  {
+    description:
+      "Codex and AI assistance where files, notebooks, terminals, and chat already live.",
+    slugs: ["ai", "compare", "api"],
+    title: "AI and automation",
+  },
+  {
+    description:
+      "Course workflows, grading, shared environments, and collaborative help for technical classes.",
+    slugs: ["teaching"],
+    title: "Teaching",
+  },
 ] as const;
 
 function titleForRoute(route: PublicFeaturesRoute, siteName: string): string {
@@ -100,76 +140,128 @@ function FeaturesIndex({ siteName }: { siteName: string }) {
     .map(({ page }) => page);
   return (
     <>
-      <PublicSection>
-        <Paragraph style={{ margin: 0, maxWidth: "70ch" }}>
-          Explore the core capabilities of {siteName}, from collaborative
-          notebooks and terminals to AI-assisted workflows, teaching tools, and
-          technical writing. Each page highlights how these workflows connect to
-          the same projects, files, and collaboration features inside the main
-          app.
-        </Paragraph>
-        <Title level={3} style={{ margin: 0 }}>
-          The new direction is increasingly agent-first
+      <section>
+        <Row align="middle" gutter={[36, 36]}>
+          <Col lg={11} xs={24}>
+            <Flex vertical gap={20}>
+              <Tag color="blue" style={{ width: "fit-content" }}>
+                Feature map
+              </Tag>
+              <Title
+                level={1}
+                style={{
+                  fontSize: 64,
+                  letterSpacing: 0,
+                  lineHeight: 0.92,
+                  margin: 0,
+                }}
+              >
+                Everything starts in a project.
+              </Title>
+              <Paragraph
+                style={{
+                  color: PUBLIC_COLORS.mutedText,
+                  fontSize: 21,
+                  margin: 0,
+                }}
+              >
+                {siteName} features make the most sense when viewed together:
+                documents, compute, AI agents, teaching, and platform operations
+                all share the same files, collaborators, history, and project
+                environment.
+              </Paragraph>
+              <Flex wrap gap={12}>
+                <Button href={featurePath("jupyter-notebook")} type="primary">
+                  Jupyter
+                </Button>
+                <Button href={featurePath("ai")}>AI agents</Button>
+                <Button href={featurePath("terminal")}>Terminal</Button>
+              </Flex>
+            </Flex>
+          </Col>
+          <Col lg={13} xs={24}>
+            <FeatureImage
+              alt="CoCalc feature map with documents, compute, AI, teaching, and platform categories"
+              src="/public/landing/feature-map.jpg"
+            />
+          </Col>
+        </Row>
+      </section>
+
+      <PublicGrid columns={2}>
+        <PublicSection>
+          <Title level={3} style={{ margin: 0 }}>
+            Durable collaborative projects
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            CoCalc projects keep files, notebooks, terminals, chat, agents,
+            snapshots, backups, and history together instead of splitting work
+            across unrelated tools.
+          </Paragraph>
+        </PublicSection>
+        <PublicSection>
+          <Title level={3} style={{ margin: 0 }}>
+            Agent-aware by design
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            Codex can work in the same project context as humans: reading files,
+            using terminals, interacting with notebooks, writing documents, and
+            participating in durable chat threads.
+          </Paragraph>
+        </PublicSection>
+      </PublicGrid>
+
+      {FEATURE_GROUPS.map((group) => (
+        <section key={group.title}>
+          <Flex vertical gap={8}>
+            <Title level={2} style={{ margin: 0 }}>
+              {group.title}
+            </Title>
+            <Paragraph
+              style={{
+                color: PUBLIC_COLORS.mutedText,
+                margin: 0,
+                maxWidth: "68ch",
+              }}
+            >
+              {group.description}
+            </Paragraph>
+          </Flex>
+          <PublicGrid columns={3}>
+            {group.slugs
+              .map((slug) => pages.find((page) => page.slug === slug))
+              .filter(Boolean)
+              .map((page) =>
+                page ? (
+                  <PublicCard
+                    href={featurePath(page.slug)}
+                    key={page.slug}
+                    title={page.title}
+                  >
+                    <Paragraph style={{ margin: 0 }}>{page.summary}</Paragraph>
+                  </PublicCard>
+                ) : null,
+              )}
+          </PublicGrid>
+        </section>
+      ))}
+
+      <section>
+        <Title level={2} style={{ margin: 0 }}>
+          Full feature index
         </Title>
-        <Paragraph style={{ margin: 0 }}>
-          CoCalc still matters for notebooks, terminals, teaching, and technical
-          writing. The new CoCalc AI direction adds something more: coding
-          agents that work inside the same collaborative projects where the
-          files, notebooks, shells, and conversations already live.
-        </Paragraph>
-        <Paragraph style={{ margin: 0 }}>
-          That is a different model from bolting a generic chat box onto a
-          notebook product. It is about making agents useful for real technical
-          work, especially around Codex, inside the broader workspace.
-        </Paragraph>
-        <Flex wrap gap={12}>
-          <Button type="primary" href={featurePath("ai")}>
-            AI agents
-          </Button>
-          <Button href={featurePath("compare")}>Compare CoCalc</Button>
-        </Flex>
-      </PublicSection>
-      <PublicGrid columns={2}>
-        <PublicSection>
-          <Title level={4} style={{ margin: 0 }}>
-            Integrated technical projects
-          </Title>
-          <Paragraph style={{ margin: 0 }}>
-            Keep notebooks, Linux tools, documents, slides, and support in one
-            place instead of spreading work across separate services.
-          </Paragraph>
-        </PublicSection>
-        <PublicSection>
-          <Title level={4} style={{ margin: 0 }}>
-            Agent-native workflows
-          </Title>
-          <Paragraph style={{ margin: 0 }}>
-            Use AI where the technical work is already happening, not only in a
-            detached prompt interface.
-          </Paragraph>
-        </PublicSection>
-        <PublicSection>
-          <Title level={4} style={{ margin: 0 }}>
-            Teaching and deployment flexibility
-          </Title>
-          <Paragraph style={{ margin: 0 }}>
-            Support classes, research groups, and engineering teams, whether you
-            stay hosted or move to CoCalc Plus, Launchpad, or custom deployment.
-          </Paragraph>
-        </PublicSection>
-      </PublicGrid>
-      <PublicGrid columns={2}>
-        {pages.map((page) => (
-          <PublicCard
-            href={featurePath(page.slug)}
-            key={page.slug}
-            title={page.title}
-          >
-            <FeatureImage alt={page.title} src={page.image} />
-            <Paragraph style={{ margin: 0 }}>{page.summary}</Paragraph>
-          </PublicCard>
-        ))}
-      </PublicGrid>
+        <PublicGrid columns={3}>
+          {pages.map((page) => (
+            <PublicCard
+              href={featurePath(page.slug)}
+              key={page.slug}
+              title={page.title}
+            >
+              <Paragraph style={{ margin: 0 }}>{page.summary}</Paragraph>
+            </PublicCard>
+          ))}
+        </PublicGrid>
+      </section>
     </>
   );
 }
@@ -295,7 +387,7 @@ export default function PublicFeaturesApp({
       config={config}
       title={
         initialRoute.view === "index"
-          ? `${siteName} Features`
+          ? undefined
           : (feature?.title ?? "Features")
       }
     >

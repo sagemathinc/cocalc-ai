@@ -53,11 +53,13 @@ describe("PublicHomeApp", () => {
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", {
-        name: "CoCalc AI is becoming agent-first",
+        name: "A durable workspace for humans and agents.",
       }),
     ).not.toBeNull();
     expect(
-      screen.getByRole("heading", { name: "Core workflows" }),
+      screen.getByRole("heading", {
+        name: "Use the tools you already understand, together.",
+      }),
     ).not.toBeNull();
     await waitFor(() =>
       expect(
@@ -65,10 +67,9 @@ describe("PublicHomeApp", () => {
       ).not.toBeNull(),
     );
     expect(
-      screen.getByRole("link", { name: "Patchflow" }).getAttribute("href"),
-    ).toBe("https://github.com/sagemathinc/patchflow");
-    expect(
-      screen.getByRole("link", { name: "CoCalc Plus" }).getAttribute("href"),
+      screen
+        .getByRole("link", { name: "Get CoCalc Plus" })
+        .getAttribute("href"),
     ).toBe("/products/cocalc-plus");
     expect(
       screen
@@ -85,7 +86,7 @@ describe("PublicHomeApp", () => {
         .getByRole("link", { name: /Jupyter Notebooks/i })
         .getAttribute("href"),
     ).toBe("/features/jupyter-notebook");
-    expect(screen.getByRole("link", { name: "All news..." })).not.toBeNull();
+    expect(screen.getByRole("link", { name: "All news" })).not.toBeNull();
   });
 
   it("shows direct app actions when authenticated", () => {
@@ -102,7 +103,7 @@ describe("PublicHomeApp", () => {
       1,
     );
     expect(
-      screen.getAllByRole("link", { name: "Settings" }).length,
+      screen.getAllByRole("link", { name: "Support" }).length,
     ).toBeGreaterThan(0);
     expect(screen.queryByRole("link", { name: "Create account" })).toBeNull();
   });
