@@ -95,7 +95,6 @@ remain active.
 
 | Item                                          | Area                         | Risk                           | First investigation                                                            |
 | --------------------------------------------- | ---------------------------- | ------------------------------ | ------------------------------------------------------------------------------ |
-| Postgres WAL logs not trimmed                 | infra / backup retention     | Disk growth                    | Define retention relative to last two snapshots; measure six-hour WAL volume.  |
 | Project/account "name" fields appear unused   | product / security / sharing | Confusing and maybe misleading | Confirm no vanity URL dependency; hide/deprecate from UI if unused.            |
 | Nebius H200 Python ML packages do not see GPU | GPU images / host runtime    | GPU product credibility        | Test CUDA/PyTorch/TensorFlow image expectations separately from host hardware. |
 | Nebius/R2 backup throughput slow              | backups / host network       | Poor large-project performance | Benchmark disk, network, R2 region path, rustic config.                        |
@@ -233,7 +232,6 @@ Scope:
 
 - Backup timestamp randomness.
 - Project runtime quotas at start/restart.
-- WAL retention.
 
 Acceptance:
 
@@ -252,7 +250,9 @@ Acceptance:
   2026-05-23.
 - File delete modal remains readable for large selections. **Done 2026-05-22**
   with a bounded, wrapping selected-file list and explicit overflow count.
-- WAL retention is bounded and documented.
+- WAL retention is bounded and documented. **Done 2026-05-23** by keeping WAL
+  retention tied to recovery-ready backup manifests and publishing per-bay
+  backup `README.md` and `events.log` metadata into the R2 backup prefix.
 
 ### E. Launch Content And GPU Acceptance
 
@@ -361,6 +361,7 @@ For each blocker:
 - Disk usage reload/recompute. **Done 2026-05-23.**
 - Delete files modal overflow. **Done 2026-05-23.**
 - Community support page. **Done 2026-05-23.**
+- WAL retention documentation. **Done 2026-05-23.**
 
 ### Batch 4: Storage And Quota Honesty
 
@@ -368,7 +369,6 @@ For each blocker:
 
 ### Batch 5: Launch Polish And Infra Cleanup
 
-- WAL retention.
 - Project/account name deprecation decision.
 - Nebius H200 acceptance notes/fixes.
 
