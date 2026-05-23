@@ -75,6 +75,7 @@ Do not ship public release until these are true:
 | Agent view missing thread menu/config                | chat UI           | fixed  | Extracted the normal chat thread `...` menu into a reusable component and mounted it in inline agent chat. The agent flyout/home agent now expose appearance, behavior, export/import/fork, clear, pin/archive, and delete actions through the same handler stack as full chat.                            |
 | Backup timestamp source consistency                  | backups / hosts   | fixed  | Scheduled/automatic rustic backups now report the actual created backup snapshot time through `hosts.recordProjectBackup`, keeping `projects.last_backup` aligned with backup indexes and host backup health/needs-backup accounting.                                                                      |
 | Bulk delete hits queued/running project delete limit | projects / delete | fixed  | Browser bulk leave/delete now submits projects sequentially. When a hard delete is queued, the browser waits until that project delete LRO leaves queued/running state before submitting the next hard delete, preserving backend limits and making close-tab cancellation natural.                        |
+| Project quota/memory should apply at start/restart   | projects / quotas | fixed  | Start/restart now uses current membership/default quotas by sharing the same membership/sponsor-aware `run_quota` path used by project starts. Stopped projects' stored `run_quota` is updated during admin quota changes, and host restart recomputes before re-starting projects.                        |
 
 ### P0: Release Blockers
 
@@ -85,14 +86,13 @@ No known P0 release blockers remain in this tracker.
 These are important for first impression and support load. Fix as many as
 possible after P0s are under control.
 
-| Item                                                          | Area                 | Risk                              | First investigation                                                                                    |
-| ------------------------------------------------------------- | -------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Disk usage reload says "Updated just now" without recomputing | storage UI / quota   | Misleading quota data             | Separate "refresh cached state" from "recompute usage"; show recompute pending/running/completed time. |
-| Backup time in storage overview appears random                | backups / storage UI | Users cannot trust backups        | Confirm latest backup source field; ensure overview and tooltip use same authoritative timestamp.      |
-| Bulk delete hits queued/running project delete limit          | projects / workers   | User cannot clean up projects     | Serialize user bulk delete one-at-a-time or raise limit with backpressure; show progress.              |
-| Delete files modal breaks with many files                     | file UI              | Simple operation looks broken     | Use scrollable file list and concise summary after first N files.                                      |
-| Community support page stale                                  | support / content    | Launch support confusion          | Remove dead Discord/Google Group/GitHub Discussions references; verify Zendesk path.                   |
-| Project quota/memory should apply at start/restart            | projects / quotas    | Membership changes appear ignored | Confirm current runtime quota source on every start; invalidate stale cached limits.                   |
+| Item                                                          | Area                 | Risk                          | First investigation                                                                                    |
+| ------------------------------------------------------------- | -------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Disk usage reload says "Updated just now" without recomputing | storage UI / quota   | Misleading quota data         | Separate "refresh cached state" from "recompute usage"; show recompute pending/running/completed time. |
+| Backup time in storage overview appears random                | backups / storage UI | Users cannot trust backups    | Confirm latest backup source field; ensure overview and tooltip use same authoritative timestamp.      |
+| Bulk delete hits queued/running project delete limit          | projects / workers   | User cannot clean up projects | Serialize user bulk delete one-at-a-time or raise limit with backpressure; show progress.              |
+| Delete files modal breaks with many files                     | file UI              | Simple operation looks broken | Use scrollable file list and concise summary after first N files.                                      |
+| Community support page stale                                  | support / content    | Launch support confusion      | Remove dead Discord/Google Group/GitHub Discussions references; verify Zendesk path.                   |
 
 ### P2: Important But Can Ship With Known Notes
 
