@@ -579,9 +579,11 @@ function FeaturesIndex({ siteName }: { siteName: string }) {
 
 function FeatureDetail({
   helpEmail,
+  isAuthenticated,
   slug,
 }: {
   helpEmail?: string;
+  isAuthenticated?: boolean;
   slug: string;
 }) {
   const page = getFeaturePage(slug);
@@ -600,6 +602,14 @@ function FeatureDetail({
 
   const CustomPage =
     FEATURE_DETAIL_COMPONENTS[slug as keyof typeof FEATURE_DETAIL_COMPONENTS];
+  if (slug === "jupyter-notebook") {
+    return (
+      <JupyterNotebookFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
   if (CustomPage) {
     return <CustomPage helpEmail={helpEmail} />;
   }
@@ -705,6 +715,7 @@ export default function PublicFeaturesApp({
       {initialRoute.view === "detail" && initialRoute.slug ? (
         <FeatureDetail
           helpEmail={config?.help_email}
+          isAuthenticated={!!config?.is_authenticated}
           slug={initialRoute.slug}
         />
       ) : (

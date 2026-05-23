@@ -404,9 +404,19 @@ function WhiteboardDiagram() {
 
 export default function JupyterNotebookFeaturePage({
   helpEmail,
+  isAuthenticated,
 }: {
   helpEmail?: string;
+  isAuthenticated?: boolean;
 }) {
+  const primaryCtaHref = isAuthenticated
+    ? appPath("projects")
+    : appPath("auth/sign-up");
+  const primaryCtaLabel = isAuthenticated ? "Open projects" : "Create account";
+  const finalCtaLabel = isAuthenticated
+    ? "Open projects"
+    : "Start using Jupyter on CoCalc";
+
   return (
     <Flex vertical gap={18}>
       <PublicSection>
@@ -440,8 +450,8 @@ export default function JupyterNotebookFeaturePage({
                 tools to stay close.
               </Paragraph>
               <Flex wrap gap={12}>
-                <Button type="primary" href={appPath("auth/sign-up")}>
-                  Create account
+                <Button type="primary" href={primaryCtaHref}>
+                  {primaryCtaLabel}
                 </Button>
                 <Button href={`${GUIDE_BASE}/jupyter-notebooks/`}>
                   Read the Jupyter guide
@@ -770,31 +780,33 @@ export default function JupyterNotebookFeaturePage({
         </Col>
       </Row>
 
-      <PublicSection>
-        <Row gutter={[20, 20]} align="middle">
-          <Col xs={24} lg={15}>
-            <Title level={3} style={{ margin: 0 }}>
-              Choose CoCalc when the notebook needs to become durable work
-            </Title>
-            <Paragraph style={{ margin: "8px 0 0" }}>
-              Quick notebook tools are excellent for quick notebook tasks.
-              CoCalc is for the moment when the notebook needs collaborators, an
-              environment, a filesystem, terminals, history, agents, courses, or
-              a long-running computation around it.
-            </Paragraph>
-          </Col>
-          <Col xs={24} lg={9}>
-            <Flex wrap gap={12} justify="end">
-              <Button type="primary" href={appPath("auth/sign-up")}>
-                Start using Jupyter on CoCalc
-              </Button>
-              {helpEmail ? (
-                <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-              ) : null}
-            </Flex>
-          </Col>
-        </Row>
-      </PublicSection>
+      <div style={{ marginBottom: 44 }}>
+        <PublicSection>
+          <Row gutter={[20, 20]} align="middle">
+            <Col xs={24} lg={15}>
+              <Title level={3} style={{ margin: 0 }}>
+                Choose CoCalc when the notebook needs to become durable work
+              </Title>
+              <Paragraph style={{ margin: "8px 0 0" }}>
+                Quick notebook tools are excellent for quick notebook tasks.
+                CoCalc is for the moment when the notebook needs collaborators,
+                an environment, a filesystem, terminals, history, agents,
+                courses, or a long-running computation around it.
+              </Paragraph>
+            </Col>
+            <Col xs={24} lg={9}>
+              <Flex wrap gap={12} justify="end">
+                <Button type="primary" href={primaryCtaHref}>
+                  {finalCtaLabel}
+                </Button>
+                {helpEmail ? (
+                  <Button href={`mailto:${helpEmail}`}>Contact support</Button>
+                ) : null}
+              </Flex>
+            </Col>
+          </Row>
+        </PublicSection>
+      </div>
     </Flex>
   );
 }

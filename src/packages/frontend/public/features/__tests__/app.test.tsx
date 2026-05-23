@@ -112,6 +112,26 @@ describe("PublicFeaturesApp", () => {
     ).not.toBeNull();
   });
 
+  it("uses projects as the jupyter CTA for authenticated users", () => {
+    render(
+      <PublicFeaturesApp
+        config={{
+          help_email: "help@example.com",
+          is_authenticated: true,
+          site_name: "Launchpad",
+        }}
+        initialRoute={{ slug: "jupyter-notebook", view: "detail" }}
+      />,
+    );
+
+    const projectLinks = screen.getAllByRole("link", { name: "Open projects" });
+    expect(projectLinks.length).toBeGreaterThan(0);
+    for (const link of projectLinks) {
+      expect(link.getAttribute("href")).toBe("/projects");
+    }
+    expect(screen.queryByText("Start using Jupyter on CoCalc")).toBeNull();
+  });
+
   it("renders the richer terminal feature page", () => {
     render(
       <PublicFeaturesApp
