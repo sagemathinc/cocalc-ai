@@ -53,6 +53,15 @@ import {
   removeWithInstance as removeChatWithInstance,
 } from "@cocalc/frontend/chat/register";
 import SideChat from "@cocalc/frontend/chat/side-chat";
+import {
+  ChatRoomModals,
+  type ChatRoomModalHandlers,
+} from "@cocalc/frontend/chat/chatroom-modals";
+import {
+  ChatRoomThreadActions,
+  type ChatRoomThreadActionHandlers,
+} from "@cocalc/frontend/chat/chatroom-thread-actions";
+import { ChatRoomThreadMenu } from "@cocalc/frontend/chat/chatroom-thread-menu";
 import { groupThreadsByRecency } from "@cocalc/frontend/chat/threads";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import {
@@ -84,6 +93,7 @@ import {
 import { path_split, tab_to_path } from "@cocalc/util/misc";
 import { joinAbsolutePath } from "@cocalc/util/path-model";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { isCodexModelName } from "@cocalc/util/ai/codex";
 
 const STATUS_COLORS: Record<AgentSessionStatus, string> = {
   active: "success",
@@ -263,6 +273,10 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   );
   const [inlineActions, setInlineActions] = useState<ChatActions | null>(null);
   const [inlineError, setInlineError] = useState<string>("");
+  const [modalHandlers, setModalHandlers] =
+    useState<ChatRoomModalHandlers | null>(null);
+  const [threadActionHandlers, setThreadActionHandlers] =
+    useState<ChatRoomThreadActionHandlers | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [panelWidth, setPanelWidth] = useState<number>(0);
   const isFlyout = layout === "flyout";
@@ -736,6 +750,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       "data-selectedThreadKey": inlineSession.thread_key,
       "data-preferLatestThread": false,
       "data-showThreadImagePreview": false,
+      "data-hideChatTopControls": true,
     };
   }, [inlineSession?.thread_key]);
 
@@ -897,65 +912,49 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   function renderInlineSessionMenu(
     record: AgentSessionRecord,
   ): React.JSX.Element {
-    const resumeLabel =
-      record.entrypoint === "global" ? "Go to Home Chat" : "Go to Chat";
-    const items: MenuProps["items"] = [
-      {
-        key: "resume",
-        label: resumeLabel,
-      },
-      {
-        key: "open-file",
-        label: "Open Chat File",
-      },
-      {
-        key: "clear",
-        label: "Clear Thread",
-        disabled: updatingSessionId === record.session_id,
-      },
-      {
-        type: "divider",
-      },
-      {
-        key: "pin",
-        label: record.thread_pin ? "Unpin" : "Pin",
-        disabled: updatingSessionId === record.session_id,
-      },
-      {
-        key: "archive",
-        label: record.status === "archived" ? "Unarchive" : "Archive",
-        disabled: updatingSessionId === record.session_id,
-        danger: record.status !== "archived",
-      },
-    ];
+    const threadKey = `${record.thread_key ?? ""}`.trim();
+    const metadata = threadKey
+      ? inlineActions?.getThreadMetadata?.(threadKey, { threadId: threadKey })
+      : undefined;
+    const label = normalizedTitle(record);
+    const model =
+      metadata?.agent_model?.trim() || metadata?.acp_config?.model?.trim();
+    const isAI = Boolean(
+      metadata?.agent_kind === "acp" ||
+      metadata?.acp_config != null ||
+      isCodexModelName(`${model ?? record.model ?? ""}`),
+    );
+    if (!inlineActions || !threadKey) {
+      return <Button size="small">Actions</Button>;
+    }
     return (
-      <Dropdown
-        trigger={["click"]}
-        menu={{
-          items,
-          onClick: ({ key }) => {
-            switch (key) {
-              case "resume":
-                openNavigatorSession(record);
-                return;
-              case "open-file":
-                actions?.open_file({ path: record.chat_path });
-                return;
-              case "clear":
-                confirmClearThread(record);
-                return;
-              case "pin":
-                void togglePin(record);
-                return;
-              case "archive":
-                void toggleArchive(record);
-                return;
-            }
-          },
-        }}
-      >
-        <Button size="small">Actions</Button>
-      </Dropdown>
+      <ChatRoomThreadMenu
+        actions={inlineActions}
+        threadKey={threadKey}
+        plainLabel={label}
+        hasCustomName={Boolean(metadata?.name?.trim())}
+        isPinned={metadata?.pin ?? record.thread_pin ?? false}
+        isAI={isAI}
+        isCodexThread={isCodexModelName(`${model ?? record.model ?? ""}`)}
+        threadColor={metadata?.thread_color}
+        threadIcon={metadata?.thread_icon}
+        openAppearanceModal={
+          modalHandlers?.openAppearanceModal ?? (() => undefined)
+        }
+        openBehaviorModal={
+          modalHandlers?.openBehaviorModal ?? (() => undefined)
+        }
+        openExportModal={modalHandlers?.openExportModal ?? (() => undefined)}
+        openImportModal={modalHandlers?.openImportModal ?? (() => undefined)}
+        openForkModal={modalHandlers?.openForkModal ?? (() => undefined)}
+        confirmResetThread={() => confirmClearThread(record)}
+        confirmDeleteThread={
+          threadActionHandlers?.confirmDeleteThread ?? (() => undefined)
+        }
+        buttonType="text"
+        buttonAriaLabel="Chat thread actions"
+        buttonTestId="agents-inline-thread-menu"
+      />
     );
   }
 
@@ -1583,6 +1582,39 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             <Loading theme="medium" />
           )}
         </div>
+        {inlineActions ? (
+          <>
+            <ChatRoomModals
+              actions={inlineActions}
+              project_id={project_id}
+              path={inlineSession.chat_path}
+              selectedThreadKey={inlineSession.thread_key}
+              selectedThreadLabel={inlineTitle}
+              onHandlers={setModalHandlers}
+            />
+            <ChatRoomThreadActions
+              actions={inlineActions}
+              path={inlineSession.chat_path}
+              selectedThreadKey={inlineSession.thread_key}
+              setSelectedThreadKey={(key) => {
+                if (key == null) {
+                  closeInlineSession();
+                  return;
+                }
+                setOpenedSelection({
+                  session_id: inlineSession.session_id,
+                  chat_path: inlineSession.chat_path,
+                  thread_key: key,
+                  session: {
+                    ...inlineSession,
+                    thread_key: key,
+                  },
+                });
+              }}
+              onHandlers={setThreadActionHandlers}
+            />
+          </>
+        ) : null}
       </div>
     );
   }

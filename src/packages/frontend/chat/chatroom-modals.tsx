@@ -63,6 +63,7 @@ export interface ChatRoomModalHandlers {
 
 interface ChatRoomModalsProps {
   actions: ChatActions;
+  project_id?: string;
   path: string;
   selectedThreadKey?: string | null;
   selectedThreadLabel?: string;
@@ -80,13 +81,15 @@ type ExportRequest = {
 
 export function ChatRoomModals({
   actions,
+  project_id: projectIdProp,
   path,
   selectedThreadKey,
   selectedThreadLabel,
   onHandlers,
 }: ChatRoomModalsProps) {
   const defaultSessionMode = getDefaultCodexSessionMode();
-  const { project_id } = useFrameContext();
+  const { project_id: frameProjectId } = useFrameContext();
+  const project_id = projectIdProp ?? frameProjectId;
   const workspaceWorkingDirectory = useWorkspaceChatWorkingDirectory(path);
   const [editingThread, setEditingThread] = useState<string | null>(null);
   const [appearanceOpen, setAppearanceOpen] = useState<boolean>(false);

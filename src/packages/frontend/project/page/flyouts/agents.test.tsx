@@ -20,6 +20,12 @@ const mockEnsureWorkspaceChatPath = jest.fn();
 const mockEnsureWorkspaceChatDirectory = jest.fn();
 const mockModalConfirm = jest.fn();
 const mockAntdMessageSuccess = jest.fn();
+const mockOpenAppearanceModal = jest.fn();
+const mockOpenBehaviorModal = jest.fn();
+const mockOpenExportModal = jest.fn();
+const mockOpenImportModal = jest.fn();
+const mockOpenForkModal = jest.fn();
+const mockConfirmDeleteThread = jest.fn();
 
 function createMockSyncdb(initialState = "ready") {
   let state = initialState;
@@ -55,6 +61,13 @@ function createMockChatActions(initialState = "ready") {
     setSelectedThread: jest.fn(),
     scrollToIndex: jest.fn(),
     resetThread: jest.fn(() => "thread-2"),
+    getThreadMetadata: jest.fn(() => ({
+      agent_kind: "acp",
+      acp_config: { model: "gpt-5-codex" },
+      pin: false,
+    })),
+    setThreadPin: jest.fn(() => true),
+    setThreadArchived: jest.fn(() => true),
     syncdb: createMockSyncdb(initialState),
   } as any;
 }
@@ -196,6 +209,37 @@ jest.mock("@cocalc/frontend/chat/side-chat", () => ({
   default: () => <div data-testid="agents-inline-chat" />,
 }));
 
+jest.mock("@cocalc/frontend/chat/chatroom-modals", () => ({
+  ChatRoomModals: ({ onHandlers }: any) => {
+    const React = require("react");
+    React.useEffect(() => {
+      onHandlers?.({
+        openAppearanceModal: (...args: any[]) =>
+          mockOpenAppearanceModal(...args),
+        openBehaviorModal: (...args: any[]) => mockOpenBehaviorModal(...args),
+        openExportModal: (...args: any[]) => mockOpenExportModal(...args),
+        openImportModal: (...args: any[]) => mockOpenImportModal(...args),
+        openForkModal: (...args: any[]) => mockOpenForkModal(...args),
+      });
+    }, [onHandlers]);
+    return null;
+  },
+}));
+
+jest.mock("@cocalc/frontend/chat/chatroom-thread-actions", () => ({
+  ChatRoomThreadActions: ({ onHandlers }: any) => {
+    const React = require("react");
+    React.useEffect(() => {
+      onHandlers?.({
+        confirmDeleteThread: (...args: any[]) =>
+          mockConfirmDeleteThread(...args),
+        confirmResetThread: jest.fn(),
+      });
+    }, [onHandlers]);
+    return null;
+  },
+}));
+
 jest.mock("@cocalc/frontend/chat/thread-badge", () => ({
   ThreadBadge: () => <div />,
 }));
@@ -289,6 +333,12 @@ describe("AgentsPanel session cards", () => {
     mockAntdMessageSuccess.mockClear();
     mockEnsureWorkspaceChatPath.mockReset();
     mockEnsureWorkspaceChatDirectory.mockReset();
+    mockOpenAppearanceModal.mockClear();
+    mockOpenBehaviorModal.mockClear();
+    mockOpenExportModal.mockClear();
+    mockOpenImportModal.mockClear();
+    mockOpenForkModal.mockClear();
+    mockConfirmDeleteThread.mockClear();
     mockWatchAgentSessionsForProject.mockReset();
     mockWatchAgentSessionsForProject.mockImplementation(
       async (_args: any, cb: (records: any[]) => void) => {
@@ -410,6 +460,31 @@ describe("AgentsPanel session cards", () => {
       expect(screen.queryByTestId("agents-inline-chat")).toBeNull(),
     );
     expect(screen.getByTestId("agent-session-card-session-1")).toBeTruthy();
+  });
+
+  it("shows the full chat thread menu in the inline agent view", async () => {
+    render(<AgentsPanel project_id="project-1" layout="page" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-session-card-session-1")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByTestId("agent-session-card-session-1"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agents-inline-thread-menu")).toBeTruthy(),
+    );
+    expect(screen.getByText("Appearance...")).toBeTruthy();
+    expect(screen.getByText("Behavior...")).toBeTruthy();
+    expect(screen.getByText("Export...")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Appearance..."));
+    expect(mockOpenAppearanceModal).toHaveBeenCalledWith(
+      "thread-1",
+      "Agent session",
+      false,
+      undefined,
+      undefined,
+    );
   });
 
   it("opens the inline chat when the agent panel reveal event fires", async () => {

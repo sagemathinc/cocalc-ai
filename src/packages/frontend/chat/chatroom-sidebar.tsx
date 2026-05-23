@@ -3,11 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { MenuProps } from "antd";
 import {
   Badge,
   Button,
-  Dropdown,
   Layout,
   Modal,
   Menu,
@@ -27,6 +25,7 @@ import { ThreadBadge } from "./thread-badge";
 import { resetThreadSelectionForNewChat } from "./thread-selection";
 import type { ThreadMeta, ThreadSectionWithUnread } from "./threads";
 import type { ChatExportOpenRequest } from "./export-types";
+import { ChatRoomThreadMenu, stripThreadHtml } from "./chatroom-thread-menu";
 import type * as immutable from "immutable";
 
 const THREAD_SIDEBAR_HEADER: React.CSSProperties = {
@@ -117,11 +116,6 @@ export function resolveThreadStatusDot({
         dotColor: COLORS.BLUE,
         dotTitle: "Recent activity",
       };
-}
-
-function stripHtml(value: string): string {
-  if (!value) return "";
-  return value.replace(/<[^>]*>/g, "");
 }
 
 const THREAD_SIDEBAR_STYLE: React.CSSProperties = {
@@ -273,130 +267,6 @@ export function ChatRoomSidebarContent({
     return () => clearInterval(id);
   }, []);
 
-  const threadMenuProps = (
-    threadKey: string,
-    plainLabel: string,
-    hasCustomName: boolean,
-    isPinned: boolean,
-    isAI: boolean,
-    isCodexThread: boolean,
-    threadColor?: string,
-    threadIcon?: string,
-  ): MenuProps => {
-    const codexItems: NonNullable<MenuProps["items"]> = isCodexThread
-      ? [
-          {
-            key: "git-browser",
-            label: "Git browser",
-          },
-        ]
-      : [];
-    const automationItems: NonNullable<MenuProps["items"]> = isAI
-      ? [
-          {
-            key: "automation",
-            label: "Automation settings…",
-          },
-        ]
-      : [];
-    return {
-      items: [
-        { key: "appearance", label: "Appearance..." },
-        { key: "behavior", label: "Behavior..." },
-        {
-          key: isPinned ? "unpin" : "pin",
-          label: isPinned ? "Unpin chat" : "Pin chat",
-        },
-        {
-          key: "archive",
-          label: "Archive chat",
-        },
-        ...automationItems,
-        ...codexItems,
-        {
-          type: "divider",
-        },
-        {
-          key: "export",
-          label: "Export...",
-        },
-        {
-          key: "import",
-          label: "Import...",
-        },
-        {
-          key: "fork",
-          label: "Fork chat…",
-        },
-        {
-          key: "clear",
-          label: "Clear thread",
-        },
-        {
-          type: "divider",
-        },
-        {
-          key: "delete",
-          label: <span style={{ color: COLORS.ANTD_RED }}>Delete chat</span>,
-        },
-      ],
-      onClick: ({ key }) => {
-        if (key === "appearance") {
-          openAppearanceModal(
-            threadKey,
-            plainLabel,
-            hasCustomName,
-            threadColor,
-            threadIcon,
-          );
-        } else if (key === "behavior") {
-          openBehaviorModal(threadKey);
-        } else if (key === "pin" || key === "unpin") {
-          if (!actions?.setThreadPin) {
-            antdMessage.error("Pinning chats is not available.");
-            return;
-          }
-          const pinned = key === "pin";
-          const success = actions.setThreadPin(threadKey, pinned);
-          if (!success) {
-            antdMessage.error("Unable to update chat pin state.");
-            return;
-          }
-          antdMessage.success(pinned ? "Chat pinned." : "Chat unpinned.");
-        } else if (key === "export") {
-          openExportModal({
-            scope: "current-thread",
-            threadKey,
-            label: plainLabel,
-          });
-        } else if (key === "import") {
-          openImportModal();
-        } else if (key === "fork") {
-          openForkModal(threadKey, plainLabel, isAI);
-        } else if (key === "clear") {
-          confirmResetThread(threadKey, plainLabel);
-        } else if (key === "archive") {
-          if (!actions?.setThreadArchived) {
-            antdMessage.error("Archiving chats is not available.");
-            return;
-          }
-          const success = actions.setThreadArchived(threadKey, true);
-          if (!success) {
-            antdMessage.error("Unable to archive chat.");
-            return;
-          }
-          antdMessage.success("Chat archived.");
-        } else if (key === "automation") {
-          openAutomationModal(threadKey);
-        } else if (key === "git-browser") {
-          openGitBrowser(threadKey);
-        } else if (key === "delete") {
-          confirmDeleteThread(threadKey, plainLabel);
-        }
-      },
-    };
-  };
-
   const handleMarkSectionRead = (section: ThreadSectionWithUnread): void => {
     if (!actions?.markThreadRead) return;
     const v: { key: string; messageCount: number }[] = [];
@@ -425,7 +295,7 @@ export function ChatRoomSidebarContent({
       threadImage,
       hasCustomAppearance,
     } = thread;
-    const plainLabel = stripHtml(displayLabel);
+    const plainLabel = stripThreadHtml(displayLabel);
     const themeLineColor = threadColor ?? threadAccentColor;
     const isHovered = hoveredThread === key;
     const isMenuOpen = openThreadMenuKey === key;
@@ -513,18 +383,25 @@ export function ChatRoomSidebarContent({
             />
           )}
           {showMenu && (
-            <Dropdown
-              menu={threadMenuProps(
-                key,
-                plainLabel,
-                hasCustomName,
-                isPinned,
-                isAI,
-                isCodexThread,
-                threadColor,
-                threadIcon,
-              )}
-              trigger={["click"]}
+            <ChatRoomThreadMenu
+              actions={actions}
+              threadKey={key}
+              plainLabel={plainLabel}
+              hasCustomName={hasCustomName}
+              isPinned={isPinned}
+              isAI={isAI}
+              isCodexThread={isCodexThread}
+              threadColor={threadColor}
+              threadIcon={threadIcon}
+              openAppearanceModal={openAppearanceModal}
+              openBehaviorModal={openBehaviorModal}
+              openGitBrowser={openGitBrowser}
+              openExportModal={openExportModal}
+              openImportModal={openImportModal}
+              openForkModal={openForkModal}
+              confirmResetThread={confirmResetThread}
+              confirmDeleteThread={confirmDeleteThread}
+              openAutomationModal={openAutomationModal}
               open={openThreadMenuKey === key}
               onOpenChange={(open) => {
                 setOpenThreadMenuKey(open ? key : null);
@@ -532,14 +409,8 @@ export function ChatRoomSidebarContent({
                   setHoveredThread((prev) => (prev === key ? null : prev));
                 }
               }}
-            >
-              <Button
-                type="text"
-                size="small"
-                onClick={(event) => event.stopPropagation()}
-                icon={<Icon name="ellipsis" />}
-              />
-            </Dropdown>
+              onButtonClick={(event) => event.stopPropagation()}
+            />
           )}
         </div>
       ),
@@ -702,7 +573,9 @@ export function ChatRoomSidebarContent({
             style={{ width: "100%", maxHeight: "50vh", overflow: "auto" }}
           >
             {archivedThreads.map((thread) => {
-              const label = stripHtml(thread.displayLabel || thread.label);
+              const label = stripThreadHtml(
+                thread.displayLabel || thread.label,
+              );
               return (
                 <div
                   key={thread.key}
