@@ -168,6 +168,19 @@ Validation:
 
 - `packages/server`: `membership/site-licenses.test.ts`
 
+### Generic seat assignment could bypass site-license claim policy
+
+The public `purchases.assignMembershipPackageSeat` RPC treated site-license pools like ordinary owner-owned team packages. Since site-license pool packages are owned by the customer license owner, that owner could directly assign arbitrary accounts or reserved email seats into a site-license pool. That bypassed verified-domain matching, custom terms acceptance, manager-approval requests, and exclusive-group institutional claim tracking.
+
+Fix:
+
+- The public generic seat-assignment RPC now rejects `kind='site'` membership packages.
+- Site-license seats must be created through the site-license workflows: verified self-claim or manager-approved request. Those internal workflows still use the lower-level package assignment primitive after policy checks pass.
+
+Validation:
+
+- `packages/server`: `conat/api/purchases.test.ts`
+
 ### False email verification markers could be treated as verified
 
 `getVerifiedEmailAddressesForAccount` normalized keys but then looked up values using the normalized key. It also had a fallback that could treat a non-null false marker as verified. This mattered because site-license claims rely on verified institutional email addresses.

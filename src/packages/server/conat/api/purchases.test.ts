@@ -1251,7 +1251,7 @@ describe("purchases membership packages", () => {
     getMembershipPackageMock.mockResolvedValue({
       id: "package-1",
       owner_account_id: "owner-1",
-      kind: "site",
+      kind: "team",
       membership_class: "member",
       seat_count: 3,
     });
@@ -1277,6 +1277,33 @@ describe("purchases membership packages", () => {
       metadata: null,
     });
     expect(result.email_address).toBe("student@example.com");
+  });
+
+  it("blocks direct public assignment into site-license pools", async () => {
+    getMembershipPackageMock.mockResolvedValue({
+      id: "site-package-1",
+      owner_account_id: "owner-1",
+      kind: "site",
+      membership_class: "member",
+      seat_count: 3,
+      metadata: {
+        site_license_id: "site-license-1",
+        allowed_domains: ["example.edu"],
+      },
+    });
+
+    const { assignMembershipPackageSeat } = await import("./purchases");
+    await expect(
+      assignMembershipPackageSeat({
+        account_id: "owner-1",
+        package_id: "site-package-1",
+        target_email_address: "student@example.edu",
+      }),
+    ).rejects.toThrow(
+      "site-license seats must be claimed or approved through site-license workflows",
+    );
+
+    expect(assignMembershipPackageSeatMock).not.toHaveBeenCalled();
   });
 
   it("purchases a course package for the owner", async () => {

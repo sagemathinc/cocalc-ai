@@ -564,6 +564,11 @@ export async function assignMembershipPackageSeat({
   if (!pkg) {
     throw Error("membership package not found");
   }
+  if (pkg.kind === "site") {
+    throw Error(
+      "site-license seats must be claimed or approved through site-license workflows",
+    );
+  }
   if (pkg.owner_account_id !== account_id && !(await isAdmin(account_id))) {
     throw Error("must own membership package");
   }
