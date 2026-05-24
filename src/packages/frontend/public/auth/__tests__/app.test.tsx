@@ -805,4 +805,76 @@ describe("PublicAuthApp", () => {
       }),
     );
   });
+
+  it("prompts for fresh auth before approving a CLI login when required", async () => {
+    mockedPostAuthApi.mockResolvedValueOnce({
+      challenge_id: "challenge-1",
+      kind: "login",
+      account_id: null,
+      email_address: null,
+      display_name: null,
+      email_hint: null,
+      current_account_id: "acct-viewer",
+      current_email_address: "alice@example.com",
+      current_display_name: "Alice Example",
+      current_matches_account: true,
+      state: "pending",
+      expires_at: "2026-05-08T18:00:00.000Z",
+    } as any);
+    mockedPostAuthApi.mockRejectedValueOnce(
+      Object.assign(new Error("fresh auth is required"), {
+        code: "fresh_auth_required",
+      }),
+    );
+    mockedPostAuthApi.mockResolvedValueOnce({
+      mode: "account",
+      enabled: false,
+      methods: [],
+      email_address: "alice@example.com",
+    } as any);
+    mockedPostAuthApi.mockResolvedValueOnce({
+      fresh_auth_until: "2026-05-08T18:10:00.000Z",
+      factor_level: "none",
+    } as any);
+    mockedPostAuthApi.mockResolvedValueOnce({ approved: true } as any);
+
+    render(
+      <PublicAuthApp
+        config={config({ is_authenticated: true })}
+        initialRoute={{ challengeId: "challenge-1", kind: "auth-cli-login" }}
+      />,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Approve CLI Login",
+      }),
+    );
+
+    expect(await screen.findByText("Confirm security action")).not.toBeNull();
+    fireEvent.change(
+      screen.getByPlaceholderText(
+        "Leave blank if this account has no password",
+      ),
+      { target: { value: "current-password" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+
+    await waitFor(() =>
+      expect(mockedPostAuthApi).toHaveBeenCalledWith({
+        endpoint: "auth/fresh-auth",
+        origin: undefined,
+        body: {
+          current_password: "current-password",
+          duration: "default",
+        },
+      }),
+    );
+    await waitFor(() =>
+      expect(mockedPostAuthApi).toHaveBeenLastCalledWith({
+        endpoint: "auth/cli/login/approve",
+        body: { challenge_id: "challenge-1" },
+      }),
+    );
+  });
 });
