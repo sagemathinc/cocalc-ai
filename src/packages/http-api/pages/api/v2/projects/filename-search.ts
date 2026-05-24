@@ -12,6 +12,9 @@ import { filenameSearch } from "@cocalc/server/projects/document-activity";
 export default async function handle(req, res) {
   const { search } = getParams(req);
   try {
+    if (req.header("Authorization")) {
+      throw Error("API keys are not allowed to access browser file activity");
+    }
     const account_id = await getAccountId(req);
     if (!account_id) {
       throw Error("must be signed in");

@@ -8,6 +8,13 @@ import getParams from "@cocalc/http-api/lib/api/get-params";
 import { fileAccess } from "@cocalc/server/projects/document-activity";
 
 export default async function handle(req, res) {
+  if (req.header("Authorization")) {
+    res.json({
+      error: "API keys are not allowed to access browser file activity",
+    });
+    return;
+  }
+
   const account_id = await getAccountId(req);
   if (account_id == null) {
     // no usage to list, since not signed in.
