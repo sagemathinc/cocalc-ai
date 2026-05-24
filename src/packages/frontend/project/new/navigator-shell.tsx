@@ -40,6 +40,7 @@ import { CodexCredentialsPanel } from "@cocalc/frontend/account/codex-credential
 import { path_split } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
+import { COLORS } from "@cocalc/util/theme";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { StartButton } from "@cocalc/frontend/project/start-button";
 import {
@@ -1399,7 +1400,7 @@ export function NavigatorShell({
       </Modal>
       <div
         style={{
-          border: "1px solid #eee",
+          border: `1px solid ${COLORS.GRAY_M}`,
           borderRadius: 8,
           overflow: "hidden",
           background: "white",
