@@ -21,6 +21,7 @@ const LICENSE_TOKEN_SETTING = "software_license_token";
 const LICENSE_SERVER_URL_SETTING = "software_license_server_url";
 const LICENSE_INSTANCE_ID_SETTING = "software_license_instance_id";
 const LICENSE_PRIVATE_KEY_SETTING = "software_license_private_key";
+const ACTIVATION_EVENT_DEDUPE_INTERVAL = "24 hours";
 
 export function isLaunchpadMode(): boolean {
   return isLaunchpadProduct();
@@ -105,21 +106,10 @@ export async function activateLicenseOnServer({
   if (license.token && license.token !== token) {
     throw Error("license token does not match");
   }
-  await pool.query(
-    `INSERT INTO software_license_events
-      (id, license_id, ts, event, metadata)
-     VALUES ($1, $2, NOW(), $3, $4)`,
-    [
-      uuid(),
-      payload.license_id,
-      "activate",
-      { instance_id: instance_id ?? null },
-    ],
-  );
-  await pool.query(
-    "UPDATE software_licenses SET last_refresh_at=NOW() WHERE id=$1",
-    [payload.license_id],
-  );
+  await recordActivationRefresh({
+    license_id: payload.license_id,
+    instance_id,
+  });
   return {
     ok: true,
     license_id: payload.license_id,
@@ -127,6 +117,45 @@ export async function activateLicenseOnServer({
     tier_id: license.tier_id ?? null,
     product: payload.product,
   };
+}
+
+export async function recordActivationRefresh({
+  license_id,
+  instance_id,
+}: {
+  license_id: string;
+  instance_id?: string;
+}): Promise<void> {
+  const pool = getPool();
+  const normalizedInstanceId = `${instance_id ?? ""}`.trim() || null;
+  await pool.query(
+    `
+WITH activation_event AS (
+  INSERT INTO software_license_events
+    (id, license_id, ts, event, metadata)
+  SELECT $1, $2, NOW(), 'activate', $3::jsonb
+  WHERE NOT EXISTS (
+    SELECT 1
+      FROM software_license_events
+     WHERE license_id = $2
+       AND event = 'activate'
+       AND COALESCE(metadata->>'instance_id', '') = COALESCE($4, '')
+       AND ts >= NOW() - $5::interval
+  )
+  RETURNING id
+)
+UPDATE software_licenses
+   SET last_refresh_at = NOW()
+ WHERE id = $2
+`,
+    [
+      uuid(),
+      license_id,
+      JSON.stringify({ instance_id: normalizedInstanceId }),
+      normalizedInstanceId,
+      ACTIVATION_EVENT_DEDUPE_INTERVAL,
+    ],
+  );
 }
 
 export async function activateLicenseOnLaunchpad({ token }: { token: string }) {
