@@ -11,6 +11,9 @@ export default async function handle(req, res) {
 
   let url;
   try {
+    if (req.header("Authorization")) {
+      throw Error("API keys are not allowed to create support tickets");
+    }
     const account_id = await getAccountId(req);
     url = await createSupportTicket({
       ...(options ?? {}),
