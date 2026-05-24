@@ -428,6 +428,29 @@ describe("hosts.createHost", () => {
     );
   });
 
+  it("rejects managed cloud hosts below the minimum disk size", async () => {
+    const { createHost } = await import("./hosts");
+    await expect(
+      createHost({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        name: "tiny-gcp",
+        region: "us-west1",
+        size: "e2-standard-2",
+        machine: {
+          cloud: "gcp",
+          disk_gb: 50,
+          storage_mode: "persistent",
+        },
+      }),
+    ).rejects.toThrow("disk_gb must be at least 75 GB");
+    expect(estimateDedicatedHostRateUsdPerHourMock).not.toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO project_hosts"),
+      expect.anything(),
+    );
+  });
+
   it("creates postpaid cloud hosts with a credit-funded purchase session", async () => {
     getDedicatedHostPolicySnapshotForAccountMock = jest.fn(async () => ({
       account_id: ACCOUNT_ID,

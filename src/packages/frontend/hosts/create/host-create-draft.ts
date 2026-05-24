@@ -7,6 +7,7 @@ import type {
   HostSpotRecoveryPolicy,
 } from "@cocalc/conat/hub/api/hosts";
 import type { R2Region } from "@cocalc/util/consts";
+import { MIN_PROJECT_HOST_DISK_GB } from "@cocalc/util/project-host-limits";
 import { getDiskTypeOptions } from "../constants";
 import type { HostProvider } from "../types";
 import {
@@ -92,6 +93,7 @@ export type NormalizedHostCreateDraft = {
 
 const DEFAULT_NAME = "My host";
 const DEFAULT_DISK_GB = 100;
+const MIN_DISK_GB = MIN_PROJECT_HOST_DISK_GB;
 const NEBIUS_IO_M3_INCREMENT_GB = 93;
 
 const MANAGED_PROVIDERS = new Set<HostProvider>([
@@ -132,12 +134,13 @@ const defaultDiskTypeForProvider = (provider: HostProvider) =>
 
 const normalizeDiskSize = (provider: HostProvider, diskGb: unknown) => {
   const parsed = readPositiveInteger(diskGb) ?? DEFAULT_DISK_GB;
+  const size = Math.max(MIN_DISK_GB, parsed);
   if (provider === "nebius") {
     return (
-      Math.ceil(parsed / NEBIUS_IO_M3_INCREMENT_GB) * NEBIUS_IO_M3_INCREMENT_GB
+      Math.ceil(size / NEBIUS_IO_M3_INCREMENT_GB) * NEBIUS_IO_M3_INCREMENT_GB
     );
   }
-  return parsed;
+  return size;
 };
 
 const getFieldOptions = (

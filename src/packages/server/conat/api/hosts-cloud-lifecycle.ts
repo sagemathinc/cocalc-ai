@@ -31,6 +31,7 @@ import type {
   HostSpotRecoveryPolicy,
 } from "@cocalc/conat/hub/api/hosts";
 import type { MoneyValue } from "@cocalc/util/money";
+import { MIN_PROJECT_HOST_DISK_GB } from "@cocalc/util/project-host-limits";
 import { randomUUID } from "crypto";
 import getPool from "@cocalc/database/pool";
 import { normalizeProviderId } from "@cocalc/cloud";
@@ -115,6 +116,19 @@ function currentBillingFundingMode(
     return value;
   }
   return undefined;
+}
+
+function assertManagedHostDiskSize(machine: Host["machine"] | undefined) {
+  const provider = normalizeProviderId(machine?.cloud);
+  if (!provider || provider === "self-host" || provider === "local") {
+    return;
+  }
+  if (machine?.storage_mode === "ephemeral") return;
+  const disk = Number(machine?.disk_gb);
+  if (!Number.isFinite(disk) || disk <= 0) return;
+  if (disk < MIN_PROJECT_HOST_DISK_GB) {
+    throw new Error(`disk_gb must be at least ${MIN_PROJECT_HOST_DISK_GB} GB`);
+  }
 }
 
 async function resolveBillableHostSessionConfig({
@@ -337,6 +351,7 @@ export async function createHostInternalHelper({
     },
     gpu,
   );
+  assertManagedHostDiskSize(normalizedMachine);
   const gpuEnabled = machineHasGpu(normalizedMachine);
   const billableSession = shouldStartAfterCreate
     ? await resolveBillableHostSessionConfig({

@@ -17,6 +17,7 @@ import {
   mapCloudRegionToR2Region,
   R2_REGION_LABELS,
 } from "@cocalc/util/consts";
+import { MIN_PROJECT_HOST_DISK_GB } from "@cocalc/util/project-host-limits";
 import { COLORS } from "@cocalc/util/theme";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import { getDiskTypeOptions } from "../constants";
@@ -31,7 +32,7 @@ import {
 import { SshTargetLabel } from "./ssh-target-help";
 import { useMachineTypeSortMode } from "../hooks/use-machine-type-sort-mode";
 
-const MIN_DISK_SIZE = 50;
+const MIN_DISK_SIZE = MIN_PROJECT_HOST_DISK_GB;
 const MAX_DISK_SIZE = 10_000;
 const INITIAL_DISK_SIZE = 100;
 const NEBIUS_IO_M3_GB = 93;
