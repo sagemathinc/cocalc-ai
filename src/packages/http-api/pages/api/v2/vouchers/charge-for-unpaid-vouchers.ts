@@ -17,6 +17,9 @@ export default async function handle(req, res) {
 }
 
 async function doIt(req) {
+  if (req.header("Authorization")) {
+    throw Error("API keys are not allowed to manage voucher codes");
+  }
   const account_id = await getAccountId(req);
   if (account_id == null) {
     throw Error("must be signed in to charge for unpaid vouchers");

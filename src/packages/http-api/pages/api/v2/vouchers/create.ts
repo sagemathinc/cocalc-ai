@@ -24,6 +24,9 @@ export default async function handle(req, res) {
 }
 
 async function create(req) {
+  if (req.header("Authorization")) {
+    throw Error("API keys are not allowed to create voucher codes");
+  }
   const account_id = await getAccountId(req);
   if (account_id == null) {
     throw Error("must be signed in");
