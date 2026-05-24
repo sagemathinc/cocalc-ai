@@ -929,7 +929,11 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
               type="warning"
               showIcon
               title="Cloud catalog not loaded yet"
-              description="Before creating hosts for this provider, refresh its catalog to load regions and machine types."
+              description={
+                catalogRefreshing
+                  ? "Refreshing the provider catalog and waiting for regions and machine types to appear."
+                  : "Before creating hosts for this provider, refresh its catalog to load regions and machine types. If you just refreshed and this message persists, reload the page."
+              }
             />
             {isAdmin ? (
               <Button

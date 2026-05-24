@@ -20,6 +20,16 @@ type UseHostCatalogOptions = {
   pollMs?: number;
 };
 
+const CATALOG_REFRESH_POLL_DELAYS_MS = [400, 800, 1200, 1800, 2400, 3200];
+
+function hasCatalogEntries(catalog: HostCatalog | undefined): boolean {
+  return (catalog?.entries?.length ?? 0) > 0;
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export const useHostCatalog = (
   hub: HubClient,
   { provider, onError, pollMs }: UseHostCatalogOptions,
@@ -93,7 +103,12 @@ export const useHostCatalog = (
     try {
       await hub.hosts.updateCloudCatalog({ provider: providerOverride });
       if (providerOverride === provider) {
-        const data = await hub.hosts.getCatalog({ provider: providerOverride });
+        let data = await hub.hosts.getCatalog({ provider: providerOverride });
+        for (const waitMs of CATALOG_REFRESH_POLL_DELAYS_MS) {
+          if (hasCatalogEntries(data)) break;
+          await delay(waitMs);
+          data = await hub.hosts.getCatalog({ provider: providerOverride });
+        }
         setCatalog(data);
         setCatalogError(undefined);
       }
