@@ -23,6 +23,10 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
+import {
+  isFreshAuthRequiredError,
+  type FreshAuthActionRunner,
+} from "@cocalc/frontend/auth/fresh-auth";
 
 interface State {
   state: "view" | "edit" | "saving"; // view --> edit --> saving --> view
@@ -31,7 +35,11 @@ interface State {
   error: string;
 }
 
-export const PasswordSetting: React.FC = () => {
+interface Props {
+  runFreshAuthAction?: FreshAuthActionRunner;
+}
+
+export function PasswordSetting({ runFreshAuthAction }: Props) {
   const intl = useIntl();
   const is_mounted = useIsMountedRef();
 
@@ -58,7 +66,15 @@ export const PasswordSetting: React.FC = () => {
     set_new_password("");
   }
 
-  async function save_new_password(): Promise<void> {
+  async function runSecurityAction(action: () => Promise<void>) {
+    if (runFreshAuthAction != null) {
+      return await runFreshAuthAction(action);
+    }
+    await action();
+    return true;
+  }
+
+  async function performSaveNewPassword(): Promise<void> {
     set_state("saving");
     try {
       await webapp_client.account_client.change_password(
@@ -67,12 +83,21 @@ export const PasswordSetting: React.FC = () => {
       );
       if (!is_mounted.current) return;
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        if (!is_mounted.current) return;
+        set_state("edit");
+        throw err;
+      }
       if (!is_mounted.current) return;
       set_state("edit");
       set_error(`Error changing password -- ${err}`);
       return;
     }
     reset();
+  }
+
+  async function save_new_password(): Promise<void> {
+    await runSecurityAction(performSaveNewPassword);
   }
 
   function is_submittable(): boolean {
@@ -188,4 +213,4 @@ export const PasswordSetting: React.FC = () => {
       {state !== "view" ? render_edit() : undefined}
     </LabeledRow>
   );
-};
+}

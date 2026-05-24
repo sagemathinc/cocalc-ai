@@ -420,7 +420,7 @@ export function AccountSettings(props: Readonly<Props>) {
       // makes no sense to change password if don't have an email address
       return;
     }
-    return <PasswordSetting />;
+    return <PasswordSetting runFreshAuthAction={runFreshAuthAction} />;
   }
 
   function render_two_factor_auth(): Rendered {
@@ -502,6 +502,7 @@ export function AccountSettings(props: Readonly<Props>) {
       <EmailAddressSetting
         email_address={props.email_address}
         verify_emails={props.verify_emails}
+        runFreshAuthAction={runFreshAuthAction}
       />
     );
   }

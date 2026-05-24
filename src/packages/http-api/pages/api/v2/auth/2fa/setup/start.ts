@@ -4,6 +4,7 @@
  */
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import { assertNoImpersonationForSubjectSecurityAction } from "@cocalc/server/auth/impersonation";
 import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import { startTwoFactorSetup } from "@cocalc/server/auth/two-factor";
@@ -22,6 +23,7 @@ export default async function startTwoFactorSetupApi(req, res) {
       account_id,
       action: "configure two-factor authentication",
     });
+    await requireFreshAuth({ req, account_id });
     res.json(await startTwoFactorSetup({ account_id }));
   } catch (err) {
     res.json({

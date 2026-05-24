@@ -81,8 +81,10 @@ export default function TwoFactorAuthSetting() {
   const [renamePasskeyId, setRenamePasskeyId] = useState("");
   const [renameLabel, setRenameLabel] = useState("");
   const [freshAction, setFreshAction] = useState<
+    | { type: "setup-totp" }
     | { type: "add-passkey" }
     | { type: "disable-passkey"; factor_id: string }
+    | { type: "rename-passkey"; factor_id: string; label: string }
     | { type: "disable" }
     | { type: "rotate" }
     | null
@@ -282,13 +284,23 @@ export default function TwoFactorAuthSetting() {
                         maxLength={128}
                         onChange={(e) => setRenameLabel(e.target.value)}
                         onPressEnter={() =>
-                          renamePasskey(passkey.id, renameLabel)
+                          setFreshAction({
+                            type: "rename-passkey",
+                            factor_id: passkey.id,
+                            label: renameLabel,
+                          })
                         }
                       />
                       <Button
                         bsStyle="primary"
                         disabled={busy || renameLabel.trim().length === 0}
-                        onClick={() => renamePasskey(passkey.id, renameLabel)}
+                        onClick={() =>
+                          setFreshAction({
+                            type: "rename-passkey",
+                            factor_id: passkey.id,
+                            label: renameLabel,
+                          })
+                        }
                       >
                         Save
                       </Button>
@@ -403,7 +415,11 @@ export default function TwoFactorAuthSetting() {
           </Space>
         ) : (
           <Space wrap>
-            <Button bsStyle="primary" disabled={busy} onClick={startSetup}>
+            <Button
+              bsStyle="primary"
+              disabled={busy}
+              onClick={() => setFreshAction({ type: "setup-totp" })}
+            >
               {busy ? "Starting..." : "Set up authenticator app"}
             </Button>
             <Button
@@ -421,10 +437,14 @@ export default function TwoFactorAuthSetting() {
         open={freshAction != null && !isImpersonating}
         onCancel={() => setFreshAction(null)}
         onSuccess={async () => {
-          if (freshAction?.type === "add-passkey") {
+          if (freshAction?.type === "setup-totp") {
+            await startSetup();
+          } else if (freshAction?.type === "add-passkey") {
             await addPasskey();
           } else if (freshAction?.type === "disable-passkey") {
             await disablePasskey(freshAction.factor_id);
+          } else if (freshAction?.type === "rename-passkey") {
+            await renamePasskey(freshAction.factor_id, freshAction.label);
           } else if (freshAction?.type === "rotate") {
             await rotateRecoveryCodes();
           } else if (freshAction?.type === "disable") {

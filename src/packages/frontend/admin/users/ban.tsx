@@ -7,6 +7,10 @@ import { Component, Rendered } from "@cocalc/frontend/app-framework";
 import { Button, Popconfirm } from "antd";
 import { Icon, ErrorDisplay } from "@cocalc/frontend/components";
 import { webapp_client } from "../../webapp-client";
+import {
+  FreshAuthModal,
+  isFreshAuthRequiredError,
+} from "@cocalc/frontend/auth/fresh-auth";
 
 interface Props {
   account_id: string;
@@ -19,6 +23,7 @@ interface State {
   running: boolean;
   link?: string;
   banned: boolean;
+  freshAuthOpen: boolean;
 }
 
 export class Ban extends Component<Props, State> {
@@ -26,14 +31,18 @@ export class Ban extends Component<Props, State> {
 
   constructor(props: any) {
     super(props);
-    this.state = { running: false, banned: !!props.banned };
+    this.state = {
+      running: false,
+      banned: !!props.banned,
+      freshAuthOpen: false,
+    };
   }
 
   componentWillUnmount(): void {
     this.mounted = false;
   }
 
-  async do_request(): Promise<void> {
+  async do_request({ fromFreshAuth = false } = {}): Promise<void> {
     this.setState({ running: true });
     try {
       await webapp_client.admin_client.admin_ban_user(
@@ -43,7 +52,17 @@ export class Ban extends Component<Props, State> {
       this.setState({ running: false, banned: !this.state.banned });
     } catch (err) {
       if (!this.mounted) return;
+      if (isFreshAuthRequiredError(err)) {
+        this.setState({ freshAuthOpen: true, running: false });
+        if (fromFreshAuth) {
+          throw err;
+        }
+        return;
+      }
       this.setState({ error: `${err}`, running: false });
+      if (fromFreshAuth) {
+        throw err;
+      }
     }
   }
 
@@ -112,6 +131,13 @@ export class Ban extends Component<Props, State> {
   render(): Rendered {
     return (
       <div>
+        <FreshAuthModal
+          open={this.state.freshAuthOpen}
+          onCancel={() => this.setState({ freshAuthOpen: false })}
+          onSuccess={async () => {
+            await this.do_request({ fromFreshAuth: true });
+          }}
+        />
         <b>
           User is currently{" "}
           {this.state.banned
