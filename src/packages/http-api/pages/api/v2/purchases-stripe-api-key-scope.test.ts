@@ -17,6 +17,9 @@ const mockGetAllOpenPayments = jest.fn();
 const mockGetInvoice = jest.fn();
 const mockGetInvoiceUrl = jest.fn();
 const mockThrottle = jest.fn();
+const mockUserIsInGroup = jest.fn();
+const mockCancelPaymentIntent = jest.fn();
+const mockGetPaymentIntentAccountId = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
@@ -35,7 +38,7 @@ jest.mock("@cocalc/util/api/throttle", () => ({
 
 jest.mock("@cocalc/server/accounts/is-in-group", () => ({
   __esModule: true,
-  default: jest.fn().mockResolvedValue(false),
+  default: (...args) => mockUserIsInGroup(...args),
 }));
 
 jest.mock("@cocalc/server/purchases/stripe/get-payment-methods", () => ({
@@ -59,9 +62,18 @@ jest.mock("@cocalc/server/purchases/stripe/invoices", () => ({
   getInvoiceUrl: (...args) => mockGetInvoiceUrl(...args),
 }));
 
+jest.mock("@cocalc/server/purchases/stripe/create-payment-intent", () => ({
+  cancelPaymentIntent: (...args) => mockCancelPaymentIntent(...args),
+  getPaymentIntentAccountId: (...args) =>
+    mockGetPaymentIntentAccountId(...args),
+}));
+
 describe("Stripe billing read routes API-key scope", () => {
   const denied = {
     error: "API keys are not allowed to access Stripe billing details",
+  };
+  const mutationDenied = {
+    error: "API keys are not allowed to modify Stripe billing details",
   };
 
   beforeEach(() => {
@@ -77,6 +89,9 @@ describe("Stripe billing read routes API-key scope", () => {
     mockGetInvoiceUrl
       .mockReset()
       .mockResolvedValue("https://stripe.example/in");
+    mockUserIsInGroup.mockReset().mockResolvedValue(false);
+    mockCancelPaymentIntent.mockReset().mockResolvedValue(undefined);
+    mockGetPaymentIntentAccountId.mockReset().mockResolvedValue("acct-1");
     mockThrottle.mockReset();
   });
 
@@ -102,6 +117,45 @@ describe("Stripe billing read routes API-key scope", () => {
     expect(mockGetAccountId).not.toHaveBeenCalled();
     expect(mockThrottle).not.toHaveBeenCalled();
     expect(backendCall).not.toHaveBeenCalled();
+  });
+
+  it("rejects API-key payment-intent cancellation before account resolution", async () => {
+    const { req, res } = createMocks({
+      method: "POST",
+      headers: { Authorization: "Bearer cocalc_api_key_test" },
+      body: { id: "pi_123", reason: "requested_by_customer" },
+    });
+
+    const { default: handler } =
+      await import("./purchases/stripe/cancel-payment-intent");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual(mutationDenied);
+    expect(mockGetAccountId).not.toHaveBeenCalled();
+    expect(mockThrottle).not.toHaveBeenCalled();
+    expect(mockGetPaymentIntentAccountId).not.toHaveBeenCalled();
+    expect(mockCancelPaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("keeps browser-session payment-intent cancellation", async () => {
+    mockGetParams.mockReturnValue({
+      id: "pi_123",
+      reason: "requested_by_customer",
+    });
+    const { req, res } = createMocks({
+      method: "POST",
+      body: { id: "pi_123", reason: "requested_by_customer" },
+    });
+
+    const { default: handler } =
+      await import("./purchases/stripe/cancel-payment-intent");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({ success: true });
+    expect(mockCancelPaymentIntent).toHaveBeenCalledWith({
+      id: "pi_123",
+      reason: "requested_by_customer",
+    });
   });
 
   it("keeps browser-session payment method listing", async () => {
