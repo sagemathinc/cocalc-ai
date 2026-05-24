@@ -9,6 +9,7 @@ import { Button, Empty, Flex, Typography } from "antd";
 import { docsPath, getDocsEntry, type DocsEntry } from "@cocalc/docs";
 import {
   DocsDetailContent,
+  DocsFontSizeFrame,
   DocsIndexContent,
 } from "@cocalc/frontend/docs/browser";
 import {
@@ -37,27 +38,34 @@ function DocsIndex({ config }: { config?: PublicConfig }) {
   return (
     <PublicSectionShell active="docs" config={config}>
       <section>
-        <Flex gap="large" vertical>
-          <div>
-            <Text
-              strong
-              style={{ color: PUBLIC_COLORS.brand, textTransform: "uppercase" }}
-            >
-              CoCalc-ai documentation
-            </Text>
-            <Title style={{ marginBottom: 12, marginTop: 10 }}>
-              Current docs for this CoCalc instance.
-            </Title>
-            <Paragraph style={{ fontSize: 18, margin: 0, maxWidth: "72ch" }}>
-              These docs are served by CoCalc-ai itself, so they can evolve with
-              the product, link to the current UI, and become source material
-              for agents answering questions inside your workspace.
-            </Paragraph>
-          </div>
-          <DocsIndexContent
-            linkForEntry={(entry) => appPath(docsPath(entry.slug))}
-          />
-        </Flex>
+        <DocsFontSizeFrame>
+          <Flex gap="large" vertical>
+            <div>
+              <Text
+                strong
+                style={{
+                  color: PUBLIC_COLORS.brand,
+                  textTransform: "uppercase",
+                }}
+              >
+                CoCalc-ai documentation
+              </Text>
+              <Title style={{ marginBottom: 12, marginTop: 10 }}>
+                Current docs for this CoCalc instance.
+              </Title>
+              <Paragraph
+                style={{ fontSize: "1.125em", margin: 0, maxWidth: "72ch" }}
+              >
+                These docs are served by CoCalc-ai itself, so they can evolve
+                with the product, link to the current UI, and become source
+                material for agents answering questions inside your workspace.
+              </Paragraph>
+            </div>
+            <DocsIndexContent
+              linkForEntry={(entry) => appPath(docsPath(entry.slug))}
+            />
+          </Flex>
+        </DocsFontSizeFrame>
       </section>
     </PublicSectionShell>
   );
@@ -79,7 +87,9 @@ function DocsDetail({
   return (
     <PublicSectionShell active="docs" config={config}>
       <section>
-        <DocsDetailContent entry={entry} />
+        <DocsFontSizeFrame>
+          <DocsDetailContent entry={entry} />
+        </DocsFontSizeFrame>
       </section>
     </PublicSectionShell>
   );

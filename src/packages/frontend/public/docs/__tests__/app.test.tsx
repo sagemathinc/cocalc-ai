@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import { docsPath, getDocsEntry, searchDocsEntries } from "@cocalc/docs";
 import PublicDocsApp from "../app";
@@ -12,6 +12,10 @@ jest.mock("@cocalc/frontend/markdown/component", () => ({
 }));
 
 describe("public/docs", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
   it("parses docs routes", () => {
     expect(getDocsRouteFromPath("/docs")).toEqual({ view: "docs-index" });
     expect(getDocsRouteFromPath("/docs/projects/project-secrets")).toEqual({
@@ -48,6 +52,30 @@ describe("public/docs", () => {
     expect(
       screen.getByRole("link", { name: /Project secrets/ }),
     ).toHaveAttribute("href", "/docs/projects/project-secrets");
+  });
+
+  it("persists docs font size controls", () => {
+    render(
+      <PublicDocsApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{ view: "docs-index" }}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Increase docs font size" }),
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Reset docs font size" }),
+    ).toHaveTextContent("15px");
+    expect(window.localStorage.getItem("cocalc-docs-font-size")).toBe("15");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reset docs font size" }),
+    );
+
+    expect(window.localStorage.getItem("cocalc-docs-font-size")).toBeNull();
   });
 
   it("renders a docs detail page with action metadata", () => {
