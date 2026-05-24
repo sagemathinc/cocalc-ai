@@ -3,8 +3,6 @@ import crypto from "node:crypto";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getDerivedBayPublicHostname } from "@cocalc/server/bay-public-origin";
 import {
-  deriveProjectHostHostname,
-  deriveProjectHostSshHostname,
   deriveProjectHostSuffix,
   normalizeCloudflareHostname,
 } from "@cocalc/server/cloud/derived-domains";
@@ -523,14 +521,12 @@ export async function ensureCloudflareTunnelForHost(opts: {
 }): Promise<CloudflareTunnel | undefined> {
   const config = await getConfig();
   if (!config) return opts.existing;
-  const hostname = deriveProjectHostHostname(opts.host_id, {
-    dns: config.dns,
-    project_hosts_cloudflare_tunnel_host_suffix: config.hostSuffix,
-  });
-  const sshHostname = deriveProjectHostSshHostname(opts.host_id, {
-    dns: config.dns,
-    project_hosts_cloudflare_tunnel_host_suffix: config.hostSuffix,
-  });
+  const hostname = config.hostSuffix
+    ? `host-${opts.host_id}${config.hostSuffix}`
+    : undefined;
+  const sshHostname = config.hostSuffix
+    ? `ssh-host-${opts.host_id}${config.hostSuffix}`
+    : undefined;
   if (!hostname || !sshHostname) return opts.existing;
   const prefix = config.prefix ? `${config.prefix}-` : "";
   return await ensureCloudflareTunnel({
@@ -736,11 +732,8 @@ export async function deleteCloudflareTunnel(opts: {
   if (!config) return;
   const hostname =
     opts.tunnel?.hostname ??
-    (opts.host_id
-      ? deriveProjectHostHostname(opts.host_id, {
-          dns: config.dns,
-          project_hosts_cloudflare_tunnel_host_suffix: config.hostSuffix,
-        })
+    (opts.host_id && config.hostSuffix
+      ? `host-${opts.host_id}${config.hostSuffix}`
       : undefined);
   const sshHostname = opts.tunnel?.ssh_hostname;
   let zoneIdValue: string | undefined;

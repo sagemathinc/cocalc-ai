@@ -29,4 +29,22 @@ describe("derived cloud domains", () => {
       }),
     ).toBe("host-abc-dev.cocalc.ai");
   });
+
+  it("expands explicit bare project-host suffixes under the site domain", () => {
+    expect(
+      deriveProjectHostHostname("abc", {
+        dns: "https://lite2b.cocalc.ai",
+        project_hosts_cloudflare_tunnel_host_suffix: "lite2b",
+      }),
+    ).toBe("host-abc-lite2b.cocalc.ai");
+  });
+
+  it("nests non-site explicit bare suffixes below the site hostname", () => {
+    expect(
+      deriveProjectHostHostname("abc", {
+        dns: "https://lite2b.cocalc.ai",
+        project_hosts_cloudflare_tunnel_host_suffix: "staging",
+      }),
+    ).toBe("host-abc-staging.lite2b.cocalc.ai");
+  });
 });

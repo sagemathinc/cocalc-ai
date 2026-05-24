@@ -42,14 +42,37 @@ export function normalizeProjectHostSuffix(value: unknown): string | undefined {
   return `${separator}${host}`;
 }
 
+function explicitProjectHostSuffix(
+  value: unknown,
+  siteHostname?: string,
+): string | undefined {
+  const raw = clean(value);
+  if (!raw) return undefined;
+  const trimmed = raw.toLowerCase();
+  const lead = trimmed[0];
+  const hasExplicitSeparator = lead === "." || lead === "-";
+  const separator = hasExplicitSeparator ? lead : "-";
+  const rest = hasExplicitSeparator ? trimmed.slice(1) : trimmed;
+  const host = normalizeCloudflareHostname(rest) ?? clean(rest);
+  if (!host) return undefined;
+  if (host.includes(".") || !siteHostname) {
+    return `${separator}${host}`;
+  }
+  if (siteHostname === host || siteHostname.startsWith(`${host}.`)) {
+    return `${separator}${siteHostname}`;
+  }
+  return `${separator}${host}.${siteHostname}`;
+}
+
 export function deriveProjectHostSuffix(settings: {
   dns?: unknown;
   project_hosts_cloudflare_tunnel_host_suffix?: unknown;
 }): string | undefined {
   const siteHostname = normalizeCloudflareHostname(settings.dns);
   return (
-    normalizeProjectHostSuffix(
+    explicitProjectHostSuffix(
       settings.project_hosts_cloudflare_tunnel_host_suffix,
+      siteHostname,
     ) ??
     normalizeProjectHostSuffix(siteHostname ? `-${siteHostname}` : undefined)
   );
