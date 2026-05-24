@@ -13,9 +13,8 @@ import { StartButton } from "@cocalc/frontend/project/start-button";
 import { getProjectLifecycleView } from "@cocalc/frontend/projects/host-operational";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { COLORS } from "@cocalc/util/theme";
+import { AGENT_CHAT_MAX_WIDTH_PX } from "../agent-layout-constants";
 import { NavigatorShell } from "../../new/navigator-shell";
-
-const HOME_AGENT_MAX_WIDTH_PX = 1400;
 
 export default function HomePage() {
   const { project_id, actions } = useProjectContext();
@@ -36,7 +35,8 @@ export default function HomePage() {
     <Row
       gutter={[30, 30]}
       style={{
-        maxWidth: HOME_AGENT_MAX_WIDTH_PX,
+        width: "100%",
+        maxWidth: AGENT_CHAT_MAX_WIDTH_PX,
         margin: "0 auto",
         padding: "10px 18px",
       }}
