@@ -13,6 +13,8 @@ const mockRequireFreshAuth = jest.fn();
 const mockGetTransactionClient = jest.fn();
 const mockIsPurchaseAllowed = jest.fn();
 const mockCreateVouchers = jest.fn();
+const mockUserIsInGroup = jest.fn();
+const mockChargeForUnpaidVouchers = jest.fn();
 
 const mockClient = {
   query: jest.fn(),
@@ -46,7 +48,17 @@ jest.mock("@cocalc/server/vouchers/create-vouchers", () => ({
   default: (...args: any[]) => mockCreateVouchers(...args),
 }));
 
-describe("voucher creation fresh auth", () => {
+jest.mock("@cocalc/server/accounts/is-in-group", () => ({
+  __esModule: true,
+  default: (...args: any[]) => mockUserIsInGroup(...args),
+}));
+
+jest.mock("@cocalc/server/vouchers/charge-for-unpaid-vouchers", () => ({
+  __esModule: true,
+  default: (...args: any[]) => mockChargeForUnpaidVouchers(...args),
+}));
+
+describe("voucher fresh auth", () => {
   beforeEach(() => {
     jest.resetModules();
     mockGetAccountId.mockReset().mockResolvedValue("acct-1");
@@ -65,6 +77,13 @@ describe("voucher creation fresh auth", () => {
       id: 7,
       amount: 25,
       codes: ["AAA", "BBB"],
+    });
+    mockUserIsInGroup.mockReset().mockResolvedValue(true);
+    mockChargeForUnpaidVouchers.mockReset().mockResolvedValue({
+      7: {
+        status: "ok",
+        purchased: { quantity: 1, time: "2026-05-23T00:00:00.000Z" },
+      },
     });
     mockClient.query.mockReset().mockResolvedValue(undefined);
     mockClient.release.mockReset();
@@ -129,5 +148,53 @@ describe("voucher creation fresh auth", () => {
     });
     expect(mockClient.query).toHaveBeenCalledWith("COMMIT");
     expect(mockClient.release).toHaveBeenCalled();
+  });
+
+  it("requires fresh auth before charging unpaid expired vouchers", async () => {
+    mockRequireFreshAuth.mockRejectedValue(
+      Object.assign(new Error("fresh auth is required"), {
+        code: "fresh_auth_required",
+      }),
+    );
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } =
+      await import("./vouchers/charge-for-unpaid-vouchers");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "fresh auth is required",
+      code: "fresh_auth_required",
+    });
+    expect(mockUserIsInGroup).toHaveBeenCalledWith("acct-1", "admin");
+    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
+      req,
+      account_id: "acct-1",
+      allow_actor_impersonation: true,
+    });
+    expect(mockChargeForUnpaidVouchers).not.toHaveBeenCalled();
+  });
+
+  it("charges unpaid expired vouchers after admin fresh auth", async () => {
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } =
+      await import("./vouchers/charge-for-unpaid-vouchers");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      7: {
+        status: "ok",
+        purchased: { quantity: 1, time: "2026-05-23T00:00:00.000Z" },
+      },
+      success: true,
+    });
+    expect(mockUserIsInGroup).toHaveBeenCalledWith("acct-1", "admin");
+    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
+      req,
+      account_id: "acct-1",
+      allow_actor_impersonation: true,
+    });
+    expect(mockChargeForUnpaidVouchers).toHaveBeenCalled();
   });
 });

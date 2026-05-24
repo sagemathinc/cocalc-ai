@@ -22,6 +22,10 @@ import { useEffect, useMemo, useState } from "react";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
 import CopyToClipboard from "@cocalc/frontend/components/copy-to-clipboard";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
@@ -242,6 +246,9 @@ export function VoucherCenterPage() {
   const [showPaidOnly, setShowPaidOnly] = useState<boolean>(false);
   const [charging, setCharging] = useState<boolean>(false);
   const [chargeResult, setChargeResult] = useState<any>(null);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   async function load() {
     setLoading(true);
@@ -492,8 +499,12 @@ export function VoucherCenterPage() {
                           onClick={async () => {
                             try {
                               setCharging(true);
-                              setChargeResult(await chargeForUnpaidVouchers());
-                              await load();
+                              await runFreshAuthAction(async () => {
+                                setChargeResult(
+                                  await chargeForUnpaidVouchers(),
+                                );
+                                await load();
+                              });
                             } catch (err) {
                               setError(`${err}`);
                             } finally {
@@ -548,6 +559,7 @@ export function VoucherCenterPage() {
           .
         </Paragraph>
       </Card>
+      <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
 }
