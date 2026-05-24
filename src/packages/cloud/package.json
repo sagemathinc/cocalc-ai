@@ -23,7 +23,7 @@
   ],
   "scripts": {
     "build": "pnpm exec tsc --build",
-    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "clean": "rm -rf dist node_modules tsconfig.tsbuildinfo",
     "sea": "pnpm run build && cd sea && ./build-sea.sh",
     "test": "pnpm exec jest",
     "build:connector": "cd self-host/go && ./build-connector.sh",
