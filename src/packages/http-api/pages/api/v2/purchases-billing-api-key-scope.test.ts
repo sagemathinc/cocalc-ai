@@ -25,6 +25,7 @@ const mockResolveMembershipForAccount = jest.fn();
 const mockGetMinBalance = jest.fn();
 const mockIsPurchaseAllowed = jest.fn();
 const mockComputeMembershipChange = jest.fn();
+const mockCostToResumeSubscription = jest.fn();
 const mockThrottle = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
@@ -119,6 +120,10 @@ jest.mock("@cocalc/server/membership/tiers", () => ({
   computeMembershipChange: (...args) => mockComputeMembershipChange(...args),
 }));
 
+jest.mock("@cocalc/server/purchases/resume-subscription", () => ({
+  costToResumeSubscription: (...args) => mockCostToResumeSubscription(...args),
+}));
+
 describe("billing account read routes API-key scope", () => {
   const denied = {
     error: "API keys are not allowed to access billing account details",
@@ -150,6 +155,10 @@ describe("billing account read routes API-key scope", () => {
     mockComputeMembershipChange.mockReset().mockResolvedValue({
       charge: 0,
     });
+    mockCostToResumeSubscription.mockReset().mockResolvedValue({
+      cost: 12,
+      periodicCost: 12,
+    });
     mockThrottle.mockReset();
   });
 
@@ -169,6 +178,7 @@ describe("billing account read routes API-key scope", () => {
     ["./purchases/get-min-balance", mockGetMinBalance],
     ["./purchases/is-purchase-allowed", mockIsPurchaseAllowed],
     ["./purchases/membership-quote", mockComputeMembershipChange],
+    ["./purchases/cost-to-resume-subscription", mockCostToResumeSubscription],
   ])("rejects API-key access to %s", async (modulePath, backendCall) => {
     const { req, res } = createMocks({
       method: "POST",
@@ -215,6 +225,27 @@ describe("billing account read routes API-key scope", () => {
     expect(mockEmailStatement).toHaveBeenCalledWith({
       account_id: "acct-1",
       statement_id: 5,
+    });
+  });
+
+  it("keeps browser-session resume-cost reads", async () => {
+    mockGetParams.mockReturnValue({ subscription_id: 7 });
+    const { req, res } = createMocks({
+      method: "POST",
+      body: { subscription_id: 7 },
+    });
+
+    const { default: handler } =
+      await import("./purchases/cost-to-resume-subscription");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      cost: 12,
+      periodicCost: 12,
+    });
+    expect(mockCostToResumeSubscription).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      subscription_id: 7,
     });
   });
 });
