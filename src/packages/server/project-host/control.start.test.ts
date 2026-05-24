@@ -23,6 +23,7 @@ let assertCanRestoreProvisionedProjectStorageMock: jest.Mock;
 let cancelStaleProjectStartLrosMock: jest.Mock;
 let resolveMembershipForAccountMock: jest.Mock;
 let isAdminMock: jest.Mock;
+let interBayHostListMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -96,6 +97,23 @@ jest.mock("@cocalc/server/inter-bay/directory", () => ({
   resolveHostBayAcrossCluster: (...args: any[]) => resolveHostBayMock(...args),
 }));
 
+jest.mock("@cocalc/server/cluster-config", () => ({
+  __esModule: true,
+  getConfiguredClusterBayIdsForStaticEnumerationOnly: jest.fn(() => [
+    "bay-0",
+    "bay-9",
+  ]),
+}));
+
+jest.mock("@cocalc/server/inter-bay/bridge", () => ({
+  __esModule: true,
+  getInterBayBridge: jest.fn(() => ({
+    hostConnection: jest.fn(() => ({
+      list: (...args: any[]) => interBayHostListMock(...args),
+    })),
+  })),
+}));
+
 jest.mock("@cocalc/server/projects/rootfs-state", () => ({
   __esModule: true,
   getCurrentProjectRootfsBinding: (...args: any[]) =>
@@ -157,6 +175,7 @@ describe("startProjectOnHost placement", () => {
       bay_id: host_id === "host-2" ? "bay-7" : "bay-0",
       epoch: 0,
     }));
+    interBayHostListMock = jest.fn(async () => []);
   });
 
   it("only uses shared pool hosts for automatic placement without an account", async () => {
@@ -256,10 +275,27 @@ describe("startProjectOnHost placement", () => {
     });
   });
 
-  it("falls back to cross-bay shared pool hosts for automatic placement", async () => {
+  it("falls back to remote shared pool hosts for automatic placement", async () => {
     resolveMembershipForAccountMock = jest.fn(async () => ({
       entitlements: { features: { project_host_tier: 0 } },
     }));
+    interBayHostListMock = jest.fn(async () => [
+      {
+        id: "remote-pool-host",
+        bay_id: "bay-9",
+        name: "Remote Pool Host",
+        owner: "host-owner",
+        region: "us-west1",
+        size: "standard",
+        gpu: false,
+        status: "running",
+        tier: 0,
+        scope: "pool",
+        access_role: "pool",
+        can_place: true,
+        pressure: { zone: "normal" },
+      },
+    ]);
     let placementQuery = 0;
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (
@@ -290,22 +326,7 @@ describe("startProjectOnHost placement", () => {
         expect(params).toEqual(["account-1"]);
         expect(sql).not.toContain("COALESCE(bay_id");
         expect(sql).toContain("tier IS NOT NULL");
-        return {
-          rows: [
-            {
-              id: "remote-pool-host",
-              bay_id: "bay-9",
-              name: "Remote Pool Host",
-              region: "us-west1",
-              public_url: null,
-              internal_url: null,
-              ssh_server: null,
-              tier: 0,
-              metadata: { machine: {} },
-              delegated_access_role: null,
-            },
-          ],
-        };
+        return { rows: [] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -323,6 +344,10 @@ describe("startProjectOnHost placement", () => {
       tier: 0,
     });
     expect(placementQuery).toBe(2);
+    expect(interBayHostListMock).toHaveBeenCalledWith({
+      account_id: "account-1",
+      catalog: false,
+    });
   });
 
   it("registers a new host placement without doing the long runtime start in createProject", async () => {

@@ -143,6 +143,10 @@ export default function MoveProject({
     }
     setMoving(true);
     try {
+      if (!currentHostId) {
+        await actions.assign_project_to_host(project_id, dest_host_id);
+        return;
+      }
       const destProjectRegion = host
         ? mapCloudRegionToR2Region(host.region)
         : undefined;

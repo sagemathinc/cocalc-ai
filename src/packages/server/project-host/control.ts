@@ -1,6 +1,6 @@
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
-import type { HostPressureZone } from "@cocalc/conat/hub/api/hosts";
+import type { Host, HostPressureZone } from "@cocalc/conat/hub/api/hosts";
 import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
 import type { HostControlApi } from "@cocalc/conat/project-host/api";
 import sshKeys from "../projects/get-ssh-keys";
@@ -28,6 +28,8 @@ import { getRoutedHostControlClient } from "./client";
 import { resolveHostBayAcrossCluster } from "@cocalc/server/inter-bay/directory";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import { getConfiguredClusterBayIdsForStaticEnumerationOnly } from "@cocalc/server/cluster-config";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import type {
   HostAccessRole,
   HostEffectiveAccessRole,
@@ -58,6 +60,31 @@ type HostRegistryRow = {
   metadata?: any;
   delegated_access_role?: HostAccessRole | null;
 };
+
+function hostToRegistryRow(host: Host): HostRegistryRow {
+  return {
+    id: host.id,
+    bay_id: host.bay_id,
+    name: host.name,
+    region: host.region,
+    public_url: host.public_url,
+    internal_url: host.internal_url,
+    ssh_server: host.ssh_server,
+    tier: host.tier ?? null,
+    metadata: {
+      owner: host.owner,
+      machine: host.machine,
+      pressure: host.pressure,
+      billing: {
+        enforcement: host.billing_enforcement,
+      },
+    },
+    delegated_access_role:
+      host.access_role === "manager" || host.access_role === "user"
+        ? host.access_role
+        : null,
+  };
+}
 
 const HOST_PLACEMENT_PRESSURE_RANK: Record<HostPressureZone, number> = {
   normal: 0,
@@ -487,6 +514,38 @@ export async function selectActiveHost({
     );
     return rows;
   };
+  const loadRemoteSharedPoolCandidateRows = async () => {
+    if (!account_id) {
+      return [];
+    }
+    const currentBayId = getConfiguredBayId();
+    const remoteRows: HostRegistryRow[] = [];
+    await Promise.all(
+      getConfiguredClusterBayIdsForStaticEnumerationOnly()
+        .filter((candidateBayId) => candidateBayId !== currentBayId)
+        .map(async (candidateBayId) => {
+          try {
+            const hosts = await getInterBayBridge()
+              .hostConnection(candidateBayId)
+              .list({
+                account_id,
+                catalog: false,
+              });
+            remoteRows.push(
+              ...hosts
+                .filter((host) => host.tier != null && host.can_place !== false)
+                .map(hostToRegistryRow),
+            );
+          } catch (err) {
+            log.warn("selectActiveHost: failed remote shared-pool host scan", {
+              bay_id: candidateBayId,
+              err: `${err}`,
+            });
+          }
+        }),
+    );
+    return remoteRows;
+  };
   const choosePlaceableRow = async (rows: HostRegistryRow[]) => {
     const placeableRows = await filterRowsPlaceableByAccount({
       rows,
@@ -501,8 +560,13 @@ export async function selectActiveHost({
   const sharedPoolRow = await choosePlaceableRow(
     await loadCandidateRows({ anyBay: true, sharedPoolOnly: true }),
   );
-  if (!sharedPoolRow) return undefined;
-  return mapHostRegistryRow(sharedPoolRow);
+  if (sharedPoolRow) return mapHostRegistryRow(sharedPoolRow);
+
+  const remoteSharedPoolRow = await choosePlaceableRow(
+    await loadRemoteSharedPoolCandidateRows(),
+  );
+  if (!remoteSharedPoolRow) return undefined;
+  return mapHostRegistryRow(remoteSharedPoolRow);
 }
 
 export async function savePlacement(

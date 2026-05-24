@@ -217,6 +217,13 @@ export interface ProjectControlSetUsageAccountResponse {
   updated: boolean;
 }
 
+export interface ProjectControlAssignHostRequest {
+  project_id: string;
+  account_id: string;
+  dest_host_id: string;
+  epoch?: number;
+}
+
 export interface ProjectControlAddressRequest {
   project_id: string;
   account_id: string;
@@ -1336,6 +1343,7 @@ export type ProjectControlMethod =
   | "backup"
   | "state"
   | "set-usage-account"
+  | "assign-host"
   | "address"
   | "move"
   | "rehome"
@@ -1616,6 +1624,7 @@ export interface InterBayProjectControlApi {
   setUsageAccount: (
     opts: ProjectControlSetUsageAccountRequest,
   ) => Promise<ProjectControlSetUsageAccountResponse>;
+  assignHost: (opts: ProjectControlAssignHostRequest) => Promise<void>;
   address: (opts: ProjectControlAddressRequest) => Promise<ProjectAddress>;
   move: (
     opts: ProjectControlMoveRequest,
@@ -3065,6 +3074,15 @@ export function createInterBayProjectControlClient({
       method: "set-usage-account",
     }),
   });
+  const assignHostClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "assignHost">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectControlSubject({
+      dest_bay,
+      method: "assign-host",
+    }),
+  });
   const addressClient = createServiceClient<
     Pick<InterBayProjectControlApi, "address">
   >({
@@ -3105,6 +3123,7 @@ export function createInterBayProjectControlClient({
     state: async (opts) => await stateClient.state(opts),
     setUsageAccount: async (opts) =>
       await setUsageAccountClient.setUsageAccount(opts),
+    assignHost: async (opts) => await assignHostClient.assignHost(opts),
     address: async (opts) => await addressClient.address(opts),
     move: async (opts) => await moveClient.move(opts),
     rehome: async (opts) => await rehomeClient.rehome(opts),
@@ -5898,6 +5917,27 @@ export function createInterBayProjectControlSetUsageAccountHandler({
     }),
     impl: {
       setUsageAccount: async (opts) => await impl.setUsageAccount(opts),
+    },
+  });
+}
+
+export function createInterBayProjectControlAssignHostHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectControlApi;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayProjectControlApi, "assignHost">>({
+    ...options,
+    service: "inter-bay-project-control",
+    subject: projectControlSubject({
+      dest_bay: bay_id,
+      method: "assign-host",
+    }),
+    impl: {
+      assignHost: async (opts) => await impl.assignHost(opts),
     },
   });
 }

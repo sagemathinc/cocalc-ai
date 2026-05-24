@@ -26,6 +26,7 @@ import {
   createInterBayProjectControlHandler,
   createInterBayProjectControlAcceptRehomeHandler,
   createInterBayProjectControlSetUsageAccountHandler,
+  createInterBayProjectControlAssignHostHandler,
   createInterBayProjectControlMoveHandler,
   createInterBayProjectControlRehomeHandler,
   createInterBayProjectControlRestartHandler,
@@ -194,6 +195,7 @@ import {
   handleProjectControlCheckStartAdmission,
   handleProjectControlAcceptRehome,
   handleProjectControlSetUsageAccount,
+  handleProjectControlAssignHost,
   handleProjectControlMove,
   handleProjectControlRehome,
   handleProjectControlRestart,
@@ -1016,6 +1018,7 @@ async function startProjectControlStartService(): Promise<void> {
     state: async (opts) => await handleProjectControlState(opts),
     setUsageAccount: async (opts) =>
       await handleProjectControlSetUsageAccount(opts),
+    assignHost: async (opts) => await handleProjectControlAssignHost(opts),
     address: async (opts) => await handleProjectControlAddress(opts),
     move: async (opts) => await handleProjectControlMove(opts),
     rehome: async (opts) => await handleProjectControlRehome(opts),
@@ -1065,6 +1068,12 @@ async function startProjectControlStartService(): Promise<void> {
       impl,
     }),
     createInterBayProjectControlSetUsageAccountHandler({
+      client,
+      bay_id,
+      parallel: true,
+      impl,
+    }),
+    createInterBayProjectControlAssignHostHandler({
       client,
       bay_id,
       parallel: true,
