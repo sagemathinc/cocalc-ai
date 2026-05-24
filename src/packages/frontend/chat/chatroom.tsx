@@ -13,6 +13,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useRedux,
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
@@ -496,6 +497,11 @@ function asTrimmedString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function chatActionsStoreName(actions: ChatActions): string {
+  const name = (actions as any)?.name;
+  return typeof name === "string" && name.trim().length > 0 ? name : "";
+}
+
 export function ChatPanel({
   actions,
   project_id,
@@ -516,9 +522,30 @@ export function ChatPanel({
   onComposerReady,
 }: ChatPanelProps) {
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
+  const storeName = chatActionsStoreName(actions);
+  const actionStoreActivity = useRedux([
+    storeName,
+    "activity",
+  ]) as ChatState["activity"];
+  const editorStoreActivity = useEditor("activity");
   const activity: undefined | immutable.Map<string, number> =
-    useEditor("activity");
-  const acpState: immutable.Map<string, string> = useEditor("acpState");
+    actionStoreActivity ?? editorStoreActivity;
+  const actionStoreAcpState = useRedux([
+    storeName,
+    "acpState",
+  ]) as ChatState["acpState"];
+  const editorStoreAcpState = useEditor("acpState");
+  const acpState: immutable.Map<string, string> =
+    actionStoreAcpState ?? editorStoreAcpState;
+  const actionStoreReadStateVersion = useRedux([
+    storeName,
+    "readStateVersion",
+  ]) as ChatState["readStateVersion"] | undefined;
+  const editorStoreReadStateVersion = useEditor("readStateVersion");
+  const effectiveReadStateVersion =
+    readStateVersion ??
+    actionStoreReadStateVersion ??
+    editorStoreReadStateVersion;
   const account_id = useTypedRedux("account", "account_id");
   if (IS_MOBILE) {
     variant = "compact";
@@ -591,7 +618,7 @@ export function ChatPanel({
     accountId: account_id,
     actions,
     version: docVersion,
-    readStateVersion,
+    readStateVersion: effectiveReadStateVersion,
   });
 
   const {

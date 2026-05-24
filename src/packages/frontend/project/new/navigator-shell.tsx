@@ -40,6 +40,7 @@ import { CodexCredentialsPanel } from "@cocalc/frontend/account/codex-credential
 import { path_split } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
+import { COLORS } from "@cocalc/util/theme";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { StartButton } from "@cocalc/frontend/project/start-button";
 import {
@@ -1249,9 +1250,6 @@ export function NavigatorShell({
               optionFilterProp="label"
             />
           ) : null}
-        </Space>
-        <Space size={[4, 4]} wrap>
-          {fontControls}
           <Tooltip title="New agent thread">
             <Button
               size="small"
@@ -1261,6 +1259,9 @@ export function NavigatorShell({
               aria-label="New agent thread"
             />
           </Tooltip>
+        </Space>
+        <Space size={[4, 4]} wrap>
+          {fontControls}
           {actions && selectedThreadKey ? (
             <ChatRoomThreadMenu
               actions={actions}
@@ -1293,6 +1294,7 @@ export function NavigatorShell({
               }
               openChatFile={openChatFile}
               openGitBrowser={() => setGitBrowserOpen(true)}
+              showClearThread={false}
               buttonType="text"
               buttonAriaLabel="Agent thread actions"
               buttonTestId="navigator-thread-menu"
@@ -1398,11 +1400,11 @@ export function NavigatorShell({
       </Modal>
       <div
         style={{
-          border: "1px solid #eee",
+          border: `1px solid ${COLORS.GRAY_M}`,
           borderRadius: 8,
           overflow: "hidden",
           background: "white",
-          height: "min(70vh, 760px)",
+          height: "clamp(420px, calc(100vh - 260px), 760px)",
         }}
         {...keyboardBoundaryProps}
       >
