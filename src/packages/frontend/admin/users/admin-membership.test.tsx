@@ -4,6 +4,11 @@ import { AdminMembership } from "./admin-membership";
 const api = jest.fn();
 const getMembershipDetails = jest.fn();
 const getAdminMembership = jest.fn();
+const setAdminMembership = jest.fn();
+const clearAdminMembership = jest.fn();
+const runFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
+  await action();
+});
 
 jest.mock("antd", () => {
   const Button = ({ children, onClick }: any) => (
@@ -81,6 +86,14 @@ jest.mock("@cocalc/frontend/components", () => ({
   ErrorDisplay: ({ error }: any) => <div>{error}</div>,
 }));
 
+jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
+  FreshAuthModal: () => null,
+  useFreshAuthAction: () => ({
+    runFreshAuthAction: (...args: any[]) => runFreshAuthAction(...args),
+    freshAuthModalProps: {},
+  }),
+}));
+
 jest.mock("@cocalc/frontend/components/time-ago", () => ({
   TimeAgo: () => null,
 }));
@@ -109,8 +122,8 @@ jest.mock("@cocalc/frontend/purchases/managed-egress-history", () => ({
 jest.mock("./actions", () => ({
   actions: {
     get_admin_membership: (...args: any[]) => getAdminMembership(...args),
-    set_admin_membership: jest.fn(),
-    clear_admin_membership: jest.fn(),
+    set_admin_membership: (...args: any[]) => setAdminMembership(...args),
+    clear_admin_membership: (...args: any[]) => clearAdminMembership(...args),
   },
 }));
 
@@ -121,6 +134,64 @@ jest.mock("./account-entitlement-override", () => ({
 describe("AdminMembership", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    runFreshAuthAction.mockImplementation(
+      async (action: () => Promise<void>) => {
+        await action();
+      },
+    );
+  });
+
+  function mockLoadedMembership() {
+    getAdminMembership.mockResolvedValue({
+      account_id: "acct-1",
+      membership_class: "pro",
+      assigned_by: "admin-1",
+      assigned_at: new Date().toISOString(),
+      expires_at: null,
+      notes: null,
+    });
+    api.mockResolvedValue({ tiers: [{ id: "pro", label: "Pro" }] });
+    getMembershipDetails.mockResolvedValue({
+      candidates: [],
+      selected: { class: "pro", source: "admin" },
+    });
+  }
+
+  it("requires fresh auth before changing an admin-assigned membership", async () => {
+    mockLoadedMembership();
+    setAdminMembership.mockResolvedValue(undefined);
+
+    render(<AdminMembership account_id="acct-1" />);
+
+    await waitFor(() => expect(screen.getByText("Update")).toBeTruthy());
+
+    fireEvent.click(screen.getByText("Update"));
+
+    await waitFor(() => {
+      expect(runFreshAuthAction).toHaveBeenCalledTimes(1);
+      expect(setAdminMembership).toHaveBeenCalledWith({
+        account_id: "acct-1",
+        membership_class: "pro",
+        expires_at: null,
+        notes: null,
+      });
+    });
+  });
+
+  it("requires fresh auth before clearing an admin-assigned membership", async () => {
+    mockLoadedMembership();
+    clearAdminMembership.mockResolvedValue(undefined);
+
+    render(<AdminMembership account_id="acct-1" />);
+
+    await waitFor(() => expect(screen.getByText("Clear")).toBeTruthy());
+
+    fireEvent.click(screen.getByText("Clear"));
+
+    await waitFor(() => {
+      expect(runFreshAuthAction).toHaveBeenCalledTimes(1);
+      expect(clearAdminMembership).toHaveBeenCalledWith("acct-1");
+    });
   });
 
   it("shows an explicit usage summary for the searched user", async () => {
