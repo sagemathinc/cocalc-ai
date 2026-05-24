@@ -1406,6 +1406,9 @@ importers:
       which:
         specifier: ^2.0.2
         version: 2.0.2
+      ws:
+        specifier: ^8.20.1
+        version: 8.20.1(bufferutil@4.0.9)(utf-8-validate@6.0.5)
     devDependencies:
       '@types/express':
         specifier: ^5.0.6
