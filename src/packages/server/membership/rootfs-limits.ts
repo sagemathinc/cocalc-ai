@@ -11,7 +11,6 @@ import { getEffectiveMembershipUsageLimits } from "./effective-limits";
 import { resolveMembershipForAccount } from "./resolve";
 import { humanSize } from "@cocalc/util/misc";
 import {
-  BUILTIN_ROOTFS_IMAGES,
   isManagedRootfsImageName,
   type RootfsScanSummary,
 } from "@cocalc/util/rootfs-images";
@@ -203,10 +202,6 @@ async function loadExistingRootfs({
   };
 }
 
-function isBuiltinRootfsImage(image: string): boolean {
-  return BUILTIN_ROOTFS_IMAGES.some((entry) => entry.image === image);
-}
-
 async function catalogImageIsTrusted({
   image,
   image_id,
@@ -214,7 +209,7 @@ async function catalogImageIsTrusted({
   image: string;
   image_id?: string;
 }): Promise<boolean> {
-  if (isManagedRootfsImageName(image) || isBuiltinRootfsImage(image)) {
+  if (isManagedRootfsImageName(image)) {
     return true;
   }
   const pool = getPool("medium");
@@ -230,8 +225,12 @@ async function catalogImageIsTrusted({
     clauses.push(`runtime_image=$${params.length}`);
   }
   if (!clauses.length) return false;
-  const { rows } = await pool.query<{ trusted: boolean }>(
-    `SELECT COALESCE(official, false) OR COALESCE(prepull, false) AS trusted
+  const { rows } = await pool.query<{
+    runtime_image: string;
+    trusted: boolean;
+  }>(
+    `SELECT runtime_image,
+            COALESCE(official, false) OR COALESCE(prepull, false) AS trusted
        FROM rootfs_images
       WHERE (${clauses.join(" OR ")})
         AND COALESCE(deleted, false)=false
@@ -240,7 +239,11 @@ async function catalogImageIsTrusted({
       LIMIT 1`,
     params,
   );
-  return rows[0]?.trusted === true;
+  const row = rows[0];
+  return (
+    row?.trusted === true &&
+    isManagedRootfsImageName(`${row.runtime_image ?? ""}`.trim())
+  );
 }
 
 async function assertRootfsScanSelectionAllowed({

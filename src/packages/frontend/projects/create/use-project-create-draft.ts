@@ -86,11 +86,13 @@ export function useProjectCreateDraft({
       siteDefaultRootfsGpu,
       accountDefaultRootfs,
       accountDefaultRootfsGpu,
+      isAdmin,
     }),
     [
       accountDefaultRootfs,
       accountDefaultRootfsGpu,
       defaultTitleValue,
+      isAdmin,
       preferredRegion,
       rootfsImages,
       selectedHost,

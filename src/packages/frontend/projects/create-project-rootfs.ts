@@ -6,32 +6,37 @@ import {
 export function isNewProjectRootfsSelectable({
   entry,
   isGpu,
+  isAdmin,
 }: {
   entry: RootfsImageEntry;
   isGpu: boolean;
+  isAdmin?: boolean;
 }): boolean {
   if (entry.hidden || entry.blocked) return false;
   if (!isGpu && entry.gpu === true) return false;
+  if (!isAdmin && !isManagedRootfsImageName(entry.image)) return false;
   return true;
 }
 
 function isManagedEntry(entry: RootfsImageEntry): boolean {
-  return !!entry.release_id || isManagedRootfsImageName(entry.image);
+  return isManagedRootfsImageName(entry.image);
 }
 
 export function chooseNewProjectRootfsDefault({
   images,
   isGpu,
+  isAdmin,
   preferredImages,
   fallbackImage,
 }: {
   images: RootfsImageEntry[];
   isGpu: boolean;
+  isAdmin?: boolean;
   preferredImages: Array<string | undefined>;
   fallbackImage: string;
 }): RootfsImageEntry | undefined {
   const selectable = images.filter((entry) =>
-    isNewProjectRootfsSelectable({ entry, isGpu }),
+    isNewProjectRootfsSelectable({ entry, isGpu, isAdmin }),
   );
   if (selectable.length === 0) {
     return undefined;

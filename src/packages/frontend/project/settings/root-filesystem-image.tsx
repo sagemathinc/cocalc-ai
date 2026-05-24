@@ -65,6 +65,7 @@ import {
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { split } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import { isManagedRootfsImageName } from "@cocalc/util/rootfs-images";
 import type {
   ProjectRootfsStateEntry,
   RootfsImageEntry,
@@ -165,6 +166,7 @@ export default function RootFilesystemImage({
     "default_rootfs_image_gpu",
   );
   const isAdmin = !!useTypedRedux("account", "is_admin");
+  const canUseCustomRootfs = isAdmin;
   const rootfsPublishOps = useTypedRedux({ project_id }, "rootfs_publish_ops");
   const seenCompletedPublishOpsRef = useRef<Set<string>>(new Set());
 
@@ -192,26 +194,33 @@ export default function RootFilesystemImage({
     loading: rootfsLoading,
     error: rootfsError,
   } = useRootfsImages([managedRootfsCatalogUrl(catalogRefresh)]);
+  const selectableRootfsImages = useMemo(
+    () =>
+      canUseCustomRootfs
+        ? rootfsImages
+        : rootfsImages.filter((entry) => isManagedRootfsImageName(entry.image)),
+    [canUseCustomRootfs, rootfsImages],
+  );
 
   const selectedRootfsEntry = useMemo(() => {
     const selectedId = imageId.trim();
     if (selectedId) {
-      return rootfsImages.find((entry) => entry.id === selectedId);
+      return selectableRootfsImages.find((entry) => entry.id === selectedId);
     }
     const image = value.trim();
     if (!image) return undefined;
-    return rootfsImages.find((entry) => entry.image === image);
-  }, [imageId, rootfsImages, value]);
+    return selectableRootfsImages.find((entry) => entry.image === image);
+  }, [imageId, selectableRootfsImages, value]);
 
   const draftRootfsEntry = useMemo(() => {
     const selectedId = rootfsDraftId.trim();
     if (selectedId) {
-      return rootfsImages.find((entry) => entry.id === selectedId);
+      return selectableRootfsImages.find((entry) => entry.id === selectedId);
     }
     const image = rootfsDraft.trim();
     if (!image) return undefined;
-    return rootfsImages.find((entry) => entry.image === image);
-  }, [rootfsDraft, rootfsDraftId, rootfsImages]);
+    return selectableRootfsImages.find((entry) => entry.image === image);
+  }, [rootfsDraft, rootfsDraftId, selectableRootfsImages]);
 
   const currentProjectRootfsState = useMemo(
     () => projectRootfsStates.find((state) => state.state_role === "current"),
@@ -236,27 +245,27 @@ export default function RootFilesystemImage({
   const currentProjectRootfsEntry = useMemo(() => {
     if (!currentProjectRootfsState) return undefined;
     if (currentProjectRootfsState.image_id) {
-      const byId = rootfsImages.find(
+      const byId = selectableRootfsImages.find(
         (entry) => entry.id === currentProjectRootfsState.image_id,
       );
       if (byId) return byId;
     }
-    return rootfsImages.find(
+    return selectableRootfsImages.find(
       (entry) => entry.image === currentProjectRootfsState.image,
     );
-  }, [currentProjectRootfsState, rootfsImages]);
+  }, [currentProjectRootfsState, selectableRootfsImages]);
   const previousProjectRootfsEntry = useMemo(() => {
     if (!previousProjectRootfsState) return undefined;
     if (previousProjectRootfsState.image_id) {
-      const byId = rootfsImages.find(
+      const byId = selectableRootfsImages.find(
         (entry) => entry.id === previousProjectRootfsState.image_id,
       );
       if (byId) return byId;
     }
-    return rootfsImages.find(
+    return selectableRootfsImages.find(
       (entry) => entry.image === previousProjectRootfsState.image,
     );
-  }, [previousProjectRootfsState, rootfsImages]);
+  }, [previousProjectRootfsState, selectableRootfsImages]);
   const currentDisplayEntry = useMemo(() => {
     const liveImage = value.trim();
     const liveImageId = imageId.trim();
@@ -295,7 +304,7 @@ export default function RootFilesystemImage({
   const activeDisplayEntry = currentDisplayEntry;
   const pickerRootfsImages = useMemo(
     () =>
-      latestRootfsVersionEntries(rootfsImages, {
+      latestRootfsVersionEntries(selectableRootfsImages, {
         showOlderVersions,
         preserveIds: [rootfsDraftId, imageId, currentDisplayEntry?.id],
       }),
@@ -303,13 +312,13 @@ export default function RootFilesystemImage({
       currentDisplayEntry?.id,
       imageId,
       rootfsDraftId,
-      rootfsImages,
+      selectableRootfsImages,
       showOlderVersions,
     ],
   );
   const relatedVersionEntries = useMemo(() => {
     if (!currentDisplayEntry?.family) return [];
-    return rootfsImages
+    return selectableRootfsImages
       .filter(
         (entry) =>
           entry.id !== currentDisplayEntry.id &&
@@ -320,7 +329,7 @@ export default function RootFilesystemImage({
             entry.channel === currentDisplayEntry.channel),
       )
       .sort((a, b) => compareRootfsVersionEntries(a, b));
-  }, [currentDisplayEntry, rootfsImages]);
+  }, [currentDisplayEntry, selectableRootfsImages]);
   const suggestedUpgradeEntry = useMemo(() => {
     if (!currentDisplayEntry) return undefined;
     const explicitUpgrade = relatedVersionEntries.find(
@@ -467,11 +476,11 @@ export default function RootFilesystemImage({
     const current = getImage(rootfs, effectiveDefaultRootfs);
     const currentId = rootfs?.image_id?.trim() ?? "";
     const currentEntry =
-      rootfsImages.find((entry) => entry.id === currentId) ??
-      rootfsImages.find((entry) => entry.image === current);
+      selectableRootfsImages.find((entry) => entry.id === currentId) ??
+      selectableRootfsImages.find((entry) => entry.image === current);
     setRootfsDraft(currentEntry?.image ?? current);
     setRootfsDraftId(currentEntry?.id ?? "");
-    setRootfsMode(currentEntry ? "catalog" : "custom");
+    setRootfsMode(currentEntry || !canUseCustomRootfs ? "catalog" : "custom");
     setRootfsSearch("");
     setOpen(true);
   }
@@ -560,14 +569,24 @@ export default function RootFilesystemImage({
   }
 
   async function applyRootfsChange() {
+    if (rootfsMode === "custom" && !canUseCustomRootfs) {
+      setError("Only admins can use advanced OCI RootFS images.");
+      return;
+    }
     const nextEntry =
       rootfsMode === "catalog"
-        ? rootfsImages.find((entry) => entry.id === rootfsDraftId.trim())
+        ? selectableRootfsImages.find(
+            (entry) => entry.id === rootfsDraftId.trim(),
+          )
         : undefined;
+    if (rootfsMode === "catalog" && !nextEntry) {
+      setError("Choose a managed catalog RootFS image.");
+      return;
+    }
     const nextImage =
       rootfsMode === "custom"
         ? rootfsDraft.trim() || effectiveDefaultRootfs
-        : nextEntry?.image || effectiveDefaultRootfs;
+        : (nextEntry?.image ?? "");
     const nextImageId =
       rootfsMode === "custom" ? undefined : nextEntry?.id?.trim() || undefined;
     await applyProjectRootfsSelection({
@@ -732,11 +751,15 @@ export default function RootFilesystemImage({
     ? displayRootfsLabel(activeDisplayEntry, activeImage)
     : rootfsLoading
       ? "Loading image metadata..."
-      : "Custom OCI image";
+      : canUseCustomRootfs
+        ? "Custom OCI image"
+        : "Legacy/custom OCI image";
   const activeDescription =
     activeDisplayEntry?.description?.trim() ||
     (isCustomRootfs
-      ? "This project uses a custom image string that is not in the managed catalog. It can still run, but catalog metadata, publisher details, managed upgrade suggestions, and catalog scan metadata may be unavailable."
+      ? canUseCustomRootfs
+        ? "This project uses a custom image string that is not in the managed catalog. It can still run, but catalog metadata, publisher details, managed upgrade suggestions, and catalog scan metadata may be unavailable."
+        : "This project uses a legacy or custom OCI image. Choose a managed catalog image; only admins can set arbitrary OCI image strings."
       : "Loading managed catalog metadata for this project's runtime image.");
   const projectIsRunning = project.getIn(["state", "state"]) == "running";
 
@@ -770,7 +793,11 @@ export default function RootFilesystemImage({
                     {activeLabel}
                   </span>
                   {isCustomRootfs ? (
-                    <Tag color="default">Custom OCI image</Tag>
+                    <Tag color={canUseCustomRootfs ? "default" : "orange"}>
+                      {canUseCustomRootfs
+                        ? "Custom OCI image"
+                        : "Legacy/custom OCI image"}
+                    </Tag>
                   ) : (
                     renderRootfsTags(activeDisplayEntry)
                   )}
@@ -862,8 +889,12 @@ export default function RootFilesystemImage({
                   title="Change or upgrade image"
                   description={
                     isCustomRootfs
-                      ? "Pick a managed catalog image or replace this custom OCI image."
-                      : "Pick another managed catalog image or use an advanced OCI image."
+                      ? canUseCustomRootfs
+                        ? "Pick a managed catalog image or replace this custom OCI image."
+                        : "Pick a managed catalog image. Only admins can set arbitrary OCI images."
+                      : canUseCustomRootfs
+                        ? "Pick another managed catalog image or use an advanced OCI image."
+                        : "Pick another managed catalog image."
                   }
                   action={
                     <Button type="primary" disabled={open} onClick={openPicker}>
@@ -1148,6 +1179,13 @@ export default function RootFilesystemImage({
           }
           onOk={applyRootfsChange}
           okText="Switch image"
+          okButtonProps={{
+            loading: saving,
+            disabled:
+              rootfsMode === "catalog"
+                ? !draftRootfsEntry
+                : !canUseCustomRootfs || !rootfsDraft.trim(),
+          }}
         >
           <Alert
             type="warning"
@@ -1168,9 +1206,9 @@ export default function RootFilesystemImage({
             <div style={{ color: "#666", marginBottom: "8px" }}>
               <p>
                 Choose a managed catalog image for the normal case. Advanced
-                OCI/Docker images are still possible, but they bypass CoCalc's
-                catalog safety and metadata layer. You can change the image at
-                any time.
+                OCI/Docker images are admin-only because they bypass CoCalc's
+                catalog safety and metadata layer and can be arbitrarily large.
+                You can change the image at any time.
               </p>
               <p>
                 Changing the image changes which root filesystem lowerdir and
@@ -1247,13 +1285,15 @@ export default function RootFilesystemImage({
                     >
                       Show older versions
                     </Checkbox>
-                    <Button
-                      type="link"
-                      onClick={() => setRootfsMode("custom")}
-                      style={{ paddingLeft: 0, width: "fit-content" }}
-                    >
-                      Advanced image
-                    </Button>
+                    {canUseCustomRootfs ? (
+                      <Button
+                        type="link"
+                        onClick={() => setRootfsMode("custom")}
+                        style={{ paddingLeft: 0, width: "fit-content" }}
+                      >
+                        Advanced image
+                      </Button>
+                    ) : null}
                   </Space>
                 </div>
                 <div
@@ -1355,7 +1395,7 @@ export default function RootFilesystemImage({
                   </div>
                 ) : null}
               </>
-            ) : (
+            ) : canUseCustomRootfs ? (
               <Space
                 orientation="vertical"
                 size="small"
@@ -1392,6 +1432,13 @@ export default function RootFilesystemImage({
                   Back to managed catalog images
                 </Button>
               </Space>
+            ) : (
+              <Alert
+                type="warning"
+                showIcon
+                title="Advanced OCI images are admin-only"
+                description="Choose a managed catalog RootFS image instead."
+              />
             )}
             {rootfsError && (
               <Paragraph type="secondary" style={{ marginBottom: 0 }}>

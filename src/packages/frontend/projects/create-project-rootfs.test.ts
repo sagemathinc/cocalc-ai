@@ -77,10 +77,22 @@ describe("new project RootFS selection", () => {
     expect(selected?.id).toBe("managed");
   });
 
-  it("falls back to OCI only when no managed image is available", () => {
+  it("does not offer OCI fallback to ordinary users", () => {
     const selected = chooseNewProjectRootfsDefault({
       images: [image("base", "buildpack-deps:noble-scm", { official: true })],
       isGpu: false,
+      preferredImages: ["buildpack-deps:noble-scm"],
+      fallbackImage: "buildpack-deps:noble-scm",
+    });
+
+    expect(selected).toBeUndefined();
+  });
+
+  it("allows admins to fall back to OCI when no managed image is available", () => {
+    const selected = chooseNewProjectRootfsDefault({
+      images: [image("base", "buildpack-deps:noble-scm", { official: true })],
+      isGpu: false,
+      isAdmin: true,
       preferredImages: ["buildpack-deps:noble-scm"],
       fallbackImage: "buildpack-deps:noble-scm",
     });

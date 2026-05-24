@@ -48,6 +48,7 @@ export type ProjectCreateContext = {
   siteDefaultRootfsGpu?: string;
   accountDefaultRootfs?: string;
   accountDefaultRootfsGpu?: string;
+  isAdmin?: boolean;
 };
 
 export type ProjectCreateOptions = {
@@ -145,7 +146,11 @@ function preferredTaggedRootfsImages({
         rank: number;
       } =>
         item.rank != null &&
-        isNewProjectRootfsSelectable({ entry: item.entry, isGpu: gpu }),
+        isNewProjectRootfsSelectable({
+          entry: item.entry,
+          isGpu: gpu,
+          isAdmin: context.isAdmin,
+        }),
     )
     .sort(compareTaggedRootfsEntry)
     .map(({ entry }) => entry.image);
@@ -211,12 +216,16 @@ function defaultRootfsForDraft({
   const entry = chooseNewProjectRootfsDefault({
     images: context.rootfsImages,
     isGpu: gpu,
+    isAdmin: context.isAdmin,
     preferredImages: preferredRootfsImages({ draft, context, gpu }),
     fallbackImage: DEFAULT_PROJECT_IMAGE,
   });
   return {
     image:
-      entry?.image || clean(context.siteDefaultRootfs) || DEFAULT_PROJECT_IMAGE,
+      entry?.image ||
+      (context.isAdmin
+        ? clean(context.siteDefaultRootfs) || DEFAULT_PROJECT_IMAGE
+        : ""),
     image_id: entry?.id,
   };
 }
@@ -254,10 +263,11 @@ function rootfsSelectionIsUsable({
     image_id: draft.rootfs_image_id,
     context,
   });
-  if (!entry) return true;
+  if (!entry) return context.isAdmin === true;
   return isNewProjectRootfsSelectable({
     entry,
     isGpu: wantsGpu(draft, context),
+    isAdmin: context.isAdmin,
   });
 }
 
@@ -407,7 +417,14 @@ export function projectDraftSummary(
     warnings.push("Project title is required.");
   }
   if (!rootfsEntry && clean(draft.rootfs_image)) {
-    warnings.push("This project uses a custom OCI image.");
+    warnings.push(
+      context.isAdmin
+        ? "This project uses a custom OCI image."
+        : "This project is using an unavailable RootFS image; choose a managed catalog image.",
+    );
+  }
+  if (!clean(draft.rootfs_image)) {
+    warnings.push("Choose a managed RootFS image.");
   }
   return {
     title: draft.title,
@@ -417,7 +434,9 @@ export function projectDraftSummary(
     rootfs_image: draft.rootfs_image,
     rootfs_image_id: draft.rootfs_image_id,
     rootfsLabel:
-      rootfsEntry?.label || draft.rootfs_image || DEFAULT_PROJECT_IMAGE,
+      rootfsEntry?.label ||
+      draft.rootfs_image ||
+      (context.isAdmin ? DEFAULT_PROJECT_IMAGE : "No RootFS image selected"),
     rootfsEntry,
     host_id: draft.host_id,
     hostName: selectedHost?.name,

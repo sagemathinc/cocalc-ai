@@ -172,7 +172,7 @@ describe("project create draft", () => {
   });
 
   it("does not recalculate RootFS when only the title changes", () => {
-    const ctx = context();
+    const ctx = context({ isAdmin: true });
     const draft = setProjectDraftRootfs(
       createInitialProjectDraft(ctx),
       { image: "docker.io/library/ubuntu:24.04" },
@@ -285,9 +285,25 @@ describe("project create draft", () => {
     expect(draft.rootfs_image_id).toBe("fallback-teaching");
   });
 
-  it("falls back to the default project image when no catalog image exists", () => {
+  it("requires a managed RootFS when no catalog image exists for ordinary users", () => {
     const draft = createInitialProjectDraft(
       context({
+        rootfsImages: [],
+        siteDefaultRootfs: undefined,
+      }),
+    );
+
+    expect(draft.rootfs_image).toBe("");
+    expect(
+      projectDraftSummary(draft, context({ rootfsImages: [] })).warnings,
+    ).toContain("Choose a managed RootFS image.");
+    expect(draft.rootfs_image_id).toBeUndefined();
+  });
+
+  it("falls back to the default project image when no catalog image exists for admins", () => {
+    const draft = createInitialProjectDraft(
+      context({
+        isAdmin: true,
         rootfsImages: [],
         siteDefaultRootfs: undefined,
       }),
