@@ -25,6 +25,9 @@ function getInteger(value: unknown): number | undefined {
 
 export default async function handle(req: Request, res: Response) {
   try {
+    if (req.header("Authorization")) {
+      throw Error("API keys are not allowed to use admin HTTP API routes");
+    }
     const account_id = await getAccountId(req);
     if (account_id == null) {
       throw Error("must be signed in to edit news");
