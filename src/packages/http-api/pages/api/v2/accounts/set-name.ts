@@ -26,6 +26,10 @@ async function handle(req, res) {
 }
 
 async function get(req) {
+  if (req.header("Authorization")) {
+    throw Error("API keys are not allowed to edit account names");
+  }
+
   const client_account_id = await getAccountId(req);
 
   if (client_account_id == null) {
