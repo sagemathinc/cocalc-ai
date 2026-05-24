@@ -314,6 +314,7 @@ export async function recordPaymentIntent({
   });
   if (purpose == RESUME_SUBSCRIPTION) {
     await resumeSubscriptionSetPaymentIntent({
+      account_id,
       subscription_id: parseInt(metadata.subscription_id),
       paymentIntentId,
     });

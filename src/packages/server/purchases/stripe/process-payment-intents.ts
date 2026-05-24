@@ -364,6 +364,7 @@ ${await support()}`;
             | "year",
           allowDowngrade: paymentIntent.metadata.allow_downgrade === "true",
           storeVisibleOnly: true,
+          paymentAmount: amount,
         });
       } else if (
         paymentIntent.metadata.purpose == MEMBERSHIP_PACKAGE_PURCHASE
@@ -396,6 +397,7 @@ ${await support()}`;
             credit_id,
             expire: null,
             numVouchers: count,
+            paymentAmount: amount,
             title,
             whenPay: "now",
           });

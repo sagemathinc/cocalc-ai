@@ -23,7 +23,12 @@ import generateVouchers, {
 import { getLogger } from "@cocalc/backend/logger";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
 import dayjs from "dayjs";
-import { moneyToDbString, toDecimal } from "@cocalc/util/money";
+import {
+  moneyToDbString,
+  toDecimal,
+  type MoneyValue,
+} from "@cocalc/util/money";
+import { assertPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
 
 const log = getLogger("createVouchers");
 
@@ -51,6 +56,8 @@ interface Options {
     postfix?: string;
   };
   credit_id?: number;
+  // Amount just captured by Stripe for this voucher purchase.
+  paymentAmount?: MoneyValue;
 }
 
 export default async function createVouchers({
@@ -66,6 +73,7 @@ export default async function createVouchers({
   title,
   generate,
   credit_id,
+  paymentAmount,
 }: Options): Promise<{
   id: number;
   codes: string[];
@@ -112,6 +120,15 @@ export default async function createVouchers({
 
   const purchaseCostValue =
     purchaseCost != null ? toDecimal(purchaseCost) : amountValue.mul(count);
+  if (whenPay != "admin" && paymentAmount != null) {
+    await assertPurchaseAllowed({
+      account_id,
+      service: "voucher",
+      cost: purchaseCostValue,
+      amount: paymentAmount,
+      client,
+    });
+  }
 
   if (generate != null) {
     if (generate.length != null && generate.length < 8) {
