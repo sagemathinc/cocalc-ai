@@ -5,6 +5,7 @@
 
 export type ProjectFixedRouteTab =
   | "agents"
+  | "docs"
   | "info"
   | "log"
   | "project-home"
@@ -114,6 +115,7 @@ export function parseProjectTarget(
       };
 
     case "agents":
+    case "docs":
     case "info":
     case "log":
     case "project-home":
