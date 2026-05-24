@@ -89,4 +89,55 @@ describe("TwoFactorAuthSetting", () => {
       );
     });
   });
+
+  it("requires fresh auth before renaming a passkey", async () => {
+    jest.mocked(postAuthApi).mockImplementation(async ({ endpoint }: any) => {
+      if (endpoint === "auth/2fa/status") {
+        return {
+          enabled: true,
+          passkeys: [
+            {
+              id: "factor-1",
+              label: "Old passkey",
+              credential_id: "credential-1",
+            },
+          ],
+        };
+      }
+      if (endpoint === "auth/2fa/passkeys/rename") {
+        return {
+          passkey: {
+            id: "factor-1",
+            label: "New passkey",
+            credential_id: "credential-1",
+          },
+        };
+      }
+      throw new Error(`unexpected endpoint ${endpoint}`);
+    });
+
+    render(<TwoFactorAuthSetting />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Rename" }));
+    fireEvent.change(screen.getByDisplayValue("Old passkey"), {
+      target: { value: "New passkey" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(screen.getByTestId("fresh-auth-modal")).toBeInTheDocument();
+    expect(postAuthApi).not.toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: "auth/2fa/passkeys/rename" }),
+    );
+
+    fireEvent.click(screen.getByTestId("fresh-auth-modal"));
+
+    await waitFor(() => {
+      expect(postAuthApi).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: "auth/2fa/passkeys/rename",
+          body: { factor_id: "factor-1", label: "New passkey" },
+        }),
+      );
+    });
+  });
 });
