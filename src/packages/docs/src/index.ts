@@ -144,7 +144,7 @@ cells keep running and output is captured even if the browser disconnects.
 
 1. Open the project.
 2. Open **New**.
-3. Choose **Jupyter Notebook**.
+3. Choose **Notebook**.
 4. Pick a filename and kernel.
 5. Start running cells.
 
@@ -240,7 +240,7 @@ engagement, and comparing edits without manually creating commits.
 ## Open TimeTravel
 
 1. Open a file in the project.
-2. Open the file actions menu.
+2. Open the **View** menu.
 3. Choose **TimeTravel**.
 4. Browse versions, diffs, and recovery options.
 
@@ -249,9 +249,12 @@ course assignments.
 
 ## How to think about it
 
-TimeTravel is not a replacement for Git when you need branches, pull requests,
-or release history. It is a high-resolution, low-friction record of day-to-day
-work that is available without asking users to commit manually.
+TimeTravel can show multiple history sources for the same file. In addition to
+CoCalc's high-resolution edit history, it can browse Git revisions when the file
+is in a Git repository, and it can also expose snapshots and backups when those
+are available. Use the Git viewer when you want to inspect full commits across a
+repository; use TimeTravel when you want a fast, file-focused slider through the
+versions of the file you are editing.
 
 ## Why this matters in CoCalc
 
