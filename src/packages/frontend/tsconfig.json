@@ -7,7 +7,9 @@
     "lib": ["es5", "es6", "es2017", "dom"],
     "paths": {
       "@cocalc/app-tasks": ["../apps/tasks/src"],
-      "@cocalc/app-tasks/*": ["../apps/tasks/src/*"]
+      "@cocalc/app-tasks/*": ["../apps/tasks/src/*"],
+      "@cocalc/docs": ["../docs"],
+      "@cocalc/docs/*": ["../docs/*"]
     }
   },
   "include": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.json"],
@@ -48,6 +50,7 @@
     { "path": "../comm" },
     { "path": "../jupyter" },
     { "path": "../conat" },
+    { "path": "../docs" },
     { "path": "../sync" },
     { "path": "../util" }
   ],
