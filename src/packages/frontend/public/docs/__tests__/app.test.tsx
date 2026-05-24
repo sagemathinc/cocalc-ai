@@ -6,6 +6,11 @@ import { docsPath, getDocsEntry, searchDocsEntries } from "@cocalc/docs";
 import PublicDocsApp from "../app";
 import { getDocsRouteFromPath } from "../routes";
 
+jest.mock("@cocalc/frontend/markdown/component", () => ({
+  __esModule: true,
+  default: ({ value }: { value: string }) => <div>{value}</div>,
+}));
+
 describe("public/docs", () => {
   it("parses docs routes", () => {
     expect(getDocsRouteFromPath("/docs")).toEqual({ view: "docs-index" });
@@ -61,7 +66,7 @@ describe("public/docs", () => {
     ).not.toBeNull();
     expect(screen.getByText("settings.environment.secrets")).not.toBeNull();
     expect(
-      within(screen.getByText("Deep actions").closest(".ant-card")!)
+      within(screen.getByText("Open this in CoCalc").closest(".ant-card")!)
         .getByRole("button", { name: "Open project secrets" })
         .getAttribute("data-cocalc-action-id"),
     ).toBe("settings.environment.secrets");

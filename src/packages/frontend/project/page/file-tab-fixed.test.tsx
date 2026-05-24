@@ -77,6 +77,7 @@ jest.mock("@cocalc/frontend/project/workspaces/chat-display", () => ({
 
 jest.mock("./flyouts", () => ({
   AgentsFlyout: () => null,
+  DocsFlyout: () => null,
   FilesFlyout: () => null,
   LogFlyout: () => null,
   NewFlyout: () => null,
