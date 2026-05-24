@@ -74,7 +74,7 @@ export function ProjectDocsPanel({
                 marginTop: isFlyout ? 4 : 8,
               }}
             >
-              Help for this workspace
+              Help for this project
             </Title>
           </div>
           {isFlyout ? (
