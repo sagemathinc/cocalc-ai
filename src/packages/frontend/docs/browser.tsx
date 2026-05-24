@@ -33,6 +33,8 @@ import { COLORS } from "@cocalc/util/theme";
 
 const { Paragraph, Text, Title } = Typography;
 
+type DocsBrowserLayout = "page" | "flyout";
+
 export type DocsBrowserAction = DocsAction & {
   available?: boolean;
   implemented?: boolean;
@@ -46,12 +48,63 @@ export function DocsMarkdown({ value }: { value: string }) {
 export function DocsCard({
   entry,
   href,
+  layout = "page",
   onSelect,
 }: {
   entry: DocsEntry;
   href?: string;
+  layout?: DocsBrowserLayout;
   onSelect?: (entry: DocsEntry) => void;
 }) {
+  if (layout === "flyout") {
+    const content = (
+      <Flex gap={6} vertical>
+        <Space size={6} wrap>
+          <BookOutlined style={{ color: COLORS.BLUE }} />
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {entry.category}
+          </Text>
+        </Space>
+        <Text strong style={{ fontSize: 15, lineHeight: 1.25 }}>
+          {entry.title}
+        </Text>
+        <Text style={{ color: COLORS.GRAY_M, fontSize: 13, lineHeight: 1.35 }}>
+          {entry.summary}
+        </Text>
+        <Space size={[4, 4]} wrap>
+          {entry.audiences.slice(0, 3).map((audience) => (
+            <Tag key={audience} style={{ marginInlineEnd: 0 }}>
+              {audience}
+            </Tag>
+          ))}
+        </Space>
+      </Flex>
+    );
+
+    if (href != null) {
+      return (
+        <a href={href} style={{ color: "inherit", textDecoration: "none" }}>
+          <div style={DOCS_BROWSER_FLYOUT_ITEM_STYLE}>{content}</div>
+        </a>
+      );
+    }
+
+    return (
+      <button
+        onClick={() => onSelect?.(entry)}
+        style={{
+          ...DOCS_BROWSER_FLYOUT_ITEM_STYLE,
+          cursor: "pointer",
+          textAlign: "left",
+          width: "100%",
+        }}
+        type="button"
+      >
+        {content}
+      </button>
+    );
+  }
+
   const content = (
     <Card hoverable style={{ height: "100%" }}>
       <Flex gap="middle" vertical>
@@ -102,9 +155,11 @@ export function DocsCard({
 }
 
 export function DocsIndexContent({
+  layout = "page",
   linkForEntry,
   onSelectEntry,
 }: {
+  layout?: DocsBrowserLayout;
   linkForEntry?: (entry: DocsEntry) => string;
   onSelectEntry?: (entry: DocsEntry) => void;
 }) {
@@ -112,28 +167,42 @@ export function DocsIndexContent({
   const entries = useMemo(() => searchDocsEntries(query), [query]);
 
   return (
-    <Flex gap="large" vertical>
+    <Flex gap={layout === "flyout" ? "middle" : "large"} vertical>
       <Input
         allowClear
         aria-label="Search documentation"
         onChange={(event) => setQuery(event.target.value)}
         placeholder="Search docs"
         prefix={<SearchOutlined />}
-        size="large"
-        style={{ maxWidth: 520 }}
+        size={layout === "flyout" ? "middle" : "large"}
+        style={{ maxWidth: layout === "flyout" ? undefined : 520 }}
         value={query}
       />
-      <Row gutter={[18, 18]}>
-        {entries.map((entry) => (
-          <Col key={entry.id} lg={8} md={12} xs={24}>
+      {layout === "flyout" ? (
+        <Flex gap={10} vertical>
+          {entries.map((entry) => (
             <DocsCard
               entry={entry}
+              key={entry.id}
+              layout={layout}
               href={linkForEntry?.(entry)}
               onSelect={onSelectEntry}
             />
-          </Col>
-        ))}
-      </Row>
+          ))}
+        </Flex>
+      ) : (
+        <Row gutter={[18, 18]}>
+          {entries.map((entry) => (
+            <Col key={entry.id} lg={8} md={12} xs={24}>
+              <DocsCard
+                entry={entry}
+                href={linkForEntry?.(entry)}
+                onSelect={onSelectEntry}
+              />
+            </Col>
+          ))}
+        </Row>
+      )}
       {entries.length === 0 ? (
         <Empty description="No documentation pages match that search." />
       ) : null}
@@ -168,43 +237,49 @@ function actionState(action: DocsBrowserAction): {
 
 export function DocsActions({
   actions,
+  layout = "page",
   onRunAction,
 }: {
   actions?: DocsBrowserAction[];
+  layout?: DocsBrowserLayout;
   onRunAction?: (action: DocsBrowserAction) => void | Promise<void>;
 }) {
   if (!actions?.length) return null;
 
-  return (
-    <Card>
-      <Flex gap="middle" vertical>
-        <Space>
-          <ToolOutlined />
-          <Text strong>Open this in CoCalc</Text>
-        </Space>
+  const content = (
+    <Flex gap={layout === "flyout" ? "small" : "middle"} vertical>
+      <Space>
+        <ToolOutlined />
+        <Text strong>Open this in CoCalc</Text>
+      </Space>
+      {layout === "page" ? (
         <Paragraph style={{ margin: 0 }}>
           Docs actions are stable UI destinations. In the app they can open the
           relevant panel directly; for agents they provide precise action ids.
         </Paragraph>
-        <Space wrap>
-          {actions.map((action) => {
-            const state = actionState(action);
-            return (
-              <Button
-                data-cocalc-action-id={action.id}
-                disabled={state.disabled || onRunAction == null}
-                key={action.id}
-                onClick={() => void onRunAction?.(action)}
-                title={action.reason ?? action.description}
-                type={
-                  !state.disabled && onRunAction != null ? "primary" : "default"
-                }
-              >
-                {state.buttonText}
-              </Button>
-            );
-          })}
-        </Space>
+      ) : null}
+      <Space orientation={layout === "flyout" ? "vertical" : "horizontal"} wrap>
+        {actions.map((action) => {
+          const state = actionState(action);
+          return (
+            <Button
+              block={layout === "flyout"}
+              data-cocalc-action-id={action.id}
+              disabled={state.disabled || onRunAction == null}
+              key={action.id}
+              onClick={() => void onRunAction?.(action)}
+              size={layout === "flyout" ? "small" : "middle"}
+              title={action.reason ?? action.description}
+              type={
+                !state.disabled && onRunAction != null ? "primary" : "default"
+              }
+            >
+              {state.buttonText}
+            </Button>
+          );
+        })}
+      </Space>
+      {layout === "page" ? (
         <Space wrap>
           {actions.map((action) => {
             const state = actionState(action);
@@ -221,19 +296,27 @@ export function DocsActions({
             );
           })}
         </Space>
-      </Flex>
-    </Card>
+      ) : null}
+    </Flex>
   );
+
+  if (layout === "flyout") {
+    return <div style={DOCS_BROWSER_FLYOUT_ACTIONS_STYLE}>{content}</div>;
+  }
+
+  return <Card>{content}</Card>;
 }
 
 export function DocsDetailContent({
   actionAvailability,
   entry,
+  layout = "page",
   onBack,
   onRunAction,
 }: {
   actionAvailability?: Map<string, DocsBrowserAction>;
   entry: DocsEntry;
+  layout?: DocsBrowserLayout;
   onBack?: () => void;
   onRunAction?: (action: DocsBrowserAction) => void | Promise<void>;
 }) {
@@ -241,6 +324,43 @@ export function DocsDetailContent({
     ...action,
     ...actionAvailability?.get(action.id),
   }));
+
+  if (layout === "flyout") {
+    return (
+      <Flex gap="middle" vertical>
+        {onBack != null ? (
+          <Button
+            icon={<ArrowLeftOutlined />}
+            onClick={onBack}
+            size="small"
+            style={{ width: "fit-content" }}
+          >
+            All docs
+          </Button>
+        ) : null}
+        <Flex gap="small" vertical>
+          <Space size={[4, 4]} wrap>
+            <Tag color="blue">{entry.category}</Tag>
+            <Tag>{entry.status}</Tag>
+          </Space>
+          <Title level={3} style={{ margin: 0 }}>
+            {entry.title}
+          </Title>
+          <Text style={{ color: COLORS.GRAY_M, lineHeight: 1.4 }}>
+            {entry.summary}
+          </Text>
+        </Flex>
+        <DocsActions
+          actions={actions}
+          layout={layout}
+          onRunAction={onRunAction}
+        />
+        <div style={DOCS_BROWSER_FLYOUT_MARKDOWN_STYLE}>
+          <DocsMarkdown value={entry.body} />
+        </div>
+      </Flex>
+    );
+  }
 
   return (
     <Flex gap="large" vertical>
@@ -271,7 +391,11 @@ export function DocsDetailContent({
           </Space>
         </Flex>
       </Card>
-      <DocsActions actions={actions} onRunAction={onRunAction} />
+      <DocsActions
+        actions={actions}
+        layout={layout}
+        onRunAction={onRunAction}
+      />
       <Card>
         <DocsMarkdown value={entry.body} />
       </Card>
@@ -282,10 +406,12 @@ export function DocsDetailContent({
 export function DocsBrowser({
   actionAvailability,
   initialEntry,
+  layout = "page",
   onRunAction,
 }: {
   actionAvailability?: DocsBrowserAction[];
   initialEntry?: DocsEntry;
+  layout?: DocsBrowserLayout;
   onRunAction?: (action: DocsBrowserAction) => void | Promise<void>;
 }) {
   const [selectedEntry, setSelectedEntry] = useState<DocsEntry | undefined>(
@@ -304,13 +430,14 @@ export function DocsBrowser({
       <DocsDetailContent
         actionAvailability={actionMap}
         entry={selectedEntry}
+        layout={layout}
         onBack={() => setSelectedEntry(undefined)}
         onRunAction={onRunAction}
       />
     );
   }
 
-  return <DocsIndexContent onSelectEntry={setSelectedEntry} />;
+  return <DocsIndexContent layout={layout} onSelectEntry={setSelectedEntry} />;
 }
 
 export const DOCS_BROWSER_PAGE_STYLE: React.CSSProperties = {
@@ -320,7 +447,7 @@ export const DOCS_BROWSER_PAGE_STYLE: React.CSSProperties = {
 };
 
 export const DOCS_BROWSER_FLYOUT_STYLE: React.CSSProperties = {
-  padding: "0 18px 24px 0",
+  padding: "0 14px 24px 0",
 };
 
 export const DOCS_BROWSER_MUTED_TITLE_STYLE: React.CSSProperties = {
@@ -328,4 +455,29 @@ export const DOCS_BROWSER_MUTED_TITLE_STYLE: React.CSSProperties = {
   fontSize: 13,
   letterSpacing: 0,
   textTransform: "uppercase",
+};
+
+const DOCS_BROWSER_FLYOUT_ITEM_STYLE: React.CSSProperties = {
+  background: "#fff",
+  border: `1px solid ${COLORS.GRAY_LL}`,
+  borderRadius: 8,
+  boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)",
+  color: "inherit",
+  display: "block",
+  margin: 0,
+  padding: "12px 12px 10px",
+};
+
+const DOCS_BROWSER_FLYOUT_ACTIONS_STYLE: React.CSSProperties = {
+  background: COLORS.ANTD_BG_BLUE_L,
+  border: `1px solid ${COLORS.BLUE_LLL}`,
+  borderRadius: 8,
+  padding: 12,
+};
+
+const DOCS_BROWSER_FLYOUT_MARKDOWN_STYLE: React.CSSProperties = {
+  background: "#fff",
+  border: `1px solid ${COLORS.GRAY_LL}`,
+  borderRadius: 8,
+  padding: "4px 12px",
 };
