@@ -11,6 +11,7 @@ const mockGetAccountId = jest.fn();
 const mockGetParams = jest.fn();
 const mockUserIsInGroup = jest.fn();
 const mockSetQuotas = jest.fn();
+const mockRequireFreshAuth = jest.fn();
 const mockEditNews = jest.fn();
 const mockClearNewsCache = jest.fn();
 const mockGetNewsItem = jest.fn();
@@ -37,7 +38,12 @@ jest.mock("@cocalc/server/accounts/is-in-group", () => ({
 }));
 
 jest.mock("@cocalc/server/conat/api/projects", () => ({
+  PROJECT_DANGEROUS_INTERNAL_AUTH: Symbol("project-dangerous-internal-auth"),
   setQuotas: (...args) => mockSetQuotas(...args),
+}));
+
+jest.mock("@cocalc/server/auth/auth-sessions", () => ({
+  requireFreshAuth: (...args) => mockRequireFreshAuth(...args),
 }));
 
 jest.mock("@cocalc/server/news/edit", () => ({
@@ -87,6 +93,7 @@ describe("admin HTTP routes API-key scope", () => {
     });
     mockUserIsInGroup.mockReset().mockResolvedValue(true);
     mockSetQuotas.mockReset().mockResolvedValue(undefined);
+    mockRequireFreshAuth.mockReset().mockResolvedValue(undefined);
     mockEditNews.mockReset().mockResolvedValue({ id: 1 });
     mockClearNewsCache.mockReset();
     mockGetNewsItem.mockReset().mockResolvedValue({ id: 1 });
@@ -152,6 +159,12 @@ describe("admin HTTP routes API-key scope", () => {
       memory_request: undefined,
       network: undefined,
       project_id: projectId,
+      internalAuth: expect.any(Symbol),
+    });
+    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
+      req,
+      account_id: "admin-acct",
+      allow_actor_impersonation: true,
     });
   });
 });
