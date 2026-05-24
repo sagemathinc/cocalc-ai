@@ -3,13 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Input, Modal, Space } from "antd";
+import { Alert, Button, Input, Modal, Progress, Space } from "antd";
 import { useState } from "react";
 
 import { Icon } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
 
 import { IconBadge, InfoRow, InfoSection } from "./hard-delete-project-modal";
+import type { BulkLeaveOrDeleteProgress } from "./projects-bulk-delete";
 
 export type LeaveOrDeleteProjectsPlan = {
   deleteIds: string[];
@@ -26,6 +27,7 @@ interface Props {
   projectTitle: (project_id: string) => string;
   onCancel: () => void;
   onConfirm: () => Promise<void>;
+  progress?: BulkLeaveOrDeleteProgress | null;
 }
 
 const CONFIRMATION_TEXT = "LEAVE OR DELETE";
@@ -37,6 +39,7 @@ export function LeaveOrDeleteProjectsModal({
   projectTitle,
   onCancel,
   onConfirm,
+  progress,
 }: Readonly<Props>) {
   const [confirmation, setConfirmation] = useState("");
   const [processing, setProcessing] = useState(false);
@@ -117,6 +120,27 @@ export function LeaveOrDeleteProjectsModal({
             showIcon
             message="Unable to leave or delete projects"
             description={error}
+          />
+        ) : undefined}
+        {processing && progress ? (
+          <Alert
+            type="info"
+            showIcon
+            message={bulkProgressMessage(progress, projectTitle)}
+            description={
+              <Space direction="vertical" size={4} style={{ width: "100%" }}>
+                <Progress
+                  percent={Math.round(
+                    (100 * progress.completed) / Math.max(1, progress.total),
+                  )}
+                  status="active"
+                />
+                <span>
+                  Completed {progress.completed} of {progress.total}
+                  {progress.failed > 0 ? `; ${progress.failed} failed` : ""}.
+                </span>
+              </Space>
+            }
           />
         ) : undefined}
         <div style={{ color: COLORS.GRAY_M }}>
@@ -216,6 +240,22 @@ export function LeaveOrDeleteProjectsModal({
       </Space>
     </Modal>
   );
+}
+
+function bulkProgressMessage(
+  progress: BulkLeaveOrDeleteProgress,
+  projectTitle: (project_id: string) => string,
+): string {
+  const title = progress.project_id
+    ? projectTitle(progress.project_id)
+    : undefined;
+  if (progress.phase === "waiting") {
+    return `Waiting for deletion cleanup to leave queued/running state${title ? `: ${title}` : ""}`;
+  }
+  if (progress.phase === "done") {
+    return "Bulk leave/delete complete";
+  }
+  return `Submitting project ${progress.current} of ${progress.total}${title ? `: ${title}` : ""}`;
 }
 
 function ProjectList({

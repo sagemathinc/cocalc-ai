@@ -265,4 +265,196 @@ describe("BaseProject.start RootFS sealing", () => {
       },
     });
   });
+
+  it("recomputes stored run_quota for stopped projects without restarting", async () => {
+    const OWNER_ID = "33333333-3333-4333-8333-333333333333";
+    const updateCalls: any[] = [];
+
+    queryTableMock = jest.fn(async (opts: any) => {
+      if (opts?.select?.includes("state")) {
+        return {
+          state: { state: "opened" },
+          run_quota: { memory_limit: 1000, disk_quota: 1000 },
+        };
+      }
+      if (opts?.select?.includes("runtime_sponsor_account_id")) {
+        return {
+          settings: { memory: 1000, disk_quota: 1000 },
+          users: { [OWNER_ID]: { group: "owner" } },
+          last_active: null,
+          last_started_by: null,
+          runtime_sponsor_account_id: null,
+          usage_account_id: null,
+        };
+      }
+      if (opts?.query === "UPDATE projects") {
+        updateCalls.push(opts);
+        return {};
+      }
+      throw new Error(`unexpected query table call: ${JSON.stringify(opts)}`);
+    });
+
+    const projectDefaults =
+      await import("@cocalc/server/membership/project-defaults");
+    jest
+      .mocked(projectDefaults.getMembershipProjectDefaultsForAccount)
+      .mockImplementation(async (account_id?: string) => {
+        if (account_id === OWNER_ID) {
+          return { memory: 4000, disk_quota: 5000 };
+        }
+        return {};
+      });
+    jest
+      .mocked(projectDefaults.mergeProjectSettingsWithMembership)
+      .mockImplementation((settings: any, defaults: any) => ({
+        ...(settings ?? {}),
+        ...(defaults ?? {}),
+      }));
+
+    const quotaModule = await import("@cocalc/util/upgrades/quota");
+    jest.mocked(quotaModule.quota).mockImplementation((settings: any) => ({
+      memory_limit: settings?.memory ?? 0,
+      disk_quota: settings?.disk_quota ?? 0,
+    }));
+
+    const { BaseProject } = await import("./base");
+    const project = new BaseProject(PROJECT_ID);
+
+    await project.setAllQuotas();
+
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].set).toEqual({
+      run_quota: { memory_limit: 4000, disk_quota: 5000 },
+    });
+    expect(startProjectOnHostMock).not.toHaveBeenCalled();
+    expect(stopProjectOnHostMock).not.toHaveBeenCalled();
+  });
+
+  it("restarts active projects when non-idle runtime quotas change", async () => {
+    const OWNER_ID = "33333333-3333-4333-8333-333333333333";
+
+    queryTableMock = jest.fn(async (opts: any) => {
+      if (opts?.select?.includes("state")) {
+        return {
+          state: { state: "running" },
+          run_quota: {
+            memory_limit: 1000,
+            disk_quota: 1000,
+            idle_timeout: 600,
+          },
+        };
+      }
+      if (opts?.select?.includes("runtime_sponsor_account_id")) {
+        return {
+          settings: { memory: 1000, disk_quota: 1000 },
+          users: { [OWNER_ID]: { group: "owner" } },
+          last_active: null,
+          last_started_by: null,
+          runtime_sponsor_account_id: null,
+          usage_account_id: null,
+        };
+      }
+      if (opts?.query === "UPDATE projects") {
+        return {};
+      }
+      throw new Error(`unexpected query table call: ${JSON.stringify(opts)}`);
+    });
+
+    const projectDefaults =
+      await import("@cocalc/server/membership/project-defaults");
+    jest
+      .mocked(projectDefaults.getMembershipProjectDefaultsForAccount)
+      .mockImplementation(async (account_id?: string) => {
+        if (account_id === OWNER_ID) {
+          return { memory: 4000, disk_quota: 5000 };
+        }
+        return {};
+      });
+    jest
+      .mocked(projectDefaults.mergeProjectSettingsWithMembership)
+      .mockImplementation((settings: any, defaults: any) => ({
+        ...(settings ?? {}),
+        ...(defaults ?? {}),
+      }));
+
+    const quotaModule = await import("@cocalc/util/upgrades/quota");
+    jest.mocked(quotaModule.quota).mockImplementation((settings: any) => ({
+      memory_limit: settings?.memory ?? 0,
+      disk_quota: settings?.disk_quota ?? 0,
+      idle_timeout: 1200,
+    }));
+
+    const { BaseProject } = await import("./base");
+    const project = new BaseProject(PROJECT_ID);
+    const restartMock = jest.fn(async () => undefined);
+    project.restart = restartMock;
+
+    await project.setAllQuotas();
+
+    expect(restartMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not restart active projects when only idle timeout changes", async () => {
+    const OWNER_ID = "33333333-3333-4333-8333-333333333333";
+
+    queryTableMock = jest.fn(async (opts: any) => {
+      if (opts?.select?.includes("state")) {
+        return {
+          state: { state: "running" },
+          run_quota: {
+            memory_limit: 4000,
+            disk_quota: 5000,
+            idle_timeout: 600,
+          },
+        };
+      }
+      if (opts?.select?.includes("runtime_sponsor_account_id")) {
+        return {
+          settings: { memory: 1000, disk_quota: 1000 },
+          users: { [OWNER_ID]: { group: "owner" } },
+          last_active: null,
+          last_started_by: null,
+          runtime_sponsor_account_id: null,
+          usage_account_id: null,
+        };
+      }
+      if (opts?.query === "UPDATE projects") {
+        return {};
+      }
+      throw new Error(`unexpected query table call: ${JSON.stringify(opts)}`);
+    });
+
+    const projectDefaults =
+      await import("@cocalc/server/membership/project-defaults");
+    jest
+      .mocked(projectDefaults.getMembershipProjectDefaultsForAccount)
+      .mockImplementation(async (account_id?: string) => {
+        if (account_id === OWNER_ID) {
+          return { memory: 4000, disk_quota: 5000 };
+        }
+        return {};
+      });
+    jest
+      .mocked(projectDefaults.mergeProjectSettingsWithMembership)
+      .mockImplementation((settings: any, defaults: any) => ({
+        ...(settings ?? {}),
+        ...(defaults ?? {}),
+      }));
+
+    const quotaModule = await import("@cocalc/util/upgrades/quota");
+    jest.mocked(quotaModule.quota).mockImplementation((settings: any) => ({
+      memory_limit: settings?.memory ?? 0,
+      disk_quota: settings?.disk_quota ?? 0,
+      idle_timeout: 1200,
+    }));
+
+    const { BaseProject } = await import("./base");
+    const project = new BaseProject(PROJECT_ID);
+    const restartMock = jest.fn(async () => undefined);
+    project.restart = restartMock;
+
+    await project.setAllQuotas();
+
+    expect(restartMock).not.toHaveBeenCalled();
+  });
 });

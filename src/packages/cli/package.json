@@ -67,6 +67,7 @@
     "@cocalc/comm": "workspace:*",
     "@cocalc/conat": "workspace:*",
     "@cocalc/database": "workspace:*",
+    "@cocalc/docs": "workspace:*",
     "@cocalc/export": "workspace:*",
     "@cocalc/util": "workspace:*",
     "ascii-table3": "^1.0.1",

@@ -42,6 +42,10 @@ import { useBookmarkedProjects } from "./use-bookmarked-projects";
 import { getVisibleProjects } from "./util";
 import { FilenameSearch } from "./filename-search";
 import { RecentDocumentActivityButton } from "@cocalc/frontend/file-use/button";
+import {
+  retainScheduledProjectDeletes,
+  useProjectDeleteQueue,
+} from "./project-delete-queue";
 
 const LOADING_STYLE: CSS = {
   fontSize: "40px",
@@ -116,6 +120,7 @@ export const ProjectsPage: React.FC = () => {
 
   const [tableHeight, setTableHeight] = useState<number>(400);
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
+  const { scheduledDeleteProjectIds } = useProjectDeleteQueue();
 
   // Track filtered collaborators from table
   const [filteredCollaborators, setFilteredCollaborators] = useState<
@@ -169,15 +174,18 @@ export const ProjectsPage: React.FC = () => {
 
   useEffect(() => {
     const visible = new Set(visible_projects);
+    const scheduled = new Set(scheduledDeleteProjectIds);
     setSelectedProjectIds((ids) =>
       ids.filter((id) => {
         const state = `${project_map?.getIn([id, "state", "state"]) ?? ""}`;
-        return (
-          visible.has(id) && state !== "deleting" && state !== "delete_failed"
-        );
+        return visible.has(id) && !scheduled.has(id) && state !== "deleting";
       }),
     );
-  }, [project_map, visible_projects]);
+  }, [project_map, visible_projects, scheduledDeleteProjectIds]);
+
+  useEffect(() => {
+    retainScheduledProjectDeletes(all_projects);
+  }, [all_projects]);
 
   useEffect(() => {
     if (!project_map) return;

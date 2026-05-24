@@ -365,6 +365,45 @@ describe("response text helpers", () => {
     ]);
   });
 
+  test("uses lightweight preview status boundaries for guidance ordering", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "I checked the preview stream.", 1, {
+        delta: true,
+      }),
+      { type: "status", state: "running", seq: 2, time: 2000 } as any,
+      textEvent("message", "The frontend should preserve this paragraph.", 3, {
+        delta: true,
+      }),
+    ];
+    (events[0] as any).time = 1000;
+    (events[2] as any).time = 3000;
+
+    expect(
+      getLiveResponseBlocks(events, [
+        { date: 2500, text: "please keep this in order", state: "sent" },
+      ]),
+    ).toEqual([
+      {
+        kind: "agent",
+        text: "I checked the preview stream.",
+        time: 1000,
+        state: undefined,
+      },
+      {
+        kind: "guidance",
+        text: "please keep this in order",
+        time: 2500,
+        state: "sent",
+      },
+      {
+        kind: "agent",
+        text: "The frontend should preserve this paragraph.",
+        time: 3000,
+        state: undefined,
+      },
+    ]);
+  });
+
   test("splits progressive agent text around live guidance chronologically", () => {
     const events: AcpStreamMessage[] = [
       {

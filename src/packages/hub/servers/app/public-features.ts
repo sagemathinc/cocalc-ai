@@ -14,6 +14,7 @@ export default function initPublicFeatures(router: Router): void {
     "/features/",
     "/features/:slug",
     "/features/:slug/",
+    /^\/docs(?:\/.*)?$/,
   ];
 
   router.get(featurePaths, (req, res) => {

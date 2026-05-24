@@ -35,7 +35,9 @@ export interface ChatRoomThreadMenuProps {
   openForkModal: (threadKey: string, label: string, isAI: boolean) => void;
   confirmResetThread: (threadKey: string, label: string) => void;
   confirmDeleteThread: (threadKey: string, label: string) => void;
+  openChatFile?: () => void;
   openAutomationModal?: (threadKey: string) => void;
+  showClearThread?: boolean;
   buttonLabel?: ReactNode;
   buttonSize?: "small" | "middle" | "large";
   buttonType?: "link" | "text" | "default" | "primary" | "dashed";
@@ -69,7 +71,9 @@ export function ChatRoomThreadMenu({
   openForkModal,
   confirmResetThread,
   confirmDeleteThread,
+  openChatFile,
   openAutomationModal,
+  showClearThread = true,
   buttonLabel,
   buttonSize = "small",
   buttonType = "text",
@@ -102,6 +106,14 @@ export function ChatRoomThreadMenu({
     items: [
       { key: "appearance", label: "Appearance..." },
       { key: "behavior", label: "Behavior..." },
+      ...(openChatFile
+        ? [
+            {
+              key: "open-chat-file",
+              label: "Open Chat File",
+            },
+          ]
+        : []),
       {
         key: isPinned ? "unpin" : "pin",
         label: isPinned ? "Unpin chat" : "Pin chat",
@@ -127,10 +139,14 @@ export function ChatRoomThreadMenu({
         key: "fork",
         label: "Fork chat…",
       },
-      {
-        key: "clear",
-        label: "Clear thread",
-      },
+      ...(showClearThread
+        ? [
+            {
+              key: "clear",
+              label: "Clear thread",
+            },
+          ]
+        : []),
       {
         type: "divider",
       },
@@ -150,6 +166,8 @@ export function ChatRoomThreadMenu({
         );
       } else if (key === "behavior") {
         openBehaviorModal(threadKey);
+      } else if (key === "open-chat-file") {
+        openChatFile?.();
       } else if (key === "pin" || key === "unpin") {
         if (!actions?.setThreadPin) {
           antdMessage.error("Pinning chats is not available.");

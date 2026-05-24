@@ -1,6 +1,12 @@
 /** @jest-environment jsdom */
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 
 const mockEraseActiveKeyHandler = jest.fn();
 const mockMessageApi = {
@@ -51,6 +57,7 @@ function createMockSharedChatActions(id = "shared") {
       removeListener: jest.fn(),
     },
     getThreadMetadata: jest.fn(() => ({})),
+    setThreadAgentMode: jest.fn(),
     setSelectedThread: jest.fn(),
     scrollToIndex: jest.fn(),
   } as any;
@@ -128,6 +135,52 @@ jest.mock("@cocalc/frontend/project/page/agent-chat-font-size", () => ({
 jest.mock("@cocalc/frontend/chat/side-chat", () => ({
   __esModule: true,
   default: () => <input data-testid="navigator-composer" />,
+}));
+
+jest.mock("@cocalc/frontend/chat/chatroom-modals", () => ({
+  ChatRoomModals: ({ onHandlers }: any) => {
+    const React = require("react");
+    React.useEffect(() => {
+      onHandlers?.({
+        openAppearanceModal: jest.fn(),
+        openBehaviorModal: jest.fn(),
+        openExportModal: jest.fn(),
+        openImportModal: jest.fn(),
+        openForkModal: jest.fn(),
+      });
+    }, [onHandlers]);
+    return null;
+  },
+}));
+
+jest.mock("@cocalc/frontend/chat/chatroom-thread-actions", () => ({
+  ChatRoomThreadActions: ({ onHandlers }: any) => {
+    const React = require("react");
+    React.useEffect(() => {
+      onHandlers?.({
+        confirmDeleteThread: jest.fn(),
+        confirmResetThread: jest.fn(),
+      });
+    }, [onHandlers]);
+    return null;
+  },
+}));
+
+jest.mock("@cocalc/frontend/chat/chatroom-thread-menu", () => ({
+  ChatRoomThreadMenu: ({ buttonTestId, showClearThread }: any) => (
+    <button
+      data-testid={buttonTestId}
+      data-show-clear-thread={String(showClearThread)}
+      type="button"
+    >
+      Thread menu
+    </button>
+  ),
+}));
+
+jest.mock("@cocalc/frontend/chat/git-commit-drawer", () => ({
+  GitCommitDrawer: ({ open }: any) =>
+    open ? <div>Git browser drawer</div> : null,
 }));
 
 jest.mock("@cocalc/frontend/chat/chat-icon-picker", () => ({
@@ -212,6 +265,7 @@ describe("NavigatorShell keyboard suppression", () => {
     mockSharedChatActions.messageCache.on.mockClear();
     mockSharedChatActions.messageCache.removeListener.mockClear();
     mockSharedChatActions.getThreadMetadata.mockClear();
+    mockSharedChatActions.setThreadAgentMode.mockClear();
     mockSharedChatActions.setSelectedThread.mockClear();
     mockSharedChatActions.scrollToIndex.mockClear();
   });
@@ -222,6 +276,36 @@ describe("NavigatorShell keyboard suppression", () => {
     fireEvent.focus(screen.getByTestId("navigator-composer"));
 
     expect(mockEraseActiveKeyHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the shared thread menu instead of the old Actions button", async () => {
+    mockSharedChatActions.messageCache.getThreadIndex = () =>
+      new Map([
+        [
+          "thread-1",
+          {
+            key: "thread-1",
+            rootMessage: { thread_id: "thread-1", content: "Navigator" },
+            newestTime: 1,
+          },
+        ],
+      ]);
+    mockSharedChatActions.getThreadMetadata.mockReturnValue({
+      name: "Navigator",
+      agent_kind: "acp",
+      acp_config: { model: "gpt-5-codex" },
+    });
+
+    render(<NavigatorShell project_id="project-1" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("navigator-thread-menu")).toBeTruthy(),
+    );
+    expect(screen.queryByText("Actions")).toBeNull();
+    expect(screen.getByTestId("navigator-thread-menu")).toHaveAttribute(
+      "data-show-clear-thread",
+      "false",
+    );
   });
 
   it("keeps the navigator chat loading until syncdb is ready", () => {

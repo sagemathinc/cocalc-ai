@@ -34,7 +34,6 @@ describe("server/projects/get", () => {
           project_id: "22222222-2222-4222-8222-222222222222",
           title: "Legacy Project",
           description: "legacy",
-          name: "legacy-name",
         },
       ],
     }));
@@ -50,7 +49,6 @@ describe("server/projects/get", () => {
         project_id: "22222222-2222-4222-8222-222222222222",
         title: "Legacy Project",
         description: "legacy",
-        name: "legacy-name",
       },
     ]);
     expect(listProjectedProjectsForAccountMock).not.toHaveBeenCalled();
@@ -103,7 +101,6 @@ describe("server/projects/get", () => {
         project_id: "22222222-2222-4222-8222-222222222222",
         title: "Legacy Project",
         description: "legacy",
-        name: "legacy-name",
       },
     ]);
     expect(listProjectedProjectsForAccountMock).toHaveBeenCalledTimes(1);

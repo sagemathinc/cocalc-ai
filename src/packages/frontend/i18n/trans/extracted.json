@@ -54,12 +54,6 @@
   "account.settings.unlisted.label": {
     "defaultMessage": "Unlisted: you can only be found by an exact email address match"
   },
-  "account.settings.username.info": {
-    "defaultMessage": "Setting a username provides optional nicer URL's for shared public documents. Your username can be between 1 and 39 characters, contain upper and lower case letters, numbers, and dashes. {br} WARNING: If you change your username, existing links using the previous username will no longer work (automatic redirects are not implemented), so change with caution."
-  },
-  "account.settings.username.label": {
-    "defaultMessage": "Username (optional)"
-  },
   "account.sign-out.button.ok": {
     "defaultMessage": "Yes, sign out{everywhere, select, true { everywhere} other {}}"
   },

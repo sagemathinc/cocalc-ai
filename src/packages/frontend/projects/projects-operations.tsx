@@ -10,8 +10,8 @@
 
 // cSpell:ignore undoable
 
-import { Alert, Button, Modal, Space, Typography } from "antd";
-import { Map, Set } from "immutable";
+import { Alert, Button, Modal, Progress, Space, Typography } from "antd";
+import { Map, Set as ImmutableSet } from "immutable";
 import { useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
@@ -30,6 +30,20 @@ import {
   LeaveOrDeleteProjectsModal,
   type LeaveOrDeleteProjectsPlan,
 } from "./leave-or-delete-projects-modal";
+import {
+  runLeaveOrDeleteProjectsSequentially,
+  type BulkLeaveOrDeleteProgress,
+} from "./projects-bulk-delete";
+import {
+  beginProjectDeleteQueue,
+  clearProjectDeleteQueueStatus,
+  failProjectDeleteQueue,
+  finishProjectDeleteQueue,
+  scheduleProjectDeletes,
+  setProjectDeleteQueueProgress,
+  unscheduleProjectDeletes,
+  useProjectDeleteQueue,
+} from "./project-delete-queue";
 import {
   ArchiveProjectModal,
   type ArchiveProjectModalItem,
@@ -63,6 +77,9 @@ export function ProjectsOperations({
   const project_map = useTypedRedux("projects", "project_map");
   const account_id = useTypedRedux("account", "account_id");
   const isAdmin = !!useTypedRedux("account", "is_admin");
+  const [bulkLeaveDeleteProgress, setBulkLeaveDeleteProgress] =
+    useState<BulkLeaveOrDeleteProgress | null>(null);
+  const deleteQueue = useProjectDeleteQueue();
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) =>
       Modal.error({
@@ -73,7 +90,7 @@ export function ProjectsOperations({
 
   const hidden = useTypedRedux("projects", "hidden");
   const search: string = useTypedRedux("projects", "search");
-  const selected_hashtags: Map<string, Set<string>> = useTypedRedux(
+  const selected_hashtags: Map<string, ImmutableSet<string>> = useTypedRedux(
     "projects",
     "selected_hashtags",
   );
@@ -123,7 +140,7 @@ export function ProjectsOperations({
     // Clear hashtags for current filter state
     if (selected_hashtags && selected_hashtags_for_filter.length > 0) {
       actions.setState({
-        selected_hashtags: selected_hashtags.set(filter, Set()),
+        selected_hashtags: selected_hashtags.set(filter, ImmutableSet()),
       });
     }
 
@@ -221,9 +238,7 @@ export function ProjectsOperations({
       ),
       okText: hide ? "Hide" : "Unhide",
       onOk: async () => {
-        for (const project_id of selected_project_ids) {
-          await actions.set_project_hide(account_id, project_id, hide);
-        }
+        await actions.set_projects_hide(account_id, selected_project_ids, hide);
       },
     });
   }
@@ -382,32 +397,70 @@ export function ProjectsOperations({
       });
       return;
     }
+    setBulkLeaveDeleteProgress(null);
     setLeaveDeleteModalOpen(true);
   }
 
   async function leaveOrDeleteSelected() {
     const plan = selectedPlan;
-    await runFreshAuthAction(async () => {
-      const results =
-        await webapp_client.conat_client.hub.projects.leaveOrDeleteProjects({
-          project_ids: plan.actionableIds,
-          browser_id: webapp_client.browser_id,
-        });
+    const started = await runFreshAuthAction(async () => {
+      await webapp_client.conat_client.hub.projects.leaveOrDeleteProjects({
+        project_ids: [],
+        browser_id: webapp_client.browser_id,
+      });
+      setLeaveDeleteModalOpen(false);
+      setBulkLeaveDeleteProgress(null);
+      beginProjectDeleteQueue();
+      scheduleProjectDeletes(plan.deleteIds);
+      onSelectionChange(
+        selected_project_ids.filter((id) => !plan.actionableIds.includes(id)),
+      );
+      void runLeaveOrDeleteProjectsInBackground(plan);
+    });
+    if (!started) {
+      setBulkLeaveDeleteProgress(null);
+    }
+  }
+
+  async function runLeaveOrDeleteProjectsInBackground(
+    plan: LeaveOrDeleteProjectsPlan,
+  ) {
+    try {
+      const { results, stopped } = await runLeaveOrDeleteProjectsSequentially({
+        project_ids: plan.actionableIds,
+        onProgress: (progress) => {
+          setBulkLeaveDeleteProgress(progress);
+          setProjectDeleteQueueProgress(progress);
+        },
+        submitProject: async (project_id) =>
+          await webapp_client.conat_client.hub.projects.leaveOrDeleteProjects({
+            project_ids: [project_id],
+            browser_id: webapp_client.browser_id,
+          }),
+        waitForQueuedDelete: waitForHardDeleteToLeaveActiveSet,
+      });
+      finishProjectDeleteQueue({
+        results,
+        stopped,
+        total: plan.actionableIds.length,
+      });
       const errors = results.filter((result) => result.action === "error");
+      unscheduleProjectDeletes(
+        errors
+          .map((result) => result.project_id)
+          .filter((project_id) => plan.deleteIds.includes(project_id)),
+      );
       const succeeded = results
         .filter((result) => result.action !== "error")
         .map((result) => result.project_id);
       for (const project_id of succeeded) {
         actions.redux.getActions("page").close_project_tab(project_id);
       }
-      onSelectionChange(
-        selected_project_ids.filter((id) => !succeeded.includes(id)),
-      );
-      setLeaveDeleteModalOpen(false);
       alert_message({
         type: errors.length > 0 ? "warning" : "success",
-        message:
-          errors.length > 0
+        message: stopped
+          ? `Processed ${succeeded.length} project(s); stopped before queuing the remaining project delete(s).`
+          : errors.length > 0
             ? `Processed ${succeeded.length} project(s); ${errors.length} failed.`
             : `Processed ${succeeded.length} selected project(s).`,
       });
@@ -425,7 +478,19 @@ export function ProjectsOperations({
           ),
         });
       }
-    });
+    } catch (err) {
+      unscheduleProjectDeletes(plan.deleteIds);
+      failProjectDeleteQueue({
+        project_ids: plan.actionableIds,
+        error: `${err}`,
+      });
+      Modal.error({
+        title: "Unable to leave or delete projects",
+        content: `${err}`,
+      });
+    } finally {
+      setBulkLeaveDeleteProgress(null);
+    }
   }
 
   return (
@@ -471,6 +536,10 @@ export function ProjectsOperations({
           }
         />
       )}
+      <BulkProjectDeleteStatus
+        queue={deleteQueue}
+        projectTitle={selectedTitle}
+      />
       {selected_project_ids.length > 0 && (
         <div
           style={{
@@ -509,20 +578,23 @@ export function ProjectsOperations({
             >
               Archive...
             </Button>
-            <Button
-              size="small"
-              icon={<Icon name="eye-slash" />}
-              onClick={() => confirmSelectedHide(true)}
-            >
-              Hide
-            </Button>
-            <Button
-              size="small"
-              icon={<Icon name="eye" />}
-              onClick={() => confirmSelectedHide(false)}
-            >
-              Unhide
-            </Button>
+            {hidden ? (
+              <Button
+                size="small"
+                icon={<Icon name="eye" />}
+                onClick={() => confirmSelectedHide(false)}
+              >
+                Unhide
+              </Button>
+            ) : (
+              <Button
+                size="small"
+                icon={<Icon name="eye-slash" />}
+                onClick={() => confirmSelectedHide(true)}
+              >
+                Hide
+              </Button>
+            )}
             <Button
               size="small"
               icon={<Icon name="user-times" />}
@@ -549,6 +621,7 @@ export function ProjectsOperations({
         projectTitle={selectedTitle}
         onCancel={() => setLeaveDeleteModalOpen(false)}
         onConfirm={leaveOrDeleteSelected}
+        progress={bulkLeaveDeleteProgress}
       />
       <ArchiveProjectModal
         open={archiveModalOpen}
@@ -559,6 +632,116 @@ export function ProjectsOperations({
       />
       <FreshAuthModal {...freshAuthModalProps} />
     </>
+  );
+}
+
+function BulkProjectDeleteStatus({
+  queue,
+  projectTitle,
+}: {
+  queue: ReturnType<typeof useProjectDeleteQueue>;
+  projectTitle: (project_id: string) => string;
+}) {
+  if (queue.status === "idle") {
+    return null;
+  }
+
+  if (queue.status === "running") {
+    const progress = queue.progress;
+    const completed = progress ? progress.completed + progress.failed : 0;
+    const total = progress?.total ?? queue.scheduledDeleteProjectIds.length;
+    const percent =
+      total > 0 ? Math.max(0, Math.min(100, (completed / total) * 100)) : 0;
+    const currentProject =
+      progress?.project_id != null ? projectTitle(progress.project_id) : null;
+
+    return (
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginTop: 8 }}
+        message="Bulk project delete is running"
+        description={
+          <Space direction="vertical" size={4} style={{ width: "100%" }}>
+            <Text>
+              {progress
+                ? `${completed} of ${progress.total} processed${
+                    currentProject
+                      ? `; ${
+                          progress.phase === "waiting"
+                            ? "waiting for"
+                            : "submitting"
+                        } ${currentProject}`
+                      : ""
+                  }.`
+                : "Preparing delete queue."}
+            </Text>
+            <Progress percent={Math.round(percent)} size="small" />
+            <Text type="secondary">
+              This browser tab is driving the queue. Closing or refreshing the
+              page stops further deletes; already submitted deletes continue on
+              the server.
+            </Text>
+          </Space>
+        }
+      />
+    );
+  }
+
+  const summary = queue.summary;
+  const failed = summary?.failed ?? 0;
+  const succeeded = summary?.succeeded ?? 0;
+  const unprocessed = summary?.unprocessed ?? 0;
+  const total = summary?.total ?? succeeded + failed;
+  const alertType =
+    queue.status === "error" || unprocessed > 0
+      ? "error"
+      : failed > 0
+        ? "warning"
+        : "success";
+
+  return (
+    <Alert
+      type={alertType}
+      showIcon
+      closable
+      style={{ marginTop: 8 }}
+      onClose={() => clearProjectDeleteQueueStatus()}
+      message={
+        failed > 0 || unprocessed > 0
+          ? `Bulk project delete finished with ${failed + unprocessed} issue(s)`
+          : "Bulk project delete finished"
+      }
+      description={
+        <Space direction="vertical" size={4}>
+          <Text>
+            {succeeded} of {total} project(s) succeeded
+            {failed > 0 ? `; ${failed} failed` : ""}
+            {unprocessed > 0 ? `; ${unprocessed} not processed` : ""}.
+            {failed > 0 || unprocessed > 0
+              ? " Failed or unprocessed rows remain selectable so you can retry delete."
+              : ""}
+          </Text>
+          {summary?.stopped && failed > 0 && (
+            <Text type="secondary">
+              The queue stopped after a blocking failure; retry failed rows once
+              the issue is resolved.
+            </Text>
+          )}
+          {summary?.errors.slice(0, 3).map((error) => (
+            <Text key={error.project_id} type="danger">
+              {projectTitle(error.project_id)}: {error.error}
+            </Text>
+          ))}
+          {(summary?.errors.length ?? 0) > 3 && (
+            <Text type="secondary">
+              {summary!.errors.length - 3} more failure(s) are shown on their
+              project rows.
+            </Text>
+          )}
+        </Space>
+      }
+    />
   );
 }
 
@@ -606,4 +789,38 @@ function archiveAllowedByAdminOnly(
     group !== "owner" &&
     project.get?.("allow_collaborator_destructive_storage_actions") !== true
   );
+}
+
+const HARD_DELETE_ACTIVE_STATUSES = new Set(["queued", "running"]);
+const HARD_DELETE_POLL_MS = 1500;
+const HARD_DELETE_WAIT_TIMEOUT_MS = 30 * 60 * 1000;
+
+async function waitForHardDeleteToLeaveActiveSet({
+  project_id,
+  op_id,
+}: {
+  project_id: string;
+  op_id: string;
+}): Promise<void> {
+  const started = Date.now();
+  while (Date.now() - started < HARD_DELETE_WAIT_TIMEOUT_MS) {
+    const summary = await webapp_client.conat_client.hub.lro.get({ op_id });
+    if (summary && !HARD_DELETE_ACTIVE_STATUSES.has(summary.status)) {
+      if (summary.status === "succeeded") {
+        return;
+      }
+      throw new Error(
+        summary.error ??
+          `Project delete ${op_id} for ${project_id} finished with status ${summary.status}`,
+      );
+    }
+    await delay(HARD_DELETE_POLL_MS);
+  }
+  throw new Error(
+    `Timed out waiting for project delete ${op_id} for ${project_id} to leave queued/running state.`,
+  );
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

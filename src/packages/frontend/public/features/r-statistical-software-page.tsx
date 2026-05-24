@@ -5,199 +5,282 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
+import type { IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
+import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
-  FeatureImage,
   featureAppPath as appPath,
   LinkButton,
 } from "./page-components";
+import {
+  IconBadge,
+  StartCard,
+  StoryCard,
+  TerminalMock,
+} from "./feature-visuals";
 
-const { Paragraph, Title } = Typography;
+const { Paragraph, Text, Title } = Typography;
+
+function RWorkflowMock() {
+  const pieces = [
+    ["jupyter", "Notebook", "IRKernel analysis"],
+    ["terminal", "Terminal", "Rscript model.R"],
+    ["markdown", "Rmd / Qmd", "reproducible report"],
+    ["tex", "Knitr", "LaTeX output"],
+  ] satisfies [IconName, string, string][];
+
+  return (
+    <div
+      aria-label="Illustration of R workflows in a CoCalc project"
+      style={{
+        background:
+          "linear-gradient(145deg, #ffffff 0%, #f4f9ff 54%, #f6fff4 100%)",
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 28,
+        boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
+        padding: 20,
+      }}
+    >
+      <Flex vertical gap={16}>
+        <Flex align="center" justify="space-between" wrap gap={10}>
+          <Flex align="center" gap={10}>
+            <IconBadge accent="#386cb0" icon="r" />
+            <div>
+              <Text strong>R project</Text>
+              <div style={{ color: PUBLIC_COLORS.mutedText }}>
+                notebooks, scripts, reports, data, and collaborators
+              </div>
+            </div>
+          </Flex>
+          <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+            real Linux
+          </Tag>
+        </Flex>
+
+        <Row gutter={[12, 12]}>
+          {pieces.map(([icon, title, body]) => (
+            <Col key={title} xs={24} sm={12}>
+              <div
+                style={{
+                  background: "#fff",
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: 18,
+                  height: "100%",
+                  padding: 14,
+                }}
+              >
+                <Flex align="center" gap={12}>
+                  <IconBadge accent="#386cb0" icon={icon} />
+                  <div>
+                    <Text strong>{title}</Text>
+                    <div style={{ color: PUBLIC_COLORS.mutedText }}>{body}</div>
+                  </div>
+                </Flex>
+              </div>
+            </Col>
+          ))}
+        </Row>
+
+        <TerminalMock
+          title="R terminal"
+          rows={[
+            "$ Rscript analysis.R",
+            "wrote figures/model-diagnostics.pdf",
+            "$ quarto render report.qmd",
+            "created report.html",
+          ]}
+        />
+      </Flex>
+    </div>
+  );
+}
+
+function PositioningBand() {
+  return (
+    <PublicSection>
+      <Row gutter={[24, 24]} align="middle">
+        <Col xs={24} lg={12}>
+          <Flex vertical gap={12}>
+            <Tag
+              color="blue"
+              style={{
+                alignSelf: "flex-start",
+                background: COLORS.ANTD_BG_BLUE_L,
+                color: COLORS.BLUE_D,
+              }}
+            >
+              Positioning
+            </Tag>
+            <Title level={3} style={{ margin: 0 }}>
+              CoCalc is not trying to be RStudio.
+            </Title>
+            <Paragraph style={{ margin: 0 }}>
+              RStudio and the Posit ecosystem are the dominant dedicated R
+              environment, and many R users should use them. CoCalc is useful
+              when R is part of a broader collaborative project: notebooks,
+              terminals, Python, LaTeX, teaching, Linux setup, files, and Codex
+              context all live together.
+            </Paragraph>
+            <Paragraph style={{ margin: 0 }}>
+              That makes CoCalc a good fit for courses, mixed-language
+              computational work, and reproducible reports that need project
+              infrastructure around R rather than only an R IDE.
+            </Paragraph>
+          </Flex>
+        </Col>
+        <Col xs={24} lg={12}>
+          <div
+            style={{
+              background: "#fff",
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: 26,
+              boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
+              padding: 22,
+            }}
+          >
+            <Flex vertical gap={12}>
+              {[
+                ["r", "Use R where it fits"],
+                ["python", "Mix with Python or shell tools"],
+                ["tex", "Publish with LaTeX, Rmd, Qmd, or Knitr"],
+                ["graduation-cap", "Teach in shared project environments"],
+              ].map(([icon, label]) => (
+                <Flex
+                  align="center"
+                  gap={12}
+                  key={label}
+                  style={{
+                    background: "#f7fbff",
+                    border: `1px solid ${PUBLIC_COLORS.border}`,
+                    borderRadius: 16,
+                    padding: 14,
+                  }}
+                >
+                  <IconBadge accent="#386cb0" icon={icon as IconName} />
+                  <Text strong>{label}</Text>
+                </Flex>
+              ))}
+            </Flex>
+          </div>
+        </Col>
+      </Row>
+    </PublicSection>
+  );
+}
 
 export default function RStatisticalSoftwareFeaturePage({
   helpEmail,
+  isAuthenticated,
 }: {
   helpEmail?: string;
+  isAuthenticated?: boolean;
 }) {
+  const primaryHref = isAuthenticated
+    ? appPath("projects")
+    : appPath("auth/sign-up");
+  const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
+  const finalLabel = isAuthenticated ? "Open projects" : "Start using R";
+
   return (
-    <Flex vertical gap={18}>
+    <Flex vertical gap={22}>
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={12}>
-            <Flex vertical gap={12}>
+        <Row gutter={[28, 28]} align="middle">
+          <Col xs={24} lg={11}>
+            <Flex vertical gap={14}>
+              <Tag color="blue" style={{ alignSelf: "flex-start" }}>
+                R in a project workspace
+              </Tag>
               <Title level={2} style={{ margin: 0 }}>
-                Use R in notebooks, terminals, and reproducible document
-                workflows
+                Use R when statistics is part of a larger workflow.
               </Title>
-              <Paragraph style={{ fontSize: 17, margin: 0 }}>
-                CoCalc supports R across Jupyter notebooks, command-line work,
-                RMarkdown-style documents, and LaTeX/Knitr workflows.
+              <Paragraph style={{ fontSize: 18, margin: 0 }}>
+                CoCalc supports R through Jupyter notebooks, terminals, scripts,
+                RMarkdown-style documents, Quarto-style workflows, Knitr, LaTeX,
+                shared files, and course projects.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                That makes it possible to keep data exploration, collaboration,
-                and report writing in the same online project.
+                It is strongest when R analysis needs to live beside other
+                technical work: Python, shell commands, generated reports,
+                teaching infrastructure, and collaborative review.
               </Paragraph>
               <Flex wrap gap={12}>
-                <Button type="primary" href={appPath("auth/sign-up")}>
-                  Create account
+                <Button type="primary" href={primaryHref}>
+                  {primaryLabel}
                 </Button>
                 <Button href={appPath("features/jupyter-notebook")}>
                   Jupyter notebooks
                 </Button>
+                <Button href={appPath("features/latex-editor")}>
+                  LaTeX editor
+                </Button>
               </Flex>
             </Flex>
           </Col>
-          <Col xs={24} lg={12}>
-            <FeatureImage
-              alt="R in a Jupyter notebook"
-              src="/public/features/cocalc-r-jupyter.png"
-            />
+          <Col xs={24} lg={13}>
+            <RWorkflowMock />
           </Col>
         </Row>
       </PublicSection>
 
       <Row gutter={[16, 16]}>
-        <Col xs={24} lg={12}>
-          <PublicSection>
-            <Title level={3} style={{ margin: 0 }}>
-              Zero-setup R for teaching and analysis
-            </Title>
-            <BulletList
-              items={[
-                "Start with a working online R environment.",
-                "Use R in notebooks, the terminal, and document-generation workflows.",
-                "Avoid repeating local R and package setup on every machine.",
-                "Keep the environment shareable for collaborators and students.",
-              ]}
-            />
-            <Paragraph style={{ margin: 0 }}>
-              CoCalc reduces the operational overhead so people can focus on the
-              statistical or data-analysis work itself.
-            </Paragraph>
-          </PublicSection>
+        <Col xs={24} lg={8}>
+          <StoryCard accent="#386cb0" icon="jupyter" title="R notebooks">
+            Use R in collaborative Jupyter notebooks when interactive analysis
+            and teaching benefit from shared browser notebooks.
+          </StoryCard>
         </Col>
-        <Col xs={24} lg={12}>
-          <PublicSection>
-            <Title level={3} style={{ margin: 0 }}>
-              Full workflow, not just a notebook
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              R work often spans more than a single notebook. Data files,
-              reports, scripts, discussions, and publication outputs all need to
-              stay coordinated.
-            </Paragraph>
-            <Paragraph style={{ margin: 0 }}>
-              CoCalc is useful here because it keeps those pieces in one
-              project.
-            </Paragraph>
-          </PublicSection>
+        <Col xs={24} lg={8}>
+          <StoryCard accent="#278c83" icon="terminal" title="R in the shell">
+            Run <code>R</code>, <code>Rscript</code>, package installs, command
+            pipelines, and reproducible jobs in a real Linux terminal.
+          </StoryCard>
+        </Col>
+        <Col xs={24} lg={8}>
+          <StoryCard accent="#ad6800" icon="markdown" title="Reports">
+            Keep Rmd, Qmd, Knitr, LaTeX, generated figures, and supporting data
+            together in the project.
+          </StoryCard>
         </Col>
       </Row>
+
+      <PositioningBand />
 
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={11}>
-            <FeatureImage
-              alt="Collaborative R notebook work"
-              src="/public/features/cocalc-r-jupyter-collaborate.png"
-            />
-          </Col>
           <Col xs={24} lg={13}>
-            <Flex vertical gap={12}>
-              <Tag
-                color="blue"
-                style={{
-                  alignSelf: "flex-start",
-                  background: COLORS.ANTD_BG_BLUE_L,
-                  color: COLORS.BLUE_D,
-                }}
-              >
-                Collaborative analysis
-              </Tag>
-              <Title level={3} style={{ margin: 0 }}>
-                Work on the same R analysis together
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                CoCalc&apos;s notebook and chat workflows make it practical to
-                collaborate on R analysis, teaching materials, and statistical
-                reports in real time.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                This is especially valuable for teams and courses that need a
-                common environment plus a shared view of the current work.
-              </Paragraph>
+            <Title level={3}>
+              Why use R on CoCalc
+            </Title>
+            <BulletList
+              items={[
+                "Use notebooks, terminals, scripts, and reproducible document workflows in one place.",
+                "Share an R environment with collaborators or students without local setup drift.",
+                "Keep R near Python, Linux tools, LaTeX, Git, and project chat.",
+                "Use CoCalc when the project context matters more than a dedicated R IDE.",
+              ]}
+            />
+            <Flex wrap gap={12}>
+              <Button href={appPath("features/python")}>Python</Button>
+              <Button href={appPath("features/teaching")}>Teaching</Button>
+              {helpEmail ? (
+                <Button href={`mailto:${helpEmail}`}>Contact support</Button>
+              ) : null}
             </Flex>
+            <LinkButton href={appPath("features/linux")}>
+              Linux environment
+            </LinkButton>
+          </Col>
+          <Col xs={24} lg={11}>
+            <StartCard
+              body="Open a project and use R in notebooks, terminals, reports, or teaching workflows."
+              href={primaryHref}
+              label={finalLabel}
+              title="Start in a project"
+            />
           </Col>
         </Row>
-      </PublicSection>
-
-      <Row gutter={[16, 16]}>
-        <Col xs={24} xl={12}>
-          <PublicSection>
-            <FeatureImage
-              alt="R and LaTeX integration in CoCalc"
-              src="/public/features/cocalc-r-latex.png"
-            />
-            <Title level={3} style={{ margin: 0 }}>
-              LaTeX, Knitr, and document generation
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              CoCalc&apos;s LaTeX editor works well for R-enhanced document
-              generation, including Knitr-style workflows where code and prose
-              are part of the same technical document.
-            </Paragraph>
-            <Paragraph style={{ margin: 0 }}>
-              That makes it easier to keep analysis and reporting tightly
-              coupled.
-            </Paragraph>
-            <LinkButton href={appPath("features/latex-editor")}>
-              LaTeX editor
-            </LinkButton>
-          </PublicSection>
-        </Col>
-        <Col xs={24} xl={12}>
-          <PublicSection>
-            <FeatureImage
-              alt="R environment in CoCalc"
-              src="/public/features/cocalc-r-environment.png"
-            />
-            <Title level={3} style={{ margin: 0 }}>
-              Project-wide R environment
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              Whether you are working in R code, notebooks, or generated
-              reports, the surrounding project gives you access to the same
-              files, supporting scripts, and collaboration tools.
-            </Paragraph>
-            <Paragraph style={{ margin: 0 }}>
-              That is the difference between an online R demo and a usable
-              shared workspace.
-            </Paragraph>
-          </PublicSection>
-        </Col>
-      </Row>
-
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          Why use R on CoCalc
-        </Title>
-        <BulletList
-          items={[
-            "Notebook, terminal, and document workflows in one place.",
-            "Collaboration and chat around statistical work.",
-            "Practical support for R-enhanced technical documents.",
-            "A managed shared environment for classes and teams.",
-          ]}
-        />
-        <Flex wrap gap={12}>
-          <Button href={appPath("features/python")}>Python</Button>
-          <Button href={appPath("features/teaching")}>Teaching</Button>
-          {helpEmail ? (
-            <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-          ) : null}
-        </Flex>
       </PublicSection>
     </Flex>
   );

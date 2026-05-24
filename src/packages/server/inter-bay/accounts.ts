@@ -357,7 +357,6 @@ async function createClusterAccountDirect(
     email_address,
     first_name: opts.first_name,
     last_name: opts.last_name,
-    name: undefined,
     home_bay_id,
   });
 
@@ -384,7 +383,6 @@ async function createClusterAccountDirect(
       email_address,
       first_name: entry.first_name ?? opts.first_name,
       last_name: entry.last_name ?? opts.last_name,
-      name: entry.name,
       home_bay_id: entry.home_bay_id ?? home_bay_id,
     });
     return {

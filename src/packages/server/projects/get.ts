@@ -12,7 +12,6 @@ export interface DBProject {
   project_id: string;
   title?: string;
   description?: string;
-  name?: string;
 }
 
 type ProjectListReadMode = "off" | "prefer" | "only";
@@ -89,7 +88,7 @@ export default async function getProjects({
   }
   const pool = getPool();
   const { rows } = await pool.query(
-    `SELECT project_id, title, description, name
+    `SELECT project_id, title, description
        FROM projects
       WHERE deleted IS NOT TRUE
         AND users ? $1

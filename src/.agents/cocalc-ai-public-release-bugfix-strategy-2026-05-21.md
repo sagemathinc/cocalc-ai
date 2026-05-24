@@ -53,26 +53,30 @@ Do not ship public release until these are true:
 
 ### Solved During This Push
 
-| Item                                               | Area              | Status | Resolution                                                                                                                                                                                                                                                                                                 |
-| -------------------------------------------------- | ----------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cross-bay impersonation stopped working            | auth / multibay   | fixed  | Grants are routed through a central seed-bay directory and token-only URLs. Grant redemption on the subject home bay now sets shared-domain `account_id` and `home_bay_id` cookies before redirecting back to the site origin.                                                                             |
-| Impersonation banner disappears after refresh      | auth / admin UX   | fixed  | The app now bootstraps auth state from the authoritative stored/home control-plane origin, so active impersonation sessions are read from the home bay and the banner persists after refresh. The impersonation grant URL also shows a non-consuming support confirmation page before session replacement. |
-| Markdown Slate collaborative editing loses content | editor / sync     | fixed  | Added Playwright coverage for full Slate and block-mode editors where a local unsaved edit is merged with a remote update before the local debounce fires. The merged value is now forced back to the shared markdown from the current editor, so the local contribution is not only visible locally.      |
-| Agent button creates message but no Codex turn     | chat / codex      | fixed  | `forceCodex: true` navigator/agent submissions now default to the standard Codex model when no explicit `codexConfig.model` is provided, so Jupyter/editor agent buttons launch ACP instead of writing an inert user message.                                                                              |
-| Agent button expired-auth path unclear             | chat / codex      | fixed  | Pre-ack Codex auth failures now leave the user message retryable, write one concise auth-expired reply, show a credentials action, and label the retry control `Submit again`. The Codex credentials panel now strongly recommends ChatGPT/Codex subscription auth while keeping API keys as fallback.     |
-| Offline editor switches to loading/read-only       | editor / sync     | fixed  | SyncDoc and editor state now treat routed project-host disconnects as recoverable transport loss instead of fatal document close. Existing editor content stays mounted and editable while reconnecting.                                                                                                   |
-| Project-host restart breaks open editors           | conat / sync      | fixed  | Same-address routed project-host reconnects preserve the Conat client and SyncDoc table state instead of rebuilding editor state. Repeated reconnect failures refresh auth/browser-session state in place. Verified with live `host1` stop/start dogfood.                                                  |
-| Node 26 fails on project hosts without libatomic   | host bootstrap    | fixed  | Added `libatomic1` to project-host bootstrap/install paths and verified Node 26 on `host1`. This was a release blocker because project-host daemons could fail before any frontend recovery logic mattered.                                                                                                |
-| Codex live chat log drops chunks                   | chat / codex      | fixed  | Fixed the efficient `acp_live_preview_stream` instead of bypassing it. The preview stream now carries lifecycle status, actual agent `message` events, summaries, and errors, but no `thinking` payloads or synthetic activity ticks that can split progressive agent output.                              |
-| Sign-in success leaves user on sign-in page        | auth / routing    | fixed  | Default public and legacy auth completion now redirects to `/projects`; explicit safe redirect targets are still preserved for flows that need them.                                                                                                                                                       |
-| Passkey selector looks like primary action         | auth UI           | fixed  | Second-factor method selection now renders as a small chooser group (`Passkey` / `Code`) while the primary submit button remains the actual passkey action.                                                                                                                                                |
-| Passkey password-save/autofill confusion           | auth UI           | fixed  | Showing the account email in the passkey modal solved the observed Chrome password-save/autofill confusion and gives useful context during passkey auth.                                                                                                                                                   |
-| SSO domain check row jumps during sign-in/up       | auth UI           | fixed  | The sign-in-method policy check now uses reserved inline status space under the email field instead of adding/removing a full alert row while typing.                                                                                                                                                      |
-| Project table stale after start                    | projects / sync   | fixed  | No longer observed after the recent Conat socket/reconnect fixes. Treat as fixed by side effect, with dogfood monitoring rather than additional speculative work.                                                                                                                                          |
-| Tiny "Loading" forever after backend upgrade       | chat / sync       | fixed  | Fixed by commit `a003b54d95`, which typed recoverable SyncDoc tables explicitly and avoided treating recoverable backend reconnect state as a permanent loading state.                                                                                                                                     |
-| Hide status security issue                         | public / security | fixed  | Deleted the public `/support/status` route, removed the footer/support index links to it, removed the frontend `/stats` fetch path, and stopped registering the public `/stats` Express route. Realtime monitoring/load information should not be public.                                                  |
-| Chat scroll often near top                         | chat / UX         | fixed  | Added chat-specific viewport anchors keyed by message date plus pixel offset, independent of Virtuoso snapshots. The chat now captures the top visible message while reading and reasserts that anchor across remounts, visibility changes, message list changes, image loads, and item resizes.           |
-| Agent view missing thread menu/config              | chat UI           | fixed  | Extracted the normal chat thread `...` menu into a reusable component and mounted it in inline agent chat. The agent flyout/home agent now expose appearance, behavior, export/import/fork, clear, pin/archive, and delete actions through the same handler stack as full chat.                            |
+| Item                                                 | Area                         | Status | Resolution                                                                                                                                                                                                                                                                                                 |
+| ---------------------------------------------------- | ---------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cross-bay impersonation stopped working              | auth / multibay              | fixed  | Grants are routed through a central seed-bay directory and token-only URLs. Grant redemption on the subject home bay now sets shared-domain `account_id` and `home_bay_id` cookies before redirecting back to the site origin.                                                                             |
+| Impersonation banner disappears after refresh        | auth / admin UX              | fixed  | The app now bootstraps auth state from the authoritative stored/home control-plane origin, so active impersonation sessions are read from the home bay and the banner persists after refresh. The impersonation grant URL also shows a non-consuming support confirmation page before session replacement. |
+| Markdown Slate collaborative editing loses content   | editor / sync                | fixed  | Added Playwright coverage for full Slate and block-mode editors where a local unsaved edit is merged with a remote update before the local debounce fires. The merged value is now forced back to the shared markdown from the current editor, so the local contribution is not only visible locally.      |
+| Agent button creates message but no Codex turn       | chat / codex                 | fixed  | `forceCodex: true` navigator/agent submissions now default to the standard Codex model when no explicit `codexConfig.model` is provided, so Jupyter/editor agent buttons launch ACP instead of writing an inert user message.                                                                              |
+| Agent button expired-auth path unclear               | chat / codex                 | fixed  | Pre-ack Codex auth failures now leave the user message retryable, write one concise auth-expired reply, show a credentials action, and label the retry control `Submit again`. The Codex credentials panel now strongly recommends ChatGPT/Codex subscription auth while keeping API keys as fallback.     |
+| Offline editor switches to loading/read-only         | editor / sync                | fixed  | SyncDoc and editor state now treat routed project-host disconnects as recoverable transport loss instead of fatal document close. Existing editor content stays mounted and editable while reconnecting.                                                                                                   |
+| Project-host restart breaks open editors             | conat / sync                 | fixed  | Same-address routed project-host reconnects preserve the Conat client and SyncDoc table state instead of rebuilding editor state. Repeated reconnect failures refresh auth/browser-session state in place. Verified with live `host1` stop/start dogfood.                                                  |
+| Node 26 fails on project hosts without libatomic     | host bootstrap               | fixed  | Added `libatomic1` to project-host bootstrap/install paths and verified Node 26 on `host1`. This was a release blocker because project-host daemons could fail before any frontend recovery logic mattered.                                                                                                |
+| Codex live chat log drops chunks                     | chat / codex                 | fixed  | Fixed the efficient `acp_live_preview_stream` instead of bypassing it. The preview stream now carries lifecycle status, actual agent `message` events, summaries, and errors, but no `thinking` payloads or synthetic activity ticks that can split progressive agent output.                              |
+| Sign-in success leaves user on sign-in page          | auth / routing               | fixed  | Default public and legacy auth completion now redirects to `/projects`; explicit safe redirect targets are still preserved for flows that need them.                                                                                                                                                       |
+| Passkey selector looks like primary action           | auth UI                      | fixed  | Second-factor method selection now renders as a small chooser group (`Passkey` / `Code`) while the primary submit button remains the actual passkey action.                                                                                                                                                |
+| Passkey password-save/autofill confusion             | auth UI                      | fixed  | Showing the account email in the passkey modal solved the observed Chrome password-save/autofill confusion and gives useful context during passkey auth.                                                                                                                                                   |
+| SSO domain check row jumps during sign-in/up         | auth UI                      | fixed  | The sign-in-method policy check now uses reserved inline status space under the email field instead of adding/removing a full alert row while typing.                                                                                                                                                      |
+| Project table stale after start                      | projects / sync              | fixed  | No longer observed after the recent Conat socket/reconnect fixes. Treat as fixed by side effect, with dogfood monitoring rather than additional speculative work.                                                                                                                                          |
+| Tiny "Loading" forever after backend upgrade         | chat / sync                  | fixed  | Fixed by commit `a003b54d95`, which typed recoverable SyncDoc tables explicitly and avoided treating recoverable backend reconnect state as a permanent loading state.                                                                                                                                     |
+| Hide status security issue                           | public / security            | fixed  | Deleted the public `/support/status` route, removed the footer/support index links to it, removed the frontend `/stats` fetch path, and stopped registering the public `/stats` Express route. Realtime monitoring/load information should not be public.                                                  |
+| Chat scroll often near top                           | chat / UX                    | fixed  | Added chat-specific viewport anchors keyed by message date plus pixel offset, independent of Virtuoso snapshots. The chat now captures the top visible message while reading and reasserts that anchor across remounts, visibility changes, message list changes, image loads, and item resizes.           |
+| Agent view missing thread menu/config                | chat UI                      | fixed  | Extracted the normal chat thread `...` menu into a reusable component and mounted it in inline agent chat. The agent flyout/home agent now expose appearance, behavior, export/import/fork, clear, pin/archive, and delete actions through the same handler stack as full chat.                            |
+| Backup timestamp source consistency                  | backups / hosts              | fixed  | Scheduled/automatic rustic backups now report the actual created backup snapshot time through `hosts.recordProjectBackup`, keeping `projects.last_backup` aligned with backup indexes and host backup health/needs-backup accounting.                                                                      |
+| Bulk delete hits queued/running project delete limit | projects / delete            | fixed  | Browser bulk leave/delete now submits projects sequentially. When a hard delete is queued, the browser waits until that project delete LRO leaves queued/running state before submitting the next hard delete, preserving backend limits and making close-tab cancellation natural.                        |
+| Project quota/memory should apply at start/restart   | projects / quotas            | fixed  | Start/restart now uses current membership/default quotas by sharing the same membership/sponsor-aware `run_quota` path used by project starts. Stopped projects' stored `run_quota` is updated during admin quota changes, and host restart recomputes before re-starting projects.                        |
+| Project/account "name" fields appear unused          | product / security / sharing | fixed  | Removed user-facing account and project vanity names before public launch. Organization names remain, and collaborator `name` values are display names derived from first/last name rather than public vanity identifiers.                                                                                 |
 
 ### P0: Release Blockers
 
@@ -83,26 +87,17 @@ No known P0 release blockers remain in this tracker.
 These are important for first impression and support load. Fix as many as
 possible after P0s are under control.
 
-| Item                                                          | Area                 | Risk                              | First investigation                                                                                    |
-| ------------------------------------------------------------- | -------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Disk usage reload says "Updated just now" without recomputing | storage UI / quota   | Misleading quota data             | Separate "refresh cached state" from "recompute usage"; show recompute pending/running/completed time. |
-| Backup time in storage overview appears random                | backups / storage UI | Users cannot trust backups        | Confirm latest backup source field; ensure overview and tooltip use same authoritative timestamp.      |
-| Bulk delete hits queued/running project delete limit          | projects / workers   | User cannot clean up projects     | Serialize user bulk delete one-at-a-time or raise limit with backpressure; show progress.              |
-| Delete files modal breaks with many files                     | file UI              | Simple operation looks broken     | Use scrollable file list and concise summary after first N files.                                      |
-| Community support page stale                                  | support / content    | Launch support confusion          | Remove dead Discord/Google Group/GitHub Discussions references; verify Zendesk path.                   |
-| Project quota/memory should apply at start/restart            | projects / quotas    | Membership changes appear ignored | Confirm current runtime quota source on every start; invalidate stale cached limits.                   |
+No known P1 launch-critical UX and correctness bugs remain in this tracker.
 
 ### P2: Important But Can Ship With Known Notes
 
 These are important but can be scheduled after the first public launch if P0/P1
 remain active.
 
-| Item                                          | Area                         | Risk                           | First investigation                                                            |
-| --------------------------------------------- | ---------------------------- | ------------------------------ | ------------------------------------------------------------------------------ |
-| Postgres WAL logs not trimmed                 | infra / backup retention     | Disk growth                    | Define retention relative to last two snapshots; measure six-hour WAL volume.  |
-| Project/account "name" fields appear unused   | product / security / sharing | Confusing and maybe misleading | Confirm no vanity URL dependency; hide/deprecate from UI if unused.            |
-| Nebius H200 Python ML packages do not see GPU | GPU images / host runtime    | GPU product credibility        | Test CUDA/PyTorch/TensorFlow image expectations separately from host hardware. |
-| Nebius/R2 backup throughput slow              | backups / host network       | Poor large-project performance | Benchmark disk, network, R2 region path, rustic config.                        |
+| Item                                          | Area                      | Risk                           | First investigation                                                            |
+| --------------------------------------------- | ------------------------- | ------------------------------ | ------------------------------------------------------------------------------ |
+| Nebius H200 Python ML packages do not see GPU | GPU images / host runtime | GPU product credibility        | Test CUDA/PyTorch/TensorFlow image expectations separately from host hardware. |
+| Nebius/R2 backup throughput slow              | backups / host network    | Poor large-project performance | Benchmark disk, network, R2 region path, rustic config.                        |
 
 ## Workstreams
 
@@ -235,21 +230,29 @@ Primary files/packages to inspect:
 
 Scope:
 
-- Disk usage reload lie.
 - Backup timestamp randomness.
 - Project runtime quotas at start/restart.
-- Bulk project delete queue limit.
-- File delete modal overflow.
-- WAL retention.
 
 Acceptance:
 
-- Disk usage UI distinguishes cached values from recompute jobs.
-- Backup overview and tooltip use authoritative latest backup timestamp.
-- Start/restart uses current membership/default quotas.
-- Bulk delete completes sequentially with progress or clear queuing.
-- File delete modal remains readable for large selections.
-- WAL retention is bounded and documented.
+- Disk usage UI distinguishes cached values from recompute jobs. **Done
+  2026-05-23.**
+- Backup overview and host health use the same authoritative latest backup
+  timestamp. **Done 2026-05-22** by fixing scheduled backup reporting at the
+  source instead of papering over stale `projects.last_backup` in the UI.
+- Start/restart uses current membership/default quotas. **Done 2026-05-22**
+  by making quota recomputation share the same membership/sponsor-aware
+  `run_quota` path used by project starts, and by updating stopped projects'
+  stored `run_quota` during admin quota changes instead of leaving stale rows.
+  Host restart operations also recompute before re-starting projects.
+- Bulk delete completes sequentially with progress or clear queuing. **Done
+  2026-05-22.** Bulk delete progress/status polish was finished
+  2026-05-23.
+- File delete modal remains readable for large selections. **Done 2026-05-22**
+  with a bounded, wrapping selected-file list and explicit overflow count.
+- WAL retention is bounded and documented. **Done 2026-05-23** by keeping WAL
+  retention tied to recovery-ready backup manifests and publishing per-bay
+  backup `README.md` and `events.log` metadata into the R2 backup prefix.
 
 ### E. Launch Content And GPU Acceptance
 
@@ -262,14 +265,15 @@ Primary files/packages to inspect:
 
 Scope:
 
-- Community support page stale links.
 - Zendesk path verification.
 - Nebius H200 image GPU usability.
 - Backup and disk throughput on GPU hosts.
 
 Acceptance:
 
-- Support page contains only active support channels.
+- Support page contains only active support channels. **Done 2026-05-23** by
+  removing stale Discord, GitHub Discussions, and Google Groups links and
+  pointing source code users at `sagemathinc/cocalc-ai`.
 - Zendesk support path is tested.
 - `nvidia-smi`, PyTorch CUDA, and TensorFlow CUDA expectations are documented
   and tested for H200 images.
@@ -288,25 +292,18 @@ Acceptance:
    2026-05-21.**
 7. Fix the Codex live-log dropped-output rendering bug or add instrumentation
    that proves where output is filtered.
-8. Fix disk usage reload wording or recompute semantics.
+8. Fix disk usage reload wording or recompute semantics. **Done
+   2026-05-23.**
 
 ## Next Release Picks
 
-Recommended next work order as of 2026-05-22:
+Recommended next work order as of 2026-05-23:
 
-1. **Disk usage reload says "Updated just now" without recomputing.** This is a
-   bounded honesty bug and likely quick: separate cached-refresh from actual
-   recompute and label timestamps by what really happened.
-2. **Backup time in storage overview appears random.** This pairs naturally with
-   disk-usage honesty and should establish one authoritative backup timestamp
-   source for both overview and tooltip.
-3. **Bulk delete hits queued/running project delete limit.** This affects users
-   trying to clean up before launch; a sequential queue with progress is safer
-   than raising worker limits blindly.
+1. Finish bulk project delete progress/status polish so multi-project cleanup
+   remains understandable after the confirmation modal closes.
 
 Good fallback tasks if the above stalls:
 
-- Fix the disk usage reload lie, since it is contained and high-confidence.
 - Hide or replace the stale community support page before public traffic.
 - Investigate the tiny chat "Loading" forever state if it recurs during
   backend upgrade dogfood; it may share enough with the SyncDoc reconnect work
@@ -359,20 +356,20 @@ For each blocker:
 - Live log dropped chunks. **Done 2026-05-22.**
 - Scroll anchoring. **Done 2026-05-22.**
 - Agent view thread menu. **Done 2026-05-22.**
+- Backup timestamp source. **Done 2026-05-22.**
+- Bulk delete behavior. **Done 2026-05-22.**
+- Disk usage reload/recompute. **Done 2026-05-23.**
+- Delete files modal overflow. **Done 2026-05-23.**
+- Community support page. **Done 2026-05-23.**
+- WAL retention documentation. **Done 2026-05-23.**
+- Project/account name deprecation. **Done 2026-05-23.**
 
 ### Batch 4: Storage And Quota Honesty
 
-- Disk usage reload/recompute.
-- Backup timestamp source.
 - Runtime quotas on start/restart.
-- Bulk delete behavior.
-- Delete modal overflow.
 
 ### Batch 5: Launch Polish And Infra Cleanup
 
-- Community support page.
-- WAL retention.
-- Project/account name deprecation decision.
 - Nebius H200 acceptance notes/fixes.
 
 ## Open Questions

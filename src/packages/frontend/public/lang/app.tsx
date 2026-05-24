@@ -87,7 +87,7 @@ const TRANSLATED_FEATURES: Array<{
     bodyKey: "chat-text",
     image: "/public/features/chatroom.png",
     links: {
-      A: "https://doc.cocalc.com/chat.html",
+      A: appPath("features/ai"),
     },
     titleKey: "chat-title",
   },

@@ -33,7 +33,8 @@ export const DNS = "cocalc.com";
 export const DOMAIN_URL = `https://${DNS}`;
 export const DISCUSSION_GROUP =
   "https://groups.google.com/forum/#!forum/cocalc";
-export const DOC_URL = "https://doc.cocalc.com/";
+export const DOC_URL = "/docs";
+export const FIELD_GUIDES_URL = "https://sagemathinc.github.io/cocalc-guides/";
 export const BLOG_URL = "https://blog.sagemath.com/";
 export const LIVE_DEMO_REQUEST =
   "https://docs.google.com/forms/d/e/1FAIpQLSesDZkGD2XVu8BHKd_sPwn5g7MrLAA8EYRTpB6daedGVMTpkA/viewform";
@@ -46,7 +47,8 @@ export const gtag_id = "AW-943259268";
 export const sign_up_id = "44ZfCImosncQhP3jwQM";
 
 // documentation
-export const JUPYTER_CLASSIC_MODERN = "https://doc.cocalc.com/jupyter.html";
+export const JUPYTER_CLASSIC_MODERN =
+  "https://sagemathinc.github.io/cocalc-guides/cocalc-for-jupyter/";
 
 // This is used by hub email code to specify the SendGrid template and ASM groups.
 export const SENDGRID_TEMPLATE_ID = "0375d02c-945f-4415-a611-7dc3411e2a78";

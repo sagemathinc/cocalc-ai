@@ -26,6 +26,7 @@ const mockOpenExportModal = jest.fn();
 const mockOpenImportModal = jest.fn();
 const mockOpenForkModal = jest.fn();
 const mockConfirmDeleteThread = jest.fn();
+const mockUpsertThreadAutomation = jest.fn();
 
 function createMockSyncdb(initialState = "ready") {
   let state = initialState;
@@ -61,6 +62,9 @@ function createMockChatActions(initialState = "ready") {
     setSelectedThread: jest.fn(),
     scrollToIndex: jest.fn(),
     resetThread: jest.fn(() => "thread-2"),
+    getCodexConfig: jest.fn(() => ({ model: "gpt-5-codex" })),
+    getMessagesInThread: jest.fn(() => []),
+    sendChat: jest.fn(),
     getThreadMetadata: jest.fn(() => ({
       agent_kind: "acp",
       acp_config: { model: "gpt-5-codex" },
@@ -120,9 +124,14 @@ jest.mock("antd", () => {
     </div>
   );
   const Empty = ({ description }: any) => <div>{description}</div>;
-  const Modal = {
-    confirm: (...args: any[]) => mockModalConfirm(...args),
-  };
+  const Modal = ({ children, open, title }: any) =>
+    open ? (
+      <div role="dialog">
+        <div>{title}</div>
+        {children}
+      </div>
+    ) : null;
+  Modal.confirm = (...args: any[]) => mockModalConfirm(...args);
   const Popconfirm = ({ children }: any) => children;
   const Space = ({ children }: any) => <div>{children}</div>;
   const Switch = ({ checked, onChange, ...props }: any) => (
@@ -209,6 +218,36 @@ jest.mock("@cocalc/frontend/chat/side-chat", () => ({
   default: () => <div data-testid="agents-inline-chat" />,
 }));
 
+jest.mock("@cocalc/frontend/chat/codex", () => ({
+  __esModule: true,
+  default: ({ threadKey }: any) => (
+    <button data-testid="agents-inline-codex-controls" type="button">
+      Codex controls {threadKey}
+    </button>
+  ),
+}));
+
+jest.mock("@cocalc/frontend/chat/use-codex-payment-source", () => ({
+  useCodexPaymentSource: () => ({
+    paymentSource: { source: "subscription" },
+    loading: false,
+    refresh: jest.fn(),
+  }),
+}));
+
+jest.mock("@cocalc/frontend/chat/acp-api", () => ({
+  upsertThreadAutomation: (...args: any[]) =>
+    mockUpsertThreadAutomation(...args),
+}));
+
+jest.mock("@cocalc/frontend/chat/automation-form", () => {
+  const actual = jest.requireActual("@cocalc/frontend/chat/automation-form");
+  return {
+    ...actual,
+    AutomationConfigFields: () => <div>Automation fields</div>,
+  };
+});
+
 jest.mock("@cocalc/frontend/chat/chatroom-modals", () => ({
   ChatRoomModals: ({ onHandlers }: any) => {
     const React = require("react");
@@ -238,6 +277,11 @@ jest.mock("@cocalc/frontend/chat/chatroom-thread-actions", () => ({
     }, [onHandlers]);
     return null;
   },
+}));
+
+jest.mock("@cocalc/frontend/chat/git-commit-drawer", () => ({
+  GitCommitDrawer: ({ open }: any) =>
+    open ? <div>Git browser drawer</div> : null,
 }));
 
 jest.mock("@cocalc/frontend/chat/thread-badge", () => ({
@@ -339,6 +383,7 @@ describe("AgentsPanel session cards", () => {
     mockOpenImportModal.mockClear();
     mockOpenForkModal.mockClear();
     mockConfirmDeleteThread.mockClear();
+    mockUpsertThreadAutomation.mockClear();
     mockWatchAgentSessionsForProject.mockReset();
     mockWatchAgentSessionsForProject.mockImplementation(
       async (_args: any, cb: (records: any[]) => void) => {
@@ -454,7 +499,7 @@ describe("AgentsPanel session cards", () => {
     await waitFor(() =>
       expect(screen.getByTestId("agents-inline-chat")).toBeTruthy(),
     );
-    fireEvent.click(screen.getByText("Back"));
+    fireEvent.click(screen.getByText("Agents"));
 
     await waitFor(() =>
       expect(screen.queryByTestId("agents-inline-chat")).toBeNull(),
@@ -473,9 +518,24 @@ describe("AgentsPanel session cards", () => {
     await waitFor(() =>
       expect(screen.getByTestId("agents-inline-thread-menu")).toBeTruthy(),
     );
+    expect(screen.getByTestId("agents-inline-codex-controls")).toBeTruthy();
     expect(screen.getByText("Appearance...")).toBeTruthy();
     expect(screen.getByText("Behavior...")).toBeTruthy();
+    expect(screen.getByText("Open Chat File")).toBeTruthy();
+    expect(screen.getByText("Automation settings…")).toBeTruthy();
+    expect(screen.getByText("Git browser")).toBeTruthy();
     expect(screen.getByText("Export...")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Open Chat File"));
+    expect(mockOpenFile).toHaveBeenCalledWith({
+      path: "/home/user/agent.chat",
+    });
+
+    fireEvent.click(screen.getByText("Automation settings…"));
+    expect(screen.getByText("Thread automation")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Git browser"));
+    expect(screen.getByText("Git browser drawer")).toBeTruthy();
 
     fireEvent.click(screen.getByText("Appearance..."));
     expect(mockOpenAppearanceModal).toHaveBeenCalledWith(

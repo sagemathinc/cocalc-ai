@@ -97,7 +97,6 @@ describe("AboutBox", () => {
   const actions = {
     set_project_title: jest.fn(),
     set_project_description: jest.fn(),
-    set_project_name: jest.fn(),
     setProjectTheme: jest.fn(),
   } as any;
 

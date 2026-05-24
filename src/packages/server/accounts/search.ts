@@ -4,7 +4,6 @@ Search for users.
 - by exact account_id
 - by exact email_address
 - by partial match on first_name and last_name
-- by @username
 */
 
 import getPool from "@cocalc/database/pool";
@@ -162,7 +161,7 @@ function process(
 }
 
 const FIELDS =
-  " account_id, first_name, last_name, name, email_address, last_active, created, banned, email_address_verified ";
+  " account_id, first_name, last_name, email_address, last_active, created, banned, email_address_verified ";
 
 async function getUserByEmailAddress(
   email_address: string,
@@ -239,7 +238,7 @@ async function getUsersByStringQueries(
     const v: string[] = [];
     for (const s of terms) {
       v.push(
-        `(lower(first_name) LIKE $${i}::TEXT OR lower(last_name) LIKE $${i}::TEXT OR '@' || lower(name) LIKE $${i}::TEXT ${
+        `(lower(first_name) LIKE $${i}::TEXT OR lower(last_name) LIKE $${i}::TEXT ${
           admin ? `OR lower(email_address) LIKE $${i}::TEXT` : ""
         })`,
       );

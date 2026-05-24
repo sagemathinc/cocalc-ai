@@ -30,7 +30,6 @@ export interface AccountState {
   terminal: Map<string, any>;
   first_name?: string;
   last_name?: string;
-  name?: string;
   unlisted?: boolean;
   profile: TypedMap<{ color: string }>;
   customize?: {

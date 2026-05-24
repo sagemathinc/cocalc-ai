@@ -31,7 +31,6 @@ export const FEATURE_PAGES: FeaturePage[] = [
     summary:
       "Run Jupyter notebooks directly in the browser with collaboration, synchronized output, time travel, and course workflows built in.",
     image: "/public/features/cocalc-jupyter2-20170508.png",
-    docsUrl: "https://doc.cocalc.com/jupyter.html",
     index: true,
     sections: [
       {
@@ -59,30 +58,29 @@ export const FEATURE_PAGES: FeaturePage[] = [
     summary:
       "Edit LaTeX in the browser with synchronized collaboration, build output, history, and the rest of the CoCalc project environment close by.",
     image: "/public/features/latex-editor-main-20251003.png",
-    docsUrl: "https://doc.cocalc.com/latex.html",
     index: true,
   },
   {
     slug: "ai",
     aliases: ["openai-chatgpt"],
-    title: "Coding Agents and AI Assistance",
-    tagline: "Use coding agents and AI help directly in the workspace.",
+    title: "Codex Agent Chat",
+    tagline: "Use Codex in durable project chat threads.",
     summary:
-      "Work with coding agents inside chat and project workflows to explain code, fix errors, generate files, and help move technical work forward.",
+      "Work with Codex inside collaborative chat threads that stay close to project files, notebooks, terminals, images, and review context.",
     image: "/public/features/chatgpt-fix-code.png",
-    docsUrl: "https://doc.cocalc.com/chat.html",
+    docsUrl: "https://sagemathinc.github.io/cocalc-guides/codex-agent-chat/",
     index: true,
     sections: [
       {
-        title: "Agent-native workflows",
+        title: "Codex in project threads",
         paragraphs: [
-          "The current direction is not generic chat boxes. It is coding agents that can inspect context, write code, and participate in the same collaborative environment as the rest of the team.",
+          "CoCalc-AI uses AI through Codex chat threads. Human @mentions notify collaborators; they do not invoke models.",
         ],
         bullets: [
-          "Understand and fix code or notebook errors",
-          "Generate or rewrite project files",
-          "Help with shell commands, environments, and debugging",
-          "Stay embedded in the same chat and document workflows as the rest of CoCalc",
+          "Use OpenAI API keys or OpenAI subscription plans for native Codex support",
+          "Keep prompts, images, patches, and review notes in one durable thread",
+          "Let Codex work with files, terminals, and live notebook state",
+          "Run other command-line agents in project terminals as normal Linux tools",
         ],
       },
     ],
@@ -90,47 +88,46 @@ export const FEATURE_PAGES: FeaturePage[] = [
   {
     slug: "slides",
     title: "Slides",
-    tagline: "Present technical work with executable, collaborative slides.",
+    tagline: "Present from slide-sized technical whiteboards.",
     summary:
-      "Build slides that live next to code, notebooks, whiteboards, and the rest of your project instead of in a disconnected presentation tool.",
+      "Build presentation decks from slide-sized whiteboard pages with markdown, math, diagrams, Jupyter cells, collaboration, and project context.",
     image: "/public/features/whiteboard-sage.png",
     index: true,
   },
   {
     slug: "whiteboard",
     title: "Whiteboard",
-    tagline: "Sketch, annotate, and explain ideas collaboratively.",
+    tagline: "A collaborative technical canvas for math, code, and sketches.",
     summary:
-      "Use an infinite collaborative whiteboard for diagrams, sketches, and teaching, with the rest of the project close by.",
+      "Use an infinite collaborative canvas with markdown, KaTeX, Jupyter cells, multiple pages, and a transparent JSONL document format.",
     image: "/public/features/whiteboard-sage.png",
     index: true,
   },
   {
     slug: "r-statistical-software",
     title: "R Statistical Software",
-    tagline:
-      "Use R in notebooks, terminals, and reproducible document workflows.",
+    tagline: "Use R when statistics is part of a larger project workflow.",
     summary:
-      "Work with R inside CoCalc using notebooks, terminals, and document-generation tools without managing local setup on every machine.",
+      "Work with R in notebooks, terminals, scripts, RMarkdown-style documents, Quarto-style workflows, Knitr, and shared course projects.",
     image: "/public/features/cocalc-r-jupyter.png",
     index: true,
   },
   {
     slug: "sage",
     title: "SageMath",
-    tagline: "Use SageMath online in the environment built by the same team.",
+    tagline:
+      "Use SageMath in the collaborative environment with deep roots in Sage.",
     summary:
-      "CoCalc has deep SageMath support, including notebooks, terminals, and integration with the broader collaborative workspace.",
+      "Use SageMath for teaching, notebooks, SageTeX documents, source development, and long-running mathematics computations in a real collaborative Linux project.",
     image: "/public/features/sagemath-jupyter.png",
     index: true,
   },
   {
     slug: "octave",
     title: "GNU Octave",
-    tagline:
-      "Run Octave online with notebooks and terminals available immediately.",
+    tagline: "Run Octave online in notebooks, scripts, and terminals.",
     summary:
-      "Use Octave in collaborative projects without local installation and pair it with notebooks, terminals, and course workflows.",
+      "Use GNU Octave for MATLAB-style numerical computing in collaborative projects with notebooks, .m files, terminals, plots, and teaching workflows.",
     image: "/public/features/cocalc-octave-jupyter-20200511.png",
     index: true,
   },
@@ -146,9 +143,9 @@ export const FEATURE_PAGES: FeaturePage[] = [
   {
     slug: "julia",
     title: "Julia",
-    tagline: "Use Julia with notebooks, terminals, and project workflows.",
+    tagline: "Use Julia in notebooks, terminals, Pluto, and source files.",
     summary:
-      "Run Julia in CoCalc using notebooks or terminals, with collaboration and course support already integrated.",
+      "Run Julia in a collaborative project with Jupyter notebooks, Pluto, package environments, source files, terminals, and course workflows.",
     image: "/public/features/julia-jupyter.png",
     index: true,
   },
@@ -159,7 +156,6 @@ export const FEATURE_PAGES: FeaturePage[] = [
     summary:
       "Work in a shared Linux shell, keep tools and files near your notebooks and documents, and avoid local environment drift.",
     image: "/public/features/terminal.png",
-    docsUrl: "https://doc.cocalc.com/terminal.html",
     index: true,
     sections: [
       {
@@ -189,7 +185,6 @@ export const FEATURE_PAGES: FeaturePage[] = [
     summary:
       "Organize assignments, distribute files, collect work, and grade notebooks or other project files with a workflow built for technical classes.",
     image: "/public/features/cocalc-course-assignments-2019.png",
-    docsUrl: "https://doc.cocalc.com/teaching-instructors.html",
     index: true,
     sections: [
       {
@@ -201,16 +196,6 @@ export const FEATURE_PAGES: FeaturePage[] = [
         ],
       },
     ],
-  },
-  {
-    slug: "x11",
-    title: "Linux Graphical Desktop",
-    tagline: "Run graphical Linux applications remotely in the browser.",
-    summary:
-      "Use remote graphical applications alongside terminals, notebooks, and project files when you need more than a text shell.",
-    image: "/public/features/x11-01.png",
-    docsUrl: "https://doc.cocalc.com/x11.html",
-    index: true,
   },
   {
     slug: "api",

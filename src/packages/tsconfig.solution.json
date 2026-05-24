@@ -12,6 +12,7 @@
     { "path": "./comm" },
     { "path": "./conat" },
     { "path": "./database" },
+    { "path": "./docs" },
     { "path": "./export" },
     { "path": "./file-server" },
     { "path": "./frontend" },

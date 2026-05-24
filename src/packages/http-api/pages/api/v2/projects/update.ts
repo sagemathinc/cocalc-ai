@@ -34,7 +34,7 @@ async function get(req) {
     throw Error("Must be signed in to update project.");
   }
 
-  const { account_id, project_id, title, description, name } = getParams(req);
+  const { account_id, project_id, title, description } = getParams(req);
 
   if (req.header("Authorization")) {
     const principal = await getAccountFromApiKey(req);
@@ -63,7 +63,6 @@ async function get(req) {
     project_update: {
       title,
       description,
-      name,
     },
   });
 }

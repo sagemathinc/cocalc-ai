@@ -85,7 +85,6 @@ describe("bay-directory", () => {
               email_address: "user@example.com",
               first_name: "Alice",
               last_name: "Example",
-              name: "Alice Example",
               home_bay_id: null,
             },
           ],
@@ -207,7 +206,6 @@ describe("bay-directory", () => {
       email_address: "user@example.com",
       first_name: "Alice",
       last_name: "Example",
-      name: "Alice Example",
       home_bay_id: "bay-0",
       source: "single-bay-default",
     });
@@ -223,7 +221,6 @@ describe("bay-directory", () => {
               email_address: "remote@example.com",
               first_name: "Remote",
               last_name: "User",
-              name: "Remote User",
               home_bay_id: "bay-7",
             },
           ],
@@ -244,7 +241,6 @@ describe("bay-directory", () => {
       email_address: "remote@example.com",
       first_name: "Remote",
       last_name: "User",
-      name: "Remote User",
       home_bay_id: "bay-7",
       source: "account-row",
     });
@@ -256,7 +252,6 @@ describe("bay-directory", () => {
       email_address: "remote@example.com",
       first_name: "Remote",
       last_name: "Directory",
-      name: "Remote Directory",
       home_bay_id: "bay-2",
     }));
     isAdminMock = jest.fn(async () => true);
@@ -283,7 +278,6 @@ describe("bay-directory", () => {
       email_address: "remote@example.com",
       first_name: "Remote",
       last_name: "Directory",
-      name: "Remote Directory",
       home_bay_id: "bay-2",
     }));
     queryMock = jest.fn(async (sql: string) => {
@@ -302,7 +296,6 @@ describe("bay-directory", () => {
       email_address: "remote@example.com",
       first_name: "Remote",
       last_name: "Directory",
-      name: "Remote Directory",
       home_bay_id: "bay-2",
       source: "cluster-directory",
     });
@@ -507,7 +500,6 @@ describe("bay-directory", () => {
               account_email_address: "user@example.com",
               account_first_name: "Alice",
               account_last_name: "Example",
-              account_name: "Alice Example",
               account_home_bay_id: "bay-0",
               account_source: "cluster-directory",
               project_id: PROJECT_ID,
@@ -537,7 +529,6 @@ describe("bay-directory", () => {
         email_address: "user@example.com",
         first_name: "Alice",
         last_name: "Example",
-        name: "Alice Example",
         home_bay_id: "bay-0",
         source: "cluster-directory",
       },
@@ -569,7 +560,6 @@ describe("bay-directory", () => {
               account_email_address: "user@example.com",
               account_first_name: "Alice",
               account_last_name: "Example",
-              account_name: "Alice Example",
               account_home_bay_id: "bay-0",
               account_source: "cluster-directory",
               project_id: PROJECT_ID,

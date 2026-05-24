@@ -221,7 +221,6 @@ function projectRowForFeed(opts: {
     project_id: payload.project_id,
     title: payload.title ?? "",
     description: payload.description ?? "",
-    name: payload.name ?? null,
     theme: payload.theme ?? null,
     host_id: payload.host_id ?? null,
     owning_bay_id: normalizeBayId(payload.owning_bay_id),

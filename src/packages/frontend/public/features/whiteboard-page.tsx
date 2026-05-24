@@ -5,185 +5,366 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
+import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
+import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
-import {
-  BulletList,
-  FeatureImage,
-  featureAppPath as appPath,
-  LinkButton,
-} from "./page-components";
+import { BulletList, featureAppPath as appPath } from "./page-components";
+import { IconBadge, StartCard, StoryCard } from "./feature-visuals";
 
-const { Paragraph, Title } = Typography;
+const { Paragraph, Text, Title } = Typography;
+
+function WhiteboardMock() {
+  const inputs = [
+    ["markdown", "Markdown note", "Proof idea + checklist", "#d4380d"],
+    ["tex", "KaTeX math", "∫ sin(x²) dx", "#2f6fda"],
+    ["jupyter", "Jupyter cell", "run after prerequisites", "#389e0d"],
+  ] satisfies [IconName, string, string, string][];
+
+  return (
+    <div
+      aria-label="Illustration of a CoCalc whiteboard with markdown, math, and Jupyter cells"
+      style={{
+        background:
+          "linear-gradient(145deg, #ffffff 0%, #f4f9ff 54%, #fff8e8 100%)",
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 28,
+        boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
+        padding: 20,
+      }}
+    >
+      <Flex vertical gap={16}>
+        <Flex align="center" justify="space-between" wrap gap={10}>
+          <Flex align="center" gap={10}>
+            <IconBadge accent="#d4380d" icon="layout" />
+            <div>
+              <Text strong>whiteboard.board</Text>
+              <div style={{ color: PUBLIC_COLORS.mutedText }}>
+                infinite canvas, pages, math, code, and collaboration
+              </div>
+            </div>
+          </Flex>
+          <Tag color="orange" style={{ marginInlineEnd: 0 }}>
+            JSONL document
+          </Tag>
+        </Flex>
+
+        <div
+          style={{
+            background: "#fff",
+            border: `1px dashed ${PUBLIC_COLORS.border}`,
+            borderRadius: 22,
+            padding: 18,
+          }}
+        >
+          <Row align="middle" gutter={[14, 14]}>
+            <Col xs={24} md={10}>
+              <Flex vertical gap={10}>
+                {inputs.map(([icon, title, body, accent]) => (
+                  <div
+                    key={title}
+                    style={{
+                      background: "#fff",
+                      border: `1px solid ${PUBLIC_COLORS.border}`,
+                      borderRadius: 16,
+                      boxShadow: "0 10px 24px rgba(33, 49, 57, 0.07)",
+                      padding: 12,
+                    }}
+                  >
+                    <Flex align="center" gap={10}>
+                      <IconBadge accent={accent} icon={icon} />
+                      <div>
+                        <Text strong>{title}</Text>
+                        <div style={{ color: PUBLIC_COLORS.mutedText }}>
+                          {body}
+                        </div>
+                      </div>
+                    </Flex>
+                  </div>
+                ))}
+              </Flex>
+            </Col>
+            <Col xs={24} md={3}>
+              <Flex align="center" justify="center">
+                <div
+                  aria-hidden="true"
+                  style={{
+                    alignItems: "center",
+                    background: "#fff7e6",
+                    border: "1px solid #ffd591",
+                    borderRadius: 999,
+                    color: "#ad6800",
+                    display: "flex",
+                    height: 46,
+                    justifyContent: "center",
+                    width: 46,
+                  }}
+                >
+                  <Icon name="arrow-right" />
+                </div>
+              </Flex>
+            </Col>
+            <Col xs={24} md={11}>
+              <div
+                style={{
+                  background:
+                    "linear-gradient(145deg, #f7fbff 0%, #ffffff 58%, #fff8e8 100%)",
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: 20,
+                  boxShadow: "0 12px 30px rgba(33, 49, 57, 0.08)",
+                  minHeight: 224,
+                  padding: 16,
+                }}
+              >
+                <Flex vertical gap={12}>
+                  <Flex align="center" gap={10}>
+                    <IconBadge accent="#d4380d" icon="layout" />
+                    <div>
+                      <Text strong>lecture page 2</Text>
+                      <div style={{ color: PUBLIC_COLORS.mutedText }}>
+                        one canvas frame
+                      </div>
+                    </div>
+                  </Flex>
+                  <div
+                    style={{
+                      background: "#fff",
+                      border: `1px solid ${PUBLIC_COLORS.border}`,
+                      borderRadius: 14,
+                      padding: 12,
+                    }}
+                  >
+                    <Text strong>Connected explanation</Text>
+                    <Paragraph
+                      style={{
+                        color: PUBLIC_COLORS.mutedText,
+                        margin: "4px 0 0",
+                      }}
+                    >
+                      Text, math, and executable cells stay editable on the
+                      board.
+                    </Paragraph>
+                  </div>
+                  <Flex gap={8} wrap>
+                    {["page", "frame", "jsonl"].map((label) => (
+                      <Tag key={label} style={{ marginInlineEnd: 0 }}>
+                        {label}
+                      </Tag>
+                    ))}
+                  </Flex>
+                </Flex>
+              </div>
+            </Col>
+          </Row>
+        </div>
+      </Flex>
+    </div>
+  );
+}
+
+function ExecutionGraph() {
+  return (
+    <PublicSection>
+      <Row gutter={[24, 24]} align="middle">
+        <Col xs={24} lg={12}>
+          <Flex vertical gap={12}>
+            <Tag
+              color="blue"
+              style={{
+                alignSelf: "flex-start",
+                background: COLORS.ANTD_BG_BLUE_L,
+                color: COLORS.BLUE_D,
+              }}
+            >
+              Computational canvas
+            </Tag>
+            <Title level={3} style={{ margin: 0 }}>
+              Put Jupyter cells in a directed graph.
+            </Title>
+            <Paragraph style={{ margin: 0 }}>
+              A CoCalc whiteboard is not only a drawing surface. Jupyter cells
+              can live on the canvas, connect to each other, and run in graph
+              order, which makes the board useful for computational diagrams,
+              lecture flows, and exploratory workflows that are not naturally
+              linear.
+            </Paragraph>
+            <BulletList
+              items={[
+                "Use markdown and Slate-based rich text for explanations.",
+                "Write precise mathematics with KaTeX.",
+                "Mix sketches, notes, frames, and executable cells.",
+                "Organize large topics with an infinite canvas and multiple pages.",
+              ]}
+            />
+          </Flex>
+        </Col>
+        <Col xs={24} lg={12}>
+          <div
+            style={{
+              background: "#fff",
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: 26,
+              boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
+              padding: 22,
+            }}
+          >
+            <Flex align="center" justify="space-between" gap={12}>
+              {["data", "clean", "fit", "plot"].map((label, index) => (
+                <Flex align="center" gap={10} key={label}>
+                  <div
+                    style={{
+                      background: index === 3 ? "#fff7e6" : "#f7fbff",
+                      border: `1px solid ${PUBLIC_COLORS.border}`,
+                      borderRadius: 16,
+                      padding: 14,
+                    }}
+                  >
+                    <Flex vertical gap={8} align="center">
+                      <IconBadge
+                        accent={index === 3 ? "#ad6800" : "#2f6fda"}
+                        icon={index === 3 ? "line-chart" : "jupyter"}
+                      />
+                      <Text strong>{label}</Text>
+                    </Flex>
+                  </div>
+                  {index < 3 ? (
+                    <Icon name="arrow-right" style={{ color: "#d29c3c" }} />
+                  ) : null}
+                </Flex>
+              ))}
+            </Flex>
+          </div>
+        </Col>
+      </Row>
+    </PublicSection>
+  );
+}
 
 export default function WhiteboardFeaturePage({
   helpEmail,
+  isAuthenticated,
 }: {
   helpEmail?: string;
+  isAuthenticated?: boolean;
 }) {
+  const primaryHref = isAuthenticated
+    ? appPath("projects")
+    : appPath("auth/sign-up");
+  const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
+  const finalLabel = isAuthenticated
+    ? "Open projects"
+    : "Start using CoCalc whiteboards";
+
   return (
-    <Flex vertical gap={18}>
+    <Flex vertical gap={22}>
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={12}>
-            <Flex vertical gap={12}>
+        <Row gutter={[28, 28]} align="middle">
+          <Col xs={24} lg={11}>
+            <Flex vertical gap={14}>
+              <Tag color="orange" style={{ alignSelf: "flex-start" }}>
+                Collaborative technical canvas
+              </Tag>
               <Title level={2} style={{ margin: 0 }}>
-                An infinite collaborative canvas with code, math, and sketching
+                A Miro-like whiteboard rebuilt for computational work.
               </Title>
-              <Paragraph style={{ fontSize: 17, margin: 0 }}>
-                CoCalc whiteboards combine freeform explanation with technical
-                content: markdown, LaTeX, drawing tools, structured frames, and
-                Jupyter code cells can all live together on the same board.
+              <Paragraph style={{ fontSize: 18, margin: 0 }}>
+                CoCalc whiteboards cover the essential collaborative canvas
+                workflow, but are shaped around technical material: rich
+                markdown, KaTeX math, Jupyter cells, pages, frames, drawings,
+                and a simple transparent JSONL document format.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                That makes them useful for teaching, brainstorming, live
-                support, and technical presentations where plain slides are too
-                rigid.
+                They are useful for teaching, office hours, research sketches,
+                live support, and diagrams where code and math should be part of
+                the board instead of pasted screenshots.
               </Paragraph>
               <Flex wrap gap={12}>
-                <Button type="primary" href={appPath("auth/sign-up")}>
-                  Create account
+                <Button type="primary" href={primaryHref}>
+                  {primaryLabel}
                 </Button>
                 <Button href={appPath("features/slides")}>Slides</Button>
+                <Button href={appPath("features/jupyter-notebook")}>
+                  Jupyter notebooks
+                </Button>
               </Flex>
             </Flex>
           </Col>
-          <Col xs={24} lg={12}>
-            <FeatureImage
-              alt="Computational whiteboard in CoCalc"
-              src="/public/features/whiteboard-sage.png"
-            />
+          <Col xs={24} lg={13}>
+            <WhiteboardMock />
           </Col>
         </Row>
       </PublicSection>
 
       <Row gutter={[16, 16]}>
+        <Col xs={24} lg={8}>
+          <StoryCard accent="#d4380d" icon="markdown" title="Markdown native">
+            Whiteboard content is based around rich markdown and Slate editing,
+            so explanations stay editable, structured, and readable.
+          </StoryCard>
+        </Col>
+        <Col xs={24} lg={8}>
+          <StoryCard accent="#2f6fda" icon="tex" title="Math first">
+            KaTeX support makes formulas first-class board content, not blurry
+            images copied from another tool.
+          </StoryCard>
+        </Col>
+        <Col xs={24} lg={8}>
+          <StoryCard accent="#389e0d" icon="jupyter" title="Executable cells">
+            Put Jupyter cells on the board and connect them in a graph when the
+            idea is a computation rather than a static sketch.
+          </StoryCard>
+        </Col>
+      </Row>
+
+      <ExecutionGraph />
+
+      <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicSection>
-            <Title level={3} style={{ margin: 0 }}>
-              Built for interactive explanation
-            </Title>
-            <BulletList
-              items={[
-                "Rich collaborative markdown with LaTeX mathematics.",
-                "Sticky notes, drawing tools, icons, frames, and layout controls.",
-                "Jupyter code cells with execution and widgets inside the board.",
-                "Chat and collaboration next to the work instead of in a separate tool.",
-              ]}
-            />
-            <Paragraph style={{ margin: 0 }}>
-              This combination makes the whiteboard useful for more than
-              freehand sketching. It becomes a workspace for technical
-              explanation.
-            </Paragraph>
-          </PublicSection>
+          <StoryCard accent="#7c3aed" icon="users" title="Realtime by default">
+            Collaborators can work on the same board, use side chat, and keep
+            the explanation in the same project as the notebooks and files it
+            references.
+          </StoryCard>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicSection>
-            <Title level={3} style={{ margin: 0 }}>
-              Better than a static diagram
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              A computational whiteboard can combine narrative, executable code,
-              mathematical notation, and annotations in one place. That is ideal
-              for office hours, collaborative problem solving, design reviews,
-              and technical teaching.
-            </Paragraph>
-            <Paragraph style={{ margin: 0 }}>
-              It is especially useful when you want to keep the fluidity of a
-              whiteboard without giving up the ability to run code or write
-              precise mathematics.
-            </Paragraph>
-          </PublicSection>
+          <StoryCard accent="#278c83" icon="file" title="Transparent format">
+            The whiteboard is stored as a simple JSONL document, which keeps the
+            format inspectable and friendly to project tooling.
+          </StoryCard>
         </Col>
       </Row>
 
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={11}>
-            <FeatureImage
-              alt="Whiteboard with sticky notes and annotations"
-              src="/public/features/whiteboard-post-it.png"
-            />
-          </Col>
           <Col xs={24} lg={13}>
-            <Flex vertical gap={12}>
-              <Tag
-                color="blue"
-                style={{
-                  alignSelf: "flex-start",
-                  background: COLORS.ANTD_BG_BLUE_L,
-                  color: COLORS.BLUE_D,
-                }}
-              >
-                Infinite canvas
-              </Tag>
-              <Title level={3} style={{ margin: 0 }}>
-                Organize complex ideas spatially
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                Frames, overview maps, and spatial layout matter when a topic is
-                too large for a single document page or slide deck.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                CoCalc whiteboards let you keep several related areas in one
-                board while still navigating them in a structured way.
-              </Paragraph>
+            <Title level={3}>
+              Why use whiteboards in CoCalc
+            </Title>
+            <BulletList
+              items={[
+                "Explain ideas with text, math, sketches, and live code together.",
+                "Use an infinite canvas with multiple pages for large technical topics.",
+                "Keep board work close to notebooks, terminals, files, and chat.",
+                "Turn a whiteboard into slides when the same material becomes a presentation.",
+              ]}
+            />
+            <Flex wrap gap={12}>
+              <Button href={appPath("features/slides")}>Slides</Button>
+              <Button href={appPath("features/teaching")}>Teaching</Button>
+              {helpEmail ? (
+                <Button href={`mailto:${helpEmail}`}>Contact support</Button>
+              ) : null}
             </Flex>
           </Col>
+          <Col xs={24} lg={11}>
+            <StartCard
+              body="Open a project and create a board for technical diagrams, lecture notes, research sketches, or computational workflows."
+              href={primaryHref}
+              label={finalLabel}
+              title="Start with a board"
+            />
+          </Col>
         </Row>
-      </PublicSection>
-
-      <Row gutter={[16, 16]}>
-        <Col xs={24} xl={12}>
-          <PublicSection>
-            <Title level={3} style={{ margin: 0 }}>
-              TimeTravel and collaboration history
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              Every change is recorded, which means whiteboards are not just
-              ephemeral drawing surfaces. You can inspect earlier states and
-              understand how an explanation or solution evolved over time.
-            </Paragraph>
-          </PublicSection>
-        </Col>
-        <Col xs={24} xl={12}>
-          <PublicSection>
-            <Title level={3} style={{ margin: 0 }}>
-              Closely related to slides
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              If you want a more presentation-focused workflow, CoCalc slides
-              use many of the same ideas in a more structured, page-oriented
-              format.
-            </Paragraph>
-            <LinkButton href={appPath("features/slides")}>
-              Explore slides
-            </LinkButton>
-          </PublicSection>
-        </Col>
-      </Row>
-
-      <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          Why teams use whiteboards in CoCalc
-        </Title>
-        <BulletList
-          items={[
-            "Explain ideas with text, math, sketches, and live code together.",
-            "Collaborate in real time instead of passing around exported screenshots.",
-            "Use one workspace for teaching, brainstorming, and technical support.",
-            "Keep history and structure around what would otherwise be transient board work.",
-          ]}
-        />
-        <Flex wrap gap={12}>
-          <Button href={appPath("features/jupyter-notebook")}>
-            Jupyter notebooks
-          </Button>
-          {helpEmail ? (
-            <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-          ) : null}
-        </Flex>
       </PublicSection>
     </Flex>
   );

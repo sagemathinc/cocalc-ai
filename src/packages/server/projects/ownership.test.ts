@@ -85,6 +85,12 @@ function projectRow(users: Record<string, { group: string }>) {
   };
 }
 
+function ownerOnlyProjectRow() {
+  return projectRow({
+    [OWNER_ID]: { group: "owner" },
+  });
+}
+
 describe("project ownership", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -195,11 +201,7 @@ describe("project ownership", () => {
 
   it("hard-deletes owner-only projects during account deletion", async () => {
     poolQueryMock.mockResolvedValueOnce({
-      rows: [
-        projectRow({
-          [OWNER_ID]: { group: "owner" },
-        }),
-      ],
+      rows: [ownerOnlyProjectRow()],
     });
     hardDeleteProjectMock.mockResolvedValueOnce({
       project_id: PROJECT_ID,
@@ -219,5 +221,35 @@ describe("project ownership", () => {
       project_id: PROJECT_ID,
       account_id: OWNER_ID,
     });
+  });
+
+  it("can hard-delete legacy soft-deleted owner-only project rows", async () => {
+    poolQueryMock.mockResolvedValueOnce({
+      rows: [ownerOnlyProjectRow()],
+    });
+    hardDeleteProjectMock.mockResolvedValueOnce({
+      op_id: "55555555-5555-4555-8555-555555555555",
+    });
+
+    const { leaveOrDeleteProjectsForAccount } = await import("./ownership");
+    await expect(
+      leaveOrDeleteProjectsForAccount({
+        account_id: OWNER_ID,
+        project_ids: [PROJECT_ID],
+        hardDeleteOwnedProject: async () => ({
+          op_id: "55555555-5555-4555-8555-555555555555",
+        }),
+      }),
+    ).resolves.toEqual([
+      {
+        project_id: PROJECT_ID,
+        action: "hard_delete_queued",
+        op_id: "55555555-5555-4555-8555-555555555555",
+      },
+    ]);
+
+    const [sql] = poolQueryMock.mock.calls[0];
+    expect(`${sql}`).not.toContain("deleted IS NOT TRUE");
+    expect(hardDeleteProjectMock).not.toHaveBeenCalled();
   });
 });

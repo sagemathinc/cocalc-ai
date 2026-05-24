@@ -38,13 +38,21 @@ import {
   upsertAgentSessionRecord,
   watchAgentSessionsForProject,
 } from "@cocalc/frontend/chat/agent-session-index";
-import type { AcpAutomationRecord } from "@cocalc/conat/ai/acp/types";
+import type {
+  AcpAutomationConfig,
+  AcpAutomationRecord,
+} from "@cocalc/conat/ai/acp/types";
 import {
+  AutomationConfigFields,
+  buildAutomationDraft,
   describeAutomationSchedule,
   formatAutomationPausedReason,
+  hasAutomationConfigContent,
+  normalizeAutomationConfigForSave,
   shouldShowAutomationNextRun,
 } from "@cocalc/frontend/chat/automation-form";
 import { showActiveAutomationLimitModal } from "@cocalc/frontend/chat/automation-limit";
+import { upsertThreadAutomation } from "@cocalc/frontend/chat/acp-api";
 import { watchAutomationsForProject } from "@cocalc/frontend/chat/automation-index";
 import {
   initChat,
@@ -61,7 +69,10 @@ import {
   ChatRoomThreadActions,
   type ChatRoomThreadActionHandlers,
 } from "@cocalc/frontend/chat/chatroom-thread-actions";
+import { GitCommitDrawer } from "@cocalc/frontend/chat/git-commit-drawer";
 import { ChatRoomThreadMenu } from "@cocalc/frontend/chat/chatroom-thread-menu";
+import CodexConfigButton from "@cocalc/frontend/chat/codex";
+import { useCodexPaymentSource } from "@cocalc/frontend/chat/use-codex-payment-source";
 import { groupThreadsByRecency } from "@cocalc/frontend/chat/threads";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import {
@@ -174,6 +185,20 @@ function displayThreadLabel(title?: string): string | null {
   return clean.length > 120 ? `${clean.slice(0, 117)}...` : clean;
 }
 
+function threadSupportsCodexAutomation(
+  metadata?: {
+    agent_kind?: string | null;
+    agent_model?: string | null;
+    acp_config?: unknown;
+  } | null,
+): boolean {
+  if (!metadata) return false;
+  if (metadata.agent_kind === "acp" || metadata.acp_config != null) {
+    return true;
+  }
+  return isCodexModelName(`${metadata.agent_model ?? ""}`.trim());
+}
+
 function deriveAgentRootPath(opts: {
   activeProjectTab?: string;
   currentPath?: string;
@@ -277,6 +302,20 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     useState<ChatRoomModalHandlers | null>(null);
   const [threadActionHandlers, setThreadActionHandlers] =
     useState<ChatRoomThreadActionHandlers | null>(null);
+  const [automationModalThreadKey, setAutomationModalThreadKey] = useState<
+    string | null
+  >(null);
+  const [automationDraft, setAutomationDraft] = useState<
+    AcpAutomationConfig | undefined
+  >(undefined);
+  const [automationSaving, setAutomationSaving] = useState(false);
+  const [gitBrowserOpen, setGitBrowserOpen] = useState(false);
+  const [gitBrowserCwd, setGitBrowserCwd] = useState<string | undefined>(
+    undefined,
+  );
+  const [gitBrowserThreadKey, setGitBrowserThreadKey] = useState<
+    string | undefined
+  >(undefined);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [panelWidth, setPanelWidth] = useState<number>(0);
   const isFlyout = layout === "flyout";
@@ -469,6 +508,14 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       null
     );
   }, [inlineSessionId, openedSelection, sessionsWithExistingChat]);
+  const {
+    paymentSource: codexPaymentSource,
+    loading: codexPaymentSourceLoading,
+    refresh: refreshCodexPaymentSource,
+  } = useCodexPaymentSource({
+    projectId: project_id,
+    enabled: inlineSession != null,
+  });
 
   const scopedSessions = useMemo(() => {
     let filtered = sessionsWithExistingChat;
@@ -751,6 +798,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       "data-preferLatestThread": false,
       "data-showThreadImagePreview": false,
       "data-hideChatTopControls": true,
+      "data-hideCompactThreadHeader": true,
     };
   }, [inlineSession?.thread_key]);
 
@@ -769,6 +817,44 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       }),
     };
   }, [inlineSession?.chat_path, project_id]);
+
+  const automationModalMetadata = useMemo(
+    () =>
+      automationModalThreadKey
+        ? inlineActions?.getThreadMetadata?.(automationModalThreadKey, {
+            threadId: automationModalThreadKey,
+          })
+        : undefined,
+    [automationModalThreadKey, inlineActions],
+  );
+
+  const automationModalConfig = useMemo(
+    () =>
+      hasAutomationConfigContent(automationModalMetadata?.automation_config)
+        ? automationModalMetadata?.automation_config
+        : undefined,
+    [automationModalMetadata?.automation_config],
+  );
+
+  const automationModalAllowsCodex = useMemo(
+    () => threadSupportsCodexAutomation(automationModalMetadata),
+    [automationModalMetadata],
+  );
+
+  useEffect(() => {
+    if (!automationModalThreadKey) return;
+    setAutomationDraft(
+      buildAutomationDraft({
+        config: automationModalConfig,
+        enabled: automationModalConfig?.enabled !== false,
+        allowCodexRunKind: automationModalAllowsCodex,
+      }),
+    );
+  }, [
+    automationModalAllowsCodex,
+    automationModalConfig,
+    automationModalThreadKey,
+  ]);
 
   function closeInlineSession(): void {
     setInlineSessionId(null);
@@ -805,6 +891,55 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   function openAutomation(record: AcpAutomationRecord): void {
     saveNavigatorSelectedThreadKey(record.thread_id, record.path);
     actions?.open_file({ path: record.path });
+  }
+
+  function openAutomationModal(threadKey: string): void {
+    const key = `${threadKey ?? ""}`.trim();
+    if (!key) return;
+    setAutomationModalThreadKey(key);
+  }
+
+  function openGitBrowserForThread(threadKey: string): void {
+    const key = `${threadKey ?? ""}`.trim();
+    if (!key) return;
+    const metadata = inlineActions?.getThreadMetadata?.(key, { threadId: key });
+    const codexConfig = inlineActions?.getCodexConfig?.(key);
+    const workingDirectory =
+      typeof codexConfig?.workingDirectory === "string" &&
+      codexConfig.workingDirectory.trim()
+        ? codexConfig.workingDirectory.trim()
+        : typeof metadata?.acp_config?.workingDirectory === "string" &&
+            metadata.acp_config.workingDirectory.trim()
+          ? metadata.acp_config.workingDirectory.trim()
+          : undefined;
+    setGitBrowserCwd(workingDirectory);
+    setGitBrowserThreadKey(key);
+    setGitBrowserOpen(true);
+  }
+
+  async function saveAutomationModal(): Promise<void> {
+    if (!inlineActions || !automationModalThreadKey) return;
+    const config = normalizeAutomationConfigForSave({
+      draft: automationDraft,
+      automationId: automationModalConfig?.automation_id,
+      allowCodexRunKind: automationModalAllowsCodex,
+    });
+    if (!config) {
+      antdMessage.error("Automation needs a prompt or command before saving.");
+      return;
+    }
+    setAutomationSaving(true);
+    try {
+      const response = await upsertThreadAutomation({
+        actions: inlineActions,
+        threadId: automationModalThreadKey,
+        config,
+      });
+      showActiveAutomationLimitModal({ project_id, response });
+      setAutomationModalThreadKey(null);
+    } finally {
+      setAutomationSaving(false);
+    }
   }
 
   async function controlAutomation(
@@ -925,7 +1060,15 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       isCodexModelName(`${model ?? record.model ?? ""}`),
     );
     if (!inlineActions || !threadKey) {
-      return <Button size="small">Actions</Button>;
+      return (
+        <Button
+          size="small"
+          type="text"
+          icon={<Icon name="ellipsis" />}
+          aria-label="Chat thread actions"
+          disabled
+        />
+      );
     }
     return (
       <ChatRoomThreadMenu
@@ -951,6 +1094,9 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         confirmDeleteThread={
           threadActionHandlers?.confirmDeleteThread ?? (() => undefined)
         }
+        openChatFile={() => actions?.open_file({ path: record.chat_path })}
+        openAutomationModal={openAutomationModal}
+        openGitBrowser={openGitBrowserForThread}
         buttonType="text"
         buttonAriaLabel="Chat thread actions"
         buttonTestId="agents-inline-thread-menu"
@@ -958,26 +1104,39 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     );
   }
 
-  function renderFontSizeControls(minimal = false): React.JSX.Element {
+  function renderFontSizeControls(): React.JSX.Element {
     return (
-      <Space size={[4, 0]} wrap>
-        {!minimal ? (
-          <Typography.Text type="secondary">Font</Typography.Text>
-        ) : null}
+      <div
+        aria-label="Agent chat text size"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 2,
+          height: 28,
+          padding: "0 3px",
+          border: "1px solid #d9d9d9",
+          borderRadius: 7,
+          background: "#fff",
+          whiteSpace: "nowrap",
+        }}
+      >
         <Tooltip title="Decrease chat font size">
           <Button
             size="small"
             type="text"
             disabled={!canDecreaseFontSize}
             onClick={decreaseFontSize}
-            style={{ minWidth: 24, padding: "0 4px" }}
+            style={{ minWidth: 24, height: 22, padding: "0 4px" }}
           >
             <Icon name="minus" />
           </Button>
         </Tooltip>
         <Tooltip title={`Agent chat font size: ${fontSize}px`}>
-          <Typography.Text style={{ minWidth: 28, textAlign: "center" }}>
-            {fontSize}
+          <Typography.Text
+            type="secondary"
+            style={{ fontSize: 12, padding: "0 4px" }}
+          >
+            Text {fontSize}
           </Typography.Text>
         </Tooltip>
         <Tooltip title="Increase chat font size">
@@ -986,12 +1145,12 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             type="text"
             disabled={!canIncreaseFontSize}
             onClick={increaseFontSize}
-            style={{ minWidth: 24, padding: "0 4px" }}
+            style={{ minWidth: 24, height: 22, padding: "0 4px" }}
           >
             <Icon name="plus" />
           </Button>
         </Tooltip>
-      </Space>
+      </div>
     );
   }
 
@@ -1494,6 +1653,25 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
 
   if (inlineSession) {
     const inlineTitle = normalizedTitle(inlineSession);
+    const inlineThreadKey = `${inlineSession.thread_key ?? ""}`.trim();
+    const inlineThreadMetadata =
+      inlineThreadKey && inlineActions
+        ? inlineActions.getThreadMetadata?.(inlineThreadKey, {
+            threadId: inlineThreadKey,
+          })
+        : undefined;
+    const inlineThreadModel =
+      inlineThreadMetadata?.agent_model?.trim() ||
+      inlineThreadMetadata?.acp_config?.model?.trim() ||
+      inlineSession.model?.trim();
+    const showInlineCodexConfig = Boolean(
+      inlineActions &&
+      inlineThreadKey &&
+      (inlineThreadMetadata?.agent_kind === "acp" ||
+        inlineThreadMetadata?.acp_config != null ||
+        inlineActions.getCodexConfig?.(inlineThreadKey) != null ||
+        isCodexModelName(`${inlineThreadModel ?? ""}`)),
+    );
     return (
       <div
         ref={panelRef}
@@ -1513,33 +1691,84 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               }
         }
       >
-        <Space
-          wrap
-          size={[8, 8]}
+        <div
           style={{
-            marginBottom: 8,
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            marginBottom: 10,
             width: "100%",
-            justifyContent: "space-between",
+            minWidth: 0,
           }}
         >
-          <Space size={[6, 6]} wrap style={{ minWidth: 0 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              width: "100%",
+              minWidth: 0,
+            }}
+          >
             <Button
               size="small"
-              type="link"
-              style={{ paddingLeft: 0 }}
+              type="text"
+              icon={<Icon name="chevron-left" />}
+              style={{ padding: "0 6px", flex: "0 0 auto" }}
               onClick={closeInlineSession}
+              aria-label="Back to agents"
             >
-              Back
+              Agents
             </Button>
-            <Typography.Text strong title={inlineTitle}>
-              {ellipsize(inlineTitle, isFlyout ? 42 : 90)}
-            </Typography.Text>
-          </Space>
-          <Space size={[4, 4]} wrap>
-            {renderFontSizeControls(true)}
-            {renderInlineSessionMenu(inlineSession)}
-          </Space>
-        </Space>
+            <div style={{ minWidth: 0, flex: "1 1 auto" }}>
+              <Typography.Text
+                strong
+                title={inlineTitle}
+                style={{
+                  display: "block",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  lineHeight: "18px",
+                }}
+              >
+                {ellipsize(inlineTitle, isFlyout ? 34 : 72)}
+              </Typography.Text>
+            </div>
+            <div style={{ flex: "0 0 auto" }}>
+              {renderInlineSessionMenu(inlineSession)}
+            </div>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              width: "100%",
+              minWidth: 0,
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+            }}
+          >
+            {showInlineCodexConfig ? (
+              <div style={{ minWidth: 0, flex: "1 1 260px" }}>
+                <CodexConfigButton
+                  threadKey={inlineThreadKey}
+                  chatPath={inlineSession.chat_path}
+                  projectId={project_id}
+                  actions={inlineActions ?? undefined}
+                  threadConfig={inlineThreadMetadata?.acp_config ?? null}
+                  paymentSource={codexPaymentSource}
+                  paymentSourceLoading={codexPaymentSourceLoading}
+                  refreshPaymentSource={refreshCodexPaymentSource}
+                />
+              </div>
+            ) : (
+              <span />
+            )}
+            {renderFontSizeControls()}
+          </div>
+        </div>
         {error ? (
           <Alert
             type="error"
@@ -1612,6 +1841,56 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                 });
               }}
               onHandlers={setThreadActionHandlers}
+            />
+            <Modal
+              title="Thread automation"
+              open={automationModalThreadKey != null}
+              destroyOnHidden
+              onCancel={() => setAutomationModalThreadKey(null)}
+              onOk={() => {
+                void saveAutomationModal();
+              }}
+              okText="Save"
+              confirmLoading={automationSaving}
+            >
+              <AutomationConfigFields
+                draft={automationDraft}
+                allowCodexRunKind={automationModalAllowsCodex}
+                onChange={(patch) =>
+                  setAutomationDraft((prev) => ({
+                    ...buildAutomationDraft({
+                      config: prev,
+                      allowCodexRunKind: automationModalAllowsCodex,
+                    }),
+                    ...patch,
+                  }))
+                }
+              />
+            </Modal>
+            <GitCommitDrawer
+              projectId={project_id}
+              sourcePath={inlineSession.chat_path}
+              cwdOverride={gitBrowserCwd}
+              open={gitBrowserOpen}
+              onClose={() => {
+                setGitBrowserOpen(false);
+                setGitBrowserThreadKey(undefined);
+              }}
+              fontSize={fontSize}
+              onRequestAgentTurn={(prompt) => {
+                const trimmed = `${prompt ?? ""}`.trim();
+                const threadId =
+                  gitBrowserThreadKey ?? inlineSession.thread_key;
+                if (!trimmed || !threadId) return;
+                inlineActions.sendChat({
+                  extraInput: trimmed,
+                  reply_thread_id: threadId,
+                  parent_message_id:
+                    `${(inlineActions.getMessagesInThread(threadId)?.slice(-1)[0] as any)?.message_id ?? ""}`.trim() ||
+                    undefined,
+                  preserveSelectedThread: true,
+                });
+              }}
             />
           </>
         ) : null}

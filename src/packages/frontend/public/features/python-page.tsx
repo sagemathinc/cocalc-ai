@@ -3,114 +3,654 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import type { ReactNode } from "react";
+
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
+import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
+import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
-import {
-  BulletList,
-  FeatureImage,
-  featureAppPath as appPath,
-} from "./page-components";
+import { featureAppPath as appPath, LinkButton } from "./page-components";
 
-const { Paragraph, Title } = Typography;
+const { Paragraph, Text, Title } = Typography;
 
-export default function PythonFeaturePage({
-  helpEmail,
+const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
+
+function IconBadge({
+  accent = PUBLIC_COLORS.brand,
+  icon,
 }: {
-  helpEmail?: string;
+  accent?: string;
+  icon: IconName;
 }) {
   return (
-    <Flex vertical gap={18}>
-      <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={12}>
-            <Flex vertical gap={12}>
-              <Title level={2} style={{ margin: 0 }}>
-                Run Python notebooks, scripts, and experiments in one shared
-                environment
-              </Title>
-              <Paragraph style={{ fontSize: 17, margin: 0 }}>
-                CoCalc makes Python useful across notebooks, terminals, code
-                editors, chat, and course workflows instead of forcing you to
-                pick only one mode of work.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                The result is a Python environment that is immediately usable
-                for teaching, data science, research, and collaborative
-                development, with fewer setup problems and more shared context.
-              </Paragraph>
-              <Flex wrap gap={12}>
-                <Button type="primary" href={appPath("auth/sign-up")}>
-                  Create account
-                </Button>
-                <Button href={appPath("features/jupyter-notebook")}>
-                  Jupyter notebooks
-                </Button>
-              </Flex>
-            </Flex>
+    <span
+      style={{
+        alignItems: "center",
+        background: `${accent}14`,
+        border: `1px solid ${accent}33`,
+        borderRadius: 16,
+        color: accent,
+        display: "inline-flex",
+        flex: "0 0 auto",
+        fontSize: 24,
+        height: 52,
+        justifyContent: "center",
+        width: 52,
+      }}
+    >
+      <Icon name={icon} />
+    </span>
+  );
+}
+
+function StoryCard({
+  accent = PUBLIC_COLORS.brand,
+  children,
+  icon,
+  title,
+}: {
+  accent?: string;
+  children: ReactNode;
+  icon: IconName;
+  title: string;
+}) {
+  return (
+    <div
+      style={{
+        background: "#fff",
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 22,
+        boxShadow: "0 14px 40px rgba(33, 49, 57, 0.07)",
+        height: "100%",
+        padding: 22,
+      }}
+    >
+      <Flex vertical gap={14}>
+        <IconBadge accent={accent} icon={icon} />
+        <Title level={4} style={{ margin: 0 }}>
+          {title}
+        </Title>
+        <Paragraph style={{ margin: 0 }}>{children}</Paragraph>
+      </Flex>
+    </div>
+  );
+}
+
+function PythonProjectMock() {
+  const panels = [
+    {
+      accent: "#2f6fda",
+      body: "analysis.ipynb",
+      icon: "jupyter",
+      title: "Notebook",
+    },
+    {
+      accent: "#278c83",
+      body: "model.py",
+      icon: "python",
+      title: "Script",
+    },
+    {
+      accent: "#ad6800",
+      body: "run.term",
+      icon: "terminal",
+      title: "Terminal",
+    },
+    {
+      accent: "#7c3aed",
+      body: "paper.tex",
+      icon: "tex",
+      title: "Paper",
+    },
+  ] satisfies { accent: string; body: string; icon: IconName; title: string }[];
+
+  return (
+    <div
+      aria-label="Illustration of one CoCalc Python project connecting notebooks, scripts, terminals, papers, and Codex"
+      style={{
+        background:
+          "linear-gradient(145deg, #ffffff 0%, #f4f9ff 55%, #fff8e8 100%)",
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 28,
+        boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
+        padding: 20,
+      }}
+    >
+      <Flex vertical gap={16}>
+        <Flex align="center" justify="space-between" wrap gap={10}>
+          <Flex align="center" gap={10}>
+            <IconBadge accent="#2f6fda" icon="python" />
+            <div>
+              <Text strong>one Python project</Text>
+              <div style={{ color: PUBLIC_COLORS.mutedText }}>
+                same files, runtime, collaborators, and agent context
+              </div>
+            </div>
+          </Flex>
+          <Flex gap={8} wrap>
+            <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+              real Linux
+            </Tag>
+            <Tag color="green" style={{ marginInlineEnd: 0 }}>
+              install packages
+            </Tag>
+          </Flex>
+        </Flex>
+
+        <Row gutter={[12, 12]}>
+          {panels.map((panel) => (
+            <Col key={panel.title} xs={24} sm={12}>
+              <div
+                style={{
+                  background: "#fff",
+                  border: `1px solid ${PUBLIC_COLORS.border}`,
+                  borderRadius: 18,
+                  height: "100%",
+                  padding: 14,
+                }}
+              >
+                <Flex align="center" gap={12}>
+                  <IconBadge accent={panel.accent} icon={panel.icon} />
+                  <div>
+                    <Text strong>{panel.title}</Text>
+                    <div style={{ color: PUBLIC_COLORS.mutedText }}>
+                      {panel.body}
+                    </div>
+                  </div>
+                </Flex>
+              </div>
+            </Col>
+          ))}
+        </Row>
+
+        <div
+          style={{
+            background: "#0b1522",
+            borderRadius: 20,
+            color: "#dbeafe",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              alignItems: "center",
+              background: "rgba(255,255,255,0.08)",
+              display: "flex",
+              gap: 8,
+              padding: "10px 14px",
+            }}
+          >
+            {["#ff6b6b", "#ffd166", "#06d6a0"].map((color) => (
+              <span
+                aria-hidden="true"
+                key={color}
+                style={{
+                  background: color,
+                  borderRadius: "50%",
+                  height: 10,
+                  width: 10,
+                }}
+              />
+            ))}
+            <Text style={{ color: "#dbeafe", marginLeft: 8 }}>terminal</Text>
+          </div>
+          <Flex
+            vertical
+            gap={8}
+            style={{
+              fontFamily:
+                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+              padding: 16,
+            }}
+          >
+            <Text style={{ color: "#bfdbfe" }}>
+              $ uv venv && uv pip install numpy matplotlib
+            </Text>
+            <Text style={{ color: "#86efac" }}>installed 12 packages</Text>
+            <Text style={{ color: "#bfdbfe" }}>$ python model.py</Text>
+            <Text style={{ color: "#86efac" }}>
+              wrote figures/model-fit.pdf
+            </Text>
+          </Flex>
+        </div>
+
+        <Flex
+          align="center"
+          gap={12}
+          style={{
+            background: "#fff",
+            border: `1px solid ${PUBLIC_COLORS.border}`,
+            borderRadius: 18,
+            padding: 14,
+          }}
+        >
+          <IconBadge accent="#7c3aed" icon="robot" />
+          <div>
+            <Text strong>Codex sees the surrounding work</Text>
+            <div style={{ color: PUBLIC_COLORS.mutedText }}>
+              files, notebooks, terminals, packages, errors, and notes
+            </div>
+          </div>
+        </Flex>
+      </Flex>
+    </div>
+  );
+}
+
+function WorkflowNode({
+  accent,
+  body,
+  icon,
+  label,
+  title,
+}: {
+  accent: string;
+  body: string;
+  icon: IconName;
+  label: string;
+  title: string;
+}) {
+  return (
+    <div
+      style={{
+        background: "#fff",
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 18,
+        boxShadow: "0 12px 34px rgba(33, 49, 57, 0.07)",
+        height: "100%",
+        padding: 18,
+      }}
+    >
+      <Flex vertical gap={12}>
+        <Flex align="center" justify="space-between" gap={12}>
+          <IconBadge accent={accent} icon={icon} />
+          <Tag
+            style={{
+              background: `${accent}12`,
+              borderColor: `${accent}2e`,
+              color: accent,
+              marginInlineEnd: 0,
+            }}
+          >
+            {label}
+          </Tag>
+        </Flex>
+        <div>
+          <Title level={4} style={{ margin: "0 0 6px" }}>
+            {title}
+          </Title>
+          <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
+            {body}
+          </Paragraph>
+        </div>
+      </Flex>
+    </div>
+  );
+}
+
+function MiniTerminal() {
+  return (
+    <div
+      style={{
+        background: "#0b1522",
+        borderRadius: 18,
+        color: "#dbeafe",
+        height: "100%",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          alignItems: "center",
+          background: "rgba(255,255,255,0.08)",
+          display: "flex",
+          gap: 8,
+          padding: "10px 12px",
+        }}
+      >
+        {["#ff6b6b", "#ffd166", "#06d6a0"].map((color) => (
+          <span
+            aria-hidden="true"
+            key={color}
+            style={{
+              background: color,
+              borderRadius: "50%",
+              height: 9,
+              width: 9,
+            }}
+          />
+        ))}
+        <Text style={{ color: "#dbeafe", marginLeft: 6 }}>terminal</Text>
+      </div>
+      <Flex
+        vertical
+        gap={8}
+        style={{
+          fontFamily:
+            "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+          fontSize: 13,
+          padding: 14,
+        }}
+      >
+        <Text style={{ color: "#bfdbfe" }}>$ uv pip install pandas pytest</Text>
+        <Text style={{ color: "#86efac" }}>resolved 18 packages</Text>
+        <Text style={{ color: "#bfdbfe" }}>$ pytest && python model.py</Text>
+        <Text style={{ color: "#86efac" }}>3 passed, wrote figure.pdf</Text>
+      </Flex>
+    </div>
+  );
+}
+
+function PackageRail() {
+  return (
+    <div
+      style={{
+        background: "#fff",
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 18,
+        height: "100%",
+        padding: 16,
+      }}
+    >
+      <Flex vertical gap={14}>
+        <Flex align="center" gap={12}>
+          <IconBadge accent="#278c83" icon="linux" />
+          <div>
+            <Text strong>Real Python on real Linux</Text>
+            <div style={{ color: PUBLIC_COLORS.mutedText }}>
+              use normal project tools
+            </div>
+          </div>
+        </Flex>
+        <Flex gap={8} wrap>
+          {["sudo", "apt", "uv", "pip", "conda", "venv", "RootFS"].map(
+            (label) => (
+              <Tag
+                key={label}
+                style={{
+                  background: COLORS.ANTD_BG_BLUE_L,
+                  borderColor: "#91caff",
+                  color: COLORS.BLUE_D,
+                  marginInlineEnd: 0,
+                }}
+              >
+                {label}
+              </Tag>
+            ),
+          )}
+        </Flex>
+      </Flex>
+    </div>
+  );
+}
+
+function CodexPanel() {
+  return (
+    <div
+      style={{
+        background: "#fff",
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 18,
+        height: "100%",
+        padding: 16,
+      }}
+    >
+      <Flex vertical gap={12}>
+        <Flex align="center" gap={12}>
+          <IconBadge accent="#7c3aed" icon="robot" />
+          <div>
+            <Text strong>Codex at the boundaries</Text>
+            <div style={{ color: PUBLIC_COLORS.mutedText }}>
+              files + notebooks + terminals
+            </div>
+          </div>
+        </Flex>
+        <div
+          style={{
+            background: "#f7f9fc",
+            border: `1px solid ${PUBLIC_COLORS.border}`,
+            borderRadius: 14,
+            padding: 12,
+          }}
+        >
+          <Text style={{ color: PUBLIC_COLORS.mutedText }}>
+            Diagnose the import error, pin the dependency, move notebook code
+            into <code>model.py</code>, and update the paper figure.
+          </Text>
+        </div>
+      </Flex>
+    </div>
+  );
+}
+
+function PythonWorkflowMap() {
+  const top = [
+    {
+      accent: "#2f6fda",
+      body: "Explore data, plots, widgets, and rough ideas in the live notebook.",
+      icon: "jupyter",
+      label: "analysis.ipynb",
+      title: "Notebook",
+    },
+    {
+      accent: "#278c83",
+      body: "Move stable code into modules, scripts, tests, and reusable functions.",
+      icon: "python",
+      label: "model.py",
+      title: "Script",
+    },
+    {
+      accent: "#ad6800",
+      body: "Use generated figures, tables, and checked results in writing.",
+      icon: "tex",
+      label: "paper.tex",
+      title: "Paper",
+    },
+  ] satisfies {
+    accent: string;
+    body: string;
+    icon: IconName;
+    label: string;
+    title: string;
+  }[];
+
+  return (
+    <PublicSection>
+      <Flex vertical gap={22}>
+        <Flex align="end" justify="space-between" wrap gap={16}>
+          <div>
+            <Tag color="gold" style={{ marginBottom: 12 }}>
+              Workflow map
+            </Tag>
+            <Title level={3} style={{ margin: 0 }}>
+              From notebook to script to paper
+            </Title>
+          </div>
+          <Paragraph
+            style={{
+              color: PUBLIC_COLORS.mutedText,
+              margin: 0,
+              maxWidth: 520,
+            }}
+          >
+            The point is not one perfect Python interface. It is one project
+            where the right interface is available at each stage.
+          </Paragraph>
+        </Flex>
+
+        <div
+          style={{
+            background:
+              "linear-gradient(145deg, #ffffff 0%, #f5fbff 58%, #fff8e8 100%)",
+            border: `1px solid ${PUBLIC_COLORS.border}`,
+            borderRadius: 28,
+            boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
+            padding: 22,
+          }}
+        >
+          <Flex vertical gap={16}>
+            <Row gutter={[14, 14]} align="stretch">
+              {top.map((node, index) => (
+                <Col key={node.title} xs={24} lg={8}>
+                  <Flex align="center" gap={12} style={{ height: "100%" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <WorkflowNode {...node} />
+                    </div>
+                    {index < top.length - 1 ? (
+                      <Icon
+                        name="arrow-right"
+                        style={{
+                          color: "#d29c3c",
+                          display: "block",
+                          flex: "0 0 auto",
+                          fontSize: 22,
+                        }}
+                      />
+                    ) : null}
+                  </Flex>
+                </Col>
+              ))}
+            </Row>
+
+            <div
+              aria-hidden="true"
+              style={{
+                background:
+                  "linear-gradient(90deg, transparent, rgba(42,143,130,0.55), transparent)",
+                height: 2,
+              }}
+            />
+
+            <Row gutter={[14, 14]} align="stretch">
+              <Col xs={24} lg={8}>
+                <MiniTerminal />
+              </Col>
+              <Col xs={24} lg={8}>
+                <PackageRail />
+              </Col>
+              <Col xs={24} lg={8}>
+                <CodexPanel />
+              </Col>
+            </Row>
+          </Flex>
+        </div>
+      </Flex>
+    </PublicSection>
+  );
+}
+
+function CompactUseCard({
+  accent,
+  body,
+  icon,
+  title,
+}: {
+  accent: string;
+  body: ReactNode;
+  icon: IconName;
+  title: string;
+}) {
+  return (
+    <div
+      style={{
+        background: "#fff",
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: 20,
+        height: "100%",
+        padding: 20,
+      }}
+    >
+      <Flex vertical gap={12}>
+        <IconBadge accent={accent} icon={icon} />
+        <Title level={4} style={{ margin: 0 }}>
+          {title}
+        </Title>
+        <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
+          {body}
+        </Paragraph>
+      </Flex>
+    </div>
+  );
+}
+
+function PythonUseCases() {
+  return (
+    <PublicSection>
+      <Flex vertical gap={18}>
+        <div>
+          <Title level={3} style={{ margin: 0 }}>
+            Where this workflow pays off
+          </Title>
+          <Paragraph
+            style={{
+              color: PUBLIC_COLORS.mutedText,
+              margin: "8px 0 0",
+              maxWidth: "72ch",
+            }}
+          >
+            The same project can be exploratory, reproducible, teachable, and
+            publishable without copying work between disconnected tools.
+          </Paragraph>
+        </div>
+        <Row gutter={[14, 14]}>
+          <Col xs={24} lg={8}>
+            <CompactUseCard
+              accent="#389e0d"
+              icon="graduation-cap"
+              title="Teaching and teams"
+              body="RootFS images, shared notebooks, side chat, TimeTravel, and snapshots help everyone use the same Python stack."
+            />
           </Col>
-          <Col xs={24} lg={12}>
-            <FeatureImage
-              alt="Editing Python code in CoCalc"
-              src="/public/features/frame-editor-python.png"
+          <Col xs={24} lg={8}>
+            <CompactUseCard
+              accent="#2f6fda"
+              icon="terminal"
+              title="Package-heavy work"
+              body={
+                <>
+                  Use <code>sudo</code>, <code>apt</code>, <code>uv</code>,{" "}
+                  <code>pip</code>, <code>conda</code>, and virtual environments
+                  where the code actually runs.
+                </>
+              }
+            />
+          </Col>
+          <Col xs={24} lg={8}>
+            <CompactUseCard
+              accent="#ad6800"
+              icon="tex"
+              title="Papers and reports"
+              body="Keep the notebook, script, generated figure, terminal setup, and LaTeX or markdown explanation in one shared workspace."
             />
           </Col>
         </Row>
-      </PublicSection>
+      </Flex>
+    </PublicSection>
+  );
+}
+export default function PythonFeaturePage({
+  helpEmail,
+  isAuthenticated,
+}: {
+  helpEmail?: string;
+  isAuthenticated?: boolean;
+}) {
+  const primaryCtaHref = isAuthenticated
+    ? appPath("projects")
+    : appPath("auth/sign-up");
+  const primaryCtaLabel = isAuthenticated ? "Open projects" : "Create account";
+  const finalCtaLabel = isAuthenticated
+    ? "Open projects"
+    : "Start using Python on CoCalc";
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={12}>
-          <PublicSection>
-            <Title level={3} style={{ margin: 0 }}>
-              Zero-setup Python for technical work
-            </Title>
-            <BulletList
-              items={[
-                "Start with a working Python environment in the browser.",
-                "Use notebooks, scripts, terminals, and documents in the same project.",
-                "Avoid repeating local installation and package setup on every machine.",
-                "Keep the environment shareable for classes and collaborators.",
-              ]}
-            />
-            <Paragraph style={{ margin: 0 }}>
-              This is especially valuable in teaching and team settings, where
-              the cost of everyone managing their own inconsistent local Python
-              stack adds up quickly.
-            </Paragraph>
-          </PublicSection>
-        </Col>
-        <Col xs={24} lg={12}>
-          <PublicSection>
-            <Title level={3} style={{ margin: 0 }}>
-              Broad scientific and data workflow support
-            </Title>
-            <BulletList
-              items={[
-                "Data science and machine learning workflows.",
-                "Scientific computing and symbolic mathematics.",
-                "Statistical analysis and visualization.",
-                "Teaching workflows built around executable notebooks and scripts.",
-              ]}
-            />
-            <Paragraph style={{ margin: 0 }}>
-              CoCalc is strongest when Python is part of a larger technical
-              environment, not just an isolated interpreter.
-            </Paragraph>
-          </PublicSection>
-        </Col>
-      </Row>
-
+  return (
+    <Flex vertical gap={18}>
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
+        <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={11}>
-            <FeatureImage
-              alt="Python in Jupyter notebooks on CoCalc"
-              src="/public/features/cocalc-python-jupyter.png"
-            />
-          </Col>
-          <Col xs={24} lg={13}>
-            <Flex vertical gap={12}>
+            <Flex vertical gap={14}>
               <Tag
                 color="blue"
                 style={{
@@ -119,89 +659,115 @@ export default function PythonFeaturePage({
                   color: COLORS.BLUE_D,
                 }}
               >
-                Notebook-first workflows
+                Real collaborative Python
               </Tag>
-              <Title level={3} style={{ margin: 0 }}>
-                Python in Jupyter is a core use case
+              <Title level={2} style={{ margin: 0 }}>
+                Python that moves from notebook to script to paper.
               </Title>
-              <Paragraph style={{ margin: 0 }}>
-                CoCalc&apos;s collaborative notebook system is especially strong
-                for Python, whether you are teaching, building a data science
-                workflow, or doing exploratory computational work.
+              <Paragraph style={{ fontSize: 18, margin: 0 }}>
+                CoCalc is not only a browser notebook, it is a full Linux
+                environment where Python lives in Jupyter notebooks,{" "}
+                <code>.py</code> files, terminals, LaTeX workflows, package
+                environments, courses, and Codex conversations at the same time.
               </Paragraph>
               <Paragraph style={{ margin: 0 }}>
-                The same `.ipynb` format remains compatible with the broader
-                Jupyter ecosystem while adding collaboration, history, and
-                course workflows around it.
+                That helps when exploratory work becomes reusable code, when a
+                figure must land in a paper, or when a class needs everyone to
+                share the same working Python stack.
               </Paragraph>
+              <Flex wrap gap={12}>
+                <Button type="primary" href={primaryCtaHref}>
+                  {primaryCtaLabel}
+                </Button>
+                <LinkButton href={`${GUIDE_BASE}/python-workflow/`}>
+                  Python workflow guide
+                </LinkButton>
+                <Button href={appPath("features/jupyter-notebook")}>
+                  Jupyter details
+                </Button>
+              </Flex>
             </Flex>
+          </Col>
+          <Col xs={24} lg={13}>
+            <PythonProjectMock />
           </Col>
         </Row>
       </PublicSection>
 
       <Row gutter={[16, 16]}>
-        <Col xs={24} xl={12}>
-          <PublicSection>
-            <FeatureImage
-              alt="Realtime collaborative Python notebook editing"
-              src="/public/features/cocalc-real-time-jupyter.png"
-            />
-            <Title level={3} style={{ margin: 0 }}>
-              Collaboration and help in context
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              Python collaboration in CoCalc is not just version control after
-              the fact. People can work in the same files and notebooks, add
-              chat beside the work, and debug from a shared view of the current
-              state.
-            </Paragraph>
-            <Paragraph style={{ margin: 0 }}>
-              That is useful for data science teams, students and TAs, and
-              anyone doing technical support or pair work.
-            </Paragraph>
-          </PublicSection>
+        <Col xs={24} lg={8}>
+          <StoryCard accent="#2f6fda" icon="jupyter" title="Notebooks">
+            Explore interactively in Jupyter with durable backend execution,
+            collaboration, TimeTravel, widgets, and agent access to the live
+            notebook state.
+          </StoryCard>
         </Col>
-        <Col xs={24} xl={12}>
-          <PublicSection>
-            <FeatureImage
-              alt="PythonTeX workflow inside CoCalc"
-              src="/public/features/cocalc-latex-pythontex.png"
-            />
-            <Title level={3} style={{ margin: 0 }}>
-              Python also fits into document workflows
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              Python is not limited to notebooks. It can also be part of LaTeX
-              and report-generation workflows, including PythonTeX-style
-              documents that mix code, computation, and technical writing.
-            </Paragraph>
-            <Paragraph style={{ margin: 0 }}>
-              This is one of the reasons a unified project environment matters:
-              code, notebooks, and documents can evolve together.
-            </Paragraph>
-          </PublicSection>
+        <Col xs={24} lg={8}>
+          <StoryCard accent="#278c83" icon="python" title="Scripts and modules">
+            Edit <code>.py</code> files, factor notebook code into modules, run
+            tests, and keep the source files next to the data and notebooks that
+            use them.
+          </StoryCard>
+        </Col>
+        <Col xs={24} lg={8}>
+          <StoryCard accent="#ad6800" icon="terminal" title="Terminals">
+            Use a real shell for package installs, virtual environments,
+            command-line tools, Git, long-running jobs, and Python REPL work.
+          </StoryCard>
         </Col>
       </Row>
 
+      <PythonWorkflowMap />
+
+      <PythonUseCases />
+
       <PublicSection>
-        <Title level={3} style={{ margin: 0 }}>
-          Why people choose CoCalc for Python
-        </Title>
-        <BulletList
-          items={[
-            "Immediate Python workflows in notebooks, scripts, and terminals.",
-            "A shared environment for collaboration, teaching, and support.",
-            "History, chat, and project structure around the code instead of only a notebook tab.",
-            "A broad technical stack that lets Python connect to the rest of the project.",
-          ]}
-        />
-        <Flex wrap gap={12}>
-          <Button href={appPath("features/terminal")}>Linux terminal</Button>
-          <Button href={appPath("features/latex-editor")}>LaTeX editor</Button>
-          {helpEmail ? (
-            <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-          ) : null}
-        </Flex>
+        <Row gutter={[24, 24]} align="middle">
+          <Col xs={24} lg={14}>
+            <Title level={3} style={{ margin: 0 }}>
+              Use Python as part of the whole project
+            </Title>
+            <Paragraph style={{ margin: 0 }}>
+              CoCalc is strongest when Python is connected to the rest of the
+              technical work: notebooks, scripts, terminals, papers, GitHub,
+              classes, long-running jobs, and AI assistance around the same
+              project state.
+            </Paragraph>
+            <Flex wrap gap={12}>
+              <Button href={appPath("features/linux")}>
+                Linux environment
+              </Button>
+              <Button href={appPath("features/terminal")}>
+                Linux terminal
+              </Button>
+              {helpEmail ? (
+                <Button href={`mailto:${helpEmail}`}>Contact support</Button>
+              ) : null}
+            </Flex>
+          </Col>
+          <Col xs={24} lg={10}>
+            <div
+              style={{
+                background: "#10213f",
+                borderRadius: 24,
+                boxShadow: "0 18px 52px rgba(33, 49, 57, 0.12)",
+                color: "#fff",
+                padding: 26,
+              }}
+            >
+              <Title level={4} style={{ color: "#fff", margin: "0 0 10px" }}>
+                Start using CoCalc
+              </Title>
+              <Paragraph style={{ color: "rgba(255,255,255,0.78)" }}>
+                Open a project, start with a notebook or script, and keep the
+                Python environment with the rest of your work.
+              </Paragraph>
+              <Button type="primary" href={primaryCtaHref}>
+                {finalCtaLabel}
+              </Button>
+            </div>
+          </Col>
+        </Row>
       </PublicSection>
     </Flex>
   );

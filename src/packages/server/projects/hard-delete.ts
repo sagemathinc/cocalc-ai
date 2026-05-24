@@ -34,7 +34,6 @@ function backupIndexHost(project_id: string): string {
 
 type ProjectRow = {
   project_id: string;
-  name: string | null;
   title: string | null;
   description: string | null;
   users: any;
@@ -138,7 +137,6 @@ async function ensureDeletedProjectsSchema(): Promise<void> {
       await pool().query(`
         CREATE TABLE IF NOT EXISTS deleted_projects (
           project_id UUID PRIMARY KEY,
-          name VARCHAR(100),
           title TEXT,
           description TEXT,
           owner_account_id UUID,
@@ -203,7 +201,6 @@ async function loadProject(project_id: string): Promise<ProjectRow | null> {
     `
       SELECT
         project_id,
-        name,
         title,
         description,
         users,
@@ -461,16 +458,15 @@ async function purgeProjectRows({
       `
         INSERT INTO deleted_projects
           (
-            project_id, name, title, description, owner_account_id, host_id, backup_repo_id,
+            project_id, title, description, owner_account_id, host_id, backup_repo_id,
             created, last_edited, deleted_at, deleted_by, backup_retention_days,
             backup_purge_due_at, backups_purged_at, backup_purge_status, backup_purge_started_at,
             backup_purge_error, metadata
           )
         VALUES
-          ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), $10, $11, $12, $13, $14, NULL, NULL, $15::jsonb)
+          ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11, $12, $13, NULL, NULL, $14::jsonb)
         ON CONFLICT (project_id)
         DO UPDATE SET
-          name = EXCLUDED.name,
           title = EXCLUDED.title,
           description = EXCLUDED.description,
           owner_account_id = EXCLUDED.owner_account_id,
@@ -490,7 +486,6 @@ async function purgeProjectRows({
       `,
       [
         project.project_id,
-        project.name,
         project.title,
         project.description,
         owner_account_id,

@@ -52,6 +52,7 @@
     "@cocalc/assets": "workspace:*",
     "@cocalc/backend": "workspace:*",
     "@cocalc/cdn": "workspace:*",
+    "@cocalc/docs": "workspace:*",
     "@cocalc/frontend": "workspace:*",
     "@cocalc/util": "workspace:*",
     "@rspack/cli": "^2.0.4",

@@ -8,6 +8,8 @@ import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory
 import type {
   ProjectStorageBreakdown,
   ProjectStorageLiveSummary,
+  ProjectStorageOverview,
+  ProjectStorageOverviewRefresh,
   ProjectStorageQuotaSummary,
   ProjectStorageRetainedSummary,
   ProjectStorageVisibleSummary,
@@ -22,6 +24,8 @@ export type StorageVisibleSummary = ProjectStorageVisibleSummary;
 export type StorageLiveSummary = ProjectStorageLiveSummary;
 
 export type StorageRetainedSummary = ProjectStorageRetainedSummary;
+
+export type StorageRefreshSummary = ProjectStorageOverviewRefresh;
 
 export default function useDiskUsage({ project_id }: { project_id: string }) {
   const [counter, setCounter] = useState<number>(0);
@@ -45,9 +49,24 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
   const [quotas, setQuotas] = useState<StorageQuotaSummary[]>(
     () => cachedOverview?.quotas ?? [],
   );
+  const [collectedAt, setCollectedAt] = useState<string | undefined>(
+    () => cachedOverview?.collected_at,
+  );
+  const [refreshSummary, setRefreshSummary] = useState<
+    StorageRefreshSummary | undefined
+  >(() => cachedOverview?.refresh);
   const requestKey = key({ project_id, home: homePath });
   const currentRef = useRef<any>(requestKey);
   currentRef.current = requestKey;
+
+  function applyOverview(overview: ProjectStorageOverview): void {
+    setVisible(overview.visible);
+    setLive(overview.live);
+    setRetained(overview.retained);
+    setQuotas(overview.quotas);
+    setCollectedAt(overview.collected_at);
+    setRefreshSummary(overview.refresh);
+  }
 
   useAsyncEffect(async () => {
     const activeRequestKey = requestKey;
@@ -58,6 +77,8 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
         setLive(cachedOverview?.live ?? null);
         setRetained(cachedOverview?.retained ?? null);
         setQuotas(cachedOverview?.quotas ?? []);
+        setCollectedAt(cachedOverview?.collected_at);
+        setRefreshSummary(cachedOverview?.refresh);
         setLoading(true);
       }
       const cache = counter == lastCounterRef.current;
@@ -69,10 +90,7 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
       if (activeRequestKey !== currentRef.current) {
         return;
       }
-      setVisible(overview.visible);
-      setLive(overview.live);
-      setRetained(overview.retained);
-      setQuotas(overview.quotas);
+      applyOverview(overview);
     } catch (err) {
       if (activeRequestKey === currentRef.current) {
         setError(err);
@@ -90,9 +108,12 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
     visible,
     live,
     retained,
+    collectedAt,
+    refreshSummary,
     loading,
     error,
     setError,
+    applyOverview,
     refresh: () => {
       setCounter((prev) => prev + 1);
     },

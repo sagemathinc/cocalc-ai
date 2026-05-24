@@ -191,6 +191,7 @@ import {
   registerCloudflareCommand,
   type CloudflareCommandDeps,
 } from "./commands/cloudflare";
+import { registerDocsCommand, type DocsCommandDeps } from "./commands/docs";
 
 const cliVerboseFlag = process.argv.includes("--verbose");
 const cliDebugEnabled =
@@ -2561,6 +2562,15 @@ const devCommandDeps = {
 } satisfies DevCommandDeps;
 
 registerDevCommand(program, devCommandDeps);
+
+const docsCommandDeps = {
+  globalsFrom,
+  emitSuccess,
+  emitError: emitErrorCore,
+  normalizeUrl,
+} satisfies DocsCommandDeps;
+
+registerDocsCommand(program, docsCommandDeps);
 
 const exportCommandDeps = {
   globalsFrom,

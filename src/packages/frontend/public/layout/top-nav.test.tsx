@@ -68,6 +68,21 @@ describe("PublicTopNav", () => {
     expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
     expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
     expect(screen.getByRole("link", { name: "Launchpad home" })).not.toBeNull();
+    expect(
+      within(screen.getByRole("menu", { name: "Public pages" }))
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent),
+    ).toEqual([
+      "Projects",
+      "Features",
+      "Field guides",
+      "Docs",
+      "Products",
+      "Pricing",
+      "News",
+      "About",
+      "Support",
+    ]);
   });
 
   it("uses sign-in and sign-up links for anonymous visitors", async () => {
@@ -101,6 +116,8 @@ describe("PublicTopNav", () => {
         .map((item) => item.textContent),
     ).toEqual([
       "Features",
+      "Field guides",
+      "Docs",
       "Products",
       "Pricing",
       "News",
@@ -234,6 +251,8 @@ describe("PublicTopNav", () => {
         .map((item) => item.textContent),
     ).toEqual([
       "Features",
+      "Field guides",
+      "Docs",
       "Products",
       "Pricing",
       "News",

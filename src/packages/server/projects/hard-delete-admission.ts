@@ -36,10 +36,20 @@ export interface ProjectHardDeleteAdmissionCounts {
 
 export const DEFAULT_PROJECT_HARD_DELETE_ADMISSION_LIMITS: ProjectHardDeleteAdmissionLimits =
   {
-    account_inflight: 2,
-    account_recent: 10,
+    account_inflight: 10,
+    account_recent: 100,
     account_recent_window_seconds: 60 * 60,
-    global_inflight: 100,
+    global_inflight: 500,
+  };
+
+export const DEFAULT_ADMIN_PROJECT_HARD_DELETE_ADMISSION_LIMITS: ProjectHardDeleteAdmissionLimits =
+  {
+    account_inflight: 100,
+    account_recent: 10_000,
+    account_recent_window_seconds:
+      DEFAULT_PROJECT_HARD_DELETE_ADMISSION_LIMITS.account_recent_window_seconds,
+    global_inflight:
+      DEFAULT_PROJECT_HARD_DELETE_ADMISSION_LIMITS.global_inflight,
   };
 
 function envInteger(name: string, fallback: number): number {
@@ -54,23 +64,55 @@ function envInteger(name: string, fallback: number): number {
   return Math.max(0, Math.floor(value));
 }
 
-export function getProjectHardDeleteAdmissionLimits(): ProjectHardDeleteAdmissionLimits {
+function envIntegerFirst(names: string[], fallback: number): number {
+  for (const name of names) {
+    const raw = process.env[name];
+    if (raw != null && raw.trim() !== "") {
+      return envInteger(name, fallback);
+    }
+  }
+  return fallback;
+}
+
+export function getProjectHardDeleteAdmissionLimits({
+  is_admin = false,
+}: {
+  is_admin?: boolean;
+} = {}): ProjectHardDeleteAdmissionLimits {
+  const defaults = is_admin
+    ? DEFAULT_ADMIN_PROJECT_HARD_DELETE_ADMISSION_LIMITS
+    : DEFAULT_PROJECT_HARD_DELETE_ADMISSION_LIMITS;
   return {
-    account_inflight: envInteger(
-      "COCALC_PROJECT_HARD_DELETE_ACCOUNT_INFLIGHT_LIMIT",
-      DEFAULT_PROJECT_HARD_DELETE_ADMISSION_LIMITS.account_inflight,
+    account_inflight: envIntegerFirst(
+      [
+        ...(is_admin
+          ? ["COCALC_PROJECT_HARD_DELETE_ADMIN_ACCOUNT_INFLIGHT_LIMIT"]
+          : []),
+        "COCALC_PROJECT_HARD_DELETE_ACCOUNT_INFLIGHT_LIMIT",
+      ],
+      defaults.account_inflight,
     ),
-    account_recent: envInteger(
-      "COCALC_PROJECT_HARD_DELETE_ACCOUNT_RECENT_LIMIT",
-      DEFAULT_PROJECT_HARD_DELETE_ADMISSION_LIMITS.account_recent,
+    account_recent: envIntegerFirst(
+      [
+        ...(is_admin
+          ? ["COCALC_PROJECT_HARD_DELETE_ADMIN_ACCOUNT_RECENT_LIMIT"]
+          : []),
+        "COCALC_PROJECT_HARD_DELETE_ACCOUNT_RECENT_LIMIT",
+      ],
+      defaults.account_recent,
     ),
-    account_recent_window_seconds: envInteger(
-      "COCALC_PROJECT_HARD_DELETE_ACCOUNT_RECENT_WINDOW_SECONDS",
-      DEFAULT_PROJECT_HARD_DELETE_ADMISSION_LIMITS.account_recent_window_seconds,
+    account_recent_window_seconds: envIntegerFirst(
+      [
+        ...(is_admin
+          ? ["COCALC_PROJECT_HARD_DELETE_ADMIN_ACCOUNT_RECENT_WINDOW_SECONDS"]
+          : []),
+        "COCALC_PROJECT_HARD_DELETE_ACCOUNT_RECENT_WINDOW_SECONDS",
+      ],
+      defaults.account_recent_window_seconds,
     ),
     global_inflight: envInteger(
       "COCALC_PROJECT_HARD_DELETE_GLOBAL_INFLIGHT_LIMIT",
-      DEFAULT_PROJECT_HARD_DELETE_ADMISSION_LIMITS.global_inflight,
+      defaults.global_inflight,
     ),
   };
 }
@@ -235,10 +277,12 @@ export async function getProjectHardDeleteAdmissionCounts({
 export async function assertProjectHardDeleteAdmission({
   account_id,
   project_id,
-  limits = getProjectHardDeleteAdmissionLimits(),
+  is_admin = false,
+  limits = getProjectHardDeleteAdmissionLimits({ is_admin }),
 }: {
   account_id: string;
   project_id: string;
+  is_admin?: boolean;
   limits?: ProjectHardDeleteAdmissionLimits;
 }): Promise<ProjectHardDeleteAdmissionCounts> {
   const counts = await getProjectHardDeleteAdmissionCounts({

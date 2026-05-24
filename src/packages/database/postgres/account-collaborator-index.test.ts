@@ -278,9 +278,9 @@ describe("account_collaborator_index rebuild", () => {
     );
     await getPool().query(
       `INSERT INTO cluster_account_directory
-         (account_id, email_address, first_name, last_name, name, home_bay_id, provisioned)
+         (account_id, email_address, first_name, last_name, home_bay_id, provisioned)
        VALUES
-         ($1, 'remote@example.com', 'Remote', 'Friend', 'Remote Friend', $2, TRUE)`,
+         ($1, 'remote@example.com', 'Remote', 'Friend', $2, TRUE)`,
       [COLLAB_B, OTHER_BAY_ID],
     );
     await getPool().query(

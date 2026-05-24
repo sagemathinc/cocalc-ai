@@ -212,14 +212,8 @@ export default function PublicRedeemVoucherView({
 
       <Paragraph type="secondary" style={{ marginBottom: 0 }}>
         Need help? Read the{" "}
-        <a
-          href="https://doc.cocalc.com/vouchers.html"
-          rel="noreferrer"
-          target="_blank"
-        >
-          voucher documentation
-        </a>
-        , open the{" "}
+        <a href={joinUrlPath(appBasePath, "docs")}>CoCalc documentation</a>,
+        open the{" "}
         <a href={joinUrlPath(appBasePath, "settings", "vouchers")}>
           Voucher Center
         </a>

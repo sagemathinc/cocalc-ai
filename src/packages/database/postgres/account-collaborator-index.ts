@@ -100,7 +100,6 @@ async function ensureClusterAccountDirectorySchema(
       email_address VARCHAR(254) NOT NULL UNIQUE,
       first_name VARCHAR(254),
       last_name VARCHAR(254),
-      name VARCHAR(39),
       home_bay_id VARCHAR(64) NOT NULL,
       created TIMESTAMP NOT NULL DEFAULT NOW(),
       last_active TIMESTAMP,
@@ -203,7 +202,6 @@ function deletedUserProjection() {
 
 function displayNameSql(alias: string): string {
   return `COALESCE(
-            NULLIF(BTRIM(${alias}.name), ''),
             NULLIF(
               BTRIM(
                 CONCAT_WS(

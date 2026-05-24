@@ -34,6 +34,7 @@ import {
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
 import { normalizeProjectStateForDisplay } from "./host-operational";
 import { projectThemeColor, projectThemeFromProject } from "./theme";
+import { useProjectDeleteQueue } from "./project-delete-queue";
 
 interface Props {
   visible_projects: string[];
@@ -62,8 +63,12 @@ export function ProjectsTable({
   const project_map = useTypedRedux("projects", "project_map");
   const host_info = useTypedRedux("projects", "host_info");
   const user_map = useTypedRedux("users", "user_map");
-  const expanded_project_id = useTypedRedux("projects", "expanded_project_id");
   const { isProjectBookmarked, setProjectBookmarked } = useBookmarkedProjects();
+  const { scheduledDeleteProjectIds } = useProjectDeleteQueue();
+  const scheduledDeleteProjectIdSet = useMemo(
+    () => new Set(scheduledDeleteProjectIds),
+    [scheduledDeleteProjectIds],
+  );
   const [sortState, setSortState] = useState<SortState>({
     columnKey: "last_edited",
     order: "descend",
@@ -123,6 +128,8 @@ export function ProjectsTable({
           ? rawState.set("state", displayState)
           : rawState;
       const stateName = `${state?.get?.("state") ?? ""}`;
+      const deletionScheduled =
+        scheduledDeleteProjectIdSet.has(project_id) && stateName !== "deleting";
       return {
         project_id,
         starred: isProjectBookmarked(project_id),
@@ -137,14 +144,24 @@ export function ProjectsTable({
         color: projectThemeColor(project),
         state,
         deleting: stateName === "deleting",
+        deletionScheduled,
         deleteFailed: stateName === "delete_failed",
+        deleteError: state?.get?.("hard_delete_error"),
         deletionBlocked:
-          stateName === "deleting" || stateName === "delete_failed",
+          deletionScheduled ||
+          stateName === "deleting" ||
+          stateName === "delete_failed",
         hidden: !!project.getIn(["users", current_account_id, "hide"]),
         collaborators,
       };
     });
-  }, [visible_projects, project_map, host_info, isProjectBookmarked]);
+  }, [
+    visible_projects,
+    project_map,
+    host_info,
+    isProjectBookmarked,
+    scheduledDeleteProjectIdSet,
+  ]);
 
   const handleToggleStar = (project_id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -152,12 +169,17 @@ export function ProjectsTable({
     setProjectBookmarked(project_id, !isStarred);
   };
 
-  const renderActionsMenu = (record: ProjectTableRecord) => {
-    return <ProjectActionsMenu record={record} />;
-  };
-
   const handleToggleExpand = (record: ProjectTableRecord) => {
     actions.toggle_expanded_project(record.project_id);
+  };
+
+  const renderActionsMenu = (record: ProjectTableRecord) => {
+    return (
+      <ProjectActionsMenu
+        record={record}
+        onToggleDetails={() => handleToggleExpand(record)}
+      />
+    );
   };
 
   // Compute all unique collaborators and their information for filtering
@@ -214,22 +236,21 @@ export function ProjectsTable({
     return filters;
   }, [visible_projects, project_map, user_map]);
 
-  // Use expanded_project_id to drive the drawer and icon state
-  const expandedRowKeys = expanded_project_id ? [expanded_project_id] : [];
-
   const columns = getProjectTableColumns(
     handleToggleStar,
     renderActionsMenu,
+    handleOpenProject,
     sortState,
-    handleToggleExpand,
-    expandedRowKeys,
     collaboratorFilters,
     narrow,
     filteredCollaborators,
     intl,
   );
 
-  function handleRowClick(record: ProjectTableRecord, e?: React.MouseEvent) {
+  function handleOpenProject(record: ProjectTableRecord, e?: React.MouseEvent) {
+    if (record.deletionBlocked) {
+      return;
+    }
     actions.open_project({
       project_id: record.project_id,
       target: "project-home",
@@ -272,7 +293,7 @@ export function ProjectsTable({
         onChange: (keys) =>
           onSelectedProjectIdsChange(keys.map((key) => `${key}`)),
         getCheckboxProps: (record) => ({
-          disabled: record.deletionBlocked,
+          disabled: record.deleting || record.deletionScheduled,
         }),
       }}
       pagination={false}
@@ -281,15 +302,7 @@ export function ProjectsTable({
       // this makes the table toggle between ascend/descend only, skipping the "not sorted" state
       sortDirections={["ascend", "descend", "ascend"]}
       onRow={(record) => ({
-        onClick: (e) => handleRowClick(record, e),
-        onMouseDown: (e) => {
-          // Support middle-click to open in background
-          if (e.button === 1) {
-            handleRowClick(record, e);
-          }
-        },
         style: {
-          cursor: "pointer",
           opacity: record.deletionBlocked ? 0.72 : undefined,
           outlineLeft: `4px solid ${record.color ?? "transparent"}`,
         },

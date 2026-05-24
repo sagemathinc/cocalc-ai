@@ -16,6 +16,7 @@ import type {
   ProjectStorageHistoryGrowth,
   ProjectStorageHistoryPoint,
   ProjectStorageOverview,
+  ProjectStorageOverviewRefresh,
   ProjectStorageRetainedSummary,
   ProjectStorageVisibleSummary,
 } from "@cocalc/conat/project/storage-info";
@@ -30,6 +31,7 @@ export const PROJECT_STORAGE_HISTORY_STREAM_NAME = "project-storage-history";
 
 const PROJECT_STORAGE_CACHE_TTL_MS = 3 * 60_000;
 const PROJECT_STORAGE_BREAKDOWN_TIMEOUT_MS = 10_000;
+const PROJECT_STORAGE_FORCE_SAMPLE_MIN_INTERVAL_MS = 60_000;
 const STORAGE_HISTORY_SAMPLE_INTERVAL_MS = 5 * 60_000;
 const STORAGE_HISTORY_TTL_MS = 35 * 24 * 60 * 60 * 1000;
 const DEFAULT_WINDOW_MINUTES = 24 * 60;
@@ -49,6 +51,7 @@ const projectStorageBreakdownInflight = new Map<
   string,
   Promise<ProjectStorageBreakdown>
 >();
+const projectStorageForceSampleAt = new Map<string, number>();
 const historyStreams = new TTL<string, DStream<ProjectStorageHistoryPoint>>({
   ttl: 30 * 60_000,
   dispose: (stream) => {
@@ -447,17 +450,21 @@ async function getStorageBreakdownImpl({
   client,
   project_id,
   path,
+  force_sample = false,
 }: {
   client: Client;
   project_id: string;
   path: string;
+  force_sample?: boolean;
 }): Promise<ProjectStorageBreakdown> {
   const normalizedPath = normalizeStoragePath(path);
   const cacheKey = storageBreakdownCacheKey({
     project_id,
     path: normalizedPath,
   });
-  const cached = projectStorageBreakdownCache.get(cacheKey);
+  const cached = force_sample
+    ? undefined
+    : projectStorageBreakdownCache.get(cacheKey);
   if (cached) return cached;
   const inflight = projectStorageBreakdownInflight.get(cacheKey);
   if (inflight) return await inflight;
@@ -510,23 +517,66 @@ async function getStorageOverviewImpl({
 }): Promise<ProjectStorageOverview> {
   const homePath = normalizeStoragePath(home || "/root");
   const cacheKey = storageOverviewCacheKey({ project_id, home: homePath });
+  const requestedAt = new Date();
+  const forced = !!force_sample;
+  const lastForcedAt = projectStorageForceSampleAt.get(cacheKey) ?? 0;
+  const nextAllowedAt =
+    lastForcedAt + PROJECT_STORAGE_FORCE_SAMPLE_MIN_INTERVAL_MS;
+  const forceAllowed = !forced || Date.now() >= nextAllowedAt;
+  const refreshBase = forced
+    ? {
+        requested_at: requestedAt.toISOString(),
+        ...(forceAllowed
+          ? {}
+          : { next_allowed_at: new Date(nextAllowedAt).toISOString() }),
+      }
+    : undefined;
   const cached = force_sample
     ? undefined
     : projectStorageOverviewCache.get(cacheKey);
   if (cached) return cached;
   const inflight = projectStorageOverviewInflight.get(cacheKey);
-  if (inflight) return await inflight;
+  if (inflight) {
+    const overview = await inflight;
+    return refreshBase
+      ? {
+          ...overview,
+          refresh: {
+            ...refreshBase,
+            status: forced && !forceAllowed ? "rate_limited" : "inflight",
+          },
+        }
+      : overview;
+  }
+  if (forced && !forceAllowed) {
+    const cachedOverview = projectStorageOverviewCache.get(cacheKey);
+    if (cachedOverview) {
+      return {
+        ...cachedOverview,
+        refresh: {
+          ...refreshBase!,
+          status: "rate_limited",
+        },
+      };
+    }
+  }
 
   const load = (async () => {
     const environmentPath = posix.join(homePath, PROJECT_IMAGE_PATH);
     const fileServer = fileServerClient(client);
     const [quota, homeUsage, environmentUsage] = await Promise.all([
       fileServer.getQuota({ project_id }),
-      getStorageBreakdownImpl({ client, project_id, path: homePath }),
+      getStorageBreakdownImpl({
+        client,
+        project_id,
+        path: homePath,
+        force_sample: forced && forceAllowed,
+      }),
       getStorageBreakdownImpl({
         client,
         project_id,
         path: environmentPath,
+        force_sample: forced && forceAllowed,
       }).catch((err) => {
         const text = `${err ?? ""}`.toLowerCase();
         if (text.includes("no such file") || text.includes("not found")) {
@@ -562,6 +612,14 @@ async function getStorageOverviewImpl({
 
     const overview: ProjectStorageOverview = {
       collected_at: new Date().toISOString(),
+      ...(refreshBase
+        ? {
+            refresh: {
+              ...refreshBase,
+              status: forceAllowed ? "sampled" : "rate_limited",
+            } satisfies ProjectStorageOverviewRefresh,
+          }
+        : {}),
       quotas: [
         {
           key: "project",
@@ -590,7 +648,7 @@ async function getStorageOverviewImpl({
         client,
         project_id,
         overview,
-        force: !!force_sample,
+        force: forced && forceAllowed,
       });
     } catch (err) {
       logger.warn(
@@ -600,6 +658,9 @@ async function getStorageOverviewImpl({
           err,
         },
       );
+    }
+    if (forced && forceAllowed) {
+      projectStorageForceSampleAt.set(cacheKey, Date.now());
     }
     projectStorageOverviewCache.set(cacheKey, overview);
     return overview;

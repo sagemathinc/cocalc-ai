@@ -18,6 +18,7 @@ jest.mock("@cocalc/frontend/cookie-consent", () => ({
 describe("PublicPage", () => {
   beforeEach(() => {
     jest.mocked(showPreferences).mockClear();
+    window.localStorage.clear();
   });
 
   it("renders the shared page title when provided", () => {
@@ -37,6 +38,27 @@ describe("PublicPage", () => {
 
     expect(screen.queryByRole("heading", { name: "Launchpad" })).toBeNull();
     expect(screen.getByText("Body")).not.toBeNull();
+  });
+
+  it("persists public page font size controls", () => {
+    render(<PublicPage config={{ site_name: "Launchpad" }}>Body</PublicPage>);
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Increase public page font size",
+      }),
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Reset public page font size" }),
+    ).toHaveTextContent("17px");
+    expect(window.localStorage.getItem("cocalc-public-font-size")).toBe("17");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reset public page font size" }),
+    );
+
+    expect(window.localStorage.getItem("cocalc-public-font-size")).toBeNull();
   });
 
   it("renders the shared footer navigation", () => {
@@ -67,7 +89,10 @@ describe("PublicPage", () => {
     ).toHaveAttribute("href", "/pricing");
     expect(
       within(footer).getByRole("link", { name: "Documentation" }),
-    ).toHaveAttribute("target", "_blank");
+    ).toHaveAttribute("href", "/docs");
+    expect(
+      within(footer).getByRole("link", { name: "Field guides" }),
+    ).toHaveAttribute("href", "https://sagemathinc.github.io/cocalc-guides/");
     expect(
       within(footer).getByRole("link", { name: "Support" }),
     ).toHaveAttribute("href", "/support");

@@ -51,6 +51,7 @@ export type BrowserActionName =
   | "scroll_to"
   | "wait_for_selector"
   | "wait_for_url"
+  | "docs_action"
   | "batch";
 
 export type BrowserCoordinateSpace =
@@ -187,6 +188,10 @@ export type BrowserAtomicActionRequest =
       regex?: string;
       timeout_ms?: number;
       poll_ms?: number;
+    }
+  | {
+      name: "docs_action";
+      id: string;
     };
 
 export type BrowserActionResult = {
@@ -195,6 +200,19 @@ export type BrowserActionResult = {
   page_url?: string;
   elapsed_ms?: number;
   [key: string]: unknown;
+};
+
+export type BrowserDocsActionAvailability = {
+  id: string;
+  label: string;
+  description: string;
+  executable: boolean;
+  implemented: boolean;
+  available: boolean;
+  reason?: string;
+  entry_id: string;
+  entry_slug: string;
+  entry_title: string;
 };
 
 export type BrowserAutomationAuditKind =
@@ -340,6 +358,9 @@ export interface BrowserSessionServiceApi {
     active_project_id?: string;
     open_projects: BrowserOpenProjectState[];
   }>;
+  listDocsActions: (opts: {
+    project_id: string;
+  }) => Promise<{ actions: BrowserDocsActionAvailability[] }>;
   configureNetworkTrace: (opts?: {
     enabled?: boolean;
     include_decoded?: boolean;

@@ -5,11 +5,15 @@
 
 import { Button, Card, Space, Tag, Typography } from "antd";
 import type { ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { file_options } from "@cocalc/frontend/editor-tmp";
+import {
+  PROJECT_SECRETS_DOCS_ACTION_EVENT,
+  type ProjectSecretsDocsActionDetail,
+} from "@cocalc/frontend/project/docs-actions";
 import { useProjectEnv } from "@cocalc/frontend/project/use-project-env";
 import { useProjectSecrets } from "@cocalc/frontend/project/use-project-secrets";
 import { COLORS } from "@cocalc/util/theme";
@@ -152,6 +156,22 @@ export function EnvironmentConfigurationSummary({
     [secrets],
   );
 
+  useEffect(() => {
+    const handleReveal = (event: Event) => {
+      const detail = (event as CustomEvent<ProjectSecretsDocsActionDetail>)
+        .detail;
+      if (detail?.projectId !== project_id) return;
+      setShowSecretsModal(true);
+    };
+    window.addEventListener(PROJECT_SECRETS_DOCS_ACTION_EVENT, handleReveal);
+    return () => {
+      window.removeEventListener(
+        PROJECT_SECRETS_DOCS_ACTION_EVENT,
+        handleReveal,
+      );
+    };
+  }, [project_id]);
+
   function saveLauncherDefaults(prefs: any | null): void {
     const next = updateAccountLauncherPrefs(
       otherSettings?.get?.(LAUNCHER_SETTINGS_KEY),
@@ -230,6 +250,7 @@ export function EnvironmentConfigurationSummary({
           status={`${secretNames.length} secret${secretNames.length === 1 ? "" : "s"}`}
           action={
             <Button
+              data-cocalc-docs-action="settings.environment.secrets"
               size="small"
               type="link"
               onClick={() => setShowSecretsModal(true)}
