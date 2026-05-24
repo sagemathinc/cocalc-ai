@@ -10,7 +10,10 @@ import { redux } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
 import type { WebappClient } from "@cocalc/frontend/client/client";
 import type { HubApi } from "@cocalc/conat/hub/api";
-import { revealDocsAction } from "@cocalc/frontend/project/docs-actions";
+import {
+  listDocsAppActions,
+  revealDocsAction,
+} from "@cocalc/frontend/project/docs-actions";
 import { BrowserExtensionsRuntime } from "../extensions-runtime";
 import { executeBrowserAction } from "./action-engine";
 import {
@@ -2364,6 +2367,20 @@ export function createBrowserSessionAutomation({
       max_sandbox_actions: MAX_SANDBOX_ACTIONS,
     }),
     getSessionInfo: async () => buildSessionSnapshot(client),
+    listDocsActions: async ({ project_id }) => ({
+      actions: listDocsAppActions({ projectId: project_id }).map((action) => ({
+        id: action.id,
+        label: action.label,
+        description: action.description,
+        executable: action.executable === true,
+        implemented: action.implemented,
+        available: action.available,
+        ...(action.reason ? { reason: action.reason } : {}),
+        entry_id: action.entryId,
+        entry_slug: action.entrySlug,
+        entry_title: action.entryTitle,
+      })),
+    }),
     configureNetworkTrace: async (opts) =>
       runtimeObservability.configureNetworkTrace(opts),
     listNetworkTrace: async (opts) =>

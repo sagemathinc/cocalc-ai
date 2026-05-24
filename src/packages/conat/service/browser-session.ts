@@ -202,6 +202,19 @@ export type BrowserActionResult = {
   [key: string]: unknown;
 };
 
+export type BrowserDocsActionAvailability = {
+  id: string;
+  label: string;
+  description: string;
+  executable: boolean;
+  implemented: boolean;
+  available: boolean;
+  reason?: string;
+  entry_id: string;
+  entry_slug: string;
+  entry_title: string;
+};
+
 export type BrowserAutomationAuditKind =
   | "exec"
   | "start_exec"
@@ -345,6 +358,9 @@ export interface BrowserSessionServiceApi {
     active_project_id?: string;
     open_projects: BrowserOpenProjectState[];
   }>;
+  listDocsActions: (opts: {
+    project_id: string;
+  }) => Promise<{ actions: BrowserDocsActionAvailability[] }>;
   configureNetworkTrace: (opts?: {
     enabled?: boolean;
     include_decoded?: boolean;

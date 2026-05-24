@@ -19,6 +19,7 @@ function makeProgram({
   getWorkspaceSelection,
   getAutomationPolicyInfo,
   getExecApiDeclaration,
+  listDocsActions,
   listRuntimeEvents,
   listNetworkTrace,
   globals,
@@ -28,6 +29,7 @@ function makeProgram({
   getWorkspaceSelection?: (opts: { project_id: string }) => Promise<any>;
   getAutomationPolicyInfo?: () => Promise<any>;
   getExecApiDeclaration?: () => Promise<string>;
+  listDocsActions?: (opts: { project_id: string }) => Promise<any>;
   listRuntimeEvents?: (opts?: any) => Promise<any>;
   listNetworkTrace?: (opts?: any) => Promise<any>;
   globals?: Record<string, unknown>;
@@ -101,6 +103,11 @@ function makeProgram({
           getExecApiDeclaration ??
           (async () =>
             "export type BrowserExecApi = { listOpenFiles: () => unknown[]; };"),
+        listDocsActions:
+          listDocsActions ??
+          (async () => ({
+            actions: [],
+          })),
         listRuntimeEvents:
           listRuntimeEvents ??
           (async () => ({
@@ -424,6 +431,50 @@ test("browser exec-api reports the raw API when raw exec is allowed", async () =
   assert.match(output, /raw_exec_policy=enabled/);
   assert.match(output, /listOpenFiles/);
   assert.doesNotMatch(output, /QuickJS sandbox mode/);
+});
+
+test("browser action docs-list reports live docs action availability", async () => {
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
+  const { program, results } = makeProgram({
+    openFiles: [],
+    listDocsActions: async ({ project_id }) => ({
+      actions: [
+        {
+          id: "settings.environment.secrets",
+          label: "Open project secrets",
+          description: "Open the project secrets modal.",
+          executable: true,
+          implemented: true,
+          available: true,
+          entry_id: "projects.project-secrets",
+          entry_slug: "projects/project-secrets",
+          entry_title: "Project secrets",
+          project_id,
+        },
+      ],
+    }),
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "action",
+    "docs-list",
+    "--browser",
+    "browser-1",
+    "--project-id",
+    PROJECT_A,
+  ]);
+
+  assert.equal((results[0] as any).browser_id, "browser-1");
+  assert.equal((results[0] as any).project_id, PROJECT_A);
+  assert.equal(
+    (results[0] as any).actions[0]?.id,
+    "settings.environment.secrets",
+  );
+  assert.equal((results[0] as any).actions[0]?.available, true);
 });
 
 test("browser logs tail --follow respects timeout while waiting for events", async () => {
