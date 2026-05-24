@@ -35,6 +35,9 @@ async function handle(req, res) {
 }
 
 async function signOut(req, res): Promise<void> {
+  if (req.header("Authorization")) {
+    throw Error("API keys are not allowed to sign out browser sessions");
+  }
   const { all } = getParams(req);
   if (all) {
     // invalidate all remember me cookies for this account.
