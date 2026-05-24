@@ -5,7 +5,7 @@
 
 import { useMemo } from "react";
 
-import { Button, Flex, message, Space, Typography } from "antd";
+import { Flex, message, Typography } from "antd";
 import {
   DocsBrowser,
   DOCS_BROWSER_FLYOUT_STYLE,
@@ -13,8 +13,6 @@ import {
   DOCS_BROWSER_PAGE_STYLE,
   type DocsBrowserAction,
 } from "@cocalc/frontend/docs/browser";
-import { Icon } from "@cocalc/frontend/components";
-import { useProjectContext } from "@cocalc/frontend/project/context";
 import {
   listDocsAppActions,
   revealDocsAction,
@@ -30,7 +28,6 @@ export function ProjectDocsPanel({
   layout: "flyout" | "page";
   project_id: string;
 }) {
-  const { actions } = useProjectContext();
   const [messageApi, contextHolder] = message.useMessage();
   const actionAvailability = useMemo(
     () => listDocsAppActions({ projectId: project_id }),
@@ -46,11 +43,6 @@ export function ProjectDocsPanel({
     }
   }
 
-  function openFullPage(): void {
-    actions?.set_active_tab("docs");
-    actions?.toggleFlyout("docs");
-  }
-
   const isFlyout = layout === "flyout";
 
   return (
@@ -61,31 +53,21 @@ export function ProjectDocsPanel({
     >
       {contextHolder}
       <Flex gap={isFlyout ? "small" : "middle"} vertical>
-        <Space align="start" style={{ justifyContent: "space-between" }}>
-          <div>
-            <Text strong style={DOCS_BROWSER_MUTED_TITLE_STYLE}>
-              CoCalc docs
-            </Text>
-            <Title
-              level={layout === "page" ? 1 : 4}
-              style={{
-                lineHeight: 1.15,
-                marginBottom: 0,
-                marginTop: isFlyout ? 4 : 8,
-              }}
-            >
-              Help for this project
-            </Title>
-          </div>
-          {isFlyout ? (
-            <Button
-              icon={<Icon name="expand" />}
-              onClick={openFullPage}
-              size="small"
-              title="Open Docs as a full project page"
-            />
-          ) : null}
-        </Space>
+        <div>
+          <Text strong style={DOCS_BROWSER_MUTED_TITLE_STYLE}>
+            CoCalc docs
+          </Text>
+          <Title
+            level={layout === "page" ? 1 : 4}
+            style={{
+              lineHeight: 1.15,
+              marginBottom: 0,
+              marginTop: isFlyout ? 4 : 8,
+            }}
+          >
+            Help for this project
+          </Title>
+        </div>
         <Paragraph
           style={{
             color: COLORS.GRAY_M,
