@@ -2256,6 +2256,7 @@ export function createBrowserSessionAutomation({
     scrollBy: (dy, dx = 0, opts = {}) => __exec("scroll_by", { dy, dx, ...opts }),
     scrollTo: (opts = {}) => __exec("scroll_to", opts),
     waitForSelector: (selector, opts = {}) => __exec("wait_for_selector", { selector, ...opts }),
+    waitForText: (opts = {}) => __exec("wait_for_text", opts),
     waitForUrl: (opts = {}) => __exec("wait_for_url", opts),
     docsAction: (id, opts = {}) => __exec("docs_action", { id, ...opts }),
   });

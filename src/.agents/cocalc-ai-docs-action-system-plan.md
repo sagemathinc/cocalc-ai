@@ -51,6 +51,9 @@ As of 2026-05-24, the first vertical slice exists and is usable:
   - `cocalc docs verify --live --spawn-browser --project-id <project_id>`
     creates a dedicated Chromium browser session, runs the live docs actions,
     and destroys the spawned session afterward.
+  - Live scenarios include UI assertions, not just action return values. They
+    use the browser-session `wait_for_text` action to confirm that the expected
+    modal, file tab, terminal, or notebook UI is actually visible.
 
 The remaining work is production hardening: more docs content, more executable
 actions, stronger live scenario assertions, Codex skill integration, and a

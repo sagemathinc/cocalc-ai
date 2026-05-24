@@ -22,7 +22,7 @@
     }
   },
   "scripts": {
-    "build": "pnpm exec tsc --build",
+    "build": "pnpm exec tsc --build --force",
     "clean": "rm -rf dist node_modules tsconfig.tsbuildinfo",
     "verify": "pnpm build && node dist/verify.js"
   },

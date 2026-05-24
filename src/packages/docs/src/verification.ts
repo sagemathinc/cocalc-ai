@@ -24,11 +24,18 @@ export type DocsVerificationIssue = {
 };
 
 export type DocsLiveVerificationScenario = {
+  assertion?: DocsLiveUiAssertion;
   actionId: DocsActionId;
   command: string[];
   description: string;
   entryId: string;
   mutatesProject?: boolean;
+};
+
+export type DocsLiveUiAssertion = {
+  cleanupCode?: string;
+  code: string;
+  description: string;
 };
 
 export type DocsVerificationReport = {
@@ -40,6 +47,7 @@ export type DocsVerificationReport = {
 };
 
 export type DocsLiveVerificationResult = {
+  assertion?: DocsLiveAssertionResult;
   actionId: DocsActionId;
   command: string[];
   ok: boolean;
@@ -47,6 +55,23 @@ export type DocsLiveVerificationResult = {
   stderr?: string;
   stdout?: string;
   error?: string;
+};
+
+export type DocsLiveAssertionResult = {
+  command: string[];
+  ok: boolean;
+  output?: unknown;
+  stderr?: string;
+  stdout?: string;
+  error?: string;
+  cleanup?: {
+    command: string[];
+    ok: boolean;
+    output?: unknown;
+    stderr?: string;
+    stdout?: string;
+    error?: string;
+  };
 };
 
 export type DocsLiveVerificationOptions = {
@@ -65,6 +90,8 @@ export type DocsLiveVerificationReport = {
 
 const DOCS_LINK_RE = /\/docs\/([A-Za-z0-9._/-]+)/g;
 const LEGACY_DOCS_RE = /https:\/\/doc\.cocalc\.com\//;
+
+const UI_ASSERTION_TIMEOUT_MS = 15_000;
 
 function issue({
   actionId,
@@ -96,6 +123,45 @@ function executableActionIds(): Set<string> {
   );
 }
 
+function liveUiAssertionForAction(
+  actionId: DocsActionId,
+): DocsLiveUiAssertion | undefined {
+  if (actionId === "settings.environment.secrets") {
+    return {
+      description: "Project Secrets modal is visible.",
+      code: `const modal = api.waitForText({ selector: ".ant-modal[role=dialog]", includes: "Project Secrets", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: modal.ok === true, modal };`,
+      cleanupCode: `api.press("Escape");
+return api.waitForSelector(".ant-modal[role=dialog]", { state: "hidden", timeout_ms: 3000 });`,
+    };
+  }
+  if (actionId === "project.terminal.open") {
+    return {
+      description: "Terminal file tab and xterm UI are visible.",
+      code: `const url = api.waitForUrl({ includes: "/files/home/user/terminal.term", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+const terminal = api.waitForText({ selector: ".terminal.xterm", includes: "$", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true && terminal.ok === true, url, terminal };`,
+    };
+  }
+  if (actionId === "project.jupyter.create") {
+    return {
+      description: "Notebook file tab and Jupyter UI are visible.",
+      code: `const url = api.waitForUrl({ includes: "/files/home/user/notebook.ipynb", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+const notebook = api.waitForText({ includes: "Jupyter", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true && notebook.ok === true, url, notebook };`,
+    };
+  }
+  if (actionId === "settings.runtime.rootfs") {
+    return {
+      description: "Runtime Image modal is visible.",
+      code: `const modal = api.waitForText({ selector: ".ant-modal[role=dialog]", includes: "Runtime Image", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: modal.ok === true, modal };`,
+      cleanupCode: `api.press("Escape");
+return api.waitForSelector(".ant-modal[role=dialog]", { state: "hidden", timeout_ms: 3000 });`,
+    };
+  }
+}
+
 export function listDocsLiveVerificationScenarios({
   cocalcArgs = [],
   cocalcCommand = "cocalc",
@@ -118,6 +184,7 @@ export function listDocsLiveVerificationScenarios({
         timeout,
       ];
       return {
+        assertion: liveUiAssertionForAction(action.id),
         actionId: action.id,
         command,
         description: action.description,
@@ -360,6 +427,124 @@ function parseJsonOutput(stdout: string): unknown {
   return JSON.parse(text);
 }
 
+function liveAssertionScriptSucceeded(output: unknown): boolean {
+  const data =
+    output && typeof output === "object" && "data" in output
+      ? (output as { data?: any }).data
+      : undefined;
+  if (!data || typeof data !== "object" || data.ok === false) {
+    return false;
+  }
+  const result = data?.result ?? data;
+  const scriptResult = result?.script_result ?? result;
+  return (
+    scriptResult != null &&
+    typeof scriptResult === "object" &&
+    scriptResult.ok === true
+  );
+}
+
+async function runLiveUiAssertion({
+  assertion,
+  browserId,
+  cocalcArgs,
+  cocalcCommand,
+  projectId,
+  timeout,
+}: {
+  assertion: DocsLiveUiAssertion;
+  browserId?: string;
+  cocalcArgs: string[];
+  cocalcCommand: string;
+  projectId: string;
+  timeout: string;
+}): Promise<DocsLiveAssertionResult> {
+  const command = [
+    cocalcCommand,
+    ...cocalcArgs,
+    "browser",
+    "exec",
+    "--project-id",
+    projectId,
+    "--timeout",
+    timeout,
+  ];
+  if (browserId) {
+    command.push("--browser", browserId);
+  }
+  command.push(assertion.code);
+  const [bin, ...args] = command;
+  let assertionResult: DocsLiveAssertionResult;
+  try {
+    const { code, stdout, stderr } = await runCommand({
+      args,
+      command: bin,
+    });
+    const output = parseJsonOutput(stdout);
+    const ok = code === 0 && liveAssertionScriptSucceeded(output);
+    assertionResult = {
+      command,
+      ok,
+      output,
+      stderr,
+      stdout,
+      ...(ok
+        ? {}
+        : {
+            error:
+              code === 0
+                ? "live UI assertion did not report ok=true"
+                : `assertion command exited with code ${code ?? "unknown"}`,
+          }),
+    };
+  } catch (err) {
+    assertionResult = {
+      command,
+      error: err instanceof Error ? err.message : `${err}`,
+      ok: false,
+    };
+  }
+
+  if (assertion.cleanupCode) {
+    const cleanupCommand = [
+      cocalcCommand,
+      ...cocalcArgs,
+      "browser",
+      "exec",
+      "--project-id",
+      projectId,
+      "--timeout",
+      "10s",
+    ];
+    if (browserId) {
+      cleanupCommand.push("--browser", browserId);
+    }
+    cleanupCommand.push(assertion.cleanupCode);
+    const [cleanupBin, ...cleanupArgs] = cleanupCommand;
+    try {
+      const { code, stdout, stderr } = await runCommand({
+        args: cleanupArgs,
+        command: cleanupBin,
+      });
+      const output = parseJsonOutput(stdout);
+      assertionResult.cleanup = {
+        command: cleanupCommand,
+        ok: code === 0 && liveAssertionScriptSucceeded(output),
+        output,
+        stderr,
+        stdout,
+      };
+    } catch (err) {
+      assertionResult.cleanup = {
+        command: cleanupCommand,
+        error: err instanceof Error ? err.message : `${err}`,
+        ok: false,
+      };
+    }
+  }
+  return assertionResult;
+}
+
 export async function verifyDocsLive({
   actionIds,
   browserId,
@@ -400,20 +585,34 @@ export async function verifyDocsLive({
         data?.ok !== false &&
         result?.opened === true &&
         result?.action_id === scenario.actionId;
+      const assertion =
+        ok && scenario.assertion
+          ? await runLiveUiAssertion({
+              assertion: scenario.assertion,
+              browserId,
+              cocalcArgs,
+              cocalcCommand,
+              projectId,
+              timeout,
+            })
+          : undefined;
       results.push({
+        assertion,
         actionId: scenario.actionId,
         command,
-        ok,
+        ok: ok && (assertion?.ok ?? true),
         output,
         stderr,
         stdout,
-        ...(ok
+        ...(ok && (assertion?.ok ?? true)
           ? {}
           : {
               error:
-                code === 0
-                  ? "docs action did not report the expected opened result"
-                  : `command exited with code ${code ?? "unknown"}`,
+                ok && assertion?.error
+                  ? assertion.error
+                  : code === 0
+                    ? "docs action did not report the expected opened result"
+                    : `command exited with code ${code ?? "unknown"}`,
             }),
       });
     } catch (err) {

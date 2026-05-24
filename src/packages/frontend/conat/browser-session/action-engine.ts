@@ -184,6 +184,49 @@ const waitForSelectorState = async ({
   }
 };
 
+const getElementText = (element: Element): string => {
+  const text =
+    typeof (element as HTMLElement).innerText === "string"
+      ? (element as HTMLElement).innerText
+      : element.textContent;
+  return `${text ?? ""}`;
+};
+
+const waitForTextMatch = async ({
+  includes,
+  poll_ms,
+  regex,
+  selector,
+  timeout_ms,
+}: {
+  includes?: string;
+  poll_ms: number;
+  regex?: RegExp;
+  selector?: string;
+  timeout_ms: number;
+}): Promise<{ element: Element; text: string }> => {
+  const started = Date.now();
+  const deadline = started + timeout_ms;
+  const rootSelector = `${selector ?? ""}`.trim();
+  const matches = (text: string): boolean =>
+    (!includes || text.includes(includes)) && (!regex || regex.test(text));
+  for (;;) {
+    const element = rootSelector
+      ? querySelectorSafe(rootSelector)
+      : document.body;
+    const text = element ? getElementText(element) : "";
+    if (element && isElementVisible(element) && matches(text)) {
+      return { element, text };
+    }
+    if (Date.now() >= deadline) {
+      throw Error(
+        `timed out waiting for text match${rootSelector ? ` in selector '${rootSelector}'` : ""}`,
+      );
+    }
+    await sleepMs(Math.max(20, poll_ms));
+  }
+};
+
 const normalizeScreenshotMeta = (
   meta: unknown,
 ): BrowserScreenshotMetadata | undefined => {
@@ -961,6 +1004,43 @@ export async function executeBrowserAction({
       selector,
       state,
       matched: !!element,
+    };
+  }
+
+  if (action.name === "wait_for_text") {
+    const selector = `${action.selector ?? ""}`.trim() || undefined;
+    const includes = `${action.includes ?? ""}`;
+    const rawRegex = `${action.regex ?? ""}`.trim();
+    if (!includes && !rawRegex) {
+      throw Error("includes or regex must be specified");
+    }
+    let regex: RegExp | undefined;
+    if (rawRegex) {
+      try {
+        regex = new RegExp(rawRegex);
+      } catch (err) {
+        throw Error(`invalid regex '${rawRegex}': ${err}`);
+      }
+    }
+    const timeout_ms = asFinitePositive(action.timeout_ms) ?? 30_000;
+    const poll_ms = asFinitePositive(action.poll_ms) ?? 100;
+    const { element, text } = await waitForTextMatch({
+      includes,
+      poll_ms,
+      regex,
+      selector,
+      timeout_ms,
+    });
+    return {
+      name: "wait_for_text",
+      ok: true,
+      page_url: location.href,
+      elapsed_ms: Date.now() - started,
+      ...(selector ? { selector } : {}),
+      ...(includes ? { includes } : {}),
+      ...(rawRegex ? { regex: rawRegex } : {}),
+      matched: !!element,
+      text_sample: text.slice(0, 500),
     };
   }
 

@@ -142,6 +142,7 @@ export type BrowserExecApi = {
   scrollBy: (dy: number, dx?: number, opts?: Record<string, unknown>) => BrowserExecActionResult;
   scrollTo: (opts?: Record<string, unknown>) => BrowserExecActionResult;
   waitForSelector: (selector: string, opts?: Record<string, unknown>) => BrowserExecActionResult;
+  waitForText: (opts?: { selector?: string; includes?: string; regex?: string; timeout_ms?: number; poll_ms?: number }) => BrowserExecActionResult;
   waitForUrl: (opts?: Record<string, unknown>) => BrowserExecActionResult;
 };`;
 
