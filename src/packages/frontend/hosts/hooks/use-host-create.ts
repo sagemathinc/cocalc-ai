@@ -24,6 +24,7 @@ type UseHostCreateOptions = {
   hub: HubClient;
   refresh: () => Promise<unknown>;
   catalog?: HostCatalog;
+  catalogProvider?: HostProvider;
   enabledProviders: HostProvider[];
   billing?: {
     fundingModeOptions?: Array<{ value: HostFundingMode }>;
@@ -37,6 +38,7 @@ export const useHostCreate = ({
   hub,
   refresh,
   catalog,
+  catalogProvider,
   enabledProviders,
   billing,
   onHostOp,
@@ -50,6 +52,8 @@ export const useHostCreate = ({
     try {
       const startAfterCreate = opts?.start !== false;
       const provider = vals?.provider as HostProvider | undefined;
+      const providerCatalog =
+        provider && provider === catalogProvider ? catalog : undefined;
       const payload = buildCreateHostPayloadFromDraft(
         { ...vals, start_after_create: startAfterCreate },
         {
@@ -58,7 +62,9 @@ export const useHostCreate = ({
               ? enabledProviders
               : [provider ?? "none"],
           catalogByProvider:
-            provider && catalog ? { [provider]: catalog } : undefined,
+            provider && providerCatalog
+              ? { [provider]: providerCatalog }
+              : undefined,
           billing,
         },
       );

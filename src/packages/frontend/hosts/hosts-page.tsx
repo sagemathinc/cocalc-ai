@@ -48,6 +48,14 @@ export const HostsPage: React.FC = () => {
           defaultFundingMode: createVm.billing.defaultFundingMode,
         },
       });
+      createVm.form.form.setFieldsValue({ provider: nextValues.provider });
+      if (
+        createVm.catalogRefresh.refreshProviders.some(
+          (option) => option.value === nextValues.provider,
+        )
+      ) {
+        createVm.catalogRefresh.setRefreshProvider(nextValues.provider);
+      }
       closeHostDrawer();
       setInitialCreateDraft(nextValues);
       setSimilarSourceHost({ id: host.id, name: host.name });
@@ -57,6 +65,8 @@ export const HostsPage: React.FC = () => {
       closeHostDrawer,
       createVm.billing.defaultFundingMode,
       createVm.billing.fundingModeOptions,
+      createVm.catalogRefresh,
+      createVm.form.form,
       createVm.provider.catalog,
       createVm.provider.providerOptions,
       createVm.provider.selectedProvider,

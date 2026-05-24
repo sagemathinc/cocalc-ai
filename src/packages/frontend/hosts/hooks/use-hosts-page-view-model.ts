@@ -1569,6 +1569,7 @@ export const useHostsPageViewModel = () => {
     hub,
     refresh,
     catalog,
+    catalogProvider,
     enabledProviders,
     billing: {
       fundingModeOptions,
