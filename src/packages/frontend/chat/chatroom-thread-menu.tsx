@@ -37,6 +37,7 @@ export interface ChatRoomThreadMenuProps {
   confirmDeleteThread: (threadKey: string, label: string) => void;
   openChatFile?: () => void;
   openAutomationModal?: (threadKey: string) => void;
+  showClearThread?: boolean;
   buttonLabel?: ReactNode;
   buttonSize?: "small" | "middle" | "large";
   buttonType?: "link" | "text" | "default" | "primary" | "dashed";
@@ -72,6 +73,7 @@ export function ChatRoomThreadMenu({
   confirmDeleteThread,
   openChatFile,
   openAutomationModal,
+  showClearThread = true,
   buttonLabel,
   buttonSize = "small",
   buttonType = "text",
@@ -137,10 +139,14 @@ export function ChatRoomThreadMenu({
         key: "fork",
         label: "Fork chat…",
       },
-      {
-        key: "clear",
-        label: "Clear thread",
-      },
+      ...(showClearThread
+        ? [
+            {
+              key: "clear",
+              label: "Clear thread",
+            },
+          ]
+        : []),
       {
         type: "divider",
       },

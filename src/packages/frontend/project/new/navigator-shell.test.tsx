@@ -167,8 +167,12 @@ jest.mock("@cocalc/frontend/chat/chatroom-thread-actions", () => ({
 }));
 
 jest.mock("@cocalc/frontend/chat/chatroom-thread-menu", () => ({
-  ChatRoomThreadMenu: ({ buttonTestId }: any) => (
-    <button data-testid={buttonTestId} type="button">
+  ChatRoomThreadMenu: ({ buttonTestId, showClearThread }: any) => (
+    <button
+      data-testid={buttonTestId}
+      data-show-clear-thread={String(showClearThread)}
+      type="button"
+    >
       Thread menu
     </button>
   ),
@@ -298,6 +302,10 @@ describe("NavigatorShell keyboard suppression", () => {
       expect(screen.getByTestId("navigator-thread-menu")).toBeTruthy(),
     );
     expect(screen.queryByText("Actions")).toBeNull();
+    expect(screen.getByTestId("navigator-thread-menu")).toHaveAttribute(
+      "data-show-clear-thread",
+      "false",
+    );
   });
 
   it("keeps the navigator chat loading until syncdb is ready", () => {

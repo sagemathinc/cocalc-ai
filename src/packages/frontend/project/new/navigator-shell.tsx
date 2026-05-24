@@ -1293,6 +1293,7 @@ export function NavigatorShell({
               }
               openChatFile={openChatFile}
               openGitBrowser={() => setGitBrowserOpen(true)}
+              showClearThread={false}
               buttonType="text"
               buttonAriaLabel="Agent thread actions"
               buttonTestId="navigator-thread-menu"
@@ -1402,7 +1403,7 @@ export function NavigatorShell({
           borderRadius: 8,
           overflow: "hidden",
           background: "white",
-          height: "min(70vh, 760px)",
+          height: "clamp(420px, calc(100vh - 260px), 760px)",
         }}
         {...keyboardBoundaryProps}
       >
