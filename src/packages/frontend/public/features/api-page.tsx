@@ -40,7 +40,7 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
                 <Button type="primary" href={appPath("auth/sign-up")}>
                   Create account
                 </Button>
-                <LinkButton href="https://doc.cocalc.com/api2/">
+                <LinkButton href={appPath("docs")}>
                   API documentation
                 </LinkButton>
               </Flex>

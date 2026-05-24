@@ -619,7 +619,7 @@ export default function LatexEditorFeaturePage({
                 Project backups and snapshots add another recovery layer around
                 the files and generated outputs.
               </Paragraph>
-              <LinkButton href="https://doc.cocalc.com/time-travel.html">
+              <LinkButton href={`${GUIDE_BASE}/cocalc-for-latex/`}>
                 Learn about TimeTravel
               </LinkButton>
             </Flex>
@@ -641,7 +641,7 @@ export default function LatexEditorFeaturePage({
                 That is useful for research groups, student feedback, and papers
                 where the final document depends on a larger technical process.
               </Paragraph>
-              <LinkButton href="https://doc.cocalc.com/latex.html">
+              <LinkButton href={`${GUIDE_BASE}/cocalc-for-latex/`}>
                 LaTeX documentation
               </LinkButton>
             </Flex>

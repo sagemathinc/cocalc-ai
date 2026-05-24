@@ -624,7 +624,7 @@ export default function JupyterNotebookFeaturePage({
                 For notebooks, this is designed to keep long-term edit history
                 without turning every intermediate output update into noise.
               </Paragraph>
-              <LinkButton href="https://doc.cocalc.com/time-travel.html">
+              <LinkButton href={`${GUIDE_BASE}/jupyter-notebooks/`}>
                 Learn about TimeTravel
               </LinkButton>
             </Flex>
@@ -647,7 +647,7 @@ export default function JupyterNotebookFeaturePage({
                 writing, while the notebook still follows standard Jupyter
                 conventions.
               </Paragraph>
-              <LinkButton href="https://doc.cocalc.com/jupyter.html">
+              <LinkButton href={`${GUIDE_BASE}/jupyter-notebooks/`}>
                 Jupyter documentation
               </LinkButton>
             </Flex>
@@ -769,7 +769,7 @@ export default function JupyterNotebookFeaturePage({
               when compatibility is the priority.
             </Paragraph>
             <Flex wrap gap={12}>
-              <LinkButton href="https://doc.cocalc.com/jupyter.html#alternatives-plain-jupyter-server-and-jupyterlab-server">
+              <LinkButton href={`${GUIDE_BASE}/cocalc-for-jupyter/`}>
                 Jupyter alternatives
               </LinkButton>
               <LinkButton href={`${GUIDE_BASE}/cocalc-for-jupyter/`}>

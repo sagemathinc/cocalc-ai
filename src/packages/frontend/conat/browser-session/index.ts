@@ -10,6 +10,10 @@ import { redux } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
 import type { WebappClient } from "@cocalc/frontend/client/client";
 import type { HubApi } from "@cocalc/conat/hub/api";
+import {
+  listDocsAppActions,
+  revealDocsAction,
+} from "@cocalc/frontend/project/docs-actions";
 import { BrowserExtensionsRuntime } from "../extensions-runtime";
 import { executeBrowserAction } from "./action-engine";
 import {
@@ -847,6 +851,10 @@ export function createBrowserSessionAutomation({
 
     const api: BrowserExecApi = {
       projectId: project_id,
+      docsAction: (id: string) => {
+        assertExecNotCanceled(isCanceled);
+        return revealDocsAction({ actionId: id, projectId: project_id });
+      },
       listOpenFiles: (): BrowserOpenFileInfo[] => {
         assertExecNotCanceled(isCanceled);
         const snapshot = buildSessionSnapshot(client);
@@ -2069,6 +2077,57 @@ export function createBrowserSessionAutomation({
     }
   };
 
+  const executeDocsActionWithAudit = async ({
+    project_id,
+    action,
+    audit_kind,
+    posture,
+  }: {
+    project_id: string;
+    action: BrowserAtomicActionRequest;
+    audit_kind: BrowserAutomationAuditKind;
+    posture: "prod" | "dev";
+  }): Promise<BrowserActionResult> => {
+    let release: (() => void) | undefined;
+    try {
+      release = claimActionSlot();
+    } catch (err) {
+      recordAutomationAudit({
+        kind: audit_kind,
+        decision: "deny",
+        project_id,
+        posture,
+        action_name: action.name,
+        reason: `${err}`,
+      });
+      throw err;
+    }
+    recordAutomationAudit({
+      kind: audit_kind,
+      decision: "allow",
+      project_id,
+      posture,
+      action_name: action.name,
+    });
+    const started = performance.now();
+    try {
+      const id = `${(action as any)?.id ?? ""}`.trim();
+      if (!id) {
+        throw Error("docs_action.id must be specified");
+      }
+      const result = revealDocsAction({ actionId: id, projectId: project_id });
+      return {
+        name: "docs_action",
+        ok: true,
+        page_url: `${location.href ?? ""}`,
+        elapsed_ms: Math.round(performance.now() - started),
+        ...result,
+      };
+    } finally {
+      release();
+    }
+  };
+
   const executeBrowserScriptQuickJSSandbox = async ({
     project_id,
     code,
@@ -2195,6 +2254,7 @@ export function createBrowserSessionAutomation({
     scrollTo: (opts = {}) => __exec("scroll_to", opts),
     waitForSelector: (selector, opts = {}) => __exec("wait_for_selector", { selector, ...opts }),
     waitForUrl: (opts = {}) => __exec("wait_for_url", opts),
+    docsAction: (id, opts = {}) => __exec("docs_action", { id, ...opts }),
   });
   globalThis.api = api;
 })();`;
@@ -2307,6 +2367,20 @@ export function createBrowserSessionAutomation({
       max_sandbox_actions: MAX_SANDBOX_ACTIONS,
     }),
     getSessionInfo: async () => buildSessionSnapshot(client),
+    listDocsActions: async ({ project_id }) => ({
+      actions: listDocsAppActions({ projectId: project_id }).map((action) => ({
+        id: action.id,
+        label: action.label,
+        description: action.description,
+        executable: action.executable === true,
+        implemented: action.implemented,
+        available: action.available,
+        ...(action.reason ? { reason: action.reason } : {}),
+        entry_id: action.entryId,
+        entry_slug: action.entrySlug,
+        entry_title: action.entryTitle,
+      })),
+    }),
     configureNetworkTrace: async (opts) =>
       runtimeObservability.configureNetworkTrace(opts),
     listNetworkTrace: async (opts) =>
@@ -2412,6 +2486,11 @@ export function createBrowserSessionAutomation({
                 `invalid batch step ${i}: action name must be a non-empty non-batch action`,
               );
             }
+            if (stepName === "docs_action") {
+              throw Error(
+                `invalid batch step ${i}: docs_action cannot be nested in batch`,
+              );
+            }
             enforceActionPolicy({
               project_id,
               action_name: stepName,
@@ -2430,6 +2509,17 @@ export function createBrowserSessionAutomation({
           reason: `${err}`,
         });
         throw err;
+      }
+      if (actionName === "docs_action") {
+        return {
+          ok: true,
+          result: await executeDocsActionWithAudit({
+            project_id,
+            action: action as BrowserAtomicActionRequest,
+            audit_kind: "action",
+            posture: normalizedPosture,
+          }),
+        };
       }
       return {
         ok: true,

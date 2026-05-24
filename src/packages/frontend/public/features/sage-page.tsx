@@ -19,6 +19,8 @@ import {
 
 const { Paragraph, Text, Title } = Typography;
 
+const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
+
 function IconBadge({
   accent = PUBLIC_COLORS.brand,
   icon,
@@ -608,7 +610,7 @@ export default function SageFeaturePage({
             </div>
           </Col>
         </Row>
-        <LinkButton href="https://doc.cocalc.com/latex.html#sage">
+        <LinkButton href={`${GUIDE_BASE}/cocalc-for-latex/`}>
           SageTeX documentation
         </LinkButton>
       </PublicSection>

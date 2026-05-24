@@ -16,6 +16,8 @@
       "@cocalc/comm/*": ["../comm/*"],
       "@cocalc/conat": ["../conat"],
       "@cocalc/conat/*": ["../conat/*"],
+      "@cocalc/docs": ["../docs"],
+      "@cocalc/docs/*": ["../docs/*"],
       "@cocalc/export": ["../export"],
       "@cocalc/export/*": ["../export/*"],
       "@cocalc/util": ["../util"],
@@ -54,6 +56,9 @@
     },
     {
       "path": "../conat"
+    },
+    {
+      "path": "../docs"
     },
     {
       "path": "../export"

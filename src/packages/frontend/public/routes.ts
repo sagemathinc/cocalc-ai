@@ -8,6 +8,8 @@ import type { PublicAboutRoute } from "./about/routes";
 import { getAboutRouteFromPath } from "./about/routes";
 import type { PublicAuthRoute } from "./auth/routes";
 import { getPublicAuthRouteFromPath } from "./auth/routes";
+import type { PublicDocsRoute } from "./docs/routes";
+import { getDocsRouteFromPath } from "./docs/routes";
 import type { PublicFeaturesRoute } from "./features/routes";
 import { getFeaturesRouteFromPath } from "./features/routes";
 import type { PublicLangRoute } from "./lang/routes";
@@ -25,6 +27,7 @@ export type PublicRoute =
   | { section: "home" }
   | { route: PublicAboutRoute; section: "about" }
   | { route: PublicAuthRoute; section: "auth" }
+  | { route: PublicDocsRoute; section: "docs" }
   | { route: PublicFeaturesRoute; section: "features" }
   | { route: PublicLangRoute; section: "lang" }
   | { route: PublicNewsRoute; section: "news" }
@@ -69,6 +72,10 @@ export function getPublicRouteFromPath(
       route: getPublicAuthRouteFromPath(pathname, search),
       section: "auth",
     };
+  }
+
+  if (routeParts[0] === "docs") {
+    return { route: getDocsRouteFromPath(pathname), section: "docs" };
   }
 
   if (routeParts[0] === "features") {
@@ -118,7 +125,7 @@ export function isPublicTarget(target?: string | null): target is string {
   ) {
     return true;
   }
-  return /\/(about|auth|invites|sso|redeem|features|lang|news|policies|pricing|products|support|[a-z]{2}(-[A-Z]{2})?)(\/|$|\?|#)/.test(
+  return /\/(about|auth|invites|sso|redeem|docs|features|lang|news|policies|pricing|products|support|[a-z]{2}(-[A-Z]{2})?)(\/|$|\?|#)/.test(
     target,
   );
 }

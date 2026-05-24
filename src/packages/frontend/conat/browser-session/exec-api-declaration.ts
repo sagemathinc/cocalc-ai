@@ -31,6 +31,8 @@ export const BROWSER_EXEC_API_DECLARATION = `/**
  *   constrained API (api.navigate/click/type/...) where each api call executes
  *   immediately via policy-gated host actions and returns structured results to
  *   the script.
+ * - In the QuickJS sandbox, api.docsAction(id) can open a documented CoCalc UI
+ *   destination such as "settings.environment.secrets" without raw JavaScript.
  */
 export type BrowserOpenFileInfo = {
   project_id: string;
@@ -177,6 +179,11 @@ export type BrowserInstallHelloWorldOptions = {
 
 export type BrowserExecApi = {
   projectId: string;
+  docsAction: (id: string) => {
+    action_id: string;
+    opened: true;
+    project_id: string;
+  };
   listOpenFiles: () => BrowserOpenFileInfo[];
   listOpenFilesAll: () => BrowserOpenFileInfo[];
   openFiles: (

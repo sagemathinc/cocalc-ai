@@ -175,7 +175,7 @@ function SupportIndex({
           description="Browse user and admin documentation."
           title="Documentation"
         >
-          <a href="https://doc.cocalc.com/" style={{ color: COLORS.BLUE_D }}>
+          <a href={appPath("/docs")} style={{ color: COLORS.BLUE_D }}>
             Read the docs
           </a>
         </SupportCard>

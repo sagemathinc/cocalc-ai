@@ -9,11 +9,7 @@ import type { IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
-import {
-  BulletList,
-  featureAppPath as appPath,
-  LinkButton,
-} from "./page-components";
+import { BulletList, featureAppPath as appPath } from "./page-components";
 import {
   IconBadge,
   StartCard,
@@ -249,9 +245,7 @@ export default function JuliaFeaturePage({
       <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={13}>
-            <Title level={3}>
-              Why use Julia on CoCalc
-            </Title>
+            <Title level={3}>Why use Julia on CoCalc</Title>
             <BulletList
               items={[
                 "Use Jupyter, Pluto, source files, and terminal workflows together.",
@@ -269,9 +263,6 @@ export default function JuliaFeaturePage({
                 <Button href={`mailto:${helpEmail}`}>Contact support</Button>
               ) : null}
             </Flex>
-            <LinkButton href="https://doc.cocalc.com/howto/pluto.html">
-              Pluto on CoCalc
-            </LinkButton>
           </Col>
           <Col xs={24} lg={11}>
             <StartCard

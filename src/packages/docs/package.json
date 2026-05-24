@@ -1,0 +1,27 @@
+{
+  "name": "@cocalc/docs",
+  "version": "0.1.0",
+  "description": "Versioned CoCalc-ai documentation content and search helpers",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "pnpm exec tsc --build",
+    "clean": "rm -rf dist node_modules tsconfig.tsbuildinfo"
+  },
+  "files": [
+    "dist/**",
+    "package.json"
+  ],
+  "author": "SageMath, Inc.",
+  "license": "SEE LICENSE.md",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sagemathinc/cocalc"
+  }
+}

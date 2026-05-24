@@ -8,6 +8,7 @@ import type {
   BrowserAutomationAuditDecision as ConatBrowserAutomationAuditDecision,
   BrowserAutomationAuditEvent as ConatBrowserAutomationAuditEvent,
   BrowserAutomationAuditKind as ConatBrowserAutomationAuditKind,
+  BrowserDocsActionAvailability,
   BrowserAutomationPosture,
   BrowserCoordinateSpace,
   BrowserExecPolicyV1,
@@ -205,6 +206,9 @@ export type BrowserSessionClient = {
   getWorkspaceSelection: (opts: {
     project_id: string;
   }) => Promise<WorkspaceSelection>;
+  listDocsActions: (opts: {
+    project_id: string;
+  }) => Promise<{ actions: BrowserDocsActionAvailability[] }>;
   openFile: (opts: {
     project_id: string;
     path: string;

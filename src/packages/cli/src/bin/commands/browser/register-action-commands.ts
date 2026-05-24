@@ -108,6 +108,194 @@ export function registerBrowserActionCommands({
     .description("run typed browser automation actions without raw JS");
 
   action
+    .command("docs-list")
+    .description(
+      "list documented CoCalc UI actions and whether the target browser can run them",
+    )
+    .option("--project <project>", "project id or name")
+    .option(
+      "--project-id <id>",
+      "project id (overrides --project); defaults to COCALC_PROJECT_ID when set",
+    )
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
+      "--timeout <duration>",
+      "rpc timeout for the docs action list request (e.g. 30s, 2m)",
+    )
+    .action(
+      async (
+        opts: {
+          project?: string;
+          projectId?: string;
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          timeout?: string;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(
+          command,
+          "browser action docs-list",
+          async (ctx) => {
+            const profileSelection = loadProfileSelection(deps, command);
+            const projectIdHint =
+              `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+            const browserHint = browserHintFromOption(opts.browser) ?? "";
+            const projectHint = `${opts.project ?? ""}`.trim();
+            const sessionInfo = await chooseBrowserSession({
+              ctx,
+              browserHint,
+              fallbackBrowserId: profileSelection.browser_id,
+              requireDiscovery:
+                projectHint.length === 0 && projectIdHint.length === 0,
+              sessionProjectId:
+                `${opts.sessionProjectId ?? ""}`.trim() ||
+                `${projectIdHint ?? ""}`.trim() ||
+                undefined,
+              activeOnly: !!opts.activeOnly,
+            });
+            const project_id = await resolveTargetProjectId({
+              deps,
+              ctx,
+              project: projectHint,
+              projectId: projectIdHint,
+              sessionInfo,
+            });
+            const browserClient = deps.createBrowserSessionClient({
+              account_id: ctx.accountId,
+              browser_id: sessionInfo.browser_id,
+              client: ctx.remote.client,
+              timeout: Math.max(
+                1_000,
+                durationToMs(opts.timeout, ctx.timeoutMs),
+              ),
+            });
+            const response = await browserClient.listDocsActions({
+              project_id,
+            });
+            return {
+              browser_id: sessionInfo.browser_id,
+              project_id,
+              actions: response.actions,
+              ...sessionTargetContext(ctx, sessionInfo, project_id),
+            };
+          },
+        );
+      },
+    );
+
+  action
+    .command("docs <id>")
+    .description("open a documented CoCalc UI action in the target browser")
+    .option("--project <project>", "project id or name")
+    .option(
+      "--project-id <id>",
+      "project id (overrides --project); defaults to COCALC_PROJECT_ID when set",
+    )
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
+      "--posture <dev|prod>",
+      "browser automation posture; default is dev on loopback targets, prod otherwise",
+    )
+    .option("--policy-file <path>", "JSON file with browser exec policy")
+    .option(
+      "--timeout <duration>",
+      "rpc timeout for the docs action request (e.g. 30s, 2m)",
+    )
+    .action(
+      async (
+        id: string,
+        opts: {
+          project?: string;
+          projectId?: string;
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          posture?: string;
+          policyFile?: string;
+          timeout?: string;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser action docs", async (ctx) => {
+          const profileSelection = loadProfileSelection(deps, command);
+          const projectIdHint =
+            `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const browserHint = browserHintFromOption(opts.browser) ?? "";
+          const projectHint = `${opts.project ?? ""}`.trim();
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint,
+            fallbackBrowserId: profileSelection.browser_id,
+            requireDiscovery:
+              projectHint.length === 0 && projectIdHint.length === 0,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() ||
+              `${projectIdHint ?? ""}`.trim() ||
+              undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          const project_id = await resolveTargetProjectId({
+            deps,
+            ctx,
+            project: projectHint,
+            projectId: projectIdHint,
+            sessionInfo,
+          });
+          const { posture, policy } = await resolveBrowserPolicyAndPosture({
+            posture: opts.posture,
+            policyFile: opts.policyFile,
+            apiBaseUrl: ctx.apiBaseUrl,
+          });
+          const actionId = `${id ?? ""}`.trim();
+          if (!actionId) {
+            throw new Error("docs action id must be specified");
+          }
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+            timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
+          });
+          const response = await browserClient.action({
+            project_id,
+            posture,
+            policy,
+            action: {
+              name: "docs_action",
+              id: actionId,
+            },
+          });
+          return {
+            browser_id: sessionInfo.browser_id,
+            project_id,
+            posture,
+            ok: !!response?.ok,
+            result: response?.result ?? null,
+            ...sessionTargetContext(ctx, sessionInfo, project_id),
+          };
+        });
+      },
+    );
+
+  action
     .command("click <selector>")
     .description("click an element by CSS selector")
     .option("--project <project>", "project id or name")
