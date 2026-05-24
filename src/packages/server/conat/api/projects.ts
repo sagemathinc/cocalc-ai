@@ -168,7 +168,10 @@ import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/accou
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
 import { fromWire as collabInviteFromWire } from "@cocalc/server/projects/collab-invite-inbox";
-import { deleteProjectDataOnHost } from "@cocalc/server/project-host/control";
+import {
+  deleteProjectDataOnHost,
+  savePlacement,
+} from "@cocalc/server/project-host/control";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import getName from "@cocalc/server/accounts/get-name";
 import { resolveProjectOwningBay } from "@cocalc/server/bay-directory";
@@ -177,6 +180,7 @@ import {
   PROJECT_DANGEROUS_INTERNAL_AUTH,
   requireDangerousProjectMutationAuth,
 } from "./project-dangerous-auth";
+import { resolveHostConnection } from "./hosts";
 import {
   assertCanStartUsingRuntimeSponsor,
   loadProjectRuntimeSponsor,
@@ -3483,6 +3487,61 @@ export async function moveProject({
     service: PERSIST_SERVICE,
     stream_name: lroStreamName(op.op_id),
   };
+}
+
+export async function assignProjectHost({
+  account_id,
+  project_id,
+  dest_host_id,
+  skip_owner_route,
+}: {
+  account_id: string;
+  project_id: string;
+  dest_host_id: string;
+  skip_owner_route?: boolean;
+}): Promise<void> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  if (!dest_host_id) {
+    throw new Error("destination host id must be specified");
+  }
+  await assertCollab({ account_id, project_id });
+  const ownership = skip_owner_route
+    ? null
+    : await resolveProjectBay(project_id);
+  if (ownership != null && ownership.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .projectControl(ownership.bay_id)
+      .assignHost({
+        project_id,
+        account_id,
+        dest_host_id,
+        epoch: ownership.epoch,
+      });
+  }
+  await assertProjectNotHardDeleting({ project_id });
+  const { rows } = await getPool().query<{ host_id: string | null }>(
+    "SELECT host_id FROM projects WHERE project_id=$1 LIMIT 1",
+    [project_id],
+  );
+  if (!rows[0]) {
+    throw new Error(`project ${project_id} not found`);
+  }
+  if (rows[0].host_id) {
+    throw new Error("project is already assigned to a host; use move instead");
+  }
+  const host = await resolveHostConnection({
+    account_id,
+    host_id: dest_host_id,
+  });
+  if (!host) {
+    throw new Error(`host ${dest_host_id} not found`);
+  }
+  if ((host as { can_place?: boolean }).can_place !== true) {
+    throw new Error("not allowed to place a project on that host");
+  }
+  await savePlacement(project_id, { host_id: dest_host_id });
 }
 
 export async function rehomeProject({

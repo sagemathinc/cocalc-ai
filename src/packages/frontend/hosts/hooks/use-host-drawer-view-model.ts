@@ -145,6 +145,11 @@ type UseHostDrawerViewModelArgs = {
       owner_spend_limit_7d_usd?: number | null;
     },
   ) => void | Promise<void>;
+  canSetHostPoolAccess?: boolean;
+  onSetHostPoolAccess?: (
+    id: string,
+    tier?: number | null,
+  ) => void | Promise<void>;
   onStopRunningProjects?: (host: Host) => void | Promise<void>;
   onRestartRunningProjects?: (host: Host) => void | Promise<void>;
   selfHost?: {
@@ -210,6 +215,8 @@ export const useHostDrawerViewModel = ({
   onRemoveHostAccess,
   onSetHostProjectRamLimit,
   onSetHostOwnerSpendLimits,
+  canSetHostPoolAccess,
+  onSetHostPoolAccess,
   onStopRunningProjects,
   onRestartRunningProjects,
   selfHost,
@@ -250,6 +257,8 @@ export const useHostDrawerViewModel = ({
     onRemoveHostAccess,
     onSetHostProjectRamLimit,
     onSetHostOwnerSpendLimits,
+    canSetHostPoolAccess,
+    onSetHostPoolAccess,
     onStopRunningProjects,
     onRestartRunningProjects,
     selfHost,

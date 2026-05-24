@@ -88,6 +88,7 @@ import type {
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
 import type { MoneyValue } from "@cocalc/util/money";
+import type { RootfsImageManifest } from "@cocalc/util/rootfs-images";
 
 export interface BayOwnership {
   bay_id: string;
@@ -215,6 +216,13 @@ export interface ProjectControlSetUsageAccountRequest {
 
 export interface ProjectControlSetUsageAccountResponse {
   updated: boolean;
+}
+
+export interface ProjectControlAssignHostRequest {
+  project_id: string;
+  account_id: string;
+  dest_host_id: string;
+  epoch?: number;
 }
 
 export interface ProjectControlAddressRequest {
@@ -1113,6 +1121,10 @@ export interface BayOpsRootfsQuotaReportRequest {
   operation?: string | null;
 }
 
+export interface BayOpsRootfsCatalogRequest {
+  account_id?: string;
+}
+
 export interface BayOpsAcpAdmissionDenialReportRequest {
   account_id?: string;
   window_minutes?: number;
@@ -1336,6 +1348,7 @@ export type ProjectControlMethod =
   | "backup"
   | "state"
   | "set-usage-account"
+  | "assign-host"
   | "address"
   | "move"
   | "rehome"
@@ -1359,6 +1372,7 @@ export type HostConnectionMethod =
   | "remove-host-access"
   | "set-host-project-ram-limit"
   | "set-host-owner-spend-limits"
+  | "set-host-pool-access"
   | "get-host-log"
   | "get-host-runtime-log"
   | "get-host-metrics-history"
@@ -1522,6 +1536,7 @@ export type BayRegistryMethod = "register" | "list";
 export type BayOpsMethod =
   | "get-load"
   | "get-backups"
+  | "get-rootfs-catalog"
   | "get-rootfs-quota-report"
   | "get-acp-admission-denial-report"
   | "get-service-admission-denial-report"
@@ -1615,6 +1630,7 @@ export interface InterBayProjectControlApi {
   setUsageAccount: (
     opts: ProjectControlSetUsageAccountRequest,
   ) => Promise<ProjectControlSetUsageAccountResponse>;
+  assignHost: (opts: ProjectControlAssignHostRequest) => Promise<void>;
   address: (opts: ProjectControlAddressRequest) => Promise<ProjectAddress>;
   move: (
     opts: ProjectControlMoveRequest,
@@ -1710,6 +1726,9 @@ export interface InterBayHostConnectionApi {
   setHostOwnerSpendLimits: (
     opts: Parameters<Hosts["setHostOwnerSpendLimits"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["setHostOwnerSpendLimits"]>>>;
+  setHostPoolAccess: (
+    opts: Parameters<Hosts["setHostPoolAccess"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["setHostPoolAccess"]>>>;
   getHostLog: (
     opts: Parameters<Hosts["getHostLog"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getHostLog"]>>>;
@@ -1927,6 +1946,7 @@ const HOST_CONNECTION_METHOD_SPECS = [
     name: "setHostOwnerSpendLimits",
     method: "set-host-owner-spend-limits",
   },
+  { name: "setHostPoolAccess", method: "set-host-pool-access" },
   { name: "getHostLog", method: "get-host-log" },
   { name: "getHostRuntimeLog", method: "get-host-runtime-log" },
   { name: "getHostMetricsHistory", method: "get-host-metrics-history" },
@@ -2423,6 +2443,9 @@ export interface InterBayBayRegistryApi {
 export interface InterBayBayOpsApi {
   getLoad: (opts: BayOpsHealthRequest) => Promise<BayLoadInfo>;
   getBackups: (opts: BayOpsHealthRequest) => Promise<BayBackupsInfo>;
+  getRootfsCatalog: (
+    opts: BayOpsRootfsCatalogRequest,
+  ) => Promise<RootfsImageManifest>;
   getRootfsQuotaReport: (
     opts: BayOpsRootfsQuotaReportRequest,
   ) => Promise<RootfsQuotaReport>;
@@ -3060,6 +3083,15 @@ export function createInterBayProjectControlClient({
       method: "set-usage-account",
     }),
   });
+  const assignHostClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "assignHost">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectControlSubject({
+      dest_bay,
+      method: "assign-host",
+    }),
+  });
   const addressClient = createServiceClient<
     Pick<InterBayProjectControlApi, "address">
   >({
@@ -3100,6 +3132,7 @@ export function createInterBayProjectControlClient({
     state: async (opts) => await stateClient.state(opts),
     setUsageAccount: async (opts) =>
       await setUsageAccountClient.setUsageAccount(opts),
+    assignHost: async (opts) => await assignHostClient.assignHost(opts),
     address: async (opts) => await addressClient.address(opts),
     move: async (opts) => await moveClient.move(opts),
     rehome: async (opts) => await rehomeClient.rehome(opts),
@@ -5131,6 +5164,15 @@ export function createInterBayBayOpsClient({
       method: "get-rootfs-quota-report",
     }),
   });
+  const rootfsCatalogClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getRootfsCatalog">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "get-rootfs-catalog",
+    }),
+  });
   const acpAdmissionDenialReportClient = createServiceClient<
     Pick<InterBayBayOpsApi, "getAcpAdmissionDenialReport">
   >({
@@ -5161,6 +5203,8 @@ export function createInterBayBayOpsClient({
   return {
     getLoad: async (opts) => await loadClient.getLoad(opts),
     getBackups: async (opts) => await backupsClient.getBackups(opts),
+    getRootfsCatalog: async (opts) =>
+      await rootfsCatalogClient.getRootfsCatalog(opts),
     getRootfsQuotaReport: async (opts) =>
       await rootfsQuotaReportClient.getRootfsQuotaReport(opts),
     getAcpAdmissionDenialReport: async (opts) =>
@@ -5236,6 +5280,17 @@ export function createInterBayBayOpsHandlers({
       }),
       impl: {
         setServerSetting: async (opts) => await impl.setServerSetting(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "getRootfsCatalog">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "get-rootfs-catalog",
+      }),
+      impl: {
+        getRootfsCatalog: async (opts) => await impl.getRootfsCatalog(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "getRootfsQuotaReport">>({
@@ -5893,6 +5948,27 @@ export function createInterBayProjectControlSetUsageAccountHandler({
     }),
     impl: {
       setUsageAccount: async (opts) => await impl.setUsageAccount(opts),
+    },
+  });
+}
+
+export function createInterBayProjectControlAssignHostHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectControlApi;
+}): ConatService {
+  return createServiceHandler<Pick<InterBayProjectControlApi, "assignHost">>({
+    ...options,
+    service: "inter-bay-project-control",
+    subject: projectControlSubject({
+      dest_bay: bay_id,
+      method: "assign-host",
+    }),
+    impl: {
+      assignHost: async (opts) => await impl.assignHost(opts),
     },
   });
 }

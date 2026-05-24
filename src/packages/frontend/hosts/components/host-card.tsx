@@ -22,6 +22,7 @@ import { HostPricingSummary } from "./host-pricing-summary";
 import { HostStatusSummary } from "./host-status-summary";
 import { HostActionsPanel } from "./host-actions-panel";
 import { HostConfigurationCell } from "./host-configuration-cell";
+import { HostAccessPolicySummary } from "./host-access-policy";
 
 type HostCardProps = {
   host: Host;
@@ -127,6 +128,7 @@ export const HostCard: React.FC<HostCardProps> = ({
           fullWidth
         />
         <HostConfigurationCell host={host} maxWidth="100%" />
+        <HostAccessPolicySummary host={host} compact />
         <HostPricingSummary
           host={host}
           catalog={pricingCatalogs ?? catalog}

@@ -18,6 +18,7 @@ import { COLORS } from "@cocalc/util/theme";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import {
+  buildSubmitDraft,
   getAvailablePresets,
   type HostCreateDraft,
   type HostCreateDraftContext,
@@ -229,7 +230,8 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
   };
   const confirmCreateHost = async (start: boolean) => {
     try {
-      const vals = await formInstance.validateFields();
+      const formValues = await formInstance.validateFields();
+      const vals = buildSubmitDraft(formValues, draftState.draft, draftContext);
       const runCreate = async () => {
         const created = await onCreate(vals, { start });
         if (!created) return;

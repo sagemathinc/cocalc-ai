@@ -736,3 +736,28 @@ export function buildCreateHostPayloadFromDraft(
     start_after_create: draft.start_after_create,
   };
 }
+
+export function buildSubmitDraft(
+  formValues: Partial<HostCreateDraft>,
+  canonicalDraft: HostCreateDraft,
+  context: HostCreateDraftContext,
+): HostCreateDraft {
+  const formDisk = readPositiveInteger(formValues.disk);
+  const formDiskGb = readPositiveInteger(formValues.disk_gb);
+  return normalizeDraft(
+    {
+      ...formValues,
+      ...canonicalDraft,
+      // Preserve fast user input from the form, but keep provider-dependent
+      // fields from the normalized draft so hidden stale form state cannot
+      // submit the wrong cloud provider.
+      name:
+        typeof formValues.name === "string"
+          ? formValues.name
+          : canonicalDraft.name,
+      disk: formDisk ?? canonicalDraft.disk,
+      disk_gb: formDiskGb ?? canonicalDraft.disk_gb,
+    },
+    context,
+  ).draft;
+}

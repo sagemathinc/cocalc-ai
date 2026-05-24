@@ -68,6 +68,7 @@ import {
 import { currentHostRuntimeExceptionSummary } from "../utils/runtime-exceptions";
 import { HostActionsPanel } from "./host-actions-panel";
 import { HostConfigurationCell } from "./host-configuration-cell";
+import { HostAccessPolicySummary } from "./host-access-policy";
 
 const STATUS_ORDER = [
   "running",
@@ -800,12 +801,20 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     {
       title: "Configuration",
       key: "configuration",
-      width: 360,
+      width: 330,
       onCell: () => ({
-        style: { minWidth: 360, maxWidth: 360 },
+        style: { minWidth: 330, maxWidth: 330 },
       }),
       render: (_: string, host: Host) => (
-        <HostConfigurationCell host={host} maxWidth={330} />
+        <HostConfigurationCell host={host} maxWidth={300} />
+      ),
+    },
+    {
+      title: "Access",
+      key: "access",
+      width: 210,
+      render: (_: string, host: Host) => (
+        <HostAccessPolicySummary host={host} compact />
       ),
     },
     {

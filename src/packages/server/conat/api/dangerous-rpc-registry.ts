@@ -235,6 +235,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "host resource cap mutation",
   },
+  "hosts.setHostPoolAccess": {
+    decision: "fresh-auth-required",
+    reason: "host public pool access mutation",
+  },
   "hosts.setHostRuntimeDeployments": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
@@ -366,6 +370,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "projects.archiveProject": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
+  },
+  "projects.assignProjectHost": {
+    decision: "fresh-auth-not-required",
+    reason: "initial host assignment for an unassigned project",
   },
   "projects.beginRestoreStaging": {
     decision: "fresh-auth-not-required",

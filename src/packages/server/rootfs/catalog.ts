@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import getLogger from "@cocalc/backend/logger";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import {
   appendRootfsImageEvent,
@@ -38,6 +39,18 @@ import {
   ROOTFS_IMAGE_MANIFEST_VERSION,
 } from "@cocalc/util/rootfs-images";
 import { assertCanCreateOrUpdateRootfs } from "@cocalc/server/membership/rootfs-limits";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import {
+  getConfiguredClusterRole,
+  getConfiguredClusterSeedBayId,
+} from "@cocalc/server/cluster-config";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+
+const logger = getLogger("server:rootfs:catalog");
+const SEED_CATALOG_SYNC_TTL_MS = 60_000;
+
+let seedCatalogSyncCheckedAt = 0;
+let seedCatalogSyncPromise: Promise<void> | undefined;
 
 type RootfsImageRow = {
   image_id: string;
@@ -144,6 +157,13 @@ function normalizeArch(value?: unknown): string {
     return trimString(value[0]) ?? "any";
   }
   return trimString(value) ?? "any";
+}
+
+function normalizeEntryArch(value?: RootfsImageEntry["arch"]): string {
+  if (Array.isArray(value)) {
+    return normalizeArch(value[0]);
+  }
+  return normalizeArch(value);
 }
 
 function fullName(row: RootfsImageRow): string | undefined {
@@ -527,6 +547,105 @@ async function queryRootfsRows(): Promise<RootfsImageRow[]> {
   return rows;
 }
 
+function shouldSyncSeedCatalogEntry(entry: RootfsImageEntry): boolean {
+  return (
+    !!trimString(entry.release_id) &&
+    (entry.official === true || entry.prepull === true) &&
+    entry.hidden !== true &&
+    entry.blocked !== true
+  );
+}
+
+async function upsertSeedCatalogEntry(entry: RootfsImageEntry): Promise<void> {
+  const pool = getPool("medium");
+  await pool.query(
+    `INSERT INTO rootfs_images
+      (image_id, release_id, owner_id, runtime_image, label, family, version, channel, supersedes_image_id, description, visibility, official, prepull, hidden, hidden_at, hidden_by, blocked, blocked_reason, blocked_at, blocked_by, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, theme, created, updated)
+      VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false, NULL, NULL, false, NULL, NULL, NULL, false, NULL, NULL, NULL, $13, $14, $15, $16::TEXT[], $17, NULL, $18, $19, $20::JSONB, COALESCE($21::TIMESTAMP, NOW()), NOW())
+      ON CONFLICT (image_id) DO UPDATE SET
+        release_id=EXCLUDED.release_id,
+        runtime_image=EXCLUDED.runtime_image,
+        label=EXCLUDED.label,
+        family=EXCLUDED.family,
+        version=EXCLUDED.version,
+        channel=EXCLUDED.channel,
+        supersedes_image_id=EXCLUDED.supersedes_image_id,
+        description=EXCLUDED.description,
+        visibility=EXCLUDED.visibility,
+        official=EXCLUDED.official,
+        prepull=EXCLUDED.prepull,
+        arch=EXCLUDED.arch,
+        gpu=EXCLUDED.gpu,
+        size_gb=EXCLUDED.size_gb,
+        tags=EXCLUDED.tags,
+        digest=EXCLUDED.digest,
+        deprecated=EXCLUDED.deprecated,
+        deprecated_reason=EXCLUDED.deprecated_reason,
+        theme=EXCLUDED.theme,
+        updated=NOW()
+      WHERE rootfs_images.owner_id IS NULL OR COALESCE(rootfs_images.official, false)=true`,
+    [
+      entry.id,
+      trimString(entry.release_id)!,
+      entry.image,
+      entry.label || entry.image,
+      trimString(entry.family) ?? null,
+      trimString(entry.version) ?? null,
+      trimString(entry.channel) ?? null,
+      trimString(entry.supersedes_image_id) ?? null,
+      trimString(entry.description) ?? null,
+      entry.visibility ?? "public",
+      entry.official === true,
+      entry.prepull === true,
+      normalizeEntryArch(entry.arch),
+      entry.gpu === true,
+      entry.size_gb ?? null,
+      normalizeTags(entry.tags),
+      trimString(entry.digest) ?? null,
+      entry.deprecated === true,
+      trimString(entry.deprecated_reason) ?? null,
+      entry.theme ? JSON.stringify(normalizeTheme(entry.theme)) : null,
+      trimString(entry.created) ?? null,
+    ],
+  );
+}
+
+async function syncOfficialRootfsCatalogFromSeed(): Promise<void> {
+  const role = getConfiguredClusterRole();
+  if (role !== "attached") {
+    return;
+  }
+  const seedBayId = getConfiguredClusterSeedBayId();
+  if (!seedBayId || seedBayId === getConfiguredBayId()) {
+    return;
+  }
+  const now = Date.now();
+  if (now - seedCatalogSyncCheckedAt < SEED_CATALOG_SYNC_TTL_MS) {
+    return;
+  }
+  seedCatalogSyncPromise ??= (async () => {
+    try {
+      const manifest = await getInterBayBridge()
+        .bayOps(seedBayId, { timeout_ms: 15_000 })
+        .getRootfsCatalog({});
+      const entries = manifest.images.filter(shouldSyncSeedCatalogEntry);
+      for (const entry of entries) {
+        await upsertSeedCatalogEntry(entry);
+      }
+      seedCatalogSyncCheckedAt = Date.now();
+    } catch (err) {
+      seedCatalogSyncCheckedAt = Date.now();
+      logger.warn("unable to sync RootFS catalog from seed bay", {
+        seed_bay_id: seedBayId,
+        err: `${err}`,
+      });
+    } finally {
+      seedCatalogSyncPromise = undefined;
+    }
+  })();
+  await seedCatalogSyncPromise;
+}
+
 async function queryReplicaStorageRows(
   release_ids: string[],
 ): Promise<Map<string, RootfsStorageLocation[]>> {
@@ -561,8 +680,12 @@ async function queryReplicaStorageRows(
 
 export async function listVisibleRootfsImages(
   account_id?: string,
+  opts: { includeSeedCatalog?: boolean } = {},
 ): Promise<RootfsImageManifest> {
   await ensureBuiltinRootfsImages();
+  if (opts.includeSeedCatalog !== false) {
+    await syncOfficialRootfsCatalogFromSeed();
+  }
   const [rows, collaboratorIds, admin] = await Promise.all([
     queryRootfsRows(),
     collaboratorIdsFor(account_id),
@@ -586,6 +709,7 @@ export async function listRootfsImagesAdmin(
     throw Error("must be an admin");
   }
   await ensureBuiltinRootfsImages();
+  await syncOfficialRootfsCatalogFromSeed();
   const rows = await queryRootfsRows();
   const entries = rows.map((row) =>
     rowToAdminEntry({ row, account_id, admin: true }),

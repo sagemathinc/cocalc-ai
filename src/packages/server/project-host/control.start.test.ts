@@ -21,6 +21,11 @@ let resolveHostBayMock: jest.Mock;
 let getCurrentProjectRootfsBindingMock: jest.Mock;
 let assertCanRestoreProvisionedProjectStorageMock: jest.Mock;
 let cancelStaleProjectStartLrosMock: jest.Mock;
+let resolveMembershipForAccountMock: jest.Mock;
+let isAdminMock: jest.Mock;
+let interBayHostListMock: jest.Mock;
+let interBayHostControlCreateProjectMock: jest.Mock;
+let interBayHostControlStartProjectMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -94,6 +99,29 @@ jest.mock("@cocalc/server/inter-bay/directory", () => ({
   resolveHostBayAcrossCluster: (...args: any[]) => resolveHostBayMock(...args),
 }));
 
+jest.mock("@cocalc/server/cluster-config", () => ({
+  __esModule: true,
+  getConfiguredClusterBayIdsForStaticEnumerationOnly: jest.fn(() => [
+    "bay-0",
+    "bay-9",
+  ]),
+}));
+
+jest.mock("@cocalc/server/inter-bay/bridge", () => ({
+  __esModule: true,
+  getInterBayBridge: jest.fn(() => ({
+    hostConnection: jest.fn(() => ({
+      list: (...args: any[]) => interBayHostListMock(...args),
+    })),
+    hostControl: jest.fn(() => ({
+      createProject: (...args: any[]) =>
+        interBayHostControlCreateProjectMock(...args),
+      startProject: (...args: any[]) =>
+        interBayHostControlStartProjectMock(...args),
+    })),
+  })),
+}));
+
 jest.mock("@cocalc/server/projects/rootfs-state", () => ({
   __esModule: true,
   getCurrentProjectRootfsBinding: (...args: any[]) =>
@@ -110,6 +138,17 @@ jest.mock("@cocalc/server/projects/start-lro-cleanup", () => ({
   __esModule: true,
   cancelStaleProjectStartLros: (...args: any[]) =>
     cancelStaleProjectStartLrosMock(...args),
+}));
+
+jest.mock("@cocalc/server/membership/resolve", () => ({
+  __esModule: true,
+  resolveMembershipForAccount: (...args: any[]) =>
+    resolveMembershipForAccountMock(...args),
+}));
+
+jest.mock("@cocalc/server/accounts/is-admin", () => ({
+  __esModule: true,
+  default: (...args: any[]) => isAdminMock(...args),
 }));
 
 describe("startProjectOnHost placement", () => {
@@ -135,11 +174,196 @@ describe("startProjectOnHost placement", () => {
       async () => undefined,
     );
     cancelStaleProjectStartLrosMock = jest.fn(async () => 0);
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: { features: { project_host_tier: 0 } },
+    }));
+    isAdminMock = jest.fn(async () => false);
+    interBayHostControlCreateProjectMock = jest.fn(async () => ({
+      project_id: "proj-1",
+      state: "opened",
+    }));
+    interBayHostControlStartProjectMock = jest.fn(async () => ({
+      project_id: "proj-1",
+      state: "running",
+    }));
     releaseMock = jest.fn();
     resolveHostBayMock = jest.fn(async (host_id: string) => ({
       bay_id: host_id === "host-2" ? "bay-7" : "bay-0",
       epoch: 0,
     }));
+    interBayHostListMock = jest.fn(async () => []);
+  });
+
+  it("only uses shared pool hosts for automatic placement without an account", async () => {
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (
+        sql.includes("FROM project_hosts") &&
+        sql.includes("WHERE status='running'")
+      ) {
+        expect(params).toEqual(["bay-0"]);
+        return {
+          rows: [
+            {
+              id: "private-host",
+              bay_id: "bay-0",
+              name: "Private Host",
+              region: "us-west1",
+              public_url: null,
+              internal_url: null,
+              ssh_server: null,
+              tier: null,
+              metadata: { owner: "owner-account", machine: {} },
+              delegated_access_role: null,
+            },
+            {
+              id: "pool-host",
+              bay_id: "bay-0",
+              name: "Pool Host",
+              region: "us-west1",
+              public_url: null,
+              internal_url: null,
+              ssh_server: null,
+              tier: 0,
+              metadata: { machine: {} },
+              delegated_access_role: null,
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { selectActiveHost } = await import("./control");
+    await expect(selectActiveHost({ bay_id: "bay-0" })).resolves.toMatchObject({
+      id: "pool-host",
+    });
+    expect(resolveMembershipForAccountMock).not.toHaveBeenCalled();
+  });
+
+  it("filters automatic placement by account host access and membership tier", async () => {
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: { features: { project_host_tier: 0 } },
+    }));
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (
+        sql.includes("FROM project_hosts") &&
+        sql.includes("WHERE status='running'")
+      ) {
+        expect(params).toEqual(["bay-0", "account-1"]);
+        return {
+          rows: [
+            {
+              id: "high-tier-host",
+              bay_id: "bay-0",
+              name: "High Tier Host",
+              region: "us-west1",
+              public_url: null,
+              internal_url: null,
+              ssh_server: null,
+              tier: 2,
+              metadata: { machine: {} },
+              delegated_access_role: null,
+            },
+            {
+              id: "owned-private-host",
+              bay_id: "bay-0",
+              name: "Owned Private Host",
+              region: "us-west1",
+              public_url: null,
+              internal_url: null,
+              ssh_server: null,
+              tier: null,
+              metadata: { owner: "account-1", machine: {} },
+              delegated_access_role: null,
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { selectActiveHost } = await import("./control");
+    await expect(
+      selectActiveHost({ bay_id: "bay-0", account_id: "account-1" }),
+    ).resolves.toMatchObject({
+      id: "owned-private-host",
+      tier: undefined,
+    });
+  });
+
+  it("falls back to remote shared pool hosts for automatic placement", async () => {
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: { features: { project_host_tier: 0 } },
+    }));
+    interBayHostListMock = jest.fn(async () => [
+      {
+        id: "remote-pool-host",
+        bay_id: "bay-9",
+        name: "Remote Pool Host",
+        owner: "host-owner",
+        region: "us-west1",
+        size: "standard",
+        gpu: false,
+        status: "running",
+        tier: 0,
+        scope: "pool",
+        access_role: "pool",
+        can_place: true,
+        pressure: { zone: "normal" },
+      },
+    ]);
+    let placementQuery = 0;
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (
+        sql.includes("FROM project_hosts") &&
+        sql.includes("WHERE status='running'")
+      ) {
+        placementQuery += 1;
+        if (placementQuery === 1) {
+          expect(params).toEqual(["bay-1", "account-1"]);
+          expect(sql).toContain("COALESCE(bay_id");
+          return {
+            rows: [
+              {
+                id: "same-bay-other-region",
+                bay_id: "bay-1",
+                name: "Same Bay Other Region",
+                region: "europe-west1",
+                public_url: null,
+                internal_url: null,
+                ssh_server: null,
+                tier: 0,
+                metadata: { machine: {} },
+                delegated_access_role: null,
+              },
+            ],
+          };
+        }
+        expect(params).toEqual(["account-1"]);
+        expect(sql).not.toContain("COALESCE(bay_id");
+        expect(sql).toContain("tier IS NOT NULL");
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { selectActiveHost } = await import("./control");
+    await expect(
+      selectActiveHost({
+        bay_id: "bay-1",
+        account_id: "account-1",
+        project_region: "wnam",
+      }),
+    ).resolves.toMatchObject({
+      id: "remote-pool-host",
+      bay_id: "bay-9",
+      tier: 0,
+    });
+    expect(placementQuery).toBe(2);
+    expect(interBayHostListMock).toHaveBeenCalledWith({
+      account_id: "account-1",
+      catalog: false,
+    });
   });
 
   it("registers a new host placement without doing the long runtime start in createProject", async () => {
@@ -263,6 +487,123 @@ describe("startProjectOnHost placement", () => {
     expect(notifyProjectHostUpdateMock).toHaveBeenCalledWith({
       project_id: "proj-1",
       host_id: "host-1",
+    });
+  });
+
+  it("passes account_id when automatic placement registers a project on a remote shared-pool host", async () => {
+    let loadProjectCalls = 0;
+    let placementQuery = 0;
+    interBayHostListMock = jest.fn(async () => [
+      {
+        id: "host-2",
+        bay_id: "bay-9",
+        name: "Remote Pool Host",
+        region: "wnam",
+        public_url: null,
+        internal_url: null,
+        ssh_server: null,
+        tier: 0,
+        can_place: true,
+        metadata: { machine: {} },
+      },
+    ]);
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
+      if (sql === "SELECT state FROM projects WHERE project_id=$1") {
+        return {
+          rows: [{ state: { state: "opened", time: "2026-03-29T00:00:00Z" } }],
+        };
+      }
+      if (sql.includes("FROM long_running_operations")) {
+        return { rows: [{ exists: false }] };
+      }
+      if (
+        sql ===
+        "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
+      ) {
+        loadProjectCalls += 1;
+        return {
+          rows: [
+            {
+              title: "Remote placement",
+              users: { owner: { group: "owner" } },
+              image: "cocalc.local/rootfs/release",
+              host_id: loadProjectCalls === 1 ? null : "host-2",
+              region: "wnam",
+              owning_bay_id: "bay-0",
+              run_quota: null,
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("FROM project_hosts") &&
+        sql.includes("WHERE status='running'")
+      ) {
+        placementQuery += 1;
+        return { rows: [] };
+      }
+      if (
+        sql ===
+        "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL"
+      ) {
+        return {
+          rows: [{ metadata: { machine: {} } }],
+        };
+      }
+      if (sql.includes("SET state=$2::jsonb")) {
+        return { rowCount: 1, rows: [] };
+      }
+      if (sql.includes("UPDATE projects AS projects")) {
+        return {
+          rows: [{ owning_bay_id: "bay-0" }],
+        };
+      }
+      if (
+        sql ===
+        "SELECT backup_repo_id, provisioned FROM projects WHERE project_id=$1"
+      ) {
+        return { rows: [{ backup_repo_id: null, provisioned: true }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    poolConnectMock = jest.fn(async () => ({
+      query: queryMock,
+      release: releaseMock,
+    }));
+
+    const { startProjectOnHost } = await import("./control");
+    await startProjectOnHost("proj-1", {
+      account_id: "account-1",
+      lro_op_id: "op-1",
+    });
+
+    expect(placementQuery).toBe(2);
+    expect(interBayHostControlCreateProjectMock).toHaveBeenCalledWith({
+      account_id: "account-1",
+      host_id: "host-2",
+      create: {
+        project_id: "proj-1",
+        title: "Remote placement",
+        users: { owner: { group: "owner" } },
+        image: "cocalc.local/rootfs/release",
+        start: false,
+        authorized_keys: "ssh-ed25519 AAAATEST user@test",
+        run_quota: {},
+      },
+    });
+    expect(interBayHostControlStartProjectMock).toHaveBeenCalledWith({
+      host_id: "host-2",
+      start: {
+        project_id: "proj-1",
+        authorized_keys: "ssh-ed25519 AAAATEST user@test",
+        run_quota: {},
+        image: "cocalc.local/rootfs/release",
+        restore: "none",
+        lro_op_id: "op-1",
+      },
     });
   });
 

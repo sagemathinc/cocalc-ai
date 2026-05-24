@@ -623,6 +623,7 @@ export const projects = {
   getSshKeys: authFirstRequireProject,
 
   moveProject: authFirstRequireAccount,
+  assignProjectHost: authFirstRequireAccount,
   rehomeProject: authFirstRequireAccount,
   getProjectRehomeOperation: authFirstRequireAccount,
   reconcileProjectRehome: authFirstRequireAccount,
@@ -1308,6 +1309,11 @@ export interface Projects {
     service: string;
     stream_name: string;
   }>;
+  assignProjectHost: (opts: {
+    account_id?: string;
+    project_id: string;
+    dest_host_id: string;
+  }) => Promise<void>;
 
   rehomeProject: (opts: {
     account_id?: string;

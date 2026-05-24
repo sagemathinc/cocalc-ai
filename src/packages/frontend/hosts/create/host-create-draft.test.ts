@@ -4,6 +4,7 @@ import {
   buildCreateHostPayloadFromDraft,
   buildDefaultDraft,
   buildSimilarDraft,
+  buildSubmitDraft,
   getAvailablePresets,
   normalizeDraft,
   type HostCreateDraftContext,
@@ -387,6 +388,45 @@ describe("host-create-draft", () => {
       disk_type: "ssd_io_m3",
       disk_gb: 186,
     });
+  });
+
+  it("keeps the canonical provider when submitting with stale hidden form state", () => {
+    const context = allProvidersContext();
+    const canonical = normalizeDraft(
+      {
+        ...buildDefaultDraft(context),
+        provider: "nebius",
+        region: "eu-north1",
+        machine_type: "1gpu-16vcpu-200gb",
+        pricing_model: "spot",
+        interruption_restore_policy: "immediate",
+      },
+      context,
+    ).draft;
+
+    const submitDraft = buildSubmitDraft(
+      {
+        ...canonical,
+        name: "Typed host name",
+        provider: "gcp",
+        region: "us-west1",
+        zone: "us-west1-a",
+        machine_type: "n2d-standard-4",
+      },
+      canonical,
+      context,
+    );
+    const payload = buildCreateHostPayloadFromDraft(submitDraft, context);
+
+    expect(submitDraft).toMatchObject({
+      name: "Typed host name",
+      provider: "nebius",
+      region: "eu-north1",
+      machine_type: "1gpu-16vcpu-200gb",
+      pricing_model: "spot",
+    });
+    expect(payload.machine.cloud).toBe("nebius");
+    expect(payload.machine.machine_type).toBe("1gpu-16vcpu-200gb");
   });
 
   it("normalizes Nebius disks to the provider-required 93 GB increments", () => {

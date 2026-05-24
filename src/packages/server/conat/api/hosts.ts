@@ -3358,6 +3358,66 @@ export async function setHostOwnerSpendLimits(opts: {
   return parseRow(rows[0]);
 }
 
+function normalizePoolAccessTier(value?: number | null): number | null {
+  if (value == null) {
+    return null;
+  }
+  const tier = Number(value);
+  if (!Number.isInteger(tier) || tier < 0) {
+    throw new Error("host pool tier must be a non-negative integer");
+  }
+  return tier;
+}
+
+export async function setHostPoolAccess({
+  account_id,
+  browser_id,
+  session_hash,
+  id,
+  tier,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string;
+  id: string;
+  tier?: number | null;
+}): Promise<Host> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .setHostPoolAccess({
+        account_id,
+        browser_id,
+        session_hash,
+        id,
+        tier,
+      });
+  }
+  const actor = requireAccount(account_id);
+  if (!(await isAdmin(actor))) {
+    throw new Error("only admins can configure public host pool access");
+  }
+  const normalizedTier = normalizePoolAccessTier(tier);
+  await maybeRequireFreshAuthForInteractiveHostAction({
+    account_id,
+    browser_id,
+    session_hash,
+    required: true,
+  });
+  const { rows } = await pool().query(
+    `UPDATE project_hosts
+     SET tier=$2, updated=NOW()
+     WHERE id=$1 AND deleted IS NULL
+     RETURNING *`,
+    [id, normalizedTier],
+  );
+  if (!rows[0]) {
+    throw new Error("host not found");
+  }
+  return parseRow(rows[0]);
+}
+
 function timestampMs(value: string | undefined): number | undefined {
   if (!value) return undefined;
   const ms = Date.parse(value);
