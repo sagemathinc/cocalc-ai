@@ -398,14 +398,6 @@ export function EnvironmentOverview({
     );
   }
 
-  function renderAction(key: string, label = "Details") {
-    return (
-      <Button size="small" type="link" onClick={() => openDetail(key)}>
-        {label}
-      </Button>
-    );
-  }
-
   function renderFeatureAction() {
     return (
       <Button
@@ -428,23 +420,6 @@ export function EnvironmentOverview({
   const detailMode: Mode = "flyout";
   const SummaryComponent = isFlyout ? SummaryRow : SummaryCard;
   const detailItems = [
-    {
-      key: "configuration",
-      label: isFlyout
-        ? "Configuration"
-        : collapseLabel("configuration", "Configuration"),
-      children: (
-        <Space direction="vertical" size={12} style={{ width: "100%" }}>
-          <Typography.Text type="secondary">
-            Launcher defaults, process environment, and mounted secrets.
-          </Typography.Text>
-          <EnvironmentConfigurationSummary
-            mode={mode}
-            project_id={project_id}
-          />
-        </Space>
-      ),
-    },
     {
       key: "diagnostics",
       label: isFlyout
@@ -512,20 +487,6 @@ export function EnvironmentOverview({
         : "Feature probe",
       action: renderFeatureAction(),
     },
-    {
-      icon: "bars",
-      title: "Environment Variables",
-      value: `${envCount} configured`,
-      subtitle: "Custom process environment",
-      action: renderAction("configuration", "Configure"),
-    },
-    {
-      icon: "key",
-      title: "Project Secrets",
-      value: `${secretCount} secret${secretCount === 1 ? "" : "s"}`,
-      subtitle: "Mounted encrypted files",
-      action: renderAction("configuration", "Configure"),
-    },
   ];
 
   return (
@@ -542,6 +503,7 @@ export function EnvironmentOverview({
           secretCount={secretCount}
         />
       ) : null}
+      <EnvironmentConfigurationSummary mode={mode} project_id={project_id} />
       <div
         style={{
           display: "grid",
