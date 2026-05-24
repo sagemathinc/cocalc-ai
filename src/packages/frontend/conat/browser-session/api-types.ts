@@ -84,13 +84,20 @@ export type BrowserTerminalSessionInfo = {
 export type BrowserExtensionApiSummary = BrowserExtensionSummary;
 export type BrowserInstallHelloOptions = BrowserInstallHelloWorldOptions;
 
+export type BrowserDocsActionResult = {
+  action_id: string;
+  opened: true;
+  path?: string;
+  panel?: string;
+  project_id: string;
+  tab?: string;
+};
+
 export type BrowserExecApi = {
   projectId: string;
-  docsAction: (id: string) => {
-    action_id: string;
-    opened: true;
-    project_id: string;
-  };
+  docsAction: (
+    id: string,
+  ) => BrowserDocsActionResult | Promise<BrowserDocsActionResult>;
   listOpenFiles: () => BrowserOpenFileInfo[];
   listOpenFilesAll: () => BrowserOpenFileInfo[];
   openFiles: (

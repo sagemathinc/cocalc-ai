@@ -36,7 +36,7 @@ export function ProjectDocsPanel({
 
   async function runAction(action: DocsBrowserAction): Promise<void> {
     try {
-      revealDocsAction({ actionId: action.id, projectId: project_id });
+      await revealDocsAction({ actionId: action.id, projectId: project_id });
       await messageApi.success(action.label);
     } catch (err) {
       await messageApi.error(`${err}`);

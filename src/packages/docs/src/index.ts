@@ -352,7 +352,7 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     actions: [
       {
         description: "Open a terminal in the active project.",
-        executable: false,
+        executable: true,
         id: "project.terminal.open",
         label: "Open terminal",
       },
@@ -372,7 +372,7 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     actions: [
       {
         description: "Create a Jupyter notebook in the active project.",
-        executable: false,
+        executable: true,
         id: "project.jupyter.create",
         label: "Create notebook",
       },
@@ -392,7 +392,7 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     actions: [
       {
         description: "Open project Settings -> Environment -> Runtime Image.",
-        executable: false,
+        executable: true,
         id: "settings.runtime.rootfs",
         label: "Open runtime image",
       },

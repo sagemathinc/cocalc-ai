@@ -5,13 +5,17 @@
 
 import { Button, Card, Collapse, Space, Tag, Typography } from "antd";
 import type { CSSProperties, ReactNode } from "react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { useProjectEnv } from "@cocalc/frontend/project/use-project-env";
 import { useProjectRootfs } from "@cocalc/frontend/project/use-project-rootfs";
 import { useProjectSecrets } from "@cocalc/frontend/project/use-project-secrets";
+import {
+  RUNTIME_IMAGE_DOCS_ACTION_EVENT,
+  type RuntimeImageDocsActionDetail,
+} from "@cocalc/frontend/project/docs-actions";
 import {
   managedRootfsCatalogUrl,
   useRootfsImages,
@@ -356,6 +360,19 @@ export function EnvironmentOverview({
   const envCount = countConfiguredEnv(env);
   const secretCount = secrets?.length ?? 0;
   const runtimeImage = rootfsLabel(rootfs, rootfsImages);
+
+  useEffect(() => {
+    function handleReveal(event: Event): void {
+      const detail = (event as CustomEvent<RuntimeImageDocsActionDetail>)
+        .detail;
+      if (detail?.projectId !== project_id) return;
+      setRuntimeImageOpen(true);
+    }
+    window.addEventListener(RUNTIME_IMAGE_DOCS_ACTION_EVENT, handleReveal);
+    return () => {
+      window.removeEventListener(RUNTIME_IMAGE_DOCS_ACTION_EVENT, handleReveal);
+    };
+  }, [project_id]);
 
   function scrollToElement(element: HTMLElement | null): void {
     if (element == null) return;

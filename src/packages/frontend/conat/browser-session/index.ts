@@ -2115,7 +2115,10 @@ export function createBrowserSessionAutomation({
       if (!id) {
         throw Error("docs_action.id must be specified");
       }
-      const result = revealDocsAction({ actionId: id, projectId: project_id });
+      const result = await revealDocsAction({
+        actionId: id,
+        projectId: project_id,
+      });
       return {
         name: "docs_action",
         ok: true,
