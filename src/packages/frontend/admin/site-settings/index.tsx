@@ -1099,7 +1099,6 @@ export default function SiteSettings({ close }) {
           data={data ?? {}}
           isSet={isSet ?? {}}
           onApply={applyWizardSettings}
-          runFreshAuthAction={runFreshAuthAction}
         />
         <GcpServiceAccountWizard
           open={activeWizard === "gcp-service-account-json"}

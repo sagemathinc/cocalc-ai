@@ -13,6 +13,7 @@ import {
   getCnameTargetForHostname,
   hasDns,
 } from "@cocalc/server/cloud/dns";
+import { normalizeCloudflareHostname } from "@cocalc/server/cloud/derived-domains";
 import { isLaunchpadProduct } from "@cocalc/server/launchpad/mode";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 
@@ -186,7 +187,7 @@ export async function getProjectAppPublicPolicy(
     };
   }
   const settings = await getServerSettings();
-  const dns_domain = `${settings.project_hosts_dns ?? ""}`.trim().toLowerCase();
+  const dns_domain = normalizeCloudflareHostname(settings.dns) ?? "";
   const suffix = normalizeSuffix(
     settings.project_hosts_app_public_subdomain_suffix as string | undefined,
   );
@@ -267,7 +268,10 @@ export async function reserveProjectAppPublicSubdomain(opts: {
     | { hostname?: string; dns_record_id?: string }
     | undefined;
   if (stale?.dns_record_id) {
-    await deleteAppSubdomainDns({ record_id: stale.dns_record_id });
+    await deleteAppSubdomainDns({
+      record_id: stale.dns_record_id,
+      hostname: stale.hostname,
+    });
   }
   if (stale?.hostname) {
     hostCache.delete(`${stale.hostname}`.toLowerCase());
@@ -316,7 +320,10 @@ export async function releaseProjectAppPublicSubdomain(opts: {
   );
   const row = rows[0];
   if (!row) return { released: false };
-  await deleteAppSubdomainDns({ record_id: row.dns_record_id ?? undefined });
+  await deleteAppSubdomainDns({
+    record_id: row.dns_record_id ?? undefined,
+    hostname: row.hostname ?? undefined,
+  });
   hostCache.delete(`${row.hostname ?? ""}`.toLowerCase());
   return { released: true };
 }

@@ -205,7 +205,10 @@ async function reconcileDnsForEntry(
     return { dns_hostname, dns_record_id: record_id };
   }
   if (entry.dns_record_id) {
-    await deleteAppSubdomainDns({ record_id: entry.dns_record_id });
+    await deleteAppSubdomainDns({
+      record_id: entry.dns_record_id,
+      hostname: dns_hostname,
+    });
   }
   return { dns_hostname, dns_record_id: null };
 }

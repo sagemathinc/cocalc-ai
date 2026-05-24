@@ -109,6 +109,7 @@ import { materializeProjectHost } from "@cocalc/server/conat/route-project";
 import { savePlacement } from "@cocalc/server/project-host/control";
 import { hardDeleteProject } from "@cocalc/server/projects/hard-delete";
 import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
+import { MIN_PROJECT_HOST_DISK_GB } from "@cocalc/util/project-host-limits";
 import { getProviderContext } from "@cocalc/server/cloud/provider-context";
 import admins from "@cocalc/server/accounts/admins";
 import { getLro } from "@cocalc/server/lro/lro-db";
@@ -5177,7 +5178,7 @@ async function buildPresetForHyperstack(): Promise<SmokePreset | undefined> {
       machine: {
         cloud: "hyperstack",
         machine_type: primary.name,
-        disk_gb: primary.disk ?? 50,
+        disk_gb: Math.max(primary.disk ?? 0, MIN_PROJECT_HOST_DISK_GB),
         storage_mode: "persistent",
       },
     },

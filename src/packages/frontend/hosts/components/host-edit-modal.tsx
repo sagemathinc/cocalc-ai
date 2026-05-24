@@ -10,6 +10,7 @@ import {
   Switch,
 } from "antd";
 import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { MIN_PROJECT_HOST_DISK_GB } from "@cocalc/util/project-host-limits";
 import type {
   Host,
   HostAutoGrowConfig,
@@ -55,6 +56,7 @@ import { SshTargetLabel } from "./ssh-target-help";
 import { HostPriceBreakdown } from "./host-price-breakdown";
 
 const NEBIUS_IO_M3_GB = 93;
+const MIN_DISK_GB = MIN_PROJECT_HOST_DISK_GB;
 
 type HostEditModalProps = {
   open: boolean;
@@ -420,7 +422,9 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const currentCpu = readPositive(host?.machine?.metadata?.cpu);
   const currentRam = readPositive(host?.machine?.metadata?.ram_gb);
   const currentDisk = readPositive(host?.machine?.disk_gb);
-  const diskMin = isDeprovisioned ? 10 : (currentDisk ?? 10);
+  const diskMin = isDeprovisioned
+    ? MIN_DISK_GB
+    : Math.max(MIN_DISK_GB, currentDisk ?? MIN_DISK_GB);
   const diskMax = Math.max(2000, diskMin);
   const watchedDiskType = Form.useWatch("disk_type", form);
   const isNebiusIoM3 =

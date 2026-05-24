@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   BookOutlined,
@@ -34,12 +34,145 @@ import { COLORS } from "@cocalc/util/theme";
 const { Paragraph, Text, Title } = Typography;
 
 type DocsBrowserLayout = "page" | "flyout";
+const DOCS_FONT_SIZE_STORAGE_KEY = "cocalc-docs-font-size";
+export const DOCS_FONT_SIZE_MIN = 10;
+export const DOCS_FONT_SIZE_MAX = 32;
+export const DOCS_FONT_SIZE_STEP = 1;
 
 export type DocsBrowserAction = DocsAction & {
   available?: boolean;
   implemented?: boolean;
   reason?: string;
 };
+
+function clampDocsFontSize(value: number): number {
+  if (!Number.isFinite(value)) return 14;
+  return Math.max(
+    DOCS_FONT_SIZE_MIN,
+    Math.min(DOCS_FONT_SIZE_MAX, Math.round(value)),
+  );
+}
+
+function readStoredDocsFontSize(): number | undefined {
+  if (typeof window === "undefined") return undefined;
+  const raw = window.localStorage.getItem(DOCS_FONT_SIZE_STORAGE_KEY);
+  if (!raw) return undefined;
+  return clampDocsFontSize(Number(raw));
+}
+
+function writeStoredDocsFontSize(value: number, defaultFontSize: number): void {
+  if (typeof window === "undefined") return;
+  if (value === clampDocsFontSize(defaultFontSize)) {
+    window.localStorage.removeItem(DOCS_FONT_SIZE_STORAGE_KEY);
+  } else {
+    window.localStorage.setItem(DOCS_FONT_SIZE_STORAGE_KEY, `${value}`);
+  }
+}
+
+export function useDocsFontSize(defaultFontSize = 14) {
+  const defaultSize = clampDocsFontSize(defaultFontSize);
+  const [fontSize, setFontSizeState] = useState(
+    () => readStoredDocsFontSize() ?? defaultSize,
+  );
+
+  useEffect(() => {
+    if (readStoredDocsFontSize() == null) {
+      setFontSizeState(defaultSize);
+    }
+  }, [defaultSize]);
+
+  const setFontSize = useCallback(
+    (value: number) => {
+      const next = clampDocsFontSize(value);
+      writeStoredDocsFontSize(next, defaultSize);
+      setFontSizeState(next);
+    },
+    [defaultSize],
+  );
+
+  const resetFontSize = useCallback(() => {
+    writeStoredDocsFontSize(defaultSize, defaultSize);
+    setFontSizeState(defaultSize);
+  }, [defaultSize]);
+
+  return {
+    fontSize,
+    setFontSize,
+    resetFontSize,
+    increaseFontSize: () => setFontSize(fontSize + DOCS_FONT_SIZE_STEP),
+    decreaseFontSize: () => setFontSize(fontSize - DOCS_FONT_SIZE_STEP),
+    canIncreaseFontSize: fontSize < DOCS_FONT_SIZE_MAX,
+    canDecreaseFontSize: fontSize > DOCS_FONT_SIZE_MIN,
+  };
+}
+
+export function DocsFontSizeFrame({
+  children,
+  defaultFontSize = 14,
+  layout = "page",
+}: {
+  children: React.ReactNode;
+  defaultFontSize?: number;
+  layout?: DocsBrowserLayout;
+}) {
+  const {
+    canDecreaseFontSize,
+    canIncreaseFontSize,
+    decreaseFontSize,
+    fontSize,
+    increaseFontSize,
+    resetFontSize,
+  } = useDocsFontSize(defaultFontSize);
+
+  return (
+    <div style={{ position: "relative" }}>
+      <Flex
+        justify="end"
+        style={{
+          marginBottom: layout === "flyout" ? 8 : 12,
+          position: "relative",
+          zIndex: 1,
+        }}
+      >
+        <Space.Compact
+          size="small"
+          style={{
+            background: "white",
+            borderRadius: 6,
+            boxShadow: "0 1px 4px rgba(15, 23, 42, 0.12)",
+          }}
+        >
+          <Button
+            aria-label="Decrease docs font size"
+            disabled={!canDecreaseFontSize}
+            onClick={decreaseFontSize}
+            title="Decrease docs font size"
+          >
+            A-
+          </Button>
+          <Button
+            aria-label="Reset docs font size"
+            onClick={resetFontSize}
+            title="Reset docs font size"
+          >
+            {fontSize}px
+          </Button>
+          <Button
+            aria-label="Increase docs font size"
+            disabled={!canIncreaseFontSize}
+            onClick={increaseFontSize}
+            title="Increase docs font size"
+          >
+            A+
+          </Button>
+        </Space.Compact>
+      </Flex>
+      <div className="cocalc-docs-font-scope" style={{ fontSize }}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 export function DocsMarkdown({ value }: { value: string }) {
   return <Markdown value={value} />;
@@ -61,14 +194,16 @@ export function DocsCard({
       <Flex gap={6} vertical>
         <Space size={6} wrap>
           <BookOutlined style={{ color: COLORS.BLUE }} />
-          <Text type="secondary" style={{ fontSize: 12 }}>
+          <Text type="secondary" style={{ fontSize: "0.86em" }}>
             {entry.category}
           </Text>
         </Space>
-        <Text strong style={{ fontSize: 15, lineHeight: 1.25 }}>
+        <Text strong style={{ fontSize: "1.07em", lineHeight: 1.25 }}>
           {entry.title}
         </Text>
-        <Text style={{ color: COLORS.GRAY_M, fontSize: 13, lineHeight: 1.35 }}>
+        <Text
+          style={{ color: COLORS.GRAY_M, fontSize: "0.93em", lineHeight: 1.35 }}
+        >
           {entry.summary}
         </Text>
         <Space size={[4, 4]} wrap>
@@ -381,7 +516,7 @@ export function DocsDetailContent({
             <Text type="secondary">Reviewed {entry.lastReviewed}</Text>
           </Space>
           <Title style={{ margin: 0 }}>{entry.title}</Title>
-          <Paragraph style={{ fontSize: 18, margin: 0 }}>
+          <Paragraph style={{ fontSize: "1.125em", margin: 0 }}>
             {entry.summary}
           </Paragraph>
           <Space wrap>
@@ -452,7 +587,7 @@ export const DOCS_BROWSER_FLYOUT_STYLE: React.CSSProperties = {
 
 export const DOCS_BROWSER_MUTED_TITLE_STYLE: React.CSSProperties = {
   color: COLORS.GRAY_M,
-  fontSize: 13,
+  fontSize: "0.93em",
   letterSpacing: 0,
   textTransform: "uppercase",
 };

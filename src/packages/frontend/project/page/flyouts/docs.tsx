@@ -5,20 +5,21 @@
 
 import { useMemo } from "react";
 
-import { Button, Flex, message, Space, Typography } from "antd";
+import { Flex, message, Typography } from "antd";
 import {
   DocsBrowser,
+  DocsFontSizeFrame,
   DOCS_BROWSER_FLYOUT_STYLE,
   DOCS_BROWSER_MUTED_TITLE_STYLE,
   DOCS_BROWSER_PAGE_STYLE,
   type DocsBrowserAction,
 } from "@cocalc/frontend/docs/browser";
-import { Icon } from "@cocalc/frontend/components";
-import { useProjectContext } from "@cocalc/frontend/project/context";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   listDocsAppActions,
   revealDocsAction,
 } from "@cocalc/frontend/project/docs-actions";
+import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { COLORS } from "@cocalc/util/theme";
 
 const { Paragraph, Text, Title } = Typography;
@@ -30,8 +31,9 @@ export function ProjectDocsPanel({
   layout: "flyout" | "page";
   project_id: string;
 }) {
-  const { actions } = useProjectContext();
   const [messageApi, contextHolder] = message.useMessage();
+  const accountFontSize =
+    useTypedRedux("account", "font_size") ?? DEFAULT_FONT_SIZE;
   const actionAvailability = useMemo(
     () => listDocsAppActions({ projectId: project_id }),
     [project_id],
@@ -46,11 +48,6 @@ export function ProjectDocsPanel({
     }
   }
 
-  function openFullPage(): void {
-    actions?.set_active_tab("docs");
-    actions?.toggleFlyout("docs");
-  }
-
   const isFlyout = layout === "flyout";
 
   return (
@@ -60,8 +57,8 @@ export function ProjectDocsPanel({
       }
     >
       {contextHolder}
-      <Flex gap={isFlyout ? "small" : "middle"} vertical>
-        <Space align="start" style={{ justifyContent: "space-between" }}>
+      <DocsFontSizeFrame defaultFontSize={accountFontSize} layout={layout}>
+        <Flex gap={isFlyout ? "small" : "middle"} vertical>
           <div>
             <Text strong style={DOCS_BROWSER_MUTED_TITLE_STYLE}>
               CoCalc docs
@@ -77,32 +74,24 @@ export function ProjectDocsPanel({
               Help for this project
             </Title>
           </div>
-          {isFlyout ? (
-            <Button
-              icon={<Icon name="expand" />}
-              onClick={openFullPage}
-              size="small"
-              title="Open Docs as a full project page"
-            />
-          ) : null}
-        </Space>
-        <Paragraph
-          style={{
-            color: COLORS.GRAY_M,
-            fontSize: isFlyout ? 13 : undefined,
-            lineHeight: isFlyout ? 1.4 : undefined,
-            marginBottom: isFlyout ? 6 : 20,
-          }}
-        >
-          Search current CoCalc-ai docs without leaving the project. Pages with
-          implemented actions can open the relevant app panel directly.
-        </Paragraph>
-      </Flex>
-      <DocsBrowser
-        actionAvailability={actionAvailability}
-        layout={layout}
-        onRunAction={runAction}
-      />
+          <Paragraph
+            style={{
+              color: COLORS.GRAY_M,
+              fontSize: isFlyout ? "0.93em" : undefined,
+              lineHeight: isFlyout ? 1.4 : undefined,
+              marginBottom: isFlyout ? 6 : 20,
+            }}
+          >
+            Search current CoCalc-ai docs without leaving the project. Pages
+            with implemented actions can open the relevant app panel directly.
+          </Paragraph>
+        </Flex>
+        <DocsBrowser
+          actionAvailability={actionAvailability}
+          layout={layout}
+          onRunAction={runAction}
+        />
+      </DocsFontSizeFrame>
     </div>
   );
 }

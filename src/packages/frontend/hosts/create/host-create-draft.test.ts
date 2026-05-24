@@ -444,6 +444,20 @@ describe("host-create-draft", () => {
     expect(draft.disk).toBe(93);
   });
 
+  it("normalizes managed cloud disks to the project host minimum", () => {
+    const draft = normalizeDraft(
+      {
+        provider: "gcp",
+        disk_gb: 50,
+        disk: 50,
+      },
+      providerContext("gcp"),
+    ).draft;
+
+    expect(draft.disk_gb).toBe(75);
+    expect(draft.disk).toBe(75);
+  });
+
   it("keeps Nebius disk sizes constrained even with network SSD selected", () => {
     const draft = normalizeDraft(
       {

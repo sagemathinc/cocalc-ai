@@ -36,4 +36,81 @@ describe("ensureCloudflareTunnelForHost", () => {
       }),
     ).resolves.toBe(existing);
   });
+
+  it("expands bare project-host suffix settings before creating dns records", async () => {
+    getServerSettingsMock = jest.fn(async () => ({
+      cloudflare_mode: "self",
+      dns: "lite2b.cocalc.ai",
+      project_hosts_cloudflare_tunnel_account_id: "account-id",
+      project_hosts_cloudflare_tunnel_api_token: "token",
+      project_hosts_cloudflare_tunnel_host_suffix: "lite2b",
+    }));
+    const fetchMock = jest.fn(async (input: any, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/zones?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            result: [{ name: "cocalc.ai", id: "zone-id" }],
+          }),
+        };
+      }
+      if (init?.method === "POST" && url.includes("/cfd_tunnel")) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            result: {
+              id: "tunnel-id",
+              name: "tunnel-name",
+              tunnel_secret: "tunnel-secret",
+            },
+          }),
+        };
+      }
+      if (init?.method === "GET" && url.includes("/dns_records?")) {
+        return {
+          ok: true,
+          json: async () => ({ success: true, result: [] }),
+        };
+      }
+      if (init?.method === "POST" && url.includes("/dns_records")) {
+        return {
+          ok: true,
+          json: async () => ({ success: true, result: { id: "record-id" } }),
+        };
+      }
+      if (init?.method === "PUT" && url.includes("/dns_records/record-id")) {
+        return {
+          ok: true,
+          json: async () => ({ success: true, result: { id: "record-id" } }),
+        };
+      }
+      if (init?.method === "GET" && url.includes("/token")) {
+        return {
+          ok: true,
+          json: async () => ({ success: true, result: "connector-token" }),
+        };
+      }
+      return {
+        ok: true,
+        json: async () => ({ success: true, result: {} }),
+      };
+    });
+    (global as any).fetch = fetchMock;
+
+    const { ensureCloudflareTunnelForHost } =
+      await import("./cloudflare-tunnel");
+    await ensureCloudflareTunnelForHost({ host_id: "abc" });
+
+    const recordNames = fetchMock.mock.calls
+      .map(([, init]) => init?.body)
+      .filter(Boolean)
+      .map((body) => JSON.parse(String(body)).name)
+      .filter(Boolean);
+    expect(recordNames).toContain("host-abc-lite2b.cocalc.ai");
+    expect(recordNames).toContain("ssh-host-abc-lite2b.cocalc.ai");
+    expect(recordNames).not.toContain("host-abc-lite2b");
+  });
 });

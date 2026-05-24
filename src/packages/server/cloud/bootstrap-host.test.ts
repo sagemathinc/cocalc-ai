@@ -178,6 +178,17 @@ describe("bootstrap-host shell templates", () => {
     expect(source).toContain(`BOOTSTRAP_LOG="$BOOTSTRAP_DIR/bootstrap.log"`);
   });
 
+  it("hands the bootstrap state directory back to the target user", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "bootstrap-host.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain(
+      `chown -R "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_STATE_ROOT" || true`,
+    );
+  });
+
   it("runs explicit reconcile mode after bootstrap is already complete", () => {
     const source = fs.readFileSync(
       path.join(__dirname, "bootstrap-host.ts"),

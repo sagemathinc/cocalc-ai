@@ -1304,6 +1304,9 @@ on_error() {
 trap 'on_error "$?" "$LINENO"' ERR
 
 mkdir -p "$BOOTSTRAP_DIR" "$BOOTSTRAP_TMP"
+if [ -n "$BOOTSTRAP_USER" ]; then
+  chown -R "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_STATE_ROOT" || true
+fi
 
 cat <<EOF_COCALC_BOOTSTRAP_HOST_FACTS > "$BOOTSTRAP_DIR/bootstrap-host-facts.json"
 {
@@ -1828,6 +1831,9 @@ if ! command -v curl >/dev/null 2>&1; then
 fi
 
 mkdir -p "$BOOTSTRAP_DIR"
+if [ -n "$BOOTSTRAP_USER" ]; then
+  chown -R "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_STATE_ROOT" || true
+fi
 ${tunnelScript}
 report_status() {
   local status="$1"

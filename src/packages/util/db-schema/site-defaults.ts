@@ -113,7 +113,6 @@ export type SiteSettingsKeys =
   | "project_hosts_gcp_surcharge_percent"
   | "project_hosts_nebius_surcharge_percent"
   | "cloudflare_mode"
-  | "project_hosts_dns"
   | "project_hosts_app_public_subdomain_suffix"
   | "launcher_default_quick_create"
   | "project_rootfs_default_image"
@@ -995,18 +994,6 @@ export const site_settings_conf: SiteSettings = {
     tags: ["Project Hosts", "Cloud", "Nebius", "Commercialization"],
     group: "Compute / Project Hosts",
     subgroup: "Billing",
-  },
-  project_hosts_dns: {
-    name: "Project Hosts: Domain name",
-    desc: "Base domain name for project hosts, e.g. 'cocalc.io'. This is used with the Cloudflare token to create stable host subdomains like host-123.cocalc.io.",
-    default: "",
-    valid: valid_dns_name_or_empty,
-    to_val: to_trimmed_str,
-    tags: ["Project Hosts", "Cloud"],
-    group: "Compute / Project Hosts",
-    subgroup: "Domain",
-    show: (conf) => (conf.cloudflare_mode ?? "none") === "self",
-    required_when: [{ key: "cloudflare_mode", equals: "self" }],
   },
   project_hosts_app_public_subdomain_suffix: {
     name: "Project Hosts: App Public Subdomain Suffix",

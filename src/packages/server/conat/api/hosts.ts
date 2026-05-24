@@ -61,6 +61,7 @@ import type {
 } from "@cocalc/conat/hub/api/projects";
 import { getProjectSecretsRuntimeCache } from "@cocalc/server/projects/project-secrets";
 import type { ProjectSecretsRuntimeCache } from "@cocalc/util/project-secrets";
+import { MIN_PROJECT_HOST_DISK_GB } from "@cocalc/util/project-host-limits";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import centralLog from "@cocalc/database/postgres/central-log";
@@ -5569,6 +5570,22 @@ export async function updateHostMachine({
     }
   }
   if (nextDisk != null) {
+    const requestedStorageMode =
+      typeof storage_mode === "string"
+        ? storage_mode
+        : nextMachine.storage_mode;
+    const targetCloud = effectiveFundingCloud ?? machineCloud;
+    if (
+      targetCloud &&
+      targetCloud !== "self-host" &&
+      targetCloud !== "local" &&
+      requestedStorageMode !== "ephemeral" &&
+      nextDisk < MIN_PROJECT_HOST_DISK_GB
+    ) {
+      throw new Error(
+        `disk_gb must be at least ${MIN_PROJECT_HOST_DISK_GB} GB`,
+      );
+    }
     const currentDisk = Number(machine.disk_gb);
     if (
       !isDeprovisioned &&

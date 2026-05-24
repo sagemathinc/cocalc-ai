@@ -160,7 +160,6 @@ export interface CustomizeState {
   _is_configured: boolean;
   project_hosts_nebius_enabled?: boolean;
   project_hosts_self_host_alpha_enabled?: boolean;
-  project_hosts_dns?: string;
   launcher_default_quick_create?: List<string>;
   project_rootfs_default_image?: string;
   project_rootfs_default_image_gpu?: string;

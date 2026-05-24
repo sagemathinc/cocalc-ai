@@ -168,6 +168,57 @@ function isUsablePublicOrigin(origin: string | undefined): boolean {
   return isPublicHostname(normalizeHostname(origin));
 }
 
+function isEnabled(value: unknown): boolean {
+  if (value === true) return true;
+  if (value == null) return false;
+  const lowered = trim(value).toLowerCase();
+  if (!lowered) return false;
+  return !["0", "false", "no", "off"].includes(lowered);
+}
+
+function normalizeCloudflareMode(
+  value: unknown,
+): "none" | "self" | "managed" | undefined {
+  const raw = trim(value).toLowerCase();
+  if (raw === "none" || raw === "self" || raw === "managed") {
+    return raw;
+  }
+  return undefined;
+}
+
+function cloudflareSelfMode(settings: Record<string, any>): boolean {
+  const mode = normalizeCloudflareMode(settings.cloudflare_mode);
+  const tunnelEnabled = isEnabled(
+    settings.project_hosts_cloudflare_tunnel_enabled,
+  );
+  if (mode === "self") return true;
+  if (mode === "managed") return false;
+  if (mode === "none") return tunnelEnabled;
+  return tunnelEnabled;
+}
+
+function hasIncompleteSelfManagedCloudflare(
+  settings: Record<string, any>,
+): boolean {
+  if (!cloudflareSelfMode(settings)) {
+    return false;
+  }
+  return (
+    !trim(settings.project_hosts_cloudflare_tunnel_account_id) ||
+    !trim(settings.project_hosts_cloudflare_tunnel_api_token) ||
+    !trim(settings.dns)
+  );
+}
+
+async function shouldPreferRequestOriginForBrowserConfig(): Promise<boolean> {
+  return (
+    (await getConfiguredValueWithTimeout(
+      "cloudflare-browser-origin-preference",
+      async () => hasIncompleteSelfManagedCloudflare(await getServerSettings()),
+    )) ?? false
+  );
+}
+
 function originFromRegistryEntry(entry: {
   public_origin?: string | null;
   dns_hostname?: string | null;
@@ -299,13 +350,16 @@ export async function getSitePublicOrigin(): Promise<string | undefined> {
 export async function getSitePublicOriginForRequest(
   req?: Request,
 ): Promise<string | undefined> {
+  const request_origin = req ? detectRequestOrigin(req) : undefined;
+  if (request_origin && (await shouldPreferRequestOriginForBrowserConfig())) {
+    return request_origin;
+  }
   const configured = await getConfiguredValueWithTimeout(
     "site-public-origin",
     () => getSitePublicOrigin(),
   );
   if (configured) return configured;
   if (!req) return;
-  const request_origin = detectRequestOrigin(req);
   if (!request_origin) {
     return;
   }
@@ -337,6 +391,14 @@ export async function getBrowserCookieDomain(): Promise<string | undefined> {
 export async function getBrowserCookieDomainForRequest(
   req?: Request,
 ): Promise<string | undefined> {
+  if (req && (await shouldPreferRequestOriginForBrowserConfig())) {
+    const request_origin = detectRequestOrigin(req);
+    const site_hostname = deriveSiteHostnameFromRequestOrigin({
+      request_origin,
+      current_bay_id: getConfiguredBayId(),
+    });
+    return deriveBrowserCookieDomain(site_hostname);
+  }
   const configured = await getConfiguredValueWithTimeout(
     "browser-cookie-domain",
     () => getBrowserCookieDomain(),
@@ -387,6 +449,13 @@ export function deriveSiteHostnameFromRequestOrigin(opts: {
 export async function getBrowserCookieSiteHostnameForRequest(
   req?: Request,
 ): Promise<string | undefined> {
+  if (req && (await shouldPreferRequestOriginForBrowserConfig())) {
+    const request_origin = detectRequestOrigin(req);
+    return deriveSiteHostnameFromRequestOrigin({
+      request_origin,
+      current_bay_id: getConfiguredBayId(),
+    });
+  }
   const configured = await getConfiguredValueWithTimeout(
     "browser-cookie-site-hostname",
     () => getConfiguredSiteDnsHostname(),
@@ -416,6 +485,9 @@ export async function getBrowserCookieNameForRequest({
 export async function getCurrentBayPublicOriginForRequest(
   req?: Request,
 ): Promise<string | undefined> {
+  if (req && (await shouldPreferRequestOriginForBrowserConfig())) {
+    return detectRequestOrigin(req);
+  }
   const configured = await getConfiguredValueWithTimeout(
     "current-bay-public-origin",
     () => getBayPublicOrigin(getConfiguredBayId()),
@@ -431,6 +503,14 @@ export async function getBayPublicOriginForRequest(
 ): Promise<string | undefined> {
   const requested = trim(bay_id);
   if (!requested) return;
+  const request_origin = req ? detectRequestOrigin(req) : undefined;
+  if (
+    request_origin &&
+    requested === getConfiguredBayId() &&
+    (await shouldPreferRequestOriginForBrowserConfig())
+  ) {
+    return request_origin;
+  }
   const configured = await getConfiguredValueWithTimeout(
     `bay-public-origin:${requested}`,
     () => getBayPublicOrigin(requested),
@@ -438,7 +518,6 @@ export async function getBayPublicOriginForRequest(
   if (configured) {
     return configured;
   }
-  const request_origin = detectRequestOrigin(req as Request);
   if (!request_origin) {
     return;
   }

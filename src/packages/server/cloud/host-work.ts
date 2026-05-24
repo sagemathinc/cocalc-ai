@@ -1740,7 +1740,10 @@ async function handleStop(row: any) {
       return;
     }
     if (!(await hasCloudflareTunnel()) && (await hasDns())) {
-      await deleteHostDns({ record_id: row.metadata?.dns?.record_id });
+      await deleteHostDns({
+        record_id: row.metadata?.dns?.record_id,
+        name: row.metadata?.dns?.name,
+      });
     }
     const nextMetadata = {
       ...(row.metadata ?? {}),
@@ -1937,7 +1940,10 @@ async function handleDelete(row: any) {
       tunnel: row.metadata?.cloudflare_tunnel,
     });
   } else if (await hasDns()) {
-    await deleteHostDns({ record_id: row.metadata?.dns?.record_id });
+    await deleteHostDns({
+      record_id: row.metadata?.dns?.record_id,
+      name: row.metadata?.dns?.name,
+    });
   }
   await logCloudVmEvent({
     vm_id: row.id,

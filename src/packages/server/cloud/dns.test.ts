@@ -1,6 +1,5 @@
 let fetchMock: jest.Mock;
 let mockedSettings: {
-  project_hosts_dns: string;
   project_hosts_cloudflare_tunnel_api_token: string;
   dns?: string;
   public_viewer_dns?: string;
@@ -32,7 +31,6 @@ describe("cloud dns", () => {
   beforeEach(() => {
     jest.resetModules();
     mockedSettings = {
-      project_hosts_dns: "example.com",
       project_hosts_cloudflare_tunnel_api_token: "token",
       dns: "https://dev.example.com",
       public_viewer_dns: "",
@@ -61,13 +59,13 @@ describe("cloud dns", () => {
 
   it("falls back to the parent Cloudflare zone for subdomain-based host dns", async () => {
     mockedSettings = {
-      project_hosts_dns: "dev.example.com",
       project_hosts_cloudflare_tunnel_api_token: "token",
+      dns: "dev.example.com",
     };
     fetchMock = jest.fn(async (input: any, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/zones?")) {
-        if (url.includes("name=dev.example.com")) {
+        if (url.includes("name=host-abc-dev.example.com")) {
           return responseWith([]);
         }
         if (url.includes("name=example.com")) {
@@ -90,14 +88,14 @@ describe("cloud dns", () => {
       ipAddress: "203.0.113.8",
     });
 
-    expect(result.name).toBe("host-abc.dev.example.com");
+    expect(result.name).toBe("host-abc-dev.example.com");
     expect(result.record_id).toBe("record-parent");
     const zoneCalls = fetchMock.mock.calls
       .map(([url]) => String(url))
       .filter((url) => url.includes("/zones?"));
-    expect(zoneCalls.some((url) => url.includes("name=dev.example.com"))).toBe(
-      true,
-    );
+    expect(
+      zoneCalls.some((url) => url.includes("name=host-abc-dev.example.com")),
+    ).toBe(true);
     expect(zoneCalls.some((url) => url.includes("name=example.com"))).toBe(
       true,
     );
@@ -109,7 +107,7 @@ describe("cloud dns", () => {
       host_id: "abc",
       ipAddress: "203.0.113.5",
     });
-    expect(result.name).toBe("host-abc.example.com");
+    expect(result.name).toBe("host-abc-dev.example.com");
     expect(result.record_id).toBe("record-1");
 
     const addCall = fetchMock.mock.calls.find(
@@ -119,7 +117,7 @@ describe("cloud dns", () => {
     const record = addCall?.[1]?.body ? JSON.parse(addCall[1].body) : undefined;
     expect(record.type).toBe("A");
     expect(record.content).toBe("203.0.113.5");
-    expect(record.name).toBe("host-abc.example.com");
+    expect(record.name).toBe("host-abc-dev.example.com");
     expect(record.proxied).toBe(true);
   });
 
@@ -150,8 +148,8 @@ describe("cloud dns", () => {
       }
       if (init?.method === "GET" && url.includes("/dns_records?")) {
         return responseWith([
-          { id: "record-a", name: "host-abc.example.com" },
-          { id: "record-b", name: "host-abc.example.com" },
+          { id: "record-a", name: "host-abc-dev.example.com" },
+          { id: "record-b", name: "host-abc-dev.example.com" },
         ]);
       }
       if (init?.method === "PUT" && url.includes("/dns_records/record-a")) {
@@ -199,7 +197,6 @@ describe("cloud dns", () => {
 
   it("ensures a proxied cname for the public viewer domain", async () => {
     mockedSettings = {
-      project_hosts_dns: "example.com",
       project_hosts_cloudflare_tunnel_api_token: "token",
       dns: "https://dev.example.com",
       public_viewer_dns: "",
@@ -274,7 +271,6 @@ describe("cloud dns", () => {
 
   it("points the public viewer hostname directly at the tunnel target", async () => {
     mockedSettings = {
-      project_hosts_dns: "example.com",
       project_hosts_cloudflare_tunnel_api_token: "token",
       dns: "https://dev.example.com",
       public_viewer_dns: "dev-raw.example.com",
@@ -328,7 +324,6 @@ describe("cloud dns", () => {
 
   it("allows a sibling raw hostname under the parent cloudflare zone", async () => {
     mockedSettings = {
-      project_hosts_dns: "dev.example.com",
       project_hosts_cloudflare_tunnel_api_token: "token",
       dns: "https://dev.example.com",
       public_viewer_dns: "dev-raw.example.com",
@@ -337,7 +332,10 @@ describe("cloud dns", () => {
     fetchMock.mockImplementation(async (input: any, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/zones?")) {
-        if (url.includes("name=dev.example.com")) {
+        if (
+          url.includes("name=dev.example.com") ||
+          url.includes("name=dev-raw.example.com")
+        ) {
           return responseWith([]);
         }
         if (url.includes("name=example.com")) {

@@ -82,6 +82,10 @@ describe("project-routing", () => {
       kind: "tab",
       tab: "settings",
     });
+    expect(parseProjectTarget("docs", { decodeDirectoryPath })).toEqual({
+      kind: "tab",
+      tab: "docs",
+    });
     expect(
       parseProjectTarget("apps/jupyter/lab", { decodeDirectoryPath }),
     ).toEqual({

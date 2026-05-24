@@ -71,7 +71,7 @@ export async function markHostDeprovisionedInternal({
     tunnel: any;
   }) => Promise<void>;
   hasDns: () => Promise<boolean>;
-  deleteHostDns: (opts: { record_id: any }) => Promise<void>;
+  deleteHostDns: (opts: { record_id: any; name?: string }) => Promise<void>;
   logWarn: (message: string, payload: Record<string, any>) => void;
   updateHostDeprovisionedRecord: (opts: {
     row: any;
@@ -109,7 +109,10 @@ export async function markHostDeprovisionedInternal({
         tunnel: row.metadata?.cloudflare_tunnel,
       });
     } else if (await hasDns()) {
-      await deleteHostDns({ record_id: row.metadata?.dns?.record_id });
+      await deleteHostDns({
+        record_id: row.metadata?.dns?.record_id,
+        name: row.metadata?.dns?.name,
+      });
     }
   } catch (err) {
     logWarn("force deprovision cleanup failed", {
