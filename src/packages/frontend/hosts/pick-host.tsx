@@ -108,9 +108,15 @@ export function HostPickerModal({
   lockRegion?: boolean;
   showOfflineMoveWarning?: boolean;
   wantsGpu?: boolean;
-  mode?: "move" | "create";
+  mode?: "move" | "assign" | "create";
 }) {
   const isCreate = mode === "create";
+  const isAssign = mode === "assign";
+  const title = isCreate
+    ? "Choose host"
+    : isAssign
+      ? "Assign to host"
+      : "Move to host";
   return (
     <Modal
       width={600}
@@ -119,7 +125,7 @@ export function HostPickerModal({
       footer={null}
       title={
         <Space>
-          <Icon name="server" /> {isCreate ? "Choose host" : "Move to host"}
+          <Icon name="server" /> {title}
         </Space>
       }
       destroyOnHidden
@@ -164,12 +170,15 @@ export function HostPickerPanel({
   lockRegion?: boolean;
   showOfflineMoveWarning?: boolean;
   wantsGpu?: boolean;
-  mode?: "move" | "create";
+  mode?: "move" | "assign" | "create";
 }) {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const projectsLabel = intl.formatMessage(labels.projects);
   const isCreate = mode === "create";
+  const isAssign = mode === "assign";
+  const isMove = mode === "move";
+  const isInitialPlacement = isCreate || isAssign;
   const [hosts, setHosts] = useState<Host[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<string | undefined>();
@@ -199,7 +208,7 @@ export function HostPickerPanel({
     ? mapCloudRegionToR2Region(selectedHost.region)
     : undefined;
   const crossRegionCutoverSelected =
-    !isCreate &&
+    isMove &&
     !!sourceProjectRegion &&
     !!selectedHostRegion &&
     selectedHostRegion !== sourceProjectRegion;
@@ -222,31 +231,31 @@ export function HostPickerPanel({
     });
   }, [hosts, showUnavailable, regionFilterState]);
 
-  const createRecommendations = useMemo(() => {
-    if (!isCreate || !regionFilter) return undefined;
+  const initialPlacementRecommendations = useMemo(() => {
+    if (!isInitialPlacement || !regionFilter) return undefined;
     return recommendProjectHosts({
       hosts,
       projectRegion: regionFilter as R2Region,
       wantsGpu,
       selectedHostId,
     });
-  }, [hosts, isCreate, regionFilter, selectedHostId, wantsGpu]);
+  }, [hosts, isInitialPlacement, regionFilter, selectedHostId, wantsGpu]);
 
-  const createRecommendationByHostId = useMemo(() => {
+  const initialPlacementRecommendationByHostId = useMemo(() => {
     const byId = new Map<string, ProjectHostRecommendation>();
-    if (!createRecommendations) return byId;
+    if (!initialPlacementRecommendations) return byId;
     for (const recommendation of [
-      ...createRecommendations.candidates,
-      ...createRecommendations.unavailable,
+      ...initialPlacementRecommendations.candidates,
+      ...initialPlacementRecommendations.unavailable,
     ]) {
       byId.set(recommendation.host.id, recommendation);
     }
     return byId;
-  }, [createRecommendations]);
+  }, [initialPlacementRecommendations]);
 
-  function createHostCompare(a: Host, b: Host): number {
-    const aRecommendation = createRecommendationByHostId.get(a.id);
-    const bRecommendation = createRecommendationByHostId.get(b.id);
+  function initialPlacementHostCompare(a: Host, b: Host): number {
+    const aRecommendation = initialPlacementRecommendationByHostId.get(a.id);
+    const bRecommendation = initialPlacementRecommendationByHostId.get(b.id);
     if (aRecommendation || bRecommendation) {
       const aScore = aRecommendation?.score ?? Number.NEGATIVE_INFINITY;
       const bScore = bRecommendation?.score ?? Number.NEGATIVE_INFINITY;
@@ -257,22 +266,28 @@ export function HostPickerPanel({
 
   const selectableHosts = useMemo(() => {
     return filteredHosts.filter(
-      (h) => h.can_place !== false && (isCreate || h.id !== currentHostId),
+      (h) =>
+        h.can_place !== false && (isInitialPlacement || h.id !== currentHostId),
     );
-  }, [filteredHosts, isCreate, currentHostId]);
+  }, [filteredHosts, isInitialPlacement, currentHostId]);
 
   const bestSelectableHost = useMemo(() => {
     const preferred = selectableHosts.find((h) => h.id === selectedHostId);
     if (preferred) return preferred;
-    if (isCreate && createRecommendations) {
+    if (isInitialPlacement && initialPlacementRecommendations) {
       const selectable = new Set(selectableHosts.map((host) => host.id));
-      const recommended = createRecommendations.candidates.find((entry) =>
-        selectable.has(entry.host.id),
+      const recommended = initialPlacementRecommendations.candidates.find(
+        (entry) => selectable.has(entry.host.id),
       );
       if (recommended) return recommended.host;
     }
     return [...selectableHosts].sort(autoSelectCompare)[0];
-  }, [createRecommendations, isCreate, selectableHosts, selectedHostId]);
+  }, [
+    initialPlacementRecommendations,
+    isInitialPlacement,
+    selectableHosts,
+    selectedHostId,
+  ]);
 
   const noSelectableTarget =
     !loading && hosts.length > 0 && selectableHosts.length === 0;
@@ -287,13 +302,16 @@ export function HostPickerPanel({
 
     const current = filtered.filter((h) => h.id === currentHostId);
     const owned = filtered.filter(
-      (h) => h.scope === "owned" && h.id !== currentHostId,
+      (h) =>
+        h.scope === "owned" && (isInitialPlacement || h.id !== currentHostId),
     );
     const collab = filtered.filter(
-      (h) => h.scope === "collab" && h.id !== currentHostId,
+      (h) =>
+        h.scope === "collab" && (isInitialPlacement || h.id !== currentHostId),
     );
     const pool = filtered.filter(
-      (h) => h.scope === "pool" && h.id !== currentHostId,
+      (h) =>
+        h.scope === "pool" && (isInitialPlacement || h.id !== currentHostId),
     );
     const poolByTier = new Map<number, Host[]>();
     for (const host of pool) {
@@ -316,12 +334,22 @@ export function HostPickerPanel({
       items.push({ type: "header", label: g.label });
       items.push(
         ...g.items
-          .sort(isCreate ? createHostCompare : autoSelectCompare)
+          .sort(
+            isInitialPlacement
+              ? initialPlacementHostCompare
+              : autoSelectCompare,
+          )
           .map((h) => ({ type: "host", host: h })),
       );
     }
     return items;
-  }, [filteredHosts, currentHostId, isCreate, createRecommendationByHostId]);
+  }, [
+    filteredHosts,
+    currentHostId,
+    isCreate,
+    isInitialPlacement,
+    initialPlacementRecommendationByHostId,
+  ]);
 
   const availableRegions = useMemo(() => {
     const regions = new Set<string>();
@@ -359,7 +387,7 @@ export function HostPickerPanel({
   useEffect(() => {
     if (
       !active ||
-      !isCreate ||
+      !isInitialPlacement ||
       !regionFilter ||
       loading ||
       autoExpandedRemote ||
@@ -368,8 +396,8 @@ export function HostPickerPanel({
       return;
     }
     if (
-      createRecommendations?.projectRegionCandidates.length === 0 &&
-      createRecommendations.remoteCandidates.length > 0
+      initialPlacementRecommendations?.projectRegionCandidates.length === 0 &&
+      initialPlacementRecommendations.remoteCandidates.length > 0
     ) {
       setRegionFilterState(undefined);
       setAutoExpandedRemote(true);
@@ -377,8 +405,8 @@ export function HostPickerPanel({
   }, [
     active,
     autoExpandedRemote,
-    createRecommendations,
-    isCreate,
+    initialPlacementRecommendations,
+    isInitialPlacement,
     loading,
     regionFilter,
     regionFilterState,
@@ -411,6 +439,12 @@ export function HostPickerPanel({
             Pick a project host for this new project. Placement tags show when a
             host is normal, stressed, or blocked for automatic placement.
           </>
+        ) : isAssign ? (
+          <>
+            Pick a project host for this project. Since the project is not
+            assigned to a host yet, no existing host-local files or snapshots
+            will be discarded.
+          </>
         ) : (
           <>
             Pick a project host to move this project to. Placement tags show
@@ -418,7 +452,7 @@ export function HostPickerPanel({
           </>
         )}
       </Typography.Paragraph>
-      {!isCreate ? (
+      {isMove ? (
         <Alert
           type="warning"
           showIcon
@@ -439,10 +473,10 @@ export function HostPickerPanel({
           description={`CoCalc will restore from the current ${sourceProjectRegionLabel} backups, create a new backup in ${selectedHostRegionLabel}, then switch the project's backup region after that backup succeeds. After the cutover, all previous backups from ${sourceProjectRegionLabel} will be discarded.`}
         />
       ) : null}
-      {isCreate &&
+      {isInitialPlacement &&
         autoExpandedRemote &&
         regionFilter &&
-        createRecommendations?.recommended && (
+        initialPlacementRecommendations?.recommended && (
           <Alert
             type="info"
             showIcon
@@ -499,7 +533,9 @@ export function HostPickerPanel({
           title={
             isCreate
               ? "No available host can be used for this new project."
-              : "No available destination host can be used for this move."
+              : isAssign
+                ? "No available host can be assigned to this project."
+                : "No available destination host can be used for this move."
           }
           description="Try another region, start/provision a host, or adjust host permissions."
         />
@@ -524,8 +560,7 @@ export function HostPickerPanel({
             }
             const host = item.host as Host;
             const disabled =
-              (!isCreate && host.id === currentHostId) ||
-              host.can_place === false;
+              (isMove && host.id === currentHostId) || host.can_place === false;
             const muted = !host.can_place;
             return (
               <List.Item style={muted ? { opacity: 0.6 } : undefined}>
@@ -583,7 +618,7 @@ export function HostPickerPanel({
                     detailMode="popover"
                     showNormal
                   />
-                  {!isCreate && host.id === currentHostId && (
+                  {isMove && host.id === currentHostId && (
                     <Typography.Text type="secondary">
                       This {projectLabel.toLowerCase()} is already on this host.
                     </Typography.Text>
@@ -613,7 +648,7 @@ export function HostPickerPanel({
             onSelect(selected, host);
           }}
         >
-          {isCreate ? "Use host" : "Move to host"}
+          {isCreate ? "Use host" : isAssign ? "Assign to host" : "Move to host"}
         </Button>
       </Space>
     </Space>

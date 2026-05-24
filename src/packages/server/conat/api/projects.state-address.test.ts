@@ -6,7 +6,10 @@ let interBayStateMock: jest.Mock;
 let interBayAddressMock: jest.Mock;
 let interBayActiveOpMock: jest.Mock;
 let interBayMoveMock: jest.Mock;
+let interBayAssignHostMock: jest.Mock;
 let requireDangerousProjectMutationAuthMock: jest.Mock;
+let savePlacementMock: jest.Mock;
+let resolveHostConnectionMock: jest.Mock;
 let poolQueryMock: jest.Mock;
 let createLroMock: jest.Mock;
 let publishLroSummaryMock: jest.Mock;
@@ -70,6 +73,7 @@ jest.mock("@cocalc/server/project-host/control", () => ({
   __esModule: true,
   updateAuthorizedKeysOnHost: jest.fn(),
   takeStartProjectPhaseTimings: jest.fn(() => undefined),
+  savePlacement: (...args: any[]) => savePlacementMock(...args),
 }));
 
 jest.mock("@cocalc/server/project-host/client", () => ({
@@ -96,6 +100,7 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
       address: (...args: any[]) => interBayAddressMock(...args),
       activeOp: (...args: any[]) => interBayActiveOpMock(...args),
       move: (...args: any[]) => interBayMoveMock(...args),
+      assignHost: (...args: any[]) => interBayAssignHostMock(...args),
     })),
   })),
 }));
@@ -175,6 +180,11 @@ jest.mock("@cocalc/server/projects/destructive-storage-actions", () => ({
     assertCanPerformDestructiveStorageActionMock(...args),
 }));
 
+jest.mock("./hosts", () => ({
+  __esModule: true,
+  resolveHostConnection: (...args: any[]) => resolveHostConnectionMock(...args),
+}));
+
 describe("projects.getProjectState / getProjectAddress", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -214,7 +224,13 @@ describe("projects.getProjectState / getProjectAddress", () => {
       service: "persist-service",
       stream_name: "lro.move-op-1",
     }));
+    interBayAssignHostMock = jest.fn(async () => undefined);
     requireDangerousProjectMutationAuthMock = jest.fn(async () => undefined);
+    savePlacementMock = jest.fn(async () => undefined);
+    resolveHostConnectionMock = jest.fn(async () => ({
+      id: "host-1",
+      can_place: true,
+    }));
     poolQueryMock = jest.fn(async () => ({
       rows: [
         {
@@ -379,6 +395,53 @@ describe("projects.getProjectState / getProjectAddress", () => {
       session_hash: "session-1",
       internalAuth: undefined,
     });
+  });
+
+  it("routes initial host assignment through the owning bay without fresh auth", async () => {
+    const { assignProjectHost } = await import("./projects");
+    await expect(
+      assignProjectHost({
+        account_id: "acct-1",
+        project_id: "proj-1",
+        dest_host_id: "host-1",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(interBayAssignHostMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      account_id: "acct-1",
+      dest_host_id: "host-1",
+      epoch: 7,
+    });
+    expect(requireDangerousProjectMutationAuthMock).not.toHaveBeenCalled();
+    expect(savePlacementMock).not.toHaveBeenCalled();
+  });
+
+  it("assigns a local unassigned project host without fresh auth", async () => {
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 7,
+    }));
+    poolQueryMock = jest.fn(async () => ({
+      rows: [{ host_id: null }],
+    }));
+    const { assignProjectHost } = await import("./projects");
+    await expect(
+      assignProjectHost({
+        account_id: "acct-1",
+        project_id: "proj-1",
+        dest_host_id: "host-1",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(resolveHostConnectionMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      host_id: "host-1",
+    });
+    expect(savePlacementMock).toHaveBeenCalledWith("proj-1", {
+      host_id: "host-1",
+    });
+    expect(requireDangerousProjectMutationAuthMock).not.toHaveBeenCalled();
   });
 
   it("reserves a runtime sponsor slot before creating a local move LRO", async () => {

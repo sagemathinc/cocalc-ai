@@ -134,9 +134,9 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   const filteredRootfsImages = useMemo(
     () =>
       rootfsImages.filter((entry) => {
-        return isNewProjectRootfsSelectable({ entry, isGpu });
+        return isNewProjectRootfsSelectable({ entry, isGpu, isAdmin });
       }),
-    [rootfsImages, isGpu],
+    [rootfsImages, isGpu, isAdmin],
   );
   const pickerRootfsImages = useMemo(
     () =>
@@ -154,12 +154,12 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   const selectedRootfsEntry = useMemo(() => {
     const imageId = draft.rootfs_image_id?.trim();
     if (imageId) {
-      return rootfsImages.find((entry) => entry.id === imageId);
+      return filteredRootfsImages.find((entry) => entry.id === imageId);
     }
     const image = draft.rootfs_image?.trim();
     if (!image) return undefined;
-    return rootfsImages.find((entry) => entry.image === image);
-  }, [draft.rootfs_image, draft.rootfs_image_id, rootfsImages]);
+    return filteredRootfsImages.find((entry) => entry.image === image);
+  }, [draft.rootfs_image, draft.rootfs_image_id, filteredRootfsImages]);
   const rootfsGroupedOptions = useMemo(
     () => groupedRootfsOptions(pickerRootfsImages),
     [pickerRootfsImages],
@@ -247,7 +247,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   }
 
   function isDisabled() {
-    return saving;
+    return saving || !summary.rootfs_image.trim();
   }
 
   function handle_keypress(e): void {
@@ -260,7 +260,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
 
   function openRootfsPicker() {
     const current = (draft.rootfs_image?.trim() ||
-      DEFAULT_PROJECT_IMAGE) as string;
+      (isAdmin ? DEFAULT_PROJECT_IMAGE : "")) as string;
     setRootfsDraft(current);
     const currentEntry =
       filteredRootfsImages.find(
@@ -275,6 +275,10 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   function applyRootfsDraft() {
     const trimmed = rootfsDraft.trim();
     if (rootfsMode === "custom") {
+      if (!isAdmin) {
+        set_error("Only admins can use advanced OCI images.");
+        return;
+      }
       setRootfs({ image: trimmed || DEFAULT_PROJECT_IMAGE });
     } else {
       const nextEntry =
@@ -446,9 +450,10 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   }
 
   function renderRootfsSection(): React.JSX.Element {
-    const displayImage = draft.rootfs_image?.trim() || DEFAULT_PROJECT_IMAGE;
+    const displayImage =
+      draft.rootfs_image?.trim() || (isAdmin ? DEFAULT_PROJECT_IMAGE : "");
     const displayLabel =
-      selectedRootfsEntry?.label || displayImage || DEFAULT_PROJECT_IMAGE;
+      selectedRootfsEntry?.label || displayImage || "No RootFS image selected";
     return (
       <Card
         size="small"
@@ -496,7 +501,11 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                 <Tag color="cyan">{selectedRootfsEntry.channel}</Tag>
               )}
               {selectedRootfsEntry?.gpu && <Tag color="purple">GPU</Tag>}
-              {!selectedRootfsEntry && <Tag color="orange">Advanced OCI</Tag>}
+              {!selectedRootfsEntry && displayImage && (
+                <Tag color={isAdmin ? "orange" : "red"}>
+                  {isAdmin ? "Advanced OCI" : "Unavailable image"}
+                </Tag>
+              )}
             </Space>
             <Button size="small" onClick={openRootfsPicker} disabled={saving}>
               {rootfsPickerOpen ? "Change image..." : "Choose image..."}
@@ -724,7 +733,11 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
               </Tag>
             )}
             {selectedRootfsEntry?.warning && <Tag color="orange">Review</Tag>}
-            {!selectedRootfsEntry && <Tag color="orange">Advanced OCI</Tag>}
+            {!selectedRootfsEntry && summary.rootfs_image && (
+              <Tag color={isAdmin ? "orange" : "red"}>
+                {isAdmin ? "Advanced OCI" : "Unavailable image"}
+              </Tag>
+            )}
           </Space>
           {summary.warnings.length > 0 && (
             <Alert

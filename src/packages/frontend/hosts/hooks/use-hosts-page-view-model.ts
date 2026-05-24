@@ -374,6 +374,7 @@ export const useHostsPageViewModel = () => {
     removeHostAccess,
     setHostProjectRamLimit,
     setHostOwnerSpendLimits,
+    setHostPoolAccess,
     stopHostProjects,
     restartHostProjects,
   } = useHostActions({
@@ -1568,6 +1569,7 @@ export const useHostsPageViewModel = () => {
     hub,
     refresh,
     catalog,
+    catalogProvider,
     enabledProviders,
     billing: {
       fundingModeOptions,
@@ -1787,6 +1789,12 @@ export const useHostsPageViewModel = () => {
     onSetHostOwnerSpendLimits: async (id, opts) => {
       await runFreshAuthAction(async () => {
         await setHostOwnerSpendLimits(id, opts);
+      });
+    },
+    canSetHostPoolAccess: isAdmin,
+    onSetHostPoolAccess: async (id, tier) => {
+      await runFreshAuthAction(async () => {
+        await setHostPoolAccess(id, tier);
       });
     },
     onStopRunningProjects: stopRunningProjectsOnHost,

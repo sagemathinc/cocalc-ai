@@ -56,6 +56,7 @@ let hostConnectionGetProjectBackupIndexesMock: jest.Mock;
 let hostConnectionSyncProjectBackupIndexesMock: jest.Mock;
 let hostConnectionDeleteProjectBackupIndexMock: jest.Mock;
 let hostConnectionListHostProjectsMock: jest.Mock;
+let hostConnectionSetHostPoolAccessMock: jest.Mock;
 let projectHostAuthTokenIssueMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
 let routedHostControlClientMock: jest.Mock;
@@ -402,6 +403,8 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
         hostConnectionDeleteProjectBackupIndexMock(...args),
       listHostProjects: (...args: any[]) =>
         hostConnectionListHostProjectsMock(...args),
+      setHostPoolAccess: (...args: any[]) =>
+        hostConnectionSetHostPoolAccessMock(...args),
     })),
     projectReference: jest.fn(() => ({
       get: (...args: any[]) => projectReferenceGetMock(...args),
@@ -721,6 +724,7 @@ beforeEach(() => {
       provisioned_needs_backup: 0,
     },
   }));
+  hostConnectionSetHostPoolAccessMock = jest.fn();
   getBackupConfigLocalInternalMock = jest.fn();
   getProjectBackupIndexesLocalInternalMock = jest.fn(async () => []);
   syncProjectBackupIndexesLocalInternalMock = jest.fn(async () => undefined);
@@ -1721,6 +1725,65 @@ describe("hosts browser fresh auth gating", () => {
       allow_actor_impersonation: true,
       session_hash: "session-hash",
     });
+  });
+
+  it("lets admins configure public shared pool access", async () => {
+    isAdminMock = jest.fn(async () => true);
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("FROM account_impersonation_sessions")) {
+        return { rows: [] };
+      }
+      if (sql.includes("UPDATE project_hosts") && sql.includes("SET tier=$2")) {
+        expect(params).toEqual([HOST_ID, 2]);
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "running",
+              tier: 2,
+              metadata: { owner: ACCOUNT_ID },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { setHostPoolAccess } = await import("./hosts");
+    const host = await setHostPoolAccess({
+      account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
+      id: HOST_ID,
+      tier: 2,
+    });
+
+    expect(host.tier).toBe(2);
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      allow_actor_impersonation: true,
+      session_hash: "session-hash",
+    });
+  });
+
+  it("rejects public shared pool access changes from non-admins", async () => {
+    isAdminMock = jest.fn(async () => false);
+    queryMock = jest.fn(async (sql: string) => {
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { setHostPoolAccess } = await import("./hosts");
+    await expect(
+      setHostPoolAccess({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+        tier: 1,
+      }),
+    ).rejects.toThrow("only admins can configure public host pool access");
+
+    expect(queryMock).not.toHaveBeenCalled();
   });
 
   it("does not force a false second-factor override for non-browser host starts", async () => {

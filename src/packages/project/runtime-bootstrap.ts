@@ -36,6 +36,7 @@ type RuntimeIdentity = {
 type MissingRuntimePackages = {
   sudo: boolean;
   caCertificates: boolean;
+  libatomic: boolean;
 };
 
 const DISABLED_RUNTIME_PASSWORD_HASH =
@@ -250,6 +251,22 @@ async function hasCaCertificates(): Promise<boolean> {
   return false;
 }
 
+async function hasLibatomic(): Promise<boolean> {
+  for (const path of [
+    "/lib/x86_64-linux-gnu/libatomic.so.1",
+    "/usr/lib/x86_64-linux-gnu/libatomic.so.1",
+    "/lib/aarch64-linux-gnu/libatomic.so.1",
+    "/usr/lib/aarch64-linux-gnu/libatomic.so.1",
+    "/lib64/libatomic.so.1",
+    "/usr/lib64/libatomic.so.1",
+  ]) {
+    if (await pathExists(path)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function runCommand(command: string, args: string[]): Promise<void> {
   logger.info("runtime bootstrap command", { command, args });
   await new Promise<void>((resolve, reject) => {
@@ -357,6 +374,7 @@ async function detectMissingRuntimePackages(): Promise<MissingRuntimePackages> {
   return {
     sudo: (await findExecutable(["/usr/bin/sudo", "/bin/sudo"])) == null,
     caCertificates: !(await hasCaCertificates()),
+    libatomic: !(await hasLibatomic()),
   };
 }
 
@@ -372,23 +390,37 @@ async function installMissingRuntimePackages(): Promise<void> {
   if (missing.caCertificates) {
     packages.push("ca-certificates");
   }
+  if (missing.libatomic) {
+    packages.push("libatomic");
+  }
   if (!packages.length) {
     logger.info("runtime bootstrap: required packages already present");
     return;
   }
 
+  const packageNames = (
+    packageManager: "apt-get" | "dnf" | "microdnf" | "yum" | "zypper",
+  ) =>
+    packages.map((name) => {
+      if (name !== "libatomic") return name;
+      return packageManager === "apt-get" || packageManager === "zypper"
+        ? "libatomic1"
+        : "libatomic";
+    });
+
   const aptGet = await findExecutable(["/usr/bin/apt-get", "/bin/apt-get"]);
   if (aptGet) {
+    const installPackages = packageNames("apt-get");
     logger.info("runtime bootstrap: installing required packages", {
       packageManager: "apt-get",
-      packages,
+      packages: installPackages,
     });
     await runCommand(aptGet, ["update"]);
     await runCommand(aptGet, [
       "install",
       "-y",
       "--no-install-recommends",
-      ...packages,
+      ...installPackages,
     ]);
     await rm("/var/lib/apt/lists", { recursive: true, force: true }).catch(
       () => {},
@@ -405,30 +437,34 @@ async function installMissingRuntimePackages(): Promise<void> {
     const yum = await findExecutable(["/usr/bin/yum", "/bin/yum"]);
     const zypper = await findExecutable(["/usr/bin/zypper", "/bin/zypper"]);
     if (dnf) {
+      const installPackages = packageNames("dnf");
       logger.info("runtime bootstrap: installing required packages", {
         packageManager: "dnf",
-        packages,
+        packages: installPackages,
       });
-      await runCommand(dnf, ["install", "-y", ...packages]);
+      await runCommand(dnf, ["install", "-y", ...installPackages]);
       await runCommand(dnf, ["clean", "all"]).catch(() => {});
     } else if (microdnf) {
+      const installPackages = packageNames("microdnf");
       logger.info("runtime bootstrap: installing required packages", {
         packageManager: "microdnf",
-        packages,
+        packages: installPackages,
       });
-      await runCommand(microdnf, ["install", "-y", ...packages]);
+      await runCommand(microdnf, ["install", "-y", ...installPackages]);
       await runCommand(microdnf, ["clean", "all"]).catch(() => {});
     } else if (yum) {
+      const installPackages = packageNames("yum");
       logger.info("runtime bootstrap: installing required packages", {
         packageManager: "yum",
-        packages,
+        packages: installPackages,
       });
-      await runCommand(yum, ["install", "-y", ...packages]);
+      await runCommand(yum, ["install", "-y", ...installPackages]);
       await runCommand(yum, ["clean", "all"]).catch(() => {});
     } else if (zypper) {
+      const installPackages = packageNames("zypper");
       logger.info("runtime bootstrap: installing required packages", {
         packageManager: "zypper",
-        packages,
+        packages: installPackages,
       });
       await runCommand(zypper, [
         "--non-interactive",
@@ -439,7 +475,7 @@ async function installMissingRuntimePackages(): Promise<void> {
         "--non-interactive",
         "install",
         "--no-recommends",
-        ...packages,
+        ...installPackages,
       ]);
       await runCommand(zypper, ["clean", "--all"]).catch(() => {});
     } else {
@@ -469,9 +505,9 @@ async function installMissingRuntimePackages(): Promise<void> {
   }
 
   const remaining = await detectMissingRuntimePackages();
-  if (remaining.sudo || remaining.caCertificates) {
+  if (remaining.sudo || remaining.caCertificates || remaining.libatomic) {
     throw new Error(
-      `runtime bootstrap failed to provision required packages: sudo missing=${remaining.sudo}, ca-certificates missing=${remaining.caCertificates}`,
+      `runtime bootstrap failed to provision required packages: sudo missing=${remaining.sudo}, ca-certificates missing=${remaining.caCertificates}, libatomic missing=${remaining.libatomic}`,
     );
   }
   logger.info("runtime bootstrap: required packages are installed");

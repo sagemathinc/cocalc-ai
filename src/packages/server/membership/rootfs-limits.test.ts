@@ -85,8 +85,18 @@ describe("rootfs membership limits", () => {
       if (sql.includes("WHERE img.image_id=$1")) {
         return { rows: existing ? [existing] : [] };
       }
-      if (sql.includes("SELECT COALESCE(official, false)")) {
-        return { rows: trusted ? [{ trusted: true }] : [] };
+      if (sql.includes("COALESCE(official, false) OR COALESCE(prepull")) {
+        return {
+          rows: trusted
+            ? [
+                {
+                  release_id: "release-official",
+                  runtime_image: "docker.io/example/official:latest",
+                  trusted: true,
+                },
+              ]
+            : [],
+        };
       }
       if (sql.includes("rel.scan_status")) {
         return { rows: scanEntry ? [scanEntry] : [] };
@@ -292,7 +302,7 @@ describe("rootfs membership limits", () => {
     );
   });
 
-  it("allows built-in and trusted catalog images without OCI-image entitlement", async () => {
+  it("allows only released trusted catalog images without OCI-image entitlement", async () => {
     const { assertCanSelectProjectRootfsImage } =
       await import("./rootfs-limits");
     await expect(
@@ -300,7 +310,9 @@ describe("rootfs membership limits", () => {
         account_id,
         image: "buildpack-deps:noble-scm",
       }),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow(
+      "arbitrary remote OCI root filesystem images are disabled",
+    );
 
     trusted = true;
     await expect(

@@ -84,6 +84,11 @@ type HubClient = {
       owner_spend_limit_5h_usd?: number | null;
       owner_spend_limit_7d_usd?: number | null;
     }) => Promise<Host>;
+    setHostPoolAccess?: (opts: {
+      id: string;
+      browser_id?: string;
+      tier?: number | null;
+    }) => Promise<Host>;
     renameHost?: (opts: { id: string; name: string }) => Promise<unknown>;
     updateHostMachine?: (opts: {
       id: string;
@@ -513,6 +518,25 @@ export const useHostActions = ({
     }
   };
 
+  const setHostPoolAccess = async (id: string, tier?: number | null) => {
+    if (!hub.hosts.setHostPoolAccess) {
+      return;
+    }
+    try {
+      await hub.hosts.setHostPoolAccess({ id, browser_id, tier });
+      await refresh();
+    } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
+      alert_message({
+        type: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  };
+
   return {
     setStatus,
     restartHost,
@@ -527,6 +551,7 @@ export const useHostActions = ({
     removeHostAccess,
     setHostProjectRamLimit,
     setHostOwnerSpendLimits,
+    setHostPoolAccess,
     stopHostProjects,
     restartHostProjects,
   };

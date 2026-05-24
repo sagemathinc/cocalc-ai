@@ -620,6 +620,7 @@ async function buildMoveProjectContext(
       : await selectActiveHost({
           exclude_host_id: source_host_id ?? undefined,
           bay_id: projectRow.project_owning_bay_id,
+          account_id,
         });
   if (!destHost) {
     throw new Error(

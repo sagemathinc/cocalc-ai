@@ -261,7 +261,7 @@ describe("projects.createProject clone routing", () => {
             {
               host_id: HOST_ID,
               region: "wnam",
-              rootfs_image: "buildpack-deps:noble-scm",
+              rootfs_image: "cocalc.local/rootfs/base",
               rootfs_image_id: "official-cocalc-base",
               owning_bay_id: "bay-3",
               backup_repo_id: null,
@@ -328,7 +328,7 @@ describe("projects.createProject clone routing", () => {
             {
               project_id: insertedProjectId,
               state_role: "current",
-              runtime_image: "buildpack-deps:noble-scm",
+              runtime_image: "cocalc.local/rootfs/base",
               release_id: null,
               image_id: "official-cocalc-base",
               set_by_account_id: null,
@@ -353,7 +353,7 @@ describe("projects.createProject clone routing", () => {
       description: "desc",
       account_id: ACCOUNT_ID,
       src_project_id: SOURCE_PROJECT_ID,
-      rootfs_image: "buildpack-deps:noble-scm",
+      rootfs_image: "cocalc.local/rootfs/base",
       start: false,
     });
 
@@ -446,7 +446,7 @@ describe("projects.createProject clone routing", () => {
       if (isRootfsScanSelectionQuery(sql)) {
         return { rows: [] };
       }
-      if (sql.includes("SELECT COALESCE(official, false)")) {
+      if (sql.includes("COALESCE(official, false) OR COALESCE(prepull")) {
         return { rows: [] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -466,7 +466,7 @@ describe("projects.createProject clone routing", () => {
         description: "desc",
         account_id: ACCOUNT_ID,
         src_project_id: SOURCE_PROJECT_ID,
-        rootfs_image: "buildpack-deps:noble-scm",
+        rootfs_image: "cocalc.local/rootfs/base",
         rootfs_image_id: "official-cocalc-base",
         start: false,
       }),
@@ -491,7 +491,7 @@ describe("projects.createProject clone routing", () => {
         description: "desc",
         account_id: ACCOUNT_ID,
         src_project_id: SOURCE_PROJECT_ID,
-        rootfs_image: "buildpack-deps:noble-scm",
+        rootfs_image: "cocalc.local/rootfs/base",
         start: false,
       }),
     ).rejects.toThrow("failed to copy project secrets for clone");
@@ -618,7 +618,7 @@ describe("projects.createProject clone routing", () => {
         description: "desc",
         account_id: ACCOUNT_ID,
         src_project_id: SOURCE_PROJECT_ID,
-        rootfs_image: "buildpack-deps:noble-scm",
+        rootfs_image: "cocalc.local/rootfs/base",
         start: false,
       }),
     ).rejects.toThrow("project belongs to another bay");
@@ -664,14 +664,14 @@ describe("projects.createProject clone routing", () => {
         sql.includes("SELECT release_id") &&
         sql.includes("FROM rootfs_images")
       ) {
-        expect(params).toEqual(["buildpack-deps:noble-scm"]);
-        return { rows: [{ release_id: null }] };
+        expect(params).toEqual(["cocalc.local/rootfs/base"]);
+        return { rows: [{ release_id: "release-base" }] };
       }
       if (
         sql.includes("SELECT release_id") &&
         sql.includes("FROM rootfs_releases")
       ) {
-        expect(params).toEqual(["buildpack-deps:noble-scm"]);
+        expect(params).toEqual(["cocalc.local/rootfs/base"]);
         return { rows: [] };
       }
       if (sql.includes("INSERT INTO project_rootfs_states")) {
@@ -688,7 +688,7 @@ describe("projects.createProject clone routing", () => {
             {
               project_id: insertedProjectId,
               state_role: "current",
-              runtime_image: "buildpack-deps:noble-scm",
+              runtime_image: "cocalc.local/rootfs/base",
               release_id: null,
               image_id: null,
               set_by_account_id: null,
@@ -727,7 +727,7 @@ describe("projects.createProject clone routing", () => {
       description: "",
       account_id: ACCOUNT_ID,
       host_id: HOST_ID,
-      rootfs_image: "buildpack-deps:noble-scm",
+      rootfs_image: "cocalc.local/rootfs/base",
       start: false,
     });
 
@@ -738,7 +738,7 @@ describe("projects.createProject clone routing", () => {
       account_id: ACCOUNT_ID,
       host_id: HOST_ID,
       create: {
-        image: "buildpack-deps:noble-scm",
+        image: "cocalc.local/rootfs/base",
         project_id,
         start: false,
         title: "Remote host placement",

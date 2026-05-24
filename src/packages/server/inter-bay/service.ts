@@ -26,6 +26,7 @@ import {
   createInterBayProjectControlHandler,
   createInterBayProjectControlAcceptRehomeHandler,
   createInterBayProjectControlSetUsageAccountHandler,
+  createInterBayProjectControlAssignHostHandler,
   createInterBayProjectControlMoveHandler,
   createInterBayProjectControlRehomeHandler,
   createInterBayProjectControlRestartHandler,
@@ -194,6 +195,7 @@ import {
   handleProjectControlCheckStartAdmission,
   handleProjectControlAcceptRehome,
   handleProjectControlSetUsageAccount,
+  handleProjectControlAssignHost,
   handleProjectControlMove,
   handleProjectControlRehome,
   handleProjectControlRestart,
@@ -258,6 +260,7 @@ import {
   setHostOwnerSpendLimits,
   setHostAccess,
   setHostProjectRamLimit,
+  setHostPoolAccess,
   setHostRuntimeDeployments,
   getProjectBackupIndexesLocal,
   syncProjectBackupIndexesLocal,
@@ -308,6 +311,7 @@ import {
   getServiceAdmissionDenialReport,
 } from "@cocalc/server/conat/api/system";
 import { setLocalProjectsHidden } from "@cocalc/server/conat/api/projects";
+import { listVisibleRootfsImages } from "@cocalc/server/rootfs/catalog";
 
 const logger = getLogger("server:inter-bay:service");
 
@@ -403,6 +407,10 @@ async function startBayOpsService(): Promise<void> {
         account_id,
         bay_id,
         internalAuth: BAY_OPS_INTERNAL_AUTH,
+      }),
+    getRootfsCatalog: async ({ account_id }) =>
+      await listVisibleRootfsImages(account_id, {
+        includeSeedCatalog: false,
       }),
     getRootfsQuotaReport: async (opts) =>
       await getRootfsQuotaReport({
@@ -1015,6 +1023,7 @@ async function startProjectControlStartService(): Promise<void> {
     state: async (opts) => await handleProjectControlState(opts),
     setUsageAccount: async (opts) =>
       await handleProjectControlSetUsageAccount(opts),
+    assignHost: async (opts) => await handleProjectControlAssignHost(opts),
     address: async (opts) => await handleProjectControlAddress(opts),
     move: async (opts) => await handleProjectControlMove(opts),
     rehome: async (opts) => await handleProjectControlRehome(opts),
@@ -1064,6 +1073,12 @@ async function startProjectControlStartService(): Promise<void> {
       impl,
     }),
     createInterBayProjectControlSetUsageAccountHandler({
+      client,
+      bay_id,
+      parallel: true,
+      impl,
+    }),
+    createInterBayProjectControlAssignHostHandler({
       client,
       bay_id,
       parallel: true,
@@ -1297,6 +1312,7 @@ async function startHostConnectionService(): Promise<void> {
     setHostProjectRamLimit: async (opts) => await setHostProjectRamLimit(opts),
     setHostOwnerSpendLimits: async (opts) =>
       await setHostOwnerSpendLimits(opts),
+    setHostPoolAccess: async (opts) => await setHostPoolAccess(opts),
     getHostLog: async ({ account_id, id, limit }) =>
       await getHostLog({
         account_id,

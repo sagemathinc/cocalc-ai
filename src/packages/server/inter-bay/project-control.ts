@@ -11,6 +11,7 @@ import type {
   ProjectReference,
   ProjectControlActiveOperationRequest,
   ProjectControlAddressRequest,
+  ProjectControlAssignHostRequest,
   ProjectControlAcceptRehomeRequest,
   ProjectControlBackupRequest,
   ProjectControlMoveRequest,
@@ -34,6 +35,7 @@ import { projectControlSubject } from "@cocalc/server/inter-bay/subjects";
 import { getProject } from "@cocalc/server/projects/control";
 import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
 import { moveProject as moveProjectLocal } from "@cocalc/server/conat/api/projects";
+import { assignProjectHost as assignProjectHostLocal } from "@cocalc/server/conat/api/projects";
 import { PROJECT_DANGEROUS_INTERNAL_AUTH } from "@cocalc/server/conat/api/project-dangerous-auth";
 import {
   clearProjectActiveOperation,
@@ -409,6 +411,21 @@ export async function handleProjectControlSetUsageAccount(
       expected_current_usage_account_id: req.expected_current_usage_account_id,
     }),
   };
+}
+
+export async function handleProjectControlAssignHost(
+  req: ProjectControlAssignHostRequest,
+): Promise<void> {
+  await assertCurrentProjectOwnership({
+    project_id: req.project_id,
+    epoch: req.epoch,
+  });
+  await assignProjectHostLocal({
+    account_id: req.account_id,
+    project_id: req.project_id,
+    dest_host_id: req.dest_host_id,
+    skip_owner_route: true,
+  });
 }
 
 export async function handleProjectControlAddress(

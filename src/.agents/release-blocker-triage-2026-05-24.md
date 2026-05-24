@@ -36,7 +36,7 @@ Status values:
 
 ### 1. Project-Host Access And Random Assignment Fallback
 
-Status: `open`
+Status: `done`
 
 Severity: high.
 
@@ -44,9 +44,10 @@ Why it matters: host assignment is a security, cost, and correctness boundary. U
 
 Known symptoms:
 
-- Public host access policy needs settings on the host card Access page.
-- Policy should include membership tier number and possibly hard limits.
-- Users currently may not see any hosts, but still get assigned to hosts randomly due to a bug or fallback.
+- Public host access policy now has admin-only settings on the host Access page.
+- Policy includes shared-pool membership tier number and explanatory copy.
+- Host list/card rows summarize whether the host is private/delegated or in the shared pool.
+- Users previously could fail host visibility checks but still get assigned to hosts randomly due to a fallback. Backend fallback was fixed by making automatic start/move placement account-aware and safe-by-default without account context.
 
 Expected outcome:
 
@@ -57,10 +58,8 @@ Expected outcome:
 
 Next action:
 
-- Read `src/.agents/scalable-architecture.md`.
-- Trace project host allocation and visibility paths.
-- Identify all fallback host-selection behavior.
-- Add focused tests for ineligible users and no-visible-host cases before changing behavior.
+- Keep any future hard per-host/project public-pool limits as a follow-up under host runtime/access policy, not a release blocker for this item.
+- Preserve regression coverage around fallback placement eligibility and admin-only public pool access when changing the host placement UI/API.
 
 ### 2. GPU Host Validation For Nebius H200
 
@@ -72,6 +71,11 @@ Why it matters: GPU hosts are expensive and user-visible. If `nvidia-smi` works 
 
 Known symptoms:
 
+- Creating a Nebius spot GPU host could submit a stale hidden GCP provider
+  value, so the backend rejected the request with
+  `host_pricing_unavailable` for provider `gcp` even while the browser showed
+  a valid Nebius price. Fixed by submitting from the canonical normalized
+  create draft instead of raw form values.
 - `nvidia-smi` works.
 - `pip install` of TensorFlow and PyTorch does not result in GPU-visible frameworks.
 - Backup to R2 is slow, around 30-50 MB/s.

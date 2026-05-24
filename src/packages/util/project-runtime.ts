@@ -14,6 +14,7 @@ export const PROJECT_RUNTIME_USERNS_SCHEME = "podman-keep-id-v1";
 export const PROJECT_RUNTIME_BOOTSTRAP_PACKAGES = [
   "sudo",
   "ca-certificates",
+  "libatomic1",
 ] as const;
 export const LEGACY_PROJECT_RUNTIME_HOME = "/root";
 export const PROJECT_RUNTIME_HOME_ALIASES = [

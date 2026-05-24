@@ -172,10 +172,11 @@ export function useHostCreateDraft({
   }, [context, initialDraft, onInitialDraftConsumed]);
 
   React.useEffect(() => {
+    if (initialDraft) return;
     setDraft((current) =>
       sameDraft(normalized.draft, current) ? current : normalized.draft,
     );
-  }, [normalized.draft]);
+  }, [initialDraft, normalized.draft]);
 
   React.useEffect(() => {
     const patch = formPatchForDraft(form, normalized.draft);

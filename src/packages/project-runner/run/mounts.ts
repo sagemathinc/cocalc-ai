@@ -8,6 +8,7 @@ export let nodePath = process.execPath;
 export const COCALC_BIN = "/opt/cocalc/bin";
 export const COCALC_BIN2 = "/opt/cocalc/bin2";
 export const COCALC_LIB = "/opt/cocalc/lib";
+export const COCALC_RUNTIME_LIB = "/opt/cocalc/runtime-lib";
 export const COCALC_SRC = "/opt/cocalc/src";
 export const DEFAULT_PROJECT_TOOLS = "/opt/cocalc/tools/current";
 export const PROJECT_BUNDLE_MOUNT_POINT = "/opt/cocalc/project-bundle";

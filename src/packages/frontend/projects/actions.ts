@@ -3108,6 +3108,39 @@ export class ProjectsActions extends Actions<ProjectsState> {
     },
   );
 
+  assign_project_to_host = reuseInFlight(
+    async (project_id: string, dest_host_id: string): Promise<boolean> => {
+      const current_host = store.getIn(["project_map", project_id, "host_id"]);
+      if (dest_host_id === current_host) return true;
+      if (current_host) {
+        return await this.move_project_to_host(project_id, dest_host_id);
+      }
+      const actions = redux.getProjectActions(project_id);
+      try {
+        await webapp_client.conat_client.hub.projects.assignProjectHost({
+          project_id,
+          dest_host_id,
+        });
+        actions?.setState({ control_error: "" });
+        const project_map = store.get("project_map");
+        if (project_map?.has(project_id)) {
+          this.setState({
+            project_map: project_map.setIn(
+              [project_id, "host_id"],
+              dest_host_id,
+            ),
+          } as ProjectsState);
+        }
+        await this.ensure_host_info(dest_host_id, true);
+      } catch (err) {
+        const error = `Error assign project host -- ${err}`;
+        actions?.setState({ control_error: error });
+        throw err;
+      }
+      return true;
+    },
+  );
+
   restart_project = reuseInFlight(
     async (project_id: string, _options?): Promise<void> => {
       if (isProjectHardDeleting(store.getIn(["project_map", project_id]))) {
