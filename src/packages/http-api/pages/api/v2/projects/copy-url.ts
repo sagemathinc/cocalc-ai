@@ -12,6 +12,8 @@ import isCollaborator from "@cocalc/server/projects/is-collaborator";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import getProxiedPublicPathInfo from "@cocalc/http-api/lib/share/proxy/get-proxied-public-path-info";
 import { conat } from "@cocalc/backend/conat";
+import { getAccountFromApiKey } from "@cocalc/server/auth/api";
+import { requireApiKeyProjectCapability } from "@cocalc/server/api/api-key-scope";
 
 export default async function handle(req, res) {
   const params = getParams(req);
@@ -33,6 +35,13 @@ export default async function handle(req, res) {
     }
     if (!(await isCollaborator({ account_id, project_id }))) {
       throw Error("must be a collaborator on target project");
+    }
+    if (req.header("Authorization")) {
+      const principal = await getAccountFromApiKey(req);
+      if (!principal?.account_id || principal.account_id !== account_id) {
+        throw Error("must be signed in with a valid account API key");
+      }
+      requireApiKeyProjectCapability(principal, "file:write", project_id);
     }
     const info = await getProxiedPublicPathInfo(url);
     if (info.contents?.content == null) {

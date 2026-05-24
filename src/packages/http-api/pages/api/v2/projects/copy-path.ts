@@ -11,6 +11,8 @@ import isCollaborator from "@cocalc/server/projects/is-collaborator";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { client as filesystemClient } from "@cocalc/conat/files/file-server";
 import { conat } from "@cocalc/backend/conat";
+import { getAccountFromApiKey } from "@cocalc/server/auth/api";
+import { requireApiKeyProjectCapability } from "@cocalc/server/api/api-key-scope";
 
 export default async function handle(req, res) {
   const params = getParams(req);
@@ -47,6 +49,18 @@ export default async function handle(req, res) {
     }
     if (!(await isCollaborator({ account_id, project_id: src_project_id }))) {
       throw Error("must be a collaborator on source project");
+    }
+    if (req.header("Authorization")) {
+      const principal = await getAccountFromApiKey(req);
+      if (!principal?.account_id || principal.account_id !== account_id) {
+        throw Error("must be signed in with a valid account API key");
+      }
+      requireApiKeyProjectCapability(principal, "file:read", src_project_id);
+      requireApiKeyProjectCapability(
+        principal,
+        "file:write",
+        target_project_id,
+      );
     }
     const client = filesystemClient({ client: conat() });
     await client.cp({
