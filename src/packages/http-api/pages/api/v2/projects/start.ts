@@ -4,9 +4,7 @@ API endpoint to start a project running.
 This requires the user to be signed in so they are allowed to use this project.
 */
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import { getProject } from "@cocalc/server/projects/control";
-import { isValidUUID } from "@cocalc/util/misc";
-import isCollaborator from "@cocalc/server/projects/is-collaborator";
+import { start as startProject } from "@cocalc/server/conat/api/projects";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
@@ -21,17 +19,10 @@ async function handle(req, res) {
   const account_id = await getAccountId(req);
 
   try {
-    if (!isValidUUID(project_id)) {
-      throw Error("project_id must be a valid uuid");
-    }
     if (!account_id) {
       throw Error("must be signed in");
     }
-    if (!(await isCollaborator({ account_id, project_id }))) {
-      throw Error("must be a collaborator to start project");
-    }
-    const project = getProject(project_id);
-    await project.start();
+    await startProject({ account_id, project_id, wait: false });
     res.json(OkStatus);
   } catch (err) {
     res.json({ error: err.message });
