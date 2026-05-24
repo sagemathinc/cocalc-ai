@@ -297,17 +297,6 @@ export async function createSetupIntent(opts: {
   return await api("purchases/stripe/create-setup-intent", opts);
 }
 
-export async function setupAutomaticBilling(opts: {
-  success_url: string;
-  cancel_url?: string;
-}): Promise<any> {
-  return await api("purchases/setup-automatic-billing", opts);
-}
-
-export async function cancelAutomaticBilling() {
-  return await api("purchases/cancel-automatic-billing");
-}
-
 export async function getUnpaidInvoices(): Promise<any[]> {
   return await api("purchases/get-unpaid-invoices");
 }
@@ -323,11 +312,6 @@ export const getMinimumPayment = longCache(
   async () => (await getServiceCost("credit")) as number,
   "get-minimum-payment",
 );
-
-export async function syncSubscription(): Promise<boolean> {
-  const { found } = await api("purchases/sync-subscription");
-  return found;
-}
 
 export interface MembershipChangeQuote {
   change: "new" | "upgrade" | "downgrade";
