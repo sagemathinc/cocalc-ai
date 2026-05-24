@@ -1,5 +1,9 @@
 import getLogger from "@cocalc/backend/logger";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import {
+  deriveProjectHostHostname,
+  normalizeCloudflareHostname,
+} from "@cocalc/server/cloud/derived-domains";
 import { resolvePublicViewerDns } from "@cocalc/util/public-viewer-origin";
 
 // Default TTL is ignored by Cloudflare when proxied.
@@ -7,30 +11,21 @@ const TTL = 120;
 
 const logger = getLogger("server:cloud:dns");
 
-async function getConfig(): Promise<{ token?: string; dns?: string }> {
+async function getConfig(): Promise<{
+  token?: string;
+  dns?: string;
+  settings: Record<string, any>;
+}> {
   const {
-    project_hosts_dns: dns,
+    dns,
     project_hosts_cloudflare_tunnel_api_token: token,
+    ...settings
   } = await getServerSettings();
-  return { token, dns };
-}
-
-function normalizeHostname(value: unknown): string | undefined {
-  const raw = `${value ?? ""}`.trim();
-  if (!raw) return undefined;
-  let host = raw;
-  if (host.startsWith("http://") || host.startsWith("https://")) {
-    try {
-      host = new URL(host).host;
-    } catch {
-      host = host.replace(/^https?:\/\//, "");
-    }
-  }
-  host = host.split("/")[0];
-  if (host.includes(":")) {
-    host = host.split(":")[0];
-  }
-  return host.toLowerCase() || undefined;
+  return {
+    token,
+    dns: normalizeCloudflareHostname(dns),
+    settings: { ...settings, dns },
+  };
 }
 
 export async function hasDns(): Promise<boolean> {
@@ -170,14 +165,22 @@ async function listDnsRecords(
 async function getClient(): Promise<{
   token: string;
   dns: string;
-  zoneId: string;
+  settings: Record<string, any>;
 }> {
-  const { token, dns } = await getConfig();
+  const { token, dns, settings } = await getConfig();
   if (!dns || !token) {
     throw new Error("cloudflare DNS not configured");
   }
-  const zoneId = await getZoneIdForHostname(token, dns);
-  return { token, dns, zoneId };
+  return { token, dns, settings };
+}
+
+async function getZoneClientForHostname(hostname: string): Promise<{
+  token: string;
+  zoneId: string;
+}> {
+  const { token } = await getClient();
+  const zoneId = await getZoneIdForHostname(token, hostname);
+  return { token, zoneId };
 }
 
 export async function ensureHostDns(opts: {
@@ -188,8 +191,10 @@ export async function ensureHostDns(opts: {
   if (!opts.host_id) throw new Error("host_id required for DNS");
   if (!opts.ipAddress) throw new Error("ipAddress required for DNS");
 
-  const { token, dns, zoneId } = await getClient();
-  const name = `host-${opts.host_id}.${dns}`;
+  const { token, settings } = await getClient();
+  const name = deriveProjectHostHostname(opts.host_id, settings);
+  if (!name) throw new Error("cloudflare DNS not configured");
+  const zoneId = await getZoneIdForHostname(token, name);
 
   const updateRecord = async (record_id: string) => {
     const newData = {
@@ -278,9 +283,13 @@ export async function ensureHostDns(opts: {
   return { name, record_id };
 }
 
-export async function deleteHostDns(opts: { record_id?: string }) {
+export async function deleteHostDns(opts: {
+  record_id?: string;
+  name?: string;
+}) {
   if (!opts.record_id) return;
-  const { token, zoneId } = await getClient();
+  const { token, dns } = await getClient();
+  const zoneId = await getZoneIdForHostname(token, opts.name ?? dns);
   try {
     await cloudflareRequest(
       token,
@@ -305,7 +314,7 @@ export async function ensureHostnameCnameDns(opts: {
   if (!hostname) throw new Error("hostname required for app DNS");
   if (!target) throw new Error("target_hostname required for app DNS");
 
-  const { token, zoneId } = await getClient();
+  const { token, zoneId } = await getZoneClientForHostname(hostname);
   const updateRecord = async (record_id: string) => {
     const payload = {
       type: "CNAME",
@@ -398,15 +407,14 @@ export async function ensurePublicViewerDns(): Promise<
   { hostname: string; target_hostname: string; record_id: string } | undefined
 > {
   const settings = await getServerSettings();
-  const zone = `${settings.project_hosts_dns ?? ""}`.trim().toLowerCase();
-  const hostname = normalizeHostname(
+  const hostname = normalizeCloudflareHostname(
     resolvePublicViewerDns({
       publicViewerDns: settings.public_viewer_dns as string | undefined,
       dns: settings.dns as string | undefined,
     }) ?? "",
   );
-  let target_hostname = normalizeHostname(settings.dns);
-  if (!zone || !hostname || !target_hostname || hostname === target_hostname) {
+  let target_hostname = normalizeCloudflareHostname(settings.dns);
+  if (!hostname || !target_hostname || hostname === target_hostname) {
     return undefined;
   }
   // If the main site hostname is itself fronted by a Cloudflare tunnel, point the
@@ -445,9 +453,11 @@ export async function getCnameTargetForHostname(
 
 export async function deleteAppSubdomainDns(opts: {
   record_id?: string;
+  hostname?: string;
 }): Promise<void> {
   if (!opts.record_id) return;
-  const { token, zoneId } = await getClient();
+  const { token, dns } = await getClient();
+  const zoneId = await getZoneIdForHostname(token, opts.hostname ?? dns);
   try {
     await cloudflareRequest(
       token,

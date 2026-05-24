@@ -206,7 +206,6 @@ function hasIncompleteSelfManagedCloudflare(
   return (
     !trim(settings.project_hosts_cloudflare_tunnel_account_id) ||
     !trim(settings.project_hosts_cloudflare_tunnel_api_token) ||
-    !trim(settings.project_hosts_dns) ||
     !trim(settings.dns)
   );
 }

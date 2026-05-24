@@ -33,7 +33,6 @@ const LOCAL_CLOUDFLARE_SETTING_KEYS = [
   "project_hosts_cloudflare_tunnel_api_token",
   "project_hosts_cloudflare_tunnel_prefix",
   "project_hosts_cloudflare_tunnel_host_suffix",
-  "project_hosts_dns",
   "r2_account_id",
   "r2_api_token",
   "r2_access_key_id",
@@ -735,7 +734,7 @@ export async function createCloudflareTeardownPlan(opts: {
   const cloudflareAccountId = clean(
     settings.project_hosts_cloudflare_tunnel_account_id,
   );
-  const zoneName = clean(settings.project_hosts_dns);
+  const zoneName = clean(settings.dns);
   const hostname = normalizeHostname(settings.dns);
   const includeR2 = !!opts.include_r2;
   const warnings: string[] = [];

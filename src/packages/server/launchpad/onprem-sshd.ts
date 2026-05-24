@@ -1299,9 +1299,6 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
   if (!clean(settings.project_hosts_cloudflare_tunnel_api_token)) {
     missing.push("Project Hosts: Cloudflare Tunnel - API Token");
   }
-  if (!clean(settings.project_hosts_dns)) {
-    missing.push("Project Hosts: Domain name");
-  }
   if (!clean(settings.dns)) {
     missing.push("External Domain Name");
   }

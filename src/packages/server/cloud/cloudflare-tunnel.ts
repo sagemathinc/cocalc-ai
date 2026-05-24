@@ -2,6 +2,12 @@ import getLogger from "@cocalc/backend/logger";
 import crypto from "node:crypto";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getDerivedBayPublicHostname } from "@cocalc/server/bay-public-origin";
+import {
+  deriveProjectHostHostname,
+  deriveProjectHostSshHostname,
+  deriveProjectHostSuffix,
+  normalizeCloudflareHostname,
+} from "@cocalc/server/cloud/derived-domains";
 
 const logger = getLogger("server:cloud:cloudflare-tunnel");
 const TTL = 120;
@@ -68,24 +74,6 @@ function clean(value: unknown): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-function normalizeHostname(value: unknown): string | undefined {
-  const raw = clean(value);
-  if (!raw) return undefined;
-  let host = raw;
-  if (host.startsWith("http://") || host.startsWith("https://")) {
-    try {
-      host = new URL(host).host;
-    } catch {
-      host = host.replace(/^https?:\/\//, "");
-    }
-  }
-  host = host.split("/")[0];
-  if (host.includes(":")) {
-    host = host.split(":")[0];
-  }
-  return host || undefined;
-}
-
 function isEnabled(value: unknown): boolean {
   if (value === true) return true;
   if (value == null) return false;
@@ -125,34 +113,18 @@ function normalizePrefix(value: unknown): string | undefined {
   return prefix || undefined;
 }
 
-function normalizeHostSuffix(value: unknown): string | undefined {
-  const raw = clean(value);
-  if (!raw) return undefined;
-  const trimmed = raw.trim();
-  const lead = trimmed[0];
-  const prefix = lead === "." || lead === "-" ? lead : "-";
-  const rest = prefix ? trimmed.slice(1) : trimmed;
-  const host = normalizeHostname(rest) ?? clean(rest);
-  if (!host) return undefined;
-  return `${prefix}${host}`;
-}
-
 async function getConfig(): Promise<TunnelConfig | undefined> {
   const settings = await getServerSettings();
   if (!cloudflareSelfMode(settings)) {
     return undefined;
   }
-  const dns = clean(settings.project_hosts_dns);
+  const dns = normalizeCloudflareHostname(settings.dns);
   const accountId = clean(settings.project_hosts_cloudflare_tunnel_account_id);
   const token = clean(settings.project_hosts_cloudflare_tunnel_api_token);
   const prefix = normalizePrefix(
     settings.project_hosts_cloudflare_tunnel_prefix,
   );
-  const externalDomain = normalizeHostname(settings.dns);
-  const defaultSuffix = externalDomain ? `-${externalDomain}` : undefined;
-  const hostSuffix =
-    normalizeHostSuffix(settings.project_hosts_cloudflare_tunnel_host_suffix) ??
-    normalizeHostSuffix(defaultSuffix);
+  const hostSuffix = deriveProjectHostSuffix(settings);
   if (!dns || !accountId || !token) return undefined;
   return { dns, accountId, token, prefix, hostSuffix };
 }
@@ -164,8 +136,8 @@ async function getHubConfig(): Promise<HubTunnelConfig | undefined> {
   }
   const accountId = clean(settings.project_hosts_cloudflare_tunnel_account_id);
   const token = clean(settings.project_hosts_cloudflare_tunnel_api_token);
-  const zone = clean(settings.project_hosts_dns);
-  const hostname = normalizeHostname(settings.dns);
+  const hostname = normalizeCloudflareHostname(settings.dns);
+  const zone = hostname;
   const prefix = normalizePrefix(
     settings.project_hosts_cloudflare_tunnel_prefix,
   );
@@ -551,9 +523,15 @@ export async function ensureCloudflareTunnelForHost(opts: {
 }): Promise<CloudflareTunnel | undefined> {
   const config = await getConfig();
   if (!config) return opts.existing;
-  const suffix = config.hostSuffix ?? `.${config.dns}`;
-  const hostname = `host-${opts.host_id}${suffix}`;
-  const sshHostname = `ssh-host-${opts.host_id}${suffix}`;
+  const hostname = deriveProjectHostHostname(opts.host_id, {
+    dns: config.dns,
+    project_hosts_cloudflare_tunnel_host_suffix: config.hostSuffix,
+  });
+  const sshHostname = deriveProjectHostSshHostname(opts.host_id, {
+    dns: config.dns,
+    project_hosts_cloudflare_tunnel_host_suffix: config.hostSuffix,
+  });
+  if (!hostname || !sshHostname) return opts.existing;
   const prefix = config.prefix ? `${config.prefix}-` : "";
   return await ensureCloudflareTunnel({
     accountId: config.accountId,
@@ -758,15 +736,23 @@ export async function deleteCloudflareTunnel(opts: {
   if (!config) return;
   const hostname =
     opts.tunnel?.hostname ??
-    (opts.host_id ? `host-${opts.host_id}.${config.dns}` : undefined);
+    (opts.host_id
+      ? deriveProjectHostHostname(opts.host_id, {
+          dns: config.dns,
+          project_hosts_cloudflare_tunnel_host_suffix: config.hostSuffix,
+        })
+      : undefined);
   const sshHostname = opts.tunnel?.ssh_hostname;
   let zoneIdValue: string | undefined;
   try {
-    zoneIdValue = await getZoneId(config.token, config.dns);
+    zoneIdValue = await getZoneIdForHostname(
+      config.token,
+      hostname ?? config.dns,
+    );
   } catch (err) {
     logger.warn("cloudflare tunnel zone lookup failed; skipping dns cleanup", {
       err,
-      dns: config.dns,
+      hostname: hostname ?? config.dns,
     });
   }
 

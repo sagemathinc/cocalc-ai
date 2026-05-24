@@ -26,7 +26,6 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
     conat_client: {
       hub: {
         system: {
-          bootstrapCloudflareConfiguration: jest.fn(),
           testR2Credentials: jest.fn(),
         },
       },
@@ -111,7 +110,7 @@ describe("CloudflareConfigWizard", () => {
     ).toBeInTheDocument();
   });
 
-  it("saves the external domain as both site dns and project-host dns", async () => {
+  it("saves the external domain as the canonical public DNS setting", async () => {
     const onApply = jest.fn(async () => {});
     render(
       <CloudflareConfigWizard
@@ -137,7 +136,6 @@ describe("CloudflareConfigWizard", () => {
     expect(onApply).toHaveBeenCalledWith(
       expect.objectContaining({
         dns: "cocalc.example.edu",
-        project_hosts_dns: "cocalc.example.edu",
       }),
     );
   });

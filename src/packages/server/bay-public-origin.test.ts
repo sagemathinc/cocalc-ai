@@ -274,8 +274,7 @@ describe("bay-public-origin", () => {
       project_hosts_cloudflare_tunnel_enabled: true,
       project_hosts_cloudflare_tunnel_account_id: "account-id",
       project_hosts_cloudflare_tunnel_api_token: "token",
-      project_hosts_dns: "",
-      dns: "lite2b.cocalc.ai",
+      dns: "",
     }));
     process.env.COCALC_BAY_ID = "bay-0";
     process.env.COCALC_CLUSTER_SEED_BAY_ID = "bay-0";
