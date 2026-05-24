@@ -19,6 +19,7 @@ const mockSetEmailAddress = jest.fn();
 const mockSetPassword = jest.fn();
 const mockStartTwoFactorSetup = jest.fn();
 const mockConfirmTwoFactorSetup = jest.fn();
+const mockDisableTwoFactor = jest.fn();
 const mockUserIsInGroup = jest.fn();
 const mockBanUser = jest.fn();
 const mockRemoveUserBan = jest.fn();
@@ -74,6 +75,7 @@ jest.mock("@cocalc/server/accounts/set-password", () => ({
 jest.mock("@cocalc/server/auth/two-factor", () => ({
   startTwoFactorSetup: (...args: any[]) => mockStartTwoFactorSetup(...args),
   confirmTwoFactorSetup: (...args: any[]) => mockConfirmTwoFactorSetup(...args),
+  disableTwoFactor: (...args: any[]) => mockDisableTwoFactor(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/is-in-group", () => ({
@@ -126,6 +128,7 @@ describe("browser-session-only account security routes", () => {
     mockConfirmTwoFactorSetup.mockReset().mockResolvedValue({
       recovery_codes: ["recovery-code"],
     });
+    mockDisableTwoFactor.mockReset().mockResolvedValue(undefined);
     mockUserIsInGroup.mockReset().mockResolvedValue(true);
     mockBanUser.mockReset().mockResolvedValue(undefined);
     mockRemoveUserBan.mockReset().mockResolvedValue(undefined);
@@ -142,8 +145,10 @@ describe("browser-session-only account security routes", () => {
     await handler(req, res);
 
     expect(res._getJSONData()).toEqual({
-      error: "browser sign-in is required",
+      error: "API keys are not allowed to delete accounts",
     });
+    expect(mockGetAccountId).not.toHaveBeenCalled();
+    expect(mockRequireFreshAuth).not.toHaveBeenCalled();
     expect(mockDeleteAccount).not.toHaveBeenCalled();
     expect(mockClearAuthCookies).not.toHaveBeenCalled();
   });
@@ -193,8 +198,10 @@ describe("browser-session-only account security routes", () => {
     await handler(req, res);
 
     expect(res._getJSONData()).toEqual({
-      error: "browser sign-in is required",
+      error: "API keys are not allowed to unlink sign-in methods",
     });
+    expect(mockGetAccountId).not.toHaveBeenCalled();
+    expect(mockRequireFreshAuth).not.toHaveBeenCalled();
     expect(mockUnlinkStrategy).not.toHaveBeenCalled();
   });
 
@@ -250,6 +257,27 @@ describe("browser-session-only account security routes", () => {
     expect(mockSetEmailAddress).not.toHaveBeenCalled();
   });
 
+  it("rejects API-key-only email address changes before account resolution", async () => {
+    mockGetParams.mockReturnValue({
+      email_address: "new@example.com",
+      password: "correct horse battery staple",
+    });
+    const { req, res } = createMocks({
+      method: "POST",
+      headers: { authorization: "Bearer sk-cc-v2.key.secret" },
+    });
+
+    const { default: handler } = await import("./accounts/set-email-address");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "API keys are not allowed to change email addresses",
+    });
+    expect(mockGetAccountId).not.toHaveBeenCalled();
+    expect(mockRequireFreshAuth).not.toHaveBeenCalled();
+    expect(mockSetEmailAddress).not.toHaveBeenCalled();
+  });
+
   it("allows fresh-authenticated email address changes", async () => {
     mockGetParams.mockReturnValue({
       email_address: "new@example.com",
@@ -290,6 +318,27 @@ describe("browser-session-only account security routes", () => {
     expect(res._getJSONData()).toEqual({
       error: "fresh auth is required",
     });
+    expect(mockSetPassword).not.toHaveBeenCalled();
+  });
+
+  it("rejects API-key-only password changes before account resolution", async () => {
+    mockGetParams.mockReturnValue({
+      currentPassword: "old-password",
+      newPassword: "new-password",
+    });
+    const { req, res } = createMocks({
+      method: "POST",
+      headers: { authorization: "Bearer sk-cc-v2.key.secret" },
+    });
+
+    const { default: handler } = await import("./accounts/set-password");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "API keys are not allowed to change passwords",
+    });
+    expect(mockGetAccountId).not.toHaveBeenCalled();
+    expect(mockRequireFreshAuth).not.toHaveBeenCalled();
     expect(mockSetPassword).not.toHaveBeenCalled();
   });
 
@@ -387,6 +436,22 @@ describe("browser-session-only account security routes", () => {
       factor_id: "factor-1",
       code: "123456",
     });
+  });
+
+  it("rejects API-key-only two-factor disable before account resolution", async () => {
+    const { req, res } = createMocks({
+      method: "POST",
+      headers: { authorization: "Bearer sk-cc-v2.key.secret" },
+    });
+
+    const { default: handler } = await import("./auth/2fa/disable");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "API keys are not allowed to disable two-factor authentication",
+    });
+    expect(mockGetAccountId).not.toHaveBeenCalled();
+    expect(mockDisableTwoFactor).not.toHaveBeenCalled();
   });
 
   it("rejects admin account bans without fresh auth", async () => {

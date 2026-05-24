@@ -16,6 +16,10 @@ import {
 } from "@cocalc/http-api/lib/api/schema/accounts/set-password";
 
 async function handle(req, res) {
+  if (req.header("Authorization")) {
+    res.json({ error: "API keys are not allowed to change passwords" });
+    return;
+  }
   const account_id = await getAccountId(req);
   if (account_id == null) {
     res.json({ error: "must be signed in" });

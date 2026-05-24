@@ -16,6 +16,9 @@ import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 async function handle(req, res) {
   try {
     if (isPost(req, res)) {
+      if (req.header("Authorization")) {
+        throw Error("API keys are not allowed to delete accounts");
+      }
       const account_id = await getAccountId(req);
       if (!account_id) {
         throw Error("must be signed in");

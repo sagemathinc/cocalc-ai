@@ -15,6 +15,9 @@ import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 
 export default async function handle(req, res) {
   try {
+    if (req.header("Authorization")) {
+      throw Error("API keys are not allowed to unlink sign-in methods");
+    }
     const account_id = await getAccountId(req);
     if (!account_id) {
       throw Error("must be signed in");

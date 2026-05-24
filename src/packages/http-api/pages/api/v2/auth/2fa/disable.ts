@@ -10,6 +10,11 @@ import { disableTwoFactor } from "@cocalc/server/auth/two-factor";
 
 export default async function disableTwoFactorApi(req, res) {
   try {
+    if (req.header("Authorization")) {
+      throw new Error(
+        "API keys are not allowed to disable two-factor authentication",
+      );
+    }
     const account_id = await getAccountId(req);
     if (!account_id) {
       throw new Error("must be signed in");
