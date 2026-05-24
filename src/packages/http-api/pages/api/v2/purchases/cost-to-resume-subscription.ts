@@ -21,5 +21,5 @@ async function get(req) {
     throw Error("must be signed in");
   }
   const { subscription_id } = getParams(req);
-  return await costToResumeSubscription(subscription_id);
+  return await costToResumeSubscription({ account_id, subscription_id });
 }
