@@ -345,7 +345,13 @@ export async function useBalanceTowardSubscriptions(
 
 // We set payment status to canceled *and* cancel the subscription --
 // user can resume it at current rates at a later date.
-export async function processSubscriptionRenewalFailure({ paymentIntent }) {
+export async function processSubscriptionRenewalFailure({
+  account_id,
+  paymentIntent,
+}: {
+  account_id: string;
+  paymentIntent;
+}) {
   const { subscription_id } = paymentIntent?.metadata ?? {};
   if (!subscription_id) {
     throw Error(
@@ -357,18 +363,27 @@ export async function processSubscriptionRenewalFailure({ paymentIntent }) {
       ? parseInt(subscription_id)
       : subscription_id;
   const pool = getPool();
-  await pool.query(
-    `UPDATE subscriptions SET payment = jsonb_set(payment, '{status}', '"canceled"'), status='canceled', canceled_at=NOW(), canceled_reason='The payment was canceled instead of being paid.' WHERE id=$1`,
-    [id],
+  const result = await pool.query(
+    `UPDATE subscriptions SET payment = jsonb_set(payment, '{status}', '"canceled"'), status='canceled', canceled_at=NOW(), canceled_reason='The payment was canceled instead of being paid.' WHERE id=$1 AND account_id=$2`,
+    [id, account_id],
   );
+  if (result.rowCount != 1) {
+    throw Error(`You do not have a subscription with id ${subscription_id}.`);
+  }
   await sendCancelNotification({ subscription_id });
 }
 
-export async function processResumeSubscriptionFailure({ paymentIntent }) {
-  await clearResumeSubscriptionPayment({ paymentIntent });
+export async function processResumeSubscriptionFailure({
+  account_id,
+  paymentIntent,
+}: {
+  account_id: string;
+  paymentIntent;
+}) {
+  await clearResumeSubscriptionPayment({ account_id, paymentIntent });
 }
 
-async function clearResumeSubscriptionPayment({ paymentIntent }) {
+async function clearResumeSubscriptionPayment({ account_id, paymentIntent }) {
   const { subscription_id } = paymentIntent?.metadata ?? {};
   if (!subscription_id) {
     throw Error(
@@ -380,10 +395,13 @@ async function clearResumeSubscriptionPayment({ paymentIntent }) {
       ? parseInt(subscription_id)
       : subscription_id;
   const pool = getPool();
-  await pool.query(
-    `UPDATE subscriptions SET resume_payment_intent=NULL WHERE id=$1`,
-    [id],
+  const result = await pool.query(
+    `UPDATE subscriptions SET resume_payment_intent=NULL WHERE id=$1 AND account_id=$2`,
+    [id, account_id],
   );
+  if (result.rowCount != 1) {
+    throw Error(`You do not have a subscription with id ${subscription_id}.`);
+  }
 }
 
 export async function resumeSubscriptionSetPaymentIntent({
@@ -432,5 +450,5 @@ export async function processResumeSubscription({
     amount,
     force: true,
   });
-  await clearResumeSubscriptionPayment({ paymentIntent });
+  await clearResumeSubscriptionPayment({ account_id, paymentIntent });
 }

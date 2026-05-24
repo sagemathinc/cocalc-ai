@@ -243,11 +243,13 @@ customer.  So we don't know what to do with this.  Please manually investigate.
         if (paymentIntent.metadata.purpose == SUBSCRIPTION_RENEWAL) {
           result = `we did NOT renew subscription (id=${paymentIntent.metadata.subscription_id})`;
           await processSubscriptionRenewalFailure({
+            account_id,
             paymentIntent,
           });
         } else if (paymentIntent.metadata.purpose == RESUME_SUBSCRIPTION) {
           result = `we did NOT resume subscription (id=${paymentIntent.metadata.subscription_id})`;
           await processResumeSubscriptionFailure({
+            account_id,
             paymentIntent,
           });
         } else if (paymentIntent.metadata.purpose == MEMBERSHIP_CHANGE) {
