@@ -2200,6 +2200,9 @@ export interface System {
   }) => Promise<{ removed: boolean }>;
 
   issueBrowserSignInCookie: (opts?: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     max_age_ms?: number;
   }) => Promise<BrowserSignInCookieInfo>;
 

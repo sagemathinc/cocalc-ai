@@ -22,7 +22,15 @@ export async function recentAttemptsLocal(
 ): Promise<number> {
   const pool = getPool();
   const { rows } = await pool.query(
-    "SELECT COUNT(*)::INT FROM password_reset_attempts WHERE email_address=$1 AND ip_address=$2 AND time >= NOW() - INTERVAL '10 min'",
+    `
+      SELECT GREATEST(
+        COUNT(*) FILTER (WHERE email_address=$1)::INT,
+        COUNT(*) FILTER (WHERE ip_address=$2::INET)::INT
+      ) AS count
+        FROM password_reset_attempts
+       WHERE time >= NOW() - INTERVAL '10 min'
+         AND (email_address=$1 OR ip_address=$2::INET)
+    `,
     [email_address, ip_address],
   );
   return rows[0].count;

@@ -29,6 +29,10 @@ describe("hub API argument transforms", () => {
         name: "purchases.purchaseMembershipPackage",
         args: [{ package_id: 1 }],
       },
+      {
+        name: "system.issueBrowserSignInCookie",
+        args: [{ max_age_ms: 60_000 }],
+      },
     ];
 
     for (const testCase of cases) {
