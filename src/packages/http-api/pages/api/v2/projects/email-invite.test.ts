@@ -56,6 +56,22 @@ describe("/api/v2/projects email invite handlers", () => {
     });
   });
 
+  it("rejects API-key preview of project invite links", async () => {
+    const { req, res } = createMocks({
+      method: "POST",
+      headers: { Authorization: "Bearer cocalc_api_key_test" },
+      body: { token: "token-1" },
+    });
+
+    const { default: handler } = await import("./preview-email-invite");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "API keys are not allowed to use project invite links",
+    });
+    expect(mockPreviewEmailProjectInvite).not.toHaveBeenCalled();
+  });
+
   it("responds to token-only invite links through the central directory", async () => {
     const { req, res } = createMocks({
       method: "POST",
@@ -73,6 +89,22 @@ describe("/api/v2/projects email invite handlers", () => {
     });
   });
 
+  it("rejects API-key responses to project invite links", async () => {
+    const { req, res } = createMocks({
+      method: "POST",
+      headers: { Authorization: "Bearer cocalc_api_key_test" },
+      body: { action: "accept", token: "token-1" },
+    });
+
+    const { default: handler } = await import("./respond-email-invite");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "API keys are not allowed to use project invite links",
+    });
+    expect(mockRespondEmailProjectInvite).not.toHaveBeenCalled();
+  });
+
   it("redeems token-only invite links through the central directory", async () => {
     const { req, res } = createMocks({
       method: "POST",
@@ -87,5 +119,21 @@ describe("/api/v2/projects email invite handlers", () => {
       account_id: "acct-1",
       token: "token-1",
     });
+  });
+
+  it("rejects API-key redemption of project invite links", async () => {
+    const { req, res } = createMocks({
+      method: "POST",
+      headers: { Authorization: "Bearer cocalc_api_key_test" },
+      body: { token: "token-1" },
+    });
+
+    const { default: handler } = await import("./redeem-email-invite");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "API keys are not allowed to use project invite links",
+    });
+    expect(mockRedeemEmailProjectInvite).not.toHaveBeenCalled();
   });
 });

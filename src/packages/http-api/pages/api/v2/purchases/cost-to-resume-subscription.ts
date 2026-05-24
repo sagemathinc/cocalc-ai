@@ -16,10 +16,13 @@ export default async function handle(req, res) {
 }
 
 async function get(req) {
+  if (req.header("Authorization")) {
+    throw Error("API keys are not allowed to access billing account details");
+  }
   const account_id = await getAccountId(req);
   if (account_id == null) {
     throw Error("must be signed in");
   }
   const { subscription_id } = getParams(req);
-  return await costToResumeSubscription(subscription_id);
+  return await costToResumeSubscription({ account_id, subscription_id });
 }

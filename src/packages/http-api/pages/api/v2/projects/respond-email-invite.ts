@@ -12,6 +12,9 @@ const ACTIONS = new Set(["accept", "decline", "block"]);
 
 export default async function handle(req, res) {
   try {
+    if (req.header("Authorization")) {
+      throw new Error("API keys are not allowed to use project invite links");
+    }
     const account_id = await getAccountId(req);
     if (!account_id) {
       throw new Error("must be signed in to respond to a project invite");

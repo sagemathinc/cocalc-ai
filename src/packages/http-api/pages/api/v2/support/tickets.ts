@@ -6,6 +6,11 @@ import getSupportTickets from "@cocalc/server/support/get-tickets";
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 
 export default async function handle(req, res) {
+  if (req.header("Authorization")) {
+    res.json({ error: "API keys are not allowed to access support tickets" });
+    return;
+  }
+
   const account_id = await getAccountId(req);
   if (account_id == null) {
     res.json({ error: "you must be signed in to get support tickets" });

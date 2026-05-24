@@ -12,7 +12,7 @@ const ExampleUserQuerySchema = z.object({
     })
     .describe(
       `Used to query for the account id and e-mail address of the account corresponding to 
-       the API key provided in this request.`,
+       the current signed-in browser session.`,
     ),
 });
 
