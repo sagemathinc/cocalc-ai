@@ -12,9 +12,11 @@ export type DocsAudience =
 
 export type DocsEntryStatus = "draft" | "ready";
 
+export type DocsActionId = "settings.environment.secrets";
+
 export interface DocsAction {
   description: string;
-  id: string;
+  id: DocsActionId;
   label: string;
 }
 
@@ -106,6 +108,12 @@ export const DOCS_ENTRIES: DocsEntry[] = [
   },
 ];
 
+const DOCS_ACTION_IDS = new Set<DocsActionId>(
+  DOCS_ENTRIES.flatMap(
+    (entry) => entry.actions?.map((action) => action.id) ?? [],
+  ),
+);
+
 export function docsPath(slug?: string): string {
   return slug ? `/docs/${slug.replace(/^\/+/, "")}` : "/docs";
 }
@@ -122,6 +130,20 @@ export function getDocsEntry(slugOrId: string): DocsEntry | undefined {
   return DOCS_ENTRIES.find(
     (entry) => entry.id === slugOrId || entry.slug === normalized,
   );
+}
+
+export function isDocsActionId(value: unknown): value is DocsActionId {
+  return DOCS_ACTION_IDS.has(value as DocsActionId);
+}
+
+export function getDocsAction(actionId: string): DocsAction | undefined {
+  for (const entry of DOCS_ENTRIES) {
+    const action = entry.actions?.find(
+      (candidate) => candidate.id === actionId,
+    );
+    if (action) return action;
+  }
+  return undefined;
 }
 
 export function searchDocsEntries(
@@ -143,6 +165,9 @@ export function searchDocsEntries(
       entry.summary,
       entry.category,
       entry.audiences.join(" "),
+      entry.actions
+        ?.map((action) => `${action.id} ${action.label} ${action.description}`)
+        .join(" "),
       entry.body,
     ]
       .join("\n")

@@ -51,6 +51,7 @@ export type BrowserActionName =
   | "scroll_to"
   | "wait_for_selector"
   | "wait_for_url"
+  | "docs_action"
   | "batch";
 
 export type BrowserCoordinateSpace =
@@ -187,6 +188,10 @@ export type BrowserAtomicActionRequest =
       regex?: string;
       timeout_ms?: number;
       poll_ms?: number;
+    }
+  | {
+      name: "docs_action";
+      id: string;
     };
 
 export type BrowserActionResult = {
