@@ -8,6 +8,8 @@ export {};
 let isAdminMock: jest.Mock;
 let requireDangerousSessionAuthMock: jest.Mock;
 let manageApiKeysMock: jest.Mock;
+let createRememberMeCookieMock: jest.Mock;
+let recordNewAuthSessionMock: jest.Mock;
 
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
   __esModule: true,
@@ -25,6 +27,17 @@ jest.mock("@cocalc/server/api/manage", () => ({
   default: (...args: any[]) => manageApiKeysMock(...args),
 }));
 
+jest.mock("@cocalc/server/auth/remember-me", () => ({
+  __esModule: true,
+  createRememberMeCookie: (...args: any[]) =>
+    createRememberMeCookieMock(...args),
+}));
+
+jest.mock("@cocalc/server/auth/auth-sessions", () => ({
+  __esModule: true,
+  recordNewAuthSession: (...args: any[]) => recordNewAuthSessionMock(...args),
+}));
+
 describe("admin maintenance dangerous-session auth", () => {
   const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
   const SUBJECT_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
@@ -38,6 +51,12 @@ describe("admin maintenance dangerous-session auth", () => {
       });
     });
     manageApiKeysMock = jest.fn(async () => []);
+    createRememberMeCookieMock = jest.fn(async () => ({
+      value: "remember-me-cookie",
+      hash: "remember-me-hash",
+      expire: new Date("2026-05-24T12:00:00.000Z"),
+    }));
+    recordNewAuthSessionMock = jest.fn(async () => undefined);
   });
 
   it("requires centralized recent 2FA fresh auth before creating impersonation grants", async () => {
@@ -291,6 +310,42 @@ describe("admin maintenance dangerous-session auth", () => {
       browser_id: "browser-1",
       session_hash: undefined,
     });
+  });
+
+  it("caps raw browser sign-in cookie lifetime", async () => {
+    requireDangerousSessionAuthMock = jest.fn(async () => ({}));
+    const { issueBrowserSignInCookie } = await import("./system");
+
+    await expect(
+      issueBrowserSignInCookie({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        max_age_ms: 365 * 24 * 60 * 60 * 1000,
+      }),
+    ).resolves.toMatchObject({
+      account_id: ACCOUNT_ID,
+      remember_me: "remember-me-cookie",
+      max_age_ms: 12 * 3600 * 1000,
+    });
+
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: undefined,
+      session_hash: "session-hash",
+    });
+    expect(createRememberMeCookieMock).toHaveBeenCalledWith(
+      ACCOUNT_ID,
+      12 * 3600,
+    );
+    expect(recordNewAuthSessionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        session_hash: "remember-me-hash",
+        factor_level: "none",
+        fresh_auth_until: null,
+        metadata: { issued_by: "issueBrowserSignInCookie" },
+      }),
+    );
   });
 
   it("allows listing account API keys without fresh auth", async () => {

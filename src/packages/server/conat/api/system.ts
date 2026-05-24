@@ -4300,7 +4300,10 @@ export async function issueBrowserSignInCookie({
   const cleanMaxAgeMs = Number(max_age_ms);
   const resolvedMaxAgeMs =
     Number.isFinite(cleanMaxAgeMs) && cleanMaxAgeMs > 0
-      ? Math.floor(cleanMaxAgeMs)
+      ? Math.min(
+          DEFAULT_BROWSER_SIGN_IN_COOKIE_MAX_AGE_MS,
+          Math.floor(cleanMaxAgeMs),
+        )
       : DEFAULT_BROWSER_SIGN_IN_COOKIE_MAX_AGE_MS;
   const { value, hash, expire } = await createRememberMeCookie(
     account_id,
