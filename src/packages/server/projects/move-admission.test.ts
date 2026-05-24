@@ -120,6 +120,72 @@ describe("move admission helpers", () => {
     ]);
   });
 
+  it("does not assign fallback destinations blocked for the move actor", () => {
+    const selected = selectMoveClaimCandidates({
+      candidates: [
+        {
+          op_id: "op-1",
+          created_by: "account-1",
+          source_host_id: "host-a",
+          dest_host_id: null,
+          project_region: "us-west-1",
+        },
+      ],
+      sourceAvailableByHost: new Map([["host-a", 1]]),
+      destAvailableByHost: new Map([
+        ["host-b", 1],
+        ["host-c", 1],
+      ]),
+      activeDestinationHosts: [
+        {
+          host_id: "host-b",
+          project_region: "us-west-1",
+          placeable_account_ids: new Set(["other-account"]),
+        },
+        {
+          host_id: "host-c",
+          project_region: "us-west-1",
+          placeable_account_ids: new Set(["account-1"]),
+        },
+      ],
+      limit: 1,
+    });
+
+    expect(selected).toEqual([
+      {
+        op_id: "op-1",
+        source_host_id: "host-a",
+        dest_host_id: "host-c",
+      },
+    ]);
+  });
+
+  it("does not assign fallback destinations when none are allowed", () => {
+    const selected = selectMoveClaimCandidates({
+      candidates: [
+        {
+          op_id: "op-1",
+          created_by: "account-1",
+          source_host_id: "host-a",
+          dest_host_id: null,
+          project_region: "us-west-1",
+        },
+      ],
+      sourceAvailableByHost: new Map([["host-a", 1]]),
+      destAvailableByHost: new Map([["host-b", 1]]),
+      activeDestinationHosts: [
+        {
+          host_id: "host-b",
+          project_region: "us-west-1",
+          placeable_account_ids: new Set(["other-account"]),
+        },
+      ],
+      limit: 1,
+    });
+
+    expect(selected).toEqual([]);
+  });
+
   it("prefers calmer destination hosts over pressured ones", () => {
     const selected = selectMoveClaimCandidates({
       candidates: [

@@ -6,7 +6,11 @@ import type { HostControlApi } from "@cocalc/conat/project-host/api";
 import sshKeys from "../projects/get-ssh-keys";
 import { notifyProjectHostUpdate } from "../conat/route-project";
 import { getConfiguredBayId } from "../bay-config";
-import { normalizeHostTier } from "./placement";
+import {
+  computePlacementPermission,
+  getUserHostTier,
+  normalizeHostTier,
+} from "./placement";
 import { machineHasGpu } from "../cloud/host-gpu";
 import { maybeAutoGrowHostDiskForReservationFailure } from "./auto-grow";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
@@ -22,6 +26,12 @@ import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { mapCloudRegionToR2Region, parseR2Region } from "@cocalc/util/consts";
 import { getRoutedHostControlClient } from "./client";
 import { resolveHostBayAcrossCluster } from "@cocalc/server/inter-bay/directory";
+import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import isAdmin from "@cocalc/server/accounts/is-admin";
+import type {
+  HostAccessRole,
+  HostEffectiveAccessRole,
+} from "@cocalc/conat/hub/api/hosts";
 
 const log = getLogger("server:project-host:control");
 // Project starts can include large restores, so allow a long RPC timeout.
@@ -46,6 +56,7 @@ type HostRegistryRow = {
   ssh_server?: string | null;
   tier?: number | null;
   metadata?: any;
+  delegated_access_role?: HostAccessRole | null;
 };
 
 const HOST_PLACEMENT_PRESSURE_RANK: Record<HostPressureZone, number> = {
@@ -133,7 +144,7 @@ function mapHostRegistryRow(row: HostRegistryRow) {
     machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
   const isLocalSelfHost =
     machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
-  const tier = normalizeHostTier(row.tier);
+  const tier = row.tier == null ? undefined : normalizeHostTier(row.tier);
   const pressure =
     typeof row?.metadata?.pressure === "object" && row.metadata.pressure != null
       ? row.metadata.pressure
@@ -150,6 +161,61 @@ function mapHostRegistryRow(row: HostRegistryRow) {
     local_proxy: isLocalSelfHost,
     pressure,
   };
+}
+
+function normalizeDelegatedAccessRole(
+  role?: string | null,
+): HostAccessRole | undefined {
+  const normalized = `${role ?? ""}`.trim().toLowerCase();
+  if (normalized === "user" || normalized === "manager") {
+    return normalized;
+  }
+  return undefined;
+}
+
+function hostOwnerAccountId(row: HostRegistryRow): string {
+  return `${row.metadata?.owner ?? row.metadata?.owner_account_id ?? ""}`.trim();
+}
+
+async function filterRowsPlaceableByAccount<T extends HostRegistryRow>({
+  rows,
+  account_id,
+}: {
+  rows: T[];
+  account_id?: string;
+}): Promise<T[]> {
+  if (!account_id) {
+    // Internal background fallback has no user context, so it must never pick a
+    // private/dedicated host. Shared pool hosts are the only safe default.
+    return rows.filter((row) => row.tier != null);
+  }
+
+  const [membership, admin] = await Promise.all([
+    resolveMembershipForAccount(account_id),
+    isAdmin(account_id),
+  ]);
+  const userTier = getUserHostTier(membership.entitlements);
+
+  return rows.filter((row) => {
+    const delegatedRole = normalizeDelegatedAccessRole(
+      row.delegated_access_role,
+    );
+    const isOwner = hostOwnerAccountId(row) === account_id;
+    const accessRole: HostEffectiveAccessRole | undefined = isOwner
+      ? "owner"
+      : delegatedRole != null
+        ? delegatedRole
+        : admin
+          ? "admin"
+          : undefined;
+    return computePlacementPermission({
+      tier: row.tier == null ? undefined : normalizeHostTier(row.tier),
+      userTier,
+      isOwner,
+      accessRole,
+      hasDedicatedAccess: delegatedRole != null,
+    }).can_place;
+  });
 }
 
 async function saveProjectStateSnapshot(
@@ -361,10 +427,12 @@ export async function selectActiveHost({
   exclude_host_id,
   bay_id,
   project_region,
+  account_id,
 }: {
   exclude_host_id?: string;
   bay_id?: string;
   project_region?: string;
+  account_id?: string;
 } = {}) {
   const params: any[] = [];
   const where: string[] = [
@@ -380,15 +448,40 @@ export async function selectActiveHost({
   const targetBayId = effectiveBayId(bay_id);
   params.push(targetBayId);
   where.push(`COALESCE(bay_id, $${params.length}) = $${params.length}`);
+  let delegatedAccessJoin = "";
+  let delegatedAccessSelect = "NULL::text AS delegated_access_role";
+  if (account_id) {
+    params.push(account_id);
+    delegatedAccessSelect = "delegated_access.delegated_access_role";
+    delegatedAccessJoin = `
+      LEFT JOIN LATERAL (
+        SELECT access.role AS delegated_access_role
+        FROM project_host_access access
+        WHERE access.host_id = project_hosts.id
+          AND access.account_id::text = $${params.length}::text
+          AND access.revoked_at IS NULL
+        LIMIT 1
+      ) delegated_access ON TRUE`;
+  }
   const { rows } = await pool().query<HostRegistryRow>(
     `
-      SELECT id, bay_id, name, region, public_url, internal_url, ssh_server, tier, metadata
+      SELECT id, bay_id, name, region, public_url, internal_url, ssh_server, tier, metadata,
+             ${delegatedAccessSelect}
       FROM project_hosts
+      ${delegatedAccessJoin}
       WHERE ${where.join("\n        AND ")}
     `,
     params,
   );
-  const row = choosePlacementHostRow(rows, Math.random, project_region);
+  const placeableRows = await filterRowsPlaceableByAccount({
+    rows,
+    account_id,
+  });
+  const row = choosePlacementHostRow(
+    placeableRows,
+    Math.random,
+    project_region,
+  );
   if (!row) return undefined;
   return mapHostRegistryRow(row);
 }
@@ -445,7 +538,10 @@ export async function savePlacement(
   });
 }
 
-async function ensurePlacement(project_id: string): Promise<HostPlacement> {
+async function ensurePlacement(
+  project_id: string,
+  account_id?: string,
+): Promise<HostPlacement> {
   const meta = await loadProject(project_id);
   const projectBayId = effectiveBayId(meta.owning_bay_id);
   const projectRegion = parseR2Region(meta.region) ?? undefined;
@@ -467,6 +563,7 @@ async function ensurePlacement(project_id: string): Promise<HostPlacement> {
   const chosen = await selectActiveHost({
     bay_id: projectBayId,
     project_region: projectRegion,
+    account_id,
   });
   if (!chosen) {
     if (projectRegion) {
@@ -514,6 +611,7 @@ export async function startProjectOnHost(
   project_id: string,
   opts?: {
     lro_op_id?: string;
+    account_id?: string;
     managed_egress_override?: ManagedProjectEgressOverride;
     restore_backup_id?: string;
   },
@@ -560,7 +658,7 @@ export async function startProjectOnHost(
       );
     }
 
-    const placement = await ensurePlacement(project_id);
+    const placement = await ensurePlacement(project_id, opts?.account_id);
     const explicitRestoreBackupId = `${opts?.restore_backup_id ?? ""}`.trim();
     const client = await getRoutedHostControlClient({
       host_id: placement.host_id,

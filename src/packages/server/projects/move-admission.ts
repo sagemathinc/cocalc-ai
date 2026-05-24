@@ -2,6 +2,7 @@ import type { HostPressureZone } from "@cocalc/conat/hub/api/hosts";
 
 export type MoveClaimCandidateRow = {
   op_id: string;
+  created_by?: string | null;
   source_host_id: string | null;
   dest_host_id: string | null;
   project_region: string;
@@ -11,6 +12,7 @@ export type MoveActiveDestinationHost = {
   host_id: string;
   project_region: string;
   pressure_zone?: HostPressureZone;
+  placeable_account_ids?: Set<string>;
 };
 
 export type MoveClaimSelection = {
@@ -48,11 +50,13 @@ export function computeAvailableMoveHostSlots({
 
 function chooseDestinationHost({
   source_host_id,
+  created_by,
   project_region,
   remainingDestByHost,
   activeDestinationHosts,
 }: {
   source_host_id: string;
+  created_by?: string | null;
   project_region: string;
   remainingDestByHost: Map<string, number>;
   activeDestinationHosts: MoveActiveDestinationHost[];
@@ -64,6 +68,14 @@ function chooseDestinationHost({
         hostRegion === project_region &&
         (remainingDestByHost.get(host_id) ?? 0) > 0,
     )
+    .filter((host) => {
+      const actor = `${created_by ?? ""}`.trim();
+      if (!actor) return host.placeable_account_ids == null;
+      return (
+        host.placeable_account_ids == null ||
+        host.placeable_account_ids.has(actor)
+      );
+    })
     .sort((a, b) => {
       const pressureDelta =
         pressureRank(a.pressure_zone) - pressureRank(b.pressure_zone);
@@ -109,6 +121,7 @@ export function selectMoveClaimCandidates({
       candidate.dest_host_id ??
       chooseDestinationHost({
         source_host_id,
+        created_by: candidate.created_by,
         project_region: candidate.project_region,
         remainingDestByHost,
         activeDestinationHosts,

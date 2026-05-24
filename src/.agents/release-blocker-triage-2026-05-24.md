@@ -36,7 +36,7 @@ Status values:
 
 ### 1. Project-Host Access And Random Assignment Fallback
 
-Status: `open`
+Status: `backend fixed; UI access-policy copy/settings still open`
 
 Severity: high.
 
@@ -46,7 +46,7 @@ Known symptoms:
 
 - Public host access policy needs settings on the host card Access page.
 - Policy should include membership tier number and possibly hard limits.
-- Users currently may not see any hosts, but still get assigned to hosts randomly due to a bug or fallback.
+- Users currently may not see any hosts, but still get assigned to hosts randomly due to a bug or fallback. Backend fallback fixed in this round by making automatic start/move placement account-aware and safe-by-default without account context.
 
 Expected outcome:
 
@@ -57,10 +57,9 @@ Expected outcome:
 
 Next action:
 
-- Read `src/.agents/scalable-architecture.md`.
-- Trace project host allocation and visibility paths.
-- Identify all fallback host-selection behavior.
-- Add focused tests for ineligible users and no-visible-host cases before changing behavior.
+- Design and implement the host Access page controls/copy for public pool tier policy.
+- Decide whether host pool policy also needs hard per-host/project limits in the same UI or a follow-up.
+- Keep focused regression coverage around fallback placement eligibility when changing the policy UI.
 
 ### 2. GPU Host Validation For Nebius H200
 

@@ -20,6 +20,10 @@ import {
   mapCloudRegionToR2Region,
   parseR2Region,
 } from "@cocalc/util/consts";
+import type {
+  HostAccessRole,
+  HostEffectiveAccessRole,
+} from "@cocalc/conat/hub/api/hosts";
 import {
   MOVE_CANCELED_CODE,
   moveProjectToHost,
@@ -35,6 +39,12 @@ import {
   heartbeatProjectRuntimeSlot,
   releaseProjectRuntimeSlot,
 } from "./runtime-slots";
+import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import isAdmin from "@cocalc/server/accounts/is-admin";
+import {
+  computePlacementPermission,
+  getUserHostTier,
+} from "@cocalc/server/project-host/placement";
 
 const logger = getLogger("server:projects:move-worker");
 const pool = () => getPool();
@@ -123,6 +133,20 @@ function publishSummary(summary: LroSummary) {
     scope_id: summary.scope_id,
     summary,
   });
+}
+
+function normalizeDelegatedAccessRole(
+  role?: string | null,
+): HostAccessRole | undefined {
+  const normalized = `${role ?? ""}`.trim().toLowerCase();
+  if (normalized === "user" || normalized === "manager") {
+    return normalized;
+  }
+  return undefined;
+}
+
+function hostOwnerAccountId(metadata: any): string {
+  return `${metadata?.owner ?? metadata?.owner_account_id ?? ""}`.trim();
 }
 
 function getMoveRuntimeSlot(
@@ -494,16 +518,19 @@ async function listFreshRunningMoveTopologyRows({
   return rows;
 }
 
-async function listActiveMoveDestinationHosts(): Promise<
-  MoveActiveDestinationHost[]
-> {
+async function listActiveMoveDestinationHosts({
+  account_ids = [],
+}: {
+  account_ids?: string[];
+} = {}): Promise<MoveActiveDestinationHost[]> {
   const { rows } = await pool().query<{
     id: string;
     region: string | null;
     metadata: any;
+    tier: number | null;
   }>(
     `
-      SELECT id, region, metadata
+      SELECT id, region, metadata, tier
       FROM project_hosts
       WHERE status = 'running'
         AND deleted IS NULL
@@ -511,13 +538,76 @@ async function listActiveMoveDestinationHosts(): Promise<
       ORDER BY id
     `,
   );
-  return rows.map(({ id, region, metadata }) => ({
+  const uniqueAccountIds = Array.from(
+    new Set(account_ids.map((id) => `${id ?? ""}`.trim()).filter(Boolean)),
+  );
+  const accessByHostAndAccount = new Map<string, HostAccessRole>();
+  if (rows.length > 0 && uniqueAccountIds.length > 0) {
+    const { rows: accessRows } = await pool().query<{
+      host_id: string;
+      account_id: string;
+      role: string | null;
+    }>(
+      `
+        SELECT host_id::text AS host_id, account_id::text AS account_id, role
+        FROM project_host_access
+        WHERE host_id::text = ANY($1::text[])
+          AND account_id::text = ANY($2::text[])
+          AND revoked_at IS NULL
+      `,
+      [rows.map(({ id }) => id), uniqueAccountIds],
+    );
+    for (const row of accessRows) {
+      const role = normalizeDelegatedAccessRole(row.role);
+      if (!role) continue;
+      accessByHostAndAccount.set(`${row.host_id}:${row.account_id}`, role);
+    }
+  }
+  const accountPlacement = new Map<
+    string,
+    { userTier: number; admin: boolean }
+  >();
+  await Promise.all(
+    uniqueAccountIds.map(async (account_id) => {
+      const [membership, admin] = await Promise.all([
+        resolveMembershipForAccount(account_id),
+        isAdmin(account_id),
+      ]);
+      accountPlacement.set(account_id, {
+        userTier: getUserHostTier(membership.entitlements),
+        admin,
+      });
+    }),
+  );
+  return rows.map(({ id, region, metadata, tier }) => ({
     host_id: id,
     project_region: mapCloudRegionToR2Region(region),
     pressure_zone:
       typeof metadata?.pressure?.zone === "string"
         ? metadata.pressure.zone
         : undefined,
+    placeable_account_ids: new Set(
+      uniqueAccountIds.filter((account_id) => {
+        const placement = accountPlacement.get(account_id);
+        if (!placement) return false;
+        const delegatedRole = accessByHostAndAccount.get(`${id}:${account_id}`);
+        const isOwner = hostOwnerAccountId(metadata) === account_id;
+        const accessRole: HostEffectiveAccessRole | undefined = isOwner
+          ? "owner"
+          : delegatedRole != null
+            ? delegatedRole
+            : placement.admin
+              ? "admin"
+              : undefined;
+        return computePlacementPermission({
+          tier: tier ?? undefined,
+          userTier: placement.userTier,
+          isOwner,
+          accessRole,
+          hasDedicatedAccess: delegatedRole != null,
+        }).can_place;
+      }),
+    ),
   }));
 }
 
@@ -540,10 +630,7 @@ async function claimMoveLroOps({
       op_ids: expired.map(({ op_id }) => op_id),
     });
   }
-  const [runningRows, activeDestinationHosts] = await Promise.all([
-    listFreshRunningMoveTopologyRows({ lease_ms }),
-    listActiveMoveDestinationHosts(),
-  ]);
+  const runningRows = await listFreshRunningMoveTopologyRows({ lease_ms });
   const sourceRunningCounts = new Map<string, number>();
   const destRunningCounts = new Map<string, number>();
   for (const row of runningRows) {
@@ -605,6 +692,11 @@ async function claimMoveLroOps({
       await client.query("ROLLBACK");
       return [];
     }
+    const activeDestinationHosts = await listActiveMoveDestinationHosts({
+      account_ids: rows
+        .map(({ created_by }) => `${created_by ?? ""}`.trim())
+        .filter(Boolean),
+    });
 
     const sourceHostIds = Array.from(
       new Set(
@@ -657,8 +749,15 @@ async function claimMoveLroOps({
     );
     const selected = selectMoveClaimCandidates({
       candidates: rows.map(
-        ({ op_id, source_host_id, dest_host_id, project_region }) => ({
+        ({
           op_id,
+          created_by,
+          source_host_id,
+          dest_host_id,
+          project_region,
+        }) => ({
+          op_id,
+          created_by,
           source_host_id,
           dest_host_id,
           project_region: parseR2Region(project_region) ?? DEFAULT_R2_REGION,

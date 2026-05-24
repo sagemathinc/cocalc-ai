@@ -1297,6 +1297,7 @@ describe("moveProjectToHost", () => {
     expect(selectActiveHostMock).toHaveBeenCalledWith({
       exclude_host_id: SOURCE_HOST_ID,
       bay_id: "bay-0",
+      account_id: "account-id",
     });
     expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
   });

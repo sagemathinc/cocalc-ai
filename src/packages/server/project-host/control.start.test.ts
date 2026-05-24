@@ -21,6 +21,8 @@ let resolveHostBayMock: jest.Mock;
 let getCurrentProjectRootfsBindingMock: jest.Mock;
 let assertCanRestoreProvisionedProjectStorageMock: jest.Mock;
 let cancelStaleProjectStartLrosMock: jest.Mock;
+let resolveMembershipForAccountMock: jest.Mock;
+let isAdminMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -112,6 +114,17 @@ jest.mock("@cocalc/server/projects/start-lro-cleanup", () => ({
     cancelStaleProjectStartLrosMock(...args),
 }));
 
+jest.mock("@cocalc/server/membership/resolve", () => ({
+  __esModule: true,
+  resolveMembershipForAccount: (...args: any[]) =>
+    resolveMembershipForAccountMock(...args),
+}));
+
+jest.mock("@cocalc/server/accounts/is-admin", () => ({
+  __esModule: true,
+  default: (...args: any[]) => isAdminMock(...args),
+}));
+
 describe("startProjectOnHost placement", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -135,11 +148,112 @@ describe("startProjectOnHost placement", () => {
       async () => undefined,
     );
     cancelStaleProjectStartLrosMock = jest.fn(async () => 0);
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: { features: { project_host_tier: 0 } },
+    }));
+    isAdminMock = jest.fn(async () => false);
     releaseMock = jest.fn();
     resolveHostBayMock = jest.fn(async (host_id: string) => ({
       bay_id: host_id === "host-2" ? "bay-7" : "bay-0",
       epoch: 0,
     }));
+  });
+
+  it("only uses shared pool hosts for automatic placement without an account", async () => {
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (
+        sql.includes("FROM project_hosts") &&
+        sql.includes("WHERE status='running'")
+      ) {
+        expect(params).toEqual(["bay-0"]);
+        return {
+          rows: [
+            {
+              id: "private-host",
+              bay_id: "bay-0",
+              name: "Private Host",
+              region: "us-west1",
+              public_url: null,
+              internal_url: null,
+              ssh_server: null,
+              tier: null,
+              metadata: { owner: "owner-account", machine: {} },
+              delegated_access_role: null,
+            },
+            {
+              id: "pool-host",
+              bay_id: "bay-0",
+              name: "Pool Host",
+              region: "us-west1",
+              public_url: null,
+              internal_url: null,
+              ssh_server: null,
+              tier: 0,
+              metadata: { machine: {} },
+              delegated_access_role: null,
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { selectActiveHost } = await import("./control");
+    await expect(selectActiveHost({ bay_id: "bay-0" })).resolves.toMatchObject({
+      id: "pool-host",
+    });
+    expect(resolveMembershipForAccountMock).not.toHaveBeenCalled();
+  });
+
+  it("filters automatic placement by account host access and membership tier", async () => {
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: { features: { project_host_tier: 0 } },
+    }));
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (
+        sql.includes("FROM project_hosts") &&
+        sql.includes("WHERE status='running'")
+      ) {
+        expect(params).toEqual(["bay-0", "account-1"]);
+        return {
+          rows: [
+            {
+              id: "high-tier-host",
+              bay_id: "bay-0",
+              name: "High Tier Host",
+              region: "us-west1",
+              public_url: null,
+              internal_url: null,
+              ssh_server: null,
+              tier: 2,
+              metadata: { machine: {} },
+              delegated_access_role: null,
+            },
+            {
+              id: "owned-private-host",
+              bay_id: "bay-0",
+              name: "Owned Private Host",
+              region: "us-west1",
+              public_url: null,
+              internal_url: null,
+              ssh_server: null,
+              tier: null,
+              metadata: { owner: "account-1", machine: {} },
+              delegated_access_role: null,
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { selectActiveHost } = await import("./control");
+    await expect(
+      selectActiveHost({ bay_id: "bay-0", account_id: "account-1" }),
+    ).resolves.toMatchObject({
+      id: "owned-private-host",
+      tier: undefined,
+    });
   });
 
   it("registers a new host placement without doing the long runtime start in createProject", async () => {
