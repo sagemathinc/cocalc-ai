@@ -235,6 +235,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "host resource cap mutation",
   },
+  "hosts.setHostPoolAccess": {
+    decision: "fresh-auth-required",
+    reason: "host public pool access mutation",
+  },
   "hosts.setHostRuntimeDeployments": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,

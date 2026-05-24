@@ -258,6 +258,7 @@ import {
   setHostOwnerSpendLimits,
   setHostAccess,
   setHostProjectRamLimit,
+  setHostPoolAccess,
   setHostRuntimeDeployments,
   getProjectBackupIndexesLocal,
   syncProjectBackupIndexesLocal,
@@ -1297,6 +1298,7 @@ async function startHostConnectionService(): Promise<void> {
     setHostProjectRamLimit: async (opts) => await setHostProjectRamLimit(opts),
     setHostOwnerSpendLimits: async (opts) =>
       await setHostOwnerSpendLimits(opts),
+    setHostPoolAccess: async (opts) => await setHostPoolAccess(opts),
     getHostLog: async ({ account_id, id, limit }) =>
       await getHostLog({
         account_id,

@@ -9,6 +9,7 @@ import {
   Popconfirm,
   Select,
   Space,
+  Switch,
   Tag,
   Tabs,
   Typography,
@@ -82,6 +83,7 @@ import { HostProjectsBrowser } from "./host-projects-browser";
 import { HostRootfsCachePanel } from "./host-rootfs-cache-panel";
 import { HostCurrentMetrics } from "./host-current-metrics";
 import { HostPlacementSummary, HostPressureTag } from "../pressure-ui";
+import { HostAccessPolicySummary } from "./host-access-policy";
 import { confirmHostDeprovision } from "./host-confirm";
 import { HostBillingEnforcementStatus } from "./host-billing-enforcement";
 import {
@@ -222,6 +224,11 @@ type HostDrawerViewModel = {
       owner_spend_limit_5h_usd?: number | null;
       owner_spend_limit_7d_usd?: number | null;
     },
+  ) => void | Promise<void>;
+  canSetHostPoolAccess?: boolean;
+  onSetHostPoolAccess?: (
+    id: string,
+    tier?: number | null,
   ) => void | Promise<void>;
   onStopRunningProjects?: (host: Host) => void | Promise<void>;
   onRestartRunningProjects?: (host: Host) => void | Promise<void>;
@@ -1392,6 +1399,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   const [projectRamLimitMb, setProjectRamLimitMb] = React.useState<
     number | null
   >(null);
+  const [poolAccessEnabled, setPoolAccessEnabled] = React.useState(false);
+  const [poolAccessTier, setPoolAccessTier] = React.useState(0);
   const [ownerSpendLimit5h, setOwnerSpendLimit5h] = React.useState<
     number | null
   >(null);
@@ -1450,6 +1459,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     onRemoveHostAccess,
     onSetHostProjectRamLimit,
     onSetHostOwnerSpendLimits,
+    canSetHostPoolAccess,
+    onSetHostPoolAccess,
     onStopRunningProjects,
     onRestartRunningProjects,
     selfHost,
@@ -1471,11 +1482,14 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
         : "green";
   React.useEffect(() => {
     setProjectRamLimitMb(host?.project_ram_limit_mb ?? null);
+    setPoolAccessEnabled(host?.tier != null);
+    setPoolAccessTier(host?.tier ?? 0);
     setOwnerSpendLimit5h(host?.owner_spend_limit_5h_usd ?? null);
     setOwnerSpendLimit7d(host?.owner_spend_limit_7d_usd ?? null);
   }, [
     host?.id,
     host?.project_ram_limit_mb,
+    host?.tier,
     host?.owner_spend_limit_5h_usd,
     host?.owner_spend_limit_7d_usd,
   ]);
@@ -2080,6 +2094,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     <Space orientation="vertical" style={{ width: "100%" }} size="middle">
       <Card size="small" title="Access">
         <Space orientation="vertical" style={{ width: "100%" }} size="small">
+          <HostAccessPolicySummary host={host} />
           <Typography.Text type="secondary">
             The host owner pays for this dedicated host. Managers can start/stop
             the host, manage access, configure the per-project RAM cap, and
@@ -2214,6 +2229,63 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           ) : (
             <Typography.Text type="secondary">
               Only the owner or a manager can edit host access.
+            </Typography.Text>
+          )}
+        </Space>
+      </Card>
+      <Card size="small" title="Public shared pool">
+        <Space orientation="vertical" style={{ width: "100%" }} size="small">
+          <Typography.Text type="secondary">
+            Admin-only policy. When enabled, this host is part of the shared
+            project-host pool, and users whose membership grants project host
+            tier greater than or equal to this value may create or move projects
+            here without delegated host access.
+          </Typography.Text>
+          <Space wrap>
+            <Switch
+              checked={poolAccessEnabled}
+              disabled={!canSetHostPoolAccess || !onSetHostPoolAccess}
+              onChange={setPoolAccessEnabled}
+            />
+            <InputNumber
+              min={0}
+              precision={0}
+              step={1}
+              addonBefore="Tier"
+              value={poolAccessTier}
+              disabled={
+                !poolAccessEnabled ||
+                !canSetHostPoolAccess ||
+                !onSetHostPoolAccess
+              }
+              onChange={(value) =>
+                setPoolAccessTier(typeof value === "number" ? value : 0)
+              }
+            />
+            <Button
+              type="primary"
+              loading={accessSavingKey === "pool"}
+              disabled={!canSetHostPoolAccess || !onSetHostPoolAccess}
+              onClick={async () => {
+                if (!onSetHostPoolAccess) return;
+                setAccessSavingKey("pool");
+                try {
+                  await onSetHostPoolAccess(
+                    host.id,
+                    poolAccessEnabled ? poolAccessTier : null,
+                  );
+                } finally {
+                  setAccessSavingKey(undefined);
+                }
+              }}
+            >
+              Save public pool policy
+            </Button>
+          </Space>
+          {!canSetHostPoolAccess && (
+            <Typography.Text type="secondary">
+              Only admins can publish hosts into the shared pool or change their
+              pool tier.
             </Typography.Text>
           )}
         </Space>

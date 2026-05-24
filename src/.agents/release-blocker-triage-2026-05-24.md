@@ -36,7 +36,7 @@ Status values:
 
 ### 1. Project-Host Access And Random Assignment Fallback
 
-Status: `backend fixed; UI access-policy copy/settings still open`
+Status: `done`
 
 Severity: high.
 
@@ -44,9 +44,10 @@ Why it matters: host assignment is a security, cost, and correctness boundary. U
 
 Known symptoms:
 
-- Public host access policy needs settings on the host card Access page.
-- Policy should include membership tier number and possibly hard limits.
-- Users currently may not see any hosts, but still get assigned to hosts randomly due to a bug or fallback. Backend fallback fixed in this round by making automatic start/move placement account-aware and safe-by-default without account context.
+- Public host access policy now has admin-only settings on the host Access page.
+- Policy includes shared-pool membership tier number and explanatory copy.
+- Host list/card rows summarize whether the host is private/delegated or in the shared pool.
+- Users previously could fail host visibility checks but still get assigned to hosts randomly due to a fallback. Backend fallback was fixed by making automatic start/move placement account-aware and safe-by-default without account context.
 
 Expected outcome:
 
@@ -57,9 +58,8 @@ Expected outcome:
 
 Next action:
 
-- Design and implement the host Access page controls/copy for public pool tier policy.
-- Decide whether host pool policy also needs hard per-host/project limits in the same UI or a follow-up.
-- Keep focused regression coverage around fallback placement eligibility when changing the policy UI.
+- Keep any future hard per-host/project public-pool limits as a follow-up under host runtime/access policy, not a release blocker for this item.
+- Preserve regression coverage around fallback placement eligibility and admin-only public pool access when changing the host placement UI/API.
 
 ### 2. GPU Host Validation For Nebius H200
 
