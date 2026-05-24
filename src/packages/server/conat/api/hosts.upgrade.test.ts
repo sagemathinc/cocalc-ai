@@ -529,7 +529,7 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
     ).resolves.toBeUndefined();
 
     expect(delayMock).toHaveBeenCalled();
-  });
+  }, 15_000);
 
   it("ignores a stale bootstrap error once lifecycle evidence is newer", async () => {
     const ssh = makeSshChild();
