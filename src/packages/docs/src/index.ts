@@ -326,7 +326,204 @@ what Codex changes, keep terminals and notebooks running, use TimeTravel, and
 share the same project state with collaborators.
 `;
 
+const CREATE_PROJECT_BODY = String.raw`
+## What projects are for
+
+A CoCalc project is a persistent Linux workspace with files, terminals,
+notebooks, chat, settings, collaborators, secrets, and an optional project host.
+Use one project for a class assignment, research computation, agent sandbox,
+paper, workshop, or team workspace.
+
+## Create a project
+
+1. Open **Projects**.
+2. Choose **New Project**.
+3. Give the project a clear name.
+4. Pick an initial setup if one is offered.
+5. Open the project and add files, collaborators, or runtime settings.
+
+Project names are for humans. The project id is the durable identifier used by
+APIs, agents, browser-session actions, project hosts, and logs.
+
+## Choose the right boundary
+
+Create separate projects when work needs different collaborators, secrets,
+software environments, compute resources, or retention policies. Keep related
+files in the same project when they share one runtime environment and should be
+reviewed together.
+
+## Why this matters in CoCalc
+
+Most CoCalc features are project-scoped. Once a project exists, humans and
+agents have a shared place to run commands, edit notebooks, manage secrets,
+configure the runtime image, and keep long-running work attached to durable
+backend state.
+`;
+
+const AI_CREDENTIALS_BODY = String.raw`
+## What AI credentials are for
+
+CoCalc-ai uses OpenAI access for integrated Codex chat. A user can connect a
+ChatGPT subscription or configure an OpenAI API key, depending on what access
+the deployment and account support.
+
+## Connect access for Codex
+
+1. Open Codex or the AI settings area.
+2. Choose **Sign in with ChatGPT** or configure an OpenAI API key.
+3. Complete the device authorization or key setup flow.
+4. Return to the Codex thread and start a concrete task.
+
+If device authorization is running, keep the authorization panel visible until
+the browser confirms that the account is connected.
+
+## Use project secrets for keys
+
+For code that calls OpenAI directly from a notebook, script, or terminal, store
+the API key as a project secret such as \`OPENAI_API_KEY\`. Do not paste keys
+into notebooks, chat messages, shell history, or committed files.
+
+## Why this matters in CoCalc
+
+AI access is both account-level and project-contextual. The account connection
+lets Codex work in the UI; project secrets let ordinary code and terminal-native
+agents use credentials without turning private tokens into shared content.
+`;
+
+const PROJECT_HOSTS_BODY = String.raw`
+## What project hosts are for
+
+A project host is compute capacity that can run CoCalc projects. Hosts can be
+local, cloud-backed, or dedicated to heavier workloads such as long-running
+research computations, courses, or agent sandboxes.
+
+## Create or choose a host
+
+1. Open the project host administration area.
+2. Configure a cloud provider or local host.
+3. Refresh the provider catalog if needed.
+4. Choose a machine type, region, disk size, and lifecycle policy.
+5. Start the host and wait for bootstrap to finish.
+6. Move or create projects on the host when it is ready.
+
+Use enough disk space for runtime images and project data. Very small disks can
+fail during image bootstrap or package installation.
+
+## Long-running work
+
+For research jobs, scheduled automation, or agent sandboxes, use a host with
+enough CPU, RAM, disk, and restart behavior for the workload. Keep important
+state in project files, a database, or another durable location rather than only
+inside a process.
+
+## Why this matters in CoCalc
+
+Project hosts make CoCalc more than a shared web editor. They let the workspace
+own real compute, run persistent services, use cloud machines economically, and
+give agents a stable Linux environment to work in.
+`;
+
+const PROJECT_FILES_BODY = String.raw`
+## What project files are for
+
+Project files are the shared filesystem for notebooks, scripts, terminals,
+LaTeX documents, datasets, whiteboards, and generated output. They are visible
+to collaborators, agents, terminals, and most project tools.
+
+## Add files
+
+1. Open the project.
+2. Use **New** to create notebooks, terminals, scripts, folders, and documents.
+3. Upload files or drag them into the file browser when appropriate.
+4. Organize related work into folders.
+5. Use descriptive names that humans and agents can refer to.
+
+Avoid putting credentials, large temporary build artifacts, or private tokens in
+ordinary files. Use project secrets for credentials.
+
+## Work with files from agents
+
+When asking Codex to edit files, name the relevant paths and expected outcome.
+For unsaved browser editor state, agents should use the live text editor or
+notebook APIs instead of assuming the filesystem copy is current.
+
+## Why this matters in CoCalc
+
+Files are the common substrate between humans, terminals, notebooks, Codex,
+TimeTravel, Git, and project hosts. Clear file organization makes the workspace
+easier to inspect, automate, recover, and teach.
+`;
+
+const GIT_BODY = String.raw`
+## What Git is for
+
+Git tracks deliberate versions of a repository: commits, branches, remotes, and
+reviews. Use it when you need portable history, collaboration with external
+tools, or a clean release record.
+
+## Use Git in a project
+
+1. Open a terminal in the project.
+2. Clone a repository or run \`git init\`.
+3. Configure remotes and credentials as needed.
+4. Commit meaningful changes.
+5. Push or pull through the terminal, file tools, or Git viewer.
+
+Store deploy keys and access tokens using project secrets or SSH keys, not
+inside the repository.
+
+## Git and TimeTravel
+
+Git and TimeTravel solve different problems. Git is for intentional repository
+history. TimeTravel is for file-focused recovery and inspection. When a file is
+in Git, TimeTravel can also make Git revisions easy to browse with a slider, and
+the Git viewer is available when you need full commit context.
+
+## Why this matters in CoCalc
+
+CoCalc projects are full Linux environments, so Git works like it does on a
+normal machine. The difference is that Git is integrated into a collaborative,
+browser-accessible workspace with terminals, notebooks, TimeTravel, and agents.
+`;
+
+const PYTHON_BODY = String.raw`
+## What Python in CoCalc is for
+
+Python in CoCalc is real Python running in a Linux project, not a browser-only
+runtime. You can use notebooks, scripts, terminals, virtual environments,
+package managers, LaTeX workflows, and agents in the same project.
+
+## Common ways to use Python
+
+1. Create a Jupyter notebook for exploratory work.
+2. Edit \`.py\` files for scripts, modules, and packages.
+3. Run \`python3\`, \`uv\`, \`pip\`, or \`conda\` in a terminal.
+4. Use Python from LaTeX workflows such as PyTeX when the document needs code.
+5. Install alternate Python versions or virtual environments when needed.
+
+Keep environment setup commands in a script, README, or runtime image workflow
+when other people or agents need to reproduce the project.
+
+## Why this matters in CoCalc
+
+CoCalc lets Python move naturally from notebook to script to paper in one
+durable workspace. The same project can contain experiments, production scripts,
+package installs, plots, papers, terminals, and Codex-driven automation.
+`;
+
 export const DOCS_ENTRIES: DocsEntry[] = [
+  {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: CREATE_PROJECT_BODY.trim(),
+    category: "Projects",
+    id: "projects.create-project",
+    lastReviewed: "2026-05-24",
+    slug: "projects/create-project",
+    status: "ready",
+    summary:
+      "Create a durable Linux workspace for files, notebooks, terminals, chat, and agents.",
+    title: "Create a project",
+  },
   {
     actions: [
       {
@@ -349,6 +546,17 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     title: "Project secrets",
   },
   {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: AI_CREDENTIALS_BODY.trim(),
+    category: "AI",
+    id: "ai.connect-credentials",
+    lastReviewed: "2026-05-24",
+    slug: "ai/connect-credentials",
+    status: "ready",
+    summary: "Connect ChatGPT or OpenAI API access for Codex and project code.",
+    title: "Connect AI access",
+  },
+  {
     actions: [
       {
         description: "Open a terminal in the active project.",
@@ -367,6 +575,18 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     summary:
       "Use durable collaborative terminals backed by real project Linux processes.",
     title: "Open a terminal",
+  },
+  {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: PROJECT_FILES_BODY.trim(),
+    category: "Files",
+    id: "files.project-files",
+    lastReviewed: "2026-05-24",
+    slug: "files/project-files",
+    status: "ready",
+    summary:
+      "Use the project filesystem as the shared place for notebooks, scripts, datasets, and output.",
+    title: "Work with project files",
   },
   {
     actions: [
@@ -389,6 +609,18 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     title: "Create a Jupyter notebook",
   },
   {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: PYTHON_BODY.trim(),
+    category: "Python",
+    id: "python.use-python",
+    lastReviewed: "2026-05-24",
+    slug: "python/use-python",
+    status: "ready",
+    summary:
+      "Use real Python through notebooks, scripts, terminals, virtual environments, and papers.",
+    title: "Use Python in CoCalc",
+  },
+  {
     actions: [
       {
         description: "Open project Settings -> Environment -> Runtime Image.",
@@ -407,6 +639,18 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     summary:
       "Choose, customize, and reuse the Linux software stack for a project.",
     title: "Runtime images and RootFS",
+  },
+  {
+    audiences: ["agents", "instructors", "researchers", "teams"],
+    body: PROJECT_HOSTS_BODY.trim(),
+    category: "Project hosts",
+    id: "hosts.project-hosts",
+    lastReviewed: "2026-05-24",
+    slug: "hosts/project-hosts",
+    status: "ready",
+    summary:
+      "Run projects on local or cloud-backed compute for courses, research, and agent sandboxes.",
+    title: "Use project hosts",
   },
   {
     actions: [
@@ -446,6 +690,18 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     status: "ready",
     summary: "Inspect, compare, and recover the history of files in a project.",
     title: "Use TimeTravel",
+  },
+  {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: GIT_BODY.trim(),
+    category: "Files",
+    id: "files.git",
+    lastReviewed: "2026-05-24",
+    slug: "files/git",
+    status: "ready",
+    summary:
+      "Use Git for repository history alongside TimeTravel for file-focused recovery.",
+    title: "Use Git",
   },
   {
     actions: [
