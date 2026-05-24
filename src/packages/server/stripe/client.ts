@@ -314,7 +314,7 @@ export class StripeClient {
       quantity: mesg.quantity,
       plan: mesg.plan,
       coupon: mesg.coupon_id,
-    };
+    } as any;
     await (await getConn()).subscriptions.update(subscription_id, changes);
     await this.update_database();
     if (mesg.coupon_id != null) {

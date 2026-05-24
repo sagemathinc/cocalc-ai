@@ -57,7 +57,7 @@ import {
   getCurrentSession,
   setStripeCheckoutSession,
 } from "./create-stripe-checkout-session";
-import type { Stripe } from "stripe";
+import type { Checkout } from "stripe";
 import { delay } from "awaiting";
 import { createCreditFromPaidStripePaymentIntent } from "./create-invoice";
 import syncPaidInvoices from "./sync-paid-invoices";
@@ -75,7 +75,7 @@ interface Options {
 
 export async function createStripeUsageBasedSubscription(
   opts: Options,
-): Promise<Stripe.Checkout.Session> {
+): Promise<Checkout.Session> {
   const { account_id, success_url, cancel_url } = opts;
   const log = (...args) => {
     logger.debug("createStripeUsageBasedSubscription", ...args);
@@ -328,7 +328,9 @@ export async function collectPayment({
   }
   const stripe = await getConn();
   const stripeAmount = moneyToStripe(amountValue);
-  await stripe.subscriptionItems.createUsageRecord(subscription_item, {
+  // Legacy usage-subscription path; newer Stripe typings removed this helper,
+  // but old metered subscription records still need compatibility.
+  await (stripe.subscriptionItems as any).createUsageRecord(subscription_item, {
     quantity: stripeAmount,
   });
   await stripe.subscriptions.update(sub.id, { billing_cycle_anchor: "now" });

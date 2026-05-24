@@ -10,7 +10,7 @@ import getConn from "@cocalc/server/stripe/connection";
 import getPool from "@cocalc/database/pool";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import getLogger from "@cocalc/backend/logger";
-import type { Stripe } from "stripe";
+import type { Checkout } from "stripe";
 import getEmailAddress from "@cocalc/server/accounts/get-email-address";
 import { MAX_COST } from "@cocalc/util/db-schema/purchases";
 import { moneyToCurrency, toDecimal } from "@cocalc/util/money";
@@ -32,7 +32,7 @@ interface Options {
 
 export const createStripeCheckoutSession = async (
   opts: Options,
-): Promise<Stripe.Checkout.Session> => {
+): Promise<Checkout.Session> => {
   const { account_id, cancel_url, force, line_items, success_url, token } =
     opts;
   logger.debug("createStripeCheckoutSession", opts);
@@ -128,9 +128,7 @@ export const setStripeCheckoutSession = async ({ account_id, session }) => {
   );
 };
 
-const getSession = async (
-  session_id: string,
-): Promise<Stripe.Checkout.Session> => {
+const getSession = async (session_id: string): Promise<Checkout.Session> => {
   const stripe = await getConn();
   return await stripe.checkout.sessions.retrieve(session_id);
 };

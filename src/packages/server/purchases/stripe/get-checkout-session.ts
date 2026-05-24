@@ -99,7 +99,7 @@ export default async function getCheckoutSession({
   };
   const session = await stripe.checkout.sessions.create({
     customer,
-    ui_mode: "embedded",
+    ui_mode: "embedded_page",
     line_items: lineItemsWithoutCredit.map(({ amount, description }) => {
       return {
         price_data: {

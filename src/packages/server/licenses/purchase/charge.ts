@@ -8,7 +8,7 @@
 */
 
 import { getLogger } from "@cocalc/backend/logger";
-import { Stripe, StripeClient } from "@cocalc/server/stripe/client";
+import { StripeClient } from "@cocalc/server/stripe/client";
 import getConn from "@cocalc/server/stripe/connection";
 import { PurchaseInfo } from "@cocalc/util/purchases/quota/types";
 import { getDays } from "@cocalc/util/stripe/timecalcs";
@@ -200,7 +200,7 @@ async function stripePurchaseProduct(
     // amount we quoted the when creating the vouchers.
     await conn.invoiceItems.create({
       customer,
-      price,
+      pricing: { price },
       quantity,
       metadata: info as any,
     });
@@ -217,7 +217,7 @@ async function stripePurchaseProduct(
     // Item gets automatically put on the invoice created below.
     await conn.invoiceItems.create({
       customer,
-      price,
+      pricing: { price },
       quantity,
       period,
     });
@@ -235,7 +235,7 @@ async function stripePurchaseProduct(
     tax_percent: tax_percent
       ? Math.round(tax_percent * 100 * 100) / 100
       : undefined,
-  } as Stripe.InvoiceCreateParams;
+  } as any;
 
   logger.debug("stripePurchaseProduct options=", JSON.stringify(options));
 
@@ -254,14 +254,15 @@ async function stripePurchaseProduct(
             payment_method: info.payment_method,
           },
     );
-    logger.debug("stripePurchaseProduct -- paid = ", invoice.paid);
+    const paid = invoice.status == "paid";
+    logger.debug("stripePurchaseProduct -- paid = ", paid);
     if (info.type === "quota") {
       logger.debug("stripePurchaseProduct -- remove discount from customer");
       // remove coupon so it isn't automatically applied
       await conn.customers.deleteDiscount(customer);
     }
 
-    if (!invoice.paid) {
+    if (!paid) {
       logger.debug(
         "stripePurchaseProduct -- invoice failed to be paid, so cancel",
       );

@@ -27,7 +27,7 @@ import getLogger from "@cocalc/backend/logger";
 import getEmailAddress from "@cocalc/server/accounts/get-email-address";
 import { getStripeCustomerId } from "./stripe/util";
 import { getCurrentSession } from "./create-stripe-checkout-session";
-import type { Stripe } from "stripe";
+import type { Checkout } from "stripe";
 
 const logger = getLogger("purchases:create-stripe-payment-method-session");
 
@@ -39,7 +39,7 @@ interface Options {
 
 export default async function createStripePaymentMethodSession(
   opts: Options,
-): Promise<Stripe.Checkout.Session> {
+): Promise<Checkout.Session> {
   const { account_id, success_url, cancel_url } = opts;
   const log = (...args) => {
     logger.debug("createStripePaymentMethodSession", ...args);

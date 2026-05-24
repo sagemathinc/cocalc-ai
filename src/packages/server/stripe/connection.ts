@@ -18,12 +18,11 @@ import Stripe from "stripe";
 import { getServerSettings } from "@cocalc/database/settings";
 
 // See https://stripe.com/docs/api/versioning
-//const apiVersion = "2025-02-24.acacia";
-const apiVersion = "2024-12-18.acacia" as any;
+const apiVersion = "2026-04-22.dahlia";
 
-interface StripeWithPublishableKey extends Stripe {
+type StripeWithPublishableKey = InstanceType<typeof Stripe> & {
   publishable_key: string;
-}
+};
 
 let stripe: StripeWithPublishableKey | undefined = undefined;
 let key: string = "";

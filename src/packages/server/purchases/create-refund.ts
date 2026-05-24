@@ -82,12 +82,16 @@ async function refundCredit(
     paymentIntentId = invoice_id;
     // it's actually a payment intent id (not an invoice_id), so we have to grab that and get the invoice from there.
     const intent = await stripe.paymentIntents.retrieve(invoice_id);
-    invoice_id = intent.invoice;
+    const intentInvoice = (intent as any).invoice;
+    if (typeof intentInvoice != "string") {
+      throw Error("payment intent does not reference a refundable invoice");
+    }
+    invoice_id = intentInvoice;
   }
 
   logger.debug("get the invoice_id", invoice_id);
   const invoice = await stripe.invoices.retrieve(invoice_id);
-  const { charge } = invoice;
+  const { charge } = invoice as any;
   logger.debug("got invoice charge = ", { charge });
   if (!charge || typeof charge != "string") {
     throw Error(
