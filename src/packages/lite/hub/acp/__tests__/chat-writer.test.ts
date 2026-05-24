@@ -14,6 +14,7 @@ import {
   threadConfigSenderId,
 } from "@cocalc/chat";
 import {
+  acpTestInternals,
   ChatStreamWriter,
   disposeAllChatWritersForTests,
   recoverCurrentWorkerStuckAcpTurns,
@@ -2530,6 +2531,125 @@ describe("repairInterruptedAcpTurn", () => {
     expect(finalChat?.generating).toBe(false);
     expect(finalChat?.acp_interrupted).toBe(true);
     expect(finalThreadState?.state).toBe("interrupted");
+  });
+});
+
+describe("queued ACP user message projection", () => {
+  it("persists per-message queued state for every queued followup", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    (turns.listRunningAcpTurnLeases as any).mockReturnValue([
+      {
+        project_id: "p",
+        path: "chat",
+        thread_id: "thread-1",
+        state: "running",
+      },
+    ]);
+    syncdb.set({
+      event: "chat",
+      date: "2026-03-19T20:20:00.000Z",
+      sender_id: "user",
+      message_id: "user-queued-1",
+      thread_id: "thread-1",
+      history: [{ content: "first queued followup" }],
+    });
+    syncdb.set({
+      event: "chat",
+      date: "2026-03-19T20:20:01.000Z",
+      sender_id: "user",
+      message_id: "user-queued-2",
+      thread_id: "thread-1",
+      history: [{ content: "second queued followup" }],
+    });
+
+    const firstState =
+      await acpTestInternals.persistQueuedUserMessageProjection({
+        client: makeFakeClient() as any,
+        project_id: "p",
+        path: "chat",
+        thread_id: "thread-1",
+        user_message_id: "user-queued-1",
+        queued: true,
+      });
+    const secondState =
+      await acpTestInternals.persistQueuedUserMessageProjection({
+        client: makeFakeClient() as any,
+        project_id: "p",
+        path: "chat",
+        thread_id: "thread-1",
+        user_message_id: "user-queued-2",
+        queued: true,
+      });
+
+    expect(firstState).toBe("queued");
+    expect(secondState).toBe("queued");
+    expect(
+      syncdb.get_one({ event: "chat", message_id: "user-queued-1" })?.acp_state,
+    ).toBe("queued");
+    expect(
+      syncdb.get_one({ event: "chat", message_id: "user-queued-2" })?.acp_state,
+    ).toBe("queued");
+    expect(
+      syncdb.get_one({
+        event: "chat-thread-state",
+        thread_id: "thread-1",
+      })?.active_message_id,
+    ).toBe("user-queued-2");
+  });
+
+  it("does not mark an idle submitted message as queued", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    syncdb.set({
+      event: "chat",
+      date: "2026-03-19T20:20:02.000Z",
+      sender_id: "user",
+      message_id: "user-active",
+      thread_id: "thread-1",
+      history: [{ content: "start working" }],
+    });
+
+    const state = await acpTestInternals.persistQueuedUserMessageProjection({
+      client: makeFakeClient() as any,
+      project_id: "p",
+      path: "chat",
+      thread_id: "thread-1",
+      user_message_id: "user-active",
+      queued: true,
+    });
+
+    expect(state).toBe("running");
+    expect(
+      syncdb.get_one({ event: "chat", message_id: "user-active" })?.acp_state,
+    ).toBeUndefined();
+  });
+
+  it("clears queued state when a queued user message starts executing", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    syncdb.set({
+      event: "chat",
+      date: "2026-03-19T20:21:00.000Z",
+      sender_id: "user",
+      message_id: "user-queued",
+      thread_id: "thread-1",
+      parent_message_id: "assistant-previous",
+      acp_state: "queued",
+      history: [{ content: "queued followup" }],
+    });
+
+    await acpTestInternals.prepareQueuedUserMessageForExecution({
+      client: makeFakeClient() as any,
+      project_id: "p",
+      path: "chat",
+      thread_id: "thread-1",
+      user_message_id: "user-queued",
+    });
+
+    expect(
+      syncdb.get_one({ event: "chat", message_id: "user-queued" })?.acp_state,
+    ).toBeNull();
   });
 });
 

@@ -639,6 +639,11 @@ function isThread(message: ChatMessageTyped, numChildren: NumChildren) {
   return d != null ? (numChildren[d] ?? 0) > 0 : false;
 }
 
+function normalizeMessageAcpState(state: unknown): string | undefined {
+  if (state === "queued") return "queue";
+  return typeof state === "string" && state.length > 0 ? state : undefined;
+}
+
 // Messages are sorted using each message record's `date` value.
 // We avoid relying on Map key shape, since cache internals are migrating
 // away from date-keyed storage.
@@ -1166,8 +1171,10 @@ export function MessageList({
     }
     const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
     const messageAcpState = messageId
-      ? (acpState?.get?.(`message:${messageId}`) ??
-        field<string>(message, "acp_state"))
+      ? normalizeMessageAcpState(
+          acpState?.get?.(`message:${messageId}`) ??
+            field<string>(message, "acp_state"),
+        )
       : undefined;
     const activitySteers = messageId
       ? activitySteersByAssistantMessageId?.get(messageId)
