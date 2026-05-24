@@ -14,12 +14,12 @@ export function isNewProjectRootfsSelectable({
 }): boolean {
   if (entry.hidden || entry.blocked) return false;
   if (!isGpu && entry.gpu === true) return false;
-  if (!isAdmin && !isManagedRootfsImageName(entry.image)) return false;
+  if (!isAdmin && !isManagedEntry(entry)) return false;
   return true;
 }
 
 function isManagedEntry(entry: RootfsImageEntry): boolean {
-  return isManagedRootfsImageName(entry.image);
+  return !!entry.release_id || isManagedRootfsImageName(entry.image);
 }
 
 export function chooseNewProjectRootfsDefault({

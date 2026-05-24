@@ -198,7 +198,7 @@ export default function RootFilesystemImage({
     () =>
       canUseCustomRootfs
         ? rootfsImages
-        : rootfsImages.filter((entry) => isManagedRootfsImageName(entry.image)),
+        : rootfsImages.filter((entry) => rootfsEntryIsManaged(entry)),
     [canUseCustomRootfs, rootfsImages],
   );
 
@@ -3200,4 +3200,8 @@ function renderRootfsWarning(
       </Paragraph>
     );
   }
+}
+
+function rootfsEntryIsManaged(entry: RootfsImageEntry): boolean {
+  return !!entry.release_id || isManagedRootfsImageName(entry.image);
 }

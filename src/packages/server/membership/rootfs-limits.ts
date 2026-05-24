@@ -226,10 +226,12 @@ async function catalogImageIsTrusted({
   }
   if (!clauses.length) return false;
   const { rows } = await pool.query<{
+    release_id: string | null;
     runtime_image: string;
     trusted: boolean;
   }>(
-    `SELECT runtime_image,
+    `SELECT release_id,
+            runtime_image,
             COALESCE(official, false) OR COALESCE(prepull, false) AS trusted
        FROM rootfs_images
       WHERE (${clauses.join(" OR ")})
@@ -240,10 +242,7 @@ async function catalogImageIsTrusted({
     params,
   );
   const row = rows[0];
-  return (
-    row?.trusted === true &&
-    isManagedRootfsImageName(`${row.runtime_image ?? ""}`.trim())
-  );
+  return row?.trusted === true && !!`${row.release_id ?? ""}`.trim();
 }
 
 async function assertRootfsScanSelectionAllowed({

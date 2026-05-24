@@ -88,7 +88,13 @@ describe("rootfs membership limits", () => {
       if (sql.includes("COALESCE(official, false) OR COALESCE(prepull")) {
         return {
           rows: trusted
-            ? [{ runtime_image: "cocalc.local/rootfs/official", trusted: true }]
+            ? [
+                {
+                  release_id: "release-official",
+                  runtime_image: "docker.io/example/official:latest",
+                  trusted: true,
+                },
+              ]
             : [],
         };
       }
@@ -296,7 +302,7 @@ describe("rootfs membership limits", () => {
     );
   });
 
-  it("allows only managed trusted catalog images without OCI-image entitlement", async () => {
+  it("allows only released trusted catalog images without OCI-image entitlement", async () => {
     const { assertCanSelectProjectRootfsImage } =
       await import("./rootfs-limits");
     await expect(
@@ -312,7 +318,7 @@ describe("rootfs membership limits", () => {
     await expect(
       assertCanSelectProjectRootfsImage({
         account_id,
-        image: "cocalc.local/rootfs/official",
+        image: "docker.io/example/official:latest",
         image_id: "official-example",
       }),
     ).resolves.toBeUndefined();
