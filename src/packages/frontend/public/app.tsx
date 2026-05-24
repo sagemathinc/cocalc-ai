@@ -19,6 +19,7 @@ import { publicPath } from "./routes";
 
 const PublicAboutApp = lazy(() => import("./about/app"));
 const PublicAuthApp = lazy(() => import("./auth/app"));
+const PublicDocsApp = lazy(() => import("./docs/app"));
 const PublicFeaturesApp = lazy(() => import("./features/app"));
 const PublicHomeApp = lazy(() => import("./home/app"));
 const PublicLangApp = lazy(() => import("./lang/app"));
@@ -109,6 +110,10 @@ function PublicRouteBody({
         redirectToPath={redirectToPath}
       />
     );
+  }
+
+  if (initialRoute.section === "docs") {
+    return <PublicDocsApp config={config} initialRoute={initialRoute.route} />;
   }
 
   if (initialRoute.section === "features") {

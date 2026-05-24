@@ -508,9 +508,6 @@ export default function TerminalFeaturePage({
                 <LinkButton href={`${GUIDE_BASE}/terminal/`}>
                   Terminal field guide
                 </LinkButton>
-                <LinkButton href="https://doc.cocalc.com/terminal.html">
-                  Terminal documentation
-                </LinkButton>
               </Flex>
             </Flex>
           </Col>

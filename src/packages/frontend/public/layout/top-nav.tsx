@@ -24,6 +24,7 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 
 type PublicInfoPageKey =
   | "home"
+  | "docs"
   | "features"
   | "products"
   | "pricing"
@@ -126,6 +127,7 @@ export default function PublicTopNav({
       rel: "noreferrer",
       target: "_blank",
     },
+    { href: appPath("docs"), key: "docs", label: "Docs" },
     { href: appPath("products"), key: "products", label: "Products" },
     { href: appPath("pricing"), key: "pricing", label: "Pricing" },
     { href: appPath("news"), key: "news", label: "News" },

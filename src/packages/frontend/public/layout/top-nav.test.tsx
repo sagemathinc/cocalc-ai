@@ -76,6 +76,7 @@ describe("PublicTopNav", () => {
       "Projects",
       "Features",
       "Field guides",
+      "Docs",
       "Products",
       "Pricing",
       "News",
@@ -116,6 +117,7 @@ describe("PublicTopNav", () => {
     ).toEqual([
       "Features",
       "Field guides",
+      "Docs",
       "Products",
       "Pricing",
       "News",
@@ -250,6 +252,7 @@ describe("PublicTopNav", () => {
     ).toEqual([
       "Features",
       "Field guides",
+      "Docs",
       "Products",
       "Pricing",
       "News",

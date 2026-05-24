@@ -21,7 +21,8 @@ export const SHARE_FLAGS = {
 } as const;
 
 // documentation pages
-export const DOC_AI = "https://doc.cocalc.com/ai.html";
+export const DOC_AI =
+  "https://sagemathinc.github.io/cocalc-guides/codex-agent-chat/";
 
 export const COCALC_CLI_DOWNLOAD_URL =
   "https://software.cocalc.ai/software/cocalc/index.html";

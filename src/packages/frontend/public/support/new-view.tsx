@@ -9,9 +9,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Button, Divider, Input, Radio, Space, Typography } from "antd";
 
 import api from "@cocalc/frontend/client/api";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import { joinUrlPath } from "@cocalc/util/url-path";
 import RecentFiles from "./recent-files";
 
 type SupportView = "index" | "new" | "tickets";
@@ -578,7 +580,9 @@ export default function SupportNew({
               description={
                 <ul style={{ marginBottom: 0, paddingLeft: 18 }}>
                   <li>
-                    <a href="https://doc.cocalc.com/">The CoCalc Manual</a>
+                    <a href={joinUrlPath(appBasePath, "docs")}>
+                      CoCalc documentation
+                    </a>
                   </li>
                   <li>
                     <a href="https://github.com/sagemathinc/cocalc-ai/issues">

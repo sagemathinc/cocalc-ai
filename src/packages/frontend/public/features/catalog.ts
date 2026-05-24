@@ -31,7 +31,6 @@ export const FEATURE_PAGES: FeaturePage[] = [
     summary:
       "Run Jupyter notebooks directly in the browser with collaboration, synchronized output, time travel, and course workflows built in.",
     image: "/public/features/cocalc-jupyter2-20170508.png",
-    docsUrl: "https://doc.cocalc.com/jupyter.html",
     index: true,
     sections: [
       {
@@ -59,7 +58,6 @@ export const FEATURE_PAGES: FeaturePage[] = [
     summary:
       "Edit LaTeX in the browser with synchronized collaboration, build output, history, and the rest of the CoCalc project environment close by.",
     image: "/public/features/latex-editor-main-20251003.png",
-    docsUrl: "https://doc.cocalc.com/latex.html",
     index: true,
   },
   {
@@ -158,7 +156,6 @@ export const FEATURE_PAGES: FeaturePage[] = [
     summary:
       "Work in a shared Linux shell, keep tools and files near your notebooks and documents, and avoid local environment drift.",
     image: "/public/features/terminal.png",
-    docsUrl: "https://doc.cocalc.com/terminal.html",
     index: true,
     sections: [
       {
@@ -188,7 +185,6 @@ export const FEATURE_PAGES: FeaturePage[] = [
     summary:
       "Organize assignments, distribute files, collect work, and grade notebooks or other project files with a workflow built for technical classes.",
     image: "/public/features/cocalc-course-assignments-2019.png",
-    docsUrl: "https://doc.cocalc.com/teaching-instructors.html",
     index: true,
     sections: [
       {

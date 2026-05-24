@@ -375,7 +375,7 @@ export default function TeachingFeaturePage({
                 <Button href={`${GUIDE_BASE}/teaching/`}>
                   Read the teaching guide
                 </Button>
-                <LinkButton href="https://doc.cocalc.com/teaching-instructors.html">
+                <LinkButton href={`${GUIDE_BASE}/teaching/`}>
                   Instructor manual
                 </LinkButton>
               </Flex>
@@ -561,7 +561,7 @@ export default function TeachingFeaturePage({
                 automatic checks, hidden-test policy, output limits, timeouts,
                 and choosing where autograding runs.
               </Paragraph>
-              <LinkButton href="https://doc.cocalc.com/teaching-nbgrader.html">
+              <LinkButton href={`${GUIDE_BASE}/teaching/`}>
                 nbgrader documentation
               </LinkButton>
             </Flex>

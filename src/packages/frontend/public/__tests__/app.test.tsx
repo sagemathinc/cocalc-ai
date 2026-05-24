@@ -130,6 +130,19 @@ describe("section route parsers", () => {
     ).toEqual({
       view: "products-cocalc-rocket",
     });
+    expect(getPublicRouteFromPath(publicPath("docs"))).toEqual({
+      route: { view: "docs-index" },
+      section: "docs",
+    });
+    expect(
+      getPublicRouteFromPath(publicPath("docs/projects/project-secrets")),
+    ).toEqual({
+      route: {
+        slug: "projects/project-secrets",
+        view: "docs-detail",
+      },
+      section: "docs",
+    });
     expect(getPublicRouteFromPath(publicPath("support/status"))).toEqual({
       section: "not-found",
     });
@@ -142,6 +155,7 @@ describe("section route parsers", () => {
     expect(isPublicTarget("/software/cocalc-plus")).toBe(false);
     expect(isPublicTarget("/pricing")).toBe(true);
     expect(isPublicTarget("/features/jupyter-notebook")).toBe(true);
+    expect(isPublicTarget("/docs/projects/project-secrets")).toBe(true);
     expect(isPublicTarget("/invites/abc")).toBe(true);
   });
 
