@@ -13,6 +13,11 @@ import {
 } from "@cocalc/http-api/lib/api/schema/user-query";
 
 async function handle(req, res) {
+  if (req.header("Authorization")) {
+    res.json({ error: "API keys are not allowed to use user-query" });
+    return;
+  }
+
   const account_id = await getAccountId(req);
   // account_id = undefined <--> anonymous queries, which do exist.
 
