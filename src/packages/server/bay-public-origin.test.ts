@@ -267,4 +267,39 @@ describe("bay-public-origin", () => {
       ),
     ).resolves.toBe("https://bay-2-lite4b.cocalc.ai");
   });
+
+  it("uses the request origin for browser bootstrap when self-managed Cloudflare is incomplete", async () => {
+    getServerSettingsMock = jest.fn(async () => ({
+      cloudflare_mode: "self",
+      project_hosts_cloudflare_tunnel_enabled: true,
+      project_hosts_cloudflare_tunnel_account_id: "account-id",
+      project_hosts_cloudflare_tunnel_api_token: "token",
+      project_hosts_dns: "",
+      dns: "lite2b.cocalc.ai",
+    }));
+    process.env.COCALC_BAY_ID = "bay-0";
+    process.env.COCALC_CLUSTER_SEED_BAY_ID = "bay-0";
+    const {
+      getBayPublicOriginForRequest,
+      getBrowserCookieDomainForRequest,
+      getSitePublicOriginForRequest,
+    } = await import("./bay-public-origin");
+    const req = {
+      headers: {
+        host: "localhost:9100",
+      },
+      protocol: "http",
+      secure: false,
+    } as any;
+
+    await expect(getSitePublicOriginForRequest(req)).resolves.toBe(
+      "http://localhost:9100",
+    );
+    await expect(getBayPublicOriginForRequest(req, "bay-0")).resolves.toBe(
+      "http://localhost:9100",
+    );
+    await expect(
+      getBrowserCookieDomainForRequest(req),
+    ).resolves.toBeUndefined();
+  });
 });

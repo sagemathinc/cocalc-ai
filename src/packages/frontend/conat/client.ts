@@ -363,8 +363,20 @@ export class ConatClient extends EventEmitter {
     }
     const stored = getStoredControlPlaneOrigin();
     if (stored) {
-      this.updateAddress(stored);
-      return;
+      try {
+        const bootstrap = await getAuthBootstrap(stored);
+        if (bootstrap.signed_in) {
+          const origin =
+            normalizeControlPlaneOrigin(bootstrap.home_bay_url) ?? stored;
+          setStoredControlPlaneOrigin(origin);
+          this.updateAddress(origin);
+          return;
+        }
+      } catch {
+        // The stored control-plane origin may be stale or temporarily
+        // unreachable. Fall through to same-origin bootstrap so localhost
+        // remains recoverable during partially configured deployments.
+      }
     }
     const cookie = Cookies.get(ACCOUNT_ID_COOKIE);
     if (!cookie) {

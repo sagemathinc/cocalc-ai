@@ -420,6 +420,7 @@ export async function bootstrapCloudflareConfiguration(opts: {
     cloudflare_mode: "self",
     project_hosts_cloudflare_tunnel_enabled: "yes",
     project_hosts_cloudflare_tunnel_account_id: accountId,
+    project_hosts_dns: domain,
     dns: domain,
     r2_account_id: accountId,
   };

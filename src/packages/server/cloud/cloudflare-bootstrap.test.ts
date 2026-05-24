@@ -104,6 +104,7 @@ describe("bootstrapCloudflareConfiguration", () => {
     expect(result.values.project_hosts_cloudflare_tunnel_api_token).toBe(
       "durable-token",
     );
+    expect(result.values.project_hosts_dns).toBe("cocalc.example.edu");
     expect(result.values.r2_api_token).toBe("durable-token");
     expect(result.visitor_location_headers.ok).toBe(true);
     expect(result.bootstrap_token_invalidated).toBe(true);

@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import CloudflareConfigWizard from "./cloudflare-config-wizard";
 
 jest.mock(
@@ -109,5 +109,36 @@ describe("CloudflareConfigWizard", () => {
     expect(
       screen.getByText(/save them and restart the server/i),
     ).toBeInTheDocument();
+  });
+
+  it("saves the external domain as both site dns and project-host dns", async () => {
+    const onApply = jest.fn(async () => {});
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={() => {}}
+        data={baseData}
+        isSet={{
+          project_hosts_cloudflare_tunnel_api_token: true,
+          r2_api_token: true,
+          r2_secret_access_key: true,
+        }}
+        onApply={onApply}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("R2 Access Key ID"), {
+      target: { value: "r2-access-key" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Apply Settings" }));
+    });
+
+    expect(onApply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dns: "cocalc.example.edu",
+        project_hosts_dns: "cocalc.example.edu",
+      }),
+    );
   });
 });

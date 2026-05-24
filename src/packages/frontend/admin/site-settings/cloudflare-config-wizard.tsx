@@ -284,7 +284,10 @@ export default function CloudflareConfigWizard({
         updates.project_hosts_cloudflare_tunnel_prefix = tunnelPrefix;
       if (hostSuffix)
         updates.project_hosts_cloudflare_tunnel_host_suffix = hostSuffix;
-      if (externalDomain) updates.dns = externalDomain;
+      if (externalDomain) {
+        updates.dns = externalDomain;
+        updates.project_hosts_dns = externalDomain;
+      }
       if (accountId) updates.r2_account_id = accountId;
       if (r2ApiToken) updates.r2_api_token = r2ApiToken;
       if (r2AccessKey) updates.r2_access_key_id = r2AccessKey;
