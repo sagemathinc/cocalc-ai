@@ -16,7 +16,7 @@ import {
   type MoneyValue,
 } from "@cocalc/util/money";
 import getBalance from "./get-balance";
-import { ALLOWED_SLACK } from "./shopping-cart-checkout";
+import { ALLOWED_SLACK } from "./allowed-slack";
 
 // Throws an exception if purchase is not allowed.  Code should
 // call this before giving the thing and doing createPurchase.

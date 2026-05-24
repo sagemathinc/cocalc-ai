@@ -20,7 +20,6 @@ import "./agents";
 import "./patches";
 import "./projects";
 import "./purchases";
-import "./shopping-cart-items";
 import "./statements";
 import "./subscriptions";
 import "./syncstrings";

@@ -37,13 +37,6 @@ export default function Home() {
         id="home-tickets"
       />
       <View
-        style={STYLE}
-        table="shopping-cart-items"
-        view="gallery"
-        name="Shopping Cart Items"
-        id="home-shopping"
-      />
-      <View
         style={{ ...STYLE, width: "95%", margin: "15px 2.5%" }}
         table="accounts"
         view="calendar"

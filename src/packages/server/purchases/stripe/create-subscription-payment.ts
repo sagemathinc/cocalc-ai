@@ -8,7 +8,7 @@ import {
   toDecimal,
 } from "@cocalc/util/money";
 import dayjs from "dayjs";
-import { ALLOWED_SLACK } from "@cocalc/server/purchases/shopping-cart-checkout";
+import { ALLOWED_SLACK } from "@cocalc/server/purchases/allowed-slack";
 import type { Subscription } from "@cocalc/util/db-schema/subscriptions";
 import createPaymentIntent from "./create-payment-intent";
 import {
@@ -387,19 +387,21 @@ async function clearResumeSubscriptionPayment({ paymentIntent }) {
 }
 
 export async function resumeSubscriptionSetPaymentIntent({
+  account_id,
   subscription_id,
   paymentIntentId,
 }: {
+  account_id: string;
   subscription_id: number;
   paymentIntentId: string;
 }) {
   const pool = getPool();
   const { rows } = await pool.query(
-    "SELECT resume_payment_intent, interval FROM subscriptions WHERE id=$1",
-    [subscription_id],
+    "SELECT resume_payment_intent, interval FROM subscriptions WHERE id=$1 AND account_id=$2",
+    [subscription_id, account_id],
   );
   if (rows.length == 0) {
-    throw Error(`no such subscription id=${subscription_id}`);
+    throw Error(`You do not have a subscription with id ${subscription_id}.`);
   }
   if (rows[0].resume_payment_intent) {
     const stripe = await getConn();

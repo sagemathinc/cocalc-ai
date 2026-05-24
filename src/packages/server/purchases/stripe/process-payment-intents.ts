@@ -5,12 +5,7 @@ import createCredit from "@cocalc/server/purchases/create-credit";
 import { LineItem } from "@cocalc/util/stripe/types";
 import { stripeToDecimal } from "@cocalc/util/stripe/calc";
 import {
-  shoppingCartCheckout,
-  shoppingCartPutItemsBack,
-} from "@cocalc/server/purchases/shopping-cart-checkout";
-import {
   AUTO_CREDIT,
-  SHOPPING_CART_CHECKOUT,
   SUBSCRIPTION_RENEWAL,
   RESUME_SUBSCRIPTION,
   MEMBERSHIP_CHANGE,
@@ -31,6 +26,7 @@ import {
   moneyToCurrency,
   toDecimal,
 } from "@cocalc/util/money";
+import type { MoneyValue } from "@cocalc/util/money";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import getBalance from "@cocalc/server/purchases/get-balance";
 import getPool from "@cocalc/database/pool";
@@ -38,7 +34,7 @@ import { getTransactionClient } from "@cocalc/database/pool";
 import { recordPaymentIntent } from "./create-payment-intent";
 import createVouchers from "@cocalc/server/vouchers/create-vouchers";
 import purchaseMembershipPackage from "@cocalc/server/purchases/membership-package";
-import type { MembershipPackageProduct } from "@cocalc/util/db-schema/shopping-cart-items";
+import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
 
 const logger = getLogger("purchases:stripe:process-payment-intents");
 
@@ -244,19 +240,7 @@ customer.  So we don't know what to do with this.  Please manually investigate.
 
       let result = "we did NOT add credit to your account";
       try {
-        if (paymentIntent.metadata.purpose == SHOPPING_CART_CHECKOUT) {
-          result = "the items you were buying were put back in your cart";
-          // free up the items so they can be purchased again.
-          // The purpose of this payment was to buy certain items from the store.  We use the credit we just got above
-          // to provision each of those items.
-          const cart_ids =
-            paymentIntent.metadata.cart_ids != null
-              ? JSON.parse(paymentIntent.metadata.cart_ids)
-              : undefined;
-          if (cart_ids != null) {
-            await shoppingCartPutItemsBack({ cart_ids });
-          }
-        } else if (paymentIntent.metadata.purpose == SUBSCRIPTION_RENEWAL) {
+        if (paymentIntent.metadata.purpose == SUBSCRIPTION_RENEWAL) {
           result = `we did NOT renew subscription (id=${paymentIntent.metadata.subscription_id})`;
           await processSubscriptionRenewalFailure({
             paymentIntent,
@@ -365,21 +349,7 @@ ${await support()}`;
 
     let reason = "add credit to your account";
     try {
-      if (paymentIntent.metadata.purpose == SHOPPING_CART_CHECKOUT) {
-        reason = "purchase items in your shopping cart";
-        // The purpose of this payment was to buy certain items from the store.
-        // We use the credit we just got above to provision each of those items.
-        await shoppingCartCheckout({
-          account_id,
-          payment_intent: paymentIntent.id,
-          amount,
-          credit_id,
-          cart_ids:
-            paymentIntent.metadata.cart_ids != null
-              ? JSON.parse(paymentIntent.metadata.cart_ids)
-              : undefined,
-        });
-      } else if (paymentIntent.metadata.purpose == SUBSCRIPTION_RENEWAL) {
+      if (paymentIntent.metadata.purpose == SUBSCRIPTION_RENEWAL) {
         reason = `renew a subscription (id=${paymentIntent.metadata.subscription_id})`;
         await processSubscriptionRenewal({ account_id, paymentIntent, amount });
       } else if (paymentIntent.metadata.purpose == RESUME_SUBSCRIPTION) {
@@ -395,6 +365,7 @@ ${await support()}`;
             | "year",
           allowDowngrade: paymentIntent.metadata.allow_downgrade === "true",
           storeVisibleOnly: true,
+          paymentAmount: amount,
         });
       } else if (
         paymentIntent.metadata.purpose == MEMBERSHIP_PACKAGE_PURCHASE
@@ -427,6 +398,7 @@ ${await support()}`;
             credit_id,
             expire: null,
             numVouchers: count,
+            paymentAmount: amount,
             title,
             whenPay: "now",
           });
@@ -442,11 +414,12 @@ ${await support()}`;
           paymentIntent.metadata.purpose.split("-")[1],
         );
         reason = `pay balance on monthly statement (id=${statement_id})`;
-        const pool = getPool();
-        await pool.query(
-          "UPDATE statements SET paid_purchase_id=$1 WHERE id=$2",
-          [credit_id, statement_id],
-        );
+        await markStatementPaidByPurchase({
+          account_id,
+          statement_id,
+          credit_id,
+          amount,
+        });
       }
       send({
         to_ids: [account_id],
@@ -505,6 +478,55 @@ ${await support()}
     return credit_id;
   },
 );
+
+export async function markStatementPaidByPurchase({
+  account_id,
+  statement_id,
+  credit_id,
+  amount,
+}: {
+  account_id: string;
+  statement_id: number;
+  credit_id: number;
+  amount: MoneyValue;
+}) {
+  if (!Number.isInteger(statement_id)) {
+    throw Error("invalid statement id");
+  }
+  const pool = getPool();
+  const { rows } = await pool.query(
+    "SELECT balance, paid_purchase_id FROM statements WHERE id=$1 AND account_id=$2",
+    [statement_id, account_id],
+  );
+  if (rows.length == 0) {
+    throw Error("statement does not belong to this account");
+  }
+
+  const { balance, paid_purchase_id } = rows[0];
+  if (paid_purchase_id != null) {
+    if (paid_purchase_id == credit_id) {
+      return;
+    }
+    throw Error("statement is already paid");
+  }
+  const amountDue = toDecimal(balance).neg();
+  if (amountDue.lte(0)) {
+    throw Error("statement does not require payment");
+  }
+  if (toDecimal(amount).lt(amountDue)) {
+    throw Error(
+      `payment amount ${moneyToCurrency(amount)} is less than statement amount due ${moneyToCurrency(amountDue)}`,
+    );
+  }
+
+  const result = await pool.query(
+    "UPDATE statements SET paid_purchase_id=$1 WHERE id=$2 AND account_id=$3 AND paid_purchase_id IS NULL",
+    [credit_id, statement_id, account_id],
+  );
+  if (result.rowCount != 1) {
+    throw Error("unable to mark statement paid");
+  }
+}
 
 // This allows for a periodic check that we have processed all recent payment
 // intents across all users.  It should be called periodically.
