@@ -10,6 +10,8 @@ import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getEmailAddress from "@cocalc/server/accounts/get-email-address";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
+import { requireApiKeyCapability } from "@cocalc/server/api/api-key-scope";
+import { getAccountFromApiKey } from "@cocalc/server/auth/api";
 
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import {
@@ -21,6 +23,13 @@ async function handle(req, res) {
   const { account_id } = getParams(req);
   const user_account_id = await getAccountId(req);
   try {
+    if (req.header("Authorization")) {
+      const principal = await getAccountFromApiKey(req);
+      if (!principal?.account_id || principal.account_id !== user_account_id) {
+        throw Error("must be signed in with a valid account API key");
+      }
+      requireApiKeyCapability(principal, "account:read");
+    }
     res.json({ email_address: await getAddress(user_account_id, account_id) });
   } catch (err) {
     res.json({ error: err.message });

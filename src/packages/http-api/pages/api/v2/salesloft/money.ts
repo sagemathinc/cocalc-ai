@@ -18,6 +18,9 @@ export default async function handle(req, res) {
 }
 
 async function get(req) {
+  if (req.header("Authorization")) {
+    throw Error("API keys are not allowed to use admin HTTP API routes");
+  }
   const admin_account_id = await getAccountId(req);
   if (admin_account_id == null) {
     throw Error("must be signed in");

@@ -25,6 +25,10 @@ export default async function handle(req: Request, res: Response) {
 }
 
 async function doIt(req: Request) {
+  if (req.header("Authorization")) {
+    throw Error("API keys are not allowed to use admin HTTP API routes");
+  }
+
   // date and until are unix timestamps in seconds
   const { id, title, text, date, channel, url, tags, hide, until } =
     getParams(req);

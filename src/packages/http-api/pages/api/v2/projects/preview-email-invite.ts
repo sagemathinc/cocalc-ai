@@ -9,6 +9,9 @@ import { previewEmailProjectInvite } from "@cocalc/server/conat/api/projects";
 
 export default async function handle(req, res) {
   try {
+    if (req.header("Authorization")) {
+      throw new Error("API keys are not allowed to use project invite links");
+    }
     const account_id = await getAccountId(req);
     const { invite_id, project_id, token } = getParams(req);
     if (!token) {

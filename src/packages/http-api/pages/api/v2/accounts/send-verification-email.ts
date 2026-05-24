@@ -17,6 +17,10 @@ import {
 } from "@cocalc/http-api/lib/api/schema/accounts/send-verification-email";
 
 async function handle(req, res) {
+  if (req.header("Authorization")) {
+    res.json({ error: "API keys are not allowed to send verification email" });
+    return;
+  }
   const account_id = await getAccountId(req);
   if (account_id == null) {
     res.json({ error: "must be signed in" });

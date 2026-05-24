@@ -29,7 +29,7 @@ export default async function resumeSubscription({
   subscription_id,
 }: Options): Promise<number | null | undefined> {
   const { metadata, start, end, current_period_end, periodicCost, interval } =
-    await getSubscriptionRenewalData(subscription_id);
+    await getSubscriptionRenewalData({ account_id, subscription_id });
   const client = await getTransactionClient();
   let purchase_id: number | undefined = undefined;
   try {
@@ -129,7 +129,10 @@ error. An admin should check in on this.
   }
 }
 
-async function getSubscriptionRenewalData(subscription_id): Promise<{
+async function getSubscriptionRenewalData({
+  account_id,
+  subscription_id,
+}: Options): Promise<{
   metadata: { type: "membership"; class: MembershipClass };
   start: Date;
   end: Date;
@@ -137,13 +140,17 @@ async function getSubscriptionRenewalData(subscription_id): Promise<{
   current_period_end: Date;
   interval: "month" | "year";
 }> {
+  const subscription = await getSubscription(subscription_id);
+  if (subscription.account_id != account_id) {
+    throw Error("you must be signed in as the owner of the subscription");
+  }
   const {
     cost: currentCost,
     interval,
     metadata,
     status,
     current_period_end,
-  } = await getSubscription(subscription_id);
+  } = subscription;
   if (metadata?.type != "membership") {
     throw Error("subscription must be a membership");
   }
@@ -167,10 +174,10 @@ async function getSubscriptionRenewalData(subscription_id): Promise<{
 }
 
 export async function costToResumeSubscription(
-  subscription_id,
+  options: Options,
 ): Promise<{ periodicCost: number; cost: number }> {
   const { periodicCost, current_period_end } =
-    await getSubscriptionRenewalData(subscription_id);
+    await getSubscriptionRenewalData(options);
   return {
     periodicCost,
     cost: current_period_end >= new Date() ? 0 : periodicCost,

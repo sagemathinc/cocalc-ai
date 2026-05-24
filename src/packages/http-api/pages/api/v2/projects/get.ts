@@ -5,6 +5,8 @@ import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
+import { requireApiKeyCapability } from "@cocalc/server/api/api-key-scope";
+import { getAccountFromApiKey } from "@cocalc/server/auth/api";
 
 import {
   GetAccountProjectsInputSchema,
@@ -20,9 +22,27 @@ async function handle(req, res) {
 
     const { account_id, limit } = getParams(req);
 
+    if (req.header("Authorization")) {
+      const principal = await getAccountFromApiKey(req);
+      if (
+        !principal?.account_id ||
+        principal.account_id !== client_account_id
+      ) {
+        throw Error("must be signed in with a valid account API key");
+      }
+      requireApiKeyCapability(principal, "project:list");
+      if (account_id && account_id !== client_account_id) {
+        throw Error("API keys may only list projects for their own account");
+      }
+    }
+
     // User must be an admin to specify account_id field
     //
-    if (account_id && !(await userIsInGroup(client_account_id, "admin"))) {
+    if (
+      account_id &&
+      account_id !== client_account_id &&
+      !(await userIsInGroup(client_account_id, "admin"))
+    ) {
       throw Error(
         "The `account_id` field may only be specified by account administrators.",
       );

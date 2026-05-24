@@ -10,6 +10,8 @@ import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
+import { requireApiKeyProjectCapability } from "@cocalc/server/api/api-key-scope";
+import { getAccountFromApiKey } from "@cocalc/server/auth/api";
 import {
   ListProjectCollaboratorsInputSchema,
   ListProjectCollaboratorsOutputSchema,
@@ -25,6 +27,19 @@ async function handle(req, res) {
     //
     if (!client_account_id) {
       throw Error("must be signed in");
+    }
+
+    if (req.header("Authorization")) {
+      const principal = await getAccountFromApiKey(req);
+      if (
+        !principal?.account_id ||
+        principal.account_id !== client_account_id
+      ) {
+        throw Error("must be signed in with a valid account API key");
+      }
+      requireApiKeyProjectCapability(principal, "project:read", project_id);
+      res.json(await getCollaborators(project_id, client_account_id));
+      return;
     }
 
     // Allow arbitrary project collaborator queries if client is an administrator.
