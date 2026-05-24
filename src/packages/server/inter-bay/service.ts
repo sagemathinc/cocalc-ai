@@ -311,6 +311,7 @@ import {
   getServiceAdmissionDenialReport,
 } from "@cocalc/server/conat/api/system";
 import { setLocalProjectsHidden } from "@cocalc/server/conat/api/projects";
+import { listVisibleRootfsImages } from "@cocalc/server/rootfs/catalog";
 
 const logger = getLogger("server:inter-bay:service");
 
@@ -406,6 +407,10 @@ async function startBayOpsService(): Promise<void> {
         account_id,
         bay_id,
         internalAuth: BAY_OPS_INTERNAL_AUTH,
+      }),
+    getRootfsCatalog: async ({ account_id }) =>
+      await listVisibleRootfsImages(account_id, {
+        includeSeedCatalog: false,
       }),
     getRootfsQuotaReport: async (opts) =>
       await getRootfsQuotaReport({

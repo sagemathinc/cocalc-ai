@@ -88,6 +88,7 @@ import type {
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
 import type { MoneyValue } from "@cocalc/util/money";
+import type { RootfsImageManifest } from "@cocalc/util/rootfs-images";
 
 export interface BayOwnership {
   bay_id: string;
@@ -1120,6 +1121,10 @@ export interface BayOpsRootfsQuotaReportRequest {
   operation?: string | null;
 }
 
+export interface BayOpsRootfsCatalogRequest {
+  account_id?: string;
+}
+
 export interface BayOpsAcpAdmissionDenialReportRequest {
   account_id?: string;
   window_minutes?: number;
@@ -1531,6 +1536,7 @@ export type BayRegistryMethod = "register" | "list";
 export type BayOpsMethod =
   | "get-load"
   | "get-backups"
+  | "get-rootfs-catalog"
   | "get-rootfs-quota-report"
   | "get-acp-admission-denial-report"
   | "get-service-admission-denial-report"
@@ -2437,6 +2443,9 @@ export interface InterBayBayRegistryApi {
 export interface InterBayBayOpsApi {
   getLoad: (opts: BayOpsHealthRequest) => Promise<BayLoadInfo>;
   getBackups: (opts: BayOpsHealthRequest) => Promise<BayBackupsInfo>;
+  getRootfsCatalog: (
+    opts: BayOpsRootfsCatalogRequest,
+  ) => Promise<RootfsImageManifest>;
   getRootfsQuotaReport: (
     opts: BayOpsRootfsQuotaReportRequest,
   ) => Promise<RootfsQuotaReport>;
@@ -5155,6 +5164,15 @@ export function createInterBayBayOpsClient({
       method: "get-rootfs-quota-report",
     }),
   });
+  const rootfsCatalogClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getRootfsCatalog">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "get-rootfs-catalog",
+    }),
+  });
   const acpAdmissionDenialReportClient = createServiceClient<
     Pick<InterBayBayOpsApi, "getAcpAdmissionDenialReport">
   >({
@@ -5185,6 +5203,8 @@ export function createInterBayBayOpsClient({
   return {
     getLoad: async (opts) => await loadClient.getLoad(opts),
     getBackups: async (opts) => await backupsClient.getBackups(opts),
+    getRootfsCatalog: async (opts) =>
+      await rootfsCatalogClient.getRootfsCatalog(opts),
     getRootfsQuotaReport: async (opts) =>
       await rootfsQuotaReportClient.getRootfsQuotaReport(opts),
     getAcpAdmissionDenialReport: async (opts) =>
@@ -5260,6 +5280,17 @@ export function createInterBayBayOpsHandlers({
       }),
       impl: {
         setServerSetting: async (opts) => await impl.setServerSetting(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "getRootfsCatalog">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "get-rootfs-catalog",
+      }),
+      impl: {
+        getRootfsCatalog: async (opts) => await impl.getRootfsCatalog(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "getRootfsQuotaReport">>({
