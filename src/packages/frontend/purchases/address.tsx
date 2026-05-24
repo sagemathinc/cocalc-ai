@@ -101,13 +101,18 @@ function StripeAddressElement({ style, onFinished }: { style?; onFinished? }) {
       }}
       stripe={loadStripe()}
     >
-      <AddressForm style={style} onFinished={onFinished} customer={customer} />
+      <AddressForm
+        style={style}
+        onFinished={onFinished}
+        customer={customer}
+        runFreshAuthAction={runFreshAuthAction}
+      />
       <FreshAuthModal {...freshAuthModalProps} />
     </Elements>
   );
 }
 
-function AddressForm({ style, onFinished, customer }) {
+function AddressForm({ style, onFinished, customer, runFreshAuthAction }) {
   const [error, setError] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -133,9 +138,11 @@ function AddressForm({ style, onFinished, customer }) {
       }
       const { complete, value } = await addressElement.getValue();
       if (complete) {
-        await setStripeCustomer(value);
-        setSuccess(true);
-        onFinished();
+        await runFreshAuthAction(async () => {
+          await setStripeCustomer(value);
+          setSuccess(true);
+          onFinished();
+        });
         return;
       }
     } catch (err) {

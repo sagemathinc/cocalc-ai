@@ -13,6 +13,7 @@ const mockRequireFreshAuth = jest.fn();
 const mockCreateSubscriptionPayment = jest.fn();
 const mockGetCheckoutSession = jest.fn();
 const mockGetCustomerSession = jest.fn();
+const mockSetCustomer = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
@@ -46,6 +47,10 @@ jest.mock("@cocalc/server/purchases/stripe/get-customer-session", () => ({
   default: (...args: any[]) => mockGetCustomerSession(...args),
 }));
 
+jest.mock("@cocalc/server/purchases/stripe/customer", () => ({
+  setCustomer: (...args: any[]) => mockSetCustomer(...args),
+}));
+
 describe("purchases Stripe fresh-auth routes", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -59,6 +64,7 @@ describe("purchases Stripe fresh-auth routes", () => {
     mockGetCustomerSession.mockReset().mockResolvedValue({
       customerSessionClientSecret: "css_test",
     });
+    mockSetCustomer.mockReset().mockResolvedValue(undefined);
   });
 
   it("requires fresh auth before creating a subscription-renewal payment", async () => {
@@ -204,5 +210,54 @@ describe("purchases Stripe fresh-auth routes", () => {
       allow_actor_impersonation: true,
     });
     expect(mockGetCustomerSession).toHaveBeenCalledWith("acct-1");
+  });
+
+  it("requires fresh auth before updating a Stripe customer", async () => {
+    mockGetParams.mockReturnValue({
+      changes: { name: "Ada Lovelace", email: "ada@example.com" },
+    });
+    mockRequireFreshAuth.mockRejectedValue(
+      Object.assign(new Error("fresh auth is required"), {
+        code: "fresh_auth_required",
+      }),
+    );
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } =
+      await import("./purchases/stripe/set-customer");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "fresh auth is required",
+      code: "fresh_auth_required",
+    });
+    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
+      req,
+      account_id: "acct-1",
+      allow_actor_impersonation: true,
+    });
+    expect(mockSetCustomer).not.toHaveBeenCalled();
+  });
+
+  it("updates a Stripe customer after fresh auth", async () => {
+    const changes = {
+      name: "Ada Lovelace",
+      email: "ada@example.com",
+      address: { country: "US" },
+    };
+    mockGetParams.mockReturnValue({ changes });
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } =
+      await import("./purchases/stripe/set-customer");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({ success: true });
+    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
+      req,
+      account_id: "acct-1",
+      allow_actor_impersonation: true,
+    });
+    expect(mockSetCustomer).toHaveBeenCalledWith("acct-1", changes);
   });
 });
