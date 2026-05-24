@@ -2,8 +2,8 @@
 
 import { render, screen, within } from "@testing-library/react";
 
+import { docsPath, getDocsEntry, searchDocsEntries } from "@cocalc/docs";
 import PublicDocsApp from "../app";
-import { docsPath, getDocsEntry, searchDocsEntries } from "../data";
 import { getDocsRouteFromPath } from "../routes";
 
 describe("public/docs", () => {

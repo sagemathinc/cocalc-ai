@@ -31,6 +31,10 @@ export interface DocsEntry {
   title: string;
 }
 
+export interface DocsSearchResult extends DocsEntry {
+  score: number;
+}
+
 const PROJECT_SECRETS_BODY = String.raw`
 ## What project secrets are for
 
@@ -106,6 +110,10 @@ export function docsPath(slug?: string): string {
   return slug ? `/docs/${slug.replace(/^\/+/, "")}` : "/docs";
 }
 
+export function listDocsEntries(): DocsEntry[] {
+  return [...DOCS_ENTRIES];
+}
+
 export function getDocsEntry(slugOrId: string): DocsEntry | undefined {
   const normalized = slugOrId
     .replace(/^\/+/, "")
@@ -116,11 +124,17 @@ export function getDocsEntry(slugOrId: string): DocsEntry | undefined {
   );
 }
 
-export function searchDocsEntries(query: string, limit = 8): DocsEntry[] {
+export function searchDocsEntries(
+  query: string,
+  limit = 8,
+): DocsSearchResult[] {
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
 
   if (terms.length === 0) {
-    return DOCS_ENTRIES.slice(0, limit);
+    return DOCS_ENTRIES.slice(0, limit).map((entry) => ({
+      ...entry,
+      score: 0,
+    }));
   }
 
   return DOCS_ENTRIES.map((entry) => {
@@ -137,12 +151,9 @@ export function searchDocsEntries(query: string, limit = 8): DocsEntry[] {
       (total, term) => total + (haystack.includes(term) ? 1 : 0),
       0,
     );
-    return { entry, score };
+    return { ...entry, score };
   })
     .filter(({ score }) => score > 0)
-    .sort(
-      (a, b) => b.score - a.score || a.entry.title.localeCompare(b.entry.title),
-    )
-    .slice(0, limit)
-    .map(({ entry }) => entry);
+    .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title))
+    .slice(0, limit);
 }

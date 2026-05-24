@@ -313,6 +313,9 @@ importers:
       '@cocalc/database':
         specifier: workspace:*
         version: link:../database
+      '@cocalc/docs':
+        specifier: workspace:*
+        version: link:../docs
       '@cocalc/export':
         specifier: workspace:*
         version: link:../export
@@ -529,6 +532,8 @@ importers:
         specifier: ^8.16.0
         version: 8.16.0
 
+  docs: {}
+
   export:
     dependencies:
       '@cocalc/ai':
@@ -618,6 +623,9 @@ importers:
       '@cocalc/conat':
         specifier: workspace:*
         version: link:../conat
+      '@cocalc/docs':
+        specifier: workspace:*
+        version: link:../docs
       '@cocalc/frontend':
         specifier: workspace:*
         version: 'link:'
@@ -1712,6 +1720,9 @@ importers:
       '@cocalc/cdn':
         specifier: workspace:*
         version: link:../cdn
+      '@cocalc/docs':
+        specifier: workspace:*
+        version: link:../docs
       '@cocalc/frontend':
         specifier: workspace:*
         version: link:../frontend

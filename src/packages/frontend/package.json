@@ -45,6 +45,7 @@
     "@cocalc/chat": "workspace:*",
     "@cocalc/comm": "workspace:*",
     "@cocalc/conat": "workspace:*",
+    "@cocalc/docs": "workspace:*",
     "@cocalc/frontend": "workspace:*",
     "@cocalc/jupyter": "workspace:*",
     "@cocalc/local-storage-lru": "^2.4.3",

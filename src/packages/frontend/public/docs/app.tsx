@@ -19,6 +19,12 @@ import {
   Typography,
 } from "antd";
 import {
+  docsPath,
+  getDocsEntry,
+  searchDocsEntries,
+  type DocsEntry,
+} from "@cocalc/docs";
+import {
   appPath,
   getSiteName,
   MarkdownSection,
@@ -26,12 +32,6 @@ import {
   PublicSectionShell,
 } from "../common";
 import { PUBLIC_COLORS } from "../theme";
-import {
-  docsPath,
-  getDocsEntry,
-  searchDocsEntries,
-  type DocsEntry,
-} from "./data";
 import type { PublicDocsRoute } from "./routes";
 
 const { Paragraph, Text, Title } = Typography;
