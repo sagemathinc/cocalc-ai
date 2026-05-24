@@ -12,6 +12,10 @@ import {
   getStripeCustomer,
   setStripeCustomer,
 } from "./api";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import ShowError from "@cocalc/frontend/components/error";
 import { loadStripe } from "@cocalc/frontend/billing/stripe";
 import type { CustomerSessionSecret } from "@cocalc/util/stripe/types";
@@ -56,16 +60,30 @@ function StripeAddressElement({ style, onFinished }: { style?; onFinished? }) {
   const [customerSession, setCustomerSession] =
     useState<CustomerSessionSecret | null>(null);
   const [customer, setCustomer] = useState<any | null>(null);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   useEffect(() => {
     (async () => {
-      setCustomerSession(await getCustomerSession());
-      setCustomer(await getStripeCustomer());
+      try {
+        await runFreshAuthAction(async () => {
+          setCustomerSession(await getCustomerSession());
+          setCustomer(await getStripeCustomer());
+        });
+      } catch (err) {
+        setError(`${err}`);
+      }
     })();
-  }, []);
+  }, [runFreshAuthAction]);
 
   if (error) {
-    return <ShowError style={style} error={error} setError={setError} />;
+    return (
+      <>
+        <ShowError style={style} error={error} setError={setError} />
+        <FreshAuthModal {...freshAuthModalProps} />
+      </>
+    );
   }
 
   if (customerSession == null || customer == null) {
@@ -84,6 +102,7 @@ function StripeAddressElement({ style, onFinished }: { style?; onFinished? }) {
       stripe={loadStripe()}
     >
       <AddressForm style={style} onFinished={onFinished} customer={customer} />
+      <FreshAuthModal {...freshAuthModalProps} />
     </Elements>
   );
 }

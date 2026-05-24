@@ -12,6 +12,7 @@ const mockGetParams = jest.fn();
 const mockRequireFreshAuth = jest.fn();
 const mockCreateSubscriptionPayment = jest.fn();
 const mockGetCheckoutSession = jest.fn();
+const mockGetCustomerSession = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
@@ -40,6 +41,11 @@ jest.mock("@cocalc/server/purchases/stripe/get-checkout-session", () => ({
   default: (...args: any[]) => mockGetCheckoutSession(...args),
 }));
 
+jest.mock("@cocalc/server/purchases/stripe/get-customer-session", () => ({
+  __esModule: true,
+  default: (...args: any[]) => mockGetCustomerSession(...args),
+}));
+
 describe("purchases Stripe fresh-auth routes", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -49,6 +55,9 @@ describe("purchases Stripe fresh-auth routes", () => {
     mockCreateSubscriptionPayment.mockReset().mockResolvedValue(undefined);
     mockGetCheckoutSession.mockReset().mockResolvedValue({
       clientSecret: "cs_test",
+    });
+    mockGetCustomerSession.mockReset().mockResolvedValue({
+      customerSessionClientSecret: "css_test",
     });
   });
 
@@ -153,5 +162,47 @@ describe("purchases Stripe fresh-auth routes", () => {
       return_url: "https://example.com/return",
       metadata: { membership_id: "membership-1" },
     });
+  });
+
+  it("requires fresh auth before creating a customer session", async () => {
+    mockRequireFreshAuth.mockRejectedValue(
+      Object.assign(new Error("fresh auth is required"), {
+        code: "fresh_auth_required",
+      }),
+    );
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } =
+      await import("./purchases/stripe/get-customer-session");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "fresh auth is required",
+      code: "fresh_auth_required",
+    });
+    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
+      req,
+      account_id: "acct-1",
+      allow_actor_impersonation: true,
+    });
+    expect(mockGetCustomerSession).not.toHaveBeenCalled();
+  });
+
+  it("creates a customer session after fresh auth", async () => {
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } =
+      await import("./purchases/stripe/get-customer-session");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      customerSessionClientSecret: "css_test",
+    });
+    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
+      req,
+      account_id: "acct-1",
+      allow_actor_impersonation: true,
+    });
+    expect(mockGetCustomerSession).toHaveBeenCalledWith("acct-1");
   });
 });

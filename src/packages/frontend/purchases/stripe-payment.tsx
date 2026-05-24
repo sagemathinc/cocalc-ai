@@ -350,15 +350,29 @@ export function FinishStripePayment({
   const [error, setError] = useState<string>("");
   const [customerSession, setCustomerSession] =
     useState<CustomerSessionSecret | null>(null);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   useEffect(() => {
     (async () => {
-      setCustomerSession(await getCustomerSession());
+      try {
+        await runFreshAuthAction(async () => {
+          setCustomerSession(await getCustomerSession());
+        });
+      } catch (err) {
+        setError(`${err}`);
+      }
     })();
-  }, [paymentIntent]);
+  }, [paymentIntent, runFreshAuthAction]);
 
   if (error) {
-    return <ShowError style={style} error={error} setError={setError} />;
+    return (
+      <>
+        <ShowError style={style} error={error} setError={setError} />
+        <FreshAuthModal {...freshAuthModalProps} />
+      </>
+    );
   }
 
   if (customerSession == null) {
@@ -382,6 +396,7 @@ export function FinishStripePayment({
         onFinished={onFinished}
         paymentIntent={paymentIntent}
       />
+      <FreshAuthModal {...freshAuthModalProps} />
     </Elements>
   );
 }
