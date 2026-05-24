@@ -61,6 +61,10 @@ describe("EmailAddressSetting", () => {
     const sendVerification = jest.mocked(
       webapp_client.account_client.send_verification_email,
     );
+    const runFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
+      await action();
+      return true;
+    });
     changeEmail.mockResolvedValueOnce({
       already_verified: false,
       email_address: "new@example.com",
@@ -72,6 +76,7 @@ describe("EmailAddressSetting", () => {
         <EmailAddressSetting
           email_address="user@example.com"
           verify_emails={true}
+          runFreshAuthAction={runFreshAuthAction}
         />
       </IntlProvider>,
     );
@@ -88,6 +93,7 @@ describe("EmailAddressSetting", () => {
     );
 
     await waitFor(() => {
+      expect(runFreshAuthAction).toHaveBeenCalledTimes(1);
       expect(changeEmail).toHaveBeenCalledWith(
         "new@example.com",
         "correct horse battery staple",

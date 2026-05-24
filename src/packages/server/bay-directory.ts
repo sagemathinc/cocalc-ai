@@ -111,7 +111,6 @@ async function getAccountRow(account_id: string): Promise<{
   email_address?: string | null;
   first_name?: string | null;
   last_name?: string | null;
-  name?: string | null;
   home_bay_id?: string | null;
   source: "account-row" | "cluster-directory";
 }> {
@@ -132,7 +131,6 @@ async function getAccountRow(account_id: string): Promise<{
       email_address: global.email_address ?? null,
       first_name: global.first_name ?? null,
       last_name: global.last_name ?? null,
-      name: global.name ?? null,
       home_bay_id: global.home_bay_id ?? null,
       source: "cluster-directory",
     };
@@ -150,14 +148,13 @@ async function getLocalAccountRow(account_id: string): Promise<
       email_address?: string | null;
       first_name?: string | null;
       last_name?: string | null;
-      name?: string | null;
       home_bay_id?: string | null;
       source: "account-row";
     }
   | undefined
 > {
   const { rows } = await getPool().query(
-    `SELECT account_id, email_address, first_name, last_name, name, home_bay_id FROM accounts
+    `SELECT account_id, email_address, first_name, last_name, home_bay_id FROM accounts
       WHERE account_id=$1
         AND (deleted IS NULL OR deleted = FALSE)
       LIMIT 1`,
@@ -257,7 +254,6 @@ export async function resolveAccountHomeBay({
     email_address: row.email_address ?? undefined,
     first_name: row.first_name ?? undefined,
     last_name: row.last_name ?? undefined,
-    name: row.name ?? undefined,
     home_bay_id: home_bay_id ?? getConfiguredBayId(),
     source: home_bay_id ? row.source : "single-bay-default",
   };
@@ -380,7 +376,6 @@ async function resolveRoutingContextLocal({
     account_email_address: string | null;
     account_first_name: string | null;
     account_last_name: string | null;
-    account_name: string | null;
     account_home_bay_id: string | null;
     account_source: "account-row" | "cluster-directory";
     project_id: string;
@@ -402,7 +397,6 @@ async function resolveRoutingContextLocal({
                COALESCE(a.email_address, cad.email_address) AS email_address,
                COALESCE(cad.first_name, a.first_name) AS first_name,
                COALESCE(cad.last_name, a.last_name) AS last_name,
-               COALESCE(cad.name, a.name) AS name,
                CASE
                  WHEN cad.account_id IS NOT NULL THEN cad.home_bay_id
                  ELSE a.home_bay_id
@@ -444,7 +438,6 @@ async function resolveRoutingContextLocal({
              ar.email_address AS account_email_address,
              ar.first_name AS account_first_name,
              ar.last_name AS account_last_name,
-             ar.name AS account_name,
              ar.home_bay_id AS account_home_bay_id,
              ar.source AS account_source,
              pr.project_id,
@@ -473,7 +466,6 @@ async function resolveRoutingContextLocal({
       email_address: row.account_email_address ?? undefined,
       first_name: row.account_first_name ?? undefined,
       last_name: row.account_last_name ?? undefined,
-      name: row.account_name ?? undefined,
       home_bay_id: accountHomeBayId ?? getConfiguredBayId(),
       source: accountHomeBayId ? row.account_source : "single-bay-default",
     },

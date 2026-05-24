@@ -11,28 +11,10 @@ const { Paragraph, Text, Title } = Typography;
 
 const COMMUNITY_LINKS = [
   {
-    title: "Discord",
-    description:
-      "Chat with other CoCalc users, ask questions, and get quick feedback from the community.",
-    href: "https://discord.gg/EugdaJZ8",
-  },
-  {
     title: "GitHub source code",
     description:
       "Browse the source, track issues, report bugs, and send pull requests.",
-    href: "https://github.com/sagemathinc/cocalc",
-  },
-  {
-    title: "GitHub discussions",
-    description:
-      "Search or ask questions and start discussions about CoCalc with other users and developers.",
-    href: "https://github.com/sagemathinc/cocalc/discussions",
-  },
-  {
-    title: "Google Groups mailing list",
-    description:
-      "Get announcements in your inbox and participate in longer-form email discussions.",
-    href: "https://groups.google.com/forum/?fromgroups#!forum/cocalc",
+    href: "https://github.com/sagemathinc/cocalc-ai",
   },
   {
     title: "LinkedIn",
@@ -51,8 +33,9 @@ export default function CommunityView() {
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <Paragraph style={{ margin: 0, fontSize: 16 }}>
-        There are several good ways to connect with the broader CoCalc community
-        beyond direct support tickets.
+        Use these public channels to follow CoCalc updates and inspect the
+        source code. For account, billing, or project-specific help, open a
+        direct support ticket.
       </Paragraph>
       <div
         style={{

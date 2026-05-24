@@ -23,7 +23,6 @@ export interface ProjectOutboxPayload {
   host_id: string | null;
   title: string;
   description: string;
-  name: string | null;
   theme: ProjectTheme | null;
   users_summary: Record<string, any>;
   state_summary: Record<string, any>;
@@ -90,7 +89,6 @@ export async function loadProjectOutboxPayload(opts: {
        host_id,
        COALESCE(title, '') AS title,
        COALESCE(description, '') AS description,
-       name,
        theme,
        COALESCE(users, '{}'::JSONB) AS users_summary,
        COALESCE(state, '{}'::JSONB) AS state_summary,
@@ -111,7 +109,6 @@ export async function loadProjectOutboxPayload(opts: {
       host_id: string | null;
       title: string | null;
       description: string | null;
-      name: string | null;
       theme: ProjectTheme | null;
       users_summary: Record<string, any> | null;
       state_summary: Record<string, any> | null;
@@ -132,7 +129,6 @@ export async function loadProjectOutboxPayload(opts: {
     host_id: row.host_id ?? null,
     title: row.title ?? "",
     description: row.description ?? "",
-    name: row.name ?? null,
     theme: row.theme ?? null,
     users_summary: row.users_summary ?? {},
     state_summary: row.state_summary ?? {},

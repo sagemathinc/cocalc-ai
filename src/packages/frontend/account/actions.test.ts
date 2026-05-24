@@ -5,6 +5,12 @@
 
 import { AccountActions } from "./actions";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import api from "@cocalc/frontend/client/api";
+
+jest.mock("@cocalc/frontend/client/api", () => ({
+  __esModule: true,
+  default: jest.fn(),
+}));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
@@ -120,6 +126,44 @@ describe("AccountActions.refresh_home_bay", () => {
     expect(setState).toHaveBeenCalledWith({
       home_bay_id: undefined,
       home_bay_source: undefined,
+    });
+  });
+});
+
+describe("AccountActions.delete_account", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("rethrows fresh-auth errors so the UI can open the fresh-auth modal", async () => {
+    const freshAuthError = Object.assign(new Error("fresh auth is required"), {
+      code: "fresh_auth_required",
+    });
+    (api as jest.Mock).mockRejectedValue(freshAuthError);
+    const setState = jest.fn();
+
+    await expect(
+      AccountActions.prototype.delete_account.call({ setState }),
+    ).rejects.toBe(freshAuthError);
+
+    expect(setState).toHaveBeenCalledWith({
+      account_deletion_error: undefined,
+    });
+    expect(setState).toHaveBeenCalledTimes(1);
+  });
+
+  it("still stores non-fresh-auth deletion errors inline", async () => {
+    (api as jest.Mock).mockRejectedValue(new Error("server exploded"));
+    const setState = jest.fn();
+
+    await AccountActions.prototype.delete_account.call({ setState });
+
+    expect(setState).toHaveBeenCalledWith({
+      account_deletion_error: undefined,
+    });
+    expect(setState).toHaveBeenCalledWith({
+      account_deletion_error:
+        "Error trying to delete the account: server exploded",
     });
   });
 });

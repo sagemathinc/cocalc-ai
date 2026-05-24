@@ -21,7 +21,6 @@ import { one_result } from "@cocalc/database/postgres/utils/one-result";
 import { pg_type } from "@cocalc/database/postgres/utils/pg-type";
 import { quote_field } from "@cocalc/database/postgres/utils/quote-field";
 import { callback2 } from "@cocalc/util/async-utils";
-import { checkProjectName } from "@cocalc/util/db-schema/name-rules";
 import * as misc from "@cocalc/util/misc";
 import { SCHEMA } from "@cocalc/util/schema";
 import type { CB } from "@cocalc/util/types/callback";
@@ -1530,7 +1529,6 @@ export async function _user_set_query_project_change_before(
 ) {
   //dbg = @_dbg("_user_set_query_project_change_before #{account_id}, #{misc.to_json(old_val)} --> #{misc.to_json(new_val)}")
   // I've seen MASSIVE OUTPUT from this, e.g., when setting avatar.
-  let err;
   const dbg = this._dbg(`_user_set_query_project_change_before ${account_id}`);
   dbg();
   const project_id =
@@ -1545,53 +1543,6 @@ export async function _user_set_query_project_change_before(
     } catch (error) {
       cb(error instanceof Error ? error.message : `${error}`);
       return;
-    }
-  }
-
-  if (
-    (new_val != null ? new_val.name : undefined) &&
-    (new_val != null ? new_val.name : undefined) !==
-      (old_val != null ? old_val.name : undefined)
-  ) {
-    // Changing or setting the name of the project to something nontrivial.
-    try {
-      checkProjectName(new_val.name);
-    } catch (error) {
-      err = error;
-      cb(err.toString());
-      return;
-    }
-    if (new_val.name) {
-      // Setting name to something nontrivial, so we must check uniqueness
-      // among all projects this user owns.
-      let result = await callback2(this._query, {
-        query: "SELECT COUNT(*) FROM projects",
-        where: {
-          [`users#>>'{${account_id},group}' = $::TEXT`]: "owner",
-          "project_id != $::UUID": new_val.project_id,
-          "LOWER(name) = $::TEXT": new_val.name.toLowerCase(),
-        },
-      });
-      if (result.rows[0].count > 0) {
-        cb(
-          `There is already a project with the same owner as this project and name='${new_val.name}'.   Names are not case sensitive.`,
-        );
-        return;
-      }
-      // A second constraint is that only the project owner can change the project name.
-      result = await callback2(this._query, {
-        query: "SELECT COUNT(*) FROM projects",
-        where: {
-          [`users#>>'{${account_id},group}' = $::TEXT`]: "owner",
-          "project_id = $::UUID": new_val.project_id,
-        },
-      });
-      if (result.rows[0].count === 0) {
-        cb(
-          "Only the owner of the project can currently change the project name.",
-        );
-        return;
-      }
     }
   }
 

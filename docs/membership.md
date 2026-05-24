@@ -95,9 +95,10 @@ If no limits are set, the system treats the limit as 0.
 
 ## Store + Purchases
 
-Memberships are purchased via the shopping cart flow:
+Memberships are purchased directly:
 
-- Cart item handler: [src/packages/server/purchases/purchase-shopping-cart-item.ts](./src/packages/server/purchases/purchase-shopping-cart-item.ts)
+- One-person membership changes: [src/packages/server/purchases/membership-change.ts](./src/packages/server/purchases/membership-change.ts)
+- Team/course/site membership packages: [src/packages/server/purchases/membership-package.ts](./src/packages/server/purchases/membership-package.ts)
 - Pricing and proration: [src/packages/server/membership/tiers.ts](./src/packages/server/membership/tiers.ts)
 
 Upgrades (e.g., member → pro) cancel the existing subscription and apply prorated credit in the first charge.
@@ -128,7 +129,8 @@ Key UI surfaces:
 ## Tests
 
 - Resolver tests: [src/packages/server/membership/resolve.test.ts](./src/packages/server/membership/resolve.test.ts)
-- Shopping cart membership tests (purchase + upgrade): [src/packages/server/purchases/purchase-shopping-cart-item.test.ts](./src/packages/server/purchases/purchase-shopping-cart-item.test.ts)
+- Membership package tests: [src/packages/server/membership/packages.test.ts](./src/packages/server/membership/packages.test.ts)
+- Purchase RPC tests: [src/packages/server/conat/api/purchases.test.ts](./src/packages/server/conat/api/purchases.test.ts)
 
 ## Known Gaps / Planned Work
 

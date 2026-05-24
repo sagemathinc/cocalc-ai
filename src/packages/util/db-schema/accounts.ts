@@ -5,7 +5,6 @@
 
 import { NOTES } from "./crm";
 import { SCHEMA as schema } from "./index";
-import { checkAccountName } from "./name-rules";
 import { Table } from "./types";
 
 import {
@@ -175,11 +174,6 @@ Table({
     deleted: {
       type: "boolean",
       desc: "True if the account has been deleted.",
-    },
-    name: {
-      type: "string",
-      pg_type: "VARCHAR(39)",
-      desc: "The username of this user.  This is optional but globally unique across all accoutns *and* organizations.  It can be between 1 and 39 characters from a-z A-Z 0-9 - and must not start with a dash.",
     },
     org: {
       type: "string",
@@ -464,10 +458,7 @@ Table({
     pg_unique_indexes: [
       "email_address", // enforce uniqueness on existing databases; nullable so deleted/legacy rows can omit it
       "api_key", // we use the map api_key --> account_id, so it better be unique
-      "LOWER(name)", // ensure user-assigned name is case sensitive globally unique
-    ], // note that we actually require uniqueness across accounts and organizations
-    // and this index is just a step in that direction; full uniquness must be
-    // checked as an extra step.
+    ],
     user_query: {
       get: {
         throttle_changes: 500,
@@ -557,7 +548,6 @@ Table({
             hide_navbar_balance: false,
             cookie_consent: null,
           },
-          name: null,
           first_name: "",
           last_name: "",
           terminal: {
@@ -599,7 +589,6 @@ Table({
       set: {
         fields: {
           account_id: "account_id",
-          name: true,
           editor_settings: true,
           other_settings: true,
           first_name: true,
@@ -620,23 +609,7 @@ Table({
           // obviously min_balance can't be set!
           auto_balance: true,
         },
-        async check_hook(db, obj, account_id, _project_id, cb) {
-          if (obj["name"] != null) {
-            // NOTE: there is no way to unset/remove a username after one is set...
-            try {
-              checkAccountName(obj["name"]);
-            } catch (err) {
-              cb(err.toString());
-              return;
-            }
-            const id = await db.nameToAccountOrOrganization(obj["name"]);
-            if (id != null && id != account_id) {
-              cb(
-                `name "${obj["name"]}" is already taken by another organization or account`,
-              );
-              return;
-            }
-          }
+        async check_hook(_db, obj, _account_id, _project_id, cb) {
           // Hook to truncate some text fields to at most 254 characters, to avoid
           // further trouble down the line.
           for (const field of ["first_name", "last_name", "email_address"]) {
@@ -775,7 +748,6 @@ Table({
         admin: true, // only admins can do get queries on this table
         fields: {
           account_id: true,
-          name: true,
           first_name: true,
           last_name: true,
           autosave: true,
@@ -980,7 +952,6 @@ export interface UserSearchResult {
   account_id: string;
   first_name?: string;
   last_name?: string;
-  name?: string; // "vanity" username
   home_bay_id?: string;
   last_active?: number; // ms since epoch -- when account was last active
   created?: number; // ms since epoch -- when account created

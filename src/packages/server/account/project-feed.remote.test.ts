@@ -47,7 +47,6 @@ describe("server/account/project-feed remote home-bay apply", () => {
         project_id: PROJECT_ID,
         title: "Shared Project",
         description: "available from another bay",
-        name: null,
         theme: null,
         host_id: HOST_ID,
         owning_bay_id: "bay-0",

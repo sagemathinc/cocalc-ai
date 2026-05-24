@@ -1,13 +1,7 @@
-import { CREATED_BY, ID } from "./crm";
-import { SCHEMA as schema } from "./index";
 import type { Service } from "./purchases";
-import { Table } from "./types";
 
 export type { Service };
 
-// Users will set their spend limits for these broad categories.
-// TODO: right now there is a separate limit for each quota spec,
-// which has got ridiculous.
 const SERVICE_CATEGORIES = ["money", "license", "metered"];
 type ServiceCategory = (typeof SERVICE_CATEGORIES)[number];
 
@@ -93,73 +87,3 @@ export const QUOTA_SPEC: QuotaSpec = {
 export function serviceToDisplay(service: Service): string {
   return QUOTA_SPEC[service]?.display ?? service;
 }
-
-Table({
-  name: "purchase_quotas",
-  fields: {
-    id: ID,
-    account_id: CREATED_BY,
-    service: {
-      title: "Service Category",
-      desc: "The service being charged for, e.g., membership, voucher, etc.",
-      type: "string",
-      pg_type: "varchar(127)",
-    },
-    value: {
-      title: "Value",
-      desc: "The maximum amount that user can be charged for this service during one month billing period, in US dollars.",
-      type: "number", // actually comes back as string in queries.
-      pg_type: "numeric(20,10)",
-    },
-  },
-  rules: {
-    desc: "Purchase Quotas",
-    primary_key: "id",
-    // make it fast to find all quotas for a given account
-    pg_indexes: ["account_id"],
-    // enforce that there is only one quota for each service for a given account
-    pg_unique_indexes: ["(account_id,service)"],
-    user_query: {
-      // set happens though v2 api only to enforce global quota
-      get: {
-        pg_where: [{ "account_id = $::UUID": "account_id" }],
-        fields: {
-          id: null,
-          account_id: null,
-          service: null,
-          value: null,
-        },
-      },
-    },
-  },
-});
-
-Table({
-  name: "crm_purchase_quotas",
-  rules: {
-    virtual: "purchase_quotas",
-    primary_key: "id",
-    user_query: {
-      get: {
-        pg_where: [],
-        admin: true,
-        fields: {
-          id: null,
-          account_id: null,
-          service: null,
-          value: null,
-        },
-      },
-      set: {
-        admin: true,
-        fields: {
-          id: true,
-          account_id: true,
-          service: true,
-          value: true,
-        },
-      },
-    },
-  },
-  fields: schema.purchase_quotas.fields,
-});

@@ -8,12 +8,18 @@ import getParams from "@cocalc/http-api/lib/api/get-params";
 
 export default async function handle(req, res) {
   try {
+    if (req.header("Authorization")) {
+      throw Error("API keys cannot manage account API keys");
+    }
     const account_id = await getAccountId(req);
     if (!account_id) {
       throw Error("must be signed in");
     }
     const { action, name, expire, capabilities, allowed_project_ids, id } =
       getParams(req);
+    if (action !== "get") {
+      throw Error("legacy HTTP API key mutations are disabled");
+    }
     const response = await manageApiKeys({
       account_id,
       action,

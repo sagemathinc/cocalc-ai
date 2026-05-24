@@ -12,16 +12,22 @@ import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
 import { MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
+import {
+  isFreshAuthRequiredError,
+  type FreshAuthActionRunner,
+} from "@cocalc/frontend/auth/fresh-auth";
 
 interface Props {
   email_address?: string;
   disabled?: boolean;
   verify_emails?: boolean;
+  runFreshAuthAction?: FreshAuthActionRunner;
 }
 
 export const EmailAddressSetting = ({
   email_address: email_address0,
   disabled,
+  runFreshAuthAction,
 }: Props) => {
   const intl = useIntl();
   const [state, setState] = useState<"view" | "edit" | "saving">("view");
@@ -46,14 +52,15 @@ export const EmailAddressSetting = ({
     setPassword("");
   }
 
-  async function save_editing(): Promise<void> {
-    if (password.length < MIN_PASSWORD_LENGTH) {
-      setState("edit");
-      setError(
-        `Password must be at least ${MIN_PASSWORD_LENGTH} characters long.`,
-      );
-      return;
+  async function runSecurityAction(action: () => Promise<void>) {
+    if (runFreshAuthAction != null) {
+      return await runFreshAuthAction(action);
     }
+    await action();
+    return true;
+  }
+
+  async function performSave(): Promise<void> {
     setState("saving");
     setMessage("");
     try {
@@ -78,6 +85,10 @@ export const EmailAddressSetting = ({
         setMessage(`Email address changed to ${changedEmail}.`);
       }
     } catch (error) {
+      if (isFreshAuthRequiredError(error)) {
+        setState("edit");
+        throw error;
+      }
       setState("edit");
       setError(`Error -- ${error}`);
       return;
@@ -85,6 +96,17 @@ export const EmailAddressSetting = ({
     setState("view");
     setError("");
     setPassword("");
+  }
+
+  async function save_editing(): Promise<void> {
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setState("edit");
+      setError(
+        `Password must be at least ${MIN_PASSWORD_LENGTH} characters long.`,
+      );
+      return;
+    }
+    await runSecurityAction(performSave);
   }
 
   function is_submittable(): boolean {

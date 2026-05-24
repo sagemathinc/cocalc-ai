@@ -66,7 +66,7 @@ function addStringQueryClauses({
       params.push(`%${term}%`);
       const pos = params.length;
       termClauses.push(
-        `(lower(first_name) LIKE $${pos}::TEXT OR lower(last_name) LIKE $${pos}::TEXT OR '@' || lower(name) LIKE $${pos}::TEXT)`,
+        `(lower(first_name) LIKE $${pos}::TEXT OR lower(last_name) LIKE $${pos}::TEXT)`,
       );
     }
     if (termClauses.length > 0) {
@@ -146,7 +146,6 @@ export async function searchRelatedClusterAccounts({
     account_id,
     first_name,
     last_name,
-    name,
     email_address,
     home_bay_id,
     created,
@@ -173,7 +172,6 @@ export async function searchRelatedClusterAccounts({
           cluster_account_directory.account_id,
           first_name,
           last_name,
-          name,
           email_address,
           COALESCE(home_bay_id, $${params.length + 1}::TEXT) AS home_bay_id,
           created,

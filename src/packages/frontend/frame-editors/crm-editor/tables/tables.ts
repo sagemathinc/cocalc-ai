@@ -20,8 +20,6 @@ import "./agents";
 import "./patches";
 import "./projects";
 import "./purchases";
-import "./purchase-quotas";
-import "./shopping-cart-items";
 import "./statements";
 import "./subscriptions";
 import "./syncstrings";

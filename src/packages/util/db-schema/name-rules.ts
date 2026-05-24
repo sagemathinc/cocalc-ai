@@ -1,23 +1,10 @@
-/* Checks that name satisfies the following constraints
+/* Checks that organization names satisfy the following constraints.
+
 Inspired by -- https://github.com/isiahmeadows/github-limits
 
-Each function checks the basic rules, but NOT for uniqueness,
-which requires a DB query.
-
-If a rule fails, throws an Error.
-
-The URL schema is
-
-https://cocalc.com/[account name]/[project name]/[shared path name]
-
-We are only using these URL's for the share server.
-We only use such a URL if all segments are specified.
-
-NOTE: at some point we considered using these url's for more than just
-the share server, and maybe when some segments aren't specified.  If we
-did that, we have to have a lot more constraints on the segments, e.g.,
-we can't allow "files" for the shared path name.  But we are NOT doing
-that.
+The account/project vanity URL names that originally used this module have
+been removed from cocalc-ai before public launch. The remaining reserved-name
+list is still used for organization names and compute DNS reservations.
 */
 
 import { is_valid_uuid_string } from "../misc";
@@ -27,7 +14,7 @@ export function isReserved(name: string): boolean {
 }
 
 /*
-Account name:
+Organization name:
  - between 1 and 39 characters
  - doesn't start with a -
  - only includes the characters 0-9,a-z,A-Z,-
@@ -55,27 +42,6 @@ export function checkAccountName(name: string) {
   // Check for reserved names.
   if (isReserved(name)) {
     throw Error(`username "${name}" is reserved -- not available`);
-  }
-}
-
-/*
-Project name:
-
-- Max length: 100 characters
-- All characters must be either a hyphen (-), a period (.), or alphanumeric
-- Unique amongst projects with given owner (that's a separate db query)
-*/
-export function checkProjectName(name: string) {
-  if (name.length < 1) {
-    throw Error("name must have at least 1 character");
-  }
-  if (name.length > 100) {
-    throw Error("name must have at most 100 characters");
-  }
-  if (!/^[\.a-z\d](?:[\.a-z\d]|-(?=[\.a-z\d])){0,99}$/i.test(name)) {
-    throw Error(
-      "name must contain only a-z,A-Z,0-9, . or -, and not start with hyphen or have spaces.",
-    );
   }
 }
 

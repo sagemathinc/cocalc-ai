@@ -16,9 +16,7 @@ import {
   type MoneyValue,
 } from "@cocalc/util/money";
 import getBalance from "./get-balance";
-import { getTotalChargesThisMonth } from "./get-charges";
-import { getPurchaseQuotas } from "./purchase-quotas";
-import { ALLOWED_SLACK } from "./shopping-cart-checkout";
+import { ALLOWED_SLACK } from "./allowed-slack";
 
 // Throws an exception if purchase is not allowed.  Code should
 // call this before giving the thing and doing createPurchase.
@@ -142,10 +140,9 @@ export async function isPurchaseAllowed({
     };
   }
 
-  // Below this is payg services only:
-  const { services } = await getPurchaseQuotas(account_id, client);
-
-  // First check that making the purchase won't reduce the account below zero.
+  // Below this is payg services only. The only supported payg service in
+  // cocalc-ai is dedicated-host usage; throttling is enforced by membership
+  // tier entitlements, not user-configurable per-service budgets.
   // Also, we round balance down since fractional pennies don't count, and
   // can cause required to be off by 1 below.
   const balance = moneyRound2Down(
@@ -175,48 +172,6 @@ export async function isPurchaseAllowed({
     };
   }
 
-  // Below here you have enough money, so everything is allowed, but
-  // possibly discouraged.
-
-  // Next check that the quota for the specific service is not exceeded.
-  // This is a self-imposed limit by the user to control what they
-  // explicitly authorized.
-  if (!QUOTA_SPEC[service]?.noSet) {
-    const quotaForService = toDecimal(services[service] ?? 0).add(marginValue);
-    if (quotaForService.lte(0)) {
-      return {
-        allowed: true,
-        discouraged: true,
-        reason: `This purchase may exceed your personal monthly spending budget for the "${
-          QUOTA_SPEC[service]?.display ?? service
-        }" service.  The purchase is still allowed.`,
-      };
-    }
-    // user has set a quota for this service.  is the total unpaid spend within this quota?
-
-    // NOTE: This does NOT involve credits at all.  Even if the user has $10K in credits,
-    // they can still limit their monthly spend on a particular service, as a safety.
-    const chargesForService = await getTotalChargesThisMonth(
-      account_id,
-      service,
-      client,
-    );
-    if (toDecimal(chargesForService).add(costValue).gt(quotaForService)) {
-      return {
-        allowed: true,
-        discouraged: true,
-        reason: `This purchase may exceed your personal monthly spending budget of ${moneyToCurrency(
-          quotaForService,
-        )} for "${
-          QUOTA_SPEC[service]?.display ?? service
-        }".  This month you have spent ${moneyToCurrency(chargesForService)} on ${
-          QUOTA_SPEC[service]?.display ?? service
-        }.`,
-      };
-    }
-  }
-
-  // allowed :-)
   return { allowed: true };
 }
 

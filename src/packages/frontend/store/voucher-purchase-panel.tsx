@@ -14,6 +14,10 @@ import {
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
 
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import StripePayment from "@cocalc/frontend/purchases/stripe-payment";
 import {
   isPurchaseAllowed,
@@ -53,6 +57,9 @@ export default function VoucherPurchasePanel({
   const [codes, setCodes] = useState<string[]>([]);
   const [actionError, setActionError] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<boolean>(false);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setActionError(`${err}`),
+  });
 
   const totalValue = useMemo(() => {
     if (!amount || !count) return toDecimal(0);
@@ -123,13 +130,15 @@ export default function VoucherPurchasePanel({
     setActionError("");
     setActionLoading(true);
     try {
-      const result = await createVoucherPurchase({
-        amount,
-        count,
-        title: title.trim(),
+      await runFreshAuthAction(async () => {
+        const result = await createVoucherPurchase({
+          amount,
+          count,
+          title: title.trim(),
+        });
+        setCodes(result.codes ?? []);
+        onOpenVoucherCenter();
       });
-      setCodes(result.codes ?? []);
-      onOpenVoucherCenter();
     } catch (err) {
       setActionError(`${err}`);
     } finally {
@@ -247,6 +256,7 @@ export default function VoucherPurchasePanel({
       <Button type="link" onClick={onOpenVoucherCenter}>
         Open Voucher Center
       </Button>
+      <FreshAuthModal {...freshAuthModalProps} />
     </Space>
   );
 }

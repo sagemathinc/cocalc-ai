@@ -22,6 +22,10 @@ import {
 } from "antd";
 import dayjs from "dayjs";
 import api from "@cocalc/frontend/client/api";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { ErrorDisplay } from "@cocalc/frontend/components";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import {
@@ -179,6 +183,9 @@ export function AdminMembership({ account_id }: { account_id: string }) {
   const [selectedTier, setSelectedTier] = useState<string | undefined>();
   const [expiresAt, setExpiresAt] = useState<dayjs.Dayjs | null>(null);
   const [notes, setNotes] = useState<string>("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   const tierOptions = useMemo(() => {
     return [...tiers]
@@ -276,41 +283,49 @@ export function AdminMembership({ account_id }: { account_id: string }) {
       setError("Select a membership tier to assign.");
       return;
     }
-    setSaving(true);
     setError("");
     try {
-      await actions.set_admin_membership({
-        account_id,
-        membership_class: selectedTier,
-        expires_at: expiresAt ? expiresAt.toDate() : null,
-        notes: notes.trim() ? notes.trim() : null,
+      await runFreshAuthAction(async () => {
+        setSaving(true);
+        try {
+          await actions.set_admin_membership({
+            account_id,
+            membership_class: selectedTier,
+            expires_at: expiresAt ? expiresAt.toDate() : null,
+            notes: notes.trim() ? notes.trim() : null,
+          });
+          await refresh();
+          message.success("Admin membership updated.");
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new Event("cocalc:membership-changed"));
+          }
+        } finally {
+          setSaving(false);
+        }
       });
-      await refresh();
-      message.success("Admin membership updated.");
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new Event("cocalc:membership-changed"));
-      }
     } catch (err) {
       setError(`${err}`);
-    } finally {
-      setSaving(false);
     }
   }
 
   async function clearAssignment() {
-    setClearing(true);
     setError("");
     try {
-      await actions.clear_admin_membership(account_id);
-      await refresh();
-      message.success("Admin membership cleared.");
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new Event("cocalc:membership-changed"));
-      }
+      await runFreshAuthAction(async () => {
+        setClearing(true);
+        try {
+          await actions.clear_admin_membership(account_id);
+          await refresh();
+          message.success("Admin membership cleared.");
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new Event("cocalc:membership-changed"));
+          }
+        } finally {
+          setClearing(false);
+        }
+      });
     } catch (err) {
       setError(`${err}`);
-    } finally {
-      setClearing(false);
     }
   }
 
@@ -320,6 +335,7 @@ export function AdminMembership({ account_id }: { account_id: string }) {
 
   return (
     <div>
+      <FreshAuthModal {...freshAuthModalProps} />
       {loading ? (
         <Spin />
       ) : (

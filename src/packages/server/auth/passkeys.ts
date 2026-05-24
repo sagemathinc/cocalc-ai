@@ -234,10 +234,9 @@ export async function startPasskeySetup({
       email_address?: string | null;
       first_name?: string | null;
       last_name?: string | null;
-      name?: string | null;
     }>(
       `
-        SELECT email_address, first_name, last_name, name
+        SELECT email_address, first_name, last_name
           FROM accounts
          WHERE account_id = $1::UUID
          LIMIT 1
@@ -248,7 +247,6 @@ export async function startPasskeySetup({
   const email = `${account?.email_address ?? ""}`.trim();
   const displayName =
     `${account?.first_name ?? ""} ${account?.last_name ?? ""}`.trim() ||
-    `${account?.name ?? ""}`.trim() ||
     email ||
     accountId;
   const options = await generateRegistrationOptions({

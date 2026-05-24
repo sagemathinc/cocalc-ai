@@ -20,7 +20,7 @@ export default async function setProject({
   project_id: string;
   project_update: Omit<DBProject, "project_id">;
 }): Promise<DBProject | undefined> {
-  const { description, title, name } = project_update;
+  const { description, title } = project_update;
   return userQuery({
     account_id: acting_account_id,
     query: {
@@ -29,7 +29,6 @@ export default async function setProject({
         // instead of fetching them.
         //
         project_id,
-        ...(name && { name }),
         ...(title && { title }),
         ...(description && { description }),
       },

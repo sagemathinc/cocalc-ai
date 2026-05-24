@@ -386,12 +386,12 @@ async function fetchInviteById(
        p.title AS project_title,
        p.description AS project_description,
        i.inviter_account_id,
-       inviter.name AS inviter_name,
+       NULLIF(BTRIM(CONCAT_WS(' ', inviter.first_name, inviter.last_name)), '') AS inviter_name,
        inviter.first_name AS inviter_first_name,
        inviter.last_name AS inviter_last_name,
        CASE WHEN $2::boolean THEN inviter.email_address ELSE NULL END AS inviter_email_address,
        i.invitee_account_id,
-       invitee.name AS invitee_name,
+       NULLIF(BTRIM(CONCAT_WS(' ', invitee.first_name, invitee.last_name)), '') AS invitee_name,
        invitee.first_name AS invitee_first_name,
        invitee.last_name AS invitee_last_name,
        CASE WHEN $2::boolean THEN invitee.email_address ELSE NULL END AS invitee_email_address,
@@ -661,9 +661,48 @@ export async function removeCollaborator({
     database.remove_collaborator_from_project.bind(database),
     opts,
   );
+  await cancelPendingInvitesFromRemovedCollaborator({
+    inviter_account_id: opts.account_id,
+    project_id: opts.project_id,
+  });
   await publishProjectAccountFeedEventsBestEffort({
     project_id: opts.project_id,
   });
+}
+
+async function cancelPendingInvitesFromRemovedCollaborator({
+  inviter_account_id,
+  project_id,
+}: {
+  inviter_account_id: string;
+  project_id: string;
+}): Promise<void> {
+  ensureUuid(inviter_account_id, "inviter_account_id");
+  ensureUuid(project_id, "project_id");
+  await ensureProjectCollabInviteEmailTokenSchema();
+  const { rows } = await getPool().query<{
+    invite_id: string;
+    invitee_account_id: string | null;
+  }>(
+    `UPDATE project_collab_invites
+        SET status='canceled',
+            responder_action='revoke',
+            responded=NOW(),
+            updated=NOW()
+      WHERE project_id=$1
+        AND inviter_account_id=$2
+        AND status='pending'
+      RETURNING invite_id, invitee_account_id`,
+    [project_id, inviter_account_id],
+  );
+  await Promise.all(
+    rows.map(async (row) => {
+      await deleteProjectedInboundCollabInvite({
+        invite_id: row.invite_id,
+        invitee_account_id: row.invitee_account_id,
+      });
+    }),
+  );
 }
 
 export async function addCollaborator({
@@ -887,15 +926,20 @@ export async function listCollabInvites({
   direction,
   status,
   limit,
+  projectWide,
 }: {
   account_id?: string;
   project_id?: string;
   direction?: ProjectCollabInviteDirection;
   status?: ProjectCollabInviteStatus;
   limit?: number;
+  projectWide?: boolean;
 }): Promise<ProjectCollabInviteRow[]> {
   if (!account_id) {
     throw new Error("user must be signed in");
+  }
+  if (projectWide && !project_id) {
+    throw new Error("project_id is required for project-wide invites");
   }
   const includeEmail = await isAdmin(account_id);
   const normalizedDirection = normalizeInviteDirection(direction);
@@ -908,6 +952,9 @@ export async function listCollabInvites({
   const where: string[] = [];
   if (project_id) {
     ensureUuid(project_id, "project_id");
+    if (projectWide) {
+      await assertLocalProjectCollaborator({ account_id, project_id });
+    }
     params.push(project_id);
     where.push(`i.project_id=$${params.length}`);
   }
@@ -915,7 +962,10 @@ export async function listCollabInvites({
   params.push(account_id);
   const accountParam = `$${params.length}`;
   const otherAccountExpr = `CASE WHEN i.inviter_account_id=${accountParam}::uuid THEN i.invitee_account_id ELSE i.inviter_account_id END`;
-  if (normalizedDirection === "inbound") {
+  if (projectWide) {
+    // Project-wide mode is for the project pending-invites panel. The project
+    // collaborator check above replaces per-account invite ownership filters.
+  } else if (normalizedDirection === "inbound") {
     where.push(`i.invitee_account_id=${accountParam}`);
   } else if (normalizedDirection === "outbound") {
     where.push(`i.inviter_account_id=${accountParam}`);
@@ -937,12 +987,12 @@ export async function listCollabInvites({
       p.title AS project_title,
       p.description AS project_description,
       i.inviter_account_id,
-      inviter.name AS inviter_name,
+      NULLIF(BTRIM(CONCAT_WS(' ', inviter.first_name, inviter.last_name)), '') AS inviter_name,
       inviter.first_name AS inviter_first_name,
       inviter.last_name AS inviter_last_name,
       CASE WHEN $1::boolean THEN inviter.email_address ELSE NULL END AS inviter_email_address,
       i.invitee_account_id,
-      invitee.name AS invitee_name,
+      NULLIF(BTRIM(CONCAT_WS(' ', invitee.first_name, invitee.last_name)), '') AS invitee_name,
       invitee.first_name AS invitee_first_name,
       invitee.last_name AS invitee_last_name,
       CASE WHEN $1::boolean THEN invitee.email_address ELSE NULL END AS invitee_email_address,
@@ -1011,7 +1061,7 @@ export async function listCollabInvites({
 
   const { rows } = await pool.query<ProjectCollabInviteRow>(sql, params);
   const projectedRows =
-    normalizedDirection === "outbound"
+    projectWide || normalizedDirection === "outbound"
       ? []
       : await listProjectedInboundCollabInvites({
           account_id,
@@ -1160,7 +1210,10 @@ export async function respondCollabInviteCanonical({
 
   if (normalizedAction === "revoke") {
     if (invite.inviter_account_id !== account_id && !admin) {
-      throw new Error("only invite sender can revoke");
+      await assertLocalProjectCollaborator({
+        account_id,
+        project_id: invite.project_id,
+      });
     }
     await pool.query(
       `UPDATE project_collab_invites
@@ -1320,9 +1373,9 @@ export async function listCollabInviteBlocks({
   const { rows } = await pool.query<ProjectCollabInviteBlockRow>(
     `SELECT
        b.blocker_account_id,
-       blocker.name AS blocker_name,
+       NULLIF(BTRIM(CONCAT_WS(' ', blocker.first_name, blocker.last_name)), '') AS blocker_name,
        b.blocked_account_id,
-       blocked.name AS blocked_name,
+       NULLIF(BTRIM(CONCAT_WS(' ', blocked.first_name, blocked.last_name)), '') AS blocked_name,
        blocked.first_name AS blocked_first_name,
        blocked.last_name AS blocked_last_name,
        CASE WHEN $2::boolean THEN blocked.email_address ELSE NULL END AS blocked_email_address,
@@ -1393,7 +1446,7 @@ export async function listCollaborators({
   const { rows } = await pool.query<ProjectCollaboratorRow>(
     `SELECT
        u.account_id_text::uuid AS account_id,
-       a.name,
+       NULLIF(BTRIM(CONCAT_WS(' ', a.first_name, a.last_name)), '') AS name,
        a.first_name,
        a.last_name,
        CASE WHEN $2::boolean THEN a.email_address ELSE NULL END AS email_address,
@@ -1459,7 +1512,7 @@ export async function listMyCollaborators({
      )
      SELECT
        u.account_id_text::uuid AS account_id,
-       MAX(a.name) AS name,
+       NULLIF(BTRIM(CONCAT_WS(' ', MAX(a.first_name), MAX(a.last_name))), '') AS name,
        MAX(a.first_name) AS first_name,
        MAX(a.last_name) AS last_name,
        CASE WHEN $2::boolean THEN MAX(a.email_address) ELSE NULL END AS email_address,
@@ -1833,7 +1886,7 @@ export async function copyEmailProjectInviteLink({
     throw new Error(`invite '${invite_id}' not found`);
   }
   if (row.inviter_account_id !== account_id) {
-    await assertLocalProjectCollaborator({
+    await assertCanCopyEmailInviteLink({
       account_id,
       project_id: row.project_id,
     });
@@ -1864,6 +1917,31 @@ export async function copyEmailProjectInviteLink({
         EMAIL_ONLY_INVITE_TTL_DAYS * 24 * 60 * 60 * 1000,
     ),
   };
+}
+
+async function assertCanCopyEmailInviteLink({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<void> {
+  if (await isAdmin(account_id)) {
+    return;
+  }
+  const { rows } = await getPool().query<{ is_owner: boolean }>(
+    `SELECT (users -> $2::text ->> 'group') = 'owner' AS is_owner
+       FROM projects
+      WHERE project_id=$1
+      LIMIT 1`,
+    [project_id, account_id],
+  );
+  if (rows[0]?.is_owner) {
+    return;
+  }
+  throw new Error(
+    "only the invite sender or a project owner can copy this invite link",
+  );
 }
 
 export async function redeemEmailProjectInvite({

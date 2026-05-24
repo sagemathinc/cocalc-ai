@@ -463,9 +463,17 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: "local account preference",
   },
+  "projects.setLocalProjectsHidden": {
+    decision: "fresh-auth-not-required",
+    reason: "local account preference",
+  },
   "projects.setProjectSecret": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
+  },
+  "projects.setProjectsHidden": {
+    decision: "fresh-auth-not-required",
+    reason: "local account preference",
   },
   "projects.setProjectSshKey": {
     decision: "fresh-auth-not-required",
@@ -578,6 +586,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "system.adminSalesloftSync": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
+  },
+  "system.bootstrapCloudflareConfiguration": {
+    decision: "fresh-auth-required",
+    reason: "Cloudflare tunnel/R2 configuration bootstrap with cloud token",
   },
   "system.clearAccountEntitlementOverride": {
     decision: "fresh-auth-required",
@@ -693,12 +705,12 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "system.runBayRestore": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "materialized bay database restore",
   },
   "system.runBayRestoreTest": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "materialized bay restore test workspace",
   },
   "system.runRootfsReleaseGc": {
     decision: "fresh-auth-required",
@@ -757,8 +769,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "system.startCloudflareR2Audit": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "resource-consuming Cloudflare R2 bucket scan LRO",
   },
   "system.startCloudflareR2BayBackupCleanup": {
     decision: "fresh-auth-required",

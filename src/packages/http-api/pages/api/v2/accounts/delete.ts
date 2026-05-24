@@ -9,6 +9,9 @@ import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import { SuccessStatus } from "@cocalc/http-api/lib/api/status";
 import { DeleteAccountOutputSchema } from "@cocalc/http-api/lib/api/schema/accounts/delete";
 import clearAuthCookies from "@cocalc/server/auth/clear-auth-cookies";
+import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
+import { assertNoImpersonationForSubjectSecurityAction } from "@cocalc/server/auth/impersonation";
+import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 
 async function handle(req, res) {
   try {
@@ -17,6 +20,15 @@ async function handle(req, res) {
       if (!account_id) {
         throw Error("must be signed in");
       }
+      if (!getRememberMeHash(req)) {
+        throw Error("browser sign-in is required");
+      }
+      await requireFreshAuth({ req, account_id });
+      await assertNoImpersonationForSubjectSecurityAction({
+        req,
+        account_id,
+        action: "delete the account",
+      });
       await deleteAccount(account_id);
       await clearAuthCookies({ req, res });
       res.json(SuccessStatus);

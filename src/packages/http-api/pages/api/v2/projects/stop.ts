@@ -4,10 +4,10 @@ API endpoint to stop a project running.
 This requires the user to be signed in so they are allowed to use this project.
 */
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import { getProject } from "@cocalc/server/projects/control";
-import { isValidUUID } from "@cocalc/util/misc";
-import isCollaborator from "@cocalc/server/projects/is-collaborator";
+import { stop as stopProject } from "@cocalc/server/conat/api/projects";
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import { getAccountFromApiKey } from "@cocalc/server/auth/api";
+import { assertHttpProjectApiKeyAllowed } from "@cocalc/server/api/http-api-key-policy";
 
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import {
@@ -21,17 +21,20 @@ async function handle(req, res) {
   const account_id = await getAccountId(req);
 
   try {
-    if (!isValidUUID(project_id)) {
-      throw Error("project_id must be a valid uuid");
-    }
     if (!account_id) {
       throw Error("must be signed in");
     }
-    if (!(await isCollaborator({ account_id, project_id }))) {
-      throw Error("must be a collaborator to stop project");
+    if (req.header("Authorization")) {
+      const principal = await getAccountFromApiKey(req);
+      if (!principal?.account_id || principal.account_id !== account_id) {
+        throw Error("must be signed in with a valid account API key");
+      }
+      assertHttpProjectApiKeyAllowed({
+        principal,
+        project_id,
+      });
     }
-    const project = getProject(project_id);
-    await project.stop();
+    await stopProject({ account_id, project_id });
     res.json(OkStatus);
   } catch (err) {
     res.json({ error: err.message });

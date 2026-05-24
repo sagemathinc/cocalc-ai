@@ -34,4 +34,46 @@ describe("backend/bin/open", () => {
     expect(error).toHaveBeenCalledWith(`open: '${missing}' does not exist`);
     expect(fs.existsSync(path.join(tempDir, missing))).toBe(false);
   });
+
+  it("opens a relative directory", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-open-"));
+    const controlDir = path.join(tempDir, "control");
+    const directory = path.join(tempDir, "subdir");
+    fs.mkdirSync(directory);
+    process.argv = ["node", "open.ts", "subdir"];
+    process.env.PWD = tempDir;
+    process.env.COCALC_CONTROL_DIR = controlDir;
+
+    await main();
+
+    expect(readOnlySpoolMessage(controlDir)).toEqual({
+      event: "open",
+      paths: [{ directory }],
+    });
+  });
+
+  it("opens an absolute directory", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-open-"));
+    const controlDir = path.join(tempDir, "control");
+    const directory = path.join(tempDir, "subdir");
+    fs.mkdirSync(directory);
+    process.argv = ["node", "open.ts", directory];
+    process.env.PWD = "/";
+    process.env.COCALC_CONTROL_DIR = controlDir;
+
+    await main();
+
+    expect(readOnlySpoolMessage(controlDir)).toEqual({
+      event: "open",
+      paths: [{ directory }],
+    });
+  });
 });
+
+function readOnlySpoolMessage(controlDir: string): unknown {
+  const files = fs
+    .readdirSync(controlDir)
+    .filter((name) => name.endsWith(".json"));
+  expect(files).toHaveLength(1);
+  return JSON.parse(fs.readFileSync(path.join(controlDir, files[0]), "utf8"));
+}

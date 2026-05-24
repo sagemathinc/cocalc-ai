@@ -15,7 +15,7 @@ import type { SortOrder } from "antd/es/table/interface";
 
 import type { IntlShape } from "react-intl";
 
-import { Avatar, Button, Tag, Typography } from "antd";
+import { Avatar, Tag, Typography } from "antd";
 
 import { Icon, IconName, TimeAgo } from "@cocalc/frontend/components";
 import { TimeElapsed } from "@cocalc/frontend/components/time-elapsed";
@@ -82,7 +82,9 @@ export interface ProjectTableRecord {
   color?: string;
   state?: any; // immutable Map
   deleting?: boolean;
+  deletionScheduled?: boolean;
   deleteFailed?: boolean;
+  deleteError?: string;
   deletionBlocked?: boolean;
   hidden: boolean;
   collaborators: string[]; // Array of collaborator account_ids (excluding current user)
@@ -94,8 +96,6 @@ export interface ProjectTableRecord {
  * @param onToggleStar - Callback when star is clicked
  * @param renderActionsMenu - Function to render the actions menu
  * @param sortState - Current sort state to apply to columns
- * @param onToggleExpand - Callback when expand column is clicked
- * @param expandedRowKeys - Array of expanded row keys to determine icon state
  * @param collaboratorFilters - Array of collaborator filter options
  * @param narrow - If true, hide the collaborators column to save space
  * @param filteredCollaborators - Array of currently filtered collaborator account_ids
@@ -105,52 +105,17 @@ export interface ProjectTableRecord {
 export function getProjectTableColumns(
   onToggleStar: (project_id: string, e: React.MouseEvent) => void,
   renderActionsMenu: (record: ProjectTableRecord) => React.ReactNode,
+  onOpenProject: (
+    record: ProjectTableRecord,
+    e?: React.MouseEvent<HTMLElement>,
+  ) => void,
   sortState: SortState,
-  onToggleExpand: (record: ProjectTableRecord) => void,
-  expandedRowKeys: string[],
   collaboratorFilters: CollaboratorFilter[],
   narrow: boolean,
   filteredCollaborators: string[] | null,
   intl: IntlShape,
 ): TableColumnsType<ProjectTableRecord> {
   const columns = [
-    // Skip expand column on mobile
-    ...(!IS_MOBILE
-      ? [
-          {
-            key: "expand",
-            width: 90,
-            align: "center" as const,
-            onCell: (record: ProjectTableRecord) => ({
-              onClick: (e: React.MouseEvent) => {
-                e.stopPropagation(); // Prevent row click
-                onToggleExpand(record);
-              },
-              style: {
-                cursor: "pointer",
-                borderLeft: `5px solid ${
-                  record.color ? record.color : "transparent"
-                }`,
-              },
-            }),
-            render: (_: any, { project_id }: ProjectTableRecord) => {
-              // Render the expand icon based on whether this row is expanded
-              const isExpanded = expandedRowKeys.includes(project_id);
-              return (
-                <Button
-                  size="small"
-                  type={isExpanded ? "primary" : "default"}
-                  icon={
-                    <Icon name={isExpanded ? "minus-square" : "info-circle"} />
-                  }
-                >
-                  Details
-                </Button>
-              );
-            },
-          },
-        ]
-      : []),
     {
       title: (
         <Icon
@@ -210,12 +175,28 @@ export function getProjectTableColumns(
       },
       sortDirections: SORT_DIRECTIONS,
       sortOrder: sortState.columnKey === "title" ? sortState.order : null,
+      onCell: (record: ProjectTableRecord) => ({
+        onClick: (e: React.MouseEvent<HTMLElement>) => {
+          onOpenProject(record, e);
+        },
+        onMouseDown: (e: React.MouseEvent<HTMLElement>) => {
+          if (e.button === 1) {
+            onOpenProject(record, e);
+          }
+        },
+        style: {
+          cursor: record.deletionBlocked ? "not-allowed" : "pointer",
+          borderLeft: `5px solid ${record.color ? record.color : "transparent"}`,
+        },
+      }),
       render: (_: any, record: ProjectTableRecord) => {
         const stateIcon = getStateIcon(record.state);
         const strong = record.state?.get("state") === "running";
         const archived = record.state?.get("state") === "archived";
         const deleting = record.deleting === true;
-        const deleteFailed = record.deleteFailed === true;
+        const deletionScheduled = record.deletionScheduled === true;
+        const deleteFailed =
+          record.deleteFailed === true && deletionScheduled !== true;
         return (
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
             {/* Avatar or placeholder */}
@@ -242,9 +223,14 @@ export function getProjectTableColumns(
                     }}
                   />
                 )}
-                <Text strong={strong} disabled={deleting}>
+                <Text strong={strong} disabled={deleting || deletionScheduled}>
                   {record.title || "Untitled"}
                 </Text>
+                {deletionScheduled && (
+                  <Tag color="orange" style={{ marginLeft: "8px" }}>
+                    Scheduled for deletion
+                  </Tag>
+                )}
                 {archived && (
                   <Tag color="purple" style={{ marginLeft: "8px" }}>
                     Archived
@@ -257,11 +243,27 @@ export function getProjectTableColumns(
                 )}
                 {deleteFailed && (
                   <Tag color="red" style={{ marginLeft: "8px" }}>
-                    Deletion failed
+                    Deletion failed - retry delete
                   </Tag>
                 )}
               </div>
-              {record.description && (
+              {deleteFailed && (
+                <Text
+                  type={record.deleteError ? "danger" : "secondary"}
+                  style={{
+                    fontSize: "12px",
+                    display: "block",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {record.deleteError
+                    ? `Error: ${record.deleteError}`
+                    : "Select this row and choose Leave or Delete to retry."}
+                </Text>
+              )}
+              {record.description && !deleteFailed && (
                 <Text
                   type="secondary"
                   style={{

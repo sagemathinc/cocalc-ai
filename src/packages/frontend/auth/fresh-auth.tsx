@@ -26,6 +26,10 @@ type FreshAuthStatus = {
   actor_email_address?: string | null;
 };
 
+export type FreshAuthActionRunner = (
+  action: () => Promise<void>,
+) => Promise<boolean>;
+
 function normalizeFreshAuthEmail(email: string): string {
   return `${email ?? ""}`.trim().toLowerCase();
 }
@@ -284,6 +288,11 @@ export function useFreshAuthAction({
 }: {
   onUnhandledError?: (err: unknown) => void;
 } = {}) {
+  // Frontend counterpart to backend requireFreshAuth checks. Any browser UI
+  // action that can hit a fresh-auth-protected HTTP route or Conat RPC should
+  // run the mutation through runFreshAuthAction and render FreshAuthModal with
+  // freshAuthModalProps. Backend-only fresh-auth changes without this wiring
+  // leave users with an opaque "fresh auth is required" error.
   const [open, setOpen] = useState(false);
   const pendingActionRef = useRef<null | (() => Promise<void>)>(null);
 

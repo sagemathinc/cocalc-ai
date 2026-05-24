@@ -143,14 +143,13 @@ async function ensureSupplementalSchemas(): Promise<void> {
 async function seedProject(project_id: string): Promise<void> {
   await getPool().query(
     `INSERT INTO projects
-       (project_id, name, title, description, users, state, owning_bay_id,
+       (project_id, title, description, users, state, owning_bay_id,
         created, last_edited)
      VALUES
-       ($1, $2, $3, 'hard delete cleanup test', $4::jsonb, $5::jsonb, $6,
+       ($1, $2, 'hard delete cleanup test', $3::jsonb, $4::jsonb, $5,
         NOW(), NOW())`,
     [
       project_id,
-      `project-${project_id.slice(0, 8)}`,
       `Project ${project_id.slice(0, 8)}`,
       JSON.stringify({ [ACCOUNT_ID]: { group: "owner" } }),
       JSON.stringify({ state: "opened" }),

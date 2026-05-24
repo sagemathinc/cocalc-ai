@@ -14,7 +14,6 @@ export interface AccountFeedAccountRow {
   email_address_problem?: Record<string, any> | null;
   editor_settings?: Record<string, any> | null;
   other_settings?: Record<string, any> | null;
-  name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   terminal?: Record<string, any> | null;
@@ -46,7 +45,6 @@ export interface AccountFeedProjectRow {
   project_id: string;
   title: string;
   description: string;
-  name?: string | null;
   theme?: ProjectTheme | null;
   host_id: string | null;
   owning_bay_id: string;

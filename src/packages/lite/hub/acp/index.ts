@@ -5330,6 +5330,34 @@ function threadHasRunningState(syncdb: SyncDB, threadId: string): boolean {
   return rows.some((row) => syncdbField<string>(row, "state") === "running");
 }
 
+function threadHasRunningBackendTurn({
+  project_id,
+  path,
+  thread_id,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+}): boolean {
+  const threadId = `${thread_id ?? ""}`.trim();
+  if (!threadId) return false;
+  return (
+    listRunningAcpJobs().some(
+      (row) =>
+        row.project_id === project_id &&
+        row.path === path &&
+        row.thread_id === threadId,
+    ) ||
+    listRunningAcpTurnLeases().some(
+      (row) =>
+        row.project_id === project_id &&
+        row.path === path &&
+        row.thread_id === threadId &&
+        row.state === "running",
+    )
+  );
+}
+
 async function persistQueuedUserMessageProjection({
   client,
   project_id,
@@ -5351,13 +5379,40 @@ async function persistQueuedUserMessageProjection({
     path,
     fn: async (syncdb) => {
       const versionCountBefore = syncdbVersionCount(syncdb);
-      const waitingInLine = threadHasRunningState(syncdb, thread_id);
+      const waitingInLine =
+        threadHasRunningState(syncdb, thread_id) ||
+        threadHasRunningBackendTurn({
+          project_id,
+          path,
+          thread_id,
+        });
       const projectedMessageState = queued
         ? waitingInLine
           ? "queued"
           : "running"
         : null;
       let touched = false;
+      const current = findChatRowByMessageId(syncdb, user_message_id);
+      const currentDate =
+        normalizeIsoDateString(syncdbField<string>(current, "date")) ??
+        undefined;
+      const currentSender = syncdbField<string>(current, "sender_id");
+      if (currentDate && currentSender) {
+        const currentState =
+          syncdbField<string | null>(current, "acp_state") ?? null;
+        const nextState = queued && waitingInLine ? "queued" : null;
+        if (currentState !== nextState) {
+          syncdb.set({
+            event: "chat",
+            date: currentDate,
+            sender_id: currentSender,
+            message_id: user_message_id,
+            thread_id: syncdbField<string>(current, "thread_id") ?? thread_id,
+            acp_state: nextState,
+          });
+          touched = true;
+        }
+      }
       if (waitingInLine) {
         const nextQueued = queued
           ? user_message_id
@@ -6260,20 +6315,30 @@ async function prepareQueuedUserMessageForExecution({
             current,
             "parent_message_id",
           );
+          const currentAcpState = syncdbField<string | null>(
+            current,
+            "acp_state",
+          );
           const effectiveParentMessageId =
             currentParentMessageId || latestParentMessageId;
-          if (
+          const shouldUpdateParent =
             effectiveParentMessageId &&
-            effectiveParentMessageId !== currentParentMessageId
-          ) {
+            effectiveParentMessageId !== currentParentMessageId;
+          const shouldClearQueuedState = currentAcpState === "queued";
+          if (shouldUpdateParent || shouldClearQueuedState) {
             const update: Record<string, unknown> = {
               event: "chat",
               date: rowDate,
               sender_id: rowSender,
               message_id: user_message_id,
               thread_id: syncdbField<string>(current, "thread_id") ?? thread_id,
-              parent_message_id: effectiveParentMessageId,
             };
+            if (shouldUpdateParent) {
+              update.parent_message_id = effectiveParentMessageId;
+            }
+            if (shouldClearQueuedState) {
+              update.acp_state = null;
+            }
             syncdb.set(update);
             syncdb.commit();
             await syncdb.save();
@@ -8048,3 +8113,8 @@ export async function disposeAcpAgents(): Promise<void> {
   await Promise.all(pending);
   agents.clear();
 }
+
+export const acpTestInternals = {
+  persistQueuedUserMessageProjection,
+  prepareQueuedUserMessageForExecution,
+};

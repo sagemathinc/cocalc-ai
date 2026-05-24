@@ -99,6 +99,12 @@ export interface ProjectRuntimeLog {
   reason?: string;
 }
 
+export interface ProjectHiddenResult {
+  project_id: string;
+  success: boolean;
+  error?: string;
+}
+
 export interface ProjectRuntimeSponsorActiveProject {
   project_id: string;
   title?: string;
@@ -610,6 +616,7 @@ export const projects = {
   hardDeleteProject: authFirstRequireAccount,
   leaveOrDeleteProjects: authFirstRequireAccount,
   setProjectHidden: authFirstRequireAccount,
+  setProjectsHidden: authFirstRequireAccount,
   setProjectSshKey: authFirstRequireAccount,
   deleteProjectSshKey: authFirstRequireAccount,
 
@@ -830,6 +837,7 @@ export interface Projects {
     direction?: ProjectCollabInviteDirection;
     status?: ProjectCollabInviteStatus;
     limit?: number;
+    projectWide?: boolean;
   }) => Promise<ProjectCollabInviteRow[]>;
 
   respondCollabInvite: (opts: {
@@ -1258,6 +1266,11 @@ export interface Projects {
     project_id: string;
     hide: boolean;
   }) => Promise<void>;
+  setProjectsHidden: (opts: {
+    account_id?: string;
+    project_ids: string[];
+    hide: boolean;
+  }) => Promise<ProjectHiddenResult[]>;
   setProjectSshKey: (opts: {
     account_id?: string;
     project_id: string;

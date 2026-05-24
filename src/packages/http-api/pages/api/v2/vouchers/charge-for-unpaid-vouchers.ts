@@ -1,5 +1,6 @@
 import chargeForUnpaidVouchers from "@cocalc/server/vouchers/charge-for-unpaid-vouchers";
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 
 export default async function handle(req, res) {
@@ -7,7 +8,10 @@ export default async function handle(req, res) {
     const result = await doIt(req);
     res.json({ ...result, success: true });
   } catch (err) {
-    res.json({ error: `${err.message}` });
+    res.json({
+      error: `${err.message}`,
+      ...(err?.code != null ? { code: err.code } : {}),
+    });
     return;
   }
 }
@@ -20,6 +24,7 @@ async function doIt(req) {
   if (!(await userIsInGroup(account_id, "admin"))) {
     throw Error("only admins can initiate the charge for unpaid vouchers");
   }
+  await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
 
   return await chargeForUnpaidVouchers();
 }

@@ -1,13 +1,19 @@
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import createSubscriptionPayment from "@cocalc/server/purchases/stripe/create-subscription-payment";
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import throttle from "@cocalc/util/api/throttle";
 
+// Legacy/manual Stripe subscription-payment route. The user-facing React unpaid
+// subscription banner calls /api/v2/purchases/renew-subscription instead.
 export default async function handle(req, res) {
   try {
     res.json(await get(req));
   } catch (err) {
-    res.json({ error: `${err.message}` });
+    res.json({
+      error: `${err.message}`,
+      ...(err?.code != null ? { code: err.code } : {}),
+    });
     return;
   }
 }
@@ -21,6 +27,7 @@ async function get(req) {
     account_id,
     endpoint: "purchases/stripe/create-subscription-payment",
   });
+  await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
   const { subscription_id } = getParams(req);
   await createSubscriptionPayment({
     account_id,

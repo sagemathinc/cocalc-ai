@@ -44,7 +44,6 @@ export async function ensureClusterAccountDirectorySchema(): Promise<void> {
       email_address VARCHAR(254) NOT NULL UNIQUE,
       first_name VARCHAR(254),
       last_name VARCHAR(254),
-      name VARCHAR(39),
       home_bay_id VARCHAR(64) NOT NULL,
       created TIMESTAMP NOT NULL DEFAULT NOW(),
       last_active TIMESTAMP,
@@ -60,9 +59,6 @@ export async function ensureClusterAccountDirectorySchema(): Promise<void> {
   );
   await pool.query(
     `CREATE INDEX IF NOT EXISTS ${TABLE}_lower_last_name_idx ON ${TABLE} (lower(last_name::text) text_pattern_ops)`,
-  );
-  await pool.query(
-    `CREATE INDEX IF NOT EXISTS ${TABLE}_lower_name_idx ON ${TABLE} (lower(name::text) text_pattern_ops)`,
   );
   await pool.query(
     `CREATE INDEX IF NOT EXISTS ${TABLE}_created_idx ON ${TABLE} (created)`,
@@ -102,7 +98,6 @@ function canonicalLocalEntry(row: any): AccountDirectoryEntry {
     account_id: row.account_id,
     first_name: row.first_name ?? undefined,
     last_name: row.last_name ?? undefined,
-    name: row.name ?? undefined,
     email_address: row.email_address ?? undefined,
     home_bay_id: `${row.home_bay_id ?? ""}`.trim() || getConfiguredBayId(),
     created:
@@ -126,7 +121,6 @@ function canonicalDirectoryEntry(row: any): AccountDirectoryEntry {
     account_id: row.account_id,
     first_name: row.first_name ?? undefined,
     last_name: row.last_name ?? undefined,
-    name: row.name ?? undefined,
     email_address: row.email_address ?? undefined,
     home_bay_id: normalizedHomeBayId(row.home_bay_id),
     created:
@@ -170,7 +164,7 @@ async function getLocalAccountById(
   // read the primary immediately after rehome updates rather than a possibly
   // stale read pool.
   const { rows } = await getPool().query(
-    `SELECT account_id, first_name, last_name, name, email_address, home_bay_id,
+    `SELECT account_id, first_name, last_name, email_address, home_bay_id,
             created, last_active, banned, email_address_verified
        FROM accounts
       WHERE account_id=$1
@@ -192,7 +186,7 @@ async function getLocalAccountByEmail(
   // read the primary immediately after rehome updates rather than a possibly
   // stale read pool.
   const { rows } = await getPool().query(
-    `SELECT account_id, first_name, last_name, name, email_address, home_bay_id,
+    `SELECT account_id, first_name, last_name, email_address, home_bay_id,
             created, last_active, banned, email_address_verified
        FROM accounts
       WHERE email_address=$1
@@ -212,7 +206,7 @@ async function getDirectoryAccountById(
   await ensureClusterAccountDirectorySchema();
   // Direct directory lookups are the cluster routing source of truth.
   const { rows } = await getPool().query(
-    `SELECT account_id, first_name, last_name, name, email_address, home_bay_id,
+    `SELECT account_id, first_name, last_name, email_address, home_bay_id,
             created, last_active, banned
        FROM ${TABLE}
       WHERE account_id=$1
@@ -233,7 +227,7 @@ async function getDirectoryAccountByEmail(
   await ensureClusterAccountDirectorySchema();
   // Direct directory lookups are the cluster routing source of truth.
   const { rows } = await getPool().query(
-    `SELECT account_id, first_name, last_name, name, email_address, home_bay_id,
+    `SELECT account_id, first_name, last_name, email_address, home_bay_id,
             created, last_active, banned
        FROM ${TABLE}
       WHERE email_address=$1
@@ -294,7 +288,7 @@ async function searchDirectoryAccounts({
 
   if (email_queries.length > 0) {
     const { rows } = await pool.query(
-      `SELECT account_id, first_name, last_name, name, email_address, home_bay_id,
+      `SELECT account_id, first_name, last_name, email_address, home_bay_id,
               created, last_active, banned
          FROM ${TABLE}
         WHERE provisioned=TRUE
@@ -322,7 +316,6 @@ async function searchDirectoryAccounts({
         const columns = [
           `lower(first_name::text) LIKE ${param}`,
           `lower(last_name::text) LIKE ${param}`,
-          `lower(name::text) LIKE ${param}`,
         ];
         if (admin) {
           columns.push(`lower(email_address::text) LIKE ${param}`);
@@ -335,7 +328,7 @@ async function searchDirectoryAccounts({
     }
     if (clauses.length > 0) {
       const { rows } = await pool.query(
-        `SELECT account_id, first_name, last_name, name, email_address, home_bay_id,
+        `SELECT account_id, first_name, last_name, email_address, home_bay_id,
                 created, last_active, banned
            FROM ${TABLE}
           WHERE provisioned=TRUE
@@ -422,7 +415,7 @@ export async function getClusterAccountsByIdsDirect(
   const pool = getPool("medium");
   const [localRowsResult, directoryRowsResult] = await Promise.all([
     pool.query(
-      `SELECT account_id, first_name, last_name, name, email_address, home_bay_id,
+      `SELECT account_id, first_name, last_name, email_address, home_bay_id,
               created, last_active, banned, email_address_verified
          FROM accounts
         WHERE account_id = ANY($1::UUID[])
@@ -432,7 +425,7 @@ export async function getClusterAccountsByIdsDirect(
     (async () => {
       await ensureClusterAccountDirectorySchema();
       return await pool.query(
-        `SELECT account_id, first_name, last_name, name, email_address, home_bay_id,
+        `SELECT account_id, first_name, last_name, email_address, home_bay_id,
                 created, last_active, banned
            FROM ${TABLE}
           WHERE account_id = ANY($1::UUID[])
@@ -517,28 +510,25 @@ export async function reserveClusterAccountDirectoryEntry({
   email_address,
   first_name,
   last_name,
-  name,
   home_bay_id,
 }: {
   account_id: string;
   email_address: string;
   first_name?: string;
   last_name?: string;
-  name?: string;
   home_bay_id: string;
 }): Promise<void> {
   await ensureClusterAccountDirectorySchema();
   await getPool().query(
     `INSERT INTO ${TABLE}
-       (account_id, email_address, first_name, last_name, name, home_bay_id, provisioned)
+       (account_id, email_address, first_name, last_name, home_bay_id, provisioned)
      VALUES
-       ($1, $2, $3, $4, $5, $6, FALSE)`,
+       ($1, $2, $3, $4, $5, FALSE)`,
     [
       account_id,
       normalizedEmail(email_address),
       first_name ?? null,
       last_name ?? null,
-      name ?? null,
       normalizedHomeBayId(home_bay_id),
     ],
   );
@@ -549,14 +539,12 @@ export async function markClusterAccountProvisioned({
   email_address,
   first_name,
   last_name,
-  name,
   home_bay_id,
 }: {
   account_id: string;
   email_address: string;
   first_name?: string;
   last_name?: string;
-  name?: string;
   home_bay_id: string;
 }): Promise<void> {
   await ensureClusterAccountDirectorySchema();
@@ -565,8 +553,7 @@ export async function markClusterAccountProvisioned({
         SET email_address=$2,
             first_name=$3,
             last_name=$4,
-            name=$5,
-            home_bay_id=$6,
+            home_bay_id=$5,
             provisioned=TRUE
       WHERE account_id=$1`,
     [
@@ -574,7 +561,6 @@ export async function markClusterAccountProvisioned({
       normalizedEmail(email_address),
       first_name ?? null,
       last_name ?? null,
-      name ?? null,
       normalizedHomeBayId(home_bay_id),
     ],
   );
@@ -631,20 +617,19 @@ export async function updateClusterAccountEmailAddressDirect({
   await ensureClusterAccountDirectorySchema();
   const { rows } = await getPool().query(
     `INSERT INTO ${TABLE}
-       (account_id, email_address, first_name, last_name, name, home_bay_id, provisioned)
+       (account_id, email_address, first_name, last_name, home_bay_id, provisioned)
      VALUES
-       ($1, $2, $3, $4, $5, $6, TRUE)
+       ($1, $2, $3, $4, $5, TRUE)
      ON CONFLICT (account_id) DO UPDATE
         SET email_address=EXCLUDED.email_address,
             provisioned=TRUE
-     RETURNING account_id, first_name, last_name, name, email_address, home_bay_id,
+     RETURNING account_id, first_name, last_name, email_address, home_bay_id,
                created, last_active, banned`,
     [
       account_id,
       email,
       current.first_name ?? null,
       current.last_name ?? null,
-      current.name ?? null,
       normalizedHomeBayId(current.home_bay_id ?? ""),
     ],
   );

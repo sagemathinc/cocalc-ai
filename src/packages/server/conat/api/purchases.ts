@@ -39,7 +39,7 @@ import {
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 import type { MoneyValue } from "@cocalc/util/money";
 import isAdmin from "@cocalc/server/accounts/is-admin";
-import type { MembershipPackageProduct } from "@cocalc/util/db-schema/shopping-cart-items";
+import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
 import purchaseMembershipPackage0 from "@cocalc/server/purchases/membership-package";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";

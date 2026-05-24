@@ -21,13 +21,7 @@ export default function AccountTableError() {
     obj = query;
   }
 
-  let description;
-  if (obj?.["name"] != null) {
-    // Issue trying to set the username.
-    description =
-      "Please try a different username.  Names can be between 1 and 39 characters, contain upper and lower case letters, numbers, and dashes.";
-  } else {
-    description = `
+  const description = `
 There was an error trying to save an account setting to the server. In
 particular, the following change failed:
 
@@ -35,7 +29,6 @@ particular, the following change failed:
 ${JSON.stringify(obj, undefined, 2)}
 \`\`\`
 `;
-  }
 
   return (
     <div style={{ width: "100%" }}>

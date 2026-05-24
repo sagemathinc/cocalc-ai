@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert as AntdAlert, Space, Typography } from "antd";
+import { Space, Typography } from "antd";
 import { List, Map } from "immutable";
 import { join } from "path";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -64,7 +64,6 @@ interface Props {
   account_id?: string;
   first_name?: string;
   last_name?: string;
-  name?: string;
   unlisted?: boolean;
   email_address?: string;
   email_address_verified?: Map<string, any>;
@@ -89,7 +88,6 @@ export function AccountSettings(props: Readonly<Props>) {
   >(undefined);
   const [show_delete_confirmation, set_show_delete_confirmation] =
     useState<boolean>(false);
-  const [username, set_username] = useState<boolean>(false);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: ugly_error,
   });
@@ -403,7 +401,11 @@ export function AccountSettings(props: Readonly<Props>) {
           <DeleteAccount
             style={{ marginTop: "1ex" }}
             initial_click={() => set_show_delete_confirmation(true)}
-            confirm_click={() => actions().delete_account()}
+            confirm_click={() =>
+              runFreshAuthAction(async () => {
+                await actions().delete_account();
+              })
+            }
             cancel_click={() => set_show_delete_confirmation(false)}
             user_name={(props.first_name + " " + props.last_name).trim()}
             show_confirmation={show_delete_confirmation}
@@ -418,7 +420,7 @@ export function AccountSettings(props: Readonly<Props>) {
       // makes no sense to change password if don't have an email address
       return;
     }
-    return <PasswordSetting />;
+    return <PasswordSetting runFreshAuthAction={runFreshAuthAction} />;
   }
 
   function render_two_factor_auth(): Rendered {
@@ -488,53 +490,6 @@ export function AccountSettings(props: Readonly<Props>) {
           onPressEnter={(e) => save_change(e, "last_name")}
           maxLength={254}
         />
-        <TextSetting
-          label={intl.formatMessage({
-            id: "account.settings.username.label",
-            defaultMessage: "Username (optional)",
-          })}
-          value={props.name}
-          onChange={(e) => {
-            const name = e.target.value?.trim();
-            actions().setState({ name });
-          }}
-          onBlur={(e) => {
-            set_username(false);
-            const name = e.target.value?.trim();
-            if (name) {
-              set_account_table({ name });
-            }
-          }}
-          onFocus={() => {
-            set_username(true);
-          }}
-          onPressEnter={(e) => {
-            const name = e.target.value?.trim();
-            if (name) {
-              set_account_table({ name });
-            }
-          }}
-          maxLength={39}
-        />
-        {username && (
-          <AntdAlert
-            showIcon
-            style={{ margin: "15px 0" }}
-            title={
-              <FormattedMessage
-                id="account.settings.username.info"
-                defaultMessage={`Setting a username provides optional nicer URL's for shared
-public documents. Your username can be between 1 and 39 characters,
-contain upper and lower case letters, numbers, and dashes.
-{br}
-WARNING: If you change your username, existing links using the previous username
-will no longer work (automatic redirects are not implemented), so change with caution.`}
-                values={{ br: <br /> }}
-              />
-            }
-            type="info"
-          />
-        )}
       </>
     );
   }
@@ -547,6 +502,7 @@ will no longer work (automatic redirects are not implemented), so change with ca
       <EmailAddressSetting
         email_address={props.email_address}
         verify_emails={props.verify_emails}
+        runFreshAuthAction={runFreshAuthAction}
       />
     );
   }

@@ -9,7 +9,8 @@ import {
 import createPurchase from "@cocalc/server/purchases/create-purchase";
 import createSubscription from "@cocalc/server/purchases/create-subscription";
 import { MembershipClass } from "@cocalc/conat/hub/api/purchases";
-import { toDecimal } from "@cocalc/util/money";
+import { toDecimal, type MoneyValue } from "@cocalc/util/money";
+import { assertPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
 
 interface MembershipChangeOptions {
   account_id: string;
@@ -18,6 +19,7 @@ interface MembershipChangeOptions {
   allowDowngrade?: boolean;
   storeVisibleOnly?: boolean;
   requireNoPayment?: boolean;
+  paymentAmount?: MoneyValue;
   client?: PoolClient;
 }
 
@@ -28,6 +30,7 @@ export async function applyMembershipChange({
   allowDowngrade = false,
   storeVisibleOnly = false,
   requireNoPayment = false,
+  paymentAmount,
   client,
 }: MembershipChangeOptions): Promise<
   MembershipChangeResult & { subscription_id: number; purchase_id: number }
@@ -44,6 +47,16 @@ export async function applyMembershipChange({
       client: transaction,
     });
     const chargeValue = toDecimal(change.charge);
+
+    if (paymentAmount != null) {
+      await assertPurchaseAllowed({
+        account_id,
+        service: "membership",
+        cost: chargeValue,
+        amount: paymentAmount,
+        client: transaction,
+      });
+    }
 
     if (requireNoPayment && chargeValue.gt(0)) {
       const purchase = await isPurchaseAllowed({

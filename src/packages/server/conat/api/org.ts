@@ -69,15 +69,11 @@ async function isNameAvailable(name: string): Promise<boolean> {
   // obvious potential for race conditions, but this is only used by
   // site admins
   const pool = getPool();
-  const a = pool.query("SELECT COUNT(*) AS count FROM accounts WHERE name=$1", [
-    name,
-  ]);
-  const b = pool.query(
+  const result = await pool.query(
     "SELECT COUNT(*) AS count FROM organizations WHERE name=$1",
     [name],
   );
-  const v = await Promise.all([a, b]);
-  return v[0].rows[0].count == 0 && v[1].rows[0].count == 0;
+  return result.rows[0].count == 0;
 }
 
 // get every organization; this is only for site admins.

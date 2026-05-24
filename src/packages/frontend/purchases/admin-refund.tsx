@@ -11,6 +11,10 @@ and we could manually create a corresponding refund transaction to match that.
 I had implemented this and realized that its super hard to get right given tax, etc.
 */
 
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { useState } from "react";
 import { Button, Modal, Input, Select, Form, Divider } from "antd";
@@ -46,6 +50,9 @@ export default function AdminRefund({
   const [refunding, setRefunding] = useState<boolean>(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [form] = Form.useForm(); // Add this line
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   const showModal = () => {
     setError("");
@@ -55,14 +62,18 @@ export default function AdminRefund({
   const handleOk = async () => {
     const values = { ...form.getFieldsValue(), reason: DEFAULT_REASON }; // Get the form data
     try {
-      setRefunding(true);
-      await adminCreateRefund({ purchase_id, ...values });
-      setIsModalVisible(false);
-      refresh?.();
+      await runFreshAuthAction(async () => {
+        setRefunding(true);
+        try {
+          await adminCreateRefund({ purchase_id, ...values });
+          setIsModalVisible(false);
+          refresh?.();
+        } finally {
+          setRefunding(false);
+        }
+      });
     } catch (err) {
       setError(`${err}`);
-    } finally {
-      setRefunding(false);
     }
   };
 
@@ -138,6 +149,7 @@ export default function AdminRefund({
           style={{ margin: "15px 0" }}
         />
       </Modal>
+      <FreshAuthModal {...freshAuthModalProps} />
     </>
   );
 }

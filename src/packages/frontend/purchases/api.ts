@@ -103,33 +103,12 @@ export async function getBalanceAdmin(account_id: string): Promise<MoneyValue> {
   return await api("purchases/get-balance-admin", { account_id });
 }
 
-export async function getSpendRate(): Promise<MoneyValue> {
-  return await api("purchases/get-spend-rate");
-}
-
-export async function getQuotas(): Promise<{
-  minBalance: MoneyValue;
-  services: { [service: string]: MoneyValue };
-}> {
-  return await api("purchases/get-quotas");
-}
-
 export async function getClosingDates(): Promise<{ last: Date; next: Date }> {
   return await api("purchases/get-closing-dates");
 }
 
 export async function resetClosingDate() {
   return await api("purchases/reset-closing-date");
-}
-
-export async function setQuota(
-  service: Service,
-  value: number,
-): Promise<{
-  minBalance: MoneyValue;
-  services: { [service: string]: MoneyValue };
-}> {
-  return await api("purchases/set-quota", { service, value });
 }
 
 export async function isPurchaseAllowed(
@@ -234,6 +213,8 @@ export async function getSubscription(
   };
 }
 
+// This is the legacy/manual Stripe renewal-payment path. The React unpaid
+// subscription banner does NOT use this; it uses renewSubscription below.
 export async function createSubscriptionPayment(subscription_id: number) {
   return await api("purchases/stripe/create-subscription-payment", {
     subscription_id,
@@ -262,13 +243,15 @@ export async function emailStatement(statement_id: number) {
 }
 
 export async function getInvoice(invoice_id: string) {
-  return await api("billing/get-invoice", { invoice_id });
+  return await api("purchases/stripe/get-invoice", { invoice_id });
 }
 
 export async function getInvoiceUrl(
   invoice_id: string,
 ): Promise<string | null> {
-  const { url } = await api("billing/get-invoice-url", { invoice_id });
+  const { url } = await api("purchases/stripe/get-invoice-url", {
+    invoice_id,
+  });
   return url ?? null;
 }
 
@@ -281,7 +264,7 @@ export async function getCostPerDay(opts: { limit?: number; offset?: number }) {
 
 // Get all the stripe information about a given user.
 export async function getCustomer() {
-  return await api("billing/get-customer");
+  return await api("purchases/stripe/get-customer");
 }
 
 // Get this month's outstanding charges by service.
@@ -336,13 +319,6 @@ export const getServiceCost = longCache(async (service: Service) => {
   return await api("purchases/get-service-cost", { service });
 }, "get-service-cost");
 
-export const getServiceCosts = longCache(
-  async (services: Service[]): Promise<{ [service: string]: any }> => {
-    return await api("purchases/get-service-cost", { service: services });
-  },
-  "get-service-cost",
-);
-
 export const getMinimumPayment = longCache(
   async () => (await getServiceCost("credit")) as number,
   "get-minimum-payment",
@@ -351,30 +327,6 @@ export const getMinimumPayment = longCache(
 export async function syncSubscription(): Promise<boolean> {
   const { found } = await api("purchases/sync-subscription");
   return found;
-}
-
-export async function getCurrentCheckoutSession(): Promise<null | {
-  id: string;
-  url: string;
-}> {
-  return (await api("purchases/get-current-checkout-session")).session;
-}
-
-export async function cancelCurrentCheckoutSession() {
-  await api("purchases/cancel-current-checkout-session");
-}
-
-export async function shoppingCartCheckout() {
-  await api("purchases/shopping-cart-checkout");
-}
-
-export async function getShoppingCartCheckoutParams(
-  opts: {
-    payment_intent?: string;
-    processing?: boolean;
-  } = {},
-) {
-  return await api("purchases/get-shopping-cart-checkout-params", opts);
 }
 
 export interface MembershipChangeQuote {
@@ -674,6 +626,8 @@ export async function costToResumeSubscription(
   });
 }
 
+// User-facing unpaid subscription renewal path. If the backend requires fresh
+// auth, the React caller must wrap this in useFreshAuthAction/FreshAuthModal.
 export async function renewSubscription(
   subscription_id: number,
 ): Promise<{ purchase_id: number | null }> {

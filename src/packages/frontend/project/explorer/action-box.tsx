@@ -49,7 +49,12 @@ export const PRE_STYLE = {
   color: "#555",
   backgroundColor: "#eee",
   padding: "6px 12px",
+  overflowY: "auto",
+  overflowX: "hidden",
+  whiteSpace: "normal",
 } as const;
+
+const MAX_RENDERED_SELECTED_FILES = 500;
 
 type FileAction = undefined | keyof typeof file_actions;
 
@@ -138,13 +143,56 @@ export function ActionBox({
     clear();
   }
 
-  function render_selected_files_list() {
+  function render_selected_files_list({
+    large = false,
+  }: { large?: boolean } = {}) {
+    const selectedFiles = checked_files.toArray().sort((a, b) =>
+      a.localeCompare(b, undefined, {
+        sensitivity: "base",
+        numeric: true,
+      }),
+    );
+    const visibleFiles = selectedFiles.slice(0, MAX_RENDERED_SELECTED_FILES);
+    const hiddenCount = selectedFiles.length - visibleFiles.length;
     return (
-      <pre style={PRE_STYLE}>
-        {checked_files.toArray().map((name) => (
-          <div key={name}>{misc.path_split(name).tail}</div>
+      <div
+        style={{
+          ...PRE_STYLE,
+          ...(large
+            ? {
+                maxHeight: "min(34vh, 320px)",
+                marginBottom: "12px",
+              }
+            : undefined),
+        }}
+        data-testid="selected-files-list"
+      >
+        {visibleFiles.map((name) => (
+          <div
+            key={name}
+            title={name}
+            style={{
+              overflowWrap: "anywhere",
+              borderBottom: "1px solid #ddd",
+              padding: "2px 0",
+            }}
+          >
+            {misc.path_split(name).tail}
+          </div>
         ))}
-      </pre>
+        {hiddenCount > 0 && (
+          <div
+            style={{
+              marginTop: "6px",
+              fontStyle: "italic",
+              color: COLORS.GRAY_M,
+            }}
+          >
+            ... and {hiddenCount} more selected{" "}
+            {misc.plural(hiddenCount, "item")}
+          </div>
+        )}
+      </div>
     );
   }
 
@@ -197,7 +245,7 @@ export function ActionBox({
             </a>
             .
           </div>
-          {render_selected_files_list()}
+          {render_selected_files_list({ large: true })}
           <div style={{ marginBottom: "12px" }}>
             <Checkbox
               checked={deleteWithSudo}

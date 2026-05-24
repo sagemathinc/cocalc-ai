@@ -63,6 +63,10 @@ describe("hard-delete admission", () => {
     delete process.env.COCALC_PROJECT_HARD_DELETE_ACCOUNT_INFLIGHT_LIMIT;
     delete process.env.COCALC_PROJECT_HARD_DELETE_ACCOUNT_RECENT_LIMIT;
     delete process.env.COCALC_PROJECT_HARD_DELETE_ACCOUNT_RECENT_WINDOW_SECONDS;
+    delete process.env.COCALC_PROJECT_HARD_DELETE_ADMIN_ACCOUNT_INFLIGHT_LIMIT;
+    delete process.env.COCALC_PROJECT_HARD_DELETE_ADMIN_ACCOUNT_RECENT_LIMIT;
+    delete process.env
+      .COCALC_PROJECT_HARD_DELETE_ADMIN_ACCOUNT_RECENT_WINDOW_SECONDS;
     delete process.env.COCALC_PROJECT_HARD_DELETE_GLOBAL_INFLIGHT_LIMIT;
   });
 
@@ -72,10 +76,39 @@ describe("hard-delete admission", () => {
     const { getProjectHardDeleteAdmissionLimits } =
       await import("./hard-delete-admission");
     expect(getProjectHardDeleteAdmissionLimits()).toMatchObject({
-      account_inflight: 2,
-      account_recent: 10,
+      account_inflight: 10,
+      account_recent: 100,
       account_recent_window_seconds: 60 * 60,
-      global_inflight: 100,
+      global_inflight: 500,
+    });
+  });
+
+  it("uses higher admin defaults for per-account admission limits", async () => {
+    const { getProjectHardDeleteAdmissionLimits } =
+      await import("./hard-delete-admission");
+    expect(
+      getProjectHardDeleteAdmissionLimits({ is_admin: true }),
+    ).toMatchObject({
+      account_inflight: 100,
+      account_recent: 10_000,
+      account_recent_window_seconds: 60 * 60,
+      global_inflight: 500,
+    });
+  });
+
+  it("lets admin-specific env vars override generic per-account limits", async () => {
+    process.env.COCALC_PROJECT_HARD_DELETE_ACCOUNT_RECENT_LIMIT = "200";
+    process.env.COCALC_PROJECT_HARD_DELETE_ADMIN_ACCOUNT_RECENT_LIMIT = "3000";
+
+    const { getProjectHardDeleteAdmissionLimits } =
+      await import("./hard-delete-admission");
+    expect(getProjectHardDeleteAdmissionLimits()).toMatchObject({
+      account_recent: 200,
+    });
+    expect(
+      getProjectHardDeleteAdmissionLimits({ is_admin: true }),
+    ).toMatchObject({
+      account_recent: 3000,
     });
   });
 
@@ -89,10 +122,10 @@ describe("hard-delete admission", () => {
         account_id: ACCOUNT_ID,
         project_id: PROJECT_ID,
         limits: {
-          account_inflight: 2,
-          account_recent: 10,
+          account_inflight: 10,
+          account_recent: 100,
           account_recent_window_seconds: 60 * 60,
-          global_inflight: 100,
+          global_inflight: 500,
         },
       }),
     ).resolves.toMatchObject({
@@ -129,9 +162,9 @@ describe("hard-delete admission", () => {
   it("allows repeated admission for an already-active delete on the same project", async () => {
     queryMock.mockResolvedValueOnce(
       counts({
-        account_inflight: 2,
-        account_recent: 10,
-        global_inflight: 100,
+        account_inflight: 10,
+        account_recent: 100,
+        global_inflight: 500,
         same_project_active: 1,
       }),
     );
@@ -143,10 +176,10 @@ describe("hard-delete admission", () => {
         account_id: ACCOUNT_ID,
         project_id: PROJECT_ID,
         limits: {
-          account_inflight: 2,
-          account_recent: 10,
+          account_inflight: 10,
+          account_recent: 100,
           account_recent_window_seconds: 60 * 60,
-          global_inflight: 100,
+          global_inflight: 500,
         },
       }),
     ).resolves.toMatchObject({ same_project_active: 1 });
@@ -184,21 +217,21 @@ describe("hard-delete admission", () => {
   it.each([
     [
       "account_inflight",
-      counts({ account_inflight: 2, account_queued: 2 }),
+      counts({ account_inflight: 10, account_queued: 10 }),
       "project_delete_rate_limited_account_inflight",
-      "queued=2, running=0, total=2, limit=2",
+      "queued=10, running=0, total=10, limit=10",
     ],
     [
       "account_recent",
-      counts({ account_recent: 10 }),
+      counts({ account_recent: 100 }),
       "project_delete_rate_limited_account_recent",
-      "recent=10, limit=10, window_seconds=3600",
+      "recent=100, limit=100, window_seconds=3600",
     ],
     [
       "global_inflight",
-      counts({ global_inflight: 100, global_queued: 99, global_running: 1 }),
+      counts({ global_inflight: 500, global_queued: 499, global_running: 1 }),
       "project_delete_rate_limited_global_inflight",
-      "queued=99, running=1, total=100, limit=100",
+      "queued=499, running=1, total=500, limit=500",
     ],
   ])(
     "rejects when %s reaches its limit",
@@ -212,10 +245,10 @@ describe("hard-delete admission", () => {
           account_id: ACCOUNT_ID,
           project_id: PROJECT_ID,
           limits: {
-            account_inflight: 2,
-            account_recent: 10,
+            account_inflight: 10,
+            account_recent: 100,
             account_recent_window_seconds: 60 * 60,
-            global_inflight: 100,
+            global_inflight: 500,
           },
         }),
       ).rejects.toMatchObject({

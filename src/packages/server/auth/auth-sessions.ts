@@ -484,6 +484,11 @@ export async function requireFreshAuth({
   account_id: string;
   allow_actor_impersonation?: boolean;
 }): Promise<AccountAuthSessionRow> {
+  // Browser-facing routes that call requireFreshAuth must have matching React
+  // wiring through useFreshAuthAction/FreshAuthModal. Otherwise stale sessions
+  // fail as raw API errors instead of prompting the user to verify and retry.
+  // Non-browser callers should document why a frontend counterpart is not
+  // needed, e.g. dev CLI fresh auth or internal maintenance code.
   const session = await getCurrentAuthSession({ req, account_id });
   if (allow_actor_impersonation) {
     const impersonation = await getImpersonationSessionBySessionHash({
@@ -528,6 +533,9 @@ export async function requireFreshAuthForSessionHash({
   account_id: string;
   allow_actor_impersonation?: boolean;
 }): Promise<AccountAuthSessionRow> {
+  // Same frontend rule as requireFreshAuth when this protects browser-triggered
+  // Conat/RPC actions: wire the React caller through useFreshAuthAction and
+  // render FreshAuthModal so the protected action can be retried after verify.
   const session = await getCurrentAuthSessionForSessionHash({
     session_hash,
     account_id,

@@ -13,7 +13,6 @@ export const AccountPreferences: React.FC = () => {
   const account_id = useTypedRedux("account", "account_id");
   const first_name = useTypedRedux("account", "first_name");
   const last_name = useTypedRedux("account", "last_name");
-  const name = useTypedRedux("account", "name");
   const email_address = useTypedRedux("account", "email_address");
   const email_address_verified = useTypedRedux(
     "account",
@@ -35,7 +34,6 @@ export const AccountPreferences: React.FC = () => {
         account_id={account_id}
         first_name={first_name}
         last_name={last_name}
-        name={name}
         email_address={email_address}
         email_address_verified={email_address_verified}
         passports={passports}

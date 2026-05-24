@@ -1,8 +1,7 @@
 import dayjs from "dayjs";
 
 import type { Date0 } from "@cocalc/util/types/store";
-import type { Period } from "@cocalc/util/upgrades/shopping";
-import type { StartEndDates } from "./types";
+import type { Period, StartEndDates } from "./types";
 
 // Make sure both start and end dates defined as Date.  For all licenses we
 // always require that both are defined.  For a subscription, the end date must

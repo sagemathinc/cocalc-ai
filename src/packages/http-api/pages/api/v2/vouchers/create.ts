@@ -6,6 +6,7 @@
 import { getTransactionClient } from "@cocalc/database/pool";
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import { isPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
 import createVouchers from "@cocalc/server/vouchers/create-vouchers";
 import { toDecimal } from "@cocalc/util/money";
@@ -15,7 +16,10 @@ export default async function handle(req, res) {
   try {
     res.json(await create(req));
   } catch (err) {
-    res.json({ error: `${err.message}` });
+    res.json({
+      error: `${err.message}`,
+      ...(err?.code != null ? { code: err.code } : {}),
+    });
   }
 }
 
@@ -24,6 +28,7 @@ async function create(req) {
   if (account_id == null) {
     throw Error("must be signed in");
   }
+  await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
 
   const { amount, count, title } = getParams(req);
   const amountValue = toDecimal(Number(amount ?? 0));

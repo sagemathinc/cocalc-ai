@@ -14,6 +14,10 @@ export default async function setDefaultSource({
   }
 
   const stripe = await getConn();
+  await stripe.customers.retrievePaymentMethod(
+    customer,
+    default_payment_method,
+  );
   await stripe.customers.update(customer, {
     invoice_settings: { default_payment_method },
   });

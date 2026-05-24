@@ -27,21 +27,6 @@ describe("nameToAccountOrOrganization", () => {
     await testCleanup(database);
   });
 
-  it("returns the account_id for account names (case-insensitive)", async () => {
-    const pool = getPool();
-    const accountId = uuid();
-    const accountName = `acct-${uuid().slice(0, 8)}`;
-
-    await pool.query(
-      "INSERT INTO accounts (account_id, email_address, created, name) VALUES ($1, $2, NOW(), $3)",
-      [accountId, `${accountName}@example.com`, accountName],
-    );
-
-    const result = await nameToAccountOrOrganization(accountName.toUpperCase());
-
-    expect(result).toBe(accountId);
-  });
-
   it("returns the organization_id for organization names", async () => {
     const pool = getPool();
     const organizationId = uuid();

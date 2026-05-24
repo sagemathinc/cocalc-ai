@@ -129,7 +129,7 @@ export function SSHPanel({
     setSetupError(undefined);
     setSetupLoading(true);
     try {
-      const title = project.get("title") || project.get("name") || projectId;
+      const title = project.get("title") || projectId;
       const response = await webapp_client.account_client.api_keys({
         action: "create",
         name: `SSH setup for ${title}`,
