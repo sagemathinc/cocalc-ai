@@ -5,6 +5,7 @@ Membership pricing + eligibility for in-app membership changes.
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { computeMembershipChange } from "@cocalc/server/membership/tiers";
 import { isPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
+import { hasPaymentMethod } from "@cocalc/server/purchases/stripe/get-payment-methods";
 
 export default async function handle(req, res) {
   try {
@@ -38,6 +39,24 @@ async function get(req) {
     allowDowngrade: !!allow_downgrade,
     storeVisibleOnly: true,
   });
+
+  if (pricing.trial_available && pricing.trial_days) {
+    if (!(await hasPaymentMethod(account_id))) {
+      return {
+        ...pricing,
+        allowed: false,
+        reason: "Add a payment method to start this free trial.",
+        charge_amount: 0,
+        trial_requires_payment_method: true,
+      };
+    }
+    return {
+      ...pricing,
+      allowed: true,
+      charge_amount: 0,
+      trial_requires_payment_method: true,
+    };
+  }
 
   if (pricing.charge <= 0) {
     return { ...pricing, allowed: true, charge_amount: 0 };

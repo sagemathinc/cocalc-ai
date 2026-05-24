@@ -183,6 +183,7 @@ export async function createPayments() {
   SELECT id as subscription_id, account_id FROM subscriptions WHERE
       status != 'canceled' AND
       current_period_end <= NOW() + interval '${RENEW_DAYS_BEFORE_END} days' AND
+      (metadata->>'trial_ends_at' IS NULL OR current_period_end <= NOW()) AND
       coalesce(payment#>>'{status}','') != 'active'
   `,
   );

@@ -12,6 +12,10 @@ export interface MembershipMetadata {
   class: MembershipClass;
   source?: "self_pay" | "org" | "course" | "promo";
   source_id?: string;
+  trial?: boolean;
+  trial_days?: number;
+  trial_email?: string;
+  trial_ends_at?: string;
 }
 export type Metadata = MembershipMetadata;
 

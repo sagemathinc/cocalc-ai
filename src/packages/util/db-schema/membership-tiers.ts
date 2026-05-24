@@ -35,6 +35,7 @@ Table({
           priority: null,
           price_monthly: null,
           price_yearly: null,
+          trial_days: null,
           course_price: null,
           course_duration_days: null,
           course_grace_days: null,
@@ -58,6 +59,7 @@ Table({
           priority: null,
           price_monthly: null,
           price_yearly: null,
+          trial_days: null,
           course_price: null,
           course_duration_days: null,
           course_grace_days: null,
@@ -108,6 +110,10 @@ Table({
       type: "number",
       desc: "Yearly price in USD.",
       pg_type: "numeric(20,10)",
+    },
+    trial_days: {
+      type: "number",
+      desc: "Number of free-trial days for new self-serve subscription purchases of this tier. Zero or null means no trial.",
     },
     course_price: {
       type: "number",

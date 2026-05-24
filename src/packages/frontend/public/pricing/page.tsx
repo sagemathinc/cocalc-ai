@@ -26,6 +26,7 @@ export interface PublicMembershipTier {
   ai_limits?: Record<string, unknown>;
   price_monthly?: number;
   price_yearly?: number;
+  trial_days?: number;
   priority?: number;
   project_defaults?: Record<string, unknown>;
   store_visible?: boolean;
@@ -166,6 +167,10 @@ function TierSection({
 }) {
   const label = tier.label ?? tier.id;
   const highlights = membershipHighlights(tier);
+  const trialDays =
+    typeof tier.trial_days === "number" && tier.trial_days > 0
+      ? Math.floor(tier.trial_days)
+      : 0;
   const description =
     TIER_DESCRIPTIONS[tier.id] ??
     "A public membership tier configured by this deployment.";
@@ -189,6 +194,9 @@ function TierSection({
         <Text strong>{currency(Number(tier.price_yearly ?? 0))}</Text>
         <Text type="secondary"> / year</Text>
       </div>
+      {trialDays > 0 && (
+        <Tag color="green">{trialDays}-day free trial with payment method</Tag>
+      )}
       {highlights.length > 0 ? (
         <ul style={{ margin: 0, paddingLeft: "20px" }}>
           {highlights.map((item) => (

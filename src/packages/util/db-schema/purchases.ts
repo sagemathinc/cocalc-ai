@@ -75,6 +75,7 @@ export interface Membership {
   interval: "month" | "year";
   admin_assigned?: boolean;
   assigned_by?: string;
+  trial_days?: number;
 }
 
 export interface MembershipPackagePurchase {

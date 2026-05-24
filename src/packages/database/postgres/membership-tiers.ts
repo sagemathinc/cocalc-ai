@@ -13,6 +13,7 @@ interface Query {
   priority?: number;
   price_monthly?: number;
   price_yearly?: number;
+  trial_days?: number;
   course_price?: number;
   course_duration_days?: number;
   course_grace_days?: number;
@@ -163,6 +164,7 @@ export default async function membershipTiersQuery(
       priority,
       price_monthly,
       price_yearly,
+      trial_days,
       course_price,
       course_duration_days,
       course_grace_days,
@@ -192,6 +194,7 @@ export default async function membershipTiersQuery(
                 "priority",
                 "price_monthly",
                 "price_yearly",
+                "trial_days",
                 "course_price",
                 "course_duration_days",
                 "course_grace_days",
@@ -205,7 +208,7 @@ export default async function membershipTiersQuery(
                 "created",
                 "updated"
               )
-              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::JSONB,$12::JSONB,$13::JSONB,$14::JSONB,$15,$16,$17::JSONB,NOW(),NOW())
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::JSONB,$13::JSONB,$14::JSONB,$15::JSONB,$16,$17,$18::JSONB,NOW(),NOW())
               ON CONFLICT (id)
               DO UPDATE SET
                 "label" = EXCLUDED.label,
@@ -214,6 +217,7 @@ export default async function membershipTiersQuery(
                 "priority" = EXCLUDED.priority,
                 "price_monthly" = EXCLUDED.price_monthly,
                 "price_yearly" = EXCLUDED.price_yearly,
+                "trial_days" = EXCLUDED.trial_days,
                 "course_price" = EXCLUDED.course_price,
                 "course_duration_days" = EXCLUDED.course_duration_days,
                 "course_grace_days" = EXCLUDED.course_grace_days,
@@ -233,6 +237,7 @@ export default async function membershipTiersQuery(
         priority ?? 0,
         price_monthly ?? null,
         price_yearly ?? null,
+        trial_days ?? null,
         course_price ?? null,
         course_duration_days ?? null,
         course_grace_days ?? null,

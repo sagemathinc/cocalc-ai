@@ -58,6 +58,7 @@ const MEMBERSHIP_TIER_FIELDS = {
   priority: null,
   price_monthly: null,
   price_yearly: null,
+  trial_days: null,
   course_price: null,
   course_duration_days: null,
   course_grace_days: null,
@@ -77,6 +78,7 @@ type MembershipTierRow = {
   priority?: number | null;
   price_monthly?: number | string | null;
   price_yearly?: number | string | null;
+  trial_days?: number | null;
   course_price?: number | string | null;
   course_duration_days?: number | null;
   course_grace_days?: number | null;
@@ -516,6 +518,7 @@ function formatMembershipTierRow(row: MembershipTierRow) {
     priority: row.priority ?? "",
     monthly: formatCurrencyValue(row.price_monthly),
     yearly: formatCurrencyValue(row.price_yearly),
+    trial_days: row.trial_days ?? "",
     course_price: formatCurrencyValue(row.course_price),
     course_days: row.course_duration_days ?? "",
     grace_days: row.course_grace_days ?? "",
@@ -534,6 +537,7 @@ function formatMembershipTierCompactRow(row: MembershipTierRow) {
     label: row.label ?? "",
     monthly: formatCurrencyValue(row.price_monthly),
     yearly: formatCurrencyValue(row.price_yearly),
+    trial: row.trial_days ?? "",
     subs: numericCount(row.subscription_count),
     accounts: numericCount(row.subscribed_account_count),
     admin: numericCount(row.admin_assigned_count),

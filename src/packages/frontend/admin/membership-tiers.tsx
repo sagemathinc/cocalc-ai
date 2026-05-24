@@ -54,6 +54,7 @@ interface Tier {
   priority?: number;
   price_monthly?: number;
   price_yearly?: number;
+  trial_days?: number;
   course_price?: number;
   course_duration_days?: number;
   course_grace_days?: number;
@@ -146,6 +147,7 @@ function useMembershipTiers() {
             priority: null,
             price_monthly: null,
             price_yearly: null,
+            trial_days: null,
             course_price: null,
             course_duration_days: null,
             course_grace_days: null,
@@ -399,6 +401,7 @@ function useMembershipTiers() {
           "priority",
           "price_monthly",
           "price_yearly",
+          "trial_days",
           "course_price",
           "course_duration_days",
           "course_grace_days",
@@ -492,6 +495,7 @@ function useMembershipTiers() {
       store_visible: false,
       course_store_visible: false,
       priority: 0,
+      trial_days: 0,
       disabled: false,
       notes: "",
       project_defaults: {},
@@ -640,6 +644,9 @@ export function MembershipTiers() {
           </Form.Item>
           <Form.Item name="price_yearly" label="Yearly price">
             <InputNumber min={0} step={1} />
+          </Form.Item>
+          <Form.Item name="trial_days" label="Trial days">
+            <InputNumber min={0} step={1} precision={0} />
           </Form.Item>
           <Form.Item name="course_price" label="Course price">
             <InputNumber min={0} step={1} />
@@ -925,6 +932,11 @@ export function MembershipTiers() {
             title="Yearly"
             dataIndex="price_yearly"
             render={(val) => (val != null ? currency(Number(val)) : "")}
+          />
+          <Table.Column<Tier>
+            title="Trial days"
+            dataIndex="trial_days"
+            render={(val) => (val != null && val > 0 ? val : "")}
           />
           <Table.Column<Tier>
             title="Course price"

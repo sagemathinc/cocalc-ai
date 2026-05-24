@@ -8,10 +8,12 @@ import {
   applyMembershipTierTemplateFallbacks,
   TIER_TEMPLATES,
 } from "@cocalc/util/membership-tier-templates";
+import { getMembershipTrialCandidate } from "./trials";
 
 export interface MembershipTierPricing {
   price_monthly?: number;
   price_yearly?: number;
+  trial_days?: number;
   course_price?: number;
   course_duration_days?: number;
   course_grace_days?: number;
@@ -38,6 +40,10 @@ export interface MembershipPricingResult {
   existing_class?: MembershipClass;
   current_period_start?: Date;
   current_period_end?: Date;
+  trial_days?: number;
+  trial_available?: boolean;
+  trial_email?: string;
+  trial_reason?: string;
 }
 
 export interface MembershipChangeResult extends MembershipPricingResult {
@@ -60,7 +66,7 @@ export async function getMembershipTiers({
   const pool = client ?? getPool("medium");
   const { rows } = await pool.query(
     `SELECT id, label, store_visible, course_store_visible, priority,
-            price_monthly, price_yearly, course_price, course_duration_days,
+            price_monthly, price_yearly, trial_days, course_price, course_duration_days,
             course_grace_days,
             project_defaults, ai_limits, features, usage_limits, disabled
      FROM membership_tiers`,
@@ -111,7 +117,7 @@ export async function getMembershipTierById({
   const pool = client ?? getPool("medium");
   const { rows } = await pool.query(
     `SELECT id, label, store_visible, course_store_visible, priority,
-            price_monthly, price_yearly, course_price, course_duration_days,
+            price_monthly, price_yearly, trial_days, course_price, course_duration_days,
             course_grace_days,
             project_defaults, ai_limits, features, usage_limits, disabled
      FROM membership_tiers
@@ -237,14 +243,23 @@ export async function computeMembershipPricing({
   const charge = moneyRound2Up(
     priceValue.sub(refund).lt(0) ? 0 : priceValue.sub(refund),
   );
+  const trial =
+    existing == null
+      ? await getMembershipTrialCandidate({
+          account_id,
+          trial_days: targetTier.trial_days ?? 0,
+          client,
+        })
+      : { trial_days: 0, trial_available: false };
   return {
     price: priceValue.toNumber(),
-    charge: charge.toNumber(),
+    charge: trial.trial_available ? 0 : charge.toNumber(),
     refund: refund.toNumber(),
     existing_subscription_id: existing?.id,
     existing_class: existing?.metadata?.class,
     current_period_start: existing?.current_period_start,
     current_period_end: existing?.current_period_end,
+    ...trial,
   };
 }
 
@@ -318,17 +333,26 @@ export async function computeMembershipChange({
       : moneyRound2Up(
           priceValue.sub(refund).lt(0) ? 0 : priceValue.sub(refund),
         );
+  const trial =
+    change == "new"
+      ? await getMembershipTrialCandidate({
+          account_id,
+          trial_days: targetTier.trial_days ?? 0,
+          client,
+        })
+      : { trial_days: 0, trial_available: false };
 
   return {
     change,
     target_class: targetClass,
     target_interval: interval,
     price: priceValue.toNumber(),
-    charge: charge.toNumber(),
+    charge: trial.trial_available ? 0 : charge.toNumber(),
     refund: refund.toNumber(),
     existing_subscription_id: existing?.id,
     existing_class: existingClass,
     current_period_start: existing?.current_period_start,
     current_period_end: existing?.current_period_end,
+    ...trial,
   };
 }
