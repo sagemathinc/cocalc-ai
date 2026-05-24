@@ -648,9 +648,9 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: "account ownership migration maintenance",
   },
   "system.issueBrowserSignInCookie": {
-    decision: "fresh-auth-not-required",
+    decision: "fresh-auth-required",
     reason:
-      "account-only auth transform overwrites account_id; used for browser session handoff",
+      "returns a raw remember-me cookie to the caller for browser session handoff",
   },
   "system.publishProjectRootfsImage": {
     decision: "fresh-auth-required",

@@ -4280,14 +4280,23 @@ export async function removeBrowserSession({
 
 export async function issueBrowserSignInCookie({
   account_id,
+  browser_id,
+  session_hash,
   max_age_ms,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   max_age_ms?: number;
 }) {
   if (!account_id) {
     throw Error("must be signed in");
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+  });
   const cleanMaxAgeMs = Number(max_age_ms);
   const resolvedMaxAgeMs =
     Number.isFinite(cleanMaxAgeMs) && cleanMaxAgeMs > 0

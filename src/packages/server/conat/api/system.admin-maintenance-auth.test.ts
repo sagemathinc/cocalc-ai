@@ -276,6 +276,23 @@ describe("admin maintenance dangerous-session auth", () => {
     expect(manageApiKeysMock).not.toHaveBeenCalled();
   });
 
+  it("requires fresh auth before issuing raw browser sign-in cookies", async () => {
+    const { issueBrowserSignInCookie } = await import("./system");
+
+    await expect(
+      issueBrowserSignInCookie({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+      }),
+    ).rejects.toThrow("fresh auth is required");
+
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      session_hash: undefined,
+    });
+  });
+
   it("allows listing account API keys without fresh auth", async () => {
     requireDangerousSessionAuthMock = jest.fn(async () => undefined);
     const { manageApiKeys } = await import("./system");
