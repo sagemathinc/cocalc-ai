@@ -15,6 +15,8 @@ const mockDeleteAccount = jest.fn();
 const mockClearAuthCookies = jest.fn();
 const mockGetParams = jest.fn();
 const mockUnlinkStrategy = jest.fn();
+const mockSetEmailAddress = jest.fn();
+const mockSetPassword = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
@@ -54,7 +56,32 @@ jest.mock("@cocalc/server/auth/sso/unlink-strategy", () => ({
   default: (...args: any[]) => mockUnlinkStrategy(...args),
 }));
 
+jest.mock("@cocalc/server/accounts/set-email-address", () => ({
+  __esModule: true,
+  default: (...args: any[]) => mockSetEmailAddress(...args),
+}));
+
+jest.mock("@cocalc/server/accounts/set-password", () => ({
+  __esModule: true,
+  default: (...args: any[]) => mockSetPassword(...args),
+}));
+
 describe("browser-session-only account security routes", () => {
+  const originalDisableApiValidation =
+    process.env.COCALC_DISABLE_API_VALIDATION;
+
+  beforeAll(() => {
+    process.env.COCALC_DISABLE_API_VALIDATION = "yes";
+  });
+
+  afterAll(() => {
+    if (originalDisableApiValidation == null) {
+      delete process.env.COCALC_DISABLE_API_VALIDATION;
+    } else {
+      process.env.COCALC_DISABLE_API_VALIDATION = originalDisableApiValidation;
+    }
+  });
+
   beforeEach(() => {
     mockGetAccountId.mockReset().mockResolvedValue("acct-1");
     mockGetRememberMeHash.mockReset().mockReturnValue("remember-me-hash");
@@ -64,6 +91,11 @@ describe("browser-session-only account security routes", () => {
     mockClearAuthCookies.mockReset().mockResolvedValue(undefined);
     mockGetParams.mockReset().mockReturnValue({ name: "github" });
     mockUnlinkStrategy.mockReset().mockResolvedValue(undefined);
+    mockSetEmailAddress.mockReset().mockResolvedValue({
+      email_address: "new@example.com",
+      already_verified: false,
+    });
+    mockSetPassword.mockReset().mockResolvedValue(undefined);
   });
 
   it("rejects API-key-only account deletion", async () => {
@@ -166,5 +198,87 @@ describe("browser-session-only account security routes", () => {
       account_id: "acct-1",
       name: "github",
     });
+  });
+
+  it("rejects email address changes without fresh auth", async () => {
+    mockGetParams.mockReturnValue({
+      email_address: "new@example.com",
+      password: "correct horse battery staple",
+    });
+    mockRequireFreshAuth.mockRejectedValue(new Error("fresh auth is required"));
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } = await import("./accounts/set-email-address");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "fresh auth is required",
+    });
+    expect(mockSetEmailAddress).not.toHaveBeenCalled();
+  });
+
+  it("allows fresh-authenticated email address changes", async () => {
+    mockGetParams.mockReturnValue({
+      email_address: "new@example.com",
+      password: "correct horse battery staple",
+    });
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } = await import("./accounts/set-email-address");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      status: "success",
+      email_address: "new@example.com",
+      already_verified: false,
+    });
+    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
+      req,
+      account_id: "acct-1",
+    });
+    expect(mockSetEmailAddress).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      email_address: "new@example.com",
+      password: "correct horse battery staple",
+    });
+  });
+
+  it("rejects password changes without fresh auth", async () => {
+    mockGetParams.mockReturnValue({
+      currentPassword: "old-password",
+      newPassword: "new-password",
+    });
+    mockRequireFreshAuth.mockRejectedValue(new Error("fresh auth is required"));
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } = await import("./accounts/set-password");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "fresh auth is required",
+    });
+    expect(mockSetPassword).not.toHaveBeenCalled();
+  });
+
+  it("allows fresh-authenticated password changes", async () => {
+    mockGetParams.mockReturnValue({
+      currentPassword: "old-password",
+      newPassword: "new-password",
+    });
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } = await import("./accounts/set-password");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({ status: "success" });
+    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
+      req,
+      account_id: "acct-1",
+    });
+    expect(mockSetPassword).toHaveBeenCalledWith(
+      "acct-1",
+      "old-password",
+      "new-password",
+    );
   });
 });

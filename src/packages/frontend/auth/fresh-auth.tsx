@@ -26,6 +26,10 @@ type FreshAuthStatus = {
   actor_email_address?: string | null;
 };
 
+export type FreshAuthActionRunner = (
+  action: () => Promise<void>,
+) => Promise<boolean>;
+
 function normalizeFreshAuthEmail(email: string): string {
   return `${email ?? ""}`.trim().toLowerCase();
 }
