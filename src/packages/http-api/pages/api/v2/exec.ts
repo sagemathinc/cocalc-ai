@@ -10,6 +10,8 @@ Run code in a project.
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
+import { requireApiKeyProjectCapability } from "@cocalc/server/api/api-key-scope";
+import { getAccountFromApiKey } from "@cocalc/server/auth/api";
 import {
   ExecInputSchema,
   ExecOutputSchema,
@@ -48,6 +50,14 @@ async function get(req) {
     async_stats,
     async_await,
   } = getParams(req);
+
+  if (req.header("Authorization")) {
+    const principal = await getAccountFromApiKey(req);
+    if (!principal?.account_id || principal.account_id !== account_id) {
+      throw Error("must be signed in with a valid account API key");
+    }
+    requireApiKeyProjectCapability(principal, "project:exec", project_id);
+  }
 
   const execOpts = {
     filesystem,
