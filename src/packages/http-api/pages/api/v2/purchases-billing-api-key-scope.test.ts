@@ -16,6 +16,7 @@ const mockGetSubscriptions = jest.fn();
 const mockGetLiveSubscriptions = jest.fn();
 const mockGetUnpaidInvoices = jest.fn();
 const mockGetChargesThisMonthByService = jest.fn();
+const mockEmailStatement = jest.fn();
 const mockThrottle = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
@@ -73,6 +74,11 @@ jest.mock("@cocalc/server/purchases/get-charges", () => ({
     mockGetChargesThisMonthByService(...args),
 }));
 
+jest.mock("@cocalc/server/purchases/statements/email-statement", () => ({
+  __esModule: true,
+  default: (...args) => mockEmailStatement(...args),
+}));
+
 describe("billing account read routes API-key scope", () => {
   const denied = {
     error: "API keys are not allowed to access billing account details",
@@ -91,6 +97,7 @@ describe("billing account read routes API-key scope", () => {
     mockGetLiveSubscriptions.mockReset().mockResolvedValue([]);
     mockGetUnpaidInvoices.mockReset().mockResolvedValue([]);
     mockGetChargesThisMonthByService.mockReset().mockResolvedValue({});
+    mockEmailStatement.mockReset().mockResolvedValue(undefined);
     mockThrottle.mockReset();
   });
 
@@ -102,6 +109,7 @@ describe("billing account read routes API-key scope", () => {
     ["./purchases/get-live-subscriptions", mockGetLiveSubscriptions],
     ["./purchases/get-unpaid-invoices", mockGetUnpaidInvoices],
     ["./purchases/get-charges-by-service", mockGetChargesThisMonthByService],
+    ["./purchases/email-statement", mockEmailStatement],
   ])("rejects API-key access to %s", async (modulePath, backendCall) => {
     const { req, res } = createMocks({
       method: "POST",
@@ -132,5 +140,22 @@ describe("billing account read routes API-key scope", () => {
 
     expect(res._getJSONData()).toEqual({ balance: 12 });
     expect(mockGetBalance).toHaveBeenCalledWith({ account_id: "acct-1" });
+  });
+
+  it("keeps browser-session statement email requests", async () => {
+    mockGetParams.mockReturnValue({ statement_id: 5 });
+    const { req, res } = createMocks({
+      method: "POST",
+      body: { statement_id: 5 },
+    });
+
+    const { default: handler } = await import("./purchases/email-statement");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({ status: "ok" });
+    expect(mockEmailStatement).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      statement_id: 5,
+    });
   });
 });
