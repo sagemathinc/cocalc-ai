@@ -659,6 +659,7 @@ async function ensurePlacement(
 
   const client = await getRoutedHostControlClient({
     host_id: chosen.id,
+    account_id,
   });
 
   log.debug("createProject on remote project host", {

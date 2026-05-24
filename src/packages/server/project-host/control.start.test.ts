@@ -24,6 +24,8 @@ let cancelStaleProjectStartLrosMock: jest.Mock;
 let resolveMembershipForAccountMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let interBayHostListMock: jest.Mock;
+let interBayHostControlCreateProjectMock: jest.Mock;
+let interBayHostControlStartProjectMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -111,6 +113,12 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
     hostConnection: jest.fn(() => ({
       list: (...args: any[]) => interBayHostListMock(...args),
     })),
+    hostControl: jest.fn(() => ({
+      createProject: (...args: any[]) =>
+        interBayHostControlCreateProjectMock(...args),
+      startProject: (...args: any[]) =>
+        interBayHostControlStartProjectMock(...args),
+    })),
   })),
 }));
 
@@ -170,6 +178,14 @@ describe("startProjectOnHost placement", () => {
       entitlements: { features: { project_host_tier: 0 } },
     }));
     isAdminMock = jest.fn(async () => false);
+    interBayHostControlCreateProjectMock = jest.fn(async () => ({
+      project_id: "proj-1",
+      state: "opened",
+    }));
+    interBayHostControlStartProjectMock = jest.fn(async () => ({
+      project_id: "proj-1",
+      state: "running",
+    }));
     releaseMock = jest.fn();
     resolveHostBayMock = jest.fn(async (host_id: string) => ({
       bay_id: host_id === "host-2" ? "bay-7" : "bay-0",
@@ -471,6 +487,123 @@ describe("startProjectOnHost placement", () => {
     expect(notifyProjectHostUpdateMock).toHaveBeenCalledWith({
       project_id: "proj-1",
       host_id: "host-1",
+    });
+  });
+
+  it("passes account_id when automatic placement registers a project on a remote shared-pool host", async () => {
+    let loadProjectCalls = 0;
+    let placementQuery = 0;
+    interBayHostListMock = jest.fn(async () => [
+      {
+        id: "host-2",
+        bay_id: "bay-9",
+        name: "Remote Pool Host",
+        region: "wnam",
+        public_url: null,
+        internal_url: null,
+        ssh_server: null,
+        tier: 0,
+        can_place: true,
+        metadata: { machine: {} },
+      },
+    ]);
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
+      if (sql === "SELECT state FROM projects WHERE project_id=$1") {
+        return {
+          rows: [{ state: { state: "opened", time: "2026-03-29T00:00:00Z" } }],
+        };
+      }
+      if (sql.includes("FROM long_running_operations")) {
+        return { rows: [{ exists: false }] };
+      }
+      if (
+        sql ===
+        "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
+      ) {
+        loadProjectCalls += 1;
+        return {
+          rows: [
+            {
+              title: "Remote placement",
+              users: { owner: { group: "owner" } },
+              image: "cocalc.local/rootfs/release",
+              host_id: loadProjectCalls === 1 ? null : "host-2",
+              region: "wnam",
+              owning_bay_id: "bay-0",
+              run_quota: null,
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("FROM project_hosts") &&
+        sql.includes("WHERE status='running'")
+      ) {
+        placementQuery += 1;
+        return { rows: [] };
+      }
+      if (
+        sql ===
+        "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL"
+      ) {
+        return {
+          rows: [{ metadata: { machine: {} } }],
+        };
+      }
+      if (sql.includes("SET state=$2::jsonb")) {
+        return { rowCount: 1, rows: [] };
+      }
+      if (sql.includes("UPDATE projects AS projects")) {
+        return {
+          rows: [{ owning_bay_id: "bay-0" }],
+        };
+      }
+      if (
+        sql ===
+        "SELECT backup_repo_id, provisioned FROM projects WHERE project_id=$1"
+      ) {
+        return { rows: [{ backup_repo_id: null, provisioned: true }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    poolConnectMock = jest.fn(async () => ({
+      query: queryMock,
+      release: releaseMock,
+    }));
+
+    const { startProjectOnHost } = await import("./control");
+    await startProjectOnHost("proj-1", {
+      account_id: "account-1",
+      lro_op_id: "op-1",
+    });
+
+    expect(placementQuery).toBe(2);
+    expect(interBayHostControlCreateProjectMock).toHaveBeenCalledWith({
+      account_id: "account-1",
+      host_id: "host-2",
+      create: {
+        project_id: "proj-1",
+        title: "Remote placement",
+        users: { owner: { group: "owner" } },
+        image: "cocalc.local/rootfs/release",
+        start: false,
+        authorized_keys: "ssh-ed25519 AAAATEST user@test",
+        run_quota: {},
+      },
+    });
+    expect(interBayHostControlStartProjectMock).toHaveBeenCalledWith({
+      host_id: "host-2",
+      start: {
+        project_id: "proj-1",
+        authorized_keys: "ssh-ed25519 AAAATEST user@test",
+        run_quota: {},
+        image: "cocalc.local/rootfs/release",
+        restore: "none",
+        lro_op_id: "op-1",
+      },
     });
   });
 
