@@ -10,7 +10,6 @@ import {
   type DocsActionId,
   type DocsActionSummary,
 } from "@cocalc/docs";
-import { default_filename } from "@cocalc/frontend/account";
 import { redux } from "@cocalc/frontend/app-framework";
 import { separate_file_extension } from "@cocalc/util/misc";
 
@@ -67,6 +66,7 @@ type ProjectActionSubset = {
         get?: (key: string) => any;
       }
     | undefined;
+  get_filenames_in_current_dir?: () => Record<string, unknown> | null;
   open_file?: (opts: { path: string; foreground?: boolean }) => void;
   set_active_tab?: (
     key: string,
@@ -191,6 +191,19 @@ function revealRuntimeImage(projectId: string): DocsActionRevealResult {
   };
 }
 
+function defaultDocsActionFilename(
+  ext: "ipynb" | "term",
+  avoid?: Record<string, unknown> | null,
+): string {
+  const basename = ext === "ipynb" ? "notebook" : "terminal";
+  for (let i = 1; i < 1000; i += 1) {
+    const suffix = i === 1 ? "" : `-${i}`;
+    const filename = `${basename}${suffix}.${ext}`;
+    if (!avoid?.[filename]) return filename;
+  }
+  return `${basename}-${Date.now()}.${ext}`;
+}
+
 async function createDefaultProjectFile({
   actionId,
   ext,
@@ -206,7 +219,10 @@ async function createDefaultProjectFile({
     throw Error("Project actions are not ready.");
   }
   const currentPath = actions.get_store?.()?.get?.("current_path_abs") ?? "/";
-  const filename = default_filename(ext, projectId);
+  const filename = defaultDocsActionFilename(
+    ext,
+    actions.get_filenames_in_current_dir?.(),
+  );
   const { name, ext: filenameExt } = separate_file_extension(filename);
   const fileExt = filenameExt || ext;
   const path =

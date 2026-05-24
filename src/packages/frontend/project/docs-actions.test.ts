@@ -7,10 +7,7 @@ const mockCreateFile = jest.fn();
 const mockConstructAbsolutePath = jest.fn();
 const mockGetStore = jest.fn();
 const mockGetProjectActions = jest.fn();
-
-jest.mock("@cocalc/frontend/account", () => ({
-  default_filename: (ext: string) => `Untitled.${ext}`,
-}));
+const mockGetFilenamesInCurrentDir = jest.fn();
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
@@ -45,6 +42,7 @@ describe("project docs actions", () => {
     mockGetProjectActions.mockReturnValue({
       construct_absolute_path: mockConstructAbsolutePath,
       createFile: mockCreateFile,
+      get_filenames_in_current_dir: mockGetFilenamesInCurrentDir,
       get_store: mockGetStore,
       set_active_tab: mockSetProjectActiveTab,
       setFlyoutExpanded: mockSetFlyoutExpanded,
@@ -80,13 +78,13 @@ describe("project docs actions", () => {
     expect(mockCreateFile).toHaveBeenCalledWith({
       current_path: "/work",
       ext: "term",
-      name: "Untitled",
+      name: "terminal",
       switch_over: true,
     });
     expect(result).toMatchObject({
       action_id: "project.terminal.open",
       opened: true,
-      path: "/work/Untitled.term",
+      path: "/work/terminal.term",
       project_id: "project-1",
     });
   });
@@ -100,7 +98,25 @@ describe("project docs actions", () => {
     expect(mockCreateFile).toHaveBeenCalledWith({
       current_path: "/work",
       ext: "ipynb",
-      name: "Untitled",
+      name: "notebook",
+      switch_over: true,
+    });
+  });
+
+  it("avoids clobbering existing quick action filenames", async () => {
+    mockGetFilenamesInCurrentDir.mockReturnValue({
+      "terminal.term": true,
+    });
+
+    await revealDocsAction({
+      actionId: "project.terminal.open",
+      projectId: "project-1",
+    });
+
+    expect(mockCreateFile).toHaveBeenCalledWith({
+      current_path: "/work",
+      ext: "term",
+      name: "terminal-2",
       switch_over: true,
     });
   });
