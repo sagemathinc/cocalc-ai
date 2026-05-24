@@ -1249,9 +1249,6 @@ export function NavigatorShell({
               optionFilterProp="label"
             />
           ) : null}
-        </Space>
-        <Space size={[4, 4]} wrap>
-          {fontControls}
           <Tooltip title="New agent thread">
             <Button
               size="small"
@@ -1261,6 +1258,9 @@ export function NavigatorShell({
               aria-label="New agent thread"
             />
           </Tooltip>
+        </Space>
+        <Space size={[4, 4]} wrap>
+          {fontControls}
           {actions && selectedThreadKey ? (
             <ChatRoomThreadMenu
               actions={actions}
