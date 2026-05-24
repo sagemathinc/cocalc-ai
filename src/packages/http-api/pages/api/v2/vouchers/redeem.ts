@@ -14,6 +14,9 @@ export default async function handle(req, res) {
 
 // returns array of objects that describe roughly what redeeming the code provided
 async function doIt(req) {
+  if (req.header("Authorization")) {
+    throw Error("API keys are not allowed to redeem voucher codes");
+  }
   const { code } = getParams(req);
   if (!code || code.length < 8) {
     throw Error("code must be at least 8 characters long");

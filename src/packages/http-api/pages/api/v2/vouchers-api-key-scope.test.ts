@@ -12,6 +12,7 @@ const mockGetParams = jest.fn();
 const mockGetVoucherCodes = jest.fn();
 const mockGetRecentlyCreatedVouchers = jest.fn();
 const mockSetVoucherCodeNotes = jest.fn();
+const mockRedeemVoucher = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
@@ -38,9 +39,17 @@ jest.mock("@cocalc/server/vouchers/set-voucher-code-notes", () => ({
   default: (...args) => mockSetVoucherCodeNotes(...args),
 }));
 
+jest.mock("@cocalc/server/vouchers/redeem", () => ({
+  __esModule: true,
+  default: (...args) => mockRedeemVoucher(...args),
+}));
+
 describe("voucher management API-key scope", () => {
   const denied = {
     error: "API keys are not allowed to manage voucher codes",
+  };
+  const redeemDenied = {
+    error: "API keys are not allowed to redeem voucher codes",
   };
 
   beforeEach(() => {
@@ -66,6 +75,13 @@ describe("voucher management API-key scope", () => {
       },
     ]);
     mockSetVoucherCodeNotes.mockReset().mockResolvedValue(undefined);
+    mockRedeemVoucher.mockReset().mockResolvedValue([
+      {
+        type: "cash",
+        amount: 25,
+        purchase_id: 10,
+      },
+    ]);
   });
 
   it.each([
@@ -85,6 +101,43 @@ describe("voucher management API-key scope", () => {
     expect(res._getJSONData()).toEqual(denied);
     expect(mockGetAccountId).not.toHaveBeenCalled();
     expect(backendCall).not.toHaveBeenCalled();
+  });
+
+  it("rejects API-key voucher redemption before account resolution", async () => {
+    const { req, res } = createMocks({
+      method: "POST",
+      headers: { Authorization: "Bearer cocalc_api_key_test" },
+      body: { code: "CODE-123456" },
+    });
+
+    const { default: handler } = await import("./vouchers/redeem");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual(redeemDenied);
+    expect(mockGetAccountId).not.toHaveBeenCalled();
+    expect(mockRedeemVoucher).not.toHaveBeenCalled();
+  });
+
+  it("keeps browser-session voucher redemption", async () => {
+    const { req, res } = createMocks({
+      method: "POST",
+      body: { code: "CODE-123456" },
+    });
+
+    const { default: handler } = await import("./vouchers/redeem");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual([
+      {
+        type: "cash",
+        amount: 25,
+        purchase_id: 10,
+      },
+    ]);
+    expect(mockRedeemVoucher).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      code: "CODE-123456",
+    });
   });
 
   it("keeps browser-session voucher-code retrieval", async () => {
