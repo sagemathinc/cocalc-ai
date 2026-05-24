@@ -167,12 +167,23 @@ export default function StripePayment({
                     ? "Choose Payment Method"
                     : "Purchase With 1-Click Using Account Credit"
                 }
-                onClick={() => {
+                onClick={async () => {
                   if (totalStripe <= 0) {
                     // no need to do stripe part at all -- just do next step of whatever purchase is happening.
                     onFinished?.(0);
+                    setRequiresPayment(true);
+                    return;
                   }
-                  setRequiresPayment(true);
+                  try {
+                    setLoading(true);
+                    await runFreshAuthAction(async () => {
+                      setRequiresPayment(true);
+                    });
+                  } catch (err) {
+                    setError(`${err}`);
+                  } finally {
+                    setLoading(false);
+                  }
                 }}
               />
             )}
