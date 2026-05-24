@@ -1,9 +1,12 @@
 import { Command } from "commander";
 
 import {
+  getDocsAction,
   getDocsEntry,
+  listDocsActions,
   listDocsEntries,
   searchDocsEntries,
+  type DocsActionSummary,
   type DocsAudience,
   type DocsEntry,
   type DocsEntryStatus,
@@ -37,6 +40,18 @@ function compactDocsEntry(entry: DocsEntry): Record<string, unknown> {
     audiences: entry.audiences,
     summary: entry.summary,
     actions: entry.actions?.map((action) => action.id) ?? [],
+  };
+}
+
+function compactDocsAction(action: DocsActionSummary): Record<string, unknown> {
+  return {
+    id: action.id,
+    label: action.label,
+    description: action.description,
+    executable: action.executable === true,
+    entry_id: action.entryId,
+    entry_slug: action.entrySlug,
+    entry_title: action.entryTitle,
   };
 }
 
@@ -122,6 +137,7 @@ Examples:
   cocalc docs list
   cocalc docs search "project secrets" --json
   cocalc docs show projects/project-secrets --json
+  cocalc docs actions --json
 `,
     );
 
@@ -155,6 +171,49 @@ Examples:
           compactSearchResult,
         );
         deps.emitSuccess({ globals }, commandName, rows);
+      } catch (error) {
+        deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
+        process.exitCode = 1;
+      }
+    });
+
+  docs
+    .command("actions")
+    .description("list stable documentation action ids")
+    .option(
+      "--executable",
+      "only show action ids that the browser action layer can run today",
+    )
+    .action((options: { executable?: boolean }, command: Command) => {
+      const globals = deps.globalsFrom(command);
+      const commandName = "docs actions";
+      try {
+        const rows = listDocsActions()
+          .filter((action) => !options.executable || action.executable === true)
+          .map(compactDocsAction);
+        deps.emitSuccess({ globals }, commandName, rows);
+      } catch (error) {
+        deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
+        process.exitCode = 1;
+      }
+    });
+
+  docs
+    .command("action <id>")
+    .description("show one stable documentation action id")
+    .action((id: string, command: Command) => {
+      const globals = deps.globalsFrom(command);
+      const commandName = "docs action";
+      try {
+        const summary = listDocsActions().find((action) => action.id === id);
+        if (summary == null) {
+          const known = getDocsAction(id);
+          if (known != null) {
+            throw new Error(`documentation action missing summary: ${id}`);
+          }
+          throw new Error(`documentation action not found: ${id}`);
+        }
+        deps.emitSuccess({ globals }, commandName, compactDocsAction(summary));
       } catch (error) {
         deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
         process.exitCode = 1;

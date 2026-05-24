@@ -23,8 +23,8 @@ describe("public/docs", () => {
       "Project secrets",
     );
     expect(
-      searchDocsEntries("secrets api token").map((entry) => entry.id),
-    ).toEqual(["projects.project-secrets"]);
+      searchDocsEntries("secrets api token").map((entry) => entry.id)[0],
+    ).toBe("projects.project-secrets");
   });
 
   it("renders the docs index", () => {

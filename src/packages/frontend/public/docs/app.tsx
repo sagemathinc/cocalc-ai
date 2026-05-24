@@ -151,7 +151,15 @@ function DocsActions({ entry }: { entry: DocsEntry }) {
         </Space>
         <Space wrap>
           {entry.actions.map((action) => (
-            <Tag key={action.id}>{action.id}</Tag>
+            <Tag
+              color={action.executable ? "green" : undefined}
+              key={action.id}
+            >
+              <span>{action.id}</span>{" "}
+              <Text type="secondary">
+                {action.executable ? "executable" : "planned"}
+              </Text>
+            </Tag>
           ))}
         </Space>
       </Flex>

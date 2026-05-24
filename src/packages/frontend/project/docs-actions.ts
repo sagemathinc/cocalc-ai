@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { isDocsActionId, type DocsActionId } from "@cocalc/docs";
+import { getDocsAction, isDocsActionId, type DocsActionId } from "@cocalc/docs";
 import { redux } from "@cocalc/frontend/app-framework";
 
 export const PROJECT_SECRETS_DOCS_ACTION_EVENT =
@@ -106,8 +106,14 @@ export function revealDocsAction({
   if (!isDocsActionId(actionId)) {
     throw Error(`unknown docs action '${actionId}'`);
   }
+  const action = getDocsAction(actionId);
+  if (!action?.executable) {
+    throw Error(`docs action '${actionId}' is not executable yet`);
+  }
   switch (actionId) {
     case "settings.environment.secrets":
       return revealProjectSecrets(projectId);
+    default:
+      throw Error(`docs action '${actionId}' has no browser implementation`);
   }
 }
