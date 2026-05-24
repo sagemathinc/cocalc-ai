@@ -26,6 +26,7 @@ import {
   moneyToCurrency,
   toDecimal,
 } from "@cocalc/util/money";
+import type { MoneyValue } from "@cocalc/util/money";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import getBalance from "@cocalc/server/purchases/get-balance";
 import getPool from "@cocalc/database/pool";
@@ -413,11 +414,12 @@ ${await support()}`;
           paymentIntent.metadata.purpose.split("-")[1],
         );
         reason = `pay balance on monthly statement (id=${statement_id})`;
-        const pool = getPool();
-        await pool.query(
-          "UPDATE statements SET paid_purchase_id=$1 WHERE id=$2",
-          [credit_id, statement_id],
-        );
+        await markStatementPaidByPurchase({
+          account_id,
+          statement_id,
+          credit_id,
+          amount,
+        });
       }
       send({
         to_ids: [account_id],
@@ -476,6 +478,55 @@ ${await support()}
     return credit_id;
   },
 );
+
+export async function markStatementPaidByPurchase({
+  account_id,
+  statement_id,
+  credit_id,
+  amount,
+}: {
+  account_id: string;
+  statement_id: number;
+  credit_id: number;
+  amount: MoneyValue;
+}) {
+  if (!Number.isInteger(statement_id)) {
+    throw Error("invalid statement id");
+  }
+  const pool = getPool();
+  const { rows } = await pool.query(
+    "SELECT balance, paid_purchase_id FROM statements WHERE id=$1 AND account_id=$2",
+    [statement_id, account_id],
+  );
+  if (rows.length == 0) {
+    throw Error("statement does not belong to this account");
+  }
+
+  const { balance, paid_purchase_id } = rows[0];
+  if (paid_purchase_id != null) {
+    if (paid_purchase_id == credit_id) {
+      return;
+    }
+    throw Error("statement is already paid");
+  }
+  const amountDue = toDecimal(balance).neg();
+  if (amountDue.lte(0)) {
+    throw Error("statement does not require payment");
+  }
+  if (toDecimal(amount).lt(amountDue)) {
+    throw Error(
+      `payment amount ${moneyToCurrency(amount)} is less than statement amount due ${moneyToCurrency(amountDue)}`,
+    );
+  }
+
+  const result = await pool.query(
+    "UPDATE statements SET paid_purchase_id=$1 WHERE id=$2 AND account_id=$3 AND paid_purchase_id IS NULL",
+    [credit_id, statement_id, account_id],
+  );
+  if (result.rowCount != 1) {
+    throw Error("unable to mark statement paid");
+  }
+}
 
 // This allows for a periodic check that we have processed all recent payment
 // intents across all users.  It should be called periodically.
