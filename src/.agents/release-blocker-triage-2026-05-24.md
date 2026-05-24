@@ -22,14 +22,15 @@ Status values:
 6. Standalone backup-all-projects host LRO.
 7. Flyout file explorer LRO visibility.
 8. RootFS scan detail links.
-9. Subscription free trial.
-10. Account creation terms-of-service link.
-11. Scheduled automation notification config.
-12. Spot uptime dashboard and recovery banner.
-13. Host runtime control page redesign.
-14. Git browser sticky file path click behavior.
-15. Terminal reconnect flash.
-16. Codex file watch / TimeTravel load policy.
+9. Membership tier benefit explanations.
+10. Subscription free trial.
+11. Account creation terms-of-service link.
+12. Scheduled automation notification config.
+13. Spot uptime dashboard and recovery banner.
+14. Host runtime control page redesign.
+15. Git browser sticky file path click behavior.
+16. Terminal reconnect flash.
+17. Codex file watch / TimeTravel load policy.
 
 ## Track A: Host Safety And Reliability
 
@@ -284,7 +285,34 @@ Next action:
 
 ## Track C: Product And Legal Release Gates
 
-### 11. Subscription Free Trial
+### 11. Membership Tier Benefit Explanations
+
+Status: `open`
+
+Severity: high.
+
+Why it matters: users cannot reasonably buy a membership tier if the UI only shows the tier name and price. This is a release blocker for paid launch because it affects trust, conversion, and support burden.
+
+Known symptoms:
+
+- Tier purchase/selection surfaces show the membership tier name and cost but not what the tier provides.
+- This appears in several places, so fixing only one modal is not enough.
+
+Expected outcome:
+
+- Every user-facing membership purchase, upgrade, and tier-selection surface explains the tier benefits in plain language.
+- Benefit copy is sourced from a shared definition, not duplicated across unrelated components.
+- The UI distinguishes benefits, limits, and billing terms.
+- Existing tier name and price display remains concise but is no longer the only information.
+
+Next action:
+
+- Find all membership tier purchase/selection surfaces.
+- Identify the canonical tier-definition source.
+- Add shared benefit metadata and render it consistently in the purchase UI.
+- Include focused tests or snapshots for the core purchase surface.
+
+### 12. Subscription Free Trial
 
 Status: `open`
 
@@ -302,7 +330,7 @@ Next action:
 
 - Define trial duration, eligibility, payment-method requirement, and abuse limits before implementation.
 
-### 12. Terms Of Service Link On Account Creation
+### 13. Terms Of Service Link On Account Creation
 
 Status: `blocked`
 
@@ -326,7 +354,7 @@ Next action:
 
 ## Track D: Chat, Codex, And Automation UX
 
-### 13. Scheduled Automation Notification Config
+### 14. Scheduled Automation Notification Config
 
 Status: `open`
 
@@ -345,7 +373,7 @@ Next action:
 - Inspect automation config type and schedule UI.
 - Add notification field, persistence, and delivery behavior.
 
-### 14. Git Browser Sticky File Path Click Behavior
+### 15. Git Browser Sticky File Path Click Behavior
 
 Status: `open`
 
@@ -367,7 +395,7 @@ Next action:
 
 ## Track E: Core UI Workflow Polish
 
-### 15. Flyout File Explorer LRO Visibility
+### 16. Flyout File Explorer LRO Visibility
 
 Status: `open`
 
@@ -390,7 +418,7 @@ Next action:
 - Compare full explorer and flyout explorer wrappers.
 - Reuse the same LRO/status component in the flyout.
 
-### 16. Terminal Reconnect Flash
+### 17. Terminal Reconnect Flash
 
 Status: `open`
 
@@ -419,15 +447,17 @@ Next action:
 6. Implement backup-all-projects host LRO.
 7. Fix flyout file explorer LRO visibility.
 8. Add RootFS scan detail links.
-9. Implement subscription free trial if product launch requires it.
-10. Add ToS link after legal URL exists.
-11. Add scheduled automation notification config.
-12. Add spot uptime dashboard/recovery banner.
-13. Redesign host runtime control page.
-14. Polish git browser sticky path behavior.
-15. Improve terminal reconnect behavior.
-16. Decide Codex file watch / TimeTravel load policy.
+9. Add membership tier benefit explanations everywhere tiers can be selected or purchased.
+10. Implement subscription free trial if product launch requires it.
+11. Add ToS link after legal URL exists.
+12. Add scheduled automation notification config.
+13. Add spot uptime dashboard/recovery banner.
+14. Redesign host runtime control page.
+15. Polish git browser sticky path behavior.
+16. Improve terminal reconnect behavior.
+17. Decide Codex file watch / TimeTravel load policy.
 
 ## Update Log
 
 - 2026-05-24: Initial triage created from `/home/user/scratch/wstein.md`.
+- 2026-05-24: Added membership tier benefit explanations as a high-severity product release blocker.
