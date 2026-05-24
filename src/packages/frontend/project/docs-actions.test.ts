@@ -8,7 +8,7 @@ const mockConstructAbsolutePath = jest.fn();
 const mockGetStore = jest.fn();
 const mockGetProjectActions = jest.fn();
 
-jest.mock("@cocalc/frontend/account", () => ({
+jest.mock("@cocalc/frontend/account/default-file-name-generator", () => ({
   default_filename: (ext: string) => `Untitled.${ext}`,
 }));
 

@@ -10,7 +10,7 @@ import {
   type DocsActionId,
   type DocsActionSummary,
 } from "@cocalc/docs";
-import { default_filename } from "@cocalc/frontend/account";
+import { default_filename } from "@cocalc/frontend/account/default-file-name-generator";
 import { redux } from "@cocalc/frontend/app-framework";
 import { separate_file_extension } from "@cocalc/util/misc";
 
