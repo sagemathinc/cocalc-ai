@@ -7,11 +7,18 @@ import {
   listDocsEntries,
   searchDocsEntries,
   type DocsActionSummary,
+  type DocsActionId,
   type DocsAudience,
   type DocsEntry,
   type DocsEntryStatus,
   type DocsSearchResult,
 } from "@cocalc/docs";
+import {
+  formatDocsVerificationReport,
+  listDocsLiveVerificationScenarios,
+  verifyDocsLive,
+  verifyDocsStatic,
+} from "@cocalc/docs/verification";
 
 export type DocsCommandDeps = {
   emitError: any;
@@ -28,6 +35,16 @@ type DocsListOptions = {
 
 type DocsSearchOptions = {
   limit?: string;
+};
+
+type DocsVerifyOptions = {
+  action?: string[];
+  browser?: string;
+  cocalcBin?: string;
+  listLive?: boolean;
+  live?: boolean;
+  projectId?: string;
+  timeout?: string;
 };
 
 function compactDocsEntry(entry: DocsEntry): Record<string, unknown> {
@@ -117,6 +134,10 @@ function filterDocsEntries(options: DocsListOptions): DocsEntry[] {
     }
     return true;
   });
+}
+
+function collectOption(value: string, previous: string[] = []): string[] {
+  return [...previous, value];
 }
 
 export function registerDocsCommand(
@@ -232,6 +253,99 @@ Examples:
           throw new Error(`documentation page not found: ${slugOrId}`);
         }
         deps.emitSuccess({ globals }, commandName, entry);
+      } catch (error) {
+        deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
+        process.exitCode = 1;
+      }
+    });
+
+  docs
+    .command("verify")
+    .description(
+      "verify docs metadata, links, actions, and optional live UI actions",
+    )
+    .option("--list-live", "list live browser-session verification scenarios")
+    .option("--live", "run live browser-session action checks")
+    .option(
+      "--action <id>",
+      "only run this live docs action; may be repeated",
+      collectOption,
+      [],
+    )
+    .option(
+      "--project-id <id>",
+      "project id for live checks; defaults to COCALC_PROJECT_ID",
+    )
+    .option(
+      "--browser <id>",
+      "browser id for live checks; defaults to COCALC_BROWSER_ID",
+    )
+    .option(
+      "--cocalc-bin <command>",
+      "cocalc command to use for live checks; defaults to this CLI process",
+    )
+    .option("--timeout <duration>", "timeout for each live action", "60s")
+    .action(async (options: DocsVerifyOptions, command: Command) => {
+      const globals = deps.globalsFrom(command);
+      const commandName = "docs verify";
+      try {
+        const projectId =
+          `${options.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+        const browserId =
+          `${options.browser ?? process.env.COCALC_BROWSER_ID ?? ""}`.trim();
+        const cocalcCommand = options.cocalcBin ?? process.execPath;
+        const cocalcArgs = options.cocalcBin
+          ? ["--json"]
+          : [process.argv[1], "--json"];
+        if (options.listLive) {
+          const scenarios = listDocsLiveVerificationScenarios({
+            cocalcArgs,
+            cocalcCommand,
+            projectId: projectId || "$COCALC_PROJECT_ID",
+            timeout: options.timeout,
+          });
+          deps.emitSuccess({ globals }, commandName, scenarios);
+          return;
+        }
+        const staticReport = verifyDocsStatic();
+        if (options.live && !projectId) {
+          throw new Error(
+            "--project-id or COCALC_PROJECT_ID is required for --live",
+          );
+        }
+        const liveReport = options.live
+          ? await verifyDocsLive({
+              actionIds: (options.action ?? []) as DocsActionId[],
+              browserId: browserId || undefined,
+              cocalcArgs,
+              cocalcCommand,
+              projectId,
+              timeout: options.timeout,
+            })
+          : undefined;
+        const ok = staticReport.ok && (liveReport?.ok ?? true);
+        if (globals.json || globals.output === "json") {
+          deps.emitSuccess(
+            { globals },
+            commandName,
+            liveReport
+              ? { static: staticReport, live: liveReport }
+              : staticReport,
+          );
+        } else {
+          console.log(formatDocsVerificationReport(staticReport));
+          for (const result of liveReport?.results ?? []) {
+            console.log(
+              `${result.ok ? "OK" : "FAIL"} live ${result.actionId}: ${result.command.join(" ")}`,
+            );
+            if (result.error) {
+              console.log(`  ${result.error}`);
+            }
+          }
+        }
+        if (!ok) {
+          process.exitCode = 1;
+        }
       } catch (error) {
         deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
         process.exitCode = 1;

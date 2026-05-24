@@ -8,11 +8,23 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./verification": {
+      "types": "./dist/verification.d.ts",
+      "default": "./dist/verification.js"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "verification": [
+        "dist/verification.d.ts"
+      ]
     }
   },
   "scripts": {
     "build": "pnpm exec tsc --build",
-    "clean": "rm -rf dist node_modules tsconfig.tsbuildinfo"
+    "clean": "rm -rf dist node_modules tsconfig.tsbuildinfo",
+    "verify": "pnpm build && node dist/verify.js"
   },
   "files": [
     "dist/**",
