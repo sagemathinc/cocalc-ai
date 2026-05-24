@@ -463,9 +463,17 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: "local account preference",
   },
+  "projects.setLocalProjectsHidden": {
+    decision: "fresh-auth-not-required",
+    reason: "local account preference",
+  },
   "projects.setProjectSecret": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
+  },
+  "projects.setProjectsHidden": {
+    decision: "fresh-auth-not-required",
+    reason: "local account preference",
   },
   "projects.setProjectSshKey": {
     decision: "fresh-auth-not-required",

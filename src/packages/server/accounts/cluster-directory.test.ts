@@ -118,7 +118,6 @@ describe("accounts.cluster-directory", () => {
         "new@example.com",
         "QA",
         "Directory",
-        null,
         "bay-2",
       ],
     );

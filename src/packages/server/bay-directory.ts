@@ -376,7 +376,6 @@ async function resolveRoutingContextLocal({
     account_email_address: string | null;
     account_first_name: string | null;
     account_last_name: string | null;
-    account_name: string | null;
     account_home_bay_id: string | null;
     account_source: "account-row" | "cluster-directory";
     project_id: string;
