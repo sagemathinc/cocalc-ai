@@ -1493,6 +1493,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     host?.owner_spend_limit_5h_usd,
     host?.owner_spend_limit_7d_usd,
   ]);
+  const currentPoolAccessTier = host?.tier ?? null;
+  const desiredPoolAccessTier = poolAccessEnabled
+    ? Math.max(0, Math.floor(Number(poolAccessTier) || 0))
+    : null;
+  const poolAccessDirty = desiredPoolAccessTier !== currentPoolAccessTier;
   const refreshHostAccess = React.useCallback(async () => {
     if (!host || !onListHostAccess || !host.can_manage_access) {
       setAccessEntries([]);
@@ -2265,15 +2270,16 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             <Button
               type="primary"
               loading={accessSavingKey === "pool"}
-              disabled={!canSetHostPoolAccess || !onSetHostPoolAccess}
+              disabled={
+                !canSetHostPoolAccess ||
+                !onSetHostPoolAccess ||
+                !poolAccessDirty
+              }
               onClick={async () => {
                 if (!onSetHostPoolAccess) return;
                 setAccessSavingKey("pool");
                 try {
-                  await onSetHostPoolAccess(
-                    host.id,
-                    poolAccessEnabled ? poolAccessTier : null,
-                  );
+                  await onSetHostPoolAccess(host.id, desiredPoolAccessTier);
                 } finally {
                   setAccessSavingKey(undefined);
                 }

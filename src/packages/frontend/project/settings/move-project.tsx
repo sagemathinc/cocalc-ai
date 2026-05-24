@@ -233,7 +233,8 @@ export default function MoveProject({
         currentHostId={currentHostId}
         regionFilter={projectRegion}
         sourceProjectRegion={projectRegion}
-        showOfflineMoveWarning
+        showOfflineMoveWarning={Boolean(currentHostId)}
+        mode={currentHostId ? "move" : "assign"}
         onCancel={() => setPickerOpen(false)}
         onSelect={async (dest_host_id, host) => {
           setPickerOpen(false);

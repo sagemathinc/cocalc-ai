@@ -434,26 +434,38 @@ export async function selectActiveHost({
   project_region?: string;
   account_id?: string;
 } = {}) {
-  const params: any[] = [];
-  const where: string[] = [
-    "status='running'",
-    "deleted IS NULL",
-    "last_seen > NOW() - interval '2 minutes'",
-    "COALESCE(metadata #>> '{billing,enforcement,state}', 'ok') NOT IN ('at_risk', 'draining', 'stopped_billing_blocked', 'deprovision_pending', 'deprovisioned_recoverable')",
-  ];
-  if (exclude_host_id) {
-    params.push(exclude_host_id);
-    where.push(`id != $${params.length}`);
-  }
   const targetBayId = effectiveBayId(bay_id);
-  params.push(targetBayId);
-  where.push(`COALESCE(bay_id, $${params.length}) = $${params.length}`);
-  let delegatedAccessJoin = "";
-  let delegatedAccessSelect = "NULL::text AS delegated_access_role";
-  if (account_id) {
-    params.push(account_id);
-    delegatedAccessSelect = "delegated_access.delegated_access_role";
-    delegatedAccessJoin = `
+  const loadCandidateRows = async ({
+    anyBay = false,
+    sharedPoolOnly = false,
+  }: {
+    anyBay?: boolean;
+    sharedPoolOnly?: boolean;
+  } = {}) => {
+    const params: any[] = [];
+    const where: string[] = [
+      "status='running'",
+      "deleted IS NULL",
+      "last_seen > NOW() - interval '2 minutes'",
+      "COALESCE(metadata #>> '{billing,enforcement,state}', 'ok') NOT IN ('at_risk', 'draining', 'stopped_billing_blocked', 'deprovision_pending', 'deprovisioned_recoverable')",
+    ];
+    if (exclude_host_id) {
+      params.push(exclude_host_id);
+      where.push(`id != $${params.length}`);
+    }
+    if (!anyBay) {
+      params.push(targetBayId);
+      where.push(`COALESCE(bay_id, $${params.length}) = $${params.length}`);
+    }
+    if (sharedPoolOnly) {
+      where.push("tier IS NOT NULL");
+    }
+    let delegatedAccessJoin = "";
+    let delegatedAccessSelect = "NULL::text AS delegated_access_role";
+    if (account_id) {
+      params.push(account_id);
+      delegatedAccessSelect = "delegated_access.delegated_access_role";
+      delegatedAccessJoin = `
       LEFT JOIN LATERAL (
         SELECT access.role AS delegated_access_role
         FROM project_host_access access
@@ -462,28 +474,35 @@ export async function selectActiveHost({
           AND access.revoked_at IS NULL
         LIMIT 1
       ) delegated_access ON TRUE`;
-  }
-  const { rows } = await pool().query<HostRegistryRow>(
-    `
+    }
+    const { rows } = await pool().query<HostRegistryRow>(
+      `
       SELECT id, bay_id, name, region, public_url, internal_url, ssh_server, tier, metadata,
              ${delegatedAccessSelect}
       FROM project_hosts
       ${delegatedAccessJoin}
       WHERE ${where.join("\n        AND ")}
     `,
-    params,
+      params,
+    );
+    return rows;
+  };
+  const choosePlaceableRow = async (rows: HostRegistryRow[]) => {
+    const placeableRows = await filterRowsPlaceableByAccount({
+      rows,
+      account_id,
+    });
+    return choosePlacementHostRow(placeableRows, Math.random, project_region);
+  };
+
+  const sameBayRow = await choosePlaceableRow(await loadCandidateRows());
+  if (sameBayRow) return mapHostRegistryRow(sameBayRow);
+
+  const sharedPoolRow = await choosePlaceableRow(
+    await loadCandidateRows({ anyBay: true, sharedPoolOnly: true }),
   );
-  const placeableRows = await filterRowsPlaceableByAccount({
-    rows,
-    account_id,
-  });
-  const row = choosePlacementHostRow(
-    placeableRows,
-    Math.random,
-    project_region,
-  );
-  if (!row) return undefined;
-  return mapHostRegistryRow(row);
+  if (!sharedPoolRow) return undefined;
+  return mapHostRegistryRow(sharedPoolRow);
 }
 
 export async function savePlacement(
