@@ -71,6 +71,11 @@ Why it matters: GPU hosts are expensive and user-visible. If `nvidia-smi` works 
 
 Known symptoms:
 
+- Creating a Nebius spot GPU host could submit a stale hidden GCP provider
+  value, so the backend rejected the request with
+  `host_pricing_unavailable` for provider `gcp` even while the browser showed
+  a valid Nebius price. Fixed by submitting from the canonical normalized
+  create draft instead of raw form values.
 - `nvidia-smi` works.
 - `pip install` of TensorFlow and PyTorch does not result in GPU-visible frameworks.
 - Backup to R2 is slow, around 30-50 MB/s.
