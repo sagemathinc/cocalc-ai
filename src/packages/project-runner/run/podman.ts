@@ -20,6 +20,8 @@ import {
   DEFAULT_PROJECT_TOOLS,
   PROJECT_BUNDLE_MOUNT_POINT,
   PROJECT_BUNDLES_MOUNT_POINT,
+  COCALC_LIB,
+  COCALC_RUNTIME_LIB,
   projectBundleBinPathPrefix,
   nodePath,
 } from "./mounts";
@@ -35,6 +37,7 @@ import {
   realpath,
   writeFile,
   chmod,
+  copyFile,
   mkdtemp,
   rename,
 } from "node:fs/promises";
@@ -98,6 +101,18 @@ const PROJECT_BUNDLE_ENTRY_CANDIDATES = [
   ["bundle", "bundle", "index.js"],
 ] as const;
 const DEFAULT_PROJECT_BUNDLES_ROOT = "/opt/cocalc/project-bundles";
+const DEFAULT_NODE_RUNTIME_COMPAT_LIBS_ROOT = join(
+  tmpdir(),
+  "cocalc-node-runtime-libs",
+);
+const HOST_LIBATOMIC_CANDIDATES = [
+  "/lib/x86_64-linux-gnu/libatomic.so.1",
+  "/usr/lib/x86_64-linux-gnu/libatomic.so.1",
+  "/lib/aarch64-linux-gnu/libatomic.so.1",
+  "/usr/lib/aarch64-linux-gnu/libatomic.so.1",
+  "/lib64/libatomic.so.1",
+  "/usr/lib64/libatomic.so.1",
+];
 export const PROJECT_SECRETS_HOST_ROOT = join(
   tmpdir(),
   "cocalc-project-secrets",
@@ -776,6 +791,54 @@ async function resolveToolsVersion(
   return undefined;
 }
 
+function prependPathList(current: string | undefined, paths: string[]): string {
+  const seen = new Set<string>();
+  const entries: string[] = [];
+  for (const path of [...paths, ...`${current ?? ""}`.split(":")]) {
+    const trimmed = `${path}`.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    entries.push(trimmed);
+  }
+  return entries.join(":");
+}
+
+async function findHostLibatomic(): Promise<string | undefined> {
+  const explicit = `${process.env.COCALC_NODE_RUNTIME_LIBATOMIC ?? ""}`.trim();
+  const candidates = explicit
+    ? [explicit, ...HOST_LIBATOMIC_CANDIDATES]
+    : HOST_LIBATOMIC_CANDIDATES;
+  for (const candidate of candidates) {
+    try {
+      const info = await stat(candidate);
+      if (info.isFile()) return candidate;
+    } catch {
+      // try the next well-known location
+    }
+  }
+  return undefined;
+}
+
+async function prepareNodeRuntimeCompatLibs(): Promise<
+  { source: string; target: string } | undefined
+> {
+  const libatomic = await findHostLibatomic();
+  if (libatomic == null) {
+    logger.warn(
+      "Node runtime compatibility library libatomic.so.1 not found on host; older project RootFS images may fail before bootstrap",
+    );
+    return undefined;
+  }
+  const root =
+    `${process.env.COCALC_NODE_RUNTIME_COMPAT_LIBS ?? ""}`.trim() ||
+    DEFAULT_NODE_RUNTIME_COMPAT_LIBS_ROOT;
+  await mkdir(root, { recursive: true, mode: 0o755 });
+  const target = join(root, "libatomic.so.1");
+  await copyFile(libatomic, target);
+  await chmod(target, 0o644).catch(() => {});
+  return { source: root, target: COCALC_RUNTIME_LIB };
+}
+
 export function networkArgument() {
   // Allow explicit override when debugging networking behavior.
   const explicit = `${process.env.COCALC_PROJECT_RUNNER_NETWORK ?? ""}`.trim();
@@ -1104,6 +1167,13 @@ export async function start({
     );
 
     const mounts = getCoCalcMounts();
+    const compatLibMount = await timings.measure(
+      "prepare_node_runtime_compat_libs",
+      async () => await prepareNodeRuntimeCompatLibs(),
+    );
+    if (compatLibMount != null) {
+      mounts[compatLibMount.source] = compatLibMount.target;
+    }
     if (bundleMount != null) {
       let replaced = false;
       for (const source of Object.keys(mounts)) {
@@ -1148,6 +1218,10 @@ export async function start({
         ? `${projectBundleBinPathPrefix()}:${env.PATH}`
         : projectBundleBinPathPrefix();
     }
+    env.LD_LIBRARY_PATH = prependPathList(env.LD_LIBRARY_PATH, [
+      ...(compatLibMount == null ? [] : [COCALC_RUNTIME_LIB]),
+      COCALC_LIB,
+    ]);
 
     report({
       type: "start-project",

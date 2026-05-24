@@ -46,7 +46,7 @@ describe("project runtime home helpers", () => {
       "com.cocalc.rootfs.runtime_uid": "2001",
       "com.cocalc.rootfs.runtime_gid": "2001",
       "com.cocalc.rootfs.runtime_home": "/home/user",
-      "com.cocalc.rootfs.runtime_bootstrap": "sudo,ca-certificates",
+      "com.cocalc.rootfs.runtime_bootstrap": "sudo,ca-certificates,libatomic1",
     });
     expect(rootfsLabelsSatisfyCurrentProjectRuntimeContract(labels)).toBe(true);
   });

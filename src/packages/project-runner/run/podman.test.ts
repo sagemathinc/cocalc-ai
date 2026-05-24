@@ -50,6 +50,8 @@ jest.mock("@cocalc/backend/get-port", () => ({
 }));
 
 jest.mock("./mounts", () => ({
+  COCALC_LIB: "/lib",
+  COCALC_RUNTIME_LIB: "/runtime-lib",
   DEFAULT_PROJECT_TOOLS: "/tools",
   PROJECT_BUNDLE_MOUNT_POINT: "/bundle",
   PROJECT_BUNDLES_MOUNT_POINT: "/bundles",
@@ -93,7 +95,7 @@ jest.mock("./conat-client", () => ({
 }));
 
 import getPort from "@cocalc/backend/get-port";
-import { mkdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import {
   cleanupProjectSecretsHostPath,
   cleanupStaleProjectSecretsHostPaths,
@@ -420,18 +422,31 @@ describe("project-runner podman orphan fallback", () => {
 
   it("uses caller-provided host ports when starting a project", async () => {
     mockPodman.mockResolvedValue({ stdout: "" });
+    const libatomic = `/tmp/cocalc-test-libatomic-${project1}`;
+    const compatLibs = `/tmp/cocalc-test-runtime-libs-${project1}`;
+    await writeFile(libatomic, "test-libatomic");
+    process.env.COCALC_NODE_RUNTIME_LIBATOMIC = libatomic;
+    process.env.COCALC_NODE_RUNTIME_COMPAT_LIBS = compatLibs;
 
-    const status = await start({
-      project_id: project1,
-      localPath: async () => ({
-        home: `/tmp/project-${project1}`,
-      }),
-      config: {
-        image: "docker.io/library/ubuntu:latest",
-        ssh_port: 30123,
-        http_port: 45123,
-      },
-    });
+    let status;
+    try {
+      status = await start({
+        project_id: project1,
+        localPath: async () => ({
+          home: `/tmp/project-${project1}`,
+        }),
+        config: {
+          image: "docker.io/library/ubuntu:latest",
+          ssh_port: 30123,
+          http_port: 45123,
+        },
+      });
+    } finally {
+      delete process.env.COCALC_NODE_RUNTIME_LIBATOMIC;
+      delete process.env.COCALC_NODE_RUNTIME_COMPAT_LIBS;
+      await rm(libatomic, { force: true }).catch(() => {});
+      await rm(compatLibs, { force: true, recursive: true }).catch(() => {});
+    }
 
     expect(getPort).not.toHaveBeenCalled();
     expect(mockPodman).toHaveBeenCalledWith(
@@ -440,6 +455,8 @@ describe("project-runner podman orphan fallback", () => {
         "127.0.0.1:30123:22",
         "-p",
         "127.0.0.1:45123:9000",
+        "-e",
+        "LD_LIBRARY_PATH=/runtime-lib:/lib",
       ]),
     );
     expect(status).toMatchObject({
