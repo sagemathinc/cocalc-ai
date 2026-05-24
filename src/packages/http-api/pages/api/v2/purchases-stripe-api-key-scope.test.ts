@@ -20,6 +20,7 @@ const mockThrottle = jest.fn();
 const mockUserIsInGroup = jest.fn();
 const mockCancelPaymentIntent = jest.fn();
 const mockGetPaymentIntentAccountId = jest.fn();
+const mockProcessPaymentIntents = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
@@ -68,6 +69,11 @@ jest.mock("@cocalc/server/purchases/stripe/create-payment-intent", () => ({
     mockGetPaymentIntentAccountId(...args),
 }));
 
+jest.mock("@cocalc/server/purchases/stripe/process-payment-intents", () => ({
+  __esModule: true,
+  default: (...args) => mockProcessPaymentIntents(...args),
+}));
+
 describe("Stripe billing read routes API-key scope", () => {
   const denied = {
     error: "API keys are not allowed to access Stripe billing details",
@@ -92,6 +98,7 @@ describe("Stripe billing read routes API-key scope", () => {
     mockUserIsInGroup.mockReset().mockResolvedValue(false);
     mockCancelPaymentIntent.mockReset().mockResolvedValue(undefined);
     mockGetPaymentIntentAccountId.mockReset().mockResolvedValue("acct-1");
+    mockProcessPaymentIntents.mockReset().mockResolvedValue(0);
     mockThrottle.mockReset();
   });
 
@@ -137,6 +144,22 @@ describe("Stripe billing read routes API-key scope", () => {
     expect(mockCancelPaymentIntent).not.toHaveBeenCalled();
   });
 
+  it("rejects API-key payment-intent processing before account resolution", async () => {
+    const { req, res } = createMocks({
+      method: "POST",
+      headers: { Authorization: "Bearer cocalc_api_key_test" },
+    });
+
+    const { default: handler } =
+      await import("./purchases/stripe/process-payment-intents");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual(mutationDenied);
+    expect(mockGetAccountId).not.toHaveBeenCalled();
+    expect(mockThrottle).not.toHaveBeenCalled();
+    expect(mockProcessPaymentIntents).not.toHaveBeenCalled();
+  });
+
   it("keeps browser-session payment-intent cancellation", async () => {
     mockGetParams.mockReturnValue({
       id: "pi_123",
@@ -174,6 +197,27 @@ describe("Stripe billing read routes API-key scope", () => {
       ending_before: undefined,
       starting_after: undefined,
       limit: undefined,
+    });
+  });
+
+  it("keeps browser-session payment-intent processing", async () => {
+    mockProcessPaymentIntents.mockResolvedValue(2);
+    const { req, res } = createMocks({
+      method: "POST",
+      body: {},
+    });
+
+    const { default: handler } =
+      await import("./purchases/stripe/process-payment-intents");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({ count: 2, success: true });
+    expect(mockThrottle).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      endpoint: "purchases/stripe/process-payment-intents",
+    });
+    expect(mockProcessPaymentIntents).toHaveBeenCalledWith({
+      account_id: "acct-1",
     });
   });
 });
