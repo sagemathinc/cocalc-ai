@@ -19,6 +19,9 @@ const mockSetEmailAddress = jest.fn();
 const mockSetPassword = jest.fn();
 const mockStartTwoFactorSetup = jest.fn();
 const mockConfirmTwoFactorSetup = jest.fn();
+const mockUserIsInGroup = jest.fn();
+const mockBanUser = jest.fn();
+const mockRemoveUserBan = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
@@ -73,6 +76,16 @@ jest.mock("@cocalc/server/auth/two-factor", () => ({
   confirmTwoFactorSetup: (...args: any[]) => mockConfirmTwoFactorSetup(...args),
 }));
 
+jest.mock("@cocalc/server/accounts/is-in-group", () => ({
+  __esModule: true,
+  default: (...args: any[]) => mockUserIsInGroup(...args),
+}));
+
+jest.mock("@cocalc/server/accounts/ban", () => ({
+  banUser: (...args: any[]) => mockBanUser(...args),
+  removeUserBan: (...args: any[]) => mockRemoveUserBan(...args),
+}));
+
 describe("browser-session-only account security routes", () => {
   const originalDisableApiValidation =
     process.env.COCALC_DISABLE_API_VALIDATION;
@@ -113,6 +126,9 @@ describe("browser-session-only account security routes", () => {
     mockConfirmTwoFactorSetup.mockReset().mockResolvedValue({
       recovery_codes: ["recovery-code"],
     });
+    mockUserIsInGroup.mockReset().mockResolvedValue(true);
+    mockBanUser.mockReset().mockResolvedValue(undefined);
+    mockRemoveUserBan.mockReset().mockResolvedValue(undefined);
   });
 
   it("rejects API-key-only account deletion", async () => {
@@ -371,5 +387,65 @@ describe("browser-session-only account security routes", () => {
       factor_id: "factor-1",
       code: "123456",
     });
+  });
+
+  it("rejects admin account bans without fresh auth", async () => {
+    mockGetParams.mockReturnValue({ account_id: "subject-1" });
+    mockRequireFreshAuth.mockRejectedValue(new Error("fresh auth is required"));
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } = await import("./accounts/ban");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "fresh auth is required",
+    });
+    expect(mockBanUser).not.toHaveBeenCalled();
+  });
+
+  it("allows fresh-authenticated admin account bans", async () => {
+    mockGetParams.mockReturnValue({ account_id: "subject-1" });
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } = await import("./accounts/ban");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({ status: "success" });
+    expect(mockUserIsInGroup).toHaveBeenCalledWith("acct-1", "admin");
+    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
+      req,
+      account_id: "acct-1",
+    });
+    expect(mockBanUser).toHaveBeenCalledWith("subject-1");
+  });
+
+  it("rejects admin account unbans without fresh auth", async () => {
+    mockGetParams.mockReturnValue({ account_id: "subject-1" });
+    mockRequireFreshAuth.mockRejectedValue(new Error("fresh auth is required"));
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } = await import("./accounts/remove-ban");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "fresh auth is required",
+    });
+    expect(mockRemoveUserBan).not.toHaveBeenCalled();
+  });
+
+  it("allows fresh-authenticated admin account unbans", async () => {
+    mockGetParams.mockReturnValue({ account_id: "subject-1" });
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } = await import("./accounts/remove-ban");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({ status: "success" });
+    expect(mockUserIsInGroup).toHaveBeenCalledWith("acct-1", "admin");
+    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
+      req,
+      account_id: "acct-1",
+    });
+    expect(mockRemoveUserBan).toHaveBeenCalledWith("subject-1");
   });
 });

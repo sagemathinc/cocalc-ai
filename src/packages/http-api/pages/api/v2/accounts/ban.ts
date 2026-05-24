@@ -6,6 +6,7 @@ import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import { banUser } from "@cocalc/server/accounts/ban";
+import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import { SuccessStatus } from "@cocalc/http-api/lib/api/status";
@@ -32,6 +33,7 @@ async function get(req) {
   if (!(await userIsInGroup(account_id0, "admin"))) {
     throw Error("only admins can ban users");
   }
+  await requireFreshAuth({ req, account_id: account_id0 });
 
   const { account_id } = getParams(req);
   await banUser(account_id);
