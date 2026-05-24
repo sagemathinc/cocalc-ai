@@ -6,6 +6,8 @@ This requires the user to be signed in so they are allowed to use this project.
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { start as startProject } from "@cocalc/server/conat/api/projects";
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import { getAccountFromApiKey } from "@cocalc/server/auth/api";
+import { assertHttpProjectApiKeyAllowed } from "@cocalc/server/api/http-api-key-policy";
 
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import { OkStatus } from "@cocalc/http-api/lib/api/status";
@@ -21,6 +23,16 @@ async function handle(req, res) {
   try {
     if (!account_id) {
       throw Error("must be signed in");
+    }
+    if (req.header("Authorization")) {
+      const principal = await getAccountFromApiKey(req);
+      if (!principal?.account_id || principal.account_id !== account_id) {
+        throw Error("must be signed in with a valid account API key");
+      }
+      assertHttpProjectApiKeyAllowed({
+        principal,
+        project_id,
+      });
     }
     await startProject({ account_id, project_id, wait: false });
     res.json(OkStatus);
