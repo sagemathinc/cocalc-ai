@@ -179,11 +179,14 @@ export type BrowserInstallHelloWorldOptions = {
 
 export type BrowserExecApi = {
   projectId: string;
-  docsAction: (id: string) => {
+  docsAction: (id: string) => Promise<{
     action_id: string;
     opened: true;
+    path?: string;
+    panel?: string;
     project_id: string;
-  };
+    tab?: string;
+  }>;
   listOpenFiles: () => BrowserOpenFileInfo[];
   listOpenFilesAll: () => BrowserOpenFileInfo[];
   openFiles: (

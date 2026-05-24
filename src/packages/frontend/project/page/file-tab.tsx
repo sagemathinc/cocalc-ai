@@ -33,6 +33,7 @@ import { useProjectContext } from "../context";
 import { generatedWorkspaceChatLabel } from "../workspaces/chat-display";
 import {
   AgentsFlyout,
+  DocsFlyout,
   FilesFlyout,
   LogFlyout,
   NewFlyout,
@@ -50,6 +51,7 @@ export type FixedTab =
   | "workspaces"
   | "active"
   | "agents"
+  | "docs"
   | "files"
   | "new"
   | "log"
@@ -116,6 +118,14 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
     icon: "comment",
     flyout: AgentsFlyout,
     noAnonymous: false,
+  },
+  docs: {
+    label: "Docs",
+    flyoutTitle: "Docs",
+    icon: "book",
+    flyout: DocsFlyout,
+    noAnonymous: false,
+    noFullPage: false,
   },
   files: {
     label: labels.explorer,

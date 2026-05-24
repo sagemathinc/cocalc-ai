@@ -168,6 +168,7 @@ jest.mock("./file-tab", () => ({
     files: { label: "Files", icon: "folder-open-o" },
     new: { label: "New", icon: "plus-circle" },
     search: { label: "Search", icon: "search" },
+    docs: { label: "Docs", icon: "book" },
     users: { label: "Users", icon: "users" },
     settings: { label: "Settings", icon: "wrench" },
     active: { label: "Tabs", icon: "edit", noFullPage: true },

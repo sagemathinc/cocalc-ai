@@ -1,4 +1,5 @@
 export { AgentsFlyout } from "./agents";
+export { DocsFlyout, ProjectDocsPanel } from "./docs";
 export { FilesFlyout } from "./files";
 export { ProjectInfoFlyout } from "./info";
 export { LogFlyout } from "./log";

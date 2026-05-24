@@ -40,6 +40,7 @@ import { ProjectSearch } from "@cocalc/frontend/project/search/search";
 import { ProjectServers } from "@cocalc/frontend/project/servers";
 import { ProjectSettings } from "@cocalc/frontend/project/settings";
 import { WorkspacesPanel } from "@cocalc/frontend/project/page/flyouts/workspaces";
+import { ProjectDocsPanel } from "@cocalc/frontend/project/page/flyouts/docs";
 import { editor_id } from "@cocalc/frontend/project/utils";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { chatMetaFile } from "@cocalc/frontend/chat/paths";
@@ -191,6 +192,8 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
       return <ProjectSettings project_id={project_id} />;
     case "agents":
       return <AgentsPanel project_id={project_id} layout="page" />;
+    case "docs":
+      return <ProjectDocsPanel project_id={project_id} layout="page" />;
     case "workspaces":
       return <WorkspacesPanel project_id={project_id} layout="page" />;
     default:
