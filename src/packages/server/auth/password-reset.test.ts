@@ -30,8 +30,6 @@ describe("password reset throttling", () => {
     const sql = queryMock.mock.calls[0][0];
     expect(sql).toContain("COUNT(*) FILTER (WHERE email_address=$1)");
     expect(sql).toContain("COUNT(*) FILTER (WHERE ip_address=$2::INET)");
-    expect(sql).toContain(
-      "COUNT(*) FILTER (WHERE email_address=$1 AND ip_address=$2::INET)",
-    );
+    expect(sql).not.toContain("AND ip_address=$2::INET)::INT");
   });
 });

@@ -25,8 +25,7 @@ export async function recentAttemptsLocal(
     `
       SELECT GREATEST(
         COUNT(*) FILTER (WHERE email_address=$1)::INT,
-        COUNT(*) FILTER (WHERE ip_address=$2::INET)::INT,
-        COUNT(*) FILTER (WHERE email_address=$1 AND ip_address=$2::INET)::INT
+        COUNT(*) FILTER (WHERE ip_address=$2::INET)::INT
       ) AS count
         FROM password_reset_attempts
        WHERE time >= NOW() - INTERVAL '10 min'
