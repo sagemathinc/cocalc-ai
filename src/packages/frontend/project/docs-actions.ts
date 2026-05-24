@@ -5,7 +5,6 @@
 
 import { isDocsActionId, type DocsActionId } from "@cocalc/docs";
 import { redux } from "@cocalc/frontend/app-framework";
-import { storeFlyoutState } from "./page/flyouts/state";
 
 export const PROJECT_SECRETS_DOCS_ACTION_EVENT =
   "cocalc:docs-action:project-secrets";
@@ -32,11 +31,28 @@ function dispatchProjectSecretsEvent(projectId: string): void {
   );
 }
 
+function storeSettingsFlyoutState(projectId: string): void {
+  if (typeof window === "undefined") return;
+  const key = `${projectId}::flyout`;
+  let current: Record<string, unknown> = {};
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        current = parsed;
+      }
+    }
+  } catch {
+    current = {};
+  }
+  current.expanded = "settings";
+  current.settings = ["environment"];
+  window.localStorage.setItem(key, JSON.stringify(current));
+}
+
 function revealProjectSecrets(projectId: string): DocsActionRevealResult {
-  storeFlyoutState(projectId, "settings", {
-    expanded: true,
-    settings: ["environment"],
-  });
+  storeSettingsFlyoutState(projectId);
 
   const pageActions = redux.getActions("page") as
     | {
