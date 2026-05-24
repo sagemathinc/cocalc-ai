@@ -17,6 +17,8 @@ const mockGetParams = jest.fn();
 const mockUnlinkStrategy = jest.fn();
 const mockSetEmailAddress = jest.fn();
 const mockSetPassword = jest.fn();
+const mockStartTwoFactorSetup = jest.fn();
+const mockConfirmTwoFactorSetup = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
@@ -66,6 +68,11 @@ jest.mock("@cocalc/server/accounts/set-password", () => ({
   default: (...args: any[]) => mockSetPassword(...args),
 }));
 
+jest.mock("@cocalc/server/auth/two-factor", () => ({
+  startTwoFactorSetup: (...args: any[]) => mockStartTwoFactorSetup(...args),
+  confirmTwoFactorSetup: (...args: any[]) => mockConfirmTwoFactorSetup(...args),
+}));
+
 describe("browser-session-only account security routes", () => {
   const originalDisableApiValidation =
     process.env.COCALC_DISABLE_API_VALIDATION;
@@ -96,6 +103,16 @@ describe("browser-session-only account security routes", () => {
       already_verified: false,
     });
     mockSetPassword.mockReset().mockResolvedValue(undefined);
+    mockStartTwoFactorSetup.mockReset().mockResolvedValue({
+      factor_id: "factor-1",
+      secret: "secret",
+      issuer: "CoCalc",
+      account_label: "user@example.com",
+      otpauth_url: "otpauth://totp/CoCalc:user@example.com?secret=secret",
+    });
+    mockConfirmTwoFactorSetup.mockReset().mockResolvedValue({
+      recovery_codes: ["recovery-code"],
+    });
   });
 
   it("rejects API-key-only account deletion", async () => {
@@ -280,5 +297,79 @@ describe("browser-session-only account security routes", () => {
       "old-password",
       "new-password",
     );
+  });
+
+  it("rejects authenticator-app two-factor setup start without fresh auth", async () => {
+    mockRequireFreshAuth.mockRejectedValue(new Error("fresh auth is required"));
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } = await import("./auth/2fa/setup/start");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "fresh auth is required",
+    });
+    expect(mockStartTwoFactorSetup).not.toHaveBeenCalled();
+  });
+
+  it("allows fresh-authenticated authenticator-app two-factor setup start", async () => {
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } = await import("./auth/2fa/setup/start");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toMatchObject({
+      factor_id: "factor-1",
+      secret: "secret",
+    });
+    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
+      req,
+      account_id: "acct-1",
+    });
+    expect(mockStartTwoFactorSetup).toHaveBeenCalledWith({
+      account_id: "acct-1",
+    });
+  });
+
+  it("rejects authenticator-app two-factor setup confirmation without fresh auth", async () => {
+    mockGetParams.mockReturnValue({
+      factor_id: "factor-1",
+      code: "123456",
+    });
+    mockRequireFreshAuth.mockRejectedValue(new Error("fresh auth is required"));
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } = await import("./auth/2fa/setup/confirm");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "fresh auth is required",
+    });
+    expect(mockConfirmTwoFactorSetup).not.toHaveBeenCalled();
+  });
+
+  it("allows fresh-authenticated authenticator-app two-factor setup confirmation", async () => {
+    mockGetParams.mockReturnValue({
+      factor_id: "factor-1",
+      code: "123456",
+    });
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } = await import("./auth/2fa/setup/confirm");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      recovery_codes: ["recovery-code"],
+    });
+    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
+      req,
+      account_id: "acct-1",
+    });
+    expect(mockConfirmTwoFactorSetup).toHaveBeenCalledWith({
+      req,
+      account_id: "acct-1",
+      factor_id: "factor-1",
+      code: "123456",
+    });
   });
 });

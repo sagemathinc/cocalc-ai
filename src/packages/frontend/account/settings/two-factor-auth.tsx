@@ -81,6 +81,7 @@ export default function TwoFactorAuthSetting() {
   const [renamePasskeyId, setRenamePasskeyId] = useState("");
   const [renameLabel, setRenameLabel] = useState("");
   const [freshAction, setFreshAction] = useState<
+    | { type: "setup-totp" }
     | { type: "add-passkey" }
     | { type: "disable-passkey"; factor_id: string }
     | { type: "disable" }
@@ -403,7 +404,11 @@ export default function TwoFactorAuthSetting() {
           </Space>
         ) : (
           <Space wrap>
-            <Button bsStyle="primary" disabled={busy} onClick={startSetup}>
+            <Button
+              bsStyle="primary"
+              disabled={busy}
+              onClick={() => setFreshAction({ type: "setup-totp" })}
+            >
               {busy ? "Starting..." : "Set up authenticator app"}
             </Button>
             <Button
@@ -421,7 +426,9 @@ export default function TwoFactorAuthSetting() {
         open={freshAction != null && !isImpersonating}
         onCancel={() => setFreshAction(null)}
         onSuccess={async () => {
-          if (freshAction?.type === "add-passkey") {
+          if (freshAction?.type === "setup-totp") {
+            await startSetup();
+          } else if (freshAction?.type === "add-passkey") {
             await addPasskey();
           } else if (freshAction?.type === "disable-passkey") {
             await disablePasskey(freshAction.factor_id);
