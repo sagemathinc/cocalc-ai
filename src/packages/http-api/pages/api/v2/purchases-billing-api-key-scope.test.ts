@@ -17,6 +17,14 @@ const mockGetLiveSubscriptions = jest.fn();
 const mockGetUnpaidInvoices = jest.fn();
 const mockGetChargesThisMonthByService = jest.fn();
 const mockEmailStatement = jest.fn();
+const mockGetCostPerDay = jest.fn();
+const mockGetLastClosingDate = jest.fn();
+const mockGetNextClosingDate = jest.fn();
+const mockGetAIUsageStatus = jest.fn();
+const mockResolveMembershipForAccount = jest.fn();
+const mockGetMinBalance = jest.fn();
+const mockIsPurchaseAllowed = jest.fn();
+const mockComputeMembershipChange = jest.fn();
 const mockThrottle = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
@@ -79,6 +87,38 @@ jest.mock("@cocalc/server/purchases/statements/email-statement", () => ({
   default: (...args) => mockEmailStatement(...args),
 }));
 
+jest.mock("@cocalc/server/purchases/get-cost-per-day", () => ({
+  __esModule: true,
+  default: (...args) => mockGetCostPerDay(...args),
+}));
+
+jest.mock("@cocalc/server/purchases/closing-date", () => ({
+  getLastClosingDate: (...args) => mockGetLastClosingDate(...args),
+  getNextClosingDate: (...args) => mockGetNextClosingDate(...args),
+}));
+
+jest.mock("@cocalc/server/ai/usage-status", () => ({
+  getAIUsageStatus: (...args) => mockGetAIUsageStatus(...args),
+}));
+
+jest.mock("@cocalc/server/membership/resolve", () => ({
+  resolveMembershipForAccount: (...args) =>
+    mockResolveMembershipForAccount(...args),
+}));
+
+jest.mock("@cocalc/server/purchases/get-min-balance", () => ({
+  __esModule: true,
+  default: (...args) => mockGetMinBalance(...args),
+}));
+
+jest.mock("@cocalc/server/purchases/is-purchase-allowed", () => ({
+  isPurchaseAllowed: (...args) => mockIsPurchaseAllowed(...args),
+}));
+
+jest.mock("@cocalc/server/membership/tiers", () => ({
+  computeMembershipChange: (...args) => mockComputeMembershipChange(...args),
+}));
+
 describe("billing account read routes API-key scope", () => {
   const denied = {
     error: "API keys are not allowed to access billing account details",
@@ -98,6 +138,18 @@ describe("billing account read routes API-key scope", () => {
     mockGetUnpaidInvoices.mockReset().mockResolvedValue([]);
     mockGetChargesThisMonthByService.mockReset().mockResolvedValue({});
     mockEmailStatement.mockReset().mockResolvedValue(undefined);
+    mockGetCostPerDay.mockReset().mockResolvedValue([]);
+    mockGetLastClosingDate.mockReset().mockResolvedValue(new Date(0));
+    mockGetNextClosingDate.mockReset().mockResolvedValue(new Date(1));
+    mockGetAIUsageStatus.mockReset().mockResolvedValue({ used: 1 });
+    mockResolveMembershipForAccount.mockReset().mockResolvedValue({
+      tier_id: "tier-1",
+    });
+    mockGetMinBalance.mockReset().mockResolvedValue(0);
+    mockIsPurchaseAllowed.mockReset().mockResolvedValue({ allowed: true });
+    mockComputeMembershipChange.mockReset().mockResolvedValue({
+      charge: 0,
+    });
     mockThrottle.mockReset();
   });
 
@@ -110,6 +162,13 @@ describe("billing account read routes API-key scope", () => {
     ["./purchases/get-unpaid-invoices", mockGetUnpaidInvoices],
     ["./purchases/get-charges-by-service", mockGetChargesThisMonthByService],
     ["./purchases/email-statement", mockEmailStatement],
+    ["./purchases/get-cost-per-day", mockGetCostPerDay],
+    ["./purchases/get-closing-dates", mockGetLastClosingDate],
+    ["./purchases/get-llm-usage", mockGetAIUsageStatus],
+    ["./purchases/get-membership", mockResolveMembershipForAccount],
+    ["./purchases/get-min-balance", mockGetMinBalance],
+    ["./purchases/is-purchase-allowed", mockIsPurchaseAllowed],
+    ["./purchases/membership-quote", mockComputeMembershipChange],
   ])("rejects API-key access to %s", async (modulePath, backendCall) => {
     const { req, res } = createMocks({
       method: "POST",
