@@ -48,10 +48,50 @@ As of 2026-05-24, the first vertical slice exists and is usable:
   - `cocalc docs verify`
   - `cocalc docs verify --list-live`
   - `cocalc docs verify --live --project-id <project_id>`
+  - `cocalc docs verify --live --spawn-browser --project-id <project_id>`
+    creates a dedicated Chromium browser session, runs the live docs actions,
+    and destroys the spawned session afterward.
 
 The remaining work is production hardening: more docs content, more executable
 actions, stronger live scenario assertions, Codex skill integration, and a
 release gate for legacy docs links.
+
+## Verification Workflow
+
+The docs action system has two verification layers.
+
+Static verification checks bundled docs metadata, links, and action ids:
+
+```sh
+cocalc docs verify
+```
+
+Live verification checks that executable docs actions still open the expected
+UI destinations in a real browser session:
+
+```sh
+cd src && eval "$(pnpm -s dev:hub:env)"
+cocalc docs verify --live --spawn-browser --project-id "$COCALC_PROJECT_ID"
+```
+
+The spawned-browser mode launches a dedicated Chromium session, discovers its
+browser id, runs every live scenario through `cocalc browser action docs <id>`,
+then destroys the spawned session. This is the preferred manual QA command for
+docs actions because it avoids depending on whatever browser tab the developer
+happens to have open.
+
+When the local API origin is `localhost` but the signed-in account belongs to
+an externally reachable home bay, the verifier asks `/api/v2/auth/bootstrap`
+for `home_bay_url` and opens Chromium on that external project URL. This avoids
+the localhost-only failure mode where the frontend changes its Conat control
+plane to the external home bay before the spawned browser registers.
+
+For debugging, keep the spawned browser alive:
+
+```sh
+cocalc docs verify --live --spawn-browser --keep-browser \
+  --project-id "$COCALC_PROJECT_ID"
+```
 
 ## Product Principles
 
