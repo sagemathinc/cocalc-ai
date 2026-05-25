@@ -14,9 +14,9 @@ This inventory excludes generated build output such as
 
 Current source inventory:
 
-- 70 legacy URL references.
-- 41 unique legacy URLs.
-- 71 grep lines matching `doc.cocalc.com` because one source line is a comment
+- 67 legacy URL references.
+- 40 unique legacy URLs.
+- 68 grep lines matching `doc.cocalc.com` because one source line is a comment
   and some files contain multiple related references.
 
 Resolved so far:
@@ -24,6 +24,9 @@ Resolved so far:
 - `https://doc.cocalc.com/howto/custom-jupyter-kernel.html` now has
   `jupyter/custom-kernels` and the Jupyter custom-kernel help action points to
   `/docs/jupyter/custom-kernels`.
+- `https://doc.cocalc.com/howto/low-memory.html` now has
+  `troubleshooting/memory`; the project RAM warning, project OOM warning, and
+  Jupyter resource usage help point to `/docs/troubleshooting/memory`.
 
 ## Recommended Migration Policy
 
@@ -49,7 +52,6 @@ points. They should be addressed before launch.
 | Jupyter notebooks                     | `jupyter/use-jupyter`, existing `jupyter/create-notebook`, existing `jupyter/custom-kernels` | `/jupyter.html`, `/howto/jupyter-kernel-terminated.html`                              | welcome email, Jupyter commands, Jupyter about, Jupyter editor, kernel warnings | create-doc/replace-existing |
 | Terminal workflows                    | existing `projects/open-terminal`, add `terminal/use-terminal` if needed                     | `/terminal.html`                                                                      | terminal editor, base editor, terminal tour                                     | replace-existing/create-doc |
 | Connectivity and browser trouble      | `troubleshooting/connectivity`                                                               | `/howto/connectivity-issues.html`, `/howto/trouble.html`                              | welcome email, active content warning                                           | create-doc                  |
-| Memory and process failure            | `troubleshooting/memory`                                                                     | `/howto/low-memory.html`                                                              | project OOM warning, project RAM warning, Jupyter status                        | create-doc                  |
 | API keys, CLI, and API authentication | `api/http-api`, existing `cli/use-cocalc-cli`, possibly `account/api-keys`                   | `/apikeys.html`, `/api2/`, `/api2/index.html#authentication`, root OpenAPI docs URL   | HTTP API docs, API key UI, app store comment                                    | create-doc/replace-existing |
 | Welcome email docs                    | `/docs` plus specific docs above                                                             | `/`, `/jupyter.html`, `/teaching-instructors.html`, `/howto/connectivity-issues.html` | `server/email/welcome-email.ts`, `server/hub/email.ts`                          | replace-existing/create-doc |
 
@@ -156,7 +158,6 @@ be concise task pages rather than full manuals.
 |     1 | `https://doc.cocalc.com/teaching-interactions.html#mention-collaborators-in-chat` | Create `collaboration/mentions`.                                    |
 |     3 | `https://doc.cocalc.com/howto/connectivity-issues.html`                           | Create `troubleshooting/connectivity`.                              |
 |     1 | `https://doc.cocalc.com/howto/trouble.html`                                       | Create `troubleshooting/connectivity` or `troubleshooting/browser`. |
-|     3 | `https://doc.cocalc.com/howto/low-memory.html`                                    | Create `troubleshooting/memory`.                                    |
 
 ### Generic Root
 
@@ -191,9 +192,9 @@ be concise task pages rather than full manuals.
 
 | File                                                  | Legacy topics                    | Recommended action                                                              |
 | ----------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------- |
-| `src/packages/frontend/project/warnings/ram.tsx`      | low memory                       | Create `troubleshooting/memory`; replace link.                                  |
-| `src/packages/frontend/project/warnings/oom.tsx`      | low memory                       | Same.                                                                           |
-| `src/packages/frontend/jupyter/status.tsx`            | low memory                       | Same.                                                                           |
+| `src/packages/frontend/project/warnings/ram.tsx`      | low memory                       | Done: replaced with `troubleshooting/memory`.                                   |
+| `src/packages/frontend/project/warnings/oom.tsx`      | low memory                       | Done: replaced with `troubleshooting/memory`.                                   |
+| `src/packages/frontend/jupyter/status.tsx`            | low memory                       | Done: replaced with `troubleshooting/memory`.                                   |
 | `src/packages/frontend/app/active-content.tsx`        | generic trouble                  | Create `troubleshooting/connectivity`; replace link.                            |
 | `src/packages/frontend/project/no-internet-modal.tsx` | internet access                  | Create `projects/internet-access`; replace link.                                |
 | `src/packages/frontend/project/info/utils.ts`         | project SSH keys                 | Create `projects/project-ssh-keys`; replace link.                               |
@@ -242,21 +243,14 @@ be concise task pages rather than full manuals.
 
 ## Suggested First Cleanup Cluster
 
-Start with `troubleshooting/memory`:
-
-- It replaces three user-facing runtime warning links.
-- It is launch-critical because users see it when things are already broken.
-- It can be concise and accurate without needing billing or teaching policy.
-- It can link to project host/runtime docs and explain what to do next.
-
-Second cluster: `api/authentication`, `api/http-api`, and existing
+Next cluster: `api/authentication`, `api/http-api`, and existing
 `cli/use-cocalc-cli`, because the OpenAPI entry points still send developers to
 old docs before they can use the product. CoCalc-ai API keys are intentionally
 much more limited than old CoCalc API keys; docs should avoid presenting them as
 the main automation surface.
 
-Third cluster: `jupyter/use-jupyter`, because it has the most repeated links and
-is a core CoCalc workflow.
+Then do `jupyter/use-jupyter`, because it has the most repeated links and is a
+core CoCalc workflow.
 
 ## Release Gate Shape
 

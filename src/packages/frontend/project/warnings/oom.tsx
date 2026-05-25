@@ -13,6 +13,7 @@ import {
 import { A, Icon } from "@cocalc/frontend/components";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
+import { joinUrlPath } from "@cocalc/util/url-path";
 import { join } from "path";
 import { ALERT_STYLE } from "./common";
 
@@ -21,7 +22,7 @@ const OOM_ALERT_STYLE: React.CSSProperties = {
   ...{ fontSize: "11pt", padding: "10px" },
 } as const;
 
-const OOM_INFO_PAGE = "https://doc.cocalc.com/howto/low-memory.html";
+const OOM_INFO_PAGE = joinUrlPath(appBasePath, "docs/troubleshooting/memory");
 
 // to test this, set the oom_kills value for your dev project directly in the DB:
 // 1. reset:         UPDATE projects SET status = jsonb_set(status, '{oom_kills}', '0'::JSONB) WHERE project_id='  ... UUID of your cc-in-cc project ... ';

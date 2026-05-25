@@ -42,6 +42,11 @@ describe("public/docs", () => {
     expect(
       searchDocsEntries("api key cli automation").map((entry) => entry.id)[0],
     ).toBe("cli.use-cocalc-cli");
+    expect(
+      searchDocsEntries("low memory oom kernel restart").map(
+        (entry) => entry.id,
+      )[0],
+    ).toBe("troubleshooting.memory");
   });
 
   it("renders the docs index", () => {

@@ -291,6 +291,58 @@ software stacks, and then make those stacks available to other projects without
 turning setup instructions into a fragile checklist.
 `;
 
+const MEMORY_TROUBLESHOOTING_BODY = String.raw`
+## What low memory means
+
+Low memory means the project is close to its RAM limit. Out-of-memory means the
+Linux kernel killed a process because the project used more memory than the host
+allowed. In notebooks, this often looks like a kernel restart, missing output,
+or a cell that stops without finishing.
+
+The limit is shared by everything running in the project: notebooks, terminals,
+language servers, background jobs, web apps, databases, and agents.
+
+## First things to try
+
+1. Open the project process or activity view and stop work you do not need.
+2. Restart the notebook kernel or terminal process that is using too much RAM.
+3. Close idle notebooks, terminals, servers, and X11 apps.
+4. Load less data at once, stream data in chunks, or write intermediate results
+   to files.
+5. Avoid keeping duplicate large arrays, dataframes, models, or images in
+   memory.
+
+For Python notebooks, clear variables you no longer need, restart the kernel
+after large experiments, and prefer chunked data tools when datasets approach
+the available RAM.
+
+## When the workload really needs more memory
+
+If the computation genuinely needs more RAM, move the project to a host or plan
+with more memory. For repeated workloads, choose a project host with enough RAM
+and disk for the largest expected dataset and runtime image.
+
+If the project is on a shared host, remember that other work on the same host
+can compete for memory. A dedicated host or larger host is more predictable for
+large research jobs, courses, or agent sandboxes.
+
+## Prevent repeat failures
+
+Keep setup and data-processing steps reproducible so a killed process is not a
+lost result. Save intermediate files, checkpoint long calculations, and use
+scripts or notebooks that can restart from a durable point.
+
+For agents, ask them to inspect memory usage before starting a large job and to
+prefer incremental processing when the input data is large.
+
+## Why this matters in CoCalc
+
+CoCalc keeps notebooks and terminals durable, but it cannot make a process use
+less RAM than the host provides. Treat memory as part of the project
+environment: monitor it, size the host appropriately, and design workflows that
+can recover after a process is killed.
+`;
+
 const COLLABORATORS_BODY = String.raw`
 ## What collaborators are for
 
@@ -929,6 +981,18 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     summary:
       "Choose, customize, and reuse the Linux software stack for a project.",
     title: "Runtime images and RootFS",
+  },
+  {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: MEMORY_TROUBLESHOOTING_BODY.trim(),
+    category: "Troubleshooting",
+    id: "troubleshooting.memory",
+    lastReviewed: "2026-05-24",
+    slug: "troubleshooting/memory",
+    status: "ready",
+    summary:
+      "Diagnose low-memory warnings, out-of-memory kills, and notebook kernel restarts.",
+    title: "Low memory and out-of-memory crashes",
   },
   {
     audiences: ["agents", "instructors", "researchers", "teams"],
