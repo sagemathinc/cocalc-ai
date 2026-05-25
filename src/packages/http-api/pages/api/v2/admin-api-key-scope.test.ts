@@ -10,8 +10,6 @@ import { createMocks } from "@cocalc/http-api/lib/api/test-framework";
 const mockGetAccountId = jest.fn();
 const mockGetParams = jest.fn();
 const mockUserIsInGroup = jest.fn();
-const mockSetQuotas = jest.fn();
-const mockRequireFreshAuth = jest.fn();
 const mockEditNews = jest.fn();
 const mockClearNewsCache = jest.fn();
 const mockGetNewsItem = jest.fn();
@@ -20,7 +18,6 @@ const mockGetMoneyData = jest.fn();
 const mockGetBalance = jest.fn();
 const mockGetPurchases = jest.fn();
 const mockThrottle = jest.fn();
-const projectId = "00000000-0000-4000-8000-000000000001";
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
@@ -35,15 +32,6 @@ jest.mock("@cocalc/http-api/lib/api/get-params", () => ({
 jest.mock("@cocalc/server/accounts/is-in-group", () => ({
   __esModule: true,
   default: (...args) => mockUserIsInGroup(...args),
-}));
-
-jest.mock("@cocalc/server/conat/api/projects", () => ({
-  PROJECT_DANGEROUS_INTERNAL_AUTH: Symbol("project-dangerous-internal-auth"),
-  setQuotas: (...args) => mockSetQuotas(...args),
-}));
-
-jest.mock("@cocalc/server/auth/auth-sessions", () => ({
-  requireFreshAuth: (...args) => mockRequireFreshAuth(...args),
 }));
 
 jest.mock("@cocalc/server/news/edit", () => ({
@@ -87,13 +75,10 @@ describe("admin HTTP routes API-key scope", () => {
     mockGetParams.mockReset().mockReturnValue({
       account_id: "user-acct",
       id: 1,
-      project_id: projectId,
       text: "body",
       title: "title",
     });
     mockUserIsInGroup.mockReset().mockResolvedValue(true);
-    mockSetQuotas.mockReset().mockResolvedValue(undefined);
-    mockRequireFreshAuth.mockReset().mockResolvedValue(undefined);
     mockEditNews.mockReset().mockResolvedValue({ id: 1 });
     mockClearNewsCache.mockReset();
     mockGetNewsItem.mockReset().mockResolvedValue({ id: 1 });
@@ -105,7 +90,6 @@ describe("admin HTTP routes API-key scope", () => {
   });
 
   it.each([
-    ["./projects/set-admin-quotas", mockSetQuotas],
     ["./news/edit", mockEditNews],
     ["./news/admin-get", mockGetNewsItem],
     ["./news/admin-list", mockGetAdminNewsIndex],
@@ -122,7 +106,6 @@ describe("admin HTTP routes API-key scope", () => {
       body: {
         account_id: "user-acct",
         id: 1,
-        project_id: projectId,
         text: "body",
         title: "title",
       },
@@ -136,35 +119,5 @@ describe("admin HTTP routes API-key scope", () => {
     expect(mockUserIsInGroup).not.toHaveBeenCalled();
     expect(mockThrottle).not.toHaveBeenCalled();
     expect(backendCall).not.toHaveBeenCalled();
-  });
-
-  it("keeps browser-session admin quota updates", async () => {
-    const { req, res } = createMocks({
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: { project_id: projectId, memory_limit: 2000 },
-    });
-
-    const { default: handler } = await import("./projects/set-admin-quotas");
-    await handler(req, res);
-
-    expect(res._getJSONData()).toEqual({ status: "success" });
-    expect(mockSetQuotas).toHaveBeenCalledWith({
-      account_id: "admin-acct",
-      cores: undefined,
-      cpu_shares: undefined,
-      disk_quota: undefined,
-      member_host: undefined,
-      memory: undefined,
-      memory_request: undefined,
-      network: undefined,
-      project_id: projectId,
-      internalAuth: expect.any(Symbol),
-    });
-    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
-      req,
-      account_id: "admin-acct",
-      allow_actor_impersonation: true,
-    });
   });
 });

@@ -126,7 +126,6 @@ import type {
   GenerateProjectSshKeySecretResult,
   ProjectCourseInfo,
   ProjectRootfsConfig,
-  ProjectQuotaSettings,
   ProjectSnapshotSchedule,
   ProjectBackupSchedule,
   ProjectCollabInviteAction,
@@ -853,9 +852,6 @@ export async function cancelPendingCopy({
   });
 }
 
-import { db } from "@cocalc/database";
-import { callback2 } from "@cocalc/util/async-utils";
-
 const log = getLogger("server:conat:api:projects");
 
 function publishStartLroSummaryBestEffort({
@@ -886,49 +882,6 @@ function normalizeLogTail(lines?: number): number {
   const n = Number(lines ?? 200);
   if (!Number.isFinite(n)) return 200;
   return Math.max(1, Math.min(5000, Math.floor(n)));
-}
-
-export async function setQuotas(opts: {
-  account_id: string;
-  browser_id?: string | null;
-  session_hash?: string | null;
-  internalAuth?: typeof PROJECT_DANGEROUS_INTERNAL_AUTH;
-  project_id: string;
-  memory?: number;
-  memory_request?: number;
-  cpu_shares?: number;
-  cores?: number;
-  disk_quota?: number;
-  mintime?: number;
-  network?: number;
-  member_host?: number;
-  always_running?: number;
-}): Promise<void> {
-  if (!(await isAdmin(opts.account_id))) {
-    throw Error("Must be an admin to do admin search.");
-  }
-  await requireDangerousProjectMutationAuth({
-    account_id: opts.account_id,
-    browser_id: opts.browser_id,
-    session_hash: opts.session_hash,
-    internalAuth: opts.internalAuth,
-  });
-  const database = db();
-  const { browser_id, session_hash, internalAuth, ...settings } = opts;
-  void browser_id;
-  void session_hash;
-  void internalAuth;
-  await callback2(database.set_project_settings, {
-    project_id: opts.project_id,
-    settings,
-  });
-  const project = await database.projectControl?.(opts.project_id);
-  // @ts-ignore
-  await project?.setAllQuotas();
-  await publishProjectDetailInvalidationBestEffort({
-    project_id: opts.project_id,
-    fields: ["run_quota", "settings"],
-  });
 }
 
 async function getProjectReadDetailsAllowRemote({
@@ -1330,17 +1283,6 @@ export async function getProjectRunQuota({
 }): Promise<ProjectRunQuota> {
   return (await getProjectReadDetailsAllowRemote({ account_id, project_id }))
     .run_quota;
-}
-
-export async function getProjectSettings({
-  account_id,
-  project_id,
-}: {
-  account_id: string;
-  project_id: string;
-}): Promise<ProjectQuotaSettings> {
-  return (await getProjectReadDetailsAllowRemote({ account_id, project_id }))
-    .settings;
 }
 
 export async function getProjectCourseInfo({

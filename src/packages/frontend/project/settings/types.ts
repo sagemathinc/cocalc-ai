@@ -23,8 +23,6 @@ export type ProjectStatus = TypedMap<{
   start_ts: number;
 }>;
 
-export type ProjectSettings = Map<string, any>;
-
 export type Project = TypedMap<{
   title: string;
   description: string;
@@ -34,7 +32,6 @@ export type Project = TypedMap<{
   hidden?: boolean;
   users: Map<string, UserRecord>;
   state?: { state: "opened" | "running" | "starting" | "stopping" };
-  settings: ProjectSettings;
   usage_account_id?: string;
   runtime_sponsor_account_id?: string;
   allow_collaborator_starts_using_sponsor?: boolean;

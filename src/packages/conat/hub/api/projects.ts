@@ -176,7 +176,6 @@ export interface ImportPublicPathResult {
   stream_name: string;
 }
 
-export type ProjectQuotaSettings = Record<string, unknown> | null;
 export type ProjectCourseInfo = CourseInfo | null;
 export type CourseStudentAccessStatus =
   | { status: "not-required"; course?: ProjectCourseInfo }
@@ -563,7 +562,6 @@ export const projects = {
   copyProjectSecrets: authFirstRequireAccount,
   generateProjectSshKeySecret: authFirstRequireAccount,
   getProjectRootfs: authFirstRequireAccount,
-  getProjectSettings: authFirstRequireAccount,
   getProjectCourseInfo: authFirstRequireAccount,
   getProjectRuntimeSponsorStatus: authFirstRequireAccount,
   getAccountRuntimeSponsorStatus: authFirstRequireAccount,
@@ -577,7 +575,6 @@ export const projects = {
   redeemEmailProjectInvite: authFirstRequireAccount,
   previewEmailProjectInvite: authFirst,
   respondEmailProjectInvite: authFirstRequireAccount,
-  setQuotas: authFirstRequireAccount,
 
   exec: authFirstRequireAccount,
   getRuntimeLog: authFirstRequireAccount,
@@ -765,11 +762,6 @@ export interface Projects {
     project_id: string;
   }) => Promise<ProjectRootfsConfig | null>;
 
-  getProjectSettings: (opts: {
-    account_id?: string;
-    project_id: string;
-  }) => Promise<ProjectQuotaSettings>;
-
   getProjectCourseInfo: (opts: {
     account_id?: string;
     project_id: string;
@@ -953,23 +945,6 @@ export interface Projects {
     token: string;
     project_id?: string;
   }) => Promise<ProjectCollabInviteRow>;
-
-  // for admins only!
-  setQuotas: (opts: {
-    account_id?: string;
-    browser_id?: string | null;
-    session_hash?: string | null;
-    project_id: string;
-    memory?: number;
-    memory_request?: number;
-    cpu_shares?: number;
-    cores?: number;
-    disk_quota?: number;
-    mintime?: number;
-    network?: number;
-    member_host?: number;
-    always_running?: number;
-  }) => Promise<void>;
 
   exec: (opts: {
     account_id?: string;

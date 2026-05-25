@@ -487,11 +487,6 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
-  "projects.setQuotas": {
-    decision: "fresh-auth-required",
-    reason:
-      "admin project quota mutation can grant compute, disk, and network resources",
-  },
   "projects.start": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,

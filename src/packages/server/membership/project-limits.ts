@@ -48,10 +48,9 @@ async function getProjectStorageQuotaFallbackBytes(
 ): Promise<number | undefined> {
   const { rows } = await getPool("medium").query<{
     run_quota: { disk_quota?: number | string } | null;
-    settings: { disk_quota?: number | string } | null;
   }>(
     `
-      SELECT run_quota, settings
+      SELECT run_quota
       FROM projects
       WHERE project_id = $1
         AND deleted IS NULL
@@ -59,9 +58,7 @@ async function getProjectStorageQuotaFallbackBytes(
     `,
     [project_id],
   );
-  const diskQuotaMb = Number(
-    rows[0]?.run_quota?.disk_quota ?? rows[0]?.settings?.disk_quota,
-  );
+  const diskQuotaMb = Number(rows[0]?.run_quota?.disk_quota);
   if (!Number.isFinite(diskQuotaMb) || diskQuotaMb <= 0) {
     return undefined;
   }

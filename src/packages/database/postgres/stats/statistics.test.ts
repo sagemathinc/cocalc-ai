@@ -251,9 +251,9 @@ describe("statistics methods", () => {
       const projectId = uuid();
       const now = new Date();
 
-      // Insert project with course.pay = false but member_host setting
+      // Insert project with course.pay = false but member_host run quota
       await pool.query(
-        "INSERT INTO projects (project_id, title, course, last_edited, settings) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO projects (project_id, title, course, last_edited, run_quota) VALUES ($1, $2, $3, $4, $5)",
         [
           projectId,
           "Test Course Prof Pay",
@@ -375,7 +375,7 @@ describe("statistics methods", () => {
 
       // Add 1 prof pay project
       await pool.query(
-        "INSERT INTO projects (project_id, title, course, last_edited, settings) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO projects (project_id, title, course, last_edited, run_quota) VALUES ($1, $2, $3, $4, $5)",
         [
           uuid(),
           "Prof Pay",

@@ -37,8 +37,6 @@ import getLogger from "@cocalc/backend/logger";
 import { send_invite_email } from "@cocalc/server/hub/email";
 import getEmailAddress from "@cocalc/server/accounts/get-email-address";
 import isAdmin from "@cocalc/server/accounts/is-admin";
-import { is_paying_customer } from "@cocalc/database/postgres/account/queries";
-import { project_has_network_access } from "@cocalc/database/postgres/project/queries";
 import { RESEND_INVITE_INTERVAL_DAYS } from "@cocalc/util/consts/invites";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
@@ -1534,7 +1532,6 @@ export async function listMyCollaborators({
 }
 
 async function allowUrlsInEmails({
-  project_id,
   account_id,
 }: {
   project_id: string;
@@ -1545,10 +1542,7 @@ async function allowUrlsInEmails({
   if (limits.invite_email_allow_urls != null) {
     return limits.invite_email_allow_urls;
   }
-  return (
-    (await is_paying_customer(db(), account_id)) ||
-    (await project_has_network_access(db(), project_id))
-  );
+  return true;
 }
 
 async function canSendInviteEmail(account_id: string): Promise<boolean> {

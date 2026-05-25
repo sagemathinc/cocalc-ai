@@ -41,7 +41,25 @@ interface CourseProjectRow {
   project_id: string;
   course: { pay?: boolean };
   last_edited: Date;
-  settings?: { member_host?: boolean };
+  run_quota?: unknown;
+}
+
+function isMemberHostRunQuota(run_quota: unknown): boolean {
+  const quota =
+    typeof run_quota === "string"
+      ? (() => {
+          try {
+            return JSON.parse(run_quota);
+          } catch {
+            return undefined;
+          }
+        })()
+      : run_quota;
+  return (
+    quota != null &&
+    typeof quota === "object" &&
+    !!(quota as { member_host?: boolean | number | string }).member_host
+  );
 }
 
 /**
@@ -79,7 +97,7 @@ export async function get_active_student_stats(
   // Query course projects from last 30 days
   const { rows } = await callback2(db._query.bind(db), {
     query:
-      "SELECT project_id, course, last_edited, settings FROM projects WHERE course IS NOT NULL AND last_edited >= $1",
+      "SELECT project_id, course, last_edited, run_quota FROM projects WHERE course IS NOT NULL AND last_edited >= $1",
     params: [days_ago(30)],
   });
 
@@ -93,13 +111,12 @@ export async function get_active_student_stats(
   // Count student pay projects (student is required to pay)
   const num_student_pay = projects.filter((x) => x.course?.pay === true).length;
 
-  // Count prof pay projects (student isn't required to pay, but
-  // project is on members-only host via settings)
+  // Count prof pay projects (student isn't required to pay, but the project
+  // is on a members-only host according to its computed runtime quota).
   let num_prof_pay = 0;
   for (const x of projects) {
     if (x.course?.pay !== true) {
-      // Check project settings for member_host
-      if (x.settings?.member_host) {
+      if (isMemberHostRunQuota(x.run_quota)) {
         num_prof_pay += 1;
         continue;
       }

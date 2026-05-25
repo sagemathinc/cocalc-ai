@@ -41,7 +41,6 @@ import type {
   ProjectCreated,
   ProjectEnv,
   ProjectRootfsConfig,
-  ProjectQuotaSettings,
   ProjectCourseInfo,
   ProjectSnapshotSchedule,
   ProjectBackupSchedule,
@@ -216,7 +215,6 @@ interface LiteProjectReadDetails {
   snapshots: ProjectSnapshotSchedule;
   backups: ProjectBackupSchedule;
   run_quota: ProjectRunQuota;
-  settings: ProjectQuotaSettings;
   course: ProjectCourseInfo;
 }
 
@@ -250,7 +248,6 @@ function getLiteProjectReadDetailsLocal(
     snapshots: row.snapshots ?? null,
     backups: row.backups ?? null,
     run_quota: row.run_quota ?? null,
-    settings: row.settings ?? null,
     course: row.course ?? null,
   };
 }
@@ -319,19 +316,6 @@ async function getProjectRootfsLite(opts: {
     });
   }
   return (await getLiteProjectReadDetails(opts)).rootfs;
-}
-
-async function getProjectSettingsLite(opts: {
-  account_id?: string;
-  project_id: string;
-}): Promise<ProjectQuotaSettings> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "projects.getProjectSettings",
-      args: [opts],
-    });
-  }
-  return (await getLiteProjectReadDetails(opts)).settings;
 }
 
 async function getProjectCourseInfoLite(opts: {
@@ -1454,7 +1438,6 @@ export const hubApi: HubApi = {
     getProjectCreated: getProjectCreatedLite,
     getProjectEnv: getProjectEnvLite,
     getProjectRootfs: getProjectRootfsLite,
-    getProjectSettings: getProjectSettingsLite,
     getProjectCourseInfo: getProjectCourseInfoLite,
     getProjectRunQuota: getProjectRunQuotaLite,
     getProjectSnapshotSchedule: getProjectSnapshotScheduleLite,

@@ -56,7 +56,6 @@ import type {
   ProjectEnv,
   ProjectLogRow,
   ProjectHiddenResult,
-  ProjectQuotaSettings,
   ProjectRegion,
   ProjectRootfsConfig,
   ProjectRunQuota,
@@ -112,7 +111,6 @@ export interface ProjectDetails {
   snapshots: ProjectSnapshotSchedule;
   backups: ProjectBackupSchedule;
   run_quota: ProjectRunQuota;
-  settings: ProjectQuotaSettings;
   course: ProjectCourseInfo;
 }
 

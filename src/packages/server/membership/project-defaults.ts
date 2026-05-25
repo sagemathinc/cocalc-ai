@@ -1,8 +1,6 @@
 import type { MembershipEntitlements } from "@cocalc/conat/hub/api/purchases";
 import { resolveMembershipForAccount } from "./resolve";
 
-export type ProjectSettings = Record<string, unknown>;
-
 const SETTINGS_FIELDS = [
   "cores",
   "cpu_shares",
@@ -46,20 +44,6 @@ export function normalizeMembershipProjectDefaults(
     defaults[key] = value;
   }
   return defaults;
-}
-
-export function mergeProjectSettingsWithMembership(
-  settings: ProjectSettings | null | undefined,
-  membershipDefaults: MembershipProjectDefaults,
-): ProjectSettings {
-  const merged: ProjectSettings = { ...(settings ?? {}) };
-  for (const [key, value] of Object.entries(membershipDefaults)) {
-    const baseValue = coerceNumber(merged[key]);
-    if (baseValue == null || value > baseValue) {
-      merged[key] = value;
-    }
-  }
-  return merged;
 }
 
 export async function getMembershipProjectDefaultsFromUsers(users: unknown) {

@@ -382,13 +382,6 @@ export interface PostgreSQLMethods extends EventEmitter {
   get_project_storage(opts: { project_id: string; cb: CB<any> }): void;
   update_project_storage_save(opts: { project_id: string; cb: CB }): void;
 
-  get_project_settings(opts: { project_id: string; cb: CB<any> }): void;
-  set_project_settings(opts: {
-    project_id: string;
-    settings: any;
-    cb: CB;
-  }): void;
-
   get_project_extra_env(opts: { project_id: string; cb: CB<any> }): void;
 
   recent_projects(
@@ -785,8 +778,6 @@ export interface PostgreSQLMethods extends EventEmitter {
   ): Promise<unknown>;
 
   webapp_error(opts: Record<string, unknown> & { cb?: CB }): void;
-
-  set_project_settings(opts: { project_id: string; settings: object; cb?: CB });
 
   // Database operations (postgres-ops)
   _get_backup_tables(tables: string[] | "all" | "critical" | string): string[];

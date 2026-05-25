@@ -10,7 +10,6 @@ import type {
   ProjectEnv,
   ProjectCourseInfo,
   ProjectRootfsConfig,
-  ProjectQuotaSettings,
   ProjectSnapshotSchedule,
   ProjectBackupSchedule,
   ProjectRunQuota,
@@ -24,7 +23,6 @@ export interface ProjectReadDetails {
   snapshots: ProjectSnapshotSchedule;
   backups: ProjectBackupSchedule;
   run_quota: ProjectRunQuota;
-  settings: ProjectQuotaSettings;
   course: ProjectCourseInfo;
 }
 
@@ -40,7 +38,6 @@ export async function loadProjectReadDetailsDirect(
     snapshots: ProjectSnapshotSchedule | null;
     backups: ProjectBackupSchedule | null;
     run_quota: ProjectRunQuota | null;
-    settings: ProjectQuotaSettings | null;
     course: ProjectCourseInfo | null;
   }>(
     `
@@ -53,7 +50,6 @@ export async function loadProjectReadDetailsDirect(
         snapshots,
         backups,
         run_quota,
-        settings,
         course
       FROM projects
       WHERE project_id = $1
@@ -80,7 +76,6 @@ export async function loadProjectReadDetailsDirect(
     snapshots: row?.snapshots ?? null,
     backups: row?.backups ?? null,
     run_quota: row?.run_quota ?? null,
-    settings: row?.settings ?? null,
     course: row?.course ?? null,
   };
 }

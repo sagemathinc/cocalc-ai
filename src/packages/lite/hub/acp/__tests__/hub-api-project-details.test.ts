@@ -96,12 +96,6 @@ describe("lite hub project detail getters", () => {
       image_id: "sha256:123",
     });
     await expect(
-      hubApi.projects.getProjectSettings({
-        account_id: ACCOUNT_ID,
-        project_id: PROJECT_ID,
-      }),
-    ).resolves.toEqual({ mintime: 5 });
-    await expect(
       hubApi.projects.getProjectSnapshotSchedule({
         account_id: ACCOUNT_ID,
         project_id: PROJECT_ID,
