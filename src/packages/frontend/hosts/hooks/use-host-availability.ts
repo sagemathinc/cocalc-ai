@@ -27,6 +27,9 @@ type UseHostAvailabilityOptions = {
   enabled?: boolean;
 };
 
+const cache = new Map<string, HostAvailabilityReport>();
+const inflight = new Map<string, Promise<HostAvailabilityReport>>();
+
 export const useHostAvailability = (
   hub: HubClient,
   hostId?: string,
@@ -44,14 +47,23 @@ export const useHostAvailability = (
         mounted = false;
       };
     }
+    const key = `${hostId}:${days}`;
+    const cached = cache.get(key);
+    if (cached) {
+      setAvailability(cached);
+    }
     setLoadingAvailability(true);
     (async () => {
       try {
-        const report = await hub.hosts.getHostAvailability({
-          id: hostId,
-          days,
-        });
-        if (mounted) setAvailability(report);
+        const report =
+          inflight.get(key) ??
+          hub.hosts.getHostAvailability({ id: hostId, days }).finally(() => {
+            inflight.delete(key);
+          });
+        inflight.set(key, report);
+        const resolved = await report;
+        cache.set(key, resolved);
+        if (mounted) setAvailability(resolved);
       } catch (err) {
         if (mounted) setAvailability(undefined);
         console.warn("getHostAvailability failed", err);

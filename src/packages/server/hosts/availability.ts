@@ -458,6 +458,7 @@ export async function getHostAvailabilityReport({
     currentEvent?.state === "online" && currentStartedAt
       ? now.getTime() - currentStartedAt.getTime()
       : 0;
+  const intendedOnlineMs = onlineMs + unplannedDowntimeMs;
   return {
     host_id: hostId,
     generated_at: now.toISOString(),
@@ -466,6 +467,9 @@ export async function getHostAvailabilityReport({
       current_state: currentEvent?.state ?? "unavailable",
       current_uptime_ms: currentUptimeMs,
       window_uptime_percent: windowMs > 0 ? (onlineMs / windowMs) * 100 : 0,
+      reliability_percent:
+        intendedOnlineMs > 0 ? (onlineMs / intendedOnlineMs) * 100 : 100,
+      intended_online_ms: intendedOnlineMs,
       planned_downtime_ms: plannedDowntimeMs,
       unplanned_downtime_ms: unplannedDowntimeMs,
       unplanned_outage_count: unplannedOutageCount,

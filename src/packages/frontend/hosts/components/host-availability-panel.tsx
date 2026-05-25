@@ -139,14 +139,18 @@ export function HostAvailabilityPanel({
           <Space wrap>
             {stateTag(availability)}
             <Tag>
-              {availability.window_days}d uptime:{" "}
-              {formatPercent(availability.summary.window_uptime_percent)}
+              Reliability:{" "}
+              {formatPercent(availability.summary.reliability_percent)}
             </Tag>
             <Tag>
               Current uptime:{" "}
               {currentIsOnline
                 ? formatDuration(availability.summary.current_uptime_ms)
                 : "not online"}
+            </Tag>
+            <Tag>
+              {availability.window_days}d availability:{" "}
+              {formatPercent(availability.summary.window_uptime_percent)}
             </Tag>
             <Tag
               color={
@@ -190,7 +194,9 @@ export function HostAvailabilityPanel({
             ))}
           </div>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            Green means the host was reporting online. Yellow/red indicates
+            Reliability measures uptime only during periods when this host was
+            intended to be online. Availability is wall-clock uptime over the
+            whole window. Green days were reporting online; yellow/red indicates
             unplanned exposure; gray indicates planned downtime.
           </Typography.Text>
         </Space>

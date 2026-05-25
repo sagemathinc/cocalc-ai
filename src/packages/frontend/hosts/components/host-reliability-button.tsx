@@ -24,10 +24,10 @@ function formatDuration(ms?: number): string {
 
 function formatPercent(value?: number): string {
   const pct = Number(value);
-  if (!Number.isFinite(pct)) return "Reliability";
-  if (pct >= 99.995) return "100% uptime";
-  if (pct >= 99) return `${pct.toFixed(2)}% uptime`;
-  return `${pct.toFixed(1)}% uptime`;
+  if (!Number.isFinite(pct)) return "n/a";
+  if (pct >= 99.995) return "100%";
+  if (pct >= 99) return `${pct.toFixed(2)}%`;
+  return `${pct.toFixed(1)}%`;
 }
 
 export function HostReliabilityButton({
@@ -36,27 +36,29 @@ export function HostReliabilityButton({
   type = "default",
   compact,
 }: Props): React.JSX.Element {
-  const [open, setOpen] = React.useState(false);
   const { availability, loadingAvailability } = useHostAvailability(
     webapp_client.conat_client.hub,
     host.id,
     {
-      enabled: open,
+      enabled: true,
       days: 90,
     },
   );
+  const [open, setOpen] = React.useState(false);
   const summary = availability?.summary;
+  const currentLabel =
+    summary?.current_state === "online"
+      ? `up ${formatDuration(summary.current_uptime_ms)}`
+      : summary?.current_state;
   const buttonLabel = summary
-    ? summary.current_state === "online"
-      ? formatPercent(summary.window_uptime_percent)
-      : summary.current_state
+    ? `${compact ? "" : "Reliability "}${formatPercent(summary.reliability_percent)} · ${currentLabel}`
     : "Reliability";
   return (
     <>
       <Button
         size={size}
         type={type}
-        loading={open && loadingAvailability && !availability}
+        loading={loadingAvailability && !availability}
         onClick={(event) => {
           event.stopPropagation();
           setOpen(true);

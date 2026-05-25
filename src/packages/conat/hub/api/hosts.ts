@@ -852,6 +852,8 @@ export interface HostAvailabilitySummary {
   current_state: HostAvailabilityState;
   current_uptime_ms: number;
   window_uptime_percent: number;
+  reliability_percent: number;
+  intended_online_ms: number;
   planned_downtime_ms: number;
   unplanned_downtime_ms: number;
   unplanned_outage_count: number;
