@@ -503,6 +503,48 @@ describe("browser-session-only account security routes", () => {
     expect(mockBanClusterAccountAndEquivalentEmails).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      label: "ban users",
+      route: "./accounts/ban",
+      target: mockBanClusterAccountAndEquivalentEmails,
+    },
+    {
+      label: "remove account bans",
+      route: "./accounts/remove-ban",
+      target: mockSetClusterAccountBan,
+    },
+    {
+      label: "quarantine account billing/resources",
+      route: "./accounts/quarantine-billing-resources",
+      target: mockQuarantineClusterAccountBillingResources,
+    },
+  ])("rejects admin $label while impersonating", async ({ route, target }) => {
+    mockGetParams.mockReturnValue({
+      account_id: "subject-1",
+      reason: "audit reason",
+    });
+    mockAssertNoImpersonation.mockRejectedValue(
+      Object.assign(
+        new Error("cannot perform admin action while impersonating"),
+        {
+          code: "impersonation_blocked",
+        },
+      ),
+    );
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } = await import(route);
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "cannot perform admin action while impersonating",
+    });
+    expect(mockUserIsInGroup).not.toHaveBeenCalled();
+    expect(mockRequireDangerousSessionAuth).not.toHaveBeenCalled();
+    expect(target).not.toHaveBeenCalled();
+  });
+
   it("allows fresh-authenticated admin account bans", async () => {
     mockGetParams.mockReturnValue({
       account_id: "subject-1",

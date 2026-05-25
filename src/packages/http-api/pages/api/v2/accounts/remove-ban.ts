@@ -7,6 +7,7 @@ import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import { setClusterAccountBan } from "@cocalc/server/inter-bay/accounts";
 import { getCurrentAuthSession } from "@cocalc/server/auth/auth-sessions";
+import { assertNoImpersonationForSubjectSecurityAction } from "@cocalc/server/auth/impersonation";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
@@ -30,6 +31,11 @@ async function get(req) {
   if (account_id0 == null) {
     throw Error("must be signed in");
   }
+  await assertNoImpersonationForSubjectSecurityAction({
+    req,
+    account_id: account_id0,
+    action: "remove account bans",
+  });
   // This user MUST be an admin:
   if (!(await userIsInGroup(account_id0, "admin"))) {
     throw Error("only admins can ban users");
