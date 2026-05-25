@@ -11,6 +11,7 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 export const IS_EMBEDDED = new URL(location.href).pathname.endsWith(
   "embed.html",
 );
+const IS_PUBLIC_APP = Boolean((globalThis as any).__cocalc_public_app);
 
 function handleTarget(): string {
   // See src/packages/hub/servers/app/app-redirect.ts where if
@@ -22,6 +23,10 @@ function handleTarget(): string {
   // more secure/robust than parsing it directly.
   const url = new URL(`http://host/${t.replace(/^\/+/, "")}`);
   let target = decodeURIComponent(url.pathname.slice(1));
+  if (IS_PUBLIC_APP) {
+    if (target) return target;
+    return location.pathname.replace(/^\/+/, "") || "";
+  }
   if (!target) {
     // if no target is encoded in the url:
     if (hasRememberMe(appBasePath)) {

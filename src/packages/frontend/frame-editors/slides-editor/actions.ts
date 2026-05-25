@@ -33,7 +33,7 @@ export class Actions extends WhiteboardActions<State> {
   }
 
   help(): void {
-    open_new_tab("https://doc.cocalc.com/slides.html");
+    open_new_tab("/docs/files/slides");
   }
 
   private updateSpeakerNotes(keys) {

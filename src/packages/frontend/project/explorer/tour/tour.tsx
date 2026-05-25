@@ -19,8 +19,7 @@ export default function ExplorerTour({
     {
       title: (
         <>
-          Tour of the File Explorer{" "}
-          <A href="https://doc.cocalc.com/explorer.html">(docs)</A>
+          Tour of the File Explorer <A href="/docs/files/explorer">(docs)</A>
         </>
       ),
       description: (

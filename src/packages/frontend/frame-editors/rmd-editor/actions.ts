@@ -23,7 +23,7 @@ import { ExecuteCodeOutputAsync } from "@cocalc/util/types/execute-code";
 import { Actions as MarkdownActions } from "../markdown-editor/actions";
 import { convert } from "./rmd-converter";
 import { checkProducedFiles } from "./utils";
-const HELP_URL = "https://doc.cocalc.com/frame-editor.html#edit-rmd";
+const HELP_URL = "/docs/editors/r-markdown";
 
 const MINIMAL = `---
 title: "Title"

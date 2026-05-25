@@ -17,7 +17,7 @@ const MINIMAL = `\\documentclass{article}
 \\end{document}
 `;
 
-const HELP_URL = "https://doc.cocalc.com/latex.html";
+const HELP_URL = "/docs/latex/build-papers";
 
 // NOTE: These names are the keys in EDITOR_SPEC in editor.ts, not the type field
 const VIEWERS = ["pdfjs_canvas", "pdf_embed", "build", "output"] as const;

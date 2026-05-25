@@ -3,10 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { init } from "@cocalc/frontend/public/bootstrap";
 import { finishedLoading, startedUp } from "./webapp-error";
 
+(globalThis as any).__cocalc_public_app = true;
+
 finishedLoading();
-void init().finally(() => {
-  startedUp();
-});
+void import("@cocalc/frontend/public/bootstrap")
+  .then(({ init }) => init())
+  .finally(() => {
+    startedUp();
+  });

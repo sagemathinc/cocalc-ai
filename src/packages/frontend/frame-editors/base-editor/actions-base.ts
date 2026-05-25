@@ -1910,7 +1910,7 @@ export class BaseEditorActions<
         case "terminal":
           return joinUrlPath(appBasePath, "docs/terminal/use-terminal");
         case "time_travel":
-          return "https://doc.cocalc.com/time-travel.html";
+          return joinUrlPath(appBasePath, "docs/files/timetravel");
         default:
           return WIKI_HELP_URL + type + "-help";
       }

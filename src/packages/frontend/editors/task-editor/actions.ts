@@ -44,7 +44,7 @@ import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { createFrontendTasksSession } from "./tasks-session";
 
 const LAST_EDITED_THRESH_S = 30;
-const TASKS_HELP_URL = "https://doc.cocalc.com/tasks.html";
+const TASKS_HELP_URL = "/docs/projects/tasks";
 
 export class TaskActions extends Actions<TaskState> {
   public syncdb: SyncDB;

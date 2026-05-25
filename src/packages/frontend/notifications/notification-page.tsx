@@ -58,15 +58,9 @@ export function NotificationPage() {
             easy to find something later.`,
           },
           {
-            A1: (c) => <A href="https://doc.cocalc.com/chat.html">{c}</A>,
-            A2: (c) => (
-              <A href="https://doc.cocalc.com/teaching-interactions.html#mention-collaborators-in-chat">
-                {c}
-              </A>
-            ),
-            A3: (c) => (
-              <A href="https://doc.cocalc.com/markdown.html#mentions">{c}</A>
-            ),
+            A1: (c) => <A href="/docs/collaboration/chat">{c}</A>,
+            A2: (c) => <A href="/docs/collaboration/mentions">{c}</A>,
+            A3: (c) => <A href="/docs/collaboration/mentions">{c}</A>,
           },
         )}
       </Paragraph>

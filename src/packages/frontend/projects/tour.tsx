@@ -39,7 +39,7 @@ export default function ProjectsPageTour({
       title: (
         <>
           <Icon name="edit" /> The {projectsLabel} Page{" "}
-          <A href="https://doc.cocalc.com/project-list.html">(docs)</A>
+          <A href="/docs/projects/project-list">(docs)</A>
         </>
       ),
       cover: <img src={projectsImage} />,

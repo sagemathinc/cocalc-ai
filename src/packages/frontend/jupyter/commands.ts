@@ -1560,7 +1560,7 @@ export function commands(actions: AllActions): {
       i: "external-link",
       m: "Markdown in CoCalc",
       f: () => {
-        open_new_tab("https://doc.cocalc.com/markdown.html");
+        open_new_tab(joinUrlPath(appBasePath, "docs/files/markdown"));
       },
       r: true,
     },

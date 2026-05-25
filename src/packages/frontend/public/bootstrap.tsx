@@ -14,6 +14,8 @@ import {
 } from "./navigation";
 import { getPublicRouteFromPath, isPublicTarget } from "./routes";
 
+(globalThis as any).__cocalc_public_app = true;
+
 export async function init(): Promise<void> {
   const target = new URLSearchParams(window.location.search).get("target");
   const initialPath = isPublicTarget(target)
