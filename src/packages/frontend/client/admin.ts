@@ -16,11 +16,12 @@ export class AdminClient {
   public async admin_ban_user(
     account_id: string,
     ban: boolean = true, // if true, ban user  -- if false, remove ban
+    reason?: string,
   ): Promise<void> {
     if (ban) {
-      await api("/accounts/ban", { account_id });
+      await api("/accounts/ban", { account_id, reason });
     } else {
-      await api("/accounts/remove-ban", { account_id });
+      await api("/accounts/remove-ban", { account_id, reason });
     }
   }
 

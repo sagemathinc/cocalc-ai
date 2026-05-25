@@ -854,6 +854,9 @@ export interface AccountLocalAdminDisableTwoFactorResult {
 export interface AccountLocalSetBanRequest {
   account_id: string;
   banned: boolean;
+  actor_account_id?: string | null;
+  reason?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface AccountLocalSetBanResult {

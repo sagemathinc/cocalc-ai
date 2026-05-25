@@ -29,6 +29,7 @@ import adminVerifyEmailAddressLocal from "@cocalc/server/accounts/admin-verify-e
 import createAccountLocal from "@cocalc/server/accounts/create-account";
 import deleteAccountLocal from "@cocalc/server/accounts/delete";
 import { banUser, removeUserBan } from "@cocalc/server/accounts/ban";
+import { recordAccountBanAuditEvent } from "@cocalc/server/accounts/ban-audit";
 import setPasswordFromResetLocal from "@cocalc/server/accounts/set-password-from-reset";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import { adminDisableTwoFactor as adminDisableTwoFactorLocal } from "@cocalc/server/auth/two-factor";
@@ -50,6 +51,7 @@ import {
   updateClusterAccountEmailAddressDirect,
   updateClusterAccountApiKeysHomeBayDirect,
   updateClusterAccountHomeBayDirect,
+  canonicalEmailForBanEquivalence,
   upsertClusterAccountApiKeyDirectoryEntryDirect,
 } from "@cocalc/server/accounts/cluster-directory";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -341,6 +343,9 @@ export async function adminDisableClusterAccountTwoFactor({
 export async function setLocalClusterAccountBan({
   account_id,
   banned,
+  actor_account_id,
+  reason,
+  metadata,
 }: AccountLocalSetBanRequest): Promise<AccountLocalSetBanResult> {
   if (!isValidUUID(account_id)) {
     throw new Error("account_id must be a valid uuid");
@@ -350,6 +355,13 @@ export async function setLocalClusterAccountBan({
   } else {
     await removeUserBan(account_id);
   }
+  await recordAccountBanAuditEvent({
+    account_id,
+    action: banned ? "ban" : "unban",
+    actor_account_id,
+    reason,
+    metadata,
+  });
   return {
     account_id,
     home_bay_id: currentBayId(),
@@ -360,6 +372,9 @@ export async function setLocalClusterAccountBan({
 export async function setClusterAccountBan({
   account_id,
   banned,
+  actor_account_id,
+  reason,
+  metadata,
 }: AccountLocalSetBanRequest): Promise<AccountLocalSetBanResult> {
   const normalizedAccountId = `${account_id ?? ""}`.trim().toLowerCase();
   if (!isValidUUID(normalizedAccountId)) {
@@ -375,6 +390,9 @@ export async function setClusterAccountBan({
       ? await setLocalClusterAccountBan({
           account_id: normalizedAccountId,
           banned,
+          actor_account_id,
+          reason,
+          metadata,
         })
       : await createInterBayAccountLocalClient({
           client: getInterBayFabricClient(),
@@ -382,6 +400,9 @@ export async function setClusterAccountBan({
         }).setBan({
           account_id: normalizedAccountId,
           banned,
+          actor_account_id,
+          reason,
+          metadata,
         });
   await updateClusterAccountBanned({
     account_id: normalizedAccountId,
@@ -396,8 +417,12 @@ export async function setClusterAccountBan({
 
 export async function banClusterAccountAndEquivalentEmails({
   account_id,
+  actor_account_id,
+  reason,
 }: {
   account_id: string;
+  actor_account_id?: string | null;
+  reason?: string | null;
 }): Promise<AccountLocalSetBanResult[]> {
   const normalizedAccountId = `${account_id ?? ""}`.trim().toLowerCase();
   if (!isValidUUID(normalizedAccountId)) {
@@ -409,6 +434,7 @@ export async function banClusterAccountAndEquivalentEmails({
   }
   const accountsToBan = new Map<string, AccountDirectoryEntry>();
   accountsToBan.set(normalizedAccountId, account);
+  const canonicalEmail = canonicalEmailForBanEquivalence(account.email_address);
   for (const equivalent of await getClusterBanEquivalentEmailAccounts({
     email_address: account.email_address ?? "",
   })) {
@@ -423,6 +449,14 @@ export async function banClusterAccountAndEquivalentEmails({
       await setClusterAccountBan({
         account_id: id,
         banned: true,
+        actor_account_id,
+        reason,
+        metadata: {
+          equivalent_email_ban: id !== normalizedAccountId,
+          primary_account_id: normalizedAccountId,
+          primary_email_address: account.email_address ?? null,
+          canonical_email: canonicalEmail ?? null,
+        },
       }),
     );
   }

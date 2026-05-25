@@ -159,16 +159,17 @@ export function UserResult({
               value={account_id}
             />
             {banned && (
-              <div
+              <Tag
+                color="red"
                 style={{
-                  fontSize: "10pt",
-                  color: "white",
-                  paddingLeft: "5px",
-                  background: "red",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  marginLeft: "8px",
+                  verticalAlign: "middle",
                 }}
               >
                 BANNED
-              </div>
+              </Tag>
             )}
           </div>
           <Space style={{ marginTop: "5px" }}>

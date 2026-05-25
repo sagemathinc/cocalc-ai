@@ -41,8 +41,12 @@ async function get(req) {
     require_second_factor: true,
   });
 
-  const { account_id } = getParams(req);
-  await banClusterAccountAndEquivalentEmails({ account_id });
+  const { account_id, reason } = getParams(req);
+  await banClusterAccountAndEquivalentEmails({
+    account_id,
+    actor_account_id: account_id0,
+    reason,
+  });
   return SuccessStatus;
 }
 

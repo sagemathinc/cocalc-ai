@@ -10,6 +10,7 @@ const getClusterBanEquivalentEmailAccountsDirectMock = jest.fn();
 const updateClusterAccountBannedDirectMock = jest.fn();
 const banUserMock = jest.fn();
 const removeUserBanMock = jest.fn();
+const recordAccountBanAuditEventMock = jest.fn();
 const remoteSetBanMock = jest.fn();
 
 jest.mock("@cocalc/server/bay-config", () => ({
@@ -38,6 +39,8 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
 }));
 
 jest.mock("@cocalc/server/accounts/cluster-directory", () => ({
+  canonicalEmailForBanEquivalence: (email: string | undefined) =>
+    email ? "codex@gmail.com" : undefined,
   getClusterAccountByIdDirect: (...args: any[]) =>
     getClusterAccountByIdDirectMock(...args),
   getClusterBanEquivalentEmailAccountsDirect: (...args: any[]) =>
@@ -49,6 +52,11 @@ jest.mock("@cocalc/server/accounts/cluster-directory", () => ({
 jest.mock("@cocalc/server/accounts/ban", () => ({
   banUser: (...args: any[]) => banUserMock(...args),
   removeUserBan: (...args: any[]) => removeUserBanMock(...args),
+}));
+
+jest.mock("@cocalc/server/accounts/ban-audit", () => ({
+  recordAccountBanAuditEvent: (...args: any[]) =>
+    recordAccountBanAuditEventMock(...args),
 }));
 
 describe("inter-bay account ban routing", () => {
@@ -65,6 +73,7 @@ describe("inter-bay account ban routing", () => {
     });
     banUserMock.mockReset().mockResolvedValue(undefined);
     removeUserBanMock.mockReset().mockResolvedValue(undefined);
+    recordAccountBanAuditEventMock.mockReset().mockResolvedValue(undefined);
     remoteSetBanMock.mockReset().mockResolvedValue({
       account_id: "00000000-0000-4000-8000-000000000001",
       home_bay_id: "bay-2",
@@ -112,11 +121,40 @@ describe("inter-bay account ban routing", () => {
       banned: true,
     });
 
-    expect(remoteSetBanMock).toHaveBeenCalledWith({
+    expect(remoteSetBanMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "00000000-0000-4000-8000-000000000001",
+        banned: true,
+      }),
+    );
+    expect(banUserMock).not.toHaveBeenCalled();
+    expect(updateClusterAccountBannedDirectMock).toHaveBeenCalledWith({
       account_id: "00000000-0000-4000-8000-000000000001",
       banned: true,
     });
-    expect(banUserMock).not.toHaveBeenCalled();
+  });
+
+  it("records local ban audit events with admin reason", async () => {
+    getClusterAccountByIdDirectMock.mockResolvedValue({
+      account_id: "00000000-0000-4000-8000-000000000001",
+      home_bay_id: "bay-1",
+    });
+
+    const { setClusterAccountBan } = await import("./accounts");
+    await setClusterAccountBan({
+      account_id: "00000000-0000-4000-8000-000000000001",
+      banned: true,
+      actor_account_id: "00000000-0000-4000-8000-000000000099",
+      reason: "spam campaign",
+    });
+
+    expect(recordAccountBanAuditEventMock).toHaveBeenCalledWith({
+      account_id: "00000000-0000-4000-8000-000000000001",
+      action: "ban",
+      actor_account_id: "00000000-0000-4000-8000-000000000099",
+      reason: "spam campaign",
+      metadata: undefined,
+    });
     expect(updateClusterAccountBannedDirectMock).toHaveBeenCalledWith({
       account_id: "00000000-0000-4000-8000-000000000001",
       banned: true,

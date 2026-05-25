@@ -41,8 +41,13 @@ async function get(req) {
     require_second_factor: true,
   });
 
-  const { account_id } = getParams(req);
-  await setClusterAccountBan({ account_id, banned: false });
+  const { account_id, reason } = getParams(req);
+  await setClusterAccountBan({
+    account_id,
+    banned: false,
+    actor_account_id: account_id0,
+    reason,
+  });
   return SuccessStatus;
 }
 
