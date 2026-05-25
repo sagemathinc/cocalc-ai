@@ -2,7 +2,12 @@
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
 
-import { docsPath, getDocsEntry, searchDocsEntries } from "@cocalc/docs";
+import {
+  docsPath,
+  getDocsEntry,
+  listDocsEntries,
+  searchDocsEntries,
+} from "@cocalc/docs";
 import PublicDocsApp from "../app";
 import { getDocsRouteFromPath } from "../routes";
 
@@ -30,7 +35,10 @@ describe("public/docs", () => {
   it("searches structured docs entries", () => {
     const secrets = getDocsEntry("projects.project-secrets");
     expect(secrets?.title).toBe("Project secrets");
-    expect(secrets?.image?.src).toBe("/public/docs/project-secrets.svg");
+    expect(secrets?.image?.src).toBe(
+      "/public/docs/project-secrets-ea9872ae.webp",
+    );
+    expect(secrets?.image?.presentation).toBe("icon");
     expect(
       searchDocsEntries("secrets api token").map((entry) => entry.id)[0],
     ).toBe("projects.project-secrets");
@@ -49,6 +57,9 @@ describe("public/docs", () => {
         (entry) => entry.id,
       )[0],
     ).toBe("terminal.use-terminal");
+    const terminal = getDocsEntry("terminal.use-terminal");
+    expect(terminal?.image?.src).toBe("/public/docs/terminal-56905fa2.webp");
+    expect(terminal?.image?.presentation).toBe("icon");
     expect(
       searchDocsEntries("browser notebook cli automation").map(
         (entry) => entry.id,
@@ -67,6 +78,32 @@ describe("public/docs", () => {
         (entry) => entry.id,
       )[0],
     ).toBe("troubleshooting.memory");
+    const runtime = getDocsEntry("projects.runtime-image");
+    expect(runtime?.image?.src).toBe(
+      "/public/docs/runtime-image-09add8c9.webp",
+    );
+    expect(runtime?.image?.presentation).toBe("icon");
+    const timetravel = getDocsEntry("files.timetravel");
+    expect(timetravel?.image?.src).toBe(
+      "/public/docs/timetravel-0f06290b.webp",
+    );
+    expect(timetravel?.image?.presentation).toBe("icon");
+    expect(
+      searchDocsEntries("websocket sign in browser connectivity").map(
+        (entry) => entry.id,
+      )[0],
+    ).toBe("troubleshooting.connectivity");
+  });
+
+  it("has hashed icon art for every docs entry", () => {
+    for (const entry of listDocsEntries()) {
+      expect(entry.image?.presentation).toBe("icon");
+      expect(entry.image?.src).toMatch(
+        /^\/public\/docs\/[-a-z0-9]+-[a-f0-9]{8}\.webp$/,
+      );
+      expect(entry.image?.thumbnailSrc).toBe(entry.image?.src);
+      expect(entry.image?.alt).toBeTruthy();
+    }
   });
 
   it("renders the docs index", () => {
@@ -111,6 +148,39 @@ describe("public/docs", () => {
     expect(window.localStorage.getItem("cocalc-docs-font-size")).toBeNull();
   });
 
+  it("applies docs font size to full-page markdown cards", () => {
+    window.localStorage.setItem("cocalc-docs-font-size", "30");
+
+    render(
+      <PublicDocsApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{
+          slug: "projects/project-secrets",
+          view: "docs-detail",
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("docs-font-scope")).toHaveStyle({
+      fontSize: "30px",
+    });
+    expect(
+      screen.getByRole("button", { name: "Reset docs font size" }),
+    ).toHaveTextContent("30px");
+
+    const markdownCardBody = screen
+      .getByTestId("docs-markdown")
+      .closest(".ant-card-body");
+    const markdownCard = screen
+      .getByTestId("docs-markdown")
+      .closest(".ant-card");
+
+    expect(markdownCard).not.toBeNull();
+    expect(markdownCardBody).not.toBeNull();
+    expect(markdownCard!).toHaveStyle({ fontSize: "inherit" });
+    expect(markdownCardBody!).toHaveStyle({ fontSize: "inherit" });
+  });
+
   it("renders a docs detail page with action metadata", () => {
     render(
       <PublicDocsApp
@@ -129,7 +199,7 @@ describe("public/docs", () => {
       screen.getByAltText(
         "Project secrets mounted as protected read-only files",
       ),
-    ).toHaveAttribute("src", "/public/docs/project-secrets.svg");
+    ).toHaveAttribute("src", "/public/docs/project-secrets-ea9872ae.webp");
     expect(screen.getByText("settings.environment.secrets")).not.toBeNull();
     expect(
       within(screen.getByText("Open this in CoCalc").closest(".ant-card")!)

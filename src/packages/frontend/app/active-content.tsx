@@ -15,6 +15,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { A } from "@cocalc/frontend/components/A";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { SiteName } from "@cocalc/frontend/customize";
 import { FileUsePage } from "@cocalc/frontend/file-use/page";
 import { Connecting } from "@cocalc/frontend/landing-page/connecting";
@@ -27,6 +28,12 @@ import { KioskModeBanner } from "./kiosk-mode-banner";
 import { HostsPage } from "@cocalc/frontend/hosts/hosts-page";
 import { AuthPage } from "@cocalc/frontend/auth";
 import { ManagedEgressBlockedScreen } from "./managed-egress-blocked-screen";
+import { joinUrlPath } from "@cocalc/util/url-path";
+
+const CONNECTIVITY_DOCS_URL = joinUrlPath(
+  appBasePath,
+  "docs/troubleshooting/connectivity",
+);
 
 const STYLE_SIGNIN_WARNING: CSS = {
   textAlign: "center",
@@ -154,10 +161,7 @@ export const ActiveContent: React.FC = React.memo(() => {
                 sign in
               </a>{" "}
               first, or otherwise check if you experience{" "}
-              <A href={"https://doc.cocalc.com/howto/trouble.html"}>
-                connectivity issues
-              </A>
-              .
+              <A href={CONNECTIVITY_DOCS_URL}>connectivity issues</A>.
             </Alert>
           </div>
         ) : null}

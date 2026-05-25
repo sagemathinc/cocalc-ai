@@ -37,6 +37,7 @@ export interface DocsActionSummary extends DocsAction {
 
 export interface DocsEntryImage {
   alt: string;
+  presentation?: "hero" | "icon";
   src: string;
   thumbnailSrc?: string;
 }
@@ -57,6 +58,15 @@ export interface DocsEntry {
 
 export interface DocsSearchResult extends DocsEntry {
   score: number;
+}
+
+function docsIcon(src: string, alt: string): DocsEntryImage {
+  return {
+    alt,
+    presentation: "icon",
+    src,
+    thumbnailSrc: src,
+  };
 }
 
 const PROJECT_SECRETS_BODY = String.raw`
@@ -170,6 +180,19 @@ Terminal files are path-based. A terminal at \`analysis/run.term\` starts in the
 \`analysis/\` directory and gives the session a stable project-file anchor.
 Create separate terminal files for separate tasks when that makes the workspace
 easier to understand.
+
+## Open project files from the terminal
+
+Use the \`open\` command to open files and directories in CoCalc from the shell,
+similar to \`xdg-open\` on Linux or \`open\` on macOS:
+
+~~~sh
+open path/to/file.ipynb path/to/script.py path/to/folder
+~~~
+
+This is often faster than switching to the file browser when you are already
+working in a terminal. Paths are interpreted relative to the terminal's current
+directory.
 
 ## Persistent work
 
@@ -445,6 +468,63 @@ CoCalc keeps notebooks and terminals durable, but it cannot make a process use
 less RAM than the host provides. Treat memory as part of the project
 environment: monitor it, size the host appropriately, and design workflows that
 can recover after a process is killed.
+`;
+
+const CONNECTIVITY_TROUBLESHOOTING_BODY = String.raw`
+## What connectivity trouble looks like
+
+CoCalc keeps a live connection between your browser and the service so files,
+terminals, notebooks, chat, and project state stay synchronized. Connectivity
+trouble usually appears as a sign-in prompt that never completes, reconnect
+messages, stale project state, failed websocket connections, or editors that do
+not update.
+
+## First things to try
+
+1. Refresh the browser tab.
+2. Sign out and sign back in if the page says you are not authenticated.
+3. Open CoCalc in a private browser window to rule out stale site data or a
+   browser extension.
+4. Disable privacy, ad-blocking, or script-blocking extensions for the CoCalc
+   site.
+5. Try another network if you are behind a strict firewall, campus proxy, VPN,
+   or corporate security filter.
+
+If the same browser has been used across several local development servers or
+site hostnames, clearing site data for that hostname can fix stale localStorage
+or cookie state.
+
+## Network requirements
+
+CoCalc needs normal HTTPS traffic and websocket connections to the site you are
+using. Some proxies allow web pages but block websocket upgrades; that can make
+the page load while realtime project features fail.
+
+For a local development instance, make sure the browser is using the same
+localhost port, session, and site hostname as the running server. If you switch
+between Lite, hub, and project-host development environments, refresh the
+matching development environment before using browser automation or CLI tools.
+
+## What to include in a support report
+
+When reporting a connectivity problem, include:
+
+1. The exact site URL.
+2. The browser and operating system.
+3. Whether the problem happens in a private browser window.
+4. Whether another network works.
+5. Any visible reconnect message or browser console websocket error.
+6. The approximate time the issue happened.
+
+Do not include passwords, API keys, project secrets, or private tokens in a
+support report.
+
+## Why this matters in CoCalc
+
+CoCalc projects are live collaborative workspaces. A partial connection can be
+more confusing than a fully offline page because some UI may render while the
+realtime project connection is blocked. The fastest diagnosis is to separate
+browser state, authentication state, and network websocket access.
 `;
 
 const COLLABORATORS_BODY = String.raw`
@@ -984,6 +1064,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: CREATE_PROJECT_BODY.trim(),
     category: "Projects",
     id: "projects.create-project",
+    image: docsIcon(
+      "/public/docs/create-project-5b221552.webp",
+      "A new CoCalc project folder with notebook, terminal, and chat tools",
+    ),
     lastReviewed: "2026-05-24",
     slug: "projects/create-project",
     status: "ready",
@@ -1005,11 +1089,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: PROJECT_SECRETS_BODY.trim(),
     category: "Projects",
     id: "projects.project-secrets",
-    image: {
-      alt: "Project secrets mounted as protected read-only files",
-      src: "/public/docs/project-secrets.svg",
-      thumbnailSrc: "/public/docs/project-secrets.svg",
-    },
+    image: docsIcon(
+      "/public/docs/project-secrets-ea9872ae.webp",
+      "Project secrets mounted as protected read-only files",
+    ),
     lastReviewed: "2026-05-24",
     slug: "projects/project-secrets",
     status: "ready",
@@ -1022,6 +1105,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: AI_CREDENTIALS_BODY.trim(),
     category: "AI",
     id: "ai.connect-credentials",
+    image: docsIcon(
+      "/public/docs/connect-ai-access-522e86e1.webp",
+      "AI access connected securely to a CoCalc project",
+    ),
     lastReviewed: "2026-05-24",
     slug: "ai/connect-credentials",
     status: "ready",
@@ -1033,6 +1120,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: COCALC_CLI_BODY.trim(),
     category: "CLI",
     id: "cli.use-cocalc-cli",
+    image: docsIcon(
+      "/public/docs/cocalc-cli-862b8d4e.webp",
+      "A terminal automating project docs, notebooks, and browser tasks",
+    ),
     lastReviewed: "2026-05-24",
     slug: "cli/use-cocalc-cli",
     status: "ready",
@@ -1045,6 +1136,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: HTTP_API_BODY.trim(),
     category: "API",
     id: "api.http-api",
+    image: docsIcon(
+      "/public/docs/http-api-5067e8ed.webp",
+      "A guarded HTTP API gateway with keys and connected endpoints",
+    ),
     lastReviewed: "2026-05-24",
     slug: "api/http-api",
     status: "ready",
@@ -1065,6 +1160,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: OPEN_TERMINAL_BODY.trim(),
     category: "Projects",
     id: "projects.open-terminal",
+    image: docsIcon(
+      "/public/docs/open-terminal-5c56d2b5.webp",
+      "A project folder opening a durable terminal session",
+    ),
     lastReviewed: "2026-05-24",
     slug: "projects/open-terminal",
     status: "ready",
@@ -1077,6 +1176,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: USE_TERMINAL_BODY.trim(),
     category: "Terminal",
     id: "terminal.use-terminal",
+    image: docsIcon(
+      "/public/docs/terminal-56905fa2.webp",
+      "Hand-drawn terminal opening project files",
+    ),
     lastReviewed: "2026-05-25",
     slug: "terminal/use-terminal",
     status: "ready",
@@ -1089,6 +1192,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: PROJECT_FILES_BODY.trim(),
     category: "Files",
     id: "files.project-files",
+    image: docsIcon(
+      "/public/docs/project-files-6c4ff552.webp",
+      "A shared project folder with notebooks, scripts, data, and output",
+    ),
     lastReviewed: "2026-05-24",
     slug: "files/project-files",
     status: "ready",
@@ -1109,6 +1216,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: CREATE_JUPYTER_BODY.trim(),
     category: "Jupyter",
     id: "jupyter.create-notebook",
+    image: docsIcon(
+      "/public/docs/create-jupyter-ddc9795c.webp",
+      "A new Jupyter notebook with code cells and a kernel gear",
+    ),
     lastReviewed: "2026-05-24",
     slug: "jupyter/create-notebook",
     status: "ready",
@@ -1121,6 +1232,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: USE_JUPYTER_BODY.trim(),
     category: "Jupyter",
     id: "jupyter.use-jupyter",
+    image: docsIcon(
+      "/public/docs/use-jupyter-bcc9b49c.webp",
+      "A collaborative Jupyter notebook with output and a running kernel",
+    ),
     lastReviewed: "2026-05-24",
     slug: "jupyter/use-jupyter",
     status: "ready",
@@ -1133,6 +1248,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: CUSTOM_JUPYTER_KERNELS_BODY.trim(),
     category: "Jupyter",
     id: "jupyter.custom-kernels",
+    image: docsIcon(
+      "/public/docs/custom-jupyter-kernels-58a40bde.webp",
+      "A custom Jupyter kernel connected to an isolated Python environment",
+    ),
     lastReviewed: "2026-05-24",
     slug: "jupyter/custom-kernels",
     status: "ready",
@@ -1145,6 +1264,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: PYTHON_BODY.trim(),
     category: "Python",
     id: "python.use-python",
+    image: docsIcon(
+      "/public/docs/python-93480a33.webp",
+      "Python work across notebooks, scripts, terminals, and plots",
+    ),
     lastReviewed: "2026-05-24",
     slug: "python/use-python",
     status: "ready",
@@ -1165,11 +1288,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: ROOTFS_BODY.trim(),
     category: "Projects",
     id: "projects.runtime-image",
-    image: {
-      alt: "A layered runtime image that defines a project's software stack",
-      src: "/public/docs/runtime-image.svg",
-      thumbnailSrc: "/public/docs/runtime-image.svg",
-    },
+    image: docsIcon(
+      "/public/docs/runtime-image-09add8c9.webp",
+      "A layered runtime image that defines a project's software stack",
+    ),
     lastReviewed: "2026-05-24",
     slug: "projects/runtime-image",
     status: "ready",
@@ -1182,6 +1304,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: MEMORY_TROUBLESHOOTING_BODY.trim(),
     category: "Troubleshooting",
     id: "troubleshooting.memory",
+    image: docsIcon(
+      "/public/docs/memory-troubleshooting-7f40cd1d.webp",
+      "A memory gauge warning about a stressed notebook kernel",
+    ),
     lastReviewed: "2026-05-24",
     slug: "troubleshooting/memory",
     status: "ready",
@@ -1190,10 +1316,30 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     title: "Low memory and out-of-memory crashes",
   },
   {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: CONNECTIVITY_TROUBLESHOOTING_BODY.trim(),
+    category: "Troubleshooting",
+    id: "troubleshooting.connectivity",
+    image: docsIcon(
+      "/public/docs/connectivity-eaca154f.webp",
+      "A browser reconnecting to CoCalc services",
+    ),
+    lastReviewed: "2026-05-25",
+    slug: "troubleshooting/connectivity",
+    status: "ready",
+    summary:
+      "Diagnose sign-in, websocket, stale browser state, and network connection problems.",
+    title: "Connectivity and browser troubleshooting",
+  },
+  {
     audiences: ["agents", "instructors", "researchers", "teams"],
     body: PROJECT_HOSTS_BODY.trim(),
     category: "Project hosts",
     id: "hosts.project-hosts",
+    image: docsIcon(
+      "/public/docs/project-hosts-684faa4c.webp",
+      "A project host running several project folders",
+    ),
     lastReviewed: "2026-05-24",
     slug: "hosts/project-hosts",
     status: "ready",
@@ -1214,6 +1360,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: COLLABORATORS_BODY.trim(),
     category: "Projects",
     id: "projects.collaborators",
+    image: docsIcon(
+      "/public/docs/collaborators-8ce1955f.webp",
+      "Collaborators sharing a project folder with realtime cursors",
+    ),
     lastReviewed: "2026-05-24",
     slug: "projects/collaborators",
     status: "ready",
@@ -1234,11 +1384,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: TIMETRAVEL_BODY.trim(),
     category: "Files",
     id: "files.timetravel",
-    image: {
-      alt: "A TimeTravel timeline with Git revisions, snapshots, and restore points",
-      src: "/public/docs/timetravel.svg",
-      thumbnailSrc: "/public/docs/timetravel.svg",
-    },
+    image: docsIcon(
+      "/public/docs/timetravel-0f06290b.webp",
+      "A TimeTravel timeline with Git revisions, snapshots, and restore points",
+    ),
     lastReviewed: "2026-05-24",
     slug: "files/timetravel",
     status: "ready",
@@ -1250,6 +1399,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: GIT_BODY.trim(),
     category: "Files",
     id: "files.git",
+    image: docsIcon(
+      "/public/docs/git-a53df3e8.webp",
+      "Git branch history beside project files",
+    ),
     lastReviewed: "2026-05-24",
     slug: "files/git",
     status: "ready",
@@ -1270,6 +1423,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: COURSE_ASSIGNMENT_BODY.trim(),
     category: "Teaching",
     id: "teaching.create-assignment",
+    image: docsIcon(
+      "/public/docs/course-assignment-ede60e1a.webp",
+      "Course assignments sent to student project folders",
+    ),
     lastReviewed: "2026-05-24",
     slug: "teaching/create-assignment",
     status: "ready",
@@ -1290,6 +1447,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: CODEX_CHAT_BODY.trim(),
     category: "AI",
     id: "ai.codex-chat",
+    image: docsIcon(
+      "/public/docs/codex-chat-3008e11e.webp",
+      "Codex chat working with project files, terminals, and notebooks",
+    ),
     lastReviewed: "2026-05-24",
     slug: "ai/codex-chat",
     status: "ready",
@@ -1302,6 +1463,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: DOCS_BROWSER_BODY.trim(),
     category: "Docs",
     id: "docs.browser",
+    image: docsIcon(
+      "/public/docs/docs-browser-74a65d58.webp",
+      "A searchable docs browser beside a project folder",
+    ),
     lastReviewed: "2026-05-24",
     slug: "documentation/browser",
     status: "ready",
@@ -1314,6 +1479,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: DOCS_ACTIONS_BODY.trim(),
     category: "Docs",
     id: "docs.executable-actions",
+    image: docsIcon(
+      "/public/docs/executable-docs-actions-195b983b.webp",
+      "Docs actions launching settings, terminal, and notebook panels",
+    ),
     lastReviewed: "2026-05-24",
     slug: "documentation/executable-actions",
     status: "ready",
@@ -1326,6 +1495,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: BROWSER_AUTOMATION_BODY.trim(),
     category: "Docs",
     id: "docs.browser-automation",
+    image: docsIcon(
+      "/public/docs/browser-automation-5dc255b9.webp",
+      "Browser automation inspecting a project page with a checklist",
+    ),
     lastReviewed: "2026-05-24",
     slug: "documentation/browser-automation",
     status: "ready",

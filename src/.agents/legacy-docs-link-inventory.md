@@ -14,9 +14,9 @@ This inventory excludes generated build output such as
 
 Current source inventory:
 
-- 52 legacy URL references.
-- 34 unique legacy URLs.
-- 52 grep lines matching `doc.cocalc.com`.
+- 48 legacy URL references.
+- 32 unique legacy URLs.
+- 48 grep lines matching `doc.cocalc.com`.
 
 Resolved so far:
 
@@ -37,6 +37,10 @@ Resolved so far:
 - `https://doc.cocalc.com/terminal.html` now has `terminal/use-terminal`; the
   terminal editor help link, base editor terminal help, and terminal tour links
   point to the local docs route.
+- `https://doc.cocalc.com/howto/connectivity-issues.html` and
+  `https://doc.cocalc.com/howto/trouble.html` now have
+  `troubleshooting/connectivity`; the welcome-email connectivity links and
+  active-content connection warning point to the local docs route.
 
 ## Recommended Migration Policy
 
@@ -57,11 +61,10 @@ outside an allowlist file. The allowlist should shrink as docs pages land.
 These links appear in warnings, first-run flows, welcome email, or API entry
 points. They should be addressed before launch.
 
-| Topic                            | Proposed CoCalc-ai docs                                                                 | Legacy URLs                                                                           | Source areas                                           | Action                      |
-| -------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------ | --------------------------- |
-| Jupyter kernel termination       | existing `troubleshooting/memory`, possibly `troubleshooting/jupyter-kernel-terminated` | `/howto/jupyter-kernel-terminated.html`                                               | kernel warnings                                        | create-doc/replace-existing |
-| Connectivity and browser trouble | `troubleshooting/connectivity`                                                          | `/howto/connectivity-issues.html`, `/howto/trouble.html`                              | welcome email, active content warning                  | create-doc                  |
-| Welcome email docs               | `/docs` plus specific docs above                                                        | `/`, `/jupyter.html`, `/teaching-instructors.html`, `/howto/connectivity-issues.html` | `server/email/welcome-email.ts`, `server/hub/email.ts` | replace-existing/create-doc |
+| Topic                      | Proposed CoCalc-ai docs                                                                 | Legacy URLs                             | Source areas                                           | Action                      |
+| -------------------------- | --------------------------------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------ | --------------------------- |
+| Jupyter kernel termination | existing `troubleshooting/memory`, possibly `troubleshooting/jupyter-kernel-terminated` | `/howto/jupyter-kernel-terminated.html` | kernel warnings                                        | create-doc/replace-existing |
+| Welcome email docs         | `/docs` plus specific docs above                                                        | `/`, `/teaching-instructors.html`       | `server/email/welcome-email.ts`, `server/hub/email.ts` | replace-existing/create-doc |
 
 ### P1: Account, Billing, Teaching, And Collaboration
 
@@ -155,12 +158,10 @@ be concise task pages rather than full manuals.
 
 ### Collaboration, Notifications, And Troubleshooting
 
-| Count | Legacy URL                                                                        | Replacement                                                         |
-| ----: | --------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-|     3 | `https://doc.cocalc.com/chat.html`                                                | Create `collaboration/chat`.                                        |
-|     1 | `https://doc.cocalc.com/teaching-interactions.html#mention-collaborators-in-chat` | Create `collaboration/mentions`.                                    |
-|     3 | `https://doc.cocalc.com/howto/connectivity-issues.html`                           | Create `troubleshooting/connectivity`.                              |
-|     1 | `https://doc.cocalc.com/howto/trouble.html`                                       | Create `troubleshooting/connectivity` or `troubleshooting/browser`. |
+| Count | Legacy URL                                                                        | Replacement                      |
+| ----: | --------------------------------------------------------------------------------- | -------------------------------- |
+|     3 | `https://doc.cocalc.com/chat.html`                                                | Create `collaboration/chat`.     |
+|     1 | `https://doc.cocalc.com/teaching-interactions.html#mention-collaborators-in-chat` | Create `collaboration/mentions`. |
 
 ### Generic Root
 
@@ -172,11 +173,11 @@ be concise task pages rather than full manuals.
 
 ### Server And API
 
-| File                                          | Legacy topics                     | Recommended action                                                                                      |
-| --------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `src/packages/server/email/welcome-email.ts`  | root docs, teaching, connectivity | Replace with `/docs`, `teaching/course-workflow`, `troubleshooting/connectivity`. Jupyter link is done. |
-| `src/packages/server/hub/email.ts`            | root docs, teaching, connectivity | Same as welcome email; check whether this duplicates or supersedes `server/email/welcome-email.ts`.     |
-| `src/packages/http-api/pages/api/v2/index.ts` | API keys, API docs root           | Done: replaced with `api/http-api` and the local docs route in OpenAPI metadata.                        |
+| File                                          | Legacy topics           | Recommended action                                                                                  |
+| --------------------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------- |
+| `src/packages/server/email/welcome-email.ts`  | root docs, teaching     | Replace with `/docs` and `teaching/course-workflow`. Jupyter and connectivity links are done.       |
+| `src/packages/server/hub/email.ts`            | root docs, teaching     | Same as welcome email; check whether this duplicates or supersedes `server/email/welcome-email.ts`. |
+| `src/packages/http-api/pages/api/v2/index.ts` | API keys, API docs root | Done: replaced with `api/http-api` and the local docs route in OpenAPI metadata.                    |
 
 ### Billing And Account
 
@@ -197,7 +198,7 @@ be concise task pages rather than full manuals.
 | `src/packages/frontend/project/warnings/ram.tsx`      | low memory                       | Done: replaced with `troubleshooting/memory`.                                   |
 | `src/packages/frontend/project/warnings/oom.tsx`      | low memory                       | Done: replaced with `troubleshooting/memory`.                                   |
 | `src/packages/frontend/jupyter/status.tsx`            | low memory                       | Done: replaced with `troubleshooting/memory`.                                   |
-| `src/packages/frontend/app/active-content.tsx`        | generic trouble                  | Create `troubleshooting/connectivity`; replace link.                            |
+| `src/packages/frontend/app/active-content.tsx`        | generic trouble                  | Done: replaced with `troubleshooting/connectivity`.                             |
 | `src/packages/frontend/project/no-internet-modal.tsx` | internet access                  | Create `projects/internet-access`; replace link.                                |
 | `src/packages/frontend/project/info/utils.ts`         | project SSH keys                 | Create `projects/project-ssh-keys`; replace link.                               |
 | `src/packages/frontend/project/project-banner.tsx`    | trial                            | Create `billing/trial`; replace link.                                           |
@@ -245,8 +246,8 @@ be concise task pages rather than full manuals.
 
 ## Suggested First Cleanup Cluster
 
-Next cluster: connectivity and browser troubleshooting, because those links
-appear in welcome/onboarding and runtime warning surfaces.
+Next cluster: TimeTravel help, because `files/timetravel` already exists and
+only one old `/time-travel.html` link remains.
 
 ## Release Gate Shape
 

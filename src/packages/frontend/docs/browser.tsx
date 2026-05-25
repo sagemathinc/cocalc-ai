@@ -35,6 +35,8 @@ const { Paragraph, Text, Title } = Typography;
 
 type DocsBrowserLayout = "page" | "flyout";
 const DOCS_FONT_SIZE_STORAGE_KEY = "cocalc-docs-font-size";
+const DOCS_BROWSER_CARD_STYLE = { fontSize: "inherit" };
+const DOCS_BROWSER_CARD_BODY_STYLE = { fontSize: "inherit" };
 export const DOCS_FONT_SIZE_MIN = 10;
 export const DOCS_FONT_SIZE_MAX = 32;
 export const DOCS_FONT_SIZE_STEP = 1;
@@ -167,7 +169,11 @@ export function DocsFontSizeFrame({
           </Button>
         </Space.Compact>
       </Flex>
-      <div className="cocalc-docs-font-scope" style={{ fontSize }}>
+      <div
+        className="cocalc-docs-font-scope"
+        data-testid="docs-font-scope"
+        style={{ fontSize }}
+      >
         {children}
       </div>
     </div>
@@ -175,7 +181,11 @@ export function DocsFontSizeFrame({
 }
 
 export function DocsMarkdown({ value }: { value: string }) {
-  return <StaticMarkdown value={value} />;
+  return (
+    <div data-testid="docs-markdown">
+      <StaticMarkdown value={value} />
+    </div>
+  );
 }
 
 function DocsEntryImage({
@@ -191,6 +201,7 @@ function DocsEntryImage({
     mode === "card" || mode === "flyout-card"
       ? (entry.image.thumbnailSrc ?? entry.image.src)
       : entry.image.src;
+  const isIcon = entry.image.presentation === "icon";
 
   if (mode === "flyout-card") {
     return (
@@ -198,12 +209,33 @@ function DocsEntryImage({
         alt=""
         src={src}
         style={{
-          aspectRatio: "4 / 3",
+          aspectRatio: isIcon ? "1 / 1" : "4 / 3",
           border: `1px solid ${COLORS.GRAY_LL}`,
           borderRadius: 7,
-          flex: "0 0 76px",
-          objectFit: "cover",
-          width: 76,
+          flex: "0 0 125px",
+          objectFit: isIcon ? "contain" : "cover",
+          width: 125,
+        }}
+      />
+    );
+  }
+
+  if (isIcon) {
+    const maxWidth =
+      mode === "flyout-detail" ? 144 : mode === "detail" ? 220 : 160;
+    return (
+      <img
+        alt={entry.image.alt}
+        src={src}
+        style={{
+          aspectRatio: "1 / 1",
+          border: `1px solid ${COLORS.GRAY_LL}`,
+          borderRadius: mode === "flyout-detail" ? 8 : 10,
+          display: "block",
+          margin: "0 auto",
+          maxWidth,
+          objectFit: "contain",
+          width: "100%",
         }}
       />
     );
@@ -295,7 +327,11 @@ export function DocsCard({
   }
 
   const content = (
-    <Card hoverable style={{ height: "100%" }}>
+    <Card
+      hoverable
+      style={{ ...DOCS_BROWSER_CARD_STYLE, height: "100%" }}
+      styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
+    >
       <Flex gap="middle" vertical>
         <DocsEntryImage entry={entry} mode="card" />
         <Space>
@@ -494,7 +530,14 @@ export function DocsActions({
     return <div style={DOCS_BROWSER_FLYOUT_ACTIONS_STYLE}>{content}</div>;
   }
 
-  return <Card>{content}</Card>;
+  return (
+    <Card
+      style={DOCS_BROWSER_CARD_STYLE}
+      styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
+    >
+      {content}
+    </Card>
+  );
 }
 
 export function DocsDetailContent({
@@ -564,7 +607,10 @@ export function DocsDetailContent({
           All docs
         </Button>
       ) : null}
-      <Card>
+      <Card
+        style={DOCS_BROWSER_CARD_STYLE}
+        styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
+      >
         <Row align="middle" gutter={[24, 24]}>
           <Col lg={entry.image == null ? 24 : 14} xs={24}>
             <Flex gap="middle" vertical>
@@ -596,7 +642,10 @@ export function DocsDetailContent({
         layout={layout}
         onRunAction={onRunAction}
       />
-      <Card>
+      <Card
+        style={DOCS_BROWSER_CARD_STYLE}
+        styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
+      >
         <DocsMarkdown value={entry.body} />
       </Card>
     </Flex>

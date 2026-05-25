@@ -60,6 +60,10 @@ async function getWelcomeEmail(
 
   const site_url = await siteURL();
   const jupyter_docs_url = joinUrlPath(site_url, "docs/jupyter/use-jupyter");
+  const connectivity_docs_url = joinUrlPath(
+    site_url,
+    "docs/troubleshooting/connectivity",
+  );
   const html = `\
 <h1>Welcome to ${site_name}</h1>
 
@@ -105,7 +109,7 @@ online editing of
     <a href="https://doc.cocalc.com/teaching-instructors.html">Teaching a course on CoCalc</a>.
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
-    <a href="https://doc.cocalc.com/howto/connectivity-issues.html">Troubleshooting connectivity issues</a>
+    <a href="${connectivity_docs_url}">Troubleshooting connectivity issues</a>
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
     <a href="https://github.com/sagemathinc/cocalc/wiki/MathematicalSyntaxErrors">Common mathematical syntax errors:</a> look into this if you are new to working with a programming language!
@@ -188,7 +192,7 @@ Subscriptions: https://cocalc.com/policies/pricing.html
 
 Teaching a course on CoCalc: https://doc.cocalc.com/teaching-instructors.html
 
-Troubleshooting connectivity issues: https://doc.cocalc.com/howto/connectivity-issues.html
+Troubleshooting connectivity issues: ${connectivity_docs_url}
 
 Common mathematical syntax errors: https://github.com/sagemathinc/cocalc/wiki/MathematicalSyntaxErrors
 
