@@ -185,7 +185,9 @@ export class Ban extends Component<Props, State> {
             is case-insensitive, ignores dots in the local part, ignores
             <Typography.Text code>+tag</Typography.Text> suffixes, and treats{" "}
             <Typography.Text code>googlemail.com</Typography.Text> as{" "}
-            <Typography.Text code>gmail.com</Typography.Text>.
+            <Typography.Text code>gmail.com</Typography.Text>. Future account
+            creation or email changes using an equivalent Gmail/Googlemail
+            address will be blocked while any equivalent account remains banned.
           </Typography.Paragraph>
           <Typography.Paragraph type="secondary">
             Unbanning is intentionally per account. If this ban expands to
@@ -405,7 +407,7 @@ export class Ban extends Component<Props, State> {
           User is currently{" "}
           {this.state.banned
             ? "banned!"
-            : "NOT banned: banning revokes active account, API, and project-host access, and also bans Gmail/Googlemail-equivalent accounts."}
+            : "NOT banned: banning revokes active account, API, and project-host access, bans existing Gmail/Googlemail-equivalent accounts, and blocks future equivalent signups."}
         </b>
         <br />
         <br />

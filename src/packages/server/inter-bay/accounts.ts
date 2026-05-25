@@ -167,6 +167,33 @@ export async function getClusterAccountHomeBayCounts(): Promise<
   }).getHomeBayCounts({});
 }
 
+export async function assertNoClusterBannedEquivalentEmailAccount({
+  email_address,
+  allowed_account_id,
+}: {
+  email_address?: string | null;
+  allowed_account_id?: string | null;
+}): Promise<void> {
+  const email = `${email_address ?? ""}`.trim().toLowerCase();
+  if (!email || !canonicalEmailForBanEquivalence(email)) {
+    return;
+  }
+  const allowedAccountId = `${allowed_account_id ?? ""}`.trim().toLowerCase();
+  const banned = (
+    await getClusterBanEquivalentEmailAccounts({ email_address: email })
+  ).find(
+    (account) =>
+      account.banned === true &&
+      (!allowedAccountId || account.account_id !== allowedAccountId),
+  );
+  if (!banned) {
+    return;
+  }
+  throw Error(
+    `This Gmail/Googlemail address is blocked because an equivalent address is banned (${banned.email_address ?? banned.account_id}).`,
+  );
+}
+
 export async function updateClusterAccountHomeBay(opts: {
   account_id: string;
   home_bay_id: string;
@@ -185,8 +212,13 @@ export async function updateClusterAccountEmailAddress(opts: {
 }): Promise<AccountDirectoryEntry> {
   const normalized = {
     ...opts,
+    account_id: `${opts.account_id ?? ""}`.trim().toLowerCase(),
     email_address: `${opts.email_address ?? ""}`.trim().toLowerCase(),
   };
+  await assertNoClusterBannedEquivalentEmailAccount({
+    email_address: normalized.email_address,
+    allowed_account_id: normalized.account_id,
+  });
   if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
     return await updateClusterAccountEmailAddressDirect(normalized);
   }
@@ -573,6 +605,7 @@ async function createClusterAccountDirect(
   if (existing?.account_id) {
     throw new Error(`an account with email '${email_address}' already exists`);
   }
+  await assertNoClusterBannedEquivalentEmailAccount({ email_address });
 
   await reserveClusterAccountDirectoryEntry({
     account_id,
