@@ -181,11 +181,15 @@ export class Ban extends Component<Props, State> {
             }
           />
           <Typography.Paragraph>
-            This also bans Gmail/Googlemail-equivalent email accounts: matching
-            is case-insensitive, ignores dots in the local part, ignores
-            <Typography.Text code>+tag</Typography.Text> suffixes, and treats{" "}
-            <Typography.Text code>googlemail.com</Typography.Text> as{" "}
-            <Typography.Text code>gmail.com</Typography.Text>.
+            This also bans supported equivalent email accounts. Matching is
+            case-insensitive and currently covers Gmail/Googlemail dot and{" "}
+            <Typography.Text code>+tag</Typography.Text> aliases,
+            Microsoft/Proton <Typography.Text code>+tag</Typography.Text>{" "}
+            aliases, and Yahoo disposable{" "}
+            <Typography.Text code>nickname-keyword@yahoo.com</Typography.Text>{" "}
+            aliases. Future account creation or email changes using a supported
+            equivalent address will be blocked while any equivalent account
+            remains banned.
           </Typography.Paragraph>
           <Typography.Paragraph type="secondary">
             Unbanning is intentionally per account. If this ban expands to
@@ -405,7 +409,7 @@ export class Ban extends Component<Props, State> {
           User is currently{" "}
           {this.state.banned
             ? "banned!"
-            : "NOT banned: banning revokes active account, API, and project-host access, and also bans Gmail/Googlemail-equivalent accounts."}
+            : "NOT banned: banning revokes active account, API, and project-host access, bans existing supported equivalent email accounts, and blocks future equivalent signups."}
         </b>
         <br />
         <br />

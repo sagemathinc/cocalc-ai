@@ -99,6 +99,12 @@ describe("Ban", () => {
     render(<Ban account_id="subject-1" banned={false} name="Target User" />);
 
     fireEvent.click(screen.getByRole("button", { name: /Ban User/i }));
+    expect(
+      screen.getByText(/blocks future equivalent signups/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Future account creation or email changes/i),
+    ).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("ban reason"), {
       target: { value: "spam campaign" },
     });

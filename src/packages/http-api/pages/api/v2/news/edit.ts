@@ -10,6 +10,8 @@ import editNews from "@cocalc/server/news/edit";
 import { clearCache } from "@cocalc/database/postgres/news";
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import { getCurrentAuthSession } from "@cocalc/server/auth/auth-sessions";
+import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 
 export default async function handle(req: Request, res: Response) {
   try {
@@ -50,6 +52,14 @@ async function doIt(req: Request) {
   if (text == null) {
     throw new Error("must provide text");
   }
+
+  const session = await getCurrentAuthSession({ req, account_id });
+  await requireDangerousSessionAuth({
+    account_id,
+    session_hash: session.session_hash,
+    require_second_factor: true,
+    allow_actor_impersonation: false,
+  });
 
   return await editNews({
     id,

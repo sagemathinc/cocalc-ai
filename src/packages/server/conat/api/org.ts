@@ -1,8 +1,9 @@
 import getPool from "@cocalc/database/pool";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { uuid } from "@cocalc/util/misc";
-import createAccount from "@cocalc/server/accounts/create-account";
+import { createClusterAccount } from "@cocalc/server/inter-bay/accounts";
 import send from "@cocalc/server/messages/send";
 import { secureRandomString } from "@cocalc/backend/misc";
 import { requireDangerousSessionAuth } from "./dangerous-session-auth";
@@ -288,12 +289,13 @@ export async function createUser({
   await requireOrgMutationAuth({ account_id, session_hash });
   // create new account
   const new_account_id = uuid();
-  await createAccount({
-    email,
-    firstName,
-    lastName,
+  await createClusterAccount({
+    email_address: email,
+    first_name: firstName,
+    last_name: lastName,
     account_id: new_account_id,
     owner_id: account_id,
+    home_bay_id: getConfiguredBayId(),
     password,
   });
   // add account to org

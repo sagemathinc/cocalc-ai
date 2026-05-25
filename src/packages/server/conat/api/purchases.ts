@@ -156,10 +156,12 @@ async function validatePurchaseFreshAuth({
   account_id,
   browser_id,
   session_hash,
+  allow_actor_impersonation = true,
 }: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string | null;
+  allow_actor_impersonation?: boolean;
 }): Promise<void> {
   const owner = requireAccount(account_id);
   const cleanedSessionHash = `${session_hash ?? ""}`.trim();
@@ -167,7 +169,7 @@ async function validatePurchaseFreshAuth({
     await requireFreshAuthForSessionHash({
       account_id: owner,
       session_hash: cleanedSessionHash,
-      allow_actor_impersonation: true,
+      allow_actor_impersonation,
     });
     return;
   }
@@ -189,7 +191,7 @@ async function validatePurchaseFreshAuth({
   await requireFreshAuthForSessionHash({
     account_id: owner,
     session_hash: browserSessionHash,
-    allow_actor_impersonation: true,
+    allow_actor_impersonation,
   });
 }
 
@@ -197,10 +199,12 @@ async function maybeRequireFreshAuthForBrowserPurchaseAction({
   account_id,
   browser_id,
   session_hash,
+  allow_actor_impersonation = true,
 }: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string | null;
+  allow_actor_impersonation?: boolean;
 }): Promise<void> {
   if (!`${browser_id ?? ""}`.trim() && !`${session_hash ?? ""}`.trim()) {
     return;
@@ -209,6 +213,7 @@ async function maybeRequireFreshAuthForBrowserPurchaseAction({
     account_id,
     browser_id,
     session_hash,
+    allow_actor_impersonation,
   });
 }
 
@@ -439,6 +444,7 @@ export async function updateMembershipPackage({
       account_id: actorId,
       browser_id,
       session_hash,
+      allow_actor_impersonation: false,
     });
     if (!isSeedBay()) {
       return await getSeedSiteLicenseClient().updateMembershipPackage({
@@ -505,6 +511,7 @@ export async function updateMembershipPackage({
       account_id: actorId,
       browser_id,
       session_hash,
+      allow_actor_impersonation: false,
     });
     return await updateSiteLicensePool0({
       actor_account_id: actorId,
@@ -725,6 +732,7 @@ export async function adminProvisionSiteLicense({
     account_id: actorId,
     browser_id,
     session_hash,
+    allow_actor_impersonation: false,
   });
   const ownerAccountId = `${owner_account_id ?? actorId}`.trim();
   if (!ownerAccountId) {
@@ -827,6 +835,7 @@ export async function updateSiteLicense({
     account_id: actorId,
     browser_id,
     session_hash,
+    allow_actor_impersonation: false,
   });
   const opts = {
     actor_account_id: actorId,
@@ -876,6 +885,7 @@ export async function addSiteLicensePool({
     account_id: actorId,
     browser_id,
     session_hash,
+    allow_actor_impersonation: false,
   });
   const opts = {
     actor_account_id: actorId,

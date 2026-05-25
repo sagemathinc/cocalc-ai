@@ -16,12 +16,11 @@ export const SetAccountNameInputSchema = z
        not provided, it is assumed that this operation pertains to the account id of the 
        user making the request.`,
     ),
-    username: z.string().describe("Unique username.").optional(),
     first_name: z.string().max(254).describe("First name").optional(),
     last_name: z.string().max(254).describe("Last name").optional(),
   })
   .describe(
-    `Set the username, first name, and/or last name for a user account. Only non-empty
+    `Set the first name and/or last name for a user account. Only non-empty
      field values are allowed; everything else will be omitted from the update query.`,
   );
 

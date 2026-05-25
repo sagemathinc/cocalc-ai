@@ -92,6 +92,7 @@ describe("admin purchase/refund fresh auth", () => {
       account_id: "admin-1",
       session_hash: "fresh-session-hash",
       require_second_factor: true,
+      allow_actor_impersonation: false,
     });
     expect(mockAdminPurchase).not.toHaveBeenCalled();
   });
@@ -115,6 +116,7 @@ describe("admin purchase/refund fresh auth", () => {
       account_id: "admin-1",
       session_hash: "fresh-session-hash",
       require_second_factor: true,
+      allow_actor_impersonation: false,
     });
     expect(mockCreateRefund).not.toHaveBeenCalled();
   });
@@ -126,6 +128,12 @@ describe("admin purchase/refund fresh auth", () => {
     await handler(req, res);
 
     expect(res._getJSONData()).toEqual({ purchase_id: 456 });
+    expect(mockRequireDangerousSessionAuth).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      session_hash: "fresh-session-hash",
+      require_second_factor: true,
+      allow_actor_impersonation: false,
+    });
     expect(mockAdminPurchase).toHaveBeenCalledWith(
       expect.objectContaining({
         admin_account_id: "admin-1",
@@ -141,6 +149,12 @@ describe("admin purchase/refund fresh auth", () => {
     await handler(req, res);
 
     expect(res._getJSONData()).toEqual({ id: 789 });
+    expect(mockRequireDangerousSessionAuth).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      session_hash: "fresh-session-hash",
+      require_second_factor: true,
+      allow_actor_impersonation: false,
+    });
     expect(mockCreateRefund).toHaveBeenCalledWith({
       account_id: "admin-1",
       notes: undefined,

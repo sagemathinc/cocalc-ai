@@ -10,6 +10,8 @@ import { createMocks } from "@cocalc/http-api/lib/api/test-framework";
 const mockGetAccountId = jest.fn();
 const mockGetParams = jest.fn();
 const mockUserIsInGroup = jest.fn();
+const mockGetCurrentAuthSession = jest.fn();
+const mockRequireDangerousSessionAuth = jest.fn();
 const mockUserQuery = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
@@ -25,6 +27,15 @@ jest.mock("@cocalc/http-api/lib/api/get-params", () => ({
 jest.mock("@cocalc/server/accounts/is-in-group", () => ({
   __esModule: true,
   default: (...args) => mockUserIsInGroup(...args),
+}));
+
+jest.mock("@cocalc/server/auth/auth-sessions", () => ({
+  getCurrentAuthSession: (...args) => mockGetCurrentAuthSession(...args),
+}));
+
+jest.mock("@cocalc/server/conat/api/dangerous-session-auth", () => ({
+  requireDangerousSessionAuth: (...args) =>
+    mockRequireDangerousSessionAuth(...args),
 }));
 
 jest.mock("@cocalc/database/user-query", () => ({
@@ -43,6 +54,10 @@ describe("/api/v2/accounts/set-name API-key scope", () => {
       last_name: "Lovelace",
     });
     mockUserIsInGroup.mockReset().mockResolvedValue(false);
+    mockGetCurrentAuthSession.mockReset().mockResolvedValue({
+      session_hash: "fresh-session-hash",
+    });
+    mockRequireDangerousSessionAuth.mockReset().mockResolvedValue(undefined);
     mockUserQuery.mockReset().mockResolvedValue(undefined);
   });
 

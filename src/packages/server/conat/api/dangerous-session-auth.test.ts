@@ -89,6 +89,25 @@ describe("requireDangerousSessionAuth", () => {
     expect(hasActiveSecondFactorMock).not.toHaveBeenCalled();
   });
 
+  it("delegates fresh-auth validation with actor impersonation disabled", async () => {
+    const { requireDangerousSessionAuth } =
+      await import("./dangerous-session-auth");
+
+    await requireDangerousSessionAuth({
+      account_id: ACCOUNT_ID,
+      session_hash: SESSION_HASH,
+      allow_actor_impersonation: false,
+    });
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      session_hash: SESSION_HASH,
+      allow_actor_impersonation: false,
+    });
+    expect(getImpersonationSessionBySessionHashMock).not.toHaveBeenCalled();
+    expect(hasActiveSecondFactorMock).not.toHaveBeenCalled();
+  });
+
   it("resolves a browser session hash when only browser_id is provided", async () => {
     const BROWSER_ID = "browser-1";
     const { recordBrowserAuthSession } =

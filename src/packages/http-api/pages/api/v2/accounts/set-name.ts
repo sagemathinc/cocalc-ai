@@ -7,6 +7,8 @@ import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import { getCurrentAuthSession } from "@cocalc/server/auth/auth-sessions";
+import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import { SuccessStatus } from "@cocalc/http-api/lib/api/status";
@@ -36,13 +38,25 @@ async function get(req) {
     throw Error("Must be signed in to edit account name.");
   }
 
-  const { username, first_name, last_name, account_id } = getParams(req);
+  const { first_name, last_name, account_id } = getParams(req);
 
   // This user MUST be an admin:
-  if (account_id && !(await userIsInGroup(client_account_id, "admin"))) {
-    throw Error(
-      "The `account_id` field may only be specified by account administrators.",
-    );
+  if (account_id) {
+    if (!(await userIsInGroup(client_account_id, "admin"))) {
+      throw Error(
+        "The `account_id` field may only be specified by account administrators.",
+      );
+    }
+    const session = await getCurrentAuthSession({
+      req,
+      account_id: client_account_id,
+    });
+    await requireDangerousSessionAuth({
+      account_id: client_account_id,
+      session_hash: session.session_hash,
+      require_second_factor: true,
+      allow_actor_impersonation: false,
+    });
   }
 
   return userQuery({
@@ -52,7 +66,6 @@ async function get(req) {
         // Any provided values must be non-empty in order for userQuery to SET values
         // instead of fetching them.
         //
-        ...(username && { name: username }),
         ...(first_name && { first_name }),
         ...(last_name && { last_name }),
       },

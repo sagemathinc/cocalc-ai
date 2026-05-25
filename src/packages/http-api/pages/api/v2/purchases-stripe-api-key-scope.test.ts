@@ -21,6 +21,8 @@ const mockUserIsInGroup = jest.fn();
 const mockCancelPaymentIntent = jest.fn();
 const mockGetPaymentIntentAccountId = jest.fn();
 const mockProcessPaymentIntents = jest.fn();
+const mockGetCurrentAuthSession = jest.fn();
+const mockRequireDangerousSessionAuth = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
@@ -40,6 +42,15 @@ jest.mock("@cocalc/util/api/throttle", () => ({
 jest.mock("@cocalc/server/accounts/is-in-group", () => ({
   __esModule: true,
   default: (...args) => mockUserIsInGroup(...args),
+}));
+
+jest.mock("@cocalc/server/auth/auth-sessions", () => ({
+  getCurrentAuthSession: (...args) => mockGetCurrentAuthSession(...args),
+}));
+
+jest.mock("@cocalc/server/conat/api/dangerous-session-auth", () => ({
+  requireDangerousSessionAuth: (...args) =>
+    mockRequireDangerousSessionAuth(...args),
 }));
 
 jest.mock("@cocalc/server/purchases/stripe/get-payment-methods", () => ({
@@ -99,6 +110,10 @@ describe("Stripe billing read routes API-key scope", () => {
     mockCancelPaymentIntent.mockReset().mockResolvedValue(undefined);
     mockGetPaymentIntentAccountId.mockReset().mockResolvedValue("acct-1");
     mockProcessPaymentIntents.mockReset().mockResolvedValue(0);
+    mockGetCurrentAuthSession.mockReset().mockResolvedValue({
+      session_hash: "fresh-session-hash",
+    });
+    mockRequireDangerousSessionAuth.mockReset().mockResolvedValue(undefined);
     mockThrottle.mockReset();
   });
 
