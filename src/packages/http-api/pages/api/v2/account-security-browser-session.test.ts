@@ -24,6 +24,7 @@ const mockConfirmTwoFactorSetup = jest.fn();
 const mockDisableTwoFactor = jest.fn();
 const mockUserIsInGroup = jest.fn();
 const mockSetClusterAccountBan = jest.fn();
+const mockBanClusterAccountAndEquivalentEmails = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
@@ -91,6 +92,8 @@ jest.mock("@cocalc/server/accounts/is-in-group", () => ({
 }));
 
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  banClusterAccountAndEquivalentEmails: (...args: any[]) =>
+    mockBanClusterAccountAndEquivalentEmails(...args),
   setClusterAccountBan: (...args: any[]) => mockSetClusterAccountBan(...args),
 }));
 
@@ -141,6 +144,9 @@ describe("browser-session-only account security routes", () => {
     mockDisableTwoFactor.mockReset().mockResolvedValue(undefined);
     mockUserIsInGroup.mockReset().mockResolvedValue(true);
     mockSetClusterAccountBan.mockReset().mockResolvedValue(undefined);
+    mockBanClusterAccountAndEquivalentEmails
+      .mockReset()
+      .mockResolvedValue(undefined);
   });
 
   it("rejects API-key-only account deletion", async () => {
@@ -478,7 +484,7 @@ describe("browser-session-only account security routes", () => {
     expect(res._getJSONData()).toEqual({
       error: "fresh auth is required",
     });
-    expect(mockSetClusterAccountBan).not.toHaveBeenCalled();
+    expect(mockBanClusterAccountAndEquivalentEmails).not.toHaveBeenCalled();
   });
 
   it("allows fresh-authenticated admin account bans", async () => {
@@ -499,9 +505,8 @@ describe("browser-session-only account security routes", () => {
       session_hash: "fresh-session-hash",
       require_second_factor: true,
     });
-    expect(mockSetClusterAccountBan).toHaveBeenCalledWith({
+    expect(mockBanClusterAccountAndEquivalentEmails).toHaveBeenCalledWith({
       account_id: "subject-1",
-      banned: true,
     });
   });
 

@@ -429,6 +429,11 @@ export interface AccountDirectorySearchRequest {
   only_email?: boolean;
 }
 
+export interface AccountDirectoryBanEquivalentEmailAccountsRequest {
+  email_address: string;
+  limit?: number;
+}
+
 export interface AccountDirectoryHomeBayCountsRequest {}
 
 export interface AccountDirectoryUpdateHomeBayRequest {
@@ -1472,6 +1477,7 @@ export type AccountDirectoryMethod =
   | "get-by-email"
   | "get-many"
   | "search"
+  | "get-ban-equivalent-email-accounts"
   | "home-bay-counts"
   | "create"
   | "delete"
@@ -2250,6 +2256,9 @@ export interface InterBayAccountDirectoryApi {
   ) => Promise<AccountDirectoryEntry[]>;
   search: (
     opts: AccountDirectorySearchRequest,
+  ) => Promise<AccountDirectoryEntry[]>;
+  getBanEquivalentEmailAccounts: (
+    opts: AccountDirectoryBanEquivalentEmailAccountsRequest,
   ) => Promise<AccountDirectoryEntry[]>;
   getHomeBayCounts: (
     opts: AccountDirectoryHomeBayCountsRequest,
@@ -3501,6 +3510,14 @@ export function createInterBayAccountDirectoryClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountDirectorySubject({ method: "search" }),
   });
+  const getBanEquivalentEmailAccountsClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "getBanEquivalentEmailAccounts">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({
+      method: "get-ban-equivalent-email-accounts",
+    }),
+  });
   const homeBayCountsClient = createServiceClient<
     Pick<InterBayAccountDirectoryApi, "getHomeBayCounts">
   >({
@@ -3624,6 +3641,10 @@ export function createInterBayAccountDirectoryClient({
     getByEmail: async (opts) => await getByEmailClient.getByEmail(opts),
     getMany: async (opts) => await getManyClient.getMany(opts),
     search: async (opts) => await searchClient.search(opts),
+    getBanEquivalentEmailAccounts: async (opts) =>
+      await getBanEquivalentEmailAccountsClient.getBanEquivalentEmailAccounts(
+        opts,
+      ),
     getHomeBayCounts: async (opts) =>
       await homeBayCountsClient.getHomeBayCounts(opts),
     updateHomeBay: async (opts) =>
@@ -3699,6 +3720,19 @@ export function createInterBayAccountDirectoryHandlers({
       subject: accountDirectorySubject({ method: "search" }),
       impl: {
         search: async (opts) => await impl.search(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "getBanEquivalentEmailAccounts">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({
+        method: "get-ban-equivalent-email-accounts",
+      }),
+      impl: {
+        getBanEquivalentEmailAccounts: async (opts) =>
+          await impl.getBanEquivalentEmailAccounts(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountDirectoryApi, "getHomeBayCounts">>(

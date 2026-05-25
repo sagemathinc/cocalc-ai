@@ -94,6 +94,7 @@ import {
   deleteClusterAccount,
   deleteLocalClusterAccount,
   getClusterAccountApiKeyByKeyId,
+  getClusterBanEquivalentEmailAccounts,
   getClusterAccountByEmail,
   getClusterAccountById,
   getClusterAccountHomeBayCounts,
@@ -551,6 +552,11 @@ async function startAccountDirectoryService(): Promise<void> {
         limit,
         admin,
         only_email,
+      }),
+    getBanEquivalentEmailAccounts: async ({ email_address, limit }) =>
+      await getClusterBanEquivalentEmailAccounts({
+        email_address,
+        limit,
       }),
     getHomeBayCounts: async () => await getClusterAccountHomeBayCounts(),
     updateHomeBay: async (opts) => await updateClusterAccountHomeBay(opts),

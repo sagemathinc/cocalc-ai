@@ -37,6 +37,7 @@ import {
   deleteClusterAccountApiKeyDirectoryEntryDirect,
   deleteClusterAccountDirectoryEntry,
   getClusterAccountApiKeyByKeyIdDirect,
+  getClusterBanEquivalentEmailAccountsDirect,
   getClusterAccountByEmailDirect,
   getClusterAccountByIdDirect,
   getClusterAccountHomeBayCountsDirect,
@@ -122,6 +123,31 @@ export async function searchClusterAccounts({
     limit,
     admin,
     only_email,
+  });
+}
+
+export async function getClusterBanEquivalentEmailAccounts({
+  email_address,
+  limit,
+}: {
+  email_address: string;
+  limit?: number;
+}): Promise<AccountDirectoryEntry[]> {
+  const normalized = `${email_address ?? ""}`.trim().toLowerCase();
+  if (!normalized) {
+    return [];
+  }
+  if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
+    return await getClusterBanEquivalentEmailAccountsDirect({
+      email_address: normalized,
+      limit,
+    });
+  }
+  return await createInterBayAccountDirectoryClient({
+    client: getInterBayFabricClient(),
+  }).getBanEquivalentEmailAccounts({
+    email_address: normalized,
+    limit,
   });
 }
 
@@ -366,6 +392,41 @@ export async function setClusterAccountBan({
     home_bay_id: homeBayId,
     banned: !!banned,
   };
+}
+
+export async function banClusterAccountAndEquivalentEmails({
+  account_id,
+}: {
+  account_id: string;
+}): Promise<AccountLocalSetBanResult[]> {
+  const normalizedAccountId = `${account_id ?? ""}`.trim().toLowerCase();
+  if (!isValidUUID(normalizedAccountId)) {
+    throw new Error("account_id must be a valid uuid");
+  }
+  const account = await getClusterAccountById(normalizedAccountId);
+  if (!account) {
+    throw Error(`account ${normalizedAccountId} not found`);
+  }
+  const accountsToBan = new Map<string, AccountDirectoryEntry>();
+  accountsToBan.set(normalizedAccountId, account);
+  for (const equivalent of await getClusterBanEquivalentEmailAccounts({
+    email_address: account.email_address ?? "",
+  })) {
+    if (equivalent.account_id) {
+      accountsToBan.set(equivalent.account_id, equivalent);
+    }
+  }
+
+  const results: AccountLocalSetBanResult[] = [];
+  for (const id of accountsToBan.keys()) {
+    results.push(
+      await setClusterAccountBan({
+        account_id: id,
+        banned: true,
+      }),
+    );
+  }
+  return results;
 }
 
 export async function setClusterAccountPasswordFromReset({

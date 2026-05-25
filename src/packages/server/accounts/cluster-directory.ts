@@ -36,6 +36,25 @@ function normalizedHomeBayId(value: string): string {
   return `${value ?? ""}`.trim() || getConfiguredBayId();
 }
 
+export function canonicalEmailForBanEquivalence(
+  email_address: string | undefined,
+): string | undefined {
+  const email = normalizedEmail(`${email_address ?? ""}`);
+  const at = email.lastIndexOf("@");
+  if (at <= 0) {
+    return undefined;
+  }
+  const domain = email.slice(at + 1);
+  if (domain !== "gmail.com" && domain !== "googlemail.com") {
+    return undefined;
+  }
+  const local = email.slice(0, at).split("+", 1)[0].replace(/\./g, "");
+  if (!local) {
+    return undefined;
+  }
+  return `${local}@gmail.com`;
+}
+
 export async function ensureClusterAccountDirectorySchema(): Promise<void> {
   const pool = getPool();
   await pool.query(`
@@ -482,6 +501,55 @@ export async function searchClusterAccountsDirect({
         ),
     )
     .slice(0, cappedLimit);
+}
+
+export async function getClusterBanEquivalentEmailAccountsDirect({
+  email_address,
+  limit = 1000,
+}: {
+  email_address: string;
+  limit?: number;
+}): Promise<AccountDirectoryEntry[]> {
+  const canonical = canonicalEmailForBanEquivalence(email_address);
+  if (!canonical) {
+    return [];
+  }
+  const [localPart] = canonical.split("@", 1);
+  const cappedLimit = Math.min(Math.max(1, Number(limit) || 1000), 1000);
+  const equivalentWhere = `
+    replace(split_part(split_part(lower(email_address), '@', 1), '+', 1), '.', '')=$1
+    AND lower(split_part(email_address, '@', 2))=ANY($2::TEXT[])
+  `;
+  const params = [localPart, ["gmail.com", "googlemail.com"], cappedLimit];
+  const pool = getPool("medium");
+  const [localRowsResult, directoryRowsResult] = await Promise.all([
+    pool.query(
+      `SELECT account_id, first_name, last_name, email_address, home_bay_id,
+              created, last_active, banned, email_address_verified
+         FROM accounts
+        WHERE (${equivalentWhere})
+          AND email_address_verified=TRUE
+          AND (deleted IS NULL OR deleted=FALSE)
+        LIMIT $3`,
+      params,
+    ),
+    (async () => {
+      await ensureClusterAccountDirectorySchema();
+      return await pool.query(
+        `SELECT account_id, first_name, last_name, email_address, home_bay_id,
+                created, last_active, banned
+           FROM ${TABLE}
+          WHERE (${equivalentWhere})
+            AND provisioned=TRUE
+          LIMIT $3`,
+        params,
+      );
+    })(),
+  ]);
+  return mergeEntries([
+    ...localRowsResult.rows.map(canonicalLocalEntry),
+    ...directoryRowsResult.rows.map(canonicalDirectoryEntry),
+  ]).slice(0, cappedLimit);
 }
 
 export async function getClusterAccountHomeBayCountsDirect(): Promise<
