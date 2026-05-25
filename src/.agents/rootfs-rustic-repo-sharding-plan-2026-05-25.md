@@ -315,6 +315,62 @@ Required CLI outcomes:
 This is important because once RootFS is sharded, object-store usage cannot be
 understood by looking for one `rootfs-images` prefix.
 
+### Management API And UI Scalability
+
+Sharding is an explicit acknowledgement that RootFS can grow to 10K or 100K+
+entries. The management API and UI must not assume that all RootFS entries can
+be loaded, merged, filtered, rendered, or enriched in one request.
+
+Current high-risk surfaces:
+
+- `src/packages/frontend/admin/rootfs.tsx`
+- `src/packages/frontend/rootfs/manifest.ts`
+- `src/packages/frontend/rootfs/catalog-ui.tsx`
+- `src/packages/frontend/hosts/hooks/use-host-rootfs-images.ts`
+- `src/packages/server/rootfs/catalog.ts`
+- `src/packages/server/conat/api/system.ts`
+- `src/packages/server/conat/api/hosts.ts`
+- `src/packages/conat/hub/api/system.ts`
+- `src/packages/conat/hub/api/hosts.ts`
+
+Specific risks:
+
+- the admin RootFS page currently requests the whole admin catalog
+- visible catalog loading returns full arrays and then filters client-side
+- select/dropdown UIs can become unusable with thousands of options
+- host RootFS cache pages may list all cached images on one host
+- scan host selection may probe or enrich too many entries
+- storage locations, recent events, scan summaries, and lifecycle data make each
+  row heavier over time
+
+Required API shape:
+
+- add paged RootFS catalog queries with `limit`, `cursor`, `query`, and
+  structured filters
+- support sorting by updated time, created time, label, family, visibility,
+  official status, scan status, storage status, owner, and usage count
+- split summary list rows from heavy detail records
+- provide detail fetch by `image_id` or `release_id`
+- provide typeahead/search endpoints for project/course image selection
+- keep the existing small public catalog path only for curated visible choices,
+  not for every historical/user/private RootFS release
+
+Required UI behavior:
+
+- admin page uses server-side paging, server-side search, and server-side
+  filters
+- admin table renders summary rows and lazy-loads lifecycle, events, scan
+  report, storage locations, and delete blockers on expansion/details
+- project/course RootFS selectors use search/typeahead and show curated latest
+  official images by default
+- host RootFS cache page supports pagination/filtering by image, release,
+  cached/pulled status, size, and last used
+- no RootFS page renders tens of thousands of rows or options in memory
+
+Membership limits help control per-user creation and total storage usage, but
+they do not remove the need for scalable catalog/search surfaces. Successful
+global usage can still create a large aggregate catalog.
+
 ## Implementation Phases
 
 ### Phase 1: Schema And Allocator
@@ -359,7 +415,17 @@ understood by looking for one `rootfs-images` prefix.
 - add orphan/legacy root detection
 - document the operator workflow for sealing, disabling, and inspecting a shard
 
-### Phase 6: Dogfood Cutover
+### Phase 6: Management API And UI Scaling
+
+- add paged/searchable RootFS catalog API types
+- convert admin RootFS table to server-side pagination/search/filtering
+- split list summaries from detail fetches
+- convert project/course RootFS selection to typeahead/search with curated
+  defaults
+- add pagination/filtering to host RootFS cache listings
+- verify pages remain responsive with synthetic 50K-entry catalogs
+
+### Phase 7: Dogfood Cutover
 
 - stop writing new artifacts to the old single RootFS repo
 - either rebuild the current dogfood RootFS or add a temporary legacy read path
@@ -408,6 +474,15 @@ Audit/CLI tests:
 - CLI shard listing reports region/status/count/cap/bytes/root
 - cleanup/GC uses the artifact's exact repo, not a region default
 
+Management UI/API tests:
+
+- admin RootFS API returns stable pages and cursors
+- admin filters and search are applied server-side
+- admin page does not request full heavy detail for list rows
+- project/course selectors can search without loading the full catalog
+- host RootFS cache page handles thousands of cached images with pagination
+- synthetic 50K-entry catalog does not freeze the browser
+
 ## Operational Notes
 
 The normal operator lifecycle should be the same as project backup shards:
@@ -432,6 +507,8 @@ when writing new artifacts rather than trying to continuously move old ones.
    serious dogfood RootFS over carrying permanent compatibility code.
 4. Authority path: confirm whether RootFS catalog writes are already centralized
    enough or need an explicit inter-bay allocation RPC.
+5. Default page size: likely 50-100 rows for admin tables and 20-50 rows for
+   selectors, but validate against actual row weight and UX.
 
 ## Definition Of Done
 
@@ -439,6 +516,8 @@ when writing new artifacts rather than trying to continuously move old ones.
 - new versions of an existing RootFS prefer the same shard when possible
 - restores, scans, replicas, and GC use stored repo ids
 - R2 audit and CLI cleanup understand sharded RootFS repos
+- RootFS admin, project/course selectors, and host cache pages use scalable
+  paged/search APIs
 - no new code path assumes the repo root is the single global `rootfs-images`
 - dogfood RootFS publish, update, regional replicate, project start, scan, and
   GC all work against sharded repos
