@@ -32,8 +32,20 @@ interface State {
   link?: string;
   banned: boolean;
   freshAuthOpen: boolean;
+  freshAuthAction?: "ban" | "quarantine";
   banModalOpen: boolean;
   banReason: string;
+  quarantineModalOpen: boolean;
+  quarantineReason: string;
+  quarantineRunning: boolean;
+  quarantineResult?: {
+    local_subscriptions_canceled: number;
+    payment_intents_canceled: number;
+    payment_methods_detached: number;
+    hosts_stop_requested: number;
+    host_ids: string[];
+    errors: string[];
+  };
 }
 
 export class Ban extends Component<Props, State> {
@@ -47,6 +59,9 @@ export class Ban extends Component<Props, State> {
       freshAuthOpen: false,
       banModalOpen: false,
       banReason: "",
+      quarantineModalOpen: false,
+      quarantineReason: "",
+      quarantineRunning: false,
     };
   }
 
@@ -72,19 +87,65 @@ export class Ban extends Component<Props, State> {
         running: false,
         banned: !this.state.banned,
         freshAuthOpen: false,
+        freshAuthAction: undefined,
         banModalOpen: false,
         banReason: "",
       });
     } catch (err) {
       if (!this.mounted) return;
       if (isFreshAuthRequiredError(err)) {
-        this.setState({ freshAuthOpen: true, running: false });
+        this.setState({
+          freshAuthOpen: true,
+          freshAuthAction: "ban",
+          running: false,
+        });
         if (fromFreshAuth) {
           throw err;
         }
         return;
       }
       this.setState({ error: `${err}`, running: false });
+      if (fromFreshAuth) {
+        throw err;
+      }
+    }
+  }
+
+  async quarantine({ fromFreshAuth = false } = {}): Promise<void> {
+    const reason = this.state.quarantineReason.trim();
+    if (!reason) {
+      this.setState({ error: "Enter a reason for the quarantine." });
+      return;
+    }
+    this.setState({ quarantineRunning: true });
+    try {
+      const result =
+        await webapp_client.admin_client.admin_quarantine_billing_resources(
+          this.props.account_id,
+          reason,
+        );
+      this.setState({
+        quarantineRunning: false,
+        freshAuthOpen: false,
+        freshAuthAction: undefined,
+        quarantineModalOpen: false,
+        quarantineReason: "",
+        quarantineResult: result,
+      });
+    } catch (err) {
+      if (!this.mounted) return;
+      if (isFreshAuthRequiredError(err)) {
+        this.setState({
+          freshAuthOpen: true,
+          freshAuthAction: "quarantine",
+          quarantineRunning: false,
+        });
+        if (fromFreshAuth) {
+          throw err;
+        }
+        return;
+      }
+      this.setState({ error: `${err}`, quarantineRunning: false });
       if (fromFreshAuth) {
         throw err;
       }
@@ -133,7 +194,8 @@ export class Ban extends Component<Props, State> {
           </Typography.Paragraph>
           <Typography.Paragraph type="secondary">
             This action does not delete projects or account data, and it does
-            not send email to the user.
+            not stop billing, subscriptions, or dedicated hosts. Use "Quarantine
+            Billing/Resources" for suspected fraud or paid-resource abuse.
           </Typography.Paragraph>
           <div style={{ marginBottom: "18px" }}>
             <Input.TextArea
@@ -149,6 +211,122 @@ export class Ban extends Component<Props, State> {
           </div>
         </Space>
       </Modal>
+    );
+  }
+
+  render_quarantine_modal(): Rendered {
+    return (
+      <Modal
+        open={this.state.quarantineModalOpen}
+        title={
+          <>
+            Quarantine billing/resources for {this.props.name ?? "this user"}?
+          </>
+        }
+        okText="Quarantine billing/resources"
+        okButtonProps={{
+          danger: true,
+          disabled:
+            this.state.quarantineRunning || !this.state.quarantineReason.trim(),
+        }}
+        cancelText="Cancel"
+        confirmLoading={this.state.quarantineRunning}
+        onCancel={() => this.setState({ quarantineModalOpen: false })}
+        onOk={() => this.quarantine()}
+      >
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Alert
+            type="error"
+            showIcon
+            message="This contains billing and paid resources without deleting account data."
+            description={
+              <>
+                Use this when abuse, fraud, or a suspect payment instrument
+                makes continuing paid resources risky. This is not a substitute
+                for account deletion, and it is not a one-click reversible
+                action.
+              </>
+            }
+          />
+          <Typography.Paragraph>
+            The backend will disable automatic balance top-ups, clear open
+            checkout state, cancel local active subscriptions, cancel open
+            Stripe payment intents, detach Stripe payment methods, cancel the
+            Stripe usage subscription if present, and request stop for owned
+            dedicated hosts.
+          </Typography.Paragraph>
+          <Typography.Paragraph type="secondary">
+            If this was a misunderstanding, the account can remain banned or be
+            unbanned independently, but billing and host state must be reviewed
+            and restored deliberately. This action does not send email to the
+            user.
+          </Typography.Paragraph>
+          <div style={{ marginBottom: "18px" }}>
+            <Input.TextArea
+              value={this.state.quarantineReason}
+              onChange={(e) =>
+                this.setState({
+                  quarantineReason: e.target.value,
+                  error: undefined,
+                })
+              }
+              rows={4}
+              maxLength={4000}
+              showCount
+              placeholder="Reason for the audit log, e.g. suspected stolen card, active crypto mining, payment dispute, or support ticket link"
+            />
+          </div>
+        </Space>
+      </Modal>
+    );
+  }
+
+  render_quarantine_result(): Rendered {
+    const result = this.state.quarantineResult;
+    if (!result) {
+      return;
+    }
+    return (
+      <Alert
+        type={result.errors.length ? "warning" : "success"}
+        showIcon
+        style={{ marginBottom: "12px" }}
+        message="Billing/resource quarantine completed"
+        description={
+          <>
+            Canceled {result.local_subscriptions_canceled} local subscriptions,
+            canceled {result.payment_intents_canceled} open payment intents,
+            detached {result.payment_methods_detached} payment methods, and
+            requested stop for {result.hosts_stop_requested} hosts.
+            {result.errors.length ? (
+              <Typography.Paragraph style={{ marginTop: "8px" }}>
+                Errors: {result.errors.join("; ")}
+              </Typography.Paragraph>
+            ) : undefined}
+          </>
+        }
+      />
+    );
+  }
+
+  render_quarantine_button(): Rendered {
+    return (
+      <Button
+        danger
+        disabled={this.state.quarantineRunning}
+        onClick={() =>
+          this.setState({
+            quarantineModalOpen: true,
+            quarantineResult: undefined,
+          })
+        }
+      >
+        <Icon
+          name={this.state.quarantineRunning ? "sync" : "stop"}
+          spin={this.state.quarantineRunning}
+        />{" "}
+        Quarantine Billing/Resources...
+      </Button>
     );
   }
 
@@ -212,9 +390,15 @@ export class Ban extends Component<Props, State> {
       <div>
         <FreshAuthModal
           open={this.state.freshAuthOpen}
-          onCancel={() => this.setState({ freshAuthOpen: false })}
+          onCancel={() =>
+            this.setState({ freshAuthOpen: false, freshAuthAction: undefined })
+          }
           onSuccess={async () => {
-            await this.do_request({ fromFreshAuth: true });
+            if (this.state.freshAuthAction === "quarantine") {
+              await this.quarantine({ fromFreshAuth: true });
+            } else {
+              await this.do_request({ fromFreshAuth: true });
+            }
           }}
         />
         <b>
@@ -227,7 +411,12 @@ export class Ban extends Component<Props, State> {
         <br />
         {this.render_error()}
         {this.render_ban_modal()}
+        {this.render_quarantine_modal()}
+        {this.render_quarantine_result()}
         {this.render_ban_button()}
+        <br />
+        <br />
+        {this.render_quarantine_button()}
         <br />
         <br />
       </div>
