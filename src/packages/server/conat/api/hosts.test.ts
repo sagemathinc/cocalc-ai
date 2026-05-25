@@ -26,6 +26,7 @@ let hostConnectionGetHostRuntimeDeploymentStatusMock: jest.Mock;
 let hostConnectionStartHostMock: jest.Mock;
 let hostConnectionStopHostMock: jest.Mock;
 let hostConnectionRestartHostMock: jest.Mock;
+let hostConnectionBackupHostProjectsMock: jest.Mock;
 let hostConnectionDrainHostMock: jest.Mock;
 let hostConnectionRemoveHostAccessMock: jest.Mock;
 let hostConnectionRefreshHostCloudStateMock: jest.Mock;
@@ -346,6 +347,8 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
       startHost: (...args: any[]) => hostConnectionStartHostMock(...args),
       stopHost: (...args: any[]) => hostConnectionStopHostMock(...args),
       restartHost: (...args: any[]) => hostConnectionRestartHostMock(...args),
+      backupHostProjects: (...args: any[]) =>
+        hostConnectionBackupHostProjectsMock(...args),
       drainHost: (...args: any[]) => hostConnectionDrainHostMock(...args),
       removeHostAccess: (...args: any[]) =>
         hostConnectionRemoveHostAccessMock(...args),
@@ -582,6 +585,14 @@ beforeEach(() => {
     service: "persist",
     stream_name: "lro:remote-restart-op",
     kind: "host-restart",
+  }));
+  hostConnectionBackupHostProjectsMock = jest.fn(async () => ({
+    op_id: "remote-backup-all-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-backup-all-op",
+    kind: "host-backup-all",
   }));
   hostConnectionDrainHostMock = jest.fn(async () => ({
     op_id: "remote-drain-op",
@@ -1030,7 +1041,8 @@ describe("hosts.listHostProjects", () => {
 
   it("adds the risk filter when requested", async () => {
     const listSqls: string[] = [];
-    queryMock.mockImplementation(async (sql: string, _params: any[]) => {
+    const listParams: any[][] = [];
+    queryMock.mockImplementation(async (sql: string, params: any[]) => {
       if (sql.includes("FROM project_hosts")) {
         return {
           rows: [
@@ -1046,6 +1058,7 @@ describe("hosts.listHostProjects", () => {
       }
       if (sql.includes("LEFT(COALESCE(title")) {
         listSqls.push(sql);
+        listParams.push(params);
         return { rows: PROJECT_ROWS_PAGE_1.slice(0, 1) };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -1070,6 +1083,9 @@ describe("hosts.listHostProjects", () => {
     const baseCount = (baseSql.match(/last_backup IS NULL/g) || []).length;
     const riskCount = (riskSql.match(/last_backup IS NULL/g) || []).length;
     expect(riskCount).toBeGreaterThan(baseCount);
+    expect(listParams[0]).toEqual([HOST_ID, 5]);
+    expect(listParams[1]).toEqual([HOST_ID, 5]);
+    expect(riskSql).toContain("INTERVAL '1 minute'");
   });
 
   it("adds state filters when requested", async () => {
@@ -3725,8 +3741,9 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
     delete process.env.COCALC_CLUSTER_BAY_IDS;
   });
 
-  it("queues host-scoped project stop/restart actions with a snapshot target set", async () => {
-    const { stopHostProjects, restartHostProjects } = await import("./hosts");
+  it("queues host-scoped project stop/restart/backup actions with a snapshot target set", async () => {
+    const { stopHostProjects, restartHostProjects, backupHostProjects } =
+      await import("./hosts");
 
     await stopHostProjects({
       account_id: ACCOUNT_ID,
@@ -3738,6 +3755,11 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
       account_id: ACCOUNT_ID,
       id: HOST_ID,
       project_state: "opened",
+    });
+    await backupHostProjects({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      parallel: 3,
     });
 
     expect(createLroMock).toHaveBeenNthCalledWith(
@@ -3770,6 +3792,32 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
           projects: [
             { project_id: "proj-1", state: "running" },
             { project_id: "proj-2", state: "running" },
+          ],
+        }),
+      }),
+    );
+    expect(createLroMock).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        kind: "host-backup-all",
+        scope_type: "host",
+        scope_id: HOST_ID,
+        input: expect.objectContaining({
+          id: HOST_ID,
+          parallel: 3,
+          projects: [
+            expect.objectContaining({
+              project_id: "proj-1",
+              state: "running",
+              provisioned: true,
+              needs_backup: true,
+            }),
+            expect.objectContaining({
+              project_id: "proj-2",
+              state: "running",
+              provisioned: true,
+              needs_backup: true,
+            }),
           ],
         }),
       }),

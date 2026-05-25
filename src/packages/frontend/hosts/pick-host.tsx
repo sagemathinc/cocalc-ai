@@ -34,6 +34,7 @@ import {
   hostPressureRank,
 } from "./pressure-ui";
 import { isSpotHost, SpotHostTag } from "./spot-ui";
+import { HostReliabilityButton } from "./components/host-reliability-button";
 
 const STATUS_COLOR = {
   stopped: "red",
@@ -618,6 +619,9 @@ export function HostPickerPanel({
                     detailMode="popover"
                     showNormal
                   />
+                  <Space wrap>
+                    <HostReliabilityButton host={host} compact />
+                  </Space>
                   {isMove && host.id === currentHostId && (
                     <Typography.Text type="secondary">
                       This {projectLabel.toLowerCase()} is already on this host.

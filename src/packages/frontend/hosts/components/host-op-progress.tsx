@@ -23,6 +23,7 @@ const KIND_LABELS: Record<string, string> = {
   "host-stop": "Stop",
   "host-restart": "Restart",
   "host-drain": "Drain",
+  "host-backup-all": "Backup projects",
   "host-reconcile-software": "Reconcile",
   "host-upgrade-software": "Upgrade",
   "host-deprovision": "Deprovision",
@@ -66,6 +67,16 @@ const BACKUP_PHASES = [
   BASE_PHASES[3],
 ] as const;
 
+const BACKUP_ONLY_PHASES = [
+  BASE_PHASES[0],
+  {
+    key: "backups",
+    label: "Backups",
+    description: "Creating project backups",
+  },
+  BASE_PHASES[3],
+] as const;
+
 const DRAIN_PHASES = [
   BASE_PHASES[0],
   BASE_PHASES[1],
@@ -99,6 +110,8 @@ function phaseDefs(kind?: string): readonly PhaseDef[] {
     case "host-deprovision":
     case "host-delete":
       return BACKUP_PHASES;
+    case "host-backup-all":
+      return BACKUP_ONLY_PHASES;
     case "host-drain":
       return DRAIN_PHASES;
     default:
@@ -114,7 +127,8 @@ function toTimestamp(value?: Date | string | null): number | undefined {
 }
 
 function progressPercent(op: HostLroState): number | undefined {
-  const progress = op.last_progress?.progress;
+  const progress =
+    op.last_progress?.progress ?? op.summary?.progress_summary?.progress;
   if (progress != null) {
     return Math.max(0, Math.min(100, Math.round(progress)));
   }
@@ -318,6 +332,9 @@ function kindInputTags(op: HostLroState) {
     if (input.force) tags.push("force=true");
     if (input.allow_offline) tags.push("allow_offline=true");
     if (input.parallel) tags.push(`parallel=${input.parallel}`);
+  }
+  if (kind === "host-backup-all" && input.parallel) {
+    tags.push(`parallel=${input.parallel}`);
   }
   if (
     (kind === "host-stop" ||

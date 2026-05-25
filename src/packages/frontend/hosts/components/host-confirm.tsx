@@ -73,7 +73,7 @@ export function confirmHostStop({
   const hostName = host.name ?? "Host";
   const { total, provisioned, running, upToDate, needsBackup } =
     getBackupCounts(host);
-  const risky = needsBackup + running;
+  const risky = needsBackup;
   const state = { skip: false };
   Modal.confirm({
     title: `Stop ${hostName}?`,
@@ -91,8 +91,9 @@ export function confirmHostStop({
           <div style={{ marginTop: 6 }}>
             <Typography.Text type="secondary">
               Assigned: {total} · Provisioned: {provisioned} · Running:{" "}
-              {running} · Backed up: {upToDate}/{provisioned}
-              {risky > 0 ? ` · Needs backup: ${risky}` : ""}
+              {running} · Covered: {upToDate}/{provisioned}
+              {needsBackup > 0 ? ` · Exposure: ${needsBackup}` : ""}
+              {running > 0 ? ` · Final backups on stop: ${running}` : ""}
             </Typography.Text>
           </div>
         )}
@@ -152,8 +153,8 @@ export function confirmHostDrain({
           <div style={{ marginTop: 6 }}>
             <Typography.Text type="secondary">
               Assigned: {total} · Provisioned: {provisioned} · Running:{" "}
-              {running} · Backed up: {upToDate}/{provisioned}
-              {needsBackup > 0 ? ` · Needs backup: ${needsBackup}` : ""}
+              {running} · Covered: {upToDate}/{provisioned}
+              {needsBackup > 0 ? ` · Exposure: ${needsBackup}` : ""}
             </Typography.Text>
           </div>
         )}
@@ -256,7 +257,7 @@ export function confirmHostDeprovision({
               <Typography.Text type="secondary">
                 Host is off, so backups cannot run. Start this host if you want
                 to ensure {needs} provisioned project
-                {needs === 1 ? "" : "s"} are properly backed up.
+                {needs === 1 ? "" : "s"} are covered by a recent backup.
               </Typography.Text>
               <Typography.Paragraph
                 type="secondary"
@@ -269,8 +270,8 @@ export function confirmHostDeprovision({
                 <div style={{ marginTop: 6 }}>
                   <Typography.Text type="secondary">
                     Assigned: {total} · Provisioned: {provisioned} · Running:{" "}
-                    {running} · Backed up: {upToDate}/{provisioned}
-                    {needs > 0 ? ` · Needs backup: ${needs}` : ""}
+                    {running} · Covered: {upToDate}/{provisioned}
+                    {needs > 0 ? ` · Exposure: ${needs}` : ""}
                   </Typography.Text>
                 </div>
               )}

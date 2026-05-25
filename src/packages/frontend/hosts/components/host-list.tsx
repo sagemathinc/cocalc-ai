@@ -68,7 +68,8 @@ import {
 import { currentHostRuntimeExceptionSummary } from "../utils/runtime-exceptions";
 import { HostActionsPanel } from "./host-actions-panel";
 import { HostConfigurationCell } from "./host-configuration-cell";
-import { HostAccessPolicySummary } from "./host-access-policy";
+import { HostAccessPolicyTags } from "./host-access-policy";
+import { HostReliabilityButton } from "./host-reliability-button";
 
 const STATUS_ORDER = [
   "running",
@@ -248,6 +249,7 @@ function HostIdentityCell({
           </Button>
         </Popover>
       ) : null}
+      <HostAccessPolicyTags host={host} />
     </Space>
   );
 }
@@ -327,6 +329,7 @@ type HostListViewModel = {
   onStop: (id: string, opts?: HostStopOptions) => void;
   onRestart: (id: string, mode: "reboot" | "hard") => void;
   onDrain: (id: string, opts?: HostDrainOptions) => void;
+  onBackup: (id: string) => void;
   onDelete: (id: string, opts?: HostDeleteOptions) => void;
   onToggleCreatePanel?: () => void;
   onRefresh: () => void;
@@ -419,6 +422,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     onStop,
     onRestart,
     onDrain,
+    onBackup,
     onDelete,
     onToggleCreatePanel,
     onRefresh,
@@ -782,9 +786,9 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       title: "Host",
       dataIndex: "name",
       key: "name",
-      width: 190,
+      width: 240,
       onCell: () => ({
-        style: { minWidth: 190, maxWidth: 190 },
+        style: { minWidth: 240, maxWidth: 240 },
       }),
       sorter: true,
       sortDirections: ["ascend", "descend"],
@@ -810,14 +814,6 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       ),
     },
     {
-      title: "Access",
-      key: "access",
-      width: 210,
-      render: (_: string, host: Host) => (
-        <HostAccessPolicySummary host={host} compact />
-      ),
-    },
-    {
       title: "Price",
       key: "price",
       width: 240,
@@ -829,12 +825,18 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       key: "resources",
       width: 250,
       render: (_: string, host: Host) =>
-        host.deleted ||
-        host.status === "deprovisioned" ||
-        (host.status === "off" && !host.provider_instance_id) ? (
+        host.deleted ? (
           <Typography.Text type="secondary">-</Typography.Text>
         ) : (
-          <HostCurrentMetrics host={host} compact dense />
+          <Space orientation="vertical" size={4}>
+            {host.status === "deprovisioned" ||
+            (host.status === "off" && !host.provider_instance_id) ? (
+              <Typography.Text type="secondary">-</Typography.Text>
+            ) : (
+              <HostCurrentMetrics host={host} compact dense />
+            )}
+            <HostReliabilityButton host={host} compact />
+          </Space>
         ),
     },
     {
@@ -882,6 +884,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             onStop={(opts) => onStop(host.id, opts)}
             onRestart={() => setRestartTarget(host)}
             onDrain={(opts) => onDrain(host.id, opts)}
+            onBackup={() => onBackup(host.id)}
             onDelete={(opts) => onDelete(host.id, opts)}
             onCancelOp={onCancelOp}
             onEdit={() => onEdit(host)}
@@ -1351,6 +1354,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
                   setRestartTarget(target);
                 }}
                 onDrain={onDrain}
+                onBackup={onBackup}
                 onDelete={onDelete}
                 onCancelOp={onCancelOp}
                 onRefreshCloudStatus={onRefreshCloudStatus}

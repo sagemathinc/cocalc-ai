@@ -1,4 +1,5 @@
 import {
+  CloudUploadOutlined,
   CloudSyncOutlined,
   DeleteOutlined,
   EditOutlined,
@@ -44,6 +45,7 @@ type HostActionsPanelProps = {
   onStop: (opts?: HostStopOptions) => void;
   onRestart: () => void;
   onDrain: (opts?: HostDrainOptions) => void;
+  onBackup: () => void;
   onDelete: (opts?: HostDeleteOptions) => void;
   onCancelOp?: (op_id: string) => void;
   onEdit: () => void;
@@ -98,6 +100,7 @@ export function HostActionsPanel({
   onStop,
   onRestart,
   onDrain,
+  onBackup,
   onDelete,
   onCancelOp,
   onEdit,
@@ -191,6 +194,10 @@ export function HostActionsPanel({
     host.machine.cloud !== "self-host" &&
     host.machine.cloud !== "local" &&
     !hostOpActive;
+  const canBackupProjects =
+    !isDeleted &&
+    !hostOpActive &&
+    (host.status === "running" || host.status === "error");
   const actionButtonStyle = {
     justifyContent: "flex-start",
     height: 30,
@@ -345,6 +352,27 @@ export function HostActionsPanel({
   const maintenanceActions = canManageLifecycle ? (
     <Space direction="vertical" size={2} style={{ width: "100%" }}>
       <SectionTitle>Maintenance</SectionTitle>
+      <Popconfirm
+        title="Backup all projects on this host?"
+        description="This creates backups for provisioned or running projects assigned to this host. Stopped unprovisioned projects are skipped."
+        okText="Backup projects"
+        cancelText="Cancel"
+        disabled={!canBackupProjects}
+        onConfirm={() => {
+          closeMore();
+          onBackup();
+        }}
+      >
+        <Button
+          block
+          type="text"
+          disabled={!canBackupProjects}
+          icon={<CloudUploadOutlined />}
+          style={actionButtonStyle}
+        >
+          Backup projects
+        </Button>
+      </Popconfirm>
       <Button
         block
         type="text"

@@ -1914,6 +1914,60 @@ export function registerHostCommand(
     });
   }
 
+  async function runHostProjectsBackupCommand(
+    hostIdentifier: string,
+    opts: {
+      parallel?: string;
+      wait?: boolean;
+    },
+    command: Command,
+  ) {
+    await withContext(command, "host projects-backup", async (ctx) => {
+      const h = await resolveHost(ctx, hostIdentifier);
+      const parallel =
+        parseOptionalPositiveInteger(opts.parallel, "--parallel") ?? undefined;
+      const op = await ctx.hub.hosts.backupHostProjects({
+        id: h.id,
+        parallel,
+      });
+
+      if (!opts.wait) {
+        return {
+          host_id: h.id,
+          op_id: op.op_id,
+          status: "queued",
+          parallel,
+        };
+      }
+
+      const summary = await waitForLro(ctx, op.op_id, {
+        timeoutMs: ctx.timeoutMs,
+        pollMs: ctx.pollMs,
+        onUpdate: createHostLroProgressReporter(ctx, {
+          host_id: h.id,
+          name: h.name,
+          op_id: op.op_id,
+        }),
+      });
+      if (summary.timedOut) {
+        throw new Error(
+          `timeout waiting for backup op ${op.op_id}; last status=${summary.status}`,
+        );
+      }
+      if (summary.status !== "succeeded") {
+        throw new Error(
+          `backup failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
+        );
+      }
+      return {
+        host_id: h.id,
+        op_id: op.op_id,
+        status: summary.status,
+        ...(summary.result ?? {}),
+      };
+    });
+  }
+
   async function runManagedComponentRolloutCommand(
     contextLabel: string,
     hostIdentifier: string,
@@ -1967,6 +2021,24 @@ export function registerHostCommand(
       };
     });
   }
+
+  host
+    .command("projects-backup <host>")
+    .description(
+      "backup projects on one host (skips unprovisioned and up-to-date projects)",
+    )
+    .option("--parallel <n>", "maximum project backups to run in parallel")
+    .option("--wait", "wait for completion")
+    .action(
+      async (
+        hostIdentifier: string,
+        opts: {
+          parallel?: string;
+          wait?: boolean;
+        },
+        command: Command,
+      ) => await runHostProjectsBackupCommand(hostIdentifier, opts, command),
+    );
 
   host
     .command("projects-stop <host>")

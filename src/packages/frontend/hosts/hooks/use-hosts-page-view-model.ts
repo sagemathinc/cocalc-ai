@@ -15,6 +15,7 @@ import { useHostFormValues } from "./use-host-form-values";
 import { useHostListViewModel } from "./use-host-list-view-model";
 import { useHosts } from "./use-hosts";
 import { useHostLog } from "./use-host-log";
+import { useHostAvailability } from "./use-host-availability";
 import { useHostOps } from "./use-host-ops";
 import { useHostProviders } from "./use-host-providers";
 import { useHostSelection } from "./use-host-selection";
@@ -377,6 +378,7 @@ export const useHostsPageViewModel = () => {
     setHostPoolAccess,
     stopHostProjects,
     restartHostProjects,
+    backupHostProjects,
   } = useHostActions({
     hub,
     setHosts,
@@ -586,6 +588,14 @@ export const useHostsPageViewModel = () => {
     enabled: drawerOpen,
     limit: 50,
   });
+  const { availability, loadingAvailability } = useHostAvailability(
+    hub,
+    selected?.id,
+    {
+      enabled: drawerOpen,
+      days: 90,
+    },
+  );
   const runtimeLogViewer = useHostRuntimeLog(hub, {
     hostId: selected?.id,
     enabled: drawerOpen,
@@ -1673,6 +1683,7 @@ export const useHostsPageViewModel = () => {
       runFreshAuthAction(async () => {
         await drainHost(id, opts);
       }),
+    onBackup: (id: string) => backupHostProjects(id),
     onDelete: deprovisionOrDeleteHost,
     onRefresh: refreshHostsNow,
     onCancelOp: cancelHostOp,
@@ -1746,6 +1757,8 @@ export const useHostsPageViewModel = () => {
     onCancelOp: cancelHostOp,
     hostLog,
     loadingLog,
+    availability,
+    loadingAvailability,
     softwareVersions: {
       ...softwareVersions,
       configuredCatalog: runtimeVersionCatalog.configured,

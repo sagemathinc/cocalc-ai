@@ -9,6 +9,7 @@ import type {
   HostRootfsImage,
   HostSoftwareArtifact,
   HostSoftwareAvailableVersion,
+  HostAvailabilityReport,
 } from "@cocalc/conat/hub/api/hosts";
 import type {
   HostRuntimeLogSource,
@@ -45,6 +46,8 @@ type UseHostDrawerViewModelArgs = {
   onCancelOp?: (op_id: string) => void;
   hostLog: HostLogEntry[];
   loadingLog: boolean;
+  availability?: HostAvailabilityReport;
+  loadingAvailability?: boolean;
   softwareVersions?: {
     loading: boolean;
     configured: HostSoftwareMap;
@@ -198,6 +201,8 @@ export const useHostDrawerViewModel = ({
   onCancelOp,
   hostLog,
   loadingLog,
+  availability,
+  loadingAvailability,
   softwareVersions,
   runtimeDeployments,
   runtimeLogViewer,
@@ -240,6 +245,8 @@ export const useHostDrawerViewModel = ({
     onCancelOp,
     hostLog,
     loadingLog,
+    availability,
+    loadingAvailability,
     softwareVersions,
     runtimeDeployments,
     runtimeLogViewer,

@@ -220,12 +220,15 @@ import {
 } from "@cocalc/server/inter-bay/project-secrets";
 import {
   HOST_DANGEROUS_INTERNAL_AUTH,
+  annotateHostAvailabilityEvent,
   deleteHost,
   deleteHostRootfsImage,
+  backupHostProjects,
   drainHost,
   forceDeprovisionHost,
   gcDeletedHostRootfsImages,
   getBackupConfigLocal,
+  getHostAvailability,
   getHostLog,
   getHostManagedComponentStatus,
   getHostMetricsHistory,
@@ -1329,6 +1332,14 @@ async function startHostConnectionService(): Promise<void> {
         id,
         limit,
       }),
+    getHostAvailability: async ({ account_id, id, days }) =>
+      await getHostAvailability({
+        account_id,
+        id,
+        days,
+      }),
+    annotateHostAvailabilityEvent: async (opts) =>
+      await annotateHostAvailabilityEvent(opts),
     getHostRuntimeLog: async ({ account_id, id, lines, source }) =>
       await getHostRuntimeLog({
         account_id,
@@ -1369,6 +1380,12 @@ async function startHostConnectionService(): Promise<void> {
         account_id,
         id,
         mode,
+      }),
+    backupHostProjects: async ({ account_id, id, parallel }) =>
+      await backupHostProjects({
+        account_id,
+        id,
+        parallel,
       }),
     drainHost: async ({
       account_id,

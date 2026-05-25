@@ -44,6 +44,9 @@ import type {
   HostEffectiveAccessRole,
   AcpAdmissionDenialRecord,
   ServiceAdmissionDenialRecord,
+  HostAvailabilityReport,
+  HostAvailabilityEvent,
+  HostAvailabilityCategory,
 } from "@cocalc/conat/hub/api/hosts";
 import { getAccountProductAccessTrust } from "@cocalc/server/accounts/trusted-product-access";
 import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
@@ -291,6 +294,10 @@ import {
   listManagedRootfsReleaseLifecycleInternal,
   recordManagedRootfsReleaseReplicaInternal,
 } from "./hosts-rootfs-releases";
+import {
+  annotateHostAvailabilityEvent as annotateHostAvailabilityEventInternal,
+  getHostAvailabilityReport,
+} from "@cocalc/server/hosts/availability";
 function pool() {
   return getPool();
 }
@@ -487,6 +494,7 @@ const HOST_START_LRO_KIND = "host-start";
 const HOST_STOP_LRO_KIND = "host-stop";
 const HOST_RESTART_LRO_KIND = "host-restart";
 const HOST_DRAIN_LRO_KIND = "host-drain";
+const HOST_BACKUP_ALL_LRO_KIND = "host-backup-all";
 const HOST_RECONCILE_LRO_KIND = "host-reconcile-software";
 const HOST_RECONCILE_RUNTIME_DEPLOYMENTS_LRO_KIND =
   "host-reconcile-runtime-deployments";
@@ -499,6 +507,7 @@ const HOST_DEPROVISION_LRO_KIND = "host-deprovision";
 const HOST_DELETE_LRO_KIND = "host-delete";
 const HOST_FORCE_DEPROVISION_LRO_KIND = "host-force-deprovision";
 const HOST_REMOVE_CONNECTOR_LRO_KIND = "host-remove-connector";
+const BACKUP_EXPOSURE_GRACE_MINUTES = 5;
 // Non-serializable capability used only by trusted in-process inter-bay
 // handlers. Public Conat API callers cannot supply this value over JSON.
 export const HOST_DANGEROUS_INTERNAL_AUTH = Symbol(
@@ -627,16 +636,20 @@ async function loadHostBackupStatus(
         ) AS running,
         COUNT(*) FILTER (
           WHERE provisioned IS TRUE
-            AND COALESCE(state->>'state', '') NOT IN ('running','starting')
             AND last_backup IS NOT NULL
-            AND (last_edited IS NULL OR last_edited <= last_backup)
+            AND (
+              last_edited IS NULL
+              OR last_edited <= last_backup + ($2::int * INTERVAL '1 minute')
+            )
         ) AS provisioned_up_to_date,
         COUNT(*) FILTER (
           WHERE provisioned IS TRUE
-            AND COALESCE(state->>'state', '') NOT IN ('running','starting')
             AND (
               last_backup IS NULL
-              OR (last_edited IS NOT NULL AND last_edited > last_backup)
+              OR (
+                last_edited IS NOT NULL
+                AND last_edited > last_backup + ($2::int * INTERVAL '1 minute')
+              )
             )
         ) AS provisioned_needs_backup
       FROM projects
@@ -644,7 +657,7 @@ async function loadHostBackupStatus(
         AND host_id = ANY($1)
       GROUP BY host_id
     `,
-    [hostIds],
+    [hostIds, BACKUP_EXPOSURE_GRACE_MINUTES],
   );
   const map = new Map<string, HostBackupStatus>();
   for (const row of rows) {
@@ -654,6 +667,7 @@ async function loadHostBackupStatus(
       running: Number(row.running ?? 0),
       provisioned_up_to_date: Number(row.provisioned_up_to_date ?? 0),
       provisioned_needs_backup: Number(row.provisioned_needs_backup ?? 0),
+      backup_exposure_grace_minutes: BACKUP_EXPOSURE_GRACE_MINUTES,
     });
   }
   return map;
@@ -929,6 +943,7 @@ async function markHostDeprovisioned(row: any, action: string) {
         [row.id, "deprovisioned", new Date(), nextMetadata],
       );
     },
+    markHostProjectsUnprovisioned,
     clearProjectHostMetrics,
     clearHostRuntimeDeployments: async ({ host_id }) => {
       await clearProjectHostRuntimeDeployments({
@@ -939,6 +954,20 @@ async function markHostDeprovisioned(row: any, action: string) {
     logCloudVmEvent,
     normalizeProviderId,
   });
+}
+
+async function markHostProjectsUnprovisioned(host_id: string) {
+  await pool().query(
+    `
+      UPDATE projects
+      SET provisioned=FALSE,
+          provisioned_checked_at=NOW()
+      WHERE host_id=$1
+        AND deleted IS NOT TRUE
+        AND provisioned IS DISTINCT FROM FALSE
+    `,
+    [host_id],
+  );
 }
 
 async function loadHostForView(id: string, account_id?: string): Promise<any> {
@@ -3663,6 +3692,7 @@ export async function listHostProjectsLocalSnapshot({
     running: 0,
     provisioned_up_to_date: 0,
     provisioned_needs_backup: 0,
+    backup_exposure_grace_minutes: BACKUP_EXPOSURE_GRACE_MINUTES,
   };
 
   const resultRows: HostProjectRow[] = rows.map((row) => ({
@@ -3711,16 +3741,16 @@ function buildHostProjectsBaseQuery({
   project_state?: string;
 }) {
   const needsBackupSql = `
-    ${HOST_PROJECT_RUNNING_STATES_SQL}
-    OR (
-      provisioned IS TRUE
-      AND (
-        last_backup IS NULL
-        OR (last_edited IS NOT NULL AND last_edited > last_backup)
+    provisioned IS TRUE
+    AND (
+      last_backup IS NULL
+      OR (
+        last_edited IS NOT NULL
+        AND last_edited > last_backup + ($2::int * INTERVAL '1 minute')
       )
     )
   `;
-  const params: any[] = [host_id];
+  const params: any[] = [host_id, BACKUP_EXPOSURE_GRACE_MINUTES];
   const filters: string[] = ["deleted IS NOT true", "host_id = $1"];
   const normalizedStateFilter = normalizeHostProjectStateFilter(state_filter);
 
@@ -3958,6 +3988,54 @@ async function queueHostProjectsAction({
   });
 }
 
+export async function backupHostProjects({
+  account_id,
+  id,
+  parallel,
+}: {
+  account_id?: string;
+  id: string;
+  parallel?: number;
+}): Promise<HostLroResponse> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .backupHostProjects({
+        account_id,
+        id,
+        parallel,
+      });
+  }
+  const row = await loadHostForStartStop(id, account_id);
+  const snapshot = await listHostProjectsLocalSnapshot({
+    id: row.id,
+    state_filter: "all",
+  });
+  const projects = snapshot.rows
+    .sort(compareHostProjectRows)
+    .map((project) => ({
+      project_id: project.project_id,
+      state: project.state ?? "",
+      provisioned: project.provisioned,
+      last_edited: project.last_edited,
+      last_backup: project.last_backup,
+      needs_backup: project.needs_backup,
+    }));
+  return await createHostLro({
+    kind: HOST_BACKUP_ALL_LRO_KIND,
+    row,
+    account_id,
+    input: {
+      id: row.id,
+      account_id,
+      parallel,
+      projects,
+    },
+    dedupe_key: `${HOST_BACKUP_ALL_LRO_KIND}:${row.id}`,
+  });
+}
+
 export async function stopHostProjects({
   account_id,
   id,
@@ -4067,6 +4145,81 @@ export async function getHostLog({
     spec: entry.spec ?? null,
     error: entry.error ?? null,
   }));
+}
+
+export async function getHostAvailability({
+  account_id,
+  id,
+  days,
+}: {
+  account_id?: string;
+  id: string;
+  days?: number;
+}): Promise<HostAvailabilityReport> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .getHostAvailability({
+        account_id,
+        id,
+        days,
+      });
+  }
+  await loadHostForView(id, account_id);
+  return await getHostAvailabilityReport({ host_id: id, days });
+}
+
+export async function annotateHostAvailabilityEvent({
+  account_id,
+  id,
+  event_id,
+  admin_note,
+  admin_note_visibility,
+  category,
+  planned,
+  summary,
+}: {
+  account_id?: string;
+  id: string;
+  event_id: string;
+  admin_note?: string | null;
+  admin_note_visibility?: "private" | "public";
+  category?: HostAvailabilityCategory;
+  planned?: boolean;
+  summary?: string | null;
+}): Promise<HostAvailabilityEvent> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .annotateHostAvailabilityEvent({
+        account_id,
+        id,
+        event_id,
+        admin_note,
+        admin_note_visibility,
+        category,
+        planned,
+        summary,
+      });
+  }
+  const row = await loadHostForView(id, account_id);
+  if (account_id) {
+    await requireLoadedHostPermission({
+      row,
+      account_id,
+      permission: "manage-access",
+    });
+  }
+  return await annotateHostAvailabilityEventInternal({
+    event_id,
+    admin_note,
+    admin_note_visibility,
+    category,
+    planned,
+    summary,
+  });
 }
 
 function normalizeHostRuntimeLogLines(lines?: number): number {
@@ -7001,6 +7154,7 @@ export async function deleteHostInternal({
         [id, "deprovisioned", "stopped"],
       );
     },
+    markHostProjectsUnprovisioned,
     clearHostRuntimeDeployments: async ({ host_id }) => {
       await clearProjectHostRuntimeDeployments({
         scope_type: "host",

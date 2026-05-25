@@ -1393,12 +1393,15 @@ export type HostConnectionMethod =
   | "set-host-owner-spend-limits"
   | "set-host-pool-access"
   | "get-host-log"
+  | "get-host-availability"
+  | "annotate-host-availability-event"
   | "get-host-runtime-log"
   | "get-host-metrics-history"
   | "get-host-runtime-deployment-status"
   | "start-host"
   | "stop-host"
   | "restart-host"
+  | "backup-host-projects"
   | "drain-host"
   | "refresh-host-cloud-state"
   | "upgrade-host-software"
@@ -1754,6 +1757,12 @@ export interface InterBayHostConnectionApi {
   getHostLog: (
     opts: Parameters<Hosts["getHostLog"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getHostLog"]>>>;
+  getHostAvailability: (
+    opts: Parameters<Hosts["getHostAvailability"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["getHostAvailability"]>>>;
+  annotateHostAvailabilityEvent: (
+    opts: Parameters<Hosts["annotateHostAvailabilityEvent"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["annotateHostAvailabilityEvent"]>>>;
   getHostRuntimeLog: (
     opts: Parameters<Hosts["getHostRuntimeLog"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getHostRuntimeLog"]>>>;
@@ -1772,6 +1781,9 @@ export interface InterBayHostConnectionApi {
   restartHost: (
     opts: Parameters<Hosts["restartHost"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["restartHost"]>>>;
+  backupHostProjects: (
+    opts: Parameters<Hosts["backupHostProjects"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["backupHostProjects"]>>>;
   drainHost: (
     opts: Parameters<Hosts["drainHost"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["drainHost"]>>>;
@@ -1970,6 +1982,11 @@ const HOST_CONNECTION_METHOD_SPECS = [
   },
   { name: "setHostPoolAccess", method: "set-host-pool-access" },
   { name: "getHostLog", method: "get-host-log" },
+  { name: "getHostAvailability", method: "get-host-availability" },
+  {
+    name: "annotateHostAvailabilityEvent",
+    method: "annotate-host-availability-event",
+  },
   { name: "getHostRuntimeLog", method: "get-host-runtime-log" },
   { name: "getHostMetricsHistory", method: "get-host-metrics-history" },
   {
@@ -1979,6 +1996,7 @@ const HOST_CONNECTION_METHOD_SPECS = [
   { name: "startHost", method: "start-host" },
   { name: "stopHost", method: "stop-host" },
   { name: "restartHost", method: "restart-host" },
+  { name: "backupHostProjects", method: "backup-host-projects" },
   { name: "drainHost", method: "drain-host" },
   { name: "refreshHostCloudState", method: "refresh-host-cloud-state" },
   { name: "upgradeHostSoftware", method: "upgrade-host-software" },

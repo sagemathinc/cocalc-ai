@@ -158,9 +158,8 @@ export function HostProjectsTable({
     const running = summary.running ?? 0;
     const upToDate = summary.provisioned_up_to_date ?? 0;
     const needs = summary.provisioned_needs_backup ?? 0;
-    const counts = `Assigned ${total} · Provisioned ${provisioned} · Running ${running} · Backed up ${upToDate}/${provisioned}`;
-    const risks = needs + running;
-    return risks > 0 ? `${counts} · Needs backup ${risks}` : counts;
+    const counts = `Assigned ${total} · Provisioned ${provisioned} · Running ${running} · Covered ${upToDate}/${provisioned}`;
+    return needs > 0 ? `${counts} · Exposure ${needs}` : counts;
   }, [summary]);
 
   return (

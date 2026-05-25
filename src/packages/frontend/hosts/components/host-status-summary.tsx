@@ -309,7 +309,7 @@ function backupSummary(host: Host): { value: string; tone: Tone } {
   if (!status || !status.total) return { value: "No projects", tone: "gray" };
   const provisioned = status.provisioned ?? 0;
   const upToDate = status.provisioned_up_to_date ?? 0;
-  const needs = (status.provisioned_needs_backup ?? 0) + (status.running ?? 0);
+  const needs = status.provisioned_needs_backup ?? 0;
   if (!provisioned) return { value: `${status.total} assigned`, tone: "gray" };
   return {
     value: `${upToDate}/${provisioned}`,
@@ -380,7 +380,8 @@ function SummaryRow({
 }
 
 function activeOpPercent(op: HostLroState): number | undefined {
-  const progress = op.last_progress?.progress;
+  const progress =
+    op.last_progress?.progress ?? op.summary?.progress_summary?.progress;
   if (progress == null) return undefined;
   return Math.max(0, Math.min(100, Math.round(progress)));
 }
@@ -1068,22 +1069,19 @@ function DetailsPopover({
               />
               <DetailRow
                 icon={<InfoCircleOutlined />}
-                label="Needs final backup"
-                value={
-                  (backupStatus?.provisioned_needs_backup ?? 0) +
-                  (backupStatus?.running ?? 0)
-                }
+                label="Backup exposure"
+                value={backupStatus?.provisioned_needs_backup ?? 0}
                 tone={
-                  (backupStatus?.provisioned_needs_backup ?? 0) +
-                    (backupStatus?.running ?? 0) >
-                  0
+                  (backupStatus?.provisioned_needs_backup ?? 0) > 0
                     ? "orange"
                     : "green"
                 }
               />
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                Running projects count here until a final backup completes;
-                unprovisioned stopped projects are not backup candidates.
+                Exposure counts provisioned projects whose latest backup is
+                missing or older than their last edit by more than{" "}
+                {backupStatus?.backup_exposure_grace_minutes ?? 5} minutes.
+                Recently backed-up running projects count as covered.
               </Typography.Text>
             </DetailSection>
             <DetailSection
