@@ -24,6 +24,7 @@ import {
 import type { DocsPrivateFilter } from "@cocalc/frontend/docs/private-state/types";
 import { useDocsPrivateState } from "@cocalc/frontend/docs/private-state/use-docs-private-state";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { Tooltip } from "@cocalc/frontend/components";
 import {
   listDocsAppActions,
   revealDocsAction,
@@ -66,33 +67,37 @@ export function ProjectDocsPanel({
   const privateToolbar =
     accountId && layout === "page" ? (
       <Space wrap>
-        <Button
-          icon={<DownloadOutlined />}
-          onClick={async () => {
-            try {
-              const bundle = await exportDocsPrivateStateBundle({
-                accountId,
-              });
-              const blob = new Blob([JSON.stringify(bundle, null, 2)], {
-                type: "application/json",
-              });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = `cocalc-docs-state-${new Date()
-                .toISOString()
-                .slice(0, 10)}.json`;
-              a.click();
-              URL.revokeObjectURL(url);
-              await messageApi.success("Exported private docs state.");
-            } catch (err) {
-              await messageApi.error(`${err}`);
-            }
-          }}
-          size="small"
-        >
-          Export
-        </Button>
+        <Tooltip title="Export your private docs notes and starred pages as a JSON backup or transfer file">
+          <Button
+            icon={<DownloadOutlined />}
+            onClick={async () => {
+              try {
+                const bundle = await exportDocsPrivateStateBundle({
+                  accountId,
+                });
+                const blob = new Blob([JSON.stringify(bundle, null, 2)], {
+                  type: "application/json",
+                });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `cocalc-docs-state-${new Date()
+                  .toISOString()
+                  .slice(0, 10)}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+                await messageApi.success(
+                  "Exported private notes and starred state.",
+                );
+              } catch (err) {
+                await messageApi.error(`${err}`);
+              }
+            }}
+            size="small"
+          >
+            Export
+          </Button>
+        </Tooltip>
         <Upload
           accept="application/json,.json"
           beforeUpload={async (file) => {
@@ -121,9 +126,11 @@ export function ProjectDocsPanel({
           }}
           showUploadList={false}
         >
-          <Button icon={<UploadOutlined />} size="small">
-            Import
-          </Button>
+          <Tooltip title="Import private docs notes and starred pages from a JSON export, merging without duplicate notes">
+            <Button icon={<UploadOutlined />} size="small">
+              Import
+            </Button>
+          </Tooltip>
         </Upload>
       </Space>
     ) : null;

@@ -77,12 +77,16 @@ export default function MultiMarkdownInput({
   disableBlockEditor = true,
   slateExternalMultilinePasteAsCodeBlock = false,
 }: MultiMarkdownInputProps) {
+  const frameContext = useFrameContext();
   const {
     isFocused: isFocusedFrame,
     isVisible,
     project_id,
     path,
-  } = useFrameContext();
+  } = frameContext;
+  const isFrameScoped = Boolean(frameContext.id || project_id || path);
+  const modeSwitchFrameFocused = isFrameScoped ? isFocusedFrame : true;
+  const modeSwitchFrameVisible = isFrameScoped ? isVisible : true;
 
   // We use refs for shiftEnter and onChange to be absolutely
   // 100% certain that if either of these functions is changed,
@@ -242,8 +246,8 @@ export default function MultiMarkdownInput({
             <MarkdownInputModeSwitch
               mode={mode}
               layout="inline"
-              isFocusedFrame={isFocusedFrame}
-              isVisible={isVisible}
+              isFocusedFrame={modeSwitchFrameFocused}
+              isVisible={modeSwitchFrameVisible}
               hideHelp={hideHelp}
               hidden={false}
               overflowEllipsis={overflowEllipsis}
@@ -269,8 +273,8 @@ export default function MultiMarkdownInput({
       ) : (
         <MarkdownInputModeSwitch
           mode={mode}
-          isFocusedFrame={isFocusedFrame}
-          isVisible={isVisible}
+          isFocusedFrame={modeSwitchFrameFocused}
+          isVisible={modeSwitchFrameVisible}
           hideHelp={hideHelp}
           hidden={!!fixedMode || !!hideModeSwitch}
           overflowEllipsis={overflowEllipsis}
