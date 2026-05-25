@@ -753,8 +753,9 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: "admin worker concurrency limit mutation",
   },
   "system.setProjectRootfsImage": {
-    decision: "fresh-auth-required",
-    reason: "RootFS catalog/project mutation",
+    decision: "fresh-auth-not-required",
+    reason:
+      "collaborator-authorized normal project runtime environment selection",
   },
   "system.setSiteSettings": {
     decision: "fresh-auth-required",
