@@ -109,18 +109,18 @@ be concise task pages rather than full manuals.
 
 ### Terminal, Files, And Editors
 
-| Count | Legacy URL                                          | Replacement                                                                                                                      |
-| ----: | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-|     4 | `https://doc.cocalc.com/markdown.html`              | Create `files/markdown` or `editors/markdown`.                                                                                   |
-|     1 | `https://doc.cocalc.com/markdown.html#mentions`     | Create `collaboration/mentions`.                                                                                                 |
-|     1 | `https://doc.cocalc.com/time-travel.html`           | Replace with existing `files/timetravel`.                                                                                        |
-|     1 | `https://doc.cocalc.com/latex.html`                 | Create `latex/build-papers`.                                                                                                     |
-|     1 | `https://doc.cocalc.com/frame-editor.html#edit-rmd` | Create `editors/r-markdown`.                                                                                                     |
-|     1 | `https://doc.cocalc.com/tasks.html`                 | Create `projects/tasks`.                                                                                                         |
-|     1 | `https://doc.cocalc.com/slides.html`                | Create `files/slides`.                                                                                                           |
-|     1 | `https://doc.cocalc.com/whiteboard.html`            | Create `files/whiteboard`.                                                                                                       |
-|     1 | `https://doc.cocalc.com/x11.html`                   | Create `projects/x11`.                                                                                                           |
-|     1 | `https://doc.cocalc.com/explorer.html`              | Create `files/explorer`.                                                                                                         |
+| Count | Legacy URL                                          | Replacement                                    |
+| ----: | --------------------------------------------------- | ---------------------------------------------- |
+|     4 | `https://doc.cocalc.com/markdown.html`              | Create `files/markdown` or `editors/markdown`. |
+|     1 | `https://doc.cocalc.com/markdown.html#mentions`     | Create `collaboration/mentions`.               |
+|     1 | `https://doc.cocalc.com/time-travel.html`           | Replace with existing `files/timetravel`.      |
+|     1 | `https://doc.cocalc.com/latex.html`                 | Create `latex/build-papers`.                   |
+|     1 | `https://doc.cocalc.com/frame-editor.html#edit-rmd` | Create `editors/r-markdown`.                   |
+|     1 | `https://doc.cocalc.com/tasks.html`                 | Create `projects/tasks`.                       |
+|     1 | `https://doc.cocalc.com/slides.html`                | Create `files/slides`.                         |
+|     1 | `https://doc.cocalc.com/whiteboard.html`            | Create `files/whiteboard`.                     |
+|     1 | `https://doc.cocalc.com/x11.html`                   | Create `projects/x11`.                         |
+|     1 | `https://doc.cocalc.com/explorer.html`              | Create `files/explorer`.                       |
 
 ### Projects, Account, And API
 
@@ -223,25 +223,25 @@ be concise task pages rather than full manuals.
 
 ### Editor Help Buttons
 
-| File                                                               | Legacy topics        | Recommended action                                                                                                      |
-| ------------------------------------------------------------------ | -------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `src/packages/frontend/frame-editors/base-editor/actions-base.ts`  | TimeTravel | Replace TimeTravel with existing `files/timetravel`. Terminal help is done. |
-| `src/packages/frontend/frame-editors/terminal-editor/actions.ts`   | terminal   | Done: replaced with `terminal/use-terminal`.                           |
-| `src/packages/frontend/frame-editors/terminal-editor/tour.tsx`     | terminal   | Done: replaced with `terminal/use-terminal`.                           |
-| `src/packages/frontend/frame-editors/jupyter-editor/actions.ts`    | Jupyter              | Done: replaced with `jupyter/use-jupyter`.                                                                              |
-| `src/packages/frontend/jupyter/about.tsx`                          | Jupyter              | Done: replaced with `jupyter/use-jupyter`.                                                                              |
-| `src/packages/frontend/jupyter/browser-actions.ts`                 | custom kernels       | Done: replaced with `jupyter/custom-kernels`.                                                                           |
-| `src/packages/frontend/jupyter/kernel-warning.tsx`                 | kernel terminated    | Create `troubleshooting/jupyter-kernel-terminated`; replace link.                                                       |
-| `src/packages/frontend/frame-editors/markdown-editor/actions.ts`   | Markdown             | Create `files/markdown`; replace link.                                                                                  |
-| `src/packages/frontend/editors/slate/help-modal.tsx`               | Markdown             | Create `editors/rich-text` or `files/markdown`; replace link.                                                           |
-| `src/packages/frontend/frame-editors/latex-editor/actions.ts`      | LaTeX                | Create `latex/build-papers`; replace link.                                                                              |
-| `src/packages/frontend/frame-editors/rmd-editor/actions.ts`        | R Markdown           | Create `editors/r-markdown`; replace link.                                                                              |
-| `src/packages/frontend/editors/task-editor/actions.ts`             | tasks                | Create `projects/tasks`; replace link.                                                                                  |
-| `src/packages/frontend/frame-editors/slides-editor/actions.ts`     | slides               | Create `files/slides`; replace link.                                                                                    |
-| `src/packages/frontend/frame-editors/whiteboard-editor/actions.ts` | whiteboard           | Create `files/whiteboard`; replace link.                                                                                |
-| `src/packages/frontend/frame-editors/x11-editor/actions.ts`        | X11                  | Create `projects/x11`; replace link.                                                                                    |
-| `src/packages/frontend/project/explorer/tour/tour.tsx`             | explorer             | Create `files/explorer`; replace link.                                                                                  |
-| `src/packages/frontend/projects/tour.tsx`                          | project list         | Create `projects/project-list`; replace link.                                                                           |
+| File                                                               | Legacy topics     | Recommended action                                                          |
+| ------------------------------------------------------------------ | ----------------- | --------------------------------------------------------------------------- |
+| `src/packages/frontend/frame-editors/base-editor/actions-base.ts`  | TimeTravel        | Replace TimeTravel with existing `files/timetravel`. Terminal help is done. |
+| `src/packages/frontend/frame-editors/terminal-editor/actions.ts`   | terminal          | Done: replaced with `terminal/use-terminal`.                                |
+| `src/packages/frontend/frame-editors/terminal-editor/tour.tsx`     | terminal          | Done: replaced with `terminal/use-terminal`.                                |
+| `src/packages/frontend/frame-editors/jupyter-editor/actions.ts`    | Jupyter           | Done: replaced with `jupyter/use-jupyter`.                                  |
+| `src/packages/frontend/jupyter/about.tsx`                          | Jupyter           | Done: replaced with `jupyter/use-jupyter`.                                  |
+| `src/packages/frontend/jupyter/browser-actions.ts`                 | custom kernels    | Done: replaced with `jupyter/custom-kernels`.                               |
+| `src/packages/frontend/jupyter/kernel-warning.tsx`                 | kernel terminated | Create `troubleshooting/jupyter-kernel-terminated`; replace link.           |
+| `src/packages/frontend/frame-editors/markdown-editor/actions.ts`   | Markdown          | Create `files/markdown`; replace link.                                      |
+| `src/packages/frontend/editors/slate/help-modal.tsx`               | Markdown          | Create `editors/rich-text` or `files/markdown`; replace link.               |
+| `src/packages/frontend/frame-editors/latex-editor/actions.ts`      | LaTeX             | Create `latex/build-papers`; replace link.                                  |
+| `src/packages/frontend/frame-editors/rmd-editor/actions.ts`        | R Markdown        | Create `editors/r-markdown`; replace link.                                  |
+| `src/packages/frontend/editors/task-editor/actions.ts`             | tasks             | Create `projects/tasks`; replace link.                                      |
+| `src/packages/frontend/frame-editors/slides-editor/actions.ts`     | slides            | Create `files/slides`; replace link.                                        |
+| `src/packages/frontend/frame-editors/whiteboard-editor/actions.ts` | whiteboard        | Create `files/whiteboard`; replace link.                                    |
+| `src/packages/frontend/frame-editors/x11-editor/actions.ts`        | X11               | Create `projects/x11`; replace link.                                        |
+| `src/packages/frontend/project/explorer/tour/tour.tsx`             | explorer          | Create `files/explorer`; replace link.                                      |
+| `src/packages/frontend/projects/tour.tsx`                          | project list      | Create `projects/project-list`; replace link.                               |
 
 ## Suggested First Cleanup Cluster
 
