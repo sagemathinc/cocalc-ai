@@ -181,6 +181,77 @@ realtime collaboration, efficient rendering of large notebooks, TimeTravel,
 nbgrader, whiteboard integration, and Codex-aware live notebook control.
 `;
 
+const CUSTOM_JUPYTER_KERNELS_BODY = String.raw`
+## What custom kernels are for
+
+A custom Jupyter kernel lets a notebook run with a specific Python environment
+instead of the default project Python. Use one when a project needs a controlled
+set of Python packages, a different Python version, or separate environments for
+different notebooks.
+
+For shared courses or many projects, prefer a runtime image when everyone should
+start with the same system-wide environment. Use a custom kernel when one
+project or one notebook needs an isolated Python environment.
+
+## Create a Python kernel with uv
+
+Open a terminal in the project and create a virtual environment. This example
+uses \`uv\`, installs \`ipykernel\`, then registers the environment as a Jupyter
+kernel.
+
+~~~sh
+mkdir -p ~/.venvs
+uv venv ~/.venvs/my-analysis --python 3.12
+uv pip install --python ~/.venvs/my-analysis/bin/python \
+  ipykernel pandas numpy matplotlib
+~/.venvs/my-analysis/bin/python -m ipykernel install --user \
+  --name my-analysis \
+  --display-name "Python (my-analysis)"
+~~~
+
+Use a short lowercase \`--name\` with letters, numbers, dashes, or underscores.
+The display name is what people see in the notebook kernel selector. Replace
+\`3.12\` with \`python3\` or another installed Python version when needed.
+
+## Use the kernel in CoCalc
+
+1. Open or create a notebook.
+2. Open the kernel selector or **Kernel** menu.
+3. Choose **Python (my-analysis)**.
+4. Run a cell that imports a package installed in the environment.
+
+If the kernel does not appear immediately, refresh the browser tab, reopen the
+notebook, or restart the project so Jupyter reloads the kernelspec list.
+
+## Install more packages later
+
+Install packages into the same virtual environment by pointing \`uv pip\` at the
+environment's Python:
+
+~~~sh
+uv pip install --python ~/.venvs/my-analysis/bin/python scikit-learn seaborn
+~~~
+
+Then restart the notebook kernel before importing newly installed packages.
+
+## Remove a custom kernel
+
+Remove the Jupyter kernelspec and, if you no longer need it, remove the virtual
+environment:
+
+~~~sh
+jupyter kernelspec uninstall my-analysis
+rm -rf ~/.venvs/my-analysis
+~~~
+
+## Why this matters in CoCalc
+
+CoCalc projects are real Linux environments, so Jupyter kernels are ordinary
+kernelspecs backed by ordinary Python executables. That means humans and agents
+can inspect, rebuild, and document the environment with normal terminal tools
+instead of relying on hidden browser state.
+`;
+
 const ROOTFS_BODY = String.raw`
 ## What the runtime image controls
 
@@ -404,6 +475,65 @@ into notebooks, chat messages, shell history, or committed files.
 AI access is both account-level and project-contextual. The account connection
 lets Codex work in the UI; project secrets let ordinary code and terminal-native
 agents use credentials without turning private tokens into shared content.
+`;
+
+const COCALC_CLI_BODY = String.raw`
+## What the CoCalc CLI is for
+
+The CoCalc CLI is the preferred automation interface for many CoCalc-ai tasks.
+It can work with the running site, project context, browser sessions, notebooks,
+docs, hosts, and other typed workflows without exposing a broad API key.
+
+Use the CLI when you want to automate CoCalc itself. Use project terminals and
+ordinary command-line tools when you want to automate software inside a project.
+
+## Why not start with API keys
+
+CoCalc-ai intentionally reduced the power of general API keys. Broad API keys
+were rarely used and increased the security and attack surface risk. Prefer
+task-specific CLI commands and authenticated browser-session or project
+commands when they exist.
+
+API access still has a place for narrow integration points, but it should not be
+the default answer for normal project, notebook, docs, or browser automation.
+
+## Common CLI workflows
+
+Search and show the versioned docs bundled with this CoCalc-ai version:
+
+~~~sh
+cocalc docs search "project secrets"
+cocalc docs show projects/project-secrets
+~~~
+
+Open a documented UI destination in the current browser session:
+
+~~~sh
+cocalc browser action docs-list
+cocalc browser action docs settings.environment.secrets
+~~~
+
+Work with live notebooks using the project Jupyter commands instead of editing
+\`.ipynb\` JSON directly:
+
+~~~sh
+cocalc project jupyter -h
+~~~
+
+For local development against a running hub, load the matching environment
+before control-plane or browser commands:
+
+~~~sh
+cd src
+eval "$(pnpm -s dev:hub:env)"
+~~~
+
+## Why this matters in CoCalc
+
+The CLI gives humans and agents a stable, inspectable way to drive CoCalc-ai
+without scraping the UI or handing out overly powerful credentials. It is also a
+bridge between docs, browser-session actions, notebooks, and project-host
+administration.
 `;
 
 const PROJECT_HOSTS_BODY = String.raw`
@@ -682,6 +812,18 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     title: "Connect AI access",
   },
   {
+    audiences: ["agents", "researchers", "teams"],
+    body: COCALC_CLI_BODY.trim(),
+    category: "CLI",
+    id: "cli.use-cocalc-cli",
+    lastReviewed: "2026-05-24",
+    slug: "cli/use-cocalc-cli",
+    status: "ready",
+    summary:
+      "Use the CoCalc CLI for authenticated docs, browser, notebook, and project automation.",
+    title: "Use the CoCalc CLI",
+  },
+  {
     actions: [
       {
         description: "Open a terminal in the active project.",
@@ -732,6 +874,18 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     summary:
       "Create notebooks that keep running and capturing output after browser disconnects.",
     title: "Create a Jupyter notebook",
+  },
+  {
+    audiences: ["agents", "instructors", "researchers", "students"],
+    body: CUSTOM_JUPYTER_KERNELS_BODY.trim(),
+    category: "Jupyter",
+    id: "jupyter.custom-kernels",
+    lastReviewed: "2026-05-24",
+    slug: "jupyter/custom-kernels",
+    status: "ready",
+    summary:
+      "Create a custom Jupyter kernel backed by a uv-managed Python virtual environment.",
+    title: "Custom Jupyter kernels with uv",
   },
   {
     audiences: ["agents", "instructors", "researchers", "students", "teams"],

@@ -34,6 +34,14 @@ describe("public/docs", () => {
     expect(
       searchDocsEntries("secrets api token").map((entry) => entry.id)[0],
     ).toBe("projects.project-secrets");
+    expect(
+      searchDocsEntries("custom jupyter kernel uv venv").map(
+        (entry) => entry.id,
+      )[0],
+    ).toBe("jupyter.custom-kernels");
+    expect(
+      searchDocsEntries("api key cli automation").map((entry) => entry.id)[0],
+    ).toBe("cli.use-cocalc-cli");
   });
 
   it("renders the docs index", () => {

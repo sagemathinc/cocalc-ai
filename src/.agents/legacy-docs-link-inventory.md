@@ -14,10 +14,16 @@ This inventory excludes generated build output such as
 
 Current source inventory:
 
-- 71 legacy URL references.
-- 42 unique legacy URLs.
-- 72 grep lines matching `doc.cocalc.com` because one source line is a comment
+- 70 legacy URL references.
+- 41 unique legacy URLs.
+- 71 grep lines matching `doc.cocalc.com` because one source line is a comment
   and some files contain multiple related references.
+
+Resolved so far:
+
+- `https://doc.cocalc.com/howto/custom-jupyter-kernel.html` now has
+  `jupyter/custom-kernels` and the Jupyter custom-kernel help action points to
+  `/docs/jupyter/custom-kernels`.
 
 ## Recommended Migration Policy
 
@@ -38,31 +44,31 @@ outside an allowlist file. The allowlist should shrink as docs pages land.
 These links appear in warnings, first-run flows, welcome email, or API entry
 points. They should be addressed before launch.
 
-| Topic                            | Proposed CoCalc-ai docs                                                  | Legacy URLs                                                                                   | Source areas                                                                    | Action                      |
-| -------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | --------------------------- |
-| Jupyter notebooks                | `jupyter/use-jupyter`, plus existing `jupyter/create-notebook`           | `/jupyter.html`, `/howto/custom-jupyter-kernel.html`, `/howto/jupyter-kernel-terminated.html` | welcome email, Jupyter commands, Jupyter about, Jupyter editor, kernel warnings | create-doc                  |
-| Terminal workflows               | existing `projects/open-terminal`, add `terminal/use-terminal` if needed | `/terminal.html`                                                                              | terminal editor, base editor, terminal tour                                     | replace-existing/create-doc |
-| Connectivity and browser trouble | `troubleshooting/connectivity`                                           | `/howto/connectivity-issues.html`, `/howto/trouble.html`                                      | welcome email, active content warning                                           | create-doc                  |
-| Memory and process failure       | `troubleshooting/memory`                                                 | `/howto/low-memory.html`                                                                      | project OOM warning, project RAM warning, Jupyter status                        | create-doc                  |
-| API keys and API authentication  | `account/api-keys`, `api/http-api`                                       | `/apikeys.html`, `/api2/`, `/api2/index.html#authentication`, root OpenAPI docs URL           | HTTP API docs, API key UI, app store comment                                    | create-doc                  |
-| Welcome email docs               | `/docs` plus specific docs above                                         | `/`, `/jupyter.html`, `/teaching-instructors.html`, `/howto/connectivity-issues.html`         | `server/email/welcome-email.ts`, `server/hub/email.ts`                          | replace-existing/create-doc |
+| Topic                                 | Proposed CoCalc-ai docs                                                                      | Legacy URLs                                                                           | Source areas                                                                    | Action                      |
+| ------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | --------------------------- |
+| Jupyter notebooks                     | `jupyter/use-jupyter`, existing `jupyter/create-notebook`, existing `jupyter/custom-kernels` | `/jupyter.html`, `/howto/jupyter-kernel-terminated.html`                              | welcome email, Jupyter commands, Jupyter about, Jupyter editor, kernel warnings | create-doc/replace-existing |
+| Terminal workflows                    | existing `projects/open-terminal`, add `terminal/use-terminal` if needed                     | `/terminal.html`                                                                      | terminal editor, base editor, terminal tour                                     | replace-existing/create-doc |
+| Connectivity and browser trouble      | `troubleshooting/connectivity`                                                               | `/howto/connectivity-issues.html`, `/howto/trouble.html`                              | welcome email, active content warning                                           | create-doc                  |
+| Memory and process failure            | `troubleshooting/memory`                                                                     | `/howto/low-memory.html`                                                              | project OOM warning, project RAM warning, Jupyter status                        | create-doc                  |
+| API keys, CLI, and API authentication | `api/http-api`, existing `cli/use-cocalc-cli`, possibly `account/api-keys`                   | `/apikeys.html`, `/api2/`, `/api2/index.html#authentication`, root OpenAPI docs URL   | HTTP API docs, API key UI, app store comment                                    | create-doc/replace-existing |
+| Welcome email docs                    | `/docs` plus specific docs above                                                             | `/`, `/jupyter.html`, `/teaching-instructors.html`, `/howto/connectivity-issues.html` | `server/email/welcome-email.ts`, `server/hub/email.ts`                          | replace-existing/create-doc |
 
 ### P1: Account, Billing, Teaching, And Collaboration
 
 These are user-visible and important, but they mostly need new content before
 safe replacement.
 
-| Topic                      | Proposed CoCalc-ai docs                                           | Legacy URLs                                                                                                                         | Source areas                                                                    | Action                      |
-| -------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | --------------------------- |
-| SSH keys                   | `account/ssh-keys`, possibly `projects/project-ssh-keys`          | `/account/ssh.html`, `/project-settings.html#ssh-keys`                                                                              | account SSH keys UI, project info utilities                                     | create-doc                  |
-| Billing overview           | `billing/overview`                                                | `/billing.html`, `/project-faq.html`                                                                                                | billing FAQ                                                                     | create-doc                  |
-| Licenses                   | `billing/licenses`                                                | `/licenses.html`, `/account/licenses.html`, `/project-settings.html#project-add-license`                                            | billing data, trial banner comment                                              | create-doc                  |
-| Trial and member hosting   | `billing/trial`, `billing/member-hosting`                         | `/trial.html`, `/billing.html#what-is-member-hosting`                                                                               | project banner, trial banner                                                    | create-doc                  |
-| Vouchers and Pay-as-you-go | `billing/vouchers`, `billing/pay-as-you-go`                       | `/vouchers.html`, `/paygo.html`                                                                                                     | voucher center, customize constants                                             | create-doc                  |
-| Course workflow            | `teaching/course-workflow`, existing `teaching/create-assignment` | `/teaching-instructors.html`, `/teaching-tips_and_tricks.html#how-exactly-are-assignments-copied-to-students`                       | billing data, welcome email, file type selector, course editor, assignment info | create-doc/replace-existing |
-| Course upgrades            | `teaching/course-upgrades` or `billing/course-upgrades`           | `/teaching-upgrade-course.html#teacher-or-institution-pays-for-upgrades`, `/teaching-upgrade-course.html#students-pay-for-upgrades` | billing data                                                                    | create-doc                  |
-| nbgrader                   | `teaching/nbgrader`                                               | `/teaching-nbgrader.html`                                                                                                           | course config, Jupyter main, Jupyter commands                                   | create-doc                  |
-| Chat and mentions          | `collaboration/chat`, `collaboration/mentions`                    | `/chat.html`, `/teaching-interactions.html#mention-collaborators-in-chat`, `/markdown.html#mentions`                                | chat actions, notifications, file type selector                                 | create-doc                  |
+| Topic                               | Proposed CoCalc-ai docs                                                       | Legacy URLs                                                                                                                         | Source areas                                                                    | Action                            |
+| ----------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | --------------------------------- |
+| SSH keys                            | `account/ssh-keys`, possibly `projects/project-ssh-keys`                      | `/account/ssh.html`, `/project-settings.html#ssh-keys`                                                                              | account SSH keys UI, project info utilities                                     | create-doc                        |
+| Billing overview                    | `billing/overview`                                                            | `/billing.html`, `/project-faq.html`                                                                                                | billing FAQ                                                                     | create-doc                        |
+| Licenses                            | `billing/licenses`                                                            | `/licenses.html`, `/account/licenses.html`, `/project-settings.html#project-add-license`                                            | billing data, trial banner comment                                              | create-doc                        |
+| Trial and member hosting            | `billing/trial`, `billing/member-hosting`                                     | `/trial.html`, `/billing.html#what-is-member-hosting`                                                                               | project banner, trial banner                                                    | create-doc                        |
+| Vouchers and dedicated host billing | `billing/vouchers`, `hosts/project-hosts`, possibly `billing/dedicated-hosts` | `/vouchers.html`, `/paygo.html`                                                                                                     | voucher center, customize constants                                             | create-doc/remove stale PAYG docs |
+| Course workflow                     | `teaching/course-workflow`, existing `teaching/create-assignment`             | `/teaching-instructors.html`, `/teaching-tips_and_tricks.html#how-exactly-are-assignments-copied-to-students`                       | billing data, welcome email, file type selector, course editor, assignment info | create-doc/replace-existing       |
+| Course upgrades                     | `teaching/course-upgrades` or `billing/course-upgrades`                       | `/teaching-upgrade-course.html#teacher-or-institution-pays-for-upgrades`, `/teaching-upgrade-course.html#students-pay-for-upgrades` | billing data                                                                    | create-doc                        |
+| nbgrader                            | `teaching/nbgrader`                                                           | `/teaching-nbgrader.html`                                                                                                           | course config, Jupyter main, Jupyter commands                                   | create-doc                        |
+| Chat and mentions                   | `collaboration/chat`, `collaboration/mentions`                                | `/chat.html`, `/teaching-interactions.html#mention-collaborators-in-chat`, `/markdown.html#mentions`                                | chat actions, notifications, file type selector                                 | create-doc                        |
 
 ### P2: Editor-Specific Help
 
@@ -89,7 +95,6 @@ be concise task pages rather than full manuals.
 | Count | Legacy URL                                                    | Replacement                                                                                              |
 | ----: | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 |     6 | `https://doc.cocalc.com/jupyter.html`                         | Create `jupyter/use-jupyter`; use existing `jupyter/create-notebook` only for notebook creation buttons. |
-|     1 | `https://doc.cocalc.com/howto/custom-jupyter-kernel.html`     | Create `jupyter/custom-kernels`.                                                                         |
 |     1 | `https://doc.cocalc.com/howto/jupyter-kernel-terminated.html` | Create `troubleshooting/jupyter-kernel-terminated` or include in `troubleshooting/memory`.               |
 |     3 | `https://doc.cocalc.com/teaching-nbgrader.html`               | Create `teaching/nbgrader`.                                                                              |
 
@@ -111,28 +116,28 @@ be concise task pages rather than full manuals.
 
 ### Projects, Account, And API
 
-| Count | Legacy URL                                              | Replacement                                                          |
-| ----: | ------------------------------------------------------- | -------------------------------------------------------------------- |
-|     1 | `https://doc.cocalc.com/project-list.html`              | Create `projects/project-list`.                                      |
-|     1 | `https://doc.cocalc.com/project-settings.html#ssh-keys` | Create `projects/project-ssh-keys` or merge into `account/ssh-keys`. |
-|     2 | `https://doc.cocalc.com/account/ssh.html`               | Create `account/ssh-keys`.                                           |
-|     2 | `https://doc.cocalc.com/apikeys.html`                   | Create `account/api-keys`.                                           |
-|     1 | `https://doc.cocalc.com/api2/`                          | Create `api/http-api`.                                               |
-|     1 | `https://doc.cocalc.com/api2/index.html#authentication` | Create `api/authentication`.                                         |
-|     1 | `https://doc.cocalc.com/upgrades.html#internet-access`  | Create `projects/internet-access`.                                   |
+| Count | Legacy URL                                              | Replacement                                                                                                                           |
+| ----: | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+|     1 | `https://doc.cocalc.com/project-list.html`              | Create `projects/project-list`.                                                                                                       |
+|     1 | `https://doc.cocalc.com/project-settings.html#ssh-keys` | Create `projects/project-ssh-keys` or merge into `account/ssh-keys`.                                                                  |
+|     2 | `https://doc.cocalc.com/account/ssh.html`               | Create `account/ssh-keys`.                                                                                                            |
+|     2 | `https://doc.cocalc.com/apikeys.html`                   | Create `api/http-api` and possibly `account/api-keys`, but document that API key capabilities are intentionally limited in CoCalc-ai. |
+|     1 | `https://doc.cocalc.com/api2/`                          | Create `api/http-api`; also point automation users toward enhanced `cocalc-cli` workflows.                                            |
+|     1 | `https://doc.cocalc.com/api2/index.html#authentication` | Create `api/authentication`; explain reduced API-key scope and when to use `cocalc-cli`.                                              |
+|     1 | `https://doc.cocalc.com/upgrades.html#internet-access`  | Create `projects/internet-access`.                                                                                                    |
 
 ### Billing And Commercial Flows
 
-| Count | Legacy URL                                                   | Replacement                                           |
-| ----: | ------------------------------------------------------------ | ----------------------------------------------------- |
-|     1 | `https://doc.cocalc.com/billing.html`                        | Create `billing/overview`.                            |
-|     1 | `https://doc.cocalc.com/project-faq.html`                    | Create `billing/project-upgrades` or remove if stale. |
-|     1 | `https://doc.cocalc.com/billing.html#what-is-member-hosting` | Create `billing/member-hosting`.                      |
-|     2 | `https://doc.cocalc.com/trial.html`                          | Create `billing/trial`.                               |
-|     1 | `https://doc.cocalc.com/paygo.html`                          | Create `billing/pay-as-you-go`.                       |
-|     1 | `https://doc.cocalc.com/vouchers.html`                       | Create `billing/vouchers`.                            |
-|     1 | `https://doc.cocalc.com/licenses.html`                       | Create `billing/licenses`.                            |
-|     1 | `https://doc.cocalc.com/account/licenses.html`               | Create `billing/account-licenses`.                    |
+| Count | Legacy URL                                                   | Replacement                                                                                                                                               |
+| ----: | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|     1 | `https://doc.cocalc.com/billing.html`                        | Create `billing/overview`.                                                                                                                                |
+|     1 | `https://doc.cocalc.com/project-faq.html`                    | Create `billing/project-upgrades` or remove if stale.                                                                                                     |
+|     1 | `https://doc.cocalc.com/billing.html#what-is-member-hosting` | Create `billing/member-hosting`.                                                                                                                          |
+|     2 | `https://doc.cocalc.com/trial.html`                          | Create `billing/trial`.                                                                                                                                   |
+|     1 | `https://doc.cocalc.com/paygo.html`                          | Remove stale pay-as-you-go language or replace with dedicated project host billing docs. Pay-as-you-go was eliminated except for dedicated project hosts. |
+|     1 | `https://doc.cocalc.com/vouchers.html`                       | Create `billing/vouchers`.                                                                                                                                |
+|     1 | `https://doc.cocalc.com/licenses.html`                       | Create `billing/licenses`.                                                                                                                                |
+|     1 | `https://doc.cocalc.com/account/licenses.html`               | Create `billing/account-licenses`.                                                                                                                        |
 
 ### Teaching
 
@@ -172,15 +177,15 @@ be concise task pages rather than full manuals.
 
 ### Billing And Account
 
-| File                                                         | Legacy topics                       | Recommended action                                                                 |
-| ------------------------------------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------- |
-| `src/packages/frontend/customize.tsx`                        | Pay-as-you-go docs constant         | Replace with `billing/pay-as-you-go` after page exists.                            |
-| `src/packages/frontend/store/voucher-center-page.tsx`        | vouchers                            | Create `billing/vouchers`; replace link.                                           |
-| `src/packages/frontend/billing/faq.tsx`                      | billing, project FAQ                | Create `billing/overview`; remove stale project FAQ or replace with specific page. |
-| `src/packages/frontend/billing/data.ts`                      | course upgrades, teaching, licenses | Create `teaching/course-upgrades`, `teaching/course-workflow`, `billing/licenses`. |
-| `src/packages/frontend/components/api-keys.tsx`              | API docs                            | Create `api/http-api`; replace link.                                               |
-| `src/packages/frontend/account/ssh-keys/ssh-key-adder.tsx`   | account SSH keys                    | Create `account/ssh-keys`; replace link.                                           |
-| `src/packages/frontend/account/ssh-keys/global-ssh-keys.tsx` | account SSH keys                    | Same.                                                                              |
+| File                                                         | Legacy topics                       | Recommended action                                                                                                           |
+| ------------------------------------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `src/packages/frontend/customize.tsx`                        | stale Pay-as-you-go docs constant   | Remove or replace with dedicated project host billing docs. Pay-as-you-go was eliminated except for dedicated project hosts. |
+| `src/packages/frontend/store/voucher-center-page.tsx`        | vouchers                            | Create `billing/vouchers`; replace link.                                                                                     |
+| `src/packages/frontend/billing/faq.tsx`                      | billing, project FAQ                | Create `billing/overview`; remove stale project FAQ or replace with specific page.                                           |
+| `src/packages/frontend/billing/data.ts`                      | course upgrades, teaching, licenses | Create `teaching/course-upgrades`, `teaching/course-workflow`, `billing/licenses`.                                           |
+| `src/packages/frontend/components/api-keys.tsx`              | API docs                            | Create `api/http-api`; also explain reduced API-key scope and prefer `cocalc-cli` for many automation workflows.             |
+| `src/packages/frontend/account/ssh-keys/ssh-key-adder.tsx`   | account SSH keys                    | Create `account/ssh-keys`; replace link.                                                                                     |
+| `src/packages/frontend/account/ssh-keys/global-ssh-keys.tsx` | account SSH keys                    | Same.                                                                                                                        |
 
 ### Project Runtime And Warnings
 
@@ -222,7 +227,7 @@ be concise task pages rather than full manuals.
 | `src/packages/frontend/frame-editors/terminal-editor/tour.tsx`     | terminal             | Same.                                                                                                                   |
 | `src/packages/frontend/frame-editors/jupyter-editor/actions.ts`    | Jupyter              | Create `jupyter/use-jupyter`; replace link.                                                                             |
 | `src/packages/frontend/jupyter/about.tsx`                          | Jupyter              | Same.                                                                                                                   |
-| `src/packages/frontend/jupyter/browser-actions.ts`                 | custom kernels       | Create `jupyter/custom-kernels`; replace link.                                                                          |
+| `src/packages/frontend/jupyter/browser-actions.ts`                 | custom kernels       | Done: replaced with `jupyter/custom-kernels`.                                                                           |
 | `src/packages/frontend/jupyter/kernel-warning.tsx`                 | kernel terminated    | Create `troubleshooting/jupyter-kernel-terminated`; replace link.                                                       |
 | `src/packages/frontend/frame-editors/markdown-editor/actions.ts`   | Markdown             | Create `files/markdown`; replace link.                                                                                  |
 | `src/packages/frontend/editors/slate/help-modal.tsx`               | Markdown             | Create `editors/rich-text` or `files/markdown`; replace link.                                                           |
@@ -244,8 +249,11 @@ Start with `troubleshooting/memory`:
 - It can be concise and accurate without needing billing or teaching policy.
 - It can link to project host/runtime docs and explain what to do next.
 
-Second cluster: `api/authentication` and `account/api-keys`, because the OpenAPI
-entry points still send developers to old docs before they can use the product.
+Second cluster: `api/authentication`, `api/http-api`, and existing
+`cli/use-cocalc-cli`, because the OpenAPI entry points still send developers to
+old docs before they can use the product. CoCalc-ai API keys are intentionally
+much more limited than old CoCalc API keys; docs should avoid presenting them as
+the main automation surface.
 
 Third cluster: `jupyter/use-jupyter`, because it has the most repeated links and
 is a core CoCalc workflow.
