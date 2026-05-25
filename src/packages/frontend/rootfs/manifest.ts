@@ -94,8 +94,16 @@ async function loadManagedCatalogManifest(
     webapp_client.conat_client.is_signed_in();
   if (hasAccountContext) {
     try {
-      const manifest =
-        await webapp_client.conat_client.hub.system.getRootfsCatalog({});
+      const page =
+        await webapp_client.conat_client.hub.system.getRootfsCatalogPage({
+          limit: 200,
+        });
+      const manifest: RootfsImageManifest = {
+        version: page.version,
+        generated_at: page.generated_at,
+        source: page.source,
+        images: page.images,
+      };
       if (!manifest.source) {
         manifest.source = url;
       }

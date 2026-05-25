@@ -32,6 +32,7 @@ import type { Host, HostRootfsImage } from "@cocalc/conat/hub/api/hosts";
 import { RootfsScanStatus } from "@cocalc/frontend/rootfs/scan-status";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
+  RootfsAdminCatalogCounts,
   RootfsAdminCatalogEntry,
   RootfsImageEvent,
   RootfsStorageLocation,
@@ -40,6 +41,7 @@ import { plural } from "@cocalc/util/misc";
 
 const ROOTFS_SCAN_ADMIN_TIMEOUT_MS = 35 * 60 * 1000;
 const ROOTFS_SCAN_HOST_CACHE_TIMEOUT_MS = 8 * 1000;
+const ROOTFS_ADMIN_PAGE_SIZE = 20;
 
 type RootfsAdminAction =
   | "download"
@@ -441,6 +443,18 @@ function scanHostCandidateLabel(candidate: RootfsScanHostCandidate) {
 export function RootfsAdmin() {
   const hub = webapp_client.conat_client.hub;
   const [rows, setRows] = React.useState<RootfsAdminCatalogEntry[]>([]);
+  const [total, setTotal] = React.useState(0);
+  const [counts, setCounts] = React.useState<RootfsAdminCatalogCounts>({
+    total: 0,
+    deleted: 0,
+    pending_delete: 0,
+    blocked: 0,
+    official_unscanned: 0,
+    official_critical: 0,
+    official_scan_failed: 0,
+  });
+  const [page, setPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState(ROOTFS_ADMIN_PAGE_SIZE);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string>("");
   const [search, setSearch] = React.useState("");
@@ -467,22 +481,38 @@ export function RootfsAdmin() {
     );
   }
 
-  const load = React.useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await hub.system.getRootfsCatalogAdmin({});
-      setRows(data ?? []);
-      setError("");
-    } catch (err) {
-      setError(`${err}`);
-    } finally {
-      setLoading(false);
-    }
-  }, [hub]);
+  const load = React.useCallback(
+    async (nextPage = 1, nextPageSize = pageSize) => {
+      setLoading(true);
+      try {
+        const data = await hub.system.getRootfsCatalogAdminPage({
+          limit: nextPageSize,
+          offset: Math.max(0, nextPage - 1) * nextPageSize,
+          query: search.trim() || undefined,
+          sort: "updated",
+          direction: "desc",
+        });
+        setRows(data.entries ?? []);
+        setTotal(data.total ?? 0);
+        setCounts(data.counts);
+        setPage(nextPage);
+        setPageSize(nextPageSize);
+        setError("");
+      } catch (err) {
+        setError(`${err}`);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [hub, pageSize, search],
+  );
 
   React.useEffect(() => {
-    load();
-  }, [load]);
+    const timeout = setTimeout(() => {
+      load(1, pageSize);
+    }, 250);
+    return () => clearTimeout(timeout);
+  }, [load, pageSize, search]);
 
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) => {
@@ -490,66 +520,6 @@ export function RootfsAdmin() {
       void load();
     },
   });
-
-  const filtered = React.useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    if (!needle) return rows;
-    return rows.filter((entry) =>
-      [
-        entry.label,
-        entry.image,
-        entry.family,
-        entry.version,
-        entry.channel,
-        entry.owner_name,
-        entry.owner_id,
-        entry.visibility,
-        ...(entry.tags ?? []),
-        ...(entry.storage_locations ?? []).flatMap((location) => [
-          location.repo_selector,
-          location.region,
-          location.bucket_name,
-          location.bucket_purpose,
-          location.backend,
-          location.artifact_format,
-          location.artifact_path,
-          location.status,
-        ]),
-      ]
-        .filter(Boolean)
-        .some((value) => `${value}`.toLowerCase().includes(needle)),
-    );
-  }, [rows, search]);
-
-  const counts = React.useMemo(
-    () => ({
-      total: rows.length,
-      deleted: rows.filter((entry) => entry.deleted).length,
-      pendingDelete: rows.filter(
-        (entry) => entry.release_gc_status === "pending_delete",
-      ).length,
-      blocked: rows.filter(
-        (entry) => entry.blocked || entry.release_gc_status === "blocked",
-      ).length,
-      officialUnscanned: rows.filter(
-        (entry) =>
-          entry.official &&
-          !entry.deleted &&
-          (!entry.scan_status || entry.scan_status === "unknown"),
-      ).length,
-      officialCritical: rows.filter(
-        (entry) =>
-          entry.official &&
-          !entry.deleted &&
-          (entry.scan?.severity_counts?.critical ?? 0) > 0,
-      ).length,
-      officialScanFailed: rows.filter(
-        (entry) =>
-          entry.official && !entry.deleted && entry.scan_status === "error",
-      ).length,
-    }),
-    [rows],
-  );
 
   async function requestDelete(entry: RootfsAdminCatalogEntry) {
     try {
@@ -847,11 +817,11 @@ export function RootfsAdmin() {
       <Space wrap>
         <Tag>{counts.total} catalog entries</Tag>
         <Tag color="red">{counts.deleted} deleted</Tag>
-        <Tag color="orange">{counts.pendingDelete} pending release GC</Tag>
+        <Tag color="orange">{counts.pending_delete} pending release GC</Tag>
         <Tag color="gold">{counts.blocked} blocked</Tag>
-        <Tag>{counts.officialUnscanned} official unscanned</Tag>
-        <Tag color="red">{counts.officialCritical} official critical</Tag>
-        <Tag color="red">{counts.officialScanFailed} scan failed</Tag>
+        <Tag>{counts.official_unscanned} official unscanned</Tag>
+        <Tag color="red">{counts.official_critical} official critical</Tag>
+        <Tag color="red">{counts.official_scan_failed} scan failed</Tag>
       </Space>
       {error ? <ErrorDisplay error={error} /> : null}
       {loading && rows.length === 0 ? (
@@ -860,8 +830,17 @@ export function RootfsAdmin() {
         <Table<RootfsAdminCatalogEntry>
           rowKey="id"
           size="small"
-          dataSource={filtered}
-          pagination={{ pageSize: 20, showSizeChanger: true }}
+          dataSource={rows}
+          pagination={{
+            current: page,
+            pageSize,
+            total,
+            showSizeChanger: true,
+            showTotal: (value, range) => `${range[0]}-${range[1]} of ${value}`,
+          }}
+          onChange={(pagination) => {
+            void load(pagination.current ?? 1, pagination.pageSize ?? pageSize);
+          }}
           columns={[
             {
               title: "Label",
@@ -1071,7 +1050,7 @@ export function RootfsAdmin() {
           ]}
         />
       )}
-      {!loading && filtered.length === 0 ? (
+      {!loading && rows.length === 0 ? (
         <Alert
           type="info"
           showIcon

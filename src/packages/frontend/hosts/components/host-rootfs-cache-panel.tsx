@@ -2,6 +2,8 @@ import {
   Alert,
   Button,
   Card,
+  Input,
+  Pagination,
   Popconfirm,
   Select,
   Space,
@@ -115,6 +117,9 @@ export function HostRootfsCachePanel({
   inventory,
 }: HostRootfsCachePanelProps) {
   const [pullImage, setPullImage] = React.useState<string>();
+  const [cacheSearch, setCacheSearch] = React.useState("");
+  const [cachePage, setCachePage] = React.useState(1);
+  const [cachePageSize, setCachePageSize] = React.useState(20);
   const { images: catalogImages, loading: catalogLoading } = useRootfsImages([
     managedRootfsCatalogUrl(),
   ]);
@@ -185,6 +190,36 @@ export function HostRootfsCachePanel({
         .length,
     [inventory?.entries],
   );
+  const filteredCacheEntries = React.useMemo(() => {
+    const query = cacheSearch.trim().toLowerCase();
+    if (!query) return inventory?.entries ?? [];
+    return (inventory?.entries ?? []).filter((entry) => {
+      const catalogEntry = catalogByImage.get(
+        normalizeRootfsImageName(entry.image),
+      );
+      return [
+        entry.image,
+        entry.digest,
+        entry.cache_path,
+        entry.release_id,
+        catalogEntry?.label,
+        catalogEntry?.family,
+        catalogEntry?.version,
+        catalogEntry?.channel,
+        ...(catalogEntry?.tags ?? []),
+      ]
+        .filter(Boolean)
+        .some((value) => `${value}`.toLowerCase().includes(query));
+    });
+  }, [cacheSearch, catalogByImage, inventory?.entries]);
+  const visibleCacheEntries = React.useMemo(() => {
+    const start = (cachePage - 1) * cachePageSize;
+    return filteredCacheEntries.slice(start, start + cachePageSize);
+  }, [cachePage, cachePageSize, filteredCacheEntries]);
+
+  React.useEffect(() => {
+    setCachePage(1);
+  }, [cacheSearch, inventory?.entries]);
 
   React.useEffect(() => {
     if (uncachedPullOptions.length === 0) {
@@ -328,7 +363,20 @@ export function HostRootfsCachePanel({
               size="small"
               style={{ width: "100%" }}
             >
-              {inventory.entries.map((entry) => {
+              <Space wrap style={{ width: "100%" }}>
+                <Input.Search
+                  allowClear
+                  placeholder="Filter cached RootFS images"
+                  style={{ width: 320, maxWidth: "100%" }}
+                  value={cacheSearch}
+                  onChange={(event) => setCacheSearch(event.target.value)}
+                />
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Showing {visibleCacheEntries.length} of{" "}
+                  {filteredCacheEntries.length} matching cached images.
+                </Typography.Text>
+              </Space>
+              {visibleCacheEntries.map((entry) => {
                 const catalogEntry = catalogByImage.get(
                   normalizeRootfsImageName(entry.image),
                 );
@@ -450,6 +498,19 @@ export function HostRootfsCachePanel({
                   </Card>
                 );
               })}
+              {filteredCacheEntries.length > cachePageSize ? (
+                <Pagination
+                  size="small"
+                  current={cachePage}
+                  pageSize={cachePageSize}
+                  total={filteredCacheEntries.length}
+                  showSizeChanger
+                  onChange={(nextPage, nextPageSize) => {
+                    setCachePage(nextPage);
+                    setCachePageSize(nextPageSize);
+                  }}
+                />
+              ) : null}
             </Space>
           )}
         </>

@@ -128,7 +128,9 @@ import {
 } from "@cocalc/server/bay-backup";
 import {
   listRootfsImagesAdmin,
+  listRootfsImagesAdminPage,
   listVisibleRootfsImages,
+  listVisibleRootfsImagesPage,
   requestRootfsImageDeletion as requestRootfsImageDeletion0,
   saveRootfsImage,
 } from "@cocalc/server/rootfs/catalog";
@@ -145,7 +147,10 @@ import type {
   ProjectRootfsStateEntry,
   ProjectRootfsPublishLroRef,
   PublishProjectRootfsBody,
+  RootfsAdminCatalogPage,
+  RootfsCatalogPageRequest,
   RootfsCatalogSaveBody,
+  RootfsImageCatalogPage,
 } from "@cocalc/util/rootfs-images";
 import type {
   RootfsProjectPreflightScanResult,
@@ -2668,12 +2673,28 @@ export async function getRootfsCatalog(opts: { account_id?: string } = {}) {
   return await listVisibleRootfsImages(opts.account_id);
 }
 
+export async function getRootfsCatalogPage(
+  opts: RootfsCatalogPageRequest & {
+    account_id?: string;
+  } = {},
+): Promise<RootfsImageCatalogPage> {
+  return await listVisibleRootfsImagesPage(opts.account_id, opts);
+}
+
 export async function getRootfsCatalogAdmin(
   opts: {
     account_id?: string;
   } = {},
 ) {
   return await listRootfsImagesAdmin(opts.account_id);
+}
+
+export async function getRootfsCatalogAdminPage(
+  opts: RootfsCatalogPageRequest & {
+    account_id?: string;
+  } = {},
+): Promise<RootfsAdminCatalogPage> {
+  return await listRootfsImagesAdminPage(opts);
 }
 
 export async function getRootfsRusticReposAdmin(
