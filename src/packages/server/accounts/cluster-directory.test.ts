@@ -122,4 +122,35 @@ describe("accounts.cluster-directory", () => {
       ],
     );
   });
+
+  it("uses provider-specific matching when finding equivalent banned accounts", async () => {
+    const { getClusterBanEquivalentEmailAccountsDirect } =
+      await import("./cluster-directory");
+
+    await getClusterBanEquivalentEmailAccountsDirect({
+      email_address: "Co.Dex+abuse@googlemail.com",
+    });
+    expect(queryMock).toHaveBeenCalledWith(expect.stringContaining("$1"), [
+      "codex",
+      ["gmail.com", "googlemail.com"],
+      1000,
+    ]);
+
+    await getClusterBanEquivalentEmailAccountsDirect({
+      email_address: "co.dex+abuse@outlook.com",
+    });
+    expect(queryMock).toHaveBeenCalledWith(expect.stringContaining("$1"), [
+      "co.dex",
+      ["outlook.com"],
+      1000,
+    ]);
+
+    await getClusterBanEquivalentEmailAccountsDirect({
+      email_address: "codex-abuse@yahoo.com",
+    });
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("position('-'"),
+      ["codex", ["yahoo.com"], 1000],
+    );
+  });
 });

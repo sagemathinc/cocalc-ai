@@ -190,7 +190,7 @@ export async function assertNoClusterBannedEquivalentEmailAccount({
     return;
   }
   throw Error(
-    `This Gmail/Googlemail address is blocked because an equivalent address is banned (${banned.email_address ?? banned.account_id}).`,
+    `This email address is blocked because an equivalent address is banned (${banned.email_address ?? banned.account_id}).`,
   );
 }
 
