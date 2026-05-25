@@ -42,6 +42,10 @@ type Capture = {
     project_state?: string;
     parallel?: number;
   }>;
+  hostProjectBackups?: Array<{
+    id: string;
+    parallel?: number;
+  }>;
   runtimeDeploymentRollbacks?: Array<{
     id: string;
     target_type: string;
@@ -133,6 +137,7 @@ function makeDeps(
   capture.hostProjectsRequests ??= [];
   capture.hostProjectStops ??= [];
   capture.hostProjectRestarts ??= [];
+  capture.hostProjectBackups ??= [];
   capture.lroListRequests ??= [];
   capture.rehomeRequests ??= [];
   capture.sshTrustRequests ??= [];
@@ -285,6 +290,13 @@ function makeDeps(
                 parallel,
               });
               return { op_id: `restart-projects-${id}` };
+            },
+            backupHostProjects: async ({ id, parallel }) => {
+              capture.hostProjectBackups!.push({
+                id,
+                parallel,
+              });
+              return { op_id: `backup-projects-${id}` };
             },
             rehomeHost: async ({ id, dest_bay_id, reason, campaign_id }) => {
               capture.rehomeRequests!.push({
@@ -710,6 +722,22 @@ function makeDeps(
             succeeded: 2,
             failed: 0,
             skipped: 0,
+          },
+        };
+      }
+      if (`${op_id}`.startsWith("backup-projects-")) {
+        return {
+          op_id,
+          status: "succeeded",
+          timedOut: false,
+          error: undefined,
+          result: {
+            host_id: `${op_id}`.replace(/^backup-projects-/, ""),
+            total: 3,
+            backup_total: 2,
+            succeeded: 2,
+            failed: 0,
+            skipped: 1,
           },
         };
       }
@@ -1723,6 +1751,42 @@ test("host projects-restart queues a host-scoped restart action", async () => {
   assert.equal(capture.data.host_id, "host-1");
   assert.equal(capture.data.action, "restart");
   assert.equal(capture.data.status, "queued");
+});
+
+test("host projects-backup queues and waits for a host-scoped backup action", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "projects-backup",
+    "host-1",
+    "--parallel",
+    "4",
+    "--wait",
+  ]);
+
+  assert.deepEqual(capture.hostProjectBackups, [
+    {
+      id: "host-1",
+      parallel: 4,
+    },
+  ]);
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.status, "succeeded");
+  assert.equal(capture.data.total, 3);
+  assert.equal(capture.data.succeeded, 2);
+  assert.equal(capture.data.skipped, 1);
 });
 
 test("host projects-stop rejects non-actionable coarse state filters", async () => {

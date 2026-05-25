@@ -1109,6 +1109,7 @@ export const hosts = {
   listHostProjects: authFirstRequireAccount,
   stopHostProjects: authFirstRequireAccount,
   restartHostProjects: authFirstRequireAccount,
+  backupHostProjects: authFirstRequireAccount,
   resolveHostConnection: authFirstRequireAccount,
   getCatalog: authFirstRequireAccount,
   updateCloudCatalog: authFirstRequireAccount,

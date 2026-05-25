@@ -106,6 +106,7 @@ type HostBackupProjectRow = {
   provisioned?: boolean | null;
   last_edited?: Date | string | null;
   last_backup?: Date | string | null;
+  needs_backup?: boolean | null;
 };
 
 type HostProjectsActionResultRow = {
@@ -786,9 +787,25 @@ async function ensureHostBackups({
   await Promise.all(workers);
 }
 
-function isBackupableHostProject(row: HostBackupProjectRow): boolean {
+function hostBackupSkipReason(
+  row: HostBackupProjectRow,
+): "unprovisioned" | "up-to-date" | undefined {
   const state = `${row.state ?? ""}`.trim();
-  return !!row.provisioned || isProjectRunning(state);
+  if (!row.provisioned && !isProjectRunning(state)) {
+    return "unprovisioned";
+  }
+  if (row.needs_backup === false) {
+    return "up-to-date";
+  }
+  if (row.needs_backup === true) {
+    return undefined;
+  }
+  const lastEdited = row.last_edited ? new Date(row.last_edited).getTime() : 0;
+  const lastBackup = row.last_backup ? new Date(row.last_backup).getTime() : 0;
+  if (lastBackup && (!lastEdited || lastEdited <= lastBackup)) {
+    return "up-to-date";
+  }
+  return undefined;
 }
 
 function normalizeHostBackupProjectRows(input: any): HostBackupProjectRow[] {
@@ -880,13 +897,14 @@ async function runHostBackupAll({
         continue;
       }
       const state = `${next.state ?? ""}`.trim();
-      if (!isBackupableHostProject(next)) {
+      const skipReason = hostBackupSkipReason(next);
+      if (skipReason) {
         skipped += 1;
         results.push({
           project_id,
           status: "skipped",
           state,
-          reason: "unprovisioned",
+          reason: skipReason,
         });
         await updateProgress(`backup ${completed + failed + skipped}/${total}`);
         continue;
