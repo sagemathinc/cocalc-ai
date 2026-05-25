@@ -2,7 +2,12 @@
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
 
-import { docsPath, getDocsEntry, searchDocsEntries } from "@cocalc/docs";
+import {
+  docsPath,
+  getDocsEntry,
+  listDocsEntries,
+  searchDocsEntries,
+} from "@cocalc/docs";
 import PublicDocsApp from "../app";
 import { getDocsRouteFromPath } from "../routes";
 
@@ -88,6 +93,17 @@ describe("public/docs", () => {
         (entry) => entry.id,
       )[0],
     ).toBe("troubleshooting.connectivity");
+  });
+
+  it("has hashed icon art for every docs entry", () => {
+    for (const entry of listDocsEntries()) {
+      expect(entry.image?.presentation).toBe("icon");
+      expect(entry.image?.src).toMatch(
+        /^\/public\/docs\/[-a-z0-9]+-[a-f0-9]{8}\.webp$/,
+      );
+      expect(entry.image?.thumbnailSrc).toBe(entry.image?.src);
+      expect(entry.image?.alt).toBeTruthy();
+    }
   });
 
   it("renders the docs index", () => {
