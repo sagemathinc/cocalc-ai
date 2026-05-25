@@ -2949,14 +2949,23 @@ export async function getProjectRootfsStates(opts: {
 
 export async function setProjectRootfsImage(opts: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   project_id: string;
   image: string;
   image_id?: string;
 }): Promise<ProjectRootfsStateEntry[]> {
-  const { account_id, project_id, image, image_id } = opts;
+  const { account_id, browser_id, session_hash, project_id, image, image_id } =
+    opts;
   if (!account_id) {
     throw Error("user must be signed in");
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: false,
+  });
   await assertProjectCollaboratorAccessAllowRemote({ account_id, project_id });
   await assertCanSelectProjectRootfsImage({
     account_id,

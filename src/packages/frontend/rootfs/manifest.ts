@@ -214,7 +214,10 @@ export async function setProjectRootfsImage(body: {
   image_id?: string;
 }): Promise<ProjectRootfsStateEntry[]> {
   const states =
-    await webapp_client.conat_client.hub.system.setProjectRootfsImage(body);
+    await webapp_client.conat_client.hub.system.setProjectRootfsImage({
+      ...body,
+      browser_id: webapp_client.browser_id,
+    });
   publishProjectDetailInvalidation({
     project_id: body.project_id,
     fields: ["rootfs"],

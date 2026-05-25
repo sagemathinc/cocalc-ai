@@ -25,6 +25,10 @@ import {
 } from "antd";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import ActionAssist from "@cocalc/frontend/components/action-assist";
 import { Icon, Paragraph, ThemeEditorModal } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
@@ -136,6 +140,9 @@ export default function RootFilesystemImage({
   const [publishThemeOpen, setPublishThemeOpen] = useState<boolean>(false);
   const [publishSourceEntry, setPublishSourceEntry] =
     useState<RootfsImageEntry>();
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
   const [publishDraft, setPublishDraft] = useState<PublishDraft>({
     image: DEFAULT_PROJECT_IMAGE,
     label: "",
@@ -536,35 +543,43 @@ export default function RootFilesystemImage({
     image_id?: string;
   }) {
     if (!project) return;
-    try {
+    const apply = async () => {
       setSaving(true);
-      const states = await switchProjectRootfs({
-        project_id: project.get("project_id"),
-        image,
-        image_id,
-      });
-      setProjectRootfsStates(states);
-      const currentState = states.find(
-        (state) => state.state_role === "current",
-      );
-      const nextRootfsImage = currentState?.image ?? image;
-      const nextRootfsImageId = currentState?.image_id ?? image_id ?? undefined;
-      setRootfs({
-        image: nextRootfsImage,
-        ...(nextRootfsImageId ? { image_id: nextRootfsImageId } : undefined),
-      });
-      setValue(currentState?.image ?? image);
-      setImageId(currentState?.image_id ?? image_id ?? "");
-      if (project.getIn(["state", "state"]) == "running") {
-        setRestartQueuedAt(new Date().toISOString());
-        redux.getActions("projects").restart_project(project.get("project_id"));
-      } else {
-        setRestartQueuedAt("");
+      try {
+        const states = await switchProjectRootfs({
+          project_id: project.get("project_id"),
+          image,
+          image_id,
+        });
+        setProjectRootfsStates(states);
+        const currentState = states.find(
+          (state) => state.state_role === "current",
+        );
+        const nextRootfsImage = currentState?.image ?? image;
+        const nextRootfsImageId =
+          currentState?.image_id ?? image_id ?? undefined;
+        setRootfs({
+          image: nextRootfsImage,
+          ...(nextRootfsImageId ? { image_id: nextRootfsImageId } : undefined),
+        });
+        setValue(currentState?.image ?? image);
+        setImageId(currentState?.image_id ?? image_id ?? "");
+        if (project.getIn(["state", "state"]) == "running") {
+          setRestartQueuedAt(new Date().toISOString());
+          redux
+            .getActions("projects")
+            .restart_project(project.get("project_id"));
+        } else {
+          setRestartQueuedAt("");
+        }
+      } finally {
+        setSaving(false);
       }
+    };
+    try {
+      await runFreshAuthAction(apply);
     } catch (err) {
       setError(`${err}`);
-    } finally {
-      setSaving(false);
     }
   }
 
@@ -2026,6 +2041,7 @@ export default function RootFilesystemImage({
         defaultIcon="cube"
         projectId={project_id}
       />
+      <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
 }

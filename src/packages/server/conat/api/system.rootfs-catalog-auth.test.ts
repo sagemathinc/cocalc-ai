@@ -87,6 +87,33 @@ describe("RootFS catalog dangerous-session auth", () => {
     });
   });
 
+  it("requires fresh auth, not 2FA, before selecting a project RootFS image", async () => {
+    requireDangerousSessionAuthMock = jest.fn(async () => {
+      throw Object.assign(new Error("fresh auth is required"), {
+        code: "fresh_auth_required",
+      });
+    });
+    const { setProjectRootfsImage } = await import("./system");
+
+    await expect(
+      setProjectRootfsImage({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        project_id: "project-1",
+        image: "example/rootfs:latest",
+        image_id: "image-1",
+      }),
+    ).rejects.toThrow("fresh auth is required");
+
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      session_hash: undefined,
+      require_second_factor: false,
+    });
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
   it("requires recent 2FA for admin lifecycle catalog fields", async () => {
     isAdminMock = jest.fn(async () => true);
     const { saveRootfsCatalogEntry } = await import("./system");
