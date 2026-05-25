@@ -380,7 +380,8 @@ function SummaryRow({
 }
 
 function activeOpPercent(op: HostLroState): number | undefined {
-  const progress = op.last_progress?.progress;
+  const progress =
+    op.last_progress?.progress ?? op.summary?.progress_summary?.progress;
   if (progress == null) return undefined;
   return Math.max(0, Math.min(100, Math.round(progress)));
 }

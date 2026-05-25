@@ -135,6 +135,10 @@ function publishSummary(summary: LroSummary) {
   });
 }
 
+function resolveProgress(step: string, progress?: number): number | undefined {
+  return progress ?? progressSteps[step];
+}
+
 function progressEvent({
   op,
   step,
@@ -148,8 +152,6 @@ function progressEvent({
   detail?: any;
   progress?: number;
 }) {
-  const resolved =
-    progress ?? (progressSteps[step] != null ? progressSteps[step] : undefined);
   void publishLroEvent({
     scope_type: op.scope_type,
     scope_id: op.scope_id,
@@ -159,7 +161,7 @@ function progressEvent({
       ts: Date.now(),
       phase: step,
       message,
-      progress: resolved,
+      progress: resolveProgress(step, progress),
       detail,
     },
   });
@@ -167,12 +169,20 @@ function progressEvent({
 
 async function updateProgressSummary(
   op: LroSummary,
-  update: { step: string; detail?: any },
+  update: {
+    step: string;
+    message: string;
+    detail?: any;
+    progress?: number;
+  },
 ) {
+  const progress = resolveProgress(update.step, update.progress);
   const updated = await updateLro({
     op_id: op.op_id,
     progress_summary: {
       phase: update.step,
+      message: update.message,
+      ...(progress != null ? { progress } : {}),
       ...(update.detail ?? {}),
     },
   });
@@ -866,9 +876,12 @@ async function runHostBackupAll({
   let failed = 0;
   let skipped = 0;
 
-  const updateProgress = async (message: string) => {
+  const currentProgress = () => {
     const done = completed + failed + skipped;
-    const progress = total ? Math.round((done / total) * 100) : 100;
+    return total ? Math.round((done / total) * 100) : 100;
+  };
+
+  const updateProgress = async (message: string) => {
     await progressStep(
       "backups",
       message,
@@ -879,7 +892,7 @@ async function runHostBackupAll({
         failed,
         skipped,
       },
-      progress,
+      currentProgress(),
     );
   };
 
@@ -936,11 +949,20 @@ async function runHostBackupAll({
       }
 
       try {
-        await progressStep("backups", `backup ${project_id}`, {
-          host_id,
-          project_id,
-          state,
-        });
+        await progressStep(
+          "backups",
+          `backup ${project_id}`,
+          {
+            host_id,
+            project_id,
+            state,
+            total,
+            completed,
+            failed,
+            skipped,
+          },
+          currentProgress(),
+        );
         const backupOp = await createProjectBackupOp({
           project_id,
           account_id,
@@ -1281,7 +1303,9 @@ async function handleOp(op: LroSummary): Promise<void> {
     touchLro({ op_id, owner_type: OWNER_TYPE, owner_id: WORKER_ID }).catch(
       () => {},
     );
-    await updateProgressSummary(op, { step, detail }).catch(() => {});
+    await updateProgressSummary(op, { step, message, detail, progress }).catch(
+      () => {},
+    );
   };
 
   const cancelState = {

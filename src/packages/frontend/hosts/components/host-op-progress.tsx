@@ -127,7 +127,8 @@ function toTimestamp(value?: Date | string | null): number | undefined {
 }
 
 function progressPercent(op: HostLroState): number | undefined {
-  const progress = op.last_progress?.progress;
+  const progress =
+    op.last_progress?.progress ?? op.summary?.progress_summary?.progress;
   if (progress != null) {
     return Math.max(0, Math.min(100, Math.round(progress)));
   }
