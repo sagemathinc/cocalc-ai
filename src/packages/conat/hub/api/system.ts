@@ -2070,8 +2070,6 @@ export interface System {
     image: string;
     image_id?: string;
     account_id?: string;
-    browser_id?: string | null;
-    session_hash?: string | null;
   }) => Promise<ProjectRootfsStateEntry[]>;
 
   getPublicSiteUrl: (opts?: {

@@ -34,10 +34,6 @@ import {
   useRootfsImages,
 } from "@cocalc/frontend/rootfs/manifest";
 import { COLORS } from "@cocalc/util/theme";
-import {
-  FreshAuthModal,
-  useFreshAuthAction,
-} from "@cocalc/frontend/auth/fresh-auth";
 import type { CourseActions } from "../actions";
 import type { CourseStore } from "../store";
 
@@ -53,9 +49,6 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
   const [applying, setApplying] = useState<boolean>(false);
   const [nextImageId, setNextImageId] = useState<string>("");
   const [nextImage, setNextImage] = useState<string>("");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => message.error(`${err}`),
-  });
   const currentImage =
     `${settings.get("student_project_rootfs_image") ?? ""}`.trim();
   const currentImageId =
@@ -174,14 +167,12 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
       onOk: async () => {
         setApplying(true);
         try {
-          await runFreshAuthAction(async () => {
-            await actions.student_projects.set_all_student_project_rootfs();
-            message.success(
-              `Changed the RootFS image for ${existingStudentProjectCount} student project${
-                existingStudentProjectCount === 1 ? "" : "s"
-              }.`,
-            );
-          });
+          await actions.student_projects.set_all_student_project_rootfs();
+          message.success(
+            `Changed the RootFS image for ${existingStudentProjectCount} student project${
+              existingStudentProjectCount === 1 ? "" : "s"
+            }.`,
+          );
         } finally {
           setApplying(false);
         }
@@ -378,7 +369,6 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
           </Typography.Paragraph>
         </Space>
       </Modal>
-      <FreshAuthModal {...freshAuthModalProps} />
     </>
   );
 }
