@@ -910,7 +910,15 @@ export function RootfsAdmin() {
               key: "scan",
               render: (_, entry) => (
                 <Space orientation="vertical" size={0}>
-                  <RootfsScanStatus entry={entry} />
+                  <RootfsScanStatus
+                    entry={entry}
+                    detailsTitle={`RootFS scan details: ${entry.label}`}
+                    onDownloadReport={
+                      entry.scan?.report?.artifact_id
+                        ? () => downloadScanReport(entry)
+                        : undefined
+                    }
+                  />
                   {entry.scan?.report_url ? (
                     <Typography.Link
                       href={entry.scan.report_url}
@@ -921,14 +929,10 @@ export function RootfsAdmin() {
                       View report
                     </Typography.Link>
                   ) : null}
-                  {entry.scan?.report?.artifact_id ? (
-                    <Button
-                      size="small"
-                      loading={actionLoading(entry, "download")}
-                      onClick={() => downloadScanReport(entry)}
-                    >
-                      Download report
-                    </Button>
+                  {actionLoading(entry, "download") ? (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Downloading report...
+                    </Typography.Text>
                   ) : null}
                   {entry.scanned_at ? (
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
