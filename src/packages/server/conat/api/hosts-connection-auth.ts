@@ -45,7 +45,10 @@ import {
   hostAccessRoleCan,
 } from "@cocalc/server/project-host/access";
 import isAdmin from "@cocalc/server/accounts/is-admin";
-import isBanned from "@cocalc/server/accounts/is-banned";
+import {
+  ensureAccountSecurityStateReady,
+  isAccountBannedCached,
+} from "@cocalc/server/accounts/security-state";
 import {
   assertAccountProjectHostTokenProjectAccess,
   assertProjectHostAgentTokenAccess,
@@ -172,7 +175,8 @@ export async function issueProjectHostAuthTokenLocalHelper({
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
-  if (await isBanned(account_id)) {
+  await ensureAccountSecurityStateReady();
+  if (isAccountBannedCached(account_id)) {
     throw new Error("account is banned");
   }
 

@@ -70,4 +70,28 @@ describe("account security state cache", () => {
 
     expect(isAccountBannedCached(ACCOUNT_ID)).toBe(true);
   });
+
+  it("loads account security state once for runtime callers that need readiness", async () => {
+    poolQueryMock.mockResolvedValueOnce({ rows: [] });
+    poolQueryMock.mockResolvedValueOnce({ rows: [] });
+    poolQueryMock.mockResolvedValueOnce({ rows: [] });
+    poolQueryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          account_id: ACCOUNT_ID,
+          banned: true,
+          revoked_before_ms: null,
+          updated_ms: 3000,
+        },
+      ],
+    });
+    const { ensureAccountSecurityStateReady, isAccountBannedCached } =
+      await import("./security-state");
+
+    await ensureAccountSecurityStateReady();
+    await ensureAccountSecurityStateReady();
+
+    expect(isAccountBannedCached(ACCOUNT_ID)).toBe(true);
+    expect(poolQueryMock).toHaveBeenCalledTimes(4);
+  });
 });

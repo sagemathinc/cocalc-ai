@@ -18,6 +18,7 @@ let ensured = false;
 let syncRunning = false;
 let syncCursor = { updated_ms: 0, account_id: "" };
 let stopSyncLoop: (() => void) | undefined;
+let initialSyncPromise: Promise<void> | undefined;
 
 type AccountSecurityState = {
   banned: boolean;
@@ -213,6 +214,7 @@ export function getAccountRevokedBeforeCached(
 export function clearAccountSecurityStateCache(): void {
   accountSecurityState.clear();
   syncCursor = { updated_ms: 0, account_id: "" };
+  initialSyncPromise = undefined;
   ensured = false;
 }
 
@@ -253,6 +255,19 @@ export async function syncAccountSecurityStateOnce({
   } finally {
     syncRunning = false;
   }
+}
+
+export async function ensureAccountSecurityStateReady(): Promise<void> {
+  if (syncCursor.updated_ms > 0 || initialSyncPromise) {
+    return await initialSyncPromise;
+  }
+  initialSyncPromise = syncAccountSecurityStateOnce({ maxPages: 1000 })
+    .then(() => undefined)
+    .catch((err) => {
+      initialSyncPromise = undefined;
+      throw err;
+    });
+  await initialSyncPromise;
 }
 
 export function startAccountSecurityStateSyncLoop({
