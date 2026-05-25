@@ -26,6 +26,7 @@ type HubClient = {
     }) => Promise<HostLroResponse>;
     drainHost?: (opts: {
       id: string;
+      browser_id?: string;
       dest_host_id?: string;
       force?: boolean;
       allow_offline?: boolean;
@@ -239,6 +240,7 @@ export const useHostActions = ({
     try {
       const op = await hub.hosts.drainHost({
         id,
+        browser_id,
         dest_host_id: opts?.dest_host_id,
         force: opts?.force,
         allow_offline: opts?.allow_offline,

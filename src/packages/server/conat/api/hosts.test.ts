@@ -2088,6 +2088,59 @@ describe("hosts browser fresh auth gating", () => {
     );
   });
 
+  it("requires fresh auth before queueing host drain", async () => {
+    requireFreshAuthForSessionHashMock = jest.fn(async () => {
+      throw Object.assign(new Error("fresh auth is required"), {
+        code: "fresh_auth_required",
+      });
+    });
+
+    const { drainHost } = await import("./hosts");
+    queryMock.mockClear();
+    createLroMock.mockClear();
+    await expect(
+      drainHost({
+        account_id: ACCOUNT_ID,
+        session_hash: "stale-session-hash",
+        id: HOST_ID,
+      }),
+    ).rejects.toThrow("fresh auth is required");
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      allow_actor_impersonation: true,
+      session_hash: "stale-session-hash",
+    });
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(createLroMock).not.toHaveBeenCalled();
+  });
+
+  it("requires fresh auth before host rehome", async () => {
+    requireFreshAuthForSessionHashMock = jest.fn(async () => {
+      throw Object.assign(new Error("fresh auth is required"), {
+        code: "fresh_auth_required",
+      });
+    });
+
+    const { rehomeHost } = await import("./hosts");
+    queryMock.mockClear();
+    await expect(
+      rehomeHost({
+        account_id: ACCOUNT_ID,
+        session_hash: "stale-session-hash",
+        id: HOST_ID,
+        dest_bay_id: "bay-1",
+      }),
+    ).rejects.toThrow("fresh auth is required");
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      allow_actor_impersonation: true,
+      session_hash: "stale-session-hash",
+    });
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
   it("cancels queued start and restart ops before queueing delete", async () => {
     listLroMock = jest.fn(async () => [
       {
@@ -2949,6 +3002,7 @@ describe("hosts.authoritative remote host actions", () => {
     });
     await drainHost({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
       dest_host_id: "dest-host",
       force: true,
@@ -3016,6 +3070,7 @@ describe("hosts.authoritative remote host actions", () => {
     });
     expect(hostConnectionDrainHostMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
       dest_host_id: "dest-host",
       force: true,

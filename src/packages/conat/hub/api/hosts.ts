@@ -1561,6 +1561,8 @@ export interface Hosts {
   }) => Promise<HostLroResponse>;
   drainHost: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     id: string;
     dest_host_id?: string;
     force?: boolean;
@@ -1579,6 +1581,8 @@ export interface Hosts {
   }) => Promise<HostOwnerSshTrustResult>;
   rehomeHost: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     id: string;
     dest_bay_id: string;
     reason?: string | null;

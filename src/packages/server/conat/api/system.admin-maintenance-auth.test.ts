@@ -177,6 +177,26 @@ describe("admin maintenance dangerous-session auth", () => {
     });
   });
 
+  it("requires recent 2FA fresh auth before reconciling account rehomes", async () => {
+    const { reconcileAccountRehome } = await import("./system");
+
+    await expect(
+      reconcileAccountRehome({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        op_id: "account-rehome-op",
+        source_bay_id: "bay-1",
+      }),
+    ).rejects.toThrow("fresh auth is required");
+
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      session_hash: undefined,
+      require_second_factor: true,
+    });
+  });
+
   it("requires recent 2FA fresh auth before clearing parallel worker limits", async () => {
     const { clearParallelOpsLimit } = await import("./system");
 

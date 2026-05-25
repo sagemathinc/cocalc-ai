@@ -4808,6 +4808,8 @@ export async function restartHostInternal({
 
 export async function drainHost({
   account_id,
+  browser_id,
+  session_hash,
   id,
   dest_host_id,
   force,
@@ -4815,22 +4817,33 @@ export async function drainHost({
   parallel,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   id: string;
   dest_host_id?: string;
   force?: boolean;
   allow_offline?: boolean;
   parallel?: number;
 }): Promise<HostLroResponse> {
+  await requireDangerousHostMutationAuth({
+    account_id,
+    browser_id,
+    session_hash,
+  });
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
   if (remoteBay) {
-    return await getInterBayBridge().hostConnection(remoteBay).drainHost({
-      account_id,
-      id,
-      dest_host_id,
-      force,
-      allow_offline,
-      parallel,
-    });
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .drainHost({
+        account_id,
+        ...(browser_id ? { browser_id } : {}),
+        session_hash,
+        id,
+        dest_host_id,
+        force,
+        allow_offline,
+        parallel,
+      });
   }
   const owner = requireAccount(account_id);
   const row = await loadHostForDrainInternal({ id, owner });
@@ -4965,17 +4978,26 @@ export async function ensureHostOwnerSshTrust({
 
 export async function rehomeHost({
   account_id,
+  browser_id,
+  session_hash,
   id,
   dest_bay_id,
   reason,
   campaign_id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   id: string;
   dest_bay_id: string;
   reason?: string | null;
   campaign_id?: string | null;
 }): Promise<HostRehomeResponse> {
+  await requireDangerousHostMutationAuth({
+    account_id,
+    browser_id,
+    session_hash,
+  });
   return await rehomeHostInternal({
     account_id,
     host_id: id,

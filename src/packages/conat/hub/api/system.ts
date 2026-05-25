@@ -1691,6 +1691,8 @@ export interface System {
 
   reconcileAccountRehome: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     op_id: string;
     source_bay_id?: string;
   }) => Promise<AccountRehomeResponse>;

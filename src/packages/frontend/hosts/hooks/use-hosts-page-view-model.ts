@@ -1669,7 +1669,10 @@ export const useHostsPageViewModel = () => {
       }),
     onStop: (id: string, opts) => setStatus(id, "stop", opts),
     onRestart: restartHost,
-    onDrain: (id: string, opts) => drainHost(id, opts),
+    onDrain: (id: string, opts) =>
+      runFreshAuthAction(async () => {
+        await drainHost(id, opts);
+      }),
     onDelete: deprovisionOrDeleteHost,
     onRefresh: refreshHostsNow,
     onCancelOp: cancelHostOp,

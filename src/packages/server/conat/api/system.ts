@@ -3401,13 +3401,23 @@ export async function getAccountRehomeOperation({
 
 export async function reconcileAccountRehome({
   account_id,
+  browser_id,
+  session_hash,
   op_id,
   source_bay_id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   op_id: string;
   source_bay_id?: string;
 }) {
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
   return await reconcileAccountRehomeInternal({
     account_id,
     op_id,
