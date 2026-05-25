@@ -37,6 +37,7 @@ import type {
   ManagedComponentRuntimeState,
   ManagedComponentUpgradePolicy,
 } from "@cocalc/conat/project-host/api";
+import { projectHostRollbackReasonLabel } from "@cocalc/conat/project-host/rollout";
 import { humanSize } from "@cocalc/util/misc";
 
 const DAEMON_COMPONENTS: Array<{
@@ -267,6 +268,62 @@ function formatUpgradePolicy(policy?: ManagedComponentUpgradePolicy): string {
   }
 }
 
+function formatRuntimeTimestamp(value?: string): string | undefined {
+  if (!value) return undefined;
+  const ts = Date.parse(value);
+  if (!Number.isFinite(ts)) return undefined;
+  return new Date(ts).toLocaleString();
+}
+
+function formatRolloutReason(reason?: string): string {
+  switch (`${reason ?? ""}`.trim()) {
+    case "automatic_project_host_local_rollback":
+      return "automatic local rollback after a failed project-host rollout";
+    default:
+      return reason?.trim() || "manual override";
+  }
+}
+
+function formatProjectHostRolloutPhase(phase?: string): string {
+  switch (`${phase ?? ""}`.trim()) {
+    case "stable":
+      return "Stable";
+    case "candidate_pending":
+      return "Candidate pending";
+    case "restart_requested":
+      return "Restart requested";
+    case "candidate_starting":
+      return "Candidate starting";
+    case "candidate_running_unhealthy":
+      return "Candidate running, evaluating health";
+    case "candidate_running_healthy":
+      return "Candidate running, healthy";
+    case "promoted":
+      return "Candidate promoted";
+    case "rollback_requested":
+      return "Rollback requested";
+    case "rolled_back":
+      return "Rolled back";
+    default:
+      return phase?.trim() || "Unknown";
+  }
+}
+
+function projectHostRolloutAlertType(
+  phase?: string,
+): "info" | "success" | "warning" {
+  switch (`${phase ?? ""}`.trim()) {
+    case "promoted":
+    case "stable":
+      return "success";
+    case "rollback_requested":
+    case "rolled_back":
+      return "warning";
+    default:
+      return "info";
+  }
+}
+
 function formatBytes(value?: number): string | undefined {
   if (!Number.isFinite(value) || !value || value <= 0) return undefined;
   return humanSize(value, { binary: true });
@@ -428,6 +485,17 @@ export function HostDaemonRuntimeControl({
   );
   const configuredLatest = softwareVersions?.configured?.["project-host"];
   const hubLatest = softwareVersions?.hub?.["project-host"];
+  const projectHostDeployment = deploymentRecord(
+    deploymentStatus,
+    "project-host",
+  );
+  const projectHostObservation =
+    deploymentStatus?.observed_host_agent?.project_host ??
+    host.observed_host_agent?.project_host;
+  const projectHostFleetTarget = observedTarget(
+    deploymentStatus,
+    "project-host",
+  )?.desired_version;
   const disabled = !!hostOpActive || host.status !== "running";
   const canControl = !!canUpgrade && !host.deleted;
 
@@ -496,6 +564,156 @@ export function HostDaemonRuntimeControl({
           message="Hub source lookup failed"
           description={softwareVersions.hubError}
         />
+      )}
+      {projectHostDeployment?.scope_type === "host" && (
+        <Alert
+          type="warning"
+          showIcon
+          message="Project-host is pinned away from the cluster default"
+          description={
+            <span>
+              This host currently overrides the cluster default and stays on{" "}
+              <code>{projectHostDeployment.desired_version ?? "unknown"}</code>
+              {projectHostFleetTarget ? (
+                <>
+                  {" "}
+                  while the fleet target is{" "}
+                  <code>{projectHostFleetTarget}</code>.
+                </>
+              ) : (
+                "."
+              )}{" "}
+              Reason:{" "}
+              {formatRolloutReason(projectHostDeployment.rollout_reason)}. Use{" "}
+              <strong>Resume cluster default</strong> when you are ready to
+              retry the fleet version.
+            </span>
+          }
+        />
+      )}
+      {projectHostObservation?.rollout && (
+        <Alert
+          type={projectHostRolloutAlertType(
+            projectHostObservation.rollout.phase,
+          )}
+          showIcon
+          message={`Project-host rollout: ${formatProjectHostRolloutPhase(
+            projectHostObservation.rollout.phase,
+          )}`}
+          description={
+            <span>
+              {projectHostObservation.rollout.target_version && (
+                <>
+                  Target{" "}
+                  <code>{projectHostObservation.rollout.target_version}</code>
+                </>
+              )}
+              {projectHostObservation.rollout.previous_version && (
+                <>
+                  {" "}
+                  from{" "}
+                  <code>{projectHostObservation.rollout.previous_version}</code>
+                </>
+              )}
+              {projectHostObservation.rollout.running_version && (
+                <>
+                  {" "}
+                  · running{" "}
+                  <code>{projectHostObservation.rollout.running_version}</code>
+                </>
+              )}
+              {formatRuntimeTimestamp(
+                projectHostObservation.rollout.deadline_at,
+              ) && (
+                <>
+                  {" "}
+                  · deadline{" "}
+                  {formatRuntimeTimestamp(
+                    projectHostObservation.rollout.deadline_at,
+                  )}
+                </>
+              )}
+              {formatRuntimeTimestamp(
+                projectHostObservation.rollout.accepted_at,
+              ) && (
+                <>
+                  {" "}
+                  · accepted{" "}
+                  {formatRuntimeTimestamp(
+                    projectHostObservation.rollout.accepted_at,
+                  )}
+                </>
+              )}
+              {formatRuntimeTimestamp(
+                projectHostObservation.rollout.rollback_finished_at,
+              ) && (
+                <>
+                  {" "}
+                  · rollback finished{" "}
+                  {formatRuntimeTimestamp(
+                    projectHostObservation.rollout.rollback_finished_at,
+                  )}
+                </>
+              )}
+              {projectHostObservation.rollout.failure_reason && (
+                <>
+                  {" "}
+                  ·{" "}
+                  {projectHostRollbackReasonLabel(
+                    projectHostObservation.rollout.failure_reason,
+                  )}
+                </>
+              )}
+            </span>
+          }
+        />
+      )}
+      {projectHostObservation?.pending_rollout && (
+        <Alert
+          type="info"
+          showIcon
+          message="Project-host rollout in progress"
+          description={
+            <span>
+              Target{" "}
+              <code>
+                {projectHostObservation.pending_rollout.target_version}
+              </code>{" "}
+              from{" "}
+              <code>
+                {projectHostObservation.pending_rollout.previous_version}
+              </code>
+              {formatRuntimeTimestamp(
+                projectHostObservation.pending_rollout.started_at,
+              ) && (
+                <>
+                  {" "}
+                  · started{" "}
+                  {formatRuntimeTimestamp(
+                    projectHostObservation.pending_rollout.started_at,
+                  )}
+                </>
+              )}
+              {formatRuntimeTimestamp(
+                projectHostObservation.pending_rollout.deadline_at,
+              ) && (
+                <>
+                  {" "}
+                  · deadline{" "}
+                  {formatRuntimeTimestamp(
+                    projectHostObservation.pending_rollout.deadline_at,
+                  )}
+                </>
+              )}
+            </span>
+          }
+        />
+      )}
+      {projectHostObservation?.last_known_good_version && (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Project-host last known good{" "}
+          <code>{projectHostObservation.last_known_good_version}</code>
+        </Typography.Text>
       )}
       {DAEMON_COMPONENTS.map(({ component, shortLabel, label, disruptive }) => {
         const deployment = deploymentRecord(deploymentStatus, component);

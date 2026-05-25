@@ -40,7 +40,6 @@ import {
 import { isSpotStandardFallbackHost } from "../spot-ui";
 import type { HostLroState } from "../hooks/use-host-ops";
 import { HostBillingEnforcementStatus } from "./host-billing-enforcement";
-import { HostDaemonRuntimeControl } from "./host-daemon-runtime-control";
 import { HostBootstrapProgress } from "./host-bootstrap-progress";
 import {
   getHostOpLabel,
@@ -840,7 +839,7 @@ function DetailsPopover({
   displayPhaseLabel?: string;
   displayPhaseOwner?: string;
   displayDeadlineAt?: string;
-  onDetails?: (host: Host) => void;
+  onDetails?: (host: Host, tab?: string) => void;
 }) {
   const [open, setOpen] = React.useState(false);
   const placement = placementSummary(host);
@@ -1090,19 +1089,18 @@ function DetailsPopover({
               description="Background services reported by the host."
               icon={<SettingOutlined />}
               footer={
-                <Popover
-                  title="Daemon runtime detail"
-                  content={
-                    <div style={{ width: 640, maxWidth: "78vw" }}>
-                      <HostDaemonRuntimeControl host={host} compact />
-                    </div>
-                  }
-                  trigger="click"
-                >
-                  <Button size="small" type="link">
-                    Details <DownOutlined />
+                onDetails ? (
+                  <Button
+                    size="small"
+                    type="link"
+                    onClick={() => {
+                      setOpen(false);
+                      onDetails(host, "runtime");
+                    }}
+                  >
+                    Open runtime controls
                   </Button>
-                </Popover>
+                ) : null
               }
             >
               <DetailRow
@@ -1157,7 +1155,7 @@ export function HostStatusSummary({
 }: {
   host: Host;
   op?: HostLroState;
-  onDetails?: (host: Host) => void;
+  onDetails?: (host: Host, tab?: string) => void;
   fullWidth?: boolean;
 }) {
   const displayOp =

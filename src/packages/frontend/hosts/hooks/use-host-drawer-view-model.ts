@@ -27,6 +27,7 @@ type HostSoftwareMap = Partial<
 type UseHostDrawerViewModelArgs = {
   open: boolean;
   host: Host | undefined;
+  initialTab?: string;
   hostOps?: Record<string, HostLroState>;
   onClose: () => void;
   onEdit: (host: Host) => void;
@@ -187,6 +188,7 @@ type UseHostDrawerViewModelArgs = {
 export const useHostDrawerViewModel = ({
   open,
   host,
+  initialTab,
   hostOps,
   onClose,
   onEdit,
@@ -232,6 +234,7 @@ export const useHostDrawerViewModel = ({
   return {
     open,
     host,
+    initialTab,
     hostOps,
     onClose,
     onEdit,
