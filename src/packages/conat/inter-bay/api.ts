@@ -593,10 +593,19 @@ export interface AccountRehomeAcceptRequest {
   account: Record<string, unknown>;
 }
 
+export interface AccountPersistFileV1 {
+  root: "local" | "archive" | "backup";
+  relative_path: string;
+  data_base64: string;
+  mode?: number;
+  mtime_ms?: number;
+}
+
 export interface AccountRehomeStateCopyRequest {
   target_account_id: string;
   source_bay_id: string;
   dest_bay_id: string;
+  account_persist_files?: AccountPersistFileV1[];
   account_project_index?: Record<string, unknown>[];
   account_collaborator_index?: Record<string, unknown>[];
   account_notification_index?: Record<string, unknown>[];

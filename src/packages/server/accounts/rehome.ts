@@ -38,6 +38,11 @@ import {
 } from "@cocalc/server/inter-bay/accounts";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
+import {
+  clearAccountPersistState,
+  loadAccountPersistState,
+  restoreAccountPersistState,
+} from "@cocalc/server/accounts/persist-portability";
 import { isValidUUID } from "@cocalc/util/misc";
 
 const log = getLogger("server:accounts:rehome");
@@ -735,6 +740,7 @@ async function loadPortableState(
     api_keys,
     account_entitlement_overrides,
     account_entitlement_override_events,
+    account_persist_files,
     membershipPortableState,
   ] = await Promise.all([
     loadPortableRows("account_project_index", account_id),
@@ -750,6 +756,7 @@ async function loadPortableState(
     loadAccountWidePortableApiKeyRows(account_id),
     loadPortableRows("account_entitlement_overrides", account_id),
     loadPortableRows("account_entitlement_override_events", account_id),
+    loadAccountPersistState(account_id),
     getMembershipPortableState(account_id),
   ]);
   return {
@@ -769,6 +776,7 @@ async function loadPortableState(
     api_keys,
     account_entitlement_overrides,
     account_entitlement_override_events,
+    account_persist_files,
     membership_grants: membershipPortableState.membership_grants,
     membership_packages: membershipPortableState.membership_packages,
     membership_package_assignments:
@@ -1195,6 +1203,7 @@ export async function copyAccountRehomeState({
   api_keys,
   account_entitlement_overrides,
   account_entitlement_override_events,
+  account_persist_files,
   membership_grants,
   membership_packages,
   membership_package_assignments,
@@ -1208,6 +1217,12 @@ export async function copyAccountRehomeState({
     throw new Error(
       `account rehome state copy for ${accountId} reached ${localBayId}, not destination bay ${destBayId}`,
     );
+  }
+  if (account_persist_files != null) {
+    await restoreAccountPersistState({
+      account_id: accountId,
+      files: account_persist_files,
+    });
   }
   await replacePortableRows({
     table: "account_project_index",
@@ -1315,6 +1330,7 @@ export async function copyAccountRehomeState({
       account_entitlement_overrides?.length ?? 0,
     account_entitlement_override_events_rows:
       account_entitlement_override_events?.length ?? 0,
+    account_persist_files: account_persist_files?.length ?? 0,
     membership_grants_rows: membership_grants?.length ?? 0,
     membership_packages_rows: membership_packages?.length ?? 0,
     membership_package_assignments_rows:
@@ -1427,6 +1443,7 @@ export async function runAccountRehomeOperation(
 
     if (op.stage === "projections_copied") {
       await clearPortableState(op.account_id);
+      await clearAccountPersistState(op.account_id);
       const accountEntry = await getClusterAccountById(op.account_id);
       await updateClusterAccountHomeBay({
         account_id: op.account_id,
