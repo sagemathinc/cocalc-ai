@@ -62,11 +62,15 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
     currentImageId || (!currentImage ? inheritedImageId : "");
   const existingStudentProjectCount =
     store?.get_student_project_ids().length ?? 0;
+  const [rootfsSearch, setRootfsSearch] = useState("");
   const {
     images: rootfsImages,
     loading: rootfsLoading,
     error: rootfsError,
-  } = useRootfsImages([managedRootfsCatalogUrl()]);
+  } = useRootfsImages([managedRootfsCatalogUrl()], {
+    query: rootfsSearch,
+    limit: 200,
+  });
   const [showOlderVersions, setShowOlderVersions] = useState<boolean>(false);
 
   useEffect(() => {
@@ -221,6 +225,7 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
                     input.trim().toLowerCase(),
                   )
                 }
+                onSearch={(value) => setRootfsSearch(value)}
                 optionRender={(option) =>
                   renderRootfsCatalogOption((option.data as any).entry)
                 }

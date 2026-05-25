@@ -24,6 +24,11 @@ type ManifestLoadState = {
   error?: string;
 };
 
+type RootfsImageLoadOptions = {
+  query?: string;
+  limit?: number;
+};
+
 const manifestCache = new Map<string, Promise<RootfsImageEntry[]>>();
 let manifestRevision = 0;
 const manifestListeners = new Set<() => void>();
@@ -88,6 +93,7 @@ function isManagedCatalogUrl(url: string): boolean {
 
 async function loadManagedCatalogManifest(
   url: string,
+  opts: RootfsImageLoadOptions = {},
 ): Promise<RootfsImageManifest | null> {
   const hasAccountContext =
     !!`${webapp_client.account_id ?? ""}`.trim() ||
@@ -96,7 +102,8 @@ async function loadManagedCatalogManifest(
     try {
       const page =
         await webapp_client.conat_client.hub.system.getRootfsCatalogPage({
-          limit: 200,
+          limit: opts.limit ?? 200,
+          query: opts.query?.trim() || undefined,
         });
       const manifest: RootfsImageManifest = {
         version: page.version,
@@ -115,9 +122,12 @@ async function loadManagedCatalogManifest(
   return await fetchManifest(url);
 }
 
-async function loadManifest(url: string): Promise<RootfsImageManifest | null> {
+async function loadManifest(
+  url: string,
+  opts: RootfsImageLoadOptions = {},
+): Promise<RootfsImageManifest | null> {
   if (isManagedCatalogUrl(url)) {
-    return await loadManagedCatalogManifest(url);
+    return await loadManagedCatalogManifest(url, opts);
   }
   return await fetchManifest(url);
 }
@@ -125,18 +135,21 @@ async function loadManifest(url: string): Promise<RootfsImageManifest | null> {
 export async function loadRootfsImages(
   manifestUrls: string[],
   scopeKey: string = rootfsCatalogScopeKey(),
+  opts: RootfsImageLoadOptions = {},
 ): Promise<RootfsImageEntry[]> {
   const urls = normalizeUrls(manifestUrls);
   if (urls.length === 0) {
     return [];
   }
-  const key = `${scopeKey}|${urls.join("|")}`;
+  const key = `${scopeKey}|${opts.query ?? ""}|${opts.limit ?? ""}|${urls.join("|")}`;
   const cached = manifestCache.get(key);
   if (cached) {
     return cached;
   }
   const pending = (async () => {
-    const manifests = await Promise.all(urls.map(loadManifest));
+    const manifests = await Promise.all(
+      urls.map((url) => loadManifest(url, opts)),
+    );
     return mergeRootfsManifests(
       manifests.filter(
         (manifest): manifest is RootfsImageManifest => !!manifest,
@@ -147,7 +160,10 @@ export async function loadRootfsImages(
   return pending;
 }
 
-export function useRootfsImages(manifestUrls: string[]): ManifestLoadState {
+export function useRootfsImages(
+  manifestUrls: string[],
+  opts: RootfsImageLoadOptions = {},
+): ManifestLoadState {
   const [state, setState] = useState<ManifestLoadState>({
     images: [],
     loading: true,
@@ -155,6 +171,8 @@ export function useRootfsImages(manifestUrls: string[]): ManifestLoadState {
   const [revision, setRevision] = useState<number>(manifestRevision);
   const urls = useMemo(() => normalizeUrls(manifestUrls), [manifestUrls]);
   const scopeKey = rootfsCatalogScopeKey();
+  const query = opts.query?.trim() ?? "";
+  const limit = opts.limit;
 
   useEffect(
     () => subscribeManifestInvalidation(() => setRevision(manifestRevision)),
@@ -170,7 +188,7 @@ export function useRootfsImages(manifestUrls: string[]): ManifestLoadState {
       };
     }
     setState((prev) => ({ ...prev, loading: true, error: undefined }));
-    loadRootfsImages(urls, scopeKey)
+    loadRootfsImages(urls, scopeKey, { query, limit })
       .then((images) => {
         if (!active) return;
         setState({ images, loading: false });
@@ -186,7 +204,7 @@ export function useRootfsImages(manifestUrls: string[]): ManifestLoadState {
     return () => {
       active = false;
     };
-  }, [revision, scopeKey, urls.join("|")]);
+  }, [limit, query, revision, scopeKey, urls.join("|")]);
 
   return state;
 }

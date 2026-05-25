@@ -117,12 +117,17 @@ export function HostRootfsCachePanel({
   inventory,
 }: HostRootfsCachePanelProps) {
   const [pullImage, setPullImage] = React.useState<string>();
+  const [pullSearch, setPullSearch] = React.useState("");
   const [cacheSearch, setCacheSearch] = React.useState("");
   const [cachePage, setCachePage] = React.useState(1);
   const [cachePageSize, setCachePageSize] = React.useState(20);
-  const { images: catalogImages, loading: catalogLoading } = useRootfsImages([
-    managedRootfsCatalogUrl(),
-  ]);
+  const { images: catalogImages, loading: catalogLoading } = useRootfsImages(
+    [managedRootfsCatalogUrl()],
+    {
+      query: pullSearch,
+      limit: 200,
+    },
+  );
 
   const uniqueCatalogEntries = React.useMemo(() => {
     const byImage = new Map<string, RootfsImageEntry>();
@@ -324,6 +329,7 @@ export function HostRootfsCachePanel({
               loading={catalogLoading}
               disabled={uncachedPullOptions.length === 0}
               onChange={(value) => setPullImage(value)}
+              onSearch={(value) => setPullSearch(value)}
               filterOption={(input, option) =>
                 `${option?.label ?? ""}`
                   .toLowerCase()
