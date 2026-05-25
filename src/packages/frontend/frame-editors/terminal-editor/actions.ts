@@ -6,12 +6,14 @@
 /*
 Terminal Editor Actions
 */
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { joinUrlPath } from "@cocalc/util/url-path";
 import { BaseEditorActions as Actions } from "../base-editor/actions-base";
 import { FrameTree } from "../frame-tree/types";
 import { open_new_tab } from "../../misc";
 import getTour from "./tour";
 
-const HELP_URL = "https://doc.cocalc.com/terminal.html";
+const HELP_URL = joinUrlPath(appBasePath, "docs/terminal/use-terminal");
 
 interface CmdOpts {
   run?: boolean; // if true (default) also send a return key

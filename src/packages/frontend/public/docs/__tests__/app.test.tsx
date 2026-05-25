@@ -45,6 +45,11 @@ describe("public/docs", () => {
       )[0],
     ).toBe("jupyter.use-jupyter");
     expect(
+      searchDocsEntries("terminal persistent linux shell").map(
+        (entry) => entry.id,
+      )[0],
+    ).toBe("terminal.use-terminal");
+    expect(
       searchDocsEntries("browser notebook cli automation").map(
         (entry) => entry.id,
       )[0],
