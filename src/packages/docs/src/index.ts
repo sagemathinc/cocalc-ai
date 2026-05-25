@@ -594,6 +594,61 @@ bridge between docs, browser-session actions, notebooks, and project-host
 administration.
 `;
 
+const HTTP_API_BODY = String.raw`
+## What the HTTP API is for
+
+The CoCalc HTTP API is for narrow integrations that need to call CoCalc from an
+external service. It is not the primary automation surface for most CoCalc-ai
+workflows.
+
+Use the [CoCalc CLI](/docs/cli/use-cocalc-cli) first when you are automating
+CoCalc from a terminal, agent, local script, or development environment. The CLI
+has richer typed workflows for docs, browser sessions, notebooks, project hosts,
+and authenticated local development.
+
+## API keys in CoCalc-ai
+
+CoCalc-ai intentionally reduced the capabilities of broad API keys. Very few
+users relied on the old broad API-key surface, and keeping it large creates
+security risk. New API keys should be scoped to the minimum capability needed
+for the integration.
+
+Treat API keys like credentials:
+
+1. Create keys only for specific integrations.
+2. Give each key a clear name and the smallest useful capability set.
+3. Rotate or delete keys that are no longer needed.
+4. Store keys outside source files, notebooks, chat messages, and terminal
+   history.
+5. For code running inside a project, store external service tokens as
+   [project secrets](/docs/projects/project-secrets), not as files.
+
+## Authentication shape
+
+The HTTP API uses basic authentication. Put the API key in the username field
+and leave the password blank.
+
+~~~sh
+curl -u "$COCALC_API_KEY:" https://cocalc.com/api/v2
+~~~
+
+For local development, use the local site origin instead of
+\`https://cocalc.com\`.
+
+## When to use something else
+
+Use \`cocalc-cli\` for project, browser, docs, notebook, and host workflows when
+a typed command exists. Use project secrets for credentials consumed by code
+inside a project. Use Codex or browser-session docs actions when the job is to
+open or verify a UI destination in the current session.
+
+## Why this matters in CoCalc
+
+CoCalc-ai is designed around authenticated, typed control paths instead of one
+large ambient API key. That keeps the attack surface smaller while still giving
+humans and agents practical ways to automate the product.
+`;
+
 const PROJECT_HOSTS_BODY = String.raw`
 ## What project hosts are for
 
@@ -880,6 +935,18 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     summary:
       "Use the CoCalc CLI for authenticated docs, browser, notebook, and project automation.",
     title: "Use the CoCalc CLI",
+  },
+  {
+    audiences: ["agents", "researchers", "teams"],
+    body: HTTP_API_BODY.trim(),
+    category: "API",
+    id: "api.http-api",
+    lastReviewed: "2026-05-24",
+    slug: "api/http-api",
+    status: "ready",
+    summary:
+      "Use the limited CoCalc HTTP API carefully, and prefer cocalc-cli for most automation.",
+    title: "CoCalc HTTP API and API keys",
   },
   {
     actions: [

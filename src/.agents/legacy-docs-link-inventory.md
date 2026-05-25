@@ -14,10 +14,9 @@ This inventory excludes generated build output such as
 
 Current source inventory:
 
-- 67 legacy URL references.
-- 40 unique legacy URLs.
-- 68 grep lines matching `doc.cocalc.com` because one source line is a comment
-  and some files contain multiple related references.
+- 62 legacy URL references.
+- 36 unique legacy URLs.
+- 62 grep lines matching `doc.cocalc.com`.
 
 Resolved so far:
 
@@ -27,6 +26,11 @@ Resolved so far:
 - `https://doc.cocalc.com/howto/low-memory.html` now has
   `troubleshooting/memory`; the project RAM warning, project OOM warning, and
   Jupyter resource usage help point to `/docs/troubleshooting/memory`.
+- `https://doc.cocalc.com/apikeys.html`,
+  `https://doc.cocalc.com/api2/`,
+  `https://doc.cocalc.com/api2/index.html#authentication`, and the OpenAPI
+  root docs URL now have `api/http-api`; the new page points automation users
+  toward `cli/use-cocalc-cli` when the CLI is the better interface.
 
 ## Recommended Migration Policy
 
@@ -47,13 +51,12 @@ outside an allowlist file. The allowlist should shrink as docs pages land.
 These links appear in warnings, first-run flows, welcome email, or API entry
 points. They should be addressed before launch.
 
-| Topic                                 | Proposed CoCalc-ai docs                                                                      | Legacy URLs                                                                           | Source areas                                                                    | Action                      |
-| ------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | --------------------------- |
-| Jupyter notebooks                     | `jupyter/use-jupyter`, existing `jupyter/create-notebook`, existing `jupyter/custom-kernels` | `/jupyter.html`, `/howto/jupyter-kernel-terminated.html`                              | welcome email, Jupyter commands, Jupyter about, Jupyter editor, kernel warnings | create-doc/replace-existing |
-| Terminal workflows                    | existing `projects/open-terminal`, add `terminal/use-terminal` if needed                     | `/terminal.html`                                                                      | terminal editor, base editor, terminal tour                                     | replace-existing/create-doc |
-| Connectivity and browser trouble      | `troubleshooting/connectivity`                                                               | `/howto/connectivity-issues.html`, `/howto/trouble.html`                              | welcome email, active content warning                                           | create-doc                  |
-| API keys, CLI, and API authentication | `api/http-api`, existing `cli/use-cocalc-cli`, possibly `account/api-keys`                   | `/apikeys.html`, `/api2/`, `/api2/index.html#authentication`, root OpenAPI docs URL   | HTTP API docs, API key UI, app store comment                                    | create-doc/replace-existing |
-| Welcome email docs                    | `/docs` plus specific docs above                                                             | `/`, `/jupyter.html`, `/teaching-instructors.html`, `/howto/connectivity-issues.html` | `server/email/welcome-email.ts`, `server/hub/email.ts`                          | replace-existing/create-doc |
+| Topic                            | Proposed CoCalc-ai docs                                                                      | Legacy URLs                                                                           | Source areas                                                                    | Action                      |
+| -------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | --------------------------- |
+| Jupyter notebooks                | `jupyter/use-jupyter`, existing `jupyter/create-notebook`, existing `jupyter/custom-kernels` | `/jupyter.html`, `/howto/jupyter-kernel-terminated.html`                              | welcome email, Jupyter commands, Jupyter about, Jupyter editor, kernel warnings | create-doc/replace-existing |
+| Terminal workflows               | existing `projects/open-terminal`, add `terminal/use-terminal` if needed                     | `/terminal.html`                                                                      | terminal editor, base editor, terminal tour                                     | replace-existing/create-doc |
+| Connectivity and browser trouble | `troubleshooting/connectivity`                                                               | `/howto/connectivity-issues.html`, `/howto/trouble.html`                              | welcome email, active content warning                                           | create-doc                  |
+| Welcome email docs               | `/docs` plus specific docs above                                                             | `/`, `/jupyter.html`, `/teaching-instructors.html`, `/howto/connectivity-issues.html` | `server/email/welcome-email.ts`, `server/hub/email.ts`                          | replace-existing/create-doc |
 
 ### P1: Account, Billing, Teaching, And Collaboration
 
@@ -118,15 +121,12 @@ be concise task pages rather than full manuals.
 
 ### Projects, Account, And API
 
-| Count | Legacy URL                                              | Replacement                                                                                                                           |
-| ----: | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-|     1 | `https://doc.cocalc.com/project-list.html`              | Create `projects/project-list`.                                                                                                       |
-|     1 | `https://doc.cocalc.com/project-settings.html#ssh-keys` | Create `projects/project-ssh-keys` or merge into `account/ssh-keys`.                                                                  |
-|     2 | `https://doc.cocalc.com/account/ssh.html`               | Create `account/ssh-keys`.                                                                                                            |
-|     2 | `https://doc.cocalc.com/apikeys.html`                   | Create `api/http-api` and possibly `account/api-keys`, but document that API key capabilities are intentionally limited in CoCalc-ai. |
-|     1 | `https://doc.cocalc.com/api2/`                          | Create `api/http-api`; also point automation users toward enhanced `cocalc-cli` workflows.                                            |
-|     1 | `https://doc.cocalc.com/api2/index.html#authentication` | Create `api/authentication`; explain reduced API-key scope and when to use `cocalc-cli`.                                              |
-|     1 | `https://doc.cocalc.com/upgrades.html#internet-access`  | Create `projects/internet-access`.                                                                                                    |
+| Count | Legacy URL                                              | Replacement                                                          |
+| ----: | ------------------------------------------------------- | -------------------------------------------------------------------- |
+|     1 | `https://doc.cocalc.com/project-list.html`              | Create `projects/project-list`.                                      |
+|     1 | `https://doc.cocalc.com/project-settings.html#ssh-keys` | Create `projects/project-ssh-keys` or merge into `account/ssh-keys`. |
+|     2 | `https://doc.cocalc.com/account/ssh.html`               | Create `account/ssh-keys`.                                           |
+|     1 | `https://doc.cocalc.com/upgrades.html#internet-access`  | Create `projects/internet-access`.                                   |
 
 ### Billing And Commercial Flows
 
@@ -161,10 +161,9 @@ be concise task pages rather than full manuals.
 
 ### Generic Root
 
-| Count | Legacy URL                | Replacement                                                                             |
-| ----: | ------------------------- | --------------------------------------------------------------------------------------- |
-|     3 | `https://doc.cocalc.com/` | Replace with `/docs`, then update nearby specific links.                                |
-|     1 | `https://doc.cocalc.com`  | Replace OpenAPI docs root with a CoCalc-ai API docs route or site-local API docs route. |
+| Count | Legacy URL                | Replacement                                              |
+| ----: | ------------------------- | -------------------------------------------------------- |
+|     3 | `https://doc.cocalc.com/` | Replace with `/docs`, then update nearby specific links. |
 
 ## Source File Map
 
@@ -174,7 +173,7 @@ be concise task pages rather than full manuals.
 | --------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
 | `src/packages/server/email/welcome-email.ts`  | root docs, Jupyter, teaching, connectivity | Replace with `/docs`, `jupyter/use-jupyter`, `teaching/course-workflow`, `troubleshooting/connectivity`. |
 | `src/packages/server/hub/email.ts`            | root docs, Jupyter, teaching, connectivity | Same as welcome email; check whether this duplicates or supersedes `server/email/welcome-email.ts`.      |
-| `src/packages/http-api/pages/api/v2/index.ts` | API keys, API docs root                    | Create `api/authentication` and `api/http-api`; replace OpenAPI metadata.                                |
+| `src/packages/http-api/pages/api/v2/index.ts` | API keys, API docs root                    | Done: replaced with `api/http-api` and the local docs route in OpenAPI metadata.                         |
 
 ### Billing And Account
 
@@ -184,7 +183,7 @@ be concise task pages rather than full manuals.
 | `src/packages/frontend/store/voucher-center-page.tsx`        | vouchers                            | Create `billing/vouchers`; replace link.                                                                                     |
 | `src/packages/frontend/billing/faq.tsx`                      | billing, project FAQ                | Create `billing/overview`; remove stale project FAQ or replace with specific page.                                           |
 | `src/packages/frontend/billing/data.ts`                      | course upgrades, teaching, licenses | Create `teaching/course-upgrades`, `teaching/course-workflow`, `billing/licenses`.                                           |
-| `src/packages/frontend/components/api-keys.tsx`              | API docs                            | Create `api/http-api`; also explain reduced API-key scope and prefer `cocalc-cli` for many automation workflows.             |
+| `src/packages/frontend/components/api-keys.tsx`              | API docs                            | Done: replaced with `api/http-api` and mention that `cocalc-cli` is better for many automation workflows.                    |
 | `src/packages/frontend/account/ssh-keys/ssh-key-adder.tsx`   | account SSH keys                    | Create `account/ssh-keys`; replace link.                                                                                     |
 | `src/packages/frontend/account/ssh-keys/global-ssh-keys.tsx` | account SSH keys                    | Same.                                                                                                                        |
 
@@ -243,14 +242,9 @@ be concise task pages rather than full manuals.
 
 ## Suggested First Cleanup Cluster
 
-Next cluster: `api/authentication`, `api/http-api`, and existing
-`cli/use-cocalc-cli`, because the OpenAPI entry points still send developers to
-old docs before they can use the product. CoCalc-ai API keys are intentionally
-much more limited than old CoCalc API keys; docs should avoid presenting them as
-the main automation surface.
-
-Then do `jupyter/use-jupyter`, because it has the most repeated links and is a
-core CoCalc workflow.
+Next cluster: `jupyter/use-jupyter`, because it has the most repeated links and
+is a core CoCalc workflow. It should include normal notebook use, long-running
+kernels, disconnect behavior, and where custom kernels fit.
 
 ## Release Gate Shape
 

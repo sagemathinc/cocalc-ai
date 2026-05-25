@@ -40,8 +40,18 @@ describe("public/docs", () => {
       )[0],
     ).toBe("jupyter.custom-kernels");
     expect(
-      searchDocsEntries("api key cli automation").map((entry) => entry.id)[0],
+      searchDocsEntries("browser notebook cli automation").map(
+        (entry) => entry.id,
+      )[0],
     ).toBe("cli.use-cocalc-cli");
+    expect(
+      searchDocsEntries("api key cli automation").map((entry) => entry.id)[0],
+    ).toBe("api.http-api");
+    expect(
+      searchDocsEntries("http api basic authentication").map(
+        (entry) => entry.id,
+      )[0],
+    ).toBe("api.http-api");
     expect(
       searchDocsEntries("low memory oom kernel restart").map(
         (entry) => entry.id,
