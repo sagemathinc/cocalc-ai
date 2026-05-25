@@ -28,9 +28,9 @@ describe("public/docs", () => {
   });
 
   it("searches structured docs entries", () => {
-    expect(getDocsEntry("projects.project-secrets")?.title).toBe(
-      "Project secrets",
-    );
+    const secrets = getDocsEntry("projects.project-secrets");
+    expect(secrets?.title).toBe("Project secrets");
+    expect(secrets?.image?.src).toBe("/public/docs/project-secrets.svg");
     expect(
       searchDocsEntries("secrets api token").map((entry) => entry.id)[0],
     ).toBe("projects.project-secrets");
@@ -92,6 +92,11 @@ describe("public/docs", () => {
     expect(
       screen.getByRole("heading", { name: "Project secrets" }),
     ).not.toBeNull();
+    expect(
+      screen.getByAltText(
+        "Project secrets mounted as protected read-only files",
+      ),
+    ).toHaveAttribute("src", "/public/docs/project-secrets.svg");
     expect(screen.getByText("settings.environment.secrets")).not.toBeNull();
     expect(
       within(screen.getByText("Open this in CoCalc").closest(".ant-card")!)

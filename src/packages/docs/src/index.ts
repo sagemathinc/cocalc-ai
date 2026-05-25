@@ -35,12 +35,19 @@ export interface DocsActionSummary extends DocsAction {
   entryTitle: string;
 }
 
+export interface DocsEntryImage {
+  alt: string;
+  src: string;
+  thumbnailSrc?: string;
+}
+
 export interface DocsEntry {
   actions?: DocsAction[];
   audiences: DocsAudience[];
   body: string;
   category: string;
   id: string;
+  image?: DocsEntryImage;
   lastReviewed: string;
   slug: string;
   status: DocsEntryStatus;
@@ -642,6 +649,11 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: PROJECT_SECRETS_BODY.trim(),
     category: "Projects",
     id: "projects.project-secrets",
+    image: {
+      alt: "Project secrets mounted as protected read-only files",
+      src: "/public/docs/project-secrets.svg",
+      thumbnailSrc: "/public/docs/project-secrets.svg",
+    },
     lastReviewed: "2026-05-24",
     slug: "projects/project-secrets",
     status: "ready",
@@ -737,6 +749,11 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: ROOTFS_BODY.trim(),
     category: "Projects",
     id: "projects.runtime-image",
+    image: {
+      alt: "A layered runtime image that defines a project's software stack",
+      src: "/public/docs/runtime-image.svg",
+      thumbnailSrc: "/public/docs/runtime-image.svg",
+    },
     lastReviewed: "2026-05-24",
     slug: "projects/runtime-image",
     status: "ready",
@@ -789,6 +806,11 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: TIMETRAVEL_BODY.trim(),
     category: "Files",
     id: "files.timetravel",
+    image: {
+      alt: "A TimeTravel timeline with Git revisions, snapshots, and restore points",
+      src: "/public/docs/timetravel.svg",
+      thumbnailSrc: "/public/docs/timetravel.svg",
+    },
     lastReviewed: "2026-05-24",
     slug: "files/timetravel",
     status: "ready",
