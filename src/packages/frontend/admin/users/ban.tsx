@@ -4,7 +4,15 @@
  */
 
 import { Component, Rendered } from "@cocalc/frontend/app-framework";
-import { Alert, Button, Input, Modal, Space, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Input,
+  Modal,
+  Popconfirm,
+  Space,
+  Typography,
+} from "antd";
 import { Icon, ErrorDisplay } from "@cocalc/frontend/components";
 import { webapp_client } from "../../webapp-client";
 import {
@@ -127,16 +135,18 @@ export class Ban extends Component<Props, State> {
             This action does not delete projects or account data, and it does
             not send email to the user.
           </Typography.Paragraph>
-          <Input.TextArea
-            value={this.state.banReason}
-            onChange={(e) =>
-              this.setState({ banReason: e.target.value, error: undefined })
-            }
-            rows={4}
-            maxLength={4000}
-            showCount
-            placeholder="Reason for the audit log, e.g. spam campaign, card fraud, crypto mining, abusive traffic, or support ticket link"
-          />
+          <div style={{ marginBottom: "18px" }}>
+            <Input.TextArea
+              value={this.state.banReason}
+              onChange={(e) =>
+                this.setState({ banReason: e.target.value, error: undefined })
+              }
+              rows={4}
+              maxLength={4000}
+              showCount
+              placeholder="Reason for the audit log, e.g. spam campaign, card fraud, crypto mining, abusive traffic, or support ticket link"
+            />
+          </div>
         </Space>
       </Modal>
     );
@@ -145,18 +155,27 @@ export class Ban extends Component<Props, State> {
   render_ban_button(): Rendered {
     if (this.state.banned) {
       return (
-        <Button
-          onClick={() => {
-            this.do_request();
-          }}
-          disabled={this.state.running}
+        <Popconfirm
+          title="Remove ban on this account?"
+          description={
+            <div style={{ maxWidth: "420px" }}>
+              Unbanning is intentionally per account. If this ban expanded to
+              equivalent email accounts, each account must be reviewed and
+              unbanned separately.
+            </div>
+          }
+          okText="Remove ban"
+          cancelText="Cancel"
+          onConfirm={() => this.do_request()}
         >
-          <Icon
-            name={this.state.running ? "sync" : "lock-open"}
-            spin={this.state.running}
-          />{" "}
-          Remove Ban on User
-        </Button>
+          <Button disabled={this.state.running}>
+            <Icon
+              name={this.state.running ? "sync" : "lock-open"}
+              spin={this.state.running}
+            />{" "}
+            Remove Ban on User
+          </Button>
+        </Popconfirm>
       );
     }
     return (

@@ -41,6 +41,13 @@ jest.mock("antd", () => ({
         </button>
       </div>
     ) : null,
+  Popconfirm: ({ children, description, onConfirm }: any) => (
+    <span>
+      {children}
+      <span>{description}</span>
+      <button onClick={onConfirm}>Confirm unban</button>
+    </span>
+  ),
   Space: ({ children }: any) => <div>{children}</div>,
   Typography: {
     Paragraph: ({ children }: any) => <p>{children}</p>,
@@ -109,6 +116,23 @@ describe("Ban", () => {
         true,
         "spam campaign",
       );
+    });
+  });
+
+  it("confirms that unban only removes the ban from this account", async () => {
+    const adminBanUser = jest.mocked(webapp_client.admin_client.admin_ban_user);
+    adminBanUser.mockResolvedValueOnce(undefined);
+
+    render(<Ban account_id="subject-1" banned={true} name="Target User" />);
+
+    expect(
+      screen.getByText(/Unbanning is intentionally per account/i),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm unban" }));
+
+    await waitFor(() => {
+      expect(adminBanUser).toHaveBeenCalledWith("subject-1", false, undefined);
     });
   });
 });
