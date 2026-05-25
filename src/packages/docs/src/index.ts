@@ -149,6 +149,58 @@ workspace with side chat, project storage, TimeTravel-friendly files, and direct
 SSH access when you want native tools.
 `;
 
+const USE_TERMINAL_BODY = String.raw`
+## What CoCalc terminals are for
+
+CoCalc terminals are persistent Linux shell sessions inside a project. The
+terminal UI runs in the browser, but the shell process runs in the project
+backend, so commands can keep running while the browser disconnects.
+
+Use terminals to install packages, run scripts, inspect files, start services,
+use Git, manage virtual environments, and work with command-line tools that are
+part of the project environment.
+
+## Open and organize terminals
+
+Open a terminal from the project activity bar, the file browser, or by opening a
+file ending in \`.term\`. For the short action flow, see
+[Open a terminal](/docs/projects/open-terminal).
+
+Terminal files are path-based. A terminal at \`analysis/run.term\` starts in the
+\`analysis/\` directory and gives the session a stable project-file anchor.
+Create separate terminal files for separate tasks when that makes the workspace
+easier to understand.
+
+## Persistent work
+
+Browser tabs are not the process boundary. Long commands can continue after the
+browser disconnects, and collaborators can reconnect to the same terminal later.
+For very long or fragile jobs, use standard shell tools such as \`tmux\`, log
+files, or scripts so progress is visible and restartable.
+
+## Collaboration and safety
+
+Terminals are collaborative. People with access to the running project can see
+terminal content and may be able to interact with the shell. Avoid pasting
+secrets into commands, prompts, logs, or shell history. Use
+[project secrets](/docs/projects/project-secrets) for credentials consumed by
+project code.
+
+## Agents and automation
+
+Agents should prefer typed CoCalc terminal or browser-session APIs when they
+need to inspect or drive a live terminal. Use the terminal for real shell work,
+but avoid relying on screenshot-only automation when a CLI or project API can
+perform the same operation directly.
+
+## Troubleshooting
+
+If a terminal seems unresponsive, check whether the project is running and
+whether a command is still active. Use Ctrl-C for a foreground command, open a
+new terminal for independent diagnosis, and inspect project memory if commands
+are being killed.
+`;
+
 const CREATE_JUPYTER_BODY = String.raw`
 ## What CoCalc Jupyter notebooks are for
 
@@ -1019,6 +1071,18 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     summary:
       "Use durable collaborative terminals backed by real project Linux processes.",
     title: "Open a terminal",
+  },
+  {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: USE_TERMINAL_BODY.trim(),
+    category: "Terminal",
+    id: "terminal.use-terminal",
+    lastReviewed: "2026-05-25",
+    slug: "terminal/use-terminal",
+    status: "ready",
+    summary:
+      "Use persistent collaborative Linux shell sessions inside CoCalc projects.",
+    title: "Use terminals",
   },
   {
     audiences: ["agents", "instructors", "researchers", "students", "teams"],

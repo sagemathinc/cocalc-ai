@@ -14,9 +14,9 @@ This inventory excludes generated build output such as
 
 Current source inventory:
 
-- 56 legacy URL references.
-- 35 unique legacy URLs.
-- 56 grep lines matching `doc.cocalc.com`.
+- 52 legacy URL references.
+- 34 unique legacy URLs.
+- 52 grep lines matching `doc.cocalc.com`.
 
 Resolved so far:
 
@@ -34,6 +34,9 @@ Resolved so far:
 - `https://doc.cocalc.com/jupyter.html` now has `jupyter/use-jupyter`; the
   Jupyter about/help links and welcome-email Jupyter links point to the local
   docs route.
+- `https://doc.cocalc.com/terminal.html` now has `terminal/use-terminal`; the
+  terminal editor help link, base editor terminal help, and terminal tour links
+  point to the local docs route.
 
 ## Recommended Migration Policy
 
@@ -57,7 +60,6 @@ points. They should be addressed before launch.
 | Topic                            | Proposed CoCalc-ai docs                                                                 | Legacy URLs                                                                           | Source areas                                           | Action                      |
 | -------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------ | --------------------------- |
 | Jupyter kernel termination       | existing `troubleshooting/memory`, possibly `troubleshooting/jupyter-kernel-terminated` | `/howto/jupyter-kernel-terminated.html`                                               | kernel warnings                                        | create-doc/replace-existing |
-| Terminal workflows               | existing `projects/open-terminal`, add `terminal/use-terminal` if needed                | `/terminal.html`                                                                      | terminal editor, base editor, terminal tour            | replace-existing/create-doc |
 | Connectivity and browser trouble | `troubleshooting/connectivity`                                                          | `/howto/connectivity-issues.html`, `/howto/trouble.html`                              | welcome email, active content warning                  | create-doc                  |
 | Welcome email docs               | `/docs` plus specific docs above                                                        | `/`, `/jupyter.html`, `/teaching-instructors.html`, `/howto/connectivity-issues.html` | `server/email/welcome-email.ts`, `server/hub/email.ts` | replace-existing/create-doc |
 
@@ -109,7 +111,6 @@ be concise task pages rather than full manuals.
 
 | Count | Legacy URL                                          | Replacement                                                                                                                      |
 | ----: | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-|     4 | `https://doc.cocalc.com/terminal.html`              | Replace direct open-terminal references with `projects/open-terminal`; create `terminal/use-terminal` for broader terminal docs. |
 |     4 | `https://doc.cocalc.com/markdown.html`              | Create `files/markdown` or `editors/markdown`.                                                                                   |
 |     1 | `https://doc.cocalc.com/markdown.html#mentions`     | Create `collaboration/mentions`.                                                                                                 |
 |     1 | `https://doc.cocalc.com/time-travel.html`           | Replace with existing `files/timetravel`.                                                                                        |
@@ -224,9 +225,9 @@ be concise task pages rather than full manuals.
 
 | File                                                               | Legacy topics        | Recommended action                                                                                                      |
 | ------------------------------------------------------------------ | -------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `src/packages/frontend/frame-editors/base-editor/actions-base.ts`  | terminal, TimeTravel | Replace TimeTravel with existing `files/timetravel`; terminal with `projects/open-terminal` or `terminal/use-terminal`. |
-| `src/packages/frontend/frame-editors/terminal-editor/actions.ts`   | terminal             | Replace with existing `projects/open-terminal` or new `terminal/use-terminal`.                                          |
-| `src/packages/frontend/frame-editors/terminal-editor/tour.tsx`     | terminal             | Same.                                                                                                                   |
+| `src/packages/frontend/frame-editors/base-editor/actions-base.ts`  | TimeTravel | Replace TimeTravel with existing `files/timetravel`. Terminal help is done. |
+| `src/packages/frontend/frame-editors/terminal-editor/actions.ts`   | terminal   | Done: replaced with `terminal/use-terminal`.                           |
+| `src/packages/frontend/frame-editors/terminal-editor/tour.tsx`     | terminal   | Done: replaced with `terminal/use-terminal`.                           |
 | `src/packages/frontend/frame-editors/jupyter-editor/actions.ts`    | Jupyter              | Done: replaced with `jupyter/use-jupyter`.                                                                              |
 | `src/packages/frontend/jupyter/about.tsx`                          | Jupyter              | Done: replaced with `jupyter/use-jupyter`.                                                                              |
 | `src/packages/frontend/jupyter/browser-actions.ts`                 | custom kernels       | Done: replaced with `jupyter/custom-kernels`.                                                                           |
@@ -244,10 +245,8 @@ be concise task pages rather than full manuals.
 
 ## Suggested First Cleanup Cluster
 
-Next cluster: terminal help, because `/terminal.html` appears in editor actions,
-the base editor help menu, and terminal tour copy. Existing
-`projects/open-terminal` may be enough for some links; broader terminal docs may
-need `terminal/use-terminal`.
+Next cluster: connectivity and browser troubleshooting, because those links
+appear in welcome/onboarding and runtime warning surfaces.
 
 ## Release Gate Shape
 
