@@ -308,6 +308,68 @@ resource indicators and restart only the affected kernel when possible. For
 memory-specific failures, see [Troubleshoot project memory](/docs/troubleshooting/memory).
 `;
 
+const JUPYTER_KERNEL_TERMINATED_BODY = String.raw`
+## What this warning means
+
+A Jupyter kernel is the process that runs the code cells in a notebook. A
+"kernel terminated" warning means that process exited unexpectedly, was killed,
+or failed to start. The notebook file usually remains intact, but variables,
+imports, open files, and in-memory results from that kernel are gone.
+
+The most common causes are:
+
+1. The project ran out of memory.
+2. The kernel crashed due to native code, compiled packages, or a bad extension.
+3. The selected custom kernel points at a missing or broken Python environment.
+4. The project restarted while the notebook was running.
+5. Startup code or package imports failed before the kernel became ready.
+
+## First recovery steps
+
+1. Save the notebook.
+2. Restart the kernel from the notebook **Kernel** menu.
+3. Run a small cell such as \`1 + 1\` before rerunning expensive cells.
+4. If the kernel immediately dies again, try a different kernel or open a
+   terminal to inspect the environment.
+5. Check project memory if the failure happened while loading data, training a
+   model, plotting a large result, or importing a heavy package.
+
+If the notebook had long-running work, inspect saved files and outputs before
+rerunning everything. The kernel restart clears memory, but files written to the
+project filesystem remain available.
+
+## Diagnose memory pressure
+
+Out-of-memory kills are the most common reason for sudden kernel termination.
+The limit is shared by notebooks, terminals, language servers, web apps, and
+agents in the project.
+
+See [Low memory and out-of-memory crashes](/docs/troubleshooting/memory) for
+ways to reduce memory use, stop other processes, checkpoint work, or move the
+project to a host with more RAM.
+
+## Diagnose custom kernels
+
+If only one custom kernel fails, the kernelspec or virtual environment is
+probably broken. Open a terminal and check:
+
+~~~sh
+jupyter kernelspec list
+python -m ipykernel --version
+~~~
+
+For uv-managed environments, make sure the kernelspec points at the Python
+inside the virtual environment and that \`ipykernel\` is installed there. See
+[Custom Jupyter kernels with uv](/docs/jupyter/custom-kernels).
+
+## Prevent repeat failures
+
+Write long computations so they can restart from durable files. Save
+intermediate data, avoid keeping duplicate large objects in memory, and test
+custom kernels with a small notebook before using them for a class or research
+workflow.
+`;
+
 const CUSTOM_JUPYTER_KERNELS_BODY = String.raw`
 ## What custom kernels are for
 
@@ -621,6 +683,98 @@ software environments, realtime help, and TimeTravel.
 Instructors can see what students are doing, help in realtime, recover mistakes,
 configure a shared runtime image, and run a course where the computational
 environment is part of the assignment instead of a prerequisite.
+`;
+
+const COURSE_WORKFLOW_BODY = String.raw`
+## What courses are for
+
+CoCalc courses manage computational classes where files, notebooks, terminals,
+software environments, realtime help, and grading all live in student projects.
+The course file is the instructor control center; student work happens in
+ordinary CoCalc projects.
+
+Use courses when students need to run code, write notebooks, edit LaTeX, submit
+files, receive feedback, or get help in the same environment where the work
+runs.
+
+## Core workflow
+
+1. Create a course file in an instructor project.
+2. Add students or invite them by email.
+3. Prepare assignment files in the instructor project.
+4. Assign files into student projects.
+5. Monitor progress, answer questions, and open student work when needed.
+6. Collect, grade, return, or peer grade the assignment.
+
+For the assignment-specific flow, see
+[Create a course assignment](/docs/teaching/create-assignment).
+
+## Student projects
+
+Each student gets a project for course work. That project can contain notebooks,
+scripts, terminals, data, output, and chat. Instructors can open student
+projects to help, inspect files, use TimeTravel, or run grading workflows.
+
+When the class needs a shared software stack, use a runtime image or project
+host setup that every student project can run. This avoids per-student package
+installation drift.
+
+## Grading
+
+Use ordinary collect/grade/return workflows for file-based assignments. Use
+[nbgrader](/docs/teaching/nbgrader) when notebooks need autograded cells,
+hidden tests, structured feedback, or a more formal grading pipeline.
+
+## Operational advice
+
+Test assignments in a student-style project before releasing them. Keep starter
+files small, put large datasets in a durable shared location, and make setup
+steps reproducible. For large classes, choose project hosts and runtime images
+that match the expected memory, disk, and package needs.
+`;
+
+const NBGRADER_BODY = String.raw`
+## What nbgrader is for
+
+nbgrader is a Jupyter-based grading workflow for notebook assignments. It lets
+instructors create notebooks with graded cells, tests, hidden tests, feedback,
+and scores, then autograde submitted notebooks.
+
+Use nbgrader when the assignment is naturally a notebook and needs structured
+grading. Use normal CoCalc collect/grade/return when the work is file-based,
+manual, or not organized around notebook cells.
+
+## Use nbgrader in a course
+
+1. Enable nbgrader in the course configuration.
+2. Create an instructor version of the notebook with graded cells and tests.
+3. Assign the notebook to students.
+4. Let students complete the notebook in their projects.
+5. Collect submissions.
+6. Autograde, inspect results, adjust feedback, and return grades.
+
+Run a small test assignment first. nbgrader depends on notebook metadata, so
+editing cells carelessly or copying content through tools that drop metadata can
+break grading.
+
+## Resource planning
+
+Autograding runs code. It can use significant CPU, RAM, disk, and time,
+especially for large classes or heavy notebooks. Tune the parallel grading
+limit based on the host where grading runs and the expected memory per
+submission.
+
+If grading frequently hits memory limits, reduce parallelism, simplify tests,
+or move grading to a host with more RAM. For the memory side of these failures,
+see [Low memory and out-of-memory crashes](/docs/troubleshooting/memory).
+
+## Common problems
+
+If cells are not graded, check that the instructor notebook has the expected
+nbgrader metadata. If autograding hangs, inspect the exact student notebook and
+run the failing cells manually in a fresh kernel. If every submission fails, the
+course environment or runtime image probably differs from the environment used
+to author the assignment.
 `;
 
 const CODEX_CHAT_BODY = String.raw`
@@ -1244,6 +1398,22 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     title: "Use Jupyter notebooks",
   },
   {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: JUPYTER_KERNEL_TERMINATED_BODY.trim(),
+    category: "Troubleshooting",
+    id: "troubleshooting.jupyter-kernel-terminated",
+    image: docsIcon(
+      "/public/docs/memory-troubleshooting-7f40cd1d.webp",
+      "A memory gauge warning about a stressed notebook kernel",
+    ),
+    lastReviewed: "2026-05-25",
+    slug: "troubleshooting/jupyter-kernel-terminated",
+    status: "ready",
+    summary:
+      "Recover from Jupyter kernels that crash, restart, or fail to start.",
+    title: "Jupyter kernel terminated",
+  },
+  {
     audiences: ["agents", "instructors", "researchers", "students"],
     body: CUSTOM_JUPYTER_KERNELS_BODY.trim(),
     category: "Jupyter",
@@ -1411,6 +1581,22 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     title: "Use Git",
   },
   {
+    audiences: ["agents", "instructors"],
+    body: COURSE_WORKFLOW_BODY.trim(),
+    category: "Teaching",
+    id: "teaching.course-workflow",
+    image: docsIcon(
+      "/public/docs/course-assignment-ede60e1a.webp",
+      "Course assignments sent to student project folders",
+    ),
+    lastReviewed: "2026-05-25",
+    slug: "teaching/course-workflow",
+    status: "ready",
+    summary:
+      "Run computational courses with student projects, assignments, collection, grading, and feedback.",
+    title: "Teach a course",
+  },
+  {
     actions: [
       {
         description: "Open course assignment creation.",
@@ -1433,6 +1619,22 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     summary:
       "Assign, collect, grade, and return computational work in student projects.",
     title: "Create a course assignment",
+  },
+  {
+    audiences: ["agents", "instructors"],
+    body: NBGRADER_BODY.trim(),
+    category: "Teaching",
+    id: "teaching.nbgrader",
+    image: docsIcon(
+      "/public/docs/course-assignment-ede60e1a.webp",
+      "Course assignments sent to student project folders",
+    ),
+    lastReviewed: "2026-05-25",
+    slug: "teaching/nbgrader",
+    status: "ready",
+    summary:
+      "Use nbgrader for structured Jupyter notebook grading in CoCalc courses.",
+    title: "Use nbgrader",
   },
   {
     actions: [

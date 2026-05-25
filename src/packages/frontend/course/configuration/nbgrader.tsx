@@ -285,7 +285,7 @@ export function Nbgrader({ name }: Props) {
       title={
         <>
           <Icon name="graduation-cap" /> nbgrader (
-          <A href="https://doc.cocalc.com/teaching-nbgrader.html">Docs</A>)
+          <A href="/docs/teaching/nbgrader">Docs</A>)
         </>
       }
     >

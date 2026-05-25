@@ -59,7 +59,12 @@ async function getWelcomeEmail(
   const { help_email, site_name } = await getServerSettings();
 
   const site_url = await siteURL();
+  const manual_docs_url = joinUrlPath(site_url, "docs");
   const jupyter_docs_url = joinUrlPath(site_url, "docs/jupyter/use-jupyter");
+  const teaching_docs_url = joinUrlPath(
+    site_url,
+    "docs/teaching/course-workflow",
+  );
   const connectivity_docs_url = joinUrlPath(
     site_url,
     "docs/troubleshooting/connectivity",
@@ -97,7 +102,7 @@ online editing of
 
 <ul>
 <li style="margin-top:0;margin-bottom:10px;">
-    <strong><a href="https://doc.cocalc.com/">CoCalc Manual:</a></strong> learn more about CoCalc's features.
+    <strong><a href="${manual_docs_url}">CoCalc Docs:</a></strong> learn more about CoCalc's features.
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
     <a href="${jupyter_docs_url}">Working with Jupyter Notebooks</a>
@@ -106,7 +111,7 @@ online editing of
     <strong><a href="https://cocalc.com/policies/pricing.html">Subscriptions:</a></strong> make hosting more robust and increase project quotas
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
-    <a href="https://doc.cocalc.com/teaching-instructors.html">Teaching a course on CoCalc</a>.
+    <a href="${teaching_docs_url}">Teaching a course on CoCalc</a>.
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
     <a href="${connectivity_docs_url}">Troubleshooting connectivity issues</a>
@@ -184,13 +189,13 @@ online editing of Jupyter Notebooks, SageMath, LaTeX files, and much more.
 
 HOW TO GET FROM 0 to 100:
 
-CoCalc Manual: https://doc.cocalc.com/
+CoCalc Docs: ${manual_docs_url}
 
 Working with Jupyter Notebooks: ${jupyter_docs_url}
 
 Subscriptions: https://cocalc.com/policies/pricing.html
 
-Teaching a course on CoCalc: https://doc.cocalc.com/teaching-instructors.html
+Teaching a course on CoCalc: ${teaching_docs_url}
 
 Troubleshooting connectivity issues: ${connectivity_docs_url}
 

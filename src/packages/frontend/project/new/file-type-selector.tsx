@@ -235,9 +235,7 @@ export function FileTypeSelector({
                     See <A>documentation</A> to learn more.`}
                     values={{
                       A: (c) => (
-                        <A href="https://doc.cocalc.com/teaching-instructors.html">
-                          {c}
-                        </A>
+                        <A href="/docs/teaching/course-workflow">{c}</A>
                       ),
                     }}
                   />

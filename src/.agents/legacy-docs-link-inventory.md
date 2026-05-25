@@ -41,6 +41,16 @@ Resolved so far:
   `https://doc.cocalc.com/howto/trouble.html` now have
   `troubleshooting/connectivity`; the welcome-email connectivity links and
   active-content connection warning point to the local docs route.
+- `https://doc.cocalc.com/howto/jupyter-kernel-terminated.html` now has
+  `troubleshooting/jupyter-kernel-terminated`; the Jupyter kernel warning help
+  link points to the local docs route.
+- `https://doc.cocalc.com/teaching-instructors.html` now has
+  `teaching/course-workflow`; the welcome emails, course editor help, new-file
+  course tooltip, and billing instructor guide constant point to the local docs
+  route.
+- `https://doc.cocalc.com/teaching-nbgrader.html` now has
+  `teaching/nbgrader`; the course nbgrader configuration and Jupyter nbgrader
+  help links point to the local docs route.
 
 ## Recommended Migration Policy
 
@@ -61,10 +71,10 @@ outside an allowlist file. The allowlist should shrink as docs pages land.
 These links appear in warnings, first-run flows, welcome email, or API entry
 points. They should be addressed before launch.
 
-| Topic                      | Proposed CoCalc-ai docs                                                                 | Legacy URLs                             | Source areas                                           | Action                      |
-| -------------------------- | --------------------------------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------ | --------------------------- |
-| Jupyter kernel termination | existing `troubleshooting/memory`, possibly `troubleshooting/jupyter-kernel-terminated` | `/howto/jupyter-kernel-terminated.html` | kernel warnings                                        | create-doc/replace-existing |
-| Welcome email docs         | `/docs` plus specific docs above                                                        | `/`, `/teaching-instructors.html`       | `server/email/welcome-email.ts`, `server/hub/email.ts` | replace-existing/create-doc |
+| Topic                      | Proposed CoCalc-ai docs                     | Legacy URLs                             | Source areas                                           | Action |
+| -------------------------- | ------------------------------------------- | --------------------------------------- | ------------------------------------------------------ | ------ |
+| Jupyter kernel termination | `troubleshooting/jupyter-kernel-terminated` | `/howto/jupyter-kernel-terminated.html` | kernel warnings                                        | done   |
+| Welcome email docs         | `/docs` plus specific docs above            | `/`, `/teaching-instructors.html`       | `server/email/welcome-email.ts`, `server/hub/email.ts` | done   |
 
 ### P1: Account, Billing, Teaching, And Collaboration
 
@@ -78,9 +88,9 @@ safe replacement.
 | Licenses                            | `billing/licenses`                                                            | `/licenses.html`, `/account/licenses.html`, `/project-settings.html#project-add-license`                                            | billing data, trial banner comment                                              | create-doc                        |
 | Trial and member hosting            | `billing/trial`, `billing/member-hosting`                                     | `/trial.html`, `/billing.html#what-is-member-hosting`                                                                               | project banner, trial banner                                                    | create-doc                        |
 | Vouchers and dedicated host billing | `billing/vouchers`, `hosts/project-hosts`, possibly `billing/dedicated-hosts` | `/vouchers.html`, `/paygo.html`                                                                                                     | voucher center, customize constants                                             | create-doc/remove stale PAYG docs |
-| Course workflow                     | `teaching/course-workflow`, existing `teaching/create-assignment`             | `/teaching-instructors.html`, `/teaching-tips_and_tricks.html#how-exactly-are-assignments-copied-to-students`                       | billing data, welcome email, file type selector, course editor, assignment info | create-doc/replace-existing       |
+| Course workflow                     | `teaching/course-workflow`, existing `teaching/create-assignment`             | `/teaching-instructors.html`, `/teaching-tips_and_tricks.html#how-exactly-are-assignments-copied-to-students`                       | billing data, welcome email, file type selector, course editor, assignment info | partial: instructor guide done    |
 | Course upgrades                     | `teaching/course-upgrades` or `billing/course-upgrades`                       | `/teaching-upgrade-course.html#teacher-or-institution-pays-for-upgrades`, `/teaching-upgrade-course.html#students-pay-for-upgrades` | billing data                                                                    | create-doc                        |
-| nbgrader                            | `teaching/nbgrader`                                                           | `/teaching-nbgrader.html`                                                                                                           | course config, Jupyter main, Jupyter commands                                   | create-doc                        |
+| nbgrader                            | `teaching/nbgrader`                                                           | `/teaching-nbgrader.html`                                                                                                           | course config, Jupyter main, Jupyter commands                                   | done                              |
 | Chat and mentions                   | `collaboration/chat`, `collaboration/mentions`                                | `/chat.html`, `/teaching-interactions.html#mention-collaborators-in-chat`, `/markdown.html#mentions`                                | chat actions, notifications, file type selector                                 | create-doc                        |
 
 ### P2: Editor-Specific Help
@@ -105,10 +115,10 @@ be concise task pages rather than full manuals.
 
 ### Jupyter
 
-| Count | Legacy URL                                                    | Replacement                                                                                |
-| ----: | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-|     1 | `https://doc.cocalc.com/howto/jupyter-kernel-terminated.html` | Create `troubleshooting/jupyter-kernel-terminated` or include in `troubleshooting/memory`. |
-|     3 | `https://doc.cocalc.com/teaching-nbgrader.html`               | Create `teaching/nbgrader`.                                                                |
+| Count | Legacy URL                                                    | Replacement                                                     |
+| ----: | ------------------------------------------------------------- | --------------------------------------------------------------- |
+|     1 | `https://doc.cocalc.com/howto/jupyter-kernel-terminated.html` | Done: replace with `troubleshooting/jupyter-kernel-terminated`. |
+|     3 | `https://doc.cocalc.com/teaching-nbgrader.html`               | Done: replace with `teaching/nbgrader`.                         |
 
 ### Terminal, Files, And Editors
 
@@ -149,12 +159,12 @@ be concise task pages rather than full manuals.
 
 ### Teaching
 
-| Count | Legacy URL                                                                                            | Replacement                                                                                                   |
-| ----: | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-|     6 | `https://doc.cocalc.com/teaching-instructors.html`                                                    | Create `teaching/course-workflow`; use existing `teaching/create-assignment` for assignment-specific buttons. |
-|     1 | `https://doc.cocalc.com/teaching-tips_and_tricks.html#how-exactly-are-assignments-copied-to-students` | Create `teaching/assignment-copying`.                                                                         |
-|     1 | `https://doc.cocalc.com/teaching-upgrade-course.html#teacher-or-institution-pays-for-upgrades`        | Create `teaching/course-upgrades`.                                                                            |
-|     1 | `https://doc.cocalc.com/teaching-upgrade-course.html#students-pay-for-upgrades`                       | Create `teaching/course-upgrades`.                                                                            |
+| Count | Legacy URL                                                                                            | Replacement                                                                                                                                              |
+| ----: | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|     6 | `https://doc.cocalc.com/teaching-instructors.html`                                                    | Done for known current source links: replace with `teaching/course-workflow`; use existing `teaching/create-assignment` for assignment-specific buttons. |
+|     1 | `https://doc.cocalc.com/teaching-tips_and_tricks.html#how-exactly-are-assignments-copied-to-students` | Create `teaching/assignment-copying`.                                                                                                                    |
+|     1 | `https://doc.cocalc.com/teaching-upgrade-course.html#teacher-or-institution-pays-for-upgrades`        | Create `teaching/course-upgrades`.                                                                                                                       |
+|     1 | `https://doc.cocalc.com/teaching-upgrade-course.html#students-pay-for-upgrades`                       | Create `teaching/course-upgrades`.                                                                                                                       |
 
 ### Collaboration, Notifications, And Troubleshooting
 

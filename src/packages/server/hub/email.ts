@@ -669,7 +669,7 @@ ${site_name} supports online editing of
 
 <ul>
 <li style="margin-top:0;margin-bottom:10px;">
-    <strong><a href="https://doc.cocalc.com/">CoCalc Manual:</a></strong> learn more about CoCalc's features.
+    <strong><a href="${joinUrlPath(url, "docs")}">CoCalc Docs:</a></strong> learn more about CoCalc's features.
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
     <a href="${joinUrlPath(url, "docs/jupyter/use-jupyter")}">Working with Jupyter Notebooks</a>
@@ -678,7 +678,7 @@ ${site_name} supports online editing of
     <strong><a href="https://cocalc.com/policies/pricing.html">Subscriptions:</a></strong> make hosting more robust and increase project quotas
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
-    <a href="https://doc.cocalc.com/teaching-instructors.html">Teaching a course on CoCalc</a>.
+    <a href="${joinUrlPath(url, "docs/teaching/course-workflow")}">Teaching a course on CoCalc</a>.
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
     <a href="${joinUrlPath(url, "docs/troubleshooting/connectivity")}">Troubleshooting connectivity issues</a>

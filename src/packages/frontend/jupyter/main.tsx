@@ -530,7 +530,7 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
             }}
           >
             <Text strong>nbgrader:</Text>{" "}
-            <A href="https://doc.cocalc.com/teaching-nbgrader.html">
+            <A href="/docs/teaching/nbgrader">
               <Icon name="book" /> Docs
             </A>
             <Tooltip title="Generate the student version of this document, which strips out the extra instructor tests and cells.">
