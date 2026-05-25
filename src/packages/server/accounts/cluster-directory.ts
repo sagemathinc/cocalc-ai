@@ -639,6 +639,49 @@ export async function updateClusterAccountEmailAddressDirect({
   return canonicalDirectoryEntry(rows[0]);
 }
 
+export async function updateClusterAccountBannedDirect({
+  account_id,
+  banned,
+}: {
+  account_id: string;
+  banned: boolean;
+}): Promise<AccountDirectoryEntry> {
+  if (!isValidUUID(account_id)) {
+    throw new Error("account_id must be a valid uuid");
+  }
+  const current = await getClusterAccountByIdDirect(account_id);
+  if (!current?.account_id) {
+    throw new Error(`account ${account_id} not found`);
+  }
+  if (!current.email_address) {
+    throw new Error(`account ${account_id} has no email address`);
+  }
+  await ensureClusterAccountDirectorySchema();
+  const { rows } = await getPool().query(
+    `INSERT INTO ${TABLE}
+       (account_id, email_address, first_name, last_name, home_bay_id, banned, provisioned)
+     VALUES
+       ($1, $2, $3, $4, $5, $6, TRUE)
+     ON CONFLICT (account_id) DO UPDATE
+        SET banned=EXCLUDED.banned,
+            provisioned=TRUE
+     RETURNING account_id, first_name, last_name, email_address, home_bay_id,
+               created, last_active, banned`,
+    [
+      account_id,
+      normalizedEmail(current.email_address),
+      current.first_name ?? null,
+      current.last_name ?? null,
+      normalizedHomeBayId(current.home_bay_id ?? ""),
+      !!banned,
+    ],
+  );
+  if (!rows[0]) {
+    throw new Error(`account ${account_id} not found`);
+  }
+  return canonicalDirectoryEntry(rows[0]);
+}
+
 export async function upsertClusterAccountApiKeyDirectoryEntryDirect({
   key_id,
   account_id,

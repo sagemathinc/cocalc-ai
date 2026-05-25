@@ -23,8 +23,7 @@ const mockStartTwoFactorSetup = jest.fn();
 const mockConfirmTwoFactorSetup = jest.fn();
 const mockDisableTwoFactor = jest.fn();
 const mockUserIsInGroup = jest.fn();
-const mockBanUser = jest.fn();
-const mockRemoveUserBan = jest.fn();
+const mockSetClusterAccountBan = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
@@ -91,9 +90,8 @@ jest.mock("@cocalc/server/accounts/is-in-group", () => ({
   default: (...args: any[]) => mockUserIsInGroup(...args),
 }));
 
-jest.mock("@cocalc/server/accounts/ban", () => ({
-  banUser: (...args: any[]) => mockBanUser(...args),
-  removeUserBan: (...args: any[]) => mockRemoveUserBan(...args),
+jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  setClusterAccountBan: (...args: any[]) => mockSetClusterAccountBan(...args),
 }));
 
 describe("browser-session-only account security routes", () => {
@@ -142,8 +140,7 @@ describe("browser-session-only account security routes", () => {
     });
     mockDisableTwoFactor.mockReset().mockResolvedValue(undefined);
     mockUserIsInGroup.mockReset().mockResolvedValue(true);
-    mockBanUser.mockReset().mockResolvedValue(undefined);
-    mockRemoveUserBan.mockReset().mockResolvedValue(undefined);
+    mockSetClusterAccountBan.mockReset().mockResolvedValue(undefined);
   });
 
   it("rejects API-key-only account deletion", async () => {
@@ -481,7 +478,7 @@ describe("browser-session-only account security routes", () => {
     expect(res._getJSONData()).toEqual({
       error: "fresh auth is required",
     });
-    expect(mockBanUser).not.toHaveBeenCalled();
+    expect(mockSetClusterAccountBan).not.toHaveBeenCalled();
   });
 
   it("allows fresh-authenticated admin account bans", async () => {
@@ -502,7 +499,10 @@ describe("browser-session-only account security routes", () => {
       session_hash: "fresh-session-hash",
       require_second_factor: true,
     });
-    expect(mockBanUser).toHaveBeenCalledWith("subject-1");
+    expect(mockSetClusterAccountBan).toHaveBeenCalledWith({
+      account_id: "subject-1",
+      banned: true,
+    });
   });
 
   it("rejects admin account unbans without recent second factor", async () => {
@@ -520,7 +520,7 @@ describe("browser-session-only account security routes", () => {
     expect(res._getJSONData()).toEqual({
       error: "recent two-factor verification is required",
     });
-    expect(mockRemoveUserBan).not.toHaveBeenCalled();
+    expect(mockSetClusterAccountBan).not.toHaveBeenCalled();
   });
 
   it("allows fresh-authenticated admin account unbans", async () => {
@@ -541,6 +541,9 @@ describe("browser-session-only account security routes", () => {
       session_hash: "fresh-session-hash",
       require_second_factor: true,
     });
-    expect(mockRemoveUserBan).toHaveBeenCalledWith("subject-1");
+    expect(mockSetClusterAccountBan).toHaveBeenCalledWith({
+      account_id: "subject-1",
+      banned: false,
+    });
   });
 });

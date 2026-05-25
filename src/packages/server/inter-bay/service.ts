@@ -100,7 +100,9 @@ import {
   getClusterAccountsByIds,
   provisionLocalClusterAccount,
   searchClusterAccounts,
+  setLocalClusterAccountBan,
   touchClusterAccountApiKeyDirectoryEntry,
+  updateClusterAccountBanned,
   updateClusterAccountEmailAddress,
   updateClusterAccountApiKeysHomeBay,
   updateClusterAccountHomeBay,
@@ -554,6 +556,7 @@ async function startAccountDirectoryService(): Promise<void> {
     updateHomeBay: async (opts) => await updateClusterAccountHomeBay(opts),
     updateEmailAddress: async (opts) =>
       await updateClusterAccountEmailAddress(opts),
+    updateBanned: async (opts) => await updateClusterAccountBanned(opts),
     create: async (opts) => await createClusterAccount(opts),
     delete: async (opts) => await deleteClusterAccount(opts),
     getApiKey: async ({ key_id }) =>
@@ -666,6 +669,7 @@ async function startAccountLocalService(): Promise<void> {
       await adminVerifyEmailAddressLocal({ account_id }),
     adminDisableTwoFactor: async ({ account_id }) =>
       await adminDisableTwoFactorLocal({ account_id }),
+    setBan: async (opts) => await setLocalClusterAccountBan(opts),
     setPasswordFromReset: async ({ account_id, password }) => {
       await setPasswordFromResetLocal({ account_id, password });
     },

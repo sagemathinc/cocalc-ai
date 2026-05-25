@@ -441,6 +441,11 @@ export interface AccountDirectoryUpdateEmailAddressRequest {
   email_address: string;
 }
 
+export interface AccountDirectoryUpdateBannedRequest {
+  account_id: string;
+  banned: boolean;
+}
+
 export interface AccountDirectoryDeleteRequest {
   account_id: string;
   only_if_tag?: string;
@@ -839,6 +844,17 @@ export interface AccountLocalAdminDisableTwoFactorResult {
   account_id: string;
   disabled_factors: number;
   deleted_recovery_codes: number;
+}
+
+export interface AccountLocalSetBanRequest {
+  account_id: string;
+  banned: boolean;
+}
+
+export interface AccountLocalSetBanResult {
+  account_id: string;
+  home_bay_id: string;
+  banned: boolean;
 }
 
 export interface AccountLocalRecentPasswordResetAttemptsRequest {
@@ -1461,6 +1477,7 @@ export type AccountDirectoryMethod =
   | "delete"
   | "update-home-bay"
   | "update-email-address"
+  | "update-banned"
   | "get-api-key"
   | "upsert-api-key"
   | "delete-api-key"
@@ -1487,6 +1504,7 @@ export type AccountLocalMethod =
   | "redeem-verify-email"
   | "admin-verify-email-address"
   | "admin-disable-two-factor"
+  | "set-ban"
   | "set-password-from-reset"
   | "assert-product-access-trust"
   | "reconcile-dedicated-host-purchase-session"
@@ -2242,6 +2260,9 @@ export interface InterBayAccountDirectoryApi {
   updateEmailAddress: (
     opts: AccountDirectoryUpdateEmailAddressRequest,
   ) => Promise<AccountDirectoryEntry>;
+  updateBanned: (
+    opts: AccountDirectoryUpdateBannedRequest,
+  ) => Promise<AccountDirectoryEntry>;
   create: (
     opts: AccountDirectoryCreateRequest,
   ) => Promise<AccountDirectoryEntry>;
@@ -2318,6 +2339,9 @@ export interface InterBayAccountLocalApi {
   adminDisableTwoFactor: (
     opts: AccountLocalAdminDisableTwoFactorRequest,
   ) => Promise<AccountLocalAdminDisableTwoFactorResult>;
+  setBan: (
+    opts: AccountLocalSetBanRequest,
+  ) => Promise<AccountLocalSetBanResult>;
   setPasswordFromReset: (
     opts: AccountLocalSetPasswordFromResetRequest,
   ) => Promise<void>;
@@ -3495,6 +3519,12 @@ export function createInterBayAccountDirectoryClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountDirectorySubject({ method: "update-email-address" }),
   });
+  const updateBannedClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "updateBanned">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "update-banned" }),
+  });
   const createClient = createServiceClient<
     Pick<InterBayAccountDirectoryApi, "create">
   >({
@@ -3600,6 +3630,7 @@ export function createInterBayAccountDirectoryClient({
       await updateHomeBayClient.updateHomeBay(opts),
     updateEmailAddress: async (opts) =>
       await updateEmailAddressClient.updateEmailAddress(opts),
+    updateBanned: async (opts) => await updateBannedClient.updateBanned(opts),
     create: async (opts) => await createClient.create(opts),
     delete: async (opts) => await deleteClient.delete(opts),
     getApiKey: async (opts) => await getApiKeyClient.getApiKey(opts),
@@ -3696,6 +3727,14 @@ export function createInterBayAccountDirectoryHandlers({
       subject: accountDirectorySubject({ method: "update-email-address" }),
       impl: {
         updateEmailAddress: async (opts) => await impl.updateEmailAddress(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountDirectoryApi, "updateBanned">>({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "update-banned" }),
+      impl: {
+        updateBanned: async (opts) => await impl.updateBanned(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountDirectoryApi, "create">>({
@@ -3950,6 +3989,15 @@ export function createInterBayAccountLocalClient({
     subject: accountLocalSubject({
       dest_bay,
       method: "admin-disable-two-factor",
+    }),
+  });
+  const setBanClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "setBan">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "set-ban",
     }),
   });
   const setPasswordFromResetClient = createServiceClient<
@@ -4317,6 +4365,7 @@ export function createInterBayAccountLocalClient({
       await adminVerifyEmailAddressClient.adminVerifyEmailAddress(opts),
     adminDisableTwoFactor: async (opts) =>
       await adminDisableTwoFactorClient.adminDisableTwoFactor(opts),
+    setBan: async (opts) => await setBanClient.setBan(opts),
     setPasswordFromReset: async (opts) =>
       await setPasswordFromResetClient.setPasswordFromReset(opts),
     assertProductAccessTrust: async (opts) =>
@@ -4582,6 +4631,17 @@ export function createInterBayAccountLocalHandler({
       impl: {
         adminDisableTwoFactor: async (opts) =>
           await impl.adminDisableTwoFactor(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "setBan">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "set-ban",
+      }),
+      impl: {
+        setBan: async (opts) => await impl.setBan(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountLocalApi, "setPasswordFromReset">>(

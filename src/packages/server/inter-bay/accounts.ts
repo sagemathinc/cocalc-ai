@@ -14,6 +14,8 @@ import {
   type AccountApiKeyDirectoryUpsertRequest,
   type AccountLocalAdminDisableTwoFactorResult,
   type AccountLocalAdminVerifyEmailAddressResult,
+  type AccountLocalSetBanRequest,
+  type AccountLocalSetBanResult,
   type AccountLocalSetPasswordFromResetRequest,
   type AccountLocalVerifySignInPasswordRequest,
   type AccountLocalVerifySignInPasswordResult,
@@ -26,6 +28,7 @@ import getPool from "@cocalc/database/pool";
 import adminVerifyEmailAddressLocal from "@cocalc/server/accounts/admin-verify-email-address";
 import createAccountLocal from "@cocalc/server/accounts/create-account";
 import deleteAccountLocal from "@cocalc/server/accounts/delete";
+import { banUser, removeUserBan } from "@cocalc/server/accounts/ban";
 import setPasswordFromResetLocal from "@cocalc/server/accounts/set-password-from-reset";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import { adminDisableTwoFactor as adminDisableTwoFactorLocal } from "@cocalc/server/auth/two-factor";
@@ -42,6 +45,7 @@ import {
   reserveClusterAccountDirectoryEntry,
   searchClusterAccountsDirect,
   touchClusterAccountApiKeyDirectoryEntryDirect,
+  updateClusterAccountBannedDirect,
   updateClusterAccountEmailAddressDirect,
   updateClusterAccountApiKeysHomeBayDirect,
   updateClusterAccountHomeBayDirect,
@@ -158,6 +162,22 @@ export async function updateClusterAccountEmailAddress(opts: {
   return await createInterBayAccountDirectoryClient({
     client: getInterBayFabricClient(),
   }).updateEmailAddress(normalized);
+}
+
+export async function updateClusterAccountBanned(opts: {
+  account_id: string;
+  banned: boolean;
+}): Promise<AccountDirectoryEntry> {
+  const normalized = {
+    account_id: `${opts.account_id ?? ""}`.trim().toLowerCase(),
+    banned: !!opts.banned,
+  };
+  if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
+    return await updateClusterAccountBannedDirect(normalized);
+  }
+  return await createInterBayAccountDirectoryClient({
+    client: getInterBayFabricClient(),
+  }).updateBanned(normalized);
 }
 
 export async function getClusterAccountApiKeyByKeyId(
@@ -290,6 +310,62 @@ export async function adminDisableClusterAccountTwoFactor({
     client: getInterBayFabricClient(),
     dest_bay: homeBayId,
   }).adminDisableTwoFactor({ account_id });
+}
+
+export async function setLocalClusterAccountBan({
+  account_id,
+  banned,
+}: AccountLocalSetBanRequest): Promise<AccountLocalSetBanResult> {
+  if (!isValidUUID(account_id)) {
+    throw new Error("account_id must be a valid uuid");
+  }
+  if (banned) {
+    await banUser(account_id);
+  } else {
+    await removeUserBan(account_id);
+  }
+  return {
+    account_id,
+    home_bay_id: currentBayId(),
+    banned: !!banned,
+  };
+}
+
+export async function setClusterAccountBan({
+  account_id,
+  banned,
+}: AccountLocalSetBanRequest): Promise<AccountLocalSetBanResult> {
+  const normalizedAccountId = `${account_id ?? ""}`.trim().toLowerCase();
+  if (!isValidUUID(normalizedAccountId)) {
+    throw new Error("account_id must be a valid uuid");
+  }
+  const account = await getClusterAccountById(normalizedAccountId);
+  if (!account) {
+    throw Error(`account ${normalizedAccountId} not found`);
+  }
+  const homeBayId = `${account.home_bay_id ?? ""}`.trim() || currentBayId();
+  const result =
+    homeBayId === currentBayId()
+      ? await setLocalClusterAccountBan({
+          account_id: normalizedAccountId,
+          banned,
+        })
+      : await createInterBayAccountLocalClient({
+          client: getInterBayFabricClient(),
+          dest_bay: homeBayId,
+        }).setBan({
+          account_id: normalizedAccountId,
+          banned,
+        });
+  await updateClusterAccountBanned({
+    account_id: normalizedAccountId,
+    banned,
+  });
+  return {
+    ...result,
+    home_bay_id: homeBayId,
+    banned: !!banned,
+  };
 }
 
 export async function setClusterAccountPasswordFromReset({

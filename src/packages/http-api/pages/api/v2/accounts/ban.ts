@@ -5,7 +5,7 @@ Ban a user.  This is ONLY allowed for admins.
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
-import { banUser } from "@cocalc/server/accounts/ban";
+import { setClusterAccountBan } from "@cocalc/server/inter-bay/accounts";
 import { getCurrentAuthSession } from "@cocalc/server/auth/auth-sessions";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 
@@ -42,7 +42,7 @@ async function get(req) {
   });
 
   const { account_id } = getParams(req);
-  await banUser(account_id);
+  await setClusterAccountBan({ account_id, banned: true });
   return SuccessStatus;
 }
 
