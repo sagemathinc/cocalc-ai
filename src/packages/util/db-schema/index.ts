@@ -16,6 +16,7 @@ export { retentionModels } from "./retention";
 
 // The tables
 import "./account-collaborator-index";
+import "./account-ban-audit-log";
 import "./account-notification-index";
 import "./account-project-index";
 import "./account-profiles";

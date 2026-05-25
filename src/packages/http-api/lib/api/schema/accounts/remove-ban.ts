@@ -12,6 +12,12 @@ import { AccountIdSchema } from "./common";
 export const RemoveAccountBanInputSchema = z
   .object({
     account_id: AccountIdSchema.describe("Account id to remove ban for."),
+    reason: z
+      .string()
+      .trim()
+      .max(4000)
+      .optional()
+      .describe("Optional admin-entered reason recorded in the ban audit log."),
   })
   .describe(
     "**Administrators only**. Used to remove an existing ban on a user's account",

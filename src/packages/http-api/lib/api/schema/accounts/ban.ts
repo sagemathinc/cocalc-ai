@@ -12,6 +12,13 @@ import { AccountIdSchema } from "./common";
 export const BanAccountInputSchema = z
   .object({
     account_id: AccountIdSchema.describe("Account id to ban."),
+    reason: z
+      .string()
+      .trim()
+      .min(1)
+      .max(4000)
+      .optional()
+      .describe("Admin-entered reason recorded in the ban audit log."),
   })
   .describe(
     "**Administrators only**. Used to ban a user's account from the system.",

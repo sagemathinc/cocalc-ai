@@ -488,7 +488,10 @@ describe("browser-session-only account security routes", () => {
   });
 
   it("allows fresh-authenticated admin account bans", async () => {
-    mockGetParams.mockReturnValue({ account_id: "subject-1" });
+    mockGetParams.mockReturnValue({
+      account_id: "subject-1",
+      reason: "spam campaign",
+    });
     const { req, res } = createMocks({ method: "POST" });
 
     const { default: handler } = await import("./accounts/ban");
@@ -507,6 +510,8 @@ describe("browser-session-only account security routes", () => {
     });
     expect(mockBanClusterAccountAndEquivalentEmails).toHaveBeenCalledWith({
       account_id: "subject-1",
+      actor_account_id: "acct-1",
+      reason: "spam campaign",
     });
   });
 
@@ -529,7 +534,10 @@ describe("browser-session-only account security routes", () => {
   });
 
   it("allows fresh-authenticated admin account unbans", async () => {
-    mockGetParams.mockReturnValue({ account_id: "subject-1" });
+    mockGetParams.mockReturnValue({
+      account_id: "subject-1",
+      reason: "appeal accepted",
+    });
     const { req, res } = createMocks({ method: "POST" });
 
     const { default: handler } = await import("./accounts/remove-ban");
@@ -549,6 +557,8 @@ describe("browser-session-only account security routes", () => {
     expect(mockSetClusterAccountBan).toHaveBeenCalledWith({
       account_id: "subject-1",
       banned: false,
+      actor_account_id: "acct-1",
+      reason: "appeal accepted",
     });
   });
 });

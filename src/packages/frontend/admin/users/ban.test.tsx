@@ -11,15 +11,41 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 }));
 
 jest.mock("antd", () => ({
-  Button: ({ children, ...props }: any) => (
-    <button {...props}>{children}</button>
+  Alert: ({ message, description }: any) => (
+    <div>
+      {message}
+      {description}
+    </div>
   ),
-  Popconfirm: ({ children, onConfirm }: any) => (
-    <span>
+  Button: ({ children, danger, ...props }: any) => (
+    <button data-danger={danger ? "true" : undefined} {...props}>
       {children}
-      <button onClick={onConfirm}>Confirm ban</button>
-    </span>
+    </button>
   ),
+  Input: {
+    TextArea: ({ value, onChange, placeholder }: any) => (
+      <textarea
+        aria-label="ban reason"
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+      />
+    ),
+  },
+  Modal: ({ children, open, onOk, okButtonProps }: any) =>
+    open ? (
+      <div role="dialog">
+        {children}
+        <button onClick={onOk} disabled={okButtonProps?.disabled}>
+          Confirm ban
+        </button>
+      </div>
+    ) : null,
+  Space: ({ children }: any) => <div>{children}</div>,
+  Typography: {
+    Paragraph: ({ children }: any) => <p>{children}</p>,
+    Text: ({ children }: any) => <code>{children}</code>,
+  },
 }));
 
 jest.mock("@cocalc/frontend/components", () => ({
@@ -64,6 +90,10 @@ describe("Ban", () => {
 
     render(<Ban account_id="subject-1" banned={false} name="Target User" />);
 
+    fireEvent.click(screen.getByRole("button", { name: /Ban User/i }));
+    fireEvent.change(screen.getByLabelText("ban reason"), {
+      target: { value: "spam campaign" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Confirm ban" }));
 
     await waitFor(() => {
@@ -74,7 +104,11 @@ describe("Ban", () => {
 
     await waitFor(() => {
       expect(adminBanUser).toHaveBeenCalledTimes(2);
-      expect(adminBanUser).toHaveBeenLastCalledWith("subject-1", true);
+      expect(adminBanUser).toHaveBeenLastCalledWith(
+        "subject-1",
+        true,
+        "spam campaign",
+      );
     });
   });
 });
