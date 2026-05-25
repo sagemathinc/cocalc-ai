@@ -10,9 +10,11 @@ import { Modal } from "antd";
 import { FormattedMessage } from "react-intl";
 import Ansi from "@cocalc/frontend/components/ansi-to-react";
 import { A, Icon, Paragraph, Title } from "@cocalc/frontend/components";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { ShowSupportLink } from "@cocalc/frontend/support";
 import { KernelInfo } from "@cocalc/jupyter/types";
 import { COLORS, JUPYTER_CLASSIC_MODERN } from "@cocalc/util/theme";
+import { joinUrlPath } from "@cocalc/util/url-path";
 import { JupyterActions } from "./browser-actions";
 
 interface AboutProps {
@@ -78,7 +80,10 @@ export function About(props: AboutProps) {
   function render_faq(): React.JSX.Element {
     return (
       <Paragraph>
-        Read <A href="https://doc.cocalc.com/jupyter.html">documentation</A>
+        Read{" "}
+        <A href={joinUrlPath(appBasePath, "docs/jupyter/use-jupyter")}>
+          documentation
+        </A>
         , create a <ShowSupportLink />, or check the latest{" "}
         <A href={JUPYTER_CLASSIC_MODERN}>status of Jupyter in CoCalc.</A>
       </Paragraph>

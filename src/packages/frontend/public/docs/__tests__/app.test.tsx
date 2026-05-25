@@ -40,6 +40,11 @@ describe("public/docs", () => {
       )[0],
     ).toBe("jupyter.custom-kernels");
     expect(
+      searchDocsEntries("use jupyter notebooks collaborative durable").map(
+        (entry) => entry.id,
+      )[0],
+    ).toBe("jupyter.use-jupyter");
+    expect(
       searchDocsEntries("browser notebook cli automation").map(
         (entry) => entry.id,
       )[0],

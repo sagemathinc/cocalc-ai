@@ -181,6 +181,58 @@ realtime collaboration, efficient rendering of large notebooks, TimeTravel,
 nbgrader, whiteboard integration, and Codex-aware live notebook control.
 `;
 
+const USE_JUPYTER_BODY = String.raw`
+## What Jupyter in CoCalc is for
+
+CoCalc runs standard Jupyter notebooks inside a durable project workspace. The
+notebook file is collaborative, the kernel runs in the project backend, and
+output is captured even if the browser tab disconnects.
+
+Use notebooks for exploratory computation, teaching, data analysis, reports,
+plots, and workflows where code, output, and explanation belong together.
+
+## Start working
+
+1. Open a project.
+2. Create or open an \`.ipynb\` file.
+3. Choose a kernel.
+4. Run cells, edit markdown, and save work as usual.
+
+For the creation flow, see [Create a Jupyter notebook](/docs/jupyter/create-notebook).
+
+## What CoCalc adds
+
+CoCalc notebooks are designed for shared and long-running work:
+
+1. Multiple people can edit the same notebook in realtime.
+2. Long-running cells keep running when the browser disconnects.
+3. Output is captured server-side and shown when you reconnect.
+4. TimeTravel records detailed notebook history.
+5. Large notebooks and large outputs are handled with CoCalc-specific rendering.
+6. Side chat, agents, terminals, and project files live next to the notebook.
+
+## Kernels and environments
+
+Use the kernel selector to switch between available project kernels. If you need
+a project-specific Python environment, create a custom kernel backed by a
+virtual environment; see [Custom Jupyter kernels with uv](/docs/jupyter/custom-kernels).
+
+For a shared software stack across many projects, use a runtime image instead of
+hand-configuring each notebook.
+
+## Agents and notebooks
+
+Agents should treat the live notebook state as the source of truth. Use
+\`cocalc project jupyter\` or the browser-session notebook APIs for durable
+notebook inspection and execution instead of editing \`.ipynb\` JSON directly.
+
+## Troubleshooting
+
+If a kernel stops, restarts, or the project runs out of memory, check the
+resource indicators and restart only the affected kernel when possible. For
+memory-specific failures, see [Troubleshoot project memory](/docs/troubleshooting/memory).
+`;
+
 const CUSTOM_JUPYTER_KERNELS_BODY = String.raw`
 ## What custom kernels are for
 
@@ -999,6 +1051,18 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     summary:
       "Create notebooks that keep running and capturing output after browser disconnects.",
     title: "Create a Jupyter notebook",
+  },
+  {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: USE_JUPYTER_BODY.trim(),
+    category: "Jupyter",
+    id: "jupyter.use-jupyter",
+    lastReviewed: "2026-05-24",
+    slug: "jupyter/use-jupyter",
+    status: "ready",
+    summary:
+      "Use collaborative durable Jupyter notebooks inside CoCalc projects.",
+    title: "Use Jupyter notebooks",
   },
   {
     audiences: ["agents", "instructors", "researchers", "students"],

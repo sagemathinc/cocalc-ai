@@ -14,9 +14,9 @@ This inventory excludes generated build output such as
 
 Current source inventory:
 
-- 62 legacy URL references.
-- 36 unique legacy URLs.
-- 62 grep lines matching `doc.cocalc.com`.
+- 56 legacy URL references.
+- 35 unique legacy URLs.
+- 56 grep lines matching `doc.cocalc.com`.
 
 Resolved so far:
 
@@ -31,6 +31,9 @@ Resolved so far:
   `https://doc.cocalc.com/api2/index.html#authentication`, and the OpenAPI
   root docs URL now have `api/http-api`; the new page points automation users
   toward `cli/use-cocalc-cli` when the CLI is the better interface.
+- `https://doc.cocalc.com/jupyter.html` now has `jupyter/use-jupyter`; the
+  Jupyter about/help links and welcome-email Jupyter links point to the local
+  docs route.
 
 ## Recommended Migration Policy
 
@@ -51,12 +54,12 @@ outside an allowlist file. The allowlist should shrink as docs pages land.
 These links appear in warnings, first-run flows, welcome email, or API entry
 points. They should be addressed before launch.
 
-| Topic                            | Proposed CoCalc-ai docs                                                                      | Legacy URLs                                                                           | Source areas                                                                    | Action                      |
-| -------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | --------------------------- |
-| Jupyter notebooks                | `jupyter/use-jupyter`, existing `jupyter/create-notebook`, existing `jupyter/custom-kernels` | `/jupyter.html`, `/howto/jupyter-kernel-terminated.html`                              | welcome email, Jupyter commands, Jupyter about, Jupyter editor, kernel warnings | create-doc/replace-existing |
-| Terminal workflows               | existing `projects/open-terminal`, add `terminal/use-terminal` if needed                     | `/terminal.html`                                                                      | terminal editor, base editor, terminal tour                                     | replace-existing/create-doc |
-| Connectivity and browser trouble | `troubleshooting/connectivity`                                                               | `/howto/connectivity-issues.html`, `/howto/trouble.html`                              | welcome email, active content warning                                           | create-doc                  |
-| Welcome email docs               | `/docs` plus specific docs above                                                             | `/`, `/jupyter.html`, `/teaching-instructors.html`, `/howto/connectivity-issues.html` | `server/email/welcome-email.ts`, `server/hub/email.ts`                          | replace-existing/create-doc |
+| Topic                            | Proposed CoCalc-ai docs                                                                 | Legacy URLs                                                                           | Source areas                                           | Action                      |
+| -------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------ | --------------------------- |
+| Jupyter kernel termination       | existing `troubleshooting/memory`, possibly `troubleshooting/jupyter-kernel-terminated` | `/howto/jupyter-kernel-terminated.html`                                               | kernel warnings                                        | create-doc/replace-existing |
+| Terminal workflows               | existing `projects/open-terminal`, add `terminal/use-terminal` if needed                | `/terminal.html`                                                                      | terminal editor, base editor, terminal tour            | replace-existing/create-doc |
+| Connectivity and browser trouble | `troubleshooting/connectivity`                                                          | `/howto/connectivity-issues.html`, `/howto/trouble.html`                              | welcome email, active content warning                  | create-doc                  |
+| Welcome email docs               | `/docs` plus specific docs above                                                        | `/`, `/jupyter.html`, `/teaching-instructors.html`, `/howto/connectivity-issues.html` | `server/email/welcome-email.ts`, `server/hub/email.ts` | replace-existing/create-doc |
 
 ### P1: Account, Billing, Teaching, And Collaboration
 
@@ -97,11 +100,10 @@ be concise task pages rather than full manuals.
 
 ### Jupyter
 
-| Count | Legacy URL                                                    | Replacement                                                                                              |
-| ----: | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-|     6 | `https://doc.cocalc.com/jupyter.html`                         | Create `jupyter/use-jupyter`; use existing `jupyter/create-notebook` only for notebook creation buttons. |
-|     1 | `https://doc.cocalc.com/howto/jupyter-kernel-terminated.html` | Create `troubleshooting/jupyter-kernel-terminated` or include in `troubleshooting/memory`.               |
-|     3 | `https://doc.cocalc.com/teaching-nbgrader.html`               | Create `teaching/nbgrader`.                                                                              |
+| Count | Legacy URL                                                    | Replacement                                                                                |
+| ----: | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+|     1 | `https://doc.cocalc.com/howto/jupyter-kernel-terminated.html` | Create `troubleshooting/jupyter-kernel-terminated` or include in `troubleshooting/memory`. |
+|     3 | `https://doc.cocalc.com/teaching-nbgrader.html`               | Create `teaching/nbgrader`.                                                                |
 
 ### Terminal, Files, And Editors
 
@@ -169,11 +171,11 @@ be concise task pages rather than full manuals.
 
 ### Server And API
 
-| File                                          | Legacy topics                              | Recommended action                                                                                       |
-| --------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `src/packages/server/email/welcome-email.ts`  | root docs, Jupyter, teaching, connectivity | Replace with `/docs`, `jupyter/use-jupyter`, `teaching/course-workflow`, `troubleshooting/connectivity`. |
-| `src/packages/server/hub/email.ts`            | root docs, Jupyter, teaching, connectivity | Same as welcome email; check whether this duplicates or supersedes `server/email/welcome-email.ts`.      |
-| `src/packages/http-api/pages/api/v2/index.ts` | API keys, API docs root                    | Done: replaced with `api/http-api` and the local docs route in OpenAPI metadata.                         |
+| File                                          | Legacy topics                     | Recommended action                                                                                      |
+| --------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `src/packages/server/email/welcome-email.ts`  | root docs, teaching, connectivity | Replace with `/docs`, `teaching/course-workflow`, `troubleshooting/connectivity`. Jupyter link is done. |
+| `src/packages/server/hub/email.ts`            | root docs, teaching, connectivity | Same as welcome email; check whether this duplicates or supersedes `server/email/welcome-email.ts`.     |
+| `src/packages/http-api/pages/api/v2/index.ts` | API keys, API docs root           | Done: replaced with `api/http-api` and the local docs route in OpenAPI metadata.                        |
 
 ### Billing And Account
 
@@ -209,7 +211,7 @@ be concise task pages rather than full manuals.
 | `src/packages/frontend/project/new/file-type-selector.tsx`        | chat and teaching           | Create `collaboration/chat`; replace teaching link with `teaching/course-workflow` or existing assignment docs. |
 | `src/packages/frontend/frame-editors/course-editor/actions.ts`    | teaching course editor help | Create `teaching/course-workflow`; replace link.                                                                |
 | `src/packages/frontend/jupyter/main.tsx`                          | nbgrader                    | Create `teaching/nbgrader`; replace link.                                                                       |
-| `src/packages/frontend/jupyter/commands.ts`                       | Jupyter, nbgrader, Markdown | Replace with the corresponding new docs pages.                                                                  |
+| `src/packages/frontend/jupyter/commands.ts`                       | nbgrader, Markdown          | Replace with the corresponding new docs pages. Jupyter help link is done.                                       |
 
 ### Collaboration And Notifications
 
@@ -225,8 +227,8 @@ be concise task pages rather than full manuals.
 | `src/packages/frontend/frame-editors/base-editor/actions-base.ts`  | terminal, TimeTravel | Replace TimeTravel with existing `files/timetravel`; terminal with `projects/open-terminal` or `terminal/use-terminal`. |
 | `src/packages/frontend/frame-editors/terminal-editor/actions.ts`   | terminal             | Replace with existing `projects/open-terminal` or new `terminal/use-terminal`.                                          |
 | `src/packages/frontend/frame-editors/terminal-editor/tour.tsx`     | terminal             | Same.                                                                                                                   |
-| `src/packages/frontend/frame-editors/jupyter-editor/actions.ts`    | Jupyter              | Create `jupyter/use-jupyter`; replace link.                                                                             |
-| `src/packages/frontend/jupyter/about.tsx`                          | Jupyter              | Same.                                                                                                                   |
+| `src/packages/frontend/frame-editors/jupyter-editor/actions.ts`    | Jupyter              | Done: replaced with `jupyter/use-jupyter`.                                                                              |
+| `src/packages/frontend/jupyter/about.tsx`                          | Jupyter              | Done: replaced with `jupyter/use-jupyter`.                                                                              |
 | `src/packages/frontend/jupyter/browser-actions.ts`                 | custom kernels       | Done: replaced with `jupyter/custom-kernels`.                                                                           |
 | `src/packages/frontend/jupyter/kernel-warning.tsx`                 | kernel terminated    | Create `troubleshooting/jupyter-kernel-terminated`; replace link.                                                       |
 | `src/packages/frontend/frame-editors/markdown-editor/actions.ts`   | Markdown             | Create `files/markdown`; replace link.                                                                                  |
@@ -242,9 +244,10 @@ be concise task pages rather than full manuals.
 
 ## Suggested First Cleanup Cluster
 
-Next cluster: `jupyter/use-jupyter`, because it has the most repeated links and
-is a core CoCalc workflow. It should include normal notebook use, long-running
-kernels, disconnect behavior, and where custom kernels fit.
+Next cluster: terminal help, because `/terminal.html` appears in editor actions,
+the base editor help menu, and terminal tour copy. Existing
+`projects/open-terminal` may be enough for some links; broader terminal docs may
+need `terminal/use-terminal`.
 
 ## Release Gate Shape
 
