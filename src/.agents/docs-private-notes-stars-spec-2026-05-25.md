@@ -28,8 +28,8 @@ The box should include:
 - a private note composer
 - a list of existing private notes for that page
 - save/edit/delete controls for each note
-- a short privacy line: "Private to you. Not shared with collaborators or
-  agents unless you export it."
+- a short privacy line: "Private to you. Export creates a JSON backup or
+  transfer file only when you choose."
 
 The visual style should be close to the git review private note box in chat:
 quiet border, white background, small status text, Markdown editing, and
@@ -72,6 +72,11 @@ Do not require a project id to read or write this state.
 
 Do not make stars public recommendations or product analytics in this first
 version.
+
+Export/import is for portability and backup, not collaboration. The motivating
+workflow is: use CoCalc site X for a while, export docs state as a JSON blob,
+then import that state on CoCalc site Y or keep it as a trustworthy local
+backup.
 
 ## Data Model
 
@@ -314,9 +319,9 @@ Home-bay tests should cover:
 ## Open Questions
 
 - Should deleted notes be kept as tombstones forever, for a limited period, or
-  only during import/export conflict handling?
+  only during import/export conflict handling?  (ANS: I'm fine with just a limited period; it's not a big deal -- these are just private notes.)
 - Should `last_viewed_at` be part of the first UI, or only stored for future
-  "read/unread" workflows?
+  "read/unread" workflows? 
 - Where should import/export controls live: docs index toolbar, account
   settings, or both?
 - Should note search show snippets, or only indicate that private notes matched?

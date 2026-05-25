@@ -24,6 +24,7 @@ import {
   Typography,
 } from "antd";
 import {
+  listDocsEntries,
   searchDocsEntries,
   type DocsAction,
   type DocsEntry,
@@ -69,6 +70,22 @@ function writeStoredDocsFontSize(value: number, defaultFontSize: number): void {
   } else {
     window.localStorage.setItem(DOCS_FONT_SIZE_STORAGE_KEY, `${value}`);
   }
+}
+
+function groupDocsEntriesByCategory(entries: DocsEntry[]): {
+  category: string;
+  entries: DocsEntry[];
+}[] {
+  const grouped = new Map<string, DocsEntry[]>();
+  for (const entry of entries) {
+    const categoryEntries = grouped.get(entry.category) ?? [];
+    categoryEntries.push(entry);
+    grouped.set(entry.category, categoryEntries);
+  }
+  return Array.from(grouped.entries()).map(([category, categoryEntries]) => ({
+    category,
+    entries: categoryEntries,
+  }));
 }
 
 export function useDocsFontSize(defaultFontSize = 14) {
@@ -390,7 +407,60 @@ export function DocsIndexContent({
   onSelectEntry?: (entry: DocsEntry) => void;
 }) {
   const [query, setQuery] = useState("");
-  const entries = useMemo(() => searchDocsEntries(query), [query]);
+  const queryIsEmpty = query.trim().length === 0;
+  const allEntries = useMemo(() => listDocsEntries(), []);
+  const groupedEntries = useMemo(
+    () => groupDocsEntriesByCategory(allEntries),
+    [allEntries],
+  );
+  const entries = useMemo(
+    () =>
+      queryIsEmpty
+        ? allEntries
+        : searchDocsEntries(query, Number.POSITIVE_INFINITY),
+    [allEntries, query, queryIsEmpty],
+  );
+  const linkFor = useCallback(
+    (entry: DocsEntry) => linkForEntry?.(entry),
+    [linkForEntry],
+  );
+
+  const renderTocLink = (entry: DocsEntry) => {
+    const href = linkFor(entry);
+    const content = (
+      <Flex gap={4} vertical>
+        <Text strong>{entry.title}</Text>
+        <Text type="secondary" style={{ lineHeight: 1.35 }}>
+          {entry.summary}
+        </Text>
+      </Flex>
+    );
+    if (href != null) {
+      return (
+        <a href={href} style={{ color: "inherit", textDecoration: "none" }}>
+          {content}
+        </a>
+      );
+    }
+    return (
+      <button
+        onClick={() => onSelectEntry?.(entry)}
+        style={{
+          background: "transparent",
+          border: 0,
+          color: "inherit",
+          cursor: "pointer",
+          margin: 0,
+          padding: 0,
+          textAlign: "left",
+          width: "100%",
+        }}
+        type="button"
+      >
+        {content}
+      </button>
+    );
+  };
 
   return (
     <Flex gap={layout === "flyout" ? "middle" : "large"} vertical>
@@ -404,7 +474,47 @@ export function DocsIndexContent({
         style={{ maxWidth: layout === "flyout" ? undefined : 520 }}
         value={query}
       />
-      {layout === "flyout" ? (
+      {queryIsEmpty ? (
+        <Flex gap={layout === "flyout" ? "middle" : "large"} vertical>
+          <Space align="baseline" wrap>
+            <Title level={layout === "flyout" ? 4 : 2} style={{ margin: 0 }}>
+              All documentation pages
+            </Title>
+            <Text type="secondary">
+              {allEntries.length} pages in {groupedEntries.length} categories
+            </Text>
+          </Space>
+          <Row gutter={[18, 18]}>
+            {groupedEntries.map(({ category, entries: categoryEntries }) => (
+              <Col
+                key={category}
+                lg={layout === "flyout" ? 24 : 8}
+                md={12}
+                xs={24}
+              >
+                <Card
+                  size="small"
+                  style={{ ...DOCS_BROWSER_CARD_STYLE, height: "100%" }}
+                  styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
+                  title={
+                    <Space>
+                      <BookOutlined />
+                      <span>{category}</span>
+                      <Text type="secondary">({categoryEntries.length})</Text>
+                    </Space>
+                  }
+                >
+                  <Flex gap="middle" vertical>
+                    {categoryEntries.map((entry) => (
+                      <div key={entry.id}>{renderTocLink(entry)}</div>
+                    ))}
+                  </Flex>
+                </Card>
+              </Col>
+            ))}
+          </Row>
+        </Flex>
+      ) : layout === "flyout" ? (
         <Flex gap={10} vertical>
           {entries.map((entry) => (
             <DocsCard

@@ -120,8 +120,22 @@ describe("public/docs", () => {
       }),
     ).not.toBeNull();
     expect(
+      screen.getByRole("heading", { name: "All documentation pages" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        `${listDocsEntries().length} pages in ${
+          new Set(listDocsEntries().map((entry) => entry.category)).size
+        } categories`,
+      ),
+    ).not.toBeNull();
+    expect(
       screen.getByRole("link", { name: /Project secrets/ }),
     ).toHaveAttribute("href", "/docs/projects/project-secrets");
+    expect(screen.getByRole("link", { name: /Use chat/ })).toHaveAttribute(
+      "href",
+      "/docs/collaboration/chat",
+    );
   });
 
   it("persists docs font size controls", () => {
