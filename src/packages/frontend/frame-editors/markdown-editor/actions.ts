@@ -440,7 +440,7 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
   }
 
   help(): void {
-    open_new_tab("https://doc.cocalc.com/markdown.html");
+    open_new_tab("/docs/files/markdown");
   }
 
   slate_help(): void {

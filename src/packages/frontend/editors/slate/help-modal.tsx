@@ -112,10 +112,7 @@ export const SlateHelpModal: React.FC<Props> = ({ open, onClose }) => {
       </ul>
 
       <Paragraph>
-        Full docs:{" "}
-        <A href="https://doc.cocalc.com/markdown.html">
-          https://doc.cocalc.com/markdown.html
-        </A>
+        Full docs: <A href="/docs/files/markdown">/docs/files/markdown</A>
       </Paragraph>
     </Modal>
   );

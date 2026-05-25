@@ -7,7 +7,7 @@
 X Window Editor Actions
 */
 
-const HELP_URL = "https://doc.cocalc.com/x11.html";
+const HELP_URL = "/docs/projects/x11";
 
 // 15 minute idle timeout -- it's important to disconnect
 // the websocket to the xpra server, to avoid a massive

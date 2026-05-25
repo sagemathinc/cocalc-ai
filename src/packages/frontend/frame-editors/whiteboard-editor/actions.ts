@@ -1470,7 +1470,7 @@ export class Actions<T extends State = State> extends BaseActions<T | State> {
   }
 
   help(): void {
-    open_new_tab("https://doc.cocalc.com/whiteboard.html");
+    open_new_tab("/docs/files/whiteboard");
   }
 
   defaultPageId(): string {

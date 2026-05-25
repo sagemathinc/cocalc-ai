@@ -1060,6 +1060,208 @@ TimeTravel, Git, and project hosts. Clear file organization makes the workspace
 easier to inspect, automate, recover, and teach.
 `;
 
+const MARKDOWN_BODY = String.raw`
+## What Markdown is for
+
+Markdown files are lightweight text documents that can include headings, lists,
+links, images, code blocks, math, and mentions. Use them for README files,
+notes, lab instructions, project documentation, and content that should remain
+easy to edit as plain text.
+
+## Edit Markdown
+
+Open a \`.md\` file in a project. CoCalc can show a source editor, a rendered
+preview, and rich text editing surfaces depending on the file and view. Use the
+source view when exact Markdown syntax matters, and use the rendered view when
+you want to inspect the final document.
+
+## Use code and math
+
+Fence code blocks with triple backticks and include a language name when useful.
+Use Markdown math syntax for formulas. Keep long generated output in separate
+files or notebooks instead of pasting it into prose.
+
+## Mentions and collaboration
+
+Markdown is collaborative in CoCalc. Use mentions when you want to draw a
+collaborator into a specific discussion or document context, and keep durable
+instructions in files instead of only in chat.
+`;
+
+const LATEX_BODY = String.raw`
+## What LaTeX is for
+
+LaTeX projects are for papers, assignments, reports, and technical documents
+that need high-quality typesetting, bibliographies, cross references, figures,
+and reproducible builds.
+
+## Build a paper
+
+1. Create or open a \`.tex\` file.
+2. Edit the source in the LaTeX editor.
+3. Build the PDF.
+4. Inspect errors and warnings in the build output.
+5. Use SyncTeX, preview panes, and project files to move between source and
+   output.
+
+Keep figures, bibliography files, generated data, and scripts in the same
+project so collaborators and agents can inspect the complete paper workflow.
+
+## Troubleshooting
+
+If the PDF does not build, start with the first meaningful LaTeX error rather
+than later follow-up errors. Clean auxiliary files when stale build state is
+suspect. For large documents, isolate failing sections in a small test file
+before changing the full paper.
+`;
+
+const R_MARKDOWN_BODY = String.raw`
+## What R Markdown is for
+
+R Markdown combines prose, R code, output, and document rendering in one file.
+Use it for reports, statistical notebooks, teaching materials, and reproducible
+analysis that should render to HTML, PDF, or other formats.
+
+## Create and render
+
+1. Create a \`.Rmd\` file.
+2. Put document settings in the YAML header.
+3. Write Markdown prose.
+4. Add R chunks for computations, plots, tables, and checks.
+5. Render the document and inspect the output.
+
+Run chunks incrementally while developing. If a full render fails, rerun the
+failing chunk in a fresh session and check package availability in the project
+environment.
+
+## Reproducibility
+
+Keep package setup, data paths, and rendering commands explicit. For classes or
+shared research projects, prefer a runtime image or setup script so the R
+environment is reproducible across projects.
+`;
+
+const TASKS_BODY = String.raw`
+## What task files are for
+
+Task files organize project work into checkable items. Use them for lab
+checklists, project plans, bug triage, grading queues, or shared TODO lists that
+belong next to the files and notebooks they describe.
+
+## Work with tasks
+
+Create a task file, add items, assign structure with headings or hashtags, and
+mark work complete as the project evolves. Because task files live in the
+project, collaborators and agents can refer to the same durable checklist.
+
+## Practical use
+
+Keep tasks actionable and close to the related project files. Put detailed
+discussion in chat or Markdown when it grows beyond a task item, then link or
+name the relevant file from the task list.
+`;
+
+const SLIDES_BODY = String.raw`
+## What slides are for
+
+Slides are presentation documents stored in the project. Use them for teaching,
+research talks, demos, and lightweight visual explanations that should live near
+the notebooks, figures, and files they reference.
+
+## Build slides
+
+Create a slides file, add pages, arrange content, and present from the browser.
+Keep source data, generated figures, and supporting notebooks in the same
+project so the presentation can be updated and reviewed with the rest of the
+work.
+
+## Collaboration
+
+Slides are project files, so collaborators can edit, review, and recover them
+with the same project tooling as other documents. Use TimeTravel when you need
+to inspect or restore earlier versions.
+`;
+
+const WHITEBOARD_BODY = String.raw`
+## What whiteboards are for
+
+Whiteboards are collaborative drawing surfaces inside a project. Use them for
+diagrams, sketches, lecture notes, planning, and visual explanations that do not
+need to be a polished paper or slide deck.
+
+## Use a whiteboard
+
+Create or open a whiteboard file, draw or add content, and collaborate in
+realtime. Keep related notebooks, scripts, data, and written notes nearby in the
+same project so the visual context is not separated from the work.
+
+## Recovery
+
+Whiteboards are project files. Use TimeTravel when you need to inspect earlier
+states or recover from accidental edits.
+`;
+
+const X11_BODY = String.raw`
+## What X11 apps are for
+
+X11 support lets graphical Linux applications run inside a CoCalc project and
+display in the browser. Use it for tools that do not have a native web UI but
+are still useful inside the project environment.
+
+## Run an X11 app
+
+Open an X11 app file or start the relevant graphical program from the project
+environment. The application runs on the project backend, while the browser
+shows the remote desktop window.
+
+## Practical limits
+
+X11 apps can use significant CPU, memory, and bandwidth. Prefer native CoCalc
+editors, notebooks, terminals, or web apps when they fit the task better. Use
+X11 when a specific graphical Linux tool is required.
+`;
+
+const FILE_EXPLORER_BODY = String.raw`
+## What the file explorer is for
+
+The file explorer is the project file browser. Use it to create, open, upload,
+rename, move, delete, and organize the files that make up a CoCalc project.
+
+## Work efficiently
+
+Use folders for related work, descriptive filenames for humans and agents, and
+the search and new-file controls when a project grows. The explorer is also a
+good starting point for creating terminals, notebooks, scripts, LaTeX files,
+slides, whiteboards, and task files.
+
+## Files are shared project state
+
+Files opened from the explorer are visible to collaborators and tools in the
+same project. For credentials, use project secrets instead of ordinary project
+files.
+`;
+
+const PROJECT_LIST_BODY = String.raw`
+## What the projects page is for
+
+The projects page lists the CoCalc projects you can access. Use it to open
+recent work, create projects, search by title or file, inspect activity, and
+manage the projects that back your courses, research, classes, and agent
+workspaces.
+
+## Organize projects
+
+Use clear project names and descriptions. Archive, stop, or delete work that is
+no longer active, and keep important projects easy to find with naming
+conventions that match your team or course.
+
+## Create new projects
+
+Create a project when you need a separate filesystem, collaborator set, runtime
+environment, or host placement. For the short creation flow, see
+[Create a project](/docs/projects/create-project).
+`;
+
 const GIT_BODY = String.raw`
 ## What Git is for
 
@@ -1358,6 +1560,117 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     title: "Work with project files",
   },
   {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: FILE_EXPLORER_BODY.trim(),
+    category: "Files",
+    id: "files.explorer",
+    image: docsIcon(
+      "/public/docs/project-files-6c4ff552.webp",
+      "A project file browser organizing notebooks, scripts, and folders",
+    ),
+    lastReviewed: "2026-05-25",
+    slug: "files/explorer",
+    status: "ready",
+    summary: "Create, open, upload, rename, move, and organize project files.",
+    title: "Use the file explorer",
+  },
+  {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: MARKDOWN_BODY.trim(),
+    category: "Files",
+    id: "files.markdown",
+    image: docsIcon(
+      "/public/docs/project-files-6c4ff552.webp",
+      "Markdown notes and documentation stored beside project files",
+    ),
+    lastReviewed: "2026-05-25",
+    slug: "files/markdown",
+    status: "ready",
+    summary:
+      "Write README files, notes, instructions, math, code blocks, and collaborative documentation.",
+    title: "Use Markdown",
+  },
+  {
+    audiences: ["instructors", "researchers", "students", "teams"],
+    body: SLIDES_BODY.trim(),
+    category: "Files",
+    id: "files.slides",
+    image: docsIcon(
+      "/public/docs/project-files-6c4ff552.webp",
+      "Presentation slides stored with notebooks, figures, and project files",
+    ),
+    lastReviewed: "2026-05-25",
+    slug: "files/slides",
+    status: "ready",
+    summary:
+      "Create presentation slides that live with the project files they explain.",
+    title: "Create slides",
+  },
+  {
+    audiences: ["instructors", "researchers", "students", "teams"],
+    body: WHITEBOARD_BODY.trim(),
+    category: "Files",
+    id: "files.whiteboard",
+    image: docsIcon(
+      "/public/docs/project-files-6c4ff552.webp",
+      "A collaborative whiteboard beside project notes and data files",
+    ),
+    lastReviewed: "2026-05-25",
+    slug: "files/whiteboard",
+    status: "ready",
+    summary:
+      "Sketch diagrams, lecture notes, and visual plans in a collaborative project file.",
+    title: "Use whiteboards",
+  },
+  {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: PROJECT_LIST_BODY.trim(),
+    category: "Projects",
+    id: "projects.project-list",
+    image: docsIcon(
+      "/public/docs/create-project-5b221552.webp",
+      "A projects page with recent work and a create-project control",
+    ),
+    lastReviewed: "2026-05-25",
+    slug: "projects/project-list",
+    status: "ready",
+    summary:
+      "Find, open, create, and organize the CoCalc projects you can access.",
+    title: "Use the projects page",
+  },
+  {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: TASKS_BODY.trim(),
+    category: "Projects",
+    id: "projects.tasks",
+    image: docsIcon(
+      "/public/docs/project-files-6c4ff552.webp",
+      "A project checklist stored with notebooks and source files",
+    ),
+    lastReviewed: "2026-05-25",
+    slug: "projects/tasks",
+    status: "ready",
+    summary:
+      "Use task files for shared checklists, project plans, and durable TODO lists.",
+    title: "Use task files",
+  },
+  {
+    audiences: ["researchers", "students", "teams"],
+    body: X11_BODY.trim(),
+    category: "Projects",
+    id: "projects.x11",
+    image: docsIcon(
+      "/public/docs/terminal-56905fa2.webp",
+      "A graphical Linux application running from a project backend",
+    ),
+    lastReviewed: "2026-05-25",
+    slug: "projects/x11",
+    status: "ready",
+    summary:
+      "Run graphical Linux applications from a project and view them in the browser.",
+    title: "Use X11 apps",
+  },
+  {
     actions: [
       {
         description: "Create a Jupyter notebook in the active project.",
@@ -1444,6 +1757,38 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     summary:
       "Use real Python through notebooks, scripts, terminals, virtual environments, and papers.",
     title: "Use Python in CoCalc",
+  },
+  {
+    audiences: ["instructors", "researchers", "students", "teams"],
+    body: LATEX_BODY.trim(),
+    category: "LaTeX",
+    id: "latex.build-papers",
+    image: docsIcon(
+      "/public/docs/project-files-6c4ff552.webp",
+      "A LaTeX paper building into a PDF with figures and references",
+    ),
+    lastReviewed: "2026-05-25",
+    slug: "latex/build-papers",
+    status: "ready",
+    summary:
+      "Write and build LaTeX papers, assignments, reports, figures, and bibliographies.",
+    title: "Build LaTeX documents",
+  },
+  {
+    audiences: ["instructors", "researchers", "students"],
+    body: R_MARKDOWN_BODY.trim(),
+    category: "R",
+    id: "editors.r-markdown",
+    image: docsIcon(
+      "/public/docs/python-93480a33.webp",
+      "A reproducible report combining prose, code chunks, plots, and output",
+    ),
+    lastReviewed: "2026-05-25",
+    slug: "editors/r-markdown",
+    status: "ready",
+    summary:
+      "Write reproducible R reports with Markdown prose, R chunks, plots, and rendered output.",
+    title: "Use R Markdown",
   },
   {
     actions: [
