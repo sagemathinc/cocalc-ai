@@ -947,23 +947,33 @@ export function searchDocsEntries(
     }));
   }
 
-  return DOCS_ENTRIES.map((entry) => {
-    const haystack = [
-      entry.title,
-      entry.summary,
-      entry.category,
-      entry.audiences.join(" "),
-      entry.actions
-        ?.map((action) => `${action.id} ${action.label} ${action.description}`)
-        .join(" "),
-      entry.body,
-    ]
-      .join("\n")
-      .toLowerCase();
-    const score = terms.reduce(
-      (total, term) => total + (haystack.includes(term) ? 1 : 0),
+  const fieldScore = (
+    value: string | undefined,
+    weight: number,
+    phraseWeight = 0,
+  ): number => {
+    if (!value) return 0;
+    const haystack = value.toLowerCase();
+    const termScore = terms.reduce(
+      (total, term) => total + (haystack.includes(term) ? weight : 0),
       0,
     );
+    return (
+      termScore + (phraseWeight && haystack.includes(query) ? phraseWeight : 0)
+    );
+  };
+
+  return DOCS_ENTRIES.map((entry) => {
+    const actionsText = entry.actions
+      ?.map((action) => `${action.id} ${action.label} ${action.description}`)
+      .join(" ");
+    const score =
+      fieldScore(entry.title, 8, 8) +
+      fieldScore(entry.summary, 4, 4) +
+      fieldScore(actionsText, 3) +
+      fieldScore(entry.category, 2) +
+      fieldScore(entry.audiences.join(" "), 1) +
+      fieldScore(entry.body, 1);
     return { ...entry, score };
   })
     .filter(({ score }) => score > 0)
