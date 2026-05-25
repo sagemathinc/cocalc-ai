@@ -48,7 +48,7 @@ export default function KernelWarning({ name, actions }: Props) {
           <div>
             <A
               style={{ float: "right", marginLeft: "10px" }}
-              href="https://doc.cocalc.com/howto/jupyter-kernel-terminated.html"
+              href="/docs/troubleshooting/jupyter-kernel-terminated"
             >
               Docs...
             </A>

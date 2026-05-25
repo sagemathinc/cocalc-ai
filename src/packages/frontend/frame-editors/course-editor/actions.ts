@@ -113,7 +113,7 @@ export class CourseEditorActions extends Actions<CourseEditorState> {
   }
 
   help = (): void => {
-    open_new_tab("https://doc.cocalc.com/teaching-instructors.html");
+    open_new_tab("/docs/teaching/course-workflow");
   };
 
   setModal = (modal: string) => {

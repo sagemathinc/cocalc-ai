@@ -9,8 +9,7 @@ export const TEACHER_PAYS =
   "https://doc.cocalc.com/teaching-upgrade-course.html#teacher-or-institution-pays-for-upgrades";
 export const STUDENT_PAYS =
   "https://doc.cocalc.com/teaching-upgrade-course.html#students-pay-for-upgrades";
-export const INSTRUCTOR_GUIDE =
-  "https://doc.cocalc.com/teaching-instructors.html";
+export const INSTRUCTOR_GUIDE = "/docs/teaching/course-workflow";
 export const DOC_LICENSE_URL = "https://doc.cocalc.com/licenses.html";
 export const DOC_ACCOUNT_LICENSES =
   "https://doc.cocalc.com/account/licenses.html";

@@ -1552,7 +1552,7 @@ export function commands(actions: AllActions): {
       i: "external-link",
       m: "nbgrader in CoCalc",
       f: () => {
-        open_new_tab("https://doc.cocalc.com/teaching-nbgrader.html");
+        open_new_tab(joinUrlPath(appBasePath, "docs/teaching/nbgrader"));
       },
       r: true,
     },
