@@ -16,6 +16,9 @@ let acceptRehomeMock: jest.Mock;
 let copyRehomeStateMock: jest.Mock;
 let getMembershipPortableStateMock: jest.Mock;
 let replaceMembershipPortableStateMock: jest.Mock;
+let loadAccountPersistStateMock: jest.Mock;
+let restoreAccountPersistStateMock: jest.Mock;
+let clearAccountPersistStateMock: jest.Mock;
 let createInterBayAccountLocalClientMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -78,6 +81,15 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
 
 jest.mock("@cocalc/server/accounts/rehome-fence", () => ({
   lockAccountRehomeFence: jest.fn(async () => undefined),
+}));
+
+jest.mock("@cocalc/server/accounts/persist-portability", () => ({
+  loadAccountPersistState: (...args: any[]) =>
+    loadAccountPersistStateMock(...args),
+  restoreAccountPersistState: (...args: any[]) =>
+    restoreAccountPersistStateMock(...args),
+  clearAccountPersistState: (...args: any[]) =>
+    clearAccountPersistStateMock(...args),
 }));
 
 jest.mock("@cocalc/server/bay-registry", () => ({
@@ -318,6 +330,9 @@ describe("account rehome", () => {
       membership_side_effects_outbox: [],
     }));
     replaceMembershipPortableStateMock = jest.fn(async () => undefined);
+    loadAccountPersistStateMock = jest.fn(async () => []);
+    restoreAccountPersistStateMock = jest.fn(async () => undefined);
+    clearAccountPersistStateMock = jest.fn(async () => undefined);
     createInterBayAccountLocalClientMock = jest.fn(({ dest_bay }) => ({
       acceptRehome: async (opts: any) => await acceptRehomeMock(opts),
       copyRehomeState: async (opts: any) => await copyRehomeStateMock(opts),
@@ -347,6 +362,9 @@ describe("account rehome", () => {
       account_id: TARGET_ACCOUNT_ID,
       home_bay_id: "bay-2",
     });
+    expect(clearAccountPersistStateMock).toHaveBeenCalledWith(
+      TARGET_ACCOUNT_ID,
+    );
     expect(result).toEqual({
       op_id: OP_ID,
       account_id: TARGET_ACCOUNT_ID,
@@ -363,6 +381,14 @@ describe("account rehome", () => {
       ...operationRow,
       stage: "source_flipped",
     };
+    loadAccountPersistStateMock = jest.fn(async () => [
+      {
+        root: "local",
+        relative_path: "docs-private-state.db",
+        data_base64: Buffer.from("account dkv").toString("base64"),
+        mode: 0o600,
+      },
+    ]);
     queryMock = jest.fn(async (sql: string, params?: any[]) => {
       if (
         sql.includes("CREATE TABLE IF NOT EXISTS account_rehome_operations") ||
@@ -696,6 +722,14 @@ describe("account rehome", () => {
             account_id: TARGET_ACCOUNT_ID,
           }),
         ],
+        account_persist_files: [
+          expect.objectContaining({
+            root: "local",
+            relative_path: "docs-private-state.db",
+            data_base64: Buffer.from("account dkv").toString("base64"),
+            mode: 0o600,
+          }),
+        ],
       }),
     );
     expect(queryMock).toHaveBeenCalledWith(
@@ -987,5 +1021,34 @@ describe("account rehome", () => {
       expect.stringContaining("COALESCE(kind, '') <> 'site'"),
       [TARGET_ACCOUNT_ID],
     );
+  });
+
+  it("restores account persist files when copying account rehome state", async () => {
+    queryMock = jest.fn(async () => ({ rows: [], rowCount: 0 }));
+
+    const { copyAccountRehomeState } = await import("./rehome");
+    await copyAccountRehomeState({
+      target_account_id: TARGET_ACCOUNT_ID,
+      source_bay_id: "bay-1",
+      dest_bay_id: "bay-1",
+      account_persist_files: [
+        {
+          root: "local",
+          relative_path: "docs-private-state.db",
+          data_base64: Buffer.from("account dkv").toString("base64"),
+          mode: 0o600,
+        },
+      ],
+    });
+
+    expect(restoreAccountPersistStateMock).toHaveBeenCalledWith({
+      account_id: TARGET_ACCOUNT_ID,
+      files: [
+        expect.objectContaining({
+          root: "local",
+          relative_path: "docs-private-state.db",
+        }),
+      ],
+    });
   });
 });
