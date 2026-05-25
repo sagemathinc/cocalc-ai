@@ -11,6 +11,7 @@ import { getServerSettings } from "@cocalc/database/settings";
 import { LIVE_DEMO_REQUEST } from "@cocalc/util/theme";
 import { getVerifyEmail } from "./verify";
 import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
+import { joinUrlPath } from "@cocalc/util/url-path";
 import siteURL from "@cocalc/database/settings/site-url";
 
 export default async function sendWelcomeEmail(
@@ -58,6 +59,7 @@ async function getWelcomeEmail(
   const { help_email, site_name } = await getServerSettings();
 
   const site_url = await siteURL();
+  const jupyter_docs_url = joinUrlPath(site_url, "docs/jupyter/use-jupyter");
   const html = `\
 <h1>Welcome to ${site_name}</h1>
 
@@ -94,7 +96,7 @@ online editing of
     <strong><a href="https://doc.cocalc.com/">CoCalc Manual:</a></strong> learn more about CoCalc's features.
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
-    <a href="https://doc.cocalc.com/jupyter.html">Working with Jupyter Notebooks</a>
+    <a href="${jupyter_docs_url}">Working with Jupyter Notebooks</a>
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
     <strong><a href="https://cocalc.com/policies/pricing.html">Subscriptions:</a></strong> make hosting more robust and increase project quotas
@@ -180,7 +182,7 @@ HOW TO GET FROM 0 to 100:
 
 CoCalc Manual: https://doc.cocalc.com/
 
-Working with Jupyter Notebooks: https://doc.cocalc.com/jupyter.html
+Working with Jupyter Notebooks: ${jupyter_docs_url}
 
 Subscriptions: https://cocalc.com/policies/pricing.html
 

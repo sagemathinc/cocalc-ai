@@ -13,6 +13,7 @@ import {
   Loading,
   Tooltip,
 } from "@cocalc/frontend/components";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import type {
   AlertLevel,
@@ -22,6 +23,7 @@ import type {
 } from "@cocalc/jupyter/types";
 import { capitalize, closest_kernel_match, rpad_html } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import { joinUrlPath } from "@cocalc/util/url-path";
 import {
   Button,
   Checkbox,
@@ -73,6 +75,11 @@ const KERNEL_ERROR_STYLE: CSS = {
   padding: "5px",
   backgroundColor: COLORS.ANTD_BG_RED_M,
 } as const;
+
+const MEMORY_DOCS_PAGE = joinUrlPath(
+  appBasePath,
+  "docs/troubleshooting/memory",
+);
 
 const BACKEND_STATE_STYLE: CSS = {
   display: "flex",
@@ -671,9 +678,7 @@ export function Kernel({
         values={{
           processes: intl.formatMessage(labels.project_info_title),
           em: (ch) => <em>{ch}</em>,
-          A: (ch) => (
-            <A href={"https://doc.cocalc.com/howto/low-memory.html"}>{ch}</A>
-          ),
+          A: (ch) => <A href={MEMORY_DOCS_PAGE}>{ch}</A>,
           secondary: (ch) => (
             <Typography.Text type="secondary">{ch}</Typography.Text>
           ),

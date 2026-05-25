@@ -28,7 +28,7 @@ import {
   type DocsAction,
   type DocsEntry,
 } from "@cocalc/docs";
-import Markdown from "@cocalc/frontend/markdown/component";
+import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { COLORS } from "@cocalc/util/theme";
 
 const { Paragraph, Text, Title } = Typography;
@@ -175,7 +175,54 @@ export function DocsFontSizeFrame({
 }
 
 export function DocsMarkdown({ value }: { value: string }) {
-  return <Markdown value={value} />;
+  return <StaticMarkdown value={value} />;
+}
+
+function DocsEntryImage({
+  entry,
+  mode,
+}: {
+  entry: DocsEntry;
+  mode: "card" | "detail" | "flyout-card" | "flyout-detail";
+}) {
+  if (entry.image == null) return null;
+
+  const src =
+    mode === "card" || mode === "flyout-card"
+      ? (entry.image.thumbnailSrc ?? entry.image.src)
+      : entry.image.src;
+
+  if (mode === "flyout-card") {
+    return (
+      <img
+        alt=""
+        src={src}
+        style={{
+          aspectRatio: "4 / 3",
+          border: `1px solid ${COLORS.GRAY_LL}`,
+          borderRadius: 7,
+          flex: "0 0 76px",
+          objectFit: "cover",
+          width: 76,
+        }}
+      />
+    );
+  }
+
+  return (
+    <img
+      alt={entry.image.alt}
+      src={src}
+      style={{
+        aspectRatio: "16 / 9",
+        border: `1px solid ${COLORS.GRAY_LL}`,
+        borderRadius: mode === "flyout-detail" ? 8 : 10,
+        display: "block",
+        objectFit: "cover",
+        width: "100%",
+      }}
+    />
+  );
 }
 
 export function DocsCard({
@@ -191,28 +238,35 @@ export function DocsCard({
 }) {
   if (layout === "flyout") {
     const content = (
-      <Flex gap={6} vertical>
-        <Space size={6} wrap>
-          <BookOutlined style={{ color: COLORS.BLUE }} />
-          <Text type="secondary" style={{ fontSize: "0.86em" }}>
-            {entry.category}
+      <Flex align="start" gap={10}>
+        <DocsEntryImage entry={entry} mode="flyout-card" />
+        <Flex gap={6} style={{ minWidth: 0 }} vertical>
+          <Space size={6} wrap>
+            <BookOutlined style={{ color: COLORS.BLUE }} />
+            <Text type="secondary" style={{ fontSize: "0.86em" }}>
+              {entry.category}
+            </Text>
+          </Space>
+          <Text strong style={{ fontSize: "1.07em", lineHeight: 1.25 }}>
+            {entry.title}
           </Text>
-        </Space>
-        <Text strong style={{ fontSize: "1.07em", lineHeight: 1.25 }}>
-          {entry.title}
-        </Text>
-        <Text
-          style={{ color: COLORS.GRAY_M, fontSize: "0.93em", lineHeight: 1.35 }}
-        >
-          {entry.summary}
-        </Text>
-        <Space size={[4, 4]} wrap>
-          {entry.audiences.slice(0, 3).map((audience) => (
-            <Tag key={audience} style={{ marginInlineEnd: 0 }}>
-              {audience}
-            </Tag>
-          ))}
-        </Space>
+          <Text
+            style={{
+              color: COLORS.GRAY_M,
+              fontSize: "0.93em",
+              lineHeight: 1.35,
+            }}
+          >
+            {entry.summary}
+          </Text>
+          <Space size={[4, 4]} wrap>
+            {entry.audiences.slice(0, 3).map((audience) => (
+              <Tag key={audience} style={{ marginInlineEnd: 0 }}>
+                {audience}
+              </Tag>
+            ))}
+          </Space>
+        </Flex>
       </Flex>
     );
 
@@ -243,6 +297,7 @@ export function DocsCard({
   const content = (
     <Card hoverable style={{ height: "100%" }}>
       <Flex gap="middle" vertical>
+        <DocsEntryImage entry={entry} mode="card" />
         <Space>
           <BookOutlined />
           <Text type="secondary">{entry.category}</Text>
@@ -485,6 +540,7 @@ export function DocsDetailContent({
             {entry.summary}
           </Text>
         </Flex>
+        <DocsEntryImage entry={entry} mode="flyout-detail" />
         <DocsActions
           actions={actions}
           layout={layout}
@@ -509,22 +565,31 @@ export function DocsDetailContent({
         </Button>
       ) : null}
       <Card>
-        <Flex gap="middle" vertical>
-          <Space wrap>
-            <Tag color="blue">{entry.category}</Tag>
-            <Tag>{entry.status}</Tag>
-            <Text type="secondary">Reviewed {entry.lastReviewed}</Text>
-          </Space>
-          <Title style={{ margin: 0 }}>{entry.title}</Title>
-          <Paragraph style={{ fontSize: "1.125em", margin: 0 }}>
-            {entry.summary}
-          </Paragraph>
-          <Space wrap>
-            {entry.audiences.map((audience) => (
-              <Tag key={audience}>{audience}</Tag>
-            ))}
-          </Space>
-        </Flex>
+        <Row align="middle" gutter={[24, 24]}>
+          <Col lg={entry.image == null ? 24 : 14} xs={24}>
+            <Flex gap="middle" vertical>
+              <Space wrap>
+                <Tag color="blue">{entry.category}</Tag>
+                <Tag>{entry.status}</Tag>
+                <Text type="secondary">Reviewed {entry.lastReviewed}</Text>
+              </Space>
+              <Title style={{ margin: 0 }}>{entry.title}</Title>
+              <Paragraph style={{ fontSize: "1.125em", margin: 0 }}>
+                {entry.summary}
+              </Paragraph>
+              <Space wrap>
+                {entry.audiences.map((audience) => (
+                  <Tag key={audience}>{audience}</Tag>
+                ))}
+              </Space>
+            </Flex>
+          </Col>
+          {entry.image != null ? (
+            <Col lg={10} xs={24}>
+              <DocsEntryImage entry={entry} mode="detail" />
+            </Col>
+          ) : null}
+        </Row>
       </Card>
       <DocsActions
         actions={actions}

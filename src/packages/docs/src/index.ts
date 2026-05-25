@@ -35,12 +35,19 @@ export interface DocsActionSummary extends DocsAction {
   entryTitle: string;
 }
 
+export interface DocsEntryImage {
+  alt: string;
+  src: string;
+  thumbnailSrc?: string;
+}
+
 export interface DocsEntry {
   actions?: DocsAction[];
   audiences: DocsAudience[];
   body: string;
   category: string;
   id: string;
+  image?: DocsEntryImage;
   lastReviewed: string;
   slug: string;
   status: DocsEntryStatus;
@@ -174,6 +181,135 @@ realtime collaboration, efficient rendering of large notebooks, TimeTravel,
 nbgrader, whiteboard integration, and Codex-aware live notebook control.
 `;
 
+const USE_JUPYTER_BODY = String.raw`
+## What Jupyter in CoCalc is for
+
+CoCalc runs standard Jupyter notebooks inside a durable project workspace. The
+notebook file is collaborative, the kernel runs in the project backend, and
+output is captured even if the browser tab disconnects.
+
+Use notebooks for exploratory computation, teaching, data analysis, reports,
+plots, and workflows where code, output, and explanation belong together.
+
+## Start working
+
+1. Open a project.
+2. Create or open an \`.ipynb\` file.
+3. Choose a kernel.
+4. Run cells, edit markdown, and save work as usual.
+
+For the creation flow, see [Create a Jupyter notebook](/docs/jupyter/create-notebook).
+
+## What CoCalc adds
+
+CoCalc notebooks are designed for shared and long-running work:
+
+1. Multiple people can edit the same notebook in realtime.
+2. Long-running cells keep running when the browser disconnects.
+3. Output is captured server-side and shown when you reconnect.
+4. TimeTravel records detailed notebook history.
+5. Large notebooks and large outputs are handled with CoCalc-specific rendering.
+6. Side chat, agents, terminals, and project files live next to the notebook.
+
+## Kernels and environments
+
+Use the kernel selector to switch between available project kernels. If you need
+a project-specific Python environment, create a custom kernel backed by a
+virtual environment; see [Custom Jupyter kernels with uv](/docs/jupyter/custom-kernels).
+
+For a shared software stack across many projects, use a runtime image instead of
+hand-configuring each notebook.
+
+## Agents and notebooks
+
+Agents should treat the live notebook state as the source of truth. Use
+\`cocalc project jupyter\` or the browser-session notebook APIs for durable
+notebook inspection and execution instead of editing \`.ipynb\` JSON directly.
+
+## Troubleshooting
+
+If a kernel stops, restarts, or the project runs out of memory, check the
+resource indicators and restart only the affected kernel when possible. For
+memory-specific failures, see [Troubleshoot project memory](/docs/troubleshooting/memory).
+`;
+
+const CUSTOM_JUPYTER_KERNELS_BODY = String.raw`
+## What custom kernels are for
+
+A custom Jupyter kernel lets a notebook run with a specific Python environment
+instead of the default project Python. Use one when a project needs a controlled
+set of Python packages, a different Python version, or separate environments for
+different notebooks.
+
+For shared courses or many projects, prefer a runtime image when everyone should
+start with the same system-wide environment. Use a custom kernel when one
+project or one notebook needs an isolated Python environment.
+
+## Create a Python kernel with uv
+
+Open a terminal in the project and install \`uv\` if it is not already
+available:
+
+~~~sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
+~~~
+
+Then create a virtual environment, install \`ipykernel\`, and register the
+environment as a Jupyter kernel:
+
+~~~sh
+mkdir -p ~/.venvs
+uv venv ~/.venvs/my-analysis --python 3.12
+uv pip install --python ~/.venvs/my-analysis/bin/python \
+  ipykernel pandas numpy matplotlib
+~/.venvs/my-analysis/bin/python -m ipykernel install --user \
+  --name my-analysis \
+  --display-name "Python (my-analysis)"
+~~~
+
+Use a short lowercase \`--name\` with letters, numbers, dashes, or underscores.
+The display name is what people see in the notebook kernel selector. Replace
+\`3.12\` with \`python3\` or another installed Python version when needed.
+
+## Use the kernel in CoCalc
+
+1. Open or create a notebook.
+2. Open the kernel selector or **Kernel** menu.
+3. Choose **Python (my-analysis)**.
+4. Run a cell that imports a package installed in the environment.
+
+If the kernel does not appear immediately, refresh the browser tab, reopen the
+notebook, or restart the project so Jupyter reloads the kernelspec list.
+
+## Install more packages later
+
+Install packages into the same virtual environment by pointing \`uv pip\` at the
+environment's Python:
+
+~~~sh
+uv pip install --python ~/.venvs/my-analysis/bin/python scikit-learn seaborn
+~~~
+
+Then restart the notebook kernel before importing newly installed packages.
+
+## Remove a custom kernel
+
+Remove the Jupyter kernelspec and, if you no longer need it, remove the virtual
+environment:
+
+~~~sh
+jupyter kernelspec uninstall my-analysis
+rm -rf ~/.venvs/my-analysis
+~~~
+
+## Why this matters in CoCalc
+
+CoCalc projects are real Linux environments, so Jupyter kernels are ordinary
+kernelspecs backed by ordinary Python executables. That means humans and agents
+can inspect, rebuild, and document the environment with normal terminal tools
+instead of relying on hidden browser state.
+`;
+
 const ROOTFS_BODY = String.raw`
 ## What the runtime image controls
 
@@ -205,6 +341,58 @@ CoCalc combines normal Linux administration inside a project with managed,
 shareable runtime images. You can use \`sudo\`, install packages, build custom
 software stacks, and then make those stacks available to other projects without
 turning setup instructions into a fragile checklist.
+`;
+
+const MEMORY_TROUBLESHOOTING_BODY = String.raw`
+## What low memory means
+
+Low memory means the project is close to its RAM limit. Out-of-memory means the
+Linux kernel killed a process because the project used more memory than the host
+allowed. In notebooks, this often looks like a kernel restart, missing output,
+or a cell that stops without finishing.
+
+The limit is shared by everything running in the project: notebooks, terminals,
+language servers, background jobs, web apps, databases, and agents.
+
+## First things to try
+
+1. Open the project process or activity view and stop work you do not need.
+2. Restart the notebook kernel or terminal process that is using too much RAM.
+3. Close idle notebooks, terminals, servers, and X11 apps.
+4. Load less data at once, stream data in chunks, or write intermediate results
+   to files.
+5. Avoid keeping duplicate large arrays, dataframes, models, or images in
+   memory.
+
+For Python notebooks, clear variables you no longer need, restart the kernel
+after large experiments, and prefer chunked data tools when datasets approach
+the available RAM.
+
+## When the workload really needs more memory
+
+If the computation genuinely needs more RAM, move the project to a host or plan
+with more memory. For repeated workloads, choose a project host with enough RAM
+and disk for the largest expected dataset and runtime image.
+
+If the project is on a shared host, remember that other work on the same host
+can compete for memory. A dedicated host or larger host is more predictable for
+large research jobs, courses, or agent sandboxes.
+
+## Prevent repeat failures
+
+Keep setup and data-processing steps reproducible so a killed process is not a
+lost result. Save intermediate files, checkpoint long calculations, and use
+scripts or notebooks that can restart from a durable point.
+
+For agents, ask them to inspect memory usage before starting a large job and to
+prefer incremental processing when the input data is large.
+
+## Why this matters in CoCalc
+
+CoCalc keeps notebooks and terminals durable, but it cannot make a process use
+less RAM than the host provides. Treat memory as part of the project
+environment: monitor it, size the host appropriately, and design workflows that
+can recover after a process is killed.
 `;
 
 const COLLABORATORS_BODY = String.raw`
@@ -399,17 +587,137 @@ lets Codex work in the UI; project secrets let ordinary code and terminal-native
 agents use credentials without turning private tokens into shared content.
 `;
 
+const COCALC_CLI_BODY = String.raw`
+## What the CoCalc CLI is for
+
+The CoCalc CLI is the preferred automation interface for many CoCalc-ai tasks.
+It can work with the running site, project context, browser sessions, notebooks,
+docs, hosts, and other typed workflows without exposing a broad API key.
+
+Use the CLI when you want to automate CoCalc itself. Use project terminals and
+ordinary command-line tools when you want to automate software inside a project.
+
+## Why not start with API keys
+
+CoCalc-ai intentionally reduced the power of general API keys. Broad API keys
+were rarely used and increased the security and attack surface risk. Prefer
+task-specific CLI commands and authenticated browser-session or project
+commands when they exist.
+
+API access still has a place for narrow integration points, but it should not be
+the default answer for normal project, notebook, docs, or browser automation.
+
+## Common CLI workflows
+
+Search and show the versioned docs bundled with this CoCalc-ai version:
+
+~~~sh
+cocalc docs search "project secrets"
+cocalc docs show projects/project-secrets
+~~~
+
+Open a documented UI destination in the current browser session:
+
+~~~sh
+cocalc browser action docs-list
+cocalc browser action docs settings.environment.secrets
+~~~
+
+Work with live notebooks using the project Jupyter commands instead of editing
+\`.ipynb\` JSON directly:
+
+~~~sh
+cocalc project jupyter -h
+~~~
+
+For local development against a running hub, load the matching environment
+before control-plane or browser commands:
+
+~~~sh
+cd src
+eval "$(pnpm -s dev:hub:env)"
+~~~
+
+## Why this matters in CoCalc
+
+The CLI gives humans and agents a stable, inspectable way to drive CoCalc-ai
+without scraping the UI or handing out overly powerful credentials. It is also a
+bridge between docs, browser-session actions, notebooks, and project-host
+administration.
+`;
+
+const HTTP_API_BODY = String.raw`
+## What the HTTP API is for
+
+The CoCalc HTTP API is for narrow integrations that need to call CoCalc from an
+external service. It is not the primary automation surface for most CoCalc-ai
+workflows.
+
+Use the [CoCalc CLI](/docs/cli/use-cocalc-cli) first when you are automating
+CoCalc from a terminal, agent, local script, or development environment. The CLI
+has richer typed workflows for docs, browser sessions, notebooks, project hosts,
+and authenticated local development.
+
+## API keys in CoCalc-ai
+
+CoCalc-ai intentionally reduced the capabilities of broad API keys. Very few
+users relied on the old broad API-key surface, and keeping it large creates
+security risk. New API keys should be scoped to the minimum capability needed
+for the integration.
+
+Treat API keys like credentials:
+
+1. Create keys only for specific integrations.
+2. Give each key a clear name and the smallest useful capability set.
+3. Rotate or delete keys that are no longer needed.
+4. Store keys outside source files, notebooks, chat messages, and terminal
+   history.
+5. For code running inside a project, store external service tokens as
+   [project secrets](/docs/projects/project-secrets), not as files.
+
+## Authentication shape
+
+The HTTP API uses basic authentication. Put the API key in the username field
+and leave the password blank.
+
+~~~sh
+curl -u "$COCALC_API_KEY:" https://cocalc.com/api/v2
+~~~
+
+For local development, use the local site origin instead of
+\`https://cocalc.com\`.
+
+## When to use something else
+
+Use \`cocalc-cli\` for project, browser, docs, notebook, and host workflows when
+a typed command exists. Use project secrets for credentials consumed by code
+inside a project. Use Codex or browser-session docs actions when the job is to
+open or verify a UI destination in the current session.
+
+## Why this matters in CoCalc
+
+CoCalc-ai is designed around authenticated, typed control paths instead of one
+large ambient API key. That keeps the attack surface smaller while still giving
+humans and agents practical ways to automate the product.
+`;
+
 const PROJECT_HOSTS_BODY = String.raw`
 ## What project hosts are for
 
-A project host is compute capacity that can run CoCalc projects. Hosts can be
-local, cloud-backed, or dedicated to heavier workloads such as long-running
-research computations, courses, or agent sandboxes.
+A project host is compute capacity that can run CoCalc projects. On hosted
+CoCalc, project hosts are CoCalc-managed or cloud-backed capacity; users cannot
+attach an arbitrary local computer or VM as a host. Hosts have access to
+project-level credentials such as backup passwords, so direct user-controlled
+hosts are only appropriate in self-hosted Launchpad or Rocket deployments.
+
+Use project hosts for heavier workloads such as long-running research
+computations, courses, or agent sandboxes.
 
 ## Create or choose a host
 
 1. Open the project host administration area.
-2. Configure a cloud provider or local host.
+2. Configure a cloud provider. In self-hosted Launchpad or Rocket, configure a
+   cloud provider or local host.
 3. Refresh the provider catalog if needed.
 4. Choose a machine type, region, disk size, and lifecycle policy.
 5. Start the host and wait for bootstrap to finish.
@@ -417,6 +725,9 @@ research computations, courses, or agent sandboxes.
 
 Use enough disk space for runtime images and project data. Very small disks can
 fail during image bootstrap or package installation.
+
+Under **Access**, add people who are allowed to add their own projects to the
+host. You can also configure the host so all projects on it may use more RAM.
 
 ## Long-running work
 
@@ -642,6 +953,11 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: PROJECT_SECRETS_BODY.trim(),
     category: "Projects",
     id: "projects.project-secrets",
+    image: {
+      alt: "Project secrets mounted as protected read-only files",
+      src: "/public/docs/project-secrets.svg",
+      thumbnailSrc: "/public/docs/project-secrets.svg",
+    },
     lastReviewed: "2026-05-24",
     slug: "projects/project-secrets",
     status: "ready",
@@ -659,6 +975,30 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     status: "ready",
     summary: "Connect ChatGPT or OpenAI API access for Codex and project code.",
     title: "Connect AI access",
+  },
+  {
+    audiences: ["agents", "researchers", "teams"],
+    body: COCALC_CLI_BODY.trim(),
+    category: "CLI",
+    id: "cli.use-cocalc-cli",
+    lastReviewed: "2026-05-24",
+    slug: "cli/use-cocalc-cli",
+    status: "ready",
+    summary:
+      "Use the CoCalc CLI for authenticated docs, browser, notebook, and project automation.",
+    title: "Use the CoCalc CLI",
+  },
+  {
+    audiences: ["agents", "researchers", "teams"],
+    body: HTTP_API_BODY.trim(),
+    category: "API",
+    id: "api.http-api",
+    lastReviewed: "2026-05-24",
+    slug: "api/http-api",
+    status: "ready",
+    summary:
+      "Use the limited CoCalc HTTP API carefully, and prefer cocalc-cli for most automation.",
+    title: "CoCalc HTTP API and API keys",
   },
   {
     actions: [
@@ -714,6 +1054,30 @@ export const DOCS_ENTRIES: DocsEntry[] = [
   },
   {
     audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: USE_JUPYTER_BODY.trim(),
+    category: "Jupyter",
+    id: "jupyter.use-jupyter",
+    lastReviewed: "2026-05-24",
+    slug: "jupyter/use-jupyter",
+    status: "ready",
+    summary:
+      "Use collaborative durable Jupyter notebooks inside CoCalc projects.",
+    title: "Use Jupyter notebooks",
+  },
+  {
+    audiences: ["agents", "instructors", "researchers", "students"],
+    body: CUSTOM_JUPYTER_KERNELS_BODY.trim(),
+    category: "Jupyter",
+    id: "jupyter.custom-kernels",
+    lastReviewed: "2026-05-24",
+    slug: "jupyter/custom-kernels",
+    status: "ready",
+    summary:
+      "Create a custom Jupyter kernel backed by a uv-managed Python virtual environment.",
+    title: "Custom Jupyter kernels with uv",
+  },
+  {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
     body: PYTHON_BODY.trim(),
     category: "Python",
     id: "python.use-python",
@@ -737,12 +1101,29 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: ROOTFS_BODY.trim(),
     category: "Projects",
     id: "projects.runtime-image",
+    image: {
+      alt: "A layered runtime image that defines a project's software stack",
+      src: "/public/docs/runtime-image.svg",
+      thumbnailSrc: "/public/docs/runtime-image.svg",
+    },
     lastReviewed: "2026-05-24",
     slug: "projects/runtime-image",
     status: "ready",
     summary:
       "Choose, customize, and reuse the Linux software stack for a project.",
     title: "Runtime images and RootFS",
+  },
+  {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: MEMORY_TROUBLESHOOTING_BODY.trim(),
+    category: "Troubleshooting",
+    id: "troubleshooting.memory",
+    lastReviewed: "2026-05-24",
+    slug: "troubleshooting/memory",
+    status: "ready",
+    summary:
+      "Diagnose low-memory warnings, out-of-memory kills, and notebook kernel restarts.",
+    title: "Low memory and out-of-memory crashes",
   },
   {
     audiences: ["agents", "instructors", "researchers", "teams"],
@@ -789,6 +1170,11 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: TIMETRAVEL_BODY.trim(),
     category: "Files",
     id: "files.timetravel",
+    image: {
+      alt: "A TimeTravel timeline with Git revisions, snapshots, and restore points",
+      src: "/public/docs/timetravel.svg",
+      thumbnailSrc: "/public/docs/timetravel.svg",
+    },
     lastReviewed: "2026-05-24",
     slug: "files/timetravel",
     status: "ready",

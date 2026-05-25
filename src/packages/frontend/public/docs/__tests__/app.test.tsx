@@ -6,7 +6,7 @@ import { docsPath, getDocsEntry, searchDocsEntries } from "@cocalc/docs";
 import PublicDocsApp from "../app";
 import { getDocsRouteFromPath } from "../routes";
 
-jest.mock("@cocalc/frontend/markdown/component", () => ({
+jest.mock("@cocalc/frontend/editors/slate/static-markdown", () => ({
   __esModule: true,
   default: ({ value }: { value: string }) => <div>{value}</div>,
 }));
@@ -28,12 +28,40 @@ describe("public/docs", () => {
   });
 
   it("searches structured docs entries", () => {
-    expect(getDocsEntry("projects.project-secrets")?.title).toBe(
-      "Project secrets",
-    );
+    const secrets = getDocsEntry("projects.project-secrets");
+    expect(secrets?.title).toBe("Project secrets");
+    expect(secrets?.image?.src).toBe("/public/docs/project-secrets.svg");
     expect(
       searchDocsEntries("secrets api token").map((entry) => entry.id)[0],
     ).toBe("projects.project-secrets");
+    expect(
+      searchDocsEntries("custom jupyter kernel uv venv").map(
+        (entry) => entry.id,
+      )[0],
+    ).toBe("jupyter.custom-kernels");
+    expect(
+      searchDocsEntries("use jupyter notebooks collaborative durable").map(
+        (entry) => entry.id,
+      )[0],
+    ).toBe("jupyter.use-jupyter");
+    expect(
+      searchDocsEntries("browser notebook cli automation").map(
+        (entry) => entry.id,
+      )[0],
+    ).toBe("cli.use-cocalc-cli");
+    expect(
+      searchDocsEntries("api key cli automation").map((entry) => entry.id)[0],
+    ).toBe("api.http-api");
+    expect(
+      searchDocsEntries("http api basic authentication").map(
+        (entry) => entry.id,
+      )[0],
+    ).toBe("api.http-api");
+    expect(
+      searchDocsEntries("low memory oom kernel restart").map(
+        (entry) => entry.id,
+      )[0],
+    ).toBe("troubleshooting.memory");
   });
 
   it("renders the docs index", () => {
@@ -92,6 +120,11 @@ describe("public/docs", () => {
     expect(
       screen.getByRole("heading", { name: "Project secrets" }),
     ).not.toBeNull();
+    expect(
+      screen.getByAltText(
+        "Project secrets mounted as protected read-only files",
+      ),
+    ).toHaveAttribute("src", "/public/docs/project-secrets.svg");
     expect(screen.getByText("settings.environment.secrets")).not.toBeNull();
     expect(
       within(screen.getByText("Open this in CoCalc").closest(".ant-card")!)

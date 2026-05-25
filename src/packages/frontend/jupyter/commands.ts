@@ -15,6 +15,7 @@ import type { IconName } from "@cocalc/frontend/components/icon";
 import { defineMessage } from "react-intl";
 
 import { redux } from "@cocalc/frontend/app-framework";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { FORMAT_SOURCE_ICON } from "@cocalc/frontend/frame-editors/frame-tree/config";
 import { JupyterEditorActions } from "@cocalc/frontend/frame-editors/jupyter-editor/actions";
 import { NotebookFrameActions } from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/actions";
@@ -28,6 +29,7 @@ import {
 import { getIntl } from "@cocalc/frontend/i18n/get-intl";
 import { open_new_tab } from "@cocalc/frontend/misc";
 import { NotebookMode } from "@cocalc/jupyter/types";
+import { joinUrlPath } from "@cocalc/util/url-path";
 import { JupyterActions } from "./browser-actions";
 import {
   adjustMinimapWidth,
@@ -1541,7 +1543,7 @@ export function commands(actions: AllActions): {
       i: "external-link",
       m: "Jupyter in CoCalc",
       f: () => {
-        open_new_tab("https://doc.cocalc.com/jupyter.html");
+        open_new_tab(joinUrlPath(appBasePath, "docs/jupyter/use-jupyter"));
       },
       r: true,
     },

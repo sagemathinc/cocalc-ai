@@ -23,10 +23,12 @@ import {
 } from "../../app-framework";
 import { useEffect, useState } from "react";
 import { A, Icon } from "@cocalc/frontend/components";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { labels } from "@cocalc/frontend/i18n";
+import { joinUrlPath } from "@cocalc/util/url-path";
 import { useIntl } from "react-intl";
 
-const OOM_INFO_PAGE = "https://doc.cocalc.com/howto/low-memory.html";
+const OOM_INFO_PAGE = joinUrlPath(appBasePath, "docs/troubleshooting/memory");
 const OOM_VIDEO = "https://youtu.be/i5qGwXlo-2I";
 const DISMISS_TIME_MS = 3 * 60 * 1000;
 

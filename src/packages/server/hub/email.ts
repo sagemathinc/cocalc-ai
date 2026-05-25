@@ -25,6 +25,7 @@ import { AllSiteSettingsCached } from "@cocalc/util/db-schema/types";
 import { contains_url } from "@cocalc/backend/misc";
 import { site_settings_conf } from "@cocalc/util/db-schema/site-defaults";
 import { defaults, required, split, to_json } from "@cocalc/util/misc";
+import { joinUrlPath } from "@cocalc/util/url-path";
 import {
   COMPANY_EMAIL,
   COMPANY_NAME,
@@ -671,7 +672,7 @@ ${site_name} supports online editing of
     <strong><a href="https://doc.cocalc.com/">CoCalc Manual:</a></strong> learn more about CoCalc's features.
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
-    <a href="https://doc.cocalc.com/jupyter.html">Working with Jupyter Notebooks</a>
+    <a href="${joinUrlPath(url, "docs/jupyter/use-jupyter")}">Working with Jupyter Notebooks</a>
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
     <strong><a href="https://cocalc.com/policies/pricing.html">Subscriptions:</a></strong> make hosting more robust and increase project quotas

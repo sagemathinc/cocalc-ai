@@ -12,13 +12,15 @@ const handler = docsApiRoute({
       title: "CoCalc API",
       version: "2.0.0",
       summary: `This is the CoCalc HTTP API. To get started, you'll need to
-                [create an API key](https://doc.cocalc.com/apikeys.html).`,
+                [create a scoped API key](/docs/api/http-api).`,
       description: `This is the CoCalc HTTP API. To get started, you'll need to
-                [create an API key](https://doc.cocalc.com/apikeys.html).`,
+                [create a scoped API key](/docs/api/http-api). CoCalc-ai API
+                keys are intentionally limited; prefer cocalc-cli for many
+                automation workflows.`,
     },
     externalDocs: {
-      url: "https://doc.cocalc.com",
-      description: "Check out the CoCalc documentation and user guide.",
+      url: "/docs/api/http-api",
+      description: "CoCalc-ai HTTP API and API key guidance.",
     },
     components: {
       securitySchemes: {
