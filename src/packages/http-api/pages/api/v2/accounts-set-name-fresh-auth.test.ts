@@ -89,6 +89,7 @@ describe("account set-name fresh auth", () => {
 
   it("does not require dangerous auth for self name edits", async () => {
     mockGetParams.mockReturnValue({
+      username: "legacy-name",
       first_name: "Ada",
       last_name: "Lovelace",
     });

@@ -38,7 +38,7 @@ async function get(req) {
     throw Error("Must be signed in to edit account name.");
   }
 
-  const { username, first_name, last_name, account_id } = getParams(req);
+  const { first_name, last_name, account_id } = getParams(req);
 
   // This user MUST be an admin:
   if (account_id) {
@@ -66,7 +66,6 @@ async function get(req) {
         // Any provided values must be non-empty in order for userQuery to SET values
         // instead of fetching them.
         //
-        ...(username && { name: username }),
         ...(first_name && { first_name }),
         ...(last_name && { last_name }),
       },
