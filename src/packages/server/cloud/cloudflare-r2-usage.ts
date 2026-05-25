@@ -756,6 +756,9 @@ function categoryForKey(key: string): string {
   if (key.startsWith("rustic/bay-backups/")) {
     return "bay_backup_rustic_repo";
   }
+  if (key.startsWith("rustic/rootfs-images/")) {
+    return "rootfs_images";
+  }
   if (key.startsWith("rootfs-images/")) {
     return "rootfs_images";
   }
@@ -792,6 +795,12 @@ function rusticRepoForKey(
     return { repo: `rustic/bay-backups/${parts[2]}`, kind: "bay-backup" };
   }
   if (parts[1] === "rootfs-images") {
+    if (parts[2] && parts[3]) {
+      return {
+        repo: `rustic/rootfs-images/${parts[2]}/${parts[3]}`,
+        kind: "rootfs",
+      };
+    }
     return { repo: "rustic/rootfs-images", kind: "rootfs" };
   }
   return { repo: `rustic/${parts[1]}`, kind: "other" };

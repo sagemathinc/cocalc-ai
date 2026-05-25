@@ -39,6 +39,7 @@ import {
   ROOTFS_IMAGE_MANIFEST_VERSION,
 } from "@cocalc/util/rootfs-images";
 import { assertCanCreateOrUpdateRootfs } from "@cocalc/server/membership/rootfs-limits";
+import { ensureRootfsRusticRepoSchema } from "@cocalc/server/rootfs/rustic-repo-schema";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   getConfiguredClusterRole,
@@ -97,6 +98,7 @@ type RootfsImageRow = {
   artifact_backend: RootfsReleaseArtifactBackend | null;
   artifact_format: RootfsReleaseArtifactFormat | null;
   artifact_path: string | null;
+  repo_id: string | null;
 };
 
 type RootfsReplicaStorageRow = {
@@ -107,6 +109,7 @@ type RootfsReplicaStorageRow = {
   bucket_purpose: string | null;
   artifact_format: RootfsReleaseArtifactFormat;
   artifact_path: string;
+  repo_id: string | null;
   status: string;
 };
 
@@ -114,6 +117,7 @@ type RootfsRusticArtifactPath = {
   artifact_backend: RootfsReleaseArtifactBackend;
   region?: string;
   snapshot_id: string;
+  repo_id?: string;
 };
 
 type RootfsLifecycleSnapshot = {
@@ -187,6 +191,14 @@ function decodeRusticArtifactPath(
     return null;
   }
   const [_, artifact_backend, region, snapshot_id] = parts;
+  if (artifact_backend === "v2") {
+    if (!region || !snapshot_id) return null;
+    return {
+      artifact_backend: "r2",
+      repo_id: region,
+      snapshot_id,
+    };
+  }
   if (!artifact_backend || !snapshot_id) {
     return null;
   }
@@ -223,6 +235,9 @@ function rootfsStorageRepoSelector({
     return "rest:rootfs-images";
   }
   if (rustic.artifact_backend === "r2") {
+    if (rustic.repo_id) {
+      return `r2:rootfs-images:${rustic.repo_id}`;
+    }
     return `r2:rootfs-images:${rustic.region ?? "site"}`;
   }
   return `${rustic.artifact_backend}:rootfs-images`;
@@ -250,6 +265,7 @@ function primaryStorageLocation(row: RootfsImageRow): RootfsStorageLocation[] {
         artifact_path: row.artifact_path,
         region: rustic?.region,
       }),
+      repo_id: row.repo_id ?? rustic?.repo_id,
       region: rustic?.region,
     },
   ];
@@ -270,6 +286,7 @@ function replicaStorageLocation(
       artifact_path: row.artifact_path,
       region: row.region ?? rustic?.region,
     }),
+    repo_id: row.repo_id ?? rustic?.repo_id,
     region: row.region ?? rustic?.region,
     bucket_name: row.bucket_name ?? undefined,
     bucket_purpose: row.bucket_purpose ?? undefined,
@@ -492,6 +509,7 @@ export async function ensureBuiltinRootfsImages(): Promise<void> {
 }
 
 async function queryRootfsRows(): Promise<RootfsImageRow[]> {
+  await ensureRootfsRusticRepoSchema();
   const pool = getPool("medium");
   const { rows } = await pool.query<RootfsImageRow>(
     `SELECT
@@ -538,7 +556,8 @@ async function queryRootfsRows(): Promise<RootfsImageRow[]> {
       rel.scan_summary,
       rel.artifact_backend,
       rel.artifact_format,
-      rel.artifact_path
+      rel.artifact_path,
+      rel.repo_id
     FROM rootfs_images AS r
     LEFT JOIN accounts AS a ON a.account_id = r.owner_id
     LEFT JOIN rootfs_releases AS rel ON rel.release_id = r.release_id
@@ -652,6 +671,7 @@ async function queryReplicaStorageRows(
   if (!release_ids.length) {
     return new Map();
   }
+  await ensureRootfsRusticRepoSchema();
   const pool = getPool("medium");
   const { rows } = await pool.query<RootfsReplicaStorageRow>(
     `SELECT
@@ -662,6 +682,7 @@ async function queryReplicaStorageRows(
       bucket_purpose,
       artifact_format,
       artifact_path,
+      repo_id,
       status
     FROM rootfs_release_artifacts
     WHERE release_id::TEXT = ANY($1::TEXT[])

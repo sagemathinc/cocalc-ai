@@ -125,6 +125,7 @@ function serializeRootfsAdminEntry(entry: RootfsAdminCatalogEntry) {
     deleted_by: entry.deleted_by ?? null,
     release_id: entry.release_id ?? null,
     release_gc_status: entry.release_gc_status ?? null,
+    storage_locations: entry.storage_locations ?? [],
     delete_blockers: entry.delete_blockers ?? null,
     scan_status: entry.scan_status ?? null,
     scan_tool: entry.scan_tool ?? null,
@@ -299,6 +300,19 @@ function formatRootfsAdminEntriesHuman(
       }
       if (entry.scan?.report_url) {
         lines.push(`   scan_report: ${entry.scan.report_url}`);
+      }
+      if (entry.storage_locations?.length) {
+        lines.push("   storage:");
+        for (const location of entry.storage_locations) {
+          const parts = [
+            location.role,
+            location.repo_selector ?? location.backend,
+          ];
+          if (location.region) parts.push(`region=${location.region}`);
+          if (location.repo_id) parts.push(`repo_id=${location.repo_id}`);
+          if (location.status) parts.push(`status=${location.status}`);
+          lines.push(`     - ${parts.join(" ")}`);
+        }
       }
       if (entry.events?.length) {
         lines.push("   recent_events:");
