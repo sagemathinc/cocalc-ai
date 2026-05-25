@@ -56,6 +56,7 @@ import {
   serviceAdmissionLimitEnvName,
 } from "@cocalc/conat/admission/limits";
 import { recordServiceAdmissionNearLimit } from "@cocalc/conat/admission/denials";
+import isBanned from "@cocalc/server/accounts/is-banned";
 
 const ssh = {} as any;
 const reflect = {} as any;
@@ -175,7 +176,7 @@ async function handleMessage({ mesg }) {
   });
 }
 
-async function handleApiRequest({ request, mesg }) {
+export async function handleApiRequest({ request, mesg }) {
   let resp, headers;
   try {
     const { account_id, project_id, host_id } = getUserId(mesg.subject);
@@ -186,6 +187,9 @@ async function handleApiRequest({ request, mesg }) {
       host_id,
       name,
     });
+    if (account_id && (await isBanned(account_id))) {
+      throw Object.assign(new Error("account is banned"), { code: 403 });
+    }
     resp =
       (await getResponse({
         name,
