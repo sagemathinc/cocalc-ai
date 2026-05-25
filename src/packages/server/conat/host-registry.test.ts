@@ -123,6 +123,27 @@ jest.mock("@cocalc/conat/service/typed", () => ({
   createServiceHandler: jest.fn(async ({ impl }) => impl),
 }));
 
+function handleAvailabilityQuery(sql: string) {
+  if (
+    sql.includes(
+      "CREATE TABLE IF NOT EXISTS project_host_availability_events",
+    ) ||
+    sql.includes(
+      "CREATE INDEX IF NOT EXISTS project_host_availability_events_host_started_idx",
+    ) ||
+    sql.includes(
+      "CREATE UNIQUE INDEX IF NOT EXISTS project_host_availability_events_one_open_idx",
+    ) ||
+    (sql.includes("FROM project_host_availability_events") &&
+      sql.includes("ended_at IS NULL")) ||
+    (sql.includes("UPDATE project_host_availability_events") &&
+      sql.includes("SET ended_at=$2")) ||
+    sql.includes("INSERT INTO project_host_availability_events")
+  ) {
+    return { rows: [] };
+  }
+}
+
 describe("host-registry automatic convergence retry", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -181,6 +202,8 @@ describe("host-registry automatic convergence retry", () => {
   it("retries pending automatic convergence on heartbeat after register observation failure", async () => {
     currentMetadata = {};
     queryMock = jest.fn(async (sql: string, params: any[]) => {
+      const availabilityResult = handleAvailabilityQuery(sql);
+      if (availabilityResult) return availabilityResult;
       if (
         sql.includes(
           "SELECT status FROM project_hosts WHERE id=$1 AND deleted IS NULL",
@@ -268,6 +291,8 @@ describe("host-registry automatic convergence retry", () => {
       machine: { cloud: "gcp" },
     };
     queryMock = jest.fn(async (sql: string) => {
+      const availabilityResult = handleAvailabilityQuery(sql);
+      if (availabilityResult) return availabilityResult;
       if (
         sql.includes(
           "SELECT status FROM project_hosts WHERE id=$1 AND deleted IS NULL",
@@ -321,6 +346,8 @@ describe("host-registry automatic convergence retry", () => {
       machine: { cloud: "gcp" },
     };
     queryMock = jest.fn(async (sql: string) => {
+      const availabilityResult = handleAvailabilityQuery(sql);
+      if (availabilityResult) return availabilityResult;
       if (
         sql.includes(
           "SELECT status FROM project_hosts WHERE id=$1 AND deleted IS NULL",
@@ -374,6 +401,8 @@ describe("host-registry automatic convergence retry", () => {
       machine: { cloud: "gcp" },
     };
     queryMock = jest.fn(async (sql: string) => {
+      const availabilityResult = handleAvailabilityQuery(sql);
+      if (availabilityResult) return availabilityResult;
       if (
         sql.includes(
           "SELECT status FROM project_hosts WHERE id=$1 AND deleted IS NULL",
@@ -467,6 +496,8 @@ describe("host-registry automatic convergence retry", () => {
     };
     connectMock = jest.fn(() => client);
     queryMock = jest.fn(async (sql: string, params: any[]) => {
+      const availabilityResult = handleAvailabilityQuery(sql);
+      if (availabilityResult) return availabilityResult;
       if (
         sql.includes(
           "SELECT status FROM project_hosts WHERE id=$1 AND deleted IS NULL",
@@ -532,6 +563,8 @@ describe("host-registry automatic convergence retry", () => {
       reason: "no_reconcile_needed",
     }));
     queryMock = jest.fn(async (sql: string, params: any[]) => {
+      const availabilityResult = handleAvailabilityQuery(sql);
+      if (availabilityResult) return availabilityResult;
       if (
         sql.includes(
           "SELECT status FROM project_hosts WHERE id=$1 AND deleted IS NULL",
