@@ -865,6 +865,26 @@ export interface AccountLocalSetBanResult {
   banned: boolean;
 }
 
+export interface AccountLocalQuarantineBillingResourcesRequest {
+  account_id: string;
+  actor_account_id?: string | null;
+  reason?: string | null;
+}
+
+export interface AccountLocalQuarantineBillingResourcesResult {
+  account_id: string;
+  home_bay_id: string;
+  auto_balance_disabled: boolean;
+  checkout_session_cleared: boolean;
+  usage_subscription_canceled: boolean;
+  local_subscriptions_canceled: number;
+  payment_intents_canceled: number;
+  payment_methods_detached: number;
+  hosts_stop_requested: number;
+  host_ids: string[];
+  errors: string[];
+}
+
 export interface AccountLocalRecentPasswordResetAttemptsRequest {
   email_address: string;
   ip_address: string;
@@ -1517,6 +1537,7 @@ export type AccountLocalMethod =
   | "admin-verify-email-address"
   | "admin-disable-two-factor"
   | "set-ban"
+  | "quarantine-billing-resources"
   | "set-password-from-reset"
   | "assert-product-access-trust"
   | "reconcile-dedicated-host-purchase-session"
@@ -2372,6 +2393,9 @@ export interface InterBayAccountLocalApi {
   setBan: (
     opts: AccountLocalSetBanRequest,
   ) => Promise<AccountLocalSetBanResult>;
+  quarantineBillingResources: (
+    opts: AccountLocalQuarantineBillingResourcesRequest,
+  ) => Promise<AccountLocalQuarantineBillingResourcesResult>;
   setPasswordFromReset: (
     opts: AccountLocalSetPasswordFromResetRequest,
   ) => Promise<void>;
@@ -4055,6 +4079,15 @@ export function createInterBayAccountLocalClient({
       method: "set-ban",
     }),
   });
+  const quarantineBillingResourcesClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "quarantineBillingResources">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "quarantine-billing-resources",
+    }),
+  });
   const setPasswordFromResetClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "setPasswordFromReset">
   >({
@@ -4421,6 +4454,8 @@ export function createInterBayAccountLocalClient({
     adminDisableTwoFactor: async (opts) =>
       await adminDisableTwoFactorClient.adminDisableTwoFactor(opts),
     setBan: async (opts) => await setBanClient.setBan(opts),
+    quarantineBillingResources: async (opts) =>
+      await quarantineBillingResourcesClient.quarantineBillingResources(opts),
     setPasswordFromReset: async (opts) =>
       await setPasswordFromResetClient.setPasswordFromReset(opts),
     assertProductAccessTrust: async (opts) =>
@@ -4697,6 +4732,20 @@ export function createInterBayAccountLocalHandler({
       }),
       impl: {
         setBan: async (opts) => await impl.setBan(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "quarantineBillingResources">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "quarantine-billing-resources",
+      }),
+      impl: {
+        quarantineBillingResources: async (opts) =>
+          await impl.quarantineBillingResources(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountLocalApi, "setPasswordFromReset">>(

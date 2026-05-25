@@ -102,6 +102,7 @@ import {
   provisionLocalClusterAccount,
   searchClusterAccounts,
   setLocalClusterAccountBan,
+  quarantineLocalClusterAccountBillingResources,
   touchClusterAccountApiKeyDirectoryEntry,
   updateClusterAccountBanned,
   updateClusterAccountEmailAddress,
@@ -679,6 +680,8 @@ async function startAccountLocalService(): Promise<void> {
     adminDisableTwoFactor: async ({ account_id }) =>
       await adminDisableTwoFactorLocal({ account_id }),
     setBan: async (opts) => await setLocalClusterAccountBan(opts),
+    quarantineBillingResources: async (opts) =>
+      await quarantineLocalClusterAccountBillingResources(opts),
     setPasswordFromReset: async ({ account_id, password }) => {
       await setPasswordFromResetLocal({ account_id, password });
     },

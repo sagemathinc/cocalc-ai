@@ -266,6 +266,34 @@ describe("requireDangerousSessionAuth", () => {
     expect(hasActiveSecondFactorMock).toHaveBeenCalledWith(ACTOR_ACCOUNT_ID);
   });
 
+  it("can block impersonation sessions for direct-admin dangerous operations", async () => {
+    getImpersonationSessionBySessionHashMock = jest.fn(async () => ({
+      actor_account_id: ACTOR_ACCOUNT_ID,
+      subject_account_id: ACCOUNT_ID,
+      actor_factor_level: "recovery_code",
+      actor_password_verified_at: PASSWORD_VERIFIED_AT,
+      actor_factor_verified_at: FACTOR_VERIFIED_AT,
+    }));
+    const { requireDangerousSessionAuth } =
+      await import("./dangerous-session-auth");
+
+    await expect(
+      requireDangerousSessionAuth({
+        account_id: ACCOUNT_ID,
+        session_hash: SESSION_HASH,
+        require_second_factor: true,
+        allow_actor_impersonation: false,
+      }),
+    ).rejects.toMatchObject({
+      code: "impersonation_blocked",
+      message:
+        "cannot perform this dangerous operation while impersonating another account",
+      actor_account_id: ACTOR_ACCOUNT_ID,
+      subject_account_id: ACCOUNT_ID,
+    });
+    expect(hasActiveSecondFactorMock).not.toHaveBeenCalled();
+  });
+
   it("requires recent actor 2FA for an impersonation session", async () => {
     getImpersonationSessionBySessionHashMock = jest.fn(async () => ({
       actor_account_id: ACTOR_ACCOUNT_ID,

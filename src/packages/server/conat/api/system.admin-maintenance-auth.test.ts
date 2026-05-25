@@ -75,6 +75,7 @@ describe("admin maintenance dangerous-session auth", () => {
       browser_id: "browser-1",
       session_hash: undefined,
       require_second_factor: true,
+      allow_actor_impersonation: false,
     });
   });
 
@@ -94,6 +95,7 @@ describe("admin maintenance dangerous-session auth", () => {
       browser_id: "browser-1",
       session_hash: undefined,
       require_second_factor: true,
+      allow_actor_impersonation: false,
     });
   });
 

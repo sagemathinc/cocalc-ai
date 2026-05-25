@@ -64,6 +64,7 @@ jest.mock("../../webapp-client", () => ({
   webapp_client: {
     admin_client: {
       admin_ban_user: jest.fn(),
+      admin_quarantine_billing_resources: jest.fn(),
     },
   },
 }));
@@ -133,6 +134,57 @@ describe("Ban", () => {
 
     await waitFor(() => {
       expect(adminBanUser).toHaveBeenCalledWith("subject-1", false, undefined);
+    });
+  });
+
+  it("requires a reason and fresh auth before quarantining billing/resources", async () => {
+    const quarantine = jest.mocked(
+      webapp_client.admin_client.admin_quarantine_billing_resources,
+    );
+    quarantine
+      .mockRejectedValueOnce(
+        Object.assign(new Error("fresh auth is required"), {
+          code: "fresh_auth_required",
+        }),
+      )
+      .mockResolvedValueOnce({
+        local_subscriptions_canceled: 2,
+        payment_intents_canceled: 1,
+        payment_methods_detached: 1,
+        hosts_stop_requested: 1,
+        host_ids: ["host-1"],
+        errors: [],
+      });
+
+    render(<Ban account_id="subject-1" banned={true} name="Target User" />);
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Quarantine Billing\/Resources/i,
+      }),
+    );
+    expect(screen.getByRole("button", { name: "Confirm ban" })).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("ban reason"), {
+      target: { value: "suspected stolen card" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm ban" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("fresh-auth-modal")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("fresh-auth-modal"));
+
+    await waitFor(() => {
+      expect(quarantine).toHaveBeenCalledTimes(2);
+      expect(quarantine).toHaveBeenLastCalledWith(
+        "subject-1",
+        "suspected stolen card",
+      );
+      expect(
+        screen.getByText(/Billing\/resource quarantine completed/i),
+      ).toBeInTheDocument();
     });
   });
 });

@@ -25,6 +25,24 @@ export class AdminClient {
     }
   }
 
+  public async admin_quarantine_billing_resources(
+    account_id: string,
+    reason: string,
+  ): Promise<{
+    local_subscriptions_canceled: number;
+    payment_intents_canceled: number;
+    payment_methods_detached: number;
+    hosts_stop_requested: number;
+    host_ids: string[];
+    errors: string[];
+  }> {
+    const response = await api("/accounts/quarantine-billing-resources", {
+      account_id,
+      reason,
+    });
+    return response.result;
+  }
+
   public async create_impersonation_grant(opts: {
     subject_account_id: string;
     reason?: string | null;

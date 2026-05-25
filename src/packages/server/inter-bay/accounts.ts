@@ -13,6 +13,8 @@ import {
   type AccountApiKeyDirectoryUpdateHomeBayRequest,
   type AccountApiKeyDirectoryUpsertRequest,
   type AccountLocalAdminDisableTwoFactorResult,
+  type AccountLocalQuarantineBillingResourcesRequest,
+  type AccountLocalQuarantineBillingResourcesResult,
   type AccountLocalAdminVerifyEmailAddressResult,
   type AccountLocalSetBanRequest,
   type AccountLocalSetBanResult,
@@ -30,6 +32,7 @@ import createAccountLocal from "@cocalc/server/accounts/create-account";
 import deleteAccountLocal from "@cocalc/server/accounts/delete";
 import { banUser, removeUserBan } from "@cocalc/server/accounts/ban";
 import { recordAccountBanAuditEvent } from "@cocalc/server/accounts/ban-audit";
+import { quarantineAccountBillingResourcesLocal } from "@cocalc/server/accounts/resource-quarantine";
 import setPasswordFromResetLocal from "@cocalc/server/accounts/set-password-from-reset";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import { adminDisableTwoFactor as adminDisableTwoFactorLocal } from "@cocalc/server/auth/two-factor";
@@ -413,6 +416,54 @@ export async function setClusterAccountBan({
     home_bay_id: homeBayId,
     banned: !!banned,
   };
+}
+
+export async function quarantineLocalClusterAccountBillingResources({
+  account_id,
+  actor_account_id,
+  reason,
+}: AccountLocalQuarantineBillingResourcesRequest): Promise<AccountLocalQuarantineBillingResourcesResult> {
+  const normalizedAccountId = `${account_id ?? ""}`.trim().toLowerCase();
+  if (!isValidUUID(normalizedAccountId)) {
+    throw new Error("account_id must be a valid uuid");
+  }
+  return await quarantineAccountBillingResourcesLocal({
+    account_id: normalizedAccountId,
+    actor_account_id,
+    reason,
+    home_bay_id: currentBayId(),
+  });
+}
+
+export async function quarantineClusterAccountBillingResources({
+  account_id,
+  actor_account_id,
+  reason,
+}: AccountLocalQuarantineBillingResourcesRequest): Promise<AccountLocalQuarantineBillingResourcesResult> {
+  const normalizedAccountId = `${account_id ?? ""}`.trim().toLowerCase();
+  if (!isValidUUID(normalizedAccountId)) {
+    throw new Error("account_id must be a valid uuid");
+  }
+  const account = await getClusterAccountById(normalizedAccountId);
+  if (!account) {
+    throw Error(`account ${normalizedAccountId} not found`);
+  }
+  const homeBayId = `${account.home_bay_id ?? ""}`.trim() || currentBayId();
+  if (homeBayId === currentBayId()) {
+    return await quarantineLocalClusterAccountBillingResources({
+      account_id: normalizedAccountId,
+      actor_account_id,
+      reason,
+    });
+  }
+  return await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: homeBayId,
+  }).quarantineBillingResources({
+    account_id: normalizedAccountId,
+    actor_account_id,
+    reason,
+  });
 }
 
 export async function banClusterAccountAndEquivalentEmails({

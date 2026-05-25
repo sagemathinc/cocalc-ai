@@ -25,6 +25,7 @@ const mockDisableTwoFactor = jest.fn();
 const mockUserIsInGroup = jest.fn();
 const mockSetClusterAccountBan = jest.fn();
 const mockBanClusterAccountAndEquivalentEmails = jest.fn();
+const mockQuarantineClusterAccountBillingResources = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
@@ -94,6 +95,8 @@ jest.mock("@cocalc/server/accounts/is-in-group", () => ({
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
   banClusterAccountAndEquivalentEmails: (...args: any[]) =>
     mockBanClusterAccountAndEquivalentEmails(...args),
+  quarantineClusterAccountBillingResources: (...args: any[]) =>
+    mockQuarantineClusterAccountBillingResources(...args),
   setClusterAccountBan: (...args: any[]) => mockSetClusterAccountBan(...args),
 }));
 
@@ -147,6 +150,19 @@ describe("browser-session-only account security routes", () => {
     mockBanClusterAccountAndEquivalentEmails
       .mockReset()
       .mockResolvedValue(undefined);
+    mockQuarantineClusterAccountBillingResources.mockReset().mockResolvedValue({
+      account_id: "subject-1",
+      home_bay_id: "bay-1",
+      auto_balance_disabled: true,
+      checkout_session_cleared: true,
+      usage_subscription_canceled: true,
+      local_subscriptions_canceled: 1,
+      payment_intents_canceled: 0,
+      payment_methods_detached: 1,
+      hosts_stop_requested: 1,
+      host_ids: ["host-1"],
+      errors: [],
+    });
   });
 
   it("rejects API-key-only account deletion", async () => {
@@ -487,6 +503,48 @@ describe("browser-session-only account security routes", () => {
     expect(mockBanClusterAccountAndEquivalentEmails).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      label: "ban users",
+      route: "./accounts/ban",
+      target: mockBanClusterAccountAndEquivalentEmails,
+    },
+    {
+      label: "remove account bans",
+      route: "./accounts/remove-ban",
+      target: mockSetClusterAccountBan,
+    },
+    {
+      label: "quarantine account billing/resources",
+      route: "./accounts/quarantine-billing-resources",
+      target: mockQuarantineClusterAccountBillingResources,
+    },
+  ])("rejects admin $label while impersonating", async ({ route, target }) => {
+    mockGetParams.mockReturnValue({
+      account_id: "subject-1",
+      reason: "audit reason",
+    });
+    mockAssertNoImpersonation.mockRejectedValue(
+      Object.assign(
+        new Error("cannot perform admin action while impersonating"),
+        {
+          code: "impersonation_blocked",
+        },
+      ),
+    );
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } = await import(route);
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "cannot perform admin action while impersonating",
+    });
+    expect(mockUserIsInGroup).not.toHaveBeenCalled();
+    expect(mockRequireDangerousSessionAuth).not.toHaveBeenCalled();
+    expect(target).not.toHaveBeenCalled();
+  });
+
   it("allows fresh-authenticated admin account bans", async () => {
     mockGetParams.mockReturnValue({
       account_id: "subject-1",
@@ -559,6 +617,72 @@ describe("browser-session-only account security routes", () => {
       banned: false,
       actor_account_id: "acct-1",
       reason: "appeal accepted",
+    });
+  });
+
+  it("rejects admin billing/resource quarantine without dangerous auth", async () => {
+    mockGetParams.mockReturnValue({
+      account_id: "subject-1",
+      reason: "suspected stolen card",
+    });
+    mockRequireDangerousSessionAuth.mockRejectedValue(
+      Object.assign(new Error("fresh auth is required"), {
+        code: "fresh_auth_required",
+      }),
+    );
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } =
+      await import("./accounts/quarantine-billing-resources");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "fresh auth is required",
+    });
+    expect(mockQuarantineClusterAccountBillingResources).not.toHaveBeenCalled();
+  });
+
+  it("allows fresh-authenticated admin billing/resource quarantine", async () => {
+    mockGetParams.mockReturnValue({
+      account_id: "subject-1",
+      reason: "suspected stolen card",
+    });
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } =
+      await import("./accounts/quarantine-billing-resources");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      status: "success",
+      result: {
+        account_id: "subject-1",
+        home_bay_id: "bay-1",
+        auto_balance_disabled: true,
+        checkout_session_cleared: true,
+        usage_subscription_canceled: true,
+        local_subscriptions_canceled: 1,
+        payment_intents_canceled: 0,
+        payment_methods_detached: 1,
+        hosts_stop_requested: 1,
+        host_ids: ["host-1"],
+        errors: [],
+      },
+    });
+    expect(mockUserIsInGroup).toHaveBeenCalledWith("acct-1", "admin");
+    expect(mockGetCurrentAuthSession).toHaveBeenCalledWith({
+      req,
+      account_id: "acct-1",
+    });
+    expect(mockRequireDangerousSessionAuth).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      session_hash: "fresh-session-hash",
+      require_second_factor: true,
+    });
+    expect(mockQuarantineClusterAccountBillingResources).toHaveBeenCalledWith({
+      account_id: "subject-1",
+      actor_account_id: "acct-1",
+      reason: "suspected stolen card",
     });
   });
 });
