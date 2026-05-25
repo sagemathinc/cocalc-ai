@@ -9,7 +9,13 @@ Table({
   name: "rootfs_releases",
   rules: {
     primary_key: "release_id",
-    pg_indexes: ["content_key", "runtime_image", "gc_status", "created"],
+    pg_indexes: [
+      "content_key",
+      "runtime_image",
+      "gc_status",
+      "created",
+      "repo_id",
+    ],
   },
   fields: {
     release_id: {
@@ -66,6 +72,10 @@ Table({
     artifact_path: {
       type: "string",
       desc: "Relative storage path/key for the immutable release artifact.",
+    },
+    repo_id: {
+      type: "uuid",
+      desc: "RootFS rustic repo row where this primary artifact is stored.",
     },
     artifact_sha256: {
       type: "string",

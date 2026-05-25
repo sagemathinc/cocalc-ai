@@ -231,6 +231,8 @@ export type RootfsArtifactTransferTarget = {
   backend: "rustic";
   repo_toml: string;
   repo_selector: string;
+  repo_id?: string;
+  repo_root?: string;
   artifact_backend: RootfsReleaseArtifactBackend;
   region?: string;
   bucket_id?: string;
@@ -249,6 +251,8 @@ export type RootfsUploadedArtifactResult = {
   artifact_path: string;
   snapshot_id: string;
   repo_selector: string;
+  repo_id?: string;
+  repo_root?: string;
   region?: string;
   bucket_id?: string;
   bucket_name?: string;
@@ -270,6 +274,8 @@ export type RootfsReleaseArtifactAccess = {
   snapshot_id: string;
   repo_selector: string;
   repo_toml: string;
+  repo_id?: string;
+  repo_root?: string;
   region?: string;
   regional_replication_target?: RootfsArtifactTransferTarget;
   inspect_data?: Record<string, any>;
@@ -312,6 +318,8 @@ export type RootfsStorageLocation = {
   artifact_format: RootfsReleaseArtifactFormat;
   artifact_path: string;
   repo_selector?: string;
+  repo_id?: string;
+  repo_root?: string;
   region?: string;
   bucket_name?: string;
   bucket_purpose?: string | null;

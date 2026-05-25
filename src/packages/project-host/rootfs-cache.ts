@@ -504,6 +504,8 @@ async function backupManagedRootfsToRustic({
     artifact_path: snapshot_id,
     snapshot_id,
     repo_selector: upload.repo_selector,
+    repo_id: upload.repo_id,
+    repo_root: upload.repo_root,
     region: upload.region,
     bucket_id: upload.bucket_id,
     bucket_name: upload.bucket_name,

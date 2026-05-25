@@ -483,6 +483,7 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
     const publishUpload = await issueRootfsReleaseArtifactUpload({
       host_id,
       artifact_kind: "full",
+      source_image: artifact.source_image,
     });
 
     let uploadResult:

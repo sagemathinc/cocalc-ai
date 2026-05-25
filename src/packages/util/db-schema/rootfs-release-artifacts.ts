@@ -9,7 +9,14 @@ Table({
   name: "rootfs_release_artifacts",
   rules: {
     primary_key: "artifact_id",
-    pg_indexes: ["release_id", "content_key", "backend", "region", "status"],
+    pg_indexes: [
+      "release_id",
+      "content_key",
+      "backend",
+      "region",
+      "status",
+      "repo_id",
+    ],
   },
   fields: {
     artifact_id: {
@@ -55,6 +62,10 @@ Table({
     artifact_path: {
       type: "string",
       desc: "Backend-relative object key or path for this artifact replica.",
+    },
+    repo_id: {
+      type: "uuid",
+      desc: "RootFS rustic repo row where this artifact replica is stored.",
     },
     artifact_sha256: {
       type: "string",

@@ -76,6 +76,7 @@ import "./rootfs-release-artifacts";
 import "./rootfs-release-scan-reports";
 import "./rootfs-release-scan-runs";
 import "./rootfs-releases";
+import "./rootfs-rustic-repos";
 import "./purchase-quotas";
 import "./purchases";
 import "./registration-tokens";
