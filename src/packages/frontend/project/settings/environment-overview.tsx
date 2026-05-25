@@ -7,7 +7,7 @@ import { Button, Card, Collapse, Space, Tag, Typography } from "antd";
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { useProjectEnv } from "@cocalc/frontend/project/use-project-env";
 import { useProjectRootfs } from "@cocalc/frontend/project/use-project-rootfs";
@@ -20,7 +20,14 @@ import {
   managedRootfsCatalogUrl,
   useRootfsImages,
 } from "@cocalc/frontend/rootfs/manifest";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { PROJECT_CAPABILITY_SPECS } from "@cocalc/util/project-capabilities";
+import {
+  PROJECT_STARTUP_ERR_PATH,
+  PROJECT_STARTUP_LOG_PATH,
+  PROJECT_STARTUP_SCRIPT_PATH,
+  PROJECT_STARTUP_SCRIPT_TEMPLATE,
+} from "@cocalc/util/project-startup-script";
 import { COLORS } from "@cocalc/util/theme";
 
 import { EnvironmentConfigurationSummary } from "./environment-configuration-summary";
@@ -334,6 +341,109 @@ function EnvironmentStatusHeader({
   );
 }
 
+function StartupScriptCard({ project_id }: { project_id: string }) {
+  const startupScriptDirectory = PROJECT_STARTUP_SCRIPT_PATH.split("/")
+    .slice(0, -1)
+    .join("/");
+
+  function openFile(path: string): void {
+    redux.getProjectActions(project_id).open_file({ path });
+  }
+
+  async function writeStartupTemplate(): Promise<void> {
+    await webapp_client.project_client.exec({
+      project_id,
+      command: "mkdir",
+      args: ["-p", startupScriptDirectory],
+      err_on_exit: true,
+    });
+    await webapp_client.project_client.write_text_file({
+      project_id,
+      path: PROJECT_STARTUP_SCRIPT_PATH,
+      content: PROJECT_STARTUP_SCRIPT_TEMPLATE,
+    });
+  }
+
+  async function openStartupScript(): Promise<void> {
+    try {
+      const content = await webapp_client.project_client.read_text_file({
+        project_id,
+        path: PROJECT_STARTUP_SCRIPT_PATH,
+      });
+      if (content.trim() === "") {
+        await writeStartupTemplate();
+      }
+    } catch {
+      await writeStartupTemplate();
+    }
+    openFile(PROJECT_STARTUP_SCRIPT_PATH);
+  }
+
+  return (
+    <Card
+      size="small"
+      style={{
+        borderColor: COLORS.GRAY_LL,
+      }}
+      styles={{ body: CARD_BODY_STYLE }}
+    >
+      <Space direction="vertical" size={8} style={{ width: "100%" }}>
+        <Space align="start" size={10} style={{ width: "100%" }}>
+          <div
+            style={{
+              alignItems: "center",
+              background: COLORS.ANTD_BG_BLUE_L,
+              borderRadius: 8,
+              color: COLORS.ANTD_LINK_BLUE,
+              display: "flex",
+              flex: "0 0 auto",
+              height: 32,
+              justifyContent: "center",
+              width: 32,
+            }}
+          >
+            <Icon name="terminal" />
+          </div>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <Typography.Text strong>Startup Script</Typography.Text>
+            <Typography.Paragraph
+              type="secondary"
+              style={{ fontSize: 12, margin: "2px 0 0" }}
+            >
+              Run setup commands each time this project starts after idle
+              shutdown, maintenance, or restart.
+            </Typography.Paragraph>
+          </div>
+        </Space>
+        <Typography.Text code copyable style={{ fontSize: 12 }}>
+          ~/{PROJECT_STARTUP_SCRIPT_PATH}
+        </Typography.Text>
+        <Space size={[8, 8]} wrap>
+          <Button
+            size="small"
+            type="primary"
+            onClick={() => void openStartupScript()}
+          >
+            Open Startup Script
+          </Button>
+          <Button
+            size="small"
+            onClick={() => openFile(PROJECT_STARTUP_LOG_PATH)}
+          >
+            Open Log
+          </Button>
+          <Button
+            size="small"
+            onClick={() => openFile(PROJECT_STARTUP_ERR_PATH)}
+          >
+            Open Errors
+          </Button>
+        </Space>
+      </Space>
+    </Card>
+  );
+}
+
 export function EnvironmentOverview({
   project,
   project_id,
@@ -521,6 +631,7 @@ export function EnvironmentOverview({
         />
       ) : null}
       <EnvironmentConfigurationSummary mode={mode} project_id={project_id} />
+      <StartupScriptCard project_id={project_id} />
       <div
         style={{
           display: "grid",

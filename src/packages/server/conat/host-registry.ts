@@ -44,7 +44,8 @@ const logger = getLogger("server:conat:host-registry");
 const pool = () => getPool();
 const STOP_POLICY_PRIORITY_CACHE_TTL_MS = 5 * 60_000;
 const HOST_RESTART_RECOVERY_SCHEDULE_DELAY_MS = 1_000;
-export const HOST_RESTART_RECOVERY_START_INTERVAL_MS = 5_000;
+const HOST_RESTART_RECOVERY_DEFAULT_PARALLEL_STARTS = 4;
+const HOST_RESTART_RECOVERY_MAX_PARALLEL_STARTS = 32;
 const HOST_RESTART_RECOVERY_SLOT_TTL_MS = 30 * 60_000;
 const HOST_RESTART_RECOVERY_ACTIVE_STATES = [
   "running",
@@ -236,6 +237,112 @@ function recoveryActivityMs(row: HostRestartRecoveryBaseRow): number {
   const value = row.last_edited ?? row.created;
   const ms = value ? new Date(value as any).getTime() : 0;
   return Number.isFinite(ms) ? ms : 0;
+}
+
+function parsePositiveNumber(value: unknown): number | undefined {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return n;
+}
+
+function parsePositiveInteger(value: unknown): number | undefined {
+  const n = parsePositiveNumber(value);
+  return n == null ? undefined : Math.floor(n);
+}
+
+function bytesToGiB(value: unknown): number | undefined {
+  const bytes = parsePositiveNumber(value);
+  return bytes == null ? undefined : bytes / 1024 ** 3;
+}
+
+function parseHostRestartRecoveryCpuCount({
+  metadata,
+  capacity,
+}: {
+  metadata?: any;
+  capacity?: any;
+}): number | undefined {
+  const machineMetadata = metadata?.machine?.metadata ?? {};
+  const runtimeMetadata = metadata?.runtime?.metadata ?? {};
+  return (
+    parsePositiveInteger(metadata?.host_cpu_count) ??
+    parsePositiveInteger(metadata?.cpu_count) ??
+    parsePositiveInteger(capacity?.cpu) ??
+    parsePositiveInteger(capacity?.cpus) ??
+    parsePositiveInteger(capacity?.vcpus) ??
+    parsePositiveInteger(machineMetadata.cpu) ??
+    parsePositiveInteger(machineMetadata.cpus) ??
+    parsePositiveInteger(machineMetadata.vcpus) ??
+    parsePositiveInteger(runtimeMetadata.cpu) ??
+    parsePositiveInteger(runtimeMetadata.cpus) ??
+    parsePositiveInteger(runtimeMetadata.vcpus)
+  );
+}
+
+function parseHostRestartRecoveryMemoryGiB({
+  metadata,
+  capacity,
+}: {
+  metadata?: any;
+  capacity?: any;
+}): number | undefined {
+  const machineMetadata = metadata?.machine?.metadata ?? {};
+  const runtimeMetadata = metadata?.runtime?.metadata ?? {};
+  const metrics = metadata?.metrics?.current ?? {};
+  const hostRamMb = parsePositiveNumber(metadata?.host_ram_mb);
+  return (
+    bytesToGiB(metrics.memory_total_bytes) ??
+    (hostRamMb == null ? undefined : hostRamMb / 1024) ??
+    parsePositiveNumber(metadata?.host_ram_gb) ??
+    parsePositiveNumber(capacity?.memory_gib) ??
+    parsePositiveNumber(capacity?.ram_gib) ??
+    parsePositiveNumber(machineMetadata.memory_gib) ??
+    parsePositiveNumber(machineMetadata.ram_gib) ??
+    parsePositiveNumber(runtimeMetadata.memory_gib) ??
+    parsePositiveNumber(runtimeMetadata.ram_gib)
+  );
+}
+
+export function hostRestartRecoveryParallelStarts({
+  metadata,
+  capacity,
+}: {
+  metadata?: any;
+  capacity?: any;
+}): number {
+  const explicit =
+    parsePositiveInteger(metadata?.restart_recovery?.max_parallel_starts) ??
+    parsePositiveInteger(metadata?.restart_recovery_parallel_starts);
+  if (explicit != null) {
+    return Math.min(HOST_RESTART_RECOVERY_MAX_PARALLEL_STARTS, explicit);
+  }
+  const cpuCount = parseHostRestartRecoveryCpuCount({ metadata, capacity });
+  const memoryGiB = parseHostRestartRecoveryMemoryGiB({ metadata, capacity });
+  const cpuBased =
+    cpuCount == null ? undefined : Math.max(1, Math.floor(cpuCount / 2));
+  const memoryBased =
+    memoryGiB == null ? undefined : Math.max(1, Math.floor(memoryGiB / 8));
+  return Math.min(
+    HOST_RESTART_RECOVERY_MAX_PARALLEL_STARTS,
+    Math.max(
+      HOST_RESTART_RECOVERY_DEFAULT_PARALLEL_STARTS,
+      cpuBased ?? 0,
+      memoryBased ?? 0,
+    ),
+  );
+}
+
+async function loadHostRestartRecoveryParallelStarts(
+  host_id: string,
+): Promise<number> {
+  const { rows } = await pool().query<{ metadata: any; capacity: any }>(
+    "SELECT metadata, capacity FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+    [host_id],
+  );
+  return hostRestartRecoveryParallelStarts({
+    metadata: rows[0]?.metadata,
+    capacity: rows[0]?.capacity,
+  });
 }
 
 async function loadHostRestartRecoveryProjects(
@@ -483,7 +590,7 @@ export async function startHostRestartRecoveryForHost({
   previous_host_session_id,
   host_session_id,
   source,
-  start_interval_ms = HOST_RESTART_RECOVERY_START_INTERVAL_MS,
+  max_parallel_starts,
 }: {
   host_id: string;
   host_boot_id?: string;
@@ -491,7 +598,7 @@ export async function startHostRestartRecoveryForHost({
   previous_host_session_id?: string;
   host_session_id?: string;
   source: "register" | "heartbeat";
-  start_interval_ms?: number;
+  max_parallel_starts?: number;
 }): Promise<void> {
   const startedAt = new Date().toISOString();
   await updateHostRestartRecoveryMetadata({
@@ -507,26 +614,44 @@ export async function startHostRestartRecoveryForHost({
     },
   });
   const projects = await loadHostRestartRecoveryProjects(host_id);
+  const rawParallelStarts =
+    max_parallel_starts ??
+    (await loadHostRestartRecoveryParallelStarts(host_id));
+  const requestedParallelStarts =
+    Number.isFinite(rawParallelStarts) && rawParallelStarts > 0
+      ? Math.floor(rawParallelStarts)
+      : HOST_RESTART_RECOVERY_DEFAULT_PARALLEL_STARTS;
+  const parallelStarts = Math.max(
+    1,
+    Math.min(projects.length || 1, requestedParallelStarts),
+  );
   let started = 0;
   let skipped = 0;
   let failed = 0;
-  for (let i = 0; i < projects.length; i += 1) {
-    const result = await recoverProjectAfterHostRestart({
-      project: projects[i],
-      host_id,
-      host_boot_id,
-    });
-    if (result === "started") {
-      started += 1;
-    } else if (result === "skipped") {
-      skipped += 1;
-    } else {
-      failed += 1;
+  let nextIndex = 0;
+  const runWorker = async () => {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      const project = projects[index];
+      if (!project) return;
+      const result = await recoverProjectAfterHostRestart({
+        project,
+        host_id,
+        host_boot_id,
+      });
+      if (result === "started") {
+        started += 1;
+      } else if (result === "skipped") {
+        skipped += 1;
+      } else {
+        failed += 1;
+      }
     }
-    if (i < projects.length - 1 && start_interval_ms > 0) {
-      await sleep(start_interval_ms);
-    }
-  }
+  };
+  await Promise.all(
+    Array.from({ length: parallelStarts }, async () => await runWorker()),
+  );
   await updateHostRestartRecoveryMetadata({
     host_id,
     patch: {
@@ -541,6 +666,7 @@ export async function startHostRestartRecoveryForHost({
       started_at: startedAt,
       finished_at: new Date().toISOString(),
       total: projects.length,
+      parallel_starts: parallelStarts,
       started,
       skipped,
       failed,
@@ -552,6 +678,7 @@ export async function startHostRestartRecoveryForHost({
     previous_host_boot_id,
     source,
     total: projects.length,
+    parallel_starts: parallelStarts,
     started,
     skipped,
     failed,

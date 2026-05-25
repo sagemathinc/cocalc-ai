@@ -122,34 +122,34 @@ Next action:
 
 ### 4. Official Project Startup Script Support
 
-Status: `open`
+Status: `done`
 
 Severity: medium-high.
 
-Why it matters: existing `/home/user/project_init.sh` support works and is useful, but is undocumented and poorly named. This becomes much more valuable once restart recovery exists.
+Why it matters: project restart recovery is more useful when users have a clear, documented place for idempotent startup setup.
 
 Known code:
 
 - `src/packages/project-runner/run/podman.ts`
+- `src/packages/project-runner/run/startup-scripts.ts`
+- `src/packages/frontend/project/settings/environment-overview.tsx`
+- `docs/project-startup-script.md`
 
 Known requirement:
 
-- Prefer canonical user-visible path such as `.local/cocalc/startup.sh`.
-- Document and expose editing from project settings.
-- Investigate whether `crontab` with `@reboot` is viable and better.
-- Consider rootfs-level initialization hooks for symlinks and other setup.
+- Canonical path is `~/.local/share/cocalc/startup.sh`.
+- Logs are `~/.local/share/cocalc/startup.log` and `~/.local/share/cocalc/startup.err`.
+- Project settings exposes the script and log files from Environment.
+- Runtime creates a commented no-op template without overwriting user edits.
 
 Expected outcome:
 
-- A documented startup script path.
-- Backward compatibility or migration path for `/home/user/project_init.sh`.
-- Project settings UI affordance to view/edit the startup script.
+- A documented startup script path. Done in `docs/project-startup-script.md`.
+- Project settings UI affordance to view/edit the startup script. Done.
 
 Next action:
 
-- Inspect current podman startup hook.
-- Decide canonical path.
-- Add docs and a minimal settings entry before broadening to cron support.
+- Optional follow-up only: evaluate whether cron support is worth adding separately.
 
 ### 5. Standalone Backup-All-Projects Host LRO
 

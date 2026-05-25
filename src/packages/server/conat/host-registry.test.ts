@@ -655,7 +655,7 @@ describe("host-registry automatic convergence retry", () => {
       previous_host_session_id: "session-old",
       host_session_id: "session-new",
       source: "register",
-      start_interval_ms: 0,
+      max_parallel_starts: 1,
     });
 
     expect(startProjectOnHostMock.mock.calls.map((call) => call[0])).toEqual([
@@ -680,6 +680,38 @@ describe("host-registry automatic convergence retry", () => {
       skipped: 0,
       failed: 0,
     });
+  });
+
+  it("derives restart recovery parallelism from host capacity", async () => {
+    const { hostRestartRecoveryParallelStarts } =
+      await import("./host-registry");
+
+    expect(hostRestartRecoveryParallelStarts({})).toBe(4);
+    expect(
+      hostRestartRecoveryParallelStarts({
+        metadata: {
+          metrics: {
+            current: {
+              memory_total_bytes: 256 * 1024 ** 3,
+            },
+          },
+        },
+      }),
+    ).toBe(32);
+    expect(
+      hostRestartRecoveryParallelStarts({
+        metadata: { host_cpu_count: 16 },
+      }),
+    ).toBe(8);
+    expect(
+      hostRestartRecoveryParallelStarts({
+        metadata: {
+          restart_recovery: {
+            max_parallel_starts: 100,
+          },
+        },
+      }),
+    ).toBe(32);
   });
 
   it("lists stop policy deltas with mirrored activity and resolved priority", async () => {

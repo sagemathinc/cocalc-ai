@@ -3,9 +3,13 @@ import {
   SSHD_CONFIG,
   START_PROJECT_SSH,
 } from "@cocalc/conat/project/runner/constants";
+import {
+  PROJECT_STARTUP_SCRIPT_PATH,
+  PROJECT_STARTUP_SCRIPT_TEMPLATE,
+} from "@cocalc/util/project-startup-script";
 import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "path";
+import { dirname, join } from "node:path";
 
 export async function writeStartupScripts(home: string) {
   const ssh = join(home, START_PROJECT_SSH);
@@ -13,10 +17,23 @@ export async function writeStartupScripts(home: string) {
   await writeFile(ssh, START_PROJECT_SSH_SERVER_SH, {
     mode: 0o700,
   });
+
+  const startup = join(home, PROJECT_STARTUP_SCRIPT_PATH);
+  await mkdir(dirname(startup), { recursive: true, mode: 0o700 });
+  try {
+    await writeFile(startup, PROJECT_STARTUP_SCRIPT_TEMPLATE, {
+      flag: "wx",
+      mode: 0o700,
+    });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
+      throw err;
+    }
+  }
 }
 
 // These scripts are run every time a project starts,
-// so do NOT make them slow!  The should take a few milliseconds.
+// so do NOT make them slow! They should take a few milliseconds.
 
 const START_PROJECT_SSH_SERVER_SH = `#!/usr/bin/env bash
 set -ev

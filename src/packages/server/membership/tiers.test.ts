@@ -42,19 +42,14 @@ describe("membership tier free trials", () => {
     expect(quote.charge).toBe(0);
     expect(quote.trial_email).toContain("@test.com");
 
-    const client = await getPool("medium").connect();
-    try {
-      await claimMembershipTrial({
-        account_id,
-        email_address: quote.trial_email!,
-        membership_class: targetClass,
-        subscription_id: 1,
-        purchase_id: 1,
-        client,
-      });
-    } finally {
-      client.release();
-    }
+    await claimMembershipTrial({
+      account_id,
+      email_address: quote.trial_email!,
+      membership_class: targetClass,
+      subscription_id: 1,
+      purchase_id: 1,
+      client: getPool() as any,
+    });
 
     const secondQuote = await computeMembershipChange({
       account_id,

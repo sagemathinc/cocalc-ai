@@ -76,6 +76,7 @@ import {
   DEFAULT_PROJECT_RUNTIME_HOME,
   DEFAULT_PROJECT_RUNTIME_UID,
 } from "@cocalc/util/project-runtime";
+import { PROJECT_STARTUP_SCRIPT_PATH } from "@cocalc/util/project-startup-script";
 import { getConatClient } from "./conat-client";
 import {
   normalizeProjectSecretName,
@@ -1471,7 +1472,7 @@ export async function start({
 
     args.push("--rootfs", rootfs);
     args.push(nodePath);
-    args.push(projectScript, "--init", "project_init.sh");
+    args.push(projectScript, "--init", PROJECT_STARTUP_SCRIPT_PATH);
 
     logger.debug("start: launching container - ", name);
     await timings.measure("podman_run", async () => await podman(args));
