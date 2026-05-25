@@ -7,6 +7,7 @@ describe("hosts teardown helpers", () => {
   it("clears host-scoped runtime deployments when marking a host deprovisioned", async () => {
     const clearHostRuntimeDeployments = jest.fn(async () => undefined);
     const updateHostDeprovisionedRecord = jest.fn(async () => undefined);
+    const markHostProjectsUnprovisioned = jest.fn(async () => undefined);
 
     await markHostDeprovisionedInternal({
       row: {
@@ -29,6 +30,7 @@ describe("hosts teardown helpers", () => {
       deleteHostDns: jest.fn(async () => undefined),
       logWarn: jest.fn(),
       updateHostDeprovisionedRecord,
+      markHostProjectsUnprovisioned,
       clearProjectHostMetrics: jest.fn(async () => undefined),
       clearHostRuntimeDeployments,
       logCloudVmEvent: jest.fn(async () => undefined),
@@ -45,10 +47,14 @@ describe("hosts teardown helpers", () => {
         }),
       }),
     );
+    expect(markHostProjectsUnprovisioned).toHaveBeenCalledWith(
+      "e5536552-6cb0-4426-b214-212af4779efd",
+    );
   });
 
   it("clears host-scoped runtime deployments for local deprovisioned deletes", async () => {
     const clearHostRuntimeDeployments = jest.fn(async () => undefined);
+    const markHostProjectsUnprovisioned = jest.fn(async () => undefined);
 
     await deleteHostInternalHelper({
       id: "f55ca72e-2d0a-4a93-a1a7-080ebcc7abcb",
@@ -64,9 +70,13 @@ describe("hosts teardown helpers", () => {
       markHostDeleted: jest.fn(async () => undefined),
       markHostDeprovisioning: jest.fn(async () => undefined),
       markHostStoppedDeprovisioned: jest.fn(async () => undefined),
+      markHostProjectsUnprovisioned,
       clearHostRuntimeDeployments,
     });
 
+    expect(markHostProjectsUnprovisioned).toHaveBeenCalledWith(
+      "f55ca72e-2d0a-4a93-a1a7-080ebcc7abcb",
+    );
     expect(clearHostRuntimeDeployments).toHaveBeenCalledWith({
       host_id: "f55ca72e-2d0a-4a93-a1a7-080ebcc7abcb",
     });
@@ -75,6 +85,7 @@ describe("hosts teardown helpers", () => {
   it("deletes not-provisioned cloud hosts without enqueueing cloud teardown", async () => {
     const markHostDeleted = jest.fn(async () => undefined);
     const enqueueCloudVmWork = jest.fn(async () => undefined);
+    const markHostProjectsUnprovisioned = jest.fn(async () => undefined);
 
     await deleteHostInternalHelper({
       id: "f55ca72e-2d0a-4a93-a1a7-080ebcc7abcb",
@@ -90,9 +101,13 @@ describe("hosts teardown helpers", () => {
       markHostDeleted,
       markHostDeprovisioning: jest.fn(async () => undefined),
       markHostStoppedDeprovisioned: jest.fn(async () => undefined),
+      markHostProjectsUnprovisioned,
       clearHostRuntimeDeployments: jest.fn(async () => undefined),
     });
 
+    expect(markHostProjectsUnprovisioned).toHaveBeenCalledWith(
+      "f55ca72e-2d0a-4a93-a1a7-080ebcc7abcb",
+    );
     expect(markHostDeleted).toHaveBeenCalledWith(
       "f55ca72e-2d0a-4a93-a1a7-080ebcc7abcb",
     );

@@ -930,6 +930,7 @@ async function markHostDeprovisioned(row: any, action: string) {
         [row.id, "deprovisioned", new Date(), nextMetadata],
       );
     },
+    markHostProjectsUnprovisioned,
     clearProjectHostMetrics,
     clearHostRuntimeDeployments: async ({ host_id }) => {
       await clearProjectHostRuntimeDeployments({
@@ -940,6 +941,20 @@ async function markHostDeprovisioned(row: any, action: string) {
     logCloudVmEvent,
     normalizeProviderId,
   });
+}
+
+async function markHostProjectsUnprovisioned(host_id: string) {
+  await pool().query(
+    `
+      UPDATE projects
+      SET provisioned=FALSE,
+          provisioned_checked_at=NOW()
+      WHERE host_id=$1
+        AND deleted IS NOT TRUE
+        AND provisioned IS DISTINCT FROM FALSE
+    `,
+    [host_id],
+  );
 }
 
 async function loadHostForView(id: string, account_id?: string): Promise<any> {
@@ -7013,6 +7028,7 @@ export async function deleteHostInternal({
         [id, "deprovisioned", "stopped"],
       );
     },
+    markHostProjectsUnprovisioned,
     clearHostRuntimeDeployments: async ({ host_id }) => {
       await clearProjectHostRuntimeDeployments({
         scope_type: "host",

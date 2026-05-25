@@ -600,6 +600,27 @@ function isMissingProjectVolumeError(err: unknown): boolean {
   );
 }
 
+async function markProjectMissingVolume({
+  project_id,
+  host_id,
+}: {
+  project_id: string;
+  host_id: string;
+}) {
+  await getPool().query(
+    `
+      UPDATE projects
+      SET provisioned=FALSE,
+          provisioned_checked_at=NOW()
+      WHERE project_id=$1
+        AND host_id=$2
+        AND deleted IS NOT TRUE
+        AND provisioned IS DISTINCT FROM FALSE
+    `,
+    [project_id, host_id],
+  );
+}
+
 async function createProjectBackupOp({
   project_id,
   account_id,
@@ -763,6 +784,10 @@ async function ensureHostBackups({
         completed += 1;
       } catch (err) {
         if (isMissingProjectVolumeError(err)) {
+          await markProjectMissingVolume({
+            project_id: next.project_id,
+            host_id,
+          });
           skippedMissingVolume += 1;
           logger.warn("skipping backup due to missing project volume", {
             host_id,
@@ -941,6 +966,7 @@ async function runHostBackupAll({
         });
       } catch (err) {
         if (isMissingProjectVolumeError(err)) {
+          await markProjectMissingVolume({ project_id, host_id });
           skipped += 1;
           results.push({
             project_id,

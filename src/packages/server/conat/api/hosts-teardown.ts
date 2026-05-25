@@ -53,6 +53,7 @@ export async function markHostDeprovisionedInternal({
   deleteHostDns,
   logWarn,
   updateHostDeprovisionedRecord,
+  markHostProjectsUnprovisioned,
   clearProjectHostMetrics,
   clearHostRuntimeDeployments,
   logCloudVmEvent,
@@ -77,6 +78,7 @@ export async function markHostDeprovisionedInternal({
     row: any;
     nextMetadata: any;
   }) => Promise<void>;
+  markHostProjectsUnprovisioned: (host_id: string) => Promise<void>;
   clearProjectHostMetrics: (opts: { host_id: string }) => Promise<void>;
   clearHostRuntimeDeployments: (opts: { host_id: string }) => Promise<void>;
   logCloudVmEvent: (opts: {
@@ -125,6 +127,7 @@ export async function markHostDeprovisionedInternal({
     row,
     nextMetadata,
   });
+  await markHostProjectsUnprovisioned(row.id);
   await clearProjectHostMetrics({ host_id: row.id });
   await clearHostRuntimeDeployments({ host_id: row.id });
   await logCloudVmEvent({
@@ -217,6 +220,7 @@ export async function deleteHostInternalHelper({
   markHostDeleted,
   markHostDeprovisioning,
   markHostStoppedDeprovisioned,
+  markHostProjectsUnprovisioned,
   clearHostRuntimeDeployments,
 }: {
   account_id?: string;
@@ -236,6 +240,7 @@ export async function deleteHostInternalHelper({
   markHostDeleted: (id: string) => Promise<void>;
   markHostDeprovisioning: (id: string) => Promise<void>;
   markHostStoppedDeprovisioned: (id: string) => Promise<void>;
+  markHostProjectsUnprovisioned: (host_id: string) => Promise<void>;
   clearHostRuntimeDeployments: (opts: { host_id: string }) => Promise<void>;
 }): Promise<void> {
   const row = await loadOwnedHost(id, account_id);
@@ -246,6 +251,7 @@ export async function deleteHostInternalHelper({
     !!`${row.metadata?.runtime?.instance_id ?? ""}`.trim();
   if (row.status === "deprovisioned" || (managedCloud && !hasProviderRuntime)) {
     await setHostDesiredStateInternal({ id, desiredState: "stopped" });
+    await markHostProjectsUnprovisioned(id);
     await markHostDeleted(id);
     return;
   }
@@ -262,5 +268,6 @@ export async function deleteHostInternalHelper({
   }
   logStatusUpdate(id, "deprovisioned", "api");
   await markHostStoppedDeprovisioned(id);
+  await markHostProjectsUnprovisioned(id);
   await clearHostRuntimeDeployments({ host_id: id });
 }
