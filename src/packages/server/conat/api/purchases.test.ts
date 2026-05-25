@@ -562,7 +562,7 @@ describe("purchases membership packages", () => {
     expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
       account_id: "admin-1",
       session_hash: "session-1",
-      allow_actor_impersonation: true,
+      allow_actor_impersonation: false,
     });
     expect(interBayAdminProvisionSiteLicenseMock).toHaveBeenCalledWith({
       actor_account_id: "admin-1",
@@ -609,6 +609,40 @@ describe("purchases membership packages", () => {
     });
 
     expect(resolveAccountHomeBayMock).not.toHaveBeenCalled();
+    expect(interBayAdminProvisionSiteLicenseMock).not.toHaveBeenCalled();
+    expect(adminProvisionSiteLicenseMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks impersonated admin sessions before site-license provisioning", async () => {
+    isAdminMock.mockResolvedValue(true);
+    requireFreshAuthForSessionHashMock.mockRejectedValueOnce(
+      Object.assign(
+        new Error(
+          "cannot perform this dangerous operation while impersonating another account",
+        ),
+        { code: "impersonation_blocked" },
+      ),
+    );
+
+    const { adminProvisionSiteLicense } = await import("./purchases");
+    await expect(
+      adminProvisionSiteLicense({
+        account_id: "admin-1",
+        session_hash: "session-1",
+        owner_account_id: "owner-1",
+        name: "Example Campus",
+        organization_name: "Example University",
+        allowed_domains: ["example.edu"],
+      }),
+    ).rejects.toMatchObject({
+      code: "impersonation_blocked",
+    });
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      session_hash: "session-1",
+      allow_actor_impersonation: false,
+    });
     expect(interBayAdminProvisionSiteLicenseMock).not.toHaveBeenCalled();
     expect(adminProvisionSiteLicenseMock).not.toHaveBeenCalled();
   });
@@ -704,7 +738,7 @@ describe("purchases membership packages", () => {
     expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
       account_id: "manager-1",
       session_hash: "fresh-session-1",
-      allow_actor_impersonation: true,
+      allow_actor_impersonation: false,
     });
     expect(interBaySetSiteLicenseManagerMock).toHaveBeenCalledWith({
       actor_account_id: "manager-1",
@@ -756,7 +790,7 @@ describe("purchases membership packages", () => {
     expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
       account_id: "manager-1",
       session_hash: "fresh-session-2",
-      allow_actor_impersonation: true,
+      allow_actor_impersonation: false,
     });
     expect(addSiteLicensePoolMock).not.toHaveBeenCalled();
   });
@@ -1100,7 +1134,7 @@ describe("purchases membership packages", () => {
     expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
       account_id: "admin-1",
       session_hash: "fresh-session-1",
-      allow_actor_impersonation: true,
+      allow_actor_impersonation: false,
     });
     expect(result.metadata?.allowed_domains).toEqual([
       "dept.example.edu",
@@ -1164,7 +1198,7 @@ describe("purchases membership packages", () => {
     expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
       account_id: "admin-1",
       session_hash: "fresh-session-1",
-      allow_actor_impersonation: true,
+      allow_actor_impersonation: false,
     });
     expect(resolveAccountHomeBayMock).not.toHaveBeenCalled();
     expect(updateMembershipPackageMock).not.toHaveBeenCalled();
