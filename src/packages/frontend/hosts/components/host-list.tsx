@@ -68,7 +68,7 @@ import {
 import { currentHostRuntimeExceptionSummary } from "../utils/runtime-exceptions";
 import { HostActionsPanel } from "./host-actions-panel";
 import { HostConfigurationCell } from "./host-configuration-cell";
-import { HostAccessPolicySummary } from "./host-access-policy";
+import { HostAccessPolicyTags } from "./host-access-policy";
 
 const STATUS_ORDER = [
   "running",
@@ -248,6 +248,7 @@ function HostIdentityCell({
           </Button>
         </Popover>
       ) : null}
+      <HostAccessPolicyTags host={host} />
     </Space>
   );
 }
@@ -784,9 +785,9 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       title: "Host",
       dataIndex: "name",
       key: "name",
-      width: 190,
+      width: 240,
       onCell: () => ({
-        style: { minWidth: 190, maxWidth: 190 },
+        style: { minWidth: 240, maxWidth: 240 },
       }),
       sorter: true,
       sortDirections: ["ascend", "descend"],
@@ -809,14 +810,6 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       }),
       render: (_: string, host: Host) => (
         <HostConfigurationCell host={host} maxWidth={300} />
-      ),
-    },
-    {
-      title: "Access",
-      key: "access",
-      width: 210,
-      render: (_: string, host: Host) => (
-        <HostAccessPolicySummary host={host} compact />
       ),
     },
     {
