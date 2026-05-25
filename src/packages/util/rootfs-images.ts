@@ -330,10 +330,14 @@ export type RootfsRusticRepoSummary = {
   id: string;
   region: string;
   bucket_id?: string | null;
+  bucket_name?: string | null;
+  bucket_purpose?: string | null;
   root: string;
   status: "active" | "sealed" | "draining" | "disabled" | string;
   assigned_artifact_count: number;
   artifact_bytes: number;
+  r2_object_count?: number;
+  r2_total_bytes?: number;
   cap: number;
   available_slots: number;
   created?: string | null;
@@ -343,6 +347,8 @@ export type RootfsRusticRepoSummary = {
 export type RootfsRusticLegacySummary = {
   artifact_count: number;
   artifact_bytes: number;
+  r2_object_count?: number;
+  r2_total_bytes?: number;
 };
 
 export type RootfsRusticRepoListResult = {
@@ -350,6 +356,12 @@ export type RootfsRusticRepoListResult = {
   releases_per_shard: number;
   repos: RootfsRusticRepoSummary[];
   legacy: RootfsRusticLegacySummary;
+  orphan_r2_repos?: Array<{
+    bucket_name?: string | null;
+    repo: string;
+    object_count: number;
+    total_bytes: number;
+  }>;
 };
 
 export type RootfsAdminCatalogEntry = RootfsImageEntry & {

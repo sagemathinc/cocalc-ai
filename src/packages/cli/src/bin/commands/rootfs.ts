@@ -397,29 +397,118 @@ function formatRootfsGcResultHuman(result: RootfsReleaseGcRunResult): string {
 function formatRootfsRusticReposHuman(
   result: RootfsRusticRepoListResult,
 ): string {
+  const byRegion = new Map<string, typeof result.repos>();
+  for (const repo of result.repos) {
+    const region = repo.region || "unknown";
+    const rows = byRegion.get(region) ?? [];
+    rows.push(repo);
+    byRegion.set(region, rows);
+  }
   const lines = [
     `active_shards_per_region: ${result.active_shards_per_region}`,
     `releases_per_shard: ${result.releases_per_shard}`,
     `repos: ${result.repos.length}`,
+    "status: active accepts new artifacts; sealed is read-only; draining is operator repair/migration; disabled is unavailable for assignment.",
   ];
-  if (result.legacy.artifact_count > 0) {
+  if (
+    result.legacy.artifact_count > 0 ||
+    result.legacy.r2_object_count != null
+  ) {
     lines.push(
-      `legacy_single_repo: ${result.legacy.artifact_count} artifacts, ${bytes(result.legacy.artifact_bytes)}; temporary read compatibility is still in use`,
+      `legacy_single_repo: ${result.legacy.artifact_count} DB artifacts, ${bytes(result.legacy.artifact_bytes)} DB bytes${result.legacy.r2_object_count != null ? `; R2 ${result.legacy.r2_object_count} objects, ${bytes(result.legacy.r2_total_bytes)}` : ""}; temporary read compatibility is still in use`,
     );
   }
-  for (const repo of result.repos) {
-    lines.push(
-      "",
-      `${repo.region} ${repo.status} ${repo.assigned_artifact_count}/${repo.cap} (${repo.available_slots} slots free, ${bytes(repo.artifact_bytes)})`,
-      `  repo_id: ${repo.id}`,
-      `  root: ${repo.root}`,
-    );
-    if (repo.bucket_id) {
-      lines.push(`  bucket_id: ${repo.bucket_id}`);
+  if (result.orphan_r2_repos?.length) {
+    lines.push("orphan_r2_rootfs_repos:");
+    for (const repo of result.orphan_r2_repos) {
+      lines.push(
+        `  - ${repo.repo} bucket=${repo.bucket_name ?? "-"} objects=${repo.object_count} total=${bytes(repo.total_bytes)}`,
+      );
     }
-    lines.push(`  updated: ${repo.updated ?? "-"}`);
+  }
+  for (const [region, repos] of [...byRegion.entries()].sort()) {
+    lines.push("", `region ${region}:`);
+    for (const repo of repos) {
+      const r2 =
+        repo.r2_object_count != null
+          ? `; R2 ${repo.r2_object_count} objects, ${bytes(repo.r2_total_bytes)}`
+          : "";
+      lines.push(
+        `  ${repo.status} ${repo.assigned_artifact_count}/${repo.cap} (${repo.available_slots} slots free, ${bytes(repo.artifact_bytes)} DB bytes${r2})`,
+        `    repo_id: ${repo.id}`,
+        `    root: ${repo.root}`,
+      );
+      if (repo.bucket_name || repo.bucket_id) {
+        lines.push(
+          `    bucket: ${repo.bucket_name ?? "-"}${repo.bucket_id ? ` (${repo.bucket_id})` : ""}`,
+        );
+      }
+      lines.push(`    updated: ${repo.updated ?? "-"}`);
+    }
   }
   return lines.join("\n");
+}
+
+async function enrichRootfsRusticReposWithR2Audit({
+  ctx,
+  result,
+  refresh,
+  maxAgeMinutes,
+}: {
+  ctx: any;
+  result: RootfsRusticRepoListResult;
+  refresh?: boolean;
+  maxAgeMinutes?: number;
+}): Promise<RootfsRusticRepoListResult> {
+  const repos = result.repos.map((repo) => ({ ...repo }));
+  const knownRoots = new Set(repos.map((repo) => repo.root).filter(Boolean));
+  const byRoot = new Map(repos.map((repo) => [repo.root, repo]));
+  const buckets = Array.from(
+    new Set(repos.map((repo) => repo.bucket_name).filter(Boolean)),
+  );
+  const orphan_r2_repos: NonNullable<
+    RootfsRusticRepoListResult["orphan_r2_repos"]
+  > = [];
+  const legacy = { ...result.legacy };
+  for (const bucket of buckets) {
+    const audit = await ctx.hub.system.auditCloudflareR2Bucket({
+      bucket,
+      prefix: "rustic/rootfs-images",
+      refresh,
+      max_age_minutes: maxAgeMinutes,
+    });
+    for (const row of audit.rustic_repos ?? []) {
+      if (row.kind !== "rootfs") continue;
+      const repo = `${row.repo ?? ""}`.trim();
+      if (repo === "rustic/rootfs-images") {
+        legacy.r2_object_count =
+          (legacy.r2_object_count ?? 0) + Number(row.object_count ?? 0);
+        legacy.r2_total_bytes =
+          (legacy.r2_total_bytes ?? 0) + Number(row.total_bytes ?? 0);
+        continue;
+      }
+      const match = byRoot.get(repo);
+      if (match) {
+        match.r2_object_count =
+          (match.r2_object_count ?? 0) + Number(row.object_count ?? 0);
+        match.r2_total_bytes =
+          (match.r2_total_bytes ?? 0) + Number(row.total_bytes ?? 0);
+      } else if (!knownRoots.has(repo)) {
+        orphan_r2_repos.push({
+          bucket_name: bucket,
+          repo,
+          object_count: Number(row.object_count ?? 0),
+          total_bytes: Number(row.total_bytes ?? 0),
+        });
+      }
+    }
+  }
+  return {
+    ...result,
+    repos,
+    legacy,
+    orphan_r2_repos,
+  };
 }
 
 function formatRootfsScanResultHuman(result: RootfsReleaseScanRun): string {
@@ -703,19 +792,55 @@ export function registerRootfsCommand(
       "--status <status>",
       "filter by status: active, sealed, draining, disabled",
     )
+    .option("--legacy", "show only legacy single-repo summary")
+    .option("--hide-empty", "hide shards with no assigned DB artifacts")
+    .option(
+      "--r2-audit",
+      "enrich shards with R2 object counts and bytes from bucket audit cache",
+    )
+    .option("--refresh", "force a fresh R2 audit when used with --r2-audit")
+    .option(
+      "--max-age-minutes <n>",
+      "maximum cached R2 audit age when used with --r2-audit",
+      "60",
+    )
     .action(
       async (
         opts: {
           region?: string;
           status?: string;
+          legacy?: boolean;
+          hideEmpty?: boolean;
+          r2Audit?: boolean;
+          refresh?: boolean;
+          maxAgeMinutes?: string;
         },
         command: Command,
       ) => {
         await withContext(command, "rootfs shards", async (ctx) => {
-          const result = await ctx.hub.system.getRootfsRusticReposAdmin({
-            region: opts.region,
-            status: opts.status,
-          });
+          let result: RootfsRusticRepoListResult =
+            await ctx.hub.system.getRootfsRusticReposAdmin({
+              region: opts.region,
+              status: opts.status,
+            });
+          if (opts.r2Audit) {
+            result = await enrichRootfsRusticReposWithR2Audit({
+              ctx,
+              result,
+              refresh: opts.refresh,
+              maxAgeMinutes: parseLimit(opts.maxAgeMinutes, 60),
+            });
+          }
+          if (opts.legacy) {
+            result = { ...result, repos: [] };
+          } else if (opts.hideEmpty) {
+            result = {
+              ...result,
+              repos: result.repos.filter(
+                (repo) => repo.assigned_artifact_count > 0,
+              ),
+            };
+          }
           if (ctx.globals.json || ctx.globals.output === "json") {
             return result;
           }
