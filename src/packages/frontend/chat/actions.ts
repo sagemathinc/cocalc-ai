@@ -2178,7 +2178,7 @@ export class ChatActions extends Actions<ChatState> {
   };
 
   help = () => {
-    open_new_tab("https://doc.cocalc.com/chat.html");
+    open_new_tab("/docs/collaboration/chat");
   };
 
   undo = () => {

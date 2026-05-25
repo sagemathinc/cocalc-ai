@@ -14,9 +14,9 @@ This inventory excludes generated build output such as
 
 Current source inventory:
 
-- 22 legacy URL references.
-- 18 unique legacy URLs.
-- 23 grep lines matching `doc.cocalc.com`, including the docs verifier's
+- 17 legacy URL references.
+- 15 unique legacy URLs.
+- 18 grep lines matching `doc.cocalc.com`, including the docs verifier's
   diagnostic string.
 
 Resolved so far:
@@ -55,6 +55,11 @@ Resolved so far:
 - Editor help links for TimeTravel, Markdown, LaTeX, R Markdown, tasks, slides,
   whiteboard, X11 apps, the file explorer, and the projects page now point to
   local docs routes.
+- `https://doc.cocalc.com/chat.html`,
+  `https://doc.cocalc.com/teaching-interactions.html#mention-collaborators-in-chat`,
+  and `https://doc.cocalc.com/markdown.html#mentions` now have
+  `collaboration/chat` and `collaboration/mentions`; the chat help action, new
+  chat tooltip, and notifications page intro point to the local docs routes.
 
 ## Recommended Migration Policy
 
@@ -95,7 +100,7 @@ safe replacement.
 | Course workflow                     | `teaching/course-workflow`, existing `teaching/create-assignment`             | `/teaching-instructors.html`, `/teaching-tips_and_tricks.html#how-exactly-are-assignments-copied-to-students`                       | billing data, welcome email, file type selector, course editor, assignment info | partial: instructor guide done    |
 | Course upgrades                     | `teaching/course-upgrades` or `billing/course-upgrades`                       | `/teaching-upgrade-course.html#teacher-or-institution-pays-for-upgrades`, `/teaching-upgrade-course.html#students-pay-for-upgrades` | billing data                                                                    | create-doc                        |
 | nbgrader                            | `teaching/nbgrader`                                                           | `/teaching-nbgrader.html`                                                                                                           | course config, Jupyter main, Jupyter commands                                   | done                              |
-| Chat and mentions                   | `collaboration/chat`, `collaboration/mentions`                                | `/chat.html`, `/teaching-interactions.html#mention-collaborators-in-chat`, `/markdown.html#mentions`                                | chat actions, notifications, file type selector                                 | create-doc                        |
+| Chat and mentions                   | `collaboration/chat`, `collaboration/mentions`                                | `/chat.html`, `/teaching-interactions.html#mention-collaborators-in-chat`, `/markdown.html#mentions`                                | chat actions, notifications, file type selector                                 | done                              |
 
 ### P2: Editor-Specific Help
 
@@ -129,7 +134,7 @@ be concise task pages rather than full manuals.
 | Count | Legacy URL                                          | Replacement                                     |
 | ----: | --------------------------------------------------- | ----------------------------------------------- |
 |     4 | `https://doc.cocalc.com/markdown.html`              | Done: replace with `files/markdown`.            |
-|     1 | `https://doc.cocalc.com/markdown.html#mentions`     | Create `collaboration/mentions`.                |
+|     1 | `https://doc.cocalc.com/markdown.html#mentions`     | Done: replace with `collaboration/mentions`.    |
 |     1 | `https://doc.cocalc.com/time-travel.html`           | Done: replace with existing `files/timetravel`. |
 |     1 | `https://doc.cocalc.com/latex.html`                 | Done: replace with `latex/build-papers`.        |
 |     1 | `https://doc.cocalc.com/frame-editor.html#edit-rmd` | Done: replace with `editors/r-markdown`.        |
@@ -172,10 +177,10 @@ be concise task pages rather than full manuals.
 
 ### Collaboration, Notifications, And Troubleshooting
 
-| Count | Legacy URL                                                                        | Replacement                      |
-| ----: | --------------------------------------------------------------------------------- | -------------------------------- |
-|     3 | `https://doc.cocalc.com/chat.html`                                                | Create `collaboration/chat`.     |
-|     1 | `https://doc.cocalc.com/teaching-interactions.html#mention-collaborators-in-chat` | Create `collaboration/mentions`. |
+| Count | Legacy URL                                                                        | Replacement                                  |
+| ----: | --------------------------------------------------------------------------------- | -------------------------------------------- |
+|     3 | `https://doc.cocalc.com/chat.html`                                                | Done: replace with `collaboration/chat`.     |
+|     1 | `https://doc.cocalc.com/teaching-interactions.html#mention-collaborators-in-chat` | Done: replace with `collaboration/mentions`. |
 
 ### Generic Root
 
@@ -220,21 +225,21 @@ be concise task pages rather than full manuals.
 
 ### Teaching
 
-| File                                                              | Legacy topics               | Recommended action                                                                                              |
-| ----------------------------------------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `src/packages/frontend/course/configuration/nbgrader.tsx`         | nbgrader                    | Create `teaching/nbgrader`; replace link.                                                                       |
-| `src/packages/frontend/course/common/student-assignment-info.tsx` | assignment copying          | Create `teaching/assignment-copying`; replace link.                                                             |
-| `src/packages/frontend/project/new/file-type-selector.tsx`        | chat and teaching           | Create `collaboration/chat`; replace teaching link with `teaching/course-workflow` or existing assignment docs. |
-| `src/packages/frontend/frame-editors/course-editor/actions.ts`    | teaching course editor help | Create `teaching/course-workflow`; replace link.                                                                |
-| `src/packages/frontend/jupyter/main.tsx`                          | nbgrader                    | Create `teaching/nbgrader`; replace link.                                                                       |
-| `src/packages/frontend/jupyter/commands.ts`                       | nbgrader, Markdown          | Replace with the corresponding new docs pages. Jupyter help link is done.                                       |
+| File                                                              | Legacy topics               | Recommended action                                                                                |
+| ----------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------- |
+| `src/packages/frontend/course/configuration/nbgrader.tsx`         | nbgrader                    | Create `teaching/nbgrader`; replace link.                                                         |
+| `src/packages/frontend/course/common/student-assignment-info.tsx` | assignment copying          | Create `teaching/assignment-copying`; replace link.                                               |
+| `src/packages/frontend/project/new/file-type-selector.tsx`        | chat and teaching           | Done: chat replaced with `collaboration/chat`; teaching replaced with `teaching/course-workflow`. |
+| `src/packages/frontend/frame-editors/course-editor/actions.ts`    | teaching course editor help | Create `teaching/course-workflow`; replace link.                                                  |
+| `src/packages/frontend/jupyter/main.tsx`                          | nbgrader                    | Create `teaching/nbgrader`; replace link.                                                         |
+| `src/packages/frontend/jupyter/commands.ts`                       | nbgrader, Markdown          | Replace with the corresponding new docs pages. Jupyter help link is done.                         |
 
 ### Collaboration And Notifications
 
-| File                                                        | Legacy topics                     | Recommended action                                                       |
-| ----------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------ |
-| `src/packages/frontend/chat/actions.ts`                     | chat                              | Create `collaboration/chat`; replace help command.                       |
-| `src/packages/frontend/notifications/notification-page.tsx` | chat, mentions, Markdown mentions | Create `collaboration/chat` and `collaboration/mentions`; replace links. |
+| File                                                        | Legacy topics                     | Recommended action                                                     |
+| ----------------------------------------------------------- | --------------------------------- | ---------------------------------------------------------------------- |
+| `src/packages/frontend/chat/actions.ts`                     | chat                              | Done: replaced with `collaboration/chat`.                              |
+| `src/packages/frontend/notifications/notification-page.tsx` | chat, mentions, Markdown mentions | Done: replaced with `collaboration/chat` and `collaboration/mentions`. |
 
 ### Editor Help Buttons
 
@@ -260,9 +265,9 @@ be concise task pages rather than full manuals.
 
 ## Suggested First Cleanup Cluster
 
-Next cluster: collaboration and mentions, because the remaining chat, mentions,
-and Markdown mentions links overlap and should become one coherent user-facing
-story.
+Next cluster: account and project SSH keys, because the remaining SSH key links
+overlap and should explain both account-level keys and project access keys
+without implying that every SSH key belongs in project files.
 
 ## Release Gate Shape
 

@@ -111,9 +111,7 @@ export function FileTypeSelector({
                     defaultMessage={`Chat with AI or human collaborators.
                       See <A>documentation</A> to learn more.`}
                     values={{
-                      A: (c) => (
-                        <A href="https://doc.cocalc.com/chat.html">{c}</A>
-                      ),
+                      A: (c) => <A href="/docs/collaboration/chat">{c}</A>,
                     }}
                   />
                 }
