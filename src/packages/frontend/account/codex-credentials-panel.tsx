@@ -41,9 +41,9 @@ const CODEX_USAGE_URL = "https://chatgpt.com/codex/settings/usage";
 const SUBSCRIPTION_AUTH_PANEL_KEY = "subscription-auth";
 
 const recommendedCardStyle: CSSProperties = {
-  border: `1px solid ${COLORS.BLUE_LLL}`,
-  borderRadius: 14,
-  background: `linear-gradient(135deg, ${COLORS.BLUE_LLLL} 0%, white 58%, ${COLORS.BS_GREEN_LL} 100%)`,
+  border: `1px solid ${COLORS.GRAY_LL}`,
+  borderRadius: 8,
+  background: "white",
   padding: 16,
 };
 
@@ -60,17 +60,10 @@ const optionCardStyle: CSSProperties = {
   padding: 14,
 };
 
-const deviceAuthCardStyle: CSSProperties = {
-  border: `1px solid ${COLORS.BLUE_LLL}`,
-  borderRadius: 10,
-  background: COLORS.BLUE_LLLL,
-  padding: 12,
-};
-
 const deviceAuthCodeStyle: CSSProperties = {
   border: `1px solid ${COLORS.GRAY_L0}`,
   borderRadius: 8,
-  background: "white",
+  background: COLORS.GRAY_LLL,
   padding: 12,
 };
 
@@ -101,6 +94,20 @@ function sourceLabel(source: CodexPaymentSourceInfo["source"]): string {
     default:
       return "None";
   }
+}
+
+function parseDeviceAuthUserCode(output?: string): string | undefined {
+  if (!output) return undefined;
+  const explicit = output.match(
+    /one-time code[^\n]*\n\s*([A-Z0-9]{3,6}(?:-[A-Z0-9]{3,6}){1,2})\b/i,
+  );
+  if (explicit?.[1]) return explicit[1];
+  const fallback = output.match(/\b[A-Z0-9]{3,6}(?:-[A-Z0-9]{3,6}){1,2}\b/g);
+  return fallback?.[fallback.length - 1];
+}
+
+function parseDeviceAuthVerificationUrl(output?: string): string | undefined {
+  return output?.match(/https?:\/\/[^\s)]+/)?.[0];
 }
 
 export function CodexCredentialsPanel(props: CodexCredentialsPanelProps = {}) {
@@ -454,140 +461,127 @@ function CodexCredentialsPanelBody({
 
   const renderDeviceAuthLogin = () => {
     if (!deviceAuth && !deviceAuthError) return null;
+    const userCode =
+      deviceAuth?.userCode ?? parseDeviceAuthUserCode(deviceAuth?.output);
+    const verificationUrl =
+      deviceAuth?.verificationUrl ??
+      parseDeviceAuthVerificationUrl(deviceAuth?.output);
     return (
-      <div style={deviceAuthCardStyle}>
-        <Space orientation="vertical" size={10} style={{ width: "100%" }}>
-          <Space wrap>
-            <Tag color={deviceAuth?.state === "completed" ? "green" : "blue"}>
-              ChatGPT login
-            </Tag>
-            <Text strong>
-              {deviceAuth?.state === "pending"
-                ? "Finish device login"
-                : deviceAuth
-                  ? `Device auth status: ${deviceAuth.state}`
-                  : "Device login needs attention"}
-            </Text>
-          </Space>
-          {deviceAuthError ? (
-            <Alert type="error" showIcon title={deviceAuthError} />
-          ) : null}
-          {deviceAuth ? (
-            <Alert
-              type={DEVICE_AUTH_ALERT_TYPE[deviceAuth.state]}
-              showIcon
-              title={`Device auth status: ${deviceAuth.state}`}
-              description={
-                deviceAuth.state === "pending"
-                  ? "Open the link below, paste the code, and keep this dialog open while CoCalc polls for completion."
-                  : deviceAuth.error
-                    ? deviceAuth.error
-                    : undefined
-              }
-            />
-          ) : null}
-          {deviceAuth?.userCode && deviceAuth.state !== "completed" ? (
-            <div style={deviceAuthCodeStyle}>
-              <Text type="secondary">1. Copy this one-time code</Text>
-              <div
+      <Space orientation="vertical" size={8} style={{ width: "100%" }}>
+        {deviceAuthError ? (
+          <Alert type="error" showIcon title={deviceAuthError} />
+        ) : null}
+        {deviceAuth ? (
+          <Alert
+            type={DEVICE_AUTH_ALERT_TYPE[deviceAuth.state]}
+            showIcon
+            title={`Device auth status: ${deviceAuth.state}`}
+            description={
+              deviceAuth.state === "pending"
+                ? "Open the link below, paste the code, and keep this dialog open while CoCalc polls for completion."
+                : deviceAuth.error
+                  ? deviceAuth.error
+                  : undefined
+            }
+          />
+        ) : null}
+        {deviceAuth?.state === "pending" && !userCode && !verificationUrl ? (
+          <Alert
+            type="info"
+            showIcon
+            title="Waiting for device login instructions"
+            description="CoCalc is starting Codex device login and will show the one-time code and link here as soon as Codex prints them."
+          />
+        ) : null}
+        {userCode && deviceAuth?.state !== "completed" ? (
+          <div style={deviceAuthCodeStyle}>
+            <Text type="secondary">1. Copy this one-time code</Text>
+            <div
+              style={{
+                marginTop: 8,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+              }}
+            >
+              <Text
                 style={{
-                  marginTop: 8,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 12,
+                  fontSize: 28,
+                  lineHeight: "34px",
+                  fontWeight: 700,
+                  letterSpacing: "0.08em",
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                  whiteSpace: "nowrap",
                 }}
               >
-                <Text
-                  style={{
-                    fontSize: 28,
-                    lineHeight: "34px",
-                    fontWeight: 700,
-                    letterSpacing: "0.08em",
-                    fontFamily:
-                      "ui-monospace, SFMono-Regular, Menlo, monospace",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {deviceAuth.userCode}
-                </Text>
+                {userCode}
+              </Text>
+              <Button onClick={() => void copyText(userCode, "Device code")}>
+                Copy code
+              </Button>
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <Text type="secondary">
+                Device codes are a common phishing target. Never share this
+                code.
+              </Text>
+            </div>
+          </div>
+        ) : null}
+        {verificationUrl && deviceAuth?.state !== "completed" ? (
+          <div style={deviceAuthCodeStyle}>
+            <Text type="secondary">
+              2.{" "}
+              <a href={verificationUrl} target="_blank" rel="noreferrer">
+                Open this link
+              </a>{" "}
+              in your browser, sign in to your account, and paste the code.
+            </Text>
+            <div style={{ marginTop: 8 }}>
+              <Space wrap>
                 <Button
                   onClick={() =>
-                    void copyText(deviceAuth.userCode ?? "", "Device code")
+                    void copyText(verificationUrl, "Verification URL")
                   }
                 >
-                  Copy code
+                  Copy URL
                 </Button>
-              </div>
-              <div style={{ marginTop: 8 }}>
-                <Text type="secondary">
-                  Device codes are a common phishing target. Never share this
-                  code.
-                </Text>
-              </div>
-            </div>
-          ) : null}
-          {deviceAuth?.verificationUrl && deviceAuth.state !== "completed" ? (
-            <div style={deviceAuthCodeStyle}>
-              <Text type="secondary">
-                2.{" "}
-                <a
-                  href={deviceAuth.verificationUrl}
+                <Button
+                  type="primary"
+                  href={verificationUrl}
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Open this link
-                </a>{" "}
-                in your browser, sign in to your account, and paste the code.
-              </Text>
-              <div style={{ marginTop: 8 }}>
-                <Space wrap>
-                  <Button
-                    onClick={() =>
-                      void copyText(
-                        deviceAuth.verificationUrl ?? "",
-                        "Verification URL",
-                      )
-                    }
-                  >
-                    Copy URL
-                  </Button>
-                  <Button
-                    type="primary"
-                    href={deviceAuth.verificationUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Open
-                  </Button>
-                </Space>
-              </div>
+                  Open
+                </Button>
+              </Space>
             </div>
-          ) : null}
-          {deviceAuth?.id ? (
-            <Space wrap>
-              <Button
-                onClick={() => void refreshDeviceAuth()}
-                disabled={!authProjectId || deviceAuthActionPending}
-              >
-                Refresh status
-              </Button>
-              <Button
-                danger
-                onClick={() => void cancelDeviceAuth()}
-                loading={deviceAuthActionPending}
-                disabled={
-                  !authProjectId ||
-                  deviceAuthActionPending ||
-                  deviceAuth.state !== "pending"
-                }
-              >
-                Cancel
-              </Button>
-            </Space>
-          ) : null}
-        </Space>
-      </div>
+          </div>
+        ) : null}
+        {deviceAuth?.id ? (
+          <Space wrap>
+            <Button
+              onClick={() => void refreshDeviceAuth()}
+              disabled={!authProjectId || deviceAuthActionPending}
+            >
+              Refresh status
+            </Button>
+            <Button
+              danger
+              onClick={() => void cancelDeviceAuth()}
+              loading={deviceAuthActionPending}
+              disabled={
+                !authProjectId ||
+                deviceAuthActionPending ||
+                deviceAuth.state !== "pending"
+              }
+            >
+              Cancel
+            </Button>
+          </Space>
+        ) : null}
+      </Space>
     );
   };
 
@@ -667,9 +661,9 @@ function CodexCredentialsPanelBody({
               View Codex usage
             </Button>
           </Space>
-          {renderDeviceAuthLogin()}
         </Space>
       </div>
+      {renderDeviceAuthLogin()}
       {loading && <Loading />}
       {!loading && error && <Alert type="error" title={error} />}
       {!loading && !error && paymentSource && (
@@ -736,8 +730,6 @@ function CodexCredentialsPanelBody({
         <div
           style={{
             ...optionCardStyle,
-            borderColor: COLORS.BLUE_LLL,
-            background: COLORS.BLUE_LLLL,
           }}
         >
           <Space orientation="vertical" size={6}>
