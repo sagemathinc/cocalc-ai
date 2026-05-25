@@ -596,7 +596,7 @@ export interface AccountRehomeAcceptRequest {
 export interface AccountPersistFileV1 {
   root: "local" | "archive" | "backup";
   relative_path: string;
-  data_base64: string;
+  data: Uint8Array;
   mode?: number;
   mtime_ms?: number;
 }

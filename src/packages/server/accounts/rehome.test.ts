@@ -385,7 +385,7 @@ describe("account rehome", () => {
       {
         root: "local",
         relative_path: "docs-private-state.db",
-        data_base64: Buffer.from("account dkv").toString("base64"),
+        data: Buffer.from("account dkv"),
         mode: 0o600,
       },
     ]);
@@ -726,7 +726,7 @@ describe("account rehome", () => {
           expect.objectContaining({
             root: "local",
             relative_path: "docs-private-state.db",
-            data_base64: Buffer.from("account dkv").toString("base64"),
+            data: Buffer.from("account dkv"),
             mode: 0o600,
           }),
         ],
@@ -1035,7 +1035,7 @@ describe("account rehome", () => {
         {
           root: "local",
           relative_path: "docs-private-state.db",
-          data_base64: Buffer.from("account dkv").toString("base64"),
+          data: Buffer.from("account dkv"),
           mode: 0o600,
         },
       ],
