@@ -4,6 +4,7 @@ import type { Host } from "@cocalc/conat/hub/api/hosts";
 export const useHostSelection = (hosts: Host[]) => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selected, setSelected] = useState<Host | undefined>(undefined);
+  const [initialTab, setInitialTab] = useState<string | undefined>();
 
   useEffect(() => {
     if (!selected) return;
@@ -11,18 +12,23 @@ export const useHostSelection = (hosts: Host[]) => {
     setSelected(updated);
   }, [hosts, selected?.id]);
 
-  const openDetails = (host: Host) => {
+  const openDetails = (host: Host, tab?: string) => {
     setSelected(host);
+    setInitialTab(tab);
     setDrawerOpen(true);
   };
 
-  const closeDetails = () => setDrawerOpen(false);
+  const closeDetails = () => {
+    setDrawerOpen(false);
+    setInitialTab(undefined);
+  };
 
   return {
     drawerOpen,
     setDrawerOpen,
     selected,
     setSelected,
+    initialTab,
     openDetails,
     closeDetails,
   };

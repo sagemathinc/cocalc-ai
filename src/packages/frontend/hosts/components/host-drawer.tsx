@@ -106,6 +106,7 @@ import {
 type HostDrawerViewModel = {
   open: boolean;
   host?: Host;
+  initialTab?: string;
   hostOps?: Record<string, HostLroState>;
   onClose: () => void;
   onCreateSimilar?: (host: Host) => void;
@@ -1435,6 +1436,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   const {
     open,
     host,
+    initialTab,
     hostOps,
     onClose,
     onCreateSimilar,
@@ -1760,11 +1762,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     ? describeSpecChange(latestLogEntry.spec)
     : undefined;
   React.useEffect(() => {
-    setActiveTab("overview");
+    setActiveTab(initialTab ?? "overview");
     setShowProjects(false);
     setExpandedArtifacts({});
     setExpandedComponents({});
-  }, [host?.id]);
+  }, [host?.id, initialTab]);
   if (!host) {
     return (
       <Drawer

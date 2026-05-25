@@ -201,7 +201,7 @@ function HostIdentityCell({
   onDetails,
 }: {
   host: Host;
-  onDetails: (host: Host) => void;
+  onDetails: (host: Host, tab?: string) => void;
 }) {
   return (
     <Space size={2} direction="vertical" style={{ minWidth: 130 }}>
@@ -337,7 +337,7 @@ type HostListViewModel = {
   onRefreshCloudStatus?: (host: Host) => void;
   onUpgrade?: (host: Host) => void;
   onUpgradeFromHub?: (host: Host) => void;
-  onDetails: (host: Host) => void;
+  onDetails: (host: Host, tab?: string) => void;
   onEdit: (host: Host) => void;
   onToggleStar: (host: Host) => void;
   selfHost?: {
