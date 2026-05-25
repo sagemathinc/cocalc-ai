@@ -15,6 +15,7 @@ jest.mock("antd", () => {
     </div>
   );
   const Space = ({ children }: any) => <div>{children}</div>;
+  const Tag: any = ({ children }: any) => <span>{children}</span>;
   const CheckableTag = ({ children, onChange, checked }: any) => (
     <button
       type="button"
@@ -24,10 +25,11 @@ jest.mock("antd", () => {
       {children}
     </button>
   );
+  Tag.CheckableTag = CheckableTag;
   return {
     Card,
     Space,
-    Tag: { CheckableTag },
+    Tag,
   };
 });
 
@@ -100,5 +102,21 @@ describe("UserResult egress entry points", () => {
     expect(screen.getByText("recent-egress-summary:acct-1")).toBeTruthy();
     expect(screen.getByText("top-projects-summary:acct-1")).toBeTruthy();
     expect(screen.getByText("View egress history:acct-1")).toBeTruthy();
+  });
+
+  it("shows the banned tag in the collapsed user header", () => {
+    render(
+      <UserResult
+        first_name="Ada"
+        last_name="Lovelace"
+        email_address="ada@example.com"
+        created={"2026-04-27T00:00:00.000Z" as any}
+        last_active={"2026-04-28T00:00:00.000Z" as any}
+        account_id="acct-1"
+        banned={true}
+      />,
+    );
+
+    expect(screen.getByText("BANNED")).toBeTruthy();
   });
 });

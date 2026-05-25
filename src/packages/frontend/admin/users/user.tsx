@@ -40,6 +40,22 @@ interface State {
   membership: boolean;
 }
 
+function BannedTag() {
+  return (
+    <Tag
+      color="red"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        marginLeft: "8px",
+        verticalAlign: "middle",
+      }}
+    >
+      BANNED
+    </Tag>
+  );
+}
+
 type More =
   | "projects"
   | "purchases"
@@ -146,6 +162,7 @@ export function UserResult({
               "NO Email"
             )}
             {home_bay_id && <Tag>Home bay: {home_bay_id}</Tag>}
+            {banned && <BannedTag />}
           </Space>
         </div>
       }
@@ -158,19 +175,7 @@ export function UserResult({
               style={{ color: "#666" }}
               value={account_id}
             />
-            {banned && (
-              <Tag
-                color="red"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  marginLeft: "8px",
-                  verticalAlign: "middle",
-                }}
-              >
-                BANNED
-              </Tag>
-            )}
+            {banned && <BannedTag />}
           </div>
           <Space style={{ marginTop: "5px" }}>
             {renderMoreLink("impersonate")}
