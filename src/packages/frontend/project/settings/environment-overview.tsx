@@ -366,6 +366,7 @@ export function EnvironmentOverview({
       const detail = (event as CustomEvent<RuntimeImageDocsActionDetail>)
         .detail;
       if (detail?.projectId !== project_id) return;
+      if (detail?.surface != null && detail.surface !== mode) return;
       setRuntimeImageOpen(true);
     }
     window.addEventListener(RUNTIME_IMAGE_DOCS_ACTION_EVENT, handleReveal);

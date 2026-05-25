@@ -161,6 +161,7 @@ export function EnvironmentConfigurationSummary({
       const detail = (event as CustomEvent<ProjectSecretsDocsActionDetail>)
         .detail;
       if (detail?.projectId !== project_id) return;
+      if (detail?.surface != null && detail.surface !== mode) return;
       setShowSecretsModal(true);
     };
     window.addEventListener(PROJECT_SECRETS_DOCS_ACTION_EVENT, handleReveal);

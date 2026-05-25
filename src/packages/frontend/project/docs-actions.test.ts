@@ -23,6 +23,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 }));
 
 import {
+  PROJECT_SECRETS_DOCS_ACTION_EVENT,
   RUNTIME_IMAGE_DOCS_ACTION_EVENT,
   listDocsAppActions,
   revealDocsAction,
@@ -132,9 +133,9 @@ describe("project docs actions", () => {
   });
 
   it("opens the runtime image modal in project settings", async () => {
-    const events: string[] = [];
-    window.addEventListener(RUNTIME_IMAGE_DOCS_ACTION_EVENT, () =>
-      events.push("runtime-image"),
+    const events: any[] = [];
+    window.addEventListener(RUNTIME_IMAGE_DOCS_ACTION_EVENT, (event) =>
+      events.push((event as CustomEvent).detail),
     );
 
     const result = await revealDocsAction({
@@ -142,7 +143,7 @@ describe("project docs actions", () => {
       projectId: "project-1",
     });
 
-    expect(events).toEqual(["runtime-image"]);
+    expect(events).toEqual([{ projectId: "project-1", surface: "flyout" }]);
     expect(mockSetProjectActiveTab).toHaveBeenCalledWith("settings", {
       change_history: false,
       noFocus: true,
@@ -160,6 +161,20 @@ describe("project docs actions", () => {
       panel: "runtime-image",
       tab: "settings",
     });
+  });
+
+  it("targets the project secrets docs event at the settings flyout", async () => {
+    const events: any[] = [];
+    window.addEventListener(PROJECT_SECRETS_DOCS_ACTION_EVENT, (event) =>
+      events.push((event as CustomEvent).detail),
+    );
+
+    await revealDocsAction({
+      actionId: "settings.environment.secrets",
+      projectId: "project-1",
+    });
+
+    expect(events[0]).toEqual({ projectId: "project-1", surface: "flyout" });
   });
 
   it("opens the people settings panel", async () => {
