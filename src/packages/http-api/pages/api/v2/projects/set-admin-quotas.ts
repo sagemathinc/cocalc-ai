@@ -5,10 +5,14 @@ This requires the user to be an admin.
 */
 
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
-import { setQuotas } from "@cocalc/server/conat/api/projects";
+import {
+  setQuotas,
+  PROJECT_DANGEROUS_INTERNAL_AUTH,
+} from "@cocalc/server/conat/api/projects";
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import {
   SetAdminQuotasInputSchema,
   SetAdminQuotasOutputSchema,
@@ -36,6 +40,7 @@ async function get(req) {
   if (!(await userIsInGroup(account_id, "admin"))) {
     throw Error("only admins can set project quotas");
   }
+  await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
 
   const {
     project_id,
@@ -50,6 +55,7 @@ async function get(req) {
 
   await setQuotas({
     account_id,
+    internalAuth: PROJECT_DANGEROUS_INTERNAL_AUTH,
     project_id,
     memory: memory_limit,
     memory_request,

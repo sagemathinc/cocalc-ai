@@ -957,6 +957,8 @@ export interface Projects {
   // for admins only!
   setQuotas: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     project_id: string;
     memory?: number;
     memory_request?: number;

@@ -181,6 +181,7 @@ import {
   requireDangerousProjectMutationAuth,
 } from "./project-dangerous-auth";
 import { resolveHostConnection } from "./hosts";
+export { PROJECT_DANGEROUS_INTERNAL_AUTH };
 import {
   assertCanStartUsingRuntimeSponsor,
   loadProjectRuntimeSponsor,
@@ -889,6 +890,9 @@ function normalizeLogTail(lines?: number): number {
 
 export async function setQuotas(opts: {
   account_id: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  internalAuth?: typeof PROJECT_DANGEROUS_INTERNAL_AUTH;
   project_id: string;
   memory?: number;
   memory_request?: number;
@@ -903,10 +907,20 @@ export async function setQuotas(opts: {
   if (!(await isAdmin(opts.account_id))) {
     throw Error("Must be an admin to do admin search.");
   }
+  await requireDangerousProjectMutationAuth({
+    account_id: opts.account_id,
+    browser_id: opts.browser_id,
+    session_hash: opts.session_hash,
+    internalAuth: opts.internalAuth,
+  });
   const database = db();
+  const { browser_id, session_hash, internalAuth, ...settings } = opts;
+  void browser_id;
+  void session_hash;
+  void internalAuth;
   await callback2(database.set_project_settings, {
     project_id: opts.project_id,
-    settings: opts,
+    settings,
   });
   const project = await database.projectControl?.(opts.project_id);
   // @ts-ignore

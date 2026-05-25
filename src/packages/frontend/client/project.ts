@@ -188,6 +188,7 @@ export class ProjectClient {
     await this.client.conat_client.hub.projects.setQuotas({
       ...x,
       project_id: opts.project_id,
+      browser_id: this.client.browser_id,
     });
   };
 

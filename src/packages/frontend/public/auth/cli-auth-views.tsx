@@ -11,6 +11,10 @@ import {
   signOutAuthSession,
   type SecondFactorMethod,
 } from "@cocalc/frontend/auth/api";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { approveCliElevationWithPasskey } from "@cocalc/frontend/auth/passkeys";
 import {
   getSecondFactorPlaceholder,
@@ -242,6 +246,9 @@ export function PublicCliLoginApprovalView({
   const [approved, setApproved] = useState(false);
   const [error, setError] = useState("");
   const [signingOut, setSigningOut] = useState(false);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -270,11 +277,13 @@ export function PublicCliLoginApprovalView({
     setApproving(true);
     setError("");
     try {
-      await postAuthApi({
-        endpoint: "auth/cli/login/approve",
-        body: { challenge_id: challengeId },
+      await runFreshAuthAction(async () => {
+        await postAuthApi({
+          endpoint: "auth/cli/login/approve",
+          body: { challenge_id: challengeId },
+        });
+        setApproved(true);
       });
-      setApproved(true);
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -347,6 +356,7 @@ export function PublicCliLoginApprovalView({
           {approving ? "Approving..." : "Approve CLI Login"}
         </ActionButton>
       ) : undefined}
+      <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
 }

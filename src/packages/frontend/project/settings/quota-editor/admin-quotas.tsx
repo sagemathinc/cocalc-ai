@@ -9,6 +9,10 @@ import { useEffect, useState } from "react";
 import { useIntl } from "react-intl";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { CSS } from "@cocalc/frontend/app-framework";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { publishProjectDetailInvalidation } from "@cocalc/frontend/project/use-project-field";
@@ -36,6 +40,13 @@ export default function AdminQuotas({ project_id, style }: Props) {
   const [quotaState, setQuotaState] = useState<Partial<QuotaParams> | null>(
     null,
   );
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) =>
+      alert_message({
+        type: "error",
+        message: `${err}`,
+      }),
+  });
 
   function setQuotaStateToProjectSettings() {
     if (projectSettings == null) return;
@@ -60,16 +71,19 @@ export default function AdminQuotas({ project_id, style }: Props) {
   async function handleSave(): Promise<void> {
     if (quotaState == null) return;
     try {
-      await webapp_client.project_client.set_quotas({
-        project_id: project_id,
-        cores: quotaState.cores,
-        cpu_shares: Math.round((quotaState.cpu_shares ?? 0) * 1024),
-        disk_quota: quotaState.disk_quota,
-        memory: quotaState.memory,
-        memory_request: quotaState.memory_request,
-        network: quotaState.network ? 1 : 0,
-        member_host: quotaState.member_host ? 1 : 0,
+      const completed = await runFreshAuthAction(async () => {
+        await webapp_client.project_client.set_quotas({
+          project_id: project_id,
+          cores: quotaState.cores,
+          cpu_shares: Math.round((quotaState.cpu_shares ?? 0) * 1024),
+          disk_quota: quotaState.disk_quota,
+          memory: quotaState.memory,
+          memory_request: quotaState.memory_request,
+          network: quotaState.network ? 1 : 0,
+          member_host: quotaState.member_host ? 1 : 0,
+        });
       });
+      if (!completed) return;
       publishProjectDetailInvalidation({
         project_id,
         fields: ["run_quota", "settings"],
@@ -118,67 +132,70 @@ export default function AdminQuotas({ project_id, style }: Props) {
   }
 
   return (
-    <Card
-      style={style}
-      title={
-        <>
-          <h4>
-            <Icon name="user-plus" /> Admin Quota Editor
-          </h4>
-          <span style={{ margin: "0 15px", float: "right" }}>
-            {editing && (
-              <>
-                <Button style={{ marginRight: "8px" }} onClick={handleCancel}>
-                  {intl.formatMessage(labels.cancel)}
-                </Button>
-                <Popconfirm
-                  disabled={!isModified()}
-                  onConfirm={handleSave}
-                  onCancel={handleCancel}
-                  title="Change Quotas?"
-                  description={`This will modify the base free quotas and restart the ${projectLabelLower}.`}
-                >
-                  <Button type="primary" disabled={!isModified()}>
-                    <Icon name="save" /> Save
+    <>
+      <Card
+        style={style}
+        title={
+          <>
+            <h4>
+              <Icon name="user-plus" /> Admin Quota Editor
+            </h4>
+            <span style={{ margin: "0 15px", float: "right" }}>
+              {editing && (
+                <>
+                  <Button style={{ marginRight: "8px" }} onClick={handleCancel}>
+                    {intl.formatMessage(labels.cancel)}
                   </Button>
-                </Popconfirm>
-              </>
-            )}
-            {!editing && (
-              <Button onClick={() => setEditing(true)} type="text">
-                <Icon name="pencil" /> Edit
-              </Button>
-            )}
-          </span>
-        </>
-      }
-      type="inner"
-      extra={
-        <Popover
-          content={
-            <div style={{ maxWidth: "400px" }}>
-              Use your admin privileges to set the <b>base free quotas</b> for
-              this {projectLabelLower} to anything you want. Licenses, user
-              upgrades, etc., are combined with these base free quotas.
-            </div>
-          }
-          trigger={["click"]}
-          placement="rightTop"
-          title="Admin Quota Editor Information"
-        >
-          <Icon name="question-circle" />
-        </Popover>
-      }
-    >
-      {editing &&
-        PROJECT_UPGRADES.field_order.map((name) => (
-          <QuotaRow
-            key={name}
-            name={name as any}
-            quotaState={quotaState}
-            setQuotaState={setQuotaState}
-          />
-        ))}
-    </Card>
+                  <Popconfirm
+                    disabled={!isModified()}
+                    onConfirm={handleSave}
+                    onCancel={handleCancel}
+                    title="Change Quotas?"
+                    description={`This will modify the base free quotas and restart the ${projectLabelLower}.`}
+                  >
+                    <Button type="primary" disabled={!isModified()}>
+                      <Icon name="save" /> Save
+                    </Button>
+                  </Popconfirm>
+                </>
+              )}
+              {!editing && (
+                <Button onClick={() => setEditing(true)} type="text">
+                  <Icon name="pencil" /> Edit
+                </Button>
+              )}
+            </span>
+          </>
+        }
+        type="inner"
+        extra={
+          <Popover
+            content={
+              <div style={{ maxWidth: "400px" }}>
+                Use your admin privileges to set the <b>base free quotas</b> for
+                this {projectLabelLower} to anything you want. Licenses, user
+                upgrades, etc., are combined with these base free quotas.
+              </div>
+            }
+            trigger={["click"]}
+            placement="rightTop"
+            title="Admin Quota Editor Information"
+          >
+            <Icon name="question-circle" />
+          </Popover>
+        }
+      >
+        {editing &&
+          PROJECT_UPGRADES.field_order.map((name) => (
+            <QuotaRow
+              key={name}
+              name={name as any}
+              quotaState={quotaState}
+              setQuotaState={setQuotaState}
+            />
+          ))}
+      </Card>
+      <FreshAuthModal {...freshAuthModalProps} />
+    </>
   );
 }

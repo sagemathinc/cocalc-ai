@@ -7,6 +7,7 @@ import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import { approveCliLoginChallenge } from "@cocalc/server/auth/cli-auth";
+import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 
 export default async function cliLoginApprove(req, res) {
   try {
@@ -14,6 +15,7 @@ export default async function cliLoginApprove(req, res) {
     if (!account_id || !getRememberMeHash(req)) {
       throw new Error("must be signed in");
     }
+    await requireFreshAuth({ req, account_id });
     const { challenge_id } = getParams(req);
     res.json(
       await approveCliLoginChallenge({
@@ -27,6 +29,7 @@ export default async function cliLoginApprove(req, res) {
         err instanceof Error
           ? err.message
           : "Problem approving CLI login challenge.",
+      ...((err as any)?.code != null ? { code: (err as any).code } : {}),
     });
   }
 }

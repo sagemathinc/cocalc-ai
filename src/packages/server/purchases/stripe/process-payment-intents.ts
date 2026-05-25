@@ -38,6 +38,43 @@ import type { MembershipPackageProduct } from "@cocalc/util/membership-package-p
 
 const logger = getLogger("purchases:stripe:process-payment-intents");
 
+function stripeCustomerId(customer): string | undefined {
+  if (typeof customer === "string") {
+    return customer;
+  }
+  return customer?.id;
+}
+
+export function assertPaymentIntentAccountBinding({
+  paymentIntent,
+  account_id,
+  expected_customer_id,
+}: {
+  paymentIntent;
+  account_id: string;
+  expected_customer_id: string;
+}) {
+  const metadataAccountId = `${paymentIntent.metadata?.account_id ?? ""}`;
+  if (metadataAccountId && metadataAccountId !== account_id) {
+    throw Error("payment intent account metadata does not match payer");
+  }
+  if (stripeCustomerId(paymentIntent.customer) !== expected_customer_id) {
+    throw Error("payment intent customer does not match payer");
+  }
+}
+
+export function assertInvoiceAccountBinding({
+  invoice,
+  expected_customer_id,
+}: {
+  invoice;
+  expected_customer_id: string;
+}) {
+  if (stripeCustomerId(invoice.customer) !== expected_customer_id) {
+    throw Error("payment invoice customer does not match payer");
+  }
+}
+
 function getMembershipPackageProductFromMetadata(
   metadata?: Record<string, string>,
 ): MembershipPackageProduct {
@@ -188,11 +225,19 @@ export const processPaymentIntent = reuseInFlight(
     }
     let account_id = paymentIntent.metadata.account_id;
     logger.debug("processPaymentIntent", { id: paymentIntent.id, account_id });
+    const paymentIntentCustomerId = stripeCustomerId(paymentIntent.customer);
+    let expectedCustomerId = paymentIntentCustomerId;
     if (!account_id) {
       // this should never happen, but in case it does, we lookup the account_id
       // in our database, based on the customer id.
+      if (!paymentIntentCustomerId) {
+        logger.debug("processPaymentIntent: missing stripe customer", {
+          payment_intent_id: paymentIntent.id,
+        });
+        return;
+      }
       account_id = await getAccountIdFromStripeCustomerId(
-        paymentIntent.customer,
+        paymentIntentCustomerId,
       );
       if (!account_id) {
         // no possible way to process this.
@@ -215,6 +260,19 @@ customer.  So we don't know what to do with this.  Please manually investigate.
     }
 
     const stripe = await getConn();
+    expectedCustomerId = await getStripeCustomerId({
+      account_id,
+      create: false,
+    });
+    if (!expectedCustomerId) {
+      throw Error("payer does not have a Stripe customer");
+    }
+    assertPaymentIntentAccountBinding({
+      paymentIntent,
+      account_id,
+      expected_customer_id: expectedCustomerId,
+    });
+
     // IMPORTANT: There is just no way in general to know directly from the payment intent
     // and invoice exactly what we were trying to charge the customer!  The problem is that
     // the invoice (and line items) in some cases (e.g., stripe checkout) is in a non-US currency.
@@ -320,6 +378,10 @@ ${await support()}`;
     }
 
     const invoice = await stripe.invoices.retrieve(paymentIntent.invoice);
+    assertInvoiceAccountBinding({
+      invoice,
+      expected_customer_id: expectedCustomerId,
+    });
 
     // credit the account.  If the account was already credited for this (e.g.,
     // by another process doing this at the same time), that should be detected

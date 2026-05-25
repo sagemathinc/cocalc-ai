@@ -6,7 +6,11 @@
 import { uuid } from "@cocalc/util/misc";
 import { before, after, getPool } from "@cocalc/server/test";
 import { createTestAccount } from "@cocalc/server/purchases/test-data";
-import { markStatementPaidByPurchase } from "./process-payment-intents";
+import {
+  assertInvoiceAccountBinding,
+  assertPaymentIntentAccountBinding,
+  markStatementPaidByPurchase,
+} from "./process-payment-intents";
 
 beforeAll(async () => {
   await before({ noConat: true });
@@ -43,6 +47,60 @@ async function getPaidPurchaseId(statement_id: number) {
 }
 
 describe("Stripe statement payment-intent fulfillment checks", () => {
+  it("rejects payment intents whose metadata account does not match the payer", () => {
+    expect(() =>
+      assertPaymentIntentAccountBinding({
+        paymentIntent: {
+          customer: "cus_attacker",
+          metadata: { account_id: "victim" },
+        },
+        account_id: "attacker",
+        expected_customer_id: "cus_attacker",
+      }),
+    ).toThrow(/account metadata does not match payer/);
+  });
+
+  it("rejects payment intents whose Stripe customer does not match the payer", () => {
+    expect(() =>
+      assertPaymentIntentAccountBinding({
+        paymentIntent: {
+          customer: "cus_victim",
+          metadata: { account_id: "attacker" },
+        },
+        account_id: "attacker",
+        expected_customer_id: "cus_attacker",
+      }),
+    ).toThrow(/customer does not match payer/);
+  });
+
+  it("rejects invoices whose Stripe customer does not match the payer", () => {
+    expect(() =>
+      assertInvoiceAccountBinding({
+        invoice: { customer: "cus_victim" },
+        expected_customer_id: "cus_attacker",
+      }),
+    ).toThrow(/invoice customer does not match payer/);
+  });
+
+  it("accepts payment intent and invoice bindings for the payer", () => {
+    expect(() =>
+      assertPaymentIntentAccountBinding({
+        paymentIntent: {
+          customer: { id: "cus_payer" },
+          metadata: { account_id: "payer" },
+        },
+        account_id: "payer",
+        expected_customer_id: "cus_payer",
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertInvoiceAccountBinding({
+        invoice: { customer: { id: "cus_payer" } },
+        expected_customer_id: "cus_payer",
+      }),
+    ).not.toThrow();
+  });
+
   it("does not let one account mark another account's statement paid", async () => {
     const owner = uuid();
     const attacker = uuid();
