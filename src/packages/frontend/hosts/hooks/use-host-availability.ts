@@ -35,9 +35,41 @@ export const useHostAvailability = (
   hostId?: string,
   options: UseHostAvailabilityOptions = {},
 ) => {
-  const { days = 90, enabled = true } = options;
+  const { days = 30, enabled = true } = options;
   const [availability, setAvailability] = useState<HostAvailabilityReport>();
   const [loadingAvailability, setLoadingAvailability] = useState(false);
+  const loadAvailability = async (force = false) => {
+    if (!hostId || !enabled) {
+      setAvailability(undefined);
+      return;
+    }
+    const key = `${hostId}:${days}`;
+    const cached = cache.get(key);
+    if (cached && !force) {
+      setAvailability(cached);
+    }
+    setLoadingAvailability(true);
+    try {
+      if (force) {
+        cache.delete(key);
+        inflight.delete(key);
+      }
+      const report =
+        inflight.get(key) ??
+        hub.hosts.getHostAvailability({ id: hostId, days }).finally(() => {
+          inflight.delete(key);
+        });
+      inflight.set(key, report);
+      const resolved = await report;
+      cache.set(key, resolved);
+      setAvailability(resolved);
+    } catch (err) {
+      setAvailability(undefined);
+      console.warn("getHostAvailability failed", err);
+    } finally {
+      setLoadingAvailability(false);
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -76,5 +108,9 @@ export const useHostAvailability = (
     };
   }, [hostId, enabled, days, hub.hosts]);
 
-  return { availability, loadingAvailability };
+  return {
+    availability,
+    loadingAvailability,
+    refreshAvailability: () => loadAvailability(true),
+  };
 };

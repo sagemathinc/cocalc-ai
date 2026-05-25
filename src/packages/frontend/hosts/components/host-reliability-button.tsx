@@ -41,7 +41,7 @@ export function HostReliabilityButton({
     host.id,
     {
       enabled: true,
-      days: 90,
+      days: 30,
     },
   );
   const [open, setOpen] = React.useState(false);

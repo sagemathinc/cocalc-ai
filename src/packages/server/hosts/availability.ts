@@ -5,6 +5,7 @@
 
 import { randomUUID } from "node:crypto";
 
+import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import type {
   HostAvailabilityCategory,
@@ -14,12 +15,16 @@ import type {
 } from "@cocalc/conat/hub/api/hosts";
 
 const TABLE = "project_host_availability_events";
-const DEFAULT_WINDOW_DAYS = 90;
+const DEFAULT_WINDOW_DAYS = 30;
 const MAX_WINDOW_DAYS = 370;
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_MAINTENANCE_INTERVAL_MS = 60 * 1000;
+
+const logger = getLogger("server:hosts:availability");
 
 let schemaReady: Promise<void> | undefined;
+let maintenanceStarted = false;
 
 type HostAvailabilityObservation = {
   host_id: string;
@@ -331,6 +336,42 @@ export async function recordCurrentHostAvailability(
   if (rows[0]) {
     await recordHostAvailabilityFromSnapshot(rows[0], source);
   }
+}
+
+export async function reconcileCurrentHostAvailability({
+  limit = 10_000,
+}: { limit?: number } = {}): Promise<number> {
+  await ensureHostAvailabilitySchema();
+  const { rows } = await pool().query<ProjectHostAvailabilitySnapshot>(
+    `SELECT id, status, deleted, last_seen, metadata
+       FROM project_hosts
+      WHERE deleted IS NULL
+      ORDER BY updated DESC
+      LIMIT $1`,
+    [Math.max(1, Math.floor(limit))],
+  );
+  for (const row of rows) {
+    await recordHostAvailabilityFromSnapshot(row, "availability_maintenance");
+  }
+  return rows.length;
+}
+
+export function startHostAvailabilityMaintenance({
+  interval_ms = DEFAULT_MAINTENANCE_INTERVAL_MS,
+}: { interval_ms?: number } = {}): void {
+  if (maintenanceStarted) return;
+  maintenanceStarted = true;
+  const run = async () => {
+    try {
+      const count = await reconcileCurrentHostAvailability();
+      logger.debug("host availability maintenance complete", { count });
+    } catch (err) {
+      logger.warn("host availability maintenance failed", { err: `${err}` });
+    }
+  };
+  void run();
+  const timer = setInterval(() => void run(), interval_ms);
+  timer.unref?.();
 }
 
 function clampWindowDays(days?: number): number {
