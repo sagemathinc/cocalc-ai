@@ -38,6 +38,7 @@ import { startMembershipSideEffectsMaintenance } from "@cocalc/server/membership
 import { startSiteLicenseAffiliationReleaseMaintenance } from "@cocalc/server/membership/site-license-affiliation-maintenance";
 import { configureHubServiceAdmissionDenialRecorder } from "./api/service-admission-denials";
 import { startConatAdmissionSettingsRefresh } from "./admission-settings";
+import { startHostAvailabilityMaintenance } from "@cocalc/server/hosts/availability";
 
 export { loadConatConfiguration };
 
@@ -96,6 +97,7 @@ export async function initConatApi() {
   startMoveLroWorker();
   startBackgroundAutoGrowMaintenance();
   startDedicatedHostSpendMaintenance();
+  startHostAvailabilityMaintenance();
   startRootfsPublishLroWorker();
   startRootfsReleaseGcMaintenance();
   startRootfsScanMaintenance();

@@ -588,14 +588,11 @@ export const useHostsPageViewModel = () => {
     enabled: drawerOpen,
     limit: 50,
   });
-  const { availability, loadingAvailability } = useHostAvailability(
-    hub,
-    selected?.id,
-    {
+  const { availability, loadingAvailability, refreshAvailability } =
+    useHostAvailability(hub, selected?.id, {
       enabled: drawerOpen,
-      days: 90,
-    },
-  );
+      days: 30,
+    });
   const runtimeLogViewer = useHostRuntimeLog(hub, {
     hostId: selected?.id,
     enabled: drawerOpen,
@@ -1759,6 +1756,7 @@ export const useHostsPageViewModel = () => {
     loadingLog,
     availability,
     loadingAvailability,
+    refreshAvailability,
     softwareVersions: {
       ...softwareVersions,
       configuredCatalog: runtimeVersionCatalog.configured,

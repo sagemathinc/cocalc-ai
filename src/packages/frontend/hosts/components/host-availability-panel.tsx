@@ -1,16 +1,46 @@
-import { Alert, Card, Popover, Space, Tag, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Input,
+  Popover,
+  Select,
+  Space,
+  Switch,
+  Tag,
+  Typography,
+  message,
+} from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import type {
+  HostAvailabilityCategory,
   HostAvailabilityDay,
   HostAvailabilityEvent,
   HostAvailabilityReport,
 } from "@cocalc/conat/hub/api/hosts";
 import { COLORS } from "@cocalc/util/theme";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 type Props = {
   availability?: HostAvailabilityReport;
   loading?: boolean;
+  canAnnotate?: boolean;
+  onAnnotated?: () => void | Promise<void>;
 };
+
+const CATEGORY_OPTIONS: { value: HostAvailabilityCategory; label: string }[] = [
+  { value: "spot_interruption", label: "Spot interruption" },
+  { value: "provider_repair", label: "Provider repair" },
+  { value: "provider_offline", label: "Provider offline" },
+  { value: "host_reboot", label: "Host reboot" },
+  { value: "maintenance", label: "Maintenance" },
+  { value: "resize_disk", label: "Disk resize" },
+  { value: "deploy", label: "Deploy" },
+  { value: "overload", label: "Overload" },
+  { value: "user_stopped", label: "User stopped" },
+  { value: "host_stale", label: "Heartbeat stale" },
+  { value: "unknown", label: "Unknown" },
+];
 
 function formatDuration(ms?: number): string {
   const value = Math.max(0, Math.floor(Number(ms) || 0));
@@ -93,9 +123,98 @@ function stateTag(report: HostAvailabilityReport): React.JSX.Element {
   return <Tag color={color}>{report.summary.current_state}</Tag>;
 }
 
+function EventAnnotationEditor({
+  event,
+  hostId,
+  onAnnotated,
+}: {
+  event: HostAvailabilityEvent;
+  hostId: string;
+  onAnnotated?: () => void | Promise<void>;
+}): React.JSX.Element {
+  const [summary, setSummary] = React.useState(event.summary ?? "");
+  const [note, setNote] = React.useState(event.admin_note ?? "");
+  const [planned, setPlanned] = React.useState(event.planned);
+  const [category, setCategory] = React.useState<HostAvailabilityCategory>(
+    event.category,
+  );
+  const [saving, setSaving] = React.useState(false);
+  return (
+    <Card size="small" type="inner">
+      <Space orientation="vertical" style={{ width: "100%" }} size="small">
+        <Space wrap>
+          <Tag>{new Date(event.started_at).toLocaleString()}</Tag>
+          {event.ended_at ? (
+            <Tag>{new Date(event.ended_at).toLocaleString()}</Tag>
+          ) : (
+            <Tag color="red">open</Tag>
+          )}
+          <Switch
+            checked={planned}
+            checkedChildren="planned"
+            unCheckedChildren="unplanned"
+            onChange={setPlanned}
+          />
+          <Select
+            size="small"
+            style={{ minWidth: 170 }}
+            value={category}
+            options={CATEGORY_OPTIONS}
+            onChange={setCategory}
+          />
+        </Space>
+        <Input
+          value={summary}
+          placeholder="Short outage summary"
+          onChange={(e) => setSummary(e.target.value)}
+        />
+        <Input.TextArea
+          value={note}
+          rows={2}
+          placeholder="Admin note explaining what happened"
+          onChange={(e) => setNote(e.target.value)}
+        />
+        <Space style={{ justifyContent: "flex-end", width: "100%" }}>
+          <Button
+            size="small"
+            type="primary"
+            loading={saving}
+            onClick={async () => {
+              setSaving(true);
+              try {
+                await webapp_client.conat_client.hub.hosts.annotateHostAvailabilityEvent(
+                  {
+                    id: hostId,
+                    event_id: event.id,
+                    summary: summary.trim() || null,
+                    admin_note: note.trim() || null,
+                    admin_note_visibility: "private",
+                    planned,
+                    category,
+                  },
+                );
+                await onAnnotated?.();
+                message.success("Availability annotation saved");
+              } catch (err) {
+                message.error(`${err}`);
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            Save annotation
+          </Button>
+        </Space>
+      </Space>
+    </Card>
+  );
+}
+
 export function HostAvailabilityPanel({
   availability,
   loading,
+  canAnnotate,
+  onAnnotated,
 }: Props): React.JSX.Element {
   if (loading && !availability) {
     return (
@@ -117,6 +236,10 @@ export function HostAvailabilityPanel({
   }
   const currentEvent = availability.summary.current_event;
   const currentIsOnline = availability.summary.current_state === "online";
+  const annotatableEvents = availability.events
+    .filter((event) => event.state !== "online")
+    .slice(-5)
+    .reverse();
   return (
     <Space orientation="vertical" style={{ width: "100%" }} size="middle">
       {!currentIsOnline && (
@@ -201,6 +324,24 @@ export function HostAvailabilityPanel({
           </Typography.Text>
         </Space>
       </Card>
+      {canAnnotate && annotatableEvents.length > 0 && (
+        <Card size="small" title="Admin annotations">
+          <Space orientation="vertical" style={{ width: "100%" }} size="small">
+            <Typography.Text type="secondary">
+              Add operational context after an outage or mark a downtime window
+              as planned.
+            </Typography.Text>
+            {annotatableEvents.map((event) => (
+              <EventAnnotationEditor
+                key={event.id}
+                event={event}
+                hostId={availability.host_id}
+                onAnnotated={onAnnotated}
+              />
+            ))}
+          </Space>
+        </Card>
+      )}
     </Space>
   );
 }

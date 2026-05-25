@@ -48,6 +48,7 @@ type UseHostDrawerViewModelArgs = {
   loadingLog: boolean;
   availability?: HostAvailabilityReport;
   loadingAvailability?: boolean;
+  refreshAvailability?: () => void | Promise<void>;
   softwareVersions?: {
     loading: boolean;
     configured: HostSoftwareMap;
@@ -203,6 +204,7 @@ export const useHostDrawerViewModel = ({
   loadingLog,
   availability,
   loadingAvailability,
+  refreshAvailability,
   softwareVersions,
   runtimeDeployments,
   runtimeLogViewer,
@@ -247,6 +249,7 @@ export const useHostDrawerViewModel = ({
     loadingLog,
     availability,
     loadingAvailability,
+    refreshAvailability,
     softwareVersions,
     runtimeDeployments,
     runtimeLogViewer,

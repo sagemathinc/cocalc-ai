@@ -127,6 +127,7 @@ type HostDrawerViewModel = {
   loadingLog: boolean;
   availability?: HostAvailabilityReport;
   loadingAvailability?: boolean;
+  refreshAvailability?: () => void | Promise<void>;
   softwareVersions?: {
     loading: boolean;
     configured: Partial<
@@ -1448,6 +1449,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     loadingLog,
     availability,
     loadingAvailability,
+    refreshAvailability,
     softwareVersions,
     runtimeDeployments,
     runtimeLogViewer,
@@ -2562,6 +2564,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
         <HostAvailabilityPanel
           availability={availability}
           loading={loadingAvailability}
+          canAnnotate={host.access_role === "admin"}
+          onAnnotated={refreshAvailability}
         />
       ),
     },
