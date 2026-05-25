@@ -21,8 +21,10 @@ Output is written beside the script on each project start:
 ~/.local/share/cocalc/startup.err
 ```
 
-Keep the script fast. If it starts long-running services, run them in the
-background and redirect their output, for example:
+The script is started asynchronously and does not block the project from
+becoming available. If it starts long-running services and you want later
+startup commands to run, put those services in the background and redirect their
+output, for example:
 
 ```sh
 python -m http.server 8000 > ~/.local/share/cocalc/http.log 2>&1 &

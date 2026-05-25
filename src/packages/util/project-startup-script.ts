@@ -18,8 +18,9 @@ export const PROJECT_STARTUP_SCRIPT_TEMPLATE = `#!/usr/bin/env bash
 #   ~/.local/share/cocalc/startup.log
 #   ~/.local/share/cocalc/startup.err
 #
-# Keep startup fast. If you start a long-running process, run it in the
-# background and redirect its output.
+# Startup does not block the project from becoming available. If you start a
+# long-running service and want later commands in this script to run, put the
+# service in the background and redirect its output.
 #
 # Examples:
 #   export MY_SERVICE_PORT=8000

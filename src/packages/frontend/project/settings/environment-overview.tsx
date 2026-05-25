@@ -20,11 +20,13 @@ import {
   managedRootfsCatalogUrl,
   useRootfsImages,
 } from "@cocalc/frontend/rootfs/manifest";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { PROJECT_CAPABILITY_SPECS } from "@cocalc/util/project-capabilities";
 import {
   PROJECT_STARTUP_ERR_PATH,
   PROJECT_STARTUP_LOG_PATH,
   PROJECT_STARTUP_SCRIPT_PATH,
+  PROJECT_STARTUP_SCRIPT_TEMPLATE,
 } from "@cocalc/util/project-startup-script";
 import { COLORS } from "@cocalc/util/theme";
 
@@ -340,8 +342,41 @@ function EnvironmentStatusHeader({
 }
 
 function StartupScriptCard({ project_id }: { project_id: string }) {
+  const startupScriptDirectory = PROJECT_STARTUP_SCRIPT_PATH.split("/")
+    .slice(0, -1)
+    .join("/");
+
   function openFile(path: string): void {
     redux.getProjectActions(project_id).open_file({ path });
+  }
+
+  async function writeStartupTemplate(): Promise<void> {
+    await webapp_client.project_client.exec({
+      project_id,
+      command: "mkdir",
+      args: ["-p", startupScriptDirectory],
+      err_on_exit: true,
+    });
+    await webapp_client.project_client.write_text_file({
+      project_id,
+      path: PROJECT_STARTUP_SCRIPT_PATH,
+      content: PROJECT_STARTUP_SCRIPT_TEMPLATE,
+    });
+  }
+
+  async function openStartupScript(): Promise<void> {
+    try {
+      const content = await webapp_client.project_client.read_text_file({
+        project_id,
+        path: PROJECT_STARTUP_SCRIPT_PATH,
+      });
+      if (content.trim() === "") {
+        await writeStartupTemplate();
+      }
+    } catch {
+      await writeStartupTemplate();
+    }
+    openFile(PROJECT_STARTUP_SCRIPT_PATH);
   }
 
   return (
@@ -387,7 +422,7 @@ function StartupScriptCard({ project_id }: { project_id: string }) {
           <Button
             size="small"
             type="primary"
-            onClick={() => openFile(PROJECT_STARTUP_SCRIPT_PATH)}
+            onClick={() => void openStartupScript()}
           >
             Open Startup Script
           </Button>
