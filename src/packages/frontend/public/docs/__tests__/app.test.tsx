@@ -6,7 +6,7 @@ import { docsPath, getDocsEntry, searchDocsEntries } from "@cocalc/docs";
 import PublicDocsApp from "../app";
 import { getDocsRouteFromPath } from "../routes";
 
-jest.mock("@cocalc/frontend/markdown/component", () => ({
+jest.mock("@cocalc/frontend/editors/slate/static-markdown", () => ({
   __esModule: true,
   default: ({ value }: { value: string }) => <div>{value}</div>,
 }));

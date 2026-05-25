@@ -195,9 +195,15 @@ project or one notebook needs an isolated Python environment.
 
 ## Create a Python kernel with uv
 
-Open a terminal in the project and create a virtual environment. This example
-uses \`uv\`, installs \`ipykernel\`, then registers the environment as a Jupyter
-kernel.
+Open a terminal in the project and install \`uv\` if it is not already
+available:
+
+~~~sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
+~~~
+
+Then create a virtual environment, install \`ipykernel\`, and register the
+environment as a Jupyter kernel:
 
 ~~~sh
 mkdir -p ~/.venvs

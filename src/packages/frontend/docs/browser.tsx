@@ -28,7 +28,7 @@ import {
   type DocsAction,
   type DocsEntry,
 } from "@cocalc/docs";
-import Markdown from "@cocalc/frontend/markdown/component";
+import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { COLORS } from "@cocalc/util/theme";
 
 const { Paragraph, Text, Title } = Typography;
@@ -175,7 +175,7 @@ export function DocsFontSizeFrame({
 }
 
 export function DocsMarkdown({ value }: { value: string }) {
-  return <Markdown value={value} />;
+  return <StaticMarkdown value={value} />;
 }
 
 function DocsEntryImage({
