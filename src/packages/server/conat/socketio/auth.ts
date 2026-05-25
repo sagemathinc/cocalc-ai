@@ -179,9 +179,29 @@ async function assertAccountSecurityStateAllowsToken({
   account_id: string;
   issued_at_s?: number;
 }): Promise<void> {
+  if (
+    !(await accountSecurityStateAllowsAccount({
+      account_id,
+      issued_at_s,
+    }))
+  ) {
+    if (isAccountBannedCached(account_id)) {
+      throw Error("account is banned");
+    }
+    throw Error("session revoked");
+  }
+}
+
+async function accountSecurityStateAllowsAccount({
+  account_id,
+  issued_at_s,
+}: {
+  account_id: string;
+  issued_at_s?: number;
+}): Promise<boolean> {
   await ensureAccountSecurityStateReady();
   if (isAccountBannedCached(account_id)) {
-    throw Error("account is banned");
+    return false;
   }
   const revokedBeforeMs = getAccountRevokedBeforeCached(account_id);
   if (
@@ -189,8 +209,9 @@ async function assertAccountSecurityStateAllowsToken({
     Number.isFinite(issued_at_s) &&
     Math.floor(issued_at_s as number) * 1000 <= revokedBeforeMs
   ) {
-    throw Error("session revoked");
+    return false;
   }
+  return true;
 }
 
 export async function getUser(
@@ -399,6 +420,17 @@ export async function isAllowed({
     return false;
   }
   const userType = getCoCalcUserType(user);
+  if (userType === "account") {
+    const account_id = getCoCalcUserId(user);
+    if (
+      !(await accountSecurityStateAllowsAccount({
+        account_id,
+        issued_at_s: (user as CoCalcUserWithAgent).auth_iat_s,
+      }))
+    ) {
+      return false;
+    }
+  }
   const agentUser = user as CoCalcUserWithAgent;
   if (agentUser.auth_actor === "agent") {
     const userId = getCoCalcUserId(agentUser);

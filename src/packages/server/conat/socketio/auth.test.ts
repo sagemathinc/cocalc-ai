@@ -255,6 +255,55 @@ describe("project-host bearer account auth", () => {
   });
 });
 
+describe("account security-state websocket authorization", () => {
+  it("denies already-connected banned account users", async () => {
+    isAccountBannedCachedMock.mockReturnValue(true);
+
+    await expect(
+      isAllowed({
+        user: { account_id },
+        type: "pub",
+        subject: `account.${account_id}.status`,
+      }),
+    ).resolves.toBe(false);
+    expect(ensureAccountSecurityStateReadyMock).toHaveBeenCalled();
+  });
+
+  it("denies already-connected banned API key users before common subjects", async () => {
+    isAccountBannedCachedMock.mockReturnValue(true);
+
+    await expect(
+      isAllowed({
+        user: {
+          account_id,
+          auth_method: "api_key" as const,
+          api_key_id: 1,
+          key_id: "key-1",
+        },
+        type: "pub",
+        subject: "_INBOX.reply",
+      }),
+    ).resolves.toBe(false);
+  });
+
+  it("denies already-connected revoked agent users before common subjects", async () => {
+    getAccountRevokedBeforeCachedMock.mockReturnValue(100_000);
+
+    await expect(
+      isAllowed({
+        user: {
+          account_id,
+          auth_actor: "agent",
+          auth_iat_s: 100,
+          auth_scopes: ["browser_session"],
+        } as any,
+        type: "pub",
+        subject: "_INBOX.reply",
+      }),
+    ).resolves.toBe(false);
+  });
+});
+
 describe("test isAllowed for common subjects for projects and accounts", () => {
   it("project user can't do random things", async () => {
     for (const subject of ["*", "public", "global", ">", "hub", "test"]) {
