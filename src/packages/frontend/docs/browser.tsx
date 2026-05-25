@@ -212,9 +212,9 @@ function DocsEntryImage({
           aspectRatio: isIcon ? "1 / 1" : "4 / 3",
           border: `1px solid ${COLORS.GRAY_LL}`,
           borderRadius: 7,
-          flex: "0 0 76px",
+          flex: "0 0 125px",
           objectFit: isIcon ? "contain" : "cover",
-          width: 76,
+          width: 125,
         }}
       />
     );

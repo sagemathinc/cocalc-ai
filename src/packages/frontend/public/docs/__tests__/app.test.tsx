@@ -30,7 +30,10 @@ describe("public/docs", () => {
   it("searches structured docs entries", () => {
     const secrets = getDocsEntry("projects.project-secrets");
     expect(secrets?.title).toBe("Project secrets");
-    expect(secrets?.image?.src).toBe("/public/docs/project-secrets.svg");
+    expect(secrets?.image?.src).toBe(
+      "/public/docs/project-secrets-ea9872ae.webp",
+    );
+    expect(secrets?.image?.presentation).toBe("icon");
     expect(
       searchDocsEntries("secrets api token").map((entry) => entry.id)[0],
     ).toBe("projects.project-secrets");
@@ -70,6 +73,16 @@ describe("public/docs", () => {
         (entry) => entry.id,
       )[0],
     ).toBe("troubleshooting.memory");
+    const runtime = getDocsEntry("projects.runtime-image");
+    expect(runtime?.image?.src).toBe(
+      "/public/docs/runtime-image-09add8c9.webp",
+    );
+    expect(runtime?.image?.presentation).toBe("icon");
+    const timetravel = getDocsEntry("files.timetravel");
+    expect(timetravel?.image?.src).toBe(
+      "/public/docs/timetravel-0f06290b.webp",
+    );
+    expect(timetravel?.image?.presentation).toBe("icon");
     expect(
       searchDocsEntries("websocket sign in browser connectivity").map(
         (entry) => entry.id,
@@ -170,7 +183,7 @@ describe("public/docs", () => {
       screen.getByAltText(
         "Project secrets mounted as protected read-only files",
       ),
-    ).toHaveAttribute("src", "/public/docs/project-secrets.svg");
+    ).toHaveAttribute("src", "/public/docs/project-secrets-ea9872ae.webp");
     expect(screen.getByText("settings.environment.secrets")).not.toBeNull();
     expect(
       within(screen.getByText("Open this in CoCalc").closest(".ant-card")!)
