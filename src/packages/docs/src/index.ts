@@ -409,14 +409,20 @@ agents use credentials without turning private tokens into shared content.
 const PROJECT_HOSTS_BODY = String.raw`
 ## What project hosts are for
 
-A project host is compute capacity that can run CoCalc projects. Hosts can be
-local, cloud-backed, or dedicated to heavier workloads such as long-running
-research computations, courses, or agent sandboxes.
+A project host is compute capacity that can run CoCalc projects. On hosted
+CoCalc, project hosts are CoCalc-managed or cloud-backed capacity; users cannot
+attach an arbitrary local computer or VM as a host. Hosts have access to
+project-level credentials such as backup passwords, so direct user-controlled
+hosts are only appropriate in self-hosted Launchpad or Rocket deployments.
+
+Use project hosts for heavier workloads such as long-running research
+computations, courses, or agent sandboxes.
 
 ## Create or choose a host
 
 1. Open the project host administration area.
-2. Configure a cloud provider or local host.
+2. Configure a cloud provider. In self-hosted Launchpad or Rocket, configure a
+   cloud provider or local host.
 3. Refresh the provider catalog if needed.
 4. Choose a machine type, region, disk size, and lifecycle policy.
 5. Start the host and wait for bootstrap to finish.
@@ -424,6 +430,9 @@ research computations, courses, or agent sandboxes.
 
 Use enough disk space for runtime images and project data. Very small disks can
 fail during image bootstrap or package installation.
+
+Under **Access**, add people who are allowed to add their own projects to the
+host. You can also configure the host so all projects on it may use more RAM.
 
 ## Long-running work
 
