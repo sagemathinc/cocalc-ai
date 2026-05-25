@@ -1372,6 +1372,8 @@ export type HostConnectionMethod =
   | "set-host-owner-spend-limits"
   | "set-host-pool-access"
   | "get-host-log"
+  | "get-host-availability"
+  | "annotate-host-availability-event"
   | "get-host-runtime-log"
   | "get-host-metrics-history"
   | "get-host-runtime-deployment-status"
@@ -1731,6 +1733,12 @@ export interface InterBayHostConnectionApi {
   getHostLog: (
     opts: Parameters<Hosts["getHostLog"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getHostLog"]>>>;
+  getHostAvailability: (
+    opts: Parameters<Hosts["getHostAvailability"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["getHostAvailability"]>>>;
+  annotateHostAvailabilityEvent: (
+    opts: Parameters<Hosts["annotateHostAvailabilityEvent"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["annotateHostAvailabilityEvent"]>>>;
   getHostRuntimeLog: (
     opts: Parameters<Hosts["getHostRuntimeLog"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getHostRuntimeLog"]>>>;
@@ -1950,6 +1958,11 @@ const HOST_CONNECTION_METHOD_SPECS = [
   },
   { name: "setHostPoolAccess", method: "set-host-pool-access" },
   { name: "getHostLog", method: "get-host-log" },
+  { name: "getHostAvailability", method: "get-host-availability" },
+  {
+    name: "annotateHostAvailabilityEvent",
+    method: "annotate-host-availability-event",
+  },
   { name: "getHostRuntimeLog", method: "get-host-runtime-log" },
   { name: "getHostMetricsHistory", method: "get-host-metrics-history" },
   {

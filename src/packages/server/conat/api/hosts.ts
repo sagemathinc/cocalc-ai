@@ -44,6 +44,9 @@ import type {
   HostEffectiveAccessRole,
   AcpAdmissionDenialRecord,
   ServiceAdmissionDenialRecord,
+  HostAvailabilityReport,
+  HostAvailabilityEvent,
+  HostAvailabilityCategory,
 } from "@cocalc/conat/hub/api/hosts";
 import { getAccountProductAccessTrust } from "@cocalc/server/accounts/trusted-product-access";
 import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
@@ -291,6 +294,10 @@ import {
   listManagedRootfsReleaseLifecycleInternal,
   recordManagedRootfsReleaseReplicaInternal,
 } from "./hosts-rootfs-releases";
+import {
+  annotateHostAvailabilityEvent as annotateHostAvailabilityEventInternal,
+  getHostAvailabilityReport,
+} from "@cocalc/server/hosts/availability";
 function pool() {
   return getPool();
 }
@@ -4123,6 +4130,81 @@ export async function getHostLog({
     spec: entry.spec ?? null,
     error: entry.error ?? null,
   }));
+}
+
+export async function getHostAvailability({
+  account_id,
+  id,
+  days,
+}: {
+  account_id?: string;
+  id: string;
+  days?: number;
+}): Promise<HostAvailabilityReport> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .getHostAvailability({
+        account_id,
+        id,
+        days,
+      });
+  }
+  await loadHostForView(id, account_id);
+  return await getHostAvailabilityReport({ host_id: id, days });
+}
+
+export async function annotateHostAvailabilityEvent({
+  account_id,
+  id,
+  event_id,
+  admin_note,
+  admin_note_visibility,
+  category,
+  planned,
+  summary,
+}: {
+  account_id?: string;
+  id: string;
+  event_id: string;
+  admin_note?: string | null;
+  admin_note_visibility?: "private" | "public";
+  category?: HostAvailabilityCategory;
+  planned?: boolean;
+  summary?: string | null;
+}): Promise<HostAvailabilityEvent> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .annotateHostAvailabilityEvent({
+        account_id,
+        id,
+        event_id,
+        admin_note,
+        admin_note_visibility,
+        category,
+        planned,
+        summary,
+      });
+  }
+  const row = await loadHostForView(id, account_id);
+  if (account_id) {
+    await requireLoadedHostPermission({
+      row,
+      account_id,
+      permission: "manage-access",
+    });
+  }
+  return await annotateHostAvailabilityEventInternal({
+    event_id,
+    admin_note,
+    admin_note_visibility,
+    category,
+    planned,
+    summary,
+  });
 }
 
 function normalizeHostRuntimeLogLines(lines?: number): number {

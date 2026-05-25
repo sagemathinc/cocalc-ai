@@ -804,6 +804,70 @@ export interface HostLogEntry {
   error?: string | null;
 }
 
+export type HostAvailabilityState =
+  | "online"
+  | "unavailable"
+  | "recovering"
+  | "degraded";
+
+export type HostAvailabilityCategory =
+  | "spot_interruption"
+  | "provider_repair"
+  | "provider_offline"
+  | "host_reboot"
+  | "maintenance"
+  | "resize_disk"
+  | "deploy"
+  | "overload"
+  | "user_stopped"
+  | "host_stale"
+  | "unknown";
+
+export interface HostAvailabilityEvent {
+  id: string;
+  host_id: string;
+  started_at: string;
+  ended_at?: string;
+  state: HostAvailabilityState;
+  planned: boolean;
+  category: HostAvailabilityCategory;
+  source: string;
+  summary?: string;
+  details?: Record<string, any>;
+  admin_note?: string;
+  admin_note_visibility?: "private" | "public";
+}
+
+export interface HostAvailabilityDay {
+  date: string;
+  uptime_percent: number;
+  online_ms: number;
+  planned_downtime_ms: number;
+  unplanned_downtime_ms: number;
+  outage_count: number;
+  events: HostAvailabilityEvent[];
+}
+
+export interface HostAvailabilitySummary {
+  current_state: HostAvailabilityState;
+  current_uptime_ms: number;
+  window_uptime_percent: number;
+  planned_downtime_ms: number;
+  unplanned_downtime_ms: number;
+  unplanned_outage_count: number;
+  longest_outage_ms: number;
+  current_event?: HostAvailabilityEvent;
+}
+
+export interface HostAvailabilityReport {
+  host_id: string;
+  generated_at: string;
+  window_days: number;
+  summary: HostAvailabilitySummary;
+  days: HostAvailabilityDay[];
+  events: HostAvailabilityEvent[];
+}
+
 export interface HostRuntimeLog {
   host_id: string;
   source: string;
@@ -1115,6 +1179,8 @@ export const hosts = {
   getCatalog: authFirstRequireAccount,
   updateCloudCatalog: authFirstRequireAccount,
   getHostLog: authFirstRequireAccount,
+  getHostAvailability: authFirstRequireAccount,
+  annotateHostAvailabilityEvent: authFirstRequireAccount,
   getHostRuntimeLog: authFirstRequireAccount,
   getHostMetricsHistory: authFirstRequireAccount,
   listHostRootfsImages: authFirstRequireAccount,
@@ -1282,6 +1348,21 @@ export interface Hosts {
     id: string;
     limit?: number;
   }) => Promise<HostLogEntry[]>;
+  getHostAvailability: (opts: {
+    account_id?: string;
+    id: string;
+    days?: number;
+  }) => Promise<HostAvailabilityReport>;
+  annotateHostAvailabilityEvent: (opts: {
+    account_id?: string;
+    id: string;
+    event_id: string;
+    admin_note?: string | null;
+    admin_note_visibility?: "private" | "public";
+    category?: HostAvailabilityCategory;
+    planned?: boolean;
+    summary?: string | null;
+  }) => Promise<HostAvailabilityEvent>;
   getHostRuntimeLog: (opts: {
     account_id?: string;
     id: string;

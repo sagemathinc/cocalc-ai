@@ -41,6 +41,7 @@ import type {
   HostRootfsImage,
   HostSoftwareArtifact,
   HostSoftwareAvailableVersion,
+  HostAvailabilityReport,
 } from "@cocalc/conat/hub/api/hosts";
 import {
   HOST_RUNTIME_LOG_SOURCES,
@@ -84,6 +85,7 @@ import { HostRootfsCachePanel } from "./host-rootfs-cache-panel";
 import { HostCurrentMetrics } from "./host-current-metrics";
 import { HostPlacementSummary, HostPressureTag } from "../pressure-ui";
 import { HostAccessPolicySummary } from "./host-access-policy";
+import { HostAvailabilityPanel } from "./host-availability-panel";
 import { confirmHostDeprovision } from "./host-confirm";
 import { HostBillingEnforcementStatus } from "./host-billing-enforcement";
 import {
@@ -123,6 +125,8 @@ type HostDrawerViewModel = {
   onCancelOp?: (op_id: string) => void;
   hostLog: HostLogEntry[];
   loadingLog: boolean;
+  availability?: HostAvailabilityReport;
+  loadingAvailability?: boolean;
   softwareVersions?: {
     loading: boolean;
     configured: Partial<
@@ -1442,6 +1446,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     onCancelOp,
     hostLog,
     loadingLog,
+    availability,
+    loadingAvailability,
     softwareVersions,
     runtimeDeployments,
     runtimeLogViewer,
@@ -1665,6 +1671,20 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           <Tag color="default">offline</Tag>
         </Tooltip>
       ) : null
+    ) : null;
+  const availabilityAlert =
+    availability?.summary.current_event &&
+    availability.summary.current_state !== "online" ? (
+      <Alert
+        type={availability.summary.current_event.planned ? "warning" : "error"}
+        showIcon
+        message={
+          availability.summary.current_event.planned
+            ? "This host is intentionally unavailable"
+            : "This host is unavailable or recovering"
+        }
+        description={availability.summary.current_event.summary}
+      />
     ) : null;
   const canForceDeprovision =
     canManageLifecycle &&
@@ -2534,6 +2554,16 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
       key: "overview",
       label: "Overview",
       children: overviewContent,
+    },
+    {
+      key: "reliability",
+      label: "Reliability",
+      children: (
+        <HostAvailabilityPanel
+          availability={availability}
+          loading={loadingAvailability}
+        />
+      ),
     },
     {
       key: "runtime",
@@ -4555,6 +4585,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             </Tooltip>
           )}
         </Space>
+        {availabilityAlert}
         <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
         <HostProjectsBrowser
           host={host}

@@ -19,6 +19,7 @@ import { getServerProvider, listServerProviders } from "./providers";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getNebiusRegionKeys } from "./nebius-credentials";
 import { shouldAutoRestoreInterruptedSpotHost } from "./spot-restore";
+import { recordHostAvailabilityFromSnapshot } from "@cocalc/server/hosts/availability";
 export { shouldAutoRestoreInterruptedSpotHost } from "./spot-restore";
 
 const logger = getLogger("server:cloud:reconcile");
@@ -514,6 +515,16 @@ async function updateHost(
     `UPDATE project_hosts SET ${sets.join(", ")}, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
     params,
   );
+  const { rows } = await pool().query(
+    `SELECT id, status, deleted, last_seen, metadata
+       FROM project_hosts
+      WHERE id=$1
+      LIMIT 1`,
+    [row.id],
+  );
+  if (rows[0]) {
+    await recordHostAvailabilityFromSnapshot(rows[0], "cloud_reconcile");
+  }
 }
 
 async function enqueueSpotRestore(

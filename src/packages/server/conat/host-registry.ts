@@ -39,6 +39,7 @@ import {
 } from "@cocalc/server/projects/runtime-sponsor";
 import { sleep } from "@cocalc/util/async-utils";
 import { notifyProjectHostUpdate } from "./route-project";
+import { recordHostAvailabilityObservation } from "@cocalc/server/hosts/availability";
 
 const logger = getLogger("server:conat:host-registry");
 const pool = () => getPool();
@@ -981,6 +982,19 @@ export async function initHostRegistryService() {
           last_seen: new Date(),
           host_session_id: nextSessionId,
         });
+        await recordHostAvailabilityObservation({
+          host_id: info.id,
+          state: "online",
+          planned: false,
+          category: "unknown",
+          source: "host_register",
+          summary: "Host is online.",
+          details: {
+            status: "running",
+            host_session_id: nextSessionId,
+            host_boot_id: nextBootId,
+          },
+        });
         await ensureHostRestartRecovery({
           host_id: info.id,
           previous_metadata: previousRows[0]?.metadata,
@@ -1041,6 +1055,19 @@ export async function initHostRegistryService() {
           status: "running",
           last_seen: new Date(),
           host_session_id: nextSessionId,
+        });
+        await recordHostAvailabilityObservation({
+          host_id: info.id,
+          state: "online",
+          planned: false,
+          category: "unknown",
+          source: "host_heartbeat",
+          summary: "Host is online.",
+          details: {
+            status: "running",
+            host_session_id: nextSessionId,
+            host_boot_id: nextBootId,
+          },
         });
         await ensureHostRestartRecovery({
           host_id: info.id,
