@@ -174,6 +174,7 @@ describe("purchases Stripe fresh-auth routes", () => {
       account_id: "acct-1",
       session_hash: "fresh-session-hash",
       require_second_factor: true,
+      allow_actor_impersonation: false,
     });
     expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
   });
@@ -198,6 +199,7 @@ describe("purchases Stripe fresh-auth routes", () => {
       account_id: "acct-1",
       session_hash: "fresh-session-hash",
       require_second_factor: true,
+      allow_actor_impersonation: false,
     });
     expect(mockCreatePaymentIntent).toHaveBeenCalledWith({
       account_id: "user-1",

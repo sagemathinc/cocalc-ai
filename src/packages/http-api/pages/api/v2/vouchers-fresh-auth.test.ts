@@ -170,7 +170,7 @@ describe("voucher fresh auth", () => {
     expect(mockRequireFreshAuth).toHaveBeenCalledWith({
       req,
       account_id: "acct-1",
-      allow_actor_impersonation: true,
+      allow_actor_impersonation: false,
     });
     expect(mockChargeForUnpaidVouchers).not.toHaveBeenCalled();
   });
@@ -193,7 +193,7 @@ describe("voucher fresh auth", () => {
     expect(mockRequireFreshAuth).toHaveBeenCalledWith({
       req,
       account_id: "acct-1",
-      allow_actor_impersonation: true,
+      allow_actor_impersonation: false,
     });
     expect(mockChargeForUnpaidVouchers).toHaveBeenCalled();
   });

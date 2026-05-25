@@ -52,6 +52,7 @@ async function get(req) {
     account_id,
     session_hash: session.session_hash,
     require_second_factor: true,
+    allow_actor_impersonation: false,
   });
 
   const { purchase_id, reason, notes } = getParams(req);
