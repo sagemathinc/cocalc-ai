@@ -7,21 +7,77 @@ description: Use when working with CoCalc-native documents and workflows, especi
 
 Use the CoCalc backend exec API first when it can solve the task. Fall back to export/import when the document type is export-oriented or the work is a bulk local transformation. Use browser exec only for UI/navigation/testing work.
 
+When the user asks to use CoCalc docs, treat the bundled docs as the source of
+truth for this CoCalc instance. Query the docs first, read the relevant page,
+then answer from that page instead of guessing from source code or memory.
+
 ## Decision Order
 
 Prefer these paths in this order:
 
-1. `cocalc exec-api` + `cocalc exec`
-2. `cocalc project jupyter ...` for notebook cell listing, mutation, execution, and live-run inspection
-3. `cocalc export ...` / `cocalc import ...`
-4. `cocalc browser exec-api` + `cocalc browser exec`
+1. `cocalc docs ...` when the user asks a CoCalc usage question or explicitly asks to use docs
+2. `cocalc exec-api` + `cocalc exec`
+3. `cocalc project jupyter ...` for notebook cell listing, mutation, execution, and live-run inspection
+4. `cocalc export ...` / `cocalc import ...`
+5. `cocalc browser exec-api` + `cocalc browser exec`
 
 This is the key rule:
 
+- Use `cocalc docs search/show/actions` for version-matched product documentation.
 - Use backend exec for live collaborative document operations.
 - Use `cocalc project jupyter` for durable notebook operations that must keep working even if the browser refreshes or disconnects.
 - Use export/import for archive, bulk transformation, or document types that do not yet have a live backend API.
 - Use browser exec only when the task is inherently about the browser UI or when notebook work needs ephemeral UI context such as the active cell, selection, or viewport.
+
+## CoCalc Docs First
+
+Use the docs CLI exactly as exposed by `cocalc docs --help`. Do not invent nested
+commands such as `cocalc docs project secrets`.
+
+Recommended lookup flow:
+
+```bash
+cocalc docs search "project secrets" --json
+cocalc docs show projects/project-secrets --json
+```
+
+If the docs entry includes an action id, inspect it when relevant:
+
+```bash
+cocalc docs action settings.environment.secrets --json
+cocalc docs actions --json
+```
+
+For UI tasks in the live browser session, prefer stable docs actions over raw
+browser scripts:
+
+```bash
+cocalc browser action docs-list
+cocalc browser action docs settings.environment.secrets
+```
+
+Use docs actions when the user asks you to open the UI, when opening the UI
+would materially help, or when verifying that the docs still match the product.
+If the user only asks for an explanation, summarize the docs and mention the
+action id rather than opening UI without a reason.
+
+When answering from docs:
+
+- Always read `docs show <slug-or-id>` for the selected result before answering.
+- Prefer the highest-scoring directly relevant result, not just the first broad match.
+- Include the stable action id when the entry has one.
+- Do not repeat examples from memory if the shown docs say something different.
+- If the docs are stale or contradict the visible product, say that plainly and
+  verify with browser actions or source inspection before giving final guidance.
+
+Example answer shape for a usage question:
+
+```text
+The docs page `projects/project-secrets` says to edit this in Settings ->
+Environment -> Secrets. The stable action id is
+`settings.environment.secrets`, which can open that panel in the current browser
+session.
+```
 
 ## Backend Exec First
 

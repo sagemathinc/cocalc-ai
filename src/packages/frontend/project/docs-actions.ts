@@ -24,12 +24,16 @@ export const RUNTIME_IMAGE_DOCS_ACTION_EVENT =
 export const PROJECT_PEOPLE_DOCS_ACTION_EVENT =
   "cocalc:docs-action:project-people";
 
+export type SettingsDocsActionSurface = "flyout" | "project";
+
 export interface ProjectSecretsDocsActionDetail {
   projectId: string;
+  surface?: SettingsDocsActionSurface;
 }
 
 export interface RuntimeImageDocsActionDetail {
   projectId: string;
+  surface?: SettingsDocsActionSurface;
 }
 
 export interface ProjectPeopleDocsActionDetail {
@@ -90,25 +94,31 @@ type ProjectActionSubset = {
   ) => void;
 };
 
-function dispatchProjectSecretsEvent(projectId: string): void {
+function dispatchProjectSecretsEvent(
+  projectId: string,
+  surface: SettingsDocsActionSurface = "flyout",
+): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(
     new CustomEvent<ProjectSecretsDocsActionDetail>(
       PROJECT_SECRETS_DOCS_ACTION_EVENT,
       {
-        detail: { projectId },
+        detail: { projectId, surface },
       },
     ),
   );
 }
 
-function dispatchRuntimeImageEvent(projectId: string): void {
+function dispatchRuntimeImageEvent(
+  projectId: string,
+  surface: SettingsDocsActionSurface = "flyout",
+): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(
     new CustomEvent<RuntimeImageDocsActionDetail>(
       RUNTIME_IMAGE_DOCS_ACTION_EVENT,
       {
-        detail: { projectId },
+        detail: { projectId, surface },
       },
     ),
   );

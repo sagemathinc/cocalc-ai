@@ -327,4 +327,34 @@ describe("CodexCredentialsPanel", () => {
       ).toBeTruthy();
     });
   });
+
+  it("shows device login instructions parsed from raw Codex output", async () => {
+    getCodexPaymentSource.mockResolvedValue({ source: "none" });
+    codexDeviceAuthStart.mockResolvedValue({
+      id: "auth-1",
+      projectId: "project-1",
+      accountId: "account-1",
+      codexHome: "/tmp/.codex",
+      state: "pending",
+      output:
+        "Open https://chatgpt.com/device and enter this one-time code\nWXYZ-1234",
+      startedAt: 1,
+      updatedAt: 1,
+    });
+
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Not configured")).toBeTruthy();
+    });
+
+    await act(async () => {
+      screen.getByText("Sign in with ChatGPT").click();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("WXYZ-1234")).toBeTruthy();
+      expect(screen.getByText("Copy URL")).toBeTruthy();
+    });
+  });
 });

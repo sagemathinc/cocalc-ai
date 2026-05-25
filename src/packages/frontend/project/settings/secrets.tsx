@@ -353,8 +353,8 @@ export const ProjectSecrets: React.FC<Props> = ({
       <p style={{ marginTop: 0 }}>
         Project secrets are encrypted at rest and mounted as read-only files at{" "}
         <code>{PROJECT_SECRETS_MOUNT_PATH}/&lt;name&gt;</code>. They are not
-        stored in project files, backups, rootfs images, downloads, or public
-        shares.
+        stored in project files, snapshots, backups, rootfs images, downloads,
+        or public shares.
       </p>
       <p style={{ marginBottom: 0 }}>
         Any code or collaborator with access to the running project can read

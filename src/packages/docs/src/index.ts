@@ -60,8 +60,11 @@ project without committing private tokens into notebooks, scripts, terminals,
 or TimeTravel history.
 
 Use them for API keys, access tokens, deployment credentials, and other values
-that code needs at runtime but collaborators should not casually paste into a
-file.
+that code needs at runtime but should not be stored in project files.
+
+Secrets are encrypted at rest in the database and mounted into running projects
+as read-only files under \`/run/secrets/cocalc/<name>\`. They are not stored in
+project files, snapshots, backups, rootfs images, downloads, or public shares.
 
 ## Add a secret from the UI
 
@@ -78,19 +81,25 @@ click.
 
 ## Use the secret
 
-Secrets are exposed as environment variables to project processes that opt into
-the project environment. In a terminal, notebook, or script, read the value using
-the standard environment-variable mechanism for your language.
+Secrets are files, not environment variables. In a terminal, notebook, or
+script, read the value from the mounted secret file. Use the
+\`COCALC_SECRETS\` environment variable instead of hardcoding the directory.
 
 ~~~python
 import os
+from pathlib import Path
 
-token = os.environ["MY_API_TOKEN"]
+secrets_dir = Path(os.environ["COCALC_SECRETS"])
+token = (secrets_dir / "MY_API_TOKEN").read_text().strip()
 ~~~
 
 Use clear uppercase names such as \`OPENAI_API_KEY\`, \`HF_TOKEN\`, or
-\`DATABASE_URL\`. Avoid putting secrets in source files, notebook outputs, chat
-messages, or command history.
+\`DATABASE_URL\`. Any code or collaborator with access to the running project
+can read these files, so avoid putting secret values in source files, notebook
+outputs, chat messages, logs, or command history.
+
+SSH private keys usually need a final newline. If you paste one manually, use
+the warning in the Secrets dialog to add the newline before saving.
 
 ## Why this matters in CoCalc
 
@@ -637,7 +646,7 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     slug: "projects/project-secrets",
     status: "ready",
     summary:
-      "Store API keys and credentials in the project environment instead of notebooks, scripts, or chat.",
+      "Store API keys and credentials as encrypted, read-only files mounted into the running project.",
     title: "Project secrets",
   },
   {
@@ -938,23 +947,33 @@ export function searchDocsEntries(
     }));
   }
 
-  return DOCS_ENTRIES.map((entry) => {
-    const haystack = [
-      entry.title,
-      entry.summary,
-      entry.category,
-      entry.audiences.join(" "),
-      entry.actions
-        ?.map((action) => `${action.id} ${action.label} ${action.description}`)
-        .join(" "),
-      entry.body,
-    ]
-      .join("\n")
-      .toLowerCase();
-    const score = terms.reduce(
-      (total, term) => total + (haystack.includes(term) ? 1 : 0),
+  const fieldScore = (
+    value: string | undefined,
+    weight: number,
+    phraseWeight = 0,
+  ): number => {
+    if (!value) return 0;
+    const haystack = value.toLowerCase();
+    const termScore = terms.reduce(
+      (total, term) => total + (haystack.includes(term) ? weight : 0),
       0,
     );
+    return (
+      termScore + (phraseWeight && haystack.includes(query) ? phraseWeight : 0)
+    );
+  };
+
+  return DOCS_ENTRIES.map((entry) => {
+    const actionsText = entry.actions
+      ?.map((action) => `${action.id} ${action.label} ${action.description}`)
+      .join(" ");
+    const score =
+      fieldScore(entry.title, 8, 8) +
+      fieldScore(entry.summary, 4, 4) +
+      fieldScore(actionsText, 3) +
+      fieldScore(entry.category, 2) +
+      fieldScore(entry.audiences.join(" "), 1) +
+      fieldScore(entry.body, 1);
     return { ...entry, score };
   })
     .filter(({ score }) => score > 0)
