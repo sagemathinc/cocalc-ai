@@ -6,11 +6,14 @@ const codexDeviceAuthStart = jest.fn();
 const codexDeviceAuthStatus = jest.fn();
 
 jest.mock("antd", () => {
-  const Button = ({ children, onClick }: any) => (
-    <button type="button" onClick={onClick}>
-      {children}
-    </button>
-  );
+  const Button = ({ children, disabled, href, loading, onClick }: any) =>
+    href ? (
+      <a href={href}>{children}</a>
+    ) : (
+      <button type="button" disabled={disabled || loading} onClick={onClick}>
+        {children}
+      </button>
+    );
   const Div = ({ children, message, title, description }: any) => (
     <div>
       {title}
@@ -19,22 +22,47 @@ jest.mock("antd", () => {
       {children}
     </div>
   );
-  const Collapse = ({ children, items }: any) => (
-    <div>
-      {items?.map((item: any) => (
-        <div key={item.key}>
-          {item.label}
-          {item.children}
-        </div>
-      ))}
-      {children}
-    </div>
-  );
+  const Collapse = ({
+    activeKey,
+    children,
+    defaultActiveKey,
+    items,
+    onChange,
+  }: any) => {
+    const keyValue = activeKey ?? defaultActiveKey ?? [];
+    const activeKeys = Array.isArray(keyValue) ? keyValue : [keyValue];
+    return (
+      <div>
+        {items?.map((item: any) => {
+          const active = activeKeys.includes(item.key);
+          return (
+            <div key={item.key}>
+              <button
+                type="button"
+                aria-expanded={active}
+                onClick={() => {
+                  const nextKeys = active
+                    ? activeKeys.filter((key: string) => key !== item.key)
+                    : [...activeKeys, item.key];
+                  onChange?.(nextKeys);
+                }}
+              >
+                {item.label}
+              </button>
+              {active ? item.children : null}
+            </div>
+          );
+        })}
+        {children}
+      </div>
+    );
+  };
+  const TextArea = ({ value }: any) => <div>{value}</div>;
   return {
     Alert: Div,
     Button,
     Collapse,
-    Input: () => null,
+    Input: { TextArea },
     Popconfirm: Div,
     Space: Div,
     Table: Div,
@@ -181,7 +209,7 @@ describe("CodexCredentialsPanel", () => {
     });
 
     await act(async () => {
-      screen.getByText("Start device login").click();
+      screen.getByText("Sign in with ChatGPT").click();
     });
 
     await waitFor(() => {
@@ -242,7 +270,7 @@ describe("CodexCredentialsPanel", () => {
     });
 
     await act(async () => {
-      screen.getByText("Start device login").click();
+      screen.getByText("Sign in with ChatGPT").click();
     });
 
     await waitFor(() => {
@@ -260,6 +288,43 @@ describe("CodexCredentialsPanel", () => {
 
     await waitFor(() => {
       expect(onPaymentSourceChanged).toHaveBeenCalled();
+    });
+  });
+
+  it("opens the ChatGPT subscription panel when sign-in starts", async () => {
+    getCodexPaymentSource.mockResolvedValue({ source: "none" });
+    codexDeviceAuthStart.mockResolvedValue({
+      id: "auth-1",
+      projectId: "project-1",
+      accountId: "account-1",
+      codexHome: "/tmp/.codex",
+      state: "pending",
+      verificationUrl: "https://chatgpt.com/device",
+      userCode: "ABCD-EFGH",
+      output: "",
+      startedAt: 1,
+      updatedAt: 1,
+    });
+
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Not configured")).toBeTruthy();
+    });
+    expect(screen.queryByText("Start device login")).toBeNull();
+
+    await act(async () => {
+      screen.getByText("Sign in with ChatGPT").click();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Start device login")).toBeTruthy();
+      expect(screen.getByText("ABCD-EFGH")).toBeTruthy();
+      expect(
+        screen.getByText((text) =>
+          text.includes("Device auth status: pending"),
+        ),
+      ).toBeTruthy();
     });
   });
 });

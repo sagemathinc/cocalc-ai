@@ -20,6 +20,7 @@ import {
 } from "@cocalc/frontend/components";
 import { IntlMessage, isIntlMessage } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { PROJECT_PEOPLE_DOCS_ACTION_EVENT } from "@cocalc/frontend/project/docs-actions";
 import { RestartProject } from "@cocalc/frontend/project/settings/restart-project";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
 import { StopProject } from "@cocalc/frontend/project/settings/stop-project";
@@ -67,6 +68,21 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
     const state = getFlyoutSettings(project_id);
     setExpandedPanels(state);
   }, []);
+
+  useEffect(() => {
+    const handleReveal = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId?: string }>).detail;
+      if (detail?.projectId !== project_id) return;
+      setExpandedPanelsHandler(["people"]);
+    };
+    window.addEventListener(PROJECT_PEOPLE_DOCS_ACTION_EVENT, handleReveal);
+    return () => {
+      window.removeEventListener(
+        PROJECT_PEOPLE_DOCS_ACTION_EVENT,
+        handleReveal,
+      );
+    };
+  }, [project_id]);
 
   function renderI18N(msg: string | IntlMessage): string {
     if (isIntlMessage(msg)) {

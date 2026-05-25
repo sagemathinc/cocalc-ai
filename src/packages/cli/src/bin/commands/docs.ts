@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+
 import { Command } from "commander";
 
 import {
@@ -7,11 +9,19 @@ import {
   listDocsEntries,
   searchDocsEntries,
   type DocsActionSummary,
+  type DocsActionId,
   type DocsAudience,
   type DocsEntry,
   type DocsEntryStatus,
   type DocsSearchResult,
 } from "@cocalc/docs";
+import {
+  formatDocsVerificationReport,
+  listDocsLiveVerificationScenarios,
+  verifyDocsLive,
+  verifyDocsStatic,
+} from "@cocalc/docs/verification";
+import { buildCookieHeader } from "../../core/auth-cookies";
 
 export type DocsCommandDeps = {
   emitError: any;
@@ -28,6 +38,29 @@ type DocsListOptions = {
 
 type DocsSearchOptions = {
   limit?: string;
+};
+
+type DocsVerifyOptions = {
+  action?: string[];
+  browser?: string;
+  cocalcBin?: string;
+  chromium?: string;
+  headed?: boolean;
+  keepBrowser?: boolean;
+  listLive?: boolean;
+  live?: boolean;
+  projectId?: string;
+  spawnBrowser?: boolean;
+  spawnReadyTimeout?: string;
+  spawnTimeout?: string;
+  targetUrl?: string;
+  timeout?: string;
+};
+
+type CliRunResult = {
+  code: number | null;
+  stdout: string;
+  stderr: string;
 };
 
 function compactDocsEntry(entry: DocsEntry): Record<string, unknown> {
@@ -117,6 +150,212 @@ function filterDocsEntries(options: DocsListOptions): DocsEntry[] {
     }
     return true;
   });
+}
+
+function collectOption(value: string, previous: string[] = []): string[] {
+  return [...previous, value];
+}
+
+function runCliCommand({
+  args,
+  command,
+}: {
+  args: string[];
+  command: string;
+}): Promise<CliRunResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code, stdout, stderr }));
+  });
+}
+
+function parseJsonOutput(stdout: string): any {
+  const text = stdout.trim();
+  if (!text) return undefined;
+  return JSON.parse(text);
+}
+
+function normalizeOrigin(value: unknown): string | undefined {
+  const raw = `${value ?? ""}`.trim();
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    url.pathname = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return undefined;
+  }
+}
+
+function projectHomeUrl(origin: string, projectId: string): string {
+  return `${origin}/projects/${projectId}/project-home`;
+}
+
+async function resolveDocsSpawnTargetUrl({
+  explicitTargetUrl,
+  globals,
+  normalizeUrl,
+  projectId,
+}: {
+  explicitTargetUrl?: string;
+  globals: any;
+  normalizeUrl: (value: string) => string;
+  projectId: string;
+}): Promise<string | undefined> {
+  const explicit = `${explicitTargetUrl ?? ""}`.trim();
+  if (explicit) return explicit;
+
+  const rawApiUrl = `${globals.api ?? process.env.COCALC_API_URL ?? ""}`.trim();
+  if (!rawApiUrl) return undefined;
+  let apiUrl: string;
+  try {
+    apiUrl = normalizeUrl(rawApiUrl);
+  } catch {
+    return undefined;
+  }
+  const apiOrigin = normalizeOrigin(apiUrl);
+  if (!apiOrigin) return undefined;
+  const cookie = buildCookieHeader(apiUrl, globals);
+  if (!cookie) return undefined;
+  try {
+    const response = await fetch(`${apiUrl}/api/v2/auth/bootstrap`, {
+      headers: { Cookie: cookie },
+    });
+    if (!response.ok) return undefined;
+    const bootstrap = (await response.json()) as {
+      signed_in?: boolean;
+      home_bay_url?: string;
+    };
+    const homeOrigin = normalizeOrigin(bootstrap.home_bay_url);
+    if (!homeOrigin || homeOrigin === apiOrigin) return undefined;
+    return projectHomeUrl(homeOrigin, projectId);
+  } catch {
+    return undefined;
+  }
+}
+
+async function spawnDocsVerificationBrowser({
+  cocalcArgs,
+  cocalcCommand,
+  globals,
+  normalizeUrl,
+  options,
+  projectId,
+}: {
+  cocalcArgs: string[];
+  cocalcCommand: string;
+  globals: any;
+  normalizeUrl: (value: string) => string;
+  options: DocsVerifyOptions;
+  projectId: string;
+}): Promise<{
+  browserId: string;
+  spawnId: string;
+  output: unknown;
+  targetUrl?: string;
+}> {
+  const targetUrl = await resolveDocsSpawnTargetUrl({
+    explicitTargetUrl: options.targetUrl,
+    globals,
+    normalizeUrl,
+    projectId,
+  });
+  const args = [
+    ...cocalcArgs,
+    "browser",
+    "session",
+    "spawn",
+    "--project-id",
+    projectId,
+    "--session-name",
+    "docs-verification",
+    "--ready-timeout",
+    `${options.spawnReadyTimeout ?? "60s"}`,
+    "--timeout",
+    `${options.spawnTimeout ?? "90s"}`,
+  ];
+  if (targetUrl) {
+    args.push("--target-url", targetUrl);
+  }
+  if (options.chromium?.trim()) {
+    args.push("--chromium", options.chromium.trim());
+  }
+  if (options.headed) {
+    args.push("--headed");
+  } else {
+    args.push("--headless");
+  }
+  const { code, stdout, stderr } = await runCliCommand({
+    args,
+    command: cocalcCommand,
+  });
+  const output = parseJsonOutput(stdout);
+  const data =
+    output && typeof output === "object" && "data" in output
+      ? (output as { data?: any }).data
+      : undefined;
+  const browserId = `${data?.browser_id ?? ""}`.trim();
+  const spawnId = `${data?.spawn_id ?? ""}`.trim();
+  if (code !== 0 || !browserId || !spawnId) {
+    const message =
+      output && typeof output === "object" && "error" in output
+        ? `${(output as { error?: { message?: string } }).error?.message ?? ""}`
+        : "";
+    throw new Error(
+      [
+        "failed to spawn Chromium browser session for docs verification",
+        message,
+        stderr.trim(),
+        stdout.trim(),
+      ]
+        .filter(Boolean)
+        .join(": "),
+    );
+  }
+  return {
+    browserId,
+    spawnId,
+    output,
+    ...(targetUrl ? { targetUrl } : {}),
+  };
+}
+
+async function destroyDocsVerificationBrowser({
+  cocalcArgs,
+  cocalcCommand,
+  spawnId,
+}: {
+  cocalcArgs: string[];
+  cocalcCommand: string;
+  spawnId: string;
+}): Promise<unknown> {
+  const { stdout } = await runCliCommand({
+    args: [
+      ...cocalcArgs,
+      "browser",
+      "session",
+      "destroy",
+      spawnId,
+      "--timeout",
+      "10s",
+    ],
+    command: cocalcCommand,
+  });
+  return parseJsonOutput(stdout);
 }
 
 export function registerDocsCommand(
@@ -235,6 +474,190 @@ Examples:
       } catch (error) {
         deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
         process.exitCode = 1;
+      }
+    });
+
+  docs
+    .command("verify")
+    .description(
+      "verify docs metadata, links, actions, and optional live UI actions",
+    )
+    .option("--list-live", "list live browser-session verification scenarios")
+    .option("--live", "run live browser-session action checks")
+    .option(
+      "--action <id>",
+      "only run this live docs action; may be repeated",
+      collectOption,
+      [],
+    )
+    .option(
+      "--project-id <id>",
+      "project id for live checks; defaults to COCALC_PROJECT_ID",
+    )
+    .option(
+      "--browser <id>",
+      "browser id for live checks; defaults to COCALC_BROWSER_ID",
+    )
+    .option(
+      "--cocalc-bin <command>",
+      "cocalc command to use for live checks; defaults to this CLI process",
+    )
+    .option(
+      "--spawn-browser",
+      "spawn a dedicated Chromium browser session for --live checks",
+    )
+    .option(
+      "--target-url <url>",
+      "exact URL to open when using --spawn-browser; defaults to the signed-in home bay when it differs from the API origin",
+    )
+    .option("--chromium <path>", "Chromium executable path for --spawn-browser")
+    .option("--headed", "launch spawned Chromium visibly instead of headless")
+    .option(
+      "--spawn-ready-timeout <duration>",
+      "timeout for spawned browser daemon readiness",
+      "60s",
+    )
+    .option(
+      "--spawn-timeout <duration>",
+      "timeout for spawned browser registration",
+      "90s",
+    )
+    .option(
+      "--keep-browser",
+      "leave the spawned browser session running after verification",
+    )
+    .option("--timeout <duration>", "timeout for each live action", "60s")
+    .action(async (options: DocsVerifyOptions, command: Command) => {
+      const globals = deps.globalsFrom(command);
+      const commandName = "docs verify";
+      let spawnedBrowser:
+        | Awaited<ReturnType<typeof spawnDocsVerificationBrowser>>
+        | undefined;
+      let destroyOutput: unknown;
+      let destroyAttempted = false;
+      try {
+        const projectId =
+          `${options.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+        const explicitBrowserId = `${options.browser ?? ""}`.trim();
+        const browserId =
+          explicitBrowserId ||
+          (options.spawnBrowser
+            ? ""
+            : `${process.env.COCALC_BROWSER_ID ?? ""}`.trim());
+        const cocalcCommand = options.cocalcBin ?? process.execPath;
+        const cocalcArgs = options.cocalcBin
+          ? ["--json"]
+          : [process.argv[1], "--json"];
+        const shouldRunLive = !!options.live || !!options.spawnBrowser;
+        if (options.spawnBrowser && explicitBrowserId) {
+          throw new Error("use either --spawn-browser or --browser, not both");
+        }
+        if (options.listLive) {
+          const scenarios = listDocsLiveVerificationScenarios({
+            cocalcArgs,
+            cocalcCommand,
+            projectId: projectId || "$COCALC_PROJECT_ID",
+            timeout: options.timeout,
+          });
+          deps.emitSuccess({ globals }, commandName, scenarios);
+          return;
+        }
+        const staticReport = verifyDocsStatic();
+        if (shouldRunLive && !projectId) {
+          throw new Error(
+            "--project-id or COCALC_PROJECT_ID is required for live docs verification",
+          );
+        }
+        if (options.spawnBrowser) {
+          spawnedBrowser = await spawnDocsVerificationBrowser({
+            cocalcArgs,
+            cocalcCommand,
+            globals,
+            normalizeUrl: deps.normalizeUrl,
+            options,
+            projectId,
+          });
+        }
+        const liveReport = shouldRunLive
+          ? await verifyDocsLive({
+              actionIds: (options.action ?? []) as DocsActionId[],
+              browserId: spawnedBrowser?.browserId || browserId || undefined,
+              cocalcArgs,
+              cocalcCommand,
+              projectId,
+              timeout: options.timeout,
+            })
+          : undefined;
+        const ok = staticReport.ok && (liveReport?.ok ?? true);
+        if (spawnedBrowser && !options.keepBrowser) {
+          destroyAttempted = true;
+          destroyOutput = await destroyDocsVerificationBrowser({
+            cocalcArgs,
+            cocalcCommand,
+            spawnId: spawnedBrowser.spawnId,
+          });
+        }
+        if (globals.json || globals.output === "json") {
+          deps.emitSuccess(
+            { globals },
+            commandName,
+            liveReport
+              ? {
+                  static: staticReport,
+                  live: liveReport,
+                  ...(spawnedBrowser
+                    ? {
+                        spawned_browser: spawnedBrowser,
+                        destroy: destroyOutput,
+                      }
+                    : {}),
+                }
+              : staticReport,
+          );
+        } else {
+          console.log(formatDocsVerificationReport(staticReport));
+          if (spawnedBrowser) {
+            console.log(
+              `Spawned Chromium browser ${spawnedBrowser.browserId} (${spawnedBrowser.spawnId})`,
+            );
+          }
+          for (const result of liveReport?.results ?? []) {
+            console.log(
+              `${result.ok ? "OK" : "FAIL"} live ${result.actionId}: ${result.command.join(" ")}`,
+            );
+            if (result.error) {
+              console.log(`  ${result.error}`);
+            }
+          }
+        }
+        if (!ok) {
+          process.exitCode = 1;
+        }
+      } catch (error) {
+        deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
+        process.exitCode = 1;
+      } finally {
+        if (spawnedBrowser && !options.keepBrowser && !destroyAttempted) {
+          try {
+            destroyAttempted = true;
+            destroyOutput = await destroyDocsVerificationBrowser({
+              cocalcArgs: options.cocalcBin
+                ? ["--json"]
+                : [process.argv[1], "--json"],
+              cocalcCommand: options.cocalcBin ?? process.execPath,
+              spawnId: spawnedBrowser.spawnId,
+            });
+          } catch (err) {
+            if (!process.exitCode) {
+              process.exitCode = 1;
+            }
+            if (!globals.json && globals.output !== "json") {
+              console.error(
+                `failed to destroy spawned docs verification browser: ${err}`,
+              );
+            }
+          }
+        }
       }
     });
 

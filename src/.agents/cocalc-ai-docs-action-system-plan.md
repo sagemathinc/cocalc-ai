@@ -1,6 +1,6 @@
 # CoCalc-ai Docs and Deep Actions Plan
 
-Status: draft plan
+Status: active implementation plan
 Date: 2026-05-24
 
 ## Goal
@@ -21,6 +21,80 @@ The system should support three related surfaces:
   skill.
 - Deep actions that let docs and agents open specific CoCalc UI destinations,
   such as `settings.environment.secrets`, without brittle selector automation.
+
+## Current Implementation Snapshot
+
+As of 2026-05-24, the first vertical slice exists and is usable:
+
+- `src/packages/docs` provides versioned docs entries, search, action metadata,
+  and `@cocalc/docs`.
+- Public `/docs` exists, including direct routing to `/docs` and docs detail
+  pages.
+- The project app has a Docs flyout/full-page panel.
+- Docs font size is adjustable and persisted in local storage.
+- `cocalc docs list/search/show/actions/action` exists for local bundled docs.
+- `cocalc browser action docs-list` lists live action availability in a target
+  browser session.
+- `cocalc browser action docs <id>` executes implemented docs actions in the
+  exact browser session.
+- Implemented executable docs actions:
+  - `settings.environment.secrets`
+  - `project.terminal.open`
+  - `project.jupyter.create`
+  - `settings.runtime.rootfs`
+- A static/live verification harness now exists:
+  - `@cocalc/docs/verification`
+  - `pnpm -C src/packages/docs verify`
+  - `cocalc docs verify`
+  - `cocalc docs verify --list-live`
+  - `cocalc docs verify --live --project-id <project_id>`
+  - `cocalc docs verify --live --spawn-browser --project-id <project_id>`
+    creates a dedicated Chromium browser session, runs the live docs actions,
+    and destroys the spawned session afterward.
+  - Live scenarios include UI assertions, not just action return values. They
+    use the browser-session `wait_for_text` action to confirm that the expected
+    modal, file tab, terminal, or notebook UI is actually visible.
+
+The remaining work is production hardening: more docs content, more executable
+actions, stronger live scenario assertions, Codex skill integration, and a
+release gate for legacy docs links.
+
+## Verification Workflow
+
+The docs action system has two verification layers.
+
+Static verification checks bundled docs metadata, links, and action ids:
+
+```sh
+cocalc docs verify
+```
+
+Live verification checks that executable docs actions still open the expected
+UI destinations in a real browser session:
+
+```sh
+cd src && eval "$(pnpm -s dev:hub:env)"
+cocalc docs verify --live --spawn-browser --project-id "$COCALC_PROJECT_ID"
+```
+
+The spawned-browser mode launches a dedicated Chromium session, discovers its
+browser id, runs every live scenario through `cocalc browser action docs <id>`,
+then destroys the spawned session. This is the preferred manual QA command for
+docs actions because it avoids depending on whatever browser tab the developer
+happens to have open.
+
+When the local API origin is `localhost` but the signed-in account belongs to
+an externally reachable home bay, the verifier asks `/api/v2/auth/bootstrap`
+for `home_bay_url` and opens Chromium on that external project URL. This avoids
+the localhost-only failure mode where the frontend changes its Conat control
+plane to the external home bay before the spawned browser registers.
+
+For debugging, keep the spawned browser alive:
+
+```sh
+cocalc docs verify --live --spawn-browser --keep-browser \
+  --project-id "$COCALC_PROJECT_ID"
+```
 
 ## Product Principles
 
@@ -49,8 +123,8 @@ Relevant existing pieces:
   terminal, markdown, SSH key screens, project warnings, etc.
 - `DOC_URL` is currently defined as `https://doc.cocalc.com/` in
   `src/packages/util/theme.ts`.
-- Field guides use `FIELD_GUIDES_URL =
-  https://sagemathinc.github.io/cocalc-guides/`.
+- Field guides use
+  `FIELD_GUIDES_URL = "https://sagemathinc.github.io/cocalc-guides/"`.
 - Browser-session automation is already substantial:
   - `src/packages/frontend/conat/browser-session`
   - QuickJS sandbox support in `index.ts`
@@ -395,7 +469,7 @@ Add corresponding TypeScript to `BROWSER_EXEC_API_DECLARATION`, ideally with a
 convenience method:
 
 ```ts
-api.deepAction("settings.environment.secrets", { project_id: api.projectId })
+api.deepAction("settings.environment.secrets", { project_id: api.projectId });
 ```
 
 Implementation details:
@@ -553,6 +627,46 @@ Initial verification gates:
 4. All internal links resolve.
 5. No `https://doc.cocalc.com/` links remain in public CoCalc-ai surfaces.
 
+Current harness:
+
+- Static checks live in `src/packages/docs/src/verification.ts`.
+- The Node entry point is `src/packages/docs/src/verify.ts`.
+- Run static checks with:
+
+```sh
+pnpm -C src/packages/docs verify
+cocalc docs verify
+```
+
+- List live browser-session scenarios with:
+
+```sh
+cocalc docs verify --list-live
+```
+
+- Run live scenarios against the active browser session with:
+
+```sh
+cd src && eval "$(pnpm -s dev:hub:env)"
+cocalc docs verify --live --project-id "$COCALC_PROJECT_ID"
+```
+
+Live verification intentionally uses docs actions instead of CSS selectors:
+
+```sh
+cocalc --json browser action docs settings.environment.secrets \
+  --project-id "$COCALC_PROJECT_ID"
+```
+
+Next verification improvements:
+
+- Add post-action DOM/state assertions for each executable docs action.
+- Add a no-side-effects mode that skips actions that create files, such as
+  `project.terminal.open` and `project.jupyter.create`.
+- Add CI release gates for static docs verification and legacy docs link scans.
+- Record scenario metadata back into docs entries once docs content moves from
+  inline TypeScript to Markdown/content files.
+
 ## Initial Task Docs
 
 Start with a small set that directly matches launch questions:
@@ -590,45 +704,53 @@ operational.
 
 ### Phase 1: Docs Package and Static Content
 
-- Create `src/packages/docs`.
-- Add parser/schema.
-- Add 5 initial docs pages:
+- Done: Create `src/packages/docs`.
+- Done: Add typed docs entries and search helpers.
+- Done: Add initial docs pages:
   - docs home,
   - project secrets,
-  - create project,
-  - install software,
+  - open terminal,
+  - create notebook,
+  - runtime image,
   - Codex chat.
-- Generate manifest/search JSON.
-- Add tests for schema, link refs, and source refs.
+- In progress: move inline content to Markdown/content files.
+- In progress: add generated manifest/search JSON if static artifacts become
+  useful.
+- Done: add the first verification harness for schema/action/link checks.
 
 ### Phase 2: Public `/docs`
 
-- Add public docs route.
-- Add docs renderer.
-- Add nav/footer links to `/docs`.
-- Replace public `doc.cocalc.com` links.
+- Done: Add public docs route.
+- Done: Add docs renderer.
+- Done: Add nav/footer links to `/docs`.
+- In progress: replace remaining `doc.cocalc.com` links.
 
 ### Phase 3: CLI Docs Search
 
-- Add `cocalc docs search/show/list`.
-- Package the docs manifest with CLI.
-- Add `docs skill-context`.
-- Add tests for search/show output.
+- Done: Add `cocalc docs search/show/list/actions/action`.
+- Done: Package docs with CLI via `@cocalc/docs`.
+- Done: Add `cocalc docs verify`.
+- Pending: Add `docs skill-context`.
+- Pending: Add focused CLI tests for docs commands.
 
 ### Phase 4: Deep Action Registry
 
-- Add frontend `deep-actions` registry.
-- Implement `settings.environment.secrets` first.
-- Add docs action block renderer.
-- Add unit tests for action registry validity.
+- Done: Add docs action registry in `src/packages/frontend/project/docs-actions.ts`.
+- Done: Implement `settings.environment.secrets`.
+- Done: Implement `project.terminal.open`.
+- Done: Implement `project.jupyter.create`.
+- Done: Implement `settings.runtime.rootfs`.
+- Done: Add docs action block renderer.
+- Done: Add unit tests for action registry validity.
 
 ### Phase 5: Browser-Session Deep Actions
 
-- Add `deep_action` to browser-session action engine.
-- Add `api.deepAction` to QuickJS prelude and exec API declaration.
-- Add CLI `cocalc docs action <id>`.
-- Verify `settings.environment.secrets` opens the relevant UI in a live browser
-  session.
+- Done: Add `docs_action` to browser-session action engine.
+- Done: Add `cocalc browser action docs-list`.
+- Done: Add `cocalc browser action docs <id>`.
+- Done: Verify executable docs actions can run in a live browser session.
+- Pending: Add a QuickJS convenience wrapper such as `api.docsAction(...)`.
+- Pending: Add stronger DOM/state assertions after browser action execution.
 
 ### Phase 6: Codex Skill
 
@@ -662,17 +784,17 @@ operational.
 
 ## First Concrete Milestone
 
-Implement one complete vertical slice:
+The original first concrete milestone is complete enough to use:
 
-1. `src/packages/docs` with `projects.project-secrets`.
-2. `/docs/projects/project-secrets` page.
-3. `settings.environment.secrets` deep action in frontend.
-4. `cocalc docs search project secrets`.
-5. `cocalc docs show projects.project-secrets`.
-6. `cocalc docs action settings.environment.secrets`.
-7. Codex skill instruction for using the docs command.
-8. A browser-session smoke test that runs the action and verifies the settings
-   secrets UI is visible.
+1. Done: `src/packages/docs` with `projects.project-secrets`.
+2. Done: `/docs/projects/project-secrets` page.
+3. Done: `settings.environment.secrets` docs action in frontend.
+4. Done: `cocalc docs search project secrets`.
+5. Done: `cocalc docs show projects.project-secrets`.
+6. Done: `cocalc browser action docs settings.environment.secrets`.
+7. Pending: Codex skill instruction for using the docs command.
+8. In progress: browser-session verification harness. Static checks and live
+   action execution exist; detailed DOM/state assertions are next.
 
 If that slice feels good, scale horizontally to the remaining launch-critical
 docs.

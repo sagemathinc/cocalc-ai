@@ -211,6 +211,7 @@ describe("bay-registry", () => {
     });
 
     expect(deleteAppSubdomainDnsMock).toHaveBeenCalledWith({
+      hostname: "bay-2-lite4b.cocalc.ai",
       record_id: "old-record",
     });
     expect(entry.dns_record_id).toBeNull();

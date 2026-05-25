@@ -50,6 +50,7 @@ export type BrowserActionName =
   | "scroll_by"
   | "scroll_to"
   | "wait_for_selector"
+  | "wait_for_text"
   | "wait_for_url"
   | "docs_action"
   | "batch";
@@ -178,6 +179,14 @@ export type BrowserAtomicActionRequest =
       name: "wait_for_selector";
       selector: string;
       state?: "attached" | "visible" | "hidden" | "detached";
+      timeout_ms?: number;
+      poll_ms?: number;
+    }
+  | {
+      name: "wait_for_text";
+      selector?: string;
+      includes?: string;
+      regex?: string;
       timeout_ms?: number;
       poll_ms?: number;
     }

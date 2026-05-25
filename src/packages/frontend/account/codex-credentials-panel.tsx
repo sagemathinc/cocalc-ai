@@ -38,6 +38,7 @@ import type {
 
 const { Text } = Typography;
 const CODEX_USAGE_URL = "https://chatgpt.com/codex/settings/usage";
+const SUBSCRIPTION_AUTH_PANEL_KEY = "subscription-auth";
 
 const recommendedCardStyle: CSSProperties = {
   border: `1px solid ${COLORS.BLUE_LLL}`,
@@ -158,6 +159,9 @@ function CodexCredentialsPanelBody({
   const [deviceAuthError, setDeviceAuthError] = useState<string>("");
   const [deviceAuthActionPending, setDeviceAuthActionPending] =
     useState<boolean>(false);
+  const [openCredentialPanelKeys, setOpenCredentialPanelKeys] = useState<
+    string[]
+  >([]);
   const [authFileUploadPending, setAuthFileUploadPending] =
     useState<boolean>(false);
   const [uploadedAuthFileStatus, setUploadedAuthFileStatus] = useState<{
@@ -176,6 +180,28 @@ function CodexCredentialsPanelBody({
     refresh();
     onPaymentSourceChanged?.();
   }, [onPaymentSourceChanged]);
+  const deviceAuthPending =
+    deviceAuthActionPending || deviceAuth?.state === "pending";
+  const openSubscriptionAuthPanel = useCallback(() => {
+    setOpenCredentialPanelKeys((keys) =>
+      keys.includes(SUBSCRIPTION_AUTH_PANEL_KEY)
+        ? keys
+        : [...keys, SUBSCRIPTION_AUTH_PANEL_KEY],
+    );
+  }, []);
+  const handleCredentialPanelChange = useCallback(
+    (key: string | string[]) => {
+      let nextKeys = Array.isArray(key) ? key : [key];
+      if (
+        deviceAuthPending &&
+        !nextKeys.includes(SUBSCRIPTION_AUTH_PANEL_KEY)
+      ) {
+        nextKeys = [SUBSCRIPTION_AUTH_PANEL_KEY, ...nextKeys];
+      }
+      setOpenCredentialPanelKeys(nextKeys);
+    },
+    [deviceAuthPending],
+  );
 
   const recentProjectId = useMemo(() => {
     if (!projectMap) return "";
@@ -372,6 +398,7 @@ function CodexCredentialsPanelBody({
   };
 
   const startDeviceAuth = async () => {
+    openSubscriptionAuthPanel();
     if (!authProjectId) {
       setDeviceAuthError(
         "No project available. Create or open a project, then retry.",
@@ -452,6 +479,12 @@ function CodexCredentialsPanelBody({
     }, 1500);
     return () => clearInterval(timer);
   }, [authProjectId, deviceAuth?.id, deviceAuth?.state]);
+
+  useEffect(() => {
+    if (deviceAuthPending) {
+      openSubscriptionAuthPanel();
+    }
+  }, [deviceAuthPending, openSubscriptionAuthPanel]);
 
   const content = (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
@@ -579,10 +612,11 @@ function CodexCredentialsPanelBody({
       </div>
       <Collapse
         size="small"
-        defaultActiveKey={[]}
+        activeKey={openCredentialPanelKeys}
+        onChange={handleCredentialPanelChange}
         items={[
           {
-            key: "subscription-auth",
+            key: SUBSCRIPTION_AUTH_PANEL_KEY,
             label: lite
               ? "Option A: Connect ChatGPT Plan"
               : "Connect ChatGPT subscription",

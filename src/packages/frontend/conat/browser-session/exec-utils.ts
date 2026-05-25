@@ -112,6 +112,7 @@ export function isAllowedActionName(
     clean === "scroll_by" ||
     clean === "scroll_to" ||
     clean === "wait_for_selector" ||
+    clean === "wait_for_text" ||
     clean === "wait_for_url" ||
     clean === "docs_action" ||
     clean === "batch"

@@ -11,12 +11,18 @@ import {
   type DocsActionSummary,
 } from "@cocalc/docs";
 import { redux } from "@cocalc/frontend/app-framework";
-import { separate_file_extension } from "@cocalc/util/misc";
+import {
+  history_path,
+  separate_file_extension,
+  tab_to_path,
+} from "@cocalc/util/misc";
 
 export const PROJECT_SECRETS_DOCS_ACTION_EVENT =
   "cocalc:docs-action:project-secrets";
 export const RUNTIME_IMAGE_DOCS_ACTION_EVENT =
   "cocalc:docs-action:runtime-image";
+export const PROJECT_PEOPLE_DOCS_ACTION_EVENT =
+  "cocalc:docs-action:project-people";
 
 export interface ProjectSecretsDocsActionDetail {
   projectId: string;
@@ -26,12 +32,17 @@ export interface RuntimeImageDocsActionDetail {
   projectId: string;
 }
 
+export interface ProjectPeopleDocsActionDetail {
+  projectId: string;
+}
+
 export type DocsActionRevealResult = {
   action_id: DocsActionId;
   opened: true;
   path?: string;
   panel?: string;
   project_id: string;
+  source_path?: string;
   tab?: string;
 };
 
@@ -73,7 +84,7 @@ type ProjectActionSubset = {
     opts?: { change_history?: boolean; noFocus?: boolean },
   ) => void;
   setFlyoutExpanded?: (
-    name: "settings",
+    name: "agents" | "settings",
     state: boolean,
     save?: boolean,
   ) => void;
@@ -96,6 +107,18 @@ function dispatchRuntimeImageEvent(projectId: string): void {
   window.dispatchEvent(
     new CustomEvent<RuntimeImageDocsActionDetail>(
       RUNTIME_IMAGE_DOCS_ACTION_EVENT,
+      {
+        detail: { projectId },
+      },
+    ),
+  );
+}
+
+function dispatchProjectPeopleEvent(projectId: string): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent<ProjectPeopleDocsActionDetail>(
+      PROJECT_PEOPLE_DOCS_ACTION_EVENT,
       {
         detail: { projectId },
       },
@@ -147,7 +170,12 @@ function storeSettingsFlyoutState(
 }
 
 function openSettingsEnvironment(projectId: string): void {
+  openSettingsPanel(projectId, "environment");
+}
+
+function openSettingsPanel(projectId: string, panel: string): void {
   storeSettingsFlyoutState(projectId);
+  storeSettingsFlyoutState(projectId, panel);
   selectProject(projectId);
   const actions = projectActions(projectId);
   actions?.set_active_tab?.("settings", {
@@ -155,6 +183,85 @@ function openSettingsEnvironment(projectId: string): void {
     noFocus: true,
   });
   actions?.setFlyoutExpanded?.("settings", true);
+}
+
+function revealProjectPeople(projectId: string): DocsActionRevealResult {
+  openSettingsPanel(projectId, "people");
+  if (typeof window !== "undefined") {
+    window.location.hash = "people";
+  }
+  dispatchProjectPeopleEvent(projectId);
+  setTimeout(() => dispatchProjectPeopleEvent(projectId), 100);
+  setTimeout(() => dispatchProjectPeopleEvent(projectId), 500);
+  return {
+    action_id: "settings.people.collaborators",
+    opened: true,
+    panel: "people",
+    project_id: projectId,
+    tab: "settings",
+  };
+}
+
+function getActiveOrRecentProjectFile(projectId: string): string | undefined {
+  const store = projectActions(projectId)?.get_store?.();
+  const activeTab = `${store?.get?.("active_project_tab") ?? ""}`;
+  const activePath = tab_to_path(activeTab);
+  if (activePath) return activePath;
+
+  const openFilesOrder = store?.get?.("open_files_order");
+  const openFiles =
+    typeof openFilesOrder?.toJS === "function"
+      ? openFilesOrder.toJS()
+      : typeof openFilesOrder?.toArray === "function"
+        ? openFilesOrder.toArray()
+        : Array.isArray(openFilesOrder)
+          ? openFilesOrder
+          : [];
+  for (let i = openFiles.length - 1; i >= 0; i -= 1) {
+    const path = `${openFiles[i] ?? ""}`.trim();
+    if (path && !path.endsWith(".time-travel")) return path;
+  }
+}
+
+async function revealTimeTravel(
+  projectId: string,
+): Promise<DocsActionRevealResult> {
+  selectProject(projectId);
+  const actions = projectActions(projectId);
+  let sourcePath = getActiveOrRecentProjectFile(projectId);
+  if (!sourcePath) {
+    const created = await createDefaultProjectFile({
+      actionId: "file.timetravel.open",
+      ext: "txt",
+      projectId,
+    });
+    sourcePath = created.path;
+  }
+  if (!sourcePath) {
+    throw Error("Could not determine a file for TimeTravel.");
+  }
+  const path = history_path(sourcePath);
+  actions?.open_file?.({ path, foreground: true });
+  return {
+    action_id: "file.timetravel.open",
+    opened: true,
+    path,
+    project_id: projectId,
+    source_path: sourcePath,
+  };
+}
+
+function revealCodex(projectId: string): DocsActionRevealResult {
+  selectProject(projectId);
+  const actions = projectActions(projectId);
+  actions?.set_active_tab?.("agents", { change_history: true });
+  actions?.setFlyoutExpanded?.("agents", true);
+  return {
+    action_id: "project.codex.open",
+    opened: true,
+    project_id: projectId,
+    tab: "agents",
+  };
 }
 
 function revealProjectSecrets(projectId: string): DocsActionRevealResult {
@@ -192,10 +299,15 @@ function revealRuntimeImage(projectId: string): DocsActionRevealResult {
 }
 
 function defaultDocsActionFilename(
-  ext: "ipynb" | "term",
+  ext: "ipynb" | "term" | "txt",
   avoid?: Record<string, unknown> | null,
 ): string {
-  const basename = ext === "ipynb" ? "notebook" : "terminal";
+  const basename =
+    ext === "ipynb"
+      ? "notebook"
+      : ext === "term"
+        ? "terminal"
+        : "timetravel-source";
   for (let i = 1; i < 1000; i += 1) {
     const suffix = i === 1 ? "" : `-${i}`;
     const filename = `${basename}${suffix}.${ext}`;
@@ -210,7 +322,7 @@ async function createDefaultProjectFile({
   projectId,
 }: {
   actionId: DocsActionId;
-  ext: "ipynb" | "term";
+  ext: "ipynb" | "term" | "txt";
   projectId: string;
 }): Promise<DocsActionRevealResult> {
   selectProject(projectId);
@@ -274,6 +386,21 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
     id: "settings.runtime.rootfs",
     isAvailable: ({ projectId }) => validateProjectId(projectId),
     run: ({ projectId }) => revealRuntimeImage(projectId),
+  },
+  "settings.people.collaborators": {
+    id: "settings.people.collaborators",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) => revealProjectPeople(projectId),
+  },
+  "file.timetravel.open": {
+    id: "file.timetravel.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) => revealTimeTravel(projectId),
+  },
+  "project.codex.open": {
+    id: "project.codex.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) => revealCodex(projectId),
   },
 };
 
