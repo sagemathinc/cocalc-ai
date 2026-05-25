@@ -171,6 +171,19 @@ Terminal files are path-based. A terminal at \`analysis/run.term\` starts in the
 Create separate terminal files for separate tasks when that makes the workspace
 easier to understand.
 
+## Open project files from the terminal
+
+Use the \`open\` command to open files and directories in CoCalc from the shell,
+similar to \`xdg-open\` on Linux or \`open\` on macOS:
+
+~~~sh
+open path/to/file.ipynb path/to/script.py path/to/folder
+~~~
+
+This is often faster than switching to the file browser when you are already
+working in a terminal. Paths are interpreted relative to the terminal's current
+directory.
+
 ## Persistent work
 
 Browser tabs are not the process boundary. Long commands can continue after the
