@@ -1032,7 +1032,8 @@ describe("hosts.listHostProjects", () => {
 
   it("adds the risk filter when requested", async () => {
     const listSqls: string[] = [];
-    queryMock.mockImplementation(async (sql: string, _params: any[]) => {
+    const listParams: any[][] = [];
+    queryMock.mockImplementation(async (sql: string, params: any[]) => {
       if (sql.includes("FROM project_hosts")) {
         return {
           rows: [
@@ -1048,6 +1049,7 @@ describe("hosts.listHostProjects", () => {
       }
       if (sql.includes("LEFT(COALESCE(title")) {
         listSqls.push(sql);
+        listParams.push(params);
         return { rows: PROJECT_ROWS_PAGE_1.slice(0, 1) };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -1072,6 +1074,9 @@ describe("hosts.listHostProjects", () => {
     const baseCount = (baseSql.match(/last_backup IS NULL/g) || []).length;
     const riskCount = (riskSql.match(/last_backup IS NULL/g) || []).length;
     expect(riskCount).toBeGreaterThan(baseCount);
+    expect(listParams[0]).toEqual([HOST_ID, 5]);
+    expect(listParams[1]).toEqual([HOST_ID, 5]);
+    expect(riskSql).toContain("INTERVAL '1 minute'");
   });
 
   it("adds state filters when requested", async () => {

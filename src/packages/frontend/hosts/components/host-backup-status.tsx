@@ -8,17 +8,13 @@ function formatBackupStatus(host: Host, compact: boolean): string | null {
   if (!total) return null;
   const provisioned = status.provisioned ?? 0;
   const upToDate = status.provisioned_up_to_date ?? 0;
-  const running = status.running ?? 0;
-  const needs = (status.provisioned_needs_backup ?? 0) + running;
+  const needs = status.provisioned_needs_backup ?? 0;
   if (compact) {
     return `Backups ${upToDate}/${provisioned || 0}`;
   }
   const assignedDetail = total !== provisioned ? ` · assigned ${total}` : "";
-  const detail =
-    needs > 0
-      ? ` · needs ${needs}${running ? ` (running ${running})` : ""}`
-      : "";
-  return `Backups: ${upToDate}/${provisioned} provisioned${assignedDetail}${detail}`;
+  const detail = needs > 0 ? ` · exposure ${needs}` : "";
+  return `Backups: ${upToDate}/${provisioned} covered${assignedDetail}${detail}`;
 }
 
 export function HostBackupStatus({

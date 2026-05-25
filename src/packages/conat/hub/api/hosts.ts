@@ -450,6 +450,7 @@ export interface HostBackupStatus {
   running: number;
   provisioned_up_to_date: number;
   provisioned_needs_backup: number;
+  backup_exposure_grace_minutes?: number;
 }
 
 export interface HostBootstrapStatus {

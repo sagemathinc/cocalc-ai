@@ -500,6 +500,7 @@ const HOST_DEPROVISION_LRO_KIND = "host-deprovision";
 const HOST_DELETE_LRO_KIND = "host-delete";
 const HOST_FORCE_DEPROVISION_LRO_KIND = "host-force-deprovision";
 const HOST_REMOVE_CONNECTOR_LRO_KIND = "host-remove-connector";
+const BACKUP_EXPOSURE_GRACE_MINUTES = 5;
 // Non-serializable capability used only by trusted in-process inter-bay
 // handlers. Public Conat API callers cannot supply this value over JSON.
 export const HOST_DANGEROUS_INTERNAL_AUTH = Symbol(
@@ -628,16 +629,20 @@ async function loadHostBackupStatus(
         ) AS running,
         COUNT(*) FILTER (
           WHERE provisioned IS TRUE
-            AND COALESCE(state->>'state', '') NOT IN ('running','starting')
             AND last_backup IS NOT NULL
-            AND (last_edited IS NULL OR last_edited <= last_backup)
+            AND (
+              last_edited IS NULL
+              OR last_edited <= last_backup + ($2::int * INTERVAL '1 minute')
+            )
         ) AS provisioned_up_to_date,
         COUNT(*) FILTER (
           WHERE provisioned IS TRUE
-            AND COALESCE(state->>'state', '') NOT IN ('running','starting')
             AND (
               last_backup IS NULL
-              OR (last_edited IS NOT NULL AND last_edited > last_backup)
+              OR (
+                last_edited IS NOT NULL
+                AND last_edited > last_backup + ($2::int * INTERVAL '1 minute')
+              )
             )
         ) AS provisioned_needs_backup
       FROM projects
@@ -645,7 +650,7 @@ async function loadHostBackupStatus(
         AND host_id = ANY($1)
       GROUP BY host_id
     `,
-    [hostIds],
+    [hostIds, BACKUP_EXPOSURE_GRACE_MINUTES],
   );
   const map = new Map<string, HostBackupStatus>();
   for (const row of rows) {
@@ -655,6 +660,7 @@ async function loadHostBackupStatus(
       running: Number(row.running ?? 0),
       provisioned_up_to_date: Number(row.provisioned_up_to_date ?? 0),
       provisioned_needs_backup: Number(row.provisioned_needs_backup ?? 0),
+      backup_exposure_grace_minutes: BACKUP_EXPOSURE_GRACE_MINUTES,
     });
   }
   return map;
@@ -3664,6 +3670,7 @@ export async function listHostProjectsLocalSnapshot({
     running: 0,
     provisioned_up_to_date: 0,
     provisioned_needs_backup: 0,
+    backup_exposure_grace_minutes: BACKUP_EXPOSURE_GRACE_MINUTES,
   };
 
   const resultRows: HostProjectRow[] = rows.map((row) => ({
@@ -3712,16 +3719,16 @@ function buildHostProjectsBaseQuery({
   project_state?: string;
 }) {
   const needsBackupSql = `
-    ${HOST_PROJECT_RUNNING_STATES_SQL}
-    OR (
-      provisioned IS TRUE
-      AND (
-        last_backup IS NULL
-        OR (last_edited IS NOT NULL AND last_edited > last_backup)
+    provisioned IS TRUE
+    AND (
+      last_backup IS NULL
+      OR (
+        last_edited IS NOT NULL
+        AND last_edited > last_backup + ($2::int * INTERVAL '1 minute')
       )
     )
   `;
-  const params: any[] = [host_id];
+  const params: any[] = [host_id, BACKUP_EXPOSURE_GRACE_MINUTES];
   const filters: string[] = ["deleted IS NOT true", "host_id = $1"];
   const normalizedStateFilter = normalizeHostProjectStateFilter(state_filter);
 

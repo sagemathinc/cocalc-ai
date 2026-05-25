@@ -1906,7 +1906,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           <Typography.Text type="secondary">
             Backups{" "}
             {host.backup_status
-              ? `${host.backup_status.provisioned_up_to_date}/${host.backup_status.provisioned} provisioned up to date · ${host.backup_status.provisioned_needs_backup} need backup`
+              ? `${host.backup_status.provisioned_up_to_date}/${host.backup_status.provisioned} covered · ${host.backup_status.provisioned_needs_backup} exposed`
               : "n/a"}
           </Typography.Text>
         </Space>
