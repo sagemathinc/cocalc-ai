@@ -681,7 +681,7 @@ ${site_name} supports online editing of
     <a href="https://doc.cocalc.com/teaching-instructors.html">Teaching a course on CoCalc</a>.
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
-    <a href="https://doc.cocalc.com/howto/connectivity-issues.html">Troubleshooting connectivity issues</a>
+    <a href="${joinUrlPath(url, "docs/troubleshooting/connectivity")}">Troubleshooting connectivity issues</a>
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
     <a href="https://github.com/sagemathinc/cocalc/wiki/MathematicalSyntaxErrors">Common mathematical syntax errors:</a> look into this if you are new to working with a programming language!

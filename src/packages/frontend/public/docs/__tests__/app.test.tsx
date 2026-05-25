@@ -67,6 +67,11 @@ describe("public/docs", () => {
         (entry) => entry.id,
       )[0],
     ).toBe("troubleshooting.memory");
+    expect(
+      searchDocsEntries("websocket sign in browser connectivity").map(
+        (entry) => entry.id,
+      )[0],
+    ).toBe("troubleshooting.connectivity");
   });
 
   it("renders the docs index", () => {

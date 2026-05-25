@@ -447,6 +447,63 @@ environment: monitor it, size the host appropriately, and design workflows that
 can recover after a process is killed.
 `;
 
+const CONNECTIVITY_TROUBLESHOOTING_BODY = String.raw`
+## What connectivity trouble looks like
+
+CoCalc keeps a live connection between your browser and the service so files,
+terminals, notebooks, chat, and project state stay synchronized. Connectivity
+trouble usually appears as a sign-in prompt that never completes, reconnect
+messages, stale project state, failed websocket connections, or editors that do
+not update.
+
+## First things to try
+
+1. Refresh the browser tab.
+2. Sign out and sign back in if the page says you are not authenticated.
+3. Open CoCalc in a private browser window to rule out stale site data or a
+   browser extension.
+4. Disable privacy, ad-blocking, or script-blocking extensions for the CoCalc
+   site.
+5. Try another network if you are behind a strict firewall, campus proxy, VPN,
+   or corporate security filter.
+
+If the same browser has been used across several local development servers or
+site hostnames, clearing site data for that hostname can fix stale localStorage
+or cookie state.
+
+## Network requirements
+
+CoCalc needs normal HTTPS traffic and websocket connections to the site you are
+using. Some proxies allow web pages but block websocket upgrades; that can make
+the page load while realtime project features fail.
+
+For a local development instance, make sure the browser is using the same
+localhost port, session, and site hostname as the running server. If you switch
+between Lite, hub, and project-host development environments, refresh the
+matching development environment before using browser automation or CLI tools.
+
+## What to include in a support report
+
+When reporting a connectivity problem, include:
+
+1. The exact site URL.
+2. The browser and operating system.
+3. Whether the problem happens in a private browser window.
+4. Whether another network works.
+5. Any visible reconnect message or browser console websocket error.
+6. The approximate time the issue happened.
+
+Do not include passwords, API keys, project secrets, or private tokens in a
+support report.
+
+## Why this matters in CoCalc
+
+CoCalc projects are live collaborative workspaces. A partial connection can be
+more confusing than a fully offline page because some UI may render while the
+realtime project connection is blocked. The fastest diagnosis is to separate
+browser state, authentication state, and network websocket access.
+`;
+
 const COLLABORATORS_BODY = String.raw`
 ## What collaborators are for
 
@@ -1188,6 +1245,18 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     summary:
       "Diagnose low-memory warnings, out-of-memory kills, and notebook kernel restarts.",
     title: "Low memory and out-of-memory crashes",
+  },
+  {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: CONNECTIVITY_TROUBLESHOOTING_BODY.trim(),
+    category: "Troubleshooting",
+    id: "troubleshooting.connectivity",
+    lastReviewed: "2026-05-25",
+    slug: "troubleshooting/connectivity",
+    status: "ready",
+    summary:
+      "Diagnose sign-in, websocket, stale browser state, and network connection problems.",
+    title: "Connectivity and browser troubleshooting",
   },
   {
     audiences: ["agents", "instructors", "researchers", "teams"],
