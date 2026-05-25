@@ -1783,7 +1783,11 @@ export const useHostsPageViewModel = () => {
         await setHostAccess(id, opts);
       });
     },
-    onRemoveHostAccess: removeHostAccess,
+    onRemoveHostAccess: async (id, target_account_id) => {
+      await runFreshAuthAction(async () => {
+        await removeHostAccess(id, target_account_id);
+      });
+    },
     onSetHostProjectRamLimit: async (id, project_ram_limit_mb) => {
       await runFreshAuthAction(async () => {
         await setHostProjectRamLimit(id, project_ram_limit_mb);

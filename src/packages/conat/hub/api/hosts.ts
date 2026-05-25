@@ -1186,6 +1186,8 @@ export interface Hosts {
   }) => Promise<HostAccessEntry>;
   removeHostAccess: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     id: string;
     target_account_id: string;
   }) => Promise<HostAccessEntry | undefined>;

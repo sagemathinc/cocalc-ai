@@ -3135,18 +3135,33 @@ export async function setHostAccess({
 
 export async function removeHostAccess({
   account_id,
+  browser_id,
+  session_hash,
   id,
   target_account_id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   id: string;
   target_account_id: string;
 }): Promise<HostAccessEntry | undefined> {
+  await requireDangerousHostMutationAuth({
+    account_id,
+    browser_id,
+    session_hash,
+  });
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
   if (remoteBay) {
     return await getInterBayBridge()
       .hostConnection(remoteBay)
-      .removeHostAccess({ account_id, id, target_account_id });
+      .removeHostAccess({
+        account_id,
+        ...(browser_id ? { browser_id } : {}),
+        session_hash,
+        id,
+        target_account_id,
+      });
   }
   return serializeHostAccessEntry(
     await removeHostAccessEntry({

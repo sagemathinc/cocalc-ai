@@ -72,6 +72,7 @@ type HubClient = {
     }) => Promise<HostAccessEntry>;
     removeHostAccess?: (opts: {
       id: string;
+      browser_id?: string;
       target_account_id: string;
     }) => Promise<HostAccessEntry | undefined>;
     setHostProjectRamLimit?: (opts: {
@@ -458,9 +459,12 @@ export const useHostActions = ({
       return;
     }
     try {
-      await hub.hosts.removeHostAccess({ id, target_account_id });
+      await hub.hosts.removeHostAccess({ id, browser_id, target_account_id });
       await refresh();
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
       alert_message({
         type: "error",
         message: err instanceof Error ? err.message : String(err),

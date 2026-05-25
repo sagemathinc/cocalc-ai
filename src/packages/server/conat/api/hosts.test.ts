@@ -27,6 +27,7 @@ let hostConnectionStartHostMock: jest.Mock;
 let hostConnectionStopHostMock: jest.Mock;
 let hostConnectionRestartHostMock: jest.Mock;
 let hostConnectionDrainHostMock: jest.Mock;
+let hostConnectionRemoveHostAccessMock: jest.Mock;
 let hostConnectionRefreshHostCloudStateMock: jest.Mock;
 let hostConnectionUpgradeHostSoftwareMock: jest.Mock;
 let hostConnectionReconcileHostSoftwareMock: jest.Mock;
@@ -346,6 +347,8 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
       stopHost: (...args: any[]) => hostConnectionStopHostMock(...args),
       restartHost: (...args: any[]) => hostConnectionRestartHostMock(...args),
       drainHost: (...args: any[]) => hostConnectionDrainHostMock(...args),
+      removeHostAccess: (...args: any[]) =>
+        hostConnectionRemoveHostAccessMock(...args),
       refreshHostCloudState: (...args: any[]) =>
         hostConnectionRefreshHostCloudStateMock(...args),
       upgradeHostSoftware: (...args: any[]) =>
@@ -587,6 +590,12 @@ beforeEach(() => {
     service: "persist",
     stream_name: "lro:remote-drain-op",
     kind: "host-drain",
+  }));
+  hostConnectionRemoveHostAccessMock = jest.fn(async () => ({
+    host_id: HOST_ID,
+    account_id: "target-account",
+    role: "manager",
+    revoked_at: new Date("2026-05-24T12:00:00.000Z"),
   }));
   hostConnectionRefreshHostCloudStateMock = jest.fn(async () => ({
     host_id: HOST_ID,
@@ -1612,6 +1621,32 @@ describe("hosts browser fresh auth gating", () => {
     ).rejects.toMatchObject({
       code: "fresh_auth_required",
     });
+  });
+
+  it("requires fresh auth before revoking host access", async () => {
+    requireFreshAuthForSessionHashMock = jest.fn(async () => {
+      throw Object.assign(new Error("fresh auth is required"), {
+        code: "fresh_auth_required",
+      });
+    });
+
+    const { removeHostAccess } = await import("./hosts");
+    queryMock.mockClear();
+    await expect(
+      removeHostAccess({
+        account_id: ACCOUNT_ID,
+        session_hash: "stale-session-hash",
+        id: HOST_ID,
+        target_account_id: "target-account",
+      }),
+    ).rejects.toThrow("fresh auth is required");
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      allow_actor_impersonation: true,
+      session_hash: "stale-session-hash",
+    });
+    expect(queryMock).not.toHaveBeenCalled();
   });
 
   it("checks fresh auth before changing host project RAM caps", async () => {
