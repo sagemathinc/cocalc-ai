@@ -364,16 +364,21 @@ export function shouldSkipStartForSnapshot({
   state,
   timeMs,
   hasActiveStartLro,
+  ignoreRecentState = false,
   nowMs = Date.now(),
 }: {
   state?: string;
   timeMs?: number;
   hasActiveStartLro: boolean;
+  ignoreRecentState?: boolean;
   nowMs?: number;
 }): { skip: boolean; reason?: string } {
   if (state === "starting") {
     if (hasActiveStartLro) {
       return { skip: true, reason: "active-start-lro" };
+    }
+    if (ignoreRecentState) {
+      return { skip: false };
     }
     const isRecent =
       timeMs != null && nowMs - timeMs <= RECENT_STARTING_STATE_MS;
@@ -383,6 +388,9 @@ export function shouldSkipStartForSnapshot({
     return { skip: false };
   }
   if (state === "running") {
+    if (ignoreRecentState) {
+      return { skip: false };
+    }
     const isRecent =
       timeMs != null && nowMs - timeMs <= RECENT_RUNNING_STATE_MS;
     if (isRecent) {
@@ -698,6 +706,7 @@ export async function startProjectOnHost(
     account_id?: string;
     managed_egress_override?: ManagedProjectEgressOverride;
     restore_backup_id?: string;
+    ignore_recent_state_snapshot?: boolean;
   },
 ): Promise<void> {
   const existing = startProjectInFlight.get(project_id);
@@ -716,6 +725,7 @@ export async function startProjectOnHost(
       state: snapshot.state,
       timeMs: snapshot.timeMs,
       hasActiveStartLro: activeStartLro,
+      ignoreRecentState: opts?.ignore_recent_state_snapshot === true,
     });
     if (startDecision.skip) {
       log.debug("startProjectOnHost skipping duplicate start", {

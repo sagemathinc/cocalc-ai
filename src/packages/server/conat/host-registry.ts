@@ -26,17 +26,38 @@ import {
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { appendProjectLogRowBestEffort } from "@cocalc/server/projects/project-log";
+import { startProjectOnHost } from "@cocalc/server/project-host/control";
+import { loadProjectRuntimeSponsor } from "@cocalc/server/projects/runtime-sponsor-db";
+import {
+  heartbeatProjectRuntimeSlot,
+  releaseProjectRuntimeSlot,
+  reserveProjectRuntimeSlot,
+} from "@cocalc/server/projects/runtime-slots";
+import {
+  getProjectOwnerAccountId,
+  type ProjectUsers,
+} from "@cocalc/server/projects/runtime-sponsor";
+import { sleep } from "@cocalc/util/async-utils";
 import { notifyProjectHostUpdate } from "./route-project";
 
 const logger = getLogger("server:conat:host-registry");
 const pool = () => getPool();
 const STOP_POLICY_PRIORITY_CACHE_TTL_MS = 5 * 60_000;
+const HOST_RESTART_RECOVERY_SCHEDULE_DELAY_MS = 1_000;
+export const HOST_RESTART_RECOVERY_START_INTERVAL_MS = 5_000;
+const HOST_RESTART_RECOVERY_SLOT_TTL_MS = 30 * 60_000;
+const HOST_RESTART_RECOVERY_ACTIVE_STATES = [
+  "running",
+  "starting",
+  "restarting",
+];
 
 const stopPolicyPriorityCache = new Map<
   string,
   { priority: number; expires_at: number }
 >();
 const stopPolicyPriorityInflight = new Map<string, Promise<number>>();
+const hostRestartRecoveryInflight = new Map<string, Promise<void>>();
 
 export interface HostRegistration extends ProjectHostRecord {
   sshpiperd_public_key?: string;
@@ -60,101 +81,6 @@ function registryBayIdForHeartbeat(previousBayId: unknown): string {
   // grant metadata ownership. During host rehome, the old bay can keep seeing
   // heartbeats until bootstrap reconcile restarts the host agent.
   return current || localBayId;
-}
-
-async function markStaleRunningProjectsOpenedAfterBootChange({
-  host_id,
-  previous_session_id,
-  next_session_id,
-  previous_boot_id,
-  next_boot_id,
-  source,
-}: {
-  host_id: string;
-  previous_session_id?: string;
-  next_session_id?: string;
-  previous_boot_id?: string;
-  next_boot_id?: string;
-  source: "register" | "heartbeat";
-}): Promise<void> {
-  if (!previous_boot_id || !next_boot_id || previous_boot_id === next_boot_id) {
-    return;
-  }
-  const defaultBayId = getConfiguredBayId();
-  const state = {
-    state: "opened",
-    time: new Date().toISOString(),
-    reason: "host_boot_replaced",
-    previous_host_boot_id: previous_boot_id,
-    host_boot_id: next_boot_id,
-    previous_host_session_id: previous_session_id,
-    host_session_id: next_session_id,
-  };
-  let projectIds: string[] = [];
-  const client = await pool().connect();
-  try {
-    await client.query("BEGIN");
-    const { rows } = await client.query<{ project_id: string }>(
-      `UPDATE projects
-          SET state=$2::jsonb
-        WHERE host_id=$1
-          AND COALESCE(state->>'state', '') IN ('running', 'starting', 'restarting')
-        RETURNING project_id`,
-      [host_id, state],
-    );
-    projectIds = rows.map((row) => row.project_id).filter(Boolean);
-    for (const project_id of projectIds) {
-      await appendProjectOutboxEventForProject({
-        db: client,
-        event_type: "project.state_changed",
-        project_id,
-        default_bay_id: defaultBayId,
-      });
-    }
-    await client.query("COMMIT");
-  } catch (err) {
-    await client.query("ROLLBACK");
-    logger.warn("failed to mark stale host-boot projects opened", {
-      host_id,
-      previous_boot_id,
-      next_boot_id,
-      previous_session_id,
-      next_session_id,
-      source,
-      err: `${err}`,
-    });
-    return;
-  } finally {
-    client.release();
-  }
-  if (projectIds.length === 0) {
-    return;
-  }
-  logger.info("marked stale host-boot projects opened", {
-    host_id,
-    previous_boot_id,
-    next_boot_id,
-    previous_session_id,
-    next_session_id,
-    source,
-    count: projectIds.length,
-  });
-  const settled = await Promise.allSettled(
-    projectIds.map((project_id) =>
-      publishProjectAccountFeedEventsBestEffort({
-        project_id,
-        default_bay_id: defaultBayId,
-      }),
-    ),
-  );
-  const failed = settled.filter((result) => result.status === "rejected");
-  if (failed.length > 0) {
-    logger.warn("failed to publish some stale host-boot project updates", {
-      host_id,
-      source,
-      failed: failed.length,
-    });
-  }
 }
 
 function getPendingAutomaticConvergenceRetry(metadata: any): {
@@ -257,6 +183,473 @@ async function hydrateStopPolicyRows(
       stop_override: defaultOverride,
     };
   });
+}
+
+type HostRestartRecoveryBaseRow = {
+  project_id: string;
+  users: ProjectUsers;
+  last_edited: Date | null;
+  created: Date | null;
+};
+
+type HostRestartRecoveryProject = {
+  project_id: string;
+  owner_account_id?: string;
+  shared_compute_priority: number;
+  activity_ms: number;
+};
+
+type HostRestartRecoveryMetadataStatus =
+  | "queued"
+  | "running"
+  | "finished"
+  | "failed";
+
+function recoveryInflightKey(host_id: string, host_boot_id?: string): string {
+  return `${host_id}:${host_boot_id ?? ""}`;
+}
+
+function getRestartRecoveryStatus(metadata: any): {
+  status?: string;
+  host_boot_id?: string;
+} {
+  const recovery = metadata?.restart_recovery ?? {};
+  return {
+    status: `${recovery.status ?? ""}`.trim() || undefined,
+    host_boot_id: `${recovery.host_boot_id ?? ""}`.trim() || undefined,
+  };
+}
+
+function isRestartRecoveryPendingForBoot(
+  metadata: any,
+  host_boot_id?: string,
+): boolean {
+  const recovery = getRestartRecoveryStatus(metadata);
+  return (
+    !!host_boot_id &&
+    recovery.host_boot_id === host_boot_id &&
+    (recovery.status === "queued" || recovery.status === "running")
+  );
+}
+
+function recoveryActivityMs(row: HostRestartRecoveryBaseRow): number {
+  const value = row.last_edited ?? row.created;
+  const ms = value ? new Date(value as any).getTime() : 0;
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+async function loadHostRestartRecoveryProjects(
+  host_id: string,
+): Promise<HostRestartRecoveryProject[]> {
+  const { rows } = await pool().query<HostRestartRecoveryBaseRow>(
+    `
+      SELECT project_id, users, last_edited, created
+        FROM projects
+       WHERE host_id=$1
+         AND deleted IS NOT TRUE
+         AND COALESCE(state->>'state', '') = ANY($2)
+    `,
+    [host_id, HOST_RESTART_RECOVERY_ACTIVE_STATES],
+  );
+  const ownerIds = Array.from(
+    new Set(
+      rows
+        .map((row) => getProjectOwnerAccountId(row.users))
+        .filter((account_id): account_id is string => !!account_id),
+    ),
+  );
+  const priorities = new Map<string, number>();
+  await Promise.all(
+    ownerIds.map(async (owner_account_id) => {
+      priorities.set(
+        owner_account_id,
+        await getSharedComputePriorityForOwner(owner_account_id),
+      );
+    }),
+  );
+  return rows
+    .map((row) => {
+      const owner_account_id = getProjectOwnerAccountId(row.users);
+      return {
+        project_id: row.project_id,
+        owner_account_id,
+        shared_compute_priority: owner_account_id
+          ? (priorities.get(owner_account_id) ?? 0)
+          : 0,
+        activity_ms: recoveryActivityMs(row),
+      };
+    })
+    .sort((a, b) => {
+      const priority = b.shared_compute_priority - a.shared_compute_priority;
+      if (priority !== 0) return priority;
+      const activity = b.activity_ms - a.activity_ms;
+      if (activity !== 0) return activity;
+      return a.project_id.localeCompare(b.project_id);
+    });
+}
+
+async function updateHostRestartRecoveryMetadata({
+  host_id,
+  patch,
+}: {
+  host_id: string;
+  patch: Record<string, unknown>;
+}): Promise<void> {
+  const { rows } = await pool().query<{ metadata: any }>(
+    "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+    [host_id],
+  );
+  const metadata = { ...(rows[0]?.metadata ?? {}) };
+  metadata.restart_recovery = {
+    ...(metadata.restart_recovery ?? {}),
+    ...patch,
+    updated_at: new Date().toISOString(),
+  };
+  await pool().query(
+    "UPDATE project_hosts SET metadata=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL",
+    [host_id, metadata],
+  );
+}
+
+async function stillNeedsHostRestartRecovery({
+  project_id,
+  host_id,
+}: {
+  project_id: string;
+  host_id: string;
+}): Promise<boolean> {
+  const { rows } = await pool().query<{ state: string | null }>(
+    `
+      SELECT COALESCE(state->>'state', '') AS state
+        FROM projects
+       WHERE project_id=$1
+         AND host_id=$2
+         AND deleted IS NOT TRUE
+       LIMIT 1
+    `,
+    [project_id, host_id],
+  );
+  return HOST_RESTART_RECOVERY_ACTIVE_STATES.includes(rows[0]?.state ?? "");
+}
+
+async function markProjectRestartRecoveryFailedOpened({
+  project_id,
+  host_id,
+  host_boot_id,
+  err,
+}: {
+  project_id: string;
+  host_id: string;
+  host_boot_id?: string;
+  err: unknown;
+}): Promise<void> {
+  const defaultBayId = getConfiguredBayId();
+  const state = {
+    state: "opened",
+    time: new Date().toISOString(),
+    reason: "host_restart_recovery_failed",
+    host_boot_id,
+    error: `${err}`.slice(0, 1000),
+  };
+  const client = await pool().connect();
+  let changed = false;
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `UPDATE projects
+          SET state=$3::jsonb
+        WHERE project_id=$1
+          AND host_id=$2
+          AND deleted IS NOT TRUE
+          AND COALESCE(state->>'state', '') = ANY($4)`,
+      [project_id, host_id, state, HOST_RESTART_RECOVERY_ACTIVE_STATES],
+    );
+    changed = (result.rowCount ?? 0) > 0;
+    if (changed) {
+      await appendProjectOutboxEventForProject({
+        db: client,
+        event_type: "project.state_changed",
+        project_id,
+        default_bay_id: defaultBayId,
+      });
+    }
+    await client.query("COMMIT");
+  } catch (updateErr) {
+    await client.query("ROLLBACK");
+    logger.warn("failed to mark restart recovery failure opened", {
+      project_id,
+      host_id,
+      err: `${updateErr}`,
+    });
+  } finally {
+    client.release();
+  }
+  if (changed) {
+    await publishProjectAccountFeedEventsBestEffort({
+      project_id,
+      default_bay_id: defaultBayId,
+    });
+  }
+}
+
+async function recoverProjectAfterHostRestart({
+  project,
+  host_id,
+  host_boot_id,
+}: {
+  project: HostRestartRecoveryProject;
+  host_id: string;
+  host_boot_id?: string;
+}): Promise<"started" | "skipped" | "failed"> {
+  if (
+    !(await stillNeedsHostRestartRecovery({
+      project_id: project.project_id,
+      host_id,
+    }))
+  ) {
+    return "skipped";
+  }
+  let reserved = false;
+  let sponsor_account_id: string | undefined;
+  try {
+    const sponsor = await loadProjectRuntimeSponsor(project.project_id);
+    sponsor_account_id = sponsor.sponsor_account_id;
+    await reserveProjectRuntimeSlot({
+      ...sponsor,
+      project_id: project.project_id,
+      actor_account_id: project.owner_account_id,
+      reason: "host-restart-recovery",
+      state: "starting",
+      ttl_ms: HOST_RESTART_RECOVERY_SLOT_TTL_MS,
+      metadata: {
+        host_id,
+        host_boot_id,
+        recovered_by: "host-restart-recovery",
+      },
+    });
+    reserved = true;
+    await startProjectOnHost(project.project_id, {
+      account_id: project.owner_account_id,
+      ignore_recent_state_snapshot: true,
+    });
+    await heartbeatProjectRuntimeSlot({
+      sponsor_account_id: sponsor.sponsor_account_id,
+      project_id: project.project_id,
+      host_id,
+      state: "running",
+      ttl_ms: HOST_RESTART_RECOVERY_SLOT_TTL_MS,
+      metadata: {
+        host_id,
+        host_boot_id,
+        recovered_by: "host-restart-recovery",
+      },
+    });
+    return "started";
+  } catch (err) {
+    logger.warn("host restart recovery failed to start project", {
+      host_id,
+      host_boot_id,
+      project_id: project.project_id,
+      err: `${err}`,
+    });
+    if (reserved && sponsor_account_id) {
+      await releaseProjectRuntimeSlot({
+        sponsor_account_id,
+        project_id: project.project_id,
+        state: "failed",
+      }).catch((releaseErr) => {
+        logger.warn("failed to release restart recovery runtime slot", {
+          host_id,
+          project_id: project.project_id,
+          sponsor_account_id,
+          err: `${releaseErr}`,
+        });
+      });
+    }
+    await markProjectRestartRecoveryFailedOpened({
+      project_id: project.project_id,
+      host_id,
+      host_boot_id,
+      err,
+    });
+    return "failed";
+  }
+}
+
+export async function startHostRestartRecoveryForHost({
+  host_id,
+  host_boot_id,
+  previous_host_boot_id,
+  previous_host_session_id,
+  host_session_id,
+  source,
+  start_interval_ms = HOST_RESTART_RECOVERY_START_INTERVAL_MS,
+}: {
+  host_id: string;
+  host_boot_id?: string;
+  previous_host_boot_id?: string;
+  previous_host_session_id?: string;
+  host_session_id?: string;
+  source: "register" | "heartbeat";
+  start_interval_ms?: number;
+}): Promise<void> {
+  const startedAt = new Date().toISOString();
+  await updateHostRestartRecoveryMetadata({
+    host_id,
+    patch: {
+      status: "running" satisfies HostRestartRecoveryMetadataStatus,
+      host_boot_id,
+      previous_host_boot_id,
+      previous_host_session_id,
+      host_session_id,
+      source,
+      started_at: startedAt,
+    },
+  });
+  const projects = await loadHostRestartRecoveryProjects(host_id);
+  let started = 0;
+  let skipped = 0;
+  let failed = 0;
+  for (let i = 0; i < projects.length; i += 1) {
+    const result = await recoverProjectAfterHostRestart({
+      project: projects[i],
+      host_id,
+      host_boot_id,
+    });
+    if (result === "started") {
+      started += 1;
+    } else if (result === "skipped") {
+      skipped += 1;
+    } else {
+      failed += 1;
+    }
+    if (i < projects.length - 1 && start_interval_ms > 0) {
+      await sleep(start_interval_ms);
+    }
+  }
+  await updateHostRestartRecoveryMetadata({
+    host_id,
+    patch: {
+      status: (failed > 0
+        ? "failed"
+        : "finished") satisfies HostRestartRecoveryMetadataStatus,
+      host_boot_id,
+      previous_host_boot_id,
+      previous_host_session_id,
+      host_session_id,
+      source,
+      started_at: startedAt,
+      finished_at: new Date().toISOString(),
+      total: projects.length,
+      started,
+      skipped,
+      failed,
+    },
+  });
+  logger.info("host restart recovery finished", {
+    host_id,
+    host_boot_id,
+    previous_host_boot_id,
+    source,
+    total: projects.length,
+    started,
+    skipped,
+    failed,
+  });
+}
+
+async function ensureHostRestartRecovery({
+  host_id,
+  previous_metadata,
+  previous_session_id,
+  next_session_id,
+  previous_boot_id,
+  next_boot_id,
+  source,
+}: {
+  host_id: string;
+  previous_metadata?: any;
+  previous_session_id?: string;
+  next_session_id?: string;
+  previous_boot_id?: string;
+  next_boot_id?: string;
+  source: "register" | "heartbeat";
+}): Promise<void> {
+  const bootChanged =
+    !!previous_boot_id && !!next_boot_id && previous_boot_id !== next_boot_id;
+  const pending = isRestartRecoveryPendingForBoot(
+    previous_metadata,
+    next_boot_id,
+  );
+  if (!bootChanged && !pending) {
+    return;
+  }
+  const key = recoveryInflightKey(host_id, next_boot_id);
+  if (hostRestartRecoveryInflight.has(key)) {
+    return;
+  }
+  await updateHostRestartRecoveryMetadata({
+    host_id,
+    patch: {
+      status: "queued" satisfies HostRestartRecoveryMetadataStatus,
+      host_boot_id: next_boot_id,
+      previous_host_boot_id: previous_boot_id,
+      previous_host_session_id: previous_session_id,
+      host_session_id: next_session_id,
+      source,
+      queued_at: new Date().toISOString(),
+    },
+  });
+  if (process.env.NODE_ENV === "test") {
+    return;
+  }
+  const task = (async () => {
+    if (HOST_RESTART_RECOVERY_SCHEDULE_DELAY_MS > 0) {
+      await sleep(HOST_RESTART_RECOVERY_SCHEDULE_DELAY_MS);
+    }
+    await startHostRestartRecoveryForHost({
+      host_id,
+      host_boot_id: next_boot_id,
+      previous_host_boot_id: previous_boot_id,
+      previous_host_session_id: previous_session_id,
+      host_session_id: next_session_id,
+      source,
+    });
+  })();
+  hostRestartRecoveryInflight.set(key, task);
+  task
+    .catch(async (err) => {
+      logger.warn("host restart recovery failed", {
+        host_id,
+        host_boot_id: next_boot_id,
+        source,
+        err: `${err}`,
+      });
+      await updateHostRestartRecoveryMetadata({
+        host_id,
+        patch: {
+          status: "failed" satisfies HostRestartRecoveryMetadataStatus,
+          host_boot_id: next_boot_id,
+          previous_host_boot_id: previous_boot_id,
+          previous_host_session_id: previous_session_id,
+          host_session_id: next_session_id,
+          source,
+          failed_at: new Date().toISOString(),
+          error: `${err}`.slice(0, 1000),
+        },
+      }).catch((metadataErr) => {
+        logger.warn("failed to record host restart recovery failure", {
+          host_id,
+          host_boot_id: next_boot_id,
+          err: `${metadataErr}`,
+        });
+      });
+    })
+    .finally(() => {
+      if (hostRestartRecoveryInflight.get(key) === task) {
+        hostRestartRecoveryInflight.delete(key);
+      }
+    });
 }
 
 export async function initHostRegistryService() {
@@ -461,8 +854,9 @@ export async function initHostRegistryService() {
           last_seen: new Date(),
           host_session_id: nextSessionId,
         });
-        await markStaleRunningProjectsOpenedAfterBootChange({
+        await ensureHostRestartRecovery({
           host_id: info.id,
+          previous_metadata: previousRows[0]?.metadata,
           previous_session_id: previousSessionId,
           next_session_id: nextSessionId,
           previous_boot_id: previousBootId,
@@ -521,8 +915,9 @@ export async function initHostRegistryService() {
           last_seen: new Date(),
           host_session_id: nextSessionId,
         });
-        await markStaleRunningProjectsOpenedAfterBootChange({
+        await ensureHostRestartRecovery({
           host_id: info.id,
+          previous_metadata: previousRows[0]?.metadata,
           previous_session_id: previousSessionId,
           next_session_id: nextSessionId,
           previous_boot_id: previousBootId,

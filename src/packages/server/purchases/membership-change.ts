@@ -11,6 +11,8 @@ import createSubscription from "@cocalc/server/purchases/create-subscription";
 import { MembershipClass } from "@cocalc/conat/hub/api/purchases";
 import { toDecimal, type MoneyValue } from "@cocalc/util/money";
 import { assertPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
+import { hasPaymentMethod } from "@cocalc/server/purchases/stripe/get-payment-methods";
+import { claimMembershipTrial } from "@cocalc/server/membership/trials";
 
 interface MembershipChangeOptions {
   account_id: string;
@@ -86,8 +88,19 @@ export async function applyMembershipChange({
 
     const start = dayjs().toDate();
     const existingEnd = change.current_period_end;
-    const end =
-      change.change == "downgrade" && existingEnd != null && existingEnd > start
+    const trialDays = change.trial_days ?? 0;
+    const isTrial =
+      change.change == "new" &&
+      change.trial_available === true &&
+      trialDays > 0;
+    if (isTrial && !(await hasPaymentMethod(account_id))) {
+      throw Error("A payment method is required to start a free trial.");
+    }
+    const end = isTrial
+      ? dayjs(start).add(trialDays, "day").toDate()
+      : change.change == "downgrade" &&
+          existingEnd != null &&
+          existingEnd > start
         ? existingEnd
         : interval == "month"
           ? dayjs(start).add(1, "month").toDate()
@@ -102,7 +115,18 @@ export async function applyMembershipChange({
         current_period_end: end,
         latest_purchase_id: 0,
         status: "active",
-        metadata: { type: "membership", class: targetClass },
+        metadata: {
+          type: "membership",
+          class: targetClass,
+          ...(isTrial
+            ? {
+                trial: true,
+                trial_days: trialDays,
+                trial_email: change.trial_email,
+                trial_ends_at: end.toISOString(),
+              }
+            : {}),
+        },
       },
       transaction,
     );
@@ -117,6 +141,7 @@ export async function applyMembershipChange({
         subscription_id,
         class: targetClass,
         interval,
+        ...(isTrial ? { trial_days: trialDays } : {}),
       },
       tag: "membership-change",
       period_start: start,
@@ -128,6 +153,17 @@ export async function applyMembershipChange({
       "UPDATE subscriptions SET latest_purchase_id=$1 WHERE id=$2",
       [purchase_id, subscription_id],
     );
+
+    if (isTrial) {
+      await claimMembershipTrial({
+        account_id,
+        email_address: change.trial_email ?? "",
+        membership_class: targetClass,
+        subscription_id,
+        purchase_id,
+        client: transaction,
+      });
+    }
 
     if (useTransaction) {
       await transaction.query("COMMIT");

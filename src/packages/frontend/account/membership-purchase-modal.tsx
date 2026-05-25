@@ -42,6 +42,8 @@ import {
 } from "@cocalc/util/money";
 import type { LineItem } from "@cocalc/util/stripe/types";
 import type { MembershipResolution } from "@cocalc/conat/hub/api/purchases";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { joinUrlPath } from "@cocalc/util/url-path";
 
 const { Text, Title } = Typography;
 
@@ -52,6 +54,7 @@ interface MembershipTier {
   priority?: number;
   price_monthly?: MoneyValue;
   price_yearly?: MoneyValue;
+  trial_days?: number;
   disabled?: boolean;
 }
 
@@ -284,6 +287,10 @@ export default function MembershipPurchaseModal({
               const price =
                 interval === "month" ? tier.price_monthly : tier.price_yearly;
               const priceValue = price != null ? toDecimal(price) : null;
+              const trialDays =
+                typeof tier.trial_days === "number" && tier.trial_days > 0
+                  ? Math.floor(tier.trial_days)
+                  : 0;
               const isCurrentTier = tier.id === currentClass;
               const tierPriority = tier.priority ?? 0;
               const currentPriority = tierById[currentClass]?.priority ?? 0;
@@ -311,6 +318,11 @@ export default function MembershipPurchaseModal({
                     )}{" "}
                     <Text type="secondary">/ {interval}</Text>
                   </div>
+                  {trialDays > 0 && (
+                    <div style={{ marginBottom: "8px" }}>
+                      <Tag color="green">{trialDays}-day free trial</Tag>
+                    </div>
+                  )}
                   <Button
                     type={selectedTierId === tier.id ? "primary" : "default"}
                     disabled={isCurrentTier || priceValue == null}
@@ -356,6 +368,29 @@ export default function MembershipPurchaseModal({
                   )}`}
                 />
               )}
+              {quote.trial_available && quote.trial_days ? (
+                <Alert
+                  type="success"
+                  showIcon
+                  style={{ marginBottom: "12px" }}
+                  title={`${quote.trial_days}-day free trial`}
+                  description="You can cancel before the trial ends and you will not be charged. A payment method is required so the subscription can renew automatically if you keep it."
+                />
+              ) : null}
+              {quote.trial_requires_payment_method &&
+                quote.allowed === false && (
+                  <div style={{ marginTop: "12px" }}>
+                    <Button
+                      href={joinUrlPath(
+                        appBasePath,
+                        "settings/payment-methods",
+                      )}
+                      target="_blank"
+                    >
+                      Add payment method
+                    </Button>
+                  </div>
+                )}
               {quote.change === "downgrade" && quote.current_period_end && (
                 <Alert
                   type="info"

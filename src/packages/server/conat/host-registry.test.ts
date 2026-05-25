@@ -13,6 +13,11 @@ let appendProjectOutboxEventForProjectMock: jest.Mock;
 let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
 let resolveMembershipForAccountMock: jest.Mock;
 let appendProjectLogRowBestEffortMock: jest.Mock;
+let startProjectOnHostMock: jest.Mock;
+let loadProjectRuntimeSponsorMock: jest.Mock;
+let reserveProjectRuntimeSlotMock: jest.Mock;
+let heartbeatProjectRuntimeSlotMock: jest.Mock;
+let releaseProjectRuntimeSlotMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -52,6 +57,24 @@ jest.mock("@cocalc/server/projects/project-log", () => ({
 jest.mock("@cocalc/server/membership/resolve", () => ({
   resolveMembershipForAccount: (...args: any[]) =>
     resolveMembershipForAccountMock(...args),
+}));
+
+jest.mock("@cocalc/server/project-host/control", () => ({
+  startProjectOnHost: (...args: any[]) => startProjectOnHostMock(...args),
+}));
+
+jest.mock("@cocalc/server/projects/runtime-sponsor-db", () => ({
+  loadProjectRuntimeSponsor: (...args: any[]) =>
+    loadProjectRuntimeSponsorMock(...args),
+}));
+
+jest.mock("@cocalc/server/projects/runtime-slots", () => ({
+  reserveProjectRuntimeSlot: (...args: any[]) =>
+    reserveProjectRuntimeSlotMock(...args),
+  heartbeatProjectRuntimeSlot: (...args: any[]) =>
+    heartbeatProjectRuntimeSlotMock(...args),
+  releaseProjectRuntimeSlot: (...args: any[]) =>
+    releaseProjectRuntimeSlotMock(...args),
 }));
 
 jest.mock("@cocalc/server/project-host/bootstrap-token", () => ({
@@ -115,6 +138,16 @@ describe("host-registry automatic convergence retry", () => {
     resolveMembershipForAccountMock = jest.fn(async () => ({
       effective_limits: { shared_compute_priority: 0 },
     }));
+    startProjectOnHostMock = jest.fn(async () => undefined);
+    loadProjectRuntimeSponsorMock = jest.fn(async (project_id: string) => ({
+      sponsor_account_id: `sponsor-${project_id}`,
+      owning_bay_id: "bay-0",
+      host_id: "host-1",
+      users: {},
+    }));
+    reserveProjectRuntimeSlotMock = jest.fn(async () => undefined);
+    heartbeatProjectRuntimeSlotMock = jest.fn(async () => undefined);
+    releaseProjectRuntimeSlotMock = jest.fn(async () => undefined);
     upsertProjectHostMock = jest.fn(async ({ metadata, host_session_id }) => {
       currentMetadata = {
         ...currentMetadata,
@@ -482,7 +515,7 @@ describe("host-registry automatic convergence retry", () => {
     ).not.toHaveBeenCalled();
   });
 
-  it("marks running projects opened when a host registers after a boot change", async () => {
+  it("queues restart recovery when a host registers after a boot change", async () => {
     currentMetadata = {
       host_session_id: "session-old",
       host_boot_id: "boot-old",
@@ -498,31 +531,6 @@ describe("host-registry automatic convergence retry", () => {
       host_id: "host-1",
       reason: "no_reconcile_needed",
     }));
-    const clientQueryMock = jest.fn(async (sql: string, params: any[]) => {
-      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
-        return { rows: [] };
-      }
-      if (sql.includes("UPDATE projects")) {
-        expect(params[0]).toBe("host-1");
-        expect(params[1]).toMatchObject({
-          state: "opened",
-          reason: "host_boot_replaced",
-          previous_host_boot_id: "boot-old",
-          host_boot_id: "boot-new",
-          previous_host_session_id: "session-old",
-          host_session_id: "session-new",
-        });
-        return {
-          rows: [{ project_id: "proj-1" }, { project_id: "proj-2" }],
-        };
-      }
-      throw new Error(`unexpected client query: ${sql}`);
-    });
-    const client = {
-      query: clientQueryMock,
-      release: jest.fn(),
-    };
-    connectMock = jest.fn(() => client);
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (
         sql.includes(
@@ -565,24 +573,112 @@ describe("host-registry automatic convergence retry", () => {
       },
     } as any);
 
-    expect(connectMock).toHaveBeenCalledTimes(1);
-    expect(clientQueryMock).toHaveBeenCalledWith("BEGIN");
-    expect(clientQueryMock).toHaveBeenCalledWith("COMMIT");
-    expect(client.release).toHaveBeenCalledTimes(1);
-    expect(appendProjectOutboxEventForProjectMock).toHaveBeenCalledTimes(2);
-    expect(appendProjectOutboxEventForProjectMock).toHaveBeenCalledWith({
-      db: client,
-      event_type: "project.state_changed",
-      project_id: "proj-1",
-      default_bay_id: "bay-0",
+    expect(connectMock).not.toHaveBeenCalled();
+    expect(currentMetadata.restart_recovery).toMatchObject({
+      status: "queued",
+      previous_host_boot_id: "boot-old",
+      host_boot_id: "boot-new",
+      previous_host_session_id: "session-old",
+      host_session_id: "session-new",
+      source: "register",
     });
-    expect(publishProjectAccountFeedEventsBestEffortMock).toHaveBeenCalledWith({
-      project_id: "proj-1",
-      default_bay_id: "bay-0",
+    expect(appendProjectOutboxEventForProjectMock).not.toHaveBeenCalled();
+    expect(
+      publishProjectAccountFeedEventsBestEffortMock,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("recovers host-restart projects in priority order", async () => {
+    currentMetadata = {
+      host_session_id: "session-new",
+      host_boot_id: "boot-new",
+      machine: { cloud: "gcp" },
+    };
+    resolveMembershipForAccountMock = jest.fn(async (account_id: string) => ({
+      effective_limits: {
+        shared_compute_priority: account_id === "owner-high" ? 10 : 0,
+      },
+    }));
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (
+        sql.includes(
+          "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rows: [{ metadata: currentMetadata }] };
+      }
+      if (
+        sql.includes(
+          "UPDATE project_hosts SET metadata=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        expect(params[0]).toBe("host-1");
+        currentMetadata = params[1];
+        return { rows: [] };
+      }
+      if (
+        sql.includes("SELECT project_id, users, last_edited, created") &&
+        sql.includes("FROM projects")
+      ) {
+        expect(params[0]).toBe("host-1");
+        return {
+          rows: [
+            {
+              project_id: "proj-low",
+              users: { "owner-low": { group: "owner" } },
+              last_edited: new Date("2026-05-01T00:00:00Z"),
+              created: new Date("2026-04-01T00:00:00Z"),
+            },
+            {
+              project_id: "proj-high",
+              users: { "owner-high": { group: "owner" } },
+              last_edited: new Date("2026-04-01T00:00:00Z"),
+              created: new Date("2026-03-01T00:00:00Z"),
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("SELECT COALESCE(state->>'state', '') AS state") &&
+        sql.includes("FROM projects")
+      ) {
+        return { rows: [{ state: "running" }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
     });
-    expect(publishProjectAccountFeedEventsBestEffortMock).toHaveBeenCalledWith({
-      project_id: "proj-2",
-      default_bay_id: "bay-0",
+
+    const { startHostRestartRecoveryForHost } = await import("./host-registry");
+    await startHostRestartRecoveryForHost({
+      host_id: "host-1",
+      host_boot_id: "boot-new",
+      previous_host_boot_id: "boot-old",
+      previous_host_session_id: "session-old",
+      host_session_id: "session-new",
+      source: "register",
+      start_interval_ms: 0,
+    });
+
+    expect(startProjectOnHostMock.mock.calls.map((call) => call[0])).toEqual([
+      "proj-high",
+      "proj-low",
+    ]);
+    expect(startProjectOnHostMock).toHaveBeenNthCalledWith(1, "proj-high", {
+      account_id: "owner-high",
+      ignore_recent_state_snapshot: true,
+    });
+    expect(startProjectOnHostMock).toHaveBeenNthCalledWith(2, "proj-low", {
+      account_id: "owner-low",
+      ignore_recent_state_snapshot: true,
+    });
+    expect(reserveProjectRuntimeSlotMock).toHaveBeenCalledTimes(2);
+    expect(heartbeatProjectRuntimeSlotMock).toHaveBeenCalledTimes(2);
+    expect(releaseProjectRuntimeSlotMock).not.toHaveBeenCalled();
+    expect(currentMetadata.restart_recovery).toMatchObject({
+      status: "finished",
+      total: 2,
+      started: 2,
+      skipped: 0,
+      failed: 0,
     });
   });
 

@@ -572,6 +572,7 @@ type TierTemplateFields = {
   priority?: number;
   price_monthly?: number;
   price_yearly?: number;
+  trial_days?: number;
   project_defaults?: Record<string, unknown>;
   ai_limits?: Record<string, unknown>;
   features?: Record<string, unknown>;
@@ -603,6 +604,7 @@ export function applyMembershipTierTemplateFallbacks<
 >(tier: T): T {
   const template = TIER_TEMPLATES[tier.id as keyof typeof TIER_TEMPLATES];
   if (template == null) return tier;
+  const templateFields = template as TierTemplateFields;
   return {
     ...tier,
     label: tier.label ?? template.label,
@@ -616,6 +618,7 @@ export function applyMembershipTierTemplateFallbacks<
     priority: tier.priority ?? template.priority,
     price_monthly: tier.price_monthly ?? template.price_monthly,
     price_yearly: tier.price_yearly ?? template.price_yearly,
+    trial_days: tier.trial_days ?? templateFields.trial_days,
     project_defaults: mergeTemplateObject(
       template.project_defaults,
       tier.project_defaults,

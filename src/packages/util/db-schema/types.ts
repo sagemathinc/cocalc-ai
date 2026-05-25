@@ -337,6 +337,7 @@ export type MembershipTierSetFields =
   | "priority"
   | "price_monthly"
   | "price_yearly"
+  | "trial_days"
   | "course_price"
   | "course_duration_days"
   | "course_grace_days"
