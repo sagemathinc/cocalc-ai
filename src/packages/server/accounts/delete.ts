@@ -14,6 +14,8 @@ export default async function deleteAccount(account_id: string): Promise<void> {
     throw Error(`invalid account_id=${account_id}`);
   }
 
+  const revokedBeforeMs = Date.now();
+
   // Cancel any subscriptions
   await cancelStripeEverything(account_id);
 
@@ -23,7 +25,7 @@ export default async function deleteAccount(account_id: string): Promise<void> {
   // intentionally stop resolving deleted accounts.
   await revokeAllAuthSessions(account_id);
   // Revoke host-level persistent sessions/tokens issued before this delete.
-  await recordAccountRevocation(account_id, Date.now());
+  await recordAccountRevocation(account_id, revokedBeforeMs, { banned: true });
 
   // Owned projects must be resolved before the account is marked deleted:
   // owner-only projects are hard-deleted, and shared projects transfer to a

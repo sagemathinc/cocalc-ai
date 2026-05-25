@@ -5,11 +5,12 @@
 
 export {};
 
-const isBannedMock = jest.fn();
+const isAccountBannedCachedMock = jest.fn();
 
-jest.mock("@cocalc/server/accounts/is-banned", () => ({
+jest.mock("@cocalc/server/accounts/security-state", () => ({
   __esModule: true,
-  default: (...args: any[]) => isBannedMock(...args),
+  isAccountBannedCached: (...args: any[]) => isAccountBannedCachedMock(...args),
+  startAccountSecurityStateSyncLoop: jest.fn(),
 }));
 
 describe("hub conat api banned account enforcement", () => {
@@ -17,11 +18,11 @@ describe("hub conat api banned account enforcement", () => {
 
   beforeEach(() => {
     jest.resetModules();
-    isBannedMock.mockReset();
+    isAccountBannedCachedMock.mockReset();
   });
 
   it("rejects account-scoped API requests from an already-connected banned account", async () => {
-    isBannedMock.mockResolvedValue(true);
+    isAccountBannedCachedMock.mockReturnValue(true);
     const { handleApiRequest } = await import("./index");
     const respond = jest.fn(async () => undefined);
 
@@ -36,7 +37,7 @@ describe("hub conat api banned account enforcement", () => {
       },
     });
 
-    expect(isBannedMock).toHaveBeenCalledWith(account_id);
+    expect(isAccountBannedCachedMock).toHaveBeenCalledWith(account_id);
     expect(respond).toHaveBeenCalledWith(null, {
       headers: {
         error: "account is banned",

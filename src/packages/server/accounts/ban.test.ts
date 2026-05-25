@@ -7,6 +7,7 @@ const withAccountRehomeWriteFenceMock = jest.fn();
 const deleteAllRememberMeMock = jest.fn();
 const revokeAllAuthSessionsMock = jest.fn();
 const recordAccountRevocationMock = jest.fn();
+const recordAccountSecurityStateMock = jest.fn();
 const clearIsBannedCacheMock = jest.fn();
 
 jest.mock("@cocalc/server/accounts/rehome-fence", () => ({
@@ -31,6 +32,12 @@ jest.mock("@cocalc/server/accounts/revocation", () => ({
     recordAccountRevocationMock(...args),
 }));
 
+jest.mock("@cocalc/server/accounts/security-state", () => ({
+  __esModule: true,
+  recordAccountSecurityState: (...args: any[]) =>
+    recordAccountSecurityStateMock(...args),
+}));
+
 jest.mock("./is-banned", () => ({
   __esModule: true,
   clearIsBannedCache: (...args: any[]) => clearIsBannedCacheMock(...args),
@@ -45,6 +52,7 @@ describe("account ban", () => {
     deleteAllRememberMeMock.mockReset().mockResolvedValue(undefined);
     revokeAllAuthSessionsMock.mockReset().mockResolvedValue(undefined);
     recordAccountRevocationMock.mockReset().mockResolvedValue(undefined);
+    recordAccountSecurityStateMock.mockReset().mockResolvedValue(undefined);
     clearIsBannedCacheMock.mockReset();
     withAccountRehomeWriteFenceMock.mockImplementation(async ({ fn }) => {
       await fn({
@@ -70,6 +78,9 @@ describe("account ban", () => {
     recordAccountRevocationMock.mockImplementation(async () => {
       calls.push("record-host-revocation");
     });
+    recordAccountSecurityStateMock.mockImplementation(async () => {
+      calls.push("record-security-state");
+    });
 
     const { banUser } = await import("./ban");
     await banUser(ACCOUNT_ID);
@@ -80,6 +91,7 @@ describe("account ban", () => {
     expect(recordAccountRevocationMock).toHaveBeenCalledWith(
       ACCOUNT_ID,
       expect.any(Number),
+      { banned: true },
     );
     expect(calls).toEqual([
       "mark-banned",
@@ -97,5 +109,9 @@ describe("account ban", () => {
     expect(deleteAllRememberMeMock).not.toHaveBeenCalled();
     expect(revokeAllAuthSessionsMock).not.toHaveBeenCalled();
     expect(recordAccountRevocationMock).not.toHaveBeenCalled();
+    expect(recordAccountSecurityStateMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      banned: false,
+    });
   });
 });

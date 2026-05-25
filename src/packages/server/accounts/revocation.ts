@@ -1,5 +1,6 @@
 import getPool from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
+import { recordAccountSecurityState } from "./security-state";
 
 let ensured = false;
 
@@ -23,6 +24,7 @@ async function ensureTable() {
 export async function recordAccountRevocation(
   account_id: string,
   revoked_before_ms = Date.now(),
+  security_state: { banned?: boolean } = {},
 ): Promise<void> {
   if (!isValidUUID(account_id)) {
     throw new Error("invalid account_id");
@@ -40,6 +42,11 @@ export async function recordAccountRevocation(
     `,
     [account_id, revokedBefore],
   );
+  await recordAccountSecurityState({
+    account_id,
+    ...security_state,
+    revoked_before_ms,
+  });
 }
 
 export async function listAccountRevocationsSince({
