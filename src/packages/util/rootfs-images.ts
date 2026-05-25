@@ -326,6 +326,32 @@ export type RootfsStorageLocation = {
   status?: string;
 };
 
+export type RootfsRusticRepoSummary = {
+  id: string;
+  region: string;
+  bucket_id?: string | null;
+  root: string;
+  status: "active" | "sealed" | "draining" | "disabled" | string;
+  assigned_artifact_count: number;
+  artifact_bytes: number;
+  cap: number;
+  available_slots: number;
+  created?: string | null;
+  updated?: string | null;
+};
+
+export type RootfsRusticLegacySummary = {
+  artifact_count: number;
+  artifact_bytes: number;
+};
+
+export type RootfsRusticRepoListResult = {
+  active_shards_per_region: number;
+  releases_per_shard: number;
+  repos: RootfsRusticRepoSummary[];
+  legacy: RootfsRusticLegacySummary;
+};
+
 export type RootfsAdminCatalogEntry = RootfsImageEntry & {
   deleted?: boolean;
   deleted_reason?: string;

@@ -23,6 +23,7 @@ import type {
   RootfsImageManifest,
   RootfsImageEntry,
   RootfsReleaseGcRunResult,
+  RootfsRusticRepoListResult,
 } from "@cocalc/util/rootfs-images";
 import type { NewsItemWebapp } from "@cocalc/util/types/news";
 import type {
@@ -112,6 +113,7 @@ export const system = {
   getFrontendSourceFingerprint: authFirst,
   getRootfsCatalog: authFirst,
   getRootfsCatalogAdmin: authFirstRequireAccount,
+  getRootfsRusticReposAdmin: authFirstRequireAccount,
   saveRootfsCatalogEntry: authFirstRequireAccount,
   requestRootfsImageDeletion: authFirstRequireAccount,
   runRootfsReleaseGc: authFirstRequireAccount,
@@ -1996,6 +1998,12 @@ export interface System {
   getRootfsCatalogAdmin: (opts?: {
     account_id?: string;
   }) => Promise<RootfsAdminCatalogEntry[]>;
+
+  getRootfsRusticReposAdmin: (opts?: {
+    account_id?: string;
+    region?: string;
+    status?: string;
+  }) => Promise<RootfsRusticRepoListResult>;
 
   saveRootfsCatalogEntry: (
     opts: RootfsCatalogSaveBody & {

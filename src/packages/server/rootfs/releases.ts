@@ -41,6 +41,7 @@ import type {
   RootfsReleaseArtifactKind,
   RootfsReleaseGcItem,
   RootfsReleaseGcRunResult,
+  RootfsRusticRepoListResult,
   RootfsUploadedArtifactResult,
 } from "@cocalc/util/rootfs-images";
 import { v4 as uuid } from "uuid";
@@ -1786,5 +1787,119 @@ export async function runPendingRootfsReleaseGc({
     blocked: items.filter((item) => item.status === "blocked").length,
     failed: items.filter((item) => item.status === "failed").length,
     items,
+  };
+}
+
+function isoDate(value?: Date | string | null): string | null {
+  if (!value) return null;
+  if (typeof value === "string") return value;
+  return value.toISOString();
+}
+
+export async function listRootfsRusticReposAdmin({
+  region,
+  status,
+}: {
+  region?: string;
+  status?: string;
+} = {}): Promise<RootfsRusticRepoListResult> {
+  await ensureRootfsRusticRepoSchema();
+  const filters: string[] = [];
+  const params: any[] = [];
+  const normalizedRegion = `${region ?? ""}`.trim();
+  if (normalizedRegion) {
+    params.push(normalizeRootfsRusticRegion(normalizedRegion));
+    filters.push(`r.region=$${params.length}`);
+  }
+  const normalizedStatus = `${status ?? ""}`.trim().toLowerCase();
+  if (normalizedStatus) {
+    params.push(normalizedStatus);
+    filters.push(`r.status=$${params.length}`);
+  }
+  const { rows } = await getPool("medium").query<
+    RootfsRusticRepoRow & {
+      artifact_bytes: number | string | null;
+    }
+  >(
+    `WITH assignments AS (
+       SELECT repo_id, release_id::text AS artifact_key, artifact_bytes
+       FROM rootfs_releases
+       WHERE repo_id IS NOT NULL
+         AND COALESCE(gc_status, 'active') <> 'deleted'
+       UNION ALL
+       SELECT repo_id, artifact_id::text AS artifact_key, artifact_bytes
+       FROM rootfs_release_artifacts
+       WHERE repo_id IS NOT NULL
+         AND COALESCE(status, 'ready') <> 'deleted'
+     )
+     SELECT
+       r.id,
+       r.region,
+       r.bucket_id,
+       r.root,
+       r.secret,
+       r.status,
+       r.created,
+       r.updated,
+       COUNT(a.artifact_key)::INTEGER AS assigned_artifact_count,
+       COALESCE(SUM(a.artifact_bytes), 0)::BIGINT AS artifact_bytes
+     FROM rootfs_rustic_repos r
+     LEFT JOIN assignments a ON a.repo_id = r.id
+     ${filters.length ? `WHERE ${filters.join(" AND ")}` : ""}
+     GROUP BY r.id
+     ORDER BY r.region ASC, r.status ASC, assigned_artifact_count ASC, r.created ASC, r.id ASC`,
+    params,
+  );
+  const { rows: legacyRows } = await getPool("medium").query<{
+    artifact_count: number | string;
+    artifact_bytes: number | string | null;
+  }>(
+    `WITH legacy AS (
+       SELECT release_id::text AS artifact_key, artifact_bytes
+       FROM rootfs_releases
+       WHERE repo_id IS NULL
+         AND artifact_format='rustic'
+         AND artifact_path LIKE 'rustic/%'
+         AND COALESCE(gc_status, 'active') <> 'deleted'
+       UNION ALL
+       SELECT artifact_id::text AS artifact_key, artifact_bytes
+       FROM rootfs_release_artifacts
+       WHERE repo_id IS NULL
+         AND artifact_format='rustic'
+         AND artifact_path LIKE 'rustic/%'
+         AND COALESCE(status, 'ready') <> 'deleted'
+     )
+     SELECT
+       COUNT(*)::INTEGER AS artifact_count,
+       COALESCE(SUM(artifact_bytes), 0)::BIGINT AS artifact_bytes
+     FROM legacy`,
+  );
+  const legacy = legacyRows[0] ?? { artifact_count: 0, artifact_bytes: 0 };
+  return {
+    active_shards_per_region: ROOTFS_RUSTIC_ACTIVE_SHARDS_PER_REGION,
+    releases_per_shard: ROOTFS_RUSTIC_RELEASES_PER_SHARD,
+    repos: rows.map((row) => {
+      const assigned = Number(row.assigned_artifact_count ?? 0);
+      return {
+        id: row.id,
+        region: row.region ?? "",
+        bucket_id: row.bucket_id ?? null,
+        root: row.root ?? "",
+        status: row.status ?? ROOTFS_RUSTIC_REPO_STATUS_ACTIVE,
+        assigned_artifact_count: assigned,
+        artifact_bytes: Number(row.artifact_bytes ?? 0),
+        cap: ROOTFS_RUSTIC_RELEASES_PER_SHARD,
+        available_slots: Math.max(
+          0,
+          ROOTFS_RUSTIC_RELEASES_PER_SHARD - assigned,
+        ),
+        created: isoDate(row.created),
+        updated: isoDate(row.updated),
+      };
+    }),
+    legacy: {
+      artifact_count: Number(legacy.artifact_count ?? 0),
+      artifact_bytes: Number(legacy.artifact_bytes ?? 0),
+    },
   };
 }

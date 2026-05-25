@@ -137,7 +137,10 @@ import {
   runProjectRootfsPreflightScan,
   runRootfsReleaseScan,
 } from "@cocalc/server/rootfs/scan-execution";
-import { runPendingRootfsReleaseGc } from "@cocalc/server/rootfs/releases";
+import {
+  listRootfsRusticReposAdmin,
+  runPendingRootfsReleaseGc,
+} from "@cocalc/server/rootfs/releases";
 import type {
   ProjectRootfsStateEntry,
   ProjectRootfsPublishLroRef,
@@ -2671,6 +2674,20 @@ export async function getRootfsCatalogAdmin(
   } = {},
 ) {
   return await listRootfsImagesAdmin(opts.account_id);
+}
+
+export async function getRootfsRusticReposAdmin(
+  opts: {
+    account_id?: string;
+    region?: string;
+    status?: string;
+  } = {},
+) {
+  const { account_id, region, status } = opts;
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await listRootfsRusticReposAdmin({ region, status });
 }
 
 const ROOTFS_ADMIN_CATALOG_FIELDS = [
