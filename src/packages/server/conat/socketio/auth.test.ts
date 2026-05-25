@@ -8,14 +8,43 @@ import { getUser, isAllowed } from "./auth";
 import { inboxPrefix } from "@cocalc/conat/names";
 import { recordApiKeyAuditEventSoon } from "@cocalc/server/api/api-key-audit";
 
+const verifyProjectHostTokenMock = jest.fn();
+const verifyProjectHostAuthTokenMock = jest.fn();
+const ensureAccountSecurityStateReadyMock = jest.fn();
+const isAccountBannedCachedMock = jest.fn();
+const getAccountRevokedBeforeCachedMock = jest.fn();
+
 jest.mock("@cocalc/backend/data", () => ({
   ...jest.requireActual("@cocalc/backend/data"),
   conatPassword: "hub-secret",
+  getProjectHostAuthTokenPublicKey: jest.fn(() => "public-key"),
 }));
 
 jest.mock("@cocalc/server/api/api-key-audit", () => ({
   __esModule: true,
   recordApiKeyAuditEventSoon: jest.fn(),
+}));
+
+jest.mock("@cocalc/server/project-host/bootstrap-token", () => ({
+  __esModule: true,
+  verifyProjectHostToken: (...args: any[]) =>
+    verifyProjectHostTokenMock(...args),
+}));
+
+jest.mock("@cocalc/conat/auth/project-host-token", () => ({
+  __esModule: true,
+  verifyProjectHostAuthToken: (...args: any[]) =>
+    verifyProjectHostAuthTokenMock(...args),
+}));
+
+jest.mock("@cocalc/server/accounts/security-state", () => ({
+  __esModule: true,
+  ensureAccountSecurityStateReady: (...args: any[]) =>
+    ensureAccountSecurityStateReadyMock(...args),
+  getAccountRevokedBeforeCached: (...args: any[]) =>
+    getAccountRevokedBeforeCachedMock(...args),
+  isAccountBannedCached: (...args: any[]) => isAccountBannedCachedMock(...args),
+  startAccountSecurityStateSyncLoop: jest.fn(() => () => undefined),
 }));
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
@@ -84,9 +113,26 @@ const PUBSUB: ("pub" | "sub")[] = ["pub", "sub"];
 const project_id = "00000000-0000-4000-8000-000000000000";
 const project_id2 = "00000000-0000-4000-8000-000000000001";
 const project_id3 = "00000000-0000-4000-8000-000000000002";
+const host_id = "00000000-0000-4000-8000-000000000020";
 
 const account_id = "00000000-0000-4000-8000-000000000010";
 const account_id2 = "00000000-0000-4000-8000-000000000011";
+
+beforeEach(() => {
+  verifyProjectHostTokenMock.mockReset().mockResolvedValue(undefined);
+  verifyProjectHostAuthTokenMock.mockReset();
+  ensureAccountSecurityStateReadyMock.mockReset().mockResolvedValue(undefined);
+  isAccountBannedCachedMock.mockReset().mockReturnValue(false);
+  getAccountRevokedBeforeCachedMock.mockReset().mockReturnValue(undefined);
+});
+
+function projectHostBearerToken() {
+  const encode = (value: any) =>
+    Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${encode({ typ: "JWT", alg: "EdDSA" })}.${encode({
+    aud: `project-host:${host_id}`,
+  })}.signature`;
+}
 
 describe("test isAllowed for non-authenticated", () => {
   it("non-authenticated users can't do anything we try", async () => {
@@ -140,6 +186,72 @@ describe("hub-password account impersonation", () => {
       if (original === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = original;
     }
+  });
+});
+
+describe("project-host bearer account auth", () => {
+  beforeEach(() => {
+    verifyProjectHostAuthTokenMock.mockReturnValue({
+      act: "account",
+      sub: account_id,
+      aud: `project-host:${host_id}`,
+      iat: 100,
+      exp: 1000,
+      jti: "00000000-0000-4000-8000-000000000099",
+      iss: "cocalc-hub",
+      v: "phat-v1",
+    });
+  });
+
+  it("accepts unrevoked account-scoped project-host bearer tokens", async () => {
+    const socket = {
+      handshake: {
+        auth: {
+          bearer: projectHostBearerToken(),
+          project_id,
+        },
+        headers: {},
+      },
+    };
+
+    await expect(getUser(socket)).resolves.toEqual({
+      account_id,
+      auth_actor: "agent",
+      auth_scopes: ["browser_session", "project_session"],
+      auth_project_id: project_id,
+      auth_iat_s: 100,
+    });
+    expect(ensureAccountSecurityStateReadyMock).toHaveBeenCalled();
+    expect(isAccountBannedCachedMock).toHaveBeenCalledWith(account_id);
+    expect(getAccountRevokedBeforeCachedMock).toHaveBeenCalledWith(account_id);
+  });
+
+  it("rejects banned accounts before accepting project-host bearer tokens", async () => {
+    isAccountBannedCachedMock.mockReturnValue(true);
+    const socket = {
+      handshake: {
+        auth: {
+          bearer: projectHostBearerToken(),
+        },
+        headers: {},
+      },
+    };
+
+    await expect(getUser(socket)).rejects.toThrow("account is banned");
+  });
+
+  it("rejects revoked account sessions before accepting project-host bearer tokens", async () => {
+    getAccountRevokedBeforeCachedMock.mockReturnValue(100_000);
+    const socket = {
+      handshake: {
+        auth: {
+          bearer: projectHostBearerToken(),
+        },
+        headers: {},
+      },
+    };
+
+    await expect(getUser(socket)).rejects.toThrow("session revoked");
   });
 });
 
