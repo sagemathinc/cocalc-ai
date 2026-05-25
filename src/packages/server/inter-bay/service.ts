@@ -219,6 +219,7 @@ import {
   HOST_DANGEROUS_INTERNAL_AUTH,
   deleteHost,
   deleteHostRootfsImage,
+  backupHostProjects,
   drainHost,
   forceDeprovisionHost,
   gcDeletedHostRootfsImages,
@@ -1359,6 +1360,12 @@ async function startHostConnectionService(): Promise<void> {
         account_id,
         id,
         mode,
+      }),
+    backupHostProjects: async ({ account_id, id, parallel }) =>
+      await backupHostProjects({
+        account_id,
+        id,
+        parallel,
       }),
     drainHost: async ({
       account_id,

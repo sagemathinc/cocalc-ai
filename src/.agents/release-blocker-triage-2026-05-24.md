@@ -153,7 +153,7 @@ Next action:
 
 ### 5. Standalone Backup-All-Projects Host LRO
 
-Status: `open`
+Status: `done`
 
 Severity: medium-high.
 
@@ -172,8 +172,7 @@ Expected outcome:
 
 Next action:
 
-- Locate stop/deprovision/drain backup logic.
-- Extract or reuse a standalone host backup orchestration path.
+- Done: added host-level `backupHostProjects`, a host-scoped LRO worker path with progress/per-project results, and a host maintenance UI button.
 
 ### 6. Spot Uptime Dashboard And Recovery Banner
 

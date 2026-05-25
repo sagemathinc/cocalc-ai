@@ -26,6 +26,7 @@ let hostConnectionGetHostRuntimeDeploymentStatusMock: jest.Mock;
 let hostConnectionStartHostMock: jest.Mock;
 let hostConnectionStopHostMock: jest.Mock;
 let hostConnectionRestartHostMock: jest.Mock;
+let hostConnectionBackupHostProjectsMock: jest.Mock;
 let hostConnectionDrainHostMock: jest.Mock;
 let hostConnectionRefreshHostCloudStateMock: jest.Mock;
 let hostConnectionUpgradeHostSoftwareMock: jest.Mock;
@@ -345,6 +346,8 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
       startHost: (...args: any[]) => hostConnectionStartHostMock(...args),
       stopHost: (...args: any[]) => hostConnectionStopHostMock(...args),
       restartHost: (...args: any[]) => hostConnectionRestartHostMock(...args),
+      backupHostProjects: (...args: any[]) =>
+        hostConnectionBackupHostProjectsMock(...args),
       drainHost: (...args: any[]) => hostConnectionDrainHostMock(...args),
       refreshHostCloudState: (...args: any[]) =>
         hostConnectionRefreshHostCloudStateMock(...args),
@@ -579,6 +582,14 @@ beforeEach(() => {
     service: "persist",
     stream_name: "lro:remote-restart-op",
     kind: "host-restart",
+  }));
+  hostConnectionBackupHostProjectsMock = jest.fn(async () => ({
+    op_id: "remote-backup-all-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-backup-all-op",
+    kind: "host-backup-all",
   }));
   hostConnectionDrainHostMock = jest.fn(async () => ({
     op_id: "remote-drain-op",
@@ -3635,8 +3646,9 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
     delete process.env.COCALC_CLUSTER_BAY_IDS;
   });
 
-  it("queues host-scoped project stop/restart actions with a snapshot target set", async () => {
-    const { stopHostProjects, restartHostProjects } = await import("./hosts");
+  it("queues host-scoped project stop/restart/backup actions with a snapshot target set", async () => {
+    const { stopHostProjects, restartHostProjects, backupHostProjects } =
+      await import("./hosts");
 
     await stopHostProjects({
       account_id: ACCOUNT_ID,
@@ -3648,6 +3660,11 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
       account_id: ACCOUNT_ID,
       id: HOST_ID,
       project_state: "opened",
+    });
+    await backupHostProjects({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      parallel: 3,
     });
 
     expect(createLroMock).toHaveBeenNthCalledWith(
@@ -3680,6 +3697,32 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
           projects: [
             { project_id: "proj-1", state: "running" },
             { project_id: "proj-2", state: "running" },
+          ],
+        }),
+      }),
+    );
+    expect(createLroMock).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        kind: "host-backup-all",
+        scope_type: "host",
+        scope_id: HOST_ID,
+        input: expect.objectContaining({
+          id: HOST_ID,
+          parallel: 3,
+          projects: [
+            expect.objectContaining({
+              project_id: "proj-1",
+              state: "running",
+              provisioned: true,
+              needs_backup: true,
+            }),
+            expect.objectContaining({
+              project_id: "proj-2",
+              state: "running",
+              provisioned: true,
+              needs_backup: true,
+            }),
           ],
         }),
       }),

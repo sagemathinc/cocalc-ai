@@ -31,6 +31,7 @@ type HostCardProps = {
   onStop: (id: string, opts?: HostStopOptions) => void;
   onRestart: (id: string, mode: "reboot" | "hard") => void;
   onDrain: (id: string, opts?: HostDrainOptions) => void;
+  onBackup: (id: string) => void;
   onDelete: (id: string, opts?: HostDeleteOptions) => void;
   onCancelOp?: (op_id: string) => void;
   onRefreshCloudStatus?: (host: Host) => void;
@@ -53,6 +54,7 @@ export const HostCard: React.FC<HostCardProps> = ({
   onStop,
   onRestart,
   onDrain,
+  onBackup,
   onDelete,
   onCancelOp,
   onRefreshCloudStatus,
@@ -170,6 +172,7 @@ export const HostCard: React.FC<HostCardProps> = ({
           onStop={(opts) => onStop(host.id, opts)}
           onRestart={() => onRestart(host.id, "reboot")}
           onDrain={(opts) => onDrain(host.id, opts)}
+          onBackup={() => onBackup(host.id)}
           onDelete={(opts) => onDelete(host.id, opts)}
           onCancelOp={onCancelOp}
           onEdit={() => onEdit(host)}

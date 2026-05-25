@@ -1378,6 +1378,7 @@ export type HostConnectionMethod =
   | "start-host"
   | "stop-host"
   | "restart-host"
+  | "backup-host-projects"
   | "drain-host"
   | "refresh-host-cloud-state"
   | "upgrade-host-software"
@@ -1748,6 +1749,9 @@ export interface InterBayHostConnectionApi {
   restartHost: (
     opts: Parameters<Hosts["restartHost"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["restartHost"]>>>;
+  backupHostProjects: (
+    opts: Parameters<Hosts["backupHostProjects"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["backupHostProjects"]>>>;
   drainHost: (
     opts: Parameters<Hosts["drainHost"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["drainHost"]>>>;
@@ -1955,6 +1959,7 @@ const HOST_CONNECTION_METHOD_SPECS = [
   { name: "startHost", method: "start-host" },
   { name: "stopHost", method: "stop-host" },
   { name: "restartHost", method: "restart-host" },
+  { name: "backupHostProjects", method: "backup-host-projects" },
   { name: "drainHost", method: "drain-host" },
   { name: "refreshHostCloudState", method: "refresh-host-cloud-state" },
   { name: "upgradeHostSoftware", method: "upgrade-host-software" },

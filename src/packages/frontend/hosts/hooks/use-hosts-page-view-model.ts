@@ -377,6 +377,7 @@ export const useHostsPageViewModel = () => {
     setHostPoolAccess,
     stopHostProjects,
     restartHostProjects,
+    backupHostProjects,
   } = useHostActions({
     hub,
     setHosts,
@@ -1670,6 +1671,7 @@ export const useHostsPageViewModel = () => {
     onStop: (id: string, opts) => setStatus(id, "stop", opts),
     onRestart: restartHost,
     onDrain: (id: string, opts) => drainHost(id, opts),
+    onBackup: (id: string) => backupHostProjects(id),
     onDelete: deprovisionOrDeleteHost,
     onRefresh: refreshHostsNow,
     onCancelOp: cancelHostOp,

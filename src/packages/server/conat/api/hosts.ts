@@ -487,6 +487,7 @@ const HOST_START_LRO_KIND = "host-start";
 const HOST_STOP_LRO_KIND = "host-stop";
 const HOST_RESTART_LRO_KIND = "host-restart";
 const HOST_DRAIN_LRO_KIND = "host-drain";
+const HOST_BACKUP_ALL_LRO_KIND = "host-backup-all";
 const HOST_RECONCILE_LRO_KIND = "host-reconcile-software";
 const HOST_RECONCILE_RUNTIME_DEPLOYMENTS_LRO_KIND =
   "host-reconcile-runtime-deployments";
@@ -3940,6 +3941,54 @@ async function queueHostProjectsAction({
       projects: rows,
     },
     dedupe_key: `${kind}:${host.id}:${normalizedStateFilter}:${`${project_state ?? ""}`.trim()}:${!!risk_only}`,
+  });
+}
+
+export async function backupHostProjects({
+  account_id,
+  id,
+  parallel,
+}: {
+  account_id?: string;
+  id: string;
+  parallel?: number;
+}): Promise<HostLroResponse> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .backupHostProjects({
+        account_id,
+        id,
+        parallel,
+      });
+  }
+  const row = await loadHostForStartStop(id, account_id);
+  const snapshot = await listHostProjectsLocalSnapshot({
+    id: row.id,
+    state_filter: "all",
+  });
+  const projects = snapshot.rows
+    .sort(compareHostProjectRows)
+    .map((project) => ({
+      project_id: project.project_id,
+      state: project.state ?? "",
+      provisioned: project.provisioned,
+      last_edited: project.last_edited,
+      last_backup: project.last_backup,
+      needs_backup: project.needs_backup,
+    }));
+  return await createHostLro({
+    kind: HOST_BACKUP_ALL_LRO_KIND,
+    row,
+    account_id,
+    input: {
+      id: row.id,
+      account_id,
+      parallel,
+      projects,
+    },
+    dedupe_key: `${HOST_BACKUP_ALL_LRO_KIND}:${row.id}`,
   });
 }
 

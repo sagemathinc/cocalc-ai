@@ -45,6 +45,10 @@ type HubClient = {
       risk_only?: boolean;
       parallel?: number;
     }) => Promise<HostLroResponse>;
+    backupHostProjects?: (opts: {
+      id: string;
+      parallel?: number;
+    }) => Promise<HostLroResponse>;
     deleteHost: (opts: {
       id: string;
       browser_id?: string;
@@ -348,6 +352,32 @@ export const useHostActions = ({
     }
   };
 
+  const backupHostProjects = async (
+    id: string,
+    opts?: { parallel?: number },
+  ) => {
+    if (!hub.hosts.backupHostProjects) {
+      return;
+    }
+    try {
+      const op = await hub.hosts.backupHostProjects({
+        id,
+        ...opts,
+      });
+      onHostOp?.(id, op);
+      await refresh();
+    } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
+      alert_message({
+        type: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+      console.error(err);
+    }
+  };
+
   const updateHostMachine = async (
     id: string,
     opts: {
@@ -554,5 +584,6 @@ export const useHostActions = ({
     setHostPoolAccess,
     stopHostProjects,
     restartHostProjects,
+    backupHostProjects,
   };
 };

@@ -174,6 +174,7 @@ export const HOST_LRO_KINDS = [
   "host-stop",
   "host-restart",
   "host-drain",
+  "host-backup-all",
   "host-stop-projects",
   "host-restart-projects",
   "host-reconcile-software",
@@ -215,6 +216,27 @@ export type HostDrainResult = {
   failed: number;
   dest_host_id?: string;
   parallel?: number;
+};
+
+export type HostBackupAllProjectStatus = "succeeded" | "failed" | "skipped";
+
+export type HostBackupAllResultRow = {
+  project_id: string;
+  status: HostBackupAllProjectStatus;
+  state?: string;
+  reason?: string;
+  backup_op_id?: string;
+  error?: string;
+};
+
+export type HostBackupAllResult = {
+  host_id: string;
+  total: number;
+  backup_total: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  projects: HostBackupAllResultRow[];
 };
 
 export type HostRehomeOperationStage =
@@ -1234,6 +1256,11 @@ export interface Hosts {
     state_filter?: HostProjectStateFilter;
     project_state?: string;
     risk_only?: boolean;
+    parallel?: number;
+  }) => Promise<HostLroResponse>;
+  backupHostProjects: (opts: {
+    account_id?: string;
+    id: string;
     parallel?: number;
   }) => Promise<HostLroResponse>;
   resolveHostConnection: (opts: {
