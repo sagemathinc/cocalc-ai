@@ -7,6 +7,16 @@ import LRU from "lru-cache";
 const noCache = new LRU<string, boolean>({ max: 10000, ttl: 1000 * 60 });
 const yesCache = new LRU<string, boolean>({ max: 10000, ttl: 10 * 1000 * 60 });
 
+export function clearIsBannedCache(account_id?: string | null): void {
+  if (!account_id) {
+    noCache.clear();
+    yesCache.clear();
+    return;
+  }
+  noCache.delete(account_id);
+  yesCache.delete(account_id);
+}
+
 export default async function isBanned(
   account_id: string | null | undefined,
 ): Promise<boolean> {

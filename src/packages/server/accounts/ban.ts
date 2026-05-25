@@ -1,5 +1,8 @@
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { recordAccountRevocation } from "@cocalc/server/accounts/revocation";
+import { revokeAllAuthSessions } from "@cocalc/server/auth/auth-sessions";
+import { deleteAllRememberMe } from "@cocalc/server/auth/remember-me";
+import { clearIsBannedCache } from "./is-banned";
 
 export async function banUser(account_id: string): Promise<void> {
   // Ban them
@@ -13,6 +16,9 @@ export async function banUser(account_id: string): Promise<void> {
       );
     },
   });
+  clearIsBannedCache(account_id);
+  await deleteAllRememberMe(account_id);
+  await revokeAllAuthSessions(account_id);
   // Revoke host-level persistent sessions/tokens issued before this ban.
   await recordAccountRevocation(account_id, Date.now());
 }
@@ -29,4 +35,5 @@ export async function removeUserBan(account_id: string): Promise<void> {
       );
     },
   });
+  clearIsBannedCache(account_id);
 }
