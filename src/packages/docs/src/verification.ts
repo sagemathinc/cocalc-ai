@@ -138,7 +138,7 @@ return api.waitForSelector(".ant-modal[role=dialog]", { state: "hidden", timeout
   if (actionId === "project.terminal.open") {
     return {
       description: "Terminal file tab and xterm UI are visible.",
-      code: `const url = api.waitForUrl({ includes: "/files/home/user/terminal.term", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+      code: `const url = api.waitForUrl({ regex: "/\\/files\\/.+\\.term(?:[?#]|$)/", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
 const terminal = api.waitForText({ selector: ".terminal.xterm", includes: "$", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
 return { ok: url.ok === true && terminal.ok === true, url, terminal };`,
     };
@@ -146,7 +146,7 @@ return { ok: url.ok === true && terminal.ok === true, url, terminal };`,
   if (actionId === "project.jupyter.create") {
     return {
       description: "Notebook file tab and Jupyter UI are visible.",
-      code: `const url = api.waitForUrl({ includes: "/files/home/user/notebook.ipynb", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+      code: `const url = api.waitForUrl({ regex: "/\\/files\\/.+\\.ipynb(?:[?#]|$)/", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
 const notebook = api.waitForText({ includes: "Jupyter", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
 return { ok: url.ok === true && notebook.ok === true, url, notebook };`,
     };
@@ -158,6 +158,29 @@ return { ok: url.ok === true && notebook.ok === true, url, notebook };`,
 return { ok: modal.ok === true, modal };`,
       cleanupCode: `api.press("Escape");
 return api.waitForSelector(".ant-modal[role=dialog]", { state: "hidden", timeout_ms: 3000 });`,
+    };
+  }
+  if (actionId === "settings.people.collaborators") {
+    return {
+      description: "Project People settings are visible.",
+      code: `const people = api.waitForText({ includes: "Collaborators", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: people.ok === true, people };`,
+    };
+  }
+  if (actionId === "file.timetravel.open") {
+    return {
+      description: "TimeTravel opens for a project file.",
+      code: `const url = api.waitForUrl({ includes: ".time-travel", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+const timetravel = api.waitForText({ includes: "TimeTravel", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true && timetravel.ok === true, url, timetravel };`,
+    };
+  }
+  if (actionId === "project.codex.open") {
+    return {
+      description: "Project Agents UI is visible.",
+      code: `const url = api.waitForUrl({ includes: "/agents", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+const agents = api.waitForText({ includes: "Agents", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true && agents.ok === true, url, agents };`,
     };
   }
 }
@@ -191,7 +214,8 @@ export function listDocsLiveVerificationScenarios({
         entryId: action.entryId,
         mutatesProject:
           action.id === "project.terminal.open" ||
-          action.id === "project.jupyter.create",
+          action.id === "project.jupyter.create" ||
+          action.id === "file.timetravel.open",
       };
     });
 }
