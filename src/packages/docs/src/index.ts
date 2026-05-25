@@ -1147,6 +1147,11 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     body: USE_TERMINAL_BODY.trim(),
     category: "Terminal",
     id: "terminal.use-terminal",
+    image: {
+      alt: "Hand-drawn terminal opening project files",
+      src: "/public/docs/terminal.webp",
+      thumbnailSrc: "/public/docs/terminal.webp",
+    },
     lastReviewed: "2026-05-25",
     slug: "terminal/use-terminal",
     status: "ready",

@@ -49,6 +49,9 @@ describe("public/docs", () => {
         (entry) => entry.id,
       )[0],
     ).toBe("terminal.use-terminal");
+    expect(getDocsEntry("terminal.use-terminal")?.image?.src).toBe(
+      "/public/docs/terminal.webp",
+    );
     expect(
       searchDocsEntries("browser notebook cli automation").map(
         (entry) => entry.id,
