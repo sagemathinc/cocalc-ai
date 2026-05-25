@@ -119,6 +119,39 @@ describe("public/docs", () => {
     expect(window.localStorage.getItem("cocalc-docs-font-size")).toBeNull();
   });
 
+  it("applies docs font size to full-page markdown cards", () => {
+    window.localStorage.setItem("cocalc-docs-font-size", "30");
+
+    render(
+      <PublicDocsApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{
+          slug: "projects/project-secrets",
+          view: "docs-detail",
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("docs-font-scope")).toHaveStyle({
+      fontSize: "30px",
+    });
+    expect(
+      screen.getByRole("button", { name: "Reset docs font size" }),
+    ).toHaveTextContent("30px");
+
+    const markdownCardBody = screen
+      .getByTestId("docs-markdown")
+      .closest(".ant-card-body");
+    const markdownCard = screen
+      .getByTestId("docs-markdown")
+      .closest(".ant-card");
+
+    expect(markdownCard).not.toBeNull();
+    expect(markdownCardBody).not.toBeNull();
+    expect(markdownCard!).toHaveStyle({ fontSize: "inherit" });
+    expect(markdownCardBody!).toHaveStyle({ fontSize: "inherit" });
+  });
+
   it("renders a docs detail page with action metadata", () => {
     render(
       <PublicDocsApp
