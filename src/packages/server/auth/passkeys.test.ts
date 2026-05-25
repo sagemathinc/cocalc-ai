@@ -10,6 +10,7 @@ import { join } from "node:path";
 
 import { after, before } from "@cocalc/server/test";
 import createAccount from "@cocalc/server/accounts/create-account";
+import getPool from "@cocalc/database/pool";
 import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
 import {
   FRESH_AUTH_DEFAULT_MS,
@@ -108,6 +109,35 @@ async function createFreshSession(account_id: string) {
   return remember;
 }
 
+async function expireFreshAuthSession(
+  account_id: string,
+  session_hash: string,
+) {
+  await getPool().query(
+    `
+      UPDATE account_auth_sessions
+         SET fresh_auth_until = NOW() - INTERVAL '1 minute'
+       WHERE account_id = $1::UUID
+         AND session_hash = $2::CHAR(127)
+    `,
+    [account_id, session_hash],
+  );
+}
+
+function registrationResponse() {
+  return {
+    id: "credential-id",
+    rawId: "credential-id",
+    type: "public-key",
+    clientExtensionResults: {},
+    response: {
+      clientDataJSON: "client-data",
+      attestationObject: "attestation",
+      transports: ["internal"],
+    },
+  } as const;
+}
+
 beforeAll(async () => {
   process.env.COCALC_SECRET_SETTINGS_KEY_PATH = join(
     os.tmpdir(),
@@ -145,17 +175,7 @@ describe("passkey setup", () => {
       account_id,
       challenge_id: setup.challenge_id,
       label: "Laptop",
-      response: {
-        id: "credential-id",
-        rawId: "credential-id",
-        type: "public-key",
-        clientExtensionResults: {},
-        response: {
-          clientDataJSON: "client-data",
-          attestationObject: "attestation",
-          transports: ["internal"],
-        },
-      },
+      response: registrationResponse(),
     });
 
     expect(result.passkey).toMatchObject({
@@ -248,5 +268,65 @@ describe("passkey setup", () => {
     ).resolves.toMatchObject({
       factor_level: "passkey",
     });
+  });
+
+  it("requires fresh auth when finishing passkey setup", async () => {
+    const account_id = uuid();
+    await createAccount({
+      email: `${uuid()}@test.com`,
+      password: "cocalcrulez",
+      firstName: "Passkey",
+      lastName: "Stale",
+      account_id,
+    });
+    const remember = await createFreshSession(account_id);
+    const req = createRequest(remember.value);
+    const setup = await startPasskeySetup({
+      req,
+      account_id,
+      label: "Laptop",
+    });
+
+    await expireFreshAuthSession(account_id, remember.hash);
+
+    await expect(
+      finishPasskeySetup({
+        req,
+        account_id,
+        challenge_id: setup.challenge_id,
+        label: "Laptop",
+        response: registrationResponse(),
+      }),
+    ).rejects.toThrow("fresh auth is required");
+  });
+
+  it("rejects passkey setup completion from a different browser session", async () => {
+    const account_id = uuid();
+    await createAccount({
+      email: `${uuid()}@test.com`,
+      password: "cocalcrulez",
+      firstName: "Passkey",
+      lastName: "Mismatch",
+      account_id,
+    });
+    const setupSession = await createFreshSession(account_id);
+    const otherSession = await createFreshSession(account_id);
+    const setupReq = createRequest(setupSession.value);
+    const otherReq = createRequest(otherSession.value);
+    const setup = await startPasskeySetup({
+      req: setupReq,
+      account_id,
+      label: "Laptop",
+    });
+
+    await expect(
+      finishPasskeySetup({
+        req: otherReq,
+        account_id,
+        challenge_id: setup.challenge_id,
+        label: "Laptop",
+        response: registrationResponse(),
+      }),
+    ).rejects.toThrow("passkey setup challenge target session mismatch");
   });
 });

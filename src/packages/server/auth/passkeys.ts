@@ -378,7 +378,9 @@ export async function finishPasskeySetup({
   label?: string;
 }): Promise<{ passkey: PasskeySummary; recovery_codes: string[] }> {
   const accountId = ensureAccountId(account_id);
+  await requireFreshAuth({ req, account_id: accountId });
   const challengeId = `${challenge_id ?? ""}`.trim();
+  const currentHash = getRememberMeHash(req);
   let passkey: PasskeySummary | undefined;
   let recovery_codes: string[] = [];
   await withAccountRehomeWriteFence({
@@ -412,6 +414,15 @@ export async function finishPasskeySetup({
       }
       if ((challenge.attempt_count ?? 0) >= (challenge.max_attempts ?? 0)) {
         throw new Error("too many passkey setup attempts");
+      }
+      if (!currentHash) {
+        throw new Error("browser sign-in is required");
+      }
+      if (
+        challenge.target_session_hash &&
+        challenge.target_session_hash !== currentHash
+      ) {
+        throw new Error("passkey setup challenge target session mismatch");
       }
       const metadata = challenge.metadata ?? {};
       const verification = await verifyRegistrationResponse({
@@ -527,7 +538,6 @@ export async function finishPasskeySetup({
   if (!passkey) {
     throw new Error("passkey setup failed");
   }
-  const currentHash = getRememberMeHash(req);
   if (currentHash) {
     await deleteOtherRememberMe(accountId, currentHash);
     await revokeOtherAuthSessions({
