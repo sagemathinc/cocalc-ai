@@ -37,11 +37,11 @@ describe("parseConmonContainerProcesses", () => {
   it("ignores podman exec conmons and keeps duplicate main containers", () => {
     const output = [
       "100 1 /usr/bin/conmon --api-version 1 -n project-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa --full-attach",
-      "101 100 /run/podman-init -- /opt/cocalc/bin/node /opt/cocalc/project-bundle/bundle/index.js --init project_init.sh",
+      "101 100 /run/podman-init -- /opt/cocalc/bin/node /opt/cocalc/project-bundle/bundle/index.js --init .local/share/cocalc/startup.sh",
       "200 1 /usr/bin/conmon --api-version 1 -n project-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa --exec-attach --exec-process-spec /tmp/spec.json",
       "201 200 /opt/cocalc/bin/node /opt/cocalc/bin2/codex app-server --listen stdio://",
       "300 1 /usr/bin/conmon --api-version 1 -n project-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa --full-attach",
-      "301 300 /run/podman-init -- /opt/cocalc/bin/node /opt/cocalc/project-bundle/bundle/index.js --init project_init.sh",
+      "301 300 /run/podman-init -- /opt/cocalc/bin/node /opt/cocalc/project-bundle/bundle/index.js --init .local/share/cocalc/startup.sh",
     ].join("\n");
 
     const lists = parseConmonContainerProcessLists(output);
@@ -67,9 +67,9 @@ describe("parseConmonContainerProcesses", () => {
   it("parses conmon runtime log paths", () => {
     const output = [
       "100 1 /usr/bin/conmon --api-version 1 -n project-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa --runtime-arg=/mnt/cocalc/data/containers/rootless/cocalc-host/run/overlay-containers/abc/userdata/oci-log --full-attach",
-      "101 100 /run/podman-init -- /opt/cocalc/bin/node /opt/cocalc/project-bundle/bundle/index.js --init project_init.sh",
+      "101 100 /run/podman-init -- /opt/cocalc/bin/node /opt/cocalc/project-bundle/bundle/index.js --init .local/share/cocalc/startup.sh",
       "200 1 /usr/bin/conmon --api-version 1 -n project-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb --log-path /tmp/project-b.log --full-attach",
-      "201 200 /run/podman-init -- /opt/cocalc/bin/node /opt/cocalc/project-bundle/bundle/index.js --init project_init.sh",
+      "201 200 /run/podman-init -- /opt/cocalc/bin/node /opt/cocalc/project-bundle/bundle/index.js --init .local/share/cocalc/startup.sh",
     ].join("\n");
 
     const containers = parseConmonContainerProcesses(output);

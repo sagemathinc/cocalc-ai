@@ -274,7 +274,7 @@ describe("reconcileOnce", () => {
       "",
       [
         `100 1 /usr/bin/conmon --api-version 1 -n project-${project_id} --full-attach`,
-        "101 100 /run/podman-init -- /opt/cocalc/bin/node /opt/cocalc/project-bundle/bundle/index.js --init project_init.sh",
+        "101 100 /run/podman-init -- /opt/cocalc/bin/node /opt/cocalc/project-bundle/bundle/index.js --init .local/share/cocalc/startup.sh",
       ].join("\n"),
     );
 

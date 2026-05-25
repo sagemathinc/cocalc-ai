@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -6,6 +6,10 @@ import {
   SSHD_CONFIG,
   START_PROJECT_SSH,
 } from "@cocalc/conat/project/runner/constants";
+import {
+  PROJECT_STARTUP_SCRIPT_PATH,
+  PROJECT_STARTUP_SCRIPT_TEMPLATE,
+} from "@cocalc/util/project-startup-script";
 import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 import { writeStartupScripts } from "./run/startup-scripts";
 
@@ -41,5 +45,21 @@ describe("writeStartupScripts", () => {
     expect(script).toContain("/usr/libexec/openssh/sftp-server");
     expect(script).toContain("mkdir -p /usr/libexec");
     expect(script).toContain('ln -sf "$SFTP_SERVER" /usr/libexec/sftp-server');
+  });
+
+  it("creates a default project startup script template without overwriting it", async () => {
+    const home = mkdtempSync(join(tmpdir(), "cocalc-startup-scripts-"));
+
+    await writeStartupScripts(home);
+
+    const startupPath = join(home, PROJECT_STARTUP_SCRIPT_PATH);
+    expect(readFileSync(startupPath, "utf8")).toBe(
+      PROJECT_STARTUP_SCRIPT_TEMPLATE,
+    );
+
+    writeFileSync(startupPath, "# custom startup\n");
+    await writeStartupScripts(home);
+
+    expect(readFileSync(startupPath, "utf8")).toBe("# custom startup\n");
   });
 });
