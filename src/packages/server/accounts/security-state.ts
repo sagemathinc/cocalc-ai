@@ -15,7 +15,7 @@ const DEFAULT_SYNC_INTERVAL_MS = Math.max(
 );
 
 let ensured = false;
-let syncRunning = false;
+let activeSyncPromise: Promise<number> | undefined;
 let syncCursor = { updated_ms: 0, account_id: "" };
 let stopSyncLoop: (() => void) | undefined;
 let initialSyncPromise: Promise<void> | undefined;
@@ -214,6 +214,7 @@ export function getAccountRevokedBeforeCached(
 export function clearAccountSecurityStateCache(): void {
   accountSecurityState.clear();
   syncCursor = { updated_ms: 0, account_id: "" };
+  activeSyncPromise = undefined;
   initialSyncPromise = undefined;
   ensured = false;
 }
@@ -225,10 +226,11 @@ export async function syncAccountSecurityStateOnce({
   limit?: number;
   maxPages?: number;
 } = {}): Promise<number> {
-  if (syncRunning) return 0;
-  syncRunning = true;
-  let count = 0;
-  try {
+  if (activeSyncPromise) {
+    return await activeSyncPromise;
+  }
+  activeSyncPromise = (async () => {
+    let count = 0;
     for (let i = 0; i < Math.max(1, maxPages); i += 1) {
       const rows = await listAccountSecurityStatesSince({
         cursor_updated_ms: syncCursor.updated_ms,
@@ -252,9 +254,10 @@ export async function syncAccountSecurityStateOnce({
       }
     }
     return count;
-  } finally {
-    syncRunning = false;
-  }
+  })().finally(() => {
+    activeSyncPromise = undefined;
+  });
+  return await activeSyncPromise;
 }
 
 export async function ensureAccountSecurityStateReady(): Promise<void> {
