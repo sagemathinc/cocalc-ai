@@ -169,6 +169,74 @@ export type RootfsImageManifest = {
   images: RootfsImageEntry[];
 };
 
+export type RootfsCatalogSortField =
+  | "updated"
+  | "created"
+  | "label"
+  | "family"
+  | "visibility"
+  | "official"
+  | "scan_status"
+  | "storage_status"
+  | "owner"
+  | "usage_count";
+
+export type RootfsCatalogSortDirection = "asc" | "desc";
+
+export type RootfsCatalogPageRequest = {
+  limit?: number;
+  offset?: number;
+  cursor?: string;
+  query?: string;
+  sort?: RootfsCatalogSortField;
+  direction?: RootfsCatalogSortDirection;
+  filters?: {
+    visibility?: RootfsImageVisibility;
+    official?: boolean;
+    prepull?: boolean;
+    hidden?: boolean;
+    blocked?: boolean;
+    deleted?: boolean;
+    gpu?: boolean;
+    scan_status?: RootfsScanStatus;
+    release_gc_status?: RootfsReleaseGcStatus;
+    owner_id?: string;
+    family?: string;
+    channel?: string;
+  };
+};
+
+export type RootfsAdminCatalogCounts = {
+  total: number;
+  deleted: number;
+  pending_delete: number;
+  blocked: number;
+  official_unscanned: number;
+  official_critical: number;
+  official_scan_failed: number;
+};
+
+export type RootfsAdminCatalogPage = {
+  entries: RootfsAdminCatalogEntry[];
+  total: number;
+  limit: number;
+  cursor?: string;
+  next_cursor?: string;
+  counts: RootfsAdminCatalogCounts;
+  generated_at: string;
+};
+
+export type RootfsImageCatalogPage = {
+  version: number;
+  generated_at?: string;
+  source?: string;
+  images: RootfsImageEntry[];
+  total: number;
+  limit: number;
+  cursor?: string;
+  next_cursor?: string;
+};
+
 export type RootfsCatalogSaveBody = {
   image_id?: string;
   image: string;
@@ -330,10 +398,14 @@ export type RootfsRusticRepoSummary = {
   id: string;
   region: string;
   bucket_id?: string | null;
+  bucket_name?: string | null;
+  bucket_purpose?: string | null;
   root: string;
   status: "active" | "sealed" | "draining" | "disabled" | string;
   assigned_artifact_count: number;
   artifact_bytes: number;
+  r2_object_count?: number;
+  r2_total_bytes?: number;
   cap: number;
   available_slots: number;
   created?: string | null;
@@ -343,6 +415,8 @@ export type RootfsRusticRepoSummary = {
 export type RootfsRusticLegacySummary = {
   artifact_count: number;
   artifact_bytes: number;
+  r2_object_count?: number;
+  r2_total_bytes?: number;
 };
 
 export type RootfsRusticRepoListResult = {
@@ -350,6 +424,12 @@ export type RootfsRusticRepoListResult = {
   releases_per_shard: number;
   repos: RootfsRusticRepoSummary[];
   legacy: RootfsRusticLegacySummary;
+  orphan_r2_repos?: Array<{
+    bucket_name?: string | null;
+    repo: string;
+    object_count: number;
+    total_bytes: number;
+  }>;
 };
 
 export type RootfsAdminCatalogEntry = RootfsImageEntry & {

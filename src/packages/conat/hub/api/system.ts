@@ -18,7 +18,10 @@ import type {
   ProjectRootfsPublishLroRef,
   PublishProjectRootfsBody,
   RootfsAdminCatalogEntry,
+  RootfsAdminCatalogPage,
+  RootfsCatalogPageRequest,
   RootfsCatalogSaveBody,
+  RootfsImageCatalogPage,
   RootfsDeleteRequestResult,
   RootfsImageManifest,
   RootfsImageEntry,
@@ -112,7 +115,9 @@ export const system = {
   getCodexPaymentSource: authFirst,
   getFrontendSourceFingerprint: authFirst,
   getRootfsCatalog: authFirst,
+  getRootfsCatalogPage: authFirst,
   getRootfsCatalogAdmin: authFirstRequireAccount,
+  getRootfsCatalogAdminPage: authFirstRequireAccount,
   getRootfsRusticReposAdmin: authFirstRequireAccount,
   saveRootfsCatalogEntry: authFirstRequireAccount,
   requestRootfsImageDeletion: authFirstRequireAccount,
@@ -1995,9 +2000,21 @@ export interface System {
     account_id?: string;
   }) => Promise<RootfsImageManifest>;
 
+  getRootfsCatalogPage: (
+    opts?: RootfsCatalogPageRequest & {
+      account_id?: string;
+    },
+  ) => Promise<RootfsImageCatalogPage>;
+
   getRootfsCatalogAdmin: (opts?: {
     account_id?: string;
   }) => Promise<RootfsAdminCatalogEntry[]>;
+
+  getRootfsCatalogAdminPage: (
+    opts?: RootfsCatalogPageRequest & {
+      account_id?: string;
+    },
+  ) => Promise<RootfsAdminCatalogPage>;
 
   getRootfsRusticReposAdmin: (opts?: {
     account_id?: string;

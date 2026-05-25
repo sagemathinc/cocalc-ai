@@ -113,6 +113,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
   const [rootfsMode, setRootfsMode] = useState<"catalog" | "custom">("catalog");
   const [rootfsDraft, setRootfsDraft] = useState<string>("");
   const [rootfsDraftId, setRootfsDraftId] = useState<string | undefined>();
+  const [rootfsSearch, setRootfsSearch] = useState("");
   const [hostPickerOpen, setHostPickerOpen] = useState<boolean>(false);
   const {
     draft,
@@ -127,7 +128,10 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     setRootfs,
     applyPreset,
     reset,
-  } = useProjectCreateDraft({ defaultValue: default_value });
+  } = useProjectCreateDraft({
+    defaultValue: default_value,
+    rootfsQuery: rootfsSearch,
+  });
 
   const [form] = Form.useForm();
   const isGpu = summary.gpu;
@@ -188,6 +192,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
     setRootfsMode("catalog");
     setRootfsDraft("");
     setRootfsDraftId(undefined);
+    setRootfsSearch("");
   }
 
   function start_editing(): void {
@@ -329,6 +334,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                     input.trim().toLowerCase(),
                   )
                 }
+                onSearch={(value) => setRootfsSearch(value)}
                 optionRender={(option) =>
                   renderRootfsCatalogOption((option.data as any).entry)
                 }

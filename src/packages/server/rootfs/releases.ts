@@ -1819,6 +1819,8 @@ export async function listRootfsRusticReposAdmin({
   const { rows } = await getPool("medium").query<
     RootfsRusticRepoRow & {
       artifact_bytes: number | string | null;
+      bucket_name: string | null;
+      bucket_purpose: string | null;
     }
   >(
     `WITH assignments AS (
@@ -1836,6 +1838,8 @@ export async function listRootfsRusticReposAdmin({
        r.id,
        r.region,
        r.bucket_id,
+       b.name AS bucket_name,
+       b.purpose AS bucket_purpose,
        r.root,
        r.secret,
        r.status,
@@ -1844,9 +1848,10 @@ export async function listRootfsRusticReposAdmin({
        COUNT(a.artifact_key)::INTEGER AS assigned_artifact_count,
        COALESCE(SUM(a.artifact_bytes), 0)::BIGINT AS artifact_bytes
      FROM rootfs_rustic_repos r
+     LEFT JOIN buckets b ON b.id = r.bucket_id
      LEFT JOIN assignments a ON a.repo_id = r.id
      ${filters.length ? `WHERE ${filters.join(" AND ")}` : ""}
-     GROUP BY r.id
+     GROUP BY r.id, b.name, b.purpose
      ORDER BY r.region ASC, r.status ASC, assigned_artifact_count ASC, r.created ASC, r.id ASC`,
     params,
   );
@@ -1884,6 +1889,8 @@ export async function listRootfsRusticReposAdmin({
         id: row.id,
         region: row.region ?? "",
         bucket_id: row.bucket_id ?? null,
+        bucket_name: row.bucket_name ?? null,
+        bucket_purpose: row.bucket_purpose ?? null,
         root: row.root ?? "",
         status: row.status ?? ROOTFS_RUSTIC_REPO_STATUS_ACTIVE,
         assigned_artifact_count: assigned,

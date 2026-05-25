@@ -193,7 +193,10 @@ export default function RootFilesystemImage({
     images: rootfsImages,
     loading: rootfsLoading,
     error: rootfsError,
-  } = useRootfsImages([managedRootfsCatalogUrl(catalogRefresh)]);
+  } = useRootfsImages([managedRootfsCatalogUrl(catalogRefresh)], {
+    query: rootfsSearch,
+    limit: 200,
+  });
   const selectableRootfsImages = useMemo(
     () =>
       canUseCustomRootfs
