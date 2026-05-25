@@ -246,7 +246,18 @@ export class BaseProject extends EventEmitter {
       }));
     await upsertPublishedRootfsRelease({
       artifact,
-      upload: uploadResult,
+      upload: {
+        ...uploadResult,
+        repo_id: uploadResult?.repo_id ?? upload.repo_id,
+        repo_root: uploadResult?.repo_root ?? upload.repo_root,
+        region: uploadResult?.region ?? upload.region,
+        bucket_id: uploadResult?.bucket_id ?? upload.bucket_id,
+        bucket_name: uploadResult?.bucket_name ?? upload.bucket_name,
+        bucket_purpose: uploadResult?.bucket_purpose ?? upload.bucket_purpose,
+        repo_selector: uploadResult?.repo_selector ?? upload.repo_selector,
+        artifact_backend:
+          uploadResult?.artifact_backend ?? upload.artifact_backend,
+      },
     });
     return {
       image: artifact.image,
