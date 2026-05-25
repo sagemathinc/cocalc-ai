@@ -18,7 +18,7 @@ import type {
   ProjectCollabInviteStatus,
 } from "@cocalc/conat/hub/api/projects";
 import { RESEND_INVITE_INTERVAL_DAYS } from "@cocalc/util/consts/invites";
-import { copy, days_ago } from "@cocalc/util/misc";
+import { days_ago } from "@cocalc/util/misc";
 import { SITE_NAME } from "@cocalc/util/theme";
 import {
   WORKSPACE_LABEL,
@@ -1000,25 +1000,6 @@ export class StudentProjectsActions {
       );
     } finally {
       this.course_actions.set_activity({ id });
-    }
-  };
-
-  // Do an admin upgrade to all student projects.  This changes the base quotas for every student
-  // project as indicated by the quotas object.  E.g., to increase the core quota from 1 to 2, do
-  //         .admin_upgrade_all_student_projects(cores:2)
-  // The quotas are: cores, cpu_shares, disk_quota, memory, mintime, network, member_host
-  admin_upgrade_all_student_projects = async (quotas): Promise<void> => {
-    const account_store = redux.getStore("account");
-    const groups = account_store.get("groups");
-    if (groups && groups.includes("admin")) {
-      throw Error("must be an admin to upgrade");
-    }
-    const store = this.get_store();
-    const ids: string[] = store.get_student_project_ids();
-    for (const project_id of ids) {
-      const x = copy(quotas);
-      x.project_id = project_id;
-      await webapp_client.project_client.set_quotas(x);
     }
   };
 

@@ -57,10 +57,6 @@ import {
 } from "./postgres/project/host";
 import { recentProjects } from "./postgres/project/recent";
 import {
-  getProjectSettings,
-  setProjectSettings,
-} from "./postgres/project/settings";
-import {
   getProjectStorage,
   setProjectStorage,
   updateProjectStorageSave,
@@ -1567,17 +1563,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
 
   async get_project_state(opts: PgMethodOpts<"get_project_state">) {
     return runWithCbResultValue(opts.cb, () => getProjectState(this, opts));
-  }
-
-  /*
-    Project settings
-    */
-  async get_project_settings(opts: PgMethodOpts<"get_project_settings">) {
-    return runWithCbResultValue(opts.cb, () => getProjectSettings(this, opts));
-  }
-
-  async set_project_settings(opts: PgMethodOpts<"set_project_settings">) {
-    return runWithCb(opts.cb, () => setProjectSettings(this, opts));
   }
 
   async get_project_extra_env(opts: PgMethodOpts<"get_project_extra_env">) {

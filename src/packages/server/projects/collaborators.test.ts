@@ -130,16 +130,6 @@ jest.mock("@cocalc/server/accounts/get-email-address", () => ({
   default: jest.fn(async () => null),
 }));
 
-jest.mock("@cocalc/database/postgres/account/queries", () => ({
-  __esModule: true,
-  is_paying_customer: jest.fn(async () => false),
-}));
-
-jest.mock("@cocalc/database/postgres/project/queries", () => ({
-  __esModule: true,
-  project_has_network_access: jest.fn(async () => false),
-}));
-
 jest.mock("@cocalc/server/project-host/control", () => ({
   __esModule: true,
   syncProjectUsersOnHost: jest.fn(async () => undefined),

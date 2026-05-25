@@ -17,7 +17,6 @@ const HUB_PROJECT_CAPABILITY_BY_NAME: Record<string, ApiKeyCapability> = {
   "projects.exec": "project:exec",
   "projects.getProjectState": "project:read",
   "projects.getProjectAddress": "project:read",
-  "projects.getProjectSettings": "project:read",
   "projects.getProjectCreated": "project:read",
   "projects.getProjectRunQuota": "project:read",
 };

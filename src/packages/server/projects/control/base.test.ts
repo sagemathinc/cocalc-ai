@@ -65,7 +65,6 @@ jest.mock("@cocalc/database/postgres/quota-site-settings", () => ({
 jest.mock("@cocalc/server/membership/project-defaults", () => ({
   __esModule: true,
   getMembershipProjectDefaultsForAccount: jest.fn(async () => ({})),
-  mergeProjectSettingsWithMembership: jest.fn((settings) => settings),
 }));
 
 describe("BaseProject local ownership", () => {

@@ -69,7 +69,6 @@ jest.mock("@cocalc/server/projects/rootfs-state", () => ({
 jest.mock("@cocalc/server/membership/project-defaults", () => ({
   __esModule: true,
   getMembershipProjectDefaultsForAccount: jest.fn(async () => ({})),
-  mergeProjectSettingsWithMembership: jest.fn((settings: any) => settings),
 }));
 
 jest.mock("@cocalc/database/postgres/quota-site-settings", () => ({
@@ -207,7 +206,6 @@ describe("BaseProject.start RootFS sealing", () => {
     queryTableMock = jest.fn(async (opts: any) => {
       if (opts?.select?.includes("runtime_sponsor_account_id")) {
         return {
-          settings: {},
           users: {
             [OWNER_ID]: { group: "owner" },
             [RUNTIME_SPONSOR_ID]: { group: "collaborator" },
@@ -238,13 +236,6 @@ describe("BaseProject.start RootFS sealing", () => {
         }
         return {};
       });
-    jest
-      .mocked(projectDefaults.mergeProjectSettingsWithMembership)
-      .mockImplementation((settings: any, defaults: any) => ({
-        ...(settings ?? {}),
-        ...(defaults ?? {}),
-      }));
-
     const quotaModule = await import("@cocalc/util/upgrades/quota");
     jest.mocked(quotaModule.quota).mockImplementation((settings: any) => ({
       memory_limit: settings?.memory ?? 0,
@@ -279,7 +270,6 @@ describe("BaseProject.start RootFS sealing", () => {
       }
       if (opts?.select?.includes("runtime_sponsor_account_id")) {
         return {
-          settings: { memory: 1000, disk_quota: 1000 },
           users: { [OWNER_ID]: { group: "owner" } },
           last_active: null,
           last_started_by: null,
@@ -304,13 +294,6 @@ describe("BaseProject.start RootFS sealing", () => {
         }
         return {};
       });
-    jest
-      .mocked(projectDefaults.mergeProjectSettingsWithMembership)
-      .mockImplementation((settings: any, defaults: any) => ({
-        ...(settings ?? {}),
-        ...(defaults ?? {}),
-      }));
-
     const quotaModule = await import("@cocalc/util/upgrades/quota");
     jest.mocked(quotaModule.quota).mockImplementation((settings: any) => ({
       memory_limit: settings?.memory ?? 0,
@@ -346,7 +329,6 @@ describe("BaseProject.start RootFS sealing", () => {
       }
       if (opts?.select?.includes("runtime_sponsor_account_id")) {
         return {
-          settings: { memory: 1000, disk_quota: 1000 },
           users: { [OWNER_ID]: { group: "owner" } },
           last_active: null,
           last_started_by: null,
@@ -370,13 +352,6 @@ describe("BaseProject.start RootFS sealing", () => {
         }
         return {};
       });
-    jest
-      .mocked(projectDefaults.mergeProjectSettingsWithMembership)
-      .mockImplementation((settings: any, defaults: any) => ({
-        ...(settings ?? {}),
-        ...(defaults ?? {}),
-      }));
-
     const quotaModule = await import("@cocalc/util/upgrades/quota");
     jest.mocked(quotaModule.quota).mockImplementation((settings: any) => ({
       memory_limit: settings?.memory ?? 0,
@@ -410,7 +385,6 @@ describe("BaseProject.start RootFS sealing", () => {
       }
       if (opts?.select?.includes("runtime_sponsor_account_id")) {
         return {
-          settings: { memory: 1000, disk_quota: 1000 },
           users: { [OWNER_ID]: { group: "owner" } },
           last_active: null,
           last_started_by: null,
@@ -434,13 +408,6 @@ describe("BaseProject.start RootFS sealing", () => {
         }
         return {};
       });
-    jest
-      .mocked(projectDefaults.mergeProjectSettingsWithMembership)
-      .mockImplementation((settings: any, defaults: any) => ({
-        ...(settings ?? {}),
-        ...(defaults ?? {}),
-      }));
-
     const quotaModule = await import("@cocalc/util/upgrades/quota");
     jest.mocked(quotaModule.quota).mockImplementation((settings: any) => ({
       memory_limit: settings?.memory ?? 0,

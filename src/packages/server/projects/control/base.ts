@@ -51,10 +51,7 @@ import {
   issueRootfsReleaseArtifactUpload,
   upsertPublishedRootfsRelease,
 } from "@cocalc/server/rootfs/releases";
-import {
-  getMembershipProjectDefaultsForAccount,
-  mergeProjectSettingsWithMembership,
-} from "@cocalc/server/membership/project-defaults";
+import { getMembershipProjectDefaultsForAccount } from "@cocalc/server/membership/project-defaults";
 import { assertLocalProjectOwnership } from "@cocalc/server/conat/project-local-access";
 import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
 import {
@@ -444,12 +441,11 @@ export class BaseProject extends EventEmitter {
   ): Promise<Quota> => {
     await this.ensureLocalOwnership();
     let nextRunQuota = run_quota;
-    // If null we compute it based on membership + settings. Runtime capacity
+    // If null we compute it based on membership entitlements. Runtime capacity
     // comes from the runtime sponsor, while disk quota stays with the storage
     // sponsor so self-sponsoring cannot shrink an existing project volume.
     if (nextRunQuota == null) {
       const {
-        settings,
         users,
         last_active,
         last_started_by,
@@ -458,7 +454,6 @@ export class BaseProject extends EventEmitter {
       } = await query({
         db: db(),
         select: [
-          "settings",
           "users",
           "last_active",
           "last_started_by",
@@ -490,21 +485,13 @@ export class BaseProject extends EventEmitter {
       });
       const runtimeDefaults =
         await getMembershipProjectDefaultsForAccount(runtime_account_id);
-      const runtimeSettings = mergeProjectSettingsWithMembership(
-        settings,
-        runtimeDefaults,
-      );
       const site_settings = await getQuotaSiteSettings(); // quick, usually cached
-      nextRunQuota = quota(runtimeSettings, undefined, site_settings);
+      nextRunQuota = quota(runtimeDefaults, undefined, site_settings);
 
       if (storage_account_id && storage_account_id !== runtime_account_id) {
         const storageDefaults =
           await getMembershipProjectDefaultsForAccount(storage_account_id);
-        const storageSettings = mergeProjectSettingsWithMembership(
-          settings,
-          storageDefaults,
-        );
-        const storageQuota = quota(storageSettings, undefined, site_settings);
+        const storageQuota = quota(storageDefaults, undefined, site_settings);
         if (storageQuota.disk_quota != null) {
           nextRunQuota.disk_quota = storageQuota.disk_quota;
         }

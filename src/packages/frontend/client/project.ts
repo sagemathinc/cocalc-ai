@@ -28,7 +28,6 @@ import {
   type ExecOutput,
 } from "@cocalc/util/db-schema/projects";
 import {
-  coerce_codomain_to_numbers,
   copy_without,
   defaults,
   encode_path,
@@ -166,30 +165,6 @@ export class ProjectClient {
     run_at?: string;
   }): Promise<CourseCollectAssignmentResult> => {
     return await this.client.conat_client.hub.projects.collectAssignment(opts);
-  };
-
-  // Set a quota parameter for a given project.
-  // As of now, only user in the admin group can make these changes.
-  set_quotas = async (opts: {
-    project_id: string;
-    memory?: number;
-    memory_request?: number;
-    cpu_shares?: number;
-    cores?: number;
-    disk_quota?: number;
-    mintime?: number;
-    network?: number;
-    member_host?: number;
-    always_running?: number;
-  }): Promise<void> => {
-    // we do some extra work to ensure all the quotas are numbers (typescript isn't
-    // enough; sometimes client code provides strings, which can cause lots of trouble).
-    const x = coerce_codomain_to_numbers(copy_without(opts, ["project_id"]));
-    await this.client.conat_client.hub.projects.setQuotas({
-      ...x,
-      project_id: opts.project_id,
-      browser_id: this.client.browser_id,
-    });
   };
 
   websocket = async (project_id: string): Promise<any> => {

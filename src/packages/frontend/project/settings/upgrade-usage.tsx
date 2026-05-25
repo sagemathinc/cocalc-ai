@@ -4,7 +4,6 @@
  */
 
 import { Card, Typography } from "antd";
-import { List } from "immutable";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { React, Rendered, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -18,7 +17,6 @@ import {
 import MembershipBadge from "@cocalc/frontend/account/membership-badge";
 import { labels } from "@cocalc/frontend/i18n";
 import { GPU, process_gpu_quota } from "@cocalc/util/types/gpu";
-import AdminQuotas from "./quota-editor/admin-quotas";
 import { RunQuota } from "./run-quota";
 import { Project } from "./types";
 
@@ -33,8 +31,6 @@ export const UpgradeUsage: React.FC<Props> = React.memo(
   ({ project_id, project, gpu, mode }: Readonly<Props>) => {
     const intl = useIntl();
     const projectLabelLower = intl.formatMessage(labels.project).toLowerCase();
-    const account_groups: List<string> =
-      useTypedRedux("account", "groups") ?? List<string>();
 
     const is_commercial: boolean = useTypedRedux("customize", "is_commercial");
     function render_membership_note(): Rendered {
@@ -52,20 +48,6 @@ export const UpgradeUsage: React.FC<Props> = React.memo(
             }}
           />
         </Typography.Text>
-      );
-    }
-
-    function renderQuotaEditor(): Rendered {
-      // The whole info is in the "run quota" box, below are the license quota upgrades.
-      return (
-        <>
-          {account_groups.includes("admin") && (
-            <AdminQuotas
-              project_id={project_id}
-              style={{ marginTop: "15px" }}
-            />
-          )}
-        </>
       );
     }
 
@@ -148,7 +130,6 @@ export const UpgradeUsage: React.FC<Props> = React.memo(
         </Paragraph>
         {render_run_quota()}
         {render_membership_note()}
-        {renderQuotaEditor()}
         {render_gpu()}
       </div>
     );

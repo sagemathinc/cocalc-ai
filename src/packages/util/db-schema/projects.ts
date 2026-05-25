@@ -69,7 +69,6 @@ Table({
       "((state #>> '{state}'))", // projecting the "state" (running, etc.) for its own index – the GIN index above still causes a scan, which we want to avoid.
       "((state ->> 'state'))", // same reason as above. both syntaxes appear and we have to index both.
       "((state IS NULL))", // not covered by the above
-      "((settings ->> 'always_running'))", // to quickly know which projects have this setting
       "((run_quota ->> 'always_running'))", // same reason as above
       "host_id", // project-host placement lookup
       "owning_bay_id", // owning control-plane bay lookup
@@ -398,10 +397,6 @@ Table({
     region: {
       type: "string",
       desc: "Project backup region (Cloudflare R2 region code).",
-    },
-    settings: {
-      type: "map",
-      desc: 'This is a map that defines the free base quotas that a project has. It is of the form {cores: 1.5, cpu_shares: 768, disk_quota: 1000, memory: 2000, mintime: 36000000, network: 0, ephemeral_state:0, ephemeral_disk:0, always_running:0}.  WARNING: some of the values are strings not numbers in the database right now, e.g., disk_quota:"1000".',
     },
     status: {
       type: "map",
