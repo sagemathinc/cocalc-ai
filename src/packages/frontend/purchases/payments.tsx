@@ -24,6 +24,10 @@ import { capitalize, replace_all } from "@cocalc/util/misc";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { Icon } from "@cocalc/frontend/components/icon";
 import ShowError from "@cocalc/frontend/components/error";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { PAYMENT_INTENT_REASONS } from "@cocalc/util/stripe/types";
 import { describeNumberOf, RawJson } from "./util";
 import { PaymentMethod } from "./payment-methods";
@@ -529,12 +533,17 @@ function needsAttention(paymentIntent) {
 function AdminCancelPayment({ id, onFinished }) {
   const [reason, setReason] = useState<string>("");
   const [error, setError] = useState<string>("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   const doCancel = async () => {
     try {
       setError("");
-      await cancelPaymentIntent({ id, reason });
-      onFinished?.();
+      await runFreshAuthAction(async () => {
+        await cancelPaymentIntent({ id, reason });
+        onFinished?.();
+      });
     } catch (err) {
       setError(`${err}`);
     }
@@ -564,6 +573,7 @@ function AdminCancelPayment({ id, onFinished }) {
       </Space>
       <br />
       <ShowError error={error} setError={setError} />
+      <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
 }

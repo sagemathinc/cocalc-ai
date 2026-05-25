@@ -9,6 +9,8 @@ import {
 } from "@cocalc/server/purchases/stripe/create-payment-intent";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
+import { getCurrentAuthSession } from "@cocalc/server/auth/auth-sessions";
+import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import throttle from "@cocalc/util/api/throttle";
 
 export default async function handle(req, res) {
@@ -38,6 +40,13 @@ async function get(req) {
     if (!(await userIsInGroup(account_id, "admin"))) {
       throw Error("only admins can cancel other user's payment intents");
     }
+    const session = await getCurrentAuthSession({ req, account_id });
+    await requireDangerousSessionAuth({
+      account_id,
+      session_hash: session.session_hash,
+      require_second_factor: true,
+      allow_actor_impersonation: false,
+    });
   }
   await cancelPaymentIntent({ id, reason });
   return { success: true };
