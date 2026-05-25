@@ -3005,6 +3005,7 @@ export async function createImpersonationGrant({
     browser_id,
     session_hash,
     require_second_factor: true,
+    allow_actor_impersonation: false,
   });
   const cleanedSessionHash = `${session_hash ?? ""}`.trim();
   const cleanedBrowserId = `${browser_id ?? ""}`.trim();
@@ -3150,6 +3151,7 @@ export async function adminResetPasswordLink({
     browser_id,
     session_hash,
     require_second_factor: true,
+    allow_actor_impersonation: false,
   });
   const email = await getEmailAddress(user_account_id);
   if (!email) {
@@ -3178,6 +3180,7 @@ export async function adminVerifyEmailAddress({
     browser_id,
     session_hash,
     require_second_factor: true,
+    allow_actor_impersonation: false,
   });
   return await adminVerifyClusterAccountEmailAddress({
     account_id: user_account_id,
@@ -3203,6 +3206,7 @@ export async function adminDisableTwoFactor({
     browser_id,
     session_hash,
     require_second_factor: true,
+    allow_actor_impersonation: false,
   });
   return await adminDisableClusterAccountTwoFactor({
     account_id: user_account_id,
@@ -3263,6 +3267,7 @@ export async function adminCreateUser({
     browser_id,
     session_hash,
     require_second_factor: true,
+    allow_actor_impersonation: false,
   });
 
   const emailAddress = `${email ?? ""}`.trim().toLowerCase();
@@ -3342,6 +3347,7 @@ export async function deleteAccount({
     browser_id,
     session_hash,
     require_second_factor: targetAccountId !== account_id,
+    allow_actor_impersonation: false,
   });
   return await deleteClusterAccount({
     account_id: targetAccountId,

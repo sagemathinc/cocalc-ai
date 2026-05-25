@@ -80,11 +80,13 @@ export async function requireDangerousSessionAuth({
   browser_id,
   session_hash,
   require_second_factor = false,
+  allow_actor_impersonation = true,
 }: {
   account_id?: string | null;
   browser_id?: string | null;
   session_hash?: string | null;
   require_second_factor?: boolean;
+  allow_actor_impersonation?: boolean;
 }): Promise<AccountAuthSessionRow> {
   const accountId = `${account_id ?? ""}`.trim();
   if (!accountId) {
@@ -115,6 +117,18 @@ export async function requireDangerousSessionAuth({
     subject_account_id: accountId,
   });
   if (impersonation) {
+    if (!allow_actor_impersonation) {
+      throw Object.assign(
+        new Error(
+          "cannot perform this dangerous operation while impersonating another account",
+        ),
+        {
+          code: "impersonation_blocked",
+          actor_account_id: impersonation.actor_account_id,
+          subject_account_id: impersonation.subject_account_id,
+        },
+      );
+    }
     if (!(await hasActiveSecondFactor(impersonation.actor_account_id))) {
       throw twoFactorRequired(
         "actor must enable two-factor authentication for this operation",
