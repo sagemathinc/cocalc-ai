@@ -2,7 +2,11 @@ import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import createPaymentIntent from "@cocalc/server/purchases/stripe/create-payment-intent";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
-import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
+import {
+  getCurrentAuthSession,
+  requireFreshAuth,
+} from "@cocalc/server/auth/auth-sessions";
+import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import throttle from "@cocalc/util/api/throttle";
 
 export default async function handle(req, res) {
@@ -33,10 +37,14 @@ async function get(req) {
     if (!(await userIsInGroup(admin_account_id, "admin"))) {
       throw Error("only admins can create a payment");
     }
-    await requireFreshAuth({
+    const session = await getCurrentAuthSession({
       req,
       account_id: admin_account_id,
-      allow_actor_impersonation: true,
+    });
+    await requireDangerousSessionAuth({
+      account_id: admin_account_id,
+      session_hash: session.session_hash,
+      require_second_factor: true,
     });
     await createPaymentIntent({
       account_id: user_account_id,

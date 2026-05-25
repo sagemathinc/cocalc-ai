@@ -9,7 +9,8 @@ import { createMocks } from "@cocalc/http-api/lib/api/test-framework";
 
 const mockGetAccountId = jest.fn();
 const mockGetParams = jest.fn();
-const mockRequireFreshAuth = jest.fn();
+const mockGetCurrentAuthSession = jest.fn();
+const mockRequireDangerousSessionAuth = jest.fn();
 const mockUserIsInGroup = jest.fn();
 const mockAdminPurchase = jest.fn();
 const mockCreateRefund = jest.fn();
@@ -25,7 +26,12 @@ jest.mock("@cocalc/http-api/lib/api/get-params", () => ({
 }));
 
 jest.mock("@cocalc/server/auth/auth-sessions", () => ({
-  requireFreshAuth: (...args: any[]) => mockRequireFreshAuth(...args),
+  getCurrentAuthSession: (...args: any[]) => mockGetCurrentAuthSession(...args),
+}));
+
+jest.mock("@cocalc/server/conat/api/dangerous-session-auth", () => ({
+  requireDangerousSessionAuth: (...args: any[]) =>
+    mockRequireDangerousSessionAuth(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/is-in-group", () => ({
@@ -58,14 +64,17 @@ describe("admin purchase/refund fresh auth", () => {
       source: "free",
       user_account_id: "user-1",
     });
-    mockRequireFreshAuth.mockReset().mockResolvedValue(undefined);
+    mockGetCurrentAuthSession.mockReset().mockResolvedValue({
+      session_hash: "fresh-session-hash",
+    });
+    mockRequireDangerousSessionAuth.mockReset().mockResolvedValue(undefined);
     mockUserIsInGroup.mockReset().mockResolvedValue(true);
     mockAdminPurchase.mockReset().mockResolvedValue({ purchase_id: 456 });
     mockCreateRefund.mockReset().mockResolvedValue(789);
   });
 
-  it("requires fresh auth before admin-assisted purchase", async () => {
-    mockRequireFreshAuth.mockRejectedValue(
+  it("requires recent dangerous auth before admin-assisted purchase", async () => {
+    mockRequireDangerousSessionAuth.mockRejectedValue(
       Object.assign(new Error("fresh auth is required"), {
         code: "fresh_auth_required",
       }),
@@ -79,18 +88,18 @@ describe("admin purchase/refund fresh auth", () => {
       error: "fresh auth is required",
       code: "fresh_auth_required",
     });
-    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
-      req,
+    expect(mockRequireDangerousSessionAuth).toHaveBeenCalledWith({
       account_id: "admin-1",
-      allow_actor_impersonation: true,
+      session_hash: "fresh-session-hash",
+      require_second_factor: true,
     });
     expect(mockAdminPurchase).not.toHaveBeenCalled();
   });
 
-  it("requires fresh auth before admin refund", async () => {
-    mockRequireFreshAuth.mockRejectedValue(
-      Object.assign(new Error("fresh auth is required"), {
-        code: "fresh_auth_required",
+  it("requires recent second factor before admin refund", async () => {
+    mockRequireDangerousSessionAuth.mockRejectedValue(
+      Object.assign(new Error("recent two-factor verification is required"), {
+        code: "two_factor_required",
       }),
     );
     const { req, res } = createMocks({ method: "POST" });
@@ -99,13 +108,13 @@ describe("admin purchase/refund fresh auth", () => {
     await handler(req, res);
 
     expect(res._getJSONData()).toEqual({
-      error: "fresh auth is required",
-      code: "fresh_auth_required",
+      error: "recent two-factor verification is required",
+      code: "two_factor_required",
     });
-    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
-      req,
+    expect(mockRequireDangerousSessionAuth).toHaveBeenCalledWith({
       account_id: "admin-1",
-      allow_actor_impersonation: true,
+      session_hash: "fresh-session-hash",
+      require_second_factor: true,
     });
     expect(mockCreateRefund).not.toHaveBeenCalled();
   });

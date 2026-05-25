@@ -5,7 +5,8 @@
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
-import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
+import { getCurrentAuthSession } from "@cocalc/server/auth/auth-sessions";
+import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import adminPurchase from "@cocalc/server/purchases/admin-purchase";
 
 export default async function handle(req, res) {
@@ -14,10 +15,11 @@ export default async function handle(req, res) {
     if (account_id == null) {
       throw Error("must be signed in");
     }
-    await requireFreshAuth({
-      req,
+    const session = await getCurrentAuthSession({ req, account_id });
+    await requireDangerousSessionAuth({
       account_id,
-      allow_actor_impersonation: true,
+      session_hash: session.session_hash,
+      require_second_factor: true,
     });
     const {
       comment,

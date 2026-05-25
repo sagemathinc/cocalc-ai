@@ -9,11 +9,16 @@ import { createMocks } from "@cocalc/http-api/lib/api/test-framework";
 
 const mockGetAccountId = jest.fn();
 const mockGetParams = jest.fn();
+const mockGetCurrentAuthSession = jest.fn();
 const mockRequireFreshAuth = jest.fn();
+const mockRequireDangerousSessionAuth = jest.fn();
 const mockCreateSubscriptionPayment = jest.fn();
+const mockCreatePaymentIntent = jest.fn();
 const mockGetCheckoutSession = jest.fn();
 const mockGetCustomerSession = jest.fn();
 const mockSetCustomer = jest.fn();
+const mockThrottle = jest.fn();
+const mockUserIsInGroup = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
@@ -26,7 +31,28 @@ jest.mock("@cocalc/http-api/lib/api/get-params", () => ({
 }));
 
 jest.mock("@cocalc/server/auth/auth-sessions", () => ({
+  getCurrentAuthSession: (...args: any[]) => mockGetCurrentAuthSession(...args),
   requireFreshAuth: (...args: any[]) => mockRequireFreshAuth(...args),
+}));
+
+jest.mock("@cocalc/server/conat/api/dangerous-session-auth", () => ({
+  requireDangerousSessionAuth: (...args: any[]) =>
+    mockRequireDangerousSessionAuth(...args),
+}));
+
+jest.mock("@cocalc/util/api/throttle", () => ({
+  __esModule: true,
+  default: (...args: any[]) => mockThrottle(...args),
+}));
+
+jest.mock("@cocalc/server/accounts/is-in-group", () => ({
+  __esModule: true,
+  default: (...args: any[]) => mockUserIsInGroup(...args),
+}));
+
+jest.mock("@cocalc/server/purchases/stripe/create-payment-intent", () => ({
+  __esModule: true,
+  default: (...args: any[]) => mockCreatePaymentIntent(...args),
 }));
 
 jest.mock(
@@ -56,8 +82,13 @@ describe("purchases Stripe fresh-auth routes", () => {
     jest.resetModules();
     mockGetAccountId.mockReset().mockResolvedValue("acct-1");
     mockGetParams.mockReset().mockReturnValue({ subscription_id: 123 });
+    mockGetCurrentAuthSession.mockReset().mockResolvedValue({
+      session_hash: "fresh-session-hash",
+    });
     mockRequireFreshAuth.mockReset().mockResolvedValue(undefined);
+    mockRequireDangerousSessionAuth.mockReset().mockResolvedValue(undefined);
     mockCreateSubscriptionPayment.mockReset().mockResolvedValue(undefined);
+    mockCreatePaymentIntent.mockReset().mockResolvedValue(undefined);
     mockGetCheckoutSession.mockReset().mockResolvedValue({
       clientSecret: "cs_test",
     });
@@ -65,6 +96,8 @@ describe("purchases Stripe fresh-auth routes", () => {
       customerSessionClientSecret: "css_test",
     });
     mockSetCustomer.mockReset().mockResolvedValue(undefined);
+    mockThrottle.mockReset();
+    mockUserIsInGroup.mockReset().mockResolvedValue(true);
   });
 
   it("requires fresh auth before creating a subscription-renewal payment", async () => {
@@ -107,6 +140,74 @@ describe("purchases Stripe fresh-auth routes", () => {
     expect(mockCreateSubscriptionPayment).toHaveBeenCalledWith({
       account_id: "acct-1",
       subscription_id: 123,
+    });
+  });
+
+  it("requires recent dangerous auth before admin-created payment intent", async () => {
+    mockGetParams.mockReturnValue({
+      user_account_id: "user-1",
+      purpose: "admin-payment",
+      description: "Manual charge",
+      lineItems: [{ description: "Credit", amount: 10 }],
+      metadata: { support_case: "case-1" },
+    });
+    mockRequireDangerousSessionAuth.mockRejectedValue(
+      Object.assign(new Error("recent two-factor verification is required"), {
+        code: "two_factor_required",
+      }),
+    );
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } =
+      await import("./purchases/stripe/create-payment-intent");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "recent two-factor verification is required",
+      code: "two_factor_required",
+    });
+    expect(mockGetCurrentAuthSession).toHaveBeenCalledWith({
+      req,
+      account_id: "acct-1",
+    });
+    expect(mockRequireDangerousSessionAuth).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      session_hash: "fresh-session-hash",
+      require_second_factor: true,
+    });
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("creates an admin payment intent after dangerous auth", async () => {
+    mockGetParams.mockReturnValue({
+      user_account_id: "user-1",
+      purpose: "admin-payment",
+      description: "Manual charge",
+      lineItems: [{ description: "Credit", amount: 10 }],
+      metadata: { support_case: "case-1" },
+    });
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } =
+      await import("./purchases/stripe/create-payment-intent");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({ success: true });
+    expect(mockRequireFreshAuth).not.toHaveBeenCalled();
+    expect(mockRequireDangerousSessionAuth).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      session_hash: "fresh-session-hash",
+      require_second_factor: true,
+    });
+    expect(mockCreatePaymentIntent).toHaveBeenCalledWith({
+      account_id: "user-1",
+      purpose: "admin-payment",
+      description: "Manual charge",
+      lineItems: [{ description: "Credit", amount: 10 }],
+      metadata: {
+        support_case: "case-1",
+        admin_account_id: "acct-1",
+      },
     });
   });
 

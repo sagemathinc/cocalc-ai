@@ -21,8 +21,9 @@ transactions, if that turns out to be necessary.
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
-import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
+import { getCurrentAuthSession } from "@cocalc/server/auth/auth-sessions";
+import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import createRefund from "@cocalc/server/purchases/create-refund";
 
 export default async function handle(req, res) {
@@ -46,7 +47,12 @@ async function get(req) {
   if (!(await userIsInGroup(account_id, "admin"))) {
     throw Error("only admins can create refunds");
   }
-  await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
+  const session = await getCurrentAuthSession({ req, account_id });
+  await requireDangerousSessionAuth({
+    account_id,
+    session_hash: session.session_hash,
+    require_second_factor: true,
+  });
 
   const { purchase_id, reason, notes } = getParams(req);
   return {
