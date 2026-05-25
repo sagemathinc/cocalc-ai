@@ -110,6 +110,7 @@ export function DocsPrivateNotesPanel({
   summary?: DocsPrivateEntrySummary;
 }) {
   const [editingNoteId, setEditingNoteId] = useState<string | undefined>();
+  const [addingNote, setAddingNote] = useState(false);
   const starred = Boolean(summary?.starred);
 
   useEffect(() => {
@@ -131,7 +132,7 @@ export function DocsPrivateNotesPanel({
       }}
       title={
         <Flex align="center" justify="space-between" gap={8}>
-          <Space>
+          <Space wrap>
             <Button
               aria-label={starred ? "Unstar docs page" : "Star docs page"}
               icon={
@@ -147,7 +148,11 @@ export function DocsPrivateNotesPanel({
             >
               {starred ? "Starred" : "Star"}
             </Button>
-            <Text strong>Private docs notes</Text>
+            {!addingNote ? (
+              <Button onClick={() => setAddingNote(true)} size="small">
+                Add Note
+              </Button>
+            ) : null}
           </Space>
           <Text type="secondary" style={{ fontSize: 12 }}>
             {notes.length} note{notes.length === 1 ? "" : "s"}
@@ -168,7 +173,16 @@ export function DocsPrivateNotesPanel({
           Private to you. Export creates a JSON backup or transfer file only
           when you choose.
         </Text>
-        <NoteEditor onSave={(value) => onSaveNote(entry, value)} />
+        {addingNote ? (
+          <NoteEditor
+            autoFocus
+            onCancel={() => setAddingNote(false)}
+            onSave={async (value) => {
+              await onSaveNote(entry, value);
+              setAddingNote(false);
+            }}
+          />
+        ) : null}
         {notes.length > 0 ? (
           <Flex gap="small" vertical>
             {notes.map((note) => {

@@ -5,6 +5,14 @@ import MultiMarkdownInput from "../multimode";
 
 let latestEditableProps: any = null;
 let latestMarkdownProps: any = null;
+let latestPopoverProps: any = null;
+let mockFrameContext: any = {
+  id: "frame-1",
+  isFocused: true,
+  isVisible: true,
+  project_id: "project-1",
+  path: "path-1",
+};
 let editableControlApi: any = {};
 let markdownSelectionApi: any = null;
 
@@ -12,18 +20,22 @@ const mockGetLocalStorage = jest.fn();
 const mockSetLocalStorage = jest.fn();
 
 jest.mock("antd", () => ({
-  Popover: ({ children }: any) => <>{children}</>,
+  Popover: (props: any) => {
+    latestPopoverProps = props;
+    return <>{props.children}</>;
+  },
   Radio: {
     Group: ({ options, onChange, value }: any) => (
       <div data-testid="mode-switch">
         {options.map((option: any) => (
           <button
             key={option.value}
+            aria-label={option.value}
             aria-pressed={value === option.value}
             onClick={() => onChange({ target: { value: option.value } })}
             type="button"
           >
-            {typeof option.label === "string" ? option.label : option.value}
+            {option.label}
           </button>
         ))}
       </div>
@@ -62,12 +74,7 @@ jest.mock("../component", () => ({
 }));
 
 jest.mock("@cocalc/frontend/frame-editors/frame-tree/frame-context", () => ({
-  useFrameContext: () => ({
-    isFocused: true,
-    isVisible: true,
-    project_id: "project-1",
-    path: "path-1",
-  }),
+  useFrameContext: () => mockFrameContext,
 }));
 
 jest.mock("@cocalc/frontend/feature", () => ({
@@ -83,6 +90,14 @@ describe("MultiMarkdownInput wrapper contract", () => {
   beforeEach(() => {
     latestEditableProps = null;
     latestMarkdownProps = null;
+    latestPopoverProps = null;
+    mockFrameContext = {
+      id: "frame-1",
+      isFocused: true,
+      isVisible: true,
+      project_id: "project-1",
+      path: "path-1",
+    };
     editableControlApi = {};
     markdownSelectionApi = null;
     mockGetLocalStorage.mockReset();
@@ -150,6 +165,22 @@ describe("MultiMarkdownInput wrapper contract", () => {
     expect(screen.getByText("help")).not.toBeNull();
     expect(screen.getByTestId("mode-switch")).not.toBeNull();
     expect(screen.queryByTestId("editable-markdown")).not.toBeNull();
+  });
+
+  it("allows the rich text overflow menu outside editor frames", () => {
+    mockFrameContext = {
+      id: "",
+      isFocused: false,
+      isVisible: false,
+      project_id: "",
+      path: "",
+    };
+
+    render(<MultiMarkdownInput value="hello" onChange={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "menu" }));
+
+    expect(latestPopoverProps?.open).toBe(true);
   });
 
   it("switches from markdown to rich text and reapplies the markdown cursor position", () => {
