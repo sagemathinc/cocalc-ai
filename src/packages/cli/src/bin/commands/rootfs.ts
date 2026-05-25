@@ -8,6 +8,7 @@ import type {
   RootfsImageTheme,
   RootfsImageVisibility,
   RootfsReleaseGcRunResult,
+  RootfsRusticRepoListResult,
 } from "@cocalc/util/rootfs-images";
 import type { RootfsReleaseScanRun } from "@cocalc/util/rootfs-scan";
 
@@ -20,6 +21,19 @@ export type RootfsCommandDeps = {
 
 function parseLimit(value?: string, fallback = 100): number {
   return Math.max(1, Math.min(10_000, Number(value ?? fallback) || fallback));
+}
+
+function bytes(value: unknown): string {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n) || n <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  let x = n;
+  let unit = 0;
+  while (x >= 1024 && unit < units.length - 1) {
+    x /= 1024;
+    unit += 1;
+  }
+  return `${x.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
 
 function parseVisibility(value?: string): RootfsImageVisibility | undefined {
@@ -380,6 +394,34 @@ function formatRootfsGcResultHuman(result: RootfsReleaseGcRunResult): string {
   return lines.join("\n");
 }
 
+function formatRootfsRusticReposHuman(
+  result: RootfsRusticRepoListResult,
+): string {
+  const lines = [
+    `active_shards_per_region: ${result.active_shards_per_region}`,
+    `releases_per_shard: ${result.releases_per_shard}`,
+    `repos: ${result.repos.length}`,
+  ];
+  if (result.legacy.artifact_count > 0) {
+    lines.push(
+      `legacy_single_repo: ${result.legacy.artifact_count} artifacts, ${bytes(result.legacy.artifact_bytes)}; temporary read compatibility is still in use`,
+    );
+  }
+  for (const repo of result.repos) {
+    lines.push(
+      "",
+      `${repo.region} ${repo.status} ${repo.assigned_artifact_count}/${repo.cap} (${repo.available_slots} slots free, ${bytes(repo.artifact_bytes)})`,
+      `  repo_id: ${repo.id}`,
+      `  root: ${repo.root}`,
+    );
+    if (repo.bucket_id) {
+      lines.push(`  bucket_id: ${repo.bucket_id}`);
+    }
+    lines.push(`  updated: ${repo.updated ?? "-"}`);
+  }
+  return lines.join("\n");
+}
+
 function formatRootfsScanResultHuman(result: RootfsReleaseScanRun): string {
   const counts = result.severity_counts ?? result.summary?.severity_counts;
   const lines = [
@@ -649,6 +691,35 @@ export function registerRootfsCommand(
             return serialized;
           }
           return formatRootfsAdminEntriesHuman(serialized);
+        });
+      },
+    );
+
+  rootfs
+    .command("shards")
+    .description("list sharded RootFS rustic repositories (admin only)")
+    .option("--region <region>", "filter by RootFS/R2 region")
+    .option(
+      "--status <status>",
+      "filter by status: active, sealed, draining, disabled",
+    )
+    .action(
+      async (
+        opts: {
+          region?: string;
+          status?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs shards", async (ctx) => {
+          const result = await ctx.hub.system.getRootfsRusticReposAdmin({
+            region: opts.region,
+            status: opts.status,
+          });
+          if (ctx.globals.json || ctx.globals.output === "json") {
+            return result;
+          }
+          return formatRootfsRusticReposHuman(result);
         });
       },
     );
