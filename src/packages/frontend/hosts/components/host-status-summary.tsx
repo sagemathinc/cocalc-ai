@@ -40,6 +40,7 @@ import {
 import { isSpotStandardFallbackHost } from "../spot-ui";
 import type { HostLroState } from "../hooks/use-host-ops";
 import { HostBillingEnforcementStatus } from "./host-billing-enforcement";
+import { HostDaemonRuntimeControl } from "./host-daemon-runtime-control";
 import { HostBootstrapProgress } from "./host-bootstrap-progress";
 import {
   getHostOpLabel,
@@ -1088,6 +1089,21 @@ function DetailsPopover({
               title="Daemon health"
               description="Background services reported by the host."
               icon={<SettingOutlined />}
+              footer={
+                <Popover
+                  title="Daemon runtime detail"
+                  content={
+                    <div style={{ width: 640, maxWidth: "78vw" }}>
+                      <HostDaemonRuntimeControl host={host} compact />
+                    </div>
+                  }
+                  trigger="click"
+                >
+                  <Button size="small" type="link">
+                    Details <DownOutlined />
+                  </Button>
+                </Popover>
+              }
             >
               <DetailRow
                 icon={<SettingOutlined />}

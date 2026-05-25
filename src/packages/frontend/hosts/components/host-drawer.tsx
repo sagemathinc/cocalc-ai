@@ -76,6 +76,7 @@ import {
 } from "./upgrade-confirmation";
 import { HostBootstrapProgress } from "./host-bootstrap-progress";
 import { HostBootstrapLifecycle } from "./host-bootstrap-lifecycle";
+import { HostDaemonRuntimeControl } from "./host-daemon-runtime-control";
 import { HostErrorDetails } from "./host-error-details";
 import { HostParallelOpsPanel } from "./host-parallel-ops-panel";
 import { HostDaemonHealthSummary } from "./host-daemon-health-summary";
@@ -2551,6 +2552,84 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
         ) : null}
       </Space>
     ) : null;
+  const runtimeControlContent = (
+    <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+      <HostDaemonRuntimeControl
+        host={host}
+        deploymentStatus={deploymentStatus}
+        softwareVersions={softwareVersions}
+        runtimeDeployments={runtimeDeployments}
+        runtimeLogViewer={runtimeLogViewer}
+        canUpgrade={canUpgrade}
+        hostOpActive={hostOpActive}
+        canReconcile={canReconcile}
+        canRefreshCloudStatus={canRefreshCloudStatus}
+        onRefresh={() => {
+          Promise.all([
+            softwareVersions?.refresh?.(),
+            runtimeDeployments?.refresh?.(),
+          ]).catch((err) => {
+            console.error("failed to refresh runtime software", err);
+          });
+        }}
+        onReconcile={onReconcile}
+        onRefreshCloudStatus={onRefreshCloudStatus}
+        onUpgradeAll={onUpgradeAll}
+        onUpgradeAllFromHub={onUpgradeAllFromHub}
+        onSetRuntimeComponentDeployment={onSetRuntimeComponentDeployment}
+        onRollbackRuntimeComponent={onRollbackRuntimeComponent}
+        onRestartRuntimeComponent={onRestartRuntimeComponent}
+        onResumeRuntimeComponentClusterDefault={
+          onResumeRuntimeComponentClusterDefault
+        }
+      />
+      {runtimeLogViewer?.log ? (
+        <Card size="small" title="Recent daemon log">
+          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Showing <code>{runtimeLogViewer.log.source}</code> ·{" "}
+              {runtimeLogViewer.log.lines} lines
+            </Typography.Text>
+            <div
+              style={{
+                maxHeight: 360,
+                overflow: "auto",
+                border: `1px solid ${COLORS.GRAY_LL}`,
+                borderRadius: 6,
+                background: COLORS.GRAY_LLL,
+                padding: 12,
+                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                fontSize: 12,
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {runtimeLogViewer.log.text?.trim()
+                ? runtimeLogViewer.log.text
+                : "(no output)"}
+            </div>
+          </Space>
+        </Card>
+      ) : null}
+      {runtimeLogViewer?.error ? (
+        <Alert
+          type="error"
+          showIcon
+          message="Failed to load runtime log"
+          description={runtimeLogViewer.error}
+        />
+      ) : null}
+      {parallelOps ? (
+        <HostParallelOpsPanel
+          host_id={host.id}
+          status={parallelOps.status}
+          loading={parallelOps.loading}
+          savingKey={parallelOps.savingKey}
+          onSetLimit={parallelOps.setLimit}
+          onClearLimit={parallelOps.clearLimit}
+        />
+      ) : null}
+    </Space>
+  );
   const tabItems = [
     {
       key: "overview",
@@ -2573,7 +2652,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
       key: "runtime",
       label: "Runtime",
       children:
-        deploymentStatus ||
+        runtimeControlContent ??
+        (deploymentStatus ||
         host?.version ||
         host?.project_bundle_version ||
         host?.tools_version ||
@@ -4497,7 +4577,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           <Typography.Text type="secondary">
             No runtime deployment details reported yet.
           </Typography.Text>
-        ),
+        )),
     },
     {
       key: "access",
