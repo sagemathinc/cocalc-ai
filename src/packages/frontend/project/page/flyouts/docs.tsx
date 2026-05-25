@@ -3,9 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
 
-import { Flex, message, Typography } from "antd";
+import { Button, Flex, message, Space, Typography, Upload } from "antd";
+import { DownloadOutlined, UploadOutlined } from "@ant-design/icons";
+import { listDocsEntries } from "@cocalc/docs";
 import {
   DocsBrowser,
   DocsFontSizeFrame,
@@ -14,6 +16,13 @@ import {
   DOCS_BROWSER_PAGE_STYLE,
   type DocsBrowserAction,
 } from "@cocalc/frontend/docs/browser";
+import { DocsPrivateNotesPanel } from "@cocalc/frontend/docs/private-state/panel";
+import {
+  exportDocsPrivateStateBundle,
+  importDocsPrivateStateBundle,
+} from "@cocalc/frontend/docs/private-state/store";
+import type { DocsPrivateFilter } from "@cocalc/frontend/docs/private-state/types";
+import { useDocsPrivateState } from "@cocalc/frontend/docs/private-state/use-docs-private-state";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   listDocsAppActions,
@@ -32,12 +41,17 @@ export function ProjectDocsPanel({
   project_id: string;
 }) {
   const [messageApi, contextHolder] = message.useMessage();
+  const [privateFilter, setPrivateFilter] = useState<DocsPrivateFilter>("all");
+  const importBusyRef = useRef(false);
   const accountFontSize =
     useTypedRedux("account", "font_size") ?? DEFAULT_FONT_SIZE;
+  const accountId = `${useTypedRedux("account", "account_id") ?? ""}`.trim();
+  const docsPrivateState = useDocsPrivateState(accountId);
   const actionAvailability = useMemo(
     () => listDocsAppActions({ projectId: project_id }),
     [project_id],
   );
+  const allDocsEntries = useMemo(() => listDocsEntries(), []);
 
   async function runAction(action: DocsBrowserAction): Promise<void> {
     try {
@@ -49,6 +63,70 @@ export function ProjectDocsPanel({
   }
 
   const isFlyout = layout === "flyout";
+  const privateToolbar =
+    accountId && layout === "page" ? (
+      <Space wrap>
+        <Button
+          icon={<DownloadOutlined />}
+          onClick={async () => {
+            try {
+              const bundle = await exportDocsPrivateStateBundle({
+                accountId,
+              });
+              const blob = new Blob([JSON.stringify(bundle, null, 2)], {
+                type: "application/json",
+              });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `cocalc-docs-state-${new Date()
+                .toISOString()
+                .slice(0, 10)}.json`;
+              a.click();
+              URL.revokeObjectURL(url);
+              await messageApi.success("Exported private docs state.");
+            } catch (err) {
+              await messageApi.error(`${err}`);
+            }
+          }}
+          size="small"
+        >
+          Export
+        </Button>
+        <Upload
+          accept="application/json,.json"
+          beforeUpload={async (file) => {
+            if (importBusyRef.current) return Upload.LIST_IGNORE;
+            importBusyRef.current = true;
+            try {
+              const payload = JSON.parse(await file.text());
+              const result = await importDocsPrivateStateBundle({
+                accountId,
+                localEntries: allDocsEntries,
+                payload,
+              });
+              await messageApi.success(
+                `Imported ${result.importedPages} page state record${
+                  result.importedPages === 1 ? "" : "s"
+                } and ${result.importedNotes} note${
+                  result.importedNotes === 1 ? "" : "s"
+                }.`,
+              );
+            } catch (err) {
+              await messageApi.error(`${err}`);
+            } finally {
+              importBusyRef.current = false;
+            }
+            return Upload.LIST_IGNORE;
+          }}
+          showUploadList={false}
+        >
+          <Button icon={<UploadOutlined />} size="small">
+            Import
+          </Button>
+        </Upload>
+      </Space>
+    ) : null;
 
   return (
     <div
@@ -90,6 +168,37 @@ export function ProjectDocsPanel({
           actionAvailability={actionAvailability}
           layout={layout}
           onRunAction={runAction}
+          privateDetailState={
+            accountId
+              ? {
+                  renderPanel: (entry) => (
+                    <DocsPrivateNotesPanel
+                      accountId={accountId}
+                      entry={entry}
+                      error={docsPrivateState.error}
+                      loading={docsPrivateState.loading}
+                      markViewed={docsPrivateState.markViewed}
+                      notes={docsPrivateState.notesForEntry(entry.id)}
+                      onDeleteNote={docsPrivateState.deleteNote}
+                      onSaveNote={docsPrivateState.saveNote}
+                      onToggleStar={docsPrivateState.toggleStar}
+                      summary={docsPrivateState.summaries[entry.id]}
+                    />
+                  ),
+                }
+              : undefined
+          }
+          privateIndexState={
+            accountId
+              ? {
+                  enabled: true,
+                  filter: privateFilter,
+                  onFilterChange: setPrivateFilter,
+                  summaries: docsPrivateState.summaries,
+                  toolbar: privateToolbar,
+                }
+              : undefined
+          }
         />
       </DocsFontSizeFrame>
     </div>

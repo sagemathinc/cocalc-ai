@@ -19,6 +19,7 @@ import {
   Flex,
   Input,
   Row,
+  Segmented,
   Space,
   Tag,
   Typography,
@@ -31,6 +32,10 @@ import {
 } from "@cocalc/docs";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { COLORS } from "@cocalc/util/theme";
+import type {
+  DocsPrivateEntrySummary,
+  DocsPrivateFilter,
+} from "./private-state/types";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -46,6 +51,18 @@ export type DocsBrowserAction = DocsAction & {
   available?: boolean;
   implemented?: boolean;
   reason?: string;
+};
+
+export type DocsPrivateIndexState = {
+  enabled: boolean;
+  filter: DocsPrivateFilter;
+  summaries: Record<string, DocsPrivateEntrySummary>;
+  toolbar?: React.ReactNode;
+  onFilterChange: (filter: DocsPrivateFilter) => void;
+};
+
+export type DocsPrivateDetailState = {
+  renderPanel: (entry: DocsEntry) => React.ReactNode;
 };
 
 function clampDocsFontSize(value: number): number {
@@ -279,11 +296,15 @@ export function DocsCard({
   href,
   layout = "page",
   onSelect,
+  privateNoteMatched,
+  privateSummary,
 }: {
   entry: DocsEntry;
   href?: string;
   layout?: DocsBrowserLayout;
   onSelect?: (entry: DocsEntry) => void;
+  privateNoteMatched?: boolean;
+  privateSummary?: DocsPrivateEntrySummary;
 }) {
   if (layout === "flyout") {
     const content = (
@@ -314,6 +335,16 @@ export function DocsCard({
                 {audience}
               </Tag>
             ))}
+            {privateSummary?.starred ? <Tag color="gold">Starred</Tag> : null}
+            {(privateSummary?.noteCount ?? 0) > 0 ? (
+              <Tag>
+                {privateNoteMatched
+                  ? "matched your private notes"
+                  : `${privateSummary?.noteCount} note${
+                      privateSummary?.noteCount === 1 ? "" : "s"
+                    }`}
+              </Tag>
+            ) : null}
           </Space>
         </Flex>
       </Flex>
@@ -363,6 +394,16 @@ export function DocsCard({
           {entry.audiences.map((audience) => (
             <Tag key={audience}>{audience}</Tag>
           ))}
+          {privateSummary?.starred ? <Tag color="gold">Starred</Tag> : null}
+          {(privateSummary?.noteCount ?? 0) > 0 ? (
+            <Tag>
+              {privateNoteMatched
+                ? "matched your private notes"
+                : `${privateSummary?.noteCount} note${
+                    privateSummary?.noteCount === 1 ? "" : "s"
+                  }`}
+            </Tag>
+          ) : null}
         </Space>
       </Flex>
     </Card>
@@ -401,24 +442,55 @@ export function DocsIndexContent({
   layout = "page",
   linkForEntry,
   onSelectEntry,
+  privateState,
 }: {
   layout?: DocsBrowserLayout;
   linkForEntry?: (entry: DocsEntry) => string;
   onSelectEntry?: (entry: DocsEntry) => void;
+  privateState?: DocsPrivateIndexState;
 }) {
   const [query, setQuery] = useState("");
   const queryIsEmpty = query.trim().length === 0;
   const allEntries = useMemo(() => listDocsEntries(), []);
+  const entries = useMemo(() => {
+    const trimQuery = query.trim().toLowerCase();
+    const baseEntries = queryIsEmpty
+      ? allEntries
+      : searchDocsEntries(query, Number.POSITIVE_INFINITY);
+    const publicIds = new Set(baseEntries.map((entry) => entry.id));
+    const noteMatchedIds = new Set<string>();
+    if (trimQuery && privateState?.enabled) {
+      for (const [entryId, summary] of Object.entries(privateState.summaries)) {
+        if (summary.noteText.toLowerCase().includes(trimQuery)) {
+          noteMatchedIds.add(entryId);
+        }
+      }
+    }
+    const combined = queryIsEmpty
+      ? baseEntries
+      : [
+          ...baseEntries,
+          ...allEntries.filter(
+            (entry) => noteMatchedIds.has(entry.id) && !publicIds.has(entry.id),
+          ),
+        ];
+    return combined.filter((entry) => {
+      const summary = privateState?.summaries[entry.id];
+      switch (privateState?.filter ?? "all") {
+        case "starred":
+          return Boolean(summary?.starred);
+        case "unstarred":
+          return !summary?.starred;
+        case "notes":
+          return (summary?.noteCount ?? 0) > 0;
+        default:
+          return true;
+      }
+    });
+  }, [allEntries, privateState, query, queryIsEmpty]);
   const groupedEntries = useMemo(
-    () => groupDocsEntriesByCategory(allEntries),
-    [allEntries],
-  );
-  const entries = useMemo(
-    () =>
-      queryIsEmpty
-        ? allEntries
-        : searchDocsEntries(query, Number.POSITIVE_INFINITY),
-    [allEntries, query, queryIsEmpty],
+    () => groupDocsEntriesByCategory(entries),
+    [entries],
   );
   const linkFor = useCallback(
     (entry: DocsEntry) => linkForEntry?.(entry),
@@ -427,9 +499,27 @@ export function DocsIndexContent({
 
   const renderTocLink = (entry: DocsEntry) => {
     const href = linkFor(entry);
+    const summary = privateState?.summaries[entry.id];
+    const privateNoteMatched =
+      query.trim().length > 0 &&
+      Boolean(
+        summary?.noteText.toLowerCase().includes(query.trim().toLowerCase()),
+      );
     const content = (
       <Flex gap={4} vertical>
-        <Text strong>{entry.title}</Text>
+        <Space size={6} wrap>
+          <Text strong>{entry.title}</Text>
+          {summary?.starred ? <Tag color="gold">Starred</Tag> : null}
+          {(summary?.noteCount ?? 0) > 0 ? (
+            <Tag>
+              {privateNoteMatched
+                ? "matched your private notes"
+                : `${summary?.noteCount} note${
+                    summary?.noteCount === 1 ? "" : "s"
+                  }`}
+            </Tag>
+          ) : null}
+        </Space>
         <Text type="secondary" style={{ lineHeight: 1.35 }}>
           {entry.summary}
         </Text>
@@ -461,6 +551,15 @@ export function DocsIndexContent({
       </button>
     );
   };
+  const privateNoteMatched = (entry: DocsEntry) => {
+    const trimQuery = query.trim().toLowerCase();
+    if (!trimQuery) return false;
+    return Boolean(
+      privateState?.summaries[entry.id]?.noteText
+        .toLowerCase()
+        .includes(trimQuery),
+    );
+  };
 
   return (
     <Flex gap={layout === "flyout" ? "middle" : "large"} vertical>
@@ -474,6 +573,30 @@ export function DocsIndexContent({
         style={{ maxWidth: layout === "flyout" ? undefined : 520 }}
         value={query}
       />
+      {privateState?.enabled ? (
+        <Flex
+          align={layout === "flyout" ? "stretch" : "center"}
+          gap="small"
+          justify="space-between"
+          vertical={layout === "flyout"}
+          wrap
+        >
+          <Segmented
+            onChange={(value) =>
+              privateState.onFilterChange(value as DocsPrivateFilter)
+            }
+            options={[
+              { label: "All", value: "all" },
+              { label: "Starred", value: "starred" },
+              { label: "Unstarred", value: "unstarred" },
+              { label: "With notes", value: "notes" },
+            ]}
+            size="small"
+            value={privateState.filter}
+          />
+          {privateState.toolbar}
+        </Flex>
+      ) : null}
       {queryIsEmpty ? (
         <Flex gap={layout === "flyout" ? "middle" : "large"} vertical>
           <Space align="baseline" wrap>
@@ -481,7 +604,9 @@ export function DocsIndexContent({
               All documentation pages
             </Title>
             <Text type="secondary">
-              {allEntries.length} pages in {groupedEntries.length} categories
+              {entries.length} page{entries.length === 1 ? "" : "s"} in{" "}
+              {groupedEntries.length} categor
+              {groupedEntries.length === 1 ? "y" : "ies"}
             </Text>
           </Space>
           <Row gutter={[18, 18]}>
@@ -523,6 +648,8 @@ export function DocsIndexContent({
               layout={layout}
               href={linkForEntry?.(entry)}
               onSelect={onSelectEntry}
+              privateNoteMatched={privateNoteMatched(entry)}
+              privateSummary={privateState?.summaries[entry.id]}
             />
           ))}
         </Flex>
@@ -534,6 +661,8 @@ export function DocsIndexContent({
                 entry={entry}
                 href={linkForEntry?.(entry)}
                 onSelect={onSelectEntry}
+                privateNoteMatched={privateNoteMatched(entry)}
+                privateSummary={privateState?.summaries[entry.id]}
               />
             </Col>
           ))}
@@ -656,12 +785,14 @@ export function DocsDetailContent({
   layout = "page",
   onBack,
   onRunAction,
+  privateState,
 }: {
   actionAvailability?: Map<string, DocsBrowserAction>;
   entry: DocsEntry;
   layout?: DocsBrowserLayout;
   onBack?: () => void;
   onRunAction?: (action: DocsBrowserAction) => void | Promise<void>;
+  privateState?: DocsPrivateDetailState;
 }) {
   const actions = entry.actions?.map((action) => ({
     ...action,
@@ -694,6 +825,7 @@ export function DocsDetailContent({
           </Text>
         </Flex>
         <DocsEntryImage entry={entry} mode="flyout-detail" />
+        {privateState?.renderPanel(entry)}
         <DocsActions
           actions={actions}
           layout={layout}
@@ -747,6 +879,7 @@ export function DocsDetailContent({
           ) : null}
         </Row>
       </Card>
+      {privateState?.renderPanel(entry)}
       <DocsActions
         actions={actions}
         layout={layout}
@@ -767,11 +900,15 @@ export function DocsBrowser({
   initialEntry,
   layout = "page",
   onRunAction,
+  privateDetailState,
+  privateIndexState,
 }: {
   actionAvailability?: DocsBrowserAction[];
   initialEntry?: DocsEntry;
   layout?: DocsBrowserLayout;
   onRunAction?: (action: DocsBrowserAction) => void | Promise<void>;
+  privateDetailState?: DocsPrivateDetailState;
+  privateIndexState?: DocsPrivateIndexState;
 }) {
   const [selectedEntry, setSelectedEntry] = useState<DocsEntry | undefined>(
     initialEntry,
@@ -792,11 +929,18 @@ export function DocsBrowser({
         layout={layout}
         onBack={() => setSelectedEntry(undefined)}
         onRunAction={onRunAction}
+        privateState={privateDetailState}
       />
     );
   }
 
-  return <DocsIndexContent layout={layout} onSelectEntry={setSelectedEntry} />;
+  return (
+    <DocsIndexContent
+      layout={layout}
+      onSelectEntry={setSelectedEntry}
+      privateState={privateIndexState}
+    />
+  );
 }
 
 export const DOCS_BROWSER_PAGE_STYLE: React.CSSProperties = {

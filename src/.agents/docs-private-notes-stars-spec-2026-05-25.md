@@ -16,6 +16,8 @@ account-global rather than project-scoped:
 - state is stored on the account home bay
 - export/import works efficiently and can be used for backup, debugging, and
   account migration verification
+- this appears only inside the signed-in app docs; the public landing-page docs
+  remain static and do not show private notes or stars
 
 ## User Experience
 
@@ -270,6 +272,10 @@ the relevant page state/notes into detail and index components.
 
 Anonymous users should see public docs without private-state UI.
 
+Public landing-page docs should also omit private-state UI even when a browser
+has an active signed-in session. Private notes and stars are an in-app reading
+workflow, not part of the SEO/public docs surface.
+
 If private state fails to load:
 
 - docs still render
@@ -319,9 +325,9 @@ Home-bay tests should cover:
 ## Open Questions
 
 - Should deleted notes be kept as tombstones forever, for a limited period, or
-  only during import/export conflict handling?  (ANS: I'm fine with just a limited period; it's not a big deal -- these are just private notes.)
+  only during import/export conflict handling? (ANS: I'm fine with just a limited period; it's not a big deal -- these are just private notes.)
 - Should `last_viewed_at` be part of the first UI, or only stored for future
-  "read/unread" workflows? 
+  "read/unread" workflows? (ANS: It would be nice to have some subtle UI once we have this that indicates the doc has been read before, and also if there were updates after that.)
 - Where should import/export controls live: docs index toolbar, account
-  settings, or both?
-- Should note search show snippets, or only indicate that private notes matched?
+  settings, or both? (ANS: just docs index toolbar -- like with git review. Where you can find it, basically.)
+- Should note search show snippets, or only indicate that private notes matched? (ans: just say there's a match)
