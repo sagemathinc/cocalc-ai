@@ -1308,11 +1308,13 @@ export interface Projects {
 
   reconcileProjectRehome: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     op_id: string;
   }) => Promise<ProjectRehomeResponse>;
 
   drainProjectRehome: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     source_bay_id?: string;
     dest_bay_id: string;
     limit?: number;

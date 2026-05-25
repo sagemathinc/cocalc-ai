@@ -7,6 +7,8 @@ let interBayAddressMock: jest.Mock;
 let interBayActiveOpMock: jest.Mock;
 let interBayMoveMock: jest.Mock;
 let interBayAssignHostMock: jest.Mock;
+let reconcileProjectRehomeMock: jest.Mock;
+let drainProjectRehomeMock: jest.Mock;
 let requireDangerousProjectMutationAuthMock: jest.Mock;
 let savePlacementMock: jest.Mock;
 let resolveHostConnectionMock: jest.Mock;
@@ -180,6 +182,15 @@ jest.mock("@cocalc/server/projects/destructive-storage-actions", () => ({
     assertCanPerformDestructiveStorageActionMock(...args),
 }));
 
+jest.mock("@cocalc/server/projects/rehome", () => ({
+  __esModule: true,
+  reconcileProjectRehome: (...args: any[]) =>
+    reconcileProjectRehomeMock(...args),
+  drainProjectRehome: (...args: any[]) => drainProjectRehomeMock(...args),
+  getProjectRehomeOperation: jest.fn(async () => null),
+  rehomeProject: jest.fn(),
+}));
+
 jest.mock("./hosts", () => ({
   __esModule: true,
   resolveHostConnection: (...args: any[]) => resolveHostConnectionMock(...args),
@@ -225,6 +236,24 @@ describe("projects.getProjectState / getProjectAddress", () => {
       stream_name: "lro.move-op-1",
     }));
     interBayAssignHostMock = jest.fn(async () => undefined);
+    reconcileProjectRehomeMock = jest.fn(async () => ({
+      op_id: "reconcile-op-1",
+      scope_type: "project",
+      scope_id: "proj-1",
+      service: "persist-service",
+      stream_name: "lro.reconcile-op-1",
+    }));
+    drainProjectRehomeMock = jest.fn(async () => ({
+      source_bay_id: "bay-0",
+      dest_bay_id: "bay-1",
+      dry_run: true,
+      limit: 25,
+      campaign_id: null,
+      candidate_count: 0,
+      candidates: [],
+      rehomed: [],
+      errors: [],
+    }));
     requireDangerousProjectMutationAuthMock = jest.fn(async () => undefined);
     savePlacementMock = jest.fn(async () => undefined);
     resolveHostConnectionMock = jest.fn(async () => ({
@@ -395,6 +424,50 @@ describe("projects.getProjectState / getProjectAddress", () => {
       session_hash: "session-1",
       internalAuth: undefined,
     });
+  });
+
+  it("requires dangerous auth before reconciling project rehome operations", async () => {
+    requireDangerousProjectMutationAuthMock = jest.fn(async () => {
+      throw new Error("fresh auth is required");
+    });
+    const { reconcileProjectRehome } = await import("./projects");
+
+    await expect(
+      reconcileProjectRehome({
+        account_id: "acct-1",
+        session_hash: "session-1",
+        op_id: "op-1",
+      }),
+    ).rejects.toThrow("fresh auth is required");
+
+    expect(requireDangerousProjectMutationAuthMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      session_hash: "session-1",
+    });
+    expect(reconcileProjectRehomeMock).not.toHaveBeenCalled();
+  });
+
+  it("requires dangerous auth before draining project rehome candidates", async () => {
+    requireDangerousProjectMutationAuthMock = jest.fn(async () => {
+      throw new Error("fresh auth is required");
+    });
+    const { drainProjectRehome } = await import("./projects");
+
+    await expect(
+      drainProjectRehome({
+        account_id: "acct-1",
+        session_hash: "session-1",
+        source_bay_id: "bay-0",
+        dest_bay_id: "bay-1",
+        dry_run: false,
+      }),
+    ).rejects.toThrow("fresh auth is required");
+
+    expect(requireDangerousProjectMutationAuthMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      session_hash: "session-1",
+    });
+    expect(drainProjectRehomeMock).not.toHaveBeenCalled();
   });
 
   it("routes initial host assignment through the owning bay without fresh auth", async () => {

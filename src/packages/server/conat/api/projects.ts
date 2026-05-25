@@ -3549,14 +3549,20 @@ export async function getProjectRehomeOperation({
 
 export async function reconcileProjectRehome({
   account_id,
+  session_hash,
   op_id,
 }: {
   account_id: string;
+  session_hash?: string | null;
   op_id: string;
 }): Promise<ProjectRehomeResponse> {
   if (!account_id) {
     throw new Error("user must be signed in");
   }
+  await requireDangerousProjectMutationAuth({
+    account_id,
+    session_hash,
+  });
   return await reconcileProjectRehomeControl({
     account_id,
     op_id,
@@ -3565,6 +3571,7 @@ export async function reconcileProjectRehome({
 
 export async function drainProjectRehome({
   account_id,
+  session_hash,
   source_bay_id,
   dest_bay_id,
   limit,
@@ -3573,6 +3580,7 @@ export async function drainProjectRehome({
   reason,
 }: {
   account_id: string;
+  session_hash?: string | null;
   source_bay_id?: string;
   dest_bay_id: string;
   limit?: number;
@@ -3583,6 +3591,10 @@ export async function drainProjectRehome({
   if (!account_id) {
     throw new Error("user must be signed in");
   }
+  await requireDangerousProjectMutationAuth({
+    account_id,
+    session_hash,
+  });
   return await drainProjectRehomeControl({
     account_id,
     source_bay_id,
