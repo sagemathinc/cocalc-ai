@@ -69,6 +69,7 @@ import { currentHostRuntimeExceptionSummary } from "../utils/runtime-exceptions"
 import { HostActionsPanel } from "./host-actions-panel";
 import { HostConfigurationCell } from "./host-configuration-cell";
 import { HostAccessPolicyTags } from "./host-access-policy";
+import { HostReliabilityButton } from "./host-reliability-button";
 
 const STATUS_ORDER = [
   "running",
@@ -824,12 +825,18 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       key: "resources",
       width: 250,
       render: (_: string, host: Host) =>
-        host.deleted ||
-        host.status === "deprovisioned" ||
-        (host.status === "off" && !host.provider_instance_id) ? (
+        host.deleted ? (
           <Typography.Text type="secondary">-</Typography.Text>
         ) : (
-          <HostCurrentMetrics host={host} compact dense />
+          <Space orientation="vertical" size={4}>
+            {host.status === "deprovisioned" ||
+            (host.status === "off" && !host.provider_instance_id) ? (
+              <Typography.Text type="secondary">-</Typography.Text>
+            ) : (
+              <HostCurrentMetrics host={host} compact dense />
+            )}
+            <HostReliabilityButton host={host} compact />
+          </Space>
         ),
     },
     {

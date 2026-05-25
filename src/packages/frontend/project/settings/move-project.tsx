@@ -14,6 +14,7 @@ import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import { useProjectRegion } from "../use-project-region";
 import { SpotHostAlert, SpotHostTag } from "@cocalc/frontend/hosts/spot-ui";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
+import { HostReliabilityButton } from "@cocalc/frontend/hosts/components/host-reliability-button";
 import {
   FreshAuthModal,
   useFreshAuthAction,
@@ -222,6 +223,11 @@ export default function MoveProject({
           <Spin />
         ) : (
           <Descriptions size="small" column={1} items={detailsItems} />
+        )}
+        {detailHost && (
+          <div style={{ marginTop: 16 }}>
+            <HostReliabilityButton host={detailHost} />
+          </div>
         )}
         {pricingModel === "spot" && (
           <div style={{ marginTop: 16 }}>
