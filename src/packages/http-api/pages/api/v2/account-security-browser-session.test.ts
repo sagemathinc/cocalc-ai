@@ -9,7 +9,9 @@ import { createMocks } from "@cocalc/http-api/lib/api/test-framework";
 
 const mockGetAccountId = jest.fn();
 const mockGetRememberMeHash = jest.fn();
+const mockGetCurrentAuthSession = jest.fn();
 const mockRequireFreshAuth = jest.fn();
+const mockRequireDangerousSessionAuth = jest.fn();
 const mockAssertNoImpersonation = jest.fn();
 const mockDeleteAccount = jest.fn();
 const mockClearAuthCookies = jest.fn();
@@ -34,7 +36,13 @@ jest.mock("@cocalc/server/auth/remember-me", () => ({
 }));
 
 jest.mock("@cocalc/server/auth/auth-sessions", () => ({
+  getCurrentAuthSession: (...args: any[]) => mockGetCurrentAuthSession(...args),
   requireFreshAuth: (...args: any[]) => mockRequireFreshAuth(...args),
+}));
+
+jest.mock("@cocalc/server/conat/api/dangerous-session-auth", () => ({
+  requireDangerousSessionAuth: (...args: any[]) =>
+    mockRequireDangerousSessionAuth(...args),
 }));
 
 jest.mock("@cocalc/server/auth/impersonation", () => ({
@@ -107,7 +115,11 @@ describe("browser-session-only account security routes", () => {
   beforeEach(() => {
     mockGetAccountId.mockReset().mockResolvedValue("acct-1");
     mockGetRememberMeHash.mockReset().mockReturnValue("remember-me-hash");
+    mockGetCurrentAuthSession.mockReset().mockResolvedValue({
+      session_hash: "fresh-session-hash",
+    });
     mockRequireFreshAuth.mockReset().mockResolvedValue(undefined);
+    mockRequireDangerousSessionAuth.mockReset().mockResolvedValue(undefined);
     mockAssertNoImpersonation.mockReset().mockResolvedValue(undefined);
     mockDeleteAccount.mockReset().mockResolvedValue(undefined);
     mockClearAuthCookies.mockReset().mockResolvedValue(undefined);
@@ -454,9 +466,13 @@ describe("browser-session-only account security routes", () => {
     expect(mockDisableTwoFactor).not.toHaveBeenCalled();
   });
 
-  it("rejects admin account bans without fresh auth", async () => {
+  it("rejects admin account bans without dangerous auth", async () => {
     mockGetParams.mockReturnValue({ account_id: "subject-1" });
-    mockRequireFreshAuth.mockRejectedValue(new Error("fresh auth is required"));
+    mockRequireDangerousSessionAuth.mockRejectedValue(
+      Object.assign(new Error("fresh auth is required"), {
+        code: "fresh_auth_required",
+      }),
+    );
     const { req, res } = createMocks({ method: "POST" });
 
     const { default: handler } = await import("./accounts/ban");
@@ -477,23 +493,32 @@ describe("browser-session-only account security routes", () => {
 
     expect(res._getJSONData()).toEqual({ status: "success" });
     expect(mockUserIsInGroup).toHaveBeenCalledWith("acct-1", "admin");
-    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
+    expect(mockGetCurrentAuthSession).toHaveBeenCalledWith({
       req,
       account_id: "acct-1",
+    });
+    expect(mockRequireDangerousSessionAuth).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      session_hash: "fresh-session-hash",
+      require_second_factor: true,
     });
     expect(mockBanUser).toHaveBeenCalledWith("subject-1");
   });
 
-  it("rejects admin account unbans without fresh auth", async () => {
+  it("rejects admin account unbans without recent second factor", async () => {
     mockGetParams.mockReturnValue({ account_id: "subject-1" });
-    mockRequireFreshAuth.mockRejectedValue(new Error("fresh auth is required"));
+    mockRequireDangerousSessionAuth.mockRejectedValue(
+      Object.assign(new Error("recent two-factor verification is required"), {
+        code: "fresh_auth_required",
+      }),
+    );
     const { req, res } = createMocks({ method: "POST" });
 
     const { default: handler } = await import("./accounts/remove-ban");
     await handler(req, res);
 
     expect(res._getJSONData()).toEqual({
-      error: "fresh auth is required",
+      error: "recent two-factor verification is required",
     });
     expect(mockRemoveUserBan).not.toHaveBeenCalled();
   });
@@ -507,9 +532,14 @@ describe("browser-session-only account security routes", () => {
 
     expect(res._getJSONData()).toEqual({ status: "success" });
     expect(mockUserIsInGroup).toHaveBeenCalledWith("acct-1", "admin");
-    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
+    expect(mockGetCurrentAuthSession).toHaveBeenCalledWith({
       req,
       account_id: "acct-1",
+    });
+    expect(mockRequireDangerousSessionAuth).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      session_hash: "fresh-session-hash",
+      require_second_factor: true,
     });
     expect(mockRemoveUserBan).toHaveBeenCalledWith("subject-1");
   });
