@@ -456,6 +456,42 @@ describe("/api/v2/auth/sign-up", () => {
     });
   });
 
+  it("returns the public signup email domain policy message when cluster creation blocks the email", async () => {
+    mockRedeemRegistrationToken.mockResolvedValue({});
+    mockCreateClusterAccount.mockRejectedValue(
+      Object.assign(
+        new Error(
+          "Account creation is not available for this email address. Use a different email address or contact support.",
+        ),
+        { name: "SignupEmailDomainPolicyError" },
+      ),
+    );
+    const { req, res } = createMocks({
+      method: "POST",
+      url: "/api/v2/auth/sign-up",
+      body: {
+        terms: true,
+        email: "new@example.com",
+        password: "correct horse battery staple 12345!",
+        firstName: "New",
+        lastName: "User",
+        registrationToken: "valid-token",
+      },
+    });
+
+    const { signUp } = await import("./sign-up");
+    await signUp(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res._getJSONData()).toEqual({
+      issues: {
+        email:
+          "Account creation is not available for this email address. Use a different email address or contact support.",
+      },
+    });
+    expect(mockSignUserIn).not.toHaveBeenCalled();
+  });
+
   it("deletes a bootstrap registration token after successful use", async () => {
     mockRedeemRegistrationToken.mockResolvedValue({
       customize: { make_admin: true, bootstrap: true },

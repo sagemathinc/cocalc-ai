@@ -3,11 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Popover } from "antd";
+import { Alert, Button, Popover } from "antd";
 import { CSSProperties } from "react";
 import { Icon, LabeledRow, Markdown } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { managedRootfsCatalogUrl } from "@cocalc/frontend/rootfs/manifest";
+import {
+  evaluateSignupEmailDomainPolicy,
+  normalizeSignupEmailDomainPolicy,
+  publicSignupEmailDomainPolicy,
+} from "@cocalc/util/accounts/signup-email-domain-policy";
 import {
   Config,
   RowType,
@@ -235,7 +240,78 @@ export function RenderRow({
         onClearSecret={onClearSecret}
         rootfsManifestUrls={rootfsManifestUrls}
       />
+      {name === "signup_email_domain_policy_mode" && (
+        <SignupEmailDomainPolicyPreview data={data} />
+      )}
     </LabeledRow>
+  );
+}
+
+function SignupEmailDomainPolicyPreview({ data }: { data: Data }) {
+  const policy = normalizeSignupEmailDomainPolicy(data);
+  const publicPolicy = publicSignupEmailDomainPolicy(data);
+  const allowedSample =
+    policy.allowRules[0] != null
+      ? `student@${policy.allowRules[0].domain}`
+      : "student@example.edu";
+  const blockedSample =
+    policy.mode === "deny_list" && policy.denyRules[0] != null
+      ? `spammer@${policy.denyRules[0].domain}`
+      : "student@not-approved.example";
+  const allowedDecision = evaluateSignupEmailDomainPolicy({
+    email_address: allowedSample,
+    settings: data,
+  });
+  const blockedDecision = evaluateSignupEmailDomainPolicy({
+    email_address: blockedSample,
+    settings: data,
+  });
+
+  let message = "All verified email domains can create accounts.";
+  let description =
+    "No signup email domain restrictions are currently configured.";
+  let type: "info" | "warning" = "info";
+
+  if (policy.mode === "allow_only") {
+    type = policy.allowRules.length === 0 ? "warning" : "info";
+    message =
+      policy.allowRules.length === 0
+        ? "Allow-list mode has no allowed domains."
+        : `Allow-list mode: ${policy.allowRules.length} domain rule${
+            policy.allowRules.length === 1 ? "" : "s"
+          } configured.`;
+    description = [
+      policy.allowRules.length === 0
+        ? "New account creation and email-address changes will be blocked until at least one allowed domain is configured."
+        : `${allowedSample} is ${
+            allowedDecision.allowed ? "allowed" : "blocked"
+          }; ${blockedSample} is ${
+            blockedDecision.allowed ? "allowed" : "blocked"
+          }.`,
+      policy.showAllowedDomains
+        ? "The allowed domain list is visible in public signup metadata."
+        : "The allowed domain list is hidden from public signup metadata.",
+      `Public message: ${publicPolicy.message ?? "(generic)"}`,
+    ].join(" ");
+  } else if (policy.mode === "deny_list") {
+    message = `Deny-list mode: ${policy.denyRules.length} domain rule${
+      policy.denyRules.length === 1 ? "" : "s"
+    } configured.`;
+    description = [
+      `${blockedSample} is ${blockedDecision.allowed ? "allowed" : "blocked"}.`,
+      "The deny list is never exposed through public customize data.",
+      `Public message: ${publicPolicy.message ?? "(generic blocked message)"}`,
+    ].join(" ");
+  }
+
+  return (
+    <Alert
+      type={type}
+      showIcon
+      message={message}
+      description={description}
+      style={{ marginTop: "12px" }}
+    />
   );
 }
 

@@ -194,6 +194,7 @@ export default function PublicAuthApp({
             cookieBannerEnabled={!!config?.cookie_banner_enabled}
             onNavigate={onNavigate}
             redirectToPath={redirectToPath}
+            signupEmailDomainPolicy={config?.signup_email_domain_public_policy}
           />
         )}
         {route.kind === "auth-form" && route.view === "password-reset" && (

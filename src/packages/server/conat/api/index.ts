@@ -56,6 +56,11 @@ import {
   serviceAdmissionLimitEnvName,
 } from "@cocalc/conat/admission/limits";
 import { recordServiceAdmissionNearLimit } from "@cocalc/conat/admission/denials";
+import {
+  isAccountBannedCached,
+  syncAccountSecurityStateOnce,
+  startAccountSecurityStateSyncLoop,
+} from "@cocalc/server/accounts/security-state";
 
 const ssh = {} as any;
 const reflect = {} as any;
@@ -113,6 +118,10 @@ async function serve() {
   logger.debug(`initAPI -- subject='${subject}', options=`, {
     queue: "0",
   });
+  // Load current ban/security state before accepting API traffic. The sync loop
+  // below keeps this cache fresh without per-request database or inter-bay work.
+  await syncAccountSecurityStateOnce({ maxPages: 1000 });
+  startAccountSecurityStateSyncLoop();
   const cn = await conat({ noCache: true });
   const api = await cn.subscribe(subject, { queue: "0" });
   for await (const mesg of api) {
@@ -175,7 +184,7 @@ async function handleMessage({ mesg }) {
   });
 }
 
-async function handleApiRequest({ request, mesg }) {
+export async function handleApiRequest({ request, mesg }) {
   let resp, headers;
   try {
     const { account_id, project_id, host_id } = getUserId(mesg.subject);
@@ -186,6 +195,9 @@ async function handleApiRequest({ request, mesg }) {
       host_id,
       name,
     });
+    if (account_id && isAccountBannedCached(account_id)) {
+      throw Object.assign(new Error("account is banned"), { code: 403 });
+    }
     resp =
       (await getResponse({
         name,

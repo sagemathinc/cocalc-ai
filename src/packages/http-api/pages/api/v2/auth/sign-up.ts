@@ -56,6 +56,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
 import { issueHomeBayRetryToken } from "@cocalc/server/auth/home-bay-retry-token";
 import { selectSignupHomeBay } from "@cocalc/server/accounts/select-home-bay";
+import { SignupEmailDomainPolicyError } from "@cocalc/server/accounts/signup-email-domain-policy";
 import { createClusterAccount } from "@cocalc/server/inter-bay/accounts";
 import { getTierTemplate } from "@cocalc/util/membership-tier-templates";
 import {
@@ -414,6 +415,17 @@ export async function signUp(req, res) {
     });
   } catch (err) {
     if (!res.headersSent) {
+      if (
+        err instanceof SignupEmailDomainPolicyError ||
+        (err as any)?.name === "SignupEmailDomainPolicyError"
+      ) {
+        res.json({
+          issues: {
+            email: err.message,
+          },
+        });
+        return;
+      }
       logger.error("error creating account", { email, err });
       res.json({
         issues: {

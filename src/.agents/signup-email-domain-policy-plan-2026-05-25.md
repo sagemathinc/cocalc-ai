@@ -1,6 +1,6 @@
 # Signup Email Domain Policy Plan
 
-Status: design plan.
+Status: implemented.
 
 Date: 2026-05-25.
 
@@ -378,14 +378,56 @@ Manual smoke:
 - add rate-limit friendly logging
 - document recommended policies for Launchpad, public Rocket, and private orgs
 
+Implementation notes:
+
+- Counters are Prometheus server metrics with bounded labels:
+  - `cocalc_server_signup_domain_policy_allowed_total{mode,domain_category}`
+  - `cocalc_server_signup_domain_policy_blocked_total{mode,domain_category}`
+- `domain_category` is a low-cardinality SHA-256 domain bucket, not the raw
+  email domain. This gives abuse visibility without creating a domain-label
+  cardinality problem or leaking deny-list targets through metrics.
+- Blocked decisions are centrally logged as `signup_email_domain_policy_blocked`
+  with the same bucketed domain category. Logs are suppressed per
+  mode/category/public-detail tuple for five minutes so abusive retries do not
+  flood `central_log`.
+- The central blocked log intentionally excludes raw email addresses and raw
+  domains. Use rate-limit and request logs for detailed incident response when
+  needed.
+
+Recommended policies:
+
+- Launchpad for a school or company:
+  - Use `allow_only`.
+  - Add exact institutional domains such as `my-school.edu`.
+  - Add explicit wildcard rules like `*.my-school.edu` only when subdomains
+    should create accounts.
+  - Set a public message explaining the requirement.
+  - Enable public display of allowed domains only if the list is not sensitive.
+- Public Rocket:
+  - Keep `allow_all` by default.
+  - Use `deny_list` for high-confidence abuse domains.
+  - Usually leave the public message blank so blocked domains receive generic
+    copy.
+  - If abuse pressure is high, switch to a narrow `allow_only` list such as
+    major consumer providers while keeping account bans and rate limits enabled.
+- Private org deployments:
+  - Prefer SSO or registration tokens when account issuance needs explicit
+    control.
+  - Use `allow_only` as a simple verified-email-domain gate when SSO is too
+    heavy.
+  - Keep deny-list entries for domains that should never self-serve accounts,
+    even if registration tokens are accidentally made public.
+
 ## Open Questions
 
 - Should admins have a deliberate override when creating an account manually?
-  If yes, it should require fresh auth and an audit reason.
+  If yes, it should require fresh auth and an audit reason. (NO: I see no need for this.)
 - Should allow-list policy apply to existing users changing email addresses?
-  Default recommendation: yes, unless admins add an explicit override.
+  Default recommendation: yes, unless admins add an explicit override. (AGREED: Yes it applies)
 - Should SSO-created accounts be exempt if the SSO provider is already
   configured for a domain?
-  Default recommendation: no hidden exemption; domain policy should be explicit.
+  Default recommendation: no hidden exemption; domain policy should be explicit. (AGREED: no hidden exemption)
 - Should public allow-list display all allowed domains when the list is large?
-  Default recommendation: only if the admin explicitly makes the list public.
+  Default recommendation: only if the admin explicitly makes the list public. (AGREED)
+
+USER: Also, we should only have one mode at a time -- either explicit allow list _or_ deny. No need to support both at once.

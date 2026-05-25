@@ -14,6 +14,7 @@ const banUserMock = jest.fn();
 const removeUserBanMock = jest.fn();
 const recordAccountBanAuditEventMock = jest.fn();
 const remoteSetBanMock = jest.fn();
+const assertSignupEmailDomainAllowedMock = jest.fn();
 
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: jest.fn(() => "bay-1"),
@@ -67,6 +68,11 @@ jest.mock("@cocalc/server/accounts/ban-audit", () => ({
     recordAccountBanAuditEventMock(...args),
 }));
 
+jest.mock("@cocalc/server/accounts/signup-email-domain-policy", () => ({
+  assertSignupEmailDomainAllowed: (...args: any[]) =>
+    assertSignupEmailDomainAllowedMock(...args),
+}));
+
 describe("inter-bay account ban routing", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -89,6 +95,7 @@ describe("inter-bay account ban routing", () => {
       home_bay_id: "bay-2",
       banned: true,
     });
+    assertSignupEmailDomainAllowedMock.mockReset().mockResolvedValue(undefined);
   });
 
   it("applies local bans on the account home bay and syncs the directory", async () => {
@@ -216,6 +223,30 @@ describe("inter-bay account ban routing", () => {
       } as any),
     ).rejects.toThrow(/equivalent address is banned/);
 
+    expect(reserveClusterAccountDirectoryEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects account creation before reserving a disallowed email domain", async () => {
+    assertSignupEmailDomainAllowedMock.mockRejectedValueOnce(
+      new Error("Use an approved email address to create an account."),
+    );
+
+    const { createClusterAccount } = await import("./accounts");
+    await expect(
+      createClusterAccount({
+        email_address: "codex@other.edu",
+        password: "secret",
+        first_name: "Code",
+        last_name: "Ex",
+      } as any),
+    ).rejects.toThrow(/approved email address/);
+
+    expect(assertSignupEmailDomainAllowedMock).toHaveBeenCalledWith({
+      email_address: "codex@other.edu",
+    });
+    expect(
+      getClusterBanEquivalentEmailAccountsDirectMock,
+    ).not.toHaveBeenCalled();
     expect(reserveClusterAccountDirectoryEntryMock).not.toHaveBeenCalled();
   });
 

@@ -8,6 +8,7 @@ import { createContext, useContext } from "react";
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { SITE_NAME } from "@cocalc/util/theme";
+import type { SignupEmailDomainPublicPolicy } from "@cocalc/util/accounts/signup-email-domain-policy";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 export interface PublicConfig {
@@ -25,6 +26,7 @@ export interface PublicConfig {
   policies?: string;
   policy_pages?: PublicPolicyPages;
   site_name?: string;
+  signup_email_domain_public_policy?: SignupEmailDomainPublicPolicy;
   terms_of_service_url?: string;
 }
 
