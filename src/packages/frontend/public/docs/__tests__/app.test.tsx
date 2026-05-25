@@ -49,9 +49,9 @@ describe("public/docs", () => {
         (entry) => entry.id,
       )[0],
     ).toBe("terminal.use-terminal");
-    expect(getDocsEntry("terminal.use-terminal")?.image?.src).toBe(
-      "/public/docs/terminal.webp",
-    );
+    const terminal = getDocsEntry("terminal.use-terminal");
+    expect(terminal?.image?.src).toBe("/public/docs/terminal-56905fa2.webp");
+    expect(terminal?.image?.presentation).toBe("icon");
     expect(
       searchDocsEntries("browser notebook cli automation").map(
         (entry) => entry.id,

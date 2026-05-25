@@ -191,6 +191,7 @@ function DocsEntryImage({
     mode === "card" || mode === "flyout-card"
       ? (entry.image.thumbnailSrc ?? entry.image.src)
       : entry.image.src;
+  const isIcon = entry.image.presentation === "icon";
 
   if (mode === "flyout-card") {
     return (
@@ -198,12 +199,33 @@ function DocsEntryImage({
         alt=""
         src={src}
         style={{
-          aspectRatio: "4 / 3",
+          aspectRatio: isIcon ? "1 / 1" : "4 / 3",
           border: `1px solid ${COLORS.GRAY_LL}`,
           borderRadius: 7,
           flex: "0 0 76px",
-          objectFit: "cover",
+          objectFit: isIcon ? "contain" : "cover",
           width: 76,
+        }}
+      />
+    );
+  }
+
+  if (isIcon) {
+    const maxWidth =
+      mode === "flyout-detail" ? 144 : mode === "detail" ? 220 : 160;
+    return (
+      <img
+        alt={entry.image.alt}
+        src={src}
+        style={{
+          aspectRatio: "1 / 1",
+          border: `1px solid ${COLORS.GRAY_LL}`,
+          borderRadius: mode === "flyout-detail" ? 8 : 10,
+          display: "block",
+          margin: "0 auto",
+          maxWidth,
+          objectFit: "contain",
+          width: "100%",
         }}
       />
     );

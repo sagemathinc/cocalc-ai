@@ -37,6 +37,7 @@ export interface DocsActionSummary extends DocsAction {
 
 export interface DocsEntryImage {
   alt: string;
+  presentation?: "hero" | "icon";
   src: string;
   thumbnailSrc?: string;
 }
@@ -1149,8 +1150,9 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     id: "terminal.use-terminal",
     image: {
       alt: "Hand-drawn terminal opening project files",
-      src: "/public/docs/terminal.webp",
-      thumbnailSrc: "/public/docs/terminal.webp",
+      presentation: "icon",
+      src: "/public/docs/terminal-56905fa2.webp",
+      thumbnailSrc: "/public/docs/terminal-56905fa2.webp",
     },
     lastReviewed: "2026-05-25",
     slug: "terminal/use-terminal",
