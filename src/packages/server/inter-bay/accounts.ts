@@ -33,6 +33,7 @@ import deleteAccountLocal from "@cocalc/server/accounts/delete";
 import { banUser, removeUserBan } from "@cocalc/server/accounts/ban";
 import { recordAccountBanAuditEvent } from "@cocalc/server/accounts/ban-audit";
 import { quarantineAccountBillingResourcesLocal } from "@cocalc/server/accounts/resource-quarantine";
+import { assertSignupEmailDomainAllowed } from "@cocalc/server/accounts/signup-email-domain-policy";
 import setPasswordFromResetLocal from "@cocalc/server/accounts/set-password-from-reset";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import { adminDisableTwoFactor as adminDisableTwoFactorLocal } from "@cocalc/server/auth/two-factor";
@@ -215,6 +216,9 @@ export async function updateClusterAccountEmailAddress(opts: {
     account_id: `${opts.account_id ?? ""}`.trim().toLowerCase(),
     email_address: `${opts.email_address ?? ""}`.trim().toLowerCase(),
   };
+  await assertSignupEmailDomainAllowed({
+    email_address: normalized.email_address,
+  });
   await assertNoClusterBannedEquivalentEmailAccount({
     email_address: normalized.email_address,
     allowed_account_id: normalized.account_id,
@@ -605,6 +609,7 @@ async function createClusterAccountDirect(
   if (existing?.account_id) {
     throw new Error(`an account with email '${email_address}' already exists`);
   }
+  await assertSignupEmailDomainAllowed({ email_address });
   await assertNoClusterBannedEquivalentEmailAccount({ email_address });
 
   await reserveClusterAccountDirectoryEntry({

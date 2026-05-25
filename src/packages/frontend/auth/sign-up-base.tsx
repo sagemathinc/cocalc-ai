@@ -1,13 +1,19 @@
 import { Alert, Button, Input, Space } from "antd";
 import { useEffect, useMemo, useState } from "react";
 
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import api from "@cocalc/frontend/client/api";
 import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
+import {
+  emailAllowedByPublicSignupPolicy,
+  type SignupEmailDomainPublicPolicy,
+} from "@cocalc/util/accounts/signup-email-domain-policy";
 import {
   is_valid_email_address as isValidEmailAddress,
   len,
 } from "@cocalc/util/misc";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
+import { COLORS } from "@cocalc/util/theme";
 import { isWrongBayAuthResponse, postAuthApi, retryAuthOnHomeBay } from "./api";
 import type { AuthView } from "./types";
 import { appUrl } from "./util";
@@ -42,6 +48,16 @@ export default function SignUpFormBase({
   const [signingUp, setSigningUp] = useState<boolean>(false);
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string>("");
+  const signupEmailDomainPolicy = useTypedRedux(
+    "customize",
+    "signup_email_domain_public_policy",
+  ) as SignupEmailDomainPublicPolicy | undefined;
+  const emailAllowedByDomainPolicy = emailAllowedByPublicSignupPolicy({
+    email_address: email,
+    policy: signupEmailDomainPolicy,
+  });
+  const emailDomainPolicyViolation =
+    isValidEmailAddress(email) && !emailAllowedByDomainPolicy;
 
   const bootstrap = useMemo(() => getQueryParam("bootstrap") === "1", []);
 
@@ -67,6 +83,9 @@ export default function SignUpFormBase({
     if (!isValidEmailAddress(email)) {
       return false;
     }
+    if (!emailAllowedByDomainPolicy) {
+      return false;
+    }
     if (password.length < MIN_PASSWORD_LENGTH) {
       return false;
     }
@@ -79,6 +98,7 @@ export default function SignUpFormBase({
     return !signingUp;
   }, [
     email,
+    emailAllowedByDomainPolicy,
     password,
     firstName,
     lastName,
@@ -186,6 +206,18 @@ export default function SignUpFormBase({
           onChange={(e) => setEmail(e.target.value)}
           onPressEnter={signUp}
         />
+        {signupEmailDomainPolicy?.message ? (
+          <div
+            style={{
+              color: emailDomainPolicyViolation ? COLORS.FG_RED : COLORS.GRAY_D,
+              fontSize: "13px",
+              lineHeight: "18px",
+              marginTop: "6px",
+            }}
+          >
+            {signupEmailDomainPolicy.message}
+          </div>
+        ) : null}
       </div>
       <div>
         <div>Password</div>

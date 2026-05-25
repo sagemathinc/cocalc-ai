@@ -36,4 +36,21 @@ describe("buildPublicSiteSettings", () => {
       }).configuration.show_policies,
     ).toBeUndefined();
   });
+
+  it("redacts raw signup domain policy lists and exposes only the safe public summary", () => {
+    const { configuration } = buildPublicSiteSettings({
+      signup_email_domain_policy_mode: "allow_only",
+      signup_email_domain_allow_list: "example.edu *.school.edu",
+      signup_email_domain_deny_list: "darkweb.example",
+      signup_email_domain_show_allowed_domains: "yes",
+    });
+
+    expect(configuration.signup_email_domain_allow_list).toBeUndefined();
+    expect(configuration.signup_email_domain_deny_list).toBeUndefined();
+    expect(configuration.signup_email_domain_public_policy).toEqual({
+      mode: "allow_only",
+      message: "Use an approved email address: @example.edu, *.school.edu.",
+      allowed_domains: ["@example.edu", "*.school.edu"],
+    });
+  });
 });

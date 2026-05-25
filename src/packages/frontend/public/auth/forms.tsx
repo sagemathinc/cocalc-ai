@@ -29,6 +29,10 @@ import { appUrl } from "@cocalc/frontend/auth/util";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import {
+  emailAllowedByPublicSignupPolicy,
+  type SignupEmailDomainPublicPolicy,
+} from "@cocalc/util/accounts/signup-email-domain-policy";
+import {
   is_valid_email_address as isValidEmailAddress,
   len,
 } from "@cocalc/util/misc";
@@ -658,10 +662,12 @@ export function PublicSignUpForm({
   cookieBannerEnabled = false,
   onNavigate,
   redirectToPath,
+  signupEmailDomainPolicy,
 }: {
   cookieBannerEnabled?: boolean;
   onNavigate: (view: AuthView) => void;
   redirectToPath?: string | (() => string);
+  signupEmailDomainPolicy?: SignupEmailDomainPublicPolicy;
 }) {
   const [requiresToken, setRequiresToken] = useState<boolean>();
   const [registrationToken, setRegistrationToken] = useState(
@@ -676,6 +682,12 @@ export function PublicSignUpForm({
   const [error, setError] = useState("");
   const consentReady = useEssentialConsent();
   const cookieConsentReady = !cookieBannerEnabled || consentReady;
+  const emailAllowedByDomainPolicy = emailAllowedByPublicSignupPolicy({
+    email_address: email,
+    policy: signupEmailDomainPolicy,
+  });
+  const emailDomainPolicyViolation =
+    isValidEmailAddress(email) && !emailAllowedByDomainPolicy;
 
   const bootstrap = useMemo(
     () => new URL(window.location.href).searchParams.get("bootstrap") === "1",
@@ -700,6 +712,9 @@ export function PublicSignUpForm({
     if (!isValidEmailAddress(email)) {
       return false;
     }
+    if (!emailAllowedByDomainPolicy) {
+      return false;
+    }
     if (password.length < MIN_PASSWORD_LENGTH) {
       return false;
     }
@@ -713,6 +728,7 @@ export function PublicSignUpForm({
   }, [
     cookieConsentReady,
     email,
+    emailAllowedByDomainPolicy,
     firstName,
     lastName,
     password,
@@ -822,6 +838,17 @@ export function PublicSignUpForm({
           onChange={setEmail}
           onPressEnter={signUp}
         />
+        {signupEmailDomainPolicy?.message ? (
+          <div
+            style={{
+              color: emailDomainPolicyViolation ? COLORS.FG_RED : COLORS.GRAY_M,
+              fontSize: "13px",
+              lineHeight: "18px",
+            }}
+          >
+            {signupEmailDomainPolicy.message}
+          </div>
+        ) : null}
       </div>
       <div style={FIELD_STYLE}>
         <div style={LABEL_STYLE}>Password</div>

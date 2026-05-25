@@ -195,6 +195,49 @@ describe("PublicAuthApp", () => {
     expect(await screen.findByText("Registration token")).not.toBeNull();
   });
 
+  it("shows and enforces a public signup allow-list domain policy", async () => {
+    mockedApi.mockResolvedValueOnce(false);
+
+    render(
+      <PublicAuthApp
+        config={config({
+          signup_email_domain_public_policy: {
+            mode: "allow_only",
+            message: "Use an approved email address: @example.edu.",
+            allowed_domains: ["@example.edu"],
+          },
+        })}
+        initialRoute={{ kind: "auth-form", view: "sign-up" }}
+      />,
+    );
+
+    expect(
+      await screen.findByText("Use an approved email address: @example.edu."),
+    ).not.toBeNull();
+    fireEvent.change(screen.getByPlaceholderText("you@example.com"), {
+      target: { value: "new-user@other.edu" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
+      target: { value: "correct horse battery staple 12345!" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("First name"), {
+      target: { value: "New" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Last name"), {
+      target: { value: "User" },
+    });
+    expect(
+      screen.getByRole("button", { name: "Create account" }),
+    ).toBeDisabled();
+
+    fireEvent.change(screen.getByPlaceholderText("you@example.com"), {
+      target: { value: "new-user@example.edu" },
+    });
+    expect(
+      screen.getByRole("button", { name: "Create account" }),
+    ).not.toBeDisabled();
+  });
+
   it("shows registration-token issues on sign-up", async () => {
     mockedApi.mockResolvedValueOnce(true);
     mockedPostAuthApi.mockResolvedValueOnce({
