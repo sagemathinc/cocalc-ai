@@ -11,8 +11,17 @@ export type DocsAudience =
   | "teams";
 
 export type DocsEntryStatus = "draft" | "ready";
+export type DocsVisibility = "public" | "signed-in" | "admin";
+export type DocsAccess = {
+  includeAdmin?: boolean;
+  includeSignedIn?: boolean;
+};
 
 export type DocsActionId =
+  | "admin.news.open"
+  | "admin.news.create-system"
+  | "admin.site-settings.open"
+  | "admin.users.open"
   | "settings.environment.secrets"
   | "project.terminal.open"
   | "project.jupyter.create"
@@ -54,6 +63,7 @@ export interface DocsEntry {
   status: DocsEntryStatus;
   summary: string;
   title: string;
+  visibility?: DocsVisibility;
 }
 
 export interface DocsSearchResult extends DocsEntry {
@@ -1476,7 +1486,272 @@ that docs are still true after frontend changes. This makes documentation,
 support, and agent behavior part of one testable system.
 `;
 
+const ADMIN_OVERVIEW_BODY = String.raw`
+## What admin docs are for
+
+Admin docs describe operational workflows for running a CoCalc-ai site. They
+are not public product docs: they assume a signed-in site administrator, current
+source-derived behavior, and the security model of the running deployment.
+
+Use admin docs when you need to operate the site, inspect users, configure
+settings, publish site messages, or guide Codex to the correct admin panel
+without searching source code from scratch every time.
+
+## Admin safety model
+
+Admin workflows can reveal account data, change site behavior, impersonate
+users, reset credentials, disable 2FA, affect billing, or move ownership across
+bays. Treat them as high-trust operations.
+
+Prefer UI actions and documented CLI commands that require fresh auth for
+dangerous operations. Avoid ad hoc database edits unless the docs or source
+explicitly call for them.
+
+## Navigation
+
+Open the Admin tab from the main app. The admin landing page contains collapsible
+sections for users, news, site settings, RootFS images, bay operations, backup
+shards, software licenses, registration tokens, SSO, and membership tiers.
+
+Docs actions for admin pages are stable destinations that Codex can use through
+the browser action API when the current user is an admin.
+`;
+
+const ADMIN_NEWS_BODY = String.raw`
+## What admin news is for
+
+Admin news manages public news posts, event posts, and in-app system notices.
+System notices are useful for urgent operational messages such as outages,
+maintenance, or service-impacting configuration changes.
+
+## Create a system notice
+
+1. Open the Admin tab.
+2. Open **News**.
+3. Choose **Create system notice**.
+4. Write the notice in Markdown.
+5. Set timing, visibility, and any image or link fields.
+6. Save and verify how it appears in the app.
+
+System notices are operational communication. Keep them short, concrete, and
+dated when they describe an incident or maintenance window.
+
+## News and events
+
+Use regular news items for public product updates. Use event posts for events
+that should appear on the public events surface. The same admin editor supports
+Markdown, image paste/upload, and preview.
+`;
+
+const ADMIN_SITE_SETTINGS_BODY = String.raw`
+## What site settings are for
+
+Site settings configure behavior for the running CoCalc-ai deployment. They
+include product configuration, authentication options, project-host/cloud
+settings, email, backup, runtime policies, and other operational controls.
+
+## Work with settings
+
+1. Open the Admin tab.
+2. Open **Site Settings**.
+3. Search for the setting or section you need.
+4. Read the current value and nearby help text before changing it.
+5. Save, then verify the affected workflow in the app or CLI.
+
+Some setting changes affect security, authentication, billing, project hosts,
+or backups. For those, make a note of the old value and prefer a small
+roll-forward/roll-back test.
+
+## Configuration wizards
+
+Some settings have dedicated helper wizards, such as Cloudflare, GCP service
+accounts, Nebius CLI, launcher defaults, and runtime retention policies. Use
+those wizards when available instead of editing related fields independently.
+`;
+
+const ADMIN_USERS_BODY = String.raw`
+## What user management is for
+
+The admin user search surface is the starting point for account support and
+site operations. It lets admins find accounts and open account-specific tools.
+
+## Common workflows
+
+Search for a user by name or email, expand the result, then use the detail tags
+for the workflow you need:
+
+- **Impersonate** generates an impersonation link after recent admin
+  verification and 2FA.
+- **Profile** includes password reset and 2FA removal tools.
+- **Ban** controls account ban state.
+- **Projects** lists recent projects the account collaborates on.
+- **Purchases**, **Egress**, and **Membership** expose billing, network, and
+  membership tools.
+
+## Safety
+
+Impersonation, password reset, and removing 2FA are sensitive support actions.
+Use them only for a concrete support or administrative reason, and expect fresh
+admin authentication checks for dangerous operations.
+`;
+
+const ADMIN_CLI_BODY = String.raw`
+## What admin CLI workflows are for
+
+The CoCalc CLI is often the fastest way to inspect a running dev or production
+site, especially for bay/account/project-host operations. Admin CLI workflows
+should use fresh environment and fresh auth so commands target the intended
+hub.
+
+## Start with the correct environment
+
+For local hub-backed development:
+
+~~~sh
+cd src && eval "$(pnpm -s dev:hub:env)"
+~~~
+
+Refresh this after restarting the hub or changing local dev instances.
+
+## Useful commands
+
+~~~sh
+cocalc bay list --json
+cocalc account where <account_id> --json
+cocalc account rehome <account_id> --bay <bay_id> --reason "..." --yes --json
+cocalc account rehome-status --op-id <op_id> --source-bay <bay_id> --json
+~~~
+
+Dangerous account operations require recent admin verification. In local dev,
+use:
+
+~~~sh
+cocalc auth elevate --dev
+~~~
+
+## Account-owned state
+
+Account-private DKV/conat-persist state, including docs private notes and git
+review state, must follow the account home bay. After rehome, verify the account
+location and smoke-test a feature that reads account-private state.
+`;
+
 export const DOCS_ENTRIES: DocsEntry[] = [
+  {
+    audiences: ["agents", "teams"],
+    body: ADMIN_OVERVIEW_BODY.trim(),
+    category: "Admin",
+    id: "admin.overview",
+    image: docsIcon(
+      "/public/docs/browser-automation-5dc255b9.webp",
+      "Admin tools connected to operational checks and site controls",
+    ),
+    lastReviewed: "2026-05-26",
+    slug: "admin/overview",
+    status: "ready",
+    summary:
+      "Understand the admin docs surface and the safety model for site operations.",
+    title: "Admin operations overview",
+    visibility: "admin",
+  },
+  {
+    actions: [
+      {
+        description: "Open the Admin -> News manager.",
+        executable: true,
+        id: "admin.news.open",
+        label: "Open news manager",
+      },
+      {
+        description: "Open the Admin -> News editor for a new system notice.",
+        executable: true,
+        id: "admin.news.create-system",
+        label: "Create system notice",
+      },
+    ],
+    audiences: ["agents", "teams"],
+    body: ADMIN_NEWS_BODY.trim(),
+    category: "Admin",
+    id: "admin.news",
+    image: docsIcon(
+      "/public/docs/docs-browser-74a65d58.webp",
+      "A site-wide message card prepared for CoCalc users",
+    ),
+    lastReviewed: "2026-05-26",
+    slug: "admin/news",
+    status: "ready",
+    summary:
+      "Create public news, events, and in-app system notices for a CoCalc site.",
+    title: "Manage news and system notices",
+    visibility: "admin",
+  },
+  {
+    actions: [
+      {
+        description: "Open the Admin -> Site Settings section.",
+        executable: true,
+        id: "admin.site-settings.open",
+        label: "Open site settings",
+      },
+    ],
+    audiences: ["agents", "teams"],
+    body: ADMIN_SITE_SETTINGS_BODY.trim(),
+    category: "Admin",
+    id: "admin.site-settings",
+    image: docsIcon(
+      "/public/docs/runtime-image-09add8c9.webp",
+      "Site configuration controls with cloud and runtime settings",
+    ),
+    lastReviewed: "2026-05-26",
+    slug: "admin/site-settings",
+    status: "ready",
+    summary:
+      "Use the admin site settings section and configuration wizards safely.",
+    title: "Configure site settings",
+    visibility: "admin",
+  },
+  {
+    actions: [
+      {
+        description: "Open the Admin -> User Search section.",
+        executable: true,
+        id: "admin.users.open",
+        label: "Open user search",
+      },
+    ],
+    audiences: ["agents", "teams"],
+    body: ADMIN_USERS_BODY.trim(),
+    category: "Admin",
+    id: "admin.users",
+    image: docsIcon(
+      "/public/docs/collaborators-8ce1955f.webp",
+      "Admin user cards with account support controls",
+    ),
+    lastReviewed: "2026-05-26",
+    slug: "admin/users",
+    status: "ready",
+    summary:
+      "Find accounts and use impersonation, password reset, 2FA removal, ban, project, and billing tools.",
+    title: "Manage users as an admin",
+    visibility: "admin",
+  },
+  {
+    audiences: ["agents", "teams"],
+    body: ADMIN_CLI_BODY.trim(),
+    category: "Admin",
+    id: "admin.cocalc-cli",
+    image: docsIcon(
+      "/public/docs/cocalc-cli-862b8d4e.webp",
+      "An admin terminal inspecting bays, accounts, and project hosts",
+    ),
+    lastReviewed: "2026-05-26",
+    slug: "admin/cocalc-cli",
+    status: "ready",
+    summary:
+      "Use cocalc-cli for admin inspection, fresh auth, bay listing, account location, and rehome smoke tests.",
+    title: "Admin cocalc-cli cookbook",
+    visibility: "admin",
+  },
   {
     audiences: ["agents", "instructors", "researchers", "students", "teams"],
     body: CREATE_PROJECT_BODY.trim(),
@@ -2159,16 +2434,38 @@ export function docsPath(slug?: string): string {
   return slug ? `/docs/${slug.replace(/^\/+/, "")}` : "/docs";
 }
 
-export function listDocsEntries(): DocsEntry[] {
-  return [...DOCS_ENTRIES];
+export function docsEntryVisibility(entry: DocsEntry): DocsVisibility {
+  return entry.visibility ?? "public";
 }
 
-export function getDocsEntry(slugOrId: string): DocsEntry | undefined {
+export function isDocsEntryVisible(
+  entry: DocsEntry,
+  access: DocsAccess = {},
+): boolean {
+  switch (docsEntryVisibility(entry)) {
+    case "admin":
+      return access.includeAdmin === true;
+    case "signed-in":
+      return access.includeSignedIn === true || access.includeAdmin === true;
+    case "public":
+    default:
+      return true;
+  }
+}
+
+export function listDocsEntries(access: DocsAccess = {}): DocsEntry[] {
+  return DOCS_ENTRIES.filter((entry) => isDocsEntryVisible(entry, access));
+}
+
+export function getDocsEntry(
+  slugOrId: string,
+  access: DocsAccess = {},
+): DocsEntry | undefined {
   const normalized = slugOrId
     .replace(/^\/+/, "")
     .replace(/^docs\//, "")
     .replace(/\/+$/, "");
-  return DOCS_ENTRIES.find(
+  return listDocsEntries(access).find(
     (entry) => entry.id === slugOrId || entry.slug === normalized,
   );
 }
@@ -2177,8 +2474,11 @@ export function isDocsActionId(value: unknown): value is DocsActionId {
   return DOCS_ACTION_IDS.has(value as DocsActionId);
 }
 
-export function getDocsAction(actionId: string): DocsAction | undefined {
-  for (const entry of DOCS_ENTRIES) {
+export function getDocsAction(
+  actionId: string,
+  access: DocsAccess = {},
+): DocsAction | undefined {
+  for (const entry of listDocsEntries(access)) {
     const action = entry.actions?.find(
       (candidate) => candidate.id === actionId,
     );
@@ -2187,8 +2487,8 @@ export function getDocsAction(actionId: string): DocsAction | undefined {
   return undefined;
 }
 
-export function listDocsActions(): DocsActionSummary[] {
-  return DOCS_ENTRIES.flatMap((entry) =>
+export function listDocsActions(access: DocsAccess = {}): DocsActionSummary[] {
+  return listDocsEntries(access).flatMap((entry) =>
     (entry.actions ?? []).map((action) => ({
       ...action,
       entryId: entry.id,
@@ -2201,11 +2501,13 @@ export function listDocsActions(): DocsActionSummary[] {
 export function searchDocsEntries(
   query: string,
   limit = 8,
+  access: DocsAccess = {},
 ): DocsSearchResult[] {
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const entries = listDocsEntries(access);
 
   if (terms.length === 0) {
-    return DOCS_ENTRIES.slice(0, limit).map((entry) => ({
+    return entries.slice(0, limit).map((entry) => ({
       ...entry,
       score: 0,
     }));
@@ -2227,19 +2529,20 @@ export function searchDocsEntries(
     );
   };
 
-  return DOCS_ENTRIES.map((entry) => {
-    const actionsText = entry.actions
-      ?.map((action) => `${action.id} ${action.label} ${action.description}`)
-      .join(" ");
-    const score =
-      fieldScore(entry.title, 8, 8) +
-      fieldScore(entry.summary, 4, 4) +
-      fieldScore(actionsText, 3) +
-      fieldScore(entry.category, 2) +
-      fieldScore(entry.audiences.join(" "), 1) +
-      fieldScore(entry.body, 1);
-    return { ...entry, score };
-  })
+  return entries
+    .map((entry) => {
+      const actionsText = entry.actions
+        ?.map((action) => `${action.id} ${action.label} ${action.description}`)
+        .join(" ");
+      const score =
+        fieldScore(entry.title, 8, 8) +
+        fieldScore(entry.summary, 4, 4) +
+        fieldScore(actionsText, 3) +
+        fieldScore(entry.category, 2) +
+        fieldScore(entry.audiences.join(" "), 1) +
+        fieldScore(entry.body, 1);
+      return { ...entry, score };
+    })
     .filter(({ score }) => score > 0)
     .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title))
     .slice(0, limit);

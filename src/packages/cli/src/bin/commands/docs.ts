@@ -10,6 +10,7 @@ import {
   searchDocsEntries,
   type DocsActionSummary,
   type DocsActionId,
+  type DocsAccess,
   type DocsAudience,
   type DocsEntry,
   type DocsEntryStatus,
@@ -33,10 +34,12 @@ export type DocsCommandDeps = {
 type DocsListOptions = {
   audience?: string;
   category?: string;
+  includeAdmin?: boolean;
   status?: string;
 };
 
 type DocsSearchOptions = {
+  includeAdmin?: boolean;
   limit?: string;
 };
 
@@ -70,6 +73,7 @@ function compactDocsEntry(entry: DocsEntry): Record<string, unknown> {
     title: entry.title,
     category: entry.category,
     status: entry.status,
+    visibility: entry.visibility ?? "public",
     audiences: entry.audiences,
     summary: entry.summary,
     actions: entry.actions?.map((action) => action.id) ?? [],
@@ -138,7 +142,7 @@ function filterDocsEntries(options: DocsListOptions): DocsEntry[] {
   const audience = parseAudience(options.audience);
   const category = options.category?.trim().toLowerCase();
   const status = parseStatus(options.status);
-  return listDocsEntries().filter((entry) => {
+  return listDocsEntries(docsAccessFromOptions(options)).filter((entry) => {
     if (audience && !entry.audiences.includes(audience)) {
       return false;
     }
@@ -150,6 +154,15 @@ function filterDocsEntries(options: DocsListOptions): DocsEntry[] {
     }
     return true;
   });
+}
+
+function docsAccessFromOptions(options: {
+  includeAdmin?: boolean;
+}): DocsAccess {
+  return {
+    includeAdmin: options.includeAdmin === true,
+    includeSignedIn: options.includeAdmin === true,
+  };
 }
 
 function collectOption(value: string, previous: string[] = []): string[] {
@@ -385,6 +398,7 @@ Examples:
     .description("list available documentation pages")
     .option("--audience <audience>", "filter by audience")
     .option("--category <category>", "filter by category")
+    .option("--include-admin", "include admin-only documentation pages")
     .option("--status <status>", "filter by status")
     .action((options: DocsListOptions, command: Command) => {
       const globals = deps.globalsFrom(command);
@@ -401,14 +415,17 @@ Examples:
   docs
     .command("search <query>")
     .description("search documentation pages")
+    .option("--include-admin", "include admin-only documentation pages")
     .option("--limit <n>", "maximum number of results", "8")
     .action((query: string, options: DocsSearchOptions, command: Command) => {
       const globals = deps.globalsFrom(command);
       const commandName = "docs search";
       try {
-        const rows = searchDocsEntries(query, parseLimit(options.limit)).map(
-          compactSearchResult,
-        );
+        const rows = searchDocsEntries(
+          query,
+          parseLimit(options.limit),
+          docsAccessFromOptions(options),
+        ).map(compactSearchResult);
         deps.emitSuccess({ globals }, commandName, rows);
       } catch (error) {
         deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
@@ -423,59 +440,83 @@ Examples:
       "--executable",
       "only show action ids that the browser action layer can run today",
     )
-    .action((options: { executable?: boolean }, command: Command) => {
-      const globals = deps.globalsFrom(command);
-      const commandName = "docs actions";
-      try {
-        const rows = listDocsActions()
-          .filter((action) => !options.executable || action.executable === true)
-          .map(compactDocsAction);
-        deps.emitSuccess({ globals }, commandName, rows);
-      } catch (error) {
-        deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
-        process.exitCode = 1;
-      }
-    });
+    .option("--include-admin", "include admin-only documentation actions")
+    .action(
+      (
+        options: { executable?: boolean; includeAdmin?: boolean },
+        command: Command,
+      ) => {
+        const globals = deps.globalsFrom(command);
+        const commandName = "docs actions";
+        try {
+          const rows = listDocsActions(docsAccessFromOptions(options))
+            .filter(
+              (action) => !options.executable || action.executable === true,
+            )
+            .map(compactDocsAction);
+          deps.emitSuccess({ globals }, commandName, rows);
+        } catch (error) {
+          deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
+          process.exitCode = 1;
+        }
+      },
+    );
 
   docs
     .command("action <id>")
     .description("show one stable documentation action id")
-    .action((id: string, command: Command) => {
-      const globals = deps.globalsFrom(command);
-      const commandName = "docs action";
-      try {
-        const summary = listDocsActions().find((action) => action.id === id);
-        if (summary == null) {
-          const known = getDocsAction(id);
-          if (known != null) {
-            throw new Error(`documentation action missing summary: ${id}`);
+    .option("--include-admin", "include admin-only documentation actions")
+    .action(
+      (id: string, options: { includeAdmin?: boolean }, command: Command) => {
+        const globals = deps.globalsFrom(command);
+        const commandName = "docs action";
+        try {
+          const summary = listDocsActions(docsAccessFromOptions(options)).find(
+            (action) => action.id === id,
+          );
+          if (summary == null) {
+            const known = getDocsAction(id, docsAccessFromOptions(options));
+            if (known != null) {
+              throw new Error(`documentation action missing summary: ${id}`);
+            }
+            throw new Error(`documentation action not found: ${id}`);
           }
-          throw new Error(`documentation action not found: ${id}`);
+          deps.emitSuccess(
+            { globals },
+            commandName,
+            compactDocsAction(summary),
+          );
+        } catch (error) {
+          deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
+          process.exitCode = 1;
         }
-        deps.emitSuccess({ globals }, commandName, compactDocsAction(summary));
-      } catch (error) {
-        deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
-        process.exitCode = 1;
-      }
-    });
+      },
+    );
 
   docs
     .command("show <slugOrId>")
     .description("show a documentation page by slug or id")
-    .action((slugOrId: string, command: Command) => {
-      const globals = deps.globalsFrom(command);
-      const commandName = "docs show";
-      try {
-        const entry = getDocsEntry(slugOrId);
-        if (entry == null) {
-          throw new Error(`documentation page not found: ${slugOrId}`);
+    .option("--include-admin", "include admin-only documentation pages")
+    .action(
+      (
+        slugOrId: string,
+        options: { includeAdmin?: boolean },
+        command: Command,
+      ) => {
+        const globals = deps.globalsFrom(command);
+        const commandName = "docs show";
+        try {
+          const entry = getDocsEntry(slugOrId, docsAccessFromOptions(options));
+          if (entry == null) {
+            throw new Error(`documentation page not found: ${slugOrId}`);
+          }
+          deps.emitSuccess({ globals }, commandName, entry);
+        } catch (error) {
+          deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
+          process.exitCode = 1;
         }
-        deps.emitSuccess({ globals }, commandName, entry);
-      } catch (error) {
-        deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
-        process.exitCode = 1;
-      }
-    });
+      },
+    );
 
   docs
     .command("verify")

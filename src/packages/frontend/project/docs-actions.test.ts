@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
 const mockSetPageActiveTab = jest.fn();
+const mockSetPageState = jest.fn();
 const mockSetProjectActiveTab = jest.fn();
 const mockSetFlyoutExpanded = jest.fn();
 const mockCreateFile = jest.fn();
@@ -9,6 +10,8 @@ const mockGetStore = jest.fn();
 const mockGetProjectActions = jest.fn();
 const mockGetFilenamesInCurrentDir = jest.fn();
 const mockOpenFile = jest.fn();
+const mockSetUrlWithSearch = jest.fn();
+let mockIsAdmin = false;
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
@@ -16,10 +19,21 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
       name === "page"
         ? {
             set_active_tab: mockSetPageActiveTab,
+            setState: mockSetPageState,
+          }
+        : undefined,
+    getStore: (name: string) =>
+      name === "account"
+        ? {
+            get: (key: string) => (key === "is_admin" ? mockIsAdmin : null),
           }
         : undefined,
     getProjectActions: (projectId: string) => mockGetProjectActions(projectId),
   },
+}));
+
+jest.mock("@cocalc/frontend/history", () => ({
+  set_url_with_search: (...args: any[]) => mockSetUrlWithSearch(...args),
 }));
 
 import {
@@ -33,6 +47,7 @@ describe("project docs actions", () => {
   beforeEach(() => {
     jest.useFakeTimers();
     jest.clearAllMocks();
+    mockIsAdmin = false;
     window.localStorage.clear();
     mockGetStore.mockReturnValue({
       get: (key: string) => {
@@ -76,6 +91,59 @@ describe("project docs actions", () => {
         "file.timetravel.open",
         "project.codex.open",
       ]),
+    );
+  });
+
+  it("hides admin docs actions from non-admins and exposes them to admins", () => {
+    expect(
+      listDocsAppActions({ projectId: "project-1" }).map((action) => action.id),
+    ).not.toContain("admin.users.open");
+
+    mockIsAdmin = true;
+    expect(
+      listDocsAppActions({ projectId: "project-1" }).map((action) => action.id),
+    ).toEqual(expect.arrayContaining(["admin.users.open"]));
+  });
+
+  it("opens admin sections for admin docs actions", async () => {
+    mockIsAdmin = true;
+
+    const result = await revealDocsAction({
+      actionId: "admin.site-settings.open",
+      projectId: "project-1",
+    });
+
+    expect(mockSetPageActiveTab).toHaveBeenCalledWith("admin", false);
+    expect(mockSetPageState).toHaveBeenCalledWith({
+      admin_route: { kind: "index", section: "site-settings" },
+    });
+    expect(mockSetUrlWithSearch).toHaveBeenCalledWith(
+      "/admin/site-settings",
+      "",
+    );
+    expect(result).toMatchObject({
+      action_id: "admin.site-settings.open",
+      opened: true,
+      panel: "site-settings",
+      project_id: "project-1",
+      tab: "admin",
+    });
+  });
+
+  it("opens the system notice editor for admin docs actions", async () => {
+    mockIsAdmin = true;
+
+    await revealDocsAction({
+      actionId: "admin.news.create-system",
+      projectId: "project-1",
+    });
+
+    expect(mockSetPageState).toHaveBeenCalledWith({
+      admin_route: { kind: "news-editor", id: "new" },
+    });
+    expect(mockSetUrlWithSearch).toHaveBeenCalledWith(
+      "/admin/news/new",
+      "?channel=system",
     );
   });
 

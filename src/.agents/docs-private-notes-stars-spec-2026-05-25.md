@@ -1,6 +1,6 @@
 # Docs Private Notes And Stars Spec
 
-Status: proposed
+Status: implemented v1
 Date: 2026-05-25
 
 ## Goal
@@ -24,10 +24,10 @@ account-global rather than project-scoped:
 Each docs detail page should include a compact private-state box near the top of
 the page, after the title/summary/visual hook and before the documentation body.
 
-The box should include:
+The v1 box includes:
 
 - a star toggle for the page
-- a private note composer
+- an Add Note button that opens a private note composer on demand
 - a list of existing private notes for that page
 - save/edit/delete controls for each note
 - a short privacy line: "Private to you. Export creates a JSON backup or
@@ -157,10 +157,12 @@ This keeps filtering by page simple and makes full export/import efficient.
 This state is account-owned, not project-owned. It must move when an account's
 `home_bay_id` moves.
 
-Before implementation is considered production-ready, audit the account home
-bay move path and verify that account-scoped conat-persist/DKV state moves with
-the account. If that is missing, fix account move as part of this work or block
-release of this feature.
+Implementation status: account-scoped conat-persist/DKV state now moves during
+account rehome. The local multibay smoke test moved account
+`aedd0458-e4ed-426f-9ecc-67886d097608` from `bay-1` to `bay-0` after creating
+docs private state. The `cocalc-docs-private-state-v1.db` files moved to the
+new home bay, the old bay copy was removed, and the frontend preserved the
+starred docs page and note after browser refresh.
 
 Expected account move behavior:
 
@@ -312,15 +314,15 @@ Home-bay tests should cover:
 
 ## Rollout Plan
 
-1. Audit account home bay move behavior for account-scoped conat-persist/DKV
+1. Done: Audit account home bay move behavior for account-scoped conat-persist/DKV
    data.
-2. Extract minimal reusable helpers from git review storage/import/export if
+2. Done: Extract minimal reusable helpers from git review storage/import/export if
    the extraction is straightforward.
-3. Implement docs private state storage and import/export.
-4. Add the private notes/star panel to docs detail pages.
-5. Add docs index filters and note-aware search.
-6. Add import/export UI.
-7. Add validation tests and browser checks.
+3. Done: Implement docs private state storage and import/export.
+4. Done: Add the private notes/star panel to docs detail pages.
+5. Done: Add docs index filters and note-aware search.
+6. Done: Add import/export UI.
+7. In progress: Add validation tests and browser checks.
 
 ## Open Questions
 

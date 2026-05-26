@@ -93,6 +93,20 @@ describe("public/docs", () => {
         (entry) => entry.id,
       )[0],
     ).toBe("troubleshooting.connectivity");
+    expect(getDocsEntry("admin.users")).toBeUndefined();
+    expect(
+      searchDocsEntries("impersonation password reset 2FA").map(
+        (entry) => entry.id,
+      ),
+    ).not.toContain("admin.users");
+    expect(getDocsEntry("admin.users", { includeAdmin: true })?.title).toBe(
+      "Manage users as an admin",
+    );
+    expect(
+      searchDocsEntries("impersonation password reset 2FA", 8, {
+        includeAdmin: true,
+      }).map((entry) => entry.id)[0],
+    ).toBe("admin.users");
   });
 
   it("has hashed icon art for every docs entry", () => {
@@ -136,6 +150,28 @@ describe("public/docs", () => {
       "href",
       "/docs/collaboration/chat",
     );
+    expect(
+      screen.queryByRole("link", { name: /Manage users as an admin/ }),
+    ).toBeNull();
+  });
+
+  it("does not render admin docs through public direct routes", () => {
+    render(
+      <PublicDocsApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{
+          slug: "admin/users",
+          view: "docs-detail",
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByText("That documentation page does not exist yet."),
+    ).not.toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Manage users as an admin" }),
+    ).toBeNull();
   });
 
   it("persists docs font size controls", () => {

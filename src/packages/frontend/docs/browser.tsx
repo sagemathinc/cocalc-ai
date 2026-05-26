@@ -25,6 +25,7 @@ import {
   Typography,
 } from "antd";
 import {
+  type DocsAccess,
   listDocsEntries,
   searchDocsEntries,
   type DocsAction,
@@ -439,11 +440,13 @@ export function DocsCard({
 }
 
 export function DocsIndexContent({
+  docsAccess,
   layout = "page",
   linkForEntry,
   onSelectEntry,
   privateState,
 }: {
+  docsAccess?: DocsAccess;
   layout?: DocsBrowserLayout;
   linkForEntry?: (entry: DocsEntry) => string;
   onSelectEntry?: (entry: DocsEntry) => void;
@@ -451,12 +454,12 @@ export function DocsIndexContent({
 }) {
   const [query, setQuery] = useState("");
   const queryIsEmpty = query.trim().length === 0;
-  const allEntries = useMemo(() => listDocsEntries(), []);
+  const allEntries = useMemo(() => listDocsEntries(docsAccess), [docsAccess]);
   const entries = useMemo(() => {
     const trimQuery = query.trim().toLowerCase();
     const baseEntries = queryIsEmpty
       ? allEntries
-      : searchDocsEntries(query, Number.POSITIVE_INFINITY);
+      : searchDocsEntries(query, Number.POSITIVE_INFINITY, docsAccess);
     const publicIds = new Set(baseEntries.map((entry) => entry.id));
     const noteMatchedIds = new Set<string>();
     if (trimQuery && privateState?.enabled) {
@@ -487,7 +490,7 @@ export function DocsIndexContent({
           return true;
       }
     });
-  }, [allEntries, privateState, query, queryIsEmpty]);
+  }, [allEntries, docsAccess, privateState, query, queryIsEmpty]);
   const groupedEntries = useMemo(
     () => groupDocsEntriesByCategory(entries),
     [entries],
@@ -897,6 +900,7 @@ export function DocsDetailContent({
 
 export function DocsBrowser({
   actionAvailability,
+  docsAccess,
   initialEntry,
   layout = "page",
   onRunAction,
@@ -904,6 +908,7 @@ export function DocsBrowser({
   privateIndexState,
 }: {
   actionAvailability?: DocsBrowserAction[];
+  docsAccess?: DocsAccess;
   initialEntry?: DocsEntry;
   layout?: DocsBrowserLayout;
   onRunAction?: (action: DocsBrowserAction) => void | Promise<void>;
@@ -936,6 +941,7 @@ export function DocsBrowser({
 
   return (
     <DocsIndexContent
+      docsAccess={docsAccess}
       layout={layout}
       onSelectEntry={setSelectedEntry}
       privateState={privateIndexState}

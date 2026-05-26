@@ -3,8 +3,33 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+export type AdminSection =
+  | "bay-ops"
+  | "managed-egress"
+  | "membership-tiers"
+  | "project-backup-shards"
+  | "registration-tokens"
+  | "rootfs"
+  | "site-settings"
+  | "software-licenses"
+  | "sso"
+  | "user-search";
+
+const ADMIN_SECTIONS = new Set<AdminSection>([
+  "bay-ops",
+  "managed-egress",
+  "membership-tiers",
+  "project-backup-shards",
+  "registration-tokens",
+  "rootfs",
+  "site-settings",
+  "software-licenses",
+  "sso",
+  "user-search",
+]);
+
 export type AdminRoute =
-  | { kind: "index" }
+  | { kind: "index"; section?: AdminSection }
   | { kind: "news-list" }
   | { kind: "news-editor"; id: string };
 
@@ -38,6 +63,9 @@ export function parseAdminRoute(
       }
       return { kind: "news-editor", id };
     default:
+      if (ADMIN_SECTIONS.has(section as AdminSection) && id == null) {
+        return { kind: "index", section: section as AdminSection };
+      }
       return undefined;
   }
 }
@@ -71,16 +99,29 @@ export function normalizeAdminRoute(route: AdminRouteLike): AdminRoute {
       return { kind: "news-list" };
     }
     case "index":
+      return normalizeAdminSection(normalized?.["section"]);
     default:
       return { kind: "index" };
   }
+}
+
+function normalizeAdminSection(
+  section: unknown,
+): Extract<AdminRoute, { kind: "index" }> {
+  if (
+    typeof section === "string" &&
+    ADMIN_SECTIONS.has(section as AdminSection)
+  ) {
+    return { kind: "index", section: section as AdminSection };
+  }
+  return { kind: "index" };
 }
 
 export function getAdminTargetPath(route: AdminRouteLike): string {
   const normalized = normalizeAdminRoute(route);
   switch (normalized.kind) {
     case "index":
-      return "admin";
+      return normalized.section ? `admin/${normalized.section}` : "admin";
     case "news-list":
       return "admin/news";
     case "news-editor":

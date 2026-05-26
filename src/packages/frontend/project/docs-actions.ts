@@ -10,7 +10,13 @@ import {
   type DocsActionId,
   type DocsActionSummary,
 } from "@cocalc/docs";
+import {
+  getAdminUrlPath,
+  type AdminRoute,
+  type AdminSection,
+} from "@cocalc/frontend/admin/routing";
 import { redux } from "@cocalc/frontend/app-framework";
+import { set_url_with_search } from "@cocalc/frontend/history";
 import {
   history_path,
   separate_file_extension,
@@ -58,8 +64,12 @@ export type DocsActionAvailability = DocsActionSummary & {
 
 type DocsAppAction = {
   id: DocsActionId;
-  isAvailable?: (context: { projectId: string }) => string | true;
+  isAvailable?: (context: {
+    includeAdmin?: boolean;
+    projectId: string;
+  }) => string | true;
   run: (context: {
+    includeAdmin?: boolean;
     projectId: string;
   }) => DocsActionRevealResult | Promise<DocsActionRevealResult>;
 };
@@ -154,6 +164,72 @@ function selectProject(projectId: string): void {
       }
     | undefined;
   void pageActions?.set_active_tab?.(projectId, false);
+}
+
+function accountIsAdmin(): boolean {
+  return !!redux.getStore("account")?.get("is_admin");
+}
+
+function validateAdmin(): string | true {
+  return accountIsAdmin() ? true : "You must be a site admin.";
+}
+
+function selectAdmin(route: AdminRoute, search = ""): void {
+  const pageActions = redux.getActions("page") as
+    | {
+        setState?: (state: { admin_route?: AdminRoute }) => void;
+        set_active_tab?: (
+          key: string,
+          changeHistory?: boolean,
+        ) => Promise<void>;
+      }
+    | undefined;
+  void pageActions?.set_active_tab?.("admin", false);
+  pageActions?.setState?.({ admin_route: route });
+  if (typeof window !== "undefined") {
+    set_url_with_search(getAdminUrlPath(route), search);
+  }
+}
+
+function revealAdminSection({
+  actionId,
+  projectId,
+  section,
+}: {
+  actionId: DocsActionId;
+  projectId: string;
+  section: AdminSection;
+}): DocsActionRevealResult {
+  const route: AdminRoute = { kind: "index", section };
+  selectAdmin(route);
+  return {
+    action_id: actionId,
+    opened: true,
+    panel: section,
+    project_id: projectId,
+    tab: "admin",
+  };
+}
+
+function revealAdminNews({
+  actionId,
+  projectId,
+  route,
+  search = "",
+}: {
+  actionId: DocsActionId;
+  projectId: string;
+  route: AdminRoute;
+  search?: string;
+}): DocsActionRevealResult {
+  selectAdmin(route, search);
+  return {
+    action_id: actionId,
+    opened: true,
+    panel: route.kind,
+    project_id: projectId,
+    tab: "admin",
+  };
 }
 
 function storeSettingsFlyoutState(
@@ -367,6 +443,47 @@ async function createDefaultProjectFile({
 }
 
 const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
+  "admin.news.open": {
+    id: "admin.news.open",
+    isAvailable: validateAdmin,
+    run: ({ projectId }) =>
+      revealAdminNews({
+        actionId: "admin.news.open",
+        projectId,
+        route: { kind: "news-list" },
+      }),
+  },
+  "admin.news.create-system": {
+    id: "admin.news.create-system",
+    isAvailable: validateAdmin,
+    run: ({ projectId }) =>
+      revealAdminNews({
+        actionId: "admin.news.create-system",
+        projectId,
+        route: { kind: "news-editor", id: "new" },
+        search: "?channel=system",
+      }),
+  },
+  "admin.site-settings.open": {
+    id: "admin.site-settings.open",
+    isAvailable: validateAdmin,
+    run: ({ projectId }) =>
+      revealAdminSection({
+        actionId: "admin.site-settings.open",
+        projectId,
+        section: "site-settings",
+      }),
+  },
+  "admin.users.open": {
+    id: "admin.users.open",
+    isAvailable: validateAdmin,
+    run: ({ projectId }) =>
+      revealAdminSection({
+        actionId: "admin.users.open",
+        projectId,
+        section: "user-search",
+      }),
+  },
   "settings.environment.secrets": {
     id: "settings.environment.secrets",
     isAvailable: ({ projectId }) => validateProjectId(projectId),
@@ -419,13 +536,16 @@ export function getDocsAppAction(actionId: string): DocsAppAction | undefined {
 }
 
 export function listDocsAppActions({
+  includeAdmin = accountIsAdmin(),
   projectId,
 }: {
+  includeAdmin?: boolean;
   projectId: string;
 }): DocsActionAvailability[] {
-  return listDocsActions().map((action) => {
+  return listDocsActions({ includeAdmin }).map((action) => {
     const appAction = getDocsAppAction(action.id);
-    const available = appAction?.isAvailable?.({ projectId }) ?? !!appAction;
+    const available =
+      appAction?.isAvailable?.({ includeAdmin, projectId }) ?? !!appAction;
     return {
       ...action,
       available: available === true,
@@ -437,23 +557,29 @@ export function listDocsAppActions({
 
 export function revealDocsAction({
   actionId,
+  includeAdmin = accountIsAdmin(),
   projectId,
 }: {
   actionId: string;
+  includeAdmin?: boolean;
   projectId: string;
 }): DocsActionRevealResult | Promise<DocsActionRevealResult> {
   if (!isDocsActionId(actionId)) {
     throw Error(`unknown docs action '${actionId}'`);
   }
-  const action = getDocsAction(actionId);
-  if (!action?.executable) {
+  const action = getDocsAction(actionId, { includeAdmin });
+  if (!action) {
+    throw Error(`docs action '${actionId}' is not available`);
+  }
+  if (!action.executable) {
     throw Error(`docs action '${actionId}' is not executable yet`);
   }
   const appAction = getDocsAppAction(actionId);
   if (!appAction) {
     throw Error(`docs action '${actionId}' has no browser implementation`);
   }
-  const available = appAction.isAvailable?.({ projectId }) ?? true;
+  const available =
+    appAction.isAvailable?.({ includeAdmin, projectId }) ?? true;
   if (available !== true) {
     throw Error(`docs action '${actionId}' is not available: ${available}`);
   }

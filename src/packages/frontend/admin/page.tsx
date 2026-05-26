@@ -4,7 +4,7 @@
  */
 
 import { Button, Collapse, CollapseProps, Space, Typography } from "antd";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Icon, Title } from "@cocalc/frontend/components";
 import { RegistrationToken } from "./registration-token";
@@ -35,8 +35,21 @@ export function AdminPage({
   route?: AdminRoute;
 }) {
   route = normalizeAdminRoute(route);
+  const routeSection = route.kind === "index" ? route.section : undefined;
   const pageActions = useActions("page");
-  const [activeKey, setActiveKey] = useState<string[]>([]);
+  const [activeKey, setActiveKey] = useState<string[]>(
+    routeSection ? [routeSection] : [],
+  );
+
+  useEffect(() => {
+    if (routeSection) {
+      setActiveKey((activeKey) =>
+        activeKey.includes(routeSection)
+          ? activeKey
+          : [...activeKey, routeSection],
+      );
+    }
+  }, [routeSection]);
 
   if (route.kind !== "index") {
     return <NewsAdminPage route={route} />;

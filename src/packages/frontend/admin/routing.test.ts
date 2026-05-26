@@ -12,6 +12,13 @@ describe("admin routing", () => {
       kind: "news-editor",
       id: "new",
     });
+    expect(parseAdminRoute("admin/site-settings")).toEqual({
+      kind: "index",
+      section: "site-settings",
+    });
+    expect(getAdminTargetPath({ kind: "index", section: "user-search" })).toBe(
+      "admin/user-search",
+    );
   });
 
   it("normalizes immutable admin routes from redux state", () => {
