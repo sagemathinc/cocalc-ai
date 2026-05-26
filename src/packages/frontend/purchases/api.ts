@@ -445,7 +445,13 @@ export async function assignMembershipPackageSeat(opts: {
   target_email_address?: string;
   metadata?: Record<string, unknown> | null;
 }): Promise<MembershipPackageAssignment> {
-  return await (await getPurchasesHubRpc()).assignMembershipPackageSeat(opts);
+  const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+  return await (
+    await getPurchasesHubRpc()
+  ).assignMembershipPackageSeat({
+    ...opts,
+    browser_id: webapp_client.browser_id,
+  });
 }
 
 export async function revokeMembershipPackageSeat(opts: {
@@ -453,7 +459,13 @@ export async function revokeMembershipPackageSeat(opts: {
   target_account_id?: string;
   target_email_address?: string;
 }): Promise<{ revoked: boolean }> {
-  return await (await getPurchasesHubRpc()).revokeMembershipPackageSeat(opts);
+  const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+  return await (
+    await getPurchasesHubRpc()
+  ).revokeMembershipPackageSeat({
+    ...opts,
+    browser_id: webapp_client.browser_id,
+  });
 }
 
 export async function getClaimableMembershipPackages(): Promise<

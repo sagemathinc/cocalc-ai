@@ -673,6 +673,8 @@ export interface Purchases {
   }) => Promise<MembershipPackageDetails[]>;
   assignMembershipPackageSeat: (opts?: {
     account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
     package_id?: string;
     target_account_id?: string;
     target_email_address?: string;
@@ -680,6 +682,8 @@ export interface Purchases {
   }) => Promise<MembershipPackageAssignment>;
   revokeMembershipPackageSeat: (opts?: {
     account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
     package_id?: string;
     target_account_id?: string;
     target_email_address?: string;

@@ -508,8 +508,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: "site-license commercial terms and domain entitlement mutation",
   },
   "purchases.assignMembershipPackageSeat": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "paid membership seat assignment",
   },
   "purchases.claimMembershipPackageSeat": {
     decision: "fresh-auth-not-required",
@@ -530,8 +530,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
       "manager removal is scoped to site-license owners/admins and does not directly change entitlements",
   },
   "purchases.revokeMembershipPackageSeat": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "paid membership seat revocation",
   },
   "purchases.setSiteLicenseManager": {
     decision: "fresh-auth-not-required",
