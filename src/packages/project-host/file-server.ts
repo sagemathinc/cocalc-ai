@@ -97,6 +97,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 import { getProject } from "./sqlite/projects";
 import { INTERNAL_SSH_CONFIG } from "@cocalc/conat/project/runner/constants";
 import { ensureSshpiperdKey } from "./ssh/sshpiperd-key";
+import { requireManagedSshKeyAccount } from "./ssh/managed-key-account";
 import { managedProjectEgressResidualTracker } from "./managed-egress-residual";
 import { getLocalHostId } from "./sqlite/hosts";
 import { setContainerFileIO } from "@cocalc/lite/hub/acp/executor/container";
@@ -110,6 +111,7 @@ import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { getMasterConatClient, queueProjectProvisioned } from "./master-status";
 import callHub from "@cocalc/conat/hub/call-hub";
+import { startProjectWithAdmission } from "./project-start-admission";
 import {
   createRusticProgressHandler,
   type RusticProgressUpdate,
@@ -236,14 +238,19 @@ async function waitForProjectSshPort(
   return null;
 }
 
-async function ensureProjectSshWake(
-  project_id: string,
-): Promise<number | null> {
+async function ensureProjectSshWake({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<number | null> {
   const existingPort = normalizePositivePort(getProject(project_id)?.ssh_port);
   if (existingPort != null) {
     return existingPort;
   }
-  const existing = sshWakeInFlight.get(project_id);
+  const wakeKey = `${project_id}:${account_id}`;
+  const existing = sshWakeInFlight.get(wakeKey);
   if (existing) {
     return await existing;
   }
@@ -258,25 +265,24 @@ async function ensureProjectSshWake(
     }
 
     const hostId = getLocalHostId();
-    if (!hubApi.projects?.start) {
-      logger.debug("ssh wake skipped: local project start unavailable", {
-        project_id,
-        host_id: hostId ?? null,
-      });
-      return await waitForProjectSshPort(project_id, 5_000, SSH_WAKE_POLL_MS);
-    }
-
     if (row.state !== "starting") {
       try {
         logger.debug("ssh wake start requested", {
           project_id,
+          account_id,
           host_id: hostId,
           state: row.state,
         });
-        await hubApi.projects.start({ project_id, autostart: true });
+        await startProjectWithAdmission({
+          account_id,
+          project_id,
+          autostart: true,
+          timeout: SSH_WAKE_TIMEOUT_MS,
+        });
       } catch (err) {
         logger.warn("ssh wake start project failed", {
           project_id,
+          account_id,
           host_id: hostId,
           err: `${err}`,
         });
@@ -291,11 +297,11 @@ async function ensureProjectSshWake(
     }
     return port;
   })().finally(() => {
-    if (sshWakeInFlight.get(project_id) === task) {
-      sshWakeInFlight.delete(project_id);
+    if (sshWakeInFlight.get(wakeKey) === task) {
+      sshWakeInFlight.delete(wakeKey);
     }
   });
-  sshWakeInFlight.set(project_id, task);
+  sshWakeInFlight.set(wakeKey, task);
   return await task;
 }
 
@@ -3875,14 +3881,25 @@ export async function initFileServer({
     await writeFile(hostKeyPath, sshpiperdKey.privateKey, { mode: 0o600 });
     await chmod(hostKeyPath, 0o600);
     logger.debug("initFileServer: ssh configured");
-    const getSshdPort = async (target: SshTarget): Promise<number | null> => {
+    const getSshdPort = async (
+      target: SshTarget,
+      { account_id, allowWake }: { account_id?: string; allowWake: boolean },
+    ): Promise<number | null> => {
       const existingPort = normalizePositivePort(
         getProject(target.project_id)?.ssh_port,
       );
       if (existingPort != null) {
         return existingPort;
       }
-      return await ensureProjectSshWake(target.project_id);
+      // Project-local authorized_keys have no account identity, so they must
+      // not wake stopped projects and bypass ban/runtime-slot admission.
+      if (!allowWake || !account_id) {
+        return null;
+      }
+      return await ensureProjectSshWake({
+        account_id,
+        project_id: target.project_id,
+      });
     };
 
     const getSshUser = async (): Promise<string> =>
@@ -3948,12 +3965,6 @@ export async function initFileServer({
       if (!row) {
         throw new Error(`project ${project_id} is not available`);
       }
-      const port = await getSshdPort(target);
-      if (!port) {
-        throw new Error(
-          `project ${project_id} is not accepting ssh connections`,
-        );
-      }
       const ssh_user = await getSshUser();
       const fingerprint = computeSshFingerprintFromRawKey(public_key);
       const managedKeys = `${row.authorized_keys ?? ""}`.trim();
@@ -3961,14 +3972,13 @@ export async function initFileServer({
         managedKeys &&
         authorizedKeysContainFingerprint(managedKeys, fingerprint)
       ) {
-        let account_id: string | undefined;
+        let account_id: string;
         try {
-          account_id = (
-            await hubApi.system.resolveManagedProjectSshKeyAccount({
-              project_id,
-              fingerprint,
-            })
-          ).account_id;
+          account_id = await requireManagedSshKeyAccount({
+            project_id,
+            fingerprint,
+            resolveAccount: hubApi.system.resolveManagedProjectSshKeyAccount,
+          });
         } catch (err) {
           logger.warn("failed to resolve managed ssh key account", {
             project_id,
@@ -3976,6 +3986,7 @@ export async function initFileServer({
             fingerprint,
             err: `${err}`,
           });
+          throw err;
         }
         const allowed = await checkManagedSshAllowed({
           project_id,
@@ -3984,9 +3995,18 @@ export async function initFileServer({
         if (!allowed.allowed) {
           throw new Error(allowed.message);
         }
+        const port = await getSshdPort(target, {
+          account_id,
+          allowWake: true,
+        });
+        if (!port) {
+          throw new Error(
+            `project ${project_id} is not accepting ssh connections`,
+          );
+        }
         return {
           project_id,
-          ...(account_id ? { account_id } : {}),
+          account_id,
           ssh_user,
           port,
         };
@@ -4013,6 +4033,12 @@ export async function initFileServer({
         const allowed = await checkManagedSshAllowed({ project_id });
         if (!allowed.allowed) {
           throw new Error(allowed.message);
+        }
+        const port = await getSshdPort(target, { allowWake: false });
+        if (!port) {
+          throw new Error(
+            "project-local ssh keys are authorized only after the project is already running",
+          );
         }
         return {
           project_id,

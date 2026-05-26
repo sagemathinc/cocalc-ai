@@ -34,6 +34,7 @@ import { getEnvironment } from "@cocalc/project-runner/run/env";
 import { getCoCalcMounts } from "@cocalc/project-runner/run/mounts";
 import { resolveProjectHostPreferredMasterConatServer } from "../master-conat-server";
 import { getProject } from "../sqlite/projects";
+import { startProjectWithAdmission } from "../project-start-admission";
 import { touchProjectLastEdited } from "../last-edited";
 import {
   type CodexAuthRuntime,
@@ -822,7 +823,13 @@ async function containerIsRunning(name: string): Promise<boolean> {
   }
 }
 
-async function ensureProjectContainerRunning(projectId: string): Promise<void> {
+async function ensureProjectContainerRunning({
+  accountId,
+  projectId,
+}: {
+  accountId?: string;
+  projectId: string;
+}): Promise<void> {
   const name = projectContainerName(projectId);
   if (await containerIsRunning(name)) return;
 
@@ -832,9 +839,6 @@ async function ensureProjectContainerRunning(projectId: string): Promise<void> {
   }
 
   const state = `${row.state ?? ""}`.trim().toLowerCase();
-  if (!hubApi.projects.start) {
-    throw new Error("project start API is not available");
-  }
   if (state === "starting" || state === "running") {
     logger.warn(
       "codex project runtime: cached project state is stale; container missing, forcing start",
@@ -849,7 +853,12 @@ async function ensureProjectContainerRunning(projectId: string): Promise<void> {
       state,
     });
   }
-  await hubApi.projects.start({ project_id: projectId, autostart: true });
+  await startProjectWithAdmission({
+    account_id: accountId,
+    project_id: projectId,
+    autostart: true,
+    timeout: PROJECT_START_TIMEOUT_MS,
+  });
 
   const deadline = Date.now() + PROJECT_START_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -1368,7 +1377,7 @@ async function spawnCodexAppServerInProjectRuntime({
     accountId,
     authRuntime,
   });
-  await ensureProjectContainerRunning(projectId);
+  await ensureProjectContainerRunning({ projectId, accountId });
   const { home, scratch } = await localPath({ project_id: projectId });
   await scrubBrokenProjectCodexAuthArtifacts(home, authRuntime);
   const name = projectContainerName(projectId);

@@ -3960,6 +3960,24 @@ async function queueHostProjectsAction({
   risk_only?: boolean;
   parallel?: number;
 }): Promise<HostLroResponse> {
+  const effectiveStateFilter =
+    kind === "host-restart-projects" ? "running" : state_filter;
+  if (
+    kind === "host-restart-projects" &&
+    state_filter != null &&
+    normalizeHostProjectStateFilter(state_filter) !== "running"
+  ) {
+    throw new Error("host project restart is limited to running projects");
+  }
+  const normalizedProjectState = `${project_state ?? ""}`.trim();
+  if (
+    kind === "host-restart-projects" &&
+    normalizedProjectState &&
+    normalizedProjectState !== "running" &&
+    normalizedProjectState !== "starting"
+  ) {
+    throw new Error("host project restart is limited to running projects");
+  }
   const {
     host,
     rows,
@@ -3967,7 +3985,7 @@ async function queueHostProjectsAction({
   } = await selectHostProjectActionRows({
     account_id,
     id,
-    state_filter,
+    state_filter: effectiveStateFilter,
     project_state,
     risk_only,
   });
@@ -3979,7 +3997,7 @@ async function queueHostProjectsAction({
       id: host.id,
       account_id,
       state_filter: normalizedStateFilter,
-      project_state: `${project_state ?? ""}`.trim() || undefined,
+      project_state: normalizedProjectState || undefined,
       risk_only: !!risk_only,
       parallel,
       projects: rows,
