@@ -88,6 +88,7 @@ import { startConatRevocationKickLoop } from "./conat-revocation-kick";
 import { getOrCreateProjectHostConatPassword } from "./local-conat-password";
 import { getProjectHostMasterConatToken } from "./master-conat-token";
 import { applyProjectHostProcessTitle } from "./process-role";
+import { startProjectWithAdmission } from "./project-start-admission";
 import {
   runRuntimeConformanceStartupChecks,
   startRuntimeConformanceMonitor,
@@ -1294,16 +1295,29 @@ export async function main(
         projectRow?.state !== "running" ||
         !Number.isInteger(projectRow?.http_port)
       ) {
-        if (!hubApi.projects?.start) {
-          throw new Error(`project start unavailable for ${project_id}`);
+        const account_id =
+          authContext?.actor === "account" ? authContext.account_id : undefined;
+        if (!account_id) {
+          // Host-local start would bypass runtime-slot and ban admission.
+          // Anonymous/public app traffic can use already-running projects, but
+          // cannot be the actor that starts a stopped project.
+          throw new Error(
+            "project is not running; anonymous app requests cannot automatically start it",
+          );
         }
         logger.debug("project proxy resolveTarget starting project", {
           project_id,
+          account_id,
           state: projectRow?.state,
           http_port: projectRow?.http_port,
           url: req.url,
         });
-        await hubApi.projects.start({ project_id, autostart: true });
+        await startProjectWithAdmission({
+          account_id,
+          project_id,
+          autostart: true,
+          timeout: PROJECT_HTTP_PORT_WAIT_MS,
+        });
       }
       const upstreamSecret = getOrCreateProjectLocalSecretToken(project_id);
       req.headers[PROJECT_PROXY_AUTH_HEADER] = upstreamSecret;

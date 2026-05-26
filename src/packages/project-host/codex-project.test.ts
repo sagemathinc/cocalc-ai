@@ -9,6 +9,7 @@ import { DEFAULT_PROJECT_RUNTIME_UID } from "@cocalc/util/project-runtime";
 const spawnMock = jest.fn();
 const execFileMock = jest.fn();
 const execMock = jest.fn();
+const mockStartProjectWithAdmission = jest.fn();
 const podmanEnvMock = jest.fn(() => ({
   XDG_RUNTIME_DIR: "/tmp/cocalc-podman-runtime",
   CONTAINERS_CGROUP_MANAGER: "cgroupfs",
@@ -85,6 +86,11 @@ jest.mock("./last-edited", () => ({
   touchProjectLastEdited: jest.fn(),
 }));
 
+jest.mock("./project-start-admission", () => ({
+  startProjectWithAdmission: (...args: any[]) =>
+    mockStartProjectWithAdmission(...args),
+}));
+
 jest.mock("@cocalc/lite/hub/api", () => ({
   hubApi: {
     projects: {
@@ -139,6 +145,8 @@ describe("initCodexProjectRunner", () => {
     });
     hubApi.projects.start.mockReset();
     hubApi.projects.start.mockResolvedValue({});
+    mockStartProjectWithAdmission.mockReset();
+    mockStartProjectWithAdmission.mockResolvedValue({});
     hubApi.hosts.issueProjectHostAgentAuthToken.mockReset();
     hubApi.hosts.issueProjectHostAgentAuthToken.mockResolvedValue({
       token: "issued-project-host-token",
@@ -771,9 +779,11 @@ describe("initCodexProjectRunner", () => {
       cwd: "/home/user",
     });
 
-    expect(hubApi.projects.start).toHaveBeenCalledWith({
+    expect(mockStartProjectWithAdmission).toHaveBeenCalledWith({
+      account_id: "00000000-0000-4000-8000-000000000001",
       project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
       autostart: true,
+      timeout: 90000,
     });
     expect(spawnMock).toHaveBeenCalledTimes(1);
   });
@@ -813,9 +823,11 @@ describe("initCodexProjectRunner", () => {
       cwd: "/home/user",
     });
 
-    expect(hubApi.projects.start).toHaveBeenCalledWith({
+    expect(mockStartProjectWithAdmission).toHaveBeenCalledWith({
+      account_id: "00000000-0000-4000-8000-000000000001",
       project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
       autostart: true,
+      timeout: 90000,
     });
     expect(spawnMock).toHaveBeenCalledTimes(1);
   });
@@ -857,7 +869,7 @@ describe("initCodexProjectRunner", () => {
       cwd: "/home/user",
     });
 
-    expect(hubApi.projects.start).not.toHaveBeenCalled();
+    expect(mockStartProjectWithAdmission).not.toHaveBeenCalled();
     expect(spawnMock).toHaveBeenCalledTimes(1);
   });
 

@@ -111,6 +111,7 @@ import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { getMasterConatClient, queueProjectProvisioned } from "./master-status";
 import callHub from "@cocalc/conat/hub/call-hub";
+import { startProjectWithAdmission } from "./project-start-admission";
 import {
   createRusticProgressHandler,
   type RusticProgressUpdate,
@@ -263,15 +264,6 @@ async function ensureProjectSshWake({
       return currentPort;
     }
 
-    const client = getMasterConatClient();
-    if (!client) {
-      logger.warn("ssh wake skipped: master hub connection unavailable", {
-        project_id,
-        account_id,
-      });
-      return null;
-    }
-
     const hostId = getLocalHostId();
     if (row.state !== "starting") {
       try {
@@ -281,18 +273,10 @@ async function ensureProjectSshWake({
           host_id: hostId,
           state: row.state,
         });
-        await callHub({
-          client,
+        await startProjectWithAdmission({
           account_id,
-          name: "projects.start",
-          args: [
-            {
-              account_id,
-              project_id,
-              autostart: true,
-              wait: true,
-            },
-          ],
+          project_id,
+          autostart: true,
           timeout: SSH_WAKE_TIMEOUT_MS,
         });
       } catch (err) {
