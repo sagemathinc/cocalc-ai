@@ -85,14 +85,20 @@ export function MembershipTierBenefits({
   const presentation = getPresentation(tier);
 
   if (compact) {
+    const benefits =
+      presentation.summaryBenefits.length > 0
+        ? presentation.summaryBenefits
+        : presentation.benefits;
+    const limits =
+      presentation.summaryLimits.length > 0
+        ? presentation.summaryLimits
+        : presentation.limits;
     return (
       <Space direction="vertical" size={6} style={{ width: "100%" }}>
         <Text type="secondary">{presentation.tagline}</Text>
-        <BulletList items={presentation.benefits} limit={4} />
-        {presentation.limits.length > 0 && (
-          <Text type="secondary">
-            Limits: {presentation.limits.slice(0, 3).join("; ")}
-          </Text>
+        <BulletList items={benefits} limit={4} />
+        {limits.length > 0 && (
+          <Text type="secondary">Limits: {limits.slice(0, 5).join("; ")}</Text>
         )}
         {showBilling && presentation.billing.length > 0 && (
           <Text type="secondary">

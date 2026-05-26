@@ -24,6 +24,8 @@ export interface MembershipTierPresentationInput {
 
 export interface MembershipTierPresentation {
   tagline: string;
+  summaryBenefits: string[];
+  summaryLimits: string[];
   benefits: string[];
   limits: string[];
   billing: string[];
@@ -38,13 +40,7 @@ const DEFAULT_TAGLINES: Record<string, string> = {
   pro: "Higher limits for heavier workloads and demanding technical projects.",
 };
 
-const PROJECT_LIMIT_KEYS = [
-  "memory",
-  "disk_quota",
-  "network",
-  "member_host",
-  "mintime",
-] as const;
+const PROJECT_LIMIT_KEYS = ["memory", "disk_quota", "mintime"] as const;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value != null && typeof value === "object"
@@ -119,10 +115,6 @@ function projectLimitLabel(key: string): string {
       return "Project RAM";
     case "disk_quota":
       return "Per-project disk quota";
-    case "network":
-      return "Internet access";
-    case "member_host":
-      return "Member/shared host access";
     case "mintime":
       return "Minimum project uptime";
     default:
@@ -137,6 +129,8 @@ export function buildMembershipTierPresentation(
   const aiLimits = asRecord(tier.ai_limits);
   const features = asRecord(tier.features);
   const usageLimits = asRecord(tier.usage_limits);
+  const summaryBenefits: string[] = [];
+  const summaryLimits: string[] = [];
   const benefits: string[] = [];
   const limits: string[] = [];
   const billing: string[] = [];
@@ -146,29 +140,33 @@ export function buildMembershipTierPresentation(
     DEFAULT_TAGLINES[tier.id] ??
     `Membership benefits configured for ${tierLabel}.`;
 
-  if (projectDefaults.network) {
-    benefits.push("Internet-enabled projects.");
-  }
-  if (projectDefaults.member_host) {
-    benefits.push("Access to the member/shared project-host pool.");
-  }
-
   const sharedHostTier = asNumber(features.project_host_tier);
+  if (projectDefaults.member_host || sharedHostTier != null) {
+    const hostPoolBenefit =
+      sharedHostTier != null && sharedHostTier > 0
+        ? `Shared project-host pool access, tier ${sharedHostTier}.`
+        : "Shared project-host pool access.";
+    summaryBenefits.push(hostPoolBenefit);
+    benefits.push(hostPoolBenefit);
+  }
   if (features.create_hosts) {
     benefits.push(
       sharedHostTier != null && sharedHostTier > 0
-        ? `Can rent custom project hosts and use shared host tier ${sharedHostTier}.`
+        ? `Can rent custom project hosts with tier ${sharedHostTier} host access.`
         : "Can rent custom project hosts.",
     );
-  } else if (sharedHostTier != null && sharedHostTier > 0) {
-    benefits.push(`Shared host tier ${sharedHostTier}.`);
   }
 
   const sponsoredProjects = asPositiveInteger(
     usageLimits.max_sponsored_running_projects,
   );
   if (sponsoredProjects != null && sponsoredProjects > 0) {
-    benefits.push("Runtime sponsorship for shared compute projects.");
+    const sponsoredBenefit = `Up to ${sponsoredProjects} simultaneous sponsored running ${plural(
+      sponsoredProjects,
+      "project",
+    )}.`;
+    summaryBenefits.push(sponsoredBenefit);
+    benefits.push(sponsoredBenefit);
   }
 
   const ai5h = asNumber(aiLimits.units_5h ?? aiLimits.limit_5h);
@@ -192,7 +190,9 @@ export function buildMembershipTierPresentation(
 
   const sharedComputePriority = asNumber(usageLimits.shared_compute_priority);
   if (sharedComputePriority != null) {
-    limits.push(`Shared compute priority: ${sharedComputePriority}`);
+    const limit = `Shared compute priority: ${sharedComputePriority}`;
+    summaryLimits.push(limit);
+    limits.push(limit);
   }
 
   if (sponsoredProjects != null) {
@@ -201,7 +201,9 @@ export function buildMembershipTierPresentation(
 
   const totalStorageHard = asNumber(usageLimits.total_storage_hard_bytes);
   if (totalStorageHard != null && totalStorageHard > 0) {
-    limits.push(`Total storage hard cap: ${humanSize(totalStorageHard)}`);
+    const limit = `Total storage hard cap: ${humanSize(totalStorageHard)}`;
+    summaryLimits.push(limit);
+    limits.push(limit);
   }
   const totalStorageSoft = asNumber(usageLimits.total_storage_soft_bytes);
   if (totalStorageSoft != null && totalStorageSoft > 0) {
@@ -210,9 +212,11 @@ export function buildMembershipTierPresentation(
 
   for (const key of PROJECT_LIMIT_KEYS) {
     if (key in projectDefaults) {
-      limits.push(
-        `${projectLimitLabel(key)}: ${formatQuotaValue(key, projectDefaults[key])}`,
-      );
+      const limit = `${projectLimitLabel(key)}: ${formatQuotaValue(key, projectDefaults[key])}`;
+      if (key === "memory" || key === "disk_quota") {
+        summaryLimits.push(limit);
+      }
+      limits.push(limit);
     }
   }
   if (ai5h != null && ai5h > 0) {
@@ -309,6 +313,8 @@ export function buildMembershipTierPresentation(
 
   return {
     tagline,
+    summaryBenefits: summaryBenefits.slice(0, 4),
+    summaryLimits: summaryLimits.slice(0, 5),
     benefits: benefits.slice(0, 7),
     limits: limits.slice(0, 10),
     billing,

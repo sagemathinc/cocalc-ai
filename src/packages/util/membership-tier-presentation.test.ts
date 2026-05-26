@@ -7,12 +7,25 @@ describe("buildMembershipTierPresentation", () => {
     const presentation = buildMembershipTierPresentation(tier);
 
     expect(presentation.tagline).toContain("Higher limits");
-    expect(presentation.benefits).toContain("Internet-enabled projects.");
+    expect(presentation.benefits).not.toContain("Internet-enabled projects.");
     expect(presentation.benefits).toContain(
-      "Can rent custom project hosts and use shared host tier 2.",
+      "Can rent custom project hosts with tier 2 host access.",
+    );
+    expect(presentation.summaryBenefits).toEqual(
+      expect.arrayContaining([
+        "Shared project-host pool access, tier 2.",
+        "Up to 10 simultaneous sponsored running projects.",
+      ]),
     );
     expect(presentation.benefits).toContain(
       "Advanced OCI RootFS image import.",
+    );
+    expect(presentation.summaryLimits).toEqual(
+      expect.arrayContaining([
+        "Shared compute priority: 4",
+        "Project RAM: 16 GB",
+        "Per-project disk quota: 10 GB",
+      ]),
     );
     expect(presentation.limits).toEqual(
       expect.arrayContaining([
@@ -41,13 +54,27 @@ describe("buildMembershipTierPresentation", () => {
     const presentation = buildMembershipTierPresentation({
       id: "custom",
       label: "Custom",
-      project_defaults: { network: 1, memory: 2000 },
+      project_defaults: { network: 1, memory: 2000, disk_quota: 5000 },
+      usage_limits: {
+        total_storage_hard_bytes: 125_000_000_000,
+        max_sponsored_running_projects: 10,
+      },
     });
 
     expect(presentation.tagline).toBe(
       "Membership benefits configured for Custom.",
     );
-    expect(presentation.benefits).toContain("Internet-enabled projects.");
+    expect(presentation.benefits).not.toContain("Internet-enabled projects.");
+    expect(presentation.summaryBenefits).toContain(
+      "Up to 10 simultaneous sponsored running projects.",
+    );
+    expect(presentation.summaryLimits).toEqual(
+      expect.arrayContaining([
+        "Total storage hard cap: 125 GB",
+        "Project RAM: 2 GB",
+        "Per-project disk quota: 5 GB",
+      ]),
+    );
     expect(presentation.limits).toContain("Project RAM: 2 GB");
   });
 });
