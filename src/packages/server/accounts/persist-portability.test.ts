@@ -84,7 +84,7 @@ describe("account persist portability", () => {
           {
             root: "local",
             relative_path: "../escape.db",
-            data_base64: Buffer.from("bad").toString("base64"),
+            data: Buffer.from("bad"),
           },
         ],
       }),

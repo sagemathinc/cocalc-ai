@@ -9,8 +9,8 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "path";
 import type { AccountPersistFileV1 } from "@cocalc/conat/inter-bay/api";
 import { syncFiles } from "@cocalc/conat/persist/context";
 
-const MAX_ACCOUNT_PERSIST_FILES = 2_000;
-const MAX_ACCOUNT_PERSIST_BYTES = 64 * 1024 * 1024;
+const MAX_ACCOUNT_PERSIST_FILES = 5_000;
+const MAX_ACCOUNT_PERSIST_BYTES = 512 * 1024 * 1024;
 
 type AccountPersistRoot = AccountPersistFileV1["root"];
 
@@ -129,10 +129,20 @@ async function collectRootFiles({
         );
       }
       const relativePath = relative(resolvedRoot, path).split(sep).join("/");
+      const data = await fs.readFile(path);
+      const statAfterRead = await fs.stat(path);
+      if (
+        stat.size !== statAfterRead.size ||
+        stat.mtimeMs !== statAfterRead.mtimeMs
+      ) {
+        throw new Error(
+          `account ${account_id} persist file changed while being read: ${relativePath}`,
+        );
+      }
       files.push({
         root,
         relative_path: validateRelativePath(relativePath),
-        data_base64: (await fs.readFile(path)).toString("base64"),
+        data,
         mode: stat.mode & 0o777,
         mtime_ms: stat.mtimeMs,
       });
@@ -184,9 +194,8 @@ export async function restoreAccountPersistState({
       throw new Error(`unknown account persist root: ${file.root}`);
     }
     const path = targetPath(rootPath, file.relative_path);
-    const data = Buffer.from(file.data_base64, "base64");
     await fs.mkdir(dirname(path), { recursive: true });
-    await fs.writeFile(path, data);
+    await fs.writeFile(path, file.data);
     if (file.mode != null) {
       await fs.chmod(path, file.mode);
     }
