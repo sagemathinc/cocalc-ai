@@ -88,6 +88,10 @@ function params(): string {
 let last_url: string | undefined = undefined;
 let last_full_url: string | undefined = undefined;
 
+function isPublicApp(): boolean {
+  return Boolean((globalThis as any).__cocalc_public_app);
+}
+
 // Update what params are set to in the URL based on state of project store,
 // leaving the rest of the URL the same.
 export function update_params() {
@@ -230,6 +234,9 @@ export function load_target(
 }
 
 window.onpopstate = (_) => {
+  if (isPublicApp()) {
+    return;
+  }
   load_target(
     decodeURIComponent(
       document.location.pathname.slice(
