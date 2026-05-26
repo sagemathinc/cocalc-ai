@@ -1,6 +1,9 @@
 import type { PoolClient } from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import isBanned from "@cocalc/server/accounts/is-banned";
+import {
+  ensureAccountSecurityStateReady,
+  isAccountBannedCached,
+} from "@cocalc/server/accounts/security-state";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import {
   QUOTA_SPEC,
@@ -65,7 +68,8 @@ export async function isPurchaseAllowed({
   if (!(await isValidAccount(account_id))) {
     return { allowed: false, reason: `${account_id} is not a valid account` };
   }
-  if (await isBanned(account_id)) {
+  await ensureAccountSecurityStateReady();
+  if (isAccountBannedCached(account_id)) {
     return { allowed: false, reason: `${account_id} is banned` };
   }
   if (QUOTA_SPEC[service] == null) {
