@@ -13,6 +13,8 @@ const getPaymentMethodsMock = jest.fn();
 const deletePaymentMethodMock = jest.fn();
 const recordAccountResourceQuarantineAuditEventMock = jest.fn();
 const projectControlStopMock = jest.fn();
+const bayOpsGetProjectRuntimeSlotReportMock = jest.fn();
+const listClusterBayInfosMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -24,10 +26,22 @@ jest.mock("@cocalc/server/conat/api/hosts", () => ({
   stopHost: (...args: any[]) => stopHostMock(...args),
 }));
 
+jest.mock("@cocalc/server/bay-config", () => ({
+  getConfiguredBayId: () => "bay-1",
+}));
+
+jest.mock("@cocalc/server/bay-registry", () => ({
+  listClusterBayInfos: (...args: any[]) => listClusterBayInfosMock(...args),
+}));
+
 jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   getInterBayBridge: () => ({
     projectControl: (bay_id: string) => ({
       stop: (opts: any) => projectControlStopMock({ bay_id, ...opts }),
+    }),
+    bayOps: (bay_id: string) => ({
+      getProjectRuntimeSlotReport: (opts: any) =>
+        bayOpsGetProjectRuntimeSlotReportMock({ bay_id, ...opts }),
     }),
   }),
 }));
@@ -77,14 +91,17 @@ describe("account resource quarantine", () => {
       }
       if (sql.includes("FROM project_runtime_slots")) {
         return {
-          rows: [
-            { project_id: "project-1", owning_bay_id: "bay-1" },
-            { project_id: "project-2", owning_bay_id: "bay-2" },
-          ],
-          rowCount: 2,
+          rows: [{ project_id: "project-1", owning_bay_id: "bay-1" }],
+          rowCount: 1,
         };
       }
       return { rows: [], rowCount: 0 };
+    });
+    listClusterBayInfosMock
+      .mockReset()
+      .mockResolvedValue([{ bay_id: "bay-1" }, { bay_id: "bay-2" }]);
+    bayOpsGetProjectRuntimeSlotReportMock.mockReset().mockResolvedValue({
+      slots: [{ project_id: "project-2", owning_bay_id: "bay-2" }],
     });
     listHostsMock.mockReset().mockResolvedValue([]);
     stopHostMock.mockReset().mockResolvedValue(undefined);
@@ -118,6 +135,13 @@ describe("account resource quarantine", () => {
     expect(projectControlStopMock).toHaveBeenCalledWith({
       bay_id: "bay-2",
       project_id: "project-2",
+    });
+    expect(bayOpsGetProjectRuntimeSlotReportMock).toHaveBeenCalledWith({
+      bay_id: "bay-2",
+      account_id: "22222222-2222-4222-8222-222222222222",
+      sponsor_account_id: ACCOUNT_ID,
+      active_only: true,
+      limit: 1000,
     });
     expect(result.projects_stop_requested).toBe(2);
     expect(result.project_ids).toEqual(["project-1", "project-2"]);

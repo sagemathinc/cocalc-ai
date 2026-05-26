@@ -5,6 +5,8 @@
 
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { listClusterBayInfos } from "@cocalc/server/bay-registry";
 import { listHosts, stopHost } from "@cocalc/server/conat/api/hosts";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { cancelUsageSubscription } from "@cocalc/server/purchases/stripe-usage-based-subscription";
@@ -12,6 +14,7 @@ import { cancelPaymentIntent } from "@cocalc/server/purchases/stripe/create-paym
 import { getAllOpenPayments } from "@cocalc/server/purchases/stripe/get-payments";
 import getPaymentMethods from "@cocalc/server/purchases/stripe/get-payment-methods";
 import deletePaymentMethod from "@cocalc/server/purchases/stripe/delete-payment-method";
+import type { ProjectRuntimeSlotReportSlot } from "@cocalc/conat/hub/api/system";
 import { recordAccountResourceQuarantineAuditEvent } from "./resource-quarantine-audit";
 
 const logger = getLogger("accounts:resource-quarantine");
@@ -174,21 +177,93 @@ async function listRuntimeSlotProjects(
   return rows;
 }
 
-async function stopRuntimeSlotProjects({
+async function listRemoteRuntimeSlotProjects({
   account_id,
+  actor_account_id,
+  bay_id,
 }: {
   account_id: string;
-}): Promise<{ count: number; project_ids: string[] }> {
-  const stopped: string[] = [];
-  for (const { project_id, owning_bay_id } of await listRuntimeSlotProjects(
-    account_id,
-  )) {
-    await getInterBayBridge()
-      .projectControl(owning_bay_id)
-      .stop({ project_id });
-    stopped.push(project_id);
+  actor_account_id?: string | null;
+  bay_id: string;
+}): Promise<RuntimeSlotProjectRow[]> {
+  if (!actor_account_id) {
+    throw new Error(
+      "actor_account_id is required to enumerate remote runtime slots",
+    );
   }
-  return { count: stopped.length, project_ids: stopped };
+  const report = await getInterBayBridge()
+    .bayOps(bay_id, { timeout_ms: 15_000 })
+    .getProjectRuntimeSlotReport({
+      account_id: actor_account_id,
+      sponsor_account_id: account_id,
+      active_only: true,
+      limit: 1000,
+    });
+  return (report.slots ?? []).map((slot: ProjectRuntimeSlotReportSlot) => ({
+    project_id: slot.project_id,
+    owning_bay_id: slot.owning_bay_id || bay_id,
+  }));
+}
+
+async function listClusterRuntimeSlotProjects({
+  account_id,
+  actor_account_id,
+}: {
+  account_id: string;
+  actor_account_id?: string | null;
+}): Promise<{ projects: RuntimeSlotProjectRow[]; errors: string[] }> {
+  const currentBayId = getConfiguredBayId();
+  const bays = await listClusterBayInfos();
+  const projects = new Map<string, RuntimeSlotProjectRow>();
+  const errors: string[] = [];
+  for (const bay of bays.length > 0 ? bays : [{ bay_id: currentBayId }]) {
+    const bay_id = `${bay.bay_id ?? ""}`.trim() || currentBayId;
+    try {
+      const rows =
+        bay_id === currentBayId
+          ? await listRuntimeSlotProjects(account_id)
+          : await listRemoteRuntimeSlotProjects({
+              account_id,
+              actor_account_id,
+              bay_id,
+            });
+      for (const row of rows) {
+        projects.set(row.project_id, row);
+      }
+    } catch (err) {
+      const message = `list runtime slot projects on ${bay_id}: ${err}`;
+      errors.push(message);
+      logger.warn(message);
+    }
+  }
+  return { projects: [...projects.values()], errors };
+}
+
+async function stopRuntimeSlotProjects({
+  account_id,
+  actor_account_id,
+}: {
+  account_id: string;
+  actor_account_id?: string | null;
+}): Promise<{ count: number; project_ids: string[]; errors: string[] }> {
+  const stopped: string[] = [];
+  const { projects, errors } = await listClusterRuntimeSlotProjects({
+    account_id,
+    actor_account_id,
+  });
+  for (const { project_id, owning_bay_id } of projects) {
+    try {
+      await getInterBayBridge()
+        .projectControl(owning_bay_id)
+        .stop({ project_id });
+      stopped.push(project_id);
+    } catch (err) {
+      const message = `stop runtime slot project ${project_id}: ${err}`;
+      errors.push(message);
+      logger.warn(message);
+    }
+  }
+  return { count: stopped.length, project_ids: stopped, errors };
 }
 
 async function attempt<T>({
@@ -267,9 +342,11 @@ export async function quarantineAccountBillingResourcesLocal({
   const stoppedProjects = await attempt({
     errors,
     label: "stop projects using account runtime slots",
-    fallback: { count: 0, project_ids: [] },
-    fn: async () => await stopRuntimeSlotProjects({ account_id }),
+    fallback: { count: 0, project_ids: [], errors: [] },
+    fn: async () =>
+      await stopRuntimeSlotProjects({ account_id, actor_account_id }),
   });
+  errors.push(...stoppedProjects.errors);
 
   const result: AccountResourceQuarantineResult = {
     account_id,

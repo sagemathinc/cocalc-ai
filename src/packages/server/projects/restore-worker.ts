@@ -11,6 +11,15 @@ import {
   getProjectFileServerClient,
 } from "@cocalc/server/conat/file-server-client";
 import { getProject } from "@cocalc/server/projects/control";
+import {
+  assertCanStartUsingRuntimeSponsor,
+  loadProjectRuntimeSponsor,
+} from "@cocalc/server/projects/runtime-sponsor-db";
+import {
+  heartbeatProjectRuntimeSlot,
+  releaseProjectRuntimeSlot,
+  reserveProjectRuntimeSlot,
+} from "@cocalc/server/projects/runtime-slots";
 import { replaceProjectRootfsStates } from "@cocalc/server/projects/rootfs-state";
 
 const logger = getLogger("server:projects:restore-worker");
@@ -23,6 +32,7 @@ const TICK_MS = 5_000;
 const DEFAULT_MAX_PARALLEL = 1;
 const RESTORE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const FILE_SERVER_READY_TIMEOUT_MS = 60_000;
+const RESTORE_START_RUNTIME_SLOT_TTL_MS = 30 * 60 * 1000;
 
 const WORKER_ID = randomUUID();
 
@@ -130,6 +140,63 @@ async function setProjectRestoreImage({
     project_id,
     current: { image },
   });
+}
+
+async function startProjectAfterRestore({
+  op,
+  project_id,
+  project,
+}: {
+  op: LroSummary;
+  project_id: string;
+  project: ReturnType<typeof getProject>;
+}): Promise<void> {
+  const account_id = `${op.created_by ?? ""}`.trim();
+  if (!account_id) {
+    throw new Error("restore op missing created_by account id");
+  }
+  const sponsor = await loadProjectRuntimeSponsor(project_id);
+  await assertCanStartUsingRuntimeSponsor({ sponsor, account_id });
+  let reserved = false;
+  try {
+    await reserveProjectRuntimeSlot({
+      ...sponsor,
+      project_id,
+      actor_account_id: account_id,
+      reason: "project-restore-start",
+      op_id: op.op_id,
+      state: "starting",
+      ttl_ms: RESTORE_START_RUNTIME_SLOT_TTL_MS,
+    });
+    reserved = true;
+    await project.start({ account_id, lro_op_id: op.op_id });
+    await heartbeatProjectRuntimeSlot({
+      sponsor_account_id: sponsor.sponsor_account_id,
+      project_id,
+      host_id: sponsor.host_id,
+      state: "running",
+      ttl_ms: RESTORE_START_RUNTIME_SLOT_TTL_MS,
+    });
+  } catch (err) {
+    if (reserved) {
+      await releaseProjectRuntimeSlot({
+        sponsor_account_id: sponsor.sponsor_account_id,
+        project_id,
+        state: "failed",
+      }).catch((releaseErr) => {
+        logger.warn(
+          "failed to release runtime slot after restore start error",
+          {
+            op_id: op.op_id,
+            project_id,
+            sponsor_account_id: sponsor.sponsor_account_id,
+            err: `${releaseErr}`,
+          },
+        );
+      });
+    }
+    throw err;
+  }
 }
 
 async function handleRestoreOp(op: LroSummary): Promise<void> {
@@ -282,7 +349,7 @@ async function handleRestoreOp(op: LroSummary): Promise<void> {
         message: "starting project",
         detail: { project_id },
       });
-      await project.start({ lro_op_id: op_id });
+      await startProjectAfterRestore({ op, project_id, project });
       result = {
         restore_type: "snapshot",
         snapshot,

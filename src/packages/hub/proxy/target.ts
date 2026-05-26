@@ -10,10 +10,13 @@ import LRU from "lru-cache";
 
 import getLogger from "@cocalc/hub/logger";
 import { getDatabase } from "@cocalc/hub/servers/database";
-import { ProjectControlFunction } from "@cocalc/server/projects/control";
+import { start as startProject } from "@cocalc/server/conat/api/projects";
+import type { ProjectControlFunction } from "@cocalc/server/projects/control";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { NamedServerName } from "@cocalc/util/types/servers";
-import hasAccess from "./check-for-access-to-project";
+import hasAccess, {
+  resolveAuthenticatedAccountId,
+} from "./check-for-access-to-project";
 import { parseReq } from "./parse";
 
 const hub_projects = require("../projects");
@@ -123,12 +126,22 @@ export async function getTarget({
       state: state.state,
       host,
     });
-    await project.start();
+    const account_id = await resolveAuthenticatedAccountId({
+      remember_me,
+      api_key,
+    });
+    if (account_id) {
+      await startProject({ account_id, project_id, autostart: true });
+    } else if (isPersonal) {
+      await project.start();
+    } else {
+      throw Error("unable to determine account for project autostart");
+    }
     state = await project.state();
     host = state.ip;
-    if (state.state === "running") {
-      database.touch_project({ project_id });
-    }
+  }
+  if (state.state === "running") {
+    database.touch_project({ project_id });
   }
 
   // https://github.com/sagemathinc/cocalc/issues/7009#issuecomment-1781950765
