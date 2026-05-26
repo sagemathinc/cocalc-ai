@@ -258,6 +258,16 @@ describe("project collaborators local bay access", () => {
 
   it("cancels pending invites created by a removed collaborator", async () => {
     queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("AS actor_group")) {
+        return {
+          rows: [
+            {
+              actor_group: "owner",
+              manage_users_owner_only: true,
+            },
+          ],
+        };
+      }
       if (
         sql.includes("UPDATE project_collab_invites") &&
         sql.includes("inviter_account_id=$2")
@@ -305,6 +315,112 @@ describe("project collaborators local bay access", () => {
       invite_id: "88888888-8888-4888-8888-888888888888",
       invitee_account_id: null,
     });
+  });
+
+  it("rejects removing other collaborators when owner-only management is enabled", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("AS actor_group")) {
+        return {
+          rows: [
+            {
+              actor_group: "collaborator",
+              manage_users_owner_only: true,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { removeCollaborator } = await import("./collaborators");
+    await expect(
+      removeCollaborator({
+        account_id: ACCOUNT_ID,
+        opts: {
+          account_id: TARGET_ACCOUNT_ID,
+          project_id: PROJECT_ID,
+        },
+      }),
+    ).rejects.toThrow("only project owners can remove collaborators");
+    expect(removeCollaboratorFromProject).not.toHaveBeenCalled();
+  });
+
+  it("allows collaborators to remove themselves when owner-only management is enabled", async () => {
+    const { removeCollaborator } = await import("./collaborators");
+    await expect(
+      removeCollaborator({
+        account_id: ACCOUNT_ID,
+        opts: {
+          account_id: ACCOUNT_ID,
+          project_id: PROJECT_ID,
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(removeCollaboratorFromProject).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(queryMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("AS actor_group"),
+      expect.anything(),
+    );
+  });
+
+  it("rejects account invites from collaborators when owner-only management is enabled", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("AS actor_group")) {
+        return {
+          rows: [
+            {
+              actor_group: "collaborator",
+              manage_users_owner_only: true,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { createCollabInvite } = await import("./collaborators");
+    await expect(
+      createCollabInvite({
+        account_id: ACCOUNT_ID,
+        invitee_account_id: TARGET_ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).rejects.toThrow("only project owners can invite collaborators");
+  });
+
+  it("rejects email invites from collaborators when owner-only management is enabled", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("AS actor_group")) {
+        return {
+          rows: [
+            {
+              actor_group: "collaborator",
+              manage_users_owner_only: true,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { inviteCollaboratorWithoutAccount } =
+      await import("./collaborators");
+    await expect(
+      inviteCollaboratorWithoutAccount({
+        account_id: ACCOUNT_ID,
+        opts: {
+          email: "Join",
+          link2proj: "https://example.com/projects/test",
+          project_id: PROJECT_ID,
+          title: "Test Project",
+          to: "new@example.com",
+        },
+      }),
+    ).rejects.toThrow("only project owners can invite collaborators");
   });
 
   it("loads collaborators only for local projects", async () => {
@@ -1113,8 +1229,15 @@ describe("project collaborators local bay access", () => {
           ],
         };
       }
-      if (sql.includes("AS inviter_authorized")) {
-        return { rows: [{ inviter_authorized: true }] };
+      if (sql.includes("AS inviter_group")) {
+        return {
+          rows: [
+            {
+              inviter_group: "owner",
+              manage_users_owner_only: true,
+            },
+          ],
+        };
       }
       if (sql.includes("SELECT EXISTS(")) {
         return { rows: [{ already: false }] };
@@ -1208,8 +1331,10 @@ describe("project collaborators local bay access", () => {
           ],
         };
       }
-      if (sql.includes("AS inviter_authorized")) {
-        return { rows: [{ inviter_authorized: false }] };
+      if (sql.includes("AS inviter_group")) {
+        return {
+          rows: [{ inviter_group: null, manage_users_owner_only: true }],
+        };
       }
       return { rows: [] };
     });
@@ -1222,6 +1347,51 @@ describe("project collaborators local bay access", () => {
         token,
       }),
     ).rejects.toThrow("invite sender no longer has access");
+    expect(addUserToProject).not.toHaveBeenCalled();
+  });
+
+  it("rejects email invite acceptance when owner-only management no longer allows the sender to grant access", async () => {
+    const inviteId = "77777777-7777-4777-8777-777777777777";
+    const token = "owner-only-stale-invite-token";
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "SELECT invite_id, project_id, inviter_account_id, status, token_hash",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              status: "pending",
+              token_hash: inviteTokenHash(token),
+            },
+          ],
+        };
+      }
+      if (sql.includes("AS inviter_group")) {
+        return {
+          rows: [
+            {
+              inviter_group: "collaborator",
+              manage_users_owner_only: true,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { redeemEmailProjectInvite } = await import("./collaborators");
+    await expect(
+      redeemEmailProjectInvite({
+        account_id: ACCOUNT_ID,
+        invite_id: inviteId,
+        token,
+      }),
+    ).rejects.toThrow("invite sender is no longer allowed");
     expect(addUserToProject).not.toHaveBeenCalled();
   });
 
@@ -1263,7 +1433,7 @@ describe("project collaborators local bay access", () => {
     expect(addUserToProject).not.toHaveBeenCalled();
     expect(ensureAccountSecurityStateReadyMock).toHaveBeenCalled();
     expect(queryMock).not.toHaveBeenCalledWith(
-      expect.stringContaining("AS inviter_authorized"),
+      expect.stringContaining("AS inviter_group"),
       expect.any(Array),
     );
   });

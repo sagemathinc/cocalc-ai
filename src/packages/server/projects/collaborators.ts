@@ -658,6 +658,13 @@ export async function removeCollaborator({
     account_id,
     project_id: opts.project_id,
   });
+  if (opts.account_id !== account_id) {
+    await assertCanManageProjectCollaborators({
+      account_id,
+      action: "remove collaborators",
+      project_id: opts.project_id,
+    });
+  }
   const database = db();
   await callback2(
     database.remove_collaborator_from_project.bind(database),
@@ -789,6 +796,11 @@ export async function createCollabInvite({
     throw new Error("cannot invite yourself");
   }
   await assertLocalProjectCollaborator({ account_id, project_id });
+  await assertCanManageProjectCollaborators({
+    account_id,
+    action: "invite collaborators",
+    project_id,
+  });
 
   const pool = getPool();
   const includeEmail = await isAdmin(account_id);
@@ -1199,17 +1211,25 @@ async function assertInviteSenderCanStillGrantAccess({
   if (isAccountBannedCached(invite.inviter_account_id)) {
     throw new Error("invite sender is banned");
   }
-  const { rows } = await pool.query<{ inviter_authorized: boolean }>(
-    `SELECT EXISTS(
-       SELECT 1
+  const { rows } = await pool.query<{
+    inviter_group: string | null;
+    manage_users_owner_only: boolean | null;
+  }>(
+    `SELECT users -> $2::text ->> 'group' AS inviter_group,
+            COALESCE(manage_users_owner_only, false) AS manage_users_owner_only
        FROM projects
-       WHERE project_id=$1
-         AND (users -> $2::text ->> 'group') IN ('owner','collaborator')
-     ) AS inviter_authorized`,
+      WHERE project_id=$1
+      LIMIT 1`,
     [invite.project_id, invite.inviter_account_id],
   );
-  if (!rows[0]?.inviter_authorized) {
+  const row = rows[0];
+  if (row?.inviter_group !== "owner" && row?.inviter_group !== "collaborator") {
     throw new Error("invite sender no longer has access to this project");
+  }
+  if (row.manage_users_owner_only && row.inviter_group !== "owner") {
+    throw new Error(
+      "invite sender is no longer allowed to grant access to this project",
+    );
   }
 }
 
@@ -1740,6 +1760,41 @@ function normalizeInviteEmail(email: string): string {
     throw Error(`email address must be at most 128 characters: '${email}'`);
   }
   return normalized;
+}
+
+async function assertCanManageProjectCollaborators({
+  account_id,
+  action,
+  project_id,
+}: {
+  account_id: string;
+  action: string;
+  project_id: string;
+}): Promise<void> {
+  if (await isAdmin(account_id)) {
+    return;
+  }
+  const { rows } = await getPool().query<{
+    actor_group: string | null;
+    manage_users_owner_only: boolean | null;
+  }>(
+    `SELECT users -> $2::text ->> 'group' AS actor_group,
+            COALESCE(manage_users_owner_only, false) AS manage_users_owner_only
+       FROM projects
+      WHERE project_id=$1
+      LIMIT 1`,
+    [project_id, account_id],
+  );
+  const row = rows[0];
+  if (row?.actor_group === "owner") {
+    return;
+  }
+  if (!row?.manage_users_owner_only) {
+    return;
+  }
+  throw new Error(
+    `only project owners can ${action} when owner-only collaborator management is enabled`,
+  );
 }
 
 async function createEmailProjectInvite({
@@ -2282,6 +2337,11 @@ export async function inviteCollaboratorWithoutAccount({
 }): Promise<{ invites: ProjectCollabInviteRow[] } & InviteEmailDeliveryStatus> {
   await assertLocalProjectCollaborator({
     account_id,
+    project_id: opts.project_id,
+  });
+  await assertCanManageProjectCollaborators({
+    account_id,
+    action: "invite collaborators",
     project_id: opts.project_id,
   });
   await assertAccountTrustedForProductAccess(
