@@ -376,38 +376,42 @@ export function DocsCard({
   }
 
   const content = (
-    <Card
-      hoverable
-      style={{ ...DOCS_BROWSER_CARD_STYLE, height: "100%" }}
-      styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
-    >
-      <Flex gap="middle" vertical>
-        <DocsEntryImage entry={entry} mode="card" />
-        <Space>
-          <BookOutlined />
-          <Text type="secondary">{entry.category}</Text>
-        </Space>
-        <Title level={3} style={{ margin: 0 }}>
-          {entry.title}
-        </Title>
-        <Paragraph style={{ margin: 0 }}>{entry.summary}</Paragraph>
-        <Space wrap>
-          {entry.audiences.map((audience) => (
-            <Tag key={audience}>{audience}</Tag>
-          ))}
-          {privateSummary?.starred ? <Tag color="gold">Starred</Tag> : null}
-          {(privateSummary?.noteCount ?? 0) > 0 ? (
-            <Tag>
-              {privateNoteMatched
-                ? "matched your private notes"
-                : `${privateSummary?.noteCount} note${
-                    privateSummary?.noteCount === 1 ? "" : "s"
-                  }`}
-            </Tag>
-          ) : null}
-        </Space>
+    <div style={DOCS_BROWSER_PAGE_ITEM_STYLE}>
+      <Flex align="start" gap={12}>
+        <DocsEntryImage entry={entry} mode="flyout-card" />
+        <Flex gap={7} style={{ minWidth: 0 }} vertical>
+          <Space size={6} wrap>
+            <BookOutlined style={{ color: COLORS.BLUE }} />
+            <Text type="secondary" style={{ fontSize: "0.88em" }}>
+              {entry.category}
+            </Text>
+          </Space>
+          <Text strong style={{ fontSize: "1.08em", lineHeight: 1.25 }}>
+            {entry.title}
+          </Text>
+          <Text style={{ color: COLORS.GRAY_M, lineHeight: 1.38 }}>
+            {entry.summary}
+          </Text>
+          <Space size={[4, 4]} wrap>
+            {entry.audiences.slice(0, 4).map((audience) => (
+              <Tag key={audience} style={{ marginInlineEnd: 0 }}>
+                {audience}
+              </Tag>
+            ))}
+            {privateSummary?.starred ? <Tag color="gold">Starred</Tag> : null}
+            {(privateSummary?.noteCount ?? 0) > 0 ? (
+              <Tag>
+                {privateNoteMatched
+                  ? "matched your private notes"
+                  : `${privateSummary?.noteCount} note${
+                      privateSummary?.noteCount === 1 ? "" : "s"
+                    }`}
+              </Tag>
+            ) : null}
+          </Space>
+        </Flex>
       </Flex>
-    </Card>
+    </div>
   );
 
   if (href != null) {
@@ -495,65 +499,6 @@ export function DocsIndexContent({
     () => groupDocsEntriesByCategory(entries),
     [entries],
   );
-  const linkFor = useCallback(
-    (entry: DocsEntry) => linkForEntry?.(entry),
-    [linkForEntry],
-  );
-
-  const renderTocLink = (entry: DocsEntry) => {
-    const href = linkFor(entry);
-    const summary = privateState?.summaries[entry.id];
-    const privateNoteMatched =
-      query.trim().length > 0 &&
-      Boolean(
-        summary?.noteText.toLowerCase().includes(query.trim().toLowerCase()),
-      );
-    const content = (
-      <Flex gap={4} vertical>
-        <Space size={6} wrap>
-          <Text strong>{entry.title}</Text>
-          {summary?.starred ? <Tag color="gold">Starred</Tag> : null}
-          {(summary?.noteCount ?? 0) > 0 ? (
-            <Tag>
-              {privateNoteMatched
-                ? "matched your private notes"
-                : `${summary?.noteCount} note${
-                    summary?.noteCount === 1 ? "" : "s"
-                  }`}
-            </Tag>
-          ) : null}
-        </Space>
-        <Text type="secondary" style={{ lineHeight: 1.35 }}>
-          {entry.summary}
-        </Text>
-      </Flex>
-    );
-    if (href != null) {
-      return (
-        <a href={href} style={{ color: "inherit", textDecoration: "none" }}>
-          {content}
-        </a>
-      );
-    }
-    return (
-      <button
-        onClick={() => onSelectEntry?.(entry)}
-        style={{
-          background: "transparent",
-          border: 0,
-          color: "inherit",
-          cursor: "pointer",
-          margin: 0,
-          padding: 0,
-          textAlign: "left",
-          width: "100%",
-        }}
-        type="button"
-      >
-        {content}
-      </button>
-    );
-  };
   const privateNoteMatched = (entry: DocsEntry) => {
     const trimQuery = query.trim().toLowerCase();
     if (!trimQuery) return false;
@@ -612,7 +557,7 @@ export function DocsIndexContent({
               {groupedEntries.length === 1 ? "y" : "ies"}
             </Text>
           </Space>
-          <Row gutter={[18, 18]}>
+          <Row gutter={[16, 16]}>
             {groupedEntries.map(({ category, entries: categoryEntries }) => (
               <Col
                 key={category}
@@ -632,9 +577,16 @@ export function DocsIndexContent({
                     </Space>
                   }
                 >
-                  <Flex gap="middle" vertical>
+                  <Flex gap={8} vertical>
                     {categoryEntries.map((entry) => (
-                      <div key={entry.id}>{renderTocLink(entry)}</div>
+                      <DocsCard
+                        entry={entry}
+                        key={entry.id}
+                        href={linkForEntry?.(entry)}
+                        onSelect={onSelectEntry}
+                        privateNoteMatched={privateNoteMatched(entry)}
+                        privateSummary={privateState?.summaries[entry.id]}
+                      />
                     ))}
                   </Flex>
                 </Card>
@@ -978,6 +930,12 @@ const DOCS_BROWSER_FLYOUT_ITEM_STYLE: React.CSSProperties = {
   display: "block",
   margin: 0,
   padding: "12px 12px 10px",
+};
+
+const DOCS_BROWSER_PAGE_ITEM_STYLE: React.CSSProperties = {
+  ...DOCS_BROWSER_FLYOUT_ITEM_STYLE,
+  boxShadow: "none",
+  padding: 10,
 };
 
 const DOCS_BROWSER_FLYOUT_ACTIONS_STYLE: React.CSSProperties = {
