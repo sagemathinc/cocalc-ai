@@ -142,68 +142,70 @@ export function DocsPage({ slug }: { slug?: string }) {
   ) : null;
 
   return (
-    <div style={DOCS_BROWSER_PAGE_STYLE}>
-      {contextHolder}
-      <DocsFontSizeFrame defaultFontSize={accountFontSize}>
-        <Flex gap="middle" vertical>
-          <div>
-            <Text strong style={DOCS_BROWSER_MUTED_TITLE_STYLE}>
-              CoCalc docs
-            </Text>
-            <Title level={1} style={{ lineHeight: 1.15, marginBottom: 0 }}>
-              Help for this CoCalc site
-            </Title>
-          </div>
-          <Paragraph
-            style={{
-              color: COLORS.GRAY_M,
-              marginBottom: 20,
-              maxWidth: 760,
-            }}
-          >
-            Search current CoCalc-ai docs from anywhere in the app. Signed-in
-            docs, account-wide private notes, and admin-only pages appear here
-            when your account has access.
-          </Paragraph>
-        </Flex>
-        <DocsBrowser
-          actionAvailability={actionAvailability}
-          docsAccess={docsAccess}
-          initialEntry={initialEntry}
-          onRunAction={runAction}
-          privateDetailState={
-            accountId
-              ? {
-                  renderPanel: (entry) => (
-                    <DocsPrivateNotesPanel
-                      accountId={accountId}
-                      entry={entry}
-                      error={docsPrivateState.error}
-                      loading={docsPrivateState.loading}
-                      markViewed={docsPrivateState.markViewed}
-                      notes={docsPrivateState.notesForEntry(entry.id)}
-                      onDeleteNote={docsPrivateState.deleteNote}
-                      onSaveNote={docsPrivateState.saveNote}
-                      onToggleStar={docsPrivateState.toggleStar}
-                      summary={docsPrivateState.summaries[entry.id]}
-                    />
-                  ),
-                }
-              : undefined
-          }
-          privateIndexState={
-            accountId
-              ? {
-                  enabled: true,
-                  filter: privateFilter,
-                  onFilterChange: setPrivateFilter,
-                  summaries: docsPrivateState.summaries,
-                  toolbar: privateToolbar,
-                }
-              : undefined
-          }
-        />
-      </DocsFontSizeFrame>
+    <div style={{ minHeight: 0, overflow: "auto" }}>
+      <div style={DOCS_BROWSER_PAGE_STYLE}>
+        {contextHolder}
+        <DocsFontSizeFrame defaultFontSize={accountFontSize}>
+          <Flex gap="middle" vertical>
+            <div>
+              <Text strong style={DOCS_BROWSER_MUTED_TITLE_STYLE}>
+                CoCalc docs
+              </Text>
+              <Title level={1} style={{ lineHeight: 1.15, marginBottom: 0 }}>
+                Help for this CoCalc site
+              </Title>
+            </div>
+            <Paragraph
+              style={{
+                color: COLORS.GRAY_M,
+                marginBottom: 20,
+                maxWidth: 760,
+              }}
+            >
+              Search current CoCalc-ai docs from anywhere in the app. Signed-in
+              docs, account-wide private notes, and admin-only pages appear here
+              when your account has access.
+            </Paragraph>
+          </Flex>
+          <DocsBrowser
+            actionAvailability={actionAvailability}
+            docsAccess={docsAccess}
+            initialEntry={initialEntry}
+            onRunAction={runAction}
+            privateDetailState={
+              accountId
+                ? {
+                    renderPanel: (entry) => (
+                      <DocsPrivateNotesPanel
+                        accountId={accountId}
+                        entry={entry}
+                        error={docsPrivateState.error}
+                        loading={docsPrivateState.loading}
+                        markViewed={docsPrivateState.markViewed}
+                        notes={docsPrivateState.notesForEntry(entry.id)}
+                        onDeleteNote={docsPrivateState.deleteNote}
+                        onSaveNote={docsPrivateState.saveNote}
+                        onToggleStar={docsPrivateState.toggleStar}
+                        summary={docsPrivateState.summaries[entry.id]}
+                      />
+                    ),
+                  }
+                : undefined
+            }
+            privateIndexState={
+              accountId
+                ? {
+                    enabled: true,
+                    filter: privateFilter,
+                    onFilterChange: setPrivateFilter,
+                    summaries: docsPrivateState.summaries,
+                    toolbar: privateToolbar,
+                  }
+                : undefined
+            }
+          />
+        </DocsFontSizeFrame>
+      </div>
     </div>
   );
 }
