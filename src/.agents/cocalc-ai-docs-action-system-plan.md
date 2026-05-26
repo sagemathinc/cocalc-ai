@@ -231,7 +231,7 @@ Use plain Markdown plus frontmatter. Avoid MDX initially.
 
 Example:
 
-```md
+````md
 ---
 id: projects.project-secrets
 slug: /docs/projects/project-secrets
@@ -272,8 +272,8 @@ should not be committed into files.
 ```action
 settings.environment.secrets
 ```
+````
 
-```
 Supported custom fenced blocks in v1:
 
 - `steps`
@@ -816,23 +816,29 @@ type DocsVisibility = "public" | "signed-in" | "admin";
 
 The first admin slice should include:
 
-- model/render/search support for `visibility: "admin"`;
-- in-app docs filtering based on the signed-in account's admin status;
-- browser docs actions that open admin destinations, so Codex can guide an
+- Done: model/render/search support for `visibility: "admin"`;
+- Done: in-app docs filtering based on the signed-in account's admin status;
+- Done: browser docs actions that open admin destinations, so Codex can guide an
   admin directly to the right UI;
-- a few short source-derived admin pages that can later grow into many
+- Done: a few short source-derived admin pages that can later grow into many
   "mini-skill" docs.
+- Done: global signed-in docs tab outside the project flyout, so account,
+  billing, admin, and configuration docs do not require a selected project.
 
 Initial admin docs backlog:
 
-- Admin overview and safety model.
-- Post system messages and urgent notices.
-- Create and edit public news and event items.
-- Site settings and configuration workflows.
-- User management: search, impersonation, password reset, remove 2FA, ban, and
+- Done: Admin overview and safety model.
+- Done: Post system messages and urgent notices.
+- Done: Create and edit public news and event items.
+- Done: Site settings and configuration workflows.
+- Done: User management: search, impersonation, password reset, remove 2FA, ban, and
   membership/purchase-related tools.
-- Admin `cocalc-cli` cookbook: fresh auth, bay inspection, account location,
+- Done: Admin `cocalc-cli` cookbook: fresh auth, bay inspection, account location,
   account rehome, project/host inspection, and smoke-test workflows.
+- Done: Bay Operations, RootFS image administration, backup shards,
+  registration tokens, and membership/software license admin docs.
+- Pending: SSO, managed egress, detailed user sub-workflows, and admin
+  project-host operations.
 
 Project-host docs should become their own cluster because both admins and users
 interact with them:

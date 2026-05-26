@@ -17,6 +17,7 @@ import { A } from "@cocalc/frontend/components/A";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { SiteName } from "@cocalc/frontend/customize";
+import { DocsPage } from "@cocalc/frontend/docs/page";
 import { FileUsePage } from "@cocalc/frontend/file-use/page";
 import { Connecting } from "@cocalc/frontend/landing-page/connecting";
 import { NotificationPage } from "@cocalc/frontend/notifications";
@@ -77,6 +78,7 @@ export const ActiveContent: React.FC = React.memo(() => {
 
   const active_top_tab = useTypedRedux("page", "active_top_tab");
   const admin_route = useTypedRedux("page", "admin_route");
+  const docs_slug = useTypedRedux("page", "docs_slug");
   const fullscreen = useTypedRedux("page", "fullscreen");
   const get_api_key = useTypedRedux("page", "get_api_key");
   const open_projects = useTypedRedux("projects", "open_projects");
@@ -191,6 +193,9 @@ export const ActiveContent: React.FC = React.memo(() => {
         break;
       case "file-use":
         overlay = renderLayer("file-use", true, <FileUsePage />);
+        break;
+      case "docs":
+        overlay = renderLayer("docs", true, <DocsPage slug={docs_slug} />);
         break;
       case "hosts":
         overlay = renderLayer("hosts", true, <HostsPage />);

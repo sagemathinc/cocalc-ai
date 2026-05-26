@@ -195,6 +195,11 @@ export function load_target(
       break;
     }
 
+    case "docs":
+      redux.getActions("page").setState({ docs_slug: parsed.slug });
+      redux.getActions("page").set_active_tab("docs", change_history);
+      break;
+
     case "hosts":
       redux.getActions("page").set_active_tab("hosts", change_history);
       break;

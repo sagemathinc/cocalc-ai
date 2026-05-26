@@ -24,7 +24,7 @@ import {
   normalizeAdminRoute,
 } from "@cocalc/frontend/admin/routing";
 
-const LITE_TABS = new Set(["account", "admin", "ssh"]);
+const LITE_TABS = new Set(["account", "admin", "docs", "ssh"]);
 
 export class PageActions extends Actions<PageState> {
   private session_manager?: any;
@@ -205,6 +205,13 @@ export class PageActions extends Actions<PageState> {
           set_url(`/${getAdminTargetPath(admin_route)}`);
         }
         set_window_title(intl.formatMessage(labels.admin));
+        return;
+      case "docs":
+        if (change_history) {
+          const docs_slug = this.redux.getStore("page").get("docs_slug");
+          set_url(getPageUrlPath({ page: "docs", slug: docs_slug }));
+        }
+        set_window_title("CoCalc Docs");
         return;
       case "hosts":
         if (change_history) {

@@ -20,7 +20,13 @@ export type DocsAccess = {
 export type DocsActionId =
   | "admin.news.open"
   | "admin.news.create-system"
+  | "admin.bay-ops.open"
+  | "admin.membership-tiers.open"
+  | "admin.project-backup-shards.open"
+  | "admin.registration-tokens.open"
+  | "admin.rootfs.open"
   | "admin.site-settings.open"
+  | "admin.software-licenses.open"
   | "admin.users.open"
   | "settings.environment.secrets"
   | "project.terminal.open"
@@ -1636,6 +1642,137 @@ review state, must follow the account home bay. After rehome, verify the account
 location and smoke-test a feature that reads account-private state.
 `;
 
+const ADMIN_BAY_OPS_BODY = String.raw`
+## What Bay Operations is for
+
+Bay Operations is the admin overview for a multi-bay CoCalc-ai deployment. Use
+it to see which bays are alive, how much work each bay owns, whether rehome
+operations are running or failing, and whether backup or load projections need
+attention.
+
+## What to check first
+
+1. Open the Admin tab.
+2. Open **Bay Operations**.
+3. Check heartbeat status for every bay.
+4. Review account, project, and project-host ownership counts.
+5. Look for failed or running rehome operations.
+6. Open bay details when backup health or load projections look suspicious.
+
+The detail view includes copyable commands for common bay inspection and
+diagnostic workflows. Prefer those typed commands over ad hoc database queries.
+
+## Ownership model
+
+Account-private state belongs on the account home bay. Project data belongs on
+the project owning bay. Project-host operations belong on the host bay. When
+moving accounts, projects, or hosts, verify both the database owner fields and
+the corresponding filesystem or conat-persist state.
+
+## Safety
+
+Bay operations are control-plane work. Do not change ownership fields manually
+unless the documented move operation cannot run and you have already inspected
+the source and destination bays.
+`;
+
+const ADMIN_ROOTFS_BODY = String.raw`
+## What RootFS administration is for
+
+RootFS administration manages the runtime image catalog and the images cached
+on project hosts. Use it when a runtime image should be published, hidden,
+blocked, deleted, garbage-collected, or scanned on a real host.
+
+## Common workflow
+
+1. Open the Admin tab.
+2. Open **RootFS Images**.
+3. Filter for the catalog entry you care about.
+4. Inspect central lifecycle state and per-host availability.
+5. Use **Scan** on an online project host when you need a host-level check.
+6. Hide or block images before deleting when users may still depend on them.
+
+Scans run on project hosts. If no online host is available, start or choose a
+host before expecting scan results.
+
+## When to use this page
+
+Use RootFS administration after changing runtime-image build or retention
+policy, when a project host fails to pull an image, or before removing old
+images from the catalog.
+`;
+
+const ADMIN_BACKUP_SHARDS_BODY = String.raw`
+## What backup shards are for
+
+Backup shards describe where project backups are stored and how backup capacity
+is split across the deployment. Admins use this page to inspect shard
+configuration and avoid silent backup-capacity or routing mistakes.
+
+## Review backup shards
+
+1. Open the Admin tab.
+2. Open **Backup Shards**.
+3. Confirm the expected shards are present.
+4. Check that shard metadata matches the intended deployment.
+5. Use **Bay Operations** to inspect bay backup health if a shard looks stale or
+   overloaded.
+
+Backups are a safety boundary. Treat edits as operational changes that need a
+clear reason, a rollback path, and a small verification afterwards.
+`;
+
+const ADMIN_REGISTRATION_TOKENS_BODY = String.raw`
+## What registration tokens are for
+
+Registration tokens control special signup and onboarding flows. Use them for
+private cohorts, managed classrooms, migrations, pilots, and sites where
+ordinary email signup is restricted.
+
+## Create or update a token
+
+1. Open the Admin tab.
+2. Open **Registration Tokens**.
+3. Create a token or edit an existing one.
+4. Confirm intended limits, expiration, and account effects.
+5. Test the signup path with a non-admin account before sharing it widely.
+
+If general email signup should be disabled, configure that in **Site
+Settings**. Registration tokens are the targeted exception mechanism.
+
+## Safety
+
+Tokens grant access to the site. Keep names and descriptions clear enough that
+another admin can tell why the token exists and when it should be removed.
+`;
+
+const ADMIN_MEMBERSHIP_AND_LICENSES_BODY = String.raw`
+## What membership tiers and software licenses are for
+
+Membership tiers describe site-level capabilities and usage limits. Software
+licenses describe purchasable or assignable license packages. Together they
+control many commercial and access-policy workflows.
+
+## Membership tiers
+
+Use **Membership Tiers** to define or adjust standard capability bundles. Pay
+special attention to dedicated-host fields such as host creation, project-host
+tier, and dedicated-host usage limits. Creating hosts still also requires
+normal billing and admission checks.
+
+## Software licenses
+
+Use **Software Licenses** to manage license tiers and concrete licenses. License
+configuration can control project upgrades, max project hosts, and other
+resource limits.
+
+## Safety
+
+Small-looking changes can affect future purchases, existing users, or dedicated
+host access. Record the old value before changing limits, then verify with an
+account that should receive the updated capability.
+`;
+
 export const DOCS_ENTRIES: DocsEntry[] = [
   {
     audiences: ["agents", "teams"],
@@ -1750,6 +1887,137 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     summary:
       "Use cocalc-cli for admin inspection, fresh auth, bay listing, account location, and rehome smoke tests.",
     title: "Admin cocalc-cli cookbook",
+    visibility: "admin",
+  },
+  {
+    actions: [
+      {
+        description: "Open the Admin -> Bay Operations section.",
+        executable: true,
+        id: "admin.bay-ops.open",
+        label: "Open bay operations",
+      },
+    ],
+    audiences: ["agents", "teams"],
+    body: ADMIN_BAY_OPS_BODY.trim(),
+    category: "Admin",
+    id: "admin.bay-ops",
+    image: docsIcon(
+      "/public/docs/browser-automation-5dc255b9.webp",
+      "Bay operation status with ownership and rehome checks",
+    ),
+    lastReviewed: "2026-05-26",
+    slug: "admin/bay-ops",
+    status: "ready",
+    summary:
+      "Inspect bay health, ownership counts, rehome operations, backup health, and load projections.",
+    title: "Inspect bay operations",
+    visibility: "admin",
+  },
+  {
+    actions: [
+      {
+        description: "Open the Admin -> RootFS Images section.",
+        executable: true,
+        id: "admin.rootfs.open",
+        label: "Open RootFS images",
+      },
+    ],
+    audiences: ["agents", "teams"],
+    body: ADMIN_ROOTFS_BODY.trim(),
+    category: "Admin",
+    id: "admin.rootfs",
+    image: docsIcon(
+      "/public/docs/runtime-image-09add8c9.webp",
+      "Runtime image catalog entries cached across project hosts",
+    ),
+    lastReviewed: "2026-05-26",
+    slug: "admin/rootfs",
+    status: "ready",
+    summary:
+      "Manage runtime image catalog entries, host scans, visibility, blocking, deletion, and retention.",
+    title: "Administer RootFS images",
+    visibility: "admin",
+  },
+  {
+    actions: [
+      {
+        description: "Open the Admin -> Backup Shards section.",
+        executable: true,
+        id: "admin.project-backup-shards.open",
+        label: "Open backup shards",
+      },
+    ],
+    audiences: ["agents", "teams"],
+    body: ADMIN_BACKUP_SHARDS_BODY.trim(),
+    category: "Admin",
+    id: "admin.project-backup-shards",
+    image: docsIcon(
+      "/public/docs/project-files-6c4ff552.webp",
+      "Backup shard storage routes connected to project folders",
+    ),
+    lastReviewed: "2026-05-26",
+    slug: "admin/project-backup-shards",
+    status: "ready",
+    summary:
+      "Inspect project backup shard configuration and connect shard health to bay operations.",
+    title: "Review backup shards",
+    visibility: "admin",
+  },
+  {
+    actions: [
+      {
+        description: "Open the Admin -> Registration Tokens section.",
+        executable: true,
+        id: "admin.registration-tokens.open",
+        label: "Open registration tokens",
+      },
+    ],
+    audiences: ["agents", "teams"],
+    body: ADMIN_REGISTRATION_TOKENS_BODY.trim(),
+    category: "Admin",
+    id: "admin.registration-tokens",
+    image: docsIcon(
+      "/public/docs/project-secrets-ea9872ae.webp",
+      "A registration token card granting controlled site access",
+    ),
+    lastReviewed: "2026-05-26",
+    slug: "admin/registration-tokens",
+    status: "ready",
+    summary:
+      "Create and review targeted signup tokens for cohorts, classrooms, pilots, and restricted sites.",
+    title: "Manage registration tokens",
+    visibility: "admin",
+  },
+  {
+    actions: [
+      {
+        description: "Open the Admin -> Membership Tiers section.",
+        executable: true,
+        id: "admin.membership-tiers.open",
+        label: "Open membership tiers",
+      },
+      {
+        description: "Open the Admin -> Software Licenses section.",
+        executable: true,
+        id: "admin.software-licenses.open",
+        label: "Open software licenses",
+      },
+    ],
+    audiences: ["agents", "teams"],
+    body: ADMIN_MEMBERSHIP_AND_LICENSES_BODY.trim(),
+    category: "Admin",
+    id: "admin.membership-licenses",
+    image: docsIcon(
+      "/public/docs/project-hosts-684faa4c.webp",
+      "Membership and license controls for account capabilities",
+    ),
+    lastReviewed: "2026-05-26",
+    slug: "admin/membership-licenses",
+    status: "ready",
+    summary:
+      "Understand membership tiers, software licenses, dedicated-host limits, and commercial access policies.",
+    title: "Manage membership and licenses",
     visibility: "admin",
   },
   {
