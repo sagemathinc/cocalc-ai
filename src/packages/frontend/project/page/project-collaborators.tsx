@@ -3,9 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { useState } from "react";
 import { useIntl } from "react-intl";
 import AdminWarning from "@cocalc/frontend/project/page/admin-warning";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   AddCollaborators,
   CurrentCollaboratorsPanel,
@@ -18,11 +19,14 @@ import {
   SettingBox,
   Title,
 } from "@cocalc/frontend/components";
-import { Alert, Space } from "antd";
+import { Alert, Space, Switch, Typography } from "antd";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { labels } from "@cocalc/frontend/i18n";
+import { COLORS } from "@cocalc/util/theme";
 import { ICON_USERS, ROOT_STYLE } from "../servers/consts";
 import { useProject } from "./common";
+
+const { Text } = Typography;
 
 interface ProjectCollaboratorsContentProps {
   project_id: string;
@@ -42,6 +46,8 @@ export function ProjectCollaboratorsContent({
     | undefined;
   const student = useStudentProjectFunctionality(project_id);
   const { project, group } = useProject(project_id);
+  const isOwner = group === "owner";
+  const canManageAsOwnerOrAdmin = isOwner || group === "admin";
   const disableCollaborators =
     accountCustomize?.disableCollaborators || student.disableCollaborators;
   const isFlyout = layout === "flyout";
@@ -61,6 +67,8 @@ export function ProjectCollaboratorsContent({
       />
     );
   } else {
+    const ownerOnly = project.get("manage_users_owner_only") === true;
+    const canManageCollaborators = !ownerOnly || canManageAsOwnerOrAdmin;
     const inviteControls = (
       <AddCollaborators
         project_id={project.get("project_id")}
@@ -76,7 +84,13 @@ export function ProjectCollaboratorsContent({
           user_map={user_map}
           mode={componentMode}
         />
-        {inviteControls}
+        <CollaboratorManagementPolicy
+          canManageCollaborators={canManageCollaborators}
+          canToggle={canManageAsOwnerOrAdmin}
+          ownerOnly={ownerOnly}
+          project_id={project.get("project_id")}
+        />
+        {canManageCollaborators && inviteControls}
         <InviteInboxPanel
           project_id={project.get("project_id")}
           mode="project"
@@ -90,9 +104,17 @@ export function ProjectCollaboratorsContent({
           project={project}
           user_map={user_map}
         />
-        <SettingBox title="Invite Collaborators" icon="UserAddOutlined">
-          {inviteControls}
-        </SettingBox>
+        <CollaboratorManagementPolicy
+          canManageCollaborators={canManageCollaborators}
+          canToggle={canManageAsOwnerOrAdmin}
+          ownerOnly={ownerOnly}
+          project_id={project.get("project_id")}
+        />
+        {canManageCollaborators && (
+          <SettingBox title="Invite Collaborators" icon="UserAddOutlined">
+            {inviteControls}
+          </SettingBox>
+        )}
         <InviteInboxPanel
           project_id={project.get("project_id")}
           mode="project"
@@ -118,4 +140,92 @@ export function ProjectCollaboratorsContent({
   );
 
   return wrap == null ? body : wrap(body);
+}
+
+function CollaboratorManagementPolicy({
+  canManageCollaborators,
+  canToggle,
+  ownerOnly,
+  project_id,
+}: {
+  canManageCollaborators: boolean;
+  canToggle: boolean;
+  ownerOnly: boolean;
+  project_id: string;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const allowOtherUsers = !ownerOnly;
+
+  async function setAllowOtherUsers(value: boolean) {
+    setError("");
+    setSaving(true);
+    try {
+      await redux
+        .getActions("projects")
+        .set_project_manage_users_owner_only(project_id, !value);
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (canToggle) {
+    return (
+      <SettingBox title="Collaborator Management" icon="users">
+        <div
+          style={{
+            alignItems: "center",
+            background: COLORS.GRAY_LLL,
+            border: `1px solid ${COLORS.GRAY_LL}`,
+            borderRadius: 8,
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns: "minmax(0, 1fr) auto",
+            padding: "10px 12px",
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <Text strong>Allow other users to manage collaborators</Text>
+            <div style={{ color: COLORS.GRAY_M, fontSize: 12, marginTop: 2 }}>
+              {allowOtherUsers
+                ? "Collaborators can invite people and remove non-owner collaborators."
+                : "Only project owners can invite people or remove other collaborators. Collaborators can still remove themselves."}
+            </div>
+          </div>
+          <Switch
+            checked={allowOtherUsers}
+            checkedChildren="Allowed"
+            disabled={saving}
+            loading={saving}
+            onChange={setAllowOtherUsers}
+            unCheckedChildren="Owner only"
+          />
+        </div>
+        {error && (
+          <Alert
+            type="error"
+            showIcon
+            message="Unable to update collaborator management"
+            description={error}
+            style={{ marginTop: 10 }}
+          />
+        )}
+      </SettingBox>
+    );
+  }
+
+  if (!canManageCollaborators) {
+    return (
+      <Alert
+        type="info"
+        showIcon
+        message="Only the project owner can manage collaborators on this project."
+        description="You can still remove yourself from the current collaborators list."
+      />
+    );
+  }
+
+  return null;
 }

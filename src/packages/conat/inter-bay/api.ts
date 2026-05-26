@@ -1302,6 +1302,12 @@ export interface ProjectCollabInviteCopyEmailLinkRequest {
   project_id?: string;
 }
 
+export interface ProjectSetManageUsersOwnerOnlyRequest {
+  account_id: string;
+  project_id: string;
+  manage_users_owner_only: boolean;
+}
+
 export interface ProjectCollabInviteEmailLinkWire {
   invite_id: string;
   invite_url: string;
@@ -1601,6 +1607,7 @@ export type ProjectCollabInviteMethod =
   | "remove-collaborator"
   | "leave-or-delete-projects"
   | "set-projects-hidden"
+  | "set-manage-users-owner-only"
   | "create"
   | "invite-without-account"
   | "copy-email-link"
@@ -2568,6 +2575,9 @@ export interface InterBayProjectCollabInviteApi {
   setProjectsHidden: (
     opts: ProjectSetHiddenRequest,
   ) => Promise<ProjectHiddenResult[]>;
+  setManageUsersOwnerOnly: (
+    opts: ProjectSetManageUsersOwnerOnlyRequest,
+  ) => Promise<void>;
   create: (
     opts: ProjectCollabInviteCreateRequest,
   ) => Promise<ProjectCollabInviteCreateResultWire>;
@@ -5715,6 +5725,15 @@ export function createInterBayProjectCollabInviteClient({
       method: "set-projects-hidden",
     }),
   });
+  const setManageUsersOwnerOnlyClient = createServiceClient<
+    Pick<InterBayProjectCollabInviteApi, "setManageUsersOwnerOnly">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({
+      dest_bay,
+      method: "set-manage-users-owner-only",
+    }),
+  });
   const respondClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "respond">
   >({
@@ -5732,6 +5751,8 @@ export function createInterBayProjectCollabInviteClient({
       await leaveOrDeleteProjectsClient.leaveOrDeleteProjects(opts),
     setProjectsHidden: async (opts) =>
       await setProjectsHiddenClient.setProjectsHidden(opts),
+    setManageUsersOwnerOnly: async (opts) =>
+      await setManageUsersOwnerOnlyClient.setManageUsersOwnerOnly(opts),
     create: async (opts) => await createClient.create(opts),
     inviteWithoutAccount: async (opts) =>
       await inviteWithoutAccountClient.inviteWithoutAccount(opts),
@@ -5933,6 +5954,20 @@ export function createInterBayProjectCollabInviteHandlers({
       }),
       impl: {
         setProjectsHidden: async (opts) => await impl.setProjectsHidden(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayProjectCollabInviteApi, "setManageUsersOwnerOnly">
+    >({
+      ...options,
+      service: "inter-bay-project-collab-invite",
+      subject: projectCollabInviteSubject({
+        dest_bay: bay_id,
+        method: "set-manage-users-owner-only",
+      }),
+      impl: {
+        setManageUsersOwnerOnly: async (opts) =>
+          await impl.setManageUsersOwnerOnly(opts),
       },
     }),
     createServiceHandler<Pick<InterBayProjectCollabInviteApi, "respond">>({

@@ -28,8 +28,13 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
   const isFlyout = mode === "flyout";
   const intl = useIntl();
   const current_account_id = useRedux("account", "account_id");
+  const isAdmin = !!useRedux("account", "is_admin");
   const sort_by_activity = useRedux("projects", "sort_by_activity");
   const student = useStudentProjectFunctionality(project.get("project_id"));
+  const ownerOnly = project.get("manage_users_owner_only") === true;
+  const currentGroup = project.getIn(["users", current_account_id, "group"]);
+  const currentCanManageCollaborators =
+    !ownerOnly || currentGroup === "owner" || isAdmin;
 
   function remove_collaborator(account_id: string) {
     const project_id = project.get("project_id");
@@ -69,10 +74,14 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
   }
 
   function user_remove_button(account_id: string, group?: string) {
-    if (student.disableCollaborators) return;
+    const isSelf = account_id === current_account_id;
+    if (student.disableCollaborators && !isSelf) return;
     const text = user_remove_confirm_text(account_id);
     const isOwner = group === "owner";
     if (isOwner) {
+      return null;
+    }
+    if (!isSelf && !currentCanManageCollaborators) {
       return null;
     }
     return (

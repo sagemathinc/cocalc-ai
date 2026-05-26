@@ -1001,6 +1001,108 @@ export async function setProjectEnv({
   });
 }
 
+export async function setProjectManageUsersOwnerOnly({
+  account_id,
+  project_id,
+  manage_users_owner_only,
+}: {
+  account_id?: string;
+  project_id: string;
+  manage_users_owner_only: boolean;
+}): Promise<void> {
+  const actor = requireAccountId(account_id);
+  if (!isValidUUID(project_id)) {
+    throw new Error("invalid project_id");
+  }
+  if (typeof manage_users_owner_only !== "boolean") {
+    throw new Error("manage_users_owner_only must be a boolean");
+  }
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership != null && ownership.bay_id !== getConfiguredBayId()) {
+    await getInterBayBridge()
+      .projectCollabInvite(ownership.bay_id)
+      .setManageUsersOwnerOnly({
+        account_id: actor,
+        project_id,
+        manage_users_owner_only,
+      });
+    return;
+  }
+  await setLocalProjectManageUsersOwnerOnly({
+    account_id: actor,
+    project_id,
+    manage_users_owner_only,
+  });
+}
+
+export async function setLocalProjectManageUsersOwnerOnly({
+  account_id,
+  project_id,
+  manage_users_owner_only,
+}: {
+  account_id: string;
+  project_id: string;
+  manage_users_owner_only: boolean;
+}): Promise<void> {
+  if (!isValidUUID(account_id) || !isValidUUID(project_id)) {
+    throw new Error("invalid account_id or project_id");
+  }
+  if (typeof manage_users_owner_only !== "boolean") {
+    throw new Error("manage_users_owner_only must be a boolean");
+  }
+  const settings = (await getServerSettings()) as Record<string, any>;
+  if (
+    settings.strict_collaborator_management &&
+    manage_users_owner_only !== true
+  ) {
+    throw new Error(
+      "Collaborator management is enforced by the site administrator and cannot be disabled.",
+    );
+  }
+  const admin = await isAdmin(account_id);
+  const default_bay_id = getConfiguredBayId();
+  await withProjectRehomeWriteFence({
+    project_id,
+    action: "change project collaborator management policy",
+    fn: async (db) => {
+      const { rows } = (await db.query(
+        `UPDATE projects
+            SET manage_users_owner_only=$3
+          WHERE project_id=$1
+            AND COALESCE(owning_bay_id, $4) = $4
+            AND ($5::boolean OR users -> $2::text ->> 'group' = 'owner')
+          RETURNING project_id::text AS project_id`,
+        [
+          project_id,
+          account_id,
+          manage_users_owner_only,
+          default_bay_id,
+          admin,
+        ],
+      )) as { rows: { project_id: string }[] };
+      if (!rows[0]?.project_id) {
+        throw new Error(
+          "Only project owners and administrators can change collaborator management settings",
+        );
+      }
+      await appendProjectOutboxEventForProject({
+        db,
+        event_type: "project.membership_changed",
+        project_id,
+        default_bay_id,
+      });
+    },
+  });
+  await publishProjectAccountFeedEventsBestEffort({
+    project_id,
+    default_bay_id,
+  });
+  await publishProjectDetailInvalidationBestEffort({
+    project_id,
+    fields: ["manage_users_owner_only"],
+  });
+}
+
 function requireAccountId(account_id?: string): string {
   const value = `${account_id ?? ""}`.trim();
   if (!value) {

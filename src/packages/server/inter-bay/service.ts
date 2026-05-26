@@ -317,7 +317,10 @@ import {
   getRootfsQuotaReport,
   getServiceAdmissionDenialReport,
 } from "@cocalc/server/conat/api/system";
-import { setLocalProjectsHidden } from "@cocalc/server/conat/api/projects";
+import {
+  setLocalProjectManageUsersOwnerOnly,
+  setLocalProjectsHidden,
+} from "@cocalc/server/conat/api/projects";
 import { listVisibleRootfsImages } from "@cocalc/server/rootfs/catalog";
 
 const logger = getLogger("server:inter-bay:service");
@@ -1275,6 +1278,8 @@ async function startProjectCollabInviteService(): Promise<void> {
         project_ids,
         hide,
       }),
+    setManageUsersOwnerOnly: async (opts) =>
+      await setLocalProjectManageUsersOwnerOnly(opts),
     respond: async ({
       account_id,
       invite_id,

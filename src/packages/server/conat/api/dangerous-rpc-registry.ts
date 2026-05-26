@@ -471,6 +471,14 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "projects.setProjectManageUsersOwnerOnly": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "projects.setLocalProjectManageUsersOwnerOnly": {
+    decision: "internal-auth-only",
+    reason: "owning-bay internal project policy mutation",
+  },
   "projects.setProjectHidden": {
     decision: "fresh-auth-not-required",
     reason: "local account preference",

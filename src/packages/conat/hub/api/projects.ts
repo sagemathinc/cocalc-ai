@@ -556,6 +556,7 @@ export const projects = {
   getProjectCreated: authFirstRequireAccount,
   getProjectEnv: authFirstRequireAccount,
   setProjectEnv: authFirstRequireAccount,
+  setProjectManageUsersOwnerOnly: authFirstRequireAccount,
   listProjectSecrets: authFirstRequireAccount,
   setProjectSecret: authFirstRequireAccount,
   deleteProjectSecret: authFirstRequireAccount,
@@ -723,6 +724,12 @@ export interface Projects {
     account_id?: string;
     project_id: string;
     env: ProjectEnv;
+  }) => Promise<void>;
+
+  setProjectManageUsersOwnerOnly: (opts: {
+    account_id?: string;
+    project_id: string;
+    manage_users_owner_only: boolean;
   }) => Promise<void>;
 
   listProjectSecrets: (opts: {
