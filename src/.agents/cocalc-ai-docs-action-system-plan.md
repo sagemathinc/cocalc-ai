@@ -32,6 +32,22 @@ As of 2026-05-24, the first vertical slice exists and is usable:
   pages.
 - The project app has a Docs flyout/full-page panel.
 - Docs font size is adjustable and persisted in local storage.
+- In-app docs have a real table of contents grouped by category, plus
+  account-private filters for all pages, starred pages, unstarred pages, and
+  pages with notes.
+- In-app docs private state v1 is implemented:
+  - private stars and Markdown notes are account-global, not project-scoped;
+  - private note text participates in in-app docs search;
+  - matches from private notes are labeled without exposing note text in public
+    docs content;
+  - export/import supports JSON backup and cross-site transfer, merging without
+    duplicate notes;
+  - public landing-page docs do not render private notes or stars.
+- Account-scoped conat-persist/DKV data now moves during account home-bay
+  rehome. This was smoke-tested locally by moving account
+  `aedd0458-e4ed-426f-9ecc-67886d097608` from `bay-1` to `bay-0`; the
+  `cocalc-docs-private-state-v1.db` store moved, the old bay copy was removed,
+  and the frontend still showed the starred doc/note after refresh.
 - `cocalc docs list/search/show/actions/action` exists for local bundled docs.
 - `cocalc browser action docs-list` lists live action availability in a target
   browser session.
@@ -56,8 +72,8 @@ As of 2026-05-24, the first vertical slice exists and is usable:
     modal, file tab, terminal, or notebook UI is actually visible.
 
 The remaining work is production hardening: more docs content, more executable
-actions, stronger live scenario assertions, Codex skill integration, and a
-release gate for legacy docs links.
+actions, stronger live scenario assertions, Codex skill runtime integration,
+and a release gate for legacy docs links.
 
 ## Verification Workflow
 
@@ -215,7 +231,7 @@ Use plain Markdown plus frontmatter. Avoid MDX initially.
 
 Example:
 
-````md
+```md
 ---
 id: projects.project-secrets
 slug: /docs/projects/project-secrets
@@ -256,8 +272,8 @@ should not be committed into files.
 ```action
 settings.environment.secrets
 ```
-````
 
+```
 Supported custom fenced blocks in v1:
 
 - `steps`
@@ -329,17 +345,18 @@ Add a docs route to the public app:
   helper or remove it in favor of a `DOCS_PATH` constant.
 - Replace public footer `Documentation` link with `/docs`.
 
-The first renderer should be simple:
+The first renderer is implemented and should stay simple:
 
-- sidebar or index grouped by category.
-- main Markdown body.
-- action buttons when an action id is available.
-- related docs.
-- source/reference foldout visible to admins/developers or always visible in a
-  compact way.
+- Done: index grouped by category.
+- Done: main Markdown body.
+- Done: action buttons when an action id is available.
+- Pending: related docs.
+- Pending: source/reference foldout visible to admins/developers or always
+  visible in a compact way.
 
 Do not block v1 on full-text search in the browser. A simple index page plus
-client-side title/summary filtering is enough initially.
+client-side filtering is enough initially; the in-app version now also searches
+account-private note text.
 
 ## Legacy Docs Link Migration
 
@@ -722,7 +739,9 @@ operational.
 
 - Done: Add public docs route.
 - Done: Add docs renderer.
+- Done: Add a category-grouped docs index/table of contents.
 - Done: Add nav/footer links to `/docs`.
+- Done: Keep public docs free of signed-in private notes/stars UI.
 - In progress: replace remaining `doc.cocalc.com` links.
 
 ### Phase 3: CLI Docs Search
@@ -754,14 +773,29 @@ operational.
 
 ### Phase 6: Codex Skill
 
-- Add `src/.agents/skills/cocalc-docs/SKILL.md`.
-- Ensure CoCalc Codex runtime includes or can discover the skill.
+- Done: Add `src/.agents/skills/cocalc-docs/SKILL.md`.
+- Pending: Ensure CoCalc Codex runtime includes or can discover the skill.
 - Add examples:
   - “How do I set a project secret?”
   - “Open the project secrets UI.”
   - “How do I install a Python package?”
 
-### Phase 7: Replace Remaining Legacy Links
+### Phase 7: Private In-App Docs State
+
+- Done: Add account-private stars and Markdown notes for in-app docs pages.
+- Done: Add compact detail-page controls: Star and Add Note, with composer only
+  after the user asks to add a note.
+- Done: Add all/starred/unstarred/with-notes filters.
+- Done: Add note-aware in-app docs search and a "matched your private notes"
+  indicator.
+- Done: Add JSON export/import for backup and cross-site transfer.
+- Done: Implement account conat-persist/DKV move during account rehome.
+- Done: Smoke-test account rehome from `bay-1` to `bay-0` with docs private
+  state present.
+- Pending: Add broader browser/UI checks for note editing, import/export, and
+  filter/search behavior.
+
+### Phase 8: Replace Remaining Legacy Links
 
 - Systematically replace or remove all remaining `doc.cocalc.com` links.
 - Add a release gate that fails on new legacy docs links except an explicit
@@ -792,7 +826,7 @@ The original first concrete milestone is complete enough to use:
 4. Done: `cocalc docs search project secrets`.
 5. Done: `cocalc docs show projects.project-secrets`.
 6. Done: `cocalc browser action docs settings.environment.secrets`.
-7. Pending: Codex skill instruction for using the docs command.
+7. Done: Codex skill instruction for using the docs command.
 8. In progress: browser-session verification harness. Static checks and live
    action execution exist; detailed DOM/state assertions are next.
 
