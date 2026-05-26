@@ -15,6 +15,11 @@ let supersedeOlderProjectStartLrosMock: jest.Mock;
 let appendProjectOutboxEventForProjectMock: jest.Mock;
 let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
 let assertBayAcceptsProjectOwnershipMock: jest.Mock;
+let loadProjectRuntimeSponsorMock: jest.Mock;
+let assertCanStartUsingRuntimeSponsorMock: jest.Mock;
+let reserveProjectRuntimeSlotMock: jest.Mock;
+let heartbeatProjectRuntimeSlotMock: jest.Mock;
+let releaseProjectRuntimeSlotMock: jest.Mock;
 let getMembershipUsageStatusForAccountMock: jest.Mock;
 let resolveProjectBackupRepoAssignmentMock: jest.Mock;
 let poolConnectMock: jest.Mock;
@@ -93,6 +98,24 @@ jest.mock("@cocalc/server/projects/control", () => ({
   getProject: (...args: any[]) => getProjectMock(...args),
 }));
 
+jest.mock("@cocalc/server/projects/runtime-sponsor-db", () => ({
+  __esModule: true,
+  loadProjectRuntimeSponsor: (...args: any[]) =>
+    loadProjectRuntimeSponsorMock(...args),
+  assertCanStartUsingRuntimeSponsor: (...args: any[]) =>
+    assertCanStartUsingRuntimeSponsorMock(...args),
+}));
+
+jest.mock("@cocalc/server/projects/runtime-slots", () => ({
+  __esModule: true,
+  reserveProjectRuntimeSlot: (...args: any[]) =>
+    reserveProjectRuntimeSlotMock(...args),
+  heartbeatProjectRuntimeSlot: (...args: any[]) =>
+    heartbeatProjectRuntimeSlotMock(...args),
+  releaseProjectRuntimeSlot: (...args: any[]) =>
+    releaseProjectRuntimeSlotMock(...args),
+}));
+
 jest.mock("@cocalc/server/conat/file-server-client", () => ({
   __esModule: true,
   getProjectFileServerClient: jest.fn(),
@@ -168,6 +191,23 @@ describe("projects.createProject start LRO", () => {
       async () => undefined,
     );
     assertBayAcceptsProjectOwnershipMock = jest.fn(async () => undefined);
+    loadProjectRuntimeSponsorMock = jest.fn(async (project_id: string) => ({
+      project_id,
+      sponsor_account_id: ACCOUNT_ID,
+      owning_bay_id: "bay-0",
+      host_id: "host-1",
+      allow_collaborator_starts_using_sponsor: true,
+      autostart_enabled: true,
+    }));
+    assertCanStartUsingRuntimeSponsorMock = jest.fn(async () => undefined);
+    reserveProjectRuntimeSlotMock = jest.fn(async () => ({
+      sponsor_account_id: ACCOUNT_ID,
+      current: 1,
+      existing: false,
+      slot: {},
+    }));
+    heartbeatProjectRuntimeSlotMock = jest.fn(async () => true);
+    releaseProjectRuntimeSlotMock = jest.fn(async () => true);
     resolveProjectBackupRepoAssignmentMock = jest.fn(async () => ({
       backup_repo_id: null,
     }));
@@ -267,10 +307,28 @@ describe("projects.createProject start LRO", () => {
       }),
     );
     const project = getProjectMock.mock.results[0]?.value;
+    expect(reserveProjectRuntimeSlotMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sponsor_account_id: ACCOUNT_ID,
+        project_id,
+        actor_account_id: ACCOUNT_ID,
+        reason: "project-create-start",
+        op_id: "op-1",
+        state: "starting",
+      }),
+    );
     expect(project.start).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       lro_op_id: "op-1",
     });
+    expect(heartbeatProjectRuntimeSlotMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sponsor_account_id: ACCOUNT_ID,
+        project_id,
+        host_id: "host-1",
+        state: "running",
+      }),
+    );
     expect(queryMock).toHaveBeenCalledWith(
       "SELECT state FROM projects WHERE project_id=$1",
       [project_id],
@@ -321,6 +379,15 @@ describe("projects.createProject start LRO", () => {
 
     const project = getProjectMock.mock.results[0]?.value;
     expect(typeof project_id).toBe("string");
+    expect(reserveProjectRuntimeSlotMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sponsor_account_id: ACCOUNT_ID,
+        project_id,
+        actor_account_id: ACCOUNT_ID,
+        reason: "project-create-start",
+        op_id: undefined,
+      }),
+    );
     expect(project.start).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       lro_op_id: undefined,
@@ -328,6 +395,49 @@ describe("projects.createProject start LRO", () => {
     expect(updateLroMock).not.toHaveBeenCalledWith(
       expect.objectContaining({
         status: "succeeded",
+      }),
+    );
+  });
+
+  it("does not start a newly created project when runtime slots are exhausted", async () => {
+    reserveProjectRuntimeSlotMock.mockRejectedValueOnce(
+      new Error("runtime sponsor slots exhausted"),
+    );
+    const createProject = (await import("./create")).default;
+    const project_id = await createProject({
+      title: "Untitled",
+      description: "",
+      account_id: ACCOUNT_ID,
+      start: true,
+    });
+
+    await flushBackgroundStartTask();
+
+    const project = getProjectMock.mock.results[0]?.value;
+    expect(typeof project_id).toBe("string");
+    expect(reserveProjectRuntimeSlotMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sponsor_account_id: ACCOUNT_ID,
+        project_id,
+        actor_account_id: ACCOUNT_ID,
+        reason: "project-create-start",
+        state: "starting",
+      }),
+    );
+    expect(project.start).not.toHaveBeenCalled();
+    expect(heartbeatProjectRuntimeSlotMock).not.toHaveBeenCalled();
+    expect(releaseProjectRuntimeSlotMock).not.toHaveBeenCalled();
+    expect(updateLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        op_id: "op-1",
+        status: "failed",
+        error: "Error: runtime sponsor slots exhausted",
+      }),
+    );
+    expect(project.saveStateToDatabase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: "opened",
+        error: "Error: runtime sponsor slots exhausted",
       }),
     );
   });
