@@ -37,6 +37,12 @@ import {
   stopProjectOnHost,
 } from "@cocalc/server/project-host/control";
 import { getProject } from "@cocalc/server/projects/control/base";
+import { loadProjectRuntimeSponsor } from "@cocalc/server/projects/runtime-sponsor-db";
+import {
+  heartbeatProjectRuntimeSlot,
+  releaseProjectRuntimeSlot,
+  reserveProjectRuntimeSlot,
+} from "@cocalc/server/projects/runtime-slots";
 import { stopSelfHostReverseTunnel } from "@cocalc/server/self-host/ssh-target";
 
 const logger = getLogger("server:hosts:ops-worker");
@@ -54,6 +60,7 @@ const BACKUP_PROGRESS_MAX = 60;
 const BACKUP_LRO_KIND = "project-backup";
 const PROJECT_HOST_UPGRADE_CONVERGENCE_TIMEOUT_MS = 60_000;
 const PROJECT_HOST_UPGRADE_CONVERGENCE_POLL_MS = 5_000;
+const HOST_PROJECTS_RUNTIME_SLOT_TTL_MS = 30 * 60 * 1000;
 
 const HOST_OP_KINDS = [
   "host-start",
@@ -446,6 +453,85 @@ async function waitForProjectStopped(project_id: string): Promise<string> {
   throw new Error(`timeout waiting for project ${project_id} to stop`);
 }
 
+async function releaseProjectRuntimeSlotAfterHostStop({
+  host_id,
+  project_id,
+}: {
+  host_id: string;
+  project_id: string;
+}) {
+  const sponsor = await loadProjectRuntimeSponsor(project_id);
+  const released = await releaseProjectRuntimeSlot({
+    sponsor_account_id: sponsor.sponsor_account_id,
+    project_id,
+  });
+  if (!released) {
+    logger.warn("host project stop found no active runtime slot to release", {
+      host_id,
+      project_id,
+      sponsor_account_id: sponsor.sponsor_account_id,
+    });
+  }
+}
+
+async function restartProjectWithRuntimeSlot({
+  actor_account_id,
+  host_id,
+  project_id,
+}: {
+  actor_account_id?: string;
+  host_id: string;
+  project_id: string;
+}) {
+  const sponsor = await loadProjectRuntimeSponsor(project_id);
+  let reserved = false;
+  try {
+    await reserveProjectRuntimeSlot({
+      ...sponsor,
+      project_id,
+      actor_account_id,
+      reason: "host-restart-projects",
+      state: "starting",
+      ttl_ms: HOST_PROJECTS_RUNTIME_SLOT_TTL_MS,
+      metadata: { host_id, restarted_by: "host-restart-projects" },
+    });
+    reserved = true;
+    await stopProjectOnHost(project_id);
+    await waitForProjectStopped(project_id);
+    await getProject(project_id).computeQuota();
+    await startProjectOnHost(project_id, {
+      ...(actor_account_id ? { account_id: actor_account_id } : {}),
+    });
+    await heartbeatProjectRuntimeSlot({
+      sponsor_account_id: sponsor.sponsor_account_id,
+      project_id,
+      host_id: sponsor.host_id ?? host_id,
+      state: "running",
+      ttl_ms: HOST_PROJECTS_RUNTIME_SLOT_TTL_MS,
+      metadata: { host_id, restarted_by: "host-restart-projects" },
+    });
+  } catch (err) {
+    if (reserved) {
+      await releaseProjectRuntimeSlot({
+        sponsor_account_id: sponsor.sponsor_account_id,
+        project_id,
+        state: "failed",
+      }).catch((releaseErr) => {
+        logger.warn(
+          "failed to release runtime slot after host project restart failure",
+          {
+            host_id,
+            project_id,
+            sponsor_account_id: sponsor.sponsor_account_id,
+            err: `${releaseErr}`,
+          },
+        );
+      });
+    }
+    throw err;
+  }
+}
+
 async function runHostProjectsAction({
   action,
   host_id,
@@ -469,6 +555,7 @@ async function runHostProjectsAction({
     : [];
   const total = requestedProjects.length;
   const parallel = Math.max(1, Math.min(32, Number(input?.parallel ?? 4) || 4));
+  const actor_account_id = `${input?.account_id ?? ""}`.trim() || undefined;
   const results: HostProjectsActionResultRow[] = [];
   let completed = 0;
   let failed = 0;
@@ -537,6 +624,7 @@ async function runHostProjectsAction({
           // the host operator to also be a collaborator on every project.
           await stopProjectOnHost(project_id);
           await waitForProjectStopped(project_id);
+          await releaseProjectRuntimeSlotAfterHostStop({ host_id, project_id });
         } else {
           if (!isProjectRunning(state)) {
             skipped += 1;
@@ -548,10 +636,11 @@ async function runHostProjectsAction({
             });
             continue;
           }
-          await stopProjectOnHost(project_id);
-          await waitForProjectStopped(project_id);
-          await getProject(project_id).computeQuota();
-          await startProjectOnHost(project_id);
+          await restartProjectWithRuntimeSlot({
+            actor_account_id,
+            host_id,
+            project_id,
+          });
         }
         completed += 1;
         results.push({ project_id, status: "succeeded", state });

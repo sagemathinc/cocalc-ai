@@ -34,6 +34,7 @@ type HubClient = {
     }) => Promise<HostLroResponse>;
     stopHostProjects?: (opts: {
       id: string;
+      browser_id?: string;
       state_filter?: "all" | "running" | "stopped" | "unprovisioned";
       project_state?: string;
       risk_only?: boolean;
@@ -41,6 +42,7 @@ type HubClient = {
     }) => Promise<HostLroResponse>;
     restartHostProjects?: (opts: {
       id: string;
+      browser_id?: string;
       state_filter?: "all" | "running" | "stopped" | "unprovisioned";
       project_state?: string;
       risk_only?: boolean;
@@ -308,6 +310,7 @@ export const useHostActions = ({
     try {
       const op = await hub.hosts.stopHostProjects({
         id,
+        browser_id,
         ...opts,
       });
       onHostOp?.(id, op);
@@ -339,6 +342,7 @@ export const useHostActions = ({
     try {
       const op = await hub.hosts.restartHostProjects({
         id,
+        browser_id,
         ...opts,
       });
       onHostOp?.(id, op);
