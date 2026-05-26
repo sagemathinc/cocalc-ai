@@ -148,6 +148,22 @@ async function expireStaleRuntimeSlots(client: Queryable): Promise<void> {
   });
 }
 
+async function assertRuntimeSponsorNotBanned(
+  client: Queryable,
+  sponsor_account_id: string,
+): Promise<void> {
+  const { rows } = await client.query<{ banned: boolean | null }>(
+    "SELECT banned FROM accounts WHERE account_id=$1",
+    [sponsor_account_id],
+  );
+  if (rows[0]?.banned === true) {
+    throw new Error("runtime sponsor account is banned");
+  }
+  if (!rows[0]) {
+    throw new Error("runtime sponsor account not found");
+  }
+}
+
 async function loadActiveSlotsForSponsor(
   client: Queryable,
   sponsor_account_id: string,
@@ -204,6 +220,7 @@ export async function getProjectRuntimeSlotDenialLocal({
 > {
   const pool = client ?? getPool();
   await expireStaleRuntimeSlots(pool);
+  await assertRuntimeSponsorNotBanned(pool, sponsor_account_id);
   const activeSlots = await loadActiveSlotsForSponsor(pool, sponsor_account_id);
   const membership = await resolveMembershipForAccount(sponsor_account_id);
   const limit = normalizePositiveInteger(
@@ -223,6 +240,7 @@ async function reserveProjectRuntimeSlotInTransaction(
   opts: ReserveProjectRuntimeSlotOptions,
 ): Promise<ReserveProjectRuntimeSlotResult> {
   await expireStaleRuntimeSlots(client);
+  await assertRuntimeSponsorNotBanned(client, opts.sponsor_account_id);
   const activeSlots = await loadActiveSlotsForSponsor(
     client,
     opts.sponsor_account_id,
@@ -368,6 +386,12 @@ export async function heartbeatProjectRuntimeSlotLocal({
        WHERE sponsor_account_id=$1
          AND project_id=$2
          AND state = ANY($7)
+         AND EXISTS (
+           SELECT 1
+             FROM accounts
+            WHERE account_id=$1
+              AND banned IS NOT TRUE
+         )
     `,
     [
       sponsor_account_id,
@@ -431,6 +455,8 @@ export async function heartbeatProjectRuntimeSlotsBatchLocal({
              CASE WHEN state='starting' THEN 'starting' ELSE 'running' END,
              NOW(), NOW(), $2, COALESCE(metadata, '{}'::jsonb)
         FROM input
+        JOIN accounts USING (sponsor_account_id)
+       WHERE accounts.banned IS NOT TRUE
       ON CONFLICT (sponsor_account_id, project_id)
       DO UPDATE SET
         owning_bay_id=EXCLUDED.owning_bay_id,
