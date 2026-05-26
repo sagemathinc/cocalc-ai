@@ -1678,8 +1678,14 @@ export const useHostsPageViewModel = () => {
       runFreshAuthAction(async () => {
         await setStatus(id, "start");
       }),
-    onStop: (id: string, opts) => setStatus(id, "stop", opts),
-    onRestart: restartHost,
+    onStop: (id: string, opts) =>
+      runFreshAuthAction(async () => {
+        await setStatus(id, "stop", opts);
+      }),
+    onRestart: (id: string, mode) =>
+      runFreshAuthAction(async () => {
+        await restartHost(id, mode);
+      }),
     onDrain: (id: string, opts) =>
       runFreshAuthAction(async () => {
         await drainHost(id, opts);

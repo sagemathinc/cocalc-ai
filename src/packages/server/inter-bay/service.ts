@@ -1367,20 +1367,32 @@ async function startHostConnectionService(): Promise<void> {
         account_id,
         id,
       }),
-    startHost: async ({ account_id, id }) =>
+    startHost: async ({ account_id, browser_id, session_hash, id }) =>
       await startHost({
         account_id,
+        browser_id,
+        session_hash,
         id,
       }),
-    stopHost: async ({ account_id, id, skip_backups }) =>
+    stopHost: async ({
+      account_id,
+      browser_id,
+      session_hash,
+      id,
+      skip_backups,
+    }) =>
       await stopHost({
         account_id,
+        browser_id,
+        session_hash,
         id,
         skip_backups,
       }),
-    restartHost: async ({ account_id, id, mode }) =>
+    restartHost: async ({ account_id, browser_id, session_hash, id, mode }) =>
       await restartHost({
         account_id,
+        browser_id,
+        session_hash,
         id,
         mode,
       }),

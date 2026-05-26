@@ -204,8 +204,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: INTERNAL_AUTH_ONLY,
   },
   "hosts.restartHost": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "host restart can disrupt all projects on a dedicated host",
   },
   "hosts.restartHostInternal": {
     decision: "internal-auth-only",
@@ -256,8 +256,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: INTERNAL_AUTH_ONLY,
   },
   "hosts.stopHost": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "host stop can disrupt all projects on a dedicated host",
   },
   "hosts.stopHostInternal": {
     decision: "internal-auth-only",
