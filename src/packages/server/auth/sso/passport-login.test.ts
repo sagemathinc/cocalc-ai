@@ -7,6 +7,8 @@ export {};
 
 const createClusterAccountMock = jest.fn();
 const createPassportMock = jest.fn();
+const ensureAccountSecurityStateReadyMock = jest.fn();
+const isAccountBannedCachedMock = jest.fn();
 
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
   assertNoClusterBannedEquivalentEmailAccount: jest.fn(),
@@ -15,6 +17,12 @@ jest.mock("@cocalc/server/inter-bay/accounts", () => ({
 
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: jest.fn(() => "bay-sso"),
+}));
+
+jest.mock("@cocalc/server/accounts/security-state", () => ({
+  ensureAccountSecurityStateReady: (...args: any[]) =>
+    ensureAccountSecurityStateReadyMock(...args),
+  isAccountBannedCached: (...args: any[]) => isAccountBannedCachedMock(...args),
 }));
 
 jest.mock("@cocalc/backend/logger", () => ({
@@ -42,6 +50,10 @@ describe("PassportLogin SSO account creation", () => {
       account_id: "11111111-1111-4111-8111-111111111111",
     });
     createPassportMock.mockReset().mockResolvedValue(undefined);
+    ensureAccountSecurityStateReadyMock
+      .mockReset()
+      .mockResolvedValue(undefined);
+    isAccountBannedCachedMock.mockReset().mockReturnValue(false);
   });
 
   it("creates new SSO accounts through the cluster account directory path", async () => {
@@ -92,5 +104,44 @@ describe("PassportLogin SSO account creation", () => {
       first_name: "Ada",
       last_name: "Lovelace",
     });
+  });
+
+  it("rejects SSO login for accounts banned in the replicated security cache", async () => {
+    isAccountBannedCachedMock.mockReturnValue(true);
+    const { PassportLogin } = await import("./passport-login");
+    const opts = {
+      passports: {
+        google: {
+          strategy: "google",
+          conf: { type: "oidc" },
+          info: {},
+        },
+      },
+      database: {
+        get_server_settings_cached: ({ cb }: any) =>
+          cb(undefined, { help_email: "help@example.com" }),
+      },
+      strategyName: "google",
+      profile: { id: "google-id" },
+      id: "google-id",
+      req: {},
+      res: {},
+      update_on_login: false,
+      host: "",
+      site_url: "https://cocalc.test",
+    };
+    const login = new PassportLogin(opts as any);
+
+    await expect(
+      (login as any).isUserBanned(
+        "11111111-1111-4111-8111-111111111111",
+        "ada@example.com",
+      ),
+    ).rejects.toThrow("is BANNED");
+
+    expect(ensureAccountSecurityStateReadyMock).toHaveBeenCalled();
+    expect(isAccountBannedCachedMock).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+    );
   });
 });

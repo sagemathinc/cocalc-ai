@@ -47,7 +47,10 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 import getEmailAddress from "../../accounts/get-email-address";
 import { emailBelongsToDomain, getEmailDomain } from "./check-required-sso";
 import { SSO_API_KEY_COOKIE_NAME } from "./consts";
-import isBanned from "@cocalc/server/accounts/is-banned";
+import {
+  ensureAccountSecurityStateReady,
+  isAccountBannedCached,
+} from "@cocalc/server/accounts/security-state";
 import clientSideRedirect from "@cocalc/server/auth/client-side-redirect";
 import setSignInCookies from "@cocalc/server/auth/set-sign-in-cookies";
 import type { AccountCreationAuthMethod } from "@cocalc/server/auth/account-creation-policy";
@@ -750,7 +753,8 @@ export class PassportLogin {
 
   // ebfore recording the sign-in below, we check if a user is banned
   private async isUserBanned(account_id, email_address): Promise<boolean> {
-    const is_banned = await isBanned(account_id);
+    await ensureAccountSecurityStateReady();
+    const is_banned = isAccountBannedCached(account_id);
     if (is_banned) {
       const helpEmail = await this.getHelpEmail();
       throw Error(
