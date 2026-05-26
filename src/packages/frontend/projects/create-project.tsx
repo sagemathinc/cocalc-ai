@@ -37,7 +37,7 @@ import { labels } from "@cocalc/frontend/i18n";
 import { R2_REGION_LABELS } from "@cocalc/util/consts";
 import { COLORS } from "@cocalc/util/theme";
 import { SelectNewHost } from "@cocalc/frontend/hosts/select-new-host";
-import { RootfsScanStatus } from "@cocalc/frontend/rootfs/scan-status";
+import { RootfsScanSummaryButton } from "@cocalc/frontend/rootfs/scan-status";
 import {
   groupedRootfsOptions,
   latestRootfsVersionEntries,
@@ -381,7 +381,12 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                 </Paragraph>
               )}
               {activeEntry && renderRootfsWarning(activeEntry)}
-              {activeEntry && <RootfsScanStatus entry={activeEntry} />}
+              {activeEntry && (
+                <RootfsScanSummaryButton
+                  entry={activeEntry}
+                  title={`RootFS scan details: ${activeEntry.label}`}
+                />
+              )}
               <Space wrap>
                 {activeEntry?.section && (
                   <Tag color={sectionTagColor(activeEntry.section)}>
@@ -524,7 +529,10 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
           )}
           {selectedRootfsEntry && renderRootfsWarning(selectedRootfsEntry)}
           {selectedRootfsEntry && (
-            <RootfsScanStatus entry={selectedRootfsEntry} />
+            <RootfsScanSummaryButton
+              entry={selectedRootfsEntry}
+              title={`RootFS scan details: ${selectedRootfsEntry.label}`}
+            />
           )}
           {renderRootfsPicker()}
         </Space>
