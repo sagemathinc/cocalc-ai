@@ -93,7 +93,7 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
     }
     case "notifications":
       return { page: "notifications" };
-    case "docs":
+    case "app-docs":
       return {
         page: "docs",
         slug: segments.slice(1).filter(Boolean).join("/") || undefined,
@@ -158,7 +158,7 @@ export function getPageTargetPath(parsed: ParsedPageTarget): string {
     case "notifications":
       return "notifications";
     case "docs":
-      return parsed.slug ? `docs/${parsed.slug}` : "docs";
+      return parsed.slug ? `app-docs/${parsed.slug}` : "app-docs";
     case "file-use":
       return "file-use";
     case "admin":

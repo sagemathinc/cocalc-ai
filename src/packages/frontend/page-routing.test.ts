@@ -38,12 +38,12 @@ describe("page-routing", () => {
   });
 
   it("parses global docs routes", () => {
-    expect(parsePageTarget("docs")).toEqual({ page: "docs" });
-    expect(parsePageTarget("docs/admin/users")).toEqual({
+    expect(parsePageTarget("app-docs")).toEqual({ page: "docs" });
+    expect(parsePageTarget("app-docs/admin/users")).toEqual({
       page: "docs",
       slug: "admin/users",
     });
-    expect(getPageTopTab(parsePageTarget("docs/admin/users"))).toBe("docs");
+    expect(getPageTopTab(parsePageTarget("app-docs/admin/users"))).toBe("docs");
   });
 
   it("parses admin subroutes and ignores query strings", () => {
@@ -111,7 +111,7 @@ describe("page-routing", () => {
       "/auth/sign-up",
     );
     expect(getPageUrlPath({ page: "docs", slug: "admin/users" })).toBe(
-      "/docs/admin/users",
+      "/app-docs/admin/users",
     );
     expect(
       getPageUrlPath({
