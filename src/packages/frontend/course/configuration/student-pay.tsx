@@ -13,6 +13,10 @@ import { FormattedMessage, useIntl } from "react-intl";
 
 import type { ClaimableMembershipPackage } from "@cocalc/conat/hub/api/purchases";
 import api from "@cocalc/frontend/client/api";
+import {
+  MembershipTierBenefits,
+  type MembershipTierWithPresentation,
+} from "@cocalc/frontend/account/membership-tier-benefits";
 import { Icon } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { getClaimableMembershipPackages } from "@cocalc/frontend/purchases/api";
@@ -20,7 +24,7 @@ import { currency } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { InstitutePaySection } from "./institute-pay";
 
-interface CourseMembershipTier {
+interface CourseMembershipTier extends MembershipTierWithPresentation {
   id: string;
   label?: string;
   priority?: number;
@@ -217,12 +221,15 @@ export default function StudentPay({ actions, settings, project_id }) {
             />
           </div>
           {selectedTier && (
-            <Space wrap>
-              <Tag color="blue">{selectedTier.label ?? selectedTier.id}</Tag>
-              <Tag>{currency(Number(selectedTier.course_price ?? 0))}</Tag>
-              <Tag>{Number(selectedTier.course_duration_days ?? 0)} days</Tag>
-              <Tag>{graceDays} grace days</Tag>
-              <Tag>priority {selectedTier.priority ?? 0}</Tag>
+            <Space direction="vertical" size="small" style={{ width: "100%" }}>
+              <Space wrap>
+                <Tag color="blue">{selectedTier.label ?? selectedTier.id}</Tag>
+                <Tag>{currency(Number(selectedTier.course_price ?? 0))}</Tag>
+                <Tag>{Number(selectedTier.course_duration_days ?? 0)} days</Tag>
+                <Tag>{graceDays} grace days</Tag>
+                <Tag>priority {selectedTier.priority ?? 0}</Tag>
+              </Space>
+              <MembershipTierBenefits compact tier={selectedTier} />
             </Space>
           )}
           <div>

@@ -14,11 +14,12 @@ import {
   MembershipPackageManager,
   SiteLicenseReverificationPanel,
 } from "../membership-package-manager";
+import type { MembershipTierWithPresentation } from "../membership-tier-benefits";
 import { SoftwareLicensesPage } from "./software-licenses";
 
 const { Paragraph, Text, Title } = Typography;
 
-interface MembershipTier {
+interface MembershipTier extends MembershipTierWithPresentation {
   id: string;
   label?: string;
   store_visible?: boolean;
