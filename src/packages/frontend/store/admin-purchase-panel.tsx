@@ -22,6 +22,10 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
+import {
+  MembershipTierBenefits,
+  type MembershipTierWithPresentation,
+} from "@cocalc/frontend/account/membership-tier-benefits";
 import api from "@cocalc/frontend/client/api";
 import {
   user_search,
@@ -37,7 +41,7 @@ const { Paragraph, Text } = Typography;
 
 type Product = "membership" | "voucher";
 
-interface MembershipTier {
+interface MembershipTier extends MembershipTierWithPresentation {
   disabled?: boolean;
   id: string;
   label?: string;
@@ -298,6 +302,13 @@ export default function AdminPurchasePanel() {
               value={membershipClass}
               onChange={(value) => setMembershipClass(value)}
             />
+            {tierById[membershipClass] != null && (
+              <MembershipTierBenefits
+                compact
+                showBilling={false}
+                tier={tierById[membershipClass]}
+              />
+            )}
             <Radio.Group
               value={interval}
               onChange={(e) => setInterval(e.target.value)}

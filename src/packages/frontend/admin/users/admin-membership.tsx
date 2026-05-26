@@ -23,6 +23,10 @@ import {
 import dayjs from "dayjs";
 import api from "@cocalc/frontend/client/api";
 import {
+  MembershipTierBenefits,
+  type MembershipTierWithPresentation,
+} from "@cocalc/frontend/account/membership-tier-benefits";
+import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
@@ -48,7 +52,7 @@ import { AccountEntitlementOverridePanel } from "./account-entitlement-override"
 
 const { Text } = Typography;
 
-interface MembershipTier {
+interface MembershipTier extends MembershipTierWithPresentation {
   id: string;
   label?: string;
   priority?: number;
@@ -209,6 +213,17 @@ export function AdminMembership({ account_id }: { account_id: string }) {
       {} as Record<string, string>,
     );
   }, [tiers]);
+  const tierById = useMemo(() => {
+    return tiers.reduce(
+      (acc, tier) => {
+        acc[tier.id] = tier;
+        return acc;
+      },
+      {} as Record<string, MembershipTier>,
+    );
+  }, [tiers]);
+  const selectedTierRecord =
+    selectedTier != null ? tierById[selectedTier] : undefined;
 
   const candidateRows = useMemo(() => {
     const candidates = details?.candidates ?? [];
@@ -483,6 +498,15 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                     showSearch
                     optionFilterProp="label"
                   />
+                  {selectedTierRecord != null && (
+                    <div style={{ marginTop: "8px" }}>
+                      <MembershipTierBenefits
+                        compact
+                        showBilling={false}
+                        tier={selectedTierRecord}
+                      />
+                    </div>
+                  )}
                 </div>
                 <div>
                   <Text>Expires</Text>

@@ -3,6 +3,7 @@ Return membership tier configuration for the store UI.
 */
 
 import { getMembershipTiers } from "@cocalc/server/membership/tiers";
+import { buildMembershipTierPresentation } from "@cocalc/util/membership-tier-presentation";
 
 export default async function handle(_req, res) {
   try {
@@ -14,5 +15,11 @@ export default async function handle(_req, res) {
 }
 
 async function get() {
-  return { tiers: await getMembershipTiers({ includeDisabled: true }) };
+  const tiers = await getMembershipTiers({ includeDisabled: true });
+  return {
+    tiers: tiers.map((tier) => ({
+      ...tier,
+      presentation: buildMembershipTierPresentation(tier),
+    })),
+  };
 }

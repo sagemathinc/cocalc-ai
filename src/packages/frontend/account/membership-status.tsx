@@ -45,10 +45,14 @@ import type {
 import MembershipPurchaseModal from "./membership-purchase-modal";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { openAccountSettings } from "./settings-routing";
+import {
+  MembershipTierBenefits,
+  type MembershipTierWithPresentation,
+} from "./membership-tier-benefits";
 
 const { Text } = Typography;
 
-interface MembershipTier {
+interface MembershipTier extends MembershipTierWithPresentation {
   id: string;
   label?: string;
   store_visible?: boolean;
@@ -876,6 +880,11 @@ export function MembershipStatusPanel({
               </Descriptions.Item>
             )}
           </Descriptions>
+          {tier != null ? (
+            <Card size="small">
+              <MembershipTierBenefits compact tier={tier} />
+            </Card>
+          ) : null}
 
           {details?.admin_override ? (
             <Alert

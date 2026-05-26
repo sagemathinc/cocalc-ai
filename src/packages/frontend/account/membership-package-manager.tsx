@@ -42,6 +42,10 @@ import {
 import { Icon, Loading } from "@cocalc/frontend/components";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
+import {
+  MembershipTierBenefits,
+  type MembershipTierWithPresentation,
+} from "./membership-tier-benefits";
 import MoneyStatistic from "@cocalc/frontend/purchases/money-statistic";
 import Payments from "@cocalc/frontend/purchases/payments";
 import {
@@ -95,7 +99,7 @@ import { openAccountSettings } from "./settings-routing";
 
 const { Paragraph, Text, Title } = Typography;
 
-interface MembershipTierLike {
+interface MembershipTierLike extends MembershipTierWithPresentation {
   id: string;
   label?: string;
   store_visible?: boolean;
@@ -2998,6 +3002,9 @@ function ProvisionPoolEditModal({
 }) {
   if (pool == null) return null;
   const theme = getProvisionPoolTheme(pool, poolIndex);
+  const selectedTier = siteLicenseTierOptions.find(
+    (tier) => tier.id === pool.membership_class,
+  );
 
   return (
     <Modal
@@ -3055,6 +3062,15 @@ function ProvisionPoolEditModal({
               }))}
               style={{ width: "100%" }}
             />
+            {selectedTier != null ? (
+              <div style={{ marginTop: 8 }}>
+                <MembershipTierBenefits
+                  compact
+                  showBilling={false}
+                  tier={selectedTier}
+                />
+              </div>
+            ) : null}
           </CompactField>
         </div>
         <div
@@ -3439,8 +3455,11 @@ function TeamPackagePurchaseModal({
     };
   }, [open, product, seatCount, membershipPackage, selectedTierId]);
 
+  const selectedTier = purchaseableTiers.find(
+    (tier) => tier.id === selectedTierId,
+  );
   const selectedTierLabel =
-    purchaseableTiers.find((tier) => tier.id === selectedTierId)?.label ??
+    selectedTier?.label ??
     capitalize(selectedTierId || membershipPackage?.membership_class || "team");
   const totalValue = toDecimal(quote?.total_price ?? 0);
   const chargeAmountValue = toDecimal(chargeAmount);
@@ -3552,6 +3571,15 @@ function TeamPackagePurchaseModal({
                   </Space>
                 </Radio.Group>
               </div>
+              {selectedTier != null ? (
+                <div style={{ marginTop: 8 }}>
+                  <MembershipTierBenefits
+                    compact
+                    showBilling={false}
+                    tier={selectedTier}
+                  />
+                </div>
+              ) : null}
             </div>
             <div>
               <Text strong>Billing interval</Text>

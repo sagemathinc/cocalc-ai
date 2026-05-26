@@ -32,6 +32,10 @@ import {
   getMembershipChangeQuote,
   type MembershipChangeQuote,
 } from "@cocalc/frontend/purchases/api";
+import {
+  MembershipTierBenefits,
+  type MembershipTierWithPresentation,
+} from "./membership-tier-benefits";
 import { MEMBERSHIP_CHANGE } from "@cocalc/util/db-schema/purchases";
 import { currency } from "@cocalc/util/misc";
 import {
@@ -47,7 +51,7 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 
 const { Text, Title } = Typography;
 
-interface MembershipTier {
+interface MembershipTier extends MembershipTierWithPresentation {
   id: string;
   label?: string;
   store_visible?: boolean;
@@ -303,7 +307,7 @@ export default function MembershipPurchaseModal({
                 <Card
                   key={tier.id}
                   style={{
-                    minWidth: "260px",
+                    minWidth: "320px",
                     flex: "1 1 0",
                     borderColor:
                       selectedTierId === tier.id ? "#1677ff" : undefined,
@@ -323,6 +327,13 @@ export default function MembershipPurchaseModal({
                       <Tag color="green">{trialDays}-day free trial</Tag>
                     </div>
                   )}
+                  <div style={{ marginBottom: "12px" }}>
+                    <MembershipTierBenefits
+                      compact
+                      showBilling={false}
+                      tier={tier}
+                    />
+                  </div>
                   <Button
                     type={selectedTierId === tier.id ? "primary" : "default"}
                     disabled={isCurrentTier || priceValue == null}

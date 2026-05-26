@@ -7,41 +7,30 @@ import { type ReactNode, useEffect, useState } from "react";
 
 import { Alert, Button, Flex, Space, Tag, Typography } from "antd";
 
+import {
+  MembershipTierBenefits,
+  type MembershipTierWithPresentation,
+} from "@cocalc/frontend/account/membership-tier-benefits";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   PublicGrid,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
-import { currency, plural, round2 } from "@cocalc/util/misc";
-import { upgrades } from "@cocalc/util/upgrade-spec";
+import { currency } from "@cocalc/util/misc";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 const { Paragraph, Text, Title } = Typography;
 
-export interface PublicMembershipTier {
+export interface PublicMembershipTier extends MembershipTierWithPresentation {
   disabled?: boolean;
-  features?: Record<string, unknown>;
   id: string;
   label?: string;
-  ai_limits?: Record<string, unknown>;
   price_monthly?: number;
   price_yearly?: number;
   trial_days?: number;
   priority?: number;
-  project_defaults?: Record<string, unknown>;
   store_visible?: boolean;
 }
-
-const PROJECT_DEFAULT_KEYS = ["memory", "disk_quota", "network"] as const;
-
-const TIER_DESCRIPTIONS: Record<string, string> = {
-  free: "A light entry point for evaluation and occasional use.",
-  member:
-    "The standard paid membership for serious day-to-day work with notebooks, terminals, and AI support.",
-  pro: "Higher limits and more headroom for heavier workloads and more demanding technical projects.",
-  student:
-    "A time-limited class-focused membership intended for course terms rather than ongoing subscriptions.",
-};
 
 function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
@@ -71,82 +60,6 @@ async function loadMembershipTiers(): Promise<
   }
 }
 
-function normalizeRecord(value?: unknown): Record<string, unknown> {
-  if (value != null && typeof value === "object") {
-    return value as Record<string, unknown>;
-  }
-  return {};
-}
-
-function formatDurationHours(hours: number): string {
-  if (!Number.isFinite(hours)) return "";
-  if (hours < 1) {
-    const minutes = Math.max(1, Math.round(hours * 60));
-    return `${minutes} min`;
-  }
-  const rounded = Number.isInteger(hours) ? hours : round2(hours);
-  return `${rounded} ${plural(rounded, "hour")}`;
-}
-
-function formatQuotaValue(key: string, value: unknown): string {
-  const spec = (upgrades as any).params?.[key];
-  if (spec?.input_type === "checkbox") {
-    return value ? "Included" : "Not included";
-  }
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return String(value);
-  }
-  const displayValue =
-    spec?.display_factor != null ? value * spec.display_factor : value;
-  if (key === "mintime") {
-    return formatDurationHours(displayValue);
-  }
-  const rounded = Number.isInteger(displayValue)
-    ? displayValue
-    : round2(displayValue);
-  const unit = spec?.display_unit ?? spec?.unit ?? "";
-  return unit ? `${rounded} ${unit}` : `${rounded}`;
-}
-
-function membershipHighlights(tier: PublicMembershipTier): string[] {
-  const projectDefaults = normalizeRecord(tier.project_defaults);
-  const aiLimits = normalizeRecord(tier.ai_limits);
-  const features = normalizeRecord(tier.features);
-
-  const highlights = PROJECT_DEFAULT_KEYS.flatMap((key) => {
-    if (!(key in projectDefaults)) return [];
-    const value = projectDefaults[key];
-    if (key === "network") {
-      return [
-        value ? "Internet-enabled projects" : "No outbound internet access",
-      ];
-    }
-    const label = key === "memory" ? "Project memory" : "Project disk";
-    return [`${label}: ${formatQuotaValue(key, value)}`];
-  });
-
-  const limit5h = Number(aiLimits.units_5h ?? aiLimits.limit_5h ?? 0);
-  const limit7d = Number(aiLimits.units_7d ?? aiLimits.limit_7d ?? 0);
-  if (Number.isFinite(limit5h) && limit5h > 0) {
-    highlights.push(
-      `AI usage included with ${round2(limit5h)} units per 5 hours`,
-    );
-  }
-  if (Number.isFinite(limit7d) && limit7d > 0) {
-    highlights.push(`Rolling 7-day AI allowance: ${round2(limit7d)} units`);
-  }
-  if (features.create_hosts) {
-    const hostTier = Number(features.project_host_tier ?? 0);
-    highlights.push(
-      hostTier > 0
-        ? `Can rent custom project hosts (tier ${hostTier})`
-        : "Can rent custom project hosts",
-    );
-  }
-
-  return highlights.slice(0, 5);
-}
-
 function yearlySavingsTag(tier: PublicMembershipTier): ReactNode {
   const monthly = Number(tier.price_monthly ?? 0);
   const yearly = Number(tier.price_yearly ?? 0);
@@ -166,14 +79,10 @@ function TierSection({
   tier: PublicMembershipTier;
 }) {
   const label = tier.label ?? tier.id;
-  const highlights = membershipHighlights(tier);
   const trialDays =
     typeof tier.trial_days === "number" && tier.trial_days > 0
       ? Math.floor(tier.trial_days)
       : 0;
-  const description =
-    TIER_DESCRIPTIONS[tier.id] ??
-    "A public membership tier configured by this deployment.";
 
   return (
     <PublicSection>
@@ -183,7 +92,6 @@ function TierSection({
         </Title>
         {yearlySavingsTag(tier)}
       </Flex>
-      <Paragraph style={{ margin: 0 }}>{description}</Paragraph>
       <div>
         <Text strong style={{ fontSize: "1.35rem" }}>
           {currency(Number(tier.price_monthly ?? 0))}
@@ -197,15 +105,7 @@ function TierSection({
       {trialDays > 0 && (
         <Tag color="green">{trialDays}-day free trial with payment method</Tag>
       )}
-      {highlights.length > 0 ? (
-        <ul style={{ margin: 0, paddingLeft: "20px" }}>
-          {highlights.map((item) => (
-            <li key={item}>{item}</li>
-          ))}
-        </ul>
-      ) : (
-        <Text type="secondary">Detailed limits are configured by admins.</Text>
-      )}
+      <MembershipTierBenefits compact tier={tier} />
       <Flex gap={8} wrap>
         {isAuthenticated ? (
           <Button href={appPath("settings/store")} type="primary">
