@@ -6,12 +6,16 @@
 export {};
 
 const getClusterAccountByIdDirectMock = jest.fn();
+const getClusterAccountByEmailDirectMock = jest.fn();
 const getClusterBanEquivalentEmailAccountsDirectMock = jest.fn();
+const reserveClusterAccountDirectoryEntryMock = jest.fn();
 const updateClusterAccountBannedDirectMock = jest.fn();
 const banUserMock = jest.fn();
 const removeUserBanMock = jest.fn();
+const quarantineAccountBillingResourcesLocalMock = jest.fn();
 const recordAccountBanAuditEventMock = jest.fn();
 const remoteSetBanMock = jest.fn();
+const assertSignupEmailDomainAllowedMock = jest.fn();
 
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: jest.fn(() => "bay-1"),
@@ -41,10 +45,16 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
 jest.mock("@cocalc/server/accounts/cluster-directory", () => ({
   canonicalEmailForBanEquivalence: (email: string | undefined) =>
     email ? "codex@gmail.com" : undefined,
+  deleteClusterAccountDirectoryEntry: jest.fn(),
+  getClusterAccountByEmailDirect: (...args: any[]) =>
+    getClusterAccountByEmailDirectMock(...args),
   getClusterAccountByIdDirect: (...args: any[]) =>
     getClusterAccountByIdDirectMock(...args),
   getClusterBanEquivalentEmailAccountsDirect: (...args: any[]) =>
     getClusterBanEquivalentEmailAccountsDirectMock(...args),
+  markClusterAccountProvisioned: jest.fn(),
+  reserveClusterAccountDirectoryEntry: (...args: any[]) =>
+    reserveClusterAccountDirectoryEntryMock(...args),
   updateClusterAccountBannedDirect: (...args: any[]) =>
     updateClusterAccountBannedDirectMock(...args),
 }));
@@ -54,18 +64,30 @@ jest.mock("@cocalc/server/accounts/ban", () => ({
   removeUserBan: (...args: any[]) => removeUserBanMock(...args),
 }));
 
+jest.mock("@cocalc/server/accounts/resource-quarantine", () => ({
+  quarantineAccountBillingResourcesLocal: (...args: any[]) =>
+    quarantineAccountBillingResourcesLocalMock(...args),
+}));
+
 jest.mock("@cocalc/server/accounts/ban-audit", () => ({
   recordAccountBanAuditEvent: (...args: any[]) =>
     recordAccountBanAuditEventMock(...args),
+}));
+
+jest.mock("@cocalc/server/accounts/signup-email-domain-policy", () => ({
+  assertSignupEmailDomainAllowed: (...args: any[]) =>
+    assertSignupEmailDomainAllowedMock(...args),
 }));
 
 describe("inter-bay account ban routing", () => {
   beforeEach(() => {
     jest.resetModules();
     getClusterAccountByIdDirectMock.mockReset();
+    getClusterAccountByEmailDirectMock.mockReset().mockResolvedValue(null);
     getClusterBanEquivalentEmailAccountsDirectMock
       .mockReset()
       .mockResolvedValue([]);
+    reserveClusterAccountDirectoryEntryMock.mockReset().mockResolvedValue(null);
     updateClusterAccountBannedDirectMock.mockReset().mockResolvedValue({
       account_id: "00000000-0000-4000-8000-000000000001",
       home_bay_id: "bay-1",
@@ -73,12 +95,16 @@ describe("inter-bay account ban routing", () => {
     });
     banUserMock.mockReset().mockResolvedValue(undefined);
     removeUserBanMock.mockReset().mockResolvedValue(undefined);
+    quarantineAccountBillingResourcesLocalMock
+      .mockReset()
+      .mockResolvedValue(undefined);
     recordAccountBanAuditEventMock.mockReset().mockResolvedValue(undefined);
     remoteSetBanMock.mockReset().mockResolvedValue({
       account_id: "00000000-0000-4000-8000-000000000001",
       home_bay_id: "bay-2",
       banned: true,
     });
+    assertSignupEmailDomainAllowedMock.mockReset().mockResolvedValue(undefined);
   });
 
   it("applies local bans on the account home bay and syncs the directory", async () => {
@@ -102,6 +128,12 @@ describe("inter-bay account ban routing", () => {
     expect(banUserMock).toHaveBeenCalledWith(
       "00000000-0000-4000-8000-000000000001",
     );
+    expect(quarantineAccountBillingResourcesLocalMock).toHaveBeenCalledWith({
+      account_id: "00000000-0000-4000-8000-000000000001",
+      actor_account_id: undefined,
+      reason: "account ban",
+      home_bay_id: "bay-1",
+    });
     expect(remoteSetBanMock).not.toHaveBeenCalled();
     expect(updateClusterAccountBannedDirectMock).toHaveBeenCalledWith({
       account_id: "00000000-0000-4000-8000-000000000001",
@@ -155,10 +187,108 @@ describe("inter-bay account ban routing", () => {
       reason: "spam campaign",
       metadata: undefined,
     });
+    expect(quarantineAccountBillingResourcesLocalMock).toHaveBeenCalledWith({
+      account_id: "00000000-0000-4000-8000-000000000001",
+      actor_account_id: "00000000-0000-4000-8000-000000000099",
+      reason: "spam campaign",
+      home_bay_id: "bay-1",
+    });
     expect(updateClusterAccountBannedDirectMock).toHaveBeenCalledWith({
       account_id: "00000000-0000-4000-8000-000000000001",
       banned: true,
     });
+  });
+
+  it("blocks new or changed Gmail-equivalent identities when an equivalent account is banned", async () => {
+    getClusterBanEquivalentEmailAccountsDirectMock.mockResolvedValue([
+      {
+        account_id: "00000000-0000-4000-8000-000000000001",
+        email_address: "codex+abuse@gmail.com",
+        home_bay_id: "bay-1",
+        banned: true,
+      },
+    ]);
+
+    const { assertNoClusterBannedEquivalentEmailAccount } =
+      await import("./accounts");
+    await expect(
+      assertNoClusterBannedEquivalentEmailAccount({
+        email_address: "cod.ex+new@googlemail.com",
+      }),
+    ).rejects.toThrow(/equivalent address is banned/);
+    expect(getClusterBanEquivalentEmailAccountsDirectMock).toHaveBeenCalledWith(
+      {
+        email_address: "cod.ex+new@googlemail.com",
+        limit: undefined,
+      },
+    );
+  });
+
+  it("rejects account creation before reserving a banned-equivalent email", async () => {
+    getClusterBanEquivalentEmailAccountsDirectMock.mockResolvedValue([
+      {
+        account_id: "00000000-0000-4000-8000-000000000001",
+        email_address: "codex@gmail.com",
+        home_bay_id: "bay-1",
+        banned: true,
+      },
+    ]);
+
+    const { createClusterAccount } = await import("./accounts");
+    await expect(
+      createClusterAccount({
+        email_address: "cod.ex+new@gmail.com",
+        password: "secret",
+        first_name: "Code",
+        last_name: "Ex",
+      } as any),
+    ).rejects.toThrow(/equivalent address is banned/);
+
+    expect(reserveClusterAccountDirectoryEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects account creation before reserving a disallowed email domain", async () => {
+    assertSignupEmailDomainAllowedMock.mockRejectedValueOnce(
+      new Error("Use an approved email address to create an account."),
+    );
+
+    const { createClusterAccount } = await import("./accounts");
+    await expect(
+      createClusterAccount({
+        email_address: "codex@other.edu",
+        password: "secret",
+        first_name: "Code",
+        last_name: "Ex",
+      } as any),
+    ).rejects.toThrow(/approved email address/);
+
+    expect(assertSignupEmailDomainAllowedMock).toHaveBeenCalledWith({
+      email_address: "codex@other.edu",
+    });
+    expect(
+      getClusterBanEquivalentEmailAccountsDirectMock,
+    ).not.toHaveBeenCalled();
+    expect(reserveClusterAccountDirectoryEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("allows the currently edited account to keep its own banned-equivalent email", async () => {
+    getClusterBanEquivalentEmailAccountsDirectMock.mockResolvedValue([
+      {
+        account_id: "00000000-0000-4000-8000-000000000001",
+        email_address: "codex+abuse@gmail.com",
+        home_bay_id: "bay-1",
+        banned: true,
+      },
+    ]);
+
+    const { assertNoClusterBannedEquivalentEmailAccount } =
+      await import("./accounts");
+    await expect(
+      assertNoClusterBannedEquivalentEmailAccount({
+        email_address: "cod.ex+abuse@googlemail.com",
+        allowed_account_id: "00000000-0000-4000-8000-000000000001",
+      }),
+    ).resolves.toBeUndefined();
   });
 
   it("bans Gmail-equivalent accounts as one admin action", async () => {
@@ -199,6 +329,16 @@ describe("inter-bay account ban routing", () => {
     );
     expect(banUserMock).toHaveBeenCalledWith(
       "00000000-0000-4000-8000-000000000002",
+    );
+    expect(quarantineAccountBillingResourcesLocalMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "00000000-0000-4000-8000-000000000001",
+      }),
+    );
+    expect(quarantineAccountBillingResourcesLocalMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "00000000-0000-4000-8000-000000000002",
+      }),
     );
     expect(updateClusterAccountBannedDirectMock).toHaveBeenCalledWith({
       account_id: "00000000-0000-4000-8000-000000000002",

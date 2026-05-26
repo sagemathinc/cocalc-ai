@@ -34,6 +34,7 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { labels, Locale } from "@cocalc/frontend/i18n";
 import { callback2, retry_until_success } from "@cocalc/util/async-utils";
 import type { AIServicesAvailable } from "@cocalc/util/db-schema/ai-models";
+import type { SignupEmailDomainPublicPolicy } from "@cocalc/util/accounts/signup-email-domain-policy";
 import {
   Config,
   KUCALC_COCALC_COM,
@@ -77,6 +78,7 @@ defaults.is_commercial = defaults.commercial;
 defaults._is_configured = false; // will be true after set via call to server
 defaults.ssh_remote_target = "";
 defaults.ssh_remote_url = "";
+defaults.signup_email_domain_public_policy = { mode: "allow_all" };
 
 // CustomizeState is maybe extension of what's in SiteSettings
 // so maybe there is a more clever way like this to do it than
@@ -99,6 +101,7 @@ export interface CustomizeState {
   custom_openai_enabled: boolean;
   datastore: boolean;
   account_creation_email_instructions: string;
+  signup_email_domain_public_policy?: SignupEmailDomainPublicPolicy;
   commercial: boolean;
   default_quotas: TypedMap<DefaultQuotaSetting>;
   dns: string; // e.g. "cocalc.com"

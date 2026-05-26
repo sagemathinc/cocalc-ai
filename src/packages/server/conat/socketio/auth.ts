@@ -40,6 +40,12 @@ import { recordApiKeyAuditEventSoon } from "@cocalc/server/api/api-key-audit";
 import { getHubManagedEgressBlockedMessage } from "./managed-egress-runtime";
 import { recordBrowserAuthSession } from "./browser-auth-sessions";
 import {
+  ensureAccountSecurityStateReady,
+  getAccountRevokedBeforeCached,
+  isAccountBannedCached,
+  startAccountSecurityStateSyncLoop,
+} from "@cocalc/server/accounts/security-state";
+import {
   type CoCalcUser,
   type CoCalcUserType,
   getCoCalcUserId,
@@ -51,6 +57,8 @@ import {
   isHostAllowed as isHostSubjectAllowed,
   isProjectAllowed as isProjectSubjectAllowed,
 } from "@cocalc/conat/auth/subject-policy";
+
+startAccountSecurityStateSyncLoop();
 
 const COOKIES = `'${HUB_PASSWORD_COOKIE_NAME}', '${REMEMBER_ME_COOKIE_NAME}', ${API_COOKIE_NAME}, '${PROJECT_SECRET_COOKIE_NAME}' or '${PROJECT_ID_COOKIE_NAME}'`;
 const DEFAULT_AGENT_SCOPES = ["browser_session", "project_session"] as const;
@@ -100,6 +108,7 @@ type CoCalcUserWithAgent = CoCalcUser & {
   auth_actor?: "account" | "agent";
   auth_scopes?: string[];
   auth_project_id?: string;
+  auth_iat_s?: number;
 };
 
 type CoCalcUserWithApiKey = CoCalcUser & Partial<ApiKeyPrincipal>;
@@ -156,10 +165,53 @@ function verifyAgentScopedProjectHostBearer(
       auth_actor: "agent",
       auth_scopes: [...DEFAULT_AGENT_SCOPES],
       auth_project_id: readAgentProjectId(socket),
+      auth_iat_s: claims.iat,
     };
   } catch {
     return;
   }
+}
+
+async function assertAccountSecurityStateAllowsToken({
+  account_id,
+  issued_at_s,
+}: {
+  account_id: string;
+  issued_at_s?: number;
+}): Promise<void> {
+  if (
+    !(await accountSecurityStateAllowsAccount({
+      account_id,
+      issued_at_s,
+    }))
+  ) {
+    if (isAccountBannedCached(account_id)) {
+      throw Error("account is banned");
+    }
+    throw Error("session revoked");
+  }
+}
+
+async function accountSecurityStateAllowsAccount({
+  account_id,
+  issued_at_s,
+}: {
+  account_id: string;
+  issued_at_s?: number;
+}): Promise<boolean> {
+  await ensureAccountSecurityStateReady();
+  if (isAccountBannedCached(account_id)) {
+    return false;
+  }
+  const revokedBeforeMs = getAccountRevokedBeforeCached(account_id);
+  if (
+    revokedBeforeMs != null &&
+    Number.isFinite(issued_at_s) &&
+    Math.floor(issued_at_s as number) * 1000 <= revokedBeforeMs
+  ) {
+    return false;
+  }
+  return true;
 }
 
 export async function getUser(
@@ -176,6 +228,10 @@ export async function getUser(
     }
     const agentUser = verifyAgentScopedProjectHostBearer(bearerToken, socket);
     if (agentUser) {
+      await assertAccountSecurityStateAllowsToken({
+        account_id: agentUser.account_id!,
+        issued_at_s: agentUser.auth_iat_s,
+      });
       assertHubInteractiveEgressAllowed(socket, agentUser);
       return agentUser;
     }
@@ -364,6 +420,17 @@ export async function isAllowed({
     return false;
   }
   const userType = getCoCalcUserType(user);
+  if (userType === "account") {
+    const account_id = getCoCalcUserId(user);
+    if (
+      !(await accountSecurityStateAllowsAccount({
+        account_id,
+        issued_at_s: (user as CoCalcUserWithAgent).auth_iat_s,
+      }))
+    ) {
+      return false;
+    }
+  }
   const agentUser = user as CoCalcUserWithAgent;
   if (agentUser.auth_actor === "agent") {
     const userId = getCoCalcUserId(agentUser);

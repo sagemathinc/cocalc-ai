@@ -1,6 +1,7 @@
 import getCustomize from "@cocalc/database/settings/customize";
 export { getCustomize };
 import getPool from "@cocalc/database/pool";
+import centralLog from "@cocalc/database/postgres/central-log";
 import { getFrontendSourceFingerprint as getFrontendSourceFingerprint0 } from "@cocalc/backend/frontend-build-fingerprint";
 import {
   getSingleBayInfo,
@@ -83,6 +84,13 @@ import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { EXTRAS as SITE_SETTINGS_EXTRAS } from "@cocalc/util/db-schema/site-settings-extras";
 import { is_valid_email_address } from "@cocalc/util/misc";
 import { site_settings_conf } from "@cocalc/util/schema";
+import {
+  normalizeSignupEmailDomainPolicy,
+  SIGNUP_EMAIL_DOMAIN_POLICY_SETTING_KEYS,
+  type DomainRule,
+  type SignupEmailDomainPolicy,
+  type SignupEmailDomainPolicySettings,
+} from "@cocalc/util/accounts/signup-email-domain-policy";
 import { v4 as uuid } from "uuid";
 import { secureRandomString } from "@cocalc/backend/misc";
 import {
@@ -128,7 +136,9 @@ import {
 } from "@cocalc/server/bay-backup";
 import {
   listRootfsImagesAdmin,
+  listRootfsImagesAdminPage,
   listVisibleRootfsImages,
+  listVisibleRootfsImagesPage,
   requestRootfsImageDeletion as requestRootfsImageDeletion0,
   saveRootfsImage,
 } from "@cocalc/server/rootfs/catalog";
@@ -137,12 +147,18 @@ import {
   runProjectRootfsPreflightScan,
   runRootfsReleaseScan,
 } from "@cocalc/server/rootfs/scan-execution";
-import { runPendingRootfsReleaseGc } from "@cocalc/server/rootfs/releases";
+import {
+  listRootfsRusticReposAdmin,
+  runPendingRootfsReleaseGc,
+} from "@cocalc/server/rootfs/releases";
 import type {
   ProjectRootfsStateEntry,
   ProjectRootfsPublishLroRef,
   PublishProjectRootfsBody,
+  RootfsAdminCatalogPage,
+  RootfsCatalogPageRequest,
   RootfsCatalogSaveBody,
+  RootfsImageCatalogPage,
 } from "@cocalc/util/rootfs-images";
 import type {
   RootfsProjectPreflightScanResult,
@@ -583,6 +599,70 @@ async function setSiteSettingLocal(update: SiteSettingUpdate): Promise<void> {
   await callback2(db().set_server_setting, normalized);
 }
 
+function isSignupEmailDomainPolicySetting(name: string): boolean {
+  return SIGNUP_EMAIL_DOMAIN_POLICY_SETTING_KEYS.has(name);
+}
+
+function auditDomainRule(rule: DomainRule): string {
+  return `${rule.includeSubdomains ? "*." : ""}${rule.domain}`;
+}
+
+function auditSignupEmailDomainPolicy(policy: SignupEmailDomainPolicy) {
+  return {
+    mode: policy.mode,
+    allow_domains: policy.allowRules.map(auditDomainRule),
+    deny_domains: policy.denyRules.map(auditDomainRule),
+    public_message: policy.publicMessage,
+    show_allowed_domains: policy.showAllowedDomains,
+  };
+}
+
+async function getSignupEmailDomainPolicySettings(): Promise<SignupEmailDomainPolicySettings> {
+  const settings: SignupEmailDomainPolicySettings = {};
+  for (const name of SIGNUP_EMAIL_DOMAIN_POLICY_SETTING_KEYS) {
+    settings[name] = await callback2(db().get_server_setting, { name });
+  }
+  return settings;
+}
+
+async function logSignupEmailDomainPolicyChange({
+  account_id,
+  updates,
+  oldSettings,
+}: {
+  account_id?: string;
+  updates: SiteSettingUpdate[];
+  oldSettings: SignupEmailDomainPolicySettings;
+}): Promise<void> {
+  const changed_setting_names = updates
+    .map(({ name }) => name)
+    .filter(isSignupEmailDomainPolicySetting)
+    .sort();
+  if (changed_setting_names.length === 0) {
+    return;
+  }
+  const newSettings: SignupEmailDomainPolicySettings = { ...oldSettings };
+  for (const { name, value } of updates) {
+    if (isSignupEmailDomainPolicySetting(name)) {
+      newSettings[name] = value;
+    }
+  }
+  await centralLog({
+    event: "signup_email_domain_policy_changed",
+    value: {
+      account_id,
+      bay_id: getConfiguredBayId(),
+      changed_setting_names,
+      old_policy: auditSignupEmailDomainPolicy(
+        normalizeSignupEmailDomainPolicy(oldSettings),
+      ),
+      new_policy: auditSignupEmailDomainPolicy(
+        normalizeSignupEmailDomainPolicy(newSettings),
+      ),
+    },
+  });
+}
+
 async function getConfiguredSiteSettingUpdates(): Promise<SiteSettingUpdate[]> {
   const settings: SiteSettingUpdate[] = [];
   for (const name of [...SITE_SETTING_NAMES].sort()) {
@@ -656,8 +736,20 @@ export async function setSiteSettings({
     require_second_factor: true,
   });
   const updates = settings.map(normalizeSiteSettingUpdate);
+  const signupEmailDomainPolicyOldSettings = updates.some(({ name }) =>
+    isSignupEmailDomainPolicySetting(name),
+  )
+    ? await getSignupEmailDomainPolicySettings()
+    : undefined;
   for (const update of updates) {
     await setSiteSettingLocal(update);
+  }
+  if (signupEmailDomainPolicyOldSettings != null) {
+    await logSignupEmailDomainPolicyChange({
+      account_id,
+      updates,
+      oldSettings: signupEmailDomainPolicyOldSettings,
+    });
   }
   return await propagateSiteSettingsToBays(updates);
 }
@@ -2665,12 +2757,42 @@ export async function getRootfsCatalog(opts: { account_id?: string } = {}) {
   return await listVisibleRootfsImages(opts.account_id);
 }
 
+export async function getRootfsCatalogPage(
+  opts: RootfsCatalogPageRequest & {
+    account_id?: string;
+  } = {},
+): Promise<RootfsImageCatalogPage> {
+  return await listVisibleRootfsImagesPage(opts.account_id, opts);
+}
+
 export async function getRootfsCatalogAdmin(
   opts: {
     account_id?: string;
   } = {},
 ) {
   return await listRootfsImagesAdmin(opts.account_id);
+}
+
+export async function getRootfsCatalogAdminPage(
+  opts: RootfsCatalogPageRequest & {
+    account_id?: string;
+  } = {},
+): Promise<RootfsAdminCatalogPage> {
+  return await listRootfsImagesAdminPage(opts);
+}
+
+export async function getRootfsRusticReposAdmin(
+  opts: {
+    account_id?: string;
+    region?: string;
+    status?: string;
+  } = {},
+) {
+  const { account_id, region, status } = opts;
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await listRootfsRusticReposAdmin({ region, status });
 }
 
 const ROOTFS_ADMIN_CATALOG_FIELDS = [

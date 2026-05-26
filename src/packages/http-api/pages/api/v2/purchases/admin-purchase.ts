@@ -20,6 +20,7 @@ export default async function handle(req, res) {
       account_id,
       session_hash: session.session_hash,
       require_second_factor: true,
+      allow_actor_impersonation: false,
     });
     const {
       comment,

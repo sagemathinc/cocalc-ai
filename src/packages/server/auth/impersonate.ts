@@ -17,6 +17,10 @@ import { resolveAccountImpersonationGrantDirectory } from "@cocalc/server/auth/i
 import setSignInCookies from "@cocalc/server/auth/set-sign-in-cookies";
 import clearAuthCookies from "@cocalc/server/auth/clear-auth-cookies";
 import {
+  ensureAccountSecurityStateReady,
+  isAccountBannedCached,
+} from "@cocalc/server/accounts/security-state";
+import {
   consumeImpersonationGrantLocal,
   createImpersonationSessionLocal,
 } from "@cocalc/server/auth/impersonation";
@@ -136,6 +140,10 @@ async function doIt({ req, res }) {
       grant_id: grantId,
       subject_account_id: account_id,
     });
+    await ensureAccountSecurityStateReady();
+    if (isAccountBannedCached(grant.actor_account_id)) {
+      throw Error("impersonation actor account is banned");
+    }
     const remember = await setSignInCookies({
       req,
       res,

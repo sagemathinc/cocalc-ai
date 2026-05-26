@@ -18,11 +18,15 @@ import type {
   ProjectRootfsPublishLroRef,
   PublishProjectRootfsBody,
   RootfsAdminCatalogEntry,
+  RootfsAdminCatalogPage,
+  RootfsCatalogPageRequest,
   RootfsCatalogSaveBody,
+  RootfsImageCatalogPage,
   RootfsDeleteRequestResult,
   RootfsImageManifest,
   RootfsImageEntry,
   RootfsReleaseGcRunResult,
+  RootfsRusticRepoListResult,
 } from "@cocalc/util/rootfs-images";
 import type { NewsItemWebapp } from "@cocalc/util/types/news";
 import type {
@@ -111,7 +115,10 @@ export const system = {
   getCodexPaymentSource: authFirst,
   getFrontendSourceFingerprint: authFirst,
   getRootfsCatalog: authFirst,
+  getRootfsCatalogPage: authFirst,
   getRootfsCatalogAdmin: authFirstRequireAccount,
+  getRootfsCatalogAdminPage: authFirstRequireAccount,
+  getRootfsRusticReposAdmin: authFirstRequireAccount,
   saveRootfsCatalogEntry: authFirstRequireAccount,
   requestRootfsImageDeletion: authFirstRequireAccount,
   runRootfsReleaseGc: authFirstRequireAccount,
@@ -1993,9 +2000,27 @@ export interface System {
     account_id?: string;
   }) => Promise<RootfsImageManifest>;
 
+  getRootfsCatalogPage: (
+    opts?: RootfsCatalogPageRequest & {
+      account_id?: string;
+    },
+  ) => Promise<RootfsImageCatalogPage>;
+
   getRootfsCatalogAdmin: (opts?: {
     account_id?: string;
   }) => Promise<RootfsAdminCatalogEntry[]>;
+
+  getRootfsCatalogAdminPage: (
+    opts?: RootfsCatalogPageRequest & {
+      account_id?: string;
+    },
+  ) => Promise<RootfsAdminCatalogPage>;
+
+  getRootfsRusticReposAdmin: (opts?: {
+    account_id?: string;
+    region?: string;
+    status?: string;
+  }) => Promise<RootfsRusticRepoListResult>;
 
   saveRootfsCatalogEntry: (
     opts: RootfsCatalogSaveBody & {

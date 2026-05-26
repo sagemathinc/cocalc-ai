@@ -129,6 +129,11 @@ describe("delete account", () => {
     expect(deleteBlobsForAccountDeletionMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
     });
+    expect(recordAccountRevocationMock).toHaveBeenCalledWith(
+      ACCOUNT_ID,
+      expect.any(Number),
+      { banned: true },
+    );
     expect(calls).toEqual([
       "dispose-projects",
       "delete-rootfs-images",

@@ -105,7 +105,7 @@ export async function requireDangerousSessionAuth({
   const session = await requireFreshAuthForSessionHash({
     account_id: accountId,
     session_hash: sessionHash,
-    allow_actor_impersonation: true,
+    allow_actor_impersonation,
   });
 
   if (!require_second_factor) {

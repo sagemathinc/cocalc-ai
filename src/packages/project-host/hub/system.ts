@@ -155,6 +155,8 @@ export function wireSystemApi(): void {
       artifact_path: string;
       snapshot_id: string;
       repo_selector: string;
+      repo_id?: string;
+      repo_root?: string;
       region?: string;
       bucket_id?: string;
       bucket_name?: string;

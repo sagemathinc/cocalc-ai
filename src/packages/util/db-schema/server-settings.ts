@@ -8,6 +8,7 @@ import type {
   KucalcValues,
   ProjectHostsFundingMode,
 } from "@cocalc/util/db-schema/site-defaults";
+import type { SignupEmailDomainPublicPolicy } from "@cocalc/util/accounts/signup-email-domain-policy";
 import type { Strategy } from "@cocalc/util/types/sso";
 
 Table({
@@ -108,6 +109,7 @@ export interface Customize {
   googleAnalytics?: string;
   emailSignup?: boolean;
   accountCreationInstructions?: string;
+  signupEmailDomainPolicy?: SignupEmailDomainPublicPolicy;
   zendesk?: boolean; // true if zendesk support is configured.
   stripePublishableKey?: string;
   imprint_html?: string;

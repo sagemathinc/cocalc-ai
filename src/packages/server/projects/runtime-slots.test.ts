@@ -47,6 +47,9 @@ describe("runtime slot admission", () => {
       if (sql.includes("SELECT sponsor_account_id")) {
         return { rows: [], rowCount: 0 };
       }
+      if (sql.includes("SELECT banned FROM accounts")) {
+        return { rows: [{ banned: false }], rowCount: 1 };
+      }
       if (sql.includes("INSERT INTO project_runtime_slots")) {
         return { rows: [makeSlot("project-1")], rowCount: 1 };
       }
@@ -91,6 +94,9 @@ describe("runtime slot admission", () => {
       if (sql.includes("SELECT sponsor_account_id")) {
         return { rows: [makeSlot("other-project")], rowCount: 1 };
       }
+      if (sql.includes("SELECT banned FROM accounts")) {
+        return { rows: [{ banned: false }], rowCount: 1 };
+      }
       throw new Error(`unexpected SQL: ${sql}`);
     });
 
@@ -105,6 +111,31 @@ describe("runtime slot admission", () => {
         owning_bay_id: "bay-0",
       }),
     ).rejects.toBeInstanceOf(RuntimeSponsorSlotsExhaustedError);
+    expect(queryMock).toHaveBeenCalledWith("ROLLBACK");
+  });
+
+  it("denies runtime slot reservation for banned sponsors", async () => {
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
+      if (sql.includes("UPDATE project_runtime_slots")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("SELECT banned FROM accounts")) {
+        return { rows: [{ banned: true }], rowCount: 1 };
+      }
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+
+    const { reserveProjectRuntimeSlotLocal } = await import("./runtime-slots");
+    await expect(
+      reserveProjectRuntimeSlotLocal({
+        sponsor_account_id: "sponsor",
+        project_id: "project-1",
+        owning_bay_id: "bay-0",
+      }),
+    ).rejects.toThrow("runtime sponsor account is banned");
     expect(queryMock).toHaveBeenCalledWith("ROLLBACK");
   });
 });

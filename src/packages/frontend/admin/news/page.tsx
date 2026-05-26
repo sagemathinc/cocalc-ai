@@ -29,6 +29,10 @@ import {
 } from "react";
 
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import ChatInput from "@cocalc/frontend/chat/input";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
 import api from "@cocalc/frontend/client/api";
@@ -415,6 +419,9 @@ function NewsEditorPage({
   const [loading, setLoading] = useState<boolean>(!isNew);
   const [saveMessage, setSaveMessage] = useState<string>("");
   const [saving, setSaving] = useState<boolean>(false);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   useEffect(() => {
     if (adminAccess !== "allowed") {
@@ -482,34 +489,38 @@ function NewsEditorPage({
 
   async function save() {
     if (!canSave) return;
-    setSaving(true);
     setError("");
     setSaveMessage("");
     try {
-      const result = await api("news/edit", {
-        ...(isNew ? undefined : { id: route.id }),
-        channel: draft.channel,
-        date: draft.date.unix(),
-        hide: draft.hide,
-        tags: draft.tags.filter((tag) => tag.trim()),
-        text: draft.text,
-        title: draft.title.trim(),
-        until: draft.until?.unix(),
-        url: draft.url.trim() || undefined,
+      await runFreshAuthAction(async () => {
+        setSaving(true);
+        try {
+          const result = await api("news/edit", {
+            ...(isNew ? undefined : { id: route.id }),
+            channel: draft.channel,
+            date: draft.date.unix(),
+            hide: draft.hide,
+            tags: draft.tags.filter((tag) => tag.trim()),
+            text: draft.text,
+            title: draft.title.trim(),
+            until: draft.until?.unix(),
+            url: draft.url.trim() || undefined,
+          });
+          const savedId = `${result.id}`;
+          setSaveMessage(
+            isNew
+              ? `Created news item #${savedId}.`
+              : `Saved changes to news item #${savedId}.`,
+          );
+          if (isNew) {
+            openAdminRoute({ kind: "news-editor", id: savedId });
+          }
+        } finally {
+          setSaving(false);
+        }
       });
-      const savedId = `${result.id}`;
-      setSaveMessage(
-        isNew
-          ? `Created news item #${savedId}.`
-          : `Saved changes to news item #${savedId}.`,
-      );
-      if (isNew) {
-        openAdminRoute({ kind: "news-editor", id: savedId });
-      }
     } catch (err) {
       setError(`${err}`);
-    } finally {
-      setSaving(false);
     }
   }
 
@@ -821,6 +832,7 @@ function NewsEditorPage({
           </Card>
         </Col>
       </Row>
+      <FreshAuthModal {...freshAuthModalProps} />
     </Space>
   );
 }

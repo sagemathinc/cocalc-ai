@@ -39,8 +39,10 @@ function defaultTitle(): string {
 
 export function useProjectCreateDraft({
   defaultValue,
+  rootfsQuery,
 }: {
   defaultValue: string;
+  rootfsQuery?: string;
 }) {
   const cloudflareCountry = useTypedRedux("customize", "country");
   const cloudflareRegionCode = useTypedRedux(
@@ -65,7 +67,10 @@ export function useProjectCreateDraft({
     images: rootfsImages,
     loading: rootfsLoading,
     error: rootfsError,
-  } = useRootfsImages([managedRootfsCatalogUrl()]);
+  } = useRootfsImages([managedRootfsCatalogUrl()], {
+    query: rootfsQuery,
+    limit: 200,
+  });
   const [selectedHost, setSelectedHost] = useState<Host | undefined>();
 
   const preferredRegion = useMemo(

@@ -7,6 +7,7 @@ import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { uuid } from "@cocalc/util/misc";
 import createAccount from "../accounts/create-account";
 import createPurchase from "./create-purchase";
+import { recordAccountSecurityState } from "@cocalc/server/accounts/security-state";
 import { isPurchaseAllowed } from "./is-purchase-allowed";
 import { before, after } from "@cocalc/server/test";
 
@@ -84,6 +85,30 @@ describe("test checking whether or not purchase is allowed under various conditi
     });
     expect(allowed).toBe(false);
     expect(reason).toContain("is not a valid account");
+  });
+
+  it("says no when the account is banned in the replicated security state", async () => {
+    const bannedAccountId = uuid();
+    await createAccount({
+      email: `${bannedAccountId}@example.com`,
+      password: "xyz",
+      firstName: "Banned",
+      lastName: "User",
+      account_id: bannedAccountId,
+    });
+    await recordAccountSecurityState({
+      account_id: bannedAccountId,
+      banned: true,
+    });
+
+    const { allowed, reason } = await isPurchaseAllowed({
+      account_id: bannedAccountId,
+      service: "membership",
+      cost: 1,
+    });
+
+    expect(allowed).toBe(false);
+    expect(reason).toContain("is banned");
   });
 
   it("says 'no' for non-existent services", async () => {

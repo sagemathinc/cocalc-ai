@@ -7,6 +7,7 @@ let requireDangerousSessionAuthMock: jest.Mock;
 let saveRootfsImageMock: jest.Mock;
 let requestRootfsImageDeletionMock: jest.Mock;
 let runPendingRootfsReleaseGcMock: jest.Mock;
+let listRootfsRusticReposAdminMock: jest.Mock;
 
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
   __esModule: true,
@@ -35,6 +36,8 @@ jest.mock("@cocalc/server/rootfs/catalog", () => ({
 
 jest.mock("@cocalc/server/rootfs/releases", () => ({
   __esModule: true,
+  listRootfsRusticReposAdmin: (...args: any[]) =>
+    listRootfsRusticReposAdminMock(...args),
   runPendingRootfsReleaseGc: (...args: any[]) =>
     runPendingRootfsReleaseGcMock(...args),
 }));
@@ -61,6 +64,10 @@ describe("RootFS catalog dangerous-session auth", () => {
       deleted: 0,
       blocked: 0,
       errors: [],
+    }));
+    listRootfsRusticReposAdminMock = jest.fn(async () => ({
+      repos: [],
+      legacy: { artifact_count: 0, artifact_bytes: 0 },
     }));
   });
 
@@ -146,5 +153,31 @@ describe("RootFS catalog dangerous-session auth", () => {
       require_second_factor: true,
     });
     expect(runPendingRootfsReleaseGcMock).toHaveBeenCalledWith({ limit: 100 });
+  });
+
+  it("allows admins to list RootFS rustic repos without fresh auth", async () => {
+    isAdminMock = jest.fn(async () => true);
+    const { getRootfsRusticReposAdmin } = await import("./system");
+    await getRootfsRusticReposAdmin({
+      account_id: ACCOUNT_ID,
+      region: "wnam",
+      status: "active",
+    });
+
+    expect(requireDangerousSessionAuthMock).not.toHaveBeenCalled();
+    expect(listRootfsRusticReposAdminMock).toHaveBeenCalledWith({
+      region: "wnam",
+      status: "active",
+    });
+  });
+
+  it("rejects non-admin RootFS rustic repo listings", async () => {
+    const { getRootfsRusticReposAdmin } = await import("./system");
+    await expect(
+      getRootfsRusticReposAdmin({
+        account_id: ACCOUNT_ID,
+      }),
+    ).rejects.toThrow("must be an admin");
+    expect(listRootfsRusticReposAdminMock).not.toHaveBeenCalled();
   });
 });

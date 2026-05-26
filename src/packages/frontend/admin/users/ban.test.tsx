@@ -99,6 +99,12 @@ describe("Ban", () => {
     render(<Ban account_id="subject-1" banned={false} name="Target User" />);
 
     fireEvent.click(screen.getByRole("button", { name: /Ban User/i }));
+    expect(
+      screen.getByText(/blocks future equivalent signups/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Future account creation or email changes/i),
+    ).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("ban reason"), {
       target: { value: "spam campaign" },
     });
@@ -153,6 +159,8 @@ describe("Ban", () => {
         payment_methods_detached: 1,
         hosts_stop_requested: 1,
         host_ids: ["host-1"],
+        projects_stop_requested: 1,
+        project_ids: ["project-1"],
         errors: [],
       });
 

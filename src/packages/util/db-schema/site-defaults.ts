@@ -9,6 +9,10 @@ import jsonic from "jsonic";
 import { isEqual } from "lodash";
 import { LOCALE } from "@cocalc/util/consts/locale";
 import { is_valid_email_address } from "@cocalc/util/misc";
+import {
+  parseDomainRules,
+  SIGNUP_EMAIL_DOMAIN_POLICY_MODES,
+} from "../accounts/signup-email-domain-policy";
 export const ALWAYS_ALLOWED_TIMETRAVEL = 10;
 
 export type ConfigValid = Readonly<string[]> | ((val: string) => boolean);
@@ -100,6 +104,11 @@ export type SiteSettingsKeys =
   | "email_enabled"
   | "verify_emails"
   | "email_signup"
+  | "signup_email_domain_policy_mode"
+  | "signup_email_domain_allow_list"
+  | "signup_email_domain_deny_list"
+  | "signup_email_domain_public_message"
+  | "signup_email_domain_show_allowed_domains"
   | "public_signup_without_registration_token"
   | "share_server"
   | "landing_pages"
@@ -212,6 +221,9 @@ export const only_nonneg_int = (val) =>
   ((v) => only_ints(v) && v >= 0)(to_int(val));
 export const only_pos_int = (val) =>
   ((v) => only_ints(v) && v > 0)(to_int(val));
+
+const validDomainList = (val: string): boolean =>
+  !val.trim() || parseDomainRules(val).length > 0;
 
 export const toFloat = (val): number => parseFloat(val);
 export const onlyFloats = (val) =>
@@ -799,6 +811,62 @@ export const site_settings_conf: SiteSettings = {
     to_val: to_bool,
     group: "Access & Identity",
     subgroup: "Signup",
+  },
+  signup_email_domain_policy_mode: {
+    name: "Signup email domain policy",
+    desc: "Restrict new account creation and email-address changes by email domain. Use exactly one mode: allow all domains, allow only listed domains, or deny listed domains.",
+    default: "allow_all",
+    valid: SIGNUP_EMAIL_DOMAIN_POLICY_MODES,
+    valid_labels: {
+      allow_all: "Allow all email domains",
+      allow_only: "Allow only listed domains",
+      deny_list: "Deny listed domains",
+    },
+    group: "Access & Identity",
+    subgroup: "Signup",
+    tags: ["Security", "Email"],
+  },
+  signup_email_domain_allow_list: {
+    name: "Signup allowed email domains",
+    desc: "Comma, whitespace, or newline separated domain list used only when Signup email domain policy is 'Allow only listed domains'. Use example.edu for exact domains or *.example.edu for subdomains.",
+    default: "",
+    clearable: true,
+    multiline: 4,
+    valid: validDomainList,
+    group: "Access & Identity",
+    subgroup: "Signup",
+    tags: ["Security", "Email"],
+  },
+  signup_email_domain_deny_list: {
+    name: "Signup denied email domains",
+    desc: "Comma, whitespace, or newline separated domain list used only when Signup email domain policy is 'Deny listed domains'. This list is never exposed through public customize data.",
+    default: "",
+    clearable: true,
+    multiline: 4,
+    valid: validDomainList,
+    group: "Access & Identity",
+    subgroup: "Signup",
+    tags: ["Security", "Email"],
+  },
+  signup_email_domain_public_message: {
+    name: "Signup email domain policy public message",
+    desc: "Optional message shown on the signup form and returned when a signup is blocked by this policy. Leave blank for a generic message.",
+    default: "",
+    clearable: true,
+    multiline: 3,
+    group: "Access & Identity",
+    subgroup: "Signup",
+    tags: ["Security", "Email"],
+  },
+  signup_email_domain_show_allowed_domains: {
+    name: "Show allowed signup domains publicly",
+    desc: "If enabled with allow-list mode, the signup form can show the allowed domain list. Deny-listed domains are never shown publicly.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    group: "Access & Identity",
+    subgroup: "Signup",
+    tags: ["Security", "Email"],
   },
   public_signup_without_registration_token: {
     name: "Allow public signup without registration token",

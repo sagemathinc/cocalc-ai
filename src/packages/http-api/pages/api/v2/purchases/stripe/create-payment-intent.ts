@@ -45,6 +45,7 @@ async function get(req) {
       account_id: admin_account_id,
       session_hash: session.session_hash,
       require_second_factor: true,
+      allow_actor_impersonation: false,
     });
     await createPaymentIntent({
       account_id: user_account_id,

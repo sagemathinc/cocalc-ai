@@ -572,7 +572,7 @@ export const useHostsPageViewModel = () => {
   const [editOpen, setEditOpen] = React.useState(false);
   const [savingEdit, setSavingEdit] = React.useState(false);
   const [editProvider, setEditProvider] = React.useState<HostProvider>("none");
-  const { drawerOpen, selected, openDetails, closeDetails } =
+  const { drawerOpen, selected, initialTab, openDetails, closeDetails } =
     useHostSelection(hosts);
   const openEdit = (host: (typeof hosts)[number]) => {
     setEditingHost(host);
@@ -1733,6 +1733,7 @@ export const useHostsPageViewModel = () => {
   const hostDrawerVm = useHostDrawerViewModel({
     open: drawerOpen,
     host: selected,
+    initialTab,
     hostOps,
     onClose: closeDetails,
     onEdit: openEdit,

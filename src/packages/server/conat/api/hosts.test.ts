@@ -7,6 +7,8 @@ let spawnMock: jest.Mock;
 let queryMock: jest.Mock;
 let isAdminMock: jest.Mock;
 let isBannedMock: jest.Mock;
+let ensureAccountSecurityStateReadyMock: jest.Mock;
+let isAccountBannedCachedMock: jest.Mock;
 let moveProjectToHostMock: jest.Mock;
 let resolveMembershipForAccountMock: jest.Mock;
 let loadProjectHostMetricsHistoryMock: jest.Mock;
@@ -162,6 +164,13 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
 jest.mock("@cocalc/server/accounts/is-banned", () => ({
   __esModule: true,
   default: (...args: any[]) => isBannedMock(...args),
+}));
+
+jest.mock("@cocalc/server/accounts/security-state", () => ({
+  __esModule: true,
+  ensureAccountSecurityStateReady: (...args: any[]) =>
+    ensureAccountSecurityStateReadyMock(...args),
+  isAccountBannedCached: (...args: any[]) => isAccountBannedCachedMock(...args),
 }));
 
 jest.mock("@cocalc/server/conat/socketio/browser-auth-sessions", () => ({
@@ -4522,6 +4531,8 @@ describe("hosts.issueProjectHostAuthToken", () => {
     queryMock = jest.fn();
     isAdminMock = jest.fn(async () => false);
     isBannedMock = jest.fn(async () => false);
+    ensureAccountSecurityStateReadyMock = jest.fn(async () => undefined);
+    isAccountBannedCachedMock = jest.fn(() => false);
     moveProjectToHostMock = jest.fn();
     resolveMembershipForAccountMock = jest.fn(async () => ({
       entitlements: {},

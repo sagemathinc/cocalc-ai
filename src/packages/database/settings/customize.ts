@@ -10,6 +10,7 @@ import { ServerSettings, getServerSettings } from "./server-settings";
 import siteURL from "./site-url";
 import { copy_with } from "@cocalc/util/misc";
 import type { Customize } from "@cocalc/util/db-schema/server-settings";
+import { publicSignupEmailDomainPolicy } from "@cocalc/util/accounts/signup-email-domain-policy";
 export type { Customize };
 
 const fallback = (a?: string, b?: string): string =>
@@ -56,6 +57,7 @@ export default async function getCustomize(
 
       emailSignup: settings.email_signup,
       accountCreationInstructions: settings.account_creation_email_instructions,
+      signupEmailDomainPolicy: publicSignupEmailDomainPolicy(settings),
 
       logoSquareURL: settings.logo_square,
       logoRectangularURL: settings.logo_rectangular,

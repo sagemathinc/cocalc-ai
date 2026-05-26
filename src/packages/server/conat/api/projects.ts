@@ -3734,15 +3734,20 @@ SELECT
 FROM projects
 CROSS JOIN LATERAL jsonb_each(users) AS u(user_id, user_data)
 CROSS JOIN LATERAL jsonb_each(u.user_data -> 'ssh_keys') AS k(fingerprint, ssh_key)
-WHERE project_id = $1;
+JOIN accounts a ON a.account_id::TEXT = u.user_id
+WHERE project_id = $1
+  AND a.banned IS NOT TRUE
+  AND COALESCE(u.user_data ->> 'group', '') IN ('owner', 'collaborator');
 `),
     f(`
 SELECT  kdata ->> 'value' AS key
 FROM projects p
 CROSS JOIN LATERAL jsonb_object_keys(p.users) AS u(account_id)
-JOIN accounts a ON a.account_id = u.account_id::uuid
+JOIN accounts a ON a.account_id::TEXT = u.account_id
 CROSS JOIN LATERAL jsonb_each(a.ssh_keys) AS k(fingerprint, kdata)
-WHERE p.project_id = $1;
+WHERE p.project_id = $1
+  AND a.banned IS NOT TRUE
+  AND COALESCE(p.users #>> ARRAY[u.account_id, 'group']::TEXT[], '') IN ('owner', 'collaborator');
 `),
   ]);
 

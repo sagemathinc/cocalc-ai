@@ -483,6 +483,7 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
     const publishUpload = await issueRootfsReleaseArtifactUpload({
       host_id,
       artifact_kind: "full",
+      source_image: artifact.source_image,
     });
 
     let uploadResult:
@@ -523,14 +524,31 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       });
       uploadResult = result;
     }
+    if (!uploadResult) {
+      throw new Error("RootFS publish upload metadata missing after upload");
+    }
+    const completedUpload = uploadResult;
 
     const release = await timings.measure("register_release", async () => {
       return await upsertPublishedRootfsRelease({
         artifact: {
           ...artifact,
-          artifact_kind: uploadResult?.artifact_kind ?? "full",
+          artifact_kind: completedUpload.artifact_kind ?? "full",
         },
-        upload: uploadResult,
+        upload: {
+          ...completedUpload,
+          repo_id: completedUpload.repo_id ?? publishUpload.repo_id,
+          repo_root: completedUpload.repo_root ?? publishUpload.repo_root,
+          region: completedUpload.region ?? publishUpload.region,
+          bucket_id: completedUpload.bucket_id ?? publishUpload.bucket_id,
+          bucket_name: completedUpload.bucket_name ?? publishUpload.bucket_name,
+          bucket_purpose:
+            completedUpload.bucket_purpose ?? publishUpload.bucket_purpose,
+          repo_selector:
+            completedUpload.repo_selector ?? publishUpload.repo_selector,
+          artifact_backend:
+            completedUpload.artifact_backend ?? publishUpload.artifact_backend,
+        },
       });
     });
 

@@ -13,6 +13,10 @@ import {
 import { v4 } from "uuid";
 import type {
   RootfsAdminCatalogEntry,
+  RootfsAdminCatalogCounts,
+  RootfsAdminCatalogPage,
+  RootfsCatalogPageRequest,
+  RootfsImageCatalogPage,
   PublishProjectRootfsArtifact,
   PublishProjectRootfsBody,
   RootfsCatalogSaveBody,
@@ -39,6 +43,7 @@ import {
   ROOTFS_IMAGE_MANIFEST_VERSION,
 } from "@cocalc/util/rootfs-images";
 import { assertCanCreateOrUpdateRootfs } from "@cocalc/server/membership/rootfs-limits";
+import { ensureRootfsRusticRepoSchema } from "@cocalc/server/rootfs/rustic-repo-schema";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   getConfiguredClusterRole,
@@ -58,6 +63,7 @@ type RootfsImageRow = {
   owner_id: string | null;
   runtime_image: string;
   created: Date | null;
+  updated: Date | null;
   label: string;
   family: string | null;
   version: string | null;
@@ -97,6 +103,15 @@ type RootfsImageRow = {
   artifact_backend: RootfsReleaseArtifactBackend | null;
   artifact_format: RootfsReleaseArtifactFormat | null;
   artifact_path: string | null;
+  repo_id: string | null;
+};
+
+type RootfsCatalogQueryResult = {
+  rows: RootfsImageRow[];
+  total: number;
+  counts: RootfsAdminCatalogCounts;
+  limit: number;
+  offset: number;
 };
 
 type RootfsReplicaStorageRow = {
@@ -107,6 +122,7 @@ type RootfsReplicaStorageRow = {
   bucket_purpose: string | null;
   artifact_format: RootfsReleaseArtifactFormat;
   artifact_path: string;
+  repo_id: string | null;
   status: string;
 };
 
@@ -114,6 +130,7 @@ type RootfsRusticArtifactPath = {
   artifact_backend: RootfsReleaseArtifactBackend;
   region?: string;
   snapshot_id: string;
+  repo_id?: string;
 };
 
 type RootfsLifecycleSnapshot = {
@@ -187,6 +204,14 @@ function decodeRusticArtifactPath(
     return null;
   }
   const [_, artifact_backend, region, snapshot_id] = parts;
+  if (artifact_backend === "v2") {
+    if (!region || !snapshot_id) return null;
+    return {
+      artifact_backend: "r2",
+      repo_id: region,
+      snapshot_id,
+    };
+  }
   if (!artifact_backend || !snapshot_id) {
     return null;
   }
@@ -223,6 +248,9 @@ function rootfsStorageRepoSelector({
     return "rest:rootfs-images";
   }
   if (rustic.artifact_backend === "r2") {
+    if (rustic.repo_id) {
+      return `r2:rootfs-images:${rustic.repo_id}`;
+    }
     return `r2:rootfs-images:${rustic.region ?? "site"}`;
   }
   return `${rustic.artifact_backend}:rootfs-images`;
@@ -250,6 +278,7 @@ function primaryStorageLocation(row: RootfsImageRow): RootfsStorageLocation[] {
         artifact_path: row.artifact_path,
         region: rustic?.region,
       }),
+      repo_id: row.repo_id ?? rustic?.repo_id,
       region: rustic?.region,
     },
   ];
@@ -270,6 +299,7 @@ function replicaStorageLocation(
       artifact_path: row.artifact_path,
       region: row.region ?? rustic?.region,
     }),
+    repo_id: row.repo_id ?? rustic?.repo_id,
     region: row.region ?? rustic?.region,
     bucket_name: row.bucket_name ?? undefined,
     bucket_purpose: row.bucket_purpose ?? undefined,
@@ -491,8 +521,203 @@ export async function ensureBuiltinRootfsImages(): Promise<void> {
   }
 }
 
-async function queryRootfsRows(): Promise<RootfsImageRow[]> {
+const ROOTFS_CATALOG_DEFAULT_LIMIT = 50;
+const ROOTFS_CATALOG_MAX_LIMIT = 200;
+
+function normalizeCatalogLimit(limit?: number): number {
+  if (typeof limit !== "number" || !Number.isFinite(limit)) {
+    return ROOTFS_CATALOG_DEFAULT_LIMIT;
+  }
+  return Math.max(1, Math.min(ROOTFS_CATALOG_MAX_LIMIT, Math.floor(limit)));
+}
+
+function encodeRootfsCatalogCursor(offset: number): string | undefined {
+  if (offset <= 0) return undefined;
+  return Buffer.from(JSON.stringify({ offset })).toString("base64url");
+}
+
+function decodeRootfsCatalogCursor(cursor?: string): number {
+  if (!cursor) return 0;
+  try {
+    const decoded = JSON.parse(
+      Buffer.from(cursor, "base64url").toString("utf8"),
+    ) as { offset?: unknown };
+    return typeof decoded.offset === "number" &&
+      Number.isFinite(decoded.offset) &&
+      decoded.offset > 0
+      ? Math.floor(decoded.offset)
+      : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function rootfsCatalogOrderBy(opts: RootfsCatalogPageRequest): string {
+  const direction = opts.direction === "asc" ? "ASC" : "DESC";
+  switch (opts.sort) {
+    case "created":
+      return `r.created ${direction} NULLS LAST, r.image_id ASC`;
+    case "label":
+      return `lower(r.label) ${direction}, r.image_id ASC`;
+    case "family":
+      return `lower(COALESCE(r.family, '')) ${direction}, lower(r.label) ASC, r.image_id ASC`;
+    case "visibility":
+      return `r.visibility ${direction} NULLS LAST, lower(r.label) ASC, r.image_id ASC`;
+    case "official":
+      return `COALESCE(r.official, false) ${direction}, lower(r.label) ASC, r.image_id ASC`;
+    case "scan_status":
+      return `rel.scan_status ${direction} NULLS LAST, lower(r.label) ASC, r.image_id ASC`;
+    case "storage_status":
+      return `rel.gc_status ${direction} NULLS LAST, lower(r.label) ASC, r.image_id ASC`;
+    case "owner":
+      return `lower(COALESCE(a.last_name, '') || ' ' || COALESCE(a.first_name, '') || ' ' || COALESCE(r.owner_id::TEXT, '')) ${direction}, lower(r.label) ASC, r.image_id ASC`;
+    case "usage_count":
+      return `COALESCE(project_refs.project_count, 0) ${direction}, lower(r.label) ASC, r.image_id ASC`;
+    case "updated":
+    default:
+      return `COALESCE(r.updated, r.created) ${direction} NULLS LAST, r.official DESC, lower(r.label) ASC, r.image_id ASC`;
+  }
+}
+
+function rootfsCatalogBaseSelect(): string {
+  return `FROM rootfs_images AS r
+    LEFT JOIN accounts AS a ON a.account_id = r.owner_id
+    LEFT JOIN rootfs_releases AS rel ON rel.release_id = r.release_id
+    LEFT JOIN (
+      SELECT rootfs_image_id AS image_id, COUNT(*)::INTEGER AS project_count
+      FROM projects
+      WHERE rootfs_image_id IS NOT NULL
+      GROUP BY rootfs_image_id
+    ) AS project_refs ON project_refs.image_id = r.image_id`;
+}
+
+function addRootfsCatalogFilters({
+  opts,
+  values,
+  where,
+}: {
+  opts: RootfsCatalogPageRequest;
+  values: unknown[];
+  where: string[];
+}) {
+  const filters = opts.filters ?? {};
+  const addValue = (value: unknown) => {
+    values.push(value);
+    return `$${values.length}`;
+  };
+  const query = trimString(opts.query);
+  if (query) {
+    const p = addValue(`%${query}%`);
+    where.push(`(
+      r.image_id ILIKE ${p} OR
+      r.release_id ILIKE ${p} OR
+      r.runtime_image ILIKE ${p} OR
+      r.label ILIKE ${p} OR
+      COALESCE(r.family, '') ILIKE ${p} OR
+      COALESCE(r.version, '') ILIKE ${p} OR
+      COALESCE(r.channel, '') ILIKE ${p} OR
+      COALESCE(r.description, '') ILIKE ${p} OR
+      COALESCE(r.visibility, '') ILIKE ${p} OR
+      COALESCE(r.owner_id::TEXT, '') ILIKE ${p} OR
+      COALESCE(a.first_name, '') ILIKE ${p} OR
+      COALESCE(a.last_name, '') ILIKE ${p} OR
+      COALESCE(array_to_string(r.tags, ' '), '') ILIKE ${p} OR
+      COALESCE(rel.scan_status, '') ILIKE ${p} OR
+      COALESCE(rel.artifact_path, '') ILIKE ${p} OR
+      COALESCE(rel.repo_id::TEXT, '') ILIKE ${p}
+    )`);
+  }
+  const booleanFilters: Array<
+    [keyof NonNullable<RootfsCatalogPageRequest["filters"]>, string]
+  > = [
+    ["official", "r.official"],
+    ["prepull", "r.prepull"],
+    ["hidden", "r.hidden"],
+    ["blocked", "r.blocked"],
+    ["deleted", "r.deleted"],
+    ["gpu", "r.gpu"],
+  ];
+  for (const [key, column] of booleanFilters) {
+    if (typeof filters[key] === "boolean") {
+      where.push(`COALESCE(${column}, false) = ${addValue(filters[key])}`);
+    }
+  }
+  if (filters.visibility) {
+    where.push(`r.visibility = ${addValue(filters.visibility)}`);
+  }
+  if (filters.scan_status) {
+    where.push(`rel.scan_status = ${addValue(filters.scan_status)}`);
+  }
+  if (filters.release_gc_status) {
+    where.push(`rel.gc_status = ${addValue(filters.release_gc_status)}`);
+  }
+  if (filters.owner_id) {
+    where.push(`r.owner_id = ${addValue(filters.owner_id)}`);
+  }
+  if (filters.family) {
+    where.push(`r.family = ${addValue(filters.family)}`);
+  }
+  if (filters.channel) {
+    where.push(`r.channel = ${addValue(filters.channel)}`);
+  }
+}
+
+async function queryRootfsCatalogRows(
+  opts: RootfsCatalogPageRequest & {
+    all?: boolean;
+    visibleFor?: {
+      account_id?: string;
+      collaboratorIds: Set<string>;
+    };
+  } = {},
+): Promise<RootfsCatalogQueryResult> {
+  await ensureRootfsRusticRepoSchema();
   const pool = getPool("medium");
+  const values: unknown[] = [];
+  const where: string[] = [];
+  if (opts.visibleFor) {
+    const addValue = (value: unknown) => {
+      values.push(value);
+      return `$${values.length}`;
+    };
+    where.push("COALESCE(r.hidden, false) = false");
+    where.push("COALESCE(r.blocked, false) = false");
+    where.push("COALESCE(r.deleted, false) = false");
+    const visible: string[] = [
+      "COALESCE(r.official, false) = true",
+      "r.visibility = 'public'",
+    ];
+    if (opts.visibleFor.account_id) {
+      visible.push(`r.owner_id = ${addValue(opts.visibleFor.account_id)}`);
+    }
+    const collaboratorIds = Array.from(opts.visibleFor.collaboratorIds);
+    if (collaboratorIds.length > 0) {
+      visible.push(
+        `(r.visibility = 'collaborators' AND r.owner_id = ANY(${addValue(
+          collaboratorIds,
+        )}::UUID[]))`,
+      );
+    }
+    where.push(`(${visible.join(" OR ")})`);
+  }
+  addRootfsCatalogFilters({ opts, values, where });
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const orderSql = rootfsCatalogOrderBy(opts);
+  const limit = normalizeCatalogLimit(opts.limit);
+  const offset = opts.all
+    ? 0
+    : typeof opts.offset === "number" &&
+        Number.isFinite(opts.offset) &&
+        opts.offset > 0
+      ? Math.floor(opts.offset)
+      : decodeRootfsCatalogCursor(opts.cursor);
+  const pageValues = values.slice();
+  const pageSql = opts.all
+    ? ""
+    : `LIMIT $${pageValues.length + 1} OFFSET $${pageValues.length + 2}`;
+  if (!opts.all) {
+    pageValues.push(limit, offset);
+  }
   const { rows } = await pool.query<RootfsImageRow>(
     `SELECT
       r.image_id,
@@ -500,6 +725,7 @@ async function queryRootfsRows(): Promise<RootfsImageRow[]> {
       r.owner_id,
       r.runtime_image,
       r.created,
+      r.updated,
       r.label,
       r.family,
       r.version,
@@ -538,13 +764,60 @@ async function queryRootfsRows(): Promise<RootfsImageRow[]> {
       rel.scan_summary,
       rel.artifact_backend,
       rel.artifact_format,
-      rel.artifact_path
-    FROM rootfs_images AS r
-    LEFT JOIN accounts AS a ON a.account_id = r.owner_id
-    LEFT JOIN rootfs_releases AS rel ON rel.release_id = r.release_id
-    ORDER BY r.official DESC, COALESCE(r.updated, r.created) DESC, r.label ASC`,
+      rel.artifact_path,
+      rel.repo_id
+    ${rootfsCatalogBaseSelect()}
+    ${whereSql}
+    ORDER BY ${orderSql}
+    ${pageSql}`,
+    pageValues,
   );
-  return rows;
+  const countResult = await pool.query<RootfsAdminCatalogCounts>(
+    `SELECT
+      COUNT(*)::INTEGER AS total,
+      COUNT(*) FILTER (WHERE COALESCE(r.deleted, false))::INTEGER AS deleted,
+      COUNT(*) FILTER (WHERE rel.gc_status = 'pending_delete')::INTEGER AS pending_delete,
+      COUNT(*) FILTER (WHERE COALESCE(r.blocked, false) OR rel.gc_status = 'blocked')::INTEGER AS blocked,
+      COUNT(*) FILTER (
+        WHERE COALESCE(r.official, false)
+          AND COALESCE(r.deleted, false) = false
+          AND (rel.scan_status IS NULL OR rel.scan_status = 'unknown')
+      )::INTEGER AS official_unscanned,
+      COUNT(*) FILTER (
+        WHERE COALESCE(r.official, false)
+          AND COALESCE(r.deleted, false) = false
+          AND COALESCE((rel.scan_summary->'severity_counts'->>'critical')::INTEGER, 0) > 0
+      )::INTEGER AS official_critical,
+      COUNT(*) FILTER (
+        WHERE COALESCE(r.official, false)
+          AND COALESCE(r.deleted, false) = false
+          AND rel.scan_status = 'error'
+      )::INTEGER AS official_scan_failed
+    ${rootfsCatalogBaseSelect()}
+    ${whereSql}`,
+    values,
+  );
+  const counts = countResult.rows[0] ?? {
+    total: rows.length,
+    deleted: 0,
+    pending_delete: 0,
+    blocked: 0,
+    official_unscanned: 0,
+    official_critical: 0,
+    official_scan_failed: 0,
+  };
+  return {
+    rows,
+    total: counts.total,
+    counts,
+    limit: opts.all ? rows.length : limit,
+    offset,
+  };
+}
+
+async function queryRootfsRows(): Promise<RootfsImageRow[]> {
+  const result = await queryRootfsCatalogRows({ all: true });
+  return result.rows;
 }
 
 function shouldSyncSeedCatalogEntry(entry: RootfsImageEntry): boolean {
@@ -652,6 +925,7 @@ async function queryReplicaStorageRows(
   if (!release_ids.length) {
     return new Map();
   }
+  await ensureRootfsRusticRepoSchema();
   const pool = getPool("medium");
   const { rows } = await pool.query<RootfsReplicaStorageRow>(
     `SELECT
@@ -662,6 +936,7 @@ async function queryReplicaStorageRows(
       bucket_purpose,
       artifact_format,
       artifact_path,
+      repo_id,
       status
     FROM rootfs_release_artifacts
     WHERE release_id::TEXT = ANY($1::TEXT[])
@@ -699,6 +974,41 @@ export async function listVisibleRootfsImages(
     generated_at: new Date().toISOString(),
     source: DEFAULT_ROOTFS_CATALOG_URL,
     images,
+  };
+}
+
+export async function listVisibleRootfsImagesPage(
+  account_id?: string,
+  opts: RootfsCatalogPageRequest & { includeSeedCatalog?: boolean } = {},
+): Promise<RootfsImageCatalogPage> {
+  await ensureBuiltinRootfsImages();
+  if (opts.includeSeedCatalog !== false) {
+    await syncOfficialRootfsCatalogFromSeed();
+  }
+  const [collaboratorIds, admin] = await Promise.all([
+    collaboratorIdsFor(account_id),
+    account_id ? isAdmin(account_id) : Promise.resolve(false),
+  ]);
+  const result = await queryRootfsCatalogRows({
+    ...opts,
+    visibleFor: { account_id, collaboratorIds },
+  });
+  const images = result.rows
+    .map((row) => rowToEntry({ row, account_id, collaboratorIds, admin }))
+    .filter((entry): entry is RootfsImageEntry => !!entry);
+  const nextOffset = result.offset + result.rows.length;
+  return {
+    version: ROOTFS_IMAGE_MANIFEST_VERSION,
+    generated_at: new Date().toISOString(),
+    source: DEFAULT_ROOTFS_CATALOG_URL,
+    images,
+    total: result.total,
+    limit: result.limit,
+    cursor: opts.cursor,
+    next_cursor:
+      nextOffset < result.total
+        ? encodeRootfsCatalogCursor(nextOffset)
+        : undefined,
   };
 }
 
@@ -753,6 +1063,84 @@ export async function listRootfsImagesAdmin(
     entry.events = eventsByImageId.get(entry.id) ?? [];
   }
   return entries;
+}
+
+async function enrichRootfsAdminEntries({
+  rows,
+  entries,
+}: {
+  rows: RootfsImageRow[];
+  entries: RootfsAdminCatalogEntry[];
+}) {
+  const replicasByReleaseId = await queryReplicaStorageRows(
+    rows
+      .map((row) => row.release_id)
+      .filter((release_id): release_id is string => !!release_id),
+  );
+  for (let i = 0; i < entries.length; i++) {
+    const release_id = rows[i].release_id;
+    if (!release_id) continue;
+    const replicas = replicasByReleaseId.get(release_id) ?? [];
+    if (!replicas.length) continue;
+    entries[i].storage_locations = [
+      ...(entries[i].storage_locations ?? []),
+      ...replicas,
+    ];
+  }
+  await Promise.all(
+    entries.map(async (entry) => {
+      if (
+        !entry.release_id ||
+        (!entry.deleted &&
+          entry.release_gc_status !== "blocked" &&
+          entry.release_gc_status !== "pending_delete")
+      ) {
+        return;
+      }
+      entry.delete_blockers = await getDeleteBlockers({
+        release_id: entry.release_id,
+        runtime_image: entry.image,
+      });
+    }),
+  );
+  const eventsByImageId = await listRecentRootfsImageEvents({
+    image_ids: entries.map((entry) => entry.id),
+    limitPerImage: 5,
+  });
+  for (const entry of entries) {
+    entry.events = eventsByImageId.get(entry.id) ?? [];
+  }
+}
+
+export async function listRootfsImagesAdminPage({
+  account_id,
+  ...opts
+}: RootfsCatalogPageRequest & {
+  account_id?: string;
+} = {}): Promise<RootfsAdminCatalogPage> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  await ensureBuiltinRootfsImages();
+  await syncOfficialRootfsCatalogFromSeed();
+  const result = await queryRootfsCatalogRows(opts);
+  const entries = result.rows.map((row) =>
+    rowToAdminEntry({ row, account_id, admin: true }),
+  );
+  await enrichRootfsAdminEntries({ rows: result.rows, entries });
+  const nextOffset = result.offset + result.rows.length;
+  return {
+    entries,
+    total: result.total,
+    counts: result.counts,
+    limit: result.limit,
+    cursor: opts.cursor,
+    next_cursor:
+      nextOffset < result.total
+        ? encodeRootfsCatalogCursor(nextOffset)
+        : undefined,
+    generated_at: new Date().toISOString(),
+  };
 }
 
 function normalizeVisibility(value?: unknown): RootfsImageVisibility {

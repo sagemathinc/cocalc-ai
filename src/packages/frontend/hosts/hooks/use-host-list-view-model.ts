@@ -33,7 +33,7 @@ type UseHostListViewModelArgs = {
   onRefreshCloudStatus?: (host: Host) => void;
   onUpgrade?: (host: Host) => void;
   onUpgradeFromHub?: (host: Host) => void;
-  onDetails: (host: Host) => void;
+  onDetails: (host: Host, tab?: string) => void;
   onEdit: (host: Host) => void;
   onToggleStar: (host: Host) => void;
   selfHost?: {

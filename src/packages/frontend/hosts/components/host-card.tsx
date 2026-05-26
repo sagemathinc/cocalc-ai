@@ -35,7 +35,7 @@ type HostCardProps = {
   onDelete: (id: string, opts?: HostDeleteOptions) => void;
   onCancelOp?: (op_id: string) => void;
   onRefreshCloudStatus?: (host: Host) => void;
-  onDetails: (host: Host) => void;
+  onDetails: (host: Host, tab?: string) => void;
   onEdit: (host: Host) => void;
   onToggleStar?: (host: Host) => void;
   catalog?: HostCatalog;

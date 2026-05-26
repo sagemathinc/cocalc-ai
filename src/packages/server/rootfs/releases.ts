@@ -17,6 +17,15 @@ import { buildLaunchpadRestRusticRepoConfig } from "@cocalc/server/launchpad/res
 import { ensureProjectBackupBucketForRegion } from "@cocalc/server/project-backup";
 import { appendRootfsImageEventForReleaseImages } from "@cocalc/server/rootfs/events";
 import {
+  ensureRootfsRusticRepoSchema,
+  ROOTFS_RUSTIC_ACTIVE_SHARDS_PER_REGION,
+  ROOTFS_RUSTIC_RELEASES_PER_SHARD,
+  ROOTFS_RUSTIC_REPO_STATUS_ACTIVE,
+  ROOTFS_RUSTIC_REPO_STATUS_DISABLED,
+  ROOTFS_RUSTIC_REPO_STATUS_SEALED,
+  ROOTFS_RUSTIC_SHARED_REPO_ROOT_PREFIX,
+} from "@cocalc/server/rootfs/rustic-repo-schema";
+import {
   DEFAULT_R2_REGION,
   mapCloudRegionToR2Region,
   parseR2Region,
@@ -32,6 +41,7 @@ import type {
   RootfsReleaseArtifactKind,
   RootfsReleaseGcItem,
   RootfsReleaseGcRunResult,
+  RootfsRusticRepoListResult,
   RootfsUploadedArtifactResult,
 } from "@cocalc/util/rootfs-images";
 import { v4 as uuid } from "uuid";
@@ -56,6 +66,7 @@ type RootfsReleaseRow = {
   artifact_format: RootfsReleaseArtifactFormat;
   artifact_backend: RootfsReleaseArtifactBackend;
   artifact_path: string;
+  repo_id: string | null;
   artifact_sha256: string;
   artifact_bytes: number;
   inspect_json: Record<string, any> | null;
@@ -84,11 +95,29 @@ type RootfsReleaseArtifactReplicaRow = {
   artifact_kind: RootfsReleaseArtifactKind;
   artifact_format: RootfsReleaseArtifactFormat;
   artifact_path: string;
+  repo_id: string | null;
   artifact_sha256: string;
   artifact_bytes: number;
   status: string;
   replicated_from_artifact_id: string | null;
   error: string | null;
+};
+
+type RootfsRusticRepoRow = {
+  id: string;
+  region: string | null;
+  bucket_id: string | null;
+  root: string | null;
+  secret: string | null;
+  status: string | null;
+  created: Date | null;
+  updated: Date | null;
+  assigned_artifact_count?: number | null;
+};
+
+type PoolClient = {
+  query: <T = any>(sql: string, params?: any[]) => Promise<{ rows: T[] }>;
+  release: () => void;
 };
 
 function normalizeContentKey(content_key?: string | null): string {
@@ -103,17 +132,28 @@ type RootfsRusticArtifactPath = {
   artifact_backend: RootfsReleaseArtifactBackend;
   snapshot_id: string;
   region?: string;
+  repo_id?: string;
 };
 
 function encodeRusticArtifactPath({
   artifact_backend,
   snapshot_id,
   region,
+  repo_id,
 }: RootfsRusticArtifactPath): string {
   const backend = `${artifact_backend ?? ""}`.trim();
   const snapshot = `${snapshot_id ?? ""}`.trim();
   if (!backend || !snapshot) {
     throw new Error("invalid rustic RootFS artifact path");
+  }
+  const repoId = `${repo_id ?? ""}`.trim();
+  if (repoId) {
+    return [
+      "rustic",
+      "v2",
+      encodeURIComponent(repoId),
+      encodeURIComponent(snapshot),
+    ].join("/");
   }
   const safeRegion = `${region ?? ""}`.trim() || "site";
   return [
@@ -138,6 +178,14 @@ function decodeRusticArtifactPath(
     return null;
   }
   const [_, artifact_backend, region, snapshot_id] = parts;
+  if (artifact_backend === "v2") {
+    if (!region || !snapshot_id) return null;
+    return {
+      artifact_backend: "r2",
+      repo_id: region,
+      snapshot_id,
+    };
+  }
   if (!artifact_backend || !snapshot_id) {
     return null;
   }
@@ -151,20 +199,32 @@ function decodeRusticArtifactPath(
 export async function issueRootfsReleaseArtifactUpload({
   host_id,
   artifact_kind = "full",
+  preferred_repo_id,
+  source_image,
+  parent_release_id,
 }: {
   host_id: string;
   artifact_kind?: RootfsReleaseArtifactKind;
+  preferred_repo_id?: string | null;
+  source_image?: string | null;
+  parent_release_id?: string | null;
 }): Promise<RootfsArtifactTransferTarget> {
   if (artifact_kind !== "full") {
     throw new Error(
       "managed RootFS releases are always stored as full rustic snapshots",
     );
   }
-  const repo = await buildRootfsRusticRepoConfigForHost(host_id);
+  const repo = await buildRootfsRusticRepoConfigForHost(host_id, {
+    preferred_repo_id,
+    source_image,
+    parent_release_id,
+  });
   return {
     backend: "rustic",
     repo_toml: repo.repo_toml,
     repo_selector: repo.repo_selector,
+    repo_id: repo.repo_id,
+    repo_root: repo.repo_root,
     artifact_backend: repo.artifact_backend,
     region: repo.region,
     bucket_id: repo.bucket?.id,
@@ -176,6 +236,7 @@ export async function issueRootfsReleaseArtifactUpload({
 async function loadRootfsReleaseRowByContentKey(
   content_key: string,
 ): Promise<RootfsReleaseRow | null> {
+  await ensureRootfsRusticRepoSchema();
   const pool = getPool("medium");
   const { rows } = await pool.query<RootfsReleaseRow>(
     `SELECT
@@ -191,6 +252,7 @@ async function loadRootfsReleaseRowByContentKey(
       artifact_format,
       artifact_backend,
       artifact_path,
+      repo_id,
       artifact_sha256,
       artifact_bytes,
       inspect_json
@@ -201,7 +263,9 @@ async function loadRootfsReleaseRowByContentKey(
   return rows[0] ?? null;
 }
 
-async function loadR2BucketForRegion(region: string): Promise<BucketRow | null> {
+async function loadR2BucketForRegion(
+  region: string,
+): Promise<BucketRow | null> {
   return (await ensureProjectBackupBucketForRegion(region)) as BucketRow | null;
 }
 
@@ -269,15 +333,350 @@ async function getRootfsRusticSharedSecret(): Promise<string> {
   return encoded;
 }
 
+function normalizeRootfsRusticRegion(region?: string | null): string {
+  return (
+    parseR2Region(region) ??
+    mapCloudRegionToR2Region(region ?? DEFAULT_R2_REGION)
+  );
+}
+
+function nextRootfsRusticRepoRoot({
+  region,
+  existingCount,
+  repoId,
+}: {
+  region: string;
+  existingCount: number;
+  repoId: string;
+}): string {
+  const serial = String(existingCount + 1).padStart(4, "0");
+  return `${ROOTFS_RUSTIC_SHARED_REPO_ROOT_PREFIX}/${region}/shard-${serial}-${repoId}`;
+}
+
+async function listRootfsRusticReposForRegionTx(
+  client: PoolClient,
+  region: string,
+  statuses?: string[],
+): Promise<RootfsRusticRepoRow[]> {
+  const filters = ["r.region=$1"];
+  const params: any[] = [region];
+  if (statuses?.length) {
+    params.push(statuses);
+    filters.push(
+      `COALESCE(r.status, '${ROOTFS_RUSTIC_REPO_STATUS_ACTIVE}') = ANY($${params.length}::text[])`,
+    );
+  }
+  const { rows } = await client.query<RootfsRusticRepoRow>(
+    `WITH assignments AS (
+       SELECT repo_id, release_id::text AS artifact_key
+       FROM rootfs_releases
+       WHERE repo_id IS NOT NULL
+         AND COALESCE(gc_status, 'active') <> 'deleted'
+       UNION
+       SELECT repo_id, artifact_id::text AS artifact_key
+       FROM rootfs_release_artifacts
+       WHERE repo_id IS NOT NULL
+         AND COALESCE(status, 'ready') <> 'deleted'
+     )
+     SELECT
+       r.id,
+       r.region,
+       r.bucket_id,
+       r.root,
+       r.secret,
+       r.status,
+       r.created,
+       r.updated,
+       COUNT(a.artifact_key)::INTEGER AS assigned_artifact_count
+     FROM rootfs_rustic_repos r
+     LEFT JOIN assignments a ON a.repo_id = r.id
+     WHERE ${filters.join(" AND ")}
+     GROUP BY r.id, r.region, r.bucket_id, r.root, r.secret, r.status, r.created, r.updated
+     ORDER BY COUNT(a.artifact_key) ASC, r.created ASC, r.id ASC`,
+    params,
+  );
+  return rows;
+}
+
+async function loadRootfsRusticRepoByIdTx(
+  client: PoolClient,
+  id: string,
+): Promise<RootfsRusticRepoRow | null> {
+  const { rows } = await client.query<RootfsRusticRepoRow>(
+    `WITH assignments AS (
+       SELECT repo_id, release_id::text AS artifact_key
+       FROM rootfs_releases
+       WHERE repo_id IS NOT NULL
+         AND COALESCE(gc_status, 'active') <> 'deleted'
+       UNION
+       SELECT repo_id, artifact_id::text AS artifact_key
+       FROM rootfs_release_artifacts
+       WHERE repo_id IS NOT NULL
+         AND COALESCE(status, 'ready') <> 'deleted'
+     )
+     SELECT
+       r.id,
+       r.region,
+       r.bucket_id,
+       r.root,
+       r.secret,
+       r.status,
+       r.created,
+       r.updated,
+       COUNT(a.artifact_key)::INTEGER AS assigned_artifact_count
+     FROM rootfs_rustic_repos r
+     LEFT JOIN assignments a ON a.repo_id = r.id
+     WHERE r.id=$1
+     GROUP BY r.id, r.region, r.bucket_id, r.root, r.secret, r.status, r.created, r.updated
+     LIMIT 1`,
+    [id],
+  );
+  return rows[0] ?? null;
+}
+
+async function loadRootfsRusticRepoById(
+  id?: string | null,
+): Promise<RootfsRusticRepoRow | null> {
+  const repoId = `${id ?? ""}`.trim();
+  if (!repoId) return null;
+  await ensureRootfsRusticRepoSchema();
+  const { rows } = await getPool("medium").query<RootfsRusticRepoRow>(
+    `SELECT id, region, bucket_id, root, secret, status, created, updated
+     FROM rootfs_rustic_repos
+     WHERE id=$1
+     LIMIT 1`,
+    [repoId],
+  );
+  return rows[0] ?? null;
+}
+
+async function createRootfsRusticRepoTx({
+  client,
+  region,
+  bucket,
+}: {
+  client: PoolClient;
+  region: string;
+  bucket: BucketRow;
+}): Promise<RootfsRusticRepoRow> {
+  const repoId = uuid();
+  const { rows: existing } = await client.query<{ count: number }>(
+    "SELECT COUNT(*)::INTEGER AS count FROM rootfs_rustic_repos WHERE region=$1",
+    [region],
+  );
+  const root = nextRootfsRusticRepoRoot({
+    region,
+    existingCount: existing[0]?.count ?? 0,
+    repoId,
+  });
+  const { rows } = await client.query<RootfsRusticRepoRow>(
+    `INSERT INTO rootfs_rustic_repos
+      (id, region, bucket_id, root, secret, status, created, updated)
+     VALUES
+      ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+     RETURNING id, region, bucket_id, root, secret, status, created, updated`,
+    [
+      repoId,
+      region,
+      bucket.id,
+      root,
+      await getRootfsRusticSharedSecret(),
+      ROOTFS_RUSTIC_REPO_STATUS_ACTIVE,
+    ],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error("failed to create RootFS rustic repository shard");
+  }
+  return row;
+}
+
+async function withRootfsRusticRegionAssignmentLock<T>(
+  region: string,
+  run: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  await ensureRootfsRusticRepoSchema();
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", [
+      `rootfs-rustic-shards:${region}`,
+    ]);
+    const result = await run(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function ensureActiveRootfsRusticReposForRegionTx({
+  client,
+  region,
+  bucket,
+}: {
+  client: PoolClient;
+  region: string;
+  bucket: BucketRow;
+}): Promise<RootfsRusticRepoRow[]> {
+  let active = await listRootfsRusticReposForRegionTx(client, region, [
+    ROOTFS_RUSTIC_REPO_STATUS_ACTIVE,
+  ]);
+  while (active.length < ROOTFS_RUSTIC_ACTIVE_SHARDS_PER_REGION) {
+    await createRootfsRusticRepoTx({ client, region, bucket });
+    active = await listRootfsRusticReposForRegionTx(client, region, [
+      ROOTFS_RUSTIC_REPO_STATUS_ACTIVE,
+    ]);
+  }
+  return active;
+}
+
+async function sealRootfsRusticReposTx(
+  client: PoolClient,
+  repoIds: string[],
+): Promise<void> {
+  const ids = repoIds.filter(Boolean);
+  if (!ids.length) return;
+  await client.query(
+    `UPDATE rootfs_rustic_repos
+     SET status=$2, updated=NOW()
+     WHERE id = ANY($1::uuid[])`,
+    [ids, ROOTFS_RUSTIC_REPO_STATUS_SEALED],
+  );
+}
+
+function rootfsRusticRepoHasCapacity(repo: RootfsRusticRepoRow): boolean {
+  return (
+    Number(repo.assigned_artifact_count ?? 0) < ROOTFS_RUSTIC_RELEASES_PER_SHARD
+  );
+}
+
+function rootfsRusticRepoCanAcceptExistingAssignment(
+  repo: RootfsRusticRepoRow,
+): boolean {
+  return repo.status !== ROOTFS_RUSTIC_REPO_STATUS_DISABLED;
+}
+
+async function findPreferredRootfsRusticRepoId({
+  region,
+  source_image,
+  parent_release_id,
+}: {
+  region: string;
+  source_image?: string | null;
+  parent_release_id?: string | null;
+}): Promise<string | null> {
+  await ensureRootfsRusticRepoSchema();
+  const filters: string[] = [];
+  const params: any[] = [region];
+  const parent = `${parent_release_id ?? ""}`.trim();
+  if (parent) {
+    params.push(parent);
+    filters.push(`rel.release_id=$${params.length}`);
+  }
+  const sourceImage = `${source_image ?? ""}`.trim();
+  if (sourceImage) {
+    params.push(sourceImage);
+    filters.push(`rel.runtime_image=$${params.length}`);
+  }
+  if (!filters.length) return null;
+  const { rows } = await getPool("medium").query<{ repo_id: string }>(
+    `SELECT rel.repo_id
+     FROM rootfs_releases rel
+     JOIN rootfs_rustic_repos repo ON repo.id = rel.repo_id
+     WHERE repo.region=$1
+       AND rel.repo_id IS NOT NULL
+       AND COALESCE(repo.status, '${ROOTFS_RUSTIC_REPO_STATUS_ACTIVE}') = '${ROOTFS_RUSTIC_REPO_STATUS_ACTIVE}'
+       AND COALESCE(rel.gc_status, 'active') <> 'deleted'
+       AND (${filters.join(" OR ")})
+     ORDER BY rel.updated DESC NULLS LAST, rel.created DESC NULLS LAST
+     LIMIT 1`,
+    params,
+  );
+  return rows[0]?.repo_id ?? null;
+}
+
+async function selectRootfsRusticRepoForArtifact({
+  region: regionRaw,
+  preferred_repo_id,
+  source_image,
+  parent_release_id,
+}: {
+  region: string;
+  preferred_repo_id?: string | null;
+  source_image?: string | null;
+  parent_release_id?: string | null;
+}): Promise<{ repo: RootfsRusticRepoRow; bucket: BucketRow }> {
+  const region = normalizeRootfsRusticRegion(regionRaw);
+  const bucket = await loadR2BucketForRegion(region);
+  if (!bucket?.id) {
+    throw new Error(`no usable R2 bucket configured for region '${region}'`);
+  }
+  const lineageRepoId =
+    `${preferred_repo_id ?? ""}`.trim() ||
+    (await findPreferredRootfsRusticRepoId({
+      region,
+      source_image,
+      parent_release_id,
+    }));
+  return await withRootfsRusticRegionAssignmentLock(region, async (client) => {
+    let active = await ensureActiveRootfsRusticReposForRegionTx({
+      client,
+      region,
+      bucket,
+    });
+    let activeWithCapacity = active.filter(rootfsRusticRepoHasCapacity);
+    if (!activeWithCapacity.length) {
+      await sealRootfsRusticReposTx(
+        client,
+        active
+          .filter((repo) => !rootfsRusticRepoHasCapacity(repo))
+          .map((repo) => repo.id),
+      );
+      active = await ensureActiveRootfsRusticReposForRegionTx({
+        client,
+        region,
+        bucket,
+      });
+      activeWithCapacity = active.filter(rootfsRusticRepoHasCapacity);
+    }
+
+    if (lineageRepoId) {
+      const preferred = await loadRootfsRusticRepoByIdTx(client, lineageRepoId);
+      if (
+        preferred &&
+        normalizeRootfsRusticRegion(preferred.region) === region &&
+        rootfsRusticRepoCanAcceptExistingAssignment(preferred) &&
+        rootfsRusticRepoHasCapacity(preferred)
+      ) {
+        return { repo: preferred, bucket };
+      }
+    }
+
+    const candidate = activeWithCapacity[0];
+    if (!candidate) {
+      throw new Error(`no RootFS rustic repo shard available in ${region}`);
+    }
+    return { repo: candidate, bucket };
+  });
+}
+
 function buildRootfsRusticS3Toml({
   endpoint,
   bucket,
+  root,
   accessKey,
   secretKey,
   password,
 }: {
   endpoint: string;
   bucket: string;
+  root: string;
   accessKey: string;
   secretKey: string;
   password: string;
@@ -291,7 +690,7 @@ function buildRootfsRusticS3Toml({
     `endpoint = "${endpoint}"`,
     'region = "auto"',
     `bucket = "${bucket}"`,
-    `root = "${ROOTFS_RUSTIC_REPO_ROOT}"`,
+    `root = "${root}"`,
     `access_key_id = "${accessKey}"`,
     `secret_access_key = "${secretKey}"`,
     "",
@@ -325,6 +724,8 @@ async function loadHostStorageContext(host_id: string): Promise<{
 type RootfsRusticRepoConfig = {
   repo_toml: string;
   repo_selector: string;
+  repo_id?: string;
+  repo_root?: string;
   artifact_backend: RootfsReleaseArtifactBackend;
   region?: string;
   bucket?: BucketRow | null;
@@ -347,10 +748,27 @@ async function buildSelfHostRootfsRusticRepoConfig(): Promise<RootfsRusticRepoCo
 
 async function buildHostedRootfsRusticRepoConfig(
   region: string,
+  repo?: RootfsRusticRepoRow | null,
 ): Promise<RootfsRusticRepoConfig> {
-  const bucket = await loadR2BucketForRegion(region);
+  const normalizedRegion = normalizeRootfsRusticRegion(region);
+  const selected =
+    repo ??
+    (
+      await selectRootfsRusticRepoForArtifact({
+        region: normalizedRegion,
+      })
+    ).repo;
+  const bucket = selected.bucket_id
+    ? await loadR2BucketById(selected.bucket_id)
+    : await loadR2BucketForRegion(normalizedRegion);
   if (!bucket?.name) {
-    throw new Error(`no usable R2 bucket configured for region '${region}'`);
+    throw new Error(
+      `no usable R2 bucket configured for region '${normalizedRegion}'`,
+    );
+  }
+  const root = `${selected.root ?? ""}`.trim();
+  if (!root) {
+    throw new Error(`RootFS rustic repo '${selected.id}' is missing root`);
   }
   const settings = await getServerSettings();
   const accountId = `${settings.r2_account_id ?? ""}`.trim() || undefined;
@@ -373,26 +791,86 @@ async function buildHostedRootfsRusticRepoConfig(
     repo_toml: buildRootfsRusticS3Toml({
       endpoint,
       bucket: bucket.name,
+      root,
+      accessKey,
+      secretKey,
+      password:
+        `${selected.secret ?? ""}`.trim() ||
+        (await getRootfsRusticSharedSecret()),
+    }),
+    repo_selector: `r2:rootfs-images:${normalizedRegion}:${selected.id}`,
+    repo_id: selected.id,
+    repo_root: root,
+    artifact_backend: "r2",
+    region: normalizedRegion,
+    bucket,
+  };
+}
+
+async function buildLegacyHostedRootfsRusticRepoConfig(
+  region: string,
+): Promise<RootfsRusticRepoConfig> {
+  const normalizedRegion = normalizeRootfsRusticRegion(region);
+  const bucket = await loadR2BucketForRegion(normalizedRegion);
+  if (!bucket?.name) {
+    throw new Error(
+      `no usable R2 bucket configured for region '${normalizedRegion}'`,
+    );
+  }
+  const settings = await getServerSettings();
+  const accountId = `${settings.r2_account_id ?? ""}`.trim() || undefined;
+  const accessKey =
+    `${settings.r2_access_key_id ?? ""}`.trim() ||
+    bucket.access_key_id ||
+    undefined;
+  const secretKey =
+    `${settings.r2_secret_access_key ?? ""}`.trim() ||
+    bucket.secret_access_key ||
+    undefined;
+  const endpoint =
+    (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : undefined) ??
+    bucket.endpoint ??
+    undefined;
+  if (!endpoint || !accessKey || !secretKey) {
+    throw new Error(`missing R2 credentials for region '${normalizedRegion}'`);
+  }
+  return {
+    repo_toml: buildRootfsRusticS3Toml({
+      endpoint,
+      bucket: bucket.name,
+      root: ROOTFS_RUSTIC_REPO_ROOT,
       accessKey,
       secretKey,
       password: await getRootfsRusticSharedSecret(),
     }),
-    repo_selector: `r2:rootfs-images:${region}`,
+    repo_selector: `r2:rootfs-images:${normalizedRegion}`,
+    repo_root: ROOTFS_RUSTIC_REPO_ROOT,
     artifact_backend: "r2",
-    region,
+    region: normalizedRegion,
     bucket,
   };
 }
 
 async function buildRootfsRusticRepoConfigForHost(
   host_id: string,
+  opts?: {
+    preferred_repo_id?: string | null;
+    source_image?: string | null;
+    parent_release_id?: string | null;
+  },
 ): Promise<RootfsRusticRepoConfig> {
   const { region, machine } = await loadHostStorageContext(host_id);
   if (isSelfHostLocalMachine(machine)) {
     return await buildSelfHostRootfsRusticRepoConfig();
   }
   const mappedRegion = mapCloudRegionToR2Region(region ?? DEFAULT_R2_REGION);
-  return await buildHostedRootfsRusticRepoConfig(mappedRegion);
+  const { repo } = await selectRootfsRusticRepoForArtifact({
+    region: mappedRegion,
+    preferred_repo_id: opts?.preferred_repo_id,
+    source_image: opts?.source_image,
+    parent_release_id: opts?.parent_release_id,
+  });
+  return await buildHostedRootfsRusticRepoConfig(mappedRegion, repo);
 }
 
 async function buildRootfsRusticRepoConfigForRelease(
@@ -407,7 +885,14 @@ async function buildRootfsRusticRepoConfigForRelease(
   if (info.artifact_backend === "rest") {
     return await buildSelfHostRootfsRusticRepoConfig();
   }
-  return await buildHostedRootfsRusticRepoConfig(
+  const repo = await loadRootfsRusticRepoById(release.repo_id ?? info.repo_id);
+  if (repo) {
+    return await buildHostedRootfsRusticRepoConfig(
+      repo.region ?? info.region ?? DEFAULT_R2_REGION,
+      repo,
+    );
+  }
+  return await buildLegacyHostedRootfsRusticRepoConfig(
     info.region ?? DEFAULT_R2_REGION,
   );
 }
@@ -418,8 +903,16 @@ async function buildRootfsRusticRepoConfigForReplica(
   if (replica.backend === "rest") {
     return await buildSelfHostRootfsRusticRepoConfig();
   }
-  return await buildHostedRootfsRusticRepoConfig(
-    replica.region ?? DEFAULT_R2_REGION,
+  const info = decodeRusticArtifactPath(replica.artifact_path);
+  const repo = await loadRootfsRusticRepoById(replica.repo_id ?? info?.repo_id);
+  if (repo) {
+    return await buildHostedRootfsRusticRepoConfig(
+      repo.region ?? replica.region ?? DEFAULT_R2_REGION,
+      repo,
+    );
+  }
+  return await buildLegacyHostedRootfsRusticRepoConfig(
+    replica.region ?? info?.region ?? DEFAULT_R2_REGION,
   );
 }
 
@@ -447,6 +940,7 @@ async function ensureRootfsRusticRepoProfile({
 async function listReadyRusticReleaseArtifactReplicas(
   release_id: string,
 ): Promise<RootfsReleaseArtifactReplicaRow[]> {
+  await ensureRootfsRusticRepoSchema();
   const { rows } = await getPool(
     "medium",
   ).query<RootfsReleaseArtifactReplicaRow>(
@@ -462,6 +956,7 @@ async function listReadyRusticReleaseArtifactReplicas(
       artifact_kind,
       artifact_format,
       artifact_path,
+      repo_id,
       artifact_sha256,
       artifact_bytes,
       status,
@@ -480,6 +975,7 @@ async function listReadyRusticReleaseArtifactReplicas(
 async function listReleaseArtifactReplicas(
   release_id: string,
 ): Promise<RootfsReleaseArtifactReplicaRow[]> {
+  await ensureRootfsRusticRepoSchema();
   const { rows } = await getPool(
     "medium",
   ).query<RootfsReleaseArtifactReplicaRow>(
@@ -495,6 +991,7 @@ async function listReleaseArtifactReplicas(
       artifact_kind,
       artifact_format,
       artifact_path,
+      repo_id,
       artifact_sha256,
       artifact_bytes,
       status,
@@ -535,6 +1032,7 @@ export async function upsertReleaseArtifactReplica({
   artifact_kind,
   artifact_format,
   artifact_path,
+  repo_id,
   artifact_sha256,
   artifact_bytes,
   status,
@@ -549,11 +1047,13 @@ export async function upsertReleaseArtifactReplica({
   artifact_kind: RootfsReleaseArtifactKind;
   artifact_format: RootfsReleaseArtifactFormat;
   artifact_path: string;
+  repo_id?: string | null;
   artifact_sha256: string;
   artifact_bytes: number;
   status: string;
   error?: string | null;
 }): Promise<RootfsReleaseArtifactReplicaRow> {
+  await ensureRootfsRusticRepoSchema();
   const id = artifact_id ?? uuid();
   const { rows } = await getPool(
     "medium",
@@ -571,6 +1071,7 @@ export async function upsertReleaseArtifactReplica({
         artifact_kind,
         artifact_format,
         artifact_path,
+        repo_id,
         artifact_sha256,
         artifact_bytes,
         status,
@@ -580,11 +1081,12 @@ export async function upsertReleaseArtifactReplica({
         updated
       )
       VALUES
-      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NULL, $15, NOW(), NOW())
+      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NULL, $16, NOW(), NOW())
       ON CONFLICT (artifact_id) DO UPDATE SET
         bucket_id = EXCLUDED.bucket_id,
         bucket_name = EXCLUDED.bucket_name,
         bucket_purpose = EXCLUDED.bucket_purpose,
+        repo_id = EXCLUDED.repo_id,
         artifact_sha256 = EXCLUDED.artifact_sha256,
         artifact_bytes = EXCLUDED.artifact_bytes,
         status = EXCLUDED.status,
@@ -602,6 +1104,7 @@ export async function upsertReleaseArtifactReplica({
         artifact_kind,
         artifact_format,
         artifact_path,
+        repo_id,
         artifact_sha256,
         artifact_bytes,
         status,
@@ -619,6 +1122,7 @@ export async function upsertReleaseArtifactReplica({
       artifact_kind,
       artifact_format,
       artifact_path,
+      repo_id ?? null,
       artifact_sha256,
       artifact_bytes,
       status,
@@ -637,6 +1141,7 @@ export async function upsertReleaseArtifactReplica({
 export async function loadRootfsReleaseByImage(
   image: string,
 ): Promise<RootfsReleaseRow | null> {
+  await ensureRootfsRusticRepoSchema();
   const runtime_image = `${image ?? ""}`.trim();
   if (!runtime_image) {
     return null;
@@ -655,6 +1160,7 @@ export async function loadRootfsReleaseByImage(
       artifact_format,
       artifact_backend,
       artifact_path,
+      repo_id,
       artifact_sha256,
       artifact_bytes,
       inspect_json
@@ -668,6 +1174,7 @@ export async function loadRootfsReleaseByImage(
 async function loadRootfsReleaseById(
   release_id?: string | null,
 ): Promise<RootfsReleaseRow | null> {
+  await ensureRootfsRusticRepoSchema();
   const value = `${release_id ?? ""}`.trim();
   if (!value) {
     return null;
@@ -686,6 +1193,7 @@ async function loadRootfsReleaseById(
       artifact_format,
       artifact_backend,
       artifact_path,
+      repo_id,
       artifact_sha256,
       artifact_bytes,
       inspect_json
@@ -762,6 +1270,7 @@ export async function upsertPublishedRootfsRelease({
   artifact: PublishProjectRootfsArtifact;
   upload?: RootfsUploadedArtifactResult;
 }): Promise<RootfsReleaseRow> {
+  await ensureRootfsRusticRepoSchema();
   const content_key = normalizeContentKey(artifact.content_key);
   if (!upload) {
     throw new Error(
@@ -775,7 +1284,9 @@ export async function upsertPublishedRootfsRelease({
     artifact_backend: upload.artifact_backend,
     snapshot_id: upload.snapshot_id,
     region: upload.region,
+    repo_id: upload.repo_id,
   });
+  const resolvedRepoId = upload.repo_id ?? null;
   const artifactSha256 = upload.artifact_sha256 || content_key;
   const artifactBytes = upload.artifact_bytes;
   const depth = 0;
@@ -797,6 +1308,7 @@ export async function upsertPublishedRootfsRelease({
         artifact_format,
         artifact_backend,
         artifact_path,
+        repo_id,
         artifact_sha256,
         artifact_bytes,
         gc_status,
@@ -812,7 +1324,7 @@ export async function upsertPublishedRootfsRelease({
       VALUES
       (
         $1, $2, $3, $4, $5, $6, $7, $8,
-        $9, $10, $11, $12, $13, $14, 'active', false, 'unknown', NULL, NULL, NULL, $15::JSONB, NOW(), NOW()
+        $9, $10, $11, $12, $13, $14, $15, 'active', false, 'unknown', NULL, NULL, NULL, $16::JSONB, NOW(), NOW()
       )
       ON CONFLICT (content_key) DO UPDATE SET
         runtime_image = EXCLUDED.runtime_image,
@@ -825,6 +1337,7 @@ export async function upsertPublishedRootfsRelease({
         artifact_format = EXCLUDED.artifact_format,
         artifact_backend = EXCLUDED.artifact_backend,
         artifact_path = EXCLUDED.artifact_path,
+        repo_id = EXCLUDED.repo_id,
         artifact_sha256 = EXCLUDED.artifact_sha256,
         artifact_bytes = EXCLUDED.artifact_bytes,
         gc_status = COALESCE(rootfs_releases.gc_status, EXCLUDED.gc_status),
@@ -848,6 +1361,7 @@ export async function upsertPublishedRootfsRelease({
         artifact_format,
         artifact_backend,
         artifact_path,
+        repo_id,
         artifact_sha256,
         artifact_bytes,
         inspect_json`,
@@ -864,6 +1378,7 @@ export async function upsertPublishedRootfsRelease({
       artifactFormat,
       resolvedArtifactBackend,
       resolvedArtifactPath,
+      resolvedRepoId,
       artifactSha256,
       artifactBytes,
       artifact.inspect_data ? JSON.stringify(artifact.inspect_data) : null,
@@ -906,20 +1421,21 @@ async function resolveRootfsRusticAccess({
     region?: string;
     repo: RootfsRusticRepoConfig;
     distance: number;
-  }> = [
-    {
-      artifact_backend: primaryInfo.artifact_backend,
-      artifact_path: release.artifact_path,
-      artifact_sha256: release.artifact_sha256,
-      artifact_bytes: release.artifact_bytes,
-      snapshot_id: primaryInfo.snapshot_id,
-      region: primaryInfo.region,
-      repo: await buildRootfsRusticRepoConfigForRelease(release),
-      distance: hostRegion
-        ? rankR2RegionDistance(hostRegion, parseR2Region(primaryInfo.region))
-        : 0,
-    },
-  ];
+  }> = [];
+  const primaryRepo = await buildRootfsRusticRepoConfigForRelease(release);
+  const primaryRegion = primaryInfo.region ?? primaryRepo.region;
+  candidates.push({
+    artifact_backend: primaryInfo.artifact_backend,
+    artifact_path: release.artifact_path,
+    artifact_sha256: release.artifact_sha256,
+    artifact_bytes: release.artifact_bytes,
+    snapshot_id: primaryInfo.snapshot_id,
+    region: primaryRegion,
+    repo: primaryRepo,
+    distance: hostRegion
+      ? rankR2RegionDistance(hostRegion, parseR2Region(primaryRegion))
+      : 0,
+  });
 
   for (const replica of await listReadyRusticReleaseArtifactReplicas(
     release.release_id,
@@ -928,19 +1444,18 @@ async function resolveRootfsRusticAccess({
     if (!info) {
       continue;
     }
+    const repo = await buildRootfsRusticRepoConfigForReplica(replica);
+    const region = info.region ?? replica.region ?? repo.region ?? undefined;
     candidates.push({
       artifact_backend: info.artifact_backend,
       artifact_path: replica.artifact_path,
       artifact_sha256: replica.artifact_sha256,
       artifact_bytes: replica.artifact_bytes,
       snapshot_id: info.snapshot_id,
-      region: info.region ?? replica.region ?? undefined,
-      repo: await buildRootfsRusticRepoConfigForReplica(replica),
+      region,
+      repo,
       distance: hostRegion
-        ? rankR2RegionDistance(
-            hostRegion,
-            parseR2Region(info.region ?? replica.region),
-          )
+        ? rankR2RegionDistance(hostRegion, parseR2Region(region))
         : 0,
     });
   }
@@ -962,11 +1477,21 @@ async function resolveRootfsRusticAccess({
     best.distance > 0 &&
     !candidates.some((candidate) => candidate.distance === 0)
   ) {
-    const target = await buildHostedRootfsRusticRepoConfig(hostRegion);
+    const { repo: targetRepo } = await selectRootfsRusticRepoForArtifact({
+      region: hostRegion,
+      source_image: release.runtime_image,
+      parent_release_id: release.parent_release_id,
+    });
+    const target = await buildHostedRootfsRusticRepoConfig(
+      hostRegion,
+      targetRepo,
+    );
     regional_replication_target = {
       backend: "rustic",
       repo_toml: target.repo_toml,
       repo_selector: target.repo_selector,
+      repo_id: target.repo_id,
+      repo_root: target.repo_root,
       artifact_backend: target.artifact_backend,
       region: target.region,
       bucket_id: target.bucket?.id,
@@ -997,6 +1522,8 @@ async function resolveRootfsRusticAccess({
     snapshot_id: best.snapshot_id,
     repo_selector: best.repo.repo_selector,
     repo_toml: best.repo.repo_toml,
+    repo_id: best.repo.repo_id,
+    repo_root: best.repo.repo_root,
     region: best.region,
     regional_replication_target,
     inspect_data: release.inspect_json ?? undefined,
@@ -1050,6 +1577,7 @@ export async function recordManagedRootfsRusticReplica({
           artifact_kind: "full",
           artifact_format: "rustic",
           artifact_path: "",
+          repo_id: upload.repo_id ?? null,
           artifact_sha256: upload.artifact_sha256,
           artifact_bytes: upload.artifact_bytes,
           status: "ready",
@@ -1069,7 +1597,9 @@ export async function recordManagedRootfsRusticReplica({
       artifact_backend,
       snapshot_id: upload.snapshot_id,
       region,
+      repo_id: upload.repo_id,
     }),
+    repo_id: upload.repo_id ?? null,
     artifact_sha256: upload.artifact_sha256,
     artifact_bytes: upload.artifact_bytes,
     status: "ready",
@@ -1257,5 +1787,126 @@ export async function runPendingRootfsReleaseGc({
     blocked: items.filter((item) => item.status === "blocked").length,
     failed: items.filter((item) => item.status === "failed").length,
     items,
+  };
+}
+
+function isoDate(value?: Date | string | null): string | null {
+  if (!value) return null;
+  if (typeof value === "string") return value;
+  return value.toISOString();
+}
+
+export async function listRootfsRusticReposAdmin({
+  region,
+  status,
+}: {
+  region?: string;
+  status?: string;
+} = {}): Promise<RootfsRusticRepoListResult> {
+  await ensureRootfsRusticRepoSchema();
+  const filters: string[] = [];
+  const params: any[] = [];
+  const normalizedRegion = `${region ?? ""}`.trim();
+  if (normalizedRegion) {
+    params.push(normalizeRootfsRusticRegion(normalizedRegion));
+    filters.push(`r.region=$${params.length}`);
+  }
+  const normalizedStatus = `${status ?? ""}`.trim().toLowerCase();
+  if (normalizedStatus) {
+    params.push(normalizedStatus);
+    filters.push(`r.status=$${params.length}`);
+  }
+  const { rows } = await getPool("medium").query<
+    RootfsRusticRepoRow & {
+      artifact_bytes: number | string | null;
+      bucket_name: string | null;
+      bucket_purpose: string | null;
+    }
+  >(
+    `WITH assignments AS (
+       SELECT repo_id, release_id::text AS artifact_key, artifact_bytes
+       FROM rootfs_releases
+       WHERE repo_id IS NOT NULL
+         AND COALESCE(gc_status, 'active') <> 'deleted'
+       UNION ALL
+       SELECT repo_id, artifact_id::text AS artifact_key, artifact_bytes
+       FROM rootfs_release_artifacts
+       WHERE repo_id IS NOT NULL
+         AND COALESCE(status, 'ready') <> 'deleted'
+     )
+     SELECT
+       r.id,
+       r.region,
+       r.bucket_id,
+       b.name AS bucket_name,
+       b.purpose AS bucket_purpose,
+       r.root,
+       r.secret,
+       r.status,
+       r.created,
+       r.updated,
+       COUNT(a.artifact_key)::INTEGER AS assigned_artifact_count,
+       COALESCE(SUM(a.artifact_bytes), 0)::BIGINT AS artifact_bytes
+     FROM rootfs_rustic_repos r
+     LEFT JOIN buckets b ON b.id = r.bucket_id
+     LEFT JOIN assignments a ON a.repo_id = r.id
+     ${filters.length ? `WHERE ${filters.join(" AND ")}` : ""}
+     GROUP BY r.id, b.name, b.purpose
+     ORDER BY r.region ASC, r.status ASC, assigned_artifact_count ASC, r.created ASC, r.id ASC`,
+    params,
+  );
+  const { rows: legacyRows } = await getPool("medium").query<{
+    artifact_count: number | string;
+    artifact_bytes: number | string | null;
+  }>(
+    `WITH legacy AS (
+       SELECT release_id::text AS artifact_key, artifact_bytes
+       FROM rootfs_releases
+       WHERE repo_id IS NULL
+         AND artifact_format='rustic'
+         AND artifact_path LIKE 'rustic/%'
+         AND COALESCE(gc_status, 'active') <> 'deleted'
+       UNION ALL
+       SELECT artifact_id::text AS artifact_key, artifact_bytes
+       FROM rootfs_release_artifacts
+       WHERE repo_id IS NULL
+         AND artifact_format='rustic'
+         AND artifact_path LIKE 'rustic/%'
+         AND COALESCE(status, 'ready') <> 'deleted'
+     )
+     SELECT
+       COUNT(*)::INTEGER AS artifact_count,
+       COALESCE(SUM(artifact_bytes), 0)::BIGINT AS artifact_bytes
+     FROM legacy`,
+  );
+  const legacy = legacyRows[0] ?? { artifact_count: 0, artifact_bytes: 0 };
+  return {
+    active_shards_per_region: ROOTFS_RUSTIC_ACTIVE_SHARDS_PER_REGION,
+    releases_per_shard: ROOTFS_RUSTIC_RELEASES_PER_SHARD,
+    repos: rows.map((row) => {
+      const assigned = Number(row.assigned_artifact_count ?? 0);
+      return {
+        id: row.id,
+        region: row.region ?? "",
+        bucket_id: row.bucket_id ?? null,
+        bucket_name: row.bucket_name ?? null,
+        bucket_purpose: row.bucket_purpose ?? null,
+        root: row.root ?? "",
+        status: row.status ?? ROOTFS_RUSTIC_REPO_STATUS_ACTIVE,
+        assigned_artifact_count: assigned,
+        artifact_bytes: Number(row.artifact_bytes ?? 0),
+        cap: ROOTFS_RUSTIC_RELEASES_PER_SHARD,
+        available_slots: Math.max(
+          0,
+          ROOTFS_RUSTIC_RELEASES_PER_SHARD - assigned,
+        ),
+        created: isoDate(row.created),
+        updated: isoDate(row.updated),
+      };
+    }),
+    legacy: {
+      artifact_count: Number(legacy.artifact_count ?? 0),
+      artifact_bytes: Number(legacy.artifact_bytes ?? 0),
+    },
   };
 }

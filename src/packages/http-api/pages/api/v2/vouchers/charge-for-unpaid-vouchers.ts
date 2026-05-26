@@ -27,7 +27,7 @@ async function doIt(req) {
   if (!(await userIsInGroup(account_id, "admin"))) {
     throw Error("only admins can initiate the charge for unpaid vouchers");
   }
-  await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
+  await requireFreshAuth({ req, account_id, allow_actor_impersonation: false });
 
   return await chargeForUnpaidVouchers();
 }

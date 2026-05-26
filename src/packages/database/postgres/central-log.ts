@@ -11,6 +11,7 @@ const PII_EVENTS = new Set([
   "successful_sign_in",
   "webapp-email_sign_up",
   "create_account_registration_token",
+  "signup_email_domain_policy_changed",
   "sso_domain_policy_changed",
   "sso_passport_linked",
   "sso_passport_unlink_blocked",

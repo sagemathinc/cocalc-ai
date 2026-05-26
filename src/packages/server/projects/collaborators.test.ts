@@ -7,6 +7,8 @@ let queryMock: jest.Mock;
 let callback2Mock: jest.Mock;
 let isAdminMock: jest.Mock;
 let dbMock: jest.Mock;
+let ensureAccountSecurityStateReadyMock: jest.Mock;
+let isAccountBannedCachedMock: jest.Mock;
 let listProjectedMyCollaboratorsForAccountMock: jest.Mock;
 let getClusterAccountByIdMock: jest.Mock;
 let getClusterAccountsByIdsMock: jest.Mock;
@@ -63,6 +65,13 @@ jest.mock("@cocalc/util/async-utils", () => ({
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
   __esModule: true,
   default: (...args: any[]) => isAdminMock(...args),
+}));
+
+jest.mock("@cocalc/server/accounts/security-state", () => ({
+  __esModule: true,
+  ensureAccountSecurityStateReady: (...args: any[]) =>
+    ensureAccountSecurityStateReadyMock(...args),
+  isAccountBannedCached: (...args: any[]) => isAccountBannedCachedMock(...args),
 }));
 
 jest.mock("@cocalc/database", () => ({
@@ -190,6 +199,8 @@ describe("project collaborators local bay access", () => {
     queryMock = jest.fn(async () => ({ rows: [] }));
     callback2Mock = jest.fn(async (fn, opts) => await fn(opts));
     isAdminMock = jest.fn(async () => false);
+    ensureAccountSecurityStateReadyMock = jest.fn(async () => undefined);
+    isAccountBannedCachedMock = jest.fn(() => false);
     listProjectedMyCollaboratorsForAccountMock = jest.fn(async () => []);
     getClusterAccountByIdMock = jest.fn(async (account_id: string) => ({
       account_id,
@@ -1102,6 +1113,9 @@ describe("project collaborators local bay access", () => {
           ],
         };
       }
+      if (sql.includes("AS inviter_authorized")) {
+        return { rows: [{ inviter_authorized: true }] };
+      }
       if (sql.includes("SELECT EXISTS(")) {
         return { rows: [{ already: false }] };
       }
@@ -1170,6 +1184,87 @@ describe("project collaborators local bay access", () => {
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining("jsonb_set"),
       [PROJECT_ID, ACCOUNT_ID],
+    );
+  });
+
+  it("rejects email invite acceptance when the sender is no longer a project collaborator", async () => {
+    const inviteId = "77777777-7777-4777-8777-777777777777";
+    const token = "stale-invite-token";
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "SELECT invite_id, project_id, inviter_account_id, status, token_hash",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              status: "pending",
+              token_hash: inviteTokenHash(token),
+            },
+          ],
+        };
+      }
+      if (sql.includes("AS inviter_authorized")) {
+        return { rows: [{ inviter_authorized: false }] };
+      }
+      return { rows: [] };
+    });
+
+    const { redeemEmailProjectInvite } = await import("./collaborators");
+    await expect(
+      redeemEmailProjectInvite({
+        account_id: ACCOUNT_ID,
+        invite_id: inviteId,
+        token,
+      }),
+    ).rejects.toThrow("invite sender no longer has access");
+    expect(addUserToProject).not.toHaveBeenCalled();
+  });
+
+  it("rejects email invite acceptance when the sender is banned", async () => {
+    const inviteId = "77777777-7777-4777-8777-777777777777";
+    const token = "banned-sender-token";
+    isAccountBannedCachedMock = jest.fn((account_id: string) => {
+      return account_id === TARGET_ACCOUNT_ID;
+    });
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "SELECT invite_id, project_id, inviter_account_id, status, token_hash",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              status: "pending",
+              token_hash: inviteTokenHash(token),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { redeemEmailProjectInvite } = await import("./collaborators");
+    await expect(
+      redeemEmailProjectInvite({
+        account_id: ACCOUNT_ID,
+        invite_id: inviteId,
+        token,
+      }),
+    ).rejects.toThrow("invite sender is banned");
+    expect(addUserToProject).not.toHaveBeenCalled();
+    expect(ensureAccountSecurityStateReadyMock).toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("AS inviter_authorized"),
+      expect.any(Array),
     );
   });
 

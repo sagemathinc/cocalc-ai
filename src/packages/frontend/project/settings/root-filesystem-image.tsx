@@ -17,6 +17,7 @@ import {
   Checkbox,
   Collapse,
   Input,
+  message,
   Modal,
   Select,
   Space,
@@ -53,6 +54,10 @@ import {
   sectionTagColor,
 } from "@cocalc/frontend/rootfs/catalog-ui";
 import {
+  RootfsScanDetailsButton,
+  RootfsScanStatus,
+} from "@cocalc/frontend/rootfs/scan-status";
+import {
   ROOTFS_PROJECT_PRESET_LABELS,
   ROOTFS_PROJECT_PRESET_TAGS,
   type RootfsProjectPreset,
@@ -66,6 +71,7 @@ import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { split } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { isManagedRootfsImageName } from "@cocalc/util/rootfs-images";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
   ProjectRootfsStateEntry,
   RootfsImageEntry,
@@ -115,6 +121,8 @@ export default function RootFilesystemImage({
   const [restartQueuedAt, setRestartQueuedAt] = useState<string>("");
   const [liveRootfsScan, setLiveRootfsScan] =
     useState<RootfsProjectPreflightScanResult>();
+  const [savingLiveScanDetails, setSavingLiveScanDetails] =
+    useState<boolean>(false);
   const [help, setHelp] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [value, setValue] = useState<string>("");
@@ -193,7 +201,10 @@ export default function RootFilesystemImage({
     images: rootfsImages,
     loading: rootfsLoading,
     error: rootfsError,
-  } = useRootfsImages([managedRootfsCatalogUrl(catalogRefresh)]);
+  } = useRootfsImages([managedRootfsCatalogUrl(catalogRefresh)], {
+    query: rootfsSearch,
+    limit: 200,
+  });
   const selectableRootfsImages = useMemo(
     () =>
       canUseCustomRootfs
@@ -693,6 +704,70 @@ export default function RootFilesystemImage({
     }
   }
 
+  async function saveLiveRootfsScanDetailsToProject(
+    result: RootfsProjectPreflightScanResult | undefined = liveRootfsScan,
+  ) {
+    if (!result) return;
+    const timestamp = rootfsScanReportTimestamp(result);
+    const directory = "rootfs-scan-reports";
+    const jsonPath = `${directory}/rootfs-scan-${timestamp}.json`;
+    const markdownPath = `${directory}/rootfs-scan-${timestamp}.md`;
+    try {
+      setError("");
+      setSavingLiveScanDetails(true);
+      await webapp_client.project_client.exec({
+        project_id,
+        command: "mkdir",
+        args: ["-p", directory],
+        err_on_exit: true,
+      });
+      await webapp_client.project_client.write_text_file({
+        project_id,
+        path: jsonPath,
+        content: JSON.stringify(
+          {
+            saved_at: new Date().toISOString(),
+            source: "project-rootfs-preflight-scan",
+            result,
+          },
+          null,
+          2,
+        ),
+      });
+      await webapp_client.project_client.write_text_file({
+        project_id,
+        path: markdownPath,
+        content: buildLiveRootfsScanMarkdown(result, jsonPath),
+      });
+      actions?.open_file({ path: markdownPath, foreground: true });
+      message.success("Saved RootFS scan details to the project.");
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSavingLiveScanDetails(false);
+    }
+  }
+
+  function renderLiveRootfsScanActions(
+    result: RootfsProjectPreflightScanResult,
+  ) {
+    return (
+      <Space wrap size="small">
+        <RootfsScanDetailsButton
+          scan={result.summary}
+          title="Live project RootFS preflight scan details"
+        />
+        <Button
+          size="small"
+          loading={savingLiveScanDetails}
+          onClick={() => saveLiveRootfsScanDetailsToProject(result)}
+        >
+          Save details to project
+        </Button>
+      </Space>
+    );
+  }
+
   async function sendPublishAssistToAgent() {
     const prompt = buildRootfsPublishAgentPrompt({
       projectId: project_id,
@@ -860,7 +935,16 @@ export default function RootFilesystemImage({
               }
               showIcon
               title="Live project RootFS preflight scan"
-              description={renderLiveRootfsScanSummary(liveRootfsScan)}
+              description={
+                <Space
+                  direction="vertical"
+                  size="small"
+                  style={{ width: "100%" }}
+                >
+                  {renderLiveRootfsScanSummary(liveRootfsScan)}
+                  {renderLiveRootfsScanActions(liveRootfsScan)}
+                </Space>
+              }
             />
           ) : null}
 
@@ -1613,8 +1697,12 @@ export default function RootFilesystemImage({
                       images are scanned again after publication, but this check
                       catches obvious vulnerabilities before creating the image.
                     </div>
-                    {liveRootfsScan &&
-                      renderLiveRootfsScanSummary(liveRootfsScan)}
+                    {liveRootfsScan ? (
+                      <>
+                        {renderLiveRootfsScanSummary(liveRootfsScan)}
+                        {renderLiveRootfsScanActions(liveRootfsScan)}
+                      </>
+                    ) : null}
                     <Button
                       size="small"
                       loading={scanningLiveRootfs}
@@ -2961,20 +3049,11 @@ function renderRootfsScan(
   if (!scan?.status || scan.status === "unknown") {
     return;
   }
-  const color =
-    scan.status === "clean"
-      ? "green"
-      : scan.status === "findings"
-        ? "orange"
-        : scan.status === "error"
-          ? "red"
-          : "blue";
   return (
-    <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-      <Tag color={color}>Scan: {scan.status}</Tag>
-      {scan.tool ? ` ${scan.tool}` : ""}
-      {scan.summary ? ` - ${scan.summary}` : ""}
-    </Paragraph>
+    <RootfsScanStatus
+      entry={entry}
+      detailsTitle={`RootFS scan details: ${entry.label}`}
+    />
   );
 }
 
@@ -3019,6 +3098,98 @@ function describeRootfsPublisher(entry: RootfsImageEntry): string | undefined {
   if (entry.warning === "public") {
     return "Public community image";
   }
+}
+
+const ROOTFS_SCAN_SEVERITIES = [
+  "critical",
+  "high",
+  "medium",
+  "low",
+  "unknown",
+] as const;
+
+function rootfsScanReportTimestamp(
+  result: RootfsProjectPreflightScanResult,
+): string {
+  const value = result.summary.scanned_at ?? new Date().toISOString();
+  return value
+    .replace(/[^0-9A-Za-z]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function markdownEscape(value: unknown): string {
+  return `${value ?? ""}`.replace(/\|/g, "\\|").replace(/\n/g, " ");
+}
+
+function buildLiveRootfsScanMarkdown(
+  result: RootfsProjectPreflightScanResult,
+  jsonPath: string,
+): string {
+  const scan = result.summary;
+  const target = scan.target;
+  const counts = scan.severity_counts ?? {};
+  const severityRows = ROOTFS_SCAN_SEVERITIES.map(
+    (severity) => `| ${severity} | ${counts[severity] ?? 0} |`,
+  ).join("\n");
+  const findingRows =
+    scan.highest_findings
+      ?.map(
+        (finding) =>
+          `| ${markdownEscape(finding.id)} | ${markdownEscape(
+            finding.severity,
+          )} | ${markdownEscape(finding.package_name)} | ${markdownEscape(
+            finding.installed_version,
+          )} | ${markdownEscape(finding.fixed_version ?? "no fix listed")} | ${markdownEscape(
+            finding.title,
+          )} |`,
+      )
+      .join("\n") || "| _none reported_ |  |  |  |  |  |";
+
+  return `# Live Project RootFS Preflight Scan
+
+This report was saved from the project settings RootFS scanner. It is a point-in-time scan of mutable project state, not the persisted official image scan.
+
+## Summary
+
+| Field | Value |
+| --- | --- |
+| Project | \`${result.project_id}\` |
+| Host | \`${result.host_id}\` |
+| Status | ${markdownEscape(scan.status)} |
+| Policy status | ${markdownEscape(scan.policy_status ?? "")} |
+| Summary | ${markdownEscape(scan.summary ?? "")} |
+| Scanner | ${markdownEscape([scan.tool, scan.tool_version].filter(Boolean).join(" "))} |
+| Scanned at | ${markdownEscape(scan.scanned_at ?? "")} |
+| Duration | ${Math.round((result.duration_ms ?? scan.duration_ms ?? 0) / 1000)}s |
+| JSON details | \`${jsonPath}\` |
+
+## Target
+
+| Field | Value |
+| --- | --- |
+| Runtime image | ${markdownEscape(target?.runtime_image ?? "")} |
+| Release | ${markdownEscape(target?.release_id ?? "")} |
+| Content key | ${markdownEscape(target?.content_key ?? "")} |
+| Architecture | ${markdownEscape(target?.arch ?? "")} |
+| Size bytes | ${markdownEscape(target?.size_bytes ?? "")} |
+
+## Severity Counts
+
+| Severity | Count |
+| --- | ---: |
+${severityRows}
+
+## Highest Findings
+
+| ID | Severity | Package | Installed | Fixed | Title |
+| --- | --- | --- | --- | --- | --- |
+${findingRows}
+
+## Raw Report
+
+The full JSON saved next to this file contains the retained scan summary and host scanner report metadata.
+`;
 }
 
 function renderLiveRootfsScanSummary(

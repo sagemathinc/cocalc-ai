@@ -22,7 +22,10 @@ import type {
   Action as ApiKeyAction,
   ApiKeyCapability,
 } from "@cocalc/util/db-schema/api-keys";
-import isBanned from "@cocalc/server/accounts/is-banned";
+import {
+  ensureAccountSecurityStateReady,
+  isAccountBannedCached,
+} from "@cocalc/server/accounts/security-state";
 import {
   getClusterAccountApiKeyByKeyId,
   getClusterAccountById,
@@ -463,7 +466,8 @@ async function checkApiKeyRows({
   key_id: string;
 }): Promise<ApiKeyPrincipal | undefined> {
   if (rows.length == 0) return undefined;
-  if (await isBanned(rows[0].account_id)) {
+  await ensureAccountSecurityStateReady();
+  if (isAccountBannedCached(rows[0].account_id)) {
     log.debug("getAccountWithApiKey: banned api key ", rows[0]?.account_id);
     recordApiKeyAuditEventSoon({
       event: "api_key_denied",
@@ -569,7 +573,8 @@ async function checkClusterAccountApiKeyDirectoryEntry({
     return undefined;
   }
   const account = await getClusterAccountById(entry.account_id);
-  if (account?.banned) {
+  await ensureAccountSecurityStateReady();
+  if (account?.banned || isAccountBannedCached(entry.account_id)) {
     recordApiKeyAuditEventSoon({
       event: "api_key_denied",
       value: {

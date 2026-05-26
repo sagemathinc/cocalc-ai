@@ -117,7 +117,13 @@ describe("BaseProject.start RootFS sealing", () => {
       backend: "rustic",
       repo_toml: "repo",
       repo_selector: "repo-selector",
+      repo_id: "44444444-4444-4444-8444-444444444444",
+      repo_root: "rustic/rootfs-images/wnam/shard-0001",
       artifact_backend: "rest",
+      region: "wnam",
+      bucket_id: "55555555-5555-4555-8555-555555555555",
+      bucket_name: "bucket",
+      bucket_purpose: "project-backups",
     }));
     upsertPublishedRootfsReleaseMock = jest.fn(async () => ({
       release_id: "release-1",
@@ -167,6 +173,17 @@ describe("BaseProject.start RootFS sealing", () => {
     expect(issueRootfsReleaseArtifactUploadMock).toHaveBeenCalledWith({
       host_id: HOST_ID,
       artifact_kind: "full",
+    });
+    expect(upsertPublishedRootfsReleaseMock).toHaveBeenCalledWith({
+      artifact: expect.objectContaining({
+        image: "cocalc.local/rootfs/abcdef",
+      }),
+      upload: expect.objectContaining({
+        repo_id: "44444444-4444-4444-8444-444444444444",
+        repo_root: "rustic/rootfs-images/wnam/shard-0001",
+        region: "wnam",
+        bucket_id: "55555555-5555-4555-8555-555555555555",
+      }),
     });
     expect(setProjectRootfsImageWithRollbackMock).toHaveBeenCalledWith({
       project_id: PROJECT_ID,

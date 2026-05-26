@@ -33,6 +33,7 @@ import deleteAccountLocal from "@cocalc/server/accounts/delete";
 import { banUser, removeUserBan } from "@cocalc/server/accounts/ban";
 import { recordAccountBanAuditEvent } from "@cocalc/server/accounts/ban-audit";
 import { quarantineAccountBillingResourcesLocal } from "@cocalc/server/accounts/resource-quarantine";
+import { assertSignupEmailDomainAllowed } from "@cocalc/server/accounts/signup-email-domain-policy";
 import setPasswordFromResetLocal from "@cocalc/server/accounts/set-password-from-reset";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import { adminDisableTwoFactor as adminDisableTwoFactorLocal } from "@cocalc/server/auth/two-factor";
@@ -167,6 +168,33 @@ export async function getClusterAccountHomeBayCounts(): Promise<
   }).getHomeBayCounts({});
 }
 
+export async function assertNoClusterBannedEquivalentEmailAccount({
+  email_address,
+  allowed_account_id,
+}: {
+  email_address?: string | null;
+  allowed_account_id?: string | null;
+}): Promise<void> {
+  const email = `${email_address ?? ""}`.trim().toLowerCase();
+  if (!email || !canonicalEmailForBanEquivalence(email)) {
+    return;
+  }
+  const allowedAccountId = `${allowed_account_id ?? ""}`.trim().toLowerCase();
+  const banned = (
+    await getClusterBanEquivalentEmailAccounts({ email_address: email })
+  ).find(
+    (account) =>
+      account.banned === true &&
+      (!allowedAccountId || account.account_id !== allowedAccountId),
+  );
+  if (!banned) {
+    return;
+  }
+  throw Error(
+    `This email address is blocked because an equivalent address is banned (${banned.email_address ?? banned.account_id}).`,
+  );
+}
+
 export async function updateClusterAccountHomeBay(opts: {
   account_id: string;
   home_bay_id: string;
@@ -185,8 +213,16 @@ export async function updateClusterAccountEmailAddress(opts: {
 }): Promise<AccountDirectoryEntry> {
   const normalized = {
     ...opts,
+    account_id: `${opts.account_id ?? ""}`.trim().toLowerCase(),
     email_address: `${opts.email_address ?? ""}`.trim().toLowerCase(),
   };
+  await assertSignupEmailDomainAllowed({
+    email_address: normalized.email_address,
+  });
+  await assertNoClusterBannedEquivalentEmailAccount({
+    email_address: normalized.email_address,
+    allowed_account_id: normalized.account_id,
+  });
   if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
     return await updateClusterAccountEmailAddressDirect(normalized);
   }
@@ -355,6 +391,12 @@ export async function setLocalClusterAccountBan({
   }
   if (banned) {
     await banUser(account_id);
+    await quarantineAccountBillingResourcesLocal({
+      account_id,
+      actor_account_id,
+      reason: reason ?? "account ban",
+      home_bay_id: currentBayId(),
+    });
   } else {
     await removeUserBan(account_id);
   }
@@ -573,6 +615,8 @@ async function createClusterAccountDirect(
   if (existing?.account_id) {
     throw new Error(`an account with email '${email_address}' already exists`);
   }
+  await assertSignupEmailDomainAllowed({ email_address });
+  await assertNoClusterBannedEquivalentEmailAccount({ email_address });
 
   await reserveClusterAccountDirectoryEntry({
     account_id,

@@ -3,6 +3,10 @@ Helpers for producing the public subset of site settings (used by /customize).
 */
 
 import { site_settings_conf, type SiteSettingsKeys } from "./site-defaults";
+import {
+  publicSignupEmailDomainPolicy,
+  SIGNUP_EMAIL_DOMAIN_POLICY_SETTING_KEYS,
+} from "../accounts/signup-email-domain-policy";
 
 export const PUBLIC_SITE_SETTINGS_KEYS = Object.freeze(
   Object.keys(site_settings_conf) as SiteSettingsKeys[],
@@ -35,6 +39,9 @@ export function buildPublicSiteSettings(all: Record<string, any>): {
   const version: VersionSettings = {};
 
   for (const key of PUBLIC_SITE_SETTINGS_KEYS) {
+    if (SIGNUP_EMAIL_DOMAIN_POLICY_SETTING_KEYS.has(key)) {
+      continue;
+    }
     if (!(key in all)) {
       continue;
     }
@@ -70,6 +77,9 @@ export function buildPublicSiteSettings(all: Record<string, any>): {
     all.zendesk_username &&
     all.zendesk_uri
   );
+
+  configuration.signup_email_domain_public_policy =
+    publicSignupEmailDomainPolicy(all);
 
   return { configuration, version };
 }

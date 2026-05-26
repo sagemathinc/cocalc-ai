@@ -36,23 +36,112 @@ function normalizedHomeBayId(value: string): string {
   return `${value ?? ""}`.trim() || getConfiguredBayId();
 }
 
-export function canonicalEmailForBanEquivalence(
+type BanEmailEquivalenceRule = {
+  canonical: string;
+  domains: string[];
+  local_part: string;
+  strip_dots?: boolean;
+  strip_plus?: boolean;
+  separator?: "-";
+  require_separator?: boolean;
+};
+
+const MICROSOFT_PLUS_DOMAINS = new Set([
+  "hotmail.com",
+  "live.com",
+  "msn.com",
+  "outlook.com",
+]);
+
+const PROTON_PLUS_DOMAINS = new Set([
+  "pm.me",
+  "proton.me",
+  "protonmail.ch",
+  "protonmail.com",
+]);
+
+function emailPartsForBanEquivalence(
   email_address: string | undefined,
-): string | undefined {
+): { local: string; domain: string } | undefined {
   const email = normalizedEmail(`${email_address ?? ""}`);
   const at = email.lastIndexOf("@");
   if (at <= 0) {
     return undefined;
   }
+  const local = email.slice(0, at);
   const domain = email.slice(at + 1);
-  if (domain !== "gmail.com" && domain !== "googlemail.com") {
+  if (!local || !domain) {
     return undefined;
   }
-  const local = email.slice(0, at).split("+", 1)[0].replace(/\./g, "");
-  if (!local) {
+  return { local, domain };
+}
+
+function banEmailEquivalenceRule(
+  email_address: string | undefined,
+): BanEmailEquivalenceRule | undefined {
+  const parts = emailPartsForBanEquivalence(email_address);
+  if (!parts) {
     return undefined;
   }
-  return `${local}@gmail.com`;
+  const { local, domain } = parts;
+  if (domain === "gmail.com" || domain === "googlemail.com") {
+    const local_part = local.split("+", 1)[0].replace(/\./g, "");
+    if (!local_part) {
+      return undefined;
+    }
+    return {
+      canonical: `${local_part}@gmail.com`,
+      domains: ["gmail.com", "googlemail.com"],
+      local_part,
+      strip_dots: true,
+      strip_plus: true,
+    };
+  }
+  if (MICROSOFT_PLUS_DOMAINS.has(domain)) {
+    const local_part = local.split("+", 1)[0];
+    if (!local_part) {
+      return undefined;
+    }
+    return {
+      canonical: `${local_part}@${domain}`,
+      domains: [domain],
+      local_part,
+      strip_plus: true,
+    };
+  }
+  if (PROTON_PLUS_DOMAINS.has(domain)) {
+    const local_part = local.split("+", 1)[0];
+    if (!local_part) {
+      return undefined;
+    }
+    return {
+      canonical: `${local_part}@${domain}`,
+      domains: [domain],
+      local_part,
+      strip_plus: true,
+    };
+  }
+  if (domain === "yahoo.com") {
+    const hyphen = local.indexOf("-");
+    if (hyphen <= 0 || hyphen === local.length - 1) {
+      return undefined;
+    }
+    const local_part = local.slice(0, hyphen);
+    return {
+      canonical: `${local_part}-*@yahoo.com`,
+      domains: ["yahoo.com"],
+      local_part,
+      separator: "-",
+      require_separator: true,
+    };
+  }
+  return undefined;
+}
+
+export function canonicalEmailForBanEquivalence(
+  email_address: string | undefined,
+): string | undefined {
+  return banEmailEquivalenceRule(email_address)?.canonical;
 }
 
 export async function ensureClusterAccountDirectorySchema(): Promise<void> {
@@ -510,17 +599,32 @@ export async function getClusterBanEquivalentEmailAccountsDirect({
   email_address: string;
   limit?: number;
 }): Promise<AccountDirectoryEntry[]> {
-  const canonical = canonicalEmailForBanEquivalence(email_address);
-  if (!canonical) {
+  const equivalence = banEmailEquivalenceRule(email_address);
+  if (!equivalence) {
     return [];
   }
-  const [localPart] = canonical.split("@", 1);
   const cappedLimit = Math.min(Math.max(1, Number(limit) || 1000), 1000);
+  const rawLocalExpr = "lower(split_part(email_address, '@', 1))";
+  let localExpr = rawLocalExpr;
+  if (equivalence.strip_plus) {
+    localExpr = `split_part(${localExpr}, '+', 1)`;
+  }
+  if (equivalence.separator === "-") {
+    localExpr = `split_part(${localExpr}, '-', 1)`;
+  }
+  if (equivalence.strip_dots) {
+    localExpr = `replace(${localExpr}, '.', '')`;
+  }
+  const separatorClause = equivalence.require_separator
+    ? `AND position('-' in ${rawLocalExpr}) > 1
+       AND position('-' in ${rawLocalExpr}) < length(${rawLocalExpr})`
+    : "";
   const equivalentWhere = `
-    replace(split_part(split_part(lower(email_address), '@', 1), '+', 1), '.', '')=$1
+    ${localExpr}=$1
     AND lower(split_part(email_address, '@', 2))=ANY($2::TEXT[])
+    ${separatorClause}
   `;
-  const params = [localPart, ["gmail.com", "googlemail.com"], cappedLimit];
+  const params = [equivalence.local_part, equivalence.domains, cappedLimit];
   const pool = getPool("medium");
   const [localRowsResult, directoryRowsResult] = await Promise.all([
     pool.query(
