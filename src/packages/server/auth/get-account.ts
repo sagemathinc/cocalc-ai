@@ -7,7 +7,10 @@ import getPool from "@cocalc/database/pool";
 import { getAccountFromApiKey } from "@cocalc/server/auth/api";
 import { getRememberMeHashes } from "@cocalc/server/auth/remember-me";
 import getLogger from "@cocalc/backend/logger";
-import isBanned from "@cocalc/server/accounts/is-banned";
+import {
+  ensureAccountSecurityStateReady,
+  isAccountBannedCached,
+} from "@cocalc/server/accounts/security-state";
 import { trunc } from "@cocalc/util/misc";
 
 const logger = getLogger("server:get-account");
@@ -78,7 +81,8 @@ export async function getAccountIdFromRememberMe(
     return;
   }
   const { account_id, expire } = result.rows[0];
-  if (await isBanned(account_id)) {
+  await ensureAccountSecurityStateReady();
+  if (isAccountBannedCached(account_id)) {
     // banned user so do not allow  -- act of banning user should have
     // deleted all remember_me, but we put this extra check in just in case.
     return;

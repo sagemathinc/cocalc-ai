@@ -7,7 +7,10 @@ import Cookies from "cookies";
 import type { Request } from "express";
 import generateHash from "@cocalc/server/auth/hash";
 import { REMEMBER_ME_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
-import isBanned from "@cocalc/server/accounts/is-banned";
+import {
+  ensureAccountSecurityStateReady,
+  isAccountBannedCached,
+} from "@cocalc/server/accounts/security-state";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   deriveBrowserCookieName,
@@ -36,7 +39,8 @@ export async function createRememberMeCookie(
   // absolute expiration time in the database
   expire: Date;
 }> {
-  if (await isBanned(account_id)) {
+  await ensureAccountSecurityStateReady();
+  if (isAccountBannedCached(account_id)) {
     throw Error("user is banned");
   }
   // compute the value and ttl_s:
