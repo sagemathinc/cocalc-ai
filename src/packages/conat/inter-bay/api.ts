@@ -882,6 +882,8 @@ export interface AccountLocalQuarantineBillingResourcesResult {
   payment_methods_detached: number;
   hosts_stop_requested: number;
   host_ids: string[];
+  projects_stop_requested: number;
+  project_ids: string[];
   errors: string[];
 }
 

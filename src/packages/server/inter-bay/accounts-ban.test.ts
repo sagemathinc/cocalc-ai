@@ -12,6 +12,7 @@ const reserveClusterAccountDirectoryEntryMock = jest.fn();
 const updateClusterAccountBannedDirectMock = jest.fn();
 const banUserMock = jest.fn();
 const removeUserBanMock = jest.fn();
+const quarantineAccountBillingResourcesLocalMock = jest.fn();
 const recordAccountBanAuditEventMock = jest.fn();
 const remoteSetBanMock = jest.fn();
 const assertSignupEmailDomainAllowedMock = jest.fn();
@@ -63,6 +64,11 @@ jest.mock("@cocalc/server/accounts/ban", () => ({
   removeUserBan: (...args: any[]) => removeUserBanMock(...args),
 }));
 
+jest.mock("@cocalc/server/accounts/resource-quarantine", () => ({
+  quarantineAccountBillingResourcesLocal: (...args: any[]) =>
+    quarantineAccountBillingResourcesLocalMock(...args),
+}));
+
 jest.mock("@cocalc/server/accounts/ban-audit", () => ({
   recordAccountBanAuditEvent: (...args: any[]) =>
     recordAccountBanAuditEventMock(...args),
@@ -89,6 +95,9 @@ describe("inter-bay account ban routing", () => {
     });
     banUserMock.mockReset().mockResolvedValue(undefined);
     removeUserBanMock.mockReset().mockResolvedValue(undefined);
+    quarantineAccountBillingResourcesLocalMock
+      .mockReset()
+      .mockResolvedValue(undefined);
     recordAccountBanAuditEventMock.mockReset().mockResolvedValue(undefined);
     remoteSetBanMock.mockReset().mockResolvedValue({
       account_id: "00000000-0000-4000-8000-000000000001",
@@ -119,6 +128,12 @@ describe("inter-bay account ban routing", () => {
     expect(banUserMock).toHaveBeenCalledWith(
       "00000000-0000-4000-8000-000000000001",
     );
+    expect(quarantineAccountBillingResourcesLocalMock).toHaveBeenCalledWith({
+      account_id: "00000000-0000-4000-8000-000000000001",
+      actor_account_id: undefined,
+      reason: "account ban",
+      home_bay_id: "bay-1",
+    });
     expect(remoteSetBanMock).not.toHaveBeenCalled();
     expect(updateClusterAccountBannedDirectMock).toHaveBeenCalledWith({
       account_id: "00000000-0000-4000-8000-000000000001",
@@ -171,6 +186,12 @@ describe("inter-bay account ban routing", () => {
       actor_account_id: "00000000-0000-4000-8000-000000000099",
       reason: "spam campaign",
       metadata: undefined,
+    });
+    expect(quarantineAccountBillingResourcesLocalMock).toHaveBeenCalledWith({
+      account_id: "00000000-0000-4000-8000-000000000001",
+      actor_account_id: "00000000-0000-4000-8000-000000000099",
+      reason: "spam campaign",
+      home_bay_id: "bay-1",
     });
     expect(updateClusterAccountBannedDirectMock).toHaveBeenCalledWith({
       account_id: "00000000-0000-4000-8000-000000000001",
@@ -308,6 +329,16 @@ describe("inter-bay account ban routing", () => {
     );
     expect(banUserMock).toHaveBeenCalledWith(
       "00000000-0000-4000-8000-000000000002",
+    );
+    expect(quarantineAccountBillingResourcesLocalMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "00000000-0000-4000-8000-000000000001",
+      }),
+    );
+    expect(quarantineAccountBillingResourcesLocalMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "00000000-0000-4000-8000-000000000002",
+      }),
     );
     expect(updateClusterAccountBannedDirectMock).toHaveBeenCalledWith({
       account_id: "00000000-0000-4000-8000-000000000002",

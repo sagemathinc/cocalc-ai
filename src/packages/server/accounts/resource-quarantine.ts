@@ -6,6 +6,7 @@
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { listHosts, stopHost } from "@cocalc/server/conat/api/hosts";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { cancelUsageSubscription } from "@cocalc/server/purchases/stripe-usage-based-subscription";
 import { cancelPaymentIntent } from "@cocalc/server/purchases/stripe/create-payment-intent";
 import { getAllOpenPayments } from "@cocalc/server/purchases/stripe/get-payments";
@@ -26,6 +27,8 @@ export interface AccountResourceQuarantineResult {
   payment_methods_detached: number;
   hosts_stop_requested: number;
   host_ids: string[];
+  projects_stop_requested: number;
+  project_ids: string[];
   errors: string[];
 }
 
@@ -148,6 +151,46 @@ async function stopOwnedDedicatedHosts({
   return { count: host_ids.length, host_ids };
 }
 
+type RuntimeSlotProjectRow = {
+  project_id: string;
+  owning_bay_id: string;
+};
+
+async function listRuntimeSlotProjects(
+  account_id: string,
+): Promise<RuntimeSlotProjectRow[]> {
+  const { rows } = await getPool().query<RuntimeSlotProjectRow>(
+    `
+      SELECT DISTINCT ON (project_id)
+             project_id,
+             owning_bay_id
+        FROM project_runtime_slots
+       WHERE sponsor_account_id=$1
+         AND state IN ('starting', 'running')
+       ORDER BY project_id, heartbeat_at DESC
+    `,
+    [account_id],
+  );
+  return rows;
+}
+
+async function stopRuntimeSlotProjects({
+  account_id,
+}: {
+  account_id: string;
+}): Promise<{ count: number; project_ids: string[] }> {
+  const stopped: string[] = [];
+  for (const { project_id, owning_bay_id } of await listRuntimeSlotProjects(
+    account_id,
+  )) {
+    await getInterBayBridge()
+      .projectControl(owning_bay_id)
+      .stop({ project_id });
+    stopped.push(project_id);
+  }
+  return { count: stopped.length, project_ids: stopped };
+}
+
 async function attempt<T>({
   errors,
   label,
@@ -221,6 +264,12 @@ export async function quarantineAccountBillingResourcesLocal({
     fn: async () =>
       await stopOwnedDedicatedHosts({ account_id, actor_account_id }),
   });
+  const stoppedProjects = await attempt({
+    errors,
+    label: "stop projects using account runtime slots",
+    fallback: { count: 0, project_ids: [] },
+    fn: async () => await stopRuntimeSlotProjects({ account_id }),
+  });
 
   const result: AccountResourceQuarantineResult = {
     account_id,
@@ -232,6 +281,8 @@ export async function quarantineAccountBillingResourcesLocal({
     payment_methods_detached,
     hosts_stop_requested: stoppedHosts.count,
     host_ids: stoppedHosts.host_ids,
+    projects_stop_requested: stoppedProjects.count,
+    project_ids: stoppedProjects.project_ids,
     errors,
   };
 

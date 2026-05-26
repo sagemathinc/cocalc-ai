@@ -32,6 +32,8 @@ const QuarantineBillingResourcesResultSchema = z.object({
   payment_methods_detached: z.number(),
   hosts_stop_requested: z.number(),
   host_ids: z.array(z.string()),
+  projects_stop_requested: z.number(),
+  project_ids: z.array(z.string()),
   errors: z.array(z.string()),
 });
 

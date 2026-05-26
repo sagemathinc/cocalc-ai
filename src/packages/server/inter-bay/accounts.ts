@@ -391,6 +391,12 @@ export async function setLocalClusterAccountBan({
   }
   if (banned) {
     await banUser(account_id);
+    await quarantineAccountBillingResourcesLocal({
+      account_id,
+      actor_account_id,
+      reason: reason ?? "account ban",
+      home_bay_id: currentBayId(),
+    });
   } else {
     await removeUserBan(account_id);
   }
