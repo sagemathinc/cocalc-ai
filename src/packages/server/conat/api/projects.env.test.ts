@@ -14,6 +14,7 @@ let generateProjectSshKeySecretLocalMock: jest.Mock;
 let exportProjectSecretsForCopyMock: jest.Mock;
 let importProjectSecretsForCopyMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
+let requireDangerousProjectMutationAuthMock: jest.Mock;
 let interBayProjectSecretsMock: {
   list: jest.Mock;
   set: jest.Mock;
@@ -88,6 +89,13 @@ jest.mock("@cocalc/server/projects/project-secret-ssh-key", () => ({
     generateProjectSshKeySecretLocalMock(...args),
 }));
 
+jest.mock("./project-dangerous-auth", () => ({
+  __esModule: true,
+  PROJECT_DANGEROUS_INTERNAL_AUTH: Symbol("project-dangerous-internal-auth"),
+  requireDangerousProjectMutationAuth: (...args: any[]) =>
+    requireDangerousProjectMutationAuthMock(...args),
+}));
+
 describe("project env helpers", () => {
   const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
   const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
@@ -126,6 +134,9 @@ describe("project env helpers", () => {
     publishProjectDetailInvalidationBestEffortMock = jest.fn(
       async () => undefined,
     );
+    requireDangerousProjectMutationAuthMock = jest.fn(async (opts) => ({
+      session_hash: opts.session_hash,
+    }));
     listProjectSecretsMock = jest.fn(async () => [
       {
         project_id: PROJECT_ID,
@@ -542,6 +553,7 @@ describe("project env helpers", () => {
     await expect(
       generateProjectSshKeySecret({
         account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
         project_id: PROJECT_ID,
       }),
     ).resolves.toEqual(
@@ -555,6 +567,11 @@ describe("project env helpers", () => {
     expect(assertCollabMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       project_id: PROJECT_ID,
+    });
+    expect(requireDangerousProjectMutationAuthMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      session_hash: undefined,
     });
     expect(generateProjectSshKeySecretLocalMock).toHaveBeenCalledWith({
       project_id: PROJECT_ID,
@@ -579,6 +596,7 @@ describe("project env helpers", () => {
     await expect(
       generateProjectSshKeySecret({
         account_id: ACCOUNT_ID,
+        session_hash: "session-1",
         project_id: PROJECT_ID,
       }),
     ).resolves.toEqual(
@@ -593,9 +611,15 @@ describe("project env helpers", () => {
       interBayProjectSecretsMock.generateSshKeySecret,
     ).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
+      session_hash: "session-1",
       project_id: PROJECT_ID,
       secret_name: undefined,
       epoch: 3,
+    });
+    expect(requireDangerousProjectMutationAuthMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: undefined,
+      session_hash: "session-1",
     });
   });
 });

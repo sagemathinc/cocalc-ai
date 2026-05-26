@@ -423,6 +423,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "finalizes staged project restore",
   },
+  "projects.generateProjectSshKeySecret": {
+    decision: "fresh-auth-required",
+    reason: "project SSH trust and private-key secret mutation",
+  },
   "projects.hardDeleteProject": {
     decision: "fresh-auth-required",
     reason: "irreversible project deletion",

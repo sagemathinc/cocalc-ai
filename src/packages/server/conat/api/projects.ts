@@ -1220,20 +1220,31 @@ export async function copyProjectSecrets({
 
 export async function generateProjectSshKeySecret({
   account_id,
+  browser_id,
+  session_hash,
   project_id,
   secret_name,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   project_id: string;
   secret_name?: string;
 }): Promise<GenerateProjectSshKeySecretResult> {
   const actor = requireAccountId(account_id);
+  const authSession = await requireDangerousProjectMutationAuth({
+    account_id: actor,
+    browser_id,
+    session_hash,
+  });
+  const actorSessionHash = authSession?.session_hash ?? session_hash;
   const ownership = await resolveRequiredProjectBay(project_id);
   if (ownership.bay_id !== getConfiguredBayId()) {
     return await getInterBayBridge()
       .projectSecrets(ownership.bay_id)
       .generateSshKeySecret({
         account_id: actor,
+        session_hash: actorSessionHash,
         project_id,
         secret_name,
         epoch: ownership.epoch,

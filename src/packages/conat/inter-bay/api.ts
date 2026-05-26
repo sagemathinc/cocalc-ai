@@ -1753,6 +1753,7 @@ export interface InterBayProjectSecretsApi {
   }) => Promise<CopyProjectSecretsResult>;
   generateSshKeySecret: (opts: {
     account_id: string;
+    session_hash?: string | null;
     project_id: string;
     secret_name?: string;
     epoch?: number;

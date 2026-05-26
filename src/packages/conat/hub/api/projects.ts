@@ -753,6 +753,8 @@ export interface Projects {
 
   generateProjectSshKeySecret: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     project_id: string;
     secret_name?: string;
   }) => Promise<GenerateProjectSshKeySecretResult>;

@@ -20,6 +20,11 @@ import type {
   ProjectSecretMetadata,
 } from "@cocalc/conat/hub/api/projects";
 import {
+  FreshAuthModal,
+  isFreshAuthRequiredError,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
+import {
   React,
   redux,
   useIsMountedRef,
@@ -144,6 +149,9 @@ export const ProjectSecrets: React.FC<Props> = ({
   >(null);
   const [sshRestartError, setSshRestartError] = useState<string>("");
   const [showRestartWarning, setShowRestartWarning] = useState<boolean>(false);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   const trimmedName = name.trim();
   const nameError = trimmedName ? validateName(trimmedName) : undefined;
@@ -307,45 +315,51 @@ export const ProjectSecrets: React.FC<Props> = ({
       );
       return;
     }
-    setSaving(true);
-    setError("");
-    setCopyResult(null);
-    clearSshKeyResult();
-    setShowRestartWarning(false);
-    try {
-      const result =
-        await webapp_client.conat_client.hub.projects.generateProjectSshKeySecret(
-          {
-            project_id,
-          },
-        );
-      if (!isMountedRef.current) return;
-      setSecrets(upsertMetadata(secrets, result.secret));
-      setSshKeyResult(result);
-      publishProjectDetailInvalidation({
-        project_id,
-        fields: ["secrets"],
-      });
+    await runFreshAuthAction(async () => {
+      setSaving(true);
+      setError("");
+      setCopyResult(null);
+      clearSshKeyResult();
+      setShowRestartWarning(false);
       try {
-        await redux.getActions("projects").restart_project(project_id);
+        const result =
+          await webapp_client.conat_client.hub.projects.generateProjectSshKeySecret(
+            {
+              browser_id: webapp_client.browser_id,
+              project_id,
+            },
+          );
         if (!isMountedRef.current) return;
-        setSshRestartState("queued");
-        setSshRestartError("");
-        setShowRestartWarning(false);
+        setSecrets(upsertMetadata(secrets, result.secret));
+        setSshKeyResult(result);
+        publishProjectDetailInvalidation({
+          project_id,
+          fields: ["secrets"],
+        });
+        try {
+          await redux.getActions("projects").restart_project(project_id);
+          if (!isMountedRef.current) return;
+          setSshRestartState("queued");
+          setSshRestartError("");
+          setShowRestartWarning(false);
+        } catch (err) {
+          if (!isMountedRef.current) return;
+          setSshRestartState("failed");
+          setSshRestartError(`${err}`);
+          setShowRestartWarning(result.restart_required);
+        }
       } catch (err) {
+        if (isFreshAuthRequiredError(err)) {
+          throw err;
+        }
         if (!isMountedRef.current) return;
-        setSshRestartState("failed");
-        setSshRestartError(`${err}`);
-        setShowRestartWarning(result.restart_required);
+        setError(`${err}`);
+      } finally {
+        if (isMountedRef.current) {
+          setSaving(false);
+        }
       }
-    } catch (err) {
-      if (!isMountedRef.current) return;
-      setError(`${err}`);
-    } finally {
-      if (isMountedRef.current) {
-        setSaving(false);
-      }
-    }
+    });
   }
 
   const help = (
@@ -717,6 +731,7 @@ export const ProjectSecrets: React.FC<Props> = ({
               message="Restart this project for mounted secret file changes to take effect."
             />
           ) : undefined}
+          <FreshAuthModal {...freshAuthModalProps} />
         </Space>
       </div>
     );
