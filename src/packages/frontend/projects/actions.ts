@@ -1748,6 +1748,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     const { project_id } = opts;
     const creation_date = Date.now();
     await webapp_client.conat_client.hub.projects.setProjectSshKey({
+      browser_id: webapp_client.browser_id,
       project_id,
       fingerprint: opts.fingerprint,
       title: opts.title,
@@ -1773,6 +1774,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   }): Promise<void> => {
     const { project_id } = opts;
     await webapp_client.conat_client.hub.projects.deleteProjectSshKey({
+      browser_id: webapp_client.browser_id,
       project_id,
       fingerprint: opts.fingerprint,
     });

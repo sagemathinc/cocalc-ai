@@ -1251,6 +1251,8 @@ export interface Projects {
   }) => Promise<ProjectHiddenResult[]>;
   setProjectSshKey: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     project_id: string;
     fingerprint: string;
     title: string;
@@ -1260,6 +1262,8 @@ export interface Projects {
   }) => Promise<void>;
   deleteProjectSshKey: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     project_id: string;
     fingerprint: string;
   }) => Promise<void>;

@@ -408,8 +408,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "projects.deleteProjectSshKey": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "project SSH trust revocation",
   },
   "projects.deleteSnapshot": {
     decision: "fresh-auth-required",
@@ -484,8 +484,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: "local account preference",
   },
   "projects.setProjectSshKey": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "project SSH trust mutation",
   },
   "projects.start": {
     decision: "fresh-auth-not-required",

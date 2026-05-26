@@ -16,6 +16,7 @@ jest.mock("./store", () => ({
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     account_id: "acct-1",
+    browser_id: "browser-1",
     conat_client: {
       hub: {
         projects: {
@@ -237,6 +238,7 @@ describe("ProjectsActions project metadata updates", () => {
       mockedWebappClient.conat_client.hub.projects.setProjectSshKey,
     ).toHaveBeenCalledWith(
       expect.objectContaining({
+        browser_id: "browser-1",
         project_id,
         fingerprint: "fp-1",
         title: "laptop",
@@ -290,6 +292,7 @@ describe("ProjectsActions project metadata updates", () => {
     expect(
       mockedWebappClient.conat_client.hub.projects.deleteProjectSshKey,
     ).toHaveBeenCalledWith({
+      browser_id: "browser-1",
       project_id,
       fingerprint: "fp-1",
     });

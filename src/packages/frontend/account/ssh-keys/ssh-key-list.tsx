@@ -3,11 +3,15 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Flex, Popconfirm, Typography } from "antd";
+import { Button, Flex, message, Popconfirm, Typography } from "antd";
 import { Map } from "immutable";
 import { useIntl } from "react-intl";
 
 import { redux } from "@cocalc/frontend/app-framework";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import {
   Gap,
   HelpIcon,
@@ -47,16 +51,21 @@ export default function SSHKeyList({
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const isFlyout = mode === "flyout";
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => message.error(`${err}`),
+  });
 
   function renderAdder(size?) {
     if (project_id) {
       return (
         <SSHKeyAdder
           size={size}
-          add_ssh_key={(opts) => {
-            redux
-              .getActions("projects")
-              .add_ssh_key_to_project({ ...opts, project_id });
+          add_ssh_key={async (opts) => {
+            await runFreshAuthAction(async () => {
+              await redux
+                .getActions("projects")
+                .add_ssh_key_to_project({ ...opts, project_id });
+            });
           }}
           style={{ marginBottom: "10px" }}
           extra={
@@ -120,6 +129,7 @@ export default function SSHKeyList({
               key={fingerprint}
               project_id={project_id}
               mode={mode}
+              runFreshAuthAction={runFreshAuthAction}
             />
           ),
         });
@@ -154,6 +164,7 @@ export default function SSHKeyList({
       <>
         {children}
         {render_keys()}
+        <FreshAuthModal {...freshAuthModalProps} />
       </>
     );
   }
@@ -173,9 +184,15 @@ interface OneSSHKeyProps {
   ssh_key: Map<string, any>;
   project_id?: string;
   mode?: "project" | "flyout";
+  runFreshAuthAction: (action: () => Promise<void>) => Promise<boolean>;
 }
 
-function OneSSHKey({ ssh_key, project_id, mode = "project" }: OneSSHKeyProps) {
+function OneSSHKey({
+  ssh_key,
+  project_id,
+  mode = "project",
+  runFreshAuthAction,
+}: OneSSHKeyProps) {
   const isFlyout = mode === "flyout";
 
   //   function render_last_use(): React.JSX.Element {
@@ -191,12 +208,14 @@ function OneSSHKey({ ssh_key, project_id, mode = "project" }: OneSSHKeyProps) {
   //     }
   //   }
 
-  function delete_key(): void {
+  async function delete_key(): Promise<void> {
     const fingerprint = ssh_key.get("fingerprint");
     if (project_id) {
-      redux.getActions("projects").delete_ssh_key_from_project({
-        fingerprint,
-        project_id: project_id,
+      await runFreshAuthAction(async () => {
+        await redux.getActions("projects").delete_ssh_key_from_project({
+          fingerprint,
+          project_id: project_id,
+        });
       });
     } else {
       redux.getActions("account").delete_ssh_key(fingerprint);
@@ -228,7 +247,9 @@ function OneSSHKey({ ssh_key, project_id, mode = "project" }: OneSSHKeyProps) {
               future, you will have to upload it again.
             </div>
           }
-          onConfirm={() => delete_key()}
+          onConfirm={() => {
+            void delete_key();
+          }}
           okText={"Yes, delete key"}
           cancelText={<CancelText />}
         >

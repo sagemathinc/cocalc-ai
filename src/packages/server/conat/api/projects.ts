@@ -3205,6 +3205,8 @@ export async function setProjectsHidden({
 
 export async function setProjectSshKey({
   account_id,
+  browser_id,
+  session_hash,
   project_id,
   fingerprint,
   title,
@@ -3213,6 +3215,8 @@ export async function setProjectSshKey({
   last_use_date,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   project_id: string;
   fingerprint: string;
   title: string;
@@ -3220,6 +3224,11 @@ export async function setProjectSshKey({
   creation_date?: number;
   last_use_date?: number;
 }): Promise<void> {
+  await requireDangerousProjectMutationAuth({
+    account_id,
+    browser_id,
+    session_hash,
+  });
   await assertCollab({ account_id, project_id });
   const actor = account_id as string;
   const fp = `${fingerprint ?? ""}`.trim();
@@ -3246,13 +3255,22 @@ export async function setProjectSshKey({
 
 export async function deleteProjectSshKey({
   account_id,
+  browser_id,
+  session_hash,
   project_id,
   fingerprint,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   project_id: string;
   fingerprint: string;
 }): Promise<void> {
+  await requireDangerousProjectMutationAuth({
+    account_id,
+    browser_id,
+    session_hash,
+  });
   await assertCollab({ account_id, project_id });
   const actor = account_id as string;
   const fp = `${fingerprint ?? ""}`.trim();
