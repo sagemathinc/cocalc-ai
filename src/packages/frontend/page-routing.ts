@@ -25,6 +25,7 @@ export type PageTopTab =
   | "account"
   | "auth"
   | "admin"
+  | "docs"
   | "file-use"
   | "hosts"
   | "notifications"
@@ -44,6 +45,7 @@ export type ParsedPageTarget =
       page: "notifications";
       tab?: "mentions";
     }
+  | { page: "docs"; slug?: string }
   | { page: "file-use" }
   | { page: "admin"; route: AdminRoute }
   | { page: "hosts" }
@@ -91,6 +93,11 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
     }
     case "notifications":
       return { page: "notifications" };
+    case "docs":
+      return {
+        page: "docs",
+        slug: segments.slice(1).filter(Boolean).join("/") || undefined,
+      };
     case "file-use":
       return { page: "file-use" };
     case "admin":
@@ -150,6 +157,8 @@ export function getPageTargetPath(parsed: ParsedPageTarget): string {
       );
     case "notifications":
       return "notifications";
+    case "docs":
+      return parsed.slug ? `docs/${parsed.slug}` : "docs";
     case "file-use":
       return "file-use";
     case "admin":

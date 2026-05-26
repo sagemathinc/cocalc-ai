@@ -192,6 +192,22 @@ export const Page: React.FC = () => {
     }
   }
 
+  function render_docs_tab(): React.JSX.Element | undefined {
+    if (!is_logged_in) return;
+    return (
+      <NavTab
+        name="docs"
+        label="Docs"
+        label_class={NAV_CLASS}
+        icon={"book"}
+        active_top_tab={active_top_tab}
+        hide_label={!show_label}
+        on_click={() => page_actions.setState({ docs_slug: undefined })}
+        tooltip="Search CoCalc documentation"
+      />
+    );
+  }
+
   function render_hosts_tab(): React.JSX.Element | null {
     if (!is_logged_in) return null;
     return (
@@ -280,6 +296,7 @@ export const Page: React.FC = () => {
         }}
       >
         {render_admin_tab()}
+        {render_docs_tab()}
         {render_sign_in_tab()}
         {is_logged_in ? render_account_tab() : undefined}
         {render_support()}

@@ -822,6 +822,8 @@ The first admin slice should include:
   admin directly to the right UI;
 - Done: a few short source-derived admin pages that can later grow into many
   "mini-skill" docs.
+- Done: global signed-in docs tab outside the project flyout, so account,
+  billing, admin, and configuration docs do not require a selected project.
 
 Initial admin docs backlog:
 

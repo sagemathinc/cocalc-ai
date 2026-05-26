@@ -918,6 +918,9 @@ export function DocsBrowser({
   const [selectedEntry, setSelectedEntry] = useState<DocsEntry | undefined>(
     initialEntry,
   );
+  useEffect(() => {
+    setSelectedEntry(initialEntry);
+  }, [initialEntry]);
   const actionMap = useMemo(
     () =>
       new Map<string, DocsBrowserAction>(

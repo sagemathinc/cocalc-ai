@@ -37,6 +37,15 @@ describe("page-routing", () => {
     expect(parsePageTarget("ssh")).toEqual({ page: "ssh" });
   });
 
+  it("parses global docs routes", () => {
+    expect(parsePageTarget("docs")).toEqual({ page: "docs" });
+    expect(parsePageTarget("docs/admin/users")).toEqual({
+      page: "docs",
+      slug: "admin/users",
+    });
+    expect(getPageTopTab(parsePageTarget("docs/admin/users"))).toBe("docs");
+  });
+
   it("parses admin subroutes and ignores query strings", () => {
     expect(parsePageTarget("admin/news")).toEqual({
       page: "admin",
@@ -100,6 +109,9 @@ describe("page-routing", () => {
     ).toBe("settings/preferences/keyboard");
     expect(getPageUrlPath({ page: "auth", view: "sign-up" })).toBe(
       "/auth/sign-up",
+    );
+    expect(getPageUrlPath({ page: "docs", slug: "admin/users" })).toBe(
+      "/docs/admin/users",
     );
     expect(
       getPageUrlPath({
