@@ -7,7 +7,8 @@ let queryMock: jest.Mock;
 let callback2Mock: jest.Mock;
 let isAdminMock: jest.Mock;
 let dbMock: jest.Mock;
-let isBannedMock: jest.Mock;
+let ensureAccountSecurityStateReadyMock: jest.Mock;
+let isAccountBannedCachedMock: jest.Mock;
 let listProjectedMyCollaboratorsForAccountMock: jest.Mock;
 let getClusterAccountByIdMock: jest.Mock;
 let getClusterAccountsByIdsMock: jest.Mock;
@@ -66,9 +67,11 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
   default: (...args: any[]) => isAdminMock(...args),
 }));
 
-jest.mock("@cocalc/server/accounts/is-banned", () => ({
+jest.mock("@cocalc/server/accounts/security-state", () => ({
   __esModule: true,
-  default: (...args: any[]) => isBannedMock(...args),
+  ensureAccountSecurityStateReady: (...args: any[]) =>
+    ensureAccountSecurityStateReadyMock(...args),
+  isAccountBannedCached: (...args: any[]) => isAccountBannedCachedMock(...args),
 }));
 
 jest.mock("@cocalc/database", () => ({
@@ -196,7 +199,8 @@ describe("project collaborators local bay access", () => {
     queryMock = jest.fn(async () => ({ rows: [] }));
     callback2Mock = jest.fn(async (fn, opts) => await fn(opts));
     isAdminMock = jest.fn(async () => false);
-    isBannedMock = jest.fn(async () => false);
+    ensureAccountSecurityStateReadyMock = jest.fn(async () => undefined);
+    isAccountBannedCachedMock = jest.fn(() => false);
     listProjectedMyCollaboratorsForAccountMock = jest.fn(async () => []);
     getClusterAccountByIdMock = jest.fn(async (account_id: string) => ({
       account_id,
@@ -1224,7 +1228,7 @@ describe("project collaborators local bay access", () => {
   it("rejects email invite acceptance when the sender is banned", async () => {
     const inviteId = "77777777-7777-4777-8777-777777777777";
     const token = "banned-sender-token";
-    isBannedMock = jest.fn(async (account_id: string) => {
+    isAccountBannedCachedMock = jest.fn((account_id: string) => {
       return account_id === TARGET_ACCOUNT_ID;
     });
     queryMock = jest.fn(async (sql: string) => {
@@ -1257,6 +1261,7 @@ describe("project collaborators local bay access", () => {
       }),
     ).rejects.toThrow("invite sender is banned");
     expect(addUserToProject).not.toHaveBeenCalled();
+    expect(ensureAccountSecurityStateReadyMock).toHaveBeenCalled();
     expect(queryMock).not.toHaveBeenCalledWith(
       expect.stringContaining("AS inviter_authorized"),
       expect.any(Array),

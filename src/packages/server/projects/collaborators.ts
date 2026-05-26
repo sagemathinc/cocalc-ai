@@ -37,7 +37,10 @@ import getLogger from "@cocalc/backend/logger";
 import { send_invite_email } from "@cocalc/server/hub/email";
 import getEmailAddress from "@cocalc/server/accounts/get-email-address";
 import isAdmin from "@cocalc/server/accounts/is-admin";
-import isBanned from "@cocalc/server/accounts/is-banned";
+import {
+  ensureAccountSecurityStateReady,
+  isAccountBannedCached,
+} from "@cocalc/server/accounts/security-state";
 import { RESEND_INVITE_INTERVAL_DAYS } from "@cocalc/util/consts/invites";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
@@ -1192,7 +1195,8 @@ async function assertInviteSenderCanStillGrantAccess({
 }): Promise<void> {
   ensureUuid(invite.project_id, "project_id");
   ensureUuid(invite.inviter_account_id, "inviter_account_id");
-  if (await isBanned(invite.inviter_account_id)) {
+  await ensureAccountSecurityStateReady();
+  if (isAccountBannedCached(invite.inviter_account_id)) {
     throw new Error("invite sender is banned");
   }
   const { rows } = await pool.query<{ inviter_authorized: boolean }>(
