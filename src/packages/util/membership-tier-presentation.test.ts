@@ -16,8 +16,8 @@ describe("buildMembershipTierPresentation", () => {
     );
     expect(presentation.limits).toEqual(
       expect.arrayContaining([
-        "CPU: 3 cores",
-        "Memory: 16 GB",
+        "Shared compute priority: 4",
+        "Project RAM: 16 GB",
         "RootFS: 250 images, 250 GB total, 30 GB per image",
       ]),
     );
@@ -48,6 +48,6 @@ describe("buildMembershipTierPresentation", () => {
       "Membership benefits configured for Custom.",
     );
     expect(presentation.benefits).toContain("Internet-enabled projects.");
-    expect(presentation.limits).toContain("Memory: 2 GB");
+    expect(presentation.limits).toContain("Project RAM: 2 GB");
   });
 });

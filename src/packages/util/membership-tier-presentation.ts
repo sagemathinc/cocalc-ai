@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { currency, plural, round2 } from "./misc";
+import { currency, humanSize, plural, round2 } from "./misc";
 import { upgrades } from "./upgrade-spec";
 
 export interface MembershipTierPresentationInput {
@@ -39,7 +39,6 @@ const DEFAULT_TAGLINES: Record<string, string> = {
 };
 
 const PROJECT_LIMIT_KEYS = [
-  "cores",
   "memory",
   "disk_quota",
   "network",
@@ -100,9 +99,6 @@ function formatQuotaValue(key: string, value: unknown): string {
     }
     return `${numberValue} MB`;
   }
-  if (key === "cores") {
-    return `${numberValue} ${plural(numberValue, "core")}`;
-  }
   const displayValue =
     spec?.display_factor != null
       ? numberValue * spec.display_factor
@@ -119,18 +115,16 @@ function formatQuotaValue(key: string, value: unknown): string {
 
 function projectLimitLabel(key: string): string {
   switch (key) {
-    case "cores":
-      return "CPU";
     case "memory":
-      return "Memory";
+      return "Project RAM";
     case "disk_quota":
-      return "Disk";
+      return "Per-project disk quota";
     case "network":
       return "Internet access";
     case "member_host":
-      return "Member/shared hosts";
+      return "Member/shared host access";
     case "mintime":
-      return "Minimum uptime";
+      return "Minimum project uptime";
     default:
       return key;
   }
@@ -173,13 +167,8 @@ export function buildMembershipTierPresentation(
   const sponsoredProjects = asPositiveInteger(
     usageLimits.max_sponsored_running_projects,
   );
-  if (sponsoredProjects != null) {
-    benefits.push(
-      `Up to ${sponsoredProjects} sponsored ${plural(
-        sponsoredProjects,
-        "running project",
-      )}.`,
-    );
+  if (sponsoredProjects != null && sponsoredProjects > 0) {
+    benefits.push("Runtime sponsorship for shared compute projects.");
   }
 
   const ai5h = asNumber(aiLimits.units_5h ?? aiLimits.limit_5h);
@@ -201,6 +190,24 @@ export function buildMembershipTierPresentation(
     benefits.push("Email invitations for projects and courses.");
   }
 
+  const sharedComputePriority = asNumber(usageLimits.shared_compute_priority);
+  if (sharedComputePriority != null) {
+    limits.push(`Shared compute priority: ${sharedComputePriority}`);
+  }
+
+  if (sponsoredProjects != null) {
+    limits.push(`Sponsored running projects: up to ${sponsoredProjects}`);
+  }
+
+  const totalStorageHard = asNumber(usageLimits.total_storage_hard_bytes);
+  if (totalStorageHard != null && totalStorageHard > 0) {
+    limits.push(`Total storage hard cap: ${humanSize(totalStorageHard)}`);
+  }
+  const totalStorageSoft = asNumber(usageLimits.total_storage_soft_bytes);
+  if (totalStorageSoft != null && totalStorageSoft > 0) {
+    limits.push(`Total storage soft cap: ${humanSize(totalStorageSoft)}`);
+  }
+
   for (const key of PROJECT_LIMIT_KEYS) {
     if (key in projectDefaults) {
       limits.push(
@@ -218,6 +225,15 @@ export function buildMembershipTierPresentation(
   const maxProjects = asPositiveInteger(usageLimits.max_projects);
   if (maxProjects != null) {
     limits.push(`Projects: up to ${maxProjects}`);
+  }
+
+  const egress5h = asNumber(usageLimits.egress_5h_bytes);
+  if (egress5h != null && egress5h > 0) {
+    limits.push(`Managed egress: ${humanSize(egress5h)} per 5 hours`);
+  }
+  const egress7d = asNumber(usageLimits.egress_7d_bytes);
+  if (egress7d != null && egress7d > 0) {
+    limits.push(`Managed egress: ${humanSize(egress7d)} per 7 days`);
   }
 
   const rootfsStorage = asNumber(usageLimits.rootfs_total_storage_gb);
