@@ -21,6 +21,7 @@ account_id, and both are uuid v4's.
 */
 
 import getPool from "@cocalc/database/pool";
+import { isValidUUID } from "@cocalc/util/misc";
 
 interface Key {
   title: string;
@@ -51,7 +52,28 @@ export default async function sshKeys(project_id: string): Promise<Keys> {
     if (users == null) {
       return keys;
     }
+    const accountIds = Object.keys(users).filter(isValidUUID);
+    const banned = new Set<string>();
+    if (accountIds.length > 0) {
+      const bannedRows = await pool.query<{ account_id: string }>(
+        `SELECT account_id
+           FROM accounts
+          WHERE account_id = ANY($1::UUID[])
+            AND banned IS TRUE`,
+        [accountIds],
+      );
+      for (const { account_id } of bannedRows.rows) {
+        banned.add(account_id);
+      }
+    }
     for (const account_id in users) {
+      if (banned.has(account_id)) {
+        continue;
+      }
+      const group = users[account_id]?.group;
+      if (group !== "owner" && group !== "collaborator") {
+        continue;
+      }
       const { ssh_keys } = users[account_id];
       if (ssh_keys != null) {
         for (const fingerprint in ssh_keys) {
@@ -65,14 +87,14 @@ export default async function sshKeys(project_id: string): Promise<Keys> {
     // to send a potentially large number of account_id's back, and allows
     // us to run the two queries in parallel.
     const { rows } = await pool.query(
-      `SELECT account_id, ssh_keys
-FROM accounts
-WHERE account_id = ANY (
-   SELECT jsonb_object_keys(users)::UUID
-   FROM projects
-   WHERE project_id=$1
-)
-AND ssh_keys IS NOT NULL AND ssh_keys != '{}'::JSONB`,
+      `SELECT a.account_id, a.ssh_keys
+FROM projects p
+CROSS JOIN LATERAL jsonb_object_keys(p.users) AS u(account_id)
+JOIN accounts a ON a.account_id::TEXT = u.account_id
+WHERE p.project_id=$1
+  AND COALESCE(p.users #>> ARRAY[u.account_id, 'group']::TEXT[], '') IN ('owner', 'collaborator')
+  AND a.banned IS NOT TRUE
+  AND a.ssh_keys IS NOT NULL AND a.ssh_keys != '{}'::JSONB`,
       [project_id],
     );
     for (const { account_id, ssh_keys } of rows) {

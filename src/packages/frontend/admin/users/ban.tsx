@@ -44,6 +44,8 @@ interface State {
     payment_methods_detached: number;
     hosts_stop_requested: number;
     host_ids: string[];
+    projects_stop_requested: number;
+    project_ids: string[];
     errors: string[];
   };
 }
@@ -176,7 +178,11 @@ export class Ban extends Component<Props, State> {
               <>
                 The user will no longer be able to sign in. Existing remember-me
                 cookies, browser auth sessions, API access, and project-host
-                persistent access are revoked.
+                persistent access are revoked. Billing/resource quarantine is
+                also applied: automatic billing is disabled, payment methods are
+                detached, subscriptions and open payment intents are canceled,
+                owned dedicated hosts are stopped, and projects using this
+                account's runtime slot are stopped.
               </>
             }
           />
@@ -198,8 +204,9 @@ export class Ban extends Component<Props, State> {
           </Typography.Paragraph>
           <Typography.Paragraph type="secondary">
             This action does not delete projects or account data, and it does
-            not stop billing, subscriptions, or dedicated hosts. Use "Quarantine
-            Billing/Resources" for suspected fraud or paid-resource abuse.
+            not send email to the user. If this was a misunderstanding, billing,
+            host, and project runtime state must be reviewed and restored
+            deliberately after unbanning.
           </Typography.Paragraph>
           <div style={{ marginBottom: "18px" }}>
             <Input.TextArea
@@ -257,7 +264,7 @@ export class Ban extends Component<Props, State> {
             checkout state, cancel local active subscriptions, cancel open
             Stripe payment intents, detach Stripe payment methods, cancel the
             Stripe usage subscription if present, and request stop for owned
-            dedicated hosts.
+            dedicated hosts and projects using this account's runtime slot.
           </Typography.Paragraph>
           <Typography.Paragraph type="secondary">
             If this was a misunderstanding, the account can remain banned or be
@@ -301,7 +308,8 @@ export class Ban extends Component<Props, State> {
             Canceled {result.local_subscriptions_canceled} local subscriptions,
             canceled {result.payment_intents_canceled} open payment intents,
             detached {result.payment_methods_detached} payment methods, and
-            requested stop for {result.hosts_stop_requested} hosts.
+            requested stop for {result.hosts_stop_requested} hosts and{" "}
+            {result.projects_stop_requested} projects.
             {result.errors.length ? (
               <Typography.Paragraph style={{ marginTop: "8px" }}>
                 Errors: {result.errors.join("; ")}
@@ -409,7 +417,7 @@ export class Ban extends Component<Props, State> {
           User is currently{" "}
           {this.state.banned
             ? "banned!"
-            : "NOT banned: banning revokes active account, API, and project-host access, bans existing supported equivalent email accounts, and blocks future equivalent signups."}
+            : "NOT banned: banning revokes active account, API, and project-host access, stops billing/resources and projects using this account's runtime slot, bans existing supported equivalent email accounts, and blocks future equivalent signups."}
         </b>
         <br />
         <br />

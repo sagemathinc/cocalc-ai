@@ -161,6 +161,8 @@ describe("browser-session-only account security routes", () => {
       payment_methods_detached: 1,
       hosts_stop_requested: 1,
       host_ids: ["host-1"],
+      projects_stop_requested: 1,
+      project_ids: ["project-1"],
       errors: [],
     });
   });
@@ -666,6 +668,8 @@ describe("browser-session-only account security routes", () => {
         payment_methods_detached: 1,
         hosts_stop_requested: 1,
         host_ids: ["host-1"],
+        projects_stop_requested: 1,
+        project_ids: ["project-1"],
         errors: [],
       },
     });

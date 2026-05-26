@@ -11,6 +11,8 @@ let clearAuthCookiesMock: jest.Mock;
 let consumeImpersonationGrantLocalMock: jest.Mock;
 let createImpersonationSessionLocalMock: jest.Mock;
 let resolveAccountImpersonationGrantDirectoryMock: jest.Mock;
+let ensureAccountSecurityStateReadyMock: jest.Mock;
+let isAccountBannedCachedMock: jest.Mock;
 
 jest.mock("@cocalc/server/auth/set-sign-in-cookies", () => ({
   __esModule: true,
@@ -62,6 +64,12 @@ jest.mock("@cocalc/server/auth/impersonation-grant-directory", () => ({
     resolveAccountImpersonationGrantDirectoryMock(...args),
 }));
 
+jest.mock("@cocalc/server/accounts/security-state", () => ({
+  ensureAccountSecurityStateReady: (...args: any[]) =>
+    ensureAccountSecurityStateReadyMock(...args),
+  isAccountBannedCached: (...args: any[]) => isAccountBannedCachedMock(...args),
+}));
+
 describe("auth/impersonate", () => {
   let prevBayId: string | undefined;
 
@@ -100,6 +108,8 @@ describe("auth/impersonate", () => {
       subject_home_bay_id: "bay-2",
       status: "pending",
     }));
+    ensureAccountSecurityStateReadyMock = jest.fn(async () => undefined);
+    isAccountBannedCachedMock = jest.fn(() => false);
   });
 
   afterEach(() => {
@@ -300,6 +310,45 @@ describe("auth/impersonate", () => {
       res,
       target: "https://lite4b.cocalc.ai/app?lang_temp=en",
     });
+  });
+
+  it("rejects impersonation redemption when the actor account is now banned", async () => {
+    process.env.COCALC_BAY_ID = "bay-2";
+    isAccountBannedCachedMock = jest.fn((account_id: string) => {
+      return account_id === "33333333-3333-4333-8333-333333333333";
+    });
+    getClusterAccountByIdMock = jest.fn(async () => ({
+      account_id: "11111111-1111-1111-1111-111111111111",
+      home_bay_id: "bay-2",
+    }));
+    verifyHomeBayRetryTokenMock = jest.fn(() => ({
+      account_id: "11111111-1111-1111-1111-111111111111",
+      home_bay_id: "bay-2",
+      purpose: "impersonate",
+    }));
+    const { signInUsingImpersonateToken } = await import("./impersonate");
+    const req = {
+      query: {
+        retry_token: "retry-token",
+        grant_id: "22222222-2222-4222-8222-222222222222",
+      },
+      protocol: "https",
+      headers: { host: "bay-2-lite4b.cocalc.ai" },
+    };
+    const res = { send: jest.fn() };
+
+    await signInUsingImpersonateToken({ req, res });
+
+    expect(consumeImpersonationGrantLocalMock).toHaveBeenCalled();
+    expect(ensureAccountSecurityStateReadyMock).toHaveBeenCalled();
+    expect(isAccountBannedCachedMock).toHaveBeenCalledWith(
+      "33333333-3333-4333-8333-333333333333",
+    );
+    expect(setSignInCookiesMock).not.toHaveBeenCalled();
+    expect(createImpersonationSessionLocalMock).not.toHaveBeenCalled();
+    expect(`${res.send.mock.calls[0]?.[0]}`).toContain(
+      "impersonation actor account is banned",
+    );
   });
 
   it("trusts impersonation retry token routing over stale account directory state", async () => {

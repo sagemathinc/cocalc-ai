@@ -24,9 +24,13 @@ import { isEmpty } from "lodash";
 import base_path from "@cocalc/backend/base-path";
 import getLogger from "@cocalc/backend/logger";
 import { set_email_address_verified } from "@cocalc/database/postgres/account/queries";
-import { assertNoClusterBannedEquivalentEmailAccount } from "@cocalc/server/inter-bay/accounts";
+import {
+  assertNoClusterBannedEquivalentEmailAccount,
+  createClusterAccount,
+} from "@cocalc/server/inter-bay/accounts";
 import { assertSignupEmailDomainAllowed } from "@cocalc/server/accounts/signup-email-domain-policy";
 import type { PostgreSQL } from "@cocalc/database/postgres/types";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import generateHash from "@cocalc/server/auth/hash";
 import { REMEMBER_ME_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
 import { sanitizeID } from "@cocalc/server/auth/sso/sanitize-id";
@@ -43,7 +47,10 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 import getEmailAddress from "../../accounts/get-email-address";
 import { emailBelongsToDomain, getEmailDomain } from "./check-required-sso";
 import { SSO_API_KEY_COOKIE_NAME } from "./consts";
-import isBanned from "@cocalc/server/accounts/is-banned";
+import {
+  ensureAccountSecurityStateReady,
+  isAccountBannedCached,
+} from "@cocalc/server/accounts/security-state";
 import clientSideRedirect from "@cocalc/server/auth/client-side-redirect";
 import setSignInCookies from "@cocalc/server/auth/set-sign-in-cookies";
 import type { AccountCreationAuthMethod } from "@cocalc/server/auth/account-creation-policy";
@@ -578,19 +585,31 @@ export class PassportLogin {
     }
   }
 
-  // This calls the DB methods to create a new account, including the SSO passport configuration
+  // Create SSO accounts through the cluster account API so signup uses the
+  // seed directory reservation, cross-bay routing, and equivalent-ban checks.
   private async create_account(
     opts: PassportLoginOpts,
     email_address: string | undefined,
   ): Promise<string> {
-    return await cb2(this.database.create_sso_account, {
+    const email = normalizedEmail(email_address) ?? "";
+    const created = await createClusterAccount({
+      email_address: email,
+      password: "",
+      first_name: opts.first_name ?? "",
+      last_name: opts.last_name ?? "",
+      home_bay_id: getConfiguredBayId(),
+      signup_reason: `SSO account creation via ${opts.strategyName}`,
+    });
+    await this.database.create_passport({
+      account_id: created.account_id,
+      strategy: opts.strategyName,
+      id: opts.id,
+      profile: opts.profile,
+      email_address: email,
       first_name: opts.first_name,
       last_name: opts.last_name,
-      email_address,
-      passport_strategy: opts.strategyName,
-      passport_id: opts.id,
-      passport_profile: opts.profile,
     });
+    return created.account_id;
   }
 
   // This calls the above, as long as we do not already have an account_id
@@ -734,7 +753,8 @@ export class PassportLogin {
 
   // ebfore recording the sign-in below, we check if a user is banned
   private async isUserBanned(account_id, email_address): Promise<boolean> {
-    const is_banned = await isBanned(account_id);
+    await ensureAccountSecurityStateReady();
+    const is_banned = isAccountBannedCached(account_id);
     if (is_banned) {
       const helpEmail = await this.getHelpEmail();
       throw Error(

@@ -3,7 +3,8 @@ export {};
 let queryMock: jest.Mock;
 let isValidAccountMock: jest.Mock;
 let verifyPasswordMock: jest.Mock;
-let isBannedMock: jest.Mock;
+let ensureAccountSecurityStateReadyMock: jest.Mock;
+let isAccountBannedCachedMock: jest.Mock;
 let getClusterAccountByIdMock: jest.Mock;
 let getClusterAccountApiKeyByKeyIdMock: jest.Mock;
 let touchClusterAccountApiKeyDirectoryEntryMock: jest.Mock;
@@ -27,9 +28,10 @@ jest.mock("@cocalc/backend/auth/password-hash", () => ({
   verifyPassword: (...args: any[]) => verifyPasswordMock(...args),
 }));
 
-jest.mock("@cocalc/server/accounts/is-banned", () => ({
-  __esModule: true,
-  default: (...args: any[]) => isBannedMock(...args),
+jest.mock("@cocalc/server/accounts/security-state", () => ({
+  ensureAccountSecurityStateReady: (...args: any[]) =>
+    ensureAccountSecurityStateReadyMock(...args),
+  isAccountBannedCached: (...args: any[]) => isAccountBannedCachedMock(...args),
 }));
 
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
@@ -93,7 +95,8 @@ describe("manageApiKeys local bay access", () => {
     queryMock = jest.fn(async () => ({ rows: [] }));
     isValidAccountMock = jest.fn(async () => true);
     verifyPasswordMock = jest.fn(() => true);
-    isBannedMock = jest.fn(async () => false);
+    ensureAccountSecurityStateReadyMock = jest.fn(async () => undefined);
+    isAccountBannedCachedMock = jest.fn(() => false);
     getClusterAccountByIdMock = jest.fn(async () => ({
       account_id: ACCOUNT_ID,
       home_bay_id: "bay-0",
@@ -297,6 +300,81 @@ describe("manageApiKeys local bay access", () => {
         api_key_id: -1,
         key_id: "key-id-remote",
         source: "api-key-auth-directory",
+      },
+    });
+  });
+
+  it("rejects local api keys for accounts banned in the replicated security cache", async () => {
+    isAccountBannedCachedMock = jest.fn(() => true);
+    const secret = "sk-cocalc-v2.key-id-123.secret-part";
+    queryMock = jest.fn(async (sql) => {
+      if (`${sql}`.includes("WHERE key_id=$1")) {
+        return {
+          rows: [
+            {
+              id: 9,
+              key_id: "key-id-123",
+              account_id: ACCOUNT_ID,
+              hash: "hash",
+              expire: null,
+              capabilities: ["account:read"],
+              allowed_project_ids: [],
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const { getAccountWithApiKey } = await import("./manage");
+    await expect(getAccountWithApiKey(secret)).resolves.toBeUndefined();
+    expect(ensureAccountSecurityStateReadyMock).toHaveBeenCalled();
+    expect(isAccountBannedCachedMock).toHaveBeenCalledWith(ACCOUNT_ID);
+    await flushAuditEvents();
+    expect(centralLogMock).toHaveBeenCalledWith({
+      event: "api_key_denied",
+      value: {
+        account_id: ACCOUNT_ID,
+        api_key_id: 9,
+        key_id: "key-id-123",
+        source: "api-key-auth-local",
+        reason: "account is banned",
+        code: "api_key_account_banned",
+      },
+    });
+  });
+
+  it("rejects directory api keys for accounts banned in the replicated security cache", async () => {
+    isAccountBannedCachedMock = jest.fn(() => true);
+    const secret = "sk-cocalc-v2.key-id-remote.secret-part";
+    getClusterAccountApiKeyByKeyIdMock = jest.fn(async () => ({
+      key_id: "key-id-remote",
+      account_id: ACCOUNT_ID,
+      home_bay_id: "bay-1",
+      hash: "hash",
+      capabilities: ["project:exec"],
+      allowed_project_ids: ["22222222-2222-4222-8222-222222222222"],
+      expire: null,
+      last_active: null,
+    }));
+    getClusterAccountByIdMock = jest.fn(async () => ({
+      account_id: ACCOUNT_ID,
+      home_bay_id: "bay-1",
+      banned: false,
+    }));
+    const { getAccountWithApiKey } = await import("./manage");
+    await expect(getAccountWithApiKey(secret)).resolves.toBeUndefined();
+    expect(ensureAccountSecurityStateReadyMock).toHaveBeenCalled();
+    expect(isAccountBannedCachedMock).toHaveBeenCalledWith(ACCOUNT_ID);
+    expect(touchClusterAccountApiKeyDirectoryEntryMock).not.toHaveBeenCalled();
+    await flushAuditEvents();
+    expect(centralLogMock).toHaveBeenCalledWith({
+      event: "api_key_denied",
+      value: {
+        account_id: ACCOUNT_ID,
+        key_id: "key-id-remote",
+        source: "api-key-auth-directory",
+        reason: "account is banned",
+        code: "api_key_account_banned",
       },
     });
   });

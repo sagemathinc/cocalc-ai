@@ -28,6 +28,7 @@ describe("project SSH keys", () => {
     jest.clearAllMocks();
     await getPool().query("DELETE FROM project_events_outbox");
     await getPool().query("DELETE FROM projects");
+    await getPool().query("DELETE FROM accounts");
   });
 
   afterAll(async () => {
@@ -116,6 +117,47 @@ describe("project SSH keys", () => {
       { event_type: "project.summary_changed" },
       { event_type: "project.summary_changed" },
     ]);
+  });
+
+  it("does not grant SSH access through keys from banned collaborators", async () => {
+    const bannedAccount = "33333333-3333-4333-8333-333333333333";
+    await getPool().query(
+      "INSERT INTO accounts (account_id, email_address, banned, ssh_keys) VALUES ($1, $2, $3, $4)",
+      [
+        bannedAccount,
+        "banned@example.com",
+        true,
+        JSON.stringify({
+          global: {
+            title: "global",
+            value: "ssh-ed25519 AAAABANNED global",
+            creation_date: 456,
+          },
+        }),
+      ],
+    );
+    await getPool().query(
+      "INSERT INTO projects (project_id, title, users, last_edited) VALUES ($1, $2, $3, NOW())",
+      [
+        PROJECT_ID,
+        "Test Project",
+        JSON.stringify({
+          [ACCOUNT_ID]: { group: "owner" },
+          [bannedAccount]: {
+            group: "collaborator",
+            ssh_keys: {
+              project: {
+                title: "project",
+                value: "ssh-ed25519 AAAABANNED project",
+                creation_date: 789,
+              },
+            },
+          },
+        }),
+      ],
+    );
+
+    expect(await sshKeys(PROJECT_ID)).toEqual({});
   });
 
   it("refuses to update SSH keys for projects owned by another bay", async () => {

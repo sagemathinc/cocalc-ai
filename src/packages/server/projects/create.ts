@@ -49,9 +49,19 @@ import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { resolveProjectBackupRepoAssignment } from "@cocalc/server/project-backup";
 import { resolveHostBay } from "@cocalc/server/inter-bay/directory";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import {
+  assertCanStartUsingRuntimeSponsor,
+  loadProjectRuntimeSponsor,
+} from "@cocalc/server/projects/runtime-sponsor-db";
+import {
+  heartbeatProjectRuntimeSlot,
+  releaseProjectRuntimeSlot,
+  reserveProjectRuntimeSlot,
+} from "@cocalc/server/projects/runtime-slots";
 
 const log = getLogger("server:projects:create");
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
+const PROJECT_RUNTIME_SLOT_TTL_MS = 30 * 60 * 1000;
 // Explicit host placement provisions the workspace on the target host during
 // createProject. Under filesystem pressure that can take much longer than the
 // default RPC timeout, and timing out too early causes the hub to retry the
@@ -697,8 +707,37 @@ async function startNewProject(
     project_id,
     op_id: op?.op_id,
   });
+  let sponsor:
+    | Awaited<ReturnType<typeof loadProjectRuntimeSponsor>>
+    | undefined;
+  let reservedSlot = false;
   try {
+    if (!account_id) {
+      throw Error("account_id is required to start a newly created project");
+    }
+    sponsor = await loadProjectRuntimeSponsor(project_id);
+    await assertCanStartUsingRuntimeSponsor({
+      sponsor,
+      account_id,
+    });
+    await reserveProjectRuntimeSlot({
+      ...sponsor,
+      project_id,
+      actor_account_id: account_id,
+      reason: "project-create-start",
+      op_id: op?.op_id,
+      state: "starting",
+      ttl_ms: PROJECT_RUNTIME_SLOT_TTL_MS,
+    });
+    reservedSlot = true;
     await project.start({ account_id, lro_op_id: op?.op_id });
+    await heartbeatProjectRuntimeSlot({
+      sponsor_account_id: sponsor.sponsor_account_id,
+      project_id,
+      host_id: sponsor.host_id,
+      state: "running",
+      ttl_ms: PROJECT_RUNTIME_SLOT_TTL_MS,
+    });
     // Keep a conservative retry for slow host bring-up, but only if the
     // persisted project state still is not active after a short settle window.
     // Do not verify via project.state() here: in project-host deployments that
@@ -732,6 +771,13 @@ async function startNewProject(
         state,
       });
       await project.start({ account_id, lro_op_id: op?.op_id });
+      await heartbeatProjectRuntimeSlot({
+        sponsor_account_id: sponsor.sponsor_account_id,
+        project_id,
+        host_id: sponsor.host_id,
+        state: "running",
+        ttl_ms: PROJECT_RUNTIME_SLOT_TTL_MS,
+      });
     }
     const phase_timings_ms = takeStartProjectPhaseTimings(op?.op_id);
     const progress_summary = {
@@ -755,6 +801,22 @@ async function startNewProject(
       keep_op_id: op?.op_id,
     });
   } catch (err) {
+    if (reservedSlot && sponsor) {
+      await releaseProjectRuntimeSlot({
+        sponsor_account_id: sponsor.sponsor_account_id,
+        project_id,
+        state: "failed",
+      }).catch((releaseErr) => {
+        log.warn(
+          "failed to release runtime slot after create-project start error",
+          {
+            project_id,
+            sponsor_account_id: sponsor?.sponsor_account_id,
+            err: `${releaseErr}`,
+          },
+        );
+      });
+    }
     log.warn(`problem starting new project -- ${err}`, {
       project_id,
     });
