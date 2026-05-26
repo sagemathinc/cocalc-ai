@@ -8,6 +8,10 @@ import { useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import SSHKeyList from "@cocalc/frontend/account/ssh-keys/ssh-key-list";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { A, CopyToClipBoard, Tooltip } from "@cocalc/frontend/components";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { CopyToClipboard } from "react-copy-to-clipboard";
@@ -62,6 +66,9 @@ export function SSHPanel({
   const [setupError, setSetupError] = useState<string | undefined>();
   const [setupApiKey, setSetupApiKey] = useState<string | undefined>();
   const copyTimeoutRef = useRef<number | null>(null);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setSetupError(`${err}`),
+  });
 
   const ssh_keys = project.getIn([
     "users",
@@ -123,9 +130,7 @@ export function SSHPanel({
     }, 1200);
   };
 
-  const createSshSetupKey = async () => {
-    setSetupModalOpen(true);
-    if (setupApiKey || setupLoading) return;
+  const createSshSetupKeyNow = async () => {
     setSetupError(undefined);
     setSetupLoading(true);
     try {
@@ -142,10 +147,18 @@ export function SSHPanel({
         throw Error("failed to create account API key");
       }
       setSetupApiKey(secret);
-    } catch (err) {
-      setSetupError(`${err}`);
     } finally {
       setSetupLoading(false);
+    }
+  };
+
+  const createSshSetupKey = async () => {
+    setSetupModalOpen(true);
+    if (setupApiKey || setupLoading) return;
+    try {
+      await runFreshAuthAction(createSshSetupKeyNow);
+    } catch (err) {
+      setSetupError(`${err}`);
     }
   };
 
@@ -332,6 +345,7 @@ export function SSHPanel({
                 )}
               </Space>
             </Modal>
+            <FreshAuthModal {...freshAuthModalProps} />
           </>
         ) : sshCommand ? (
           <>
