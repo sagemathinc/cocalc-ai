@@ -30,7 +30,6 @@ import type {
   PostgreSQL as PostgreSQLType,
   UserQueryOptions,
 } from "../postgres/types";
-import { awakenProject } from "./awaken-project";
 import {
   cancelUserQueries,
   type CancelUserQueriesOptions,
@@ -2416,28 +2415,9 @@ export function _user_set_query_syncstring_change_after(
   _account_id: string,
   cb: CB,
 ) {
-  const dbg = this._dbg("_user_set_query_syncstring_change_after");
   cb(); // return immediately -- stuff below can happen as side effect in the background.
-  // Now do the following reactions to this syncstring change in the background:
-  // 1. Awaken the relevant project.
-  const project_id =
-    (old_val != null ? old_val.project_id : undefined) != null
-      ? old_val != null
-        ? old_val.project_id
-        : undefined
-      : new_val != null
-        ? new_val.project_id
-        : undefined;
-  if (
-    project_id != null &&
-    (new_val?.save?.state === "requested" ||
-      ((new_val != null ? new_val.last_active : undefined) != null &&
-        (new_val != null ? new_val.last_active : undefined) !==
-          (old_val != null ? old_val.last_active : undefined)))
-  ) {
-    dbg(`awakening project ${project_id}`);
-    return awakenProject(this as any, project_id);
-  }
+  void old_val;
+  void new_val;
 }
 
 // Verify that writing a patch is allowed.

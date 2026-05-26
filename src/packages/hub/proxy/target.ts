@@ -53,26 +53,6 @@ interface Options {
   parsed?: ReturnType<typeof parseReq>;
 }
 
-function shouldAutoStartForProxyRoute(
-  type: string,
-  port_desc: string,
-): boolean {
-  if (
-    type === "port" ||
-    type === "proxy" ||
-    type === "server" ||
-    type === "apps"
-  ) {
-    return true;
-  }
-  return (
-    port_desc === "jupyter" ||
-    port_desc === "jupyterlab" ||
-    port_desc === "code" ||
-    port_desc === "rserver"
-  );
-}
-
 export async function getTarget({
   remember_me,
   api_key,
@@ -116,19 +96,8 @@ export async function getTarget({
   let state = await project.state();
   let host = state.ip;
   dbg("host", host);
-  if (shouldAutoStartForProxyRoute(type, port_desc)) {
-    dbg("proxied service requested, ensuring project is running", {
-      type,
-      port_desc,
-      state: state.state,
-      host,
-    });
-    await project.start();
-    state = await project.state();
-    host = state.ip;
-    if (state.state === "running") {
-      database.touch_project({ project_id });
-    }
+  if (state.state === "running") {
+    database.touch_project({ project_id });
   }
 
   // https://github.com/sagemathinc/cocalc/issues/7009#issuecomment-1781950765
