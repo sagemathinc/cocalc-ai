@@ -365,6 +365,10 @@ const ACP_PATCHFLOW_COMMIT_CEILING = envNumber(
   "COCALC_ACP_PATCHFLOW_COMMIT_CEILING",
   10,
 );
+const ACP_TIME_TRAVEL_ENABLED = envBoolean(
+  "COCALC_ACP_TIME_TRAVEL_ENABLED",
+  false,
+);
 const ACP_BLOB_MATERIALIZE_SLOW_MS = envNumber(
   "COCALC_ACP_BLOB_MATERIALIZE_SLOW_MS",
   250,
@@ -709,6 +713,14 @@ function envNumber(name: string, fallback: number): number {
   if (!value) return fallback;
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function envBoolean(name: string, fallback: boolean): boolean {
+  const value = `${process.env[name] ?? ""}`.trim().toLowerCase();
+  if (!value) return fallback;
+  if (["1", "true", "yes", "on"].includes(value)) return true;
+  if (["0", "false", "no", "off"].includes(value)) return false;
+  return fallback;
 }
 
 function roundMs(value: number): number {
@@ -2032,7 +2044,7 @@ export class ChatStreamWriter {
     if (livePreviewStreamFactory) {
       this.livePreviewStream = livePreviewStreamFactory();
     }
-    if (workspaceRoot) {
+    if (workspaceRoot && ACP_TIME_TRAVEL_ENABLED) {
       this.timeTravel = new AgentTimeTravelRecorder({
         project_id: metadata.project_id,
         chat_path: metadata.path,
@@ -2046,6 +2058,13 @@ export class ChatStreamWriter {
         sessionId: sessionKey,
       });
       logger.debug("agent-tt enabled", {
+        chatKey: this.chatKey,
+        project_id: metadata.project_id,
+        chat_path: metadata.path,
+        workspaceRoot,
+      });
+    } else if (workspaceRoot) {
+      logger.debug("agent-tt disabled (COCALC_ACP_TIME_TRAVEL_ENABLED=0)", {
         chatKey: this.chatKey,
         project_id: metadata.project_id,
         chat_path: metadata.path,

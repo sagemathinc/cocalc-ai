@@ -4,6 +4,7 @@
  */
 
 import {
+  Alert,
   Button,
   Descriptions,
   Modal,
@@ -86,6 +87,71 @@ function severityCounts(scan?: RootfsScanSummary): string | undefined {
     .join(" ");
 }
 
+function scanSeverityCount(
+  scan: RootfsScanSummary | undefined,
+  severity: RootfsScanSeverity,
+): number {
+  return Number(scan?.severity_counts?.[severity] ?? 0);
+}
+
+function compactScanLabel(scan?: RootfsScanSummary): string {
+  if (!scan?.status || scan.status === "unknown") return "Security Scan";
+  if (scan.status === "pending") return "Security Scan: pending";
+  if (scan.status === "error") return "Security Scan: failed";
+  return `Security Scan: ${scanSeverityCount(scan, "critical")} critical, ${scanSeverityCount(scan, "high")} high`;
+}
+
+function isLikelyKernelPackage(finding: RootfsScanFinding): boolean {
+  const name = finding.package_name?.trim().toLowerCase();
+  if (!name) return false;
+  return (
+    name === "kernel" ||
+    name.startsWith("kernel-") ||
+    name.startsWith("linux-") ||
+    name.startsWith("linux_")
+  );
+}
+
+function hasFixAvailable(finding: RootfsScanFinding): boolean {
+  return !!finding.fixed_version?.trim();
+}
+
+type FindingActionability = "fix-available" | "review" | "container-context";
+
+function findingActionability(
+  finding: RootfsScanFinding,
+): FindingActionability {
+  if (isLikelyKernelPackage(finding)) return "container-context";
+  if (hasFixAvailable(finding)) return "fix-available";
+  return "review";
+}
+
+function findingActionabilityRank(finding: RootfsScanFinding): number {
+  switch (findingActionability(finding)) {
+    case "fix-available":
+      return 0;
+    case "review":
+      return 1;
+    case "container-context":
+      return 2;
+  }
+}
+
+function findingActionabilityTag(finding: RootfsScanFinding): ReactNode {
+  switch (findingActionability(finding)) {
+    case "fix-available":
+      return <Tag color="orange">fix available</Tag>;
+    case "review":
+      return <Tag>review</Tag>;
+    case "container-context":
+      return (
+        <Tooltip title="This looks like a Linux kernel package inside the root filesystem. Containers run on the host kernel, so this may not be the active runtime kernel.">
+          <Tag style={{ marginInlineEnd: 0 }}>container-context</Tag>
+        </Tooltip>
+      );
+  }
+}
+
 function scanTooltip(entry: {
   scan?: RootfsScanSummary;
   official?: boolean;
@@ -158,16 +224,56 @@ function scanSeverityRows(scan?: RootfsScanSummary) {
   return SEVERITIES.map((severity) => ({
     severity,
     count: scan?.severity_counts?.[severity] ?? 0,
-  })).filter((row) => row.count > 0);
+  }));
 }
 
 function RootfsScanDetails({ scan }: { scan: RootfsScanSummary }) {
-  const findings = scan.highest_findings ?? [];
+  const findings = [...(scan.highest_findings ?? [])].sort(
+    (a, b) => findingActionabilityRank(a) - findingActionabilityRank(b),
+  );
   const target = scan.target;
   const report = scan.report;
   const severityRows = scanSeverityRows(scan);
+  const kernelFindingCount = findings.filter(isLikelyKernelPackage).length;
+  const fixAvailableCount = findings.filter(
+    (finding) =>
+      findingActionability(finding) === "fix-available" &&
+      (finding.severity === "critical" || finding.severity === "high"),
+  ).length;
+  const reviewCount = findings.filter(
+    (finding) => findingActionability(finding) === "review",
+  ).length;
   return (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+      <Alert
+        type={
+          scanSeverityCount(scan, "critical") > 0
+            ? "error"
+            : scanSeverityCount(scan, "high") > 0
+              ? "warning"
+              : "info"
+        }
+        showIcon
+        message="CoCalc interpretation"
+        description={
+          <Space orientation="vertical" size={4}>
+            <span>
+              Trivy reports raw package inventory findings. For CoCalc project
+              containers, prioritize high/critical non-kernel packages with a
+              listed fixed version.
+            </span>
+            {findings.length > 0 ? (
+              <span>
+                In the retained top findings shown below: {fixAvailableCount}{" "}
+                high/critical non-kernel finding
+                {fixAvailableCount === 1 ? "" : "s"} have a listed fix,{" "}
+                {reviewCount} need context review, and {kernelFindingCount} look
+                like rootfs kernel-package findings.
+              </span>
+            ) : null}
+          </Space>
+        }
+      />
       <Descriptions size="small" bordered column={1}>
         <Descriptions.Item label="Status">
           <Space wrap size="small">
@@ -279,47 +385,84 @@ function RootfsScanDetails({ scan }: { scan: RootfsScanSummary }) {
           rowKey="severity"
           dataSource={severityRows}
           columns={[
-            { title: "Severity", dataIndex: "severity", key: "severity" },
+            {
+              title: "Raw Trivy severity",
+              dataIndex: "severity",
+              key: "severity",
+            },
             { title: "Count", dataIndex: "count", key: "count" },
           ]}
         />
       ) : null}
       {findings.length > 0 ? (
-        <Table<RootfsScanFinding>
-          size="small"
-          pagination={{ pageSize: 10, hideOnSinglePage: true }}
-          rowKey={(finding, index) =>
-            `${finding.id}-${finding.package_name ?? ""}-${index}`
-          }
-          dataSource={findings}
-          columns={[
-            { title: "ID", dataIndex: "id", key: "id" },
-            { title: "Severity", dataIndex: "severity", key: "severity" },
-            { title: "Package", dataIndex: "package_name", key: "package" },
-            {
-              title: "Installed",
-              dataIndex: "installed_version",
-              key: "installed",
-            },
-            { title: "Fixed", dataIndex: "fixed_version", key: "fixed" },
-            {
-              title: "Details",
-              key: "details",
-              render: (_, finding) =>
-                finding.primary_url ? (
-                  <Typography.Link
-                    href={finding.primary_url}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {finding.title ?? finding.primary_url}
-                  </Typography.Link>
-                ) : (
-                  finding.title
+        <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+          {kernelFindingCount > 0 ? (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {kernelFindingCount} listed finding
+              {kernelFindingCount === 1 ? "" : "s"} appear to be for Linux
+              kernel packages inside the RootFS. CoCalc project containers use
+              the host kernel, so these are often not the runtime kernel, but
+              they are still shown until scan metadata can classify them
+              precisely.
+            </Typography.Text>
+          ) : null}
+          <Table<RootfsScanFinding>
+            size="small"
+            pagination={{ pageSize: 10, hideOnSinglePage: true }}
+            rowKey={(finding, index) =>
+              `${finding.id}-${finding.package_name ?? ""}-${index}`
+            }
+            dataSource={findings}
+            columns={[
+              { title: "ID", dataIndex: "id", key: "id" },
+              { title: "Severity", dataIndex: "severity", key: "severity" },
+              {
+                title: "CoCalc context",
+                key: "actionability",
+                render: (_, finding) => findingActionabilityTag(finding),
+              },
+              {
+                title: "Package",
+                dataIndex: "package_name",
+                key: "package",
+                render: (_, finding) => (
+                  <Space wrap size={4}>
+                    <span>{finding.package_name ?? ""}</span>
+                    {isLikelyKernelPackage(finding) ? (
+                      <Tooltip title="This is still part of the rootfs package inventory, but usually not the active kernel used by the project container.">
+                        <Tag style={{ marginInlineEnd: 0 }}>
+                          rootfs kernel package
+                        </Tag>
+                      </Tooltip>
+                    ) : null}
+                  </Space>
                 ),
-            },
-          ]}
-        />
+              },
+              {
+                title: "Installed",
+                dataIndex: "installed_version",
+                key: "installed",
+              },
+              { title: "Fixed", dataIndex: "fixed_version", key: "fixed" },
+              {
+                title: "Details",
+                key: "details",
+                render: (_, finding) =>
+                  finding.primary_url ? (
+                    <Typography.Link
+                      href={finding.primary_url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {finding.title ?? finding.primary_url}
+                    </Typography.Link>
+                  ) : (
+                    finding.title
+                  ),
+              },
+            ]}
+          />
+        </Space>
       ) : null}
     </Space>
   );
@@ -341,6 +484,68 @@ export function RootfsScanDetailsButton({
       <Button size="small" onClick={() => setOpen(true)}>
         Details
       </Button>
+      <Modal
+        open={open}
+        title={title}
+        width={900}
+        footer={
+          <Space>
+            {scan.report?.artifact_id && onDownloadReport ? (
+              <Button onClick={onDownloadReport}>Download full JSON</Button>
+            ) : null}
+            <Button type="primary" onClick={() => setOpen(false)}>
+              Close
+            </Button>
+          </Space>
+        }
+        onCancel={() => setOpen(false)}
+      >
+        <RootfsScanDetails scan={scan} />
+      </Modal>
+    </>
+  );
+}
+
+export function RootfsScanSummaryButton({
+  entry,
+  title = "RootFS scan details",
+  onDownloadReport,
+}: {
+  entry: Pick<RootfsImageEntry, "scan" | "official">;
+  title?: string;
+  onDownloadReport?: () => void;
+}) {
+  const scan = entry.scan;
+  const [open, setOpen] = useState(false);
+  if (!scan?.status || scan.status === "unknown") {
+    return entry.official ? (
+      <Tag style={{ marginInlineEnd: 0 }}>Security Scan: not scanned</Tag>
+    ) : null;
+  }
+  const color =
+    scan.status === "clean"
+      ? undefined
+      : scan.status === "error" || scanSeverityCount(scan, "critical") > 0
+        ? "danger"
+        : "default";
+  return (
+    <>
+      <Tooltip
+        title={
+          <span style={{ whiteSpace: "pre-line" }}>
+            {scanTooltip(entry)}
+            {"\n"}Click for scan details.
+          </span>
+        }
+      >
+        <Button
+          size="small"
+          danger={color === "danger"}
+          onClick={() => setOpen(true)}
+        >
+          {compactScanLabel(scan)}
+        </Button>
+      </Tooltip>
       <Modal
         open={open}
         title={title}
