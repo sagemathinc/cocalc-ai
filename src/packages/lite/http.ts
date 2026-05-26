@@ -151,6 +151,12 @@ export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
     "/webapp/serviceWorker.js",
     express.static(join(ASSET_PATH, "serviceWorker.js")),
   );
+  const publicAssetsPath = resolvePublicAssetsPath();
+  if (publicAssetsPath) {
+    app.use("/public", express.static(publicAssetsPath));
+  } else {
+    logger.warn("public assets not found");
+  }
 
   app.get("/customize", async (_, res) => {
     const payload = await getCustomizePayload();
@@ -191,6 +197,22 @@ export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
     params.set("target", target);
     res.redirect(`${redirectBase}?${params.toString()}`);
   });
+}
+
+function resolvePublicAssetsPath(): string | undefined {
+  const candidates: string[] = [];
+  if (process.env.COCALC_PUBLIC_ASSETS_PATH) {
+    candidates.push(process.env.COCALC_PUBLIC_ASSETS_PATH);
+  }
+  if (process.env.COCALC_BUNDLE_DIR) {
+    candidates.push(join(process.env.COCALC_BUNDLE_DIR, "public"));
+  }
+  candidates.push(join(__dirname, "..", "public"), join(ASSET_PATH, "public"));
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
 }
 
 function mapLiteTarget(rawUrl: string): string {
