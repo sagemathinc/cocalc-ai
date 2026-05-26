@@ -8,6 +8,7 @@ const {
 } = require("../access");
 import generateHash from "@cocalc/server/auth/hash";
 import { getAccountWithApiKey } from "@cocalc/server/api/manage";
+import { requireApiKeyProjectCapability } from "@cocalc/server/api/api-key-scope";
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
 import {
   ensureAccountSecurityStateReady,
@@ -249,6 +250,12 @@ async function checkForApiKeyAccess({ project_id, api_key, type, dbg }) {
   if (user == null) {
     dbg("api key is not valid (probably expired)");
     return { access: false, error: "invalid or expired api key" };
+  }
+  try {
+    requireApiKeyProjectCapability(user, "project:exec", project_id);
+  } catch (err) {
+    dbg("api key denied by project capability scope", `${err}`);
+    return { access: false, account_id: user.account_id, error: `${err}` };
   }
   return {
     account_id: user.account_id,
