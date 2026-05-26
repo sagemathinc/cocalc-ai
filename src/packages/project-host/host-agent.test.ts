@@ -27,8 +27,10 @@ jest.mock("./upgrade", () => ({
 
 describe("project-host host-agent local rollback", () => {
   let reconcileProjectHostRollback: any;
+  let tempDirs: string[] = [];
 
   beforeEach(async () => {
+    tempDirs = [];
     jest.resetModules();
     inspectProjectHostRuntimeMock.mockReset();
     restartProjectHostMock.mockReset();
@@ -38,8 +40,16 @@ describe("project-host host-agent local rollback", () => {
     } = await import("./host-agent"));
   });
 
+  afterEach(() => {
+    for (const dir of tempDirs.reverse()) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   function mkdtemp(prefix: string) {
-    return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    tempDirs.push(dir);
+    return dir;
   }
 
   function statePath(dataDir: string) {

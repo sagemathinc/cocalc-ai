@@ -13,6 +13,13 @@ const savedEnv = {
   COCALC_PROJECT_BUNDLES: process.env.COCALC_PROJECT_BUNDLES,
   COCALC_PROJECT_TOOLS: process.env.COCALC_PROJECT_TOOLS,
 };
+let tempDirs: string[] = [];
+
+function mkTempDir(prefix: string) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
 
 afterEach(() => {
   process.env.COCALC_PROJECT_HOST_BOOTSTRAP_DIR =
@@ -21,6 +28,10 @@ afterEach(() => {
     savedEnv.COCALC_PROJECT_HOST_CURRENT;
   process.env.COCALC_PROJECT_BUNDLES = savedEnv.COCALC_PROJECT_BUNDLES;
   process.env.COCALC_PROJECT_TOOLS = savedEnv.COCALC_PROJECT_TOOLS;
+  for (const dir of tempDirs.reverse()) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  tempDirs = [];
 });
 
 function makeVersionedCurrent(root: string, version: string) {
@@ -35,9 +46,7 @@ function makeVersionedCurrent(root: string, version: string) {
 
 describe("bootstrap lifecycle reporting", () => {
   it("reports in-sync lifecycle when desired and installed versions match", () => {
-    const base = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-bootstrap-lifecycle-sync-"),
-    );
+    const base = mkTempDir("cocalc-bootstrap-lifecycle-sync-");
     const bootstrapDir = path.join(base, "bootstrap");
     const projectHostRoot = path.join(base, "project-host");
     const projectBundlesRoot = path.join(base, "project-bundles");
@@ -114,9 +123,7 @@ describe("bootstrap lifecycle reporting", () => {
   });
 
   it("reports drift when the running bundle differs from desired state", () => {
-    const base = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-bootstrap-lifecycle-drift-"),
-    );
+    const base = mkTempDir("cocalc-bootstrap-lifecycle-drift-");
     const bootstrapDir = path.join(base, "bootstrap");
     const projectHostRoot = path.join(base, "project-host");
     const projectBundlesRoot = path.join(base, "project-bundles");
@@ -178,9 +185,7 @@ describe("bootstrap lifecycle reporting", () => {
   });
 
   it("reports drift when the runtime keep-id map differs from the desired contract", () => {
-    const base = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-bootstrap-lifecycle-userns-drift-"),
-    );
+    const base = mkTempDir("cocalc-bootstrap-lifecycle-userns-drift-");
     const bootstrapDir = path.join(base, "bootstrap");
     const projectHostRoot = path.join(base, "project-host");
     const projectBundlesRoot = path.join(base, "project-bundles");
@@ -253,9 +258,7 @@ describe("bootstrap lifecycle reporting", () => {
   });
 
   it("treats a newer numeric installed bundle version as aligned", () => {
-    const base = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-bootstrap-lifecycle-newer-"),
-    );
+    const base = mkTempDir("cocalc-bootstrap-lifecycle-newer-");
     const bootstrapDir = path.join(base, "bootstrap");
     const projectHostRoot = path.join(base, "project-host");
     const projectBundlesRoot = path.join(base, "project-bundles");
@@ -318,9 +321,7 @@ describe("bootstrap lifecycle reporting", () => {
   });
 
   it("surfaces runtime wrapper helpers from bootstrap state", () => {
-    const base = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-bootstrap-lifecycle-runtime-"),
-    );
+    const base = mkTempDir("cocalc-bootstrap-lifecycle-runtime-");
     const bootstrapDir = path.join(base, "bootstrap");
     const runtimeRoot = path.join(base, "project-host-runtime");
     fs.mkdirSync(path.join(runtimeRoot, "bin"), { recursive: true });

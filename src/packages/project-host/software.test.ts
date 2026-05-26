@@ -24,8 +24,16 @@ function makeVersionDir(root: string, version: string, build_id?: string) {
 
 describe("getInstalledRuntimeArtifacts", () => {
   const env = { ...process.env };
+  let tempDirs: string[] = [];
+
+  function mkTempDir(prefix: string) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    tempDirs.push(dir);
+    return dir;
+  }
 
   beforeEach(() => {
+    tempDirs = [];
     process.env = { ...env };
     process.env.COCALC_LITE_SQLITE_FILENAME = ":memory:";
     closeDatabase();
@@ -37,10 +45,13 @@ describe("getInstalledRuntimeArtifacts", () => {
 
   afterEach(() => {
     closeDatabase();
+    for (const dir of tempDirs.reverse()) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("tracks installed project-host bundle versions from bundle-layout roots", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-software-"));
+    const root = mkTempDir("cocalc-software-");
     const bundleRoot = path.join(root, "project-host", "bundles");
     fs.mkdirSync(bundleRoot, { recursive: true });
     makeVersionDir(bundleRoot, "1001");
@@ -60,7 +71,7 @@ describe("getInstalledRuntimeArtifacts", () => {
   });
 
   it("tracks installed project bundle and tools versions from current symlinks", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-software-"));
+    const root = mkTempDir("cocalc-software-");
     const bundlesRoot = path.join(root, "project-bundles");
     const toolsRoot = path.join(root, "tools");
     fs.mkdirSync(bundlesRoot, { recursive: true });
@@ -99,7 +110,7 @@ describe("getInstalledRuntimeArtifacts", () => {
   });
 
   it("includes referenced running project bundle and tools versions", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-software-"));
+    const root = mkTempDir("cocalc-software-");
     const bundlesRoot = path.join(root, "project-bundles");
     const toolsRoot = path.join(root, "tools");
     fs.mkdirSync(bundlesRoot, { recursive: true });
@@ -139,7 +150,7 @@ describe("getInstalledRuntimeArtifacts", () => {
   });
 
   it("can include installed bytes on demand", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-software-"));
+    const root = mkTempDir("cocalc-software-");
     const bundlesRoot = path.join(root, "project-bundles");
     fs.mkdirSync(bundlesRoot, { recursive: true });
     const currentBundle = makeVersionDir(bundlesRoot, "bundle-b");
@@ -168,7 +179,7 @@ describe("getInstalledRuntimeArtifacts", () => {
   });
 
   it("reports persisted retention policy with env overrides applied", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-software-"));
+    const root = mkTempDir("cocalc-software-");
     const bundlesRoot = path.join(root, "project-bundles");
     fs.mkdirSync(bundlesRoot, { recursive: true });
     const currentBundle = makeVersionDir(bundlesRoot, "bundle-b");

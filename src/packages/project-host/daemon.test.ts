@@ -34,16 +34,22 @@ function mockSpawn(): jest.MockedFunction<ProcessRuntimeSpawn> {
 describe("project-host daemon stop", () => {
   const originalEnv = { ...process.env };
   let runtimeDir: string;
+  let tempDirs: string[] = [];
+
+  function mkTempDir(prefix: string) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    tempDirs.push(dir);
+    return dir;
+  }
 
   beforeEach(() => {
     jest.restoreAllMocks();
+    tempDirs = [];
     process.env = { ...originalEnv };
     process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "0";
     __test__.resetHealthFailureStreaks();
     resetProjectHostActivityStateForTesting();
-    runtimeDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-runtime-"),
-    );
+    runtimeDir = mkTempDir("cocalc-project-host-runtime-");
     process.env.COCALC_PODMAN_RUNTIME_DIR = runtimeDir;
     process.env.DEBUG_FILE = path.join(runtimeDir, "debug.log");
     jest.spyOn(__test__.processRuntime, "spawn").mockImplementation(((
@@ -56,14 +62,18 @@ describe("project-host daemon stop", () => {
     }) as ProcessRuntimeSpawn);
   });
 
+  afterEach(() => {
+    for (const dir of tempDirs.reverse()) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   afterAll(() => {
     process.env = originalEnv;
   });
 
   it("waits for SIGTERM exit before removing the pid file", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     const pidPath = path.join(dataDir, "daemon.pid");
     fs.writeFileSync(pidPath, "4242");
     process.env.COCALC_DATA = dataDir;
@@ -101,9 +111,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("escalates to SIGKILL when SIGTERM does not stop the daemon", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     const pidPath = path.join(dataDir, "daemon.pid");
     fs.writeFileSync(pidPath, "5252");
     process.env.COCALC_DATA = dataDir;
@@ -141,9 +149,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("cleans up stray project-host processes when the pid file is stale", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     const pidPath = path.join(dataDir, "daemon.pid");
     fs.writeFileSync(pidPath, "9999");
     process.env.COCALC_DATA = dataDir;
@@ -228,9 +234,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("treats a stale daemon pid file with no live process as a successful stop", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     const pidPath = path.join(dataDir, "daemon.pid");
     fs.writeFileSync(pidPath, "9999");
     process.env.COCALC_DATA = dataDir;
@@ -256,9 +260,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("does nothing when the daemon is healthy", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     const pidPath = path.join(dataDir, "daemon.pid");
     fs.writeFileSync(pidPath, "7373");
     process.env.COCALC_DATA = dataDir;
@@ -311,12 +313,8 @@ describe("project-host daemon stop", () => {
   });
 
   it("starts a separate host-agent process with the managed local router env", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
-    const bundleRoot = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-bundle-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
+    const bundleRoot = mkTempDir("cocalc-project-host-bundle-");
     const runtimeRoot = path.join(bundleRoot, "1776319000001");
     fs.mkdirSync(path.join(runtimeRoot, "main"), { recursive: true });
     fs.writeFileSync(path.join(runtimeRoot, "main", "index.js"), "");
@@ -362,9 +360,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("rejects an explicitly configured external router URL for host-agent", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     process.env.COCALC_DATA = dataDir;
     process.env.PORT = "9002";
     process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL = "https://router.example";
@@ -373,9 +369,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("ensureHostAgent treats a running agent as healthy without a second reconcile", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     const agentPidPath = path.join(dataDir, "host-agent.pid");
     const pidPath = path.join(dataDir, "daemon.pid");
     fs.writeFileSync(agentPidPath, "7374");
@@ -413,12 +407,8 @@ describe("project-host daemon stop", () => {
   });
 
   it("ensureHostAgent restarts a running agent when it is on the wrong bundle version", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
-    const bundleRoot = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-bundle-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
+    const bundleRoot = mkTempDir("cocalc-project-host-bundle-");
     const runtimeRoot = path.join(bundleRoot, "1776319000002");
     fs.mkdirSync(path.join(runtimeRoot, "main"), { recursive: true });
     fs.writeFileSync(path.join(runtimeRoot, "main", "index.js"), "");
@@ -497,9 +487,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("does not treat a host-agent process as a stray project-host", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     process.env.COCALC_DATA = dataDir;
     process.env.PORT = "9002";
 
@@ -535,9 +523,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("detects titled managed processes via /proc cmdline", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     process.env.COCALC_DATA = dataDir;
     process.env.PORT = "9002";
 
@@ -634,9 +620,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("preserves managed router and persist while recovering project-host under host-agent supervision", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     process.env.COCALC_DATA = dataDir;
     process.env.PORT = "9002";
     process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
@@ -732,9 +716,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("restarts only project-host for the restart-project-host daemon action", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     process.env.COCALC_DATA = dataDir;
     process.env.PORT = "9003";
     process.env.COCALC_PROJECT_HOST_PUBLIC_HTTP_PORT = "9002";
@@ -846,9 +828,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("treats start as idempotent when the daemon is already healthy", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     const pidPath = path.join(dataDir, "daemon.pid");
     const routerPidPath = path.join(dataDir, "conat-router.pid");
     fs.writeFileSync(pidPath, "7474");
@@ -889,9 +869,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("starts a managed conat router before project-host in external router mode", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     process.env.COCALC_DATA = dataDir;
     process.env.PORT = "9002";
     process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
@@ -950,9 +928,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("starts managed conat persist after router and before project-host", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     process.env.COCALC_DATA = dataDir;
     process.env.PORT = "9002";
     process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
@@ -1020,9 +996,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("does not propagate host-agent env markers to managed children", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     process.env.COCALC_DATA = dataDir;
     process.env.PORT = "9002";
     process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "1";
@@ -1066,12 +1040,8 @@ describe("project-host daemon stop", () => {
   });
 
   it("starts runtime daemons from the selected current bundle rather than the host-agent bundle", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
-    const bundleRoot = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-bundle-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
+    const bundleRoot = mkTempDir("cocalc-project-host-bundle-");
     const runtimeRoot = path.join(bundleRoot, "1776319000000");
     fs.mkdirSync(path.join(runtimeRoot, "main"), { recursive: true });
     fs.writeFileSync(path.join(runtimeRoot, "main", "index.js"), "");
@@ -1116,9 +1086,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("defaults project-host bootstrap to the managed local router daemon and persist", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     process.env.COCALC_DATA = dataDir;
     process.env.PORT = "9002";
     delete process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER;
@@ -1183,9 +1151,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("treats a derived local router URL as managed when running inside host-agent", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     process.env.COCALC_DATA = dataDir;
     process.env.PORT = "9002";
     process.env.COCALC_PROJECT_HOST_AGENT = "1";
@@ -1228,9 +1194,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("stops the managed conat router when stopping project-host", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     fs.writeFileSync(path.join(dataDir, "daemon.pid"), "8181");
     fs.writeFileSync(path.join(dataDir, "conat-router.pid"), "8282");
     process.env.COCALC_DATA = dataDir;
@@ -1270,9 +1234,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("stops the managed conat persist when stopping project-host", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     fs.writeFileSync(path.join(dataDir, "daemon.pid"), "8181");
     fs.writeFileSync(path.join(dataDir, "conat-router.pid"), "8282");
     fs.writeFileSync(path.join(dataDir, "conat-persist.pid"), "8383");
@@ -1317,9 +1279,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("rejects an explicit external router url when starting the daemon", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     process.env.COCALC_DATA = dataDir;
     process.env.PORT = "9002";
     process.env.COCALC_PROJECT_HOST_CONAT_ROUTER_URL = "https://router.example";
@@ -1328,9 +1288,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("restarts the daemon when the pid is running but health checks fail", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     const pidPath = path.join(dataDir, "daemon.pid");
     const routerPidPath = path.join(dataDir, "conat-router.pid");
     fs.writeFileSync(pidPath, "8484");
@@ -1420,9 +1378,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("restarts only after the configured number of consecutive failed health checks", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     const pidPath = path.join(dataDir, "daemon.pid");
     const routerPidPath = path.join(dataDir, "conat-router.pid");
     fs.writeFileSync(pidPath, "8484");
@@ -1540,9 +1496,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("captures unhealthy process forensics when enabled", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     process.env.COCALC_PROJECT_HOST_DAEMON_CAPTURE_FORENSICS = "1";
     process.env.COCALC_PROJECT_HOST_DAEMON_CAPTURE_FORENSICS_SEC = "1";
     const spawnSyncSpy = jest
@@ -1621,9 +1575,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("loads a local env overlay after the bootstrap env file", () => {
-    const tempDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-env-"),
-    );
+    const tempDir = mkTempDir("cocalc-project-host-daemon-env-");
     const envFile = path.join(tempDir, "project-host.env");
     const localEnvFile = path.join(tempDir, "project-host.local.env");
     fs.writeFileSync(
@@ -1649,9 +1601,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("prefers the explicit public http port over PORT when resolving daemon env", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-env-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-env-");
     process.env.COCALC_DATA = dataDir;
     process.env.PORT = "9003";
     process.env.COCALC_PROJECT_HOST_PUBLIC_HTTP_PORT = "9002";
@@ -1666,9 +1616,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("does not restart an unhealthy daemon during the startup grace window", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     const pidPath = path.join(dataDir, "daemon.pid");
     const routerPidPath = path.join(dataDir, "conat-router.pid");
     fs.writeFileSync(pidPath, "8585");
@@ -1720,9 +1668,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("does not restart an unhealthy daemon during active start or stop work", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     const pidPath = path.join(dataDir, "daemon.pid");
     const routerPidPath = path.join(dataDir, "conat-router.pid");
     fs.writeFileSync(pidPath, "8686");
@@ -1850,9 +1796,7 @@ describe("project-host daemon stop", () => {
   });
 
   it("repairs podman pause-process state before starting the daemon", () => {
-    const dataDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
-    );
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
     process.env.COCALC_DATA = dataDir;
     process.env.PORT = "9002";
 

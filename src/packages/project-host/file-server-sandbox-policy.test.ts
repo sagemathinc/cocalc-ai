@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -7,9 +7,23 @@ import { PROJECT_SECRETS_MOUNT_PATH } from "@cocalc/util/project-secrets-constan
 
 describe("file-server sandbox policy", () => {
   const project_id = "00000000-1000-4000-8000-000000000000";
+  let tempDirs: string[] = [];
+
+  async function mkTempDir(prefix: string) {
+    const dir = await mkdtemp(join(tmpdir(), prefix));
+    tempDirs.push(dir);
+    return dir;
+  }
+
+  afterEach(async () => {
+    await Promise.all(
+      tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
+    );
+    tempDirs = [];
+  });
 
   it("keeps home writable while denying rootfs/temp volume when mounts are missing", async () => {
-    const base = await mkdtemp(join(tmpdir(), "cocalc-fs-policy-"));
+    const base = await mkTempDir("cocalc-fs-policy-");
     const home = join(base, "home");
     const rootfs = join(base, "rootfs-missing");
     const scratch = join(base, "scratch-missing");
@@ -39,7 +53,7 @@ describe("file-server sandbox policy", () => {
   });
 
   it("routes writes to home, rootfs, and temp volume when mounts exist", async () => {
-    const base = await mkdtemp(join(tmpdir(), "cocalc-fs-policy-"));
+    const base = await mkTempDir("cocalc-fs-policy-");
     const home = join(base, "home");
     const rootfs = join(base, "rootfs");
     const scratch = join(base, "scratch");
@@ -74,7 +88,7 @@ describe("file-server sandbox policy", () => {
   });
 
   it("does not expose runtime project secrets through file-server paths", async () => {
-    const base = await mkdtemp(join(tmpdir(), "cocalc-fs-policy-"));
+    const base = await mkTempDir("cocalc-fs-policy-");
     const home = join(base, "home");
     const rootfs = join(base, "rootfs");
     const scratch = join(base, "scratch");
@@ -98,7 +112,7 @@ describe("file-server sandbox policy", () => {
   });
 
   it("routes snapshot rm to deleteSnapshot for runtime-home paths", async () => {
-    const base = await mkdtemp(join(tmpdir(), "cocalc-fs-policy-"));
+    const base = await mkTempDir("cocalc-fs-policy-");
     const home = join(base, "home");
     const rootfs = join(base, "rootfs");
     const scratch = join(base, "scratch");
@@ -125,7 +139,7 @@ describe("file-server sandbox policy", () => {
   });
 
   it("rejects deleting nested files inside snapshots", async () => {
-    const base = await mkdtemp(join(tmpdir(), "cocalc-fs-policy-"));
+    const base = await mkTempDir("cocalc-fs-policy-");
     const home = join(base, "home");
     const rootfs = join(base, "rootfs");
     const scratch = join(base, "scratch");

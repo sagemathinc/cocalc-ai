@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -37,8 +37,23 @@ function withBootstrapEnv<T>(bootstrapDir: string, fn: () => T): T {
 }
 
 describe("master-conat-token bootstrap source", () => {
+  let tempDirs: string[] = [];
+
+  function mkTempDir(prefix: string) {
+    const dir = mkdtempSync(join(tmpdir(), prefix));
+    tempDirs.push(dir);
+    return dir;
+  }
+
+  afterEach(() => {
+    for (const dir of tempDirs.reverse()) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    tempDirs = [];
+  });
+
   it("prefers split desired-state bootstrap connection over legacy config", () => {
-    const root = mkdtempSync(join(tmpdir(), "cocalc-bootstrap-"));
+    const root = mkTempDir("cocalc-bootstrap-");
     const bootstrapDir = join(root, "bootstrap");
     mkdirSync(bootstrapDir, { recursive: true });
     writeFileSync(
@@ -67,7 +82,7 @@ describe("master-conat-token bootstrap source", () => {
   });
 
   it("returns undefined when split desired state is missing", () => {
-    const root = mkdtempSync(join(tmpdir(), "cocalc-bootstrap-"));
+    const root = mkTempDir("cocalc-bootstrap-");
     const bootstrapDir = join(root, "bootstrap");
     mkdirSync(bootstrapDir, { recursive: true });
 

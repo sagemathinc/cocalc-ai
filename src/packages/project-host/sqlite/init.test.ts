@@ -10,12 +10,13 @@ import { initSqlite } from "./init";
 
 describe("project-host sqlite init", () => {
   let dbPath: string;
+  let tempDir: string;
 
   beforeEach(() => {
-    dbPath = path.join(
-      fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-project-host-sqlite-")),
-      "sqlite.db",
+    tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-sqlite-"),
     );
+    dbPath = path.join(tempDir, "sqlite.db");
     process.env.COCALC_LITE_SQLITE_FILENAME = dbPath;
     closeDatabase();
   });
@@ -23,6 +24,7 @@ describe("project-host sqlite init", () => {
   afterEach(() => {
     closeDatabase();
     delete process.env.COCALC_LITE_SQLITE_FILENAME;
+    fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
   it("clears stale active storage reservations on startup", async () => {

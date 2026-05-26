@@ -1,5 +1,5 @@
 import type http from "node:http";
-import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
@@ -76,9 +76,23 @@ const PUBLIC_ROOT = `${DEFAULT_PROJECT_RUNTIME_HOME}/public`;
 
 describe("static app serving", () => {
   const project_id = "00000000-1000-4000-8000-000000000000";
+  let tempDirs: string[] = [];
+
+  async function mkTempDir(prefix: string) {
+    const dir = await mkdtemp(join(tmpdir(), prefix));
+    tempDirs.push(dir);
+    return dir;
+  }
 
   beforeEach(() => {
     currentProjectFs = undefined;
+  });
+
+  afterEach(async () => {
+    await Promise.all(
+      tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
+    );
+    tempDirs = [];
   });
 
   it("uses a smaller dedicated viewer page for markdown and notebooks", () => {
@@ -98,7 +112,7 @@ describe("static app serving", () => {
   });
 
   it("serves files inside the configured root", async () => {
-    const base = await mkdtemp(join(tmpdir(), "cocalc-static-apps-"));
+    const base = await mkTempDir("cocalc-static-apps-");
     const home = join(base, "home");
     const rootfs = join(base, "rootfs");
     const scratch = join(base, "scratch");
@@ -128,7 +142,7 @@ describe("static app serving", () => {
   });
 
   it("redirects directory roots to a trailing-slash URL", async () => {
-    const base = await mkdtemp(join(tmpdir(), "cocalc-static-apps-"));
+    const base = await mkTempDir("cocalc-static-apps-");
     const home = join(base, "home");
     const rootfs = join(base, "rootfs");
     const scratch = join(base, "scratch");
@@ -164,7 +178,7 @@ describe("static app serving", () => {
   });
 
   it("does not follow symlinks outside the configured root", async () => {
-    const base = await mkdtemp(join(tmpdir(), "cocalc-static-apps-"));
+    const base = await mkTempDir("cocalc-static-apps-");
     const home = join(base, "home");
     const rootfs = join(base, "rootfs");
     const scratch = join(base, "scratch");
@@ -195,7 +209,7 @@ describe("static app serving", () => {
   });
 
   it("rejects oversized public viewer manifests before reading them", async () => {
-    const base = await mkdtemp(join(tmpdir(), "cocalc-static-apps-"));
+    const base = await mkTempDir("cocalc-static-apps-");
     const home = join(base, "home");
     const rootfs = join(base, "rootfs");
     const scratch = join(base, "scratch");
@@ -248,7 +262,7 @@ describe("static app serving", () => {
   });
 
   it("allows the central viewer origin to fetch private raw files with credentials", async () => {
-    const base = await mkdtemp(join(tmpdir(), "cocalc-static-apps-"));
+    const base = await mkTempDir("cocalc-static-apps-");
     const home = join(base, "home");
     const rootfs = join(base, "rootfs");
     const scratch = join(base, "scratch");
@@ -307,7 +321,7 @@ describe("static app serving", () => {
   });
 
   it("uses public cache defaults for exposed raw files and supports etag revalidation", async () => {
-    const base = await mkdtemp(join(tmpdir(), "cocalc-static-apps-"));
+    const base = await mkTempDir("cocalc-static-apps-");
     const home = join(base, "home");
     const rootfs = join(base, "rootfs");
     const scratch = join(base, "scratch");
@@ -381,7 +395,7 @@ describe("static app serving", () => {
   });
 
   it("uses a shorter public cache default for generated manifest pages", async () => {
-    const base = await mkdtemp(join(tmpdir(), "cocalc-static-apps-"));
+    const base = await mkTempDir("cocalc-static-apps-");
     const home = join(base, "home");
     const rootfs = join(base, "rootfs");
     const scratch = join(base, "scratch");

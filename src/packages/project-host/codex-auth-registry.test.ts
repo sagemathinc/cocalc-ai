@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -30,15 +30,30 @@ jest.mock("./sqlite/hosts", () => ({
 }));
 
 describe("syncSubscriptionAuthToRegistryIfChanged", () => {
+  let tempDirs: string[] = [];
+
+  function mkTempDir(prefix: string) {
+    const dir = mkdtempSync(path.join(tmpdir(), prefix));
+    tempDirs.push(dir);
+    return dir;
+  }
+
   beforeEach(() => {
+    tempDirs = [];
     callHubMock.mockReset();
     getMasterConatClientMock.mockClear();
     getLocalHostIdMock.mockClear();
     jest.resetModules();
   });
 
+  afterEach(() => {
+    for (const dir of tempDirs.reverse()) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("pushes local auth once and skips unchanged content", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "cocalc-auth-sync-"));
+    const root = mkTempDir("cocalc-auth-sync-");
     writeFileSync(path.join(root, "auth.json"), '{"token":"one"}\n');
 
     callHubMock.mockResolvedValue({ id: "cred-1" });
@@ -70,7 +85,7 @@ describe("syncSubscriptionAuthToRegistryIfChanged", () => {
   });
 
   it("pushes again after auth.json changes", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "cocalc-auth-sync-"));
+    const root = mkTempDir("cocalc-auth-sync-");
     const authPath = path.join(root, "auth.json");
     writeFileSync(authPath, '{"token":"one"}\n');
 

@@ -5,13 +5,24 @@ import { which } from "./which";
 
 describe("which", () => {
   const originalPath = process.env.PATH;
+  let tempDirs: string[] = [];
 
-  afterEach(() => {
+  async function mkTempDir(prefix: string) {
+    const dir = await fs.mkdtemp(join(tmpdir(), prefix));
+    tempDirs.push(dir);
+    return dir;
+  }
+
+  afterEach(async () => {
     process.env.PATH = originalPath;
+    await Promise.all(
+      tempDirs.map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    );
+    tempDirs = [];
   });
 
   it("resolves a binary from PATH when present", async () => {
-    const dir = await fs.mkdtemp(join(tmpdir(), "which-test-"));
+    const dir = await mkTempDir("which-test-");
     const bin = join(dir, "fakebin");
     await fs.writeFile(bin, "echo hello\n");
     process.env.PATH = `${dir}${originalPath ? `:${originalPath}` : ""}`;
