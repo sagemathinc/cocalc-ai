@@ -2148,6 +2148,59 @@ describe("hosts browser fresh auth gating", () => {
     );
   });
 
+  it("requires fresh auth before queueing host stop or restart", async () => {
+    requireFreshAuthForSessionHashMock = jest.fn(async () => {
+      throw Object.assign(new Error("fresh auth is required"), {
+        code: "fresh_auth_required",
+      });
+    });
+
+    const { stopHost, restartHost } = await import("./hosts");
+    queryMock.mockClear();
+    createLroMock.mockClear();
+    await expect(
+      stopHost({
+        account_id: ACCOUNT_ID,
+        session_hash: "stale-session-hash",
+        id: HOST_ID,
+      }),
+    ).rejects.toMatchObject({ code: "fresh_auth_required" });
+    await expect(
+      restartHost({
+        account_id: ACCOUNT_ID,
+        session_hash: "stale-session-hash",
+        id: HOST_ID,
+      }),
+    ).rejects.toMatchObject({ code: "fresh_auth_required" });
+
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(createLroMock).not.toHaveBeenCalled();
+  });
+
+  it("uses browser fresh auth before queueing host stop", async () => {
+    getBrowserAuthSessionHashMock = jest.fn(() => "session-hash");
+
+    const { stopHost } = await import("./hosts");
+    await stopHost({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      id: HOST_ID,
+    });
+
+    expect(getBrowserAuthSessionHashMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+    });
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      allow_actor_impersonation: true,
+      session_hash: "session-hash",
+    });
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "host-stop" }),
+    );
+  });
+
   it("requires fresh auth before queueing host drain", async () => {
     requireFreshAuthForSessionHashMock = jest.fn(async () => {
       throw Object.assign(new Error("fresh auth is required"), {
@@ -3053,10 +3106,20 @@ describe("hosts.authoritative remote host actions", () => {
       removeSelfHostConnector,
     } = await import("./hosts");
 
-    await startHost({ account_id: ACCOUNT_ID, id: HOST_ID });
-    await stopHost({ account_id: ACCOUNT_ID, id: HOST_ID, skip_backups: true });
+    await startHost({
+      account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
+      id: HOST_ID,
+    });
+    await stopHost({
+      account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
+      id: HOST_ID,
+      skip_backups: true,
+    });
     await restartHost({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
       mode: "hard",
     });
@@ -3116,15 +3179,18 @@ describe("hosts.authoritative remote host actions", () => {
 
     expect(hostConnectionStartHostMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
     });
     expect(hostConnectionStopHostMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
       skip_backups: true,
     });
     expect(hostConnectionRestartHostMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
       mode: "hard",
     });

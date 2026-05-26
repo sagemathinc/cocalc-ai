@@ -1665,11 +1665,15 @@ export interface Hosts {
   }) => Promise<HostLroResponse>;
   stopHost: (opts: {
     account_id?: string;
+    browser_id?: string;
+    session_hash?: string;
     id: string;
     skip_backups?: boolean;
   }) => Promise<HostLroResponse>;
   restartHost: (opts: {
     account_id?: string;
+    browser_id?: string;
+    session_hash?: string;
     id: string;
     mode?: "reboot" | "hard";
   }) => Promise<HostLroResponse>;

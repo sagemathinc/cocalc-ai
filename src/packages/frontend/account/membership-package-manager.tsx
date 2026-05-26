@@ -1059,12 +1059,14 @@ export function MembershipPackageManager({
               setAssignmentTarget(membershipPackage)
             }
             onRevokeSeat={async (membershipPackage, assignment) => {
-              await revokeMembershipPackageSeat({
-                package_id: membershipPackage.id,
-                target_account_id: assignment.account_id ?? undefined,
-                target_email_address: assignment.email_address ?? undefined,
+              await runFreshAuthAction(async () => {
+                await revokeMembershipPackageSeat({
+                  package_id: membershipPackage.id,
+                  target_account_id: assignment.account_id ?? undefined,
+                  target_email_address: assignment.email_address ?? undefined,
+                });
+                await handleChanged();
               });
-              await handleChanged();
             }}
           />
           <SiteLicenseDashboard
@@ -1104,12 +1106,14 @@ export function MembershipPackageManager({
               }
             }}
             onRevokeSeat={async (pool, assignment) => {
-              await revokeMembershipPackageSeat({
-                package_id: pool.id,
-                target_account_id: assignment.account_id ?? undefined,
-                target_email_address: assignment.email_address ?? undefined,
+              await runFreshAuthAction(async () => {
+                await revokeMembershipPackageSeat({
+                  package_id: pool.id,
+                  target_account_id: assignment.account_id ?? undefined,
+                  target_email_address: assignment.email_address ?? undefined,
+                });
+                await handleChanged();
               });
-              await handleChanged();
             }}
             onUpdateLicense={
               is_admin
@@ -3726,6 +3730,9 @@ function AssignMembershipSeatModal({
   const [searchError, setSearchError] = useState<string>("");
   const [selectedTarget, setSelectedTarget] = useState<string>("");
   const [assigning, setAssigning] = useState<boolean>(false);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setSearchError(`${err}`),
+  });
   const activeAccountIds = useMemo(
     () =>
       new Set(
@@ -3812,18 +3819,20 @@ function AssignMembershipSeatModal({
     setAssigning(true);
     setSearchError("");
     try {
-      if (selectedTarget.startsWith("account:")) {
-        await assignMembershipPackageSeat({
-          package_id: membershipPackage.id,
-          target_account_id: selectedTarget.slice("account:".length),
-        });
-      } else if (selectedTarget.startsWith("email:")) {
-        await assignMembershipPackageSeat({
-          package_id: membershipPackage.id,
-          target_email_address: selectedTarget.slice("email:".length),
-        });
-      }
-      await onAssigned();
+      await runFreshAuthAction(async () => {
+        if (selectedTarget.startsWith("account:")) {
+          await assignMembershipPackageSeat({
+            package_id: membershipPackage.id,
+            target_account_id: selectedTarget.slice("account:".length),
+          });
+        } else if (selectedTarget.startsWith("email:")) {
+          await assignMembershipPackageSeat({
+            package_id: membershipPackage.id,
+            target_email_address: selectedTarget.slice("email:".length),
+          });
+        }
+        await onAssigned();
+      });
     } catch (err) {
       setSearchError(`${err}`);
     } finally {
@@ -3936,6 +3945,7 @@ function AssignMembershipSeatModal({
           />
         ) : null}
       </Space>
+      <FreshAuthModal {...freshAuthModalProps} />
     </Modal>
   );
 }

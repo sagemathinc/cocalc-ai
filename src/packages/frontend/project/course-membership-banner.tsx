@@ -441,9 +441,11 @@ function StudentCoursePurchaseModal({
     try {
       const { count } = await processPaymentIntents();
       if (count > 0) {
-        await assignLatestPurchasedPackage();
-        await onPurchased();
-        setPlace("done");
+        await runFreshAuthAction(async () => {
+          await assignLatestPurchasedPackage();
+          await onPurchased();
+          setPlace("done");
+        });
       }
     } catch (err) {
       setActionError(`${err}`);

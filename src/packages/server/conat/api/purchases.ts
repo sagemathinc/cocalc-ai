@@ -540,12 +540,16 @@ export async function updateMembershipPackage({
 
 export async function assignMembershipPackageSeat({
   account_id,
+  browser_id,
+  session_hash,
   package_id,
   target_account_id,
   target_email_address,
   metadata,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
   package_id?: string;
   target_account_id?: string;
   target_email_address?: string;
@@ -567,6 +571,12 @@ export async function assignMembershipPackageSeat({
     account_id,
     "assign membership seats",
   );
+  await validatePurchaseFreshAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
   const pkg = await getMembershipPackage({ package_id });
   if (!pkg) {
     throw Error("membership package not found");
@@ -590,11 +600,15 @@ export async function assignMembershipPackageSeat({
 
 export async function revokeMembershipPackageSeat({
   account_id,
+  browser_id,
+  session_hash,
   package_id,
   target_account_id,
   target_email_address,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
   package_id?: string;
   target_account_id?: string;
   target_email_address?: string;
@@ -615,6 +629,12 @@ export async function revokeMembershipPackageSeat({
     account_id,
     "revoke membership seats",
   );
+  await validatePurchaseFreshAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
   const pkg = await getMembershipPackage({ package_id });
   if (!pkg) {
     throw Error("membership package not found");

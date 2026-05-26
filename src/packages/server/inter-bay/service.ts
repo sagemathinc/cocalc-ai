@@ -317,7 +317,10 @@ import {
   getRootfsQuotaReport,
   getServiceAdmissionDenialReport,
 } from "@cocalc/server/conat/api/system";
-import { setLocalProjectsHidden } from "@cocalc/server/conat/api/projects";
+import {
+  setLocalProjectManageUsersOwnerOnly,
+  setLocalProjectsHidden,
+} from "@cocalc/server/conat/api/projects";
 import { listVisibleRootfsImages } from "@cocalc/server/rootfs/catalog";
 
 const logger = getLogger("server:inter-bay:service");
@@ -1275,6 +1278,8 @@ async function startProjectCollabInviteService(): Promise<void> {
         project_ids,
         hide,
       }),
+    setManageUsersOwnerOnly: async (opts) =>
+      await setLocalProjectManageUsersOwnerOnly(opts),
     respond: async ({
       account_id,
       invite_id,
@@ -1367,20 +1372,32 @@ async function startHostConnectionService(): Promise<void> {
         account_id,
         id,
       }),
-    startHost: async ({ account_id, id }) =>
+    startHost: async ({ account_id, browser_id, session_hash, id }) =>
       await startHost({
         account_id,
+        browser_id,
+        session_hash,
         id,
       }),
-    stopHost: async ({ account_id, id, skip_backups }) =>
+    stopHost: async ({
+      account_id,
+      browser_id,
+      session_hash,
+      id,
+      skip_backups,
+    }) =>
       await stopHost({
         account_id,
+        browser_id,
+        session_hash,
         id,
         skip_backups,
       }),
-    restartHost: async ({ account_id, id, mode }) =>
+    restartHost: async ({ account_id, browser_id, session_hash, id, mode }) =>
       await restartHost({
         account_id,
+        browser_id,
+        session_hash,
         id,
         mode,
       }),

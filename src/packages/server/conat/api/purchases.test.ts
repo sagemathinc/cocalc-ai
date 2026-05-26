@@ -1246,6 +1246,7 @@ describe("purchases membership packages", () => {
     const { assignMembershipPackageSeat } = await import("./purchases");
     const result = await assignMembershipPackageSeat({
       account_id: "owner-1",
+      session_hash: "session-1",
       package_id: "package-1",
       target_account_id: "student-1",
     });
@@ -1260,7 +1261,33 @@ describe("purchases membership packages", () => {
       "owner-1",
       "assign membership seats",
     );
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "owner-1",
+      allow_actor_impersonation: false,
+      session_hash: "session-1",
+    });
     expect(result.id).toBe("assignment-1");
+  });
+
+  it("requires fresh auth before assigning a package seat", async () => {
+    requireFreshAuthForSessionHashMock.mockRejectedValueOnce(
+      Object.assign(new Error("fresh auth is required"), {
+        code: "fresh_auth_required",
+      }),
+    );
+
+    const { assignMembershipPackageSeat } = await import("./purchases");
+    await expect(
+      assignMembershipPackageSeat({
+        account_id: "owner-1",
+        session_hash: "stale-session",
+        package_id: "package-1",
+        target_account_id: "student-1",
+      }),
+    ).rejects.toMatchObject({ code: "fresh_auth_required" });
+
+    expect(getMembershipPackageMock).not.toHaveBeenCalled();
+    expect(assignMembershipPackageSeatMock).not.toHaveBeenCalled();
   });
 
   it("blocks untrusted accounts from assigning package seats", async () => {
@@ -1299,6 +1326,7 @@ describe("purchases membership packages", () => {
     const { assignMembershipPackageSeat } = await import("./purchases");
     const result = await assignMembershipPackageSeat({
       account_id: "owner-1",
+      session_hash: "session-1",
       package_id: "package-1",
       target_email_address: "student@example.com",
     });
@@ -1330,6 +1358,7 @@ describe("purchases membership packages", () => {
     await expect(
       assignMembershipPackageSeat({
         account_id: "owner-1",
+        session_hash: "session-1",
         package_id: "site-package-1",
         target_email_address: "student@example.edu",
       }),
@@ -1464,6 +1493,7 @@ describe("purchases membership packages", () => {
     const { revokeMembershipPackageSeat } = await import("./purchases");
     const result = await revokeMembershipPackageSeat({
       account_id: "owner-1",
+      session_hash: "session-1",
       package_id: "package-1",
       target_account_id: "student-1",
     });
@@ -1473,7 +1503,33 @@ describe("purchases membership packages", () => {
       account_id: "student-1",
       email_address: undefined,
     });
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "owner-1",
+      allow_actor_impersonation: false,
+      session_hash: "session-1",
+    });
     expect(result).toEqual({ revoked: true });
+  });
+
+  it("requires fresh auth before revoking a package seat", async () => {
+    requireFreshAuthForSessionHashMock.mockRejectedValueOnce(
+      Object.assign(new Error("fresh auth is required"), {
+        code: "fresh_auth_required",
+      }),
+    );
+
+    const { revokeMembershipPackageSeat } = await import("./purchases");
+    await expect(
+      revokeMembershipPackageSeat({
+        account_id: "owner-1",
+        session_hash: "stale-session",
+        package_id: "package-1",
+        target_account_id: "student-1",
+      }),
+    ).rejects.toMatchObject({ code: "fresh_auth_required" });
+
+    expect(getMembershipPackageMock).not.toHaveBeenCalled();
+    expect(revokeMembershipPackageSeatMock).not.toHaveBeenCalled();
   });
 
   it("loads claimable packages for the signed-in account", async () => {

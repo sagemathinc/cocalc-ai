@@ -556,6 +556,7 @@ export const projects = {
   getProjectCreated: authFirstRequireAccount,
   getProjectEnv: authFirstRequireAccount,
   setProjectEnv: authFirstRequireAccount,
+  setProjectManageUsersOwnerOnly: authFirstRequireAccount,
   listProjectSecrets: authFirstRequireAccount,
   setProjectSecret: authFirstRequireAccount,
   deleteProjectSecret: authFirstRequireAccount,
@@ -725,6 +726,12 @@ export interface Projects {
     env: ProjectEnv;
   }) => Promise<void>;
 
+  setProjectManageUsersOwnerOnly: (opts: {
+    account_id?: string;
+    project_id: string;
+    manage_users_owner_only: boolean;
+  }) => Promise<void>;
+
   listProjectSecrets: (opts: {
     account_id?: string;
     project_id: string;
@@ -753,6 +760,8 @@ export interface Projects {
 
   generateProjectSshKeySecret: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     project_id: string;
     secret_name?: string;
   }) => Promise<GenerateProjectSshKeySecretResult>;
@@ -1251,6 +1260,8 @@ export interface Projects {
   }) => Promise<ProjectHiddenResult[]>;
   setProjectSshKey: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     project_id: string;
     fingerprint: string;
     title: string;
@@ -1260,6 +1271,8 @@ export interface Projects {
   }) => Promise<void>;
   deleteProjectSshKey: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     project_id: string;
     fingerprint: string;
   }) => Promise<void>;

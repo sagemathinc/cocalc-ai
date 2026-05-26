@@ -23,6 +23,8 @@ let reserveProjectRuntimeSlotMock: jest.Mock;
 let releaseProjectRuntimeSlotMock: jest.Mock;
 let getRoutedHostControlClientMock: jest.Mock;
 let assertCanPerformDestructiveStorageActionMock: jest.Mock;
+let upsertProjectSshKeyInDbMock: jest.Mock;
+let deleteProjectSshKeyInDbMock: jest.Mock;
 
 jest.mock("@cocalc/server/projects/create", () => ({
   __esModule: true,
@@ -147,7 +149,7 @@ jest.mock("@cocalc/conat/persist/util", () => ({
 
 jest.mock("./util", () => ({
   __esModule: true,
-  assertCollab: jest.fn(),
+  assertCollab: (...args: any[]) => assertCollabMock(...args),
   assertCollabAllowRemoteProjectAccess: (...args: any[]) =>
     assertCollabMock(...args),
 }));
@@ -180,6 +182,14 @@ jest.mock("@cocalc/server/projects/destructive-storage-actions", () => ({
   __esModule: true,
   assertCanPerformDestructiveStorageAction: (...args: any[]) =>
     assertCanPerformDestructiveStorageActionMock(...args),
+}));
+
+jest.mock("@cocalc/server/projects/project-ssh-keys", () => ({
+  __esModule: true,
+  deleteProjectSshKeyInDb: (...args: any[]) =>
+    deleteProjectSshKeyInDbMock(...args),
+  upsertProjectSshKeyInDb: (...args: any[]) =>
+    upsertProjectSshKeyInDbMock(...args),
 }));
 
 jest.mock("@cocalc/server/projects/rehome", () => ({
@@ -305,6 +315,8 @@ describe("projects.getProjectState / getProjectAddress", () => {
         running: true,
       })),
     }));
+    upsertProjectSshKeyInDbMock = jest.fn(async () => true);
+    deleteProjectSshKeyInDbMock = jest.fn(async () => true);
   });
 
   it("routes project state reads through the owning bay", async () => {
@@ -572,5 +584,65 @@ describe("projects.getProjectState / getProjectAddress", () => {
         op_id: "move-op-local",
       }),
     );
+  });
+
+  it("requires dangerous auth before adding a project SSH key", async () => {
+    const { setProjectSshKey } = await import("./projects");
+
+    await expect(
+      setProjectSshKey({
+        account_id: "acct-1",
+        browser_id: "browser-1",
+        project_id: "proj-1",
+        fingerprint: "SHA256:test",
+        title: "laptop",
+        value: "ssh-ed25519 AAAATEST laptop",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(requireDangerousProjectMutationAuthMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      browser_id: "browser-1",
+      session_hash: undefined,
+    });
+    expect(assertCollabMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      project_id: "proj-1",
+    });
+    expect(upsertProjectSshKeyInDbMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "acct-1",
+        project_id: "proj-1",
+        fingerprint: "SHA256:test",
+      }),
+    );
+  });
+
+  it("requires dangerous auth before deleting a project SSH key", async () => {
+    const { deleteProjectSshKey } = await import("./projects");
+
+    await expect(
+      deleteProjectSshKey({
+        account_id: "acct-1",
+        session_hash: "session-1",
+        project_id: "proj-1",
+        fingerprint: "SHA256:test",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(requireDangerousProjectMutationAuthMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      browser_id: undefined,
+      session_hash: "session-1",
+    });
+    expect(assertCollabMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      project_id: "proj-1",
+    });
+    expect(deleteProjectSshKeyInDbMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      project_id: "proj-1",
+      fingerprint: "SHA256:test",
+    });
   });
 });

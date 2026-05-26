@@ -204,8 +204,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: INTERNAL_AUTH_ONLY,
   },
   "hosts.restartHost": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "host restart can disrupt all projects on a dedicated host",
   },
   "hosts.restartHostInternal": {
     decision: "internal-auth-only",
@@ -256,8 +256,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: INTERNAL_AUTH_ONLY,
   },
   "hosts.stopHost": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "host stop can disrupt all projects on a dedicated host",
   },
   "hosts.stopHostInternal": {
     decision: "internal-auth-only",
@@ -408,8 +408,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "projects.deleteProjectSshKey": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "project SSH trust revocation",
   },
   "projects.deleteSnapshot": {
     decision: "fresh-auth-required",
@@ -422,6 +422,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "projects.finalizeRestoreStaging": {
     decision: "fresh-auth-required",
     reason: "finalizes staged project restore",
+  },
+  "projects.generateProjectSshKeySecret": {
+    decision: "fresh-auth-required",
+    reason: "project SSH trust and private-key secret mutation",
   },
   "projects.hardDeleteProject": {
     decision: "fresh-auth-required",
@@ -467,6 +471,14 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "projects.setProjectManageUsersOwnerOnly": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "projects.setLocalProjectManageUsersOwnerOnly": {
+    decision: "internal-auth-only",
+    reason: "owning-bay internal project policy mutation",
+  },
   "projects.setProjectHidden": {
     decision: "fresh-auth-not-required",
     reason: "local account preference",
@@ -484,8 +496,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: "local account preference",
   },
   "projects.setProjectSshKey": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "project SSH trust mutation",
   },
   "projects.start": {
     decision: "fresh-auth-not-required",
@@ -508,8 +520,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: "site-license commercial terms and domain entitlement mutation",
   },
   "purchases.assignMembershipPackageSeat": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "paid membership seat assignment",
   },
   "purchases.claimMembershipPackageSeat": {
     decision: "fresh-auth-not-required",
@@ -530,8 +542,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
       "manager removal is scoped to site-license owners/admins and does not directly change entitlements",
   },
   "purchases.revokeMembershipPackageSeat": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "paid membership seat revocation",
   },
   "purchases.setSiteLicenseManager": {
     decision: "fresh-auth-not-required",

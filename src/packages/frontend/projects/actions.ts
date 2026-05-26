@@ -109,6 +109,7 @@ export function buildProjectRecordFromFeedRow(
     theme: row.theme ?? null,
     host_id: row.host_id,
     owning_bay_id: row.owning_bay_id,
+    manage_users_owner_only: row.manage_users_owner_only ?? null,
     users: row.users ?? {},
     state: row.state ?? {},
   }) as Map<string, any>;
@@ -1476,6 +1477,24 @@ export class ProjectsActions extends Actions<ProjectsState> {
     } as ProjectsState);
   };
 
+  private setProjectLocalBooleanField = (
+    project_id: string,
+    field:
+      | "allow_collaborator_starts_using_sponsor"
+      | "allow_collaborator_destructive_storage_actions"
+      | "autostart_enabled"
+      | "manage_users_owner_only",
+    value: boolean | undefined,
+  ): void => {
+    const project_map = store.get("project_map");
+    if (project_map == null || !project_map.has(project_id)) {
+      return;
+    }
+    this.setState({
+      project_map: project_map.setIn([project_id, field], value),
+    } as ProjectsState);
+  };
+
   private setProjectLocalTheme = (
     project_id: string,
     theme: ProjectTheme | null | undefined,
@@ -1626,6 +1645,43 @@ export class ProjectsActions extends Actions<ProjectsState> {
     });
   };
 
+  set_project_manage_users_owner_only = async (
+    project_id: string,
+    manage_users_owner_only: boolean,
+  ): Promise<void> => {
+    if (!(await this.have_project(project_id))) {
+      console.warn(
+        `Can't set collaborator management policy -- you are not a collaborator on project '${project_id}'.`,
+      );
+      return;
+    }
+    const before = store.getIn([
+      "project_map",
+      project_id,
+      "manage_users_owner_only",
+    ]) as boolean | undefined;
+    this.setProjectLocalBooleanField(
+      project_id,
+      "manage_users_owner_only",
+      manage_users_owner_only,
+    );
+    try {
+      await webapp_client.conat_client.hub.projects.setProjectManageUsersOwnerOnly(
+        {
+          project_id,
+          manage_users_owner_only,
+        },
+      );
+    } catch (err) {
+      this.setProjectLocalBooleanField(
+        project_id,
+        "manage_users_owner_only",
+        before,
+      );
+      throw err;
+    }
+  };
+
   set_project_allow_collaborator_destructive_storage_actions = async (
     project_id: string,
     allow_collaborator_destructive_storage_actions: boolean,
@@ -1748,6 +1804,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     const { project_id } = opts;
     const creation_date = Date.now();
     await webapp_client.conat_client.hub.projects.setProjectSshKey({
+      browser_id: webapp_client.browser_id,
       project_id,
       fingerprint: opts.fingerprint,
       title: opts.title,
@@ -1773,6 +1830,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   }): Promise<void> => {
     const { project_id } = opts;
     await webapp_client.conat_client.hub.projects.deleteProjectSshKey({
+      browser_id: webapp_client.browser_id,
       project_id,
       fingerprint: opts.fingerprint,
     });

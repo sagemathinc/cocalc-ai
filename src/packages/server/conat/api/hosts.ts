@@ -1014,7 +1014,10 @@ async function maybeRequireFreshAuthForInteractiveHostAction({
   browser_id?: string;
   session_hash?: string;
   required: boolean;
-}): Promise<{ allow_second_factor_override?: boolean }> {
+}): Promise<{
+  allow_second_factor_override?: boolean;
+  session_hash?: string;
+}> {
   const owner = requireAccount(account_id);
   if (!required) {
     return {};
@@ -1043,6 +1046,7 @@ async function maybeRequireFreshAuthForInteractiveHostAction({
   });
   return {
     allow_second_factor_override: impersonation ? true : undefined,
+    session_hash: resolvedSessionHash,
   };
 }
 
@@ -4869,12 +4873,20 @@ export async function startHost({
 }): Promise<HostLroResponse> {
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
   if (remoteBay) {
-    return await getInterBayBridge().hostConnection(remoteBay).startHost({
+    const auth = await maybeRequireFreshAuthForInteractiveHostAction({
       account_id,
       browser_id,
       session_hash,
-      id,
+      required: true,
     });
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .startHost({
+        account_id,
+        browser_id,
+        session_hash: auth.session_hash ?? session_hash,
+        id,
+      });
   }
   const row = await loadHostForStartStop(id, account_id);
   assertHostBillingEnforcementAllowsStart(row.metadata);
@@ -4922,20 +4934,34 @@ export async function startHostInternal({
 
 export async function stopHost({
   account_id,
+  browser_id,
+  session_hash,
   id,
   skip_backups,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string;
   id: string;
   skip_backups?: boolean;
 }): Promise<HostLroResponse> {
+  const auth = await maybeRequireFreshAuthForInteractiveHostAction({
+    account_id,
+    browser_id,
+    session_hash,
+    required: true,
+  });
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
   if (remoteBay) {
-    return await getInterBayBridge().hostConnection(remoteBay).stopHost({
-      account_id,
-      id,
-      skip_backups,
-    });
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .stopHost({
+        account_id,
+        browser_id,
+        session_hash: auth.session_hash ?? session_hash,
+        id,
+        skip_backups,
+      });
   }
   const row = await loadHostForStartStop(id, account_id);
   return await createHostLro({
@@ -4966,20 +4992,34 @@ export async function stopHostInternal({
 
 export async function restartHost({
   account_id,
+  browser_id,
+  session_hash,
   id,
   mode,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string;
   id: string;
   mode?: "reboot" | "hard";
 }): Promise<HostLroResponse> {
+  const auth = await maybeRequireFreshAuthForInteractiveHostAction({
+    account_id,
+    browser_id,
+    session_hash,
+    required: true,
+  });
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
   if (remoteBay) {
-    return await getInterBayBridge().hostConnection(remoteBay).restartHost({
-      account_id,
-      id,
-      mode,
-    });
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .restartHost({
+        account_id,
+        browser_id,
+        session_hash: auth.session_hash ?? session_hash,
+        id,
+        mode,
+      });
   }
   const row = await loadHostForStartStop(id, account_id);
   await assertNoPendingDestructiveHostOp(row.id);

@@ -28,6 +28,10 @@ import {
   assignMembershipPackageSeat,
   revokeMembershipPackageSeat,
 } from "@cocalc/frontend/purchases/api";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { labels } from "@cocalc/frontend/i18n";
 import { ProjectMap, UserMap } from "@cocalc/frontend/todo-types";
 import { User } from "@cocalc/frontend/users";
@@ -103,6 +107,9 @@ export function Student({
 }: StudentProps) {
   const intl = useIntl();
   const actions: CourseActions = redux.getActions(name);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setSeatError(`${err}`),
+  });
   const store = actions.get_store();
   if (store == null) throw Error("store must be defined");
 
@@ -951,16 +958,18 @@ export function Student({
     setSeatLoading(true);
     setSeatError("");
     try {
-      await assignMembershipPackageSeat({
-        package_id: coursePackage.id,
-        target_account_id: studentAccountId,
-        metadata: {
-          course_project_id: store.get("course_project_id"),
-          project_id: studentProjectId,
-          student_id,
-        },
+      await runFreshAuthAction(async () => {
+        await assignMembershipPackageSeat({
+          package_id: coursePackage.id,
+          target_account_id: studentAccountId,
+          metadata: {
+            course_project_id: store.get("course_project_id"),
+            project_id: studentProjectId,
+            student_id,
+          },
+        });
+        await refreshCoursePackage?.();
       });
-      await refreshCoursePackage?.();
     } catch (err) {
       setSeatError(`${err}`);
     } finally {
@@ -975,11 +984,13 @@ export function Student({
     setSeatLoading(true);
     setSeatError("");
     try {
-      await revokeMembershipPackageSeat({
-        package_id: coursePackage.id,
-        target_account_id: studentAccountId,
+      await runFreshAuthAction(async () => {
+        await revokeMembershipPackageSeat({
+          package_id: coursePackage.id,
+          target_account_id: studentAccountId,
+        });
+        await refreshCoursePackage?.();
       });
-      await refreshCoursePackage?.();
     } catch (err) {
       setSeatError(`${err}`);
     } finally {
@@ -1135,6 +1146,7 @@ export function Student({
           {is_expanded ? render_more_panel() : undefined}
         </Col>
       </Row>
+      <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
 }

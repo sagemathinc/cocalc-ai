@@ -18,10 +18,12 @@ type HubClient = {
     }) => Promise<HostLroResponse>;
     stopHost: (opts: {
       id: string;
+      browser_id?: string;
       skip_backups?: boolean;
     }) => Promise<HostLroResponse>;
     restartHost?: (opts: {
       id: string;
+      browser_id?: string;
       mode?: "reboot" | "hard";
     }) => Promise<HostLroResponse>;
     drainHost?: (opts: {
@@ -159,6 +161,7 @@ export const useHostActions = ({
       } else {
         const op = await hub.hosts.stopHost({
           id,
+          browser_id,
           skip_backups: opts?.skip_backups,
         });
         onHostOp?.(id, op);
@@ -196,7 +199,7 @@ export const useHostActions = ({
           host.id === id ? { ...host, status: "restarting" } : host,
         ),
       );
-      const op = await hub.hosts.restartHost({ id, mode });
+      const op = await hub.hosts.restartHost({ id, browser_id, mode });
       onHostOp?.(id, op);
     } catch (err) {
       if (isFreshAuthRequiredError(err)) {

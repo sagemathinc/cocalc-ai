@@ -78,6 +78,7 @@ function buildProjectFeedRow(opts: {
     theme: payload.theme ?? null,
     host_id: payload.host_id ?? null,
     owning_bay_id: `${payload.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
+    manage_users_owner_only: payload.manage_users_owner_only ?? null,
     users: payload.users_summary ?? {},
     state: payload.state_summary ?? {},
     last_active: payload.last_activity_by_account ?? {},
