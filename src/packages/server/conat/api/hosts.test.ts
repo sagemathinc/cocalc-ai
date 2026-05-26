@@ -3763,7 +3763,6 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
     await restartHostProjects({
       account_id: ACCOUNT_ID,
       id: HOST_ID,
-      project_state: "opened",
     });
     await backupHostProjects({
       account_id: ACCOUNT_ID,
@@ -3796,8 +3795,7 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
         scope_id: HOST_ID,
         input: expect.objectContaining({
           id: HOST_ID,
-          state_filter: "all",
-          project_state: "opened",
+          state_filter: "running",
           projects: [
             { project_id: "proj-1", state: "running" },
             { project_id: "proj-2", state: "running" },
@@ -3831,6 +3829,25 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
         }),
       }),
     );
+  });
+
+  it("rejects host-scoped project restart requests for non-running projects", async () => {
+    const { restartHostProjects } = await import("./hosts");
+    await expect(
+      restartHostProjects({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+        state_filter: "stopped",
+      }),
+    ).rejects.toThrow("host project restart is limited to running projects");
+    await expect(
+      restartHostProjects({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+        project_state: "stopped",
+      }),
+    ).rejects.toThrow("host project restart is limited to running projects");
+    expect(createLroMock).not.toHaveBeenCalled();
   });
 
   it("routes host-scoped project actions to the host-owning bay", async () => {

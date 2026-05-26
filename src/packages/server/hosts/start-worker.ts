@@ -538,6 +538,16 @@ async function runHostProjectsAction({
           await stopProjectOnHost(project_id);
           await waitForProjectStopped(project_id);
         } else {
+          if (!isProjectRunning(state)) {
+            skipped += 1;
+            results.push({
+              project_id,
+              status: "skipped",
+              state,
+              error: "restart is limited to running projects",
+            });
+            continue;
+          }
           await stopProjectOnHost(project_id);
           await waitForProjectStopped(project_id);
           await getProject(project_id).computeQuota();
