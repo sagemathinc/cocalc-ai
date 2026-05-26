@@ -97,6 +97,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 import { getProject } from "./sqlite/projects";
 import { INTERNAL_SSH_CONFIG } from "@cocalc/conat/project/runner/constants";
 import { ensureSshpiperdKey } from "./ssh/sshpiperd-key";
+import { requireManagedSshKeyAccount } from "./ssh/managed-key-account";
 import { managedProjectEgressResidualTracker } from "./managed-egress-residual";
 import { getLocalHostId } from "./sqlite/hosts";
 import { setContainerFileIO } from "@cocalc/lite/hub/acp/executor/container";
@@ -3959,14 +3960,13 @@ export async function initFileServer({
         managedKeys &&
         authorizedKeysContainFingerprint(managedKeys, fingerprint)
       ) {
-        let account_id: string | undefined;
+        let account_id: string;
         try {
-          account_id = (
-            await hubApi.system.resolveManagedProjectSshKeyAccount({
-              project_id,
-              fingerprint,
-            })
-          ).account_id;
+          account_id = await requireManagedSshKeyAccount({
+            project_id,
+            fingerprint,
+            resolveAccount: hubApi.system.resolveManagedProjectSshKeyAccount,
+          });
         } catch (err) {
           logger.warn("failed to resolve managed ssh key account", {
             project_id,
@@ -3974,6 +3974,7 @@ export async function initFileServer({
             fingerprint,
             err: `${err}`,
           });
+          throw err;
         }
         const allowed = await checkManagedSshAllowed({
           project_id,
@@ -3984,7 +3985,7 @@ export async function initFileServer({
         }
         return {
           project_id,
-          ...(account_id ? { account_id } : {}),
+          account_id,
           ssh_user,
           port,
         };
