@@ -132,6 +132,7 @@ import { getBrowserTimeTravelProviders } from "./timetravel-providers";
 import { createBrowserExecFsApi } from "./fs-api";
 
 const SESSION_SYNC_DEBOUNCE_MS = 250;
+const HEARTBEAT_PERIODIC_MS = 60_000;
 const HEARTBEAT_RETRY_MS = 4_000;
 const HEARTBEAT_RETRY_MAX_MS = 60_000;
 const HEARTBEAT_STALE_PROBE_TIMEOUT_MS = 2_000;
@@ -250,6 +251,7 @@ export function createBrowserSessionAutomation({
   const heartbeatController = createBrowserSessionHeartbeat({
     hub,
     getSnapshot: () => buildSessionSnapshot(client),
+    heartbeatIntervalMs: HEARTBEAT_PERIODIC_MS,
     retryMs: HEARTBEAT_RETRY_MS,
     maxRetryMs: HEARTBEAT_RETRY_MAX_MS,
     onWarn: (message) => console.warn(message),

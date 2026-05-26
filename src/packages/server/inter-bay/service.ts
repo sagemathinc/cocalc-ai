@@ -104,6 +104,7 @@ import {
   setLocalClusterAccountBan,
   quarantineLocalClusterAccountBillingResources,
   touchClusterAccountApiKeyDirectoryEntry,
+  touchClusterAccountDirectoryEntry,
   updateClusterAccountBanned,
   updateClusterAccountEmailAddress,
   updateClusterAccountApiKeysHomeBay,
@@ -570,6 +571,7 @@ async function startAccountDirectoryService(): Promise<void> {
     updateEmailAddress: async (opts) =>
       await updateClusterAccountEmailAddress(opts),
     updateBanned: async (opts) => await updateClusterAccountBanned(opts),
+    touch: async (opts) => await touchClusterAccountDirectoryEntry(opts),
     create: async (opts) => await createClusterAccount(opts),
     delete: async (opts) => await deleteClusterAccount(opts),
     getApiKey: async ({ key_id }) =>

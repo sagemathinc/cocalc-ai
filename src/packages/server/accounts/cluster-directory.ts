@@ -854,6 +854,22 @@ export async function updateClusterAccountBannedDirect({
   return canonicalDirectoryEntry(rows[0]);
 }
 
+export async function touchClusterAccountDirectoryEntryDirect(
+  account_id: string,
+): Promise<void> {
+  if (!isValidUUID(account_id)) {
+    return;
+  }
+  await ensureClusterAccountDirectorySchema();
+  await getPool().query(
+    `UPDATE ${TABLE}
+        SET last_active=NOW()
+      WHERE account_id=$1
+        AND provisioned=TRUE`,
+    [account_id],
+  );
+}
+
 export async function upsertClusterAccountApiKeyDirectoryEntryDirect({
   key_id,
   account_id,

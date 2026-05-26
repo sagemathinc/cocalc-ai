@@ -44,6 +44,32 @@ describe("browser session sync controller", () => {
     expect(upsertBrowserSession).toHaveBeenCalledTimes(2);
   });
 
+  it("can force a periodic heartbeat even when session metadata is unchanged", async () => {
+    const upsertBrowserSession = jest.fn().mockResolvedValue(undefined);
+
+    const { createBrowserSessionHeartbeat } = require("./session-heartbeat");
+    const heartbeat = createBrowserSessionHeartbeat({
+      hub: {
+        system: {
+          upsertBrowserSession,
+        },
+      },
+      getSnapshot: () => ({ browser_id: "browser-1", open_projects: [] }),
+      heartbeatIntervalMs: 60_000,
+      retryMs: 4_000,
+      maxRetryMs: 60_000,
+      retryBackoff: 2,
+      retryJitter: 0,
+    });
+
+    heartbeat.activate("acct-1");
+    await heartbeat.heartbeat();
+    expect(upsertBrowserSession).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(upsertBrowserSession).toHaveBeenCalledTimes(2);
+  });
+
   it("suspends retries while disconnected and resumes immediately on reconnect", async () => {
     const upsertBrowserSession = jest
       .fn()

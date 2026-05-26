@@ -51,6 +51,7 @@ import {
   reserveClusterAccountDirectoryEntry,
   searchClusterAccountsDirect,
   touchClusterAccountApiKeyDirectoryEntryDirect,
+  touchClusterAccountDirectoryEntryDirect,
   updateClusterAccountBannedDirect,
   updateClusterAccountEmailAddressDirect,
   updateClusterAccountApiKeysHomeBayDirect,
@@ -245,6 +246,24 @@ export async function updateClusterAccountBanned(opts: {
   return await createInterBayAccountDirectoryClient({
     client: getInterBayFabricClient(),
   }).updateBanned(normalized);
+}
+
+export async function touchClusterAccountDirectoryEntry(opts: {
+  account_id: string;
+}): Promise<void> {
+  const normalized = {
+    account_id: `${opts.account_id ?? ""}`.trim().toLowerCase(),
+  };
+  if (!isMultiBayCluster()) {
+    return;
+  }
+  if (getConfiguredClusterRole() === "seed") {
+    await touchClusterAccountDirectoryEntryDirect(normalized.account_id);
+    return;
+  }
+  await createInterBayAccountDirectoryClient({
+    client: getInterBayFabricClient(),
+  }).touch(normalized);
 }
 
 export async function getClusterAccountApiKeyByKeyId(

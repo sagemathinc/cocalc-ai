@@ -451,6 +451,10 @@ export interface AccountDirectoryUpdateBannedRequest {
   banned: boolean;
 }
 
+export interface AccountDirectoryTouchRequest {
+  account_id: string;
+}
+
 export interface AccountDirectoryDeleteRequest {
   account_id: string;
   only_if_tag?: string;
@@ -1518,6 +1522,7 @@ export type AccountDirectoryMethod =
   | "update-home-bay"
   | "update-email-address"
   | "update-banned"
+  | "touch"
   | "get-api-key"
   | "upsert-api-key"
   | "delete-api-key"
@@ -2324,6 +2329,7 @@ export interface InterBayAccountDirectoryApi {
   updateBanned: (
     opts: AccountDirectoryUpdateBannedRequest,
   ) => Promise<AccountDirectoryEntry>;
+  touch: (opts: AccountDirectoryTouchRequest) => Promise<void>;
   create: (
     opts: AccountDirectoryCreateRequest,
   ) => Promise<AccountDirectoryEntry>;
@@ -3600,6 +3606,12 @@ export function createInterBayAccountDirectoryClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountDirectorySubject({ method: "update-banned" }),
   });
+  const touchClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "touch">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "touch" }),
+  });
   const createClient = createServiceClient<
     Pick<InterBayAccountDirectoryApi, "create">
   >({
@@ -3710,6 +3722,7 @@ export function createInterBayAccountDirectoryClient({
     updateEmailAddress: async (opts) =>
       await updateEmailAddressClient.updateEmailAddress(opts),
     updateBanned: async (opts) => await updateBannedClient.updateBanned(opts),
+    touch: async (opts) => await touchClient.touch(opts),
     create: async (opts) => await createClient.create(opts),
     delete: async (opts) => await deleteClient.delete(opts),
     getApiKey: async (opts) => await getApiKeyClient.getApiKey(opts),
@@ -3827,6 +3840,14 @@ export function createInterBayAccountDirectoryHandlers({
       subject: accountDirectorySubject({ method: "update-banned" }),
       impl: {
         updateBanned: async (opts) => await impl.updateBanned(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountDirectoryApi, "touch">>({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "touch" }),
+      impl: {
+        touch: async (opts) => await impl.touch(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountDirectoryApi, "create">>({
