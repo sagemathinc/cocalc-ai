@@ -3750,18 +3750,50 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
     delete process.env.COCALC_CLUSTER_BAY_IDS;
   });
 
+  it("requires fresh auth before queueing bulk host project stop or restart actions", async () => {
+    requireFreshAuthForSessionHashMock = jest.fn(async () => {
+      throw Object.assign(new Error("fresh auth is required"), {
+        code: "fresh_auth_required",
+      });
+    });
+
+    const { stopHostProjects, restartHostProjects } = await import("./hosts");
+    await expect(
+      stopHostProjects({
+        account_id: ACCOUNT_ID,
+        session_hash: "stale-session-hash",
+        id: HOST_ID,
+        state_filter: "running",
+      }),
+    ).rejects.toMatchObject({
+      code: "fresh_auth_required",
+    });
+    await expect(
+      restartHostProjects({
+        account_id: ACCOUNT_ID,
+        session_hash: "stale-session-hash",
+        id: HOST_ID,
+      }),
+    ).rejects.toMatchObject({
+      code: "fresh_auth_required",
+    });
+    expect(createLroMock).not.toHaveBeenCalled();
+  });
+
   it("queues host-scoped project stop/restart/backup actions with a snapshot target set", async () => {
     const { stopHostProjects, restartHostProjects, backupHostProjects } =
       await import("./hosts");
 
     await stopHostProjects({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
       state_filter: "running",
       parallel: 2,
     });
     await restartHostProjects({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
     });
     await backupHostProjects({
@@ -3836,6 +3868,7 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
     await expect(
       restartHostProjects({
         account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
         id: HOST_ID,
         state_filter: "stopped",
       }),
@@ -3843,6 +3876,7 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
     await expect(
       restartHostProjects({
         account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
         id: HOST_ID,
         project_state: "stopped",
       }),
@@ -3892,6 +3926,7 @@ describe("hosts.stopHostProjects / restartHostProjects", () => {
     const { stopHostProjects } = await import("./hosts");
     await stopHostProjects({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
       state_filter: "running",
     });

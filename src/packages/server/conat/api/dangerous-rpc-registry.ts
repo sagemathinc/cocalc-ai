@@ -212,8 +212,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: INTERNAL_AUTH_ONLY,
   },
   "hosts.restartHostProjects": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "bulk project restart on a host can disrupt many runtimes",
   },
   "hosts.rolloutHostManagedComponents": {
     decision: "fresh-auth-not-required",
@@ -264,8 +264,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: INTERNAL_AUTH_ONLY,
   },
   "hosts.stopHostProjects": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason: "bulk project stop on a host can disrupt many runtimes",
   },
   "hosts.syncProjectBackupIndexes": {
     decision: "fresh-auth-not-required",

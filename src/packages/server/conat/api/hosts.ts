@@ -4056,6 +4056,8 @@ export async function backupHostProjects({
 
 export async function stopHostProjects({
   account_id,
+  browser_id,
+  session_hash,
   id,
   state_filter,
   project_state,
@@ -4063,12 +4065,20 @@ export async function stopHostProjects({
   parallel,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string;
   id: string;
   state_filter?: HostProjectStateFilter;
   project_state?: string;
   risk_only?: boolean;
   parallel?: number;
 }): Promise<HostLroResponse> {
+  await maybeRequireFreshAuthForInteractiveHostAction({
+    account_id,
+    browser_id,
+    session_hash,
+    required: true,
+  });
   return await queueHostProjectsAction({
     kind: "host-stop-projects",
     account_id,
@@ -4082,6 +4092,8 @@ export async function stopHostProjects({
 
 export async function restartHostProjects({
   account_id,
+  browser_id,
+  session_hash,
   id,
   state_filter,
   project_state,
@@ -4089,12 +4101,20 @@ export async function restartHostProjects({
   parallel,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string;
   id: string;
   state_filter?: HostProjectStateFilter;
   project_state?: string;
   risk_only?: boolean;
   parallel?: number;
 }): Promise<HostLroResponse> {
+  await maybeRequireFreshAuthForInteractiveHostAction({
+    account_id,
+    browser_id,
+    session_hash,
+    required: true,
+  });
   return await queueHostProjectsAction({
     kind: "host-restart-projects",
     account_id,

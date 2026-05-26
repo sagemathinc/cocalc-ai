@@ -1319,15 +1319,19 @@ export const useHostsPageViewModel = () => {
   );
   const stopRunningProjectsOnHost = React.useCallback(
     async (host: Host) => {
-      await stopHostProjects(host.id, { state_filter: "running" });
+      await runFreshAuthAction(async () => {
+        await stopHostProjects(host.id, { state_filter: "running" });
+      });
     },
-    [stopHostProjects],
+    [runFreshAuthAction, stopHostProjects],
   );
   const restartRunningProjectsOnHost = React.useCallback(
     async (host: Host) => {
-      await restartHostProjects(host.id, { state_filter: "running" });
+      await runFreshAuthAction(async () => {
+        await restartHostProjects(host.id, { state_filter: "running" });
+      });
     },
-    [restartHostProjects],
+    [restartHostProjects, runFreshAuthAction],
   );
   const [setupHost, setSetupHost] = React.useState<Host | undefined>();
   const [setupToken, setSetupToken] = React.useState<string | undefined>();
