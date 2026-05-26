@@ -247,4 +247,9 @@ rsync -a --delete \
   --exclude 'embed-*.js' \
   packages/static/dist/ "$OUT/static/"
 
+echo "- Copy public assets"
+mkdir -p "$OUT"/public
+rsync -a --delete \
+  packages/assets/public/ "$OUT/public/"
+
 echo "- Bundle created at $OUT"
