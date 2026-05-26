@@ -464,6 +464,56 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
         search: "?channel=system",
       }),
   },
+  "admin.bay-ops.open": {
+    id: "admin.bay-ops.open",
+    isAvailable: validateAdmin,
+    run: ({ projectId }) =>
+      revealAdminSection({
+        actionId: "admin.bay-ops.open",
+        projectId,
+        section: "bay-ops",
+      }),
+  },
+  "admin.membership-tiers.open": {
+    id: "admin.membership-tiers.open",
+    isAvailable: validateAdmin,
+    run: ({ projectId }) =>
+      revealAdminSection({
+        actionId: "admin.membership-tiers.open",
+        projectId,
+        section: "membership-tiers",
+      }),
+  },
+  "admin.project-backup-shards.open": {
+    id: "admin.project-backup-shards.open",
+    isAvailable: validateAdmin,
+    run: ({ projectId }) =>
+      revealAdminSection({
+        actionId: "admin.project-backup-shards.open",
+        projectId,
+        section: "project-backup-shards",
+      }),
+  },
+  "admin.registration-tokens.open": {
+    id: "admin.registration-tokens.open",
+    isAvailable: validateAdmin,
+    run: ({ projectId }) =>
+      revealAdminSection({
+        actionId: "admin.registration-tokens.open",
+        projectId,
+        section: "registration-tokens",
+      }),
+  },
+  "admin.rootfs.open": {
+    id: "admin.rootfs.open",
+    isAvailable: validateAdmin,
+    run: ({ projectId }) =>
+      revealAdminSection({
+        actionId: "admin.rootfs.open",
+        projectId,
+        section: "rootfs",
+      }),
+  },
   "admin.site-settings.open": {
     id: "admin.site-settings.open",
     isAvailable: validateAdmin,
@@ -472,6 +522,16 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
         actionId: "admin.site-settings.open",
         projectId,
         section: "site-settings",
+      }),
+  },
+  "admin.software-licenses.open": {
+    id: "admin.software-licenses.open",
+    isAvailable: validateAdmin,
+    run: ({ projectId }) =>
+      revealAdminSection({
+        actionId: "admin.software-licenses.open",
+        projectId,
+        section: "software-licenses",
       }),
   },
   "admin.users.open": {

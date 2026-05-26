@@ -102,7 +102,13 @@ describe("project docs actions", () => {
     mockIsAdmin = true;
     expect(
       listDocsAppActions({ projectId: "project-1" }).map((action) => action.id),
-    ).toEqual(expect.arrayContaining(["admin.users.open"]));
+    ).toEqual(
+      expect.arrayContaining([
+        "admin.bay-ops.open",
+        "admin.rootfs.open",
+        "admin.users.open",
+      ]),
+    );
   });
 
   it("opens admin sections for admin docs actions", async () => {
@@ -126,6 +132,26 @@ describe("project docs actions", () => {
       opened: true,
       panel: "site-settings",
       project_id: "project-1",
+      tab: "admin",
+    });
+  });
+
+  it("opens additional admin sections for admin docs actions", async () => {
+    mockIsAdmin = true;
+
+    const result = await revealDocsAction({
+      actionId: "admin.rootfs.open",
+      projectId: "project-1",
+    });
+
+    expect(mockSetPageState).toHaveBeenCalledWith({
+      admin_route: { kind: "index", section: "rootfs" },
+    });
+    expect(mockSetUrlWithSearch).toHaveBeenCalledWith("/admin/rootfs", "");
+    expect(result).toMatchObject({
+      action_id: "admin.rootfs.open",
+      opened: true,
+      panel: "rootfs",
       tab: "admin",
     });
   });
