@@ -221,8 +221,9 @@ export function listDocsLiveVerificationScenarios({
 }
 
 export function verifyDocsStatic(): DocsVerificationReport {
-  const entries = listDocsEntries();
-  const actions = listDocsActions();
+  const docsAccess = { includeAdmin: true, includeSignedIn: true };
+  const entries = listDocsEntries(docsAccess);
+  const actions = listDocsActions(docsAccess);
   const issues: DocsVerificationIssue[] = [];
   const entryIds = new Set<string>();
   const slugs = new Set<string>();
@@ -281,7 +282,7 @@ export function verifyDocsStatic(): DocsVerificationReport {
         }),
       );
     }
-    if (getDocsEntry(entry.id)?.id !== entry.id) {
+    if (getDocsEntry(entry.id, docsAccess)?.id !== entry.id) {
       issues.push(
         issue({
           code: "entry-id-lookup",
@@ -290,7 +291,7 @@ export function verifyDocsStatic(): DocsVerificationReport {
         }),
       );
     }
-    if (getDocsEntry(entry.slug)?.id !== entry.id) {
+    if (getDocsEntry(entry.slug, docsAccess)?.id !== entry.id) {
       issues.push(
         issue({
           code: "entry-slug-lookup",
@@ -351,7 +352,7 @@ export function verifyDocsStatic(): DocsVerificationReport {
     }
     for (const match of entry.body.matchAll(DOCS_LINK_RE)) {
       const slug = match[1]?.replace(/[),.;:]+$/, "");
-      if (slug && !getDocsEntry(slug)) {
+      if (slug && !getDocsEntry(slug, docsAccess)) {
         issues.push(
           issue({
             code: "entry-internal-link",
@@ -362,7 +363,7 @@ export function verifyDocsStatic(): DocsVerificationReport {
       }
     }
     for (const action of entry.actions ?? []) {
-      if (getDocsAction(action.id)?.id !== action.id) {
+      if (getDocsAction(action.id, docsAccess)?.id !== action.id) {
         issues.push(
           issue({
             actionId: action.id,

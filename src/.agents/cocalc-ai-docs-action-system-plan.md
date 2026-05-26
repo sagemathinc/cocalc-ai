@@ -536,7 +536,7 @@ cocalc docs show projects.project-secrets
 cocalc docs action settings.environment.secrets --project-id "$COCALC_PROJECT_ID"
 ```
 
-## Docs Search API
+## Docs Search AI
 
 Expose a small site-local API so agents and external tools can query docs that
 match the running deployment:
@@ -800,6 +800,55 @@ operational.
 - Systematically replace or remove all remaining `doc.cocalc.com` links.
 - Add a release gate that fails on new legacy docs links except an explicit
   allowlist.
+
+### Phase 9: Admin Docs And Project-Host Guides
+
+Admin docs should be treated as first-class operational docs, not as public
+marketing/help pages. They should be visible by default only inside the signed-in
+app for site admins, and hidden from public `/docs`, public search, anonymous
+docs output, and SEO indexes.
+
+Add explicit docs visibility:
+
+```ts
+type DocsVisibility = "public" | "signed-in" | "admin";
+```
+
+The first admin slice should include:
+
+- model/render/search support for `visibility: "admin"`;
+- in-app docs filtering based on the signed-in account's admin status;
+- browser docs actions that open admin destinations, so Codex can guide an
+  admin directly to the right UI;
+- a few short source-derived admin pages that can later grow into many
+  "mini-skill" docs.
+
+Initial admin docs backlog:
+
+- Admin overview and safety model.
+- Post system messages and urgent notices.
+- Create and edit public news and event items.
+- Site settings and configuration workflows.
+- User management: search, impersonation, password reset, remove 2FA, ban, and
+  membership/purchase-related tools.
+- Admin `cocalc-cli` cookbook: fresh auth, bay inspection, account location,
+  account rehome, project/host inspection, and smoke-test workflows.
+
+Project-host docs should become their own cluster because both admins and users
+interact with them:
+
+- what project hosts are and how they relate to bays/projects;
+- user host creation and access controls;
+- cloud provider setup and bootstrap lifecycle;
+- RAM, disk, billing, and minimum sizing expectations;
+- DNS/Cloudflare tunnel behavior;
+- failed bootstrap troubleshooting;
+- admin host operations, upgrades, and bay/host/project ownership model.
+
+Docs media should support both small icon-like visual hooks and larger workflow
+diagrams. Prefer optimized `.webp` assets with short hashes in filenames, plus
+stored prompt/source notes when imagegen2 is used, so regenerated assets can be
+reviewed and cache-busted intentionally.
 
 ## Open Questions
 

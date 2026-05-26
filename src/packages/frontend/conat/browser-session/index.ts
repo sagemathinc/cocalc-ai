@@ -853,7 +853,11 @@ export function createBrowserSessionAutomation({
       projectId: project_id,
       docsAction: (id: string) => {
         assertExecNotCanceled(isCanceled);
-        return revealDocsAction({ actionId: id, projectId: project_id });
+        return revealDocsAction({
+          actionId: id,
+          includeAdmin: isBrowserRawExecAdmin(),
+          projectId: project_id,
+        });
       },
       listOpenFiles: (): BrowserOpenFileInfo[] => {
         assertExecNotCanceled(isCanceled);
@@ -2117,6 +2121,7 @@ export function createBrowserSessionAutomation({
       }
       const result = await revealDocsAction({
         actionId: id,
+        includeAdmin: isBrowserRawExecAdmin(),
         projectId: project_id,
       });
       return {
@@ -2372,7 +2377,10 @@ export function createBrowserSessionAutomation({
     }),
     getSessionInfo: async () => buildSessionSnapshot(client),
     listDocsActions: async ({ project_id }) => ({
-      actions: listDocsAppActions({ projectId: project_id }).map((action) => ({
+      actions: listDocsAppActions({
+        includeAdmin: isBrowserRawExecAdmin(),
+        projectId: project_id,
+      }).map((action) => ({
         id: action.id,
         label: action.label,
         description: action.description,

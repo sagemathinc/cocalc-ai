@@ -7,6 +7,7 @@ import { useMemo, useRef, useState } from "react";
 
 import { Button, Flex, message, Space, Typography, Upload } from "antd";
 import { DownloadOutlined, UploadOutlined } from "@ant-design/icons";
+import type { DocsAccess } from "@cocalc/docs";
 import { listDocsEntries } from "@cocalc/docs";
 import {
   DocsBrowser,
@@ -47,12 +48,20 @@ export function ProjectDocsPanel({
   const accountFontSize =
     useTypedRedux("account", "font_size") ?? DEFAULT_FONT_SIZE;
   const accountId = `${useTypedRedux("account", "account_id") ?? ""}`.trim();
+  const isAdmin = !!useTypedRedux("account", "is_admin");
+  const docsAccess = useMemo<DocsAccess>(
+    () => ({ includeAdmin: isAdmin, includeSignedIn: !!accountId }),
+    [accountId, isAdmin],
+  );
   const docsPrivateState = useDocsPrivateState(accountId);
   const actionAvailability = useMemo(
-    () => listDocsAppActions({ projectId: project_id }),
-    [project_id],
+    () => listDocsAppActions({ includeAdmin: isAdmin, projectId: project_id }),
+    [isAdmin, project_id],
   );
-  const allDocsEntries = useMemo(() => listDocsEntries(), []);
+  const allDocsEntries = useMemo(
+    () => listDocsEntries(docsAccess),
+    [docsAccess],
+  );
 
   async function runAction(action: DocsBrowserAction): Promise<void> {
     try {
@@ -173,6 +182,7 @@ export function ProjectDocsPanel({
         </Flex>
         <DocsBrowser
           actionAvailability={actionAvailability}
+          docsAccess={docsAccess}
           layout={layout}
           onRunAction={runAction}
           privateDetailState={

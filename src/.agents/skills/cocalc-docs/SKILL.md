@@ -18,6 +18,12 @@ When the CoCalc runtime requires an exact CLI path, use
    cocalc docs search "<query>" --json
    ```
 
+   When the user is asking about site administration, include admin-only docs:
+
+   ```sh
+   cocalc docs search "<query>" --include-admin --json
+   ```
+
 2. Read the most relevant page:
 
    ```sh
@@ -53,6 +59,7 @@ cocalc docs verify
 
 Use `--json` when the answer benefits from exact ids, slugs, action ids, or
 machine-readable metadata.
+Use `--include-admin` only for admin/operator questions.
 
 ## Answering Style
 
