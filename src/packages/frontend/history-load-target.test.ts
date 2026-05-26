@@ -85,6 +85,13 @@ import { load_target } from "./history";
 describe("load_target", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    delete (globalThis as any).__cocalc_public_app;
+    mockRedux.getStore.mockImplementation((name: string) => {
+      if (name === "account") {
+        return accountStore;
+      }
+      return {};
+    });
     webappClient.is_signed_in.mockReturnValue(false);
     accountStore.get.mockImplementation((key: string) => {
       if (key === "is_logged_in") {
@@ -154,5 +161,17 @@ describe("load_target", () => {
       "notifications",
       false,
     );
+  });
+
+  it("ignores browser popstate events while the public app owns routing", () => {
+    (globalThis as any).__cocalc_public_app = true;
+    window.history.replaceState({}, "", "/docs");
+    mockRedux.getStore.mockImplementation(() => undefined);
+
+    expect(() => {
+      window.onpopstate?.(new PopStateEvent("popstate"));
+    }).not.toThrow();
+
+    expect(mockRedux.getActions).not.toHaveBeenCalled();
   });
 });
