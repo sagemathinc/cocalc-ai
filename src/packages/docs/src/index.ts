@@ -2741,7 +2741,7 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     category: "Project hosts",
     id: "hosts.access-and-ram",
     image: docsIcon(
-      "/public/docs/project-hosts-684faa4c.webp",
+      "/public/docs/project-hosts-access-ram-9245deeb.webp",
       "A project host access panel with delegated users and resource limits",
     ),
     lastReviewed: "2026-05-27",
@@ -2765,8 +2765,8 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     category: "Project hosts",
     id: "hosts.move-projects",
     image: docsIcon(
-      "/public/docs/project-hosts-684faa4c.webp",
-      "A project being moved between two project hosts through backups",
+      "/public/docs/project-hosts-move-47c2a6e8.webp",
+      "A project folder moving between two project hosts across regions",
     ),
     lastReviewed: "2026-05-27",
     slug: "hosts/move-projects",
