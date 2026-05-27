@@ -5645,6 +5645,7 @@ export async function updateHostMachine({
   let storageModeChanged = false;
   let diskTypeChanged = false;
   let machineChanged = false;
+  let sharedScratchResizeGb: number | undefined;
   let nextRegion = row.region ?? "";
   const requestedCloudRaw = typeof cloud === "string" ? cloud : undefined;
   const requestedCloud = normalizeProviderId(requestedCloudRaw);
@@ -5918,6 +5919,12 @@ export async function updateHostMachine({
     diskTypeChanged = true;
   }
   if (nextSharedDisk != null) {
+    const currentSharedDisk = Number(machine.shared_disk_gb ?? 0);
+    if (!isDeprovisioned && currentSharedDisk <= 0 && nextSharedDisk > 0) {
+      throw new Error(
+        "adding shared scratch to an already provisioned host is not implemented yet; stop and deprovision/recreate the host for now",
+      );
+    }
     if (
       shared_disk_type != null &&
       machine.shared_disk_type != null &&
@@ -5940,6 +5947,13 @@ export async function updateHostMachine({
       nextMachine.shared_disk_type !== machine.shared_disk_type
     ) {
       changed = true;
+    }
+    if (
+      !isDeprovisioned &&
+      currentSharedDisk > 0 &&
+      nextSharedDisk > currentSharedDisk
+    ) {
+      sharedScratchResizeGb = nextSharedDisk;
     }
   } else if (shared_disk_type != null) {
     if (!nextMachine.shared_disk_gb) {
@@ -6200,6 +6214,45 @@ export async function updateHostMachine({
         resizeWarning =
           "disk resized in cloud, but filesystem resize failed; reboot or run /usr/local/sbin/cocalc-grow-btrfs";
         console.warn("growBtrfs failed after disk resize", err);
+      }
+    }
+  }
+  if (!isSelfHost && machineCloud && sharedScratchResizeGb != null) {
+    const provider = getServerProvider(machineCloud);
+    if (!provider?.entry.capabilities.sharedScratchDisk?.supported) {
+      throw new Error(
+        "shared scratch disks are not supported for this provider",
+      );
+    }
+    if (!provider.entry.provider.resizeSharedScratchDisk) {
+      throw new Error(
+        "shared scratch disk resize is not supported for this provider",
+      );
+    }
+    if (!runtime.instance_id) {
+      throw new Error("host is not provisioned");
+    }
+    const { entry, creds } = await getProviderContext(machineCloud, {
+      region: row.region,
+    });
+    if (!entry.provider.resizeSharedScratchDisk) {
+      throw new Error(
+        "shared scratch disk resize is not supported for this provider",
+      );
+    }
+    await entry.provider.resizeSharedScratchDisk(
+      runtime,
+      sharedScratchResizeGb,
+      creds,
+    );
+    if (row.status !== "off") {
+      const client = await hostControlClient(row.id);
+      try {
+        await client.growSharedScratch({ disk_gb: sharedScratchResizeGb });
+      } catch (err) {
+        resizeWarning =
+          "shared scratch disk resized in cloud, but filesystem resize failed; restart the host or run sudo /usr/local/sbin/cocalc-runtime-storage grow-shared-scratch";
+        console.warn("growSharedScratch failed after disk resize", err);
       }
     }
   }

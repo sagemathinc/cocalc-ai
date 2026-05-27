@@ -1833,6 +1833,10 @@ async function startHostControlService(): Promise<void> {
       ).rolloutManagedComponents(rollout),
     growBtrfs: async ({ host_id, grow }) =>
       await (await getHostClient(host_id, 10 * 60 * 1000)).growBtrfs(grow),
+    growSharedScratch: async ({ host_id, grow }) =>
+      await (
+        await getHostClient(host_id, 10 * 60 * 1000)
+      ).growSharedScratch(grow),
     getRuntimeLog: async ({ host_id, get }) =>
       await (await getHostClient(host_id, 30_000)).getRuntimeLog(get),
     getProjectRuntimeLog: async ({ host_id, get }) =>

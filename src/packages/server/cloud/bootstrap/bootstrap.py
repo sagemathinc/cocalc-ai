@@ -1830,7 +1830,7 @@ deny() {
 allow_path() {
   local path="${1//\\\\:/:}"
   case "$path" in
-    /mnt/cocalc|/mnt/cocalc/*|/dev/loop*|/var/lib/cocalc/cocalc.img|/var/lib/cocalc/btrfs.img|/opt/cocalc/project-host|/opt/cocalc/project-host/*|/opt/cocalc/project-bundles|/opt/cocalc/project-bundles/*|/opt/cocalc/tools|/opt/cocalc/tools/*)
+    /mnt/cocalc|/mnt/cocalc/*|/mnt/cocalc-scratch|/mnt/cocalc-scratch/*|/dev/loop*|/var/lib/cocalc/cocalc.img|/var/lib/cocalc/btrfs.img|/opt/cocalc/project-host|/opt/cocalc/project-host/*|/opt/cocalc/project-bundles|/opt/cocalc/project-bundles/*|/opt/cocalc/tools|/opt/cocalc/tools/*)
       return 0
       ;;
     *)
@@ -2780,6 +2780,28 @@ PY' bash "$tree"
       deny "grow-btrfs-bad-args" "non-numeric-argument"
     fi
     exec /usr/local/sbin/cocalc-grow-btrfs "$@"
+    ;;
+  grow-shared-scratch)
+    if [ "$#" -gt 1 ]; then
+      deny "grow-shared-scratch-bad-args" "too-many-arguments"
+    fi
+    if [ "$#" -eq 1 ] && ! echo "$1" | grep -Eq '^[0-9]+$'; then
+      deny "grow-shared-scratch-bad-args" "non-numeric-argument"
+    fi
+    scratch_mount="/mnt/cocalc-scratch"
+    if ! mountpoint -q "$scratch_mount"; then
+      deny "shared-scratch-not-mounted" "$scratch_mount"
+    fi
+    scratch_source="$(findmnt -n -o SOURCE "$scratch_mount" 2>/dev/null || true)"
+    case "$scratch_source" in
+      /dev/*)
+        ;;
+      *)
+        deny "shared-scratch-source-not-allowed" "$scratch_source"
+        ;;
+    esac
+    resize2fs "$scratch_source"
+    chmod 1777 "$scratch_mount"
     ;;
   sync)
     exec /bin/sync "$@"
