@@ -34,6 +34,7 @@ beforeEach(() => {
 beforeEach(async () => {
   await Promise.all([
     import("../about/app"),
+    import("../guides/app"),
     import("../news/app"),
     import("../policies/app"),
     import("../pricing/app"),
@@ -134,6 +135,9 @@ describe("section route parsers", () => {
       route: { view: "docs-index" },
       section: "docs",
     });
+    expect(getPublicRouteFromPath(publicPath("guides"))).toEqual({
+      section: "guides",
+    });
     expect(
       getPublicRouteFromPath(publicPath("docs/projects/project-secrets")),
     ).toEqual({
@@ -155,6 +159,7 @@ describe("section route parsers", () => {
     expect(isPublicTarget("/software/cocalc-plus")).toBe(false);
     expect(isPublicTarget("/pricing")).toBe(true);
     expect(isPublicTarget("/features/jupyter-notebook")).toBe(true);
+    expect(isPublicTarget("/guides")).toBe(true);
     expect(isPublicTarget("/docs/projects/project-secrets")).toBe(true);
     expect(isPublicTarget("/invites/abc")).toBe(true);
   });
@@ -225,7 +230,7 @@ describe("PublicApp", () => {
     expect(screen.queryByText("Team")).toBeNull();
   });
 
-  it("shows Projects but not Settings in the shared nav when authenticated", async () => {
+  it("shows Projects and Settings in the shared nav when authenticated", async () => {
     await renderPublicApp(
       <PublicApp
         config={{ is_authenticated: true, site_name: "Launchpad" }}
@@ -234,7 +239,26 @@ describe("PublicApp", () => {
     );
 
     expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
-    expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
+  });
+
+  it("renders the guides bridge page", async () => {
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{ section: "guides" }}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Guides" })).not.toBeNull();
+    expect(screen.getByText("Jupyter workflows")).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: /Open all guides/i }),
+    ).toHaveAttribute("href", "https://sagemathinc.github.io/cocalc-guides/");
+    expect(screen.getByRole("link", { name: "Browse docs" })).toHaveAttribute(
+      "href",
+      "/docs",
+    );
   });
 
   it("uses the stored home-bay origin for public auth bootstrap", async () => {

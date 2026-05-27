@@ -56,7 +56,7 @@ describe("PublicTopNav", () => {
     return result;
   }
 
-  it("uses Projects as the authenticated app entry and omits Settings", async () => {
+  it("uses Projects and Settings as authenticated app actions", async () => {
     await render(
       <PublicConfigProvider
         config={{ is_authenticated: true, site_name: "Launchpad" }}
@@ -66,16 +66,15 @@ describe("PublicTopNav", () => {
     );
 
     expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
-    expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
     expect(screen.getByRole("link", { name: "Launchpad home" })).not.toBeNull();
     expect(
       within(screen.getByRole("menu", { name: "Public pages" }))
         .getAllByRole("menuitem")
         .map((item) => item.textContent),
     ).toEqual([
-      "Projects",
       "Features",
-      "Field guides",
+      "Guides",
       "Docs",
       "Products",
       "Pricing",
@@ -83,6 +82,10 @@ describe("PublicTopNav", () => {
       "About",
       "Support",
     ]);
+    expect(screen.getByRole("link", { name: "Guides" })).toHaveAttribute(
+      "href",
+      "/guides",
+    );
   });
 
   it("uses sign-in and sign-up links for anonymous visitors", async () => {
@@ -116,7 +119,7 @@ describe("PublicTopNav", () => {
         .map((item) => item.textContent),
     ).toEqual([
       "Features",
-      "Field guides",
+      "Guides",
       "Docs",
       "Products",
       "Pricing",
@@ -205,6 +208,19 @@ describe("PublicTopNav", () => {
     ).toHaveClass("ant-menu-item-selected");
   });
 
+  it("selects Guides in the menu when that section is active", async () => {
+    await renderTopNav(<PublicTopNav active="guides" />);
+
+    const publicPages = screen.getByRole("menu", {
+      name: "Public pages",
+    });
+    expect(
+      within(publicPages)
+        .getByRole("menuitem", { name: "Guides" })
+        .closest("li"),
+    ).toHaveClass("ant-menu-item-selected");
+  });
+
   it("marks the logo link current on Home without selecting a menu item", async () => {
     await renderTopNav(<PublicTopNav active="home" />);
 
@@ -251,7 +267,7 @@ describe("PublicTopNav", () => {
         .map((item) => item.textContent),
     ).toEqual([
       "Features",
-      "Field guides",
+      "Guides",
       "Docs",
       "Products",
       "Pricing",

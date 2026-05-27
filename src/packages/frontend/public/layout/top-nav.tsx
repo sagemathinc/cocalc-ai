@@ -19,13 +19,13 @@ import {
   usePublicConfig,
   usesDefaultCoCalcBranding,
 } from "@cocalc/frontend/public/config";
-import { FIELD_GUIDES_URL } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 type PublicInfoPageKey =
   | "home"
   | "docs"
   | "features"
+  | "guides"
   | "products"
   | "pricing"
   | "news"
@@ -35,7 +35,7 @@ type PublicInfoPageKey =
 
 export type PublicTopNavActiveKey = PublicInfoPageKey | "auth";
 
-type PublicTopNavItemKey = PublicInfoPageKey | "field-guides" | "projects";
+type PublicTopNavItemKey = PublicInfoPageKey;
 
 function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
@@ -120,13 +120,7 @@ export default function PublicTopNav({
     target?: string;
   }> = [
     { href: appPath("features"), key: "features", label: "Features" },
-    {
-      href: FIELD_GUIDES_URL,
-      key: "field-guides",
-      label: "Field guides",
-      rel: "noreferrer",
-      target: "_blank",
-    },
+    { href: appPath("guides"), key: "guides", label: "Guides" },
     { href: appPath("docs"), key: "docs", label: "Docs" },
     { href: appPath("products"), key: "products", label: "Products" },
     { href: appPath("pricing"), key: "pricing", label: "Pricing" },
@@ -145,16 +139,7 @@ export default function PublicTopNav({
     key: "support",
     label: "Support",
   });
-  const signedInItems: typeof publicInfoItems = [
-    { href: appPath("projects"), key: "projects", label: "Projects" },
-    ...publicInfoItems,
-  ];
-  const items = isAuthenticated ? signedInItems : publicInfoItems;
-  const visibleMenuItems =
-    isCompact && isAuthenticated
-      ? items.filter((item) => item.key !== "projects")
-      : items;
-  const menuItems: MenuProps["items"] = visibleMenuItems.map((item) => ({
+  const menuItems: MenuProps["items"] = publicInfoItems.map((item) => ({
     key: item.key,
     label: (
       <a href={item.href} rel={item.rel} target={item.target}>
@@ -181,6 +166,20 @@ export default function PublicTopNav({
       </Button>
     </>
   );
+  const appActions = isAuthenticated ? (
+    <>
+      <Button
+        href={appPath("projects")}
+        size={isCompact ? "small" : "middle"}
+        type="primary"
+      >
+        Projects
+      </Button>
+      <Button href={appPath("settings")} size={isCompact ? "small" : "middle"}>
+        Settings
+      </Button>
+    </>
+  ) : null;
 
   if (isCompact) {
     return (
@@ -192,15 +191,7 @@ export default function PublicTopNav({
           logoSquare={logoSquare}
           siteName={siteName}
         />
-        <Space>
-          {isAuthenticated ? (
-            <Button href={appPath("projects")} size="small">
-              Projects
-            </Button>
-          ) : (
-            authActions
-          )}
-        </Space>
+        <Space>{isAuthenticated ? appActions : authActions}</Space>
         <Button
           aria-label="Open navigation menu"
           aria-haspopup="menu"
@@ -246,7 +237,7 @@ export default function PublicTopNav({
           flex: "1 1 auto",
         }}
       />
-      <Space>{authActions}</Space>
+      <Space>{isAuthenticated ? appActions : authActions}</Space>
     </Flex>
   );
 }

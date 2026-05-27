@@ -41,7 +41,7 @@ import {
   PUBLIC_COLORS,
   PUBLIC_DISPLAY_FONT_FAMILY,
 } from "@cocalc/frontend/public/theme";
-import { COMPANY_NAME, FIELD_GUIDES_URL } from "@cocalc/util/theme";
+import { COMPANY_NAME } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import PublicTopNav, { type PublicTopNavActiveKey } from "./top-nav";
 
@@ -275,10 +275,8 @@ function getFooterColumns(config?: PublicConfig) {
           label: "Documentation",
         },
         {
-          href: FIELD_GUIDES_URL,
-          label: "Field guides",
-          rel: "noreferrer",
-          target: "_blank" as const,
+          href: appPath("guides"),
+          label: "Guides",
         },
         { href: appPath("support"), label: "Support" },
       ],

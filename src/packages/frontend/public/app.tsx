@@ -21,6 +21,7 @@ const PublicAboutApp = lazy(() => import("./about/app"));
 const PublicAuthApp = lazy(() => import("./auth/app"));
 const PublicDocsApp = lazy(() => import("./docs/app"));
 const PublicFeaturesApp = lazy(() => import("./features/app"));
+const PublicGuidesApp = lazy(() => import("./guides/app"));
 const PublicHomeApp = lazy(() => import("./home/app"));
 const PublicLangApp = lazy(() => import("./lang/app"));
 const PublicNewsApp = lazy(() => import("./news/app"));
@@ -120,6 +121,10 @@ function PublicRouteBody({
     return (
       <PublicFeaturesApp config={config} initialRoute={initialRoute.route} />
     );
+  }
+
+  if (initialRoute.section === "guides") {
+    return <PublicGuidesApp config={config} />;
   }
 
   if (initialRoute.section === "lang") {
