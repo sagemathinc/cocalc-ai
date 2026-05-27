@@ -15,12 +15,14 @@ import {
   Typography,
 } from "antd";
 import {
+  BookOutlined,
   CodeOutlined,
   QuestionCircleOutlined,
   SyncOutlined,
 } from "@ant-design/icons";
 import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Tooltip } from "@cocalc/frontend/components";
+import { openAppDocs } from "@cocalc/frontend/docs/navigation";
 import { Icon } from "@cocalc/frontend/components/icon";
 import SelectUser from "@cocalc/frontend/users/select-user";
 import { User } from "@cocalc/frontend/users/user";
@@ -102,6 +104,9 @@ import {
   projectHostRollbackReasonLabel,
   shouldSuppressProjectHostFailedOp,
 } from "@cocalc/conat/project-host/rollout";
+
+const HOST_ACCESS_DOCS_IMAGE =
+  "/public/docs/project-hosts-access-ram-9245deeb.webp";
 
 type HostDrawerViewModel = {
   open: boolean;
@@ -280,6 +285,46 @@ function HostAccessUser({ account_id }: { account_id: string }) {
     return <Typography.Text type="secondary">User</Typography.Text>;
   }
   return <User account_id={account_id} show_avatar avatarSize={18} />;
+}
+
+function HostAccessDocsAnchor() {
+  return (
+    <div
+      style={{
+        alignItems: "center",
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 12,
+      }}
+    >
+      <img
+        alt=""
+        src={HOST_ACCESS_DOCS_IMAGE}
+        style={{
+          aspectRatio: "1 / 1",
+          borderRadius: 8,
+          flex: "0 0 112px",
+          objectFit: "contain",
+          width: 112,
+        }}
+      />
+      <Space direction="vertical" size={2} style={{ flex: "1 1 260px" }}>
+        <Typography.Text type="secondary">
+          Host access controls who can place projects here and what RAM projects
+          may use.
+        </Typography.Text>
+        <Button
+          icon={<BookOutlined />}
+          onClick={() => openAppDocs("hosts/access-and-ram")}
+          size="small"
+          style={{ height: "auto", padding: 0 }}
+          type="link"
+        >
+          Docs
+        </Button>
+      </Space>
+    </div>
+  );
 }
 
 type HostConfigSpec = {
@@ -2122,6 +2167,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   ) : null;
   const accessContent = host ? (
     <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+      <HostAccessDocsAnchor />
       <Card size="small" title="Access">
         <Space orientation="vertical" style={{ width: "100%" }} size="small">
           <HostAccessPolicySummary host={host} />
