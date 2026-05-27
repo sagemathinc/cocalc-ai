@@ -7,7 +7,7 @@
 X Window Editor Actions
 */
 
-const HELP_URL = "/docs/projects/x11";
+const HELP_URL = "/docs";
 
 // 15 minute idle timeout -- it's important to disconnect
 // the websocket to the xpra server, to avoid a massive

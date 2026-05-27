@@ -6,6 +6,7 @@
 
 export const APP_ROUTES = new Set([
   "admin",
+  "app-docs",
   "file-use",
   "help",
   "ssh",

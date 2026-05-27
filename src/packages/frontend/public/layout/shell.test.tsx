@@ -40,24 +40,17 @@ describe("PublicPage", () => {
     expect(screen.getByText("Body")).not.toBeNull();
   });
 
-  it("persists public page font size controls", () => {
+  it("does not render public page font size controls", () => {
     render(<PublicPage config={{ site_name: "Launchpad" }}>Body</PublicPage>);
 
-    fireEvent.click(
-      screen.getByRole("button", {
+    expect(
+      screen.queryByRole("button", {
         name: "Increase public page font size",
       }),
-    );
-
+    ).toBeNull();
     expect(
-      screen.getByRole("button", { name: "Reset public page font size" }),
-    ).toHaveTextContent("17px");
-    expect(window.localStorage.getItem("cocalc-public-font-size")).toBe("17");
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "Reset public page font size" }),
-    );
-
+      screen.queryByRole("button", { name: "Reset public page font size" }),
+    ).toBeNull();
     expect(window.localStorage.getItem("cocalc-public-font-size")).toBeNull();
   });
 

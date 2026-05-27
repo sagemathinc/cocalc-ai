@@ -22,11 +22,13 @@ export type DocsActionId =
   | "admin.news.create-system"
   | "admin.bay-ops.open"
   | "admin.membership-tiers.open"
+  | "admin.managed-egress.open"
   | "admin.project-backup-shards.open"
   | "admin.registration-tokens.open"
   | "admin.rootfs.open"
   | "admin.site-settings.open"
   | "admin.software-licenses.open"
+  | "admin.sso.open"
   | "admin.users.open"
   | "settings.environment.secrets"
   | "project.terminal.open"
@@ -511,7 +513,7 @@ language servers, background jobs, web apps, databases, and agents.
 
 1. Open the project process or activity view and stop work you do not need.
 2. Restart the notebook kernel or terminal process that is using too much RAM.
-3. Close idle notebooks, terminals, servers, and X11 apps.
+3. Close idle notebooks, terminals, and servers.
 4. Load less data at once, stream data in chunks, or write intermediate results
    to files.
 5. Avoid keeping duplicate large arrays, dataframes, models, or images in
@@ -1279,26 +1281,6 @@ Whiteboards are project files. Use TimeTravel when you need to inspect earlier
 states or recover from accidental edits.
 `;
 
-const X11_BODY = String.raw`
-## What X11 apps are for
-
-X11 support lets graphical Linux applications run inside a CoCalc project and
-display in the browser. Use it for tools that do not have a native web UI but
-are still useful inside the project environment.
-
-## Run an X11 app
-
-Open an X11 app file or start the relevant graphical program from the project
-environment. The application runs on the project backend, while the browser
-shows the remote desktop window.
-
-## Practical limits
-
-X11 apps can use significant CPU, memory, and bandwidth. Prefer native CoCalc
-editors, notebooks, terminals, or web apps when they fit the task better. Use
-X11 when a specific graphical Linux tool is required.
-`;
-
 const FILE_EXPLORER_BODY = String.raw`
 ## What the file explorer is for
 
@@ -1773,6 +1755,79 @@ host access. Record the old value before changing limits, then verify with an
 account that should receive the updated capability.
 `;
 
+const ADMIN_MANAGED_EGRESS_BODY = String.raw`
+## What Network Egress is for
+
+Network Egress tracks managed egress that CoCalc attributes to accounts,
+projects, and categories. It gives admins an operational view into recent
+network usage so they can investigate unexpected traffic, understand limit
+pressure, and connect support reports to concrete account or project activity.
+
+## Review site-wide egress
+
+1. Open the Admin tab.
+2. Open **Network Egress**.
+3. Choose the time range that matches the support or operations question.
+4. Review top accounts, top projects, categories, and recent events.
+5. Drill into the relevant user or project when the aggregate view points to a
+   specific owner.
+
+The site-wide view is for triage. It helps answer "who or what is producing
+traffic right now?" before deciding whether the next step is account support,
+project inspection, membership limits, or infrastructure investigation.
+
+## Account-level egress
+
+The admin user detail view also exposes recent and historical managed egress
+for a specific account. Use the account-level view when a user asks why they
+are over a managed-egress limit, or when you need to correlate traffic with
+that account's projects and membership entitlements.
+
+## Safety
+
+Managed egress data can reveal operational behavior of user projects. Treat it
+as support and abuse-investigation data. Prefer summarizing categories and
+amounts rather than copying raw event details into tickets unless the ticket
+needs that evidence.
+`;
+
+const ADMIN_SSO_BODY = String.raw`
+## What SSO administration is for
+
+SSO administration configures single sign-on providers and domain policies for
+a CoCalc site. Use it when an institution or organization needs SAML login,
+domain-managed signup behavior, or a policy that requires users from a domain
+to use a specific identity provider.
+
+## Configure an SSO provider
+
+1. Open the Admin tab.
+2. Open **SSO Providers & Domains**.
+3. Add or edit the provider.
+4. Paste metadata XML when available so the form can fill the entity ID, SSO
+   URL, and signing certificate.
+5. Save the provider, then test sign-in with a non-admin account that belongs
+   to the target domain.
+
+Prefer metadata import over manual copy/paste. Manual fields are useful for
+debugging, but metadata reduces transcription mistakes in certificates and
+service URLs.
+
+## Configure domain policy
+
+Domain policies decide how users with matching email domains sign in. A domain
+can allow passwords, require SSO, allow signup through SSO only, and optionally
+require CoCalc-native 2FA. Keep policy names and notes clear enough that
+another admin can understand why the rule exists.
+
+## Safety
+
+SSO policy changes can lock users out. Before requiring SSO for a domain,
+verify that the provider works, that at least one admin has an alternate access
+path, and that support knows how users should recover if their institutional
+identity is unavailable.
+`;
+
 export const DOCS_ENTRIES: DocsEntry[] = [
   {
     audiences: ["agents", "teams"],
@@ -2021,6 +2076,56 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     visibility: "admin",
   },
   {
+    actions: [
+      {
+        description: "Open the Admin -> Network Egress section.",
+        executable: true,
+        id: "admin.managed-egress.open",
+        label: "Open network egress",
+      },
+    ],
+    audiences: ["agents", "teams"],
+    body: ADMIN_MANAGED_EGRESS_BODY.trim(),
+    category: "Admin",
+    id: "admin.managed-egress",
+    image: docsIcon(
+      "/public/docs/connectivity-eaca154f.webp",
+      "Network egress activity grouped by accounts, projects, and categories",
+    ),
+    lastReviewed: "2026-05-27",
+    slug: "admin/managed-egress",
+    status: "ready",
+    summary:
+      "Use the admin Network Egress overview to investigate recent account, project, and category network usage.",
+    title: "Monitor network egress",
+    visibility: "admin",
+  },
+  {
+    actions: [
+      {
+        description: "Open the Admin -> SSO Providers & Domains section.",
+        executable: true,
+        id: "admin.sso.open",
+        label: "Open SSO settings",
+      },
+    ],
+    audiences: ["agents", "teams"],
+    body: ADMIN_SSO_BODY.trim(),
+    category: "Admin",
+    id: "admin.sso",
+    image: docsIcon(
+      "/public/docs/http-api-5067e8ed.webp",
+      "An identity provider connection with domain policy controls",
+    ),
+    lastReviewed: "2026-05-27",
+    slug: "admin/sso",
+    status: "ready",
+    summary:
+      "Configure SSO providers and domain policies without locking users out.",
+    title: "Configure SSO providers and domains",
+    visibility: "admin",
+  },
+  {
     audiences: ["agents", "instructors", "researchers", "students", "teams"],
     body: CREATE_PROJECT_BODY.trim(),
     category: "Projects",
@@ -2258,22 +2363,6 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     summary:
       "Use task files for shared checklists, project plans, and durable TODO lists.",
     title: "Use task files",
-  },
-  {
-    audiences: ["researchers", "students", "teams"],
-    body: X11_BODY.trim(),
-    category: "Projects",
-    id: "projects.x11",
-    image: docsIcon(
-      "/public/docs/terminal-56905fa2.webp",
-      "A graphical Linux application running from a project backend",
-    ),
-    lastReviewed: "2026-05-25",
-    slug: "projects/x11",
-    status: "ready",
-    summary:
-      "Run graphical Linux applications from a project and view them in the browser.",
-    title: "Use X11 apps",
   },
   {
     actions: [

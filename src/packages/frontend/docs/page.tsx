@@ -28,6 +28,8 @@ import {
   listDocsAppActions,
   revealDocsAction,
 } from "@cocalc/frontend/project/docs-actions";
+import { set_url } from "@cocalc/frontend/history";
+import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { Tooltip } from "@cocalc/frontend/components";
 import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { COLORS } from "@cocalc/util/theme";
@@ -88,6 +90,7 @@ export function DocsPage({ slug }: { slug?: string }) {
     saveStoredAppDocsEntry(initialEntry);
     if (!slug) {
       pageActions.setState({ docs_slug: initialEntry.slug });
+      set_url(getPageUrlPath({ page: "docs", slug: initialEntry.slug }));
     }
   }, [initialEntry, initialEntrySlug, pageActions, slug]);
 
@@ -205,6 +208,7 @@ export function DocsPage({ slug }: { slug?: string }) {
             onRunAction={runAction}
             onSelectedEntryChange={(entry) => {
               pageActions.setState({ docs_slug: entry?.slug });
+              set_url(getPageUrlPath({ page: "docs", slug: entry?.slug }));
               saveStoredAppDocsEntry(entry);
             }}
             privateDetailState={
