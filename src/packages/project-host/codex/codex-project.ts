@@ -28,7 +28,10 @@ import {
   mount as mountRootFs,
   unmount,
 } from "@cocalc/project-runner/run/rootfs";
-import { networkArgument } from "@cocalc/project-runner/run/podman";
+import {
+  networkArgument,
+  resolveSharedScratchMount,
+} from "@cocalc/project-runner/run/podman";
 import { mountArg } from "@cocalc/backend/podman";
 import { getEnvironment } from "@cocalc/project-runner/run/env";
 import { getCoCalcMounts } from "@cocalc/project-runner/run/mounts";
@@ -1065,6 +1068,15 @@ async function ensureContainer({
   }
   if (scratch) {
     args.push(mountArg({ source: scratch, target: "/tmp" }));
+  }
+  const sharedScratchMount = await resolveSharedScratchMount();
+  if (sharedScratchMount) {
+    args.push(
+      mountArg({
+        source: sharedScratchMount.source,
+        target: sharedScratchMount.target,
+      }),
+    );
   }
   const mounts = getCoCalcMounts();
   for (const src in mounts) {
