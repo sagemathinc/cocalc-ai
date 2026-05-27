@@ -56,7 +56,7 @@ describe("PublicTopNav", () => {
     return result;
   }
 
-  it("uses Projects as the authenticated app entry and omits Settings", async () => {
+  it("uses Projects and Settings as authenticated app actions", async () => {
     await render(
       <PublicConfigProvider
         config={{ is_authenticated: true, site_name: "Launchpad" }}
@@ -66,16 +66,15 @@ describe("PublicTopNav", () => {
     );
 
     expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
-    expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
     expect(screen.getByRole("link", { name: "Launchpad home" })).not.toBeNull();
     expect(
       within(screen.getByRole("menu", { name: "Public pages" }))
         .getAllByRole("menuitem")
         .map((item) => item.textContent),
     ).toEqual([
-      "Projects",
       "Features",
-      "Field guides",
+      "Guides",
       "Docs",
       "Products",
       "Pricing",
@@ -116,7 +115,7 @@ describe("PublicTopNav", () => {
         .map((item) => item.textContent),
     ).toEqual([
       "Features",
-      "Field guides",
+      "Guides",
       "Docs",
       "Products",
       "Pricing",
@@ -251,7 +250,7 @@ describe("PublicTopNav", () => {
         .map((item) => item.textContent),
     ).toEqual([
       "Features",
-      "Field guides",
+      "Guides",
       "Docs",
       "Products",
       "Pricing",

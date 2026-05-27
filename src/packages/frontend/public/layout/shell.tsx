@@ -276,7 +276,7 @@ function getFooterColumns(config?: PublicConfig) {
         },
         {
           href: FIELD_GUIDES_URL,
-          label: "Field guides",
+          label: "Guides",
           rel: "noreferrer",
           target: "_blank" as const,
         },

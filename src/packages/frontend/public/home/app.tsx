@@ -1019,7 +1019,7 @@ function BottomCallout({ config }: { config?: HomeConfig }) {
             <Flex gap={10} wrap>
               <Button href={appPath("products")}>Compare products</Button>
               <Button href={FIELD_GUIDES_URL} rel="noreferrer" target="_blank">
-                Field guides
+                Guides
               </Button>
               <Button href={appPath("support")}>Support</Button>
             </Flex>
