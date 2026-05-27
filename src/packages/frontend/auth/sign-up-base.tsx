@@ -1,8 +1,12 @@
-import { Alert, Button, Input, Space } from "antd";
+import { Alert, Button, Checkbox, Input, Space } from "antd";
 import { useEffect, useMemo, useState } from "react";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import api from "@cocalc/frontend/client/api";
+import {
+  PolicyPrivacyPageUrl,
+  PolicyTOSPageUrl,
+} from "@cocalc/frontend/customize";
 import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import {
   emailAllowedByPublicSignupPolicy,
@@ -13,10 +17,10 @@ import {
   len,
 } from "@cocalc/util/misc";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
-import { COLORS } from "@cocalc/util/theme";
 import { isWrongBayAuthResponse, postAuthApi, retryAuthOnHomeBay } from "./api";
 import type { AuthView } from "./types";
 import { appUrl } from "./util";
+import { COLORS } from "@cocalc/util/theme";
 
 interface SignUpFormBaseProps {
   initialRequiresToken?: boolean;
@@ -45,6 +49,8 @@ export default function SignUpFormBase({
   const [password, setPassword] = useState<string>("");
   const [firstName, setFirstName] = useState<string>("");
   const [lastName, setLastName] = useState<string>("");
+  const [acceptedTerms, setAcceptedTerms] = useState<boolean>(false);
+  const [marketingConsent, setMarketingConsent] = useState<boolean>(false);
   const [signingUp, setSigningUp] = useState<boolean>(false);
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string>("");
@@ -95,8 +101,12 @@ export default function SignUpFormBase({
     if (requiresToken && !registrationToken.trim()) {
       return false;
     }
+    if (!acceptedTerms) {
+      return false;
+    }
     return !signingUp;
   }, [
+    acceptedTerms,
     email,
     emailAllowedByDomainPolicy,
     password,
@@ -118,7 +128,8 @@ export default function SignUpFormBase({
       let result = await postAuthApi<any>({
         endpoint: "auth/sign-up",
         body: {
-          terms: true,
+          terms: acceptedTerms,
+          marketing_consent: marketingConsent,
           email,
           password,
           firstName,
@@ -248,6 +259,42 @@ export default function SignUpFormBase({
           onPressEnter={signUp}
         />
       </div>
+      <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+        <Checkbox
+          checked={acceptedTerms}
+          style={{ cursor: "pointer" }}
+          onChange={(e) => setAcceptedTerms(e.target.checked)}
+        >
+          I accept the{" "}
+          <a href={PolicyTOSPageUrl} target="_blank" rel="noreferrer">
+            Terms of Service
+          </a>{" "}
+          and{" "}
+          <a href={PolicyPrivacyPageUrl} target="_blank" rel="noreferrer">
+            Privacy Policy
+          </a>
+          .
+        </Checkbox>
+        {issues.terms && (
+          <div
+            style={{
+              color: COLORS.ANTD_RED_WARN,
+              fontSize: "13px",
+              lineHeight: "18px",
+            }}
+          >
+            {issues.terms}
+          </div>
+        )}
+        <Checkbox
+          checked={marketingConsent}
+          style={{ cursor: "pointer" }}
+          onChange={(e) => setMarketingConsent(e.target.checked)}
+        >
+          Send me occasional platform tips, onboarding help, and product
+          updates. You can change this later in Account Preferences.
+        </Checkbox>
+      </Space>
       <Button
         type="primary"
         size="large"

@@ -218,6 +218,8 @@ export default function initPublicContent(router: Router): void {
     "/about/team/",
     "/about/team/:slug",
     "/about/team/:slug/",
+    "/guides",
+    "/guides/",
     "/pricing",
     "/pricing/",
     "/pricing/:slug",

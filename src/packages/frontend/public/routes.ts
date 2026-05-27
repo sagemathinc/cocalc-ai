@@ -29,6 +29,7 @@ export type PublicRoute =
   | { route: PublicAuthRoute; section: "auth" }
   | { route: PublicDocsRoute; section: "docs" }
   | { route: PublicFeaturesRoute; section: "features" }
+  | { section: "guides" }
   | { route: PublicLangRoute; section: "lang" }
   | { route: PublicNewsRoute; section: "news" }
   | { section: "not-found" }
@@ -82,6 +83,10 @@ export function getPublicRouteFromPath(
     return { route: getFeaturesRouteFromPath(pathname), section: "features" };
   }
 
+  if (routeParts[0] === "guides") {
+    return { section: "guides" };
+  }
+
   if (routeParts[0] === "lang" || parsePublicLangTarget(pathname) != null) {
     return { route: getLangRouteFromPath(pathname), section: "lang" };
   }
@@ -125,7 +130,7 @@ export function isPublicTarget(target?: string | null): target is string {
   ) {
     return true;
   }
-  return /\/(about|auth|invites|sso|redeem|docs|features|lang|news|policies|pricing|products|support|[a-z]{2}(-[A-Z]{2})?)(\/|$|\?|#)/.test(
+  return /\/(about|auth|invites|sso|redeem|docs|features|guides|lang|news|policies|pricing|products|support|[a-z]{2}(-[A-Z]{2})?)(\/|$|\?|#)/.test(
     target,
   );
 }

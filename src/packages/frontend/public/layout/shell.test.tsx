@@ -91,8 +91,8 @@ describe("PublicPage", () => {
       within(footer).getByRole("link", { name: "Documentation" }),
     ).toHaveAttribute("href", "/docs");
     expect(
-      within(footer).getByRole("link", { name: "Field guides" }),
-    ).toHaveAttribute("href", "https://sagemathinc.github.io/cocalc-guides/");
+      within(footer).getByRole("link", { name: "Guides" }),
+    ).toHaveAttribute("href", "/guides");
     expect(
       within(footer).getByRole("link", { name: "Support" }),
     ).toHaveAttribute("href", "/support");

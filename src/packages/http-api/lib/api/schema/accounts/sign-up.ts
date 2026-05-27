@@ -21,6 +21,12 @@ export const SignUpInputSchema = z
     terms: z
       .boolean()
       .describe("Must be set to 'true' to indicate acceptance of ToS."),
+    marketing_consent: z
+      .boolean()
+      .optional()
+      .describe(
+        "Optional consent for product tips, updates, and onboarding cadences.",
+      ),
     registrationToken: z
       .string()
       .optional()

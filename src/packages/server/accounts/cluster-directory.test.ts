@@ -153,4 +153,18 @@ describe("accounts.cluster-directory", () => {
       ["codex", ["yahoo.com"], 1000],
     );
   });
+
+  it("touches directory account activity without scanning accounts", async () => {
+    const { touchClusterAccountDirectoryEntryDirect } =
+      await import("./cluster-directory");
+
+    await touchClusterAccountDirectoryEntryDirect(
+      "11111111-1111-4111-8111-111111111111",
+    );
+
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("SET last_active=NOW()"),
+      ["11111111-1111-4111-8111-111111111111"],
+    );
+  });
 });

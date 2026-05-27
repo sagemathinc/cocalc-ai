@@ -34,7 +34,18 @@ jest.mock("react-intl", () => ({
 }));
 
 jest.mock("antd", () => ({
-  Alert: ({ message }: { message: string }) => <div>{message}</div>,
+  Alert: ({
+    description,
+    message,
+  }: {
+    description?: ReactNode;
+    message: ReactNode;
+  }) => (
+    <div>
+      {message}
+      {description}
+    </div>
+  ),
   Radio: {
     Group: ({
       options,
@@ -72,7 +83,26 @@ jest.mock("@cocalc/frontend/antd-bootstrap", () => ({
       {children}
     </section>
   ),
-  Switch: ({ children }: { children: ReactNode }) => <label>{children}</label>,
+  Switch: ({
+    checked,
+    children,
+    onChange,
+  }: {
+    checked?: boolean;
+    children: ReactNode;
+    onChange?: (event: { target: { checked: boolean } }) => void;
+  }) => (
+    <label>
+      <input
+        checked={!!checked}
+        type="checkbox"
+        onChange={(event) =>
+          onChange?.({ target: { checked: event.currentTarget.checked } })
+        }
+      />
+      {children}
+    </label>
+  ),
 }));
 
 jest.mock("@cocalc/frontend/components", () => ({
@@ -142,6 +172,26 @@ describe("AccountPreferencesCommunication", () => {
           ai: "immediate",
           billing: "immediate",
           security: "immediate",
+        }),
+      }),
+    );
+  });
+
+  it("persists marketing consent and product email preference together", () => {
+    render(<AccountPreferencesCommunication />);
+
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /Occasional platform tips and product updates/,
+      }),
+    );
+
+    expect(setOtherSettings).toHaveBeenCalledWith("newsletter", true);
+    expect(setOtherSettings).toHaveBeenCalledWith(
+      OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY,
+      expect.objectContaining({
+        email: expect.objectContaining({
+          product: "digest",
         }),
       }),
     );

@@ -9,7 +9,7 @@ We will add additional sync mechanisms later.
 
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import getLogger from "@cocalc/backend/logger";
-import { addNewUsers } from "./sync";
+import { addNewUsers, removeOptedOutUsers } from "./sync";
 import { updateMoney } from "./money";
 
 const log = getLogger("salesloft:init");
@@ -56,5 +56,6 @@ async function update() {
   log.debug(
     "Salesloft periodic sync -- adding new users who made an account during the last day",
   );
+  await removeOptedOutUsers();
   await addNewUsers("1 day");
 }

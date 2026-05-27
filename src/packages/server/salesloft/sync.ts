@@ -48,9 +48,10 @@ exponential backoff with up to 10 minutes between attempts.
 */
 
 import getPool from "@cocalc/database/pool";
-import { create, list, update } from "./people";
+import { create, destroy, list, update } from "./people";
 import getLogger from "@cocalc/backend/logger";
 import { delay } from "awaiting";
+import { isMarketingConsentEnabled } from "@cocalc/util/notification-preferences";
 
 const logger = getLogger("salesloft:sync");
 const log = logger.debug.bind(logger);
@@ -62,6 +63,7 @@ export async function sync(
 ): Promise<{
   update: number;
   create: number;
+  delete: number;
   salesloft_ids: { [account_id: string]: number };
 }> {
   const cocalc = getPool("long");
@@ -73,18 +75,20 @@ export async function sync(
     "accounts",
   );
   const { rows } = await cocalc.query(
-    "SELECT account_id AS cocalc_account_id, salesloft_id, created AS cocalc_created, last_active AS cocalc_last_active, stripe_customer_id, tags AS cocalc_tags, notes AS cocalc_notes, email_address, first_name, last_name, sign_up_usage_intent FROM accounts WHERE account_id=ANY($1) AND email_address IS NOT NULL",
+    "SELECT account_id AS cocalc_account_id, salesloft_id, created AS cocalc_created, last_active AS cocalc_last_active, stripe_customer_id, tags AS cocalc_tags, notes AS cocalc_notes, email_address, first_name, last_name, sign_up_usage_intent, other_settings FROM accounts WHERE account_id=ANY($1) AND email_address IS NOT NULL",
     [account_ids],
   );
   log("got ", rows.length, " records with an email address");
 
-  const stats = { update: 0, create: 0, salesloft_ids };
+  const stats = { update: 0, create: 0, delete: 0, salesloft_ids };
   let currentDelayMs = 2 * delayMs;
   for (const row of rows) {
     log("considering ", row.email_address);
     try {
       const id = await syncOne({ row, stats, cocalc });
-      salesloft_ids[row.cocalc_account_id] = id;
+      if (id != null) {
+        salesloft_ids[row.cocalc_account_id] = id;
+      }
       currentDelayMs = 2 * delayMs; // success - reset this
     } catch (err) {
       log(`Failed to sync ${row.email_address}`, err);
@@ -104,7 +108,20 @@ export async function sync(
   return stats;
 }
 
-async function syncOne({ row, stats, cocalc }): Promise<number> {
+async function syncOne({ row, stats, cocalc }): Promise<number | undefined> {
+  if (!isMarketingConsentEnabled(row.other_settings)) {
+    if (row.salesloft_id) {
+      log(
+        "marketing consent is off, deleting existing salesloft person ",
+        row.salesloft_id,
+      );
+      await destroy(`${row.salesloft_id}`);
+      stats.delete += 1;
+    } else {
+      log("marketing consent is off, so skipping salesloft sync");
+    }
+    return undefined;
+  }
   const data = toSalesloft(row);
   if (row.salesloft_id) {
     log(
@@ -185,7 +202,7 @@ export async function addNewUsers(
 ) {
   return await sync(
     await getAccountIds(
-      `created IS NOT NULL AND created >= NOW() - interval '${howLongAgo}' AND salesloft_id IS NULL`,
+      `created IS NOT NULL AND created >= NOW() - interval '${howLongAgo}' AND salesloft_id IS NULL AND ${marketingConsentSql()}`,
     ),
     delayMs,
   );
@@ -197,7 +214,7 @@ export async function addActiveUsers(
 ) {
   return await sync(
     await getAccountIds(
-      `last_active >= NOW() - interval '${howLongAgo}' AND salesloft_id IS NULL`,
+      `last_active >= NOW() - interval '${howLongAgo}' AND salesloft_id IS NULL AND ${marketingConsentSql()}`,
     ),
     delayMs,
   );
@@ -213,6 +230,19 @@ export async function updateActiveUsers(
     ),
     delayMs,
   );
+}
+
+export async function removeOptedOutUsers(delayMs: number = 1000) {
+  return await sync(
+    await getAccountIds(
+      `salesloft_id IS NOT NULL AND NOT (${marketingConsentSql()})`,
+    ),
+    delayMs,
+  );
+}
+
+function marketingConsentSql(): string {
+  return `other_settings->>'newsletter' = 'true'`;
 }
 
 async function getAccountIds(condition: string): Promise<string[]> {
