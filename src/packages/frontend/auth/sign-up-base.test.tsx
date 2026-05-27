@@ -37,6 +37,15 @@ beforeEach(() => {
 });
 
 describe("SignUpFormBase", () => {
+  it("links to the Terms of Service before account creation", () => {
+    render(
+      <SignUpFormBase initialRequiresToken={false} onNavigate={jest.fn()} />,
+    );
+
+    const link = screen.getByRole("link", { name: "Terms of Service" });
+    expect(link.getAttribute("href")).toBe("/policies/terms");
+  });
+
   it("shows registration-token issues returned by sign-up", async () => {
     mockedPostAuthApi.mockResolvedValueOnce({
       issues: {

@@ -2,6 +2,7 @@ import { Alert, Button, Input, Space } from "antd";
 import { useEffect, useMemo, useState } from "react";
 
 import api from "@cocalc/frontend/client/api";
+import { PolicyTOSPageUrl } from "@cocalc/frontend/customize";
 import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import {
   is_valid_email_address as isValidEmailAddress,
@@ -11,6 +12,7 @@ import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import { isWrongBayAuthResponse, postAuthApi, retryAuthOnHomeBay } from "./api";
 import type { AuthView } from "./types";
 import { appUrl } from "./util";
+import { COLORS } from "@cocalc/util/theme";
 
 interface SignUpFormBaseProps {
   initialRequiresToken?: boolean;
@@ -215,6 +217,15 @@ export default function SignUpFormBase({
           onChange={(e) => setLastName(e.target.value)}
           onPressEnter={signUp}
         />
+      </div>
+      <div
+        style={{ color: COLORS.GRAY_M, fontSize: "13px", lineHeight: "18px" }}
+      >
+        By creating an account, you agree to the{" "}
+        <a href={PolicyTOSPageUrl} target="_blank" rel="noreferrer">
+          Terms of Service
+        </a>
+        .
       </div>
       <Button
         type="primary"

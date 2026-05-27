@@ -195,6 +195,24 @@ describe("PublicAuthApp", () => {
     expect(await screen.findByText("Registration token")).not.toBeNull();
   });
 
+  it("links to the configured Terms of Service on sign-up", async () => {
+    mockedApi.mockResolvedValueOnce(false);
+
+    render(
+      <PublicAuthApp
+        config={config({
+          terms_of_service_url: "https://example.com/terms",
+        })}
+        initialRoute={{ kind: "auth-form", view: "sign-up" }}
+      />,
+    );
+
+    const link = await screen.findByRole("link", {
+      name: "Terms of Service",
+    });
+    expect(link.getAttribute("href")).toBe("https://example.com/terms");
+  });
+
   it("shows registration-token issues on sign-up", async () => {
     mockedApi.mockResolvedValueOnce(true);
     mockedPostAuthApi.mockResolvedValueOnce({

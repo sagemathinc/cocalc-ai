@@ -27,6 +27,10 @@ import {
 } from "@cocalc/frontend/auth/second-factor-input";
 import { appUrl } from "@cocalc/frontend/auth/util";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import {
+  getExternalPoliciesUrl,
+  usePublicConfig,
+} from "@cocalc/frontend/public/config";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import {
   is_valid_email_address as isValidEmailAddress,
@@ -52,6 +56,12 @@ const LABEL_STYLE: CSSProperties = {
   color: COLORS.GRAY_D,
   fontSize: "14px",
   fontWeight: 600,
+} as const;
+
+const TERMS_NOTICE_STYLE: CSSProperties = {
+  color: COLORS.GRAY_M,
+  fontSize: "13px",
+  lineHeight: "18px",
 } as const;
 
 const INPUT_STYLE: CSSProperties = {
@@ -231,6 +241,10 @@ function NavLink(props: { children: ReactNode; onClick: () => void }) {
 
 function ssoLoginHref(strategyName: string): string {
   return joinUrlPath(appBasePath, "auth", strategyName);
+}
+
+function termsOfServiceHref(): string {
+  return joinUrlPath(appBasePath, "policies/terms");
 }
 
 export function defaultAuthRedirectPath(): string {
@@ -674,8 +688,10 @@ export function PublicSignUpForm({
   const [signingUp, setSigningUp] = useState(false);
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
+  const publicConfig = usePublicConfig();
   const consentReady = useEssentialConsent();
   const cookieConsentReady = !cookieBannerEnabled || consentReady;
+  const termsUrl = getExternalPoliciesUrl(publicConfig) ?? termsOfServiceHref();
 
   const bootstrap = useMemo(
     () => new URL(window.location.href).searchParams.get("bootstrap") === "1",
@@ -852,6 +868,13 @@ export function PublicSignUpForm({
           onChange={setLastName}
           onPressEnter={signUp}
         />
+      </div>
+      <div style={TERMS_NOTICE_STYLE}>
+        By creating an account, you agree to the{" "}
+        <a href={termsUrl} target="_blank" rel="noreferrer">
+          Terms of Service
+        </a>
+        .
       </div>
       <ActionButton disabled={!canSubmit} onClick={signUp}>
         {signingUp
