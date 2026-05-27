@@ -120,6 +120,22 @@ const NEBIUS_CONSOLE_PRICES: NebiusPriceItem[] = [
   },
   {
     service: "Compute",
+    product: "NVIDIA RTX PRO 6000",
+    region: "us-central1",
+    price_usd: "1.8",
+    unit: "GPU hour",
+    valid_from: "2026-05-27",
+  },
+  {
+    service: "Compute",
+    product: "Preemptible NVIDIA RTX PRO 6000",
+    region: "us-central1",
+    price_usd: "0.95",
+    unit: "GPU hour",
+    valid_from: "2026-05-27",
+  },
+  {
+    service: "Compute",
     product: "NVIDIA B200 NVLink with Intel Emerald Rapids",
     region: "us-central1",
     price_usd: "5.5",

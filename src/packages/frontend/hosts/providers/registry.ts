@@ -2567,8 +2567,7 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
       ...emptyOptions(),
       machine_type: getNebiusInstanceTypeOptions(catalog, selection).map(
         (opt) => ({
-          value: opt.value,
-          label: opt.label,
+          ...opt,
           meta: opt.entry,
         }),
       ),

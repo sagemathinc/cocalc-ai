@@ -117,12 +117,60 @@ const nebiusCatalog = () =>
           allowed_for_preemptibles: false,
         },
         {
+          name: "gpu-rtx6000_1gpu-24vcpu-218gb",
+          platform: "gpu-rtx6000",
+          platform_label: "NVIDIA RTX PRO 6000",
+          vcpus: 24,
+          memory_gib: 218,
+          gpus: 1,
+          gpu_label: "NVIDIA RTX PRO 6000",
+          allowed_for_preemptibles: true,
+        },
+        {
           name: "1gpu-16vcpu-200gb",
+          platform: "gpu-h200-sxm",
+          platform_label: "NVIDIA H200 NVLink",
           vcpus: 16,
           memory_gib: 200,
           gpus: 1,
           gpu_label: "H200",
           allowed_for_preemptibles: true,
+        },
+      ],
+    },
+    {
+      kind: "prices",
+      scope: "global",
+      payload: [
+        {
+          product: "NVIDIA RTX PRO 6000",
+          region: "eu-north1",
+          price_usd: "1.8",
+          unit: "GPU hour",
+        },
+        {
+          product: "Preemptible NVIDIA RTX PRO 6000",
+          region: "eu-north1",
+          price_usd: "0.95",
+          unit: "GPU hour",
+        },
+        {
+          product: "NVIDIA H200 NVLink with Intel Sapphire Rapids",
+          region: "eu-north1",
+          price_usd: "3.5",
+          unit: "GPU hour",
+        },
+        {
+          product: "Preemptible NVIDIA H200 NVLink with Intel Sapphire Rapids",
+          region: "eu-north1",
+          price_usd: "1.45",
+          unit: "GPU hour",
+        },
+        {
+          product: "Network SSD IO M3 disk",
+          region: "eu-north1",
+          price_usd: "0.000161111",
+          unit: "GiB hour",
         },
       ],
     },
@@ -697,15 +745,15 @@ describe("host-create-draft", () => {
 
     expect(
       getAvailablePresets(base, context).map((preset) => preset.label),
-    ).toEqual(["Standard H200 GPU", "Low cost Spot H200 GPU", "HPC"]);
+    ).toEqual(["Standard GPU", "Low cost Spot GPU", "HPC"]);
     expect(applyPreset("gpu-workstation", base, context)).toMatchObject({
       provider: "nebius",
-      machine_type: "1gpu-16vcpu-200gb",
+      machine_type: "gpu-rtx6000_1gpu-24vcpu-218gb",
       pricing_model: "on_demand",
     });
     expect(applyPreset("low-cost-spot", base, context)).toMatchObject({
       provider: "nebius",
-      machine_type: "1gpu-16vcpu-200gb",
+      machine_type: "gpu-rtx6000_1gpu-24vcpu-218gb",
       pricing_model: "spot",
     });
     expect(applyPreset("balanced-cpu", base, context)).toMatchObject({

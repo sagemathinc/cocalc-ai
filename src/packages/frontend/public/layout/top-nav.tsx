@@ -3,12 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { MenuOutlined } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 
-import { Button, Drawer, Flex, Grid, Menu, Space, theme } from "antd";
+import { Button, Drawer, Flex, Menu, Space, theme } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   arePublicPoliciesVisible,
@@ -37,8 +37,31 @@ export type PublicTopNavActiveKey = PublicInfoPageKey | "auth";
 
 type PublicTopNavItemKey = PublicInfoPageKey;
 
+const COMPACT_NAV_MEDIA_QUERY = "(max-width: 875px)";
+
 function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
+}
+
+function matchesCompactNav(): boolean {
+  if (typeof window === "undefined") return false;
+  if (typeof window.matchMedia !== "function") return false;
+  return window.matchMedia(COMPACT_NAV_MEDIA_QUERY).matches;
+}
+
+function useCompactNav(): boolean {
+  const [isCompact, setIsCompact] = useState(matchesCompactNav);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const mediaQuery = window.matchMedia(COMPACT_NAV_MEDIA_QUERY);
+    const update = () => setIsCompact(mediaQuery.matches);
+    update();
+    mediaQuery.addEventListener("change", update);
+    return () => mediaQuery.removeEventListener("change", update);
+  }, []);
+
+  return isCompact;
 }
 
 function HomeLogoLink({
@@ -104,11 +127,10 @@ export default function PublicTopNav({
 }: {
   active?: PublicTopNavActiveKey;
 }) {
-  const screens = Grid.useBreakpoint();
   const config = usePublicConfig();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isAuthenticated = !!config?.is_authenticated;
-  const isCompact = !screens.sm;
+  const isCompact = useCompactNav();
   const logoSquare = getLogoSquare(config);
   const showPolicies = arePublicPoliciesVisible(config);
   const siteName = getSiteName(config);
