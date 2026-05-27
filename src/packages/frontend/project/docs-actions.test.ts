@@ -105,7 +105,9 @@ describe("project docs actions", () => {
     ).toEqual(
       expect.arrayContaining([
         "admin.bay-ops.open",
+        "admin.managed-egress.open",
         "admin.rootfs.open",
+        "admin.sso.open",
         "admin.users.open",
       ]),
     );
@@ -154,6 +156,31 @@ describe("project docs actions", () => {
       panel: "rootfs",
       tab: "admin",
     });
+  });
+
+  it("opens managed egress and sso admin sections", async () => {
+    mockIsAdmin = true;
+
+    await revealDocsAction({
+      actionId: "admin.managed-egress.open",
+      projectId: "project-1",
+    });
+    expect(mockSetPageState).toHaveBeenLastCalledWith({
+      admin_route: { kind: "index", section: "managed-egress" },
+    });
+    expect(mockSetUrlWithSearch).toHaveBeenLastCalledWith(
+      "/admin/managed-egress",
+      "",
+    );
+
+    await revealDocsAction({
+      actionId: "admin.sso.open",
+      projectId: "project-1",
+    });
+    expect(mockSetPageState).toHaveBeenLastCalledWith({
+      admin_route: { kind: "index", section: "sso" },
+    });
+    expect(mockSetUrlWithSearch).toHaveBeenLastCalledWith("/admin/sso", "");
   });
 
   it("opens the system notice editor for admin docs actions", async () => {
