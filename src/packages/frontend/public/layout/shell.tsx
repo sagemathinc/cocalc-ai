@@ -9,20 +9,17 @@ import {
   type CSSProperties,
   type MouseEvent,
   type ReactNode,
-  useEffect,
   useState,
 } from "react";
 
 import {
   App as AntdApp,
-  Button,
   Card,
   Col,
   ConfigProvider,
   Flex,
   Layout,
   Row,
-  Space,
   theme,
   Typography,
 } from "antd";
@@ -47,10 +44,6 @@ import PublicTopNav, { type PublicTopNavActiveKey } from "./top-nav";
 
 const { Content, Footer, Header, Sider } = Layout;
 const { Paragraph, Text, Title } = Typography;
-const PUBLIC_FONT_SIZE_STORAGE_KEY = "cocalc-public-font-size";
-const PUBLIC_FONT_SIZE_DEFAULT = 16;
-const PUBLIC_FONT_SIZE_MIN = 14;
-const PUBLIC_FONT_SIZE_MAX = 24;
 
 const PUBLIC_DISPLAY_FONT_URL = joinUrlPath(
   appBasePath,
@@ -82,16 +75,6 @@ const PUBLIC_PAGE_CSS = `
     margin-inline: 0 !important;
   }
 
-  .cocalc-public-font-controls {
-    position: fixed;
-    right: 18px;
-    bottom: 18px;
-    z-index: 1100;
-    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14);
-    border-radius: 8px;
-    overflow: hidden;
-  }
-
   .cocalc-public-card.ant-card {
     border-color: ${PUBLIC_COLORS.border};
   }
@@ -120,8 +103,7 @@ const PUBLIC_PAGE_CSS = `
   @media print {
     .cocalc-public-header,
     .cocalc-public-footer-band,
-    .cocalc-public-sider,
-    .cocalc-public-font-controls {
+    .cocalc-public-sider {
       display: none !important;
     }
 
@@ -137,70 +119,6 @@ const PAGE_BAND_STYLE = {
   paddingInline: "max(16px, calc((100vw - 1200px) / 2))",
   width: "100%",
 } as const;
-
-function clampPublicFontSize(value: number): number {
-  if (!Number.isFinite(value)) return PUBLIC_FONT_SIZE_DEFAULT;
-  return Math.min(
-    PUBLIC_FONT_SIZE_MAX,
-    Math.max(PUBLIC_FONT_SIZE_MIN, Math.round(value)),
-  );
-}
-
-function loadPublicFontSize(): number {
-  if (typeof window === "undefined") return PUBLIC_FONT_SIZE_DEFAULT;
-  const raw = window.localStorage.getItem(PUBLIC_FONT_SIZE_STORAGE_KEY);
-  if (!raw) return PUBLIC_FONT_SIZE_DEFAULT;
-  return clampPublicFontSize(Number(raw));
-}
-
-function savePublicFontSize(size: number): void {
-  if (typeof window === "undefined") return;
-  if (size === PUBLIC_FONT_SIZE_DEFAULT) {
-    window.localStorage.removeItem(PUBLIC_FONT_SIZE_STORAGE_KEY);
-  } else {
-    window.localStorage.setItem(PUBLIC_FONT_SIZE_STORAGE_KEY, `${size}`);
-  }
-}
-
-function PublicFontSizeControls({
-  fontSize,
-  setFontSize,
-}: {
-  fontSize: number;
-  setFontSize: (size: number) => void;
-}) {
-  const decrease = () => setFontSize(clampPublicFontSize(fontSize - 1));
-  const increase = () => setFontSize(clampPublicFontSize(fontSize + 1));
-  const reset = () => setFontSize(PUBLIC_FONT_SIZE_DEFAULT);
-
-  return (
-    <Space.Compact
-      className="cocalc-public-font-controls"
-      size="small"
-      style={{ background: "white" }}
-    >
-      <Button
-        aria-label="Decrease public page font size"
-        disabled={fontSize <= PUBLIC_FONT_SIZE_MIN}
-        onClick={decrease}
-        title="Decrease font size"
-      >
-        A-
-      </Button>
-      <Button aria-label="Reset public page font size" onClick={reset}>
-        {fontSize}px
-      </Button>
-      <Button
-        aria-label="Increase public page font size"
-        disabled={fontSize >= PUBLIC_FONT_SIZE_MAX}
-        onClick={increase}
-        title="Increase font size"
-      >
-        A+
-      </Button>
-    </Space.Compact>
-  );
-}
 
 interface FooterLinkSpec {
   href: string;
@@ -446,26 +364,11 @@ export function PublicPage({
   title,
 }: PublicPageProps) {
   const { token } = theme.useToken();
-  const [publicFontSize, setPublicFontSizeState] = useState(
-    PUBLIC_FONT_SIZE_DEFAULT,
-  );
   const [siderHiddenByBreakpoint, setSiderHiddenByBreakpoint] = useState(false);
   const publicPageStyle = {
     "--cocalc-public-anchor-offset": `${token.Layout?.headerHeight ?? 64}px`,
-    "--cocalc-public-font-size": `${publicFontSize}px`,
-    fontSize: "var(--cocalc-public-font-size)",
     minHeight: "100vh",
   } as CSSProperties;
-
-  useEffect(() => {
-    setPublicFontSizeState(loadPublicFontSize());
-  }, []);
-
-  const setPublicFontSize = (size: number) => {
-    const next = clampPublicFontSize(size);
-    setPublicFontSizeState(next);
-    savePublicFontSize(next);
-  };
 
   return (
     <ConfigProvider
@@ -485,7 +388,6 @@ export function PublicPage({
           colorText: PUBLIC_COLORS.text,
           colorTextHeading: PUBLIC_COLORS.heading,
           colorTextSecondary: PUBLIC_COLORS.mutedText,
-          fontSize: publicFontSize,
         },
       }}
     >
@@ -559,10 +461,6 @@ export function PublicPage({
             >
               <PublicFooter config={config} />
             </Footer>
-            <PublicFontSizeControls
-              fontSize={publicFontSize}
-              setFontSize={setPublicFontSize}
-            />
           </Layout>
         </AntdApp>
       </PublicConfigProvider>

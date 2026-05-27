@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 
 import {
   docsPath,
@@ -174,7 +174,7 @@ describe("public/docs", () => {
     ).toBeNull();
   });
 
-  it("persists docs font size controls", () => {
+  it("does not render docs font size controls on public docs pages", () => {
     render(
       <PublicDocsApp
         config={{ site_name: "Launchpad" }}
@@ -182,23 +182,16 @@ describe("public/docs", () => {
       />,
     );
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Increase docs font size" }),
-    );
-
     expect(
-      screen.getByRole("button", { name: "Reset docs font size" }),
-    ).toHaveTextContent("15px");
-    expect(window.localStorage.getItem("cocalc-docs-font-size")).toBe("15");
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "Reset docs font size" }),
-    );
-
+      screen.queryByRole("button", { name: "Increase docs font size" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Reset docs font size" }),
+    ).toBeNull();
     expect(window.localStorage.getItem("cocalc-docs-font-size")).toBeNull();
   });
 
-  it("applies docs font size to full-page markdown cards", () => {
+  it("renders public docs detail without the docs font-size wrapper", () => {
     window.localStorage.setItem("cocalc-docs-font-size", "30");
 
     render(
@@ -211,12 +204,10 @@ describe("public/docs", () => {
       />,
     );
 
-    expect(screen.getByTestId("docs-font-scope")).toHaveStyle({
-      fontSize: "30px",
-    });
+    expect(screen.queryByTestId("docs-font-scope")).toBeNull();
     expect(
-      screen.getByRole("button", { name: "Reset docs font size" }),
-    ).toHaveTextContent("30px");
+      screen.queryByRole("button", { name: "Reset docs font size" }),
+    ).toBeNull();
 
     const markdownCardBody = screen
       .getByTestId("docs-markdown")
