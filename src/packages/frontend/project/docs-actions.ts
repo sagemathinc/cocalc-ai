@@ -80,6 +80,24 @@ type DocsAppAction = {
   }) => DocsActionRevealResult | Promise<DocsActionRevealResult>;
 };
 
+function actionNeedsProjectParameter(action: DocsActionSummary): boolean {
+  return (
+    action.parameters?.some(
+      (parameter) => parameter.type === "project" && parameter.required,
+    ) === true
+  );
+}
+
+function effectiveProjectId({
+  parameters,
+  projectId,
+}: {
+  parameters?: DocsActionParameters;
+  projectId: string;
+}): string {
+  return `${parameters?.projectId ?? projectId ?? ""}`.trim();
+}
+
 type ProjectActionSubset = {
   construct_absolute_path?: (
     name: string,
@@ -697,6 +715,13 @@ export function listDocsAppActions({
 }): DocsActionAvailability[] {
   return listDocsActions({ includeAdmin }).map((action) => {
     const appAction = getDocsAppAction(action.id);
+    if (appAction && !projectId && actionNeedsProjectParameter(action)) {
+      return {
+        ...action,
+        available: true,
+        implemented: true,
+      };
+    }
     const available =
       appAction?.isAvailable?.({ includeAdmin, projectId }) ?? !!appAction;
     return {
@@ -733,10 +758,11 @@ export function revealDocsAction({
   if (!appAction) {
     throw Error(`docs action '${actionId}' has no browser implementation`);
   }
+  const runProjectId = effectiveProjectId({ parameters, projectId });
   const available =
-    appAction.isAvailable?.({ includeAdmin, projectId }) ?? true;
+    appAction.isAvailable?.({ includeAdmin, projectId: runProjectId }) ?? true;
   if (available !== true) {
     throw Error(`docs action '${actionId}' is not available: ${available}`);
   }
-  return appAction.run({ parameters, projectId });
+  return appAction.run({ parameters, projectId: runProjectId });
 }

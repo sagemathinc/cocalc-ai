@@ -16,7 +16,7 @@ export type DocsAccess = {
   includeAdmin?: boolean;
   includeSignedIn?: boolean;
 };
-export type DocsActionParameterType = "project-host";
+export type DocsActionParameterType = "project" | "project-host";
 
 export interface DocsActionParameter {
   label: string;
@@ -63,6 +63,18 @@ export interface DocsActionSummary extends DocsAction {
   entryId: string;
   entrySlug: string;
   entryTitle: string;
+}
+
+function projectActionParameters(): DocsActionParameter[] {
+  return [
+    {
+      label: "Project",
+      name: "projectId",
+      placeholder: "Select a project",
+      required: true,
+      type: "project",
+    },
+  ];
 }
 
 export interface DocsEntryImage {
@@ -2322,6 +2334,7 @@ export const DOCS_ENTRIES: DocsEntry[] = [
         executable: true,
         id: "settings.environment.secrets",
         label: "Open project secrets",
+        parameters: projectActionParameters(),
       },
     ],
     audiences: ["agents", "researchers", "students", "teams"],
@@ -2393,6 +2406,7 @@ export const DOCS_ENTRIES: DocsEntry[] = [
         executable: true,
         id: "project.terminal.open",
         label: "Open terminal",
+        parameters: projectActionParameters(),
       },
     ],
     audiences: ["agents", "researchers", "students", "teams"],
@@ -2544,6 +2558,7 @@ export const DOCS_ENTRIES: DocsEntry[] = [
         executable: true,
         id: "project.jupyter.create",
         label: "Create notebook",
+        parameters: projectActionParameters(),
       },
     ],
     audiences: ["agents", "instructors", "researchers", "students"],
@@ -2664,6 +2679,7 @@ export const DOCS_ENTRIES: DocsEntry[] = [
         executable: true,
         id: "settings.runtime.rootfs",
         label: "Open runtime image",
+        parameters: projectActionParameters(),
       },
     ],
     audiences: ["agents", "instructors", "researchers", "teams"],
@@ -2801,6 +2817,7 @@ export const DOCS_ENTRIES: DocsEntry[] = [
         executable: true,
         id: "settings.people.collaborators",
         label: "Manage collaborators",
+        parameters: projectActionParameters(),
       },
     ],
     audiences: ["instructors", "researchers", "students", "teams"],
@@ -2857,6 +2874,7 @@ export const DOCS_ENTRIES: DocsEntry[] = [
         executable: true,
         id: "file.timetravel.open",
         label: "Open TimeTravel",
+        parameters: projectActionParameters(),
       },
     ],
     audiences: ["agents", "instructors", "researchers", "students", "teams"],
@@ -2952,6 +2970,7 @@ export const DOCS_ENTRIES: DocsEntry[] = [
         executable: true,
         id: "project.codex.open",
         label: "Open Codex",
+        parameters: projectActionParameters(),
       },
     ],
     audiences: ["agents", "researchers", "students", "teams"],

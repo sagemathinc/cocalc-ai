@@ -136,6 +136,31 @@ describe("project docs actions", () => {
     });
   });
 
+  it("keeps project-parameter actions available without an ambient project", () => {
+    const actions = listDocsAppActions({ projectId: "" });
+    const terminalAction = actions.find(
+      (action) => action.id === "project.terminal.open",
+    );
+
+    expect(terminalAction).toMatchObject({
+      available: true,
+      implemented: true,
+    });
+  });
+
+  it("runs project-parameter actions against the selected project", async () => {
+    await revealDocsAction({
+      actionId: "project.codex.open",
+      parameters: { projectId: "project-1" },
+      projectId: "",
+    });
+
+    expect(mockGetProjectActions).toHaveBeenCalledWith("project-1");
+    expect(mockSetProjectActiveTab).toHaveBeenCalledWith("agents", {
+      change_history: true,
+    });
+  });
+
   it("hides admin docs actions from non-admins and exposes them to admins", () => {
     expect(
       listDocsAppActions({ projectId: "project-1" }).map((action) => action.id),
