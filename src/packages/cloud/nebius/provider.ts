@@ -43,8 +43,10 @@ type NebiusRuntimeMeta = {
   diskIds?: {
     boot?: string;
     data?: string;
+    scratch?: string;
   };
   diskTypeCode?: number;
+  scratchDiskTypeCode?: number;
   subnetId?: string;
 };
 
@@ -68,10 +70,27 @@ function sanitizeName(base: string, maxLen = 63): string {
 
 function diskTypeFor(spec: HostSpec): DiskSpec_DiskType {
   if (spec.disk_type === "standard") return DiskSpec_DiskType.NETWORK_HDD;
+  if (spec.disk_type === "balanced") {
+    return DiskSpec_DiskType.NETWORK_SSD_NON_REPLICATED;
+  }
   if (spec.disk_type === "ssd_io_m3") {
     return DiskSpec_DiskType.NETWORK_SSD_IO_M3;
   }
   return DiskSpec_DiskType.NETWORK_SSD;
+}
+
+function sharedScratchDiskTypeFor(spec: HostSpec): DiskSpec_DiskType {
+  switch (spec.shared_disk_type) {
+    case "balanced":
+      return DiskSpec_DiskType.NETWORK_SSD_NON_REPLICATED;
+    case "ssd_io_m3":
+      return DiskSpec_DiskType.NETWORK_SSD_IO_M3;
+    case "standard":
+      return DiskSpec_DiskType.NETWORK_HDD;
+    case "ssd":
+    default:
+      return DiskSpec_DiskType.NETWORK_SSD;
+  }
 }
 
 const NEBIUS_IO_M3_GIB = 93;
@@ -466,6 +485,49 @@ export class NebiusProvider implements CloudProvider {
         );
       }
     }
+    const sharedDiskGb = Number(spec.shared_disk_gb ?? 0);
+    const wantsSharedScratch =
+      Number.isFinite(sharedDiskGb) && sharedDiskGb > 0;
+    let scratchDiskType: DiskSpec_DiskType | undefined;
+    if (wantsSharedScratch) {
+      const existingScratchDiskId =
+        spec.metadata?.shared_disk_id ??
+        spec.metadata?.sharedDiskId ??
+        undefined;
+      scratchDiskType = sharedScratchDiskTypeFor(spec);
+      const normalized = normalizeDiskSizeGib(sharedDiskGb, scratchDiskType);
+      if (normalized.adjusted) {
+        logger.info("nebius: adjusting shared scratch disk size for IO M3", {
+          name,
+          from_gb: sharedDiskGb,
+          to_gb: normalized.sizeGib,
+        });
+      }
+      logger.info("nebius: creating shared scratch disk", {
+        name,
+        size_gb: normalized.sizeGib,
+        type: scratchDiskType,
+      });
+      const scratchDiskName =
+        spec.metadata?.shared_disk_name ?? `${name}-scratch`;
+      if (existingScratchDiskId) {
+        diskIds.scratch = existingScratchDiskId;
+      } else {
+        diskIds.scratch = await createDiskOrReuse(
+          client,
+          parentId,
+          scratchDiskName,
+          DiskSpec.create({
+            type: scratchDiskType,
+            blockSizeBytes: blockSizeBytes(),
+            size: {
+              $case: "sizeGibibytes",
+              sizeGibibytes: Long.fromNumber(normalized.sizeGib),
+            },
+          }),
+        );
+      }
+    }
 
     const userData = buildUserData(spec) ?? "";
     const sshKeys = normalizeSshKeys(
@@ -531,18 +593,34 @@ export class NebiusProvider implements CloudProvider {
               existingDisk: ExistingDisk.create({ id: diskIds.boot! }),
             },
           }),
-          secondaryDisks: diskIds.data
-            ? [
-                AttachedDiskSpec.create({
-                  attachMode: AttachedDiskSpec_AttachMode.READ_WRITE,
-                  deviceId: "data",
-                  type: {
-                    $case: "existingDisk",
-                    existingDisk: ExistingDisk.create({ id: diskIds.data }),
-                  },
-                }),
-              ]
-            : [],
+          secondaryDisks: [
+            ...(diskIds.data
+              ? [
+                  AttachedDiskSpec.create({
+                    attachMode: AttachedDiskSpec_AttachMode.READ_WRITE,
+                    deviceId: "data",
+                    type: {
+                      $case: "existingDisk",
+                      existingDisk: ExistingDisk.create({ id: diskIds.data }),
+                    },
+                  }),
+                ]
+              : []),
+            ...(diskIds.scratch
+              ? [
+                  AttachedDiskSpec.create({
+                    attachMode: AttachedDiskSpec_AttachMode.READ_WRITE,
+                    deviceId: "scratch",
+                    type: {
+                      $case: "existingDisk",
+                      existingDisk: ExistingDisk.create({
+                        id: diskIds.scratch,
+                      }),
+                    },
+                  }),
+                ]
+              : []),
+          ],
           filesystems: [],
           cloudInitUserData: cloudInit,
           stopped: false,
@@ -571,6 +649,14 @@ export class NebiusProvider implements CloudProvider {
       metadata: {
         diskIds,
         diskTypeCode: dataDiskType.code,
+        ...(scratchDiskType
+          ? {
+              scratchDiskTypeCode: scratchDiskType.code,
+              shared_disk_id: diskIds.scratch,
+              shared_disk_name:
+                spec.metadata?.shared_disk_name ?? `${name}-scratch`,
+            }
+          : {}),
         subnetId,
       },
     };
@@ -637,7 +723,7 @@ export class NebiusProvider implements CloudProvider {
       ?.diskIds;
     const disksToDelete = opts?.preserveDataDisk
       ? [diskIds?.boot]
-      : [diskIds?.data, diskIds?.boot];
+      : [diskIds?.scratch, diskIds?.data, diskIds?.boot];
     for (const diskId of disksToDelete.filter(Boolean) as string[]) {
       await deleteDiskWithRetry(client, diskId, runtime.instance_id);
     }
@@ -670,6 +756,48 @@ export class NebiusProvider implements CloudProvider {
       }),
     );
     await op.wait();
+  }
+
+  async resizeSharedScratchDisk(
+    runtime: HostRuntime,
+    newSizeGb: number,
+    creds: NebiusProviderCreds,
+  ) {
+    const client = new NebiusClient(creds);
+    const meta = runtime.metadata as NebiusRuntimeMeta | undefined;
+    const diskId =
+      meta?.diskIds?.scratch ?? (runtime.metadata as any)?.shared_disk_id;
+    if (!diskId) {
+      throw new Error("nebius: no shared scratch disk to resize");
+    }
+    const diskType = diskTypeFromCode(meta?.scratchDiskTypeCode);
+    const normalized = normalizeDiskSizeGib(newSizeGb, diskType);
+    const op = await client.disks.update(
+      UpdateDiskRequest.create({
+        metadata: ResourceMetadata.create({ id: diskId }),
+        spec: DiskSpec.create({
+          type: diskType,
+          blockSizeBytes: blockSizeBytes(),
+          size: {
+            $case: "sizeGibibytes",
+            sizeGibibytes: Long.fromNumber(normalized.sizeGib),
+          },
+        }),
+      }),
+    );
+    await op.wait();
+  }
+
+  async deleteSharedScratchDisk(
+    runtime: HostRuntime,
+    creds: NebiusProviderCreds,
+  ) {
+    const client = new NebiusClient(creds);
+    const diskId =
+      (runtime.metadata as NebiusRuntimeMeta | undefined)?.diskIds?.scratch ??
+      (runtime.metadata as any)?.shared_disk_id;
+    if (!diskId) return;
+    await deleteDiskWithRetry(client, diskId, runtime.instance_id);
   }
 
   async getInstance(

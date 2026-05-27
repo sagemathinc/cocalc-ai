@@ -87,6 +87,12 @@ export interface CloudProvider {
     newSizeGb: number,
     creds: any,
   ): Promise<void>;
+  resizeSharedScratchDisk?(
+    runtime: HostRuntime,
+    newSizeGb: number,
+    creds: any,
+  ): Promise<void>;
+  deleteSharedScratchDisk?(runtime: HostRuntime, creds: any): Promise<void>;
   getStatus(
     runtime: HostRuntime,
     creds: any,
