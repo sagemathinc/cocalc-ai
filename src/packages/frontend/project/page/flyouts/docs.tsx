@@ -16,6 +16,7 @@ import {
   DOCS_BROWSER_MUTED_TITLE_STYLE,
   DOCS_BROWSER_PAGE_STYLE,
   type DocsBrowserAction,
+  type DocsBrowserActionParameters,
 } from "@cocalc/frontend/docs/browser";
 import { DocsPrivateNotesPanel } from "@cocalc/frontend/docs/private-state/panel";
 import {
@@ -121,9 +122,16 @@ export function ProjectDocsPanel({
       );
   }, [docsAccess, project_id]);
 
-  async function runAction(action: DocsBrowserAction): Promise<void> {
+  async function runAction(
+    action: DocsBrowserAction,
+    parameters?: DocsBrowserActionParameters,
+  ): Promise<void> {
     try {
-      await revealDocsAction({ actionId: action.id, projectId: project_id });
+      await revealDocsAction({
+        actionId: action.id,
+        parameters,
+        projectId: project_id,
+      });
       await messageApi.success(action.label);
     } catch (err) {
       await messageApi.error(`${err}`);

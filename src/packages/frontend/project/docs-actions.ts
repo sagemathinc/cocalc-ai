@@ -22,6 +22,7 @@ import {
   separate_file_extension,
   tab_to_path,
 } from "@cocalc/util/misc";
+import { openHostDrawer } from "@cocalc/frontend/hosts/open-host-drawer";
 
 export const PROJECT_SECRETS_DOCS_ACTION_EVENT =
   "cocalc:docs-action:project-secrets";
@@ -48,6 +49,8 @@ export interface ProjectPeopleDocsActionDetail {
 
 export type DocsActionRevealResult = {
   action_id: DocsActionId;
+  drawer_tab?: string;
+  host_id?: string;
   opened: true;
   path?: string;
   panel?: string;
@@ -55,6 +58,8 @@ export type DocsActionRevealResult = {
   source_path?: string;
   tab?: string;
 };
+
+export type DocsActionParameters = Record<string, string | undefined>;
 
 export type DocsActionAvailability = DocsActionSummary & {
   available: boolean;
@@ -70,6 +75,7 @@ type DocsAppAction = {
   }) => string | true;
   run: (context: {
     includeAdmin?: boolean;
+    parameters?: DocsActionParameters;
     projectId: string;
   }) => DocsActionRevealResult | Promise<DocsActionRevealResult>;
 };
@@ -193,11 +199,31 @@ function selectAdmin(route: AdminRoute, search = ""): void {
 
 function revealHostsPage({
   actionId,
+  hostId,
   projectId,
+  tab,
 }: {
   actionId: DocsActionId;
+  hostId?: string;
   projectId: string;
+  tab?: string;
 }): DocsActionRevealResult {
+  const normalizedHostId = `${hostId ?? ""}`.trim();
+  const normalizedTab = `${tab ?? ""}`.trim();
+  if (normalizedHostId) {
+    openHostDrawer({
+      hostId: normalizedHostId,
+      tab: normalizedTab || undefined,
+    });
+    return {
+      action_id: actionId,
+      drawer_tab: normalizedTab || undefined,
+      host_id: normalizedHostId,
+      opened: true,
+      project_id: projectId,
+      tab: "hosts",
+    };
+  }
   const pageActions = redux.getActions("page") as
     | {
         set_active_tab?: (
@@ -598,8 +624,13 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
   },
   "hosts.access.open": {
     id: "hosts.access.open",
-    run: ({ projectId }) =>
-      revealHostsPage({ actionId: "hosts.access.open", projectId }),
+    run: ({ parameters, projectId }) =>
+      revealHostsPage({
+        actionId: "hosts.access.open",
+        hostId: parameters?.hostId,
+        projectId,
+        tab: "access",
+      }),
   },
   "hosts.move.open": {
     id: "hosts.move.open",
@@ -680,10 +711,12 @@ export function listDocsAppActions({
 export function revealDocsAction({
   actionId,
   includeAdmin = accountIsAdmin(),
+  parameters,
   projectId,
 }: {
   actionId: string;
   includeAdmin?: boolean;
+  parameters?: DocsActionParameters;
   projectId: string;
 }): DocsActionRevealResult | Promise<DocsActionRevealResult> {
   if (!isDocsActionId(actionId)) {
@@ -705,5 +738,5 @@ export function revealDocsAction({
   if (available !== true) {
     throw Error(`docs action '${actionId}' is not available: ${available}`);
   }
-  return appAction.run({ projectId });
+  return appAction.run({ parameters, projectId });
 }

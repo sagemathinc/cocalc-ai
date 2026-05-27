@@ -27,6 +27,12 @@ import { useHostRuntimeLog } from "./use-host-runtime-log";
 import { useParallelOps } from "./use-parallel-ops";
 import { formatHostUpgradeFailureMessage } from "./host-upgrade-errors";
 import {
+  clearStoredHostDrawerOpenRequest,
+  HOST_DRAWER_OPEN_EVENT,
+  readStoredHostDrawerOpenRequest,
+  type HostDrawerOpenDetail,
+} from "../open-host-drawer";
+import {
   buildCreateHostPayload,
   getProviderOptions,
   getSelfHostConnectors,
@@ -574,6 +580,45 @@ export const useHostsPageViewModel = () => {
   const [editProvider, setEditProvider] = React.useState<HostProvider>("none");
   const { drawerOpen, selected, initialTab, openDetails, closeDetails } =
     useHostSelection(hosts);
+  const pendingDrawerRequestRef = React.useRef<
+    HostDrawerOpenDetail | undefined
+  >(undefined);
+  const openRequestedHostDrawer = React.useCallback(
+    (request?: HostDrawerOpenDetail) => {
+      if (!request?.hostId) return false;
+      const host = hosts.find((host) => host.id === request.hostId);
+      if (!host) return false;
+      openDetails(host, request.tab);
+      pendingDrawerRequestRef.current = undefined;
+      clearStoredHostDrawerOpenRequest();
+      return true;
+    },
+    [hosts, openDetails],
+  );
+
+  React.useEffect(() => {
+    const handleHostDrawerOpen = (event: Event) => {
+      const request = (event as CustomEvent<HostDrawerOpenDetail>).detail;
+      pendingDrawerRequestRef.current = request;
+      openRequestedHostDrawer(request);
+    };
+    window.addEventListener(HOST_DRAWER_OPEN_EVENT, handleHostDrawerOpen);
+    return () =>
+      window.removeEventListener(HOST_DRAWER_OPEN_EVENT, handleHostDrawerOpen);
+  }, [openRequestedHostDrawer]);
+
+  React.useEffect(() => {
+    const request =
+      pendingDrawerRequestRef.current ?? readStoredHostDrawerOpenRequest();
+    if (!request) return;
+    pendingDrawerRequestRef.current = request;
+    if (openRequestedHostDrawer(request)) return;
+    if (hostsLoaded) {
+      pendingDrawerRequestRef.current = undefined;
+      clearStoredHostDrawerOpenRequest();
+    }
+  }, [hostsLoaded, openRequestedHostDrawer]);
+
   const openEdit = (host: (typeof hosts)[number]) => {
     setEditingHost(host);
     setEditProvider((host.machine?.cloud ?? "none") as HostProvider);

@@ -16,6 +16,15 @@ export type DocsAccess = {
   includeAdmin?: boolean;
   includeSignedIn?: boolean;
 };
+export type DocsActionParameterType = "project-host";
+
+export interface DocsActionParameter {
+  label: string;
+  name: string;
+  placeholder?: string;
+  required?: boolean;
+  type: DocsActionParameterType;
+}
 
 export type DocsActionId =
   | "admin.news.open"
@@ -47,6 +56,7 @@ export interface DocsAction {
   executable?: boolean;
   id: DocsActionId;
   label: string;
+  parameters?: DocsActionParameter[];
 }
 
 export interface DocsActionSummary extends DocsAction {
@@ -2730,10 +2740,19 @@ export const DOCS_ENTRIES: DocsEntry[] = [
   {
     actions: [
       {
-        description: "Open the top-level Project Hosts page.",
+        description: "Open a project host drawer on the Access tab.",
         executable: true,
         id: "hosts.access.open",
-        label: "Open project hosts",
+        label: "Open host access",
+        parameters: [
+          {
+            label: "Project host",
+            name: "hostId",
+            placeholder: "Select a host",
+            required: true,
+            type: "project-host",
+          },
+        ],
       },
     ],
     audiences: ["agents", "instructors", "researchers", "teams"],

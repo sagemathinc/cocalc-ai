@@ -11,6 +11,7 @@ const mockGetProjectActions = jest.fn();
 const mockGetFilenamesInCurrentDir = jest.fn();
 const mockOpenFile = jest.fn();
 const mockSetUrlWithSearch = jest.fn();
+const mockOpenHostDrawer = jest.fn();
 let mockIsAdmin = false;
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -34,6 +35,10 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 
 jest.mock("@cocalc/frontend/history", () => ({
   set_url_with_search: (...args: any[]) => mockSetUrlWithSearch(...args),
+}));
+
+jest.mock("@cocalc/frontend/hosts/open-host-drawer", () => ({
+  openHostDrawer: (...args: any[]) => mockOpenHostDrawer(...args),
 }));
 
 import {
@@ -106,6 +111,27 @@ describe("project docs actions", () => {
     expect(result).toMatchObject({
       action_id: "hosts.open",
       opened: true,
+      tab: "hosts",
+    });
+  });
+
+  it("opens a project host drawer on the access tab", async () => {
+    const result = await revealDocsAction({
+      actionId: "hosts.access.open",
+      parameters: { hostId: "host-1" },
+      projectId: "project-1",
+    });
+
+    expect(mockOpenHostDrawer).toHaveBeenCalledWith({
+      hostId: "host-1",
+      tab: "access",
+    });
+    expect(result).toMatchObject({
+      action_id: "hosts.access.open",
+      drawer_tab: "access",
+      host_id: "host-1",
+      opened: true,
+      project_id: "project-1",
       tab: "hosts",
     });
   });
