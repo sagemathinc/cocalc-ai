@@ -708,7 +708,7 @@ function useProjectHostParameterOptions(enabled: boolean): {
     setLoading(true);
     setError(undefined);
     webapp_client.conat_client.hub.hosts
-      .listHosts({})
+      .listHosts({ show_all: true })
       .then((hosts: Host[]) => {
         if (canceled) return;
         setOptions(hosts.map(formatProjectHostOption));
