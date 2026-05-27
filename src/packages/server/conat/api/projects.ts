@@ -22,6 +22,7 @@ import {
   respondEmailProjectInvite as respondEmailProjectInviteLocal,
   removeCollaborator as removeCollaboratorLocal,
   respondCollabInvite as respondCollabInviteLocal,
+  setProjectUserRole as setProjectUserRoleLocal,
 } from "@cocalc/server/projects/collaborators";
 import {
   leaveOrDeleteProjectsForAccount,
@@ -1751,6 +1752,22 @@ export async function removeCollaborator({
   await getInterBayBridge()
     .projectCollabInvite(ownership.bay_id)
     .removeCollaborator({ account_id: account_id!, opts });
+}
+
+export async function setProjectUserRole({
+  account_id,
+  opts,
+}: {
+  account_id?: string;
+  opts: Parameters<typeof setProjectUserRoleLocal>[0]["opts"];
+}) {
+  const ownership = await resolveProjectBay(opts.project_id);
+  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
+    return await setProjectUserRoleLocal({ account_id: account_id!, opts });
+  }
+  await getInterBayBridge()
+    .projectCollabInvite(ownership.bay_id)
+    .setProjectUserRole({ account_id: account_id!, opts });
 }
 
 function isCollabInviteNotFound(err: unknown, invite_id: string): boolean {

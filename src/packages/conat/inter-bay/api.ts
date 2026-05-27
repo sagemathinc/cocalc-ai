@@ -87,6 +87,10 @@ import type {
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
 import type { MoneyValue } from "@cocalc/util/money";
+import type {
+  ProjectUserRole,
+  ProjectViewerReadPolicy,
+} from "@cocalc/util/project-access";
 import type { RootfsImageManifest } from "@cocalc/util/rootfs-images";
 
 export interface BayOwnership {
@@ -1380,6 +1384,16 @@ export interface ProjectRemoveCollaboratorRequest {
   };
 }
 
+export interface ProjectSetUserRoleRequest {
+  account_id: string;
+  opts: {
+    project_id: string;
+    target_account_id: string;
+    role: Exclude<ProjectUserRole, "owner">;
+    read_policy?: ProjectViewerReadPolicy | null;
+  };
+}
+
 export interface ProjectLeaveOrDeleteProjectsRequest {
   account_id: string;
   project_ids: string[];
@@ -1620,6 +1634,7 @@ export type ProjectCollabInviteMethod =
   | "list"
   | "usage"
   | "remove-collaborator"
+  | "set-project-user-role"
   | "leave-or-delete-projects"
   | "set-projects-hidden"
   | "set-manage-users-owner-only"
@@ -2582,6 +2597,7 @@ export interface InterBayProjectCollabInviteApi {
     opts: ProjectCollabInviteListRequest,
   ) => Promise<ProjectCollabInviteWire[]>;
   removeCollaborator: (opts: ProjectRemoveCollaboratorRequest) => Promise<void>;
+  setProjectUserRole: (opts: ProjectSetUserRoleRequest) => Promise<void>;
   getUsage: (
     opts: ProjectCollaboratorInviteUsageRequest,
   ) => Promise<ProjectCollaboratorInviteUsageWire>;
@@ -5729,6 +5745,15 @@ export function createInterBayProjectCollabInviteClient({
       method: "remove-collaborator",
     }),
   });
+  const setProjectUserRoleClient = createServiceClient<
+    Pick<InterBayProjectCollabInviteApi, "setProjectUserRole">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({
+      dest_bay,
+      method: "set-project-user-role",
+    }),
+  });
   const usageClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "getUsage">
   >({
@@ -5777,6 +5802,8 @@ export function createInterBayProjectCollabInviteClient({
     list: async (opts) => await listClient.list(opts),
     removeCollaborator: async (opts) =>
       await removeCollaboratorClient.removeCollaborator(opts),
+    setProjectUserRole: async (opts) =>
+      await setProjectUserRoleClient.setProjectUserRole(opts),
     getUsage: async (opts) => await usageClient.getUsage(opts),
     leaveOrDeleteProjects: async (opts) =>
       await leaveOrDeleteProjectsClient.leaveOrDeleteProjects(opts),
@@ -5958,6 +5985,19 @@ export function createInterBayProjectCollabInviteHandlers({
       }),
       impl: {
         removeCollaborator: async (opts) => await impl.removeCollaborator(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayProjectCollabInviteApi, "setProjectUserRole">
+    >({
+      ...options,
+      service: "inter-bay-project-collab-invite",
+      subject: projectCollabInviteSubject({
+        dest_bay: bay_id,
+        method: "set-project-user-role",
+      }),
+      impl: {
+        setProjectUserRole: async (opts) => await impl.setProjectUserRole(opts),
       },
     }),
     createServiceHandler<

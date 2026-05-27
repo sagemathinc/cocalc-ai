@@ -2260,6 +2260,40 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
   }
 
+  public async set_project_user_role(
+    project_id: string,
+    target_account_id: string,
+    role: "collaborator" | "viewer",
+  ): Promise<void> {
+    try {
+      await webapp_client.project_collaborators.set_role({
+        project_id,
+        target_account_id,
+        role,
+      });
+      const project_map = store.get("project_map");
+      if (project_map?.has(project_id)) {
+        const userPath = [project_id, "users", target_account_id];
+        const currentUser =
+          (project_map.getIn(userPath) as Map<string, any> | undefined) ??
+          Map<string, any>();
+        const nextUser =
+          role === "viewer"
+            ? currentUser.set("group", role)
+            : currentUser.set("group", role).delete("read_policy");
+        this.setState({
+          project_map: project_map.setIn(userPath, nextUser),
+        } as ProjectsState);
+      }
+    } catch (err) {
+      alert_message({
+        type: "error",
+        message: `Error changing project user role -- ${err}`,
+      });
+      throw err;
+    }
+  }
+
   // this is for inviting existing users, the email is only known by the back-end
   public async invite_collaborator(
     project_id: string,

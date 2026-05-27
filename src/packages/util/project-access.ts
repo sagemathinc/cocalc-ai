@@ -44,6 +44,19 @@ export interface ProjectAccess {
   capabilities: ProjectAccessCapabilities;
 }
 
+export const DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY: ProjectViewerReadPolicy =
+  {
+    rules: [
+      { action: "include", path: "." },
+      { action: "exclude", path: ".snapshots" },
+      { action: "exclude", path: ".snapshots/**" },
+      { action: "exclude", path: ".ssh" },
+      { action: "exclude", path: ".ssh/**" },
+      { action: "exclude", path: ".local/share/cocalc" },
+      { action: "exclude", path: ".local/share/cocalc/**" },
+    ],
+  };
+
 const NO_CAPABILITIES: ProjectAccessCapabilities = {
   readProjectMetadata: false,
   readProjectFiles: false,

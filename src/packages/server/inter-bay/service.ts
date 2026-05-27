@@ -306,6 +306,7 @@ import {
   removeCollaborator,
   respondCollabInviteCanonical,
   respondEmailProjectInvite,
+  setProjectUserRole,
 } from "@cocalc/server/projects/collaborators";
 import { getProjectCollaboratorInviteUsage } from "@cocalc/server/membership/project-limits";
 import { leaveOrDeleteProjectsForAccount } from "@cocalc/server/projects/ownership";
@@ -1264,6 +1265,9 @@ async function startProjectCollabInviteService(): Promise<void> {
       ),
     removeCollaborator: async (opts) => {
       await removeCollaborator(opts);
+    },
+    setProjectUserRole: async (opts) => {
+      await setProjectUserRole(opts);
     },
     getUsage: async (opts) => {
       await assertLocalProjectCollaborator(opts);
