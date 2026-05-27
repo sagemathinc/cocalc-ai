@@ -728,6 +728,10 @@ async function addUserToProjectForAcceptedInvite({
     `,
     [project_id, account_id, role, JSON.stringify(rolePatch)],
   );
+  await appendProjectOutboxEventForProject({
+    event_type: "project.membership_changed",
+    project_id,
+  });
 }
 
 export async function removeCollaborator({

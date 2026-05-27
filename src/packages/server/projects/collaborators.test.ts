@@ -966,6 +966,12 @@ describe("project collaborators local bay access", () => {
       expect.stringContaining("jsonb_set"),
       expect.arrayContaining([PROJECT_ID, ACCOUNT_ID, "viewer"]),
     );
+    const { appendProjectOutboxEventForProject } =
+      await import("@cocalc/database/postgres/project-events-outbox");
+    expect(appendProjectOutboxEventForProject).toHaveBeenCalledWith({
+      event_type: "project.membership_changed",
+      project_id: PROJECT_ID,
+    });
   });
 
   it("blocks untrusted accounts from accepting projected invites", async () => {

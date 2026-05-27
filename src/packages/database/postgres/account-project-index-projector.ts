@@ -16,7 +16,7 @@ import type {
 } from "./project-events-outbox";
 
 const DEFAULT_SINGLE_BAY_ID = "bay-0";
-const VISIBLE_GROUPS = new Set(["owner", "collaborator"]);
+const VISIBLE_GROUPS = new Set(["owner", "collaborator", "viewer"]);
 
 export interface DrainAccountProjectIndexProjectionResult {
   bay_id: string;

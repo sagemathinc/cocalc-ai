@@ -2030,7 +2030,7 @@ export function _user_get_query_where(
           return this.user_is_in_project_group({
             account_id,
             project_id: user_query.project_id,
-            groups: ["owner", "collaborator"],
+            groups: ["owner", "collaborator", "viewer"],
             cb: (err, in_group) => {
               if (err) {
                 return cb(err);

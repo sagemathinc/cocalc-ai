@@ -337,6 +337,60 @@ describe("account_project_index projector", () => {
     ]);
   });
 
+  it("projects local-home viewers into the project list", async () => {
+    await seedBaseRows();
+    await getPool().query(
+      `UPDATE projects
+          SET users = $2::JSONB
+        WHERE project_id = $1`,
+      [
+        PROJECT_ID,
+        JSON.stringify({
+          [ACCOUNT_LOCAL]: { group: "viewer" },
+        }),
+      ],
+    );
+    await appendProjectOutboxEventForProject({
+      event_type: "project.membership_changed",
+      project_id: PROJECT_ID,
+      default_bay_id: LOCAL_BAY_ID,
+    });
+
+    await expect(
+      drainAccountProjectIndexProjection({
+        bay_id: LOCAL_BAY_ID,
+        limit: 10,
+        dry_run: false,
+      }),
+    ).resolves.toMatchObject({
+      applied_events: 1,
+      inserted_rows: 1,
+      feed_events: [
+        {
+          type: "project.upsert",
+          account_id: ACCOUNT_LOCAL,
+          project: expect.objectContaining({
+            users: expect.objectContaining({
+              [ACCOUNT_LOCAL]: expect.objectContaining({ group: "viewer" }),
+            }),
+          }),
+        },
+      ],
+    });
+
+    await expect(
+      getPool().query(
+        `SELECT users_summary -> $2::TEXT ->> 'group' AS role
+           FROM account_project_index
+          WHERE project_id = $1
+            AND account_id = $2`,
+        [PROJECT_ID, ACCOUNT_LOCAL],
+      ),
+    ).resolves.toMatchObject({
+      rows: [{ role: "viewer" }],
+    });
+  });
+
   it("emits project.remove feed events when local membership is removed", async () => {
     await seedBaseRows();
     await appendProjectOutboxEventForProject({

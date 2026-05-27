@@ -143,7 +143,6 @@ export const AddCollaborators: React.FC<Props> = ({
 
   // currently carrying out a search
   const [state, set_state] = useState<State>("input");
-  const [focused, set_focused] = useState<boolean>(false);
   const [select_open, set_select_open] = useState<boolean>(false);
   // display an error in case something went wrong doing a search
   const [err, set_err] = useState<string>("");
@@ -666,6 +665,8 @@ export const AddCollaborators: React.FC<Props> = ({
             onChange={(e) => set_email_to((e.target as any).value)}
             autoFocus
           />
+          {render_access_role()}
+          {render_invite_slots()}
           {render_customize_message()}
           <div style={{ display: "flex", marginTop: "10px" }}>
             <Button
@@ -698,34 +699,6 @@ export const AddCollaborators: React.FC<Props> = ({
             </Button>
           </div>
         </Well>
-      </div>
-    );
-  }
-
-  function render_search(): React.JSX.Element | undefined {
-    if (state == "searched") {
-      return;
-    }
-    return (
-      <div
-        style={{
-          alignItems: "flex-start",
-          color: COLORS.GRAY_M,
-          display: "flex",
-          gap: 8,
-          marginBottom: 10,
-        }}
-      >
-        <Icon
-          name="info-circle"
-          style={{ color: COLORS.ANTD_LINK_BLUE, marginTop: 2 }}
-        />
-        <span>
-          Collaborators get full project access. For teaching, add students
-          through the course instead. Viewers get read-only file access and
-          cannot edit files, start runtimes, use terminals, SSH, or manage the
-          project.
-        </span>
       </div>
     );
   }
@@ -834,16 +807,8 @@ export const AddCollaborators: React.FC<Props> = ({
     }
     const showSelector = state === ("searched" as State) && users.length > 0;
 
-    function render_search_help(): React.JSX.Element | undefined {
-      if (focused && results.length === 0) {
-        return <Alert type="info" title={"Press enter to search..."} />;
-      }
-    }
     const hasSearchContentBelow =
-      showSelector ||
-      (focused && results.length === 0) ||
-      selected_entries.length > 0 ||
-      state == "searched";
+      showSelector || selected_entries.length > 0 || state == "searched";
 
     return (
       <div
@@ -855,41 +820,25 @@ export const AddCollaborators: React.FC<Props> = ({
           padding: 12,
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            marginBottom: hasSearchContentBelow ? 10 : 0,
+        <Input.Search
+          autoFocus={autoFocus}
+          placeholder="Search by name or email address..."
+          value={search}
+          enterButton="Search"
+          loading={state === ("searching" as State)}
+          style={{ marginBottom: hasSearchContentBelow ? 10 : 0 }}
+          onChange={(e) => {
+            const value = (e.target as any).value ?? "";
+            search_ref.current = value;
+            set_search(value);
           }}
-        >
-          <Input
-            autoFocus={autoFocus}
-            placeholder="Search by name or email address..."
-            disabled={invite_slots_exhausted}
-            value={search}
-            onChange={(e) => {
-              const value = (e.target as any).value ?? "";
-              search_ref.current = value;
-              set_search(value);
-            }}
-            onPressEnter={() => {
-              if (state !== ("searching" as State)) {
-                void do_search(search_ref.current);
-              }
-            }}
-          />
-          <Button
-            onClick={() => void do_search(search_ref.current)}
-            disabled={
-              invite_slots_exhausted ||
-              state === ("searching" as State) ||
-              !search.trim()
+          onSearch={(value) => {
+            const next = value.trim();
+            if (next && state !== ("searching" as State)) {
+              void do_search(next);
             }
-            type={search.trim() ? "primary" : "default"}
-          >
-            Search
-          </Button>
-        </div>
+          }}
+        />
         {showSelector && (
           <Select
             ref={select_ref}
@@ -920,11 +869,9 @@ export const AddCollaborators: React.FC<Props> = ({
             optionLabelProp="tag"
             notFoundContent={null}
             onFocus={() => {
-              set_focused(true);
               set_select_open(true);
             }}
             onBlur={() => {
-              set_focused(false);
               set_select_open(false);
             }}
             onDropdownVisibleChange={(open) => {
@@ -934,8 +881,13 @@ export const AddCollaborators: React.FC<Props> = ({
             {render_options(users)}
           </Select>
         )}
-        {render_search_help()}
-        {selected_entries.length > 0 && render_customize_message()}
+        {selected_entries.length > 0 && (
+          <>
+            {render_access_role()}
+            {render_invite_slots()}
+            {render_customize_message()}
+          </>
+        )}
         {state == "searched" && render_select_list_button()}
       </div>
     );
@@ -1196,9 +1148,6 @@ export const AddCollaborators: React.FC<Props> = ({
     >
       {err && <ErrorDisplay error={err} onClose={() => set_err("")} />}
       {state == "searching" && <Loading />}
-      {render_access_role()}
-      {render_invite_slots()}
-      {render_search()}
       {render_select_list()}
       {render_send_email()}
       {render_invite_result()}
