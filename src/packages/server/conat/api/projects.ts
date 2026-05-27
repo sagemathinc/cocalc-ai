@@ -2201,6 +2201,7 @@ export async function start({
   restore_backup_id,
   autostart,
   managed_egress_override,
+  managed_egress_override_auth,
   wait = true,
 }: {
   account_id: string;
@@ -2212,6 +2213,7 @@ export async function start({
   restore_backup_id?: string;
   autostart?: boolean;
   managed_egress_override?: ManagedProjectEgressOverride;
+  managed_egress_override_auth?: typeof PROJECT_DANGEROUS_INTERNAL_AUTH;
   wait?: boolean;
 }): Promise<{
   op_id: string;
@@ -2227,6 +2229,7 @@ export async function start({
     restore_backup_id,
     autostart,
     managed_egress_override,
+    managed_egress_override_auth,
     wait,
   });
 }
@@ -2261,6 +2264,7 @@ async function runProjectStartLikeAction({
   restore_backup_id,
   autostart,
   managed_egress_override,
+  managed_egress_override_auth,
   wait = true,
 }: {
   kind: "start" | "restart";
@@ -2269,6 +2273,7 @@ async function runProjectStartLikeAction({
   restore_backup_id?: string;
   autostart?: boolean;
   managed_egress_override?: ManagedProjectEgressOverride;
+  managed_egress_override_auth?: typeof PROJECT_DANGEROUS_INTERNAL_AUTH;
   wait?: boolean;
 }): Promise<{
   op_id: string;
@@ -2279,6 +2284,13 @@ async function runProjectStartLikeAction({
 }> {
   await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
   await assertProjectNotHardDeleting({ project_id });
+  if (
+    managed_egress_override != null &&
+    managed_egress_override_auth !== PROJECT_DANGEROUS_INTERNAL_AUTH &&
+    !(await isAdmin(account_id))
+  ) {
+    throw new Error("managed egress override requires admin authorization");
+  }
   try {
     const ownership = await resolveProjectBay(project_id);
     if (ownership == null) {
