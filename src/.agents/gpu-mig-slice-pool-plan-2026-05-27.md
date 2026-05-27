@@ -1,5 +1,7 @@
 # GPU MIG Slice Pool Plan, 2026-05-27
 
+**Not implemented: Not economically viable**
+
 ## Goal
 
 Treat a GPU project host as a pool of schedulable GPU slices rather than one
@@ -357,7 +359,7 @@ Steps:
 1. If project does not request GPU, start CPU-only.
 2. If host is not GPU-capable, either:
    - fail with clear `gpu_unavailable_on_host`, or
-   - re-place the project onto an eligible GPU host if placement is automatic.
+   - re-place the project onto an eligible GPU host if placement is automatic. (user: no -- placement is not automatic, and can be disruptive.)
 3. Resolve account entitlement:
    - allowed profile classes;
    - concurrent GPU project limit;

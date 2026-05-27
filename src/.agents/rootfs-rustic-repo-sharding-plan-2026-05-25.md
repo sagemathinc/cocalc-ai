@@ -504,7 +504,7 @@ when writing new artifacts rather than trying to continuously move old ones.
 2. Lineage key: `parent_release_id` is clear; catalog family/channel metadata may
    need a small explicit field if current metadata is not stable enough.
 3. Legacy support: because CoCalc-ai is not released, prefer rebuilding the one
-   serious dogfood RootFS over carrying permanent compatibility code.
+   serious dogfood RootFS over carrying permanent compatibility code.  (USER: all the matters is that might existing projects still work.  I.e., i need to be able to use the rootfs already on spot-utah so I can start this project, at for an hour -- I could then make a new rootfs, switch my project to that, and we get rid of backward compat.)
 4. Authority path: confirm whether RootFS catalog writes are already centralized
    enough or need an explicit inter-bay allocation RPC.
 5. Default page size: likely 50-100 rows for admin tables and 20-50 rows for
