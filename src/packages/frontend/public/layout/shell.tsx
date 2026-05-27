@@ -78,6 +78,10 @@ const PUBLIC_PAGE_CSS = `
     color: ${PUBLIC_COLORS.accent} !important;
   }
 
+  .cocalc-public-page .ant-row {
+    margin-inline: 0 !important;
+  }
+
   .cocalc-public-font-controls {
     position: fixed;
     right: 18px;

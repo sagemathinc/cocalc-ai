@@ -283,6 +283,26 @@ describe("PublicTopNav", () => {
     ).toHaveClass("ant-menu-item-selected");
   });
 
+  it("switches to the compact menu at 875px", async () => {
+    setViewportWidth(875);
+    await renderTopNav(<PublicTopNav />);
+
+    expect(screen.queryByRole("menu", { name: "Public pages" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Open navigation menu" }),
+    ).not.toBeNull();
+  });
+
+  it("uses the full menu above 875px", async () => {
+    setViewportWidth(876);
+    await renderTopNav(<PublicTopNav />);
+
+    expect(screen.getByRole("menu", { name: "Public pages" })).not.toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Open navigation menu" }),
+    ).toBeNull();
+  });
+
   it("ignores stale legacy policy visibility settings", async () => {
     await render(
       <PublicConfigProvider
