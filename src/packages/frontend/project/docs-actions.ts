@@ -650,10 +650,62 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
         tab: "access",
       }),
   },
+  "hosts.change-rules.open": {
+    id: "hosts.change-rules.open",
+    run: ({ parameters, projectId }) =>
+      revealHostsPage({
+        actionId: "hosts.change-rules.open",
+        hostId: parameters?.hostId,
+        projectId,
+      }),
+  },
+  "hosts.lifecycle.open": {
+    id: "hosts.lifecycle.open",
+    run: ({ parameters, projectId }) =>
+      revealHostsPage({
+        actionId: "hosts.lifecycle.open",
+        hostId: parameters?.hostId,
+        projectId,
+      }),
+  },
   "hosts.move.open": {
     id: "hosts.move.open",
-    run: ({ projectId }) =>
-      revealHostsPage({ actionId: "hosts.move.open", projectId }),
+    run: ({ parameters, projectId }) =>
+      revealHostsPage({
+        actionId: "hosts.move.open",
+        hostId: parameters?.hostId,
+        projectId,
+        tab: "projects",
+      }),
+  },
+  "hosts.reliability.open": {
+    id: "hosts.reliability.open",
+    run: ({ parameters, projectId }) =>
+      revealHostsPage({
+        actionId: "hosts.reliability.open",
+        hostId: parameters?.hostId,
+        projectId,
+        tab: "reliability",
+      }),
+  },
+  "hosts.runtime.open": {
+    id: "hosts.runtime.open",
+    run: ({ parameters, projectId }) =>
+      revealHostsPage({
+        actionId: "hosts.runtime.open",
+        hostId: parameters?.hostId,
+        projectId,
+        tab: "runtime",
+      }),
+  },
+  "hosts.spot-recovery.open": {
+    id: "hosts.spot-recovery.open",
+    run: ({ parameters, projectId }) =>
+      revealHostsPage({
+        actionId: "hosts.spot-recovery.open",
+        hostId: parameters?.hostId,
+        projectId,
+      }),
   },
   "settings.environment.secrets": {
     id: "settings.environment.secrets",

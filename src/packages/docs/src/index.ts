@@ -41,7 +41,12 @@ export type DocsActionId =
   | "admin.users.open"
   | "hosts.open"
   | "hosts.access.open"
+  | "hosts.change-rules.open"
+  | "hosts.lifecycle.open"
   | "hosts.move.open"
+  | "hosts.reliability.open"
+  | "hosts.runtime.open"
+  | "hosts.spot-recovery.open"
   | "settings.environment.secrets"
   | "project.terminal.open"
   | "project.jupyter.create"
@@ -73,6 +78,18 @@ function projectActionParameters(): DocsActionParameter[] {
       placeholder: "Select a project",
       required: true,
       type: "project",
+    },
+  ];
+}
+
+function projectHostActionParameters(): DocsActionParameter[] {
+  return [
+    {
+      label: "Project host",
+      name: "hostId",
+      placeholder: "Select a host",
+      required: true,
+      type: "project-host",
     },
   ];
 }
@@ -1292,6 +1309,284 @@ If automating a move, prefer explicit destination host ids. Do not rely on
 implicit placement unless the task is genuinely "pick an available host".
 Always mention the \`/tmp\`, snapshot, backup freshness, SSH, and region
 consequences before advising a user to move important work.
+`;
+
+const PROJECT_HOST_LIFECYCLE_BODY = String.raw`
+## Lifecycle states
+
+A project host has two related lifecycles:
+
+1. the CoCalc host record, access policy, billing policy, and project
+   placement metadata
+2. the provider resources that actually run projects, such as the VM, disk,
+   network identity, daemon processes, and runtime software
+
+**Start** provisions or starts the provider machine and then waits for
+bootstrap, software lifecycle, and daemon health to settle. **Stop** shuts down
+the machine while keeping the host record and recoverable provider state.
+**Restart** reboots the running machine. **Deprovision** removes provider
+resources. **Delete** removes the host record after deprovisioning, or before a
+provider machine was ever created.
+
+## Start, stop, and restart
+
+Use **Start** when the host is stopped or deprovisioned but should run
+projects again. Start can be blocked by billing enforcement, missing connector
+availability for self-hosted machines, active lifecycle work, or provider
+errors.
+
+Use **Stop** when you want to stop paying for active compute while keeping the
+host configuration. CoCalc may ask whether to back up projects first. During an
+active start or restart, **Emergency stop** can appear when the provider
+supports stopping the machine and the host is in a stoppable state.
+
+Use **Restart** for runtime drift, daemon problems, or settings that require a
+machine restart. Reboot is graceful when the provider supports it. Some
+providers also expose a hard reboot, which is more disruptive and should be a
+maintenance-window action.
+
+## Deprovision and delete
+
+Deprovisioning is destructive for provider resources. It removes the cloud
+machine and attached provider resources. It does not mean "hide from the UI" or
+"pause billing for a minute"; it is a lifecycle boundary. Use it when changing
+settings that require a fresh machine, retiring the host, or recovering from
+provider drift that cannot be reconciled safely.
+
+Deletion is the final cleanup. It is available after deprovisioning, or before
+provisioning created provider resources. Deleted hosts do not expose further
+destructive actions.
+
+## Maintenance operations
+
+The host action menu also includes **Backup projects**, **Drain**, and
+sometimes **Cancel backups**. Backup projects creates project backups for
+provisioned or running projects on the host. Drain is for removing active work
+from a host before maintenance. Cancel backups is only offered during the
+backup stage of a host operation.
+
+## Agent notes
+
+Before running lifecycle commands, check active host operations, project
+backups, assigned projects, billing enforcement, and provider capabilities.
+Prefer deprovision over delete when provider resources still exist. Do not
+advise deprovisioning a host with important unbacked work.
+`;
+
+const PROJECT_HOST_SPOT_RECOVERY_BODY = String.raw`
+## Why spot recovery exists
+
+Spot hosts can be much cheaper than standard on-demand hosts, but the cloud
+provider can reclaim them at any time. CoCalc's spot recovery strategy controls
+what happens after that interruption: retry spot, optionally fall back to a
+standard VM, and later probe whether spot capacity is available again.
+
+Spot recovery is active only when the host uses **spot** pricing and
+**Interruption restore** is set to **Restore immediately**. The **Spot Recovery
+Strategy** modal shows the recovery states as a diagram, but the diagram is
+read-only; the settings below it control behavior.
+
+## Retry spot first
+
+After a spot interruption, CoCalc first tries to restore the same kind of spot
+capacity. The key settings are:
+
+- **Spot retry window (minutes)**: how long CoCalc keeps retrying spot before
+  moving on.
+- **Retry backoff (seconds)**: the base delay between spot restore attempts.
+  The worker adds exponential backoff up to a cap.
+- **Max restore attempts before fallback**: a count-based limit. Set it to
+  \`0\` to rely only on the retry window.
+
+Use a short window when user-facing uptime matters. Use a longer window when
+cost matters more than immediate recovery.
+
+## Standard fallback
+
+When **Allow standard fallback** is enabled, CoCalc can temporarily switch the
+host to a standard on-demand VM if spot recovery fails. The host remains
+configured as a spot host, but it is running as a standard fallback. The UI
+shows this as **standard fallback** and explains the current standard rate and
+the spot rate when restored.
+
+The fallback settings are:
+
+- **Minimum standard runtime (minutes)**: how long the standard fallback should
+  run before CoCalc starts trying to return to spot.
+- **Spot probe interval (minutes)**: how often to check the same zone and
+  machine type for spot availability.
+- **Require successful probe before returning to spot**: when enabled, CoCalc
+  only switches back after a matching probe VM starts successfully.
+
+## Returning to spot
+
+While a host is on standard fallback, CoCalc probes for spot availability.
+After a successful probe and the minimum runtime window, it can move back to
+spot. Returning to spot is itself disruptive because the underlying VM changes,
+so schedule sensitive workloads accordingly.
+
+## Agent notes
+
+When explaining spot recovery, distinguish three states: desired pricing
+(spot), effective pricing (possibly standard fallback), and recovery phase.
+Use spot for cost-sensitive workloads that tolerate interruption. Use standard
+hosts for workloads that must not be interrupted by cloud spot reclamation.
+`;
+
+const PROJECT_HOST_CHANGE_RULES_BODY = String.raw`
+## The rule of thumb
+
+Some host settings are policy and can change immediately. Other settings change
+the underlying provider machine and need a restart or full deprovision. Treat
+host edits as infrastructure changes, not normal project settings.
+
+## Changes that can happen while running
+
+**Disk enlarge** can be done any time without reboot for GCP and Nebius hosts.
+This is an online capacity increase. It should still be treated carefully:
+watch the storage tab and keep backups current, but users do not need to stop
+the host just to grow disk.
+
+Access policy, per-project RAM cap, shared-pool tier, and many metadata or
+billing policy settings are also host record changes. They do not by
+themselves recreate the provider machine.
+
+## Changes that require restart
+
+Switching **spot** and **standard** pricing can be requested any time, but the
+effective machine changes only after restart. Instance type changes are the
+same: they can be edited while the host exists, but they require restart before
+the running machine matches the new shape.
+
+Use the UI's restart/reprovision warnings as the source of truth for whether a
+host is currently running old infrastructure.
+
+## Changes that require deprovision
+
+Moving a host between region or zone requires deprovision. Region and zone are
+provider placement decisions; CoCalc cannot mutate a running VM into another
+region. Back up projects, drain or move workloads, deprovision, then provision
+again in the new location.
+
+## Practical checklist
+
+1. Check whether projects are running on the host.
+2. Check whether the change is disk, pricing, instance shape, region, or zone.
+3. Back up projects before restart or deprovision work.
+4. Warn users about interruption when the change requires restart.
+5. Warn users about provider-resource deletion when the change requires
+   deprovision.
+
+## Agent notes
+
+For GCP and Nebius, disk enlarge is online. For spot/standard and instance type
+changes, expect restart. For region/zone moves, expect deprovision. Do not
+promise a no-downtime machine shape or location change unless provider-specific
+code explicitly supports it.
+`;
+
+const PROJECT_HOST_RELIABILITY_BODY = String.raw`
+## What the reliability view measures
+
+The host **Reliability** tab summarizes recent host availability. It is not a
+generic cloud SLA and it is not a project success metric. It answers: when this
+host was intended to be online, how often was it actually reporting online?
+
+The modal and tab show:
+
+- current state, such as online, planned downtime, or recovering
+- current uptime
+- window availability over the selected lookback period
+- reliability over intended-online periods
+- unplanned outage count
+- unplanned exposure time
+- planned downtime, when present
+
+## Reliability versus availability
+
+**Reliability** measures uptime only during periods when the host was intended
+to be online. Planned downtime is excluded from the reliability denominator.
+
+**Availability** is wall-clock uptime over the whole window. A host that was
+intentionally stopped for most of the month can have low availability but good
+reliability.
+
+## Reading the day grid
+
+The small day squares summarize the recent window. Green days were reporting
+online. Yellow or red indicates unplanned exposure. Gray indicates planned
+downtime. Hovering a day shows the day's details.
+
+If the host is currently unavailable, the top alert distinguishes planned
+unavailability from unplanned or recovering state.
+
+## Admin annotations
+
+Admins can annotate recent non-online events. Use this to distinguish planned
+maintenance, provider incidents, testing, billing holds, or known user-driven
+stops. Public notes should be written carefully because they can be shown to
+users.
+
+## Agent notes
+
+Use reliability when deciding whether a host is suitable for long-running
+workloads. If a user reports intermittent failures, compare reliability,
+current state, host logs, active operations, spot recovery state, and project
+events before blaming a notebook or terminal.
+`;
+
+const PROJECT_HOST_SOFTWARE_LIFECYCLE_BODY = String.raw`
+## What the runtime tab is for
+
+The host **Runtime** tab explains what software the host wants to run, what is
+actually installed, and what managed daemons are currently doing. It combines
+cluster defaults, host-specific overrides, host telemetry, reconcile state, and
+daemon rollout state.
+
+There are two related surfaces:
+
+- **Runtime software**: versions for project-host, project bundle, and tools.
+- **Managed daemon components**: local daemons such as project-host services
+  that can be restarted, reconciled, rolled forward, or rolled back.
+
+## Bootstrap and software lifecycle
+
+Bootstrap prepares the host. Software lifecycle then keeps the host aligned
+with desired state. The lifecycle reports summary status, drift count, last
+reconcile result, active reconcile work, and errors.
+
+Drift means the host's observed state does not match desired state. It may be
+normal during an upgrade or after changing versions, but persistent drift means
+the host needs reconcile or investigation.
+
+## Reconcile and upgrade
+
+**Reconcile** asks the host to repair or align installed software and daemon
+state with the desired configuration. It is the first action to try when the
+host reports drift but the desired versions are already correct.
+
+**Upgrade** changes desired versions and then queues lifecycle work. Newly
+started projects use the upgraded project bundle and tools. Project-host daemon
+upgrades may briefly reconnect browser and proxy traffic, so they should be
+scheduled with care.
+
+## Daemon lifecycle
+
+Managed daemons have desired versions, installed versions, running versions,
+health, rollout phase, and sometimes rollback hints. A daemon can be pinned by
+a host-specific override or inherit the cluster default.
+
+If a daemon is disruptive, prefer maintenance windows. If a desired version is
+not installed yet, setting it queues reconcile work. Refresh the runtime tab to
+watch rollout, health, rollback, and repair state.
+
+## Agent notes
+
+For deep inspection, use host runtime and deployment commands in addition to
+the browser tab. Look for version drift, failed reconcile, daemon health,
+rollout phase, and host-specific overrides. Do not treat project bundle,
+project-host daemon, and tools as the same artifact; they affect different
+parts of the runtime stack.
 `;
 
 const PROJECT_FILES_BODY = String.raw`
@@ -2760,15 +3055,7 @@ export const DOCS_ENTRIES: DocsEntry[] = [
         executable: true,
         id: "hosts.access.open",
         label: "Open host access",
-        parameters: [
-          {
-            label: "Project host",
-            name: "hostId",
-            placeholder: "Select a host",
-            required: true,
-            type: "project-host",
-          },
-        ],
+        parameters: projectHostActionParameters(),
       },
     ],
     audiences: ["agents", "instructors", "researchers", "teams"],
@@ -2789,10 +3076,11 @@ export const DOCS_ENTRIES: DocsEntry[] = [
   {
     actions: [
       {
-        description: "Open the top-level Project Hosts page.",
+        description: "Open a project host drawer on the Projects tab.",
         executable: true,
         id: "hosts.move.open",
-        label: "Open project hosts",
+        label: "Open host projects",
+        parameters: projectHostActionParameters(),
       },
     ],
     audiences: ["agents", "instructors", "researchers", "teams"],
@@ -2809,6 +3097,131 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     summary:
       "Move projects between hosts while accounting for backups, snapshots, region changes, and SSH.",
     title: "Move projects between hosts",
+  },
+  {
+    actions: [
+      {
+        description: "Open a project host drawer.",
+        executable: true,
+        id: "hosts.lifecycle.open",
+        label: "Open host lifecycle",
+        parameters: projectHostActionParameters(),
+      },
+    ],
+    audiences: ["agents", "instructors", "researchers", "teams"],
+    body: PROJECT_HOST_LIFECYCLE_BODY.trim(),
+    category: "Project hosts",
+    id: "hosts.lifecycle",
+    image: docsIcon(
+      "/public/docs/project-hosts-lifecycle-6d603bd0.webp",
+      "A project host with start stop restart deprovision and delete controls",
+    ),
+    lastReviewed: "2026-05-27",
+    slug: "hosts/lifecycle",
+    status: "ready",
+    summary:
+      "Understand start, stop, restart, drain, deprovision, and delete actions for project hosts.",
+    title: "Project host lifecycle actions",
+  },
+  {
+    actions: [
+      {
+        description: "Open a project host drawer.",
+        executable: true,
+        id: "hosts.spot-recovery.open",
+        label: "Open host details",
+        parameters: projectHostActionParameters(),
+      },
+    ],
+    audiences: ["agents", "instructors", "researchers", "teams"],
+    body: PROJECT_HOST_SPOT_RECOVERY_BODY.trim(),
+    category: "Project hosts",
+    id: "hosts.spot-recovery",
+    image: docsIcon(
+      "/public/docs/project-hosts-spot-recovery-75af618c.webp",
+      "A spot host recovering through retries and standard fallback",
+    ),
+    lastReviewed: "2026-05-27",
+    slug: "hosts/spot-recovery",
+    status: "ready",
+    summary:
+      "Explain spot retry windows, standard fallback, probes, and returning from fallback to spot.",
+    title: "Spot recovery strategy for project hosts",
+  },
+  {
+    actions: [
+      {
+        description: "Open a project host drawer.",
+        executable: true,
+        id: "hosts.change-rules.open",
+        label: "Open host details",
+        parameters: projectHostActionParameters(),
+      },
+    ],
+    audiences: ["agents", "instructors", "researchers", "teams"],
+    body: PROJECT_HOST_CHANGE_RULES_BODY.trim(),
+    category: "Project hosts",
+    id: "hosts.change-rules",
+    image: docsIcon(
+      "/public/docs/project-hosts-change-rules-40b02147.webp",
+      "Project host settings grouped by online change restart and deprovision",
+    ),
+    lastReviewed: "2026-05-27",
+    slug: "hosts/change-rules",
+    status: "ready",
+    summary:
+      "Know which host edits are online, which require restart, and which require deprovision.",
+    title: "What can change on a project host and when",
+  },
+  {
+    actions: [
+      {
+        description: "Open a project host drawer on the Reliability tab.",
+        executable: true,
+        id: "hosts.reliability.open",
+        label: "Open reliability",
+        parameters: projectHostActionParameters(),
+      },
+    ],
+    audiences: ["agents", "instructors", "researchers", "teams"],
+    body: PROJECT_HOST_RELIABILITY_BODY.trim(),
+    category: "Project hosts",
+    id: "hosts.reliability",
+    image: docsIcon(
+      "/public/docs/project-hosts-reliability-e1f428a6.webp",
+      "A project host with a reliability gauge and recent availability bars",
+    ),
+    lastReviewed: "2026-05-27",
+    slug: "hosts/reliability",
+    status: "ready",
+    summary:
+      "Read host reliability, availability, outage exposure, planned downtime, and day-grid signals.",
+    title: "Understand project host reliability",
+  },
+  {
+    actions: [
+      {
+        description: "Open a project host drawer on the Runtime tab.",
+        executable: true,
+        id: "hosts.runtime.open",
+        label: "Open runtime",
+        parameters: projectHostActionParameters(),
+      },
+    ],
+    audiences: ["agents", "instructors", "researchers", "teams"],
+    body: PROJECT_HOST_SOFTWARE_LIFECYCLE_BODY.trim(),
+    category: "Project hosts",
+    id: "hosts.software-lifecycle",
+    image: docsIcon(
+      "/public/docs/project-hosts-software-lifecycle-29c58052.webp",
+      "A project host with software packages daemon health and reconcile arrows",
+    ),
+    lastReviewed: "2026-05-27",
+    slug: "hosts/software-lifecycle",
+    status: "ready",
+    summary:
+      "Understand runtime software, managed daemons, reconcile, upgrades, drift, and rollbacks.",
+    title: "Project host software and daemon lifecycle",
   },
   {
     actions: [
