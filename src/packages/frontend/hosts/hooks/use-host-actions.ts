@@ -108,6 +108,9 @@ type HubClient = {
       ram_gb?: number;
       disk_gb?: number;
       disk_type?: "ssd" | "balanced" | "standard" | "ssd_io_m3";
+      shared_disk_gb?: number;
+      shared_disk_type?: "ssd" | "balanced" | "standard" | "ssd_io_m3";
+      delete_shared_scratch?: boolean;
       machine_type?: string;
       gpu_type?: string;
       gpu_count?: number;
@@ -396,6 +399,9 @@ export const useHostActions = ({
       ram_gb?: number;
       disk_gb?: number;
       disk_type?: "ssd" | "balanced" | "standard" | "ssd_io_m3";
+      shared_disk_gb?: number;
+      shared_disk_type?: "ssd" | "balanced" | "standard" | "ssd_io_m3";
+      delete_shared_scratch?: boolean;
       machine_type?: string;
       gpu_type?: string;
       gpu_count?: number;
@@ -422,8 +428,16 @@ export const useHostActions = ({
       if (isFreshAuthRequiredError(err)) {
         throw err;
       }
+      alert_message({
+        type: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
       console.error(err);
     }
+  };
+
+  const deleteSharedScratch = async (id: string) => {
+    await updateHostMachine(id, { delete_shared_scratch: true });
   };
 
   const forceDeprovision = async (id: string) => {
@@ -587,6 +601,7 @@ export const useHostActions = ({
     removeHost,
     renameHost,
     updateHostMachine,
+    deleteSharedScratch,
     forceDeprovision,
     removeSelfHostConnector,
     listHostAccess,

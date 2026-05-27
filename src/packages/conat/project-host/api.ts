@@ -346,6 +346,7 @@ export interface HostControlApi {
   ) => Promise<UpgradeSoftwareResponse>;
   growBtrfs: (opts: { disk_gb?: number }) => Promise<{ ok: boolean }>;
   growSharedScratch: (opts: { disk_gb?: number }) => Promise<{ ok: boolean }>;
+  unmountSharedScratch: (opts?: {}) => Promise<{ ok: boolean }>;
   getRuntimeLog: (opts: {
     lines?: number;
     source?: HostRuntimeLogSource;

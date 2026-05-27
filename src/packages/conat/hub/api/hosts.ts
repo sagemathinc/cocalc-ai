@@ -1764,6 +1764,7 @@ export interface Hosts {
     disk_type?: HostMachine["disk_type"];
     shared_disk_gb?: number;
     shared_disk_type?: HostMachine["shared_disk_type"];
+    delete_shared_scratch?: boolean;
     machine_type?: HostMachine["machine_type"];
     gpu_type?: HostMachine["gpu_type"];
     gpu_count?: number;

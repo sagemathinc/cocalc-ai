@@ -506,7 +506,7 @@ describe("host-create-draft", () => {
     expect(draft.disk).toBe(75);
   });
 
-  it("normalizes shared scratch size and default type for GCP", () => {
+  it("drops shared scratch for GCP until provider lifecycle support exists", () => {
     const draft = normalizeDraft(
       {
         provider: "gcp",
@@ -515,8 +515,8 @@ describe("host-create-draft", () => {
       providerContext("gcp"),
     ).draft;
 
-    expect(draft.shared_disk_gb).toBe(75);
-    expect(draft.shared_disk_type).toBe("balanced");
+    expect(draft.shared_disk_gb).toBeUndefined();
+    expect(draft.shared_disk_type).toBeUndefined();
   });
 
   it("normalizes Nebius shared scratch IO M3 disks to 93 GB increments", () => {

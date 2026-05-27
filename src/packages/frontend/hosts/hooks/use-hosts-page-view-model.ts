@@ -368,6 +368,7 @@ export const useHostsPageViewModel = () => {
     removeHost,
     renameHost,
     updateHostMachine,
+    deleteSharedScratch,
     forceDeprovision,
     removeSelfHostConnector,
     listHostAccess,
@@ -1748,6 +1749,11 @@ export const useHostsPageViewModel = () => {
     onClose: closeDetails,
     onEdit: openEdit,
     onDelete: deprovisionOrDeleteHost,
+    onDeleteSharedScratch: async (id: string) => {
+      await runFreshAuthAction(async () => {
+        await deleteSharedScratch(id);
+      });
+    },
     onUpgrade: canMaintainSelectedHost ? upgradeHostSoftware : undefined,
     onUpgradeAll: canMaintainSelectedHost ? upgradeAllHostSoftware : undefined,
     onReconcile: canMaintainSelectedHost ? reconcileHostSoftware : undefined,
@@ -1859,6 +1865,9 @@ export const useHostsPageViewModel = () => {
         ram_gb?: number;
         disk_gb?: number;
         disk_type?: string;
+        shared_disk_gb?: number;
+        shared_disk_type?: "ssd" | "balanced" | "standard" | "ssd_io_m3";
+        delete_shared_scratch?: boolean;
         machine_type?: string;
         gpu_type?: string;
         size?: string;
@@ -1966,6 +1975,12 @@ export const useHostsPageViewModel = () => {
             if (machine.disk_type) {
               update.disk_type = machine.disk_type;
             }
+            if (typeof machine.shared_disk_gb === "number") {
+              update.shared_disk_gb = machine.shared_disk_gb;
+            }
+            if (machine.shared_disk_type) {
+              update.shared_disk_type = machine.shared_disk_type;
+            }
             if (typeof metadata.cpu === "number") {
               update.cpu = metadata.cpu;
             }
@@ -2053,6 +2068,7 @@ export const useHostsPageViewModel = () => {
           const currentCpu = Number(editingHost.machine?.metadata?.cpu);
           const currentRam = Number(editingHost.machine?.metadata?.ram_gb);
           const currentDisk = Number(editingHost.machine?.disk_gb);
+          const currentSharedDisk = Number(editingHost.machine?.shared_disk_gb);
           const nextCpu = parsePositive(values.cpu);
           const nextRam = parsePositive(values.ram_gb);
           const nextDisk = parsePositive(values.disk_gb);
@@ -2062,6 +2078,16 @@ export const useHostsPageViewModel = () => {
           }
           if (nextDisk && nextDisk !== currentDisk) {
             update.disk_gb = nextDisk;
+          }
+          const nextSharedDisk = parsePositive(values.shared_disk_gb);
+          if (nextSharedDisk && nextSharedDisk !== currentSharedDisk) {
+            update.shared_disk_gb = nextSharedDisk;
+          }
+          if (
+            values.shared_disk_type &&
+            values.shared_disk_type !== editingHost.machine?.shared_disk_type
+          ) {
+            update.shared_disk_type = values.shared_disk_type;
           }
           if (isSelfHost) {
             const currentTarget =

@@ -1502,6 +1502,7 @@ export type HostControlMethod =
   | "rollout-managed-components"
   | "grow-btrfs"
   | "grow-shared-scratch"
+  | "unmount-shared-scratch"
   | "get-runtime-log"
   | "get-project-runtime-log"
   | "list-rootfs-images"
@@ -2243,6 +2244,10 @@ export interface InterBayHostControlApi {
     host_id: string;
     grow: HostControlArg<"growSharedScratch">;
   }) => Promise<{ ok: boolean }>;
+  unmountSharedScratch: (opts: {
+    host_id: string;
+    unmount: HostControlArg<"unmountSharedScratch">;
+  }) => Promise<{ ok: boolean }>;
   getRuntimeLog: (opts: {
     host_id: string;
     get: HostControlArg<"getRuntimeLog">;
@@ -2715,6 +2720,7 @@ const HOST_CONTROL_METHOD_SPECS = [
   { name: "rolloutManagedComponents", method: "rollout-managed-components" },
   { name: "growBtrfs", method: "grow-btrfs" },
   { name: "growSharedScratch", method: "grow-shared-scratch" },
+  { name: "unmountSharedScratch", method: "unmount-shared-scratch" },
   { name: "getRuntimeLog", method: "get-runtime-log" },
   { name: "getProjectRuntimeLog", method: "get-project-runtime-log" },
   { name: "listRootfsImages", method: "list-rootfs-images" },

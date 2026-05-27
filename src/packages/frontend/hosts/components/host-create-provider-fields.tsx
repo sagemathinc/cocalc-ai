@@ -31,6 +31,7 @@ import {
 } from "./host-options-select";
 import { SshTargetLabel } from "./ssh-target-help";
 import { useMachineTypeSortMode } from "../hooks/use-machine-type-sort-mode";
+import { HostSharedScratchFields } from "./host-shared-scratch-fields";
 
 const MIN_DISK_SIZE = MIN_PROJECT_HOST_DISK_GB;
 const MAX_DISK_SIZE = 10_000;
@@ -518,6 +519,12 @@ export const HostCreateProviderFields: React.FC<
               </Col>
             </Row>
           </Form.Item>
+          <HostSharedScratchFields
+            provider={selectedProvider}
+            catalog={provider.catalog}
+            draftManaged={draftManaged}
+            onDraftPatch={onDraftPatch}
+          />
         </div>
       )}
       {showSpotHint && (

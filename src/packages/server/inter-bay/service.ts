@@ -1837,6 +1837,10 @@ async function startHostControlService(): Promise<void> {
       await (
         await getHostClient(host_id, 10 * 60 * 1000)
       ).growSharedScratch(grow),
+    unmountSharedScratch: async ({ host_id, unmount }) =>
+      await (
+        await getHostClient(host_id, 10 * 60 * 1000)
+      ).unmountSharedScratch(unmount),
     getRuntimeLog: async ({ host_id, get }) =>
       await (await getHostClient(host_id, 30_000)).getRuntimeLog(get),
     getProjectRuntimeLog: async ({ host_id, get }) =>

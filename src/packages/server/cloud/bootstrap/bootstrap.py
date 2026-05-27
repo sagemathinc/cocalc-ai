@@ -2875,6 +2875,18 @@ PY' bash "$tree"
     resize2fs "$scratch_source"
     chmod 1777 "$scratch_mount"
     ;;
+  unmount-shared-scratch)
+    if [ "$#" -ne 0 ]; then
+      deny "unmount-shared-scratch-bad-args" "too-many-arguments"
+    fi
+    scratch_mount="/mnt/cocalc-scratch"
+    if mountpoint -q "$scratch_mount"; then
+      umount "$scratch_mount"
+    fi
+    if [ -f /etc/fstab ]; then
+      sed -i.bak '/# cocalc-scratch$/d' /etc/fstab
+    fi
+    ;;
   sync)
     exec /bin/sync "$@"
     ;;

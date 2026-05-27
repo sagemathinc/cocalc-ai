@@ -63,6 +63,7 @@ describe("project-host client routing", () => {
       rolloutManagedComponents: jest.fn(async () => ({ results: [] })),
       growBtrfs: jest.fn(async () => ({ ok: true })),
       growSharedScratch: jest.fn(async () => ({ ok: true })),
+      unmountSharedScratch: jest.fn(async () => ({ ok: true })),
       getRuntimeLog: jest.fn(async () => ({ source: "x", lines: 1, text: "" })),
       getProjectRuntimeLog: jest.fn(async () => ({
         project_id: "p1",

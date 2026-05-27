@@ -451,13 +451,13 @@ describe("hosts.createHost", () => {
     );
   });
 
-  it("normalizes shared scratch fields and includes them in create pricing", async () => {
+  it("normalizes Nebius shared scratch fields on create", async () => {
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql.startsWith("INSERT INTO project_hosts ")) {
         expect(params[4]?.machine).toMatchObject({
-          cloud: "gcp",
+          cloud: "nebius",
           shared_disk_gb: 75,
-          shared_disk_type: "balanced",
+          shared_disk_type: "ssd",
           metadata: {
             shared_disk_mount: "/mnt/cocalc-scratch",
             shared_disk_filesystem: "ext4",
@@ -474,17 +474,17 @@ describe("hosts.createHost", () => {
           rows: [
             {
               id: params[0],
-              name: "scratch-gcp",
-              region: "us-west1",
+              name: "scratch-nebius",
+              region: "us-central1",
               status: "starting",
               metadata: {
                 owner: ACCOUNT_ID,
-                size: "e2-standard-2",
+                size: "cpu-standard-v3",
                 gpu: false,
                 machine: {
-                  cloud: "gcp",
+                  cloud: "nebius",
                   shared_disk_gb: 75,
-                  shared_disk_type: "balanced",
+                  shared_disk_type: "ssd",
                 },
               },
               last_seen: null,
@@ -502,24 +502,17 @@ describe("hosts.createHost", () => {
     await createHost({
       account_id: ACCOUNT_ID,
       session_hash: "session-hash",
-      name: "scratch-gcp",
-      region: "us-west1",
-      size: "e2-standard-2",
+      name: "scratch-nebius",
+      region: "us-central1",
+      size: "cpu-standard-v3",
       machine: {
-        cloud: "gcp",
+        cloud: "nebius",
         disk_gb: 100,
-        disk_type: "balanced",
+        disk_type: "ssd",
         storage_mode: "persistent",
         shared_disk_gb: 50,
       },
     });
-
-    expect(estimateDedicatedHostRateUsdPerHourMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        shared_disk_gb: 75,
-        shared_disk_type: "balanced",
-      }),
-    );
   });
 
   it("rejects shared scratch for providers without support", async () => {

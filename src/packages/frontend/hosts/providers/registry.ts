@@ -808,6 +808,8 @@ const hostProviderSelectionForPricing = (host: Host): ProviderSelection => ({
   storage_mode: host.machine?.storage_mode ?? undefined,
   disk_type: host.machine?.disk_type ?? undefined,
   disk_gb: host.machine?.disk_gb ?? undefined,
+  shared_disk_type: host.machine?.shared_disk_type ?? undefined,
+  shared_disk_gb: host.machine?.shared_disk_gb ?? undefined,
 });
 
 const hostProviderSelectionForCurrentPricing = (

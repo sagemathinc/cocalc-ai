@@ -1720,6 +1720,94 @@ describe("hosts browser fresh auth gating", () => {
     );
   });
 
+  it("deletes shared scratch after unmounting it on a running host", async () => {
+    const deleteSharedScratchDisk = jest.fn(async () => undefined);
+    const unmountSharedScratch = jest.fn(async () => ({ ok: true }));
+    routedHostControlClientMock = jest.fn(async () => ({
+      unmountSharedScratch,
+    }));
+    getProviderContextMock = jest.fn(async () => ({
+      entry: {
+        provider: {
+          deleteSharedScratchDisk,
+        },
+      },
+      creds: { token: "provider-creds" },
+    }));
+    const initialMetadata = {
+      owner: ACCOUNT_ID,
+      runtime: {
+        instance_id: "nebius-instance",
+        metadata: {
+          diskIds: { data: "data-disk", scratch: "scratch-disk" },
+          shared_disk_id: "scratch-disk",
+          shared_disk_name: "host-name-scratch",
+          scratchDiskTypeCode: 3,
+        },
+      },
+      machine: {
+        cloud: "nebius",
+        disk_gb: 200,
+        shared_disk_gb: 100,
+        shared_disk_type: "ssd",
+        machine_type: "cpu-d3",
+        metadata: {
+          cpu: 4,
+          ram_gb: 16,
+          shared_disk_mount: "/mnt/cocalc-scratch",
+          shared_disk_filesystem: "ext4",
+        },
+      },
+      pricing_model: "on_demand",
+    };
+    let savedMetadata: any;
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "running",
+              metadata: savedMetadata ?? initialMetadata,
+            },
+          ],
+        };
+      }
+      if (sql.includes("UPDATE project_hosts SET region=$2")) {
+        savedMetadata = params?.[2];
+        return { rowCount: 1, rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { updateHostMachine } = await import("./hosts");
+    await updateHostMachine({
+      account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
+      id: HOST_ID,
+      delete_shared_scratch: true,
+    });
+
+    expect(unmountSharedScratch).toHaveBeenCalledWith({});
+    expect(deleteSharedScratchDisk).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instance_id: "nebius-instance",
+        metadata: expect.objectContaining({
+          shared_disk_id: "scratch-disk",
+        }),
+      }),
+      { token: "provider-creds" },
+    );
+    expect(savedMetadata.machine.shared_disk_gb).toBeUndefined();
+    expect(savedMetadata.machine.shared_disk_type).toBeUndefined();
+    expect(savedMetadata.runtime.metadata.diskIds).toEqual({
+      data: "data-disk",
+    });
+    expect(savedMetadata.runtime.metadata.shared_disk_id).toBeUndefined();
+  });
+
   it("checks fresh auth before host starts when a CLI session hash is provided", async () => {
     queryMock = jest.fn(async (sql: string) => {
       if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {

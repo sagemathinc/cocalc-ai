@@ -118,28 +118,6 @@ export const PROVIDERS: Record<ProviderId, ProviderEntry | undefined> = {
       supportsGpu: true,
       supportsZones: true,
       persistentStorage: { supported: true, growable: true },
-      sharedScratchDisk: {
-        supported: true,
-        growable: true,
-        disk_types: [
-          {
-            value: "balanced",
-            label: "Balanced persistent disk",
-            durability: "replicated",
-            default: true,
-          },
-          {
-            value: "ssd",
-            label: "SSD persistent disk",
-            durability: "replicated",
-          },
-          {
-            value: "standard",
-            label: "Standard persistent disk",
-            durability: "replicated",
-          },
-        ],
-      },
       hasRegions: true,
       hasZones: true,
       hasImages: true,

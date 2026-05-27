@@ -65,6 +65,8 @@ export async function getRoutedHostControlClient({
       growBtrfs: async (grow) => await bridge.growBtrfs({ host_id, grow }),
       growSharedScratch: async (grow) =>
         await bridge.growSharedScratch({ host_id, grow }),
+      unmountSharedScratch: async (unmount) =>
+        await bridge.unmountSharedScratch({ host_id, unmount }),
       getRuntimeLog: async (get) =>
         await bridge.getRuntimeLog({ host_id, get }),
       getProjectRuntimeLog: async (get) =>

@@ -5582,6 +5582,7 @@ export async function updateHostMachine({
   disk_type,
   shared_disk_gb,
   shared_disk_type,
+  delete_shared_scratch,
   machine_type,
   gpu_type,
   gpu_count,
@@ -5609,6 +5610,7 @@ export async function updateHostMachine({
   disk_type?: HostMachine["disk_type"];
   shared_disk_gb?: number;
   shared_disk_type?: HostMachine["shared_disk_type"];
+  delete_shared_scratch?: boolean;
   machine_type?: HostMachine["machine_type"];
   gpu_type?: HostMachine["gpu_type"];
   gpu_count?: number;
@@ -5651,6 +5653,7 @@ export async function updateHostMachine({
   let machineChanged = false;
   let sharedScratchEnsureGb: number | undefined;
   let sharedScratchResizeGb: number | undefined;
+  let deleteSharedScratch = false;
   let reconcileSharedScratchMount = false;
   let nextRegion = row.region ?? "";
   const requestedCloudRaw = typeof cloud === "string" ? cloud : undefined;
@@ -5740,6 +5743,10 @@ export async function updateHostMachine({
   const nextRam = parsePositiveInt(ram_gb, "ram_gb");
   const nextDisk = parsePositiveInt(disk_gb, "disk_gb");
   const nextSharedDisk = parsePositiveInt(shared_disk_gb, "shared_disk_gb");
+  const requestedDeleteSharedScratch = parseBooleanLike(
+    delete_shared_scratch,
+    "delete_shared_scratch",
+  );
   const nextGpuCount = parsePositiveInt(gpu_count, "gpu_count");
   const nextAutoGrowEnabled = parseBooleanLike(
     auto_grow_enabled,
@@ -5924,7 +5931,24 @@ export async function updateHostMachine({
     nonDiskChange = true;
     diskTypeChanged = true;
   }
-  if (nextSharedDisk != null) {
+  if (requestedDeleteSharedScratch) {
+    if (nextSharedDisk != null || shared_disk_type != null) {
+      throw new Error(
+        "cannot set shared scratch size/type while deleting shared scratch",
+      );
+    }
+    if (Number(machine.shared_disk_gb ?? 0) > 0) {
+      deleteSharedScratch = true;
+      delete nextMachine.shared_disk_gb;
+      delete nextMachine.shared_disk_type;
+      if (nextMachine.metadata) {
+        delete nextMachine.metadata.shared_disk_mount;
+        delete nextMachine.metadata.shared_disk_filesystem;
+        delete nextMachine.metadata.shared_disk_state;
+      }
+      changed = true;
+    }
+  } else if (nextSharedDisk != null) {
     const currentSharedDisk = Number(machine.shared_disk_gb ?? 0);
     if (!isDeprovisioned && currentSharedDisk <= 0 && nextSharedDisk > 0) {
       sharedScratchEnsureGb = nextSharedDisk;
@@ -6309,6 +6333,64 @@ export async function updateHostMachine({
     reconcileSharedScratchMount = HOST_RUNNING_STATUSES.has(
       String(row.status ?? ""),
     );
+  }
+  if (deleteSharedScratch) {
+    if (isSelfHost || !machineCloud) {
+      throw new Error("shared scratch disks are not supported for this host");
+    }
+    const provider = getServerProvider(machineCloud);
+    if (!provider?.entry.capabilities.sharedScratchDisk?.supported) {
+      throw new Error(
+        "shared scratch disks are not supported for this provider",
+      );
+    }
+    if (row.status !== "deprovisioned") {
+      if (!runtime.instance_id) {
+        throw new Error("host is not provisioned");
+      }
+      if (HOST_RUNNING_STATUSES.has(String(row.status ?? ""))) {
+        const client = await hostControlClient(row.id);
+        try {
+          await client.unmountSharedScratch({});
+        } catch (err) {
+          throw new Error(
+            `shared scratch could not be unmounted; stop or restart projects using /scratch and try again: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
+      const { entry, creds } = await getProviderContext(machineCloud, {
+        region: row.region,
+      });
+      if (!entry.provider.deleteSharedScratchDisk) {
+        throw new Error(
+          "shared scratch disk delete is not supported for this provider",
+        );
+      }
+      await entry.provider.deleteSharedScratchDisk(
+        {
+          ...runtime,
+          metadata:
+            runtime.metadata == null
+              ? runtime.metadata
+              : JSON.parse(JSON.stringify(runtime.metadata)),
+        },
+        creds,
+      );
+    }
+    const runtimeMetadata = { ...((runtime.metadata ?? {}) as any) };
+    const diskIds = { ...(runtimeMetadata.diskIds ?? {}) };
+    delete diskIds.scratch;
+    runtimeMetadata.diskIds = diskIds;
+    delete runtimeMetadata.shared_disk_id;
+    delete runtimeMetadata.shared_disk_name;
+    delete runtimeMetadata.scratchDiskTypeCode;
+    runtime = {
+      ...runtime,
+      metadata: runtimeMetadata,
+    };
+    metadata.runtime = runtime;
   }
 
   const nextMetadata = {

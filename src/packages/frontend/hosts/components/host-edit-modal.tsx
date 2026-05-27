@@ -31,6 +31,10 @@ import {
   sortMachineTypeOptions,
 } from "./host-options-select";
 import { HostSpotRecoveryFields } from "./host-spot-recovery-fields";
+import {
+  HostSharedScratchFields,
+  supportsSharedScratch,
+} from "./host-shared-scratch-fields";
 import { useHostForm } from "../hooks/use-host-form";
 import { useHostFormValues } from "../hooks/use-host-form-values";
 import { useHostPricingSettings } from "../hooks/use-host-pricing-settings";
@@ -77,6 +81,9 @@ type HostEditModalProps = {
       ram_gb?: number;
       disk_gb?: number;
       disk_type?: string;
+      shared_disk_gb?: number;
+      shared_disk_type?: string;
+      delete_shared_scratch?: boolean;
       machine_type?: string;
       gpu_type?: string;
       storage_mode?: string;
@@ -106,6 +113,8 @@ type HostEditSelectionInputs = {
   storage_mode?: string;
   disk_type?: string;
   disk_gb?: number;
+  shared_disk_type?: string;
+  shared_disk_gb?: number;
   self_host_kind?: string;
   self_host_mode?: string;
   size?: string;
@@ -128,6 +137,10 @@ export function buildHostEditSelection(
     storage_mode: opts.storage_mode ?? host?.machine?.storage_mode ?? undefined,
     disk_type: opts.disk_type ?? host?.machine?.disk_type ?? undefined,
     disk_gb: opts.disk_gb ?? host?.machine?.disk_gb ?? undefined,
+    shared_disk_type:
+      opts.shared_disk_type ?? host?.machine?.shared_disk_type ?? undefined,
+    shared_disk_gb:
+      opts.shared_disk_gb ?? host?.machine?.shared_disk_gb ?? undefined,
     self_host_kind: opts.self_host_kind,
     self_host_mode: opts.self_host_mode,
     size:
@@ -281,6 +294,8 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const watchedGpuType = Form.useWatch("gpu_type", form);
   const watchedSize = Form.useWatch("size", form);
   const watchedPricingModel = Form.useWatch("pricing_model", form);
+  const watchedSharedDiskGb = Form.useWatch("shared_disk_gb", form);
+  const watchedSharedDiskType = Form.useWatch("shared_disk_type", form);
   const hideAdvanced = providerId === "self-host";
   const showRegionPreference =
     canEditMachine &&
@@ -301,6 +316,12 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     storage_mode: selectedStorageMode,
     disk_type: selectedDiskType,
     disk_gb: selectedDiskGb,
+    shared_disk_type: watchedSharedDiskType,
+    shared_disk_gb:
+      typeof watchedSharedDiskGb === "number" &&
+      Number.isFinite(watchedSharedDiskGb)
+        ? watchedSharedDiskGb
+        : undefined,
     self_host_kind: selectedSelfHostKind,
     self_host_mode: selectedSelfHostMode,
     size: watchedSize,
@@ -408,6 +429,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const defaultDiskType =
     providerId === "nebius" ? "ssd_io_m3" : diskTypeOptions[0]?.value;
   const supportsDiskResize = !!providerCaps?.supportsDiskResize;
+  const supportsScratch = supportsSharedScratch(providerId, catalog);
   const diskResizeRequiresStop = !!providerCaps?.diskResizeRequiresStop;
   const diskResizeBlocked =
     !isSelfHost &&
@@ -422,6 +444,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const currentCpu = readPositive(host?.machine?.metadata?.cpu);
   const currentRam = readPositive(host?.machine?.metadata?.ram_gb);
   const currentDisk = readPositive(host?.machine?.disk_gb);
+  const currentSharedDisk = readPositive(host?.machine?.shared_disk_gb);
   const diskMin = isDeprovisioned
     ? MIN_DISK_GB
     : Math.max(MIN_DISK_GB, currentDisk ?? MIN_DISK_GB);
@@ -537,6 +560,8 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       size: host.machine?.machine_type ?? host.size ?? undefined,
       storage_mode: storageMode,
       disk_type: host.machine?.disk_type,
+      shared_disk_gb: currentSharedDisk,
+      shared_disk_type: host.machine?.shared_disk_type,
       funding_mode: host.funding_mode ?? undefined,
       pricing_model: host.pricing_model ?? "on_demand",
       interruption_restore_policy:
@@ -566,6 +591,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     currentAutoGrow.min_grow_interval_minutes,
     currentDisk,
     currentRam,
+    currentSharedDisk,
     form,
     host,
     open,
@@ -1077,6 +1103,13 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
               }}
             />
           </Form.Item>
+        )}
+        {!isDeprovisioned && supportsScratch && (
+          <HostSharedScratchFields
+            provider={providerId}
+            catalog={catalog}
+            currentSizeGb={currentSharedDisk}
+          />
         )}
         {showAutoGrowControls && (
           <Collapse ghost style={{ marginBottom: 8 }} defaultActiveKey={[]}>
