@@ -529,6 +529,448 @@ shared_scratch_disk: {
 }
 ```
 
+## Detailed Implementation Plan
+
+### Phase 0: Keep Existing Edit/Recreate Semantics Safe
+
+Goal: identify every place a dedicated host can be recreated so scratch is
+preserved anywhere the durable data disk is preserved.
+
+Files to inspect/update:
+
+- `src/packages/server/cloud/host-work.ts`
+- `src/packages/server/cloud/host-util.ts`
+- `src/packages/server/conat/api/hosts.ts`
+- `src/packages/server/conat/api/hosts-cloud-lifecycle.ts`
+- `src/packages/cloud/gcp.ts`
+- `src/packages/cloud/nebius/provider.ts`
+
+Tasks:
+
+- Audit stop/start, recreate, spot to standard, standard to spot, and instance
+  type change paths.
+- Define the exact metadata contract for preserving scratch across VM recreate.
+- Make "delete host" and "recreate VM" separate concepts in code comments and
+  tests where they are currently ambiguous.
+- Add tests before provider implementation that assert update/recreate paths
+  preserve `shared_disk_id` / `shared_disk_name` once present.
+
+Exit criteria:
+
+- There is a documented and tested place where runtime scratch disk metadata is
+  carried forward during recreate/edit flows.
+- Explicit host delete remains the only host-level path that deletes scratch.
+
+### Phase 1: Types, Validation, And Provider Capabilities
+
+Goal: make shared scratch representable everywhere without provisioning it yet.
+
+Files to update:
+
+- `src/packages/cloud/types.ts`
+- `src/packages/conat/hub/api/hosts.ts`
+- `src/packages/server/conat/api/hosts-cloud-lifecycle.ts`
+- `src/packages/server/conat/api/hosts-normalization.ts`
+- `src/packages/server/conat/api/hosts.ts`
+- `src/packages/frontend/hosts/providers/registry.ts`
+- `src/packages/frontend/hosts/create/host-create-draft.ts`
+- `src/packages/frontend/hosts/hooks/use-host-actions.ts`
+- `src/packages/frontend/hosts/hooks/use-hosts-page-view-model.ts`
+
+Data additions:
+
+- Add `shared_disk_gb?: number` to host machine API types.
+- Add `shared_disk_type?: string` to host machine API types.
+- Add runtime metadata fields:
+  - `shared_disk_id`
+  - `shared_disk_name`
+  - `shared_disk_mount`
+  - `shared_disk_filesystem`
+  - `shared_disk_state`
+  - grow audit fields.
+
+Provider capability additions:
+
+```ts
+shared_scratch_disk: {
+  supported: boolean;
+  growable: boolean;
+  disk_types: Array<{
+    value: string;
+    label: string;
+    durability: "single-copy" | "replicated" | "highly-replicated";
+    default?: boolean;
+  }>;
+}
+```
+
+Validation rules:
+
+- Reject unsupported providers.
+- Reject local SSD.
+- Reject shrink.
+- Allow create, add, grow, delete.
+- Normalize Nebius IO M3 sizes to 93 GB increments.
+- Default Nebius scratch disk type to two-copy `ssd`.
+- Default GCP scratch disk type to the provider's balanced persistent disk.
+
+Tests:
+
+- `src/packages/server/conat/api/hosts.create.test.ts`
+- `src/packages/server/conat/api/hosts.test.ts`
+- `src/packages/frontend/hosts/create/host-create-draft.test.ts`
+- `src/packages/frontend/hosts/providers/registry.test.ts`
+
+Exit criteria:
+
+- Host create/update accepts scratch fields and stores normalized metadata.
+- Unsupported values are rejected before provider calls.
+- Frontend can round-trip scratch fields without provisioning.
+
+### Phase 2: Pricing And Spend Accounting
+
+Goal: users see and pay for scratch disk storage as a separate line item.
+
+Files to update:
+
+- `src/packages/util/project-host-pricing.ts`
+- `src/packages/util/project-host-pricing.test.ts`
+- `src/packages/frontend/hosts/providers/registry.ts`
+- `src/packages/frontend/hosts/providers/registry.test.ts`
+- `src/packages/server/project-host/spend.ts`
+- `src/packages/server/project-host/spend.test.ts`
+- `src/packages/server/project-host/spend-maintenance.ts`
+- `src/packages/server/project-host/spend-maintenance.test.ts`
+
+Tasks:
+
+- Extend pricing selection inputs with `shared_disk_gb` and
+  `shared_disk_type`.
+- Add a line item labeled `Shared scratch disk`.
+- Keep durable host disk and shared scratch disk as separate line items.
+- Ensure stopped-host estimates include scratch storage cost but not compute
+  cost.
+- Ensure spend enforcement includes scratch disk storage when allocated.
+
+Tests:
+
+- GCP estimate with durable disk + scratch disk.
+- Nebius estimate with durable disk + scratch disk.
+- Stopped host current price includes storage, including scratch.
+- Deleted scratch no longer contributes to current spend.
+
+Exit criteria:
+
+- Create/edit UI and spend accounting agree on scratch disk hourly cost.
+- Billing line item makes clear that scratch storage continues while host is
+  stopped.
+
+### Phase 3: Nebius Provider Implementation
+
+Goal: implement scratch create, attach, preserve, grow, and delete for Nebius
+first.
+
+Files to update:
+
+- `src/packages/cloud/types.ts`
+- `src/packages/cloud/nebius/provider.ts`
+- `src/packages/cloud/test/nebius.test.ts`
+- `src/packages/server/cloud/host-work.ts`
+- `src/packages/server/cloud/host-util.ts`
+- `src/packages/server/cloud/host-work.test.ts`
+- `src/packages/server/project-host/auto-grow.ts` if reusable grow logic is
+  factored out.
+
+Provider operations:
+
+- Create or reuse `${name}-scratch`.
+- Attach scratch disk to instance.
+- Store `shared_disk_id`.
+- Reattach scratch disk on VM recreate/edit.
+- Grow scratch disk.
+- Delete scratch disk only on explicit scratch delete or explicit host delete.
+- Never delete scratch on spot/standard transition or instance type change.
+
+Implementation notes:
+
+- Reuse existing Nebius disk normalization and disk create/reuse helpers where
+  possible.
+- Do not overload durable data disk metadata.
+- Keep scratch disk metadata names distinct from durable data disk metadata.
+- Add a helper for `normalizeSharedDiskSizeGib`.
+
+Tests:
+
+- Create host with scratch creates boot, data, and scratch disks.
+- Create host without scratch is unchanged.
+- Existing `shared_disk_id` is reused on recreate.
+- Spot to standard path preserves `shared_disk_id`.
+- Standard to spot path preserves `shared_disk_id`.
+- Explicit host delete deletes scratch.
+- Runtime/edit recreate does not delete scratch.
+- Grow calls Nebius resize with normalized size.
+- Grow below current size is rejected before provider call.
+
+Exit criteria:
+
+- Nebius provider unit tests cover all required lifecycle semantics.
+
+### Phase 4: Host Bootstrap Mount And Grow
+
+Goal: mounted scratch disk appears reliably at `/mnt/cocalc-scratch`.
+
+Files to update:
+
+- `src/packages/server/cloud/bootstrap-host.ts`
+- `src/packages/server/cloud/bootstrap-host.test.ts`
+- `src/packages/server/cloud/bootstrap-host-runtime-deployments.test.ts`
+
+Tasks:
+
+- Add generated shell logic for scratch setup.
+- Discover scratch disk by provider metadata or stable device path.
+- Format ext4 only if no filesystem exists.
+- Mount by UUID in `/etc/fstab`.
+- Create `/mnt/cocalc-scratch`.
+- Set `chmod 1777`.
+- Run `resize2fs` after grow.
+- Add diagnostics when scratch is configured but missing.
+
+Generated script behavior:
+
+```sh
+mkdir -p /mnt/cocalc-scratch
+blkid "$SCRATCH_DEVICE" || mkfs.ext4 -F "$SCRATCH_DEVICE"
+uuid="$(blkid -s UUID -o value "$SCRATCH_DEVICE")"
+grep -q "$uuid" /etc/fstab || echo "UUID=$uuid /mnt/cocalc-scratch ext4 defaults,nofail 0 2" >> /etc/fstab
+mount /mnt/cocalc-scratch
+resize2fs "$SCRATCH_DEVICE" || true
+chmod 1777 /mnt/cocalc-scratch
+```
+
+Tests:
+
+- No scratch config means no scratch setup script.
+- Scratch config emits mount setup.
+- Script checks for existing filesystem before formatting.
+- Script uses UUID.
+- Script includes `resize2fs`.
+- Script sets sticky world-writable permissions.
+
+Exit criteria:
+
+- A bootstrapped host with attached scratch disk mounts it at
+  `/mnt/cocalc-scratch` idempotently.
+
+### Phase 5: Project Container Bind Mount
+
+Goal: running projects see `/scratch`.
+
+Files to locate/update:
+
+- Project container launch code in project-host runtime.
+- Likely under `src/packages/project`, `src/packages/server/cloud`, or
+  project-host daemon/acp-worker code that assembles podman arguments.
+- Tests near project start/control paths once exact launcher is identified.
+
+Tasks:
+
+- Add bind mount:
+  - host: `/mnt/cocalc-scratch`
+  - container: `/scratch`
+  - rw
+- Add it only when host scratch is configured and mounted.
+- Fail project start clearly if configured scratch is missing.
+- Ensure project restart is sufficient for projects to see newly added scratch.
+
+Tests:
+
+- Podman arguments include scratch bind mount when configured.
+- Podman arguments omit scratch when not configured.
+- Missing host scratch mount causes clear project start failure.
+
+Exit criteria:
+
+- Existing and new projects see `/scratch` after restart.
+
+### Phase 6: Runtime Scratch LROs
+
+Goal: add, grow, and delete scratch after host creation.
+
+Files to update:
+
+- `src/packages/conat/hub/api/hosts.ts`
+- `src/packages/server/conat/api/hosts.ts`
+- `src/packages/server/conat/api/dangerous-rpc-registry.ts`
+- `src/packages/server/lro/*` if new LRO worker wiring is needed.
+- `src/packages/cli/src/bin/commands/host.ts`
+- `src/packages/cli/src/bin/commands/host.test.ts`
+
+Operations:
+
+- `host scratch add`
+- `host scratch grow`
+- `host scratch delete`
+- `host scratch info`
+
+API behavior:
+
+- Add can run while host is running.
+- Grow can run while host is running.
+- Delete requires no running projects with scratch mounted, or the LRO stops
+  affected projects first if that is the chosen UX.
+- Host does not need to stop for add/delete unless provider requires it.
+- Project restart requirement is surfaced in operation result.
+
+Tests:
+
+- Add updates metadata and queues provider action.
+- Grow rejects shrink.
+- Delete requires explicit destructive confirmation.
+- Delete clears metadata and stops billing.
+- Running projects are handled according to the final delete policy.
+
+Exit criteria:
+
+- Scratch lifecycle is not only tied to initial host creation.
+
+### Phase 7: Frontend Host Create/Edit UI
+
+Goal: make scratch discoverable and hard to misunderstand.
+
+Files to update:
+
+- `src/packages/frontend/hosts/components/host-create-card.tsx`
+- `src/packages/frontend/hosts/components/host-create-provider-fields.tsx`
+- `src/packages/frontend/hosts/components/host-create-advanced-fields.tsx`
+- `src/packages/frontend/hosts/components/host-edit-modal.tsx`
+- `src/packages/frontend/hosts/components/host-drawer.tsx`
+- `src/packages/frontend/hosts/hooks/use-host-create.ts`
+- `src/packages/frontend/hosts/hooks/use-host-form.ts`
+- `src/packages/frontend/hosts/hooks/use-host-actions.ts`
+- Related tests under `src/packages/frontend/hosts/**`
+
+Create UI:
+
+- Add "Shared scratch disk" section.
+- Size input.
+- Disk type selector for Nebius/GCP.
+- Default Nebius to two-copy network SSD.
+- Do not show local SSD.
+- Show price line item.
+- Include clear durability/not-backed-up copy.
+
+Edit UI:
+
+- Add scratch if absent.
+- Grow scratch if present.
+- Delete scratch with explicit confirmation.
+- Show project restart guidance.
+- Reject or hide shrink.
+
+Host drawer:
+
+- Show configured size, type, mount path, usage, and warnings.
+- Surface active operation status.
+
+Tests:
+
+- Supported providers show scratch controls.
+- Unsupported providers hide/disable controls.
+- Nebius default disk type is two-copy network SSD.
+- Local SSD not present.
+- Price estimate updates when scratch changes.
+- Delete confirmation includes "deletes all data".
+
+Exit criteria:
+
+- Users can create and manage scratch from the host UI without CLI.
+
+### Phase 8: Project Disk Usage And Host Usage Reporting
+
+Goal: show scratch usage separately from project quota.
+
+Files to update:
+
+- `src/packages/conat/project/storage-info.ts`
+- `src/packages/frontend/project/disk-usage/disk-usage.tsx`
+- `src/packages/frontend/project/disk-usage/storage-overview.ts`
+- `src/packages/frontend/project/disk-usage/use-disk-usage.ts`
+- `src/packages/frontend/project/settings/health-rail.tsx`
+- Project-host status/daemon reporting path if usage is sampled by host daemon.
+
+Tasks:
+
+- Collect `df` usage for `/scratch` when mounted.
+- Add a `shared_scratch` section to project storage overview.
+- Do not add scratch usage to project quota.
+- Optionally sample scratch usage over time.
+- Show durability/not-backed-up note.
+
+Tests:
+
+- Disk usage dialog renders separate scratch section.
+- Project quota bar ignores scratch.
+- Missing scratch omits section.
+- Usage values format correctly.
+
+Exit criteria:
+
+- Users can answer "how full is `/scratch`?" from normal UI.
+
+### Phase 9: Public Pool Warning
+
+Goal: warn admins when sharing a host that has shared scratch.
+
+Files to update:
+
+- Host access/admin components, likely:
+  - `src/packages/frontend/hosts/components/host-drawer.tsx`
+  - `src/packages/frontend/hosts/components/host-access-policy.tsx`
+  - access policy tests
+
+Tasks:
+
+- Detect `shared_disk_gb > 0`.
+- Show warning when enabling public/shared-pool access.
+- Do not block backend operations.
+
+Exit criteria:
+
+- Admins get explicit warning but trusted lab/class deployments remain possible.
+
+### Phase 10: Smoke Runner And Dogfood
+
+Goal: validate with a real Nebius host before broader exposure.
+
+Files to update:
+
+- `src/packages/server/cloud/smoke-runner/project-host.ts`
+- `src/packages/server/cloud/smoke-runner/runner.ts`
+- Smoke docs/output where applicable.
+
+Smoke scenario:
+
+1. Create Nebius host with 200 GB scratch.
+2. Start project.
+3. Verify `/scratch` writable and mounted.
+4. Write marker file.
+5. Start second project on same host.
+6. Verify marker file visible.
+7. Stop/start host.
+8. Verify marker persists.
+9. Edit host spot/standard or instance type.
+10. Verify marker persists.
+11. Grow to 300 GB.
+12. Verify `df` reports larger size.
+13. Delete scratch.
+14. Restart projects.
+15. Verify `/scratch` gone.
+
+Exit criteria:
+
+- Nebius dogfood path passes before GCP implementation begins.
+
 ## Failure Modes
 
 Handle explicitly:
@@ -650,4 +1092,3 @@ Smoke tests:
 - Should scratch usage be sampled by the host daemon or queried live by project
   storage-info?
 - What is the exact provider-safe maximum scratch disk size for each disk type?
-
