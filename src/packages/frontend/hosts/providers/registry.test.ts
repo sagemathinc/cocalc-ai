@@ -824,6 +824,58 @@ describe("catalog-backed pricing labels", () => {
     expect(estimate?.hourly_label).toContain("/hr");
   });
 
+  it("returns a provider price estimate for Nebius unified RTX GPU selections", () => {
+    const catalog = testCatalog([
+      {
+        kind: "instance_types",
+        scope: "global",
+        payload: [
+          {
+            name: "gpu-rtx6000_1gpu-24vcpu-218gb",
+            platform: "gpu-rtx6000",
+            platform_label: "NVIDIA RTX PRO 6000",
+            vcpus: 24,
+            memory_gib: 218,
+            gpus: 1,
+            gpu_label: "NVIDIA RTX PRO 6000",
+          },
+        ],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: [
+          {
+            product: "NVIDIA RTX PRO 6000",
+            region: "us-central1",
+            price_usd: "1.8",
+            unit: "GPU hour",
+          },
+          {
+            product: "Network SSD IO M3 disk",
+            region: "us-central1",
+            price_usd: "0.000161111",
+            unit: "GiB hour",
+          },
+        ],
+      },
+    ]);
+
+    const estimate = getProviderPriceEstimate("nebius", catalog, {
+      region: "us-central1",
+      machine_type: "gpu-rtx6000_1gpu-24vcpu-218gb",
+      pricing_model: "on_demand",
+      storage_mode: "persistent",
+      disk_type: "ssd_io_m3",
+      disk_gb: 100,
+    });
+
+    expect(estimate?.usd_per_hour).toBeCloseTo(1.8161111, 9);
+    expect(estimate?.line_items.map((item) => item.label)).toContain(
+      "GPU instance",
+    );
+  });
+
   it("labels missing Nebius regional prices explicitly once a machine is selected", () => {
     const catalog = testCatalog([
       {
