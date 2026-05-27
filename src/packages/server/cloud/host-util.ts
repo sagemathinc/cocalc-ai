@@ -314,6 +314,19 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
   let sourceImageProject: string | undefined;
   let platform = machine.metadata?.platform;
   const sanitizedMetadata = { ...(machine.metadata ?? {}) };
+  const runtimeMetadata = metadata.runtime?.metadata ?? {};
+  if (
+    sanitizedMetadata.shared_disk_id == null &&
+    runtimeMetadata.shared_disk_id != null
+  ) {
+    sanitizedMetadata.shared_disk_id = runtimeMetadata.shared_disk_id;
+  }
+  if (
+    sanitizedMetadata.shared_disk_name == null &&
+    runtimeMetadata.shared_disk_name != null
+  ) {
+    sanitizedMetadata.shared_disk_name = runtimeMetadata.shared_disk_name;
+  }
   if (sanitizedMetadata.boot_disk_gb == null) {
     sanitizedMetadata.boot_disk_gb = 25;
   }

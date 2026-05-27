@@ -33,6 +33,7 @@ import {
   StartInstanceRequest,
   StopInstanceRequest,
   UpdateDiskRequest,
+  UpdateInstanceRequest,
 } from "@nebius/js-sdk/api/nebius/compute/v1/index";
 import { ResourceMetadata } from "@nebius/js-sdk/api/nebius/common/v1/index";
 import { Long } from "@nebius/js-sdk/runtime/protos/index";
@@ -786,6 +787,96 @@ export class NebiusProvider implements CloudProvider {
       }),
     );
     await op.wait();
+  }
+
+  async ensureSharedScratchDisk(
+    runtime: HostRuntime,
+    spec: HostSpec,
+    creds: NebiusProviderCreds,
+  ): Promise<HostRuntime> {
+    const sharedDiskGb = Number(spec.shared_disk_gb ?? 0);
+    if (!Number.isFinite(sharedDiskGb) || sharedDiskGb <= 0) {
+      throw new Error("nebius: shared scratch disk size is required");
+    }
+    const parentId = creds.parentId;
+    if (!parentId) {
+      throw new Error("nebius parentId is required");
+    }
+    const client = new NebiusClient(creds);
+    const meta = runtime.metadata as NebiusRuntimeMeta | undefined;
+    const scratchDiskType = sharedScratchDiskTypeFor(spec);
+    const normalized = normalizeDiskSizeGib(sharedDiskGb, scratchDiskType);
+    const scratchDiskName =
+      spec.metadata?.shared_disk_name ??
+      (runtime.metadata as any)?.shared_disk_name ??
+      `${spec.name}-scratch`;
+    const existingScratchDiskId =
+      meta?.diskIds?.scratch ??
+      (runtime.metadata as any)?.shared_disk_id ??
+      spec.metadata?.shared_disk_id ??
+      spec.metadata?.sharedDiskId ??
+      undefined;
+    const scratchDiskId =
+      existingScratchDiskId ??
+      (await createDiskOrReuse(
+        client,
+        parentId,
+        scratchDiskName,
+        DiskSpec.create({
+          type: scratchDiskType,
+          blockSizeBytes: blockSizeBytes(),
+          size: {
+            $case: "sizeGibibytes",
+            sizeGibibytes: Long.fromNumber(normalized.sizeGib),
+          },
+        }),
+      ));
+    const instance = await client.instances.get(
+      GetInstanceRequest.create({ id: runtime.instance_id }),
+    );
+    const secondaryDisks = [...(instance.spec?.secondaryDisks ?? [])];
+    const hasScratchAttachment = secondaryDisks.some((disk: any) => {
+      const existingDisk =
+        disk.type?.$case === "existingDisk"
+          ? disk.type.existingDisk?.id
+          : undefined;
+      return disk.deviceId === "scratch" || existingDisk === scratchDiskId;
+    });
+    if (!hasScratchAttachment) {
+      secondaryDisks.push(
+        AttachedDiskSpec.create({
+          attachMode: AttachedDiskSpec_AttachMode.READ_WRITE,
+          deviceId: "scratch",
+          type: {
+            $case: "existingDisk",
+            existingDisk: ExistingDisk.create({ id: scratchDiskId }),
+          },
+        }),
+      );
+      const op = await client.instances.update(
+        UpdateInstanceRequest.create({
+          metadata: ResourceMetadata.create({ id: runtime.instance_id }),
+          spec: InstanceSpec.create({
+            ...(instance.spec ?? {}),
+            secondaryDisks,
+          }),
+        }),
+      );
+      await op.wait();
+    }
+    return {
+      ...runtime,
+      metadata: {
+        ...(runtime.metadata ?? {}),
+        diskIds: {
+          ...(meta?.diskIds ?? {}),
+          scratch: scratchDiskId,
+        },
+        scratchDiskTypeCode: scratchDiskType.code,
+        shared_disk_id: scratchDiskId,
+        shared_disk_name: scratchDiskName,
+      },
+    };
   }
 
   async deleteSharedScratchDisk(

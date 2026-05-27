@@ -1574,8 +1574,37 @@ describe("hosts browser fresh auth gating", () => {
     ).rejects.toThrow("self-hosted hosts are limited to admins");
   });
 
-  it("rejects adding shared scratch to an already provisioned host", async () => {
-    queryMock = jest.fn(async (sql: string) => {
+  it("adds shared scratch to an already provisioned host", async () => {
+    const ensureSharedScratchDisk = jest.fn(async (runtime: any) => ({
+      ...runtime,
+      metadata: {
+        ...(runtime.metadata ?? {}),
+        diskIds: { scratch: "scratch-disk" },
+        shared_disk_id: "scratch-disk",
+        shared_disk_name: "host-name-scratch",
+      },
+    }));
+    getProviderContextMock = jest.fn(async () => ({
+      entry: {
+        provider: {
+          ensureSharedScratchDisk,
+        },
+      },
+      creds: { token: "provider-creds" },
+    }));
+    const initialMetadata = {
+      owner: ACCOUNT_ID,
+      runtime: { instance_id: "nebius-instance", metadata: {} },
+      machine: {
+        cloud: "nebius",
+        disk_gb: 200,
+        machine_type: "cpu-d3",
+        metadata: { cpu: 4, ram_gb: 16 },
+      },
+      pricing_model: "on_demand",
+    };
+    let savedMetadata: any;
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
       if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
         return {
           rows: [
@@ -1583,35 +1612,39 @@ describe("hosts browser fresh auth gating", () => {
               id: HOST_ID,
               name: "host-name",
               region: "us-central1",
-              status: "running",
-              metadata: {
-                owner: ACCOUNT_ID,
-                runtime: { instance_id: "nebius-instance" },
-                machine: {
-                  cloud: "nebius",
-                  disk_gb: 200,
-                  machine_type: "cpu-d3",
-                  metadata: { cpu: 4, ram_gb: 16 },
-                },
-                pricing_model: "on_demand",
-              },
+              status: "off",
+              metadata: savedMetadata ?? initialMetadata,
             },
           ],
         };
+      }
+      if (sql.includes("UPDATE project_hosts SET region=$2")) {
+        savedMetadata = params?.[2];
+        return { rowCount: 1, rows: [] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
 
     const { updateHostMachine } = await import("./hosts");
-    await expect(
-      updateHostMachine({
-        account_id: ACCOUNT_ID,
-        session_hash: "session-hash",
-        id: HOST_ID,
-        shared_disk_gb: 100,
+    await updateHostMachine({
+      account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
+      id: HOST_ID,
+      shared_disk_gb: 100,
+    });
+
+    expect(ensureSharedScratchDisk).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instance_id: "nebius-instance",
       }),
-    ).rejects.toThrow("adding shared scratch to an already provisioned host");
-    expect(getProviderContextMock).not.toHaveBeenCalled();
+      expect.objectContaining({
+        shared_disk_gb: 100,
+        shared_disk_type: "ssd",
+      }),
+      { token: "provider-creds" },
+    );
+    expect(savedMetadata.machine.shared_disk_gb).toBe(100);
+    expect(savedMetadata.runtime.metadata.shared_disk_id).toBe("scratch-disk");
   });
 
   it("grows an existing shared scratch disk in the provider and host filesystem", async () => {

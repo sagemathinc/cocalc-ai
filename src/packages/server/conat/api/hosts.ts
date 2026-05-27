@@ -50,7 +50,11 @@ import type {
 } from "@cocalc/conat/hub/api/hosts";
 import { getAccountProductAccessTrust } from "@cocalc/server/accounts/trusted-product-access";
 import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
-import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
+import {
+  normalizeProviderId,
+  type HostSpec,
+  type ProviderId,
+} from "@cocalc/cloud";
 import type {
   HostManagedComponentRolloutResponse,
   HostManagedComponentStatus,
@@ -5645,7 +5649,9 @@ export async function updateHostMachine({
   let storageModeChanged = false;
   let diskTypeChanged = false;
   let machineChanged = false;
+  let sharedScratchEnsureGb: number | undefined;
   let sharedScratchResizeGb: number | undefined;
+  let reconcileSharedScratchMount = false;
   let nextRegion = row.region ?? "";
   const requestedCloudRaw = typeof cloud === "string" ? cloud : undefined;
   const requestedCloud = normalizeProviderId(requestedCloudRaw);
@@ -5921,9 +5927,7 @@ export async function updateHostMachine({
   if (nextSharedDisk != null) {
     const currentSharedDisk = Number(machine.shared_disk_gb ?? 0);
     if (!isDeprovisioned && currentSharedDisk <= 0 && nextSharedDisk > 0) {
-      throw new Error(
-        "adding shared scratch to an already provisioned host is not implemented yet; stop and deprovision/recreate the host for now",
-      );
+      sharedScratchEnsureGb = nextSharedDisk;
     }
     if (
       shared_disk_type != null &&
@@ -6256,6 +6260,56 @@ export async function updateHostMachine({
       }
     }
   }
+  if (!isSelfHost && machineCloud && sharedScratchEnsureGb != null) {
+    const provider = getServerProvider(machineCloud);
+    if (!provider?.entry.capabilities.sharedScratchDisk?.supported) {
+      throw new Error(
+        "shared scratch disks are not supported for this provider",
+      );
+    }
+    if (!runtime.instance_id) {
+      throw new Error("host is not provisioned");
+    }
+    const { entry, creds } = await getProviderContext(machineCloud, {
+      region: row.region,
+    });
+    if (!entry.provider.ensureSharedScratchDisk) {
+      throw new Error(
+        "shared scratch disk runtime attach is not supported for this provider",
+      );
+    }
+    const prefix = getProviderPrefix(machineCloud, await getServerSettings());
+    const baseName = row.id.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
+    const hostName = (provider.normalizeName ?? gcpSafeName)(prefix, baseName);
+    const scratchSpec: HostSpec = {
+      name: hostName,
+      region: row.region ?? nextMachine.zone ?? "",
+      zone: nextMachine.zone,
+      cpu: Math.max(1, Number(nextMachine.metadata?.cpu ?? 1)),
+      ram_gb: Math.max(1, Number(nextMachine.metadata?.ram_gb ?? 1)),
+      disk_gb: Math.max(1, Number(nextMachine.disk_gb ?? machine.disk_gb ?? 1)),
+      disk_type:
+        nextMachine.disk_type === "ssd" ||
+        nextMachine.disk_type === "standard" ||
+        nextMachine.disk_type === "ssd_io_m3"
+          ? nextMachine.disk_type
+          : "balanced",
+      shared_disk_gb: sharedScratchEnsureGb,
+      shared_disk_type: nextMachine.shared_disk_type,
+      metadata: {
+        ...(nextMachine.metadata ?? {}),
+      },
+    };
+    runtime = await entry.provider.ensureSharedScratchDisk(
+      runtime,
+      scratchSpec,
+      creds,
+    );
+    metadata.runtime = runtime;
+    reconcileSharedScratchMount = HOST_RUNNING_STATUSES.has(
+      String(row.status ?? ""),
+    );
+  }
 
   const nextMetadata = {
     ...metadata,
@@ -6298,6 +6352,9 @@ export async function updateHostMachine({
       after: buildConfigSpec(nextMachine, nextRegion),
     },
   });
+  if (reconcileSharedScratchMount) {
+    await reconcileCloudHostBootstrapOverSsh({ host_id: row.id, row: rows[0] });
+  }
   return parseRow(rows[0]);
 }
 

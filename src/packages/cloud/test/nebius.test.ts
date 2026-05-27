@@ -14,6 +14,7 @@ const disksUpdateMock = jest.fn();
 const instancesCreateMock = jest.fn();
 const instancesDeleteMock = jest.fn();
 const instancesGetMock = jest.fn();
+const instancesUpdateMock = jest.fn();
 
 jest.mock("../nebius/client", () => {
   class NebiusClient {
@@ -28,6 +29,7 @@ jest.mock("../nebius/client", () => {
       create: instancesCreateMock,
       delete: instancesDeleteMock,
       get: instancesGetMock,
+      update: instancesUpdateMock,
     };
 
     constructor(private creds: any) {}
@@ -83,12 +85,14 @@ describe("NebiusProvider", () => {
     instancesCreateMock.mockReset();
     instancesDeleteMock.mockReset();
     instancesGetMock.mockReset();
+    instancesUpdateMock.mockReset();
     disksListMock.mockResolvedValue({ items: [], nextPageToken: "" });
     disksCreateMock
       .mockResolvedValueOnce(diskOp("boot-disk"))
       .mockResolvedValueOnce(diskOp("data-disk"));
     instancesCreateMock.mockResolvedValue(instanceOp("instance-1"));
     instancesDeleteMock.mockResolvedValue(instanceOp("instance-1"));
+    instancesUpdateMock.mockResolvedValue(instanceOp("instance-1"));
     disksDeleteMock.mockResolvedValue(diskOp("deleted-disk"));
     disksUpdateMock.mockResolvedValue(diskOp("updated-disk"));
   });
@@ -440,5 +444,64 @@ describe("NebiusProvider", () => {
     expect(
       disksUpdateMock.mock.calls[0][0].spec.size.sizeGibibytes.toNumber(),
     ).toBe(186);
+  });
+
+  it("creates and attaches shared scratch to an existing instance", async () => {
+    disksCreateMock.mockReset().mockResolvedValueOnce(diskOp("scratch-disk"));
+    instancesGetMock.mockResolvedValue({
+      spec: {
+        serviceAccountId: "svc-1",
+        secondaryDisks: [
+          {
+            deviceId: "data",
+            type: {
+              $case: "existingDisk",
+              existingDisk: { id: "data-disk" },
+            },
+          },
+        ],
+      },
+    });
+    const provider = new NebiusProvider();
+    const runtime = await provider.ensureSharedScratchDisk!(
+      {
+        provider: "nebius",
+        instance_id: "instance-1",
+        ssh_user: "ubuntu",
+        metadata: {
+          diskIds: {
+            data: "data-disk",
+          },
+        },
+      },
+      buildSpec({
+        shared_disk_gb: 500,
+        shared_disk_type: "ssd",
+      }),
+      {
+        parentId: "project-1",
+        serviceAccountId: "svc-1",
+        publicKeyId: "pub-1",
+        privateKeyPem: "key",
+        sshPublicKey: "ssh-ed25519 AAAA",
+        subnetId: "subnet-1",
+      },
+    );
+
+    expect(disksCreateMock).toHaveBeenCalledTimes(1);
+    expect(instancesUpdateMock).toHaveBeenCalledTimes(1);
+    const updateArgs = instancesUpdateMock.mock.calls[0][0];
+    expect(updateArgs.metadata.id).toBe("instance-1");
+    expect(
+      updateArgs.spec.secondaryDisks.map((disk: any) => disk.deviceId),
+    ).toEqual(["data", "scratch"]);
+    expect(runtime.metadata).toMatchObject({
+      diskIds: {
+        data: "data-disk",
+        scratch: "scratch-disk",
+      },
+      shared_disk_id: "scratch-disk",
+      shared_disk_name: "spot-host-scratch",
+    });
   });
 });
