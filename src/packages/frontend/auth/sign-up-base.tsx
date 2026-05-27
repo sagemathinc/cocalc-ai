@@ -17,7 +17,6 @@ import {
   len,
 } from "@cocalc/util/misc";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
-import { COLORS } from "@cocalc/util/theme";
 import { isWrongBayAuthResponse, postAuthApi, retryAuthOnHomeBay } from "./api";
 import type { AuthView } from "./types";
 import { appUrl } from "./util";
