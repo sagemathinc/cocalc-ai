@@ -82,6 +82,10 @@ describe("PublicTopNav", () => {
       "About",
       "Support",
     ]);
+    expect(screen.getByRole("link", { name: "Guides" })).toHaveAttribute(
+      "href",
+      "/guides",
+    );
   });
 
   it("uses sign-in and sign-up links for anonymous visitors", async () => {
@@ -200,6 +204,19 @@ describe("PublicTopNav", () => {
     expect(
       within(publicPages)
         .getByRole("menuitem", { name: "Support" })
+        .closest("li"),
+    ).toHaveClass("ant-menu-item-selected");
+  });
+
+  it("selects Guides in the menu when that section is active", async () => {
+    await renderTopNav(<PublicTopNav active="guides" />);
+
+    const publicPages = screen.getByRole("menu", {
+      name: "Public pages",
+    });
+    expect(
+      within(publicPages)
+        .getByRole("menuitem", { name: "Guides" })
         .closest("li"),
     ).toHaveClass("ant-menu-item-selected");
   });

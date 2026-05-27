@@ -19,13 +19,13 @@ import {
   usePublicConfig,
   usesDefaultCoCalcBranding,
 } from "@cocalc/frontend/public/config";
-import { FIELD_GUIDES_URL } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 type PublicInfoPageKey =
   | "home"
   | "docs"
   | "features"
+  | "guides"
   | "products"
   | "pricing"
   | "news"
@@ -35,7 +35,7 @@ type PublicInfoPageKey =
 
 export type PublicTopNavActiveKey = PublicInfoPageKey | "auth";
 
-type PublicTopNavItemKey = PublicInfoPageKey | "field-guides";
+type PublicTopNavItemKey = PublicInfoPageKey;
 
 function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
@@ -120,13 +120,7 @@ export default function PublicTopNav({
     target?: string;
   }> = [
     { href: appPath("features"), key: "features", label: "Features" },
-    {
-      href: FIELD_GUIDES_URL,
-      key: "field-guides",
-      label: "Guides",
-      rel: "noreferrer",
-      target: "_blank",
-    },
+    { href: appPath("guides"), key: "guides", label: "Guides" },
     { href: appPath("docs"), key: "docs", label: "Docs" },
     { href: appPath("products"), key: "products", label: "Products" },
     { href: appPath("pricing"), key: "pricing", label: "Pricing" },
