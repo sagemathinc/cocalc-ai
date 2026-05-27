@@ -8,6 +8,7 @@ import {
   getGcpMachineTypeOptions,
   getNebiusRegionOptions,
   getProviderEnablement,
+  getProviderOptions,
   getProviderOptionsList,
   getProviderPriceEstimate,
   isNebiusSpotSupported,
@@ -874,6 +875,49 @@ describe("catalog-backed pricing labels", () => {
     expect(estimate?.line_items.map((item) => item.label)).toContain(
       "GPU instance",
     );
+  });
+
+  it("filters Nebius region-scoped GPU platforms by selected region", () => {
+    const catalog = testCatalog([
+      {
+        kind: "instance_types",
+        scope: "global",
+        payload: [
+          {
+            name: "1gpu-20vcpu-224gb",
+            platform: "gpu-b200-sxm",
+            platform_label: "NVIDIA B200 NVLink",
+            regions: ["us-central1"],
+            vcpus: 20,
+            memory_gib: 224,
+            gpus: 1,
+            gpu_label: "NVIDIA B200 NVLink",
+          },
+          {
+            name: "1gpu-20vcpu-224gb",
+            platform: "gpu-b200-sxm-a",
+            platform_label: "NVIDIA B200 NVLink",
+            regions: ["me-west1"],
+            vcpus: 20,
+            memory_gib: 224,
+            gpus: 1,
+            gpu_label: "NVIDIA B200 NVLink",
+          },
+        ],
+      },
+    ]);
+
+    const usOptions = getProviderOptions("nebius", catalog, {
+      region: "us-central1",
+    }).machine_type;
+    const meOptions = getProviderOptions("nebius", catalog, {
+      region: "me-west1",
+    }).machine_type;
+
+    expect(usOptions).toHaveLength(1);
+    expect(meOptions).toHaveLength(1);
+    expect((usOptions[0]?.meta as any)?.platform).toBe("gpu-b200-sxm");
+    expect((meOptions[0]?.meta as any)?.platform).toBe("gpu-b200-sxm-a");
   });
 
   it("labels missing Nebius regional prices explicitly once a machine is selected", () => {
