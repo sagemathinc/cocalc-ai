@@ -50,6 +50,7 @@ import {
   machineHasGpu,
   normalizeMachineGpuInPlace,
 } from "@cocalc/server/cloud/host-gpu";
+import { normalizeSharedScratchMachineInPlace } from "./hosts-shared-scratch";
 import { hasCloudflareTunnel } from "@cocalc/server/cloud/cloudflare-tunnel";
 import { enqueueCloudVmWork } from "@cocalc/server/cloud";
 import { normalizeSpotRecoveryPolicy } from "@cocalc/server/cloud/spot-restore";
@@ -131,6 +132,22 @@ function assertManagedHostDiskSize(machine: Host["machine"] | undefined) {
   }
 }
 
+function assertManagedHostSharedScratchSize(
+  machine: Host["machine"] | undefined,
+) {
+  const provider = normalizeProviderId(machine?.cloud);
+  if (!provider || provider === "self-host" || provider === "local") {
+    return;
+  }
+  const disk = Number(machine?.shared_disk_gb ?? 0);
+  if (!Number.isFinite(disk) || disk <= 0) return;
+  if (disk < MIN_PROJECT_HOST_DISK_GB) {
+    throw new Error(
+      `shared_disk_gb must be at least ${MIN_PROJECT_HOST_DISK_GB} GB`,
+    );
+  }
+}
+
 async function resolveBillableHostSessionConfig({
   account_id,
   action,
@@ -175,6 +192,8 @@ async function resolveBillableHostSessionConfig({
     machine_type: machine?.machine_type ?? size,
     disk_gb: machine?.disk_gb,
     disk_type: machine?.disk_type,
+    shared_disk_gb: machine?.shared_disk_gb,
+    shared_disk_type: machine?.shared_disk_type,
     storage_mode: machine?.storage_mode,
     gpu_type: machine?.gpu_type,
     gpu_count: machine?.gpu_count,
@@ -351,7 +370,11 @@ export async function createHostInternalHelper({
     },
     gpu,
   );
+  normalizeSharedScratchMachineInPlace(normalizedMachine, {
+    allowShrink: true,
+  });
   assertManagedHostDiskSize(normalizedMachine);
+  assertManagedHostSharedScratchSize(normalizedMachine);
   const gpuEnabled = machineHasGpu(normalizedMachine);
   const billableSession = shouldStartAfterCreate
     ? await resolveBillableHostSessionConfig({

@@ -30,6 +30,8 @@ export type HostSpec = {
   ram_gb: number;
   disk_gb: number;
   disk_type: "ssd" | "balanced" | "standard" | "ssd_io_m3";
+  shared_disk_gb?: number;
+  shared_disk_type?: "ssd" | "balanced" | "standard" | "ssd_io_m3";
   gpu?: { type: string; count: number };
   tags?: string[];
   metadata?: Record<string, any>;

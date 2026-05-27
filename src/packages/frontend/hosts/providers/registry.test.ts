@@ -111,6 +111,40 @@ describe("buildCreateHostPayload", () => {
     expect(payload.interruption_restore_policy).toBe("immediate");
   });
 
+  it("includes shared scratch fields in create payloads", () => {
+    const payload = buildCreateHostPayload(
+      {
+        provider: "gcp",
+        name: "Scratch Host",
+        region: "us-west1",
+        zone: "us-west1-a",
+        machine_type: "n2d-standard-4",
+        disk_gb: 100,
+        disk_type: "balanced",
+        shared_disk_gb: 500,
+        shared_disk_type: "ssd",
+      },
+      {
+        fieldOptions: {
+          region: [{ value: "us-west1", label: "US West 1" }],
+          zone: [{ value: "us-west1-a", label: "US West 1A" }],
+          machine_type: [
+            {
+              value: "n2d-standard-4",
+              label: "n2d-standard-4",
+              meta: { guestCpus: 4, memoryMb: 16384 },
+            },
+          ],
+        },
+      },
+    );
+
+    expect(payload.machine).toMatchObject({
+      shared_disk_gb: 500,
+      shared_disk_type: "ssd",
+    });
+  });
+
   it("includes explicit spot pricing fields", () => {
     const payload = buildCreateHostPayload(
       {

@@ -45,6 +45,47 @@ describe("project host pricing", () => {
     ).toBeCloseTo(0.1405, 9);
   });
 
+  it("adds GCP shared scratch disk as a separate line item", () => {
+    const catalog: GcpCatalogPrices = {
+      fetched_at: "2026-05-08T00:00:00.000Z",
+      service_id: "compute",
+      families: {
+        n2d: {
+          cpu: { "us-west1": 0.05 },
+          ram: { "us-west1": 0.01 },
+          spot_cpu: { "us-west1": 0.02 },
+          spot_ram: { "us-west1": 0.003 },
+        },
+      },
+      gpus: {},
+      disks: {
+        "pd-balanced": { "us-west1": 0.0001 },
+        "pd-ssd": { "us-west1": 0.0002 },
+      },
+    };
+
+    const breakdown = estimateGcpCatalogRateBreakdown(catalog, {
+      zone: "us-west1-a",
+      machine_type: "n2d-standard-4",
+      disk_type: "balanced",
+      disk_gb: 100,
+      shared_disk_type: "ssd",
+      shared_disk_gb: 500,
+      storage_mode: "persistent",
+    });
+
+    expect(breakdown?.items.map((item) => item.key)).toEqual([
+      "vm",
+      "disk",
+      "shared_scratch_disk",
+      "public_ipv4",
+    ]);
+    expect(
+      breakdown?.items.find((item) => item.key === "shared_scratch_disk")
+        ?.usd_per_hour,
+    ).toBeCloseTo(0.1, 9);
+  });
+
   it("supports T2A ARM machine pricing", () => {
     const catalog: GcpCatalogPrices = {
       fetched_at: "2026-05-08T00:00:00.000Z",
@@ -335,6 +376,62 @@ describe("project host pricing", () => {
 
     expect(breakdown?.items.map((item) => item.key)).toEqual(["vm", "disk"]);
     expect(breakdown?.total_usd_per_hour).toBeCloseTo(0.114183323, 9);
+  });
+
+  it("adds Nebius shared scratch disk as a separate line item", () => {
+    const breakdown = estimateNebiusCatalogRateBreakdown({
+      prices: [
+        {
+          product: "Non-GPU AMD Epyc Genoa. CPU",
+          region: "eu-north1",
+          price_usd: "0.012",
+          unit: "vCPU hour",
+        },
+        {
+          product: "Non-GPU AMD Epyc Genoa. RAM",
+          region: "eu-north1",
+          price_usd: "0.0032",
+          unit: "GiB hour",
+        },
+        {
+          product: "Network SSD disk",
+          region: "eu-north1",
+          price_usd: "0.0001",
+          unit: "GiB hour",
+        },
+        {
+          product: "Network SSD Non-replicated disk",
+          region: "eu-north1",
+          price_usd: "0.00005",
+          unit: "GiB hour",
+        },
+      ],
+      region: "eu-north1",
+      pricing_model: "on_demand",
+      instance: {
+        name: "cpu-standard-v3",
+        platform: "amd-epyc-genoa",
+        platform_label: "AMD Epyc Genoa",
+        vcpus: 4,
+        memory_gib: 16,
+        gpus: 0,
+      },
+      disk_type: "ssd",
+      disk_gb: 100,
+      shared_disk_type: "balanced",
+      shared_disk_gb: 1000,
+      storage_mode: "persistent",
+    });
+
+    expect(breakdown?.items.map((item) => item.key)).toEqual([
+      "vm",
+      "disk",
+      "shared_scratch_disk",
+    ]);
+    expect(
+      breakdown?.items.find((item) => item.key === "shared_scratch_disk")
+        ?.usd_per_hour,
+    ).toBeCloseTo(0.05, 9);
   });
 
   it("estimates Nebius spot GPU hourly rates from preemptible catalog rows", () => {

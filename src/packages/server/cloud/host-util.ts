@@ -274,6 +274,15 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
   )
     ? (machine.disk_type as HostSpec["disk_type"])
     : "balanced";
+  const shared_disk_gb = machine.shared_disk_gb;
+  const shared_disk_type = [
+    "ssd",
+    "balanced",
+    "standard",
+    "ssd_io_m3",
+  ].includes(machine.shared_disk_type ?? "")
+    ? (machine.shared_disk_type as HostSpec["shared_disk_type"])
+    : undefined;
   const storage_mode = machine.storage_mode;
   const gpuType = machine.gpu_type;
   const gpu =
@@ -430,6 +439,8 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
     ram_gb,
     disk_gb,
     disk_type,
+    shared_disk_gb,
+    shared_disk_type,
     gpu,
     metadata: {
       host_id: row.id,

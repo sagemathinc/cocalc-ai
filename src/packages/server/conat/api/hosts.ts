@@ -218,6 +218,7 @@ import {
   runtimeDeploymentsForComponentRollout,
   runtimeDeploymentsForUpgradeResults,
 } from "./hosts-runtime-deployment-planning";
+import { normalizeSharedScratchMachineInPlace } from "./hosts-shared-scratch";
 import {
   installedProjectHostArtifactVersion,
   isProjectHostLocalRollbackError as isProjectHostLocalRollbackErrorInternal,
@@ -5575,6 +5576,8 @@ export async function updateHostMachine({
   ram_gb,
   disk_gb,
   disk_type,
+  shared_disk_gb,
+  shared_disk_type,
   machine_type,
   gpu_type,
   gpu_count,
@@ -5600,6 +5603,8 @@ export async function updateHostMachine({
   ram_gb?: number;
   disk_gb?: number;
   disk_type?: HostMachine["disk_type"];
+  shared_disk_gb?: number;
+  shared_disk_type?: HostMachine["shared_disk_type"];
   machine_type?: HostMachine["machine_type"];
   gpu_type?: HostMachine["gpu_type"];
   gpu_count?: number;
@@ -5692,6 +5697,8 @@ export async function updateHostMachine({
     ram_gb: specMachine.metadata?.ram_gb ?? null,
     disk_gb: specMachine.disk_gb ?? null,
     disk_type: specMachine.disk_type ?? null,
+    shared_disk_gb: specMachine.shared_disk_gb ?? null,
+    shared_disk_type: specMachine.shared_disk_type ?? null,
     storage_mode: specMachine.storage_mode ?? null,
     auto_grow: specMachine.metadata?.auto_grow ?? null,
     pricing_model:
@@ -5725,6 +5732,7 @@ export async function updateHostMachine({
   const nextCpu = parsePositiveInt(cpu, "cpu");
   const nextRam = parsePositiveInt(ram_gb, "ram_gb");
   const nextDisk = parsePositiveInt(disk_gb, "disk_gb");
+  const nextSharedDisk = parsePositiveInt(shared_disk_gb, "shared_disk_gb");
   const nextGpuCount = parsePositiveInt(gpu_count, "gpu_count");
   const nextAutoGrowEnabled = parseBooleanLike(
     auto_grow_enabled,
@@ -5908,6 +5916,54 @@ export async function updateHostMachine({
     changed = true;
     nonDiskChange = true;
     diskTypeChanged = true;
+  }
+  if (nextSharedDisk != null) {
+    if (
+      shared_disk_type != null &&
+      machine.shared_disk_type != null &&
+      shared_disk_type !== machine.shared_disk_type
+    ) {
+      throw new Error(
+        "shared scratch disk type changes require deleting and recreating the scratch disk",
+      );
+    }
+    nextMachine.shared_disk_gb = nextSharedDisk;
+    if (shared_disk_type != null) {
+      nextMachine.shared_disk_type = shared_disk_type;
+    }
+    normalizeSharedScratchMachineInPlace(nextMachine, {
+      current: machine,
+      allowShrink: isDeprovisioned,
+    });
+    if (
+      nextMachine.shared_disk_gb !== machine.shared_disk_gb ||
+      nextMachine.shared_disk_type !== machine.shared_disk_type
+    ) {
+      changed = true;
+    }
+  } else if (shared_disk_type != null) {
+    if (!nextMachine.shared_disk_gb) {
+      throw new Error(
+        "shared_disk_gb is required when setting shared_disk_type",
+      );
+    }
+    if (
+      machine.shared_disk_type != null &&
+      shared_disk_type !== machine.shared_disk_type
+    ) {
+      throw new Error(
+        "shared scratch disk type changes require deleting and recreating the scratch disk",
+      );
+    }
+    nextMachine.shared_disk_type = shared_disk_type;
+    normalizeSharedScratchMachineInPlace(nextMachine, {
+      current: machine,
+      allowShrink: isDeprovisioned,
+    });
+    if (nextMachine.shared_disk_type !== machine.shared_disk_type) {
+      changed = true;
+      nonDiskChange = true;
+    }
   }
   if (typeof zone === "string" && zone && zone !== nextMachine.zone) {
     nextMachine.zone = zone;

@@ -31,6 +31,17 @@ export type ProviderCapabilities = {
     supported: boolean;
     growable: boolean;
   };
+  sharedScratchDisk?: {
+    supported: boolean;
+    growable: boolean;
+    disk_types: Array<{
+      value: "ssd" | "balanced" | "standard" | "ssd_io_m3";
+      label: string;
+      durability: "single-copy" | "replicated" | "highly-replicated";
+      default?: boolean;
+      help_url?: string;
+    }>;
+  };
   hasRegions: boolean;
   hasZones: boolean;
   hasImages: boolean;
@@ -107,6 +118,28 @@ export const PROVIDERS: Record<ProviderId, ProviderEntry | undefined> = {
       supportsGpu: true,
       supportsZones: true,
       persistentStorage: { supported: true, growable: true },
+      sharedScratchDisk: {
+        supported: true,
+        growable: true,
+        disk_types: [
+          {
+            value: "balanced",
+            label: "Balanced persistent disk",
+            durability: "replicated",
+            default: true,
+          },
+          {
+            value: "ssd",
+            label: "SSD persistent disk",
+            durability: "replicated",
+          },
+          {
+            value: "standard",
+            label: "Standard persistent disk",
+            durability: "replicated",
+          },
+        ],
+      },
       hasRegions: true,
       hasZones: true,
       hasImages: true,
@@ -226,6 +259,31 @@ export const PROVIDERS: Record<ProviderId, ProviderEntry | undefined> = {
       supportsGpu: true,
       supportsZones: false,
       persistentStorage: { supported: true, growable: true },
+      sharedScratchDisk: {
+        supported: true,
+        growable: true,
+        disk_types: [
+          {
+            value: "ssd",
+            label: "Network SSD disk",
+            durability: "replicated",
+            default: true,
+            help_url: "https://docs.nebius.com/compute/storage/types",
+          },
+          {
+            value: "ssd_io_m3",
+            label: "Network SSD IO M3 disk",
+            durability: "highly-replicated",
+            help_url: "https://docs.nebius.com/compute/storage/types",
+          },
+          {
+            value: "balanced",
+            label: "Network SSD Non-replicated disk",
+            durability: "single-copy",
+            help_url: "https://docs.nebius.com/compute/storage/types",
+          },
+        ],
+      },
       hasRegions: true,
       hasZones: false,
       hasImages: true,
