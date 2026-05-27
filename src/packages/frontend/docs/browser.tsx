@@ -6,7 +6,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
+  ArrowRightOutlined,
   BookOutlined,
+  CheckCircleOutlined,
   SearchOutlined,
   ToolOutlined,
   ArrowLeftOutlined,
@@ -64,6 +66,16 @@ export type DocsPrivateIndexState = {
 
 export type DocsPrivateDetailState = {
   renderPanel: (entry: DocsEntry) => React.ReactNode;
+};
+
+type DocsLinearNavigationState = {
+  count: number;
+  currentIndex: number;
+  entry: DocsEntry;
+  next?: DocsEntry;
+  onSelectEntry: (entry: DocsEntry) => void;
+  previous?: DocsEntry;
+  summary?: DocsPrivateEntrySummary;
 };
 
 function clampDocsFontSize(value: number): number {
@@ -337,6 +349,9 @@ export function DocsCard({
               </Tag>
             ))}
             {privateSummary?.starred ? <Tag color="gold">Starred</Tag> : null}
+            {privateSummary?.lastViewedAt ? (
+              <Tag color="green">Viewed</Tag>
+            ) : null}
             {(privateSummary?.noteCount ?? 0) > 0 ? (
               <Tag>
                 {privateNoteMatched
@@ -399,6 +414,9 @@ export function DocsCard({
               </Tag>
             ))}
             {privateSummary?.starred ? <Tag color="gold">Starred</Tag> : null}
+            {privateSummary?.lastViewedAt ? (
+              <Tag color="green">Viewed</Tag>
+            ) : null}
             {(privateSummary?.noteCount ?? 0) > 0 ? (
               <Tag>
                 {privateNoteMatched
@@ -734,9 +752,97 @@ export function DocsActions({
   );
 }
 
+function DocsLinearNavigation({
+  layout = "page",
+  navigation,
+}: {
+  layout?: DocsBrowserLayout;
+  navigation?: DocsLinearNavigationState;
+}) {
+  if (navigation == null || navigation.count <= 1) return null;
+
+  const isFlyout = layout === "flyout";
+  const viewed = navigation.summary?.lastViewedAt != null;
+  const content = (
+    <Flex
+      align={isFlyout ? "stretch" : "center"}
+      gap="small"
+      justify="space-between"
+      vertical={isFlyout}
+      wrap
+    >
+      <Space size={[6, 4]} wrap>
+        <BookOutlined style={{ color: COLORS.BLUE }} />
+        <Text type="secondary">
+          Page {navigation.currentIndex + 1} of {navigation.count} in{" "}
+          {navigation.entry.category}
+        </Text>
+        {viewed ? (
+          <Tag color="green" icon={<CheckCircleOutlined />}>
+            Viewed
+          </Tag>
+        ) : null}
+      </Space>
+      <Space.Compact block={isFlyout}>
+        <Button
+          disabled={navigation.previous == null}
+          icon={<ArrowLeftOutlined />}
+          onClick={() => {
+            if (navigation.previous != null) {
+              navigation.onSelectEntry(navigation.previous);
+            }
+          }}
+          size={isFlyout ? "small" : "middle"}
+          title={
+            navigation.previous != null
+              ? `Previous: ${navigation.previous.title}`
+              : "This is the first page in this section"
+          }
+        >
+          Previous
+        </Button>
+        <Button
+          disabled={navigation.next == null}
+          icon={<ArrowRightOutlined />}
+          iconPlacement="end"
+          onClick={() => {
+            if (navigation.next != null) {
+              navigation.onSelectEntry(navigation.next);
+            }
+          }}
+          size={isFlyout ? "small" : "middle"}
+          title={
+            navigation.next != null
+              ? `Next: ${navigation.next.title}`
+              : "This is the last page in this section"
+          }
+          type="primary"
+        >
+          Next
+        </Button>
+      </Space.Compact>
+    </Flex>
+  );
+
+  if (isFlyout) {
+    return <div style={DOCS_BROWSER_FLYOUT_ACTIONS_STYLE}>{content}</div>;
+  }
+
+  return (
+    <Card
+      size="small"
+      style={DOCS_BROWSER_CARD_STYLE}
+      styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
+    >
+      {content}
+    </Card>
+  );
+}
+
 export function DocsDetailContent({
   actionAvailability,
   entry,
+  linearNavigation,
   layout = "page",
   onBack,
   onRunAction,
@@ -744,6 +850,7 @@ export function DocsDetailContent({
 }: {
   actionAvailability?: Map<string, DocsBrowserAction>;
   entry: DocsEntry;
+  linearNavigation?: DocsLinearNavigationState;
   layout?: DocsBrowserLayout;
   onBack?: () => void;
   onRunAction?: (action: DocsBrowserAction) => void | Promise<void>;
@@ -780,6 +887,7 @@ export function DocsDetailContent({
           </Text>
         </Flex>
         <DocsEntryImage entry={entry} mode="flyout-detail" />
+        <DocsLinearNavigation layout={layout} navigation={linearNavigation} />
         {privateState?.renderPanel(entry)}
         <DocsActions
           actions={actions}
@@ -834,6 +942,7 @@ export function DocsDetailContent({
           ) : null}
         </Row>
       </Card>
+      <DocsLinearNavigation layout={layout} navigation={linearNavigation} />
       {privateState?.renderPanel(entry)}
       <DocsActions
         actions={actions}
@@ -846,6 +955,7 @@ export function DocsDetailContent({
       >
         <DocsMarkdown value={entry.body} />
       </Card>
+      <DocsLinearNavigation layout={layout} navigation={linearNavigation} />
     </Flex>
   );
 }
@@ -882,6 +992,7 @@ export function DocsBrowser({
       ),
     [actionAvailability],
   );
+  const allEntries = useMemo(() => listDocsEntries(docsAccess), [docsAccess]);
   const selectEntry = useCallback(
     (entry?: DocsEntry) => {
       setSelectedEntry(entry);
@@ -891,10 +1002,29 @@ export function DocsBrowser({
   );
 
   if (selectedEntry != null) {
+    const categoryEntries = allEntries.filter(
+      (entry) => entry.category === selectedEntry.category,
+    );
+    const currentIndex = categoryEntries.findIndex(
+      (entry) => entry.id === selectedEntry.id,
+    );
+    const linearNavigation =
+      currentIndex >= 0
+        ? {
+            count: categoryEntries.length,
+            currentIndex,
+            entry: selectedEntry,
+            next: categoryEntries[currentIndex + 1],
+            onSelectEntry: selectEntry,
+            previous: categoryEntries[currentIndex - 1],
+            summary: privateIndexState?.summaries[selectedEntry.id],
+          }
+        : undefined;
     return (
       <DocsDetailContent
         actionAvailability={actionMap}
         entry={selectedEntry}
+        linearNavigation={linearNavigation}
         layout={layout}
         onBack={() => selectEntry(undefined)}
         onRunAction={onRunAction}
