@@ -45,6 +45,14 @@ import { ShowSupportLink } from "@cocalc/frontend/support/link";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { onCollabInvitesChanged } from "./invite-events";
+import {
+  ViewerReadPolicyEditor,
+  viewerPolicyHasReadablePath,
+} from "./viewer-read-policy";
+import {
+  DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY,
+  type ProjectViewerReadPolicy,
+} from "@cocalc/util/project-access";
 
 const INVITE_MESSAGE_MAX_LENGTH = 1000;
 type InviteRole = "collaborator" | "viewer";
@@ -151,6 +159,8 @@ export const AddCollaborators: React.FC<Props> = ({
     ManualInviteLink[]
   >([]);
   const [invite_role, set_invite_role] = useState<InviteRole>("collaborator");
+  const [invite_read_policy, set_invite_read_policy] =
+    useState<ProjectViewerReadPolicy>(DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY);
   const [invite_usage, set_invite_usage] =
     useState<ProjectCollaboratorInviteUsage | null>(null);
   const [invite_usage_error, set_invite_usage_error] = useState<string>("");
@@ -198,6 +208,9 @@ export const AddCollaborators: React.FC<Props> = ({
     invite_role === "collaborator" &&
     invite_slot_limited &&
     invite_slots_remaining <= 0;
+  const viewer_policy_empty =
+    invite_role === "viewer" &&
+    !viewerPolicyHasReadablePath(invite_read_policy);
 
   function reset(): void {
     set_search("");
@@ -396,6 +409,7 @@ export const AddCollaborators: React.FC<Props> = ({
       replyto,
       replyto_name,
       invite_role,
+      invite_role === "viewer" ? invite_read_policy : undefined,
     );
   }
 
@@ -497,6 +511,7 @@ export const AddCollaborators: React.FC<Props> = ({
       undefined,
       undefined,
       invite_role,
+      invite_role === "viewer" ? invite_read_policy : undefined,
     );
     if (!silent && !allow_urls) {
       // Show a message that they might have to email that person
@@ -668,7 +683,10 @@ export const AddCollaborators: React.FC<Props> = ({
               type="primary"
               onClick={() => void send_email_invite()}
               disabled={
-                !!email_body_editing || invite_slots_exhausted || exceedsSlots
+                !!email_body_editing ||
+                invite_slots_exhausted ||
+                exceedsSlots ||
+                viewer_policy_empty
               }
             >
               {exceedsSlots
@@ -739,11 +757,17 @@ export const AddCollaborators: React.FC<Props> = ({
             },
           ]}
         />
-        <div style={{ color: COLORS.GRAY_M, fontSize: 12, marginTop: 6 }}>
-          Viewer invites use the full-project read-only preset with sensitive
-          paths excluded: <code>.snapshots</code>, <code>.ssh</code>, and{" "}
-          <code>.local/share/cocalc</code>.
-        </div>
+        {invite_role === "viewer" ? (
+          <ViewerReadPolicyEditor
+            value={invite_read_policy}
+            onChange={set_invite_read_policy}
+          />
+        ) : (
+          <div style={{ color: COLORS.GRAY_M, fontSize: 12, marginTop: 6 }}>
+            Collaborators get normal read/write access, project runtimes,
+            terminals, SSH, and project tools.
+          </div>
+        )}
       </div>
     );
   }
@@ -946,6 +970,7 @@ export const AddCollaborators: React.FC<Props> = ({
       disabled = true;
     }
     if (
+      invite_role === "collaborator" &&
       invite_slots_remaining != null &&
       number_selected > invite_slots_remaining
     ) {
@@ -954,6 +979,10 @@ export const AddCollaborators: React.FC<Props> = ({
         invite_slots_remaining,
         "slot",
       )} left`;
+    }
+    if (viewer_policy_empty) {
+      disabled = true;
+      label = "Viewer policy allows no files";
     }
     return (
       <div

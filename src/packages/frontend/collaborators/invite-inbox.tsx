@@ -43,6 +43,7 @@ import {
   notifyCollabInvitesChanged,
   onCollabInvitesChanged,
 } from "./invite-events";
+import { viewerReadPolicySummary } from "./viewer-read-policy";
 
 const { Panel } = Collapse;
 
@@ -153,6 +154,27 @@ function friendlyRespondError(err: unknown): string {
     default:
       return "Invite is no longer pending.";
   }
+}
+
+function inviteRoleLabel(invite: ProjectCollabInviteRow): React.JSX.Element {
+  const role = invite.invite_role === "viewer" ? "viewer" : "collaborator";
+  if (role === "viewer") {
+    return (
+      <Space size={6} wrap>
+        <Tag color="gold" style={{ marginInlineEnd: 0 }}>
+          Viewer
+        </Tag>
+        <Tag style={{ marginInlineEnd: 0 }}>
+          {viewerReadPolicySummary(invite.read_policy)}
+        </Tag>
+      </Space>
+    );
+  }
+  return (
+    <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+      Collaborator
+    </Tag>
+  );
 }
 
 export function useInviteInboxState({
@@ -359,6 +381,7 @@ function renderIncomingCards(
                 <div>
                   From <strong>{inviter}</strong>
                 </div>
+                <div style={{ marginTop: 4 }}>{inviteRoleLabel(invite)}</div>
                 {!!invite.project_description?.trim() && (
                   <div style={{ marginTop: "4px" }}>
                     {invite.project_description.trim()}
@@ -626,6 +649,7 @@ export const InviteInboxPanel: React.FC<Props> = ({
                   <div>
                     To <strong>{invitee}</strong>
                   </div>
+                  <div style={{ marginTop: 4 }}>{inviteRoleLabel(invite)}</div>
                   <div style={{ fontSize: "12px", opacity: 0.75 }}>
                     Created by <strong>{createdByMe ? "you" : inviter}</strong>
                   </div>
