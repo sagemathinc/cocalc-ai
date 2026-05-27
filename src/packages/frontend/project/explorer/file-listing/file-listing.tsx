@@ -117,6 +117,7 @@ interface Props {
   project_id: string;
   shiftIsDown: boolean;
   isRunning?: boolean;
+  readOnly?: boolean;
   sort_by: (column_name: string) => void;
   onNavigateDirectory?: (path: string) => void;
 }
@@ -444,6 +445,7 @@ export function FileListing({
   project_id,
   shiftIsDown,
   file_search = "",
+  readOnly = false,
   sort_by,
   onNavigateDirectory,
 }: Props) {
@@ -696,7 +698,7 @@ export function FileListing({
         },
       ];
 
-      if (!record.isDir) {
+      if (!readOnly && !record.isDir) {
         const ext = misc.filename_extension(record.name)?.toLowerCase() ?? "";
         if (VIEWABLE_FILE_EXT.includes(ext)) {
           items.push({
@@ -709,21 +711,23 @@ export function FileListing({
         }
       }
 
-      items.push({ key: "divider-1", type: "divider" });
-      items.push(
-        ...buildFileActionItems({
-          isdir: !!record.isDir,
-          intl,
-          multiple,
-          disableActions: student_project_functionality.disableActions,
-          inSnapshots: isSnapshotsPath(current_path),
-          fullPath: record.fullPath,
-          triggerFileAction: (action) =>
-            triggerFileAction(record.fullPath, action),
-        }),
-      );
+      if (!readOnly) {
+        items.push({ key: "divider-1", type: "divider" });
+        items.push(
+          ...buildFileActionItems({
+            isdir: !!record.isDir,
+            intl,
+            multiple,
+            disableActions: student_project_functionality.disableActions,
+            inSnapshots: isSnapshotsPath(current_path),
+            fullPath: record.fullPath,
+            triggerFileAction: (action) =>
+              triggerFileAction(record.fullPath, action),
+          }),
+        );
+      }
 
-      if (!record.isDir) {
+      if (!readOnly && !record.isDir) {
         items.push({ key: "divider-2", type: "divider" });
         items.push({
           key: "download",
@@ -738,6 +742,7 @@ export function FileListing({
     },
     [
       student_project_functionality.disableActions,
+      readOnly,
       checked_files,
       current_path,
       intl,
@@ -898,7 +903,8 @@ export function FileListing({
     () => ({
       currentPath: current_path,
       projectId: project_id,
-      disableActions: !!student_project_functionality.disableActions,
+      disableActions:
+        !!student_project_functionality.disableActions || readOnly,
       getEntry: (index: number) => virtualData[index],
       getDragPaths: (record: FileEntry) => {
         if (checked_files.has(record.fullPath)) {
@@ -915,6 +921,7 @@ export function FileListing({
       current_path,
       project_id,
       student_project_functionality.disableActions,
+      readOnly,
       virtualData,
       checked_files,
       onRow,
@@ -948,7 +955,7 @@ export function FileListing({
 
     return (
       <tr>
-        {!student_project_functionality.disableActions && (
+        {!student_project_functionality.disableActions && !readOnly && (
           <th
             style={{
               ...centeredHeaderStyle,
@@ -1055,6 +1062,7 @@ export function FileListing({
     );
   }, [
     student_project_functionality.disableActions,
+    readOnly,
     allChecked,
     someChecked,
     handleSelectAll,
@@ -1070,7 +1078,7 @@ export function FileListing({
 
   const numCols = useMemo(() => {
     let n = 4; // public + type + star + name
-    if (!student_project_functionality.disableActions) {
+    if (!student_project_functionality.disableActions && !readOnly) {
       n += 1;
     }
     n += 1; // date
@@ -1078,7 +1086,7 @@ export function FileListing({
       n += 2; // size + actions
     }
     return n;
-  }, [student_project_functionality.disableActions, isNarrow]);
+  }, [student_project_functionality.disableActions, readOnly, isNarrow]);
 
   const itemContent = useCallback(
     (_index: number, entry: VirtualEntry) => {
@@ -1120,7 +1128,7 @@ export function FileListing({
 
       return (
         <>
-          {!student_project_functionality.disableActions && (
+          {!student_project_functionality.disableActions && !readOnly && (
             <td
               style={{
                 ...cellStyle,
@@ -1264,6 +1272,7 @@ export function FileListing({
     },
     [
       student_project_functionality.disableActions,
+      readOnly,
       checked_files,
       current_path,
       handleCheckboxChange,

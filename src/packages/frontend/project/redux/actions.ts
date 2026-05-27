@@ -119,7 +119,11 @@ import { RootfsPublishOpsManager } from "@cocalc/frontend/project/rootfs-publish
 import { MoveOpsManager } from "@cocalc/frontend/project/move-ops";
 import { StartOpsManager } from "@cocalc/frontend/project/start-ops";
 import { isCollaboratorRealtimeAccessError } from "@cocalc/frontend/project/collaborator-realtime";
-import { canUseCollaboratorProjectRealtime } from "@cocalc/frontend/project/realtime-access";
+import {
+  canUseCollaboratorProjectRealtime,
+  getProjectUserRole,
+  isViewerProjectRole,
+} from "@cocalc/frontend/project/realtime-access";
 import { getSearch } from "@cocalc/frontend/project/explorer/config";
 import dust from "@cocalc/frontend/project/disk-usage/dust";
 import { withProjectHostBase } from "@cocalc/frontend/project/host-url";
@@ -1503,6 +1507,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
       return;
     }
+    if (this.isViewerProjectUser()) {
+      if (!opts.noFocus) {
+        this.show_file(path);
+      }
+      return;
+    }
     if (this.open_files == null) return;
     void (async () => {
       try {
@@ -1551,6 +1561,18 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
     })();
   };
+
+  private isViewerProjectUser(): boolean {
+    const account_id = redux.getStore("account")?.get("account_id");
+    if (!account_id) return false;
+    return isViewerProjectRole(
+      getProjectUserRole({
+        account_id,
+        project_id: this.project_id,
+        projectsStore: redux.getStore("projects") as any,
+      }),
+    );
+  }
 
   public ensure_open_file_component = (
     path: string,

@@ -22,7 +22,12 @@ import { DEFAULT_QUOTAS } from "@cocalc/util/schema";
 import { Upgrades } from "@cocalc/util/upgrades/types";
 import { lite } from "@cocalc/frontend/lite";
 
-export type UserGroup = "admin" | "owner" | "collaborator" | "public";
+export type UserGroup =
+  | "admin"
+  | "owner"
+  | "collaborator"
+  | "viewer"
+  | "public";
 
 const aiEnabledCache = new LRU<string, boolean>({
   max: 50,
@@ -258,11 +263,12 @@ export class ProjectsStore extends Store<ProjectsState> {
   /*
   Return the group that the current user has on this project,
   which can be one of:
-     'owner', 'collaborator', 'public', 'admin' or undefined, where
+     'owner', 'collaborator', 'viewer', 'public', 'admin' or undefined, where
   undefined -- means the information needed to determine
   group hasn't been loaded yet.
   'owner' - the current user owns the project
   'collaborator' - current user is a collaborator on the project
+  'viewer' - current user has read-only viewer access to the project
   'public' - user is possibly not logged in or is not an
        admin and not on the project at all
   'admin' - user is not owner/collaborator but is an admin, hence has rights.

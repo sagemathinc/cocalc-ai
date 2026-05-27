@@ -14,12 +14,15 @@ and it displays the file as an editor associated with that path in the project,
 or Loading... if the file is still being loaded.
 */
 
+import { Alert, Button, Space } from "antd";
 import { Map } from "immutable";
 import { debounce } from "lodash";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Draggable from "react-draggable";
 import { React, redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { KioskModeBanner } from "@cocalc/frontend/app/kiosk-mode-banner";
+import { getExternalSideChatDesc } from "@cocalc/frontend/chat/external-side-chat-selection";
+import { chatMetaFile } from "@cocalc/frontend/chat/paths";
 import type { ChatState } from "@cocalc/frontend/chat/chat-indicator";
 import SideChat from "@cocalc/frontend/chat/side-chat";
 import { Loading } from "@cocalc/frontend/components";
@@ -43,8 +46,7 @@ import { WorkspacesPanel } from "@cocalc/frontend/project/page/flyouts/workspace
 import { ProjectDocsPanel } from "@cocalc/frontend/project/page/flyouts/docs";
 import { editor_id } from "@cocalc/frontend/project/utils";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { chatMetaFile } from "@cocalc/frontend/chat/paths";
-import { getExternalSideChatDesc } from "@cocalc/frontend/chat/external-side-chat-selection";
+import { filename_extension } from "@cocalc/util/misc";
 import { useProjectContext } from "../context";
 import { AgentsPanel } from "./flyouts/agents";
 import getAnchorTagComponent from "./anchor-tag-component";
@@ -60,6 +62,16 @@ const MAIN_STYLE: React.CSSProperties = {
   position: "absolute",
   inset: 0,
 } as const;
+
+const VIEWER_ALLOWED_TABS = new Set([
+  "active",
+  "docs",
+  "files",
+  "home",
+  "info",
+  "log",
+  "users",
+]);
 
 interface Props {
   tab_name: string; // e.g., 'files', 'new', 'log', 'search', 'settings', 'agents', or 'editor-<path>'
@@ -133,7 +145,7 @@ interface TabContentProps {
 
 const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
   const { tab_name, is_visible } = props;
-  const { project_id } = useProjectContext();
+  const { project_id, projectAccess } = useProjectContext();
 
   const open_files =
     useTypedRedux({ project_id }, "open_files") ?? Map<string, any>();
@@ -169,6 +181,22 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
   // show the kiosk mode banner instead of anything besides a file editor
   if (fullscreen === "kiosk" && !tab_name.startsWith("editor-")) {
     return <KioskModeBanner />;
+  }
+
+  if (
+    projectAccess.role === "viewer" &&
+    !tab_name.startsWith("editor-") &&
+    !VIEWER_ALLOWED_TABS.has(tab_name)
+  ) {
+    return (
+      <Alert
+        showIcon
+        type="info"
+        style={{ margin: "24px" }}
+        message="Viewer access is read-only"
+        description="Viewers can browse and open allowed project files, but cannot create files, start runtimes, use terminals, open app servers, run agents, or change project settings."
+      />
+    );
   }
 
   switch (tab_name) {
@@ -251,6 +279,10 @@ interface EditorProps {
 
 const Editor: React.FC<EditorProps> = (props: EditorProps) => {
   const { path, project_id, is_visible, component } = props;
+  const { projectAccess } = useProjectContext();
+  if (projectAccess.role === "viewer") {
+    return <ReadOnlyFileViewer project_id={project_id} path={path} />;
+  }
   const { Editor: EditorComponent, redux_name } = component;
   if (EditorComponent == null) {
     return <Loading theme={"medium"} />;
@@ -274,6 +306,206 @@ const Editor: React.FC<EditorProps> = (props: EditorProps) => {
   );
 };
 
+const TEXT_EXTENSIONS = new Set([
+  "",
+  "c",
+  "cc",
+  "conf",
+  "cpp",
+  "css",
+  "csv",
+  "h",
+  "html",
+  "ipynb",
+  "js",
+  "json",
+  "jsx",
+  "log",
+  "md",
+  "py",
+  "qmd",
+  "r",
+  "rb",
+  "rs",
+  "sh",
+  "tex",
+  "toml",
+  "ts",
+  "tsx",
+  "txt",
+  "yaml",
+  "yml",
+]);
+
+function isProbablyTextFile(path: string, mime?: string): boolean {
+  if (mime?.startsWith("text/")) return true;
+  if (
+    mime === "application/json" ||
+    mime === "application/x-ipynb+json" ||
+    mime === "application/xml"
+  ) {
+    return true;
+  }
+  return TEXT_EXTENSIONS.has(filename_extension(path).toLowerCase());
+}
+
+function ReadOnlyFileViewer({
+  project_id,
+  path,
+}: {
+  project_id: string;
+  path: string;
+}) {
+  const [state, setState] = useState<{
+    loading: boolean;
+    error?: string;
+    content?: string;
+    mime?: string;
+    binary?: boolean;
+  }>({ loading: true });
+
+  const downloadFile = useCallback(async () => {
+    const fs = await webapp_client.conat_client.projectFs({
+      project_id,
+      caller: "ReadOnlyFileViewer.download",
+      viewer: true,
+    });
+    const data = await fs.readFile(path);
+    const blob = new Blob([toBlobPart(data)]);
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = path.split("/").pop() || "download";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }, [project_id, path]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setState({ loading: true });
+    void (async () => {
+      try {
+        const fs = await webapp_client.conat_client.projectFs({
+          project_id,
+          caller: "ReadOnlyFileViewer",
+          viewer: true,
+        });
+        const description = await fs.describeFile(path);
+        if (!isProbablyTextFile(path, description.mime)) {
+          if (!cancelled) {
+            setState({
+              loading: false,
+              mime: description.mime,
+              content: description.snippet,
+              binary: true,
+            });
+          }
+          return;
+        }
+        const content = await fs.readFile(path, "utf8");
+        if (!cancelled) {
+          setState({
+            loading: false,
+            mime: description.mime,
+            content: typeof content === "string" ? content : `${content}`,
+          });
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setState({ loading: false, error: `${err}` });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [project_id, path]);
+
+  if (state.loading) {
+    return <Loading theme="medium" />;
+  }
+  if (state.error) {
+    return (
+      <Alert
+        showIcon
+        type="error"
+        style={{ margin: "24px" }}
+        message="Unable to open file"
+        description={state.error}
+      />
+    );
+  }
+  if (state.binary) {
+    return (
+      <Alert
+        showIcon
+        type="info"
+        style={{ margin: "24px" }}
+        message="Binary file"
+        description={
+          <Space direction="vertical">
+            <span>
+              This file is available to you as a viewer, but the read-only
+              in-browser viewer does not render this MIME type
+              {state.mime ? ` (${state.mime})` : ""}.
+            </span>
+            <Button onClick={downloadFile}>Download file</Button>
+          </Space>
+        }
+      />
+    );
+  }
+  return (
+    <div
+      style={{
+        height: "100%",
+        overflow: "auto",
+        padding: "16px",
+        background: "white",
+      }}
+    >
+      <Alert
+        showIcon
+        type="info"
+        style={{ marginBottom: "12px" }}
+        message="Read-only viewer"
+        description="You can read this file, but cannot edit or execute it in this project."
+      />
+      <pre
+        style={{
+          margin: 0,
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          fontSize: "13px",
+          lineHeight: 1.45,
+        }}
+      >
+        {state.content ?? ""}
+      </pre>
+    </div>
+  );
+}
+
+function toBlobPart(data: unknown): BlobPart {
+  if (typeof data === "string") return data;
+  if (data instanceof ArrayBuffer) return data;
+  if (ArrayBuffer.isView(data)) {
+    const copy = new Uint8Array(data.byteLength);
+    copy.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+    return copy;
+  }
+  if (
+    data != null &&
+    typeof data === "object" &&
+    Array.isArray((data as any).data)
+  ) {
+    return new Uint8Array((data as any).data);
+  }
+  return String(data ?? "");
+}
+
 interface EditorContentProps {
   project_id: string;
   path: string;
@@ -294,6 +526,7 @@ const EditorContent: React.FC<EditorContentProps> = ({
   chatState,
   component,
 }: EditorContentProps) => {
+  const { projectAccess } = useProjectContext();
   const editor_container_ref = useRef<any>(null);
   const sideChatDesc = useMemo(
     () => getExternalSideChatDesc(project_id, path),
@@ -315,7 +548,7 @@ const EditorContent: React.FC<EditorContentProps> = ({
   );
 
   let content: React.JSX.Element;
-  if (chatState == "external") {
+  if (chatState == "external" && projectAccess.role !== "viewer") {
     // 2-column layout with chat
     content = (
       <div

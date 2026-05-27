@@ -564,7 +564,9 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
         />
         {renderFlyoutHeader()}
         <div style={{ flex: 1, overflow: "hidden", display: "flex" }}>
-          <StartButton minimal style={{ margin: "2px 4px 0px 4px" }} />
+          {projectCtx.projectAccess.capabilities.useProjectRuntime && (
+            <StartButton minimal style={{ margin: "2px 4px 0px 4px" }} />
+          )}
           <ProjectTabs project_id={project_id} />
         </div>
       </div>
@@ -685,7 +687,10 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
       >
         <ProjectControlStatus banner />
         <StartInProgress project_id={project_id} />
-        {START_BANNER && <StartButton />}
+        {START_BANNER &&
+          projectCtx.projectAccess.capabilities.useProjectRuntime && (
+            <StartButton />
+          )}
         <div
           style={{
             position: "relative",

@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Col, Row } from "antd";
+import { Alert, Button, Col, Row } from "antd";
 import { FormattedMessage } from "react-intl";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -17,7 +17,7 @@ import { AGENT_CHAT_MAX_WIDTH_PX } from "../agent-layout-constants";
 import { NavigatorShell } from "../../new/navigator-shell";
 
 export default function HomePage() {
-  const { project_id, actions } = useProjectContext();
+  const { project_id, actions, projectAccess } = useProjectContext();
   const other_settings = useTypedRedux("account", "other_settings");
   const project_map = useTypedRedux("projects", "project_map");
   const lifecycle = getProjectLifecycleView({
@@ -30,6 +30,7 @@ export default function HomePage() {
   const projectLabelLower = "project";
   const showLifecycleBanner = lifecycle.showLifecycleBanner;
   const showHomeContent = lifecycle.canShowFilesystem;
+  const viewer = projectAccess?.role === "viewer";
 
   return (
     <Row
@@ -62,7 +63,29 @@ export default function HomePage() {
           </Title>
         </div>
       </Col>
-      {showLifecycleBanner && (
+      {viewer && (
+        <Col md={24}>
+          <Alert
+            style={{ width: "100%" }}
+            type="info"
+            showIcon
+            message="Read-only project access"
+            description={
+              <div>
+                You can browse and open allowed project files, but cannot start
+                the project runtime, create files, use terminals, run agents, or
+                change project settings.
+                <div style={{ marginTop: "12px" }}>
+                  <Button onClick={() => actions?.set_active_tab("files")}>
+                    Open files
+                  </Button>
+                </div>
+              </div>
+            }
+          />
+        </Col>
+      )}
+      {!viewer && showLifecycleBanner && (
         <Col md={24}>
           <Alert
             style={{ width: "100%" }}
@@ -149,7 +172,7 @@ export default function HomePage() {
           />
         </Col>
       )}
-      {showHomeContent && (
+      {!viewer && showHomeContent && (
         <>
           <Col md={24}>
             <NavigatorShell
