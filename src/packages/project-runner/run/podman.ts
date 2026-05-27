@@ -83,6 +83,9 @@ import {
   PROJECT_SECRETS_MOUNT_PATH,
 } from "@cocalc/util/project-secrets";
 import { tmpdir } from "node:os";
+import { resolveSharedScratchMount } from "./shared-scratch";
+
+export { resolveSharedScratchMount } from "./shared-scratch";
 
 const logger = getLogger("project-runner:podman");
 // Restores can be large; allow the RPC to stay open while rustic runs.
@@ -1301,6 +1304,10 @@ export async function start({
           secrets: config?.secrets,
         }),
     );
+    const sharedScratchMount = await timings.measure(
+      "resolve_shared_scratch",
+      async () => await resolveSharedScratchMount(),
+    );
     const configuredSshPort =
       Number.isInteger(config?.ssh_port) && (config?.ssh_port ?? 0) > 0
         ? Number(config?.ssh_port)
@@ -1450,6 +1457,14 @@ export async function start({
       args.push(
         "--mount",
         `type=tmpfs,tmpfs-size=${config.tmp},tmpfs-mode=1777,destination=/tmp`,
+      );
+    }
+    if (sharedScratchMount) {
+      args.push(
+        mountArg({
+          source: sharedScratchMount.source,
+          target: sharedScratchMount.target,
+        }),
       );
     }
     args.push(

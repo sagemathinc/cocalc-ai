@@ -357,7 +357,7 @@ async function performAutoGrow(
     await client.growBtrfs({ disk_gb: nextDisk });
   } catch (err) {
     resizeWarning =
-      "disk resized in cloud, but filesystem resize failed; reboot or run /usr/local/sbin/cocalc-grow-btrfs";
+      "disk resized in cloud, but online filesystem resize failed; run sudo /usr/local/sbin/cocalc-runtime-storage grow-btrfs";
     log.warn("auto-grow growBtrfs failed", {
       host_id: row.id,
       nextDisk,

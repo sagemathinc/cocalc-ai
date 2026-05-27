@@ -253,6 +253,8 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
   const watchedDiskType = Form.useWatch("disk_type", formInstance);
   const watchedDisk = Form.useWatch("disk", formInstance);
   const watchedDiskGb = Form.useWatch("disk_gb", formInstance);
+  const watchedSharedDiskGb = Form.useWatch("shared_disk_gb", formInstance);
+  const watchedSharedDiskType = Form.useWatch("shared_disk_type", formInstance);
   const watchedMachineType = Form.useWatch("machine_type", formInstance);
   const watchedGpuType = Form.useWatch("gpu_type", formInstance);
   const watchedPricingModel = Form.useWatch("pricing_model", formInstance);
@@ -297,11 +299,19 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
       storage_mode: watchedStorageMode,
       disk_type: watchedDiskType,
       disk_gb: selectedDiskGb,
+      shared_disk_type: watchedSharedDiskType,
+      shared_disk_gb:
+        typeof watchedSharedDiskGb === "number" &&
+        Number.isFinite(watchedSharedDiskGb)
+          ? watchedSharedDiskGb
+          : undefined,
       price_display: watchedPriceDisplay === "monthly" ? "monthly" : "hourly",
     }),
     [
       selectedDiskGb,
       watchedDiskType,
+      watchedSharedDiskGb,
+      watchedSharedDiskType,
       watchedGpuType,
       watchedMachineType,
       watchedFundingMode,

@@ -126,6 +126,11 @@ class BootstrapConfig:
     root_reserve_gb_raw: str
     data_disk_devices: str
     data_disk_candidates: str
+    shared_scratch_enabled: bool
+    shared_scratch_devices: str
+    shared_scratch_mount: str
+    shared_scratch_project_mount: str
+    shared_scratch_filesystem: str
     apt_packages: list[str]
     has_gpu: bool
     ssh_user: str
@@ -181,6 +186,7 @@ def load_config(bootstrap_dir: str) -> BootstrapConfig:
     bundle_project = desired.get("project_bundle") or {}
     bundle_tools = desired.get("tools_bundle") or {}
     cloudflared = desired.get("cloudflared") or {}
+    shared_scratch = desired.get("shared_scratch") or {}
     bootstrap_meta = desired.get("bootstrap") or {}
     bootstrap_connection = desired.get("bootstrap_connection") or {}
     return BootstrapConfig(
@@ -221,6 +227,27 @@ def load_config(bootstrap_dir: str) -> BootstrapConfig:
         data_disk_candidates=_ensure_str(
             facts.get("data_disk_candidates") or "",
             "bootstrap-host-facts.data_disk_candidates",
+        ),
+        shared_scratch_enabled=_ensure_bool(
+            shared_scratch.get("enabled"),
+            "bootstrap-desired-state.shared_scratch.enabled",
+            False,
+        ),
+        shared_scratch_devices=_ensure_str(
+            facts.get("shared_scratch_disk_devices") or "",
+            "bootstrap-host-facts.shared_scratch_disk_devices",
+        ),
+        shared_scratch_mount=_ensure_str(
+            shared_scratch.get("mount") or "/mnt/cocalc-scratch",
+            "bootstrap-desired-state.shared_scratch.mount",
+        ),
+        shared_scratch_project_mount=_ensure_str(
+            shared_scratch.get("project_mount") or "/scratch",
+            "bootstrap-desired-state.shared_scratch.project_mount",
+        ),
+        shared_scratch_filesystem=_ensure_str(
+            shared_scratch.get("filesystem") or "ext4",
+            "bootstrap-desired-state.shared_scratch.filesystem",
         ),
         apt_packages=[
             str(p)
@@ -655,6 +682,7 @@ def build_host_facts(cfg: BootstrapConfig) -> dict[str, Any]:
         "env_file": cfg.env_file,
         "data_disk_devices": cfg.data_disk_devices,
         "data_disk_candidates": cfg.data_disk_candidates,
+        "shared_scratch_disk_devices": cfg.shared_scratch_devices,
         "runtime_user_host_uid": desired_uid,
         "runtime_user_host_gid": desired_gid,
         "project_host_bundle_root": cfg.project_host_bundle.root,
@@ -689,6 +717,12 @@ def build_desired_state(cfg: BootstrapConfig) -> dict[str, Any]:
         "apt_packages": cfg.apt_packages,
         "env_lines": cfg.env_lines,
         "bootstrap_done_paths": cfg.bootstrap_done_paths,
+        "shared_scratch": {
+            "enabled": cfg.shared_scratch_enabled,
+            "mount": cfg.shared_scratch_mount,
+            "project_mount": cfg.shared_scratch_project_mount,
+            "filesystem": cfg.shared_scratch_filesystem,
+        },
         "runtime_user_contract": expected_runtime_user_contract(cfg),
         "bootstrap_connection": build_bootstrap_connection(cfg),
         "project_host_bundle": {
@@ -1506,7 +1540,13 @@ def prune_bundle_versions(
         )
 
 
-def pick_data_disk(cfg: BootstrapConfig, devices: list[str]) -> str | None:
+def pick_unmounted_or_target_disk(
+    cfg: BootstrapConfig,
+    devices: list[str],
+    *,
+    mountpoint: str,
+    min_size_bytes: int = 10 * 1024 * 1024 * 1024,
+) -> str | None:
     for dev in devices:
         if not dev or not Path(dev).exists():
             continue
@@ -1519,7 +1559,7 @@ def pick_data_disk(cfg: BootstrapConfig, devices: list[str]) -> str | None:
         except Exception:
             mountpoints = []
         mountpoints = [m for m in mountpoints if m]
-        if mountpoints and "/mnt/cocalc" in mountpoints:
+        if mountpoints and mountpoint in mountpoints:
             return dev
         if mountpoints:
             log_line(cfg, f"bootstrap: skipping {dev} (mounted at {mountpoints})")
@@ -1532,11 +1572,15 @@ def pick_data_disk(cfg: BootstrapConfig, devices: list[str]) -> str | None:
             )
         except Exception:
             size_bytes = 0
-        if size_bytes and size_bytes < 10 * 1024 * 1024 * 1024:
+        if size_bytes and size_bytes < min_size_bytes:
             log_line(cfg, f"bootstrap: skipping {dev} (size {size_bytes}B too small)")
             continue
         return dev
     return None
+
+
+def pick_data_disk(cfg: BootstrapConfig, devices: list[str]) -> str | None:
+    return pick_unmounted_or_target_disk(cfg, devices, mountpoint="/mnt/cocalc")
 
 
 def setup_btrfs(cfg: BootstrapConfig, image_size_gb: int) -> None:
@@ -1587,16 +1631,87 @@ def setup_btrfs(cfg: BootstrapConfig, image_size_gb: int) -> None:
     ensure_legacy_btrfs_link(cfg)
 
 
-def update_fstab(line: str) -> None:
+def setup_shared_scratch(cfg: BootstrapConfig) -> None:
+    if not cfg.shared_scratch_enabled:
+        return
+    if cfg.shared_scratch_filesystem != "ext4":
+        raise RuntimeError(
+            f"unsupported shared scratch filesystem: {cfg.shared_scratch_filesystem}"
+        )
+    scratch_mount = Path(cfg.shared_scratch_mount)
+    scratch_mount.mkdir(parents=True, exist_ok=True)
+    devices = [d for d in cfg.shared_scratch_devices.split() if d]
+    if not devices:
+        raise RuntimeError("shared scratch is enabled but no candidate devices were configured")
+
+    log_line(cfg, "bootstrap: waiting for shared scratch disk (up to 600s)")
+    scratch_disk = None
+    for attempt in range(60):
+        scratch_disk = pick_unmounted_or_target_disk(
+            cfg,
+            devices,
+            mountpoint=cfg.shared_scratch_mount,
+        )
+        if scratch_disk:
+            break
+        log_line(
+            cfg,
+            f"bootstrap: shared scratch disk not ready (attempt {attempt + 1}/60)",
+        )
+        time.sleep(10)
+    if not scratch_disk:
+        raise RuntimeError("shared scratch disk was not found")
+
+    log_line(cfg, f"bootstrap: using shared scratch disk {scratch_disk}")
+    fstype = subprocess.check_output(
+        ["lsblk", "-no", "FSTYPE", scratch_disk],
+        text=True,
+    ).strip()
+    if not fstype:
+        run_cmd(cfg, ["mkfs.ext4", "-F", scratch_disk], "mkfs.ext4 shared scratch")
+    elif fstype != "ext4":
+        raise RuntimeError(
+            f"refusing to mount shared scratch disk {scratch_disk} (filesystem={fstype})"
+        )
+    if not scratch_mount.is_mount():
+        run_cmd(
+            cfg,
+            ["mount", scratch_disk, cfg.shared_scratch_mount],
+            "mount shared scratch disk",
+        )
+    uuid = subprocess.check_output(
+        ["blkid", "-s", "UUID", "-o", "value", scratch_disk],
+        text=True,
+    ).strip()
+    fstab_line = (
+        f"UUID={uuid} {cfg.shared_scratch_mount} ext4 defaults,nofail 0 2 # cocalc-scratch"
+    )
+    update_fstab(
+        fstab_line,
+        mountpoint=cfg.shared_scratch_mount,
+        marker="cocalc-scratch",
+    )
+    run_best_effort(cfg, ["resize2fs", scratch_disk], "resize shared scratch filesystem")
+    os.chmod(cfg.shared_scratch_mount, 0o1777)
+
+
+def update_fstab(
+    line: str,
+    *,
+    mountpoint: str = "/mnt/cocalc",
+    marker: str = "cocalc-btrfs",
+) -> None:
     fstab = Path("/etc/fstab")
     existing = fstab.read_text(encoding="utf-8") if fstab.exists() else ""
-    lines = [
-        l
-        for l in existing.splitlines()
-        if "cocalc-btrfs" not in l
-        and " /btrfs " not in l
-        and " /mnt/cocalc " not in l
-    ]
+    lines = []
+    for existing_line in existing.splitlines():
+        if marker and marker in existing_line:
+            continue
+        if f" {mountpoint} " in existing_line:
+            continue
+        if mountpoint == "/mnt/cocalc" and " /btrfs " in existing_line:
+            continue
+        lines.append(existing_line)
     lines.append(line)
     fstab.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -1631,6 +1746,44 @@ if ! mountpoint -q "$MOUNTPOINT"; then
   exit 0
 fi
 MOUNT_SOURCE="$(findmnt -n -o SOURCE "$MOUNTPOINT" 2>/dev/null || true)"
+refresh_block_device() {
+  local source="$1"
+  local resolved parent_name parent part_num base rescan_path
+  resolved="$(readlink -f "$source" 2>/dev/null || printf '%s' "$source")"
+  parent_name="$(lsblk -no PKNAME "$resolved" 2>/dev/null | head -n1 | tr -d '[:space:]' || true)"
+  part_num="$(lsblk -no PARTN "$resolved" 2>/dev/null | head -n1 | tr -d '[:space:]' || true)"
+  if [ -n "$parent_name" ]; then
+    parent="/dev/$parent_name"
+  else
+    parent="$resolved"
+  fi
+  base="$(basename "$parent")"
+  rescan_path="/sys/class/block/$base/device/rescan"
+  if [ -w "$rescan_path" ]; then
+    echo 1 > "$rescan_path" || true
+  fi
+  blockdev --rereadpt "$parent" >/dev/null 2>&1 || true
+  if command -v partprobe >/dev/null 2>&1; then
+    partprobe "$parent" >/dev/null 2>&1 || true
+  fi
+  if command -v udevadm >/dev/null 2>&1; then
+    udevadm settle >/dev/null 2>&1 || true
+  fi
+  if [ -n "$part_num" ]; then
+    if ! command -v growpart >/dev/null 2>&1; then
+      echo "growpart is required to grow partition-backed filesystem $resolved" >&2
+      return 1
+    fi
+    growpart "$parent" "$part_num" >/dev/null 2>&1 || true
+    blockdev --rereadpt "$parent" >/dev/null 2>&1 || true
+    if command -v partprobe >/dev/null 2>&1; then
+      partprobe "$parent" >/dev/null 2>&1 || true
+    fi
+    if command -v udevadm >/dev/null 2>&1; then
+      udevadm settle >/dev/null 2>&1 || true
+    fi
+  fi
+}
 if [ "$MOUNT_SOURCE" = "$IMAGE" ] || [ "${MOUNT_SOURCE#/dev/loop}" != "$MOUNT_SOURCE" ]; then
   if [ ! -f "$IMAGE" ]; then
     exit 0
@@ -1670,6 +1823,7 @@ if [ "$MOUNT_SOURCE" = "$IMAGE" ] || [ "${MOUNT_SOURCE#/dev/loop}" != "$MOUNT_SO
   btrfs filesystem resize max "$MOUNTPOINT" >/dev/null 2>&1 || true
   exit 0
 fi
+refresh_block_device "$MOUNT_SOURCE" || true
 btrfs filesystem resize max "$MOUNTPOINT" >/dev/null 2>&1 || true
 """
     helper_path = Path("/usr/local/sbin/cocalc-grow-btrfs")
@@ -1715,7 +1869,7 @@ deny() {
 allow_path() {
   local path="${1//\\\\:/:}"
   case "$path" in
-    /mnt/cocalc|/mnt/cocalc/*|/dev/loop*|/var/lib/cocalc/cocalc.img|/var/lib/cocalc/btrfs.img|/opt/cocalc/project-host|/opt/cocalc/project-host/*|/opt/cocalc/project-bundles|/opt/cocalc/project-bundles/*|/opt/cocalc/tools|/opt/cocalc/tools/*)
+    /mnt/cocalc|/mnt/cocalc/*|/mnt/cocalc-scratch|/mnt/cocalc-scratch/*|/dev/loop*|/var/lib/cocalc/cocalc.img|/var/lib/cocalc/btrfs.img|/opt/cocalc/project-host|/opt/cocalc/project-host/*|/opt/cocalc/project-bundles|/opt/cocalc/project-bundles/*|/opt/cocalc/tools|/opt/cocalc/tools/*)
       return 0
       ;;
     *)
@@ -2665,6 +2819,73 @@ PY' bash "$tree"
       deny "grow-btrfs-bad-args" "non-numeric-argument"
     fi
     exec /usr/local/sbin/cocalc-grow-btrfs "$@"
+    ;;
+  grow-shared-scratch)
+    if [ "$#" -gt 1 ]; then
+      deny "grow-shared-scratch-bad-args" "too-many-arguments"
+    fi
+    if [ "$#" -eq 1 ] && ! echo "$1" | grep -Eq '^[0-9]+$'; then
+      deny "grow-shared-scratch-bad-args" "non-numeric-argument"
+    fi
+    scratch_mount="/mnt/cocalc-scratch"
+    if ! mountpoint -q "$scratch_mount"; then
+      deny "shared-scratch-not-mounted" "$scratch_mount"
+    fi
+    scratch_source="$(findmnt -n -o SOURCE "$scratch_mount" 2>/dev/null || true)"
+    case "$scratch_source" in
+      /dev/*)
+        ;;
+      *)
+        deny "shared-scratch-source-not-allowed" "$scratch_source"
+        ;;
+    esac
+    scratch_source="$(readlink -f "$scratch_source" 2>/dev/null || printf '%s' "$scratch_source")"
+    scratch_parent_name="$(lsblk -no PKNAME "$scratch_source" 2>/dev/null | head -n1 | tr -d '[:space:]' || true)"
+    scratch_part_num="$(lsblk -no PARTN "$scratch_source" 2>/dev/null | head -n1 | tr -d '[:space:]' || true)"
+    if [ -n "$scratch_parent_name" ]; then
+      scratch_parent="/dev/$scratch_parent_name"
+    else
+      scratch_parent="$scratch_source"
+    fi
+    scratch_base="$(basename "$scratch_parent")"
+    scratch_rescan="/sys/class/block/$scratch_base/device/rescan"
+    if [ -w "$scratch_rescan" ]; then
+      echo 1 > "$scratch_rescan" || true
+    fi
+    blockdev --rereadpt "$scratch_parent" >/dev/null 2>&1 || true
+    if command -v partprobe >/dev/null 2>&1; then
+      partprobe "$scratch_parent" >/dev/null 2>&1 || true
+    fi
+    if command -v udevadm >/dev/null 2>&1; then
+      udevadm settle >/dev/null 2>&1 || true
+    fi
+    if [ -n "$scratch_part_num" ]; then
+      if ! command -v growpart >/dev/null 2>&1; then
+        deny "growpart-missing" "cloud-guest-utils"
+      fi
+      growpart "$scratch_parent" "$scratch_part_num" >/dev/null 2>&1 || true
+      blockdev --rereadpt "$scratch_parent" >/dev/null 2>&1 || true
+      if command -v partprobe >/dev/null 2>&1; then
+        partprobe "$scratch_parent" >/dev/null 2>&1 || true
+      fi
+      if command -v udevadm >/dev/null 2>&1; then
+        udevadm settle >/dev/null 2>&1 || true
+      fi
+    fi
+    resize2fs "$scratch_source"
+    chmod 1777 "$scratch_mount"
+    ;;
+  unmount-shared-scratch)
+    if [ "$#" -ne 0 ]; then
+      deny "unmount-shared-scratch-bad-args" "too-many-arguments"
+    fi
+    scratch_mount="/mnt/cocalc-scratch"
+    if mountpoint -q "$scratch_mount"; then
+      umount "$scratch_mount"
+    fi
+    if [ -f /etc/fstab ]; then
+      sed -i.bak '/# cocalc-scratch$/d' /etc/fstab
+    fi
     ;;
   sync)
     exec /bin/sync "$@"
@@ -4296,6 +4517,7 @@ def run_provision(cfg: BootstrapConfig) -> int:
         enable_linger(cfg)
         prepare_dirs(cfg)
         setup_btrfs(cfg, image_size_gb)
+        setup_shared_scratch(cfg)
         record_operation_success(cfg, "provision")
         log_line(cfg, "bootstrap: provision completed successfully")
         return 0
@@ -4318,6 +4540,7 @@ def run_reconcile(cfg: BootstrapConfig) -> int:
         install_btrfs_helper(cfg)
         install_privileged_wrappers(cfg)
         ensure_cocalc_mount(cfg)
+        setup_shared_scratch(cfg)
         ensure_btrfs_data(cfg)
         ensure_subuids(cfg)
         configure_podman(cfg)

@@ -451,6 +451,90 @@ describe("hosts.createHost", () => {
     );
   });
 
+  it("normalizes Nebius shared scratch fields on create", async () => {
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.startsWith("INSERT INTO project_hosts ")) {
+        expect(params[4]?.machine).toMatchObject({
+          cloud: "nebius",
+          shared_disk_gb: 75,
+          shared_disk_type: "ssd",
+          metadata: {
+            shared_disk_mount: "/mnt/cocalc-scratch",
+            shared_disk_filesystem: "ext4",
+          },
+        });
+        return { rowCount: 1 };
+      }
+      if (
+        sql.includes(
+          "SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              id: params[0],
+              name: "scratch-nebius",
+              region: "us-central1",
+              status: "starting",
+              metadata: {
+                owner: ACCOUNT_ID,
+                size: "cpu-standard-v3",
+                gpu: false,
+                machine: {
+                  cloud: "nebius",
+                  shared_disk_gb: 75,
+                  shared_disk_type: "ssd",
+                },
+              },
+              last_seen: null,
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM account_impersonation_sessions")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { createHost } = await import("./hosts");
+    await createHost({
+      account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
+      name: "scratch-nebius",
+      region: "us-central1",
+      size: "cpu-standard-v3",
+      machine: {
+        cloud: "nebius",
+        disk_gb: 100,
+        disk_type: "ssd",
+        storage_mode: "persistent",
+        shared_disk_gb: 50,
+      },
+    });
+  });
+
+  it("rejects shared scratch for providers without support", async () => {
+    const { createHost } = await import("./hosts");
+    await expect(
+      createHost({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        name: "scratch-lambda",
+        region: "us-east-1",
+        size: "gpu_1x_a10",
+        machine: {
+          cloud: "lambda",
+          shared_disk_gb: 100,
+        },
+      }),
+    ).rejects.toThrow(
+      "shared scratch disks are not supported for provider 'lambda'",
+    );
+    expect(estimateDedicatedHostRateUsdPerHourMock).not.toHaveBeenCalled();
+  });
+
   it("creates postpaid cloud hosts with a credit-funded purchase session", async () => {
     getDedicatedHostPolicySnapshotForAccountMock = jest.fn(async () => ({
       account_id: ACCOUNT_ID,

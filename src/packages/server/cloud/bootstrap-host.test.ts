@@ -214,6 +214,18 @@ describe("bootstrap-host shell templates", () => {
     expect(source).not.toContain(`> "$BOOTSTRAP_DIR/bootstrap-config.json"`);
   });
 
+  it("passes shared scratch configuration through split bootstrap state", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "bootstrap-host.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain(`"shared_scratch_disk_devices"`);
+    expect(source).toContain(`"shared_scratch"`);
+    expect(source).toContain(`/mnt/cocalc-scratch`);
+    expect(source).toContain(`COCALC_SHARED_SCRATCH_HOST_MOUNT`);
+  });
+
   it("does not make bootstrap execution depend on tee writing the log file", () => {
     const source = fs.readFileSync(
       path.join(__dirname, "bootstrap-host.ts"),

@@ -506,6 +506,33 @@ describe("host-create-draft", () => {
     expect(draft.disk).toBe(75);
   });
 
+  it("drops shared scratch for GCP until provider lifecycle support exists", () => {
+    const draft = normalizeDraft(
+      {
+        provider: "gcp",
+        shared_disk_gb: 50,
+      },
+      providerContext("gcp"),
+    ).draft;
+
+    expect(draft.shared_disk_gb).toBeUndefined();
+    expect(draft.shared_disk_type).toBeUndefined();
+  });
+
+  it("normalizes Nebius shared scratch IO M3 disks to 93 GB increments", () => {
+    const draft = normalizeDraft(
+      {
+        provider: "nebius",
+        shared_disk_gb: 100,
+        shared_disk_type: "ssd_io_m3",
+      },
+      providerContext("nebius"),
+    ).draft;
+
+    expect(draft.shared_disk_gb).toBe(186);
+    expect(draft.shared_disk_type).toBe("ssd_io_m3");
+  });
+
   it("keeps Nebius disk sizes constrained even with network SSD selected", () => {
     const draft = normalizeDraft(
       {

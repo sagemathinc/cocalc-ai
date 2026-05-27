@@ -95,6 +95,7 @@ jest.mock("./conat-client", () => ({
 }));
 
 import getPort from "@cocalc/backend/get-port";
+import { mountArg } from "@cocalc/backend/podman";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import {
   cleanupProjectSecretsHostPath,
@@ -121,6 +122,9 @@ describe("project-runner podman orphan fallback", () => {
     mockFileServerClient.mockReturnValue({
       beginRestoreStaging: jest.fn(async () => null),
     });
+    delete process.env.COCALC_SHARED_SCRATCH_ENABLED;
+    delete process.env.COCALC_SHARED_SCRATCH_HOST_MOUNT;
+    delete process.env.COCALC_SHARED_SCRATCH_PROJECT_MOUNT;
     processKillSpy = jest.spyOn(process, "kill").mockImplementation(() => true);
   });
 
@@ -464,6 +468,52 @@ describe("project-runner podman orphan fallback", () => {
       ssh_port: 30123,
       http_port: 45123,
     });
+  });
+
+  it("bind mounts host shared scratch into started project containers", async () => {
+    mockPodman.mockResolvedValue({ stdout: "" });
+    process.env.COCALC_SHARED_SCRATCH_ENABLED = "1";
+    process.env.COCALC_SHARED_SCRATCH_HOST_MOUNT = "/";
+    process.env.COCALC_SHARED_SCRATCH_PROJECT_MOUNT = "/scratch";
+
+    await start({
+      project_id: project1,
+      localPath: async () => ({
+        home: `/tmp/project-${project1}`,
+      }),
+      config: {
+        image: "docker.io/library/ubuntu:latest",
+        ssh_port: 30123,
+        http_port: 45123,
+      },
+    });
+
+    expect(mountArg).toHaveBeenCalledWith({
+      source: "/",
+      target: "/scratch",
+    });
+  });
+
+  it("fails project start when configured shared scratch is not mounted", async () => {
+    mockPodman.mockResolvedValue({ stdout: "" });
+    process.env.COCALC_SHARED_SCRATCH_ENABLED = "1";
+    process.env.COCALC_SHARED_SCRATCH_HOST_MOUNT = `/tmp/missing-scratch-${project1}`;
+
+    await expect(
+      start({
+        project_id: project1,
+        localPath: async () => ({
+          home: `/tmp/project-${project1}`,
+        }),
+        config: {
+          image: "docker.io/library/ubuntu:latest",
+          ssh_port: 30123,
+          http_port: 45123,
+        },
+      }),
+    ).rejects.toThrow(
+      "shared scratch is enabled but host mount /tmp/missing-scratch-11111111-1111-4111-8111-111111111111 does not exist",
+    );
   });
 
   it("materializes project secrets as private runtime files", async () => {

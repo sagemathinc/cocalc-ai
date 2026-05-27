@@ -50,7 +50,11 @@ import type {
 } from "@cocalc/conat/hub/api/hosts";
 import { getAccountProductAccessTrust } from "@cocalc/server/accounts/trusted-product-access";
 import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
-import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
+import {
+  normalizeProviderId,
+  type HostSpec,
+  type ProviderId,
+} from "@cocalc/cloud";
 import type {
   HostManagedComponentRolloutResponse,
   HostManagedComponentStatus,
@@ -218,6 +222,7 @@ import {
   runtimeDeploymentsForComponentRollout,
   runtimeDeploymentsForUpgradeResults,
 } from "./hosts-runtime-deployment-planning";
+import { normalizeSharedScratchMachineInPlace } from "./hosts-shared-scratch";
 import {
   installedProjectHostArtifactVersion,
   isProjectHostLocalRollbackError as isProjectHostLocalRollbackErrorInternal,
@@ -5575,6 +5580,9 @@ export async function updateHostMachine({
   ram_gb,
   disk_gb,
   disk_type,
+  shared_disk_gb,
+  shared_disk_type,
+  delete_shared_scratch,
   machine_type,
   gpu_type,
   gpu_count,
@@ -5600,6 +5608,9 @@ export async function updateHostMachine({
   ram_gb?: number;
   disk_gb?: number;
   disk_type?: HostMachine["disk_type"];
+  shared_disk_gb?: number;
+  shared_disk_type?: HostMachine["shared_disk_type"];
+  delete_shared_scratch?: boolean;
   machine_type?: HostMachine["machine_type"];
   gpu_type?: HostMachine["gpu_type"];
   gpu_count?: number;
@@ -5640,6 +5651,10 @@ export async function updateHostMachine({
   let storageModeChanged = false;
   let diskTypeChanged = false;
   let machineChanged = false;
+  let sharedScratchEnsureGb: number | undefined;
+  let sharedScratchResizeGb: number | undefined;
+  let deleteSharedScratch = false;
+  let reconcileSharedScratchMount = false;
   let nextRegion = row.region ?? "";
   const requestedCloudRaw = typeof cloud === "string" ? cloud : undefined;
   const requestedCloud = normalizeProviderId(requestedCloudRaw);
@@ -5692,6 +5707,8 @@ export async function updateHostMachine({
     ram_gb: specMachine.metadata?.ram_gb ?? null,
     disk_gb: specMachine.disk_gb ?? null,
     disk_type: specMachine.disk_type ?? null,
+    shared_disk_gb: specMachine.shared_disk_gb ?? null,
+    shared_disk_type: specMachine.shared_disk_type ?? null,
     storage_mode: specMachine.storage_mode ?? null,
     auto_grow: specMachine.metadata?.auto_grow ?? null,
     pricing_model:
@@ -5725,6 +5742,11 @@ export async function updateHostMachine({
   const nextCpu = parsePositiveInt(cpu, "cpu");
   const nextRam = parsePositiveInt(ram_gb, "ram_gb");
   const nextDisk = parsePositiveInt(disk_gb, "disk_gb");
+  const nextSharedDisk = parsePositiveInt(shared_disk_gb, "shared_disk_gb");
+  const requestedDeleteSharedScratch = parseBooleanLike(
+    delete_shared_scratch,
+    "delete_shared_scratch",
+  );
   const nextGpuCount = parsePositiveInt(gpu_count, "gpu_count");
   const nextAutoGrowEnabled = parseBooleanLike(
     auto_grow_enabled,
@@ -5908,6 +5930,82 @@ export async function updateHostMachine({
     changed = true;
     nonDiskChange = true;
     diskTypeChanged = true;
+  }
+  if (requestedDeleteSharedScratch) {
+    if (nextSharedDisk != null || shared_disk_type != null) {
+      throw new Error(
+        "cannot set shared scratch size/type while deleting shared scratch",
+      );
+    }
+    if (Number(machine.shared_disk_gb ?? 0) > 0) {
+      deleteSharedScratch = true;
+      delete nextMachine.shared_disk_gb;
+      delete nextMachine.shared_disk_type;
+      if (nextMachine.metadata) {
+        delete nextMachine.metadata.shared_disk_mount;
+        delete nextMachine.metadata.shared_disk_filesystem;
+        delete nextMachine.metadata.shared_disk_state;
+      }
+      changed = true;
+    }
+  } else if (nextSharedDisk != null) {
+    const currentSharedDisk = Number(machine.shared_disk_gb ?? 0);
+    if (!isDeprovisioned && currentSharedDisk <= 0 && nextSharedDisk > 0) {
+      sharedScratchEnsureGb = nextSharedDisk;
+    }
+    if (
+      shared_disk_type != null &&
+      machine.shared_disk_type != null &&
+      shared_disk_type !== machine.shared_disk_type
+    ) {
+      throw new Error(
+        "shared scratch disk type changes require deleting and recreating the scratch disk",
+      );
+    }
+    nextMachine.shared_disk_gb = nextSharedDisk;
+    if (shared_disk_type != null) {
+      nextMachine.shared_disk_type = shared_disk_type;
+    }
+    normalizeSharedScratchMachineInPlace(nextMachine, {
+      current: machine,
+      allowShrink: isDeprovisioned,
+    });
+    if (
+      nextMachine.shared_disk_gb !== machine.shared_disk_gb ||
+      nextMachine.shared_disk_type !== machine.shared_disk_type
+    ) {
+      changed = true;
+    }
+    if (
+      !isDeprovisioned &&
+      currentSharedDisk > 0 &&
+      nextSharedDisk > currentSharedDisk
+    ) {
+      sharedScratchResizeGb = nextSharedDisk;
+    }
+  } else if (shared_disk_type != null) {
+    if (!nextMachine.shared_disk_gb) {
+      throw new Error(
+        "shared_disk_gb is required when setting shared_disk_type",
+      );
+    }
+    if (
+      machine.shared_disk_type != null &&
+      shared_disk_type !== machine.shared_disk_type
+    ) {
+      throw new Error(
+        "shared scratch disk type changes require deleting and recreating the scratch disk",
+      );
+    }
+    nextMachine.shared_disk_type = shared_disk_type;
+    normalizeSharedScratchMachineInPlace(nextMachine, {
+      current: machine,
+      allowShrink: isDeprovisioned,
+    });
+    if (nextMachine.shared_disk_type !== machine.shared_disk_type) {
+      changed = true;
+      nonDiskChange = true;
+    }
   }
   if (typeof zone === "string" && zone && zone !== nextMachine.zone) {
     nextMachine.zone = zone;
@@ -6142,10 +6240,157 @@ export async function updateHostMachine({
         await client.growBtrfs({ disk_gb: nextDisk });
       } catch (err) {
         resizeWarning =
-          "disk resized in cloud, but filesystem resize failed; reboot or run /usr/local/sbin/cocalc-grow-btrfs";
+          "disk resized in cloud, but online filesystem resize failed; run sudo /usr/local/sbin/cocalc-runtime-storage grow-btrfs";
         console.warn("growBtrfs failed after disk resize", err);
       }
     }
+  }
+  if (!isSelfHost && machineCloud && sharedScratchResizeGb != null) {
+    const provider = getServerProvider(machineCloud);
+    if (!provider?.entry.capabilities.sharedScratchDisk?.supported) {
+      throw new Error(
+        "shared scratch disks are not supported for this provider",
+      );
+    }
+    if (!provider.entry.provider.resizeSharedScratchDisk) {
+      throw new Error(
+        "shared scratch disk resize is not supported for this provider",
+      );
+    }
+    if (!runtime.instance_id) {
+      throw new Error("host is not provisioned");
+    }
+    const { entry, creds } = await getProviderContext(machineCloud, {
+      region: row.region,
+    });
+    if (!entry.provider.resizeSharedScratchDisk) {
+      throw new Error(
+        "shared scratch disk resize is not supported for this provider",
+      );
+    }
+    await entry.provider.resizeSharedScratchDisk(
+      runtime,
+      sharedScratchResizeGb,
+      creds,
+    );
+    if (row.status !== "off") {
+      const client = await hostControlClient(row.id);
+      try {
+        await client.growSharedScratch({ disk_gb: sharedScratchResizeGb });
+      } catch (err) {
+        resizeWarning =
+          "shared scratch disk resized in cloud, but online filesystem resize failed; run sudo /usr/local/sbin/cocalc-runtime-storage grow-shared-scratch";
+        console.warn("growSharedScratch failed after disk resize", err);
+      }
+    }
+  }
+  if (!isSelfHost && machineCloud && sharedScratchEnsureGb != null) {
+    const provider = getServerProvider(machineCloud);
+    if (!provider?.entry.capabilities.sharedScratchDisk?.supported) {
+      throw new Error(
+        "shared scratch disks are not supported for this provider",
+      );
+    }
+    if (!runtime.instance_id) {
+      throw new Error("host is not provisioned");
+    }
+    const { entry, creds } = await getProviderContext(machineCloud, {
+      region: row.region,
+    });
+    if (!entry.provider.ensureSharedScratchDisk) {
+      throw new Error(
+        "shared scratch disk runtime attach is not supported for this provider",
+      );
+    }
+    const prefix = getProviderPrefix(machineCloud, await getServerSettings());
+    const baseName = row.id.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
+    const hostName = (provider.normalizeName ?? gcpSafeName)(prefix, baseName);
+    const scratchSpec: HostSpec = {
+      name: hostName,
+      region: row.region ?? nextMachine.zone ?? "",
+      zone: nextMachine.zone,
+      cpu: Math.max(1, Number(nextMachine.metadata?.cpu ?? 1)),
+      ram_gb: Math.max(1, Number(nextMachine.metadata?.ram_gb ?? 1)),
+      disk_gb: Math.max(1, Number(nextMachine.disk_gb ?? machine.disk_gb ?? 1)),
+      disk_type:
+        nextMachine.disk_type === "ssd" ||
+        nextMachine.disk_type === "standard" ||
+        nextMachine.disk_type === "ssd_io_m3"
+          ? nextMachine.disk_type
+          : "balanced",
+      shared_disk_gb: sharedScratchEnsureGb,
+      shared_disk_type: nextMachine.shared_disk_type,
+      metadata: {
+        ...(nextMachine.metadata ?? {}),
+      },
+    };
+    runtime = await entry.provider.ensureSharedScratchDisk(
+      runtime,
+      scratchSpec,
+      creds,
+    );
+    metadata.runtime = runtime;
+    reconcileSharedScratchMount = HOST_RUNNING_STATUSES.has(
+      String(row.status ?? ""),
+    );
+  }
+  if (deleteSharedScratch) {
+    if (isSelfHost || !machineCloud) {
+      throw new Error("shared scratch disks are not supported for this host");
+    }
+    const provider = getServerProvider(machineCloud);
+    if (!provider?.entry.capabilities.sharedScratchDisk?.supported) {
+      throw new Error(
+        "shared scratch disks are not supported for this provider",
+      );
+    }
+    if (row.status !== "deprovisioned") {
+      if (!runtime.instance_id) {
+        throw new Error("host is not provisioned");
+      }
+      if (HOST_RUNNING_STATUSES.has(String(row.status ?? ""))) {
+        const client = await hostControlClient(row.id);
+        try {
+          await client.unmountSharedScratch({});
+        } catch (err) {
+          throw new Error(
+            `shared scratch could not be unmounted; stop or restart projects using /scratch and try again: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
+      const { entry, creds } = await getProviderContext(machineCloud, {
+        region: row.region,
+      });
+      if (!entry.provider.deleteSharedScratchDisk) {
+        throw new Error(
+          "shared scratch disk delete is not supported for this provider",
+        );
+      }
+      await entry.provider.deleteSharedScratchDisk(
+        {
+          ...runtime,
+          metadata:
+            runtime.metadata == null
+              ? runtime.metadata
+              : JSON.parse(JSON.stringify(runtime.metadata)),
+        },
+        creds,
+      );
+    }
+    const runtimeMetadata = { ...((runtime.metadata ?? {}) as any) };
+    const diskIds = { ...(runtimeMetadata.diskIds ?? {}) };
+    delete diskIds.scratch;
+    runtimeMetadata.diskIds = diskIds;
+    delete runtimeMetadata.shared_disk_id;
+    delete runtimeMetadata.shared_disk_name;
+    delete runtimeMetadata.scratchDiskTypeCode;
+    runtime = {
+      ...runtime,
+      metadata: runtimeMetadata,
+    };
+    metadata.runtime = runtime;
   }
 
   const nextMetadata = {
@@ -6189,6 +6434,9 @@ export async function updateHostMachine({
       after: buildConfigSpec(nextMachine, nextRegion),
     },
   });
+  if (reconcileSharedScratchMount) {
+    await reconcileCloudHostBootstrapOverSsh({ host_id: row.id, row: rows[0] });
+  }
   return parseRow(rows[0]);
 }
 

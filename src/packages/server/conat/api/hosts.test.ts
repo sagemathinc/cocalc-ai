@@ -89,6 +89,7 @@ let refreshCloudCatalogNowMock: jest.Mock;
 let bumpReconcileMock: jest.Mock;
 let runReconcileOnceMock: jest.Mock;
 let listCloudOrphanInstancesMock: jest.Mock;
+let logCloudVmEventMock: jest.Mock;
 let getBrowserAuthSessionHashMock: jest.Mock;
 let requireFreshAuthForSessionHashMock: jest.Mock;
 let getImpersonationSessionBySessionHashMock: jest.Mock;
@@ -153,6 +154,7 @@ jest.mock("@cocalc/server/cloud", () => {
     runReconcileOnce: (...args: any[]) => runReconcileOnceMock(...args),
     listCloudOrphanInstances: (...args: any[]) =>
       listCloudOrphanInstancesMock(...args),
+    logCloudVmEvent: (...args: any[]) => logCloudVmEventMock(...args),
   };
 });
 
@@ -767,6 +769,7 @@ beforeEach(() => {
     next_at: new Date("2026-01-01T00:00:00Z"),
   }));
   listCloudOrphanInstancesMock = jest.fn(async () => []);
+  logCloudVmEventMock = jest.fn(async () => undefined);
 });
 
 afterAll(() => {
@@ -1569,6 +1572,240 @@ describe("hosts browser fresh auth gating", () => {
         disk_gb: 100,
       }),
     ).rejects.toThrow("self-hosted hosts are limited to admins");
+  });
+
+  it("adds shared scratch to an already provisioned host", async () => {
+    const ensureSharedScratchDisk = jest.fn(async (runtime: any) => ({
+      ...runtime,
+      metadata: {
+        ...(runtime.metadata ?? {}),
+        diskIds: { scratch: "scratch-disk" },
+        shared_disk_id: "scratch-disk",
+        shared_disk_name: "host-name-scratch",
+      },
+    }));
+    getProviderContextMock = jest.fn(async () => ({
+      entry: {
+        provider: {
+          ensureSharedScratchDisk,
+        },
+      },
+      creds: { token: "provider-creds" },
+    }));
+    const initialMetadata = {
+      owner: ACCOUNT_ID,
+      runtime: { instance_id: "nebius-instance", metadata: {} },
+      machine: {
+        cloud: "nebius",
+        disk_gb: 200,
+        machine_type: "cpu-d3",
+        metadata: { cpu: 4, ram_gb: 16 },
+      },
+      pricing_model: "on_demand",
+    };
+    let savedMetadata: any;
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "off",
+              metadata: savedMetadata ?? initialMetadata,
+            },
+          ],
+        };
+      }
+      if (sql.includes("UPDATE project_hosts SET region=$2")) {
+        savedMetadata = params?.[2];
+        return { rowCount: 1, rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { updateHostMachine } = await import("./hosts");
+    await updateHostMachine({
+      account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
+      id: HOST_ID,
+      shared_disk_gb: 100,
+    });
+
+    expect(ensureSharedScratchDisk).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instance_id: "nebius-instance",
+      }),
+      expect.objectContaining({
+        shared_disk_gb: 100,
+        shared_disk_type: "ssd",
+      }),
+      { token: "provider-creds" },
+    );
+    expect(savedMetadata.machine.shared_disk_gb).toBe(100);
+    expect(savedMetadata.runtime.metadata.shared_disk_id).toBe("scratch-disk");
+  });
+
+  it("grows an existing shared scratch disk in the provider and host filesystem", async () => {
+    const resizeSharedScratchDisk = jest.fn(async () => undefined);
+    const growSharedScratch = jest.fn(async () => ({ ok: true }));
+    routedHostControlClientMock = jest.fn(async () => ({
+      growSharedScratch,
+    }));
+    getProviderContextMock = jest.fn(async () => ({
+      entry: {
+        provider: {
+          resizeSharedScratchDisk,
+        },
+      },
+      creds: { token: "provider-creds" },
+    }));
+    const initialMetadata = {
+      owner: ACCOUNT_ID,
+      runtime: { instance_id: "nebius-instance" },
+      machine: {
+        cloud: "nebius",
+        disk_gb: 200,
+        shared_disk_gb: 100,
+        shared_disk_type: "ssd",
+        machine_type: "cpu-d3",
+        metadata: { cpu: 4, ram_gb: 16 },
+      },
+      pricing_model: "on_demand",
+    };
+    let savedMetadata: any;
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "running",
+              metadata: savedMetadata ?? initialMetadata,
+            },
+          ],
+        };
+      }
+      if (sql.includes("UPDATE project_hosts SET region=$2")) {
+        savedMetadata = params?.[2];
+        return { rowCount: 1, rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { updateHostMachine } = await import("./hosts");
+    await updateHostMachine({
+      account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
+      id: HOST_ID,
+      shared_disk_gb: 150,
+    });
+
+    expect(resizeSharedScratchDisk).toHaveBeenCalledWith(
+      initialMetadata.runtime,
+      150,
+      { token: "provider-creds" },
+    );
+    expect(growSharedScratch).toHaveBeenCalledWith({ disk_gb: 150 });
+    expect(savedMetadata.machine.shared_disk_gb).toBe(150);
+    expect(logCloudVmEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        vm_id: HOST_ID,
+        action: "update_config",
+        status: "success",
+      }),
+    );
+  });
+
+  it("deletes shared scratch after unmounting it on a running host", async () => {
+    const deleteSharedScratchDisk = jest.fn(async () => undefined);
+    const unmountSharedScratch = jest.fn(async () => ({ ok: true }));
+    routedHostControlClientMock = jest.fn(async () => ({
+      unmountSharedScratch,
+    }));
+    getProviderContextMock = jest.fn(async () => ({
+      entry: {
+        provider: {
+          deleteSharedScratchDisk,
+        },
+      },
+      creds: { token: "provider-creds" },
+    }));
+    const initialMetadata = {
+      owner: ACCOUNT_ID,
+      runtime: {
+        instance_id: "nebius-instance",
+        metadata: {
+          diskIds: { data: "data-disk", scratch: "scratch-disk" },
+          shared_disk_id: "scratch-disk",
+          shared_disk_name: "host-name-scratch",
+          scratchDiskTypeCode: 3,
+        },
+      },
+      machine: {
+        cloud: "nebius",
+        disk_gb: 200,
+        shared_disk_gb: 100,
+        shared_disk_type: "ssd",
+        machine_type: "cpu-d3",
+        metadata: {
+          cpu: 4,
+          ram_gb: 16,
+          shared_disk_mount: "/mnt/cocalc-scratch",
+          shared_disk_filesystem: "ext4",
+        },
+      },
+      pricing_model: "on_demand",
+    };
+    let savedMetadata: any;
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "running",
+              metadata: savedMetadata ?? initialMetadata,
+            },
+          ],
+        };
+      }
+      if (sql.includes("UPDATE project_hosts SET region=$2")) {
+        savedMetadata = params?.[2];
+        return { rowCount: 1, rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { updateHostMachine } = await import("./hosts");
+    await updateHostMachine({
+      account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
+      id: HOST_ID,
+      delete_shared_scratch: true,
+    });
+
+    expect(unmountSharedScratch).toHaveBeenCalledWith({});
+    expect(deleteSharedScratchDisk).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instance_id: "nebius-instance",
+        metadata: expect.objectContaining({
+          shared_disk_id: "scratch-disk",
+        }),
+      }),
+      { token: "provider-creds" },
+    );
+    expect(savedMetadata.machine.shared_disk_gb).toBeUndefined();
+    expect(savedMetadata.machine.shared_disk_type).toBeUndefined();
+    expect(savedMetadata.runtime.metadata.diskIds).toEqual({
+      data: "data-disk",
+    });
+    expect(savedMetadata.runtime.metadata.shared_disk_id).toBeUndefined();
   });
 
   it("checks fresh auth before host starts when a CLI session hash is provided", async () => {

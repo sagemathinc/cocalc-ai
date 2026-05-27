@@ -211,6 +211,8 @@ export type ProviderSelection = {
   storage_mode?: string;
   disk_type?: string;
   disk_gb?: number;
+  shared_disk_type?: string;
+  shared_disk_gb?: number;
   self_host_kind?: string;
   self_host_mode?: string;
   size?: string;
@@ -376,6 +378,11 @@ const buildBasePayload = (
       storage_mode,
       disk_gb,
       disk_type: vals.disk_type,
+      shared_disk_gb:
+        typeof vals.shared_disk_gb === "number"
+          ? vals.shared_disk_gb
+          : undefined,
+      shared_disk_type: vals.shared_disk_type,
       ...machine,
       metadata: mergedMetadata,
     },
@@ -554,6 +561,8 @@ const estimateGcpSelectionUsdPerHour = (
       gpu_count: gpuType ? 1 : undefined,
       disk_type: next.disk_type,
       disk_gb: next.disk_gb,
+      shared_disk_type: next.shared_disk_type,
+      shared_disk_gb: next.shared_disk_gb,
       storage_mode: next.storage_mode,
     }),
     getDedicatedHostSurchargeFraction("gcp", next.pricing_settings),
@@ -591,6 +600,8 @@ const estimateGcpSelectionBreakdown = (
       gpu_count: gpuType ? 1 : undefined,
       disk_type: next.disk_type,
       disk_gb: next.disk_gb,
+      shared_disk_type: next.shared_disk_type,
+      shared_disk_gb: next.shared_disk_gb,
       storage_mode: next.storage_mode,
     }),
     getDedicatedHostSurchargeFraction("gcp", next.pricing_settings),
@@ -621,6 +632,8 @@ const estimateNebiusSelectionUsdPerHour = (
       instance,
       disk_type: next.disk_type,
       disk_gb: next.disk_gb,
+      shared_disk_type: next.shared_disk_type,
+      shared_disk_gb: next.shared_disk_gb,
       storage_mode: next.storage_mode,
     }),
     getDedicatedHostSurchargeFraction("nebius", next.pricing_settings),
@@ -651,6 +664,8 @@ const estimateNebiusSelectionBreakdown = (
       instance,
       disk_type: next.disk_type,
       disk_gb: next.disk_gb,
+      shared_disk_type: next.shared_disk_type,
+      shared_disk_gb: next.shared_disk_gb,
       storage_mode: next.storage_mode,
     }),
     getDedicatedHostSurchargeFraction("nebius", next.pricing_settings),
@@ -793,6 +808,8 @@ const hostProviderSelectionForPricing = (host: Host): ProviderSelection => ({
   storage_mode: host.machine?.storage_mode ?? undefined,
   disk_type: host.machine?.disk_type ?? undefined,
   disk_gb: host.machine?.disk_gb ?? undefined,
+  shared_disk_type: host.machine?.shared_disk_type ?? undefined,
+  shared_disk_gb: host.machine?.shared_disk_gb ?? undefined,
 });
 
 const hostProviderSelectionForCurrentPricing = (
@@ -853,7 +870,9 @@ function stoppedHostPriceEstimate(
 ): ProviderPriceEstimate | undefined {
   if (!running) return undefined;
   return buildProviderPriceEstimateFromLineItems(
-    running.line_items.filter((item) => item.key === "disk"),
+    running.line_items.filter(
+      (item) => item.key === "disk" || item.key === "shared_scratch_disk",
+    ),
     running.notes,
   );
 }

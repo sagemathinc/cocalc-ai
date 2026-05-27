@@ -111,6 +111,38 @@ describe("buildCreateHostPayload", () => {
     expect(payload.interruption_restore_policy).toBe("immediate");
   });
 
+  it("includes shared scratch fields in create payloads", () => {
+    const payload = buildCreateHostPayload(
+      {
+        provider: "nebius",
+        name: "Scratch Host",
+        region: "us-central1",
+        machine_type: "cpu-standard-v3",
+        disk_gb: 100,
+        disk_type: "ssd",
+        shared_disk_gb: 500,
+        shared_disk_type: "ssd",
+      },
+      {
+        fieldOptions: {
+          region: [{ value: "us-central1", label: "US Central 1" }],
+          machine_type: [
+            {
+              value: "cpu-standard-v3",
+              label: "cpu-standard-v3",
+              meta: { vcpus: 4, memory_gib: 16 },
+            },
+          ],
+        },
+      },
+    );
+
+    expect(payload.machine).toMatchObject({
+      shared_disk_gb: 500,
+      shared_disk_type: "ssd",
+    });
+  });
+
   it("includes explicit spot pricing fields", () => {
     const payload = buildCreateHostPayload(
       {
