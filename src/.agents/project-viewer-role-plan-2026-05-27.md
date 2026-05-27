@@ -141,6 +141,16 @@ must be opt-in per capability.
 ## File Access Design
 
 The first implementation should expose a read-only file surface for viewers.
+Viewer file traffic must go directly between the browser/client and the
+project-host, like normal collaborator file traffic. The hub/control plane is
+responsible for syncing project user roles and issuing/authorizing project-host
+access, but it must not proxy file reads, listings, previews, or downloads.
+
+Use a distinct project-host Conat service/subject for viewer file access, e.g.
+`fs-viewer.project-<project_id>.account-<account_id>`. That service should
+expose only read methods and should enforce the viewer read policy before every
+filesystem operation. Normal collaborator file subjects remain unavailable to
+viewers.
 
 Allowed operations should be limited to read-style operations such as:
 
@@ -150,10 +160,13 @@ Allowed operations should be limited to read-style operations such as:
 - read symlink only when the resolved target is allowed.
 - download a single allowed file.
 - preview/render file content where rendering does not execute project code.
+- copy an allowed file/path from the viewed project into a project where the
+  viewer has normal collaborator access.
 
 Do not initially allow:
 
 - write, rename, delete, mkdir, copy, upload, chmod, chown, or touch.
+- copying into the viewed project.
 - archive creation.
 - git operations.
 - terminal commands.
@@ -162,7 +175,10 @@ Do not initially allow:
 - syncdoc write subjects.
 
 Search and recursive listing can be added later, but only with rate limits and
-the same path restrictions.
+the same path restrictions. Recursive directory copy is allowed only when the
+server can prove every copied child is allowed by the read policy. Directory
+copy is all-or-nothing: if any child is denied, the entire copy is denied
+instead of performing a partial copy.
 
 ## Viewer Read Policy
 
@@ -369,7 +385,8 @@ check.
 
 ### Phase 2: Read-Only File API
 
-- add a read-only file API surface for viewers.
+- add a direct project-host read-only file API surface for viewers on a
+  distinct viewer subject; do not proxy viewer file data through the hub.
 - enforce viewer read policies with the existing sandbox/openat2 resolved-path
   boundary.
 - add tests for symlink escapes, `..`, absolute paths, allowed subdirectories,
@@ -378,6 +395,9 @@ check.
   `.ssh`, `.ssh/**`, `.local/share/cocalc`, and
   `.local/share/cocalc/**` excluded.
 - verify viewer file reads do not start the project runtime.
+- verify viewers cannot use the normal collaborator file subject.
+- allow copy-out only to destination projects where the viewer has normal
+  collaborator access; recursive directory copy must be all-or-nothing.
 
 ### Phase 3: UI Support
 

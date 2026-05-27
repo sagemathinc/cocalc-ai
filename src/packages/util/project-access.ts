@@ -150,3 +150,102 @@ export function projectAccessFromUsers({
     read_policy: role === "viewer" ? info?.read_policy : undefined,
   });
 }
+
+export function normalizeProjectViewerPolicyPath(
+  path: string,
+): string | undefined {
+  const raw = `${path ?? ""}`.replace(/\\/g, "/");
+  if (raw === "" || raw === "." || raw === "/") {
+    return "";
+  }
+  const withoutLeadingSlash = raw.startsWith("/") ? raw.slice(1) : raw;
+  const parts: string[] = [];
+  for (const part of withoutLeadingSlash.split("/")) {
+    if (part === "" || part === ".") {
+      continue;
+    }
+    if (part === "..") {
+      if (parts.length === 0) {
+        return undefined;
+      }
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  return parts.join("/");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+}
+
+function globToRegExp(pattern: string): RegExp {
+  let source = "^";
+  for (let i = 0; i < pattern.length; i += 1) {
+    const char = pattern[i];
+    if (char === "*") {
+      if (pattern[i + 1] === "*") {
+        source += ".*";
+        i += 1;
+      } else {
+        source += "[^/]*";
+      }
+    } else {
+      source += escapeRegExp(char);
+    }
+  }
+  source += "$";
+  return new RegExp(source);
+}
+
+function viewerReadRuleMatches({
+  rulePath,
+  path,
+}: {
+  rulePath: string;
+  path: string;
+}): boolean {
+  const normalizedRulePath = normalizeProjectViewerPolicyPath(rulePath);
+  if (normalizedRulePath == null) {
+    return false;
+  }
+  if (normalizedRulePath === "") {
+    return true;
+  }
+  if (path === normalizedRulePath) {
+    return true;
+  }
+  if (normalizedRulePath.endsWith("/**")) {
+    const directory = normalizedRulePath.slice(0, -3);
+    return path === directory || path.startsWith(`${directory}/`);
+  }
+  return globToRegExp(normalizedRulePath).test(path);
+}
+
+export function viewerReadPolicyAllowsPath({
+  policy,
+  path,
+}: {
+  policy?: ProjectViewerReadPolicy | null;
+  path: string;
+}): boolean {
+  const normalizedPath = normalizeProjectViewerPolicyPath(path);
+  if (normalizedPath == null || !Array.isArray(policy?.rules)) {
+    return false;
+  }
+  let included = false;
+  for (const rule of policy.rules) {
+    if (rule?.action !== "include" && rule?.action !== "exclude") {
+      continue;
+    }
+    if (!viewerReadRuleMatches({ rulePath: rule.path, path: normalizedPath })) {
+      continue;
+    }
+    if (rule.action === "exclude") {
+      return false;
+    }
+    included = true;
+  }
+  return included;
+}

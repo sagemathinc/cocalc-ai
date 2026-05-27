@@ -27,6 +27,7 @@ import sha256js from "sha256";
 const logger = getLogger("files:fs");
 
 export const DEFAULT_FILE_SERVICE = "fs";
+export const VIEWER_FILE_SERVICE = "fs-viewer";
 
 export interface ExecOutput {
   stdout: Buffer;
@@ -421,6 +422,128 @@ interface Options {
   }) => void | Promise<void>;
 }
 
+interface ReadOnlyOptions {
+  service: string;
+  client: Client;
+  fs: (subject?: string) => Promise<Filesystem>;
+  project_id?: string;
+}
+
+export type ReadOnlyFilesystem = Pick<
+  Filesystem,
+  | "constants"
+  | "describeFile"
+  | "exists"
+  | "lstat"
+  | "readFile"
+  | "readdir"
+  | "readlink"
+  | "stat"
+> &
+  Pick<Required<Filesystem>, "canonicalSyncIdentityPath">;
+
+export async function fsReadOnlyServer({
+  service,
+  fs: fs0,
+  client,
+  project_id,
+}: ReadOnlyOptions) {
+  const resolvedClient = requireClient(client, "fsReadOnlyServer");
+  const subject = project_id
+    ? `${service}.project-${project_id}.>`
+    : `${service}.>`;
+
+  logger.debug("fsReadOnlyServer: ", { subject, service });
+
+  const closeFilesystem = (filesystem: Filesystem) => {
+    try {
+      void filesystem.close?.();
+    } catch {}
+  };
+  const cache = new TTL<string, Filesystem>({
+    ttl: 60 * 1000 * 60,
+    dispose: closeFilesystem,
+  });
+  const fs = reuseInFlight(async (subject) => {
+    if (!cache.has(subject)) {
+      cache.set(subject, await fs0(subject));
+    }
+    return cache.get(subject)!;
+  });
+
+  const sub = await resolvedClient.service<
+    ReadOnlyFilesystem & { subject?: string }
+  >(subject, {
+    async constants(): Promise<{ [key: string]: number }> {
+      return await (await fs(this.subject)).constants();
+    },
+    async describeFile(path: string): Promise<FileDescription> {
+      return await (await fs(this.subject)).describeFile(path);
+    },
+    async exists(path: string): Promise<boolean> {
+      return await (await fs(this.subject)).exists(path);
+    },
+    async lstat(path: string): Promise<IStats> {
+      return await (await fs(this.subject)).lstat(path);
+    },
+    async readFile(path: string, encoding?, lock?) {
+      return await (await fs(this.subject)).readFile(path, encoding, lock);
+    },
+    async readdir(path: string, options?) {
+      const files = await (await fs(this.subject)).readdir(path, options);
+      if (!options?.withFileTypes) {
+        return files;
+      }
+      return files.map((x) => {
+        // @ts-ignore
+        return { ...x, type: x[Object.getOwnPropertySymbols(x)[0]] };
+      });
+    },
+    async readlink(path: string) {
+      return await (await fs(this.subject)).readlink(path);
+    },
+    async canonicalSyncIdentityPath(path: string) {
+      const filesystem = await fs(this.subject);
+      if (typeof filesystem.canonicalSyncIdentityPath === "function") {
+        return await filesystem.canonicalSyncIdentityPath(path);
+      }
+      if (typeof filesystem.realpath === "function") {
+        try {
+          return await filesystem.realpath(path);
+        } catch {
+          return path;
+        }
+      }
+      return path;
+    },
+    async stat(path: string): Promise<IStats> {
+      const s = await (await fs(this.subject)).stat(path);
+      return {
+        ...s,
+        atime: new Date(s.atime),
+        mtime: new Date(s.mtime),
+        ctime: new Date(s.ctime),
+        birthtime: new Date(s.birthtime),
+      };
+    },
+  });
+
+  return {
+    invalidateSubject: (subject?: string) => {
+      if (!subject) return;
+      cache.delete(subject);
+    },
+    invalidateAll: () => {
+      cache.clear();
+    },
+    close: () => {
+      cache.clear();
+      cache.cancelTimer();
+      sub.close();
+    },
+  };
+}
+
 export async function fsServer({
   service,
   fs: fs0,
@@ -811,6 +934,46 @@ export function fsSubject({
     throw Error("service must be a string");
   }
   return `${getService({ service })}.project-${project_id}`;
+}
+
+export function viewerFsSubject({
+  project_id,
+  account_id,
+  service = VIEWER_FILE_SERVICE,
+}: {
+  project_id: string;
+  account_id: string;
+  service?: string;
+}) {
+  if (!isValidUUID(project_id)) {
+    throw Error(`project_id must be a valid uuid -- ${project_id}`);
+  }
+  if (!isValidUUID(account_id)) {
+    throw Error(`account_id must be a valid uuid -- ${account_id}`);
+  }
+  if (typeof service != "string") {
+    throw Error("service must be a string");
+  }
+  return `${getService({ service })}.project-${project_id}.account-${account_id}`;
+}
+
+export function parseViewerFsSubject(
+  subject: string,
+): { project_id: string; account_id: string } | undefined {
+  const parts = subject.split(".");
+  if (parts.length !== 3 || parts[0] !== VIEWER_FILE_SERVICE) {
+    return;
+  }
+  const project_id = parts[1]?.startsWith("project-")
+    ? parts[1].slice("project-".length)
+    : "";
+  const account_id = parts[2]?.startsWith("account-")
+    ? parts[2].slice("account-".length)
+    : "";
+  if (!isValidUUID(project_id) || !isValidUUID(account_id)) {
+    return;
+  }
+  return { project_id, account_id };
 }
 
 const DEFAULT_FS_CALL_TIMEOUT = 5 * 60_000;

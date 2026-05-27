@@ -1,4 +1,8 @@
-import { extractProjectSubject, isProjectAllowed } from "./subject-policy";
+import {
+  extractProjectSubject,
+  extractViewerFileSubject,
+  isProjectAllowed,
+} from "./subject-policy";
 
 describe("conat auth subject policy", () => {
   const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -17,5 +21,16 @@ describe("conat auth subject policy", () => {
         subject: `file-server.${PROJECT_ID}.api`,
       }),
     ).toBe(true);
+  });
+
+  it("extracts viewer file subjects", () => {
+    expect(
+      extractViewerFileSubject(
+        `fs-viewer.project-${PROJECT_ID}.account-${PROJECT_ID}`,
+      ),
+    ).toEqual({ project_id: PROJECT_ID, account_id: PROJECT_ID });
+    expect(extractViewerFileSubject(`fs.project-${PROJECT_ID}`)).toBe(
+      undefined,
+    );
   });
 });
