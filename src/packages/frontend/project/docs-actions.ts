@@ -191,6 +191,33 @@ function selectAdmin(route: AdminRoute, search = ""): void {
   }
 }
 
+function revealHostsPage({
+  actionId,
+  projectId,
+}: {
+  actionId: DocsActionId;
+  projectId: string;
+}): DocsActionRevealResult {
+  const pageActions = redux.getActions("page") as
+    | {
+        set_active_tab?: (
+          key: string,
+          changeHistory?: boolean,
+        ) => Promise<void>;
+      }
+    | undefined;
+  void pageActions?.set_active_tab?.("hosts", false);
+  if (typeof window !== "undefined") {
+    set_url_with_search("/hosts", "");
+  }
+  return {
+    action_id: actionId,
+    opened: true,
+    project_id: projectId,
+    tab: "hosts",
+  };
+}
+
 function revealAdminSection({
   actionId,
   projectId,
@@ -563,6 +590,21 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
         projectId,
         section: "user-search",
       }),
+  },
+  "hosts.open": {
+    id: "hosts.open",
+    run: ({ projectId }) =>
+      revealHostsPage({ actionId: "hosts.open", projectId }),
+  },
+  "hosts.access.open": {
+    id: "hosts.access.open",
+    run: ({ projectId }) =>
+      revealHostsPage({ actionId: "hosts.access.open", projectId }),
+  },
+  "hosts.move.open": {
+    id: "hosts.move.open",
+    run: ({ projectId }) =>
+      revealHostsPage({ actionId: "hosts.move.open", projectId }),
   },
   "settings.environment.secrets": {
     id: "settings.environment.secrets",

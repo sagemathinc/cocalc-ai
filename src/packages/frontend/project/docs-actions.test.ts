@@ -90,8 +90,24 @@ describe("project docs actions", () => {
         "settings.people.collaborators",
         "file.timetravel.open",
         "project.codex.open",
+        "hosts.open",
       ]),
     );
+  });
+
+  it("opens the project hosts page", async () => {
+    const result = await revealDocsAction({
+      actionId: "hosts.open",
+      projectId: "project-1",
+    });
+
+    expect(mockSetPageActiveTab).toHaveBeenCalledWith("hosts", false);
+    expect(mockSetUrlWithSearch).toHaveBeenCalledWith("/hosts", "");
+    expect(result).toMatchObject({
+      action_id: "hosts.open",
+      opened: true,
+      tab: "hosts",
+    });
   });
 
   it("hides admin docs actions from non-admins and exposes them to admins", () => {

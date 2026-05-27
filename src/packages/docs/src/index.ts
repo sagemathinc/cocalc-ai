@@ -30,6 +30,9 @@ export type DocsActionId =
   | "admin.software-licenses.open"
   | "admin.sso.open"
   | "admin.users.open"
+  | "hosts.open"
+  | "hosts.access.open"
+  | "hosts.move.open"
   | "settings.environment.secrets"
   | "project.terminal.open"
   | "project.jupyter.create"
@@ -1079,11 +1082,16 @@ hosts are only appropriate in self-hosted Launchpad or Rocket deployments.
 Use project hosts for heavier workloads such as long-running research
 computations, courses, or agent sandboxes.
 
+The host is not just a label. It controls where the project filesystem lives,
+where project processes run, where host-local snapshots are stored, what runtime
+software is installed, which backup region is used, and which users are allowed
+to place projects there.
+
 ## Create or choose a host
 
 1. Open the project host administration area.
 2. Configure a cloud provider. In self-hosted Launchpad or Rocket, configure a
-   cloud provider or local host.
+   cloud provider or self-hosted connector.
 3. Refresh the provider catalog if needed.
 4. Choose a machine type, region, disk size, and lifecycle policy.
 5. Start the host and wait for bootstrap to finish.
@@ -1092,8 +1100,32 @@ computations, courses, or agent sandboxes.
 Use enough disk space for runtime images and project data. Very small disks can
 fail during image bootstrap or package installation.
 
-Under **Access**, add people who are allowed to add their own projects to the
-host. You can also configure the host so all projects on it may use more RAM.
+## Access and placement
+
+Private hosts are available to the owner and delegated users. A delegated
+**User** can create or move projects onto the host. A delegated **Manager** can
+also start and stop the host, manage access, configure the per-project RAM cap,
+and place projects there.
+
+Admins can publish a host into the **Public shared pool** by assigning a host
+tier. Users whose membership grants that project-host tier, or a higher tier,
+may place projects there without delegated host access.
+
+## Project RAM cap
+
+The host **Project resource policy** has an optional per-project RAM cap. This
+cap lets projects use more RAM on a large host without changing normal project
+policy for CPU and storage. Leave it blank when normal project limits should
+apply. Set it deliberately when the host is dedicated to workloads that need
+larger in-memory notebooks, language models, databases, or agents.
+
+## Moving projects
+
+Moving a project between hosts is a data operation, not a cosmetic setting.
+CoCalc moves through backups and restore. Files in \`/tmp\` are discarded,
+previous host-local snapshots are discarded after the move, and SSH access must
+be reconfigured after the move. If the destination region differs, the backup
+region can change after a successful new backup.
 
 ## Long-running work
 
@@ -1102,11 +1134,142 @@ enough CPU, RAM, disk, and restart behavior for the workload. Keep important
 state in project files, a database, or another durable location rather than only
 inside a process.
 
+## Agent notes
+
+When helping with project hosts:
+
+1. Determine whether the user is on hosted CoCalc, Launchpad, Rocket, or Lite.
+   Lite does not use project hosts. Hosted CoCalc does not allow arbitrary
+   local user machines as hosts.
+2. Open the hosts page with the \`hosts.open\` docs action when browser context
+   is available.
+3. For CLI inspection, start with:
+
+~~~sh
+cocalc host list --json
+cocalc host get <host>
+cocalc host projects <host> --all
+cocalc host metrics <host>
+cocalc host bootstrap-status <host>
+~~~
+
+4. Before recommending a move, check source host status, backup freshness,
+   destination access, destination RAM/disk, region changes, and whether \`/tmp\`
+   or host-local snapshots matter.
+5. Do not assume the current bay is authoritative. Route host operations by the
+   host's owning bay and project operations by the project's owning bay.
+
 ## Why this matters in CoCalc
 
 Project hosts make CoCalc more than a shared web editor. They let the workspace
 own real compute, run persistent services, use cloud machines economically, and
 give agents a stable Linux environment to work in.
+`;
+
+const PROJECT_HOST_ACCESS_BODY = String.raw`
+## What host access controls
+
+Host access controls who may place projects on a private dedicated host and who
+may administer that host. It is separate from project collaborators: a user can
+collaborate on a project without being able to create their own projects on the
+host, and a host user can place their own projects without being a collaborator
+on every existing project.
+
+## Roles
+
+- **Owner** pays for the host and has full control.
+- **Manager** can start and stop the host, manage access, configure the
+  per-project RAM cap, and place projects on the host.
+- **User** can create or move their own projects onto the host.
+
+Use **Access** on the host drawer to add users or managers by account. Use
+**Remove** to revoke delegated access.
+
+## Public shared pool
+
+Admins can put a host in the public shared pool by enabling the shared-pool
+policy and setting a tier. Any user with project-host tier greater than or
+equal to that value may place projects there without a delegated access row.
+
+Use this for shared fleet capacity. Use delegated access for a private host
+that should only be usable by a known set of people.
+
+## Per-project RAM cap
+
+The host access page also includes **Project resource policy**. The optional
+RAM cap applies to projects running on that host. It is useful when a large
+dedicated host should permit larger notebooks, agents, or databases than the
+normal project policy allows.
+
+Do not set the cap higher than the host can realistically support for the
+number of simultaneous projects. If several projects can run at once, leave
+headroom for the project host itself, filesystem cache, backups, and runtime
+services.
+
+## Agent notes
+
+When answering access questions:
+
+1. Distinguish host access from project collaborators.
+2. Check whether the host is private, delegated, or public shared-pool.
+3. For "why can't I move/create here?", check delegated access, membership host
+   tier, host status, placement availability, and region filters.
+4. For RAM questions, compare the per-project RAM cap with host RAM and the
+   number of projects expected to run concurrently.
+5. Host access mutations require fresh auth and must route to the host-owning
+   bay.
+`;
+
+const PROJECT_HOST_MOVE_BODY = String.raw`
+## What a project host move does
+
+Moving a project to another host changes where the project runs and where the
+project's host-local data lives. CoCalc uses backups to transfer the project to
+the destination host, restores it there, and updates the project-host
+assignment.
+
+Use a move when a project needs more RAM, GPUs, a different region, a quieter
+host, or a host that a specific group can access.
+
+## Before moving
+
+Check these items before starting the move:
+
+1. The destination host is running or can be started.
+2. The user is allowed to place projects on the destination host.
+3. The destination has enough disk and RAM for the project.
+4. The source host has a recent backup, especially if the source host is
+   stopped or deprovisioned.
+5. The user understands that \`/tmp\` files and previous host-local snapshots
+   will not follow the project.
+6. SSH access may need to be configured again after the move.
+
+If the move changes backup region, CoCalc restores from the current backup
+region, creates a new backup in the destination region, then switches the
+project's backup region after that backup succeeds.
+
+## During and after the move
+
+Watch the move progress. If the source host is unavailable, the move may use
+the most recent backup. After the move finishes, open the project, verify files,
+start the needed notebooks or services, and check that collaborators can still
+work.
+
+## Agent notes
+
+For browser work, open the project settings or project file flyout and use the
+host picker. For CLI work, inspect the host and project first:
+
+~~~sh
+cocalc host list --json
+cocalc host get <destination-host>
+cocalc host projects <source-host> --all
+~~~
+
+If automating a move, prefer explicit destination host ids. Do not rely on
+implicit placement unless the task is genuinely "pick an available host".
+Always mention the \`/tmp\`, snapshot, backup freshness, SSH, and region
+consequences before advising a user to move important work.
 `;
 
 const PROJECT_FILES_BODY = String.raw`
@@ -2541,6 +2704,14 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     title: "Connectivity and browser troubleshooting",
   },
   {
+    actions: [
+      {
+        description: "Open the top-level Project Hosts page.",
+        executable: true,
+        id: "hosts.open",
+        label: "Open project hosts",
+      },
+    ],
     audiences: ["agents", "instructors", "researchers", "teams"],
     body: PROJECT_HOSTS_BODY.trim(),
     category: "Project hosts",
@@ -2553,8 +2724,56 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     slug: "hosts/project-hosts",
     status: "ready",
     summary:
-      "Run projects on local or cloud-backed compute for courses, research, and agent sandboxes.",
+      "Run projects on dedicated or cloud-backed compute for courses, research, and agent sandboxes.",
     title: "Use project hosts",
+  },
+  {
+    actions: [
+      {
+        description: "Open the top-level Project Hosts page.",
+        executable: true,
+        id: "hosts.access.open",
+        label: "Open project hosts",
+      },
+    ],
+    audiences: ["agents", "instructors", "researchers", "teams"],
+    body: PROJECT_HOST_ACCESS_BODY.trim(),
+    category: "Project hosts",
+    id: "hosts.access-and-ram",
+    image: docsIcon(
+      "/public/docs/project-hosts-684faa4c.webp",
+      "A project host access panel with delegated users and resource limits",
+    ),
+    lastReviewed: "2026-05-27",
+    slug: "hosts/access-and-ram",
+    status: "ready",
+    summary:
+      "Delegate host access, understand shared-pool tiers, and set per-project RAM policy.",
+    title: "Manage project host access and RAM",
+  },
+  {
+    actions: [
+      {
+        description: "Open the top-level Project Hosts page.",
+        executable: true,
+        id: "hosts.move.open",
+        label: "Open project hosts",
+      },
+    ],
+    audiences: ["agents", "instructors", "researchers", "teams"],
+    body: PROJECT_HOST_MOVE_BODY.trim(),
+    category: "Project hosts",
+    id: "hosts.move-projects",
+    image: docsIcon(
+      "/public/docs/project-hosts-684faa4c.webp",
+      "A project being moved between two project hosts through backups",
+    ),
+    lastReviewed: "2026-05-27",
+    slug: "hosts/move-projects",
+    status: "ready",
+    summary:
+      "Move projects between hosts while accounting for backups, snapshots, region changes, and SSH.",
+    title: "Move projects between hosts",
   },
   {
     actions: [
