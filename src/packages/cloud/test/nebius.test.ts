@@ -87,6 +87,9 @@ describe("NebiusProvider", () => {
     instancesGetMock.mockReset();
     instancesUpdateMock.mockReset();
     disksListMock.mockResolvedValue({ items: [], nextPageToken: "" });
+    disksGetMock.mockResolvedValue({
+      metadata: { id: "disk-id", name: "disk-name" },
+    });
     disksCreateMock
       .mockResolvedValueOnce(diskOp("boot-disk"))
       .mockResolvedValueOnce(diskOp("data-disk"));
@@ -440,10 +443,49 @@ describe("NebiusProvider", () => {
     );
 
     expect(disksUpdateMock).toHaveBeenCalledTimes(1);
+    expect(disksGetMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "scratch-disk" }),
+    );
     expect(disksUpdateMock.mock.calls[0][0].metadata.id).toBe("scratch-disk");
+    expect(disksUpdateMock.mock.calls[0][0].metadata.name).toBe("disk-name");
     expect(
       disksUpdateMock.mock.calls[0][0].spec.size.sizeGibibytes.toNumber(),
     ).toBe(186);
+  });
+
+  it("resizes shared scratch disks using the persisted scratch disk name", async () => {
+    disksGetMock.mockResolvedValueOnce({
+      metadata: { id: "scratch-disk" },
+    });
+    const provider = new NebiusProvider();
+    await provider.resizeSharedScratchDisk(
+      {
+        provider: "nebius",
+        instance_id: "instance-1",
+        ssh_user: "ubuntu",
+        metadata: {
+          diskIds: {
+            scratch: "scratch-disk",
+          },
+          shared_disk_name: "spot-host-scratch",
+          scratchDiskTypeCode: DiskSpec_DiskType.NETWORK_SSD.code,
+        },
+      },
+      200,
+      {
+        parentId: "project-1",
+        serviceAccountId: "svc-1",
+        publicKeyId: "pub-1",
+        privateKeyPem: "key",
+        sshPublicKey: "ssh-ed25519 AAAA",
+        subnetId: "subnet-1",
+      },
+    );
+
+    expect(disksUpdateMock.mock.calls[0][0].metadata.id).toBe("scratch-disk");
+    expect(disksUpdateMock.mock.calls[0][0].metadata.name).toBe(
+      "spot-host-scratch",
+    );
   });
 
   it("creates and attaches shared scratch to an existing instance", async () => {

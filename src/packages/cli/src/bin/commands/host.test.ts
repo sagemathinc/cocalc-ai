@@ -86,6 +86,7 @@ type Capture = {
     public_key: string;
     user?: string;
   }>;
+  hostMachineUpdates?: Array<Record<string, any>>;
 };
 
 function withConsoleCapture(fn: () => Promise<void> | void): Promise<string> {
@@ -143,6 +144,7 @@ function makeDeps(
   capture.sshTrustRequests ??= [];
   capture.hostSshKeyInstallRequests ??= [];
   capture.hostRuntimeLogRequests ??= [];
+  capture.hostMachineUpdates ??= [];
   return {
     withContext: async (_command, _label, fn) => {
       const ctx = {
@@ -616,6 +618,40 @@ function makeDeps(
                 auto_grow_recommended: false,
               },
             }),
+            updateHostMachine: async (request) => {
+              capture.hostMachineUpdates!.push(request);
+              return {
+                id: request.id,
+                name: `host-${request.id}`,
+                status: "running",
+                machine: {
+                  cloud: "nebius",
+                  shared_disk_gb: request.delete_shared_scratch
+                    ? undefined
+                    : request.shared_disk_gb,
+                  shared_disk_type: request.delete_shared_scratch
+                    ? undefined
+                    : request.shared_disk_type,
+                  metadata: request.delete_shared_scratch
+                    ? {}
+                    : {
+                        shared_disk_mount: "/mnt/cocalc-scratch",
+                        shared_disk_filesystem: "ext4",
+                      },
+                },
+                runtime: request.delete_shared_scratch
+                  ? { metadata: {} }
+                  : {
+                      metadata: {
+                        diskIds: { scratch: "scratch-disk" },
+                        scratchDiskTypeCode:
+                          request.shared_disk_type === "balanced" ? 3 : 1,
+                        shared_disk_id: "scratch-disk",
+                        shared_disk_name: "host-scratch",
+                      },
+                    },
+              };
+            },
           },
           lro: {
             list: async ({ scope_type, scope_id, include_completed }) => {
@@ -829,6 +865,77 @@ test("host upgrade --all-online targets only online running hosts", async () => 
   assert.deepEqual(capture.upgrades, ["online-1"]);
   assert.equal(capture.data.status, "queued");
   assert.equal(capture.data.host_id, "online-1");
+});
+
+test("host scratch set grows existing shared scratch without sending disk type", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const deps = makeDeps(capture, {
+    resolveHost: async (_ctx, host) => ({
+      id: host,
+      name: `host-${host}`,
+      status: "running",
+      machine: {
+        cloud: "nebius",
+        shared_disk_gb: 100,
+        shared_disk_type: "balanced",
+      },
+    }),
+  });
+  const program = new Command();
+  registerHostCommand(program, deps);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "scratch",
+    "set",
+    "host-1",
+    "--size-gb",
+    "200",
+    "--type",
+    "ssd",
+  ]);
+
+  assert.equal(capture.hostMachineUpdates?.[0]?.id, "host-1");
+  assert.equal(capture.hostMachineUpdates?.[0]?.shared_disk_gb, 200);
+  assert.equal(capture.hostMachineUpdates?.[0]?.shared_disk_type, undefined);
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.requested_shared_disk_gb, 200);
+});
+
+test("host scratch delete requires confirmation and sends delete flag", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "scratch",
+    "delete",
+    "host-1",
+    "--yes",
+  ]);
+
+  assert.equal(capture.hostMachineUpdates?.[0]?.id, "host-1");
+  assert.equal(capture.hostMachineUpdates?.[0]?.delete_shared_scratch, true);
+  assert.equal(capture.data.deleted_shared_scratch, true);
 });
 
 test("host upgrade accepts --artifact-version for explicit version pinning", async () => {
