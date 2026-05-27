@@ -265,7 +265,7 @@ import {
   type ImmerDB,
   type ImmerDBOptions,
 } from "@cocalc/conat/sync-doc/immer-db";
-import { fsClient, fsSubject } from "@cocalc/conat/files/fs";
+import { fsClient, fsSubject, viewerFsSubject } from "@cocalc/conat/files/fs";
 import TTL from "@isaacs/ttlcache";
 import {
   ConatSocketServer,
@@ -2418,6 +2418,21 @@ export class Client extends EventEmitter {
   }) => {
     return fsClient({
       subject: fsSubject(opts),
+      timeout: opts.timeout,
+      waitForInterest: opts.waitForInterest,
+      client: this,
+    });
+  };
+
+  viewerFs = (opts: {
+    project_id: string;
+    account_id: string;
+    service?: string;
+    timeout?: number;
+    waitForInterest?: boolean;
+  }) => {
+    return fsClient({
+      subject: viewerFsSubject(opts),
       timeout: opts.timeout,
       waitForInterest: opts.waitForInterest,
       client: this,

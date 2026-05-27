@@ -94,6 +94,10 @@ import {
 } from "./reconnect-coordinator";
 import { disconnect_from_all_projects } from "@cocalc/frontend/project/websocket/connect";
 import { parseManagedEgressBlockedError } from "@cocalc/frontend/purchases/managed-egress-blocked";
+import {
+  getProjectUserRole,
+  isViewerProjectRole,
+} from "@cocalc/frontend/project/realtime-access";
 
 export interface ConatConnectionStatus {
   state: "connected" | "connecting" | "disconnected";
@@ -2659,17 +2663,41 @@ export class ConatClient extends EventEmitter {
   projectFs = async ({
     project_id,
     caller = "projectFs",
+    viewer,
   }: {
     project_id: string;
     caller?: string;
+    viewer?: boolean;
   }): Promise<FilesystemClient> => {
     const client = await this.projectConat({
       project_id,
       caller,
       requireRouting: true,
     });
+    const useViewerFs = viewer ?? this.hasViewerProjectAccess(project_id);
+    if (useViewerFs) {
+      const account_id = this.client.account_id;
+      if (!account_id) {
+        throw Error("account_id is required for viewer project filesystem");
+      }
+      return client.viewerFs({ project_id, account_id });
+    }
     return client.fs({ project_id });
   };
+
+  private hasViewerProjectAccess(project_id: string): boolean {
+    return isViewerProjectRole(
+      getProjectUserRole({
+        account_id: this.client.account_id,
+        project_id,
+        projectsStore: redux.getStore("projects") as
+          | {
+              getIn?: (path: string[]) => unknown;
+            }
+          | undefined,
+      }),
+    );
+  }
 
   listings = async (opts: { project_id: string }) => {
     const client = await this.projectConat({

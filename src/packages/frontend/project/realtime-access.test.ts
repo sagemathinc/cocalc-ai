@@ -1,6 +1,10 @@
 import immutable from "immutable";
 
-import { canUseCollaboratorProjectRealtime } from "./realtime-access";
+import {
+  canUseCollaboratorProjectRealtime,
+  getProjectUserRole,
+  isViewerProjectRole,
+} from "./realtime-access";
 
 describe("canUseCollaboratorProjectRealtime", () => {
   it("allows admins without collaborator entries", () => {
@@ -57,5 +61,33 @@ describe("canUseCollaboratorProjectRealtime", () => {
         projectsStore,
       }),
     ).toBe(false);
+  });
+
+  it("does not allow viewer entries to initialize collaborator realtime", () => {
+    const projectsStore = immutable.Map({
+      project_map: immutable.Map({
+        "project-1": immutable.Map({
+          users: immutable.Map({
+            "acct-1": immutable.Map({ group: "viewer" }),
+          }),
+        }),
+      }),
+    });
+    expect(
+      canUseCollaboratorProjectRealtime({
+        account_id: "acct-1",
+        project_id: "project-1",
+        projectsStore,
+      }),
+    ).toBe(false);
+    expect(
+      isViewerProjectRole(
+        getProjectUserRole({
+          account_id: "acct-1",
+          project_id: "project-1",
+          projectsStore,
+        }),
+      ),
+    ).toBe(true);
   });
 });

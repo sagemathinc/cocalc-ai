@@ -61,6 +61,28 @@ describe("project-host token bay checks", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("allows browser-issued project-host token access for a local viewer", async () => {
+    queryMock = jest.fn(async () => ({
+      rows: [
+        {
+          host_id: HOST_UUID,
+          project_owning_bay_id: "bay-0",
+          group: "viewer",
+        },
+      ],
+    }));
+
+    const { assertAccountProjectHostTokenProjectAccess } =
+      await import("./project-host-token-auth");
+    await expect(
+      assertAccountProjectHostTokenProjectAccess({
+        account_id: ACCOUNT_UUID,
+        host_id: HOST_UUID,
+        project_id: PROJECT_UUID,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("allows remote collaborator browser-issued project-host token access when the owning bay confirms visibility", async () => {
     queryMock = jest.fn(async () => ({ rows: [] }));
     resolveProjectBayMock = jest.fn(async () => ({
