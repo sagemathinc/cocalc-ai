@@ -367,7 +367,11 @@ describe("PublicApp", () => {
       }),
     ).not.toBeNull();
     expect(screen.getByText("Member")).not.toBeNull();
-    expect(screen.getAllByRole("link", { name: "Open Store" }).length).toBe(1);
+    expect(screen.getByRole("link", { name: /Member/ })).toHaveAttribute(
+      "href",
+      "/settings/store",
+    );
+    expect(screen.queryByRole("link", { name: "Open Store" })).toBeNull();
     expect(
       screen.getByText(/the one planned pay-as-you-go exception/i),
     ).not.toBeNull();

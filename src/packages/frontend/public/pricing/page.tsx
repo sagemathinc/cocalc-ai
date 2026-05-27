@@ -13,6 +13,7 @@ import {
 } from "@cocalc/frontend/account/membership-tier-benefits";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
+  PublicCard,
   PublicGrid,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
@@ -71,7 +72,7 @@ function yearlySavingsTag(tier: PublicMembershipTier): ReactNode {
   return <Tag color="blue">Save about {savings}% yearly</Tag>;
 }
 
-function TierSection({
+function PricingTierTile({
   isAuthenticated,
   tier,
 }: {
@@ -84,43 +85,39 @@ function TierSection({
       ? Math.floor(tier.trial_days)
       : 0;
 
+  const href = isAuthenticated
+    ? appPath("settings/store")
+    : appPath("auth/sign-up");
+
   return (
-    <PublicSection>
-      <Flex align="center" gap={8} justify="space-between">
-        <Title level={3} style={{ margin: 0 }}>
-          {label}
-        </Title>
-        {yearlySavingsTag(tier)}
-      </Flex>
-      <div>
-        <Text strong style={{ fontSize: "1.35rem" }}>
-          {currency(Number(tier.price_monthly ?? 0))}
-        </Text>
-        <Text type="secondary"> / month</Text>
-      </div>
-      <div>
-        <Text strong>{currency(Number(tier.price_yearly ?? 0))}</Text>
-        <Text type="secondary"> / year</Text>
-      </div>
-      {trialDays > 0 && (
-        <Tag color="green">{trialDays}-day free trial with payment method</Tag>
-      )}
-      <MembershipTierBenefits compact tier={tier} />
-      <Flex gap={8} wrap>
-        {isAuthenticated ? (
-          <Button href={appPath("settings/store")} type="primary">
-            Open Store
-          </Button>
-        ) : (
-          <>
-            <Button href={appPath("auth/sign-up")} type="primary">
-              Create account
-            </Button>
-            <Button href={appPath("auth/sign-in")}>Sign in</Button>
-          </>
+    <PublicCard
+      href={href}
+      title={
+        <Flex align="center" gap={8} justify="space-between">
+          <span>{label}</span>
+          {yearlySavingsTag(tier)}
+        </Flex>
+      }
+    >
+      <Flex vertical gap="middle">
+        <div>
+          <Text strong style={{ fontSize: "1.35rem" }}>
+            {currency(Number(tier.price_monthly ?? 0))}
+          </Text>
+          <Text type="secondary"> / month</Text>
+        </div>
+        <div>
+          <Text strong>{currency(Number(tier.price_yearly ?? 0))}</Text>
+          <Text type="secondary"> / year</Text>
+        </div>
+        {trialDays > 0 && (
+          <Tag color="green">
+            {trialDays}-day free trial with payment method
+          </Tag>
         )}
+        <MembershipTierBenefits compact tier={tier} />
       </Flex>
-    </PublicSection>
+    </PublicCard>
   );
 }
 
@@ -158,9 +155,9 @@ export default function PricingPage({
   return (
     <>
       {visibleTiers.length > 0 ? (
-        <PublicGrid columns={3}>
+        <PublicGrid columns={4}>
           {visibleTiers.map((tier) => (
-            <TierSection
+            <PricingTierTile
               isAuthenticated={isAuthenticated}
               key={tier.id}
               tier={tier}
