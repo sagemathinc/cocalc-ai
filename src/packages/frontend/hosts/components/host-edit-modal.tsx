@@ -123,10 +123,31 @@ type HostEditSelectionInputs = {
   pricing_settings?: ProviderSelection["pricing_settings"];
 };
 
+function sharedScratchTypeForHost(host?: Host): string | undefined {
+  const explicit = `${host?.machine?.shared_disk_type ?? ""}`.trim();
+  if (explicit) return explicit;
+  const code = Number(
+    ((host as any)?.runtime?.metadata as any)?.scratchDiskTypeCode,
+  );
+  switch (code) {
+    case 2:
+      return "standard";
+    case 3:
+      return "balanced";
+    case 4:
+      return "ssd_io_m3";
+    case 1:
+      return "ssd";
+    default:
+      return undefined;
+  }
+}
+
 export function buildHostEditSelection(
   opts: HostEditSelectionInputs,
 ): ProviderSelection {
   const { host } = opts;
+  const hostSharedScratchType = sharedScratchTypeForHost(host);
   return {
     region: opts.region ?? host?.region ?? undefined,
     zone: opts.zone ?? host?.machine?.zone ?? undefined,
@@ -138,7 +159,7 @@ export function buildHostEditSelection(
     disk_type: opts.disk_type ?? host?.machine?.disk_type ?? undefined,
     disk_gb: opts.disk_gb ?? host?.machine?.disk_gb ?? undefined,
     shared_disk_type:
-      opts.shared_disk_type ?? host?.machine?.shared_disk_type ?? undefined,
+      opts.shared_disk_type ?? hostSharedScratchType ?? undefined,
     shared_disk_gb:
       opts.shared_disk_gb ?? host?.machine?.shared_disk_gb ?? undefined,
     self_host_kind: opts.self_host_kind,
@@ -445,6 +466,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const currentRam = readPositive(host?.machine?.metadata?.ram_gb);
   const currentDisk = readPositive(host?.machine?.disk_gb);
   const currentSharedDisk = readPositive(host?.machine?.shared_disk_gb);
+  const currentSharedDiskType = sharedScratchTypeForHost(host);
   const diskMin = isDeprovisioned
     ? MIN_DISK_GB
     : Math.max(MIN_DISK_GB, currentDisk ?? MIN_DISK_GB);
@@ -561,7 +583,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       storage_mode: storageMode,
       disk_type: host.machine?.disk_type,
       shared_disk_gb: currentSharedDisk,
-      shared_disk_type: host.machine?.shared_disk_type,
+      shared_disk_type: currentSharedDiskType,
       funding_mode: host.funding_mode ?? undefined,
       pricing_model: host.pricing_model ?? "on_demand",
       interruption_restore_policy:
@@ -592,6 +614,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     currentDisk,
     currentRam,
     currentSharedDisk,
+    currentSharedDiskType,
     form,
     host,
     open,
@@ -812,6 +835,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       okText="Save"
       okButtonProps={{ disabled: disableSave }}
       destroyOnHidden
+      width="min(860px, 96vw)"
     >
       <Form form={form} layout="vertical">
         {isDeprovisioned ? (

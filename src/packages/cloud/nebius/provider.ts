@@ -120,6 +120,40 @@ function diskTypeFromCode(code?: number): DiskSpec_DiskType {
   return DiskSpec_DiskType.fromNumber(code);
 }
 
+async function updateDiskSize({
+  client,
+  diskId,
+  diskType,
+  sizeGib,
+  fallbackName,
+}: {
+  client: NebiusClient;
+  diskId: string;
+  diskType: DiskSpec_DiskType;
+  sizeGib: number;
+  fallbackName?: string;
+}) {
+  const disk = await client.disks.get(GetDiskRequest.create({ id: diskId }));
+  const name = `${disk?.metadata?.name ?? fallbackName ?? ""}`.trim();
+  const op = await client.disks.update(
+    UpdateDiskRequest.create({
+      metadata: ResourceMetadata.create({
+        id: diskId,
+        ...(name ? { name } : {}),
+      }),
+      spec: DiskSpec.create({
+        type: diskType,
+        blockSizeBytes: blockSizeBytes(),
+        size: {
+          $case: "sizeGibibytes",
+          sizeGibibytes: Long.fromNumber(sizeGib),
+        },
+      }),
+    }),
+  );
+  await op.wait();
+}
+
 function normalizeIp(value?: string | null): string | undefined {
   if (!value) return undefined;
   const trimmed = value.trim();
@@ -743,20 +777,12 @@ export class NebiusProvider implements CloudProvider {
     }
     const diskTypeCode = (runtime.metadata as NebiusRuntimeMeta | undefined)
       ?.diskTypeCode;
-    const op = await client.disks.update(
-      UpdateDiskRequest.create({
-        metadata: ResourceMetadata.create({ id: diskIds.data }),
-        spec: DiskSpec.create({
-          type: diskTypeFromCode(diskTypeCode),
-          blockSizeBytes: blockSizeBytes(),
-          size: {
-            $case: "sizeGibibytes",
-            sizeGibibytes: Long.fromNumber(newSizeGb),
-          },
-        }),
-      }),
-    );
-    await op.wait();
+    await updateDiskSize({
+      client,
+      diskId: diskIds.data,
+      diskType: diskTypeFromCode(diskTypeCode),
+      sizeGib: newSizeGb,
+    });
   }
 
   async resizeSharedScratchDisk(
@@ -773,20 +799,13 @@ export class NebiusProvider implements CloudProvider {
     }
     const diskType = diskTypeFromCode(meta?.scratchDiskTypeCode);
     const normalized = normalizeDiskSizeGib(newSizeGb, diskType);
-    const op = await client.disks.update(
-      UpdateDiskRequest.create({
-        metadata: ResourceMetadata.create({ id: diskId }),
-        spec: DiskSpec.create({
-          type: diskType,
-          blockSizeBytes: blockSizeBytes(),
-          size: {
-            $case: "sizeGibibytes",
-            sizeGibibytes: Long.fromNumber(normalized.sizeGib),
-          },
-        }),
-      }),
-    );
-    await op.wait();
+    await updateDiskSize({
+      client,
+      diskId,
+      diskType,
+      sizeGib: normalized.sizeGib,
+      fallbackName: (runtime.metadata as any)?.shared_disk_name,
+    });
   }
 
   async ensureSharedScratchDisk(
