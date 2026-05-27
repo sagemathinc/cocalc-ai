@@ -1776,9 +1776,9 @@ account that should receive the updated capability.
 `;
 
 const ADMIN_MANAGED_EGRESS_BODY = String.raw`
-## What managed egress is for
+## What Network Egress is for
 
-Managed egress tracks network egress that CoCalc attributes to accounts,
+Network Egress tracks managed egress that CoCalc attributes to accounts,
 projects, and categories. It gives admins an operational view into recent
 network usage so they can investigate unexpected traffic, understand limit
 pressure, and connect support reports to concrete account or project activity.
@@ -1786,7 +1786,7 @@ pressure, and connect support reports to concrete account or project activity.
 ## Review site-wide egress
 
 1. Open the Admin tab.
-2. Open **Managed Egress**.
+2. Open **Network Egress**.
 3. Choose the time range that matches the support or operations question.
 4. Review top accounts, top projects, categories, and recent events.
 5. Drill into the relevant user or project when the aggregate view points to a
@@ -2098,10 +2098,10 @@ export const DOCS_ENTRIES: DocsEntry[] = [
   {
     actions: [
       {
-        description: "Open the Admin -> Managed Egress section.",
+        description: "Open the Admin -> Network Egress section.",
         executable: true,
         id: "admin.managed-egress.open",
-        label: "Open managed egress",
+        label: "Open network egress",
       },
     ],
     audiences: ["agents", "teams"],
@@ -2116,8 +2116,8 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     slug: "admin/managed-egress",
     status: "ready",
     summary:
-      "Use the admin managed-egress overview to investigate recent account, project, and category network usage.",
-    title: "Monitor managed egress",
+      "Use the admin Network Egress overview to investigate recent account, project, and category network usage.",
+    title: "Monitor network egress",
     visibility: "admin",
   },
   {
