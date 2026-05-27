@@ -61,4 +61,45 @@ describe("DocsBrowser", () => {
     expect(onSelectedEntryChange).toHaveBeenCalledWith(nextEntry);
     expect(screen.getByRole("heading", { name: nextEntry.title })).toBeTruthy();
   });
+
+  it("advances from the last page of a category to the next chapter", () => {
+    const allEntries = listDocsEntries();
+    const categoryOrder = Array.from(
+      new Set(allEntries.map((entry) => entry.category)),
+    );
+    const category = categoryOrder.find((candidate, index) => {
+      const nextCategory = categoryOrder[index + 1];
+      return (
+        nextCategory != null &&
+        allEntries.some((entry) => entry.category === candidate)
+      );
+    });
+    if (category == null) throw new Error("missing next docs chapter");
+    const categoryEntries = allEntries.filter(
+      (entry) => entry.category === category,
+    );
+    const entry = categoryEntries[categoryEntries.length - 1];
+    const entryIndex = allEntries.findIndex(
+      (candidate) => candidate.id === entry.id,
+    );
+    const nextChapter = allEntries
+      .slice(entryIndex + 1)
+      .find((candidate) => candidate.category !== entry.category);
+    if (nextChapter == null) throw new Error("missing next chapter entry");
+    const onSelectedEntryChange = jest.fn();
+
+    render(
+      <DocsBrowser
+        initialEntry={entry}
+        onSelectedEntryChange={onSelectedEntryChange}
+      />,
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: /Next Chapter/ })[0]);
+
+    expect(onSelectedEntryChange).toHaveBeenCalledWith(nextChapter);
+    expect(
+      screen.getByRole("heading", { name: nextChapter.title }),
+    ).toBeTruthy();
+  });
 });

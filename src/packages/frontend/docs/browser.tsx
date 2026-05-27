@@ -8,7 +8,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowRightOutlined,
   BookOutlined,
-  CheckCircleOutlined,
   SearchOutlined,
   ToolOutlined,
   ArrowLeftOutlined,
@@ -73,9 +72,9 @@ type DocsLinearNavigationState = {
   currentIndex: number;
   entry: DocsEntry;
   next?: DocsEntry;
+  nextChapter?: DocsEntry;
   onSelectEntry: (entry: DocsEntry) => void;
   previous?: DocsEntry;
-  summary?: DocsPrivateEntrySummary;
 };
 
 function clampDocsFontSize(value: number): number {
@@ -762,7 +761,8 @@ function DocsLinearNavigation({
   if (navigation == null || navigation.count <= 1) return null;
 
   const isFlyout = layout === "flyout";
-  const viewed = navigation.summary?.lastViewedAt != null;
+  const nextEntry = navigation.next ?? navigation.nextChapter;
+  const nextLabel = navigation.next ? "Next" : "Next Chapter";
   const content = (
     <Flex
       align={isFlyout ? "stretch" : "center"}
@@ -777,11 +777,6 @@ function DocsLinearNavigation({
           Page {navigation.currentIndex + 1} of {navigation.count} in{" "}
           {navigation.entry.category}
         </Text>
-        {viewed ? (
-          <Tag color="green" icon={<CheckCircleOutlined />}>
-            Viewed
-          </Tag>
-        ) : null}
       </Space>
       <Space.Compact block={isFlyout}>
         <Button
@@ -802,23 +797,23 @@ function DocsLinearNavigation({
           Previous
         </Button>
         <Button
-          disabled={navigation.next == null}
+          disabled={nextEntry == null}
           icon={<ArrowRightOutlined />}
           iconPlacement="end"
           onClick={() => {
-            if (navigation.next != null) {
-              navigation.onSelectEntry(navigation.next);
+            if (nextEntry != null) {
+              navigation.onSelectEntry(nextEntry);
             }
           }}
           size={isFlyout ? "small" : "middle"}
           title={
-            navigation.next != null
-              ? `Next: ${navigation.next.title}`
-              : "This is the last page in this section"
+            nextEntry != null
+              ? `${nextLabel}: ${nextEntry.title}`
+              : "This is the last page"
           }
           type="primary"
         >
-          Next
+          {nextLabel}
         </Button>
       </Space.Compact>
     </Flex>
@@ -1002,6 +997,9 @@ export function DocsBrowser({
   );
 
   if (selectedEntry != null) {
+    const selectedGlobalIndex = allEntries.findIndex(
+      (entry) => entry.id === selectedEntry.id,
+    );
     const categoryEntries = allEntries.filter(
       (entry) => entry.category === selectedEntry.category,
     );
@@ -1015,9 +1013,11 @@ export function DocsBrowser({
             currentIndex,
             entry: selectedEntry,
             next: categoryEntries[currentIndex + 1],
+            nextChapter: allEntries
+              .slice(selectedGlobalIndex + 1)
+              .find((entry) => entry.category !== selectedEntry.category),
             onSelectEntry: selectEntry,
             previous: categoryEntries[currentIndex - 1],
-            summary: privateIndexState?.summaries[selectedEntry.id],
           }
         : undefined;
     return (
