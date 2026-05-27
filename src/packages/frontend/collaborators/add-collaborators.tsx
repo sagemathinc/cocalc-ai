@@ -45,8 +45,17 @@ import { ShowSupportLink } from "@cocalc/frontend/support/link";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { onCollabInvitesChanged } from "./invite-events";
+import {
+  ViewerReadPolicyEditor,
+  viewerPolicyHasReadablePath,
+} from "./viewer-read-policy";
+import {
+  DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY,
+  type ProjectViewerReadPolicy,
+} from "@cocalc/util/project-access";
 
 const INVITE_MESSAGE_MAX_LENGTH = 1000;
+type InviteRole = "collaborator" | "viewer";
 
 interface RegisteredUser {
   sort?: string;
@@ -134,7 +143,6 @@ export const AddCollaborators: React.FC<Props> = ({
 
   // currently carrying out a search
   const [state, set_state] = useState<State>("input");
-  const [focused, set_focused] = useState<boolean>(false);
   const [select_open, set_select_open] = useState<boolean>(false);
   // display an error in case something went wrong doing a search
   const [err, set_err] = useState<string>("");
@@ -149,6 +157,9 @@ export const AddCollaborators: React.FC<Props> = ({
   const [manual_invite_links, set_manual_invite_links] = useState<
     ManualInviteLink[]
   >([]);
+  const [invite_role, set_invite_role] = useState<InviteRole>("collaborator");
+  const [invite_read_policy, set_invite_read_policy] =
+    useState<ProjectViewerReadPolicy>(DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY);
   const [invite_usage, set_invite_usage] =
     useState<ProjectCollaboratorInviteUsage | null>(null);
   const [invite_usage_error, set_invite_usage_error] = useState<string>("");
@@ -193,7 +204,12 @@ export const AddCollaborators: React.FC<Props> = ({
   const invite_slot_limited =
     invite_usage?.limit != null && invite_slots_remaining != null;
   const invite_slots_exhausted =
-    invite_slot_limited && invite_slots_remaining <= 0;
+    invite_role === "collaborator" &&
+    invite_slot_limited &&
+    invite_slots_remaining <= 0;
+  const viewer_policy_empty =
+    invite_role === "viewer" &&
+    !viewerPolicyHasReadablePath(invite_read_policy);
 
   function reset(): void {
     set_search("");
@@ -391,6 +407,8 @@ export const AddCollaborators: React.FC<Props> = ({
       false,
       replyto,
       replyto_name,
+      invite_role,
+      invite_role === "viewer" ? invite_read_policy : undefined,
     );
   }
 
@@ -448,7 +466,11 @@ export const AddCollaborators: React.FC<Props> = ({
     const title = project.get("title");
     const target = `'${title}'`;
     const SiteName = redux.getStore("customize").get("site_name") ?? SITE_NAME;
-    const body = `Hello!\n\nPlease collaborate with me using ${SiteName} on ${target}.\n\nBest wishes,\n\n${name}`;
+    const action =
+      invite_role === "viewer"
+        ? "view this project read-only"
+        : "collaborate with me";
+    const body = `Hello!\n\nPlease ${action} using ${SiteName} on ${target}.\n\nBest wishes,\n\n${name}`;
     set_email_to(search);
     set_email_body(body);
   }
@@ -462,8 +484,9 @@ export const AddCollaborators: React.FC<Props> = ({
     const replyto_name = redux.getStore("account").get_fullname();
     const SiteName = redux.getStore("customize").get("site_name") ?? SITE_NAME;
     let subject;
+    const access = invite_role === "viewer" ? "view" : "collaborate on";
     if (replyto_name != null) {
-      subject = `${replyto_name} invited you to '${project?.get("title")}'`;
+      subject = `${replyto_name} invited you to ${access} '${project?.get("title")}'`;
     } else {
       subject = `${SiteName} Invitation to '${project?.get("title")}'`;
     }
@@ -484,6 +507,10 @@ export const AddCollaborators: React.FC<Props> = ({
       silent,
       replyto,
       replyto_name,
+      undefined,
+      undefined,
+      invite_role,
+      invite_role === "viewer" ? invite_read_policy : undefined,
     );
     if (!silent && !allow_urls) {
       // Show a message that they might have to email that person
@@ -623,7 +650,9 @@ export const AddCollaborators: React.FC<Props> = ({
       .map((x) => x.trim())
       .filter((x) => x.length > 0).length;
     const exceedsSlots =
-      invite_slots_remaining != null && recipientCount > invite_slots_remaining;
+      invite_role === "collaborator" &&
+      invite_slots_remaining != null &&
+      recipientCount > invite_slots_remaining;
 
     return (
       <div>
@@ -636,6 +665,8 @@ export const AddCollaborators: React.FC<Props> = ({
             onChange={(e) => set_email_to((e.target as any).value)}
             autoFocus
           />
+          {render_access_role()}
+          {render_invite_slots()}
           {render_customize_message()}
           <div style={{ display: "flex", marginTop: "10px" }}>
             <Button
@@ -653,7 +684,10 @@ export const AddCollaborators: React.FC<Props> = ({
               type="primary"
               onClick={() => void send_email_invite()}
               disabled={
-                !!email_body_editing || invite_slots_exhausted || exceedsSlots
+                !!email_body_editing ||
+                invite_slots_exhausted ||
+                exceedsSlots ||
+                viewer_policy_empty
               }
             >
               {exceedsSlots
@@ -669,28 +703,44 @@ export const AddCollaborators: React.FC<Props> = ({
     );
   }
 
-  function render_search(): React.JSX.Element | undefined {
-    if (state == "searched") {
-      return;
-    }
+  function render_access_role(): React.JSX.Element {
     return (
       <div
         style={{
-          alignItems: "flex-start",
-          color: COLORS.GRAY_M,
-          display: "flex",
-          gap: 8,
+          background: COLORS.GRAY_LLL,
+          border: `1px solid ${COLORS.GRAY_LL}`,
+          borderRadius: 10,
           marginBottom: 10,
+          padding: 12,
         }}
       >
-        <Icon
-          name="info-circle"
-          style={{ color: COLORS.ANTD_LINK_BLUE, marginTop: 2 }}
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>Access level</div>
+        <Select
+          style={{ width: "100%" }}
+          value={invite_role}
+          onChange={(value) => set_invite_role(value as InviteRole)}
+          options={[
+            {
+              value: "collaborator",
+              label: "Collaborator: can edit files and use project runtimes",
+            },
+            {
+              value: "viewer",
+              label: "Viewer: read-only files, no runtimes or write access",
+            },
+          ]}
         />
-        <span>
-          Collaborators get full project access. For teaching, add students
-          through the course instead.
-        </span>
+        {invite_role === "viewer" ? (
+          <ViewerReadPolicyEditor
+            value={invite_read_policy}
+            onChange={set_invite_read_policy}
+          />
+        ) : (
+          <div style={{ color: COLORS.GRAY_M, fontSize: 12, marginTop: 6 }}>
+            Collaborators get normal read/write access, project runtimes,
+            terminals, SSH, and project tools.
+          </div>
+        )}
       </div>
     );
   }
@@ -709,6 +759,17 @@ export const AddCollaborators: React.FC<Props> = ({
     }
     if (invite_usage == null || invite_usage.limit == null) {
       return;
+    }
+    if (invite_role === "viewer") {
+      return (
+        <Alert
+          showIcon
+          type="info"
+          style={{ marginBottom: 10 }}
+          message="Viewer invites do not use collaborator slots"
+          description="Viewers have read-only file access and cannot edit files or use project runtimes."
+        />
+      );
     }
     const { current, limit, remaining } = invite_usage;
     const remainingCount = remaining ?? 0;
@@ -746,16 +807,8 @@ export const AddCollaborators: React.FC<Props> = ({
     }
     const showSelector = state === ("searched" as State) && users.length > 0;
 
-    function render_search_help(): React.JSX.Element | undefined {
-      if (focused && results.length === 0) {
-        return <Alert type="info" title={"Press enter to search..."} />;
-      }
-    }
     const hasSearchContentBelow =
-      showSelector ||
-      (focused && results.length === 0) ||
-      selected_entries.length > 0 ||
-      state == "searched";
+      showSelector || selected_entries.length > 0 || state == "searched";
 
     return (
       <div
@@ -767,41 +820,25 @@ export const AddCollaborators: React.FC<Props> = ({
           padding: 12,
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            marginBottom: hasSearchContentBelow ? 10 : 0,
+        <Input.Search
+          autoFocus={autoFocus}
+          placeholder="Search by name or email address..."
+          value={search}
+          enterButton="Search"
+          loading={state === ("searching" as State)}
+          style={{ marginBottom: hasSearchContentBelow ? 10 : 0 }}
+          onChange={(e) => {
+            const value = (e.target as any).value ?? "";
+            search_ref.current = value;
+            set_search(value);
           }}
-        >
-          <Input
-            autoFocus={autoFocus}
-            placeholder="Search by name or email address..."
-            disabled={invite_slots_exhausted}
-            value={search}
-            onChange={(e) => {
-              const value = (e.target as any).value ?? "";
-              search_ref.current = value;
-              set_search(value);
-            }}
-            onPressEnter={() => {
-              if (state !== ("searching" as State)) {
-                void do_search(search_ref.current);
-              }
-            }}
-          />
-          <Button
-            onClick={() => void do_search(search_ref.current)}
-            disabled={
-              invite_slots_exhausted ||
-              state === ("searching" as State) ||
-              !search.trim()
+          onSearch={(value) => {
+            const next = value.trim();
+            if (next && state !== ("searching" as State)) {
+              void do_search(next);
             }
-            type={search.trim() ? "primary" : "default"}
-          >
-            Search
-          </Button>
-        </div>
+          }}
+        />
         {showSelector && (
           <Select
             ref={select_ref}
@@ -832,11 +869,9 @@ export const AddCollaborators: React.FC<Props> = ({
             optionLabelProp="tag"
             notFoundContent={null}
             onFocus={() => {
-              set_focused(true);
               set_select_open(true);
             }}
             onBlur={() => {
-              set_focused(false);
               set_select_open(false);
             }}
             onDropdownVisibleChange={(open) => {
@@ -846,8 +881,13 @@ export const AddCollaborators: React.FC<Props> = ({
             {render_options(users)}
           </Select>
         )}
-        {render_search_help()}
-        {selected_entries.length > 0 && render_customize_message()}
+        {selected_entries.length > 0 && (
+          <>
+            {render_access_role()}
+            {render_invite_slots()}
+            {render_customize_message()}
+          </>
+        )}
         {state == "searched" && render_select_list_button()}
       </div>
     );
@@ -882,6 +922,7 @@ export const AddCollaborators: React.FC<Props> = ({
       disabled = true;
     }
     if (
+      invite_role === "collaborator" &&
       invite_slots_remaining != null &&
       number_selected > invite_slots_remaining
     ) {
@@ -890,6 +931,10 @@ export const AddCollaborators: React.FC<Props> = ({
         invite_slots_remaining,
         "slot",
       )} left`;
+    }
+    if (viewer_policy_empty) {
+      disabled = true;
+      label = "Viewer policy allows no files";
     }
     return (
       <div
@@ -1103,8 +1148,6 @@ export const AddCollaborators: React.FC<Props> = ({
     >
       {err && <ErrorDisplay error={err} onClose={() => set_err("")} />}
       {state == "searching" && <Loading />}
-      {render_invite_slots()}
-      {render_search()}
       {render_select_list()}
       {render_send_email()}
       {render_invite_result()}

@@ -128,6 +128,9 @@ export function ProjectsTable({
           ? rawState.set("state", displayState)
           : rawState;
       const stateName = `${state?.get?.("state") ?? ""}`;
+      const currentRole = `${
+        project.getIn(["users", current_account_id, "group"]) ?? ""
+      }`;
       const deletionScheduled =
         scheduledDeleteProjectIdSet.has(project_id) && stateName !== "deleting";
       return {
@@ -141,6 +144,12 @@ export function ProjectsTable({
           return typeof hostName === "string" ? hostName : undefined;
         })(),
         last_edited: project.get("last_edited"),
+        currentRole:
+          currentRole === "owner" ||
+          currentRole === "collaborator" ||
+          currentRole === "viewer"
+            ? currentRole
+            : undefined,
         color: projectThemeColor(project),
         state,
         deleting: stateName === "deleting",

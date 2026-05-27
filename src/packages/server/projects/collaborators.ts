@@ -47,6 +47,7 @@ import {
 import {
   DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY,
   isProjectUserRole,
+  normalizeProjectUserRole,
   type ProjectUserRole,
   type ProjectViewerReadPolicy,
 } from "@cocalc/util/project-access";
@@ -94,6 +95,7 @@ const EMAIL_INVITE_HASH_AAD = "project_collab_invites.email-token:v2";
 const EMAIL_INVITE_SOURCE = "email";
 const EMAIL_INVITE_SCOPE = "project_collab";
 const COURSE_EMAIL_INVITE_SCOPE = "course_student";
+const DEFAULT_INVITE_ROLE = "collaborator" as const;
 const INVITE_STATUS_SET = new Set<string>([
   "pending",
   "accepted",
@@ -166,6 +168,32 @@ function normalizeInviteStatus(
   );
 }
 
+function normalizeInviteRole(
+  value?: unknown,
+): Exclude<ProjectUserRole, "owner"> {
+  const role = normalizeProjectUserRole(value);
+  if (role == null) {
+    return DEFAULT_INVITE_ROLE;
+  }
+  if (role === "owner") {
+    throw new Error("invite_role must be collaborator or viewer");
+  }
+  return role;
+}
+
+function normalizeInviteReadPolicy({
+  invite_role,
+  read_policy,
+}: {
+  invite_role: Exclude<ProjectUserRole, "owner">;
+  read_policy?: ProjectViewerReadPolicy | null;
+}): ProjectViewerReadPolicy | null {
+  if (invite_role !== "viewer") {
+    return null;
+  }
+  return read_policy ?? DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY;
+}
+
 function emailUnavailableFromSendMessage(message: string | undefined): boolean {
   const value = `${message ?? ""}`.toLowerCase();
   return (
@@ -222,7 +250,9 @@ async function ensureProjectCollabInviteEmailTokenSchemaUncached(): Promise<void
       ADD COLUMN IF NOT EXISTS last_sent TIMESTAMP,
       ADD COLUMN IF NOT EXISTS resend_count INTEGER,
       ADD COLUMN IF NOT EXISTS scope VARCHAR(48),
-      ADD COLUMN IF NOT EXISTS context JSONB
+      ADD COLUMN IF NOT EXISTS context JSONB,
+      ADD COLUMN IF NOT EXISTS invite_role VARCHAR(24),
+      ADD COLUMN IF NOT EXISTS read_policy JSONB
   `);
   await pool.query(
     `CREATE INDEX IF NOT EXISTS project_collab_invites_email_pending_idx
@@ -417,6 +447,8 @@ async function fetchInviteById(
        i.resend_count,
        i.scope,
        i.context,
+       COALESCE(i.invite_role, 'collaborator') AS invite_role,
+       i.read_policy,
        i.status,
        i.message,
        i.responder_action,
@@ -654,6 +686,54 @@ async function hydrateInviteBlockRows(
   });
 }
 
+async function addUserToProjectForAcceptedInvite({
+  account_id,
+  project_id,
+  invite_role,
+  read_policy,
+}: {
+  account_id: string;
+  project_id: string;
+  invite_role?: string | null;
+  read_policy?: ProjectViewerReadPolicy | null;
+}): Promise<void> {
+  const role = normalizeInviteRole(invite_role);
+  const policy = normalizeInviteReadPolicy({ invite_role: role, read_policy });
+  const database = db();
+  await callback2(database.add_user_to_project.bind(database), {
+    project_id,
+    account_id,
+    group: role,
+  });
+  const rolePatch =
+    role === "viewer"
+      ? { group: "viewer", read_policy: policy }
+      : { group: "collaborator" };
+  await getPool().query(
+    `
+      UPDATE projects
+         SET users = jsonb_set(
+           COALESCE(users, '{}'::jsonb),
+           ARRAY[$2::text],
+           CASE
+             WHEN $3::text = 'collaborator' THEN
+               (COALESCE(users -> $2::text, '{}'::jsonb) - 'read_policy') || $4::jsonb
+             ELSE
+               COALESCE(users -> $2::text, '{}'::jsonb) || $4::jsonb
+           END,
+           true
+         )
+       WHERE project_id=$1
+         AND COALESCE(users -> $2::text ->> 'group', '') <> 'owner'
+    `,
+    [project_id, account_id, role, JSON.stringify(rolePatch)],
+  );
+  await appendProjectOutboxEventForProject({
+    event_type: "project.membership_changed",
+    project_id,
+  });
+}
+
 export async function removeCollaborator({
   account_id,
   opts,
@@ -868,12 +948,16 @@ export async function createCollabInvite({
   invitee_account_id,
   message,
   direct,
+  invite_role,
+  read_policy,
 }: {
   account_id?: string;
   project_id: string;
   invitee_account_id: string;
   message?: string;
   direct?: boolean;
+  invite_role?: Exclude<ProjectUserRole, "owner">;
+  read_policy?: ProjectViewerReadPolicy | null;
 }): Promise<{
   created: boolean;
   invite: ProjectCollabInviteRow;
@@ -896,6 +980,9 @@ export async function createCollabInvite({
     action: "invite collaborators",
     project_id,
   });
+  await ensureProjectCollabInviteEmailTokenSchema();
+  const role = normalizeInviteRole(invite_role);
+  const policy = normalizeInviteReadPolicy({ invite_role: role, read_policy });
 
   const pool = getPool();
   const includeEmail = await isAdmin(account_id);
@@ -910,20 +997,26 @@ export async function createCollabInvite({
     throw new Error(`account '${invitee_account_id}' does not exist`);
   }
 
-  const { rows: collabRows } = await pool.query<{ already: boolean }>(
-    `SELECT EXISTS(
-       SELECT 1
+  const { rows: collabRows } = await pool.query<{
+    existing_group: string | null;
+  }>(
+    `SELECT users -> $2::text ->> 'group' AS existing_group
        FROM projects
-       WHERE project_id=$1
-         AND (users -> $2::text ->> 'group') IN ('owner','collaborator')
-     ) AS already`,
+      WHERE project_id=$1
+      LIMIT 1`,
     [project_id, invitee_account_id],
   );
-  if (collabRows[0]?.already) {
-    throw new Error("target account is already a collaborator");
+  const existingGroup = collabRows[0]?.existing_group;
+  if (existingGroup === "owner" || existingGroup === "collaborator") {
+    throw new Error("target account already has full project access");
+  }
+  if (existingGroup === "viewer" && role === "viewer") {
+    throw new Error("target account is already a viewer");
   }
 
-  await assertProjectCollaboratorInviteLimit({ project_id });
+  if (role === "collaborator") {
+    await assertProjectCollaboratorInviteLimit({ project_id });
+  }
 
   const { rows: blockedRows } = await pool.query<{ blocked: boolean }>(
     `SELECT EXISTS(
@@ -944,11 +1037,11 @@ export async function createCollabInvite({
     if (!includeEmail) {
       throw new Error("direct collaborator add requires admin privileges");
     }
-    const database = db();
-    await callback2(database.add_user_to_project.bind(database), {
+    await addUserToProjectForAcceptedInvite({
       project_id,
       account_id: invitee_account_id,
-      group: "collaborator",
+      invite_role: role,
+      read_policy: policy,
     });
     await syncProjectUsersOnHostBestEffort(
       project_id,
@@ -968,6 +1061,8 @@ export async function createCollabInvite({
         inviter_account_id: account_id,
         invitee_account_id,
         status: "accepted",
+        invite_role: role,
+        read_policy: policy,
         message: normalizedMessage,
         responder_action: "accept",
         created: now,
@@ -984,10 +1079,11 @@ export async function createCollabInvite({
      WHERE project_id=$1
        AND inviter_account_id=$2
        AND invitee_account_id=$3
+       AND COALESCE(invite_role, 'collaborator')=$4
        AND status='pending'
      ORDER BY created DESC
      LIMIT 1`,
-    [project_id, account_id, invitee_account_id],
+    [project_id, account_id, invitee_account_id, role],
   );
   const existingPending = pendingRows[0]?.invite_id;
   if (existingPending) {
@@ -1009,10 +1105,19 @@ export async function createCollabInvite({
   const invite_id = uuid();
   await pool.query(
     `INSERT INTO project_collab_invites
-      (invite_id, project_id, inviter_account_id, invitee_account_id, status, message, created, updated)
+      (invite_id, project_id, inviter_account_id, invitee_account_id,
+       invite_role, read_policy, status, message, created, updated)
      VALUES
-      ($1, $2, $3, $4, 'pending', $5, NOW(), NOW())`,
-    [invite_id, project_id, account_id, invitee_account_id, normalizedMessage],
+      ($1, $2, $3, $4, $5, $6::jsonb, 'pending', $7, NOW(), NOW())`,
+    [
+      invite_id,
+      project_id,
+      account_id,
+      invitee_account_id,
+      role,
+      JSON.stringify(policy),
+      normalizedMessage,
+    ],
   );
   const invite = await fetchInviteById(invite_id, includeEmail);
   if (!invite) {
@@ -1055,6 +1160,7 @@ export async function listCollabInvites({
   const normalizedStatus = normalizeInviteStatus(status);
   const maxRows = Math.max(1, Math.min(1000, Number(limit ?? 200) || 200));
   const pool = getPool();
+  await ensureProjectCollabInviteEmailTokenSchema();
   await expirePendingCollabInvites(pool);
 
   const params: any[] = [includeEmail];
@@ -1116,6 +1222,8 @@ export async function listCollabInvites({
       i.resend_count,
       i.scope,
       i.context,
+      COALESCE(i.invite_role, 'collaborator') AS invite_role,
+      i.read_policy,
       i.status,
       i.message,
       i.responder_action,
@@ -1202,6 +1310,8 @@ async function getCanonicalCollabInvite(
       accepted_account_id?: string | null;
       invite_source?: string | null;
       scope?: string | null;
+      invite_role?: string | null;
+      read_policy?: ProjectViewerReadPolicy | null;
       token_hash?: string | null;
       token_ciphertext?: string | null;
       status: string;
@@ -1217,12 +1327,17 @@ async function getCanonicalCollabInvite(
     accepted_account_id?: string | null;
     invite_source?: string | null;
     scope?: string | null;
+    invite_role?: string | null;
+    read_policy?: ProjectViewerReadPolicy | null;
     token_hash?: string | null;
     token_ciphertext?: string | null;
     status: string;
   }>(
     `SELECT invite_id, project_id, inviter_account_id, invitee_account_id,
-            accepted_account_id, invite_source, scope, token_hash, token_ciphertext, status
+            accepted_account_id, invite_source, scope,
+            COALESCE(invite_role, 'collaborator') AS invite_role,
+            read_policy,
+            token_hash, token_ciphertext, status
      FROM project_collab_invites
      WHERE invite_id=$1
      LIMIT 1`,
@@ -1245,6 +1360,8 @@ async function getPendingEmailCollabInviteForToken({
   inviter_account_id: string;
   token_hash: string;
   scope?: string | null;
+  invite_role?: string | null;
+  read_policy?: ProjectViewerReadPolicy | null;
 }> {
   ensureUuid(invite_id, "invite_id");
   if (project_id) {
@@ -1260,8 +1377,12 @@ async function getPendingEmailCollabInviteForToken({
     status: string;
     token_hash: string | null;
     scope?: string | null;
+    invite_role?: string | null;
+    read_policy?: ProjectViewerReadPolicy | null;
   }>(
-    `SELECT invite_id, project_id, inviter_account_id, status, token_hash, scope
+    `SELECT invite_id, project_id, inviter_account_id, status, token_hash,
+            scope, COALESCE(invite_role, 'collaborator') AS invite_role,
+            read_policy
        FROM project_collab_invites
       WHERE invite_id=$1
         AND invite_source IN ('email', 'course_email')
@@ -1398,22 +1519,28 @@ export async function respondCollabInviteCanonical({
         "accept collaboration invites",
       );
     }
-    const { rows: collabRows } = await pool.query<{ already: boolean }>(
-      `SELECT EXISTS(
-         SELECT 1
+    const role = normalizeInviteRole(invite.invite_role);
+    const { rows: collabRows } = await pool.query<{
+      existing_group: string | null;
+    }>(
+      `SELECT users -> $2::text ->> 'group' AS existing_group
          FROM projects
-         WHERE project_id=$1
-           AND (users -> $2::text ->> 'group') IN ('owner','collaborator')
-       ) AS already`,
+        WHERE project_id=$1
+        LIMIT 1`,
       [invite.project_id, account_id],
     );
-    const alreadyCollaborator = !!collabRows[0]?.already;
-    if (!alreadyCollaborator) {
-      const database = db();
-      await callback2(database.add_user_to_project.bind(database), {
+    const existingGroup = collabRows[0]?.existing_group;
+    const needsGrant =
+      existingGroup !== "owner" &&
+      existingGroup !== "collaborator" &&
+      !(existingGroup === "viewer" && role === "viewer");
+    const needsUpgrade = existingGroup === "viewer" && role === "collaborator";
+    if (needsGrant || needsUpgrade) {
+      await addUserToProjectForAcceptedInvite({
         project_id: invite.project_id,
         account_id,
-        group: "collaborator",
+        invite_role: invite.invite_role,
+        read_policy: invite.read_policy,
       });
       await syncProjectUsersOnHostBestEffort(
         invite.project_id,
@@ -1903,6 +2030,8 @@ async function createEmailProjectInvite({
   email_address,
   message,
   scope = EMAIL_INVITE_SCOPE,
+  invite_role,
+  read_policy,
 }: {
   account_id: string;
   context?: Record<string, unknown>;
@@ -1910,6 +2039,8 @@ async function createEmailProjectInvite({
   email_address: string;
   message?: string;
   scope?: string;
+  invite_role?: Exclude<ProjectUserRole, "owner">;
+  read_policy?: ProjectViewerReadPolicy | null;
 }): Promise<{
   created: boolean;
   invite: ProjectCollabInviteRow;
@@ -1923,6 +2054,11 @@ async function createEmailProjectInvite({
   });
   const email_hash = await hashInviteEmail(normalizedEmail);
   const pool = getPool();
+  const role = normalizeInviteRole(invite_role);
+  if (scope !== EMAIL_INVITE_SCOPE && role !== "collaborator") {
+    throw new Error("viewer invites are only supported for project invites");
+  }
+  const policy = normalizeInviteReadPolicy({ invite_role: role, read_policy });
 
   const { rows: existingRows } = await pool.query<{
     invite_id: string;
@@ -1937,9 +2073,10 @@ async function createEmailProjectInvite({
         AND status='pending'
         AND invite_source=$4
         AND scope=$5
+        AND COALESCE(invite_role, 'collaborator')=$6
       ORDER BY created DESC
       LIMIT 1`,
-    [project_id, account_id, email_hash, EMAIL_INVITE_SOURCE, scope],
+    [project_id, account_id, email_hash, EMAIL_INVITE_SOURCE, scope, role],
   );
   const existing = existingRows[0];
   if (existing) {
@@ -1974,7 +2111,9 @@ async function createEmailProjectInvite({
     };
   }
 
-  await assertProjectCollaboratorInviteLimit({ project_id });
+  if (role === "collaborator") {
+    await assertProjectCollaboratorInviteLimit({ project_id });
+  }
   const token = generateInviteToken();
   const invite_id = uuid();
   const token_hash = await hashProjectCollabInviteToken(token);
@@ -1991,9 +2130,11 @@ async function createEmailProjectInvite({
     `INSERT INTO project_collab_invites
       (invite_id, project_id, inviter_account_id, invitee_account_id,
        invite_source, email_hash, email_ciphertext, token_hash, token_ciphertext,
-       token_hint, status, message, scope, context, created, updated)
+       token_hint, invite_role, read_policy, status, message, scope, context,
+       created, updated)
      VALUES
-      ($1, $2, $3, NULL, $4, $5, $6, $7, $8, $9, 'pending', $10, $11, $12::jsonb, NOW(), NOW())`,
+      ($1, $2, $3, NULL, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, 'pending',
+       $12, $13, $14::jsonb, NOW(), NOW())`,
     [
       invite_id,
       project_id,
@@ -2004,6 +2145,8 @@ async function createEmailProjectInvite({
       token_hash,
       token_ciphertext,
       token_hint,
+      role,
+      JSON.stringify(policy),
       normalizedMessage || null,
       scope,
       JSON.stringify(context ?? {}),
@@ -2157,21 +2300,28 @@ export async function redeemEmailProjectInvite({
     token,
   });
   await assertInviteSenderCanStillGrantAccess({ pool, invite });
-  const { rows: collabRows } = await pool.query<{ already: boolean }>(
-    `SELECT EXISTS(
-       SELECT 1
+  const role = normalizeInviteRole(invite.invite_role);
+  const { rows: collabRows } = await pool.query<{
+    existing_group: string | null;
+  }>(
+    `SELECT users -> $2::text ->> 'group' AS existing_group
        FROM projects
-       WHERE project_id=$1
-         AND (users -> $2::text ->> 'group') IN ('owner','collaborator')
-     ) AS already`,
+      WHERE project_id=$1
+      LIMIT 1`,
     [invite.project_id, account_id],
   );
-  if (!collabRows[0]?.already) {
-    const database = db();
-    await callback2(database.add_user_to_project.bind(database), {
+  const existingGroup = collabRows[0]?.existing_group;
+  const needsGrant =
+    existingGroup !== "owner" &&
+    existingGroup !== "collaborator" &&
+    !(existingGroup === "viewer" && role === "viewer");
+  const needsUpgrade = existingGroup === "viewer" && role === "collaborator";
+  if (needsGrant || needsUpgrade) {
+    await addUserToProjectForAcceptedInvite({
       project_id: invite.project_id,
       account_id,
-      group: "collaborator",
+      invite_role: invite.invite_role,
+      read_policy: invite.read_policy,
     });
     await syncProjectUsersOnHostBestEffort(
       invite.project_id,
@@ -2322,6 +2472,8 @@ export async function inviteCollaborator({
     email?: string;
     subject?: string;
     message?: string;
+    invite_role?: Exclude<ProjectUserRole, "owner">;
+    read_policy?: ProjectViewerReadPolicy | null;
   };
 }): Promise<void> {
   await assertLocalProjectCollaborator({
@@ -2336,6 +2488,8 @@ export async function inviteCollaborator({
       project_id: opts.project_id,
       invitee_account_id: opts.account_id,
       message: opts.message,
+      invite_role: opts.invite_role,
+      read_policy: opts.read_policy,
     });
   } catch (err) {
     if (isAlreadyCollaboratorError(err)) {
@@ -2432,6 +2586,8 @@ export async function inviteCollaboratorWithoutAccount({
     send_email?: boolean;
     invite_context?: Record<string, unknown>;
     invite_scope?: string;
+    invite_role?: Exclude<ProjectUserRole, "owner">;
+    read_policy?: ProjectViewerReadPolicy | null;
   };
 }): Promise<{ invites: ProjectCollabInviteRow[] } & InviteEmailDeliveryStatus> {
   await assertLocalProjectCollaborator({
@@ -2504,6 +2660,8 @@ export async function inviteCollaboratorWithoutAccount({
       email_address,
       message: opts.message,
       scope: opts.invite_scope,
+      invite_role: opts.invite_role,
+      read_policy: opts.read_policy,
     });
 
     // 3. Has email been sent recently?

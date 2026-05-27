@@ -54,7 +54,7 @@ describe("server/projects/get", () => {
     expect(listProjectedProjectsForAccountMock).not.toHaveBeenCalled();
     expect(queryMock).toHaveBeenCalledTimes(1);
     expect(`${queryMock.mock.calls[0]?.[0] ?? ""}`).toContain(
-      "IN ('owner', 'collaborator')",
+      "IN ('owner', 'collaborator', 'viewer')",
     );
   });
 

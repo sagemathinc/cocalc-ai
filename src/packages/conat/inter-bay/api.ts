@@ -1281,6 +1281,8 @@ export interface ProjectCollabInviteCreateRequest {
   invitee_account_id: string;
   message?: string;
   direct?: boolean;
+  invite_role?: Exclude<ProjectUserRole, "owner">;
+  read_policy?: ProjectViewerReadPolicy | null;
 }
 
 export interface ProjectCollabInviteCreateResultWire {
@@ -1303,6 +1305,8 @@ export interface ProjectCollabInviteWithoutAccountRequest {
     send_email?: boolean;
     invite_context?: Record<string, unknown>;
     invite_scope?: string;
+    invite_role?: Exclude<ProjectUserRole, "owner">;
+    read_policy?: ProjectViewerReadPolicy | null;
   };
 }
 

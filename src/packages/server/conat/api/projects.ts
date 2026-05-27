@@ -136,6 +136,7 @@ import type {
   ProjectRunQuota,
   WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
+import type { ProjectViewerReadPolicy } from "@cocalc/util/project-access";
 import { validateProjectEnv } from "@cocalc/util/project-secrets";
 import {
   copyProjectSecrets as copyProjectSecretsInDb,
@@ -1601,12 +1602,16 @@ export async function createCollabInvite({
   invitee_account_id,
   message,
   direct,
+  invite_role,
+  read_policy,
 }: {
   account_id?: string;
   project_id: string;
   invitee_account_id: string;
   message?: string;
   direct?: boolean;
+  invite_role?: "collaborator" | "viewer";
+  read_policy?: ProjectViewerReadPolicy | null;
 }) {
   await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
   const ownership = await resolveProjectBay(project_id);
@@ -1620,6 +1625,8 @@ export async function createCollabInvite({
       invitee_account_id,
       message,
       direct,
+      invite_role,
+      read_policy,
     });
   }
   const result = await getInterBayBridge()
@@ -1630,6 +1637,8 @@ export async function createCollabInvite({
       invitee_account_id,
       message,
       direct,
+      invite_role,
+      read_policy,
     });
   return {
     created: result.created,
@@ -1655,6 +1664,8 @@ export async function inviteCollaboratorWithoutAccount({
     send_email?: boolean;
     invite_context?: Record<string, unknown>;
     invite_scope?: string;
+    invite_role?: "collaborator" | "viewer";
+    read_policy?: ProjectViewerReadPolicy | null;
   };
 }) {
   if (!account_id) {

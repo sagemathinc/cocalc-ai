@@ -105,7 +105,7 @@ export function useProjectSettingsSections({
     };
   }
 
-  if (projectAccess.role === "viewer") {
+  if (projectAccess?.role === "viewer") {
     const sections: ProjectSettingsSection[] = [
       {
         id: "people",

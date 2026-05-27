@@ -360,7 +360,7 @@ describe("PublicAuthApp", () => {
     ).not.toBeNull();
   });
 
-  it("shows app navigation links in the shared nav for authenticated users", () => {
+  it("shows Projects and Settings in the shared nav for authenticated users", () => {
     render(
       <PublicAuthApp
         config={config({ is_authenticated: true })}

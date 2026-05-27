@@ -1578,7 +1578,7 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
               expect.objectContaining({
                 account_id: "test-account",
                 project_id: "project-1",
-                groups: ["owner", "collaborator"],
+                groups: ["owner", "collaborator", "viewer"],
               }),
             );
             restore();
