@@ -18,7 +18,7 @@ describe("notification preferences", () => {
         support: "immediate",
         collaboration: "immediate",
         ai: "off",
-        product: "digest",
+        product: "off",
         maintenance: "digest",
         course: "immediate",
       },

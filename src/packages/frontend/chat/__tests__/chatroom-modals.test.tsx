@@ -181,19 +181,71 @@ describe("chatroom fork modal defaults", () => {
 
     await waitFor(() => {
       const blocks = Array.from(
-        document.querySelectorAll<HTMLPreElement>("pre.cocalc-slate-code-block"),
+        document.querySelectorAll<HTMLPreElement>(
+          "pre.cocalc-slate-code-block",
+        ),
       );
       expect(
-        blocks.some((block) =>
-          block.textContent?.includes("cocalc export chat project/chat/test.chat") ??
-          false,
+        blocks.some(
+          (block) =>
+            block.textContent?.includes(
+              "cocalc export chat project/chat/test.chat",
+            ) ?? false,
         ),
       ).toBe(true);
       expect(
-        blocks.some((block) =>
-          block.textContent?.includes("--include-codex-context") ?? false,
+        blocks.some(
+          (block) =>
+            block.textContent?.includes("--include-codex-context") ?? false,
         ),
       ).toBe(true);
+    });
+  });
+
+  it("saves the Codex turn-finish notification setting from the behavior modal", async () => {
+    const actions: any = {
+      getThreadMetadata: jest.fn(() => ({
+        agent_kind: "acp",
+        acp_config: {
+          sessionId: "session-1",
+          notifyOnTurnFinish: false,
+        },
+      })),
+      setCodexConfig: jest.fn(),
+    };
+    let handlers: any;
+
+    render(
+      <ChatRoomModals
+        actions={actions}
+        path="project/chat/test.chat"
+        onHandlers={(next) => {
+          handlers = next;
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(handlers?.openBehaviorModal).toBeDefined());
+
+    act(() => {
+      handlers.openBehaviorModal("thread-1");
+    });
+
+    const notifyCheckbox = await screen.findByRole("checkbox", {
+      name: "Notify when a Codex turn finishes",
+    });
+    expect((notifyCheckbox as HTMLInputElement).checked).toBe(false);
+
+    fireEvent.click(notifyCheckbox);
+    fireEvent.click(await screen.findByRole("button", { name: "OK" }));
+
+    await waitFor(() => {
+      expect(actions.setCodexConfig).toHaveBeenCalledWith(
+        "thread-1",
+        expect.objectContaining({
+          notifyOnTurnFinish: true,
+        }),
+      );
     });
   });
 
@@ -264,18 +316,23 @@ describe("chatroom fork modal defaults", () => {
 
     await waitFor(() => {
       const blocks = Array.from(
-        document.querySelectorAll<HTMLPreElement>("pre.cocalc-slate-code-block"),
+        document.querySelectorAll<HTMLPreElement>(
+          "pre.cocalc-slate-code-block",
+        ),
       );
       expect(
-        blocks.some((block) =>
-          block.textContent?.includes("cocalc import chat /path/to/chat-export.zip") ??
-          false,
+        blocks.some(
+          (block) =>
+            block.textContent?.includes(
+              "cocalc import chat /path/to/chat-export.zip",
+            ) ?? false,
         ),
       ).toBe(true);
       expect(
-        blocks.some((block) =>
-          block.textContent?.includes("--target project/chat/test.chat") ??
-          false,
+        blocks.some(
+          (block) =>
+            block.textContent?.includes("--target project/chat/test.chat") ??
+            false,
         ),
       ).toBe(true);
     });

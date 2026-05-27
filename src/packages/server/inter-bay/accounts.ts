@@ -610,6 +610,7 @@ export async function provisionLocalClusterAccount(
     signupReason: opts.signup_reason,
     ephemeral: opts.ephemeral,
     customize: opts.customize,
+    other_settings: opts.other_settings,
     trusted_product_access: opts.trusted_product_access,
     trusted_product_access_reason: opts.trusted_product_access_reason,
   });

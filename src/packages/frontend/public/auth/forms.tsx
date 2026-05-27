@@ -27,6 +27,10 @@ import {
 } from "@cocalc/frontend/auth/second-factor-input";
 import { appUrl } from "@cocalc/frontend/auth/util";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import {
+  getExternalPoliciesUrl,
+  usePublicConfig,
+} from "@cocalc/frontend/public/config";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import {
   emailAllowedByPublicSignupPolicy,
@@ -56,6 +60,22 @@ const LABEL_STYLE: CSSProperties = {
   color: COLORS.GRAY_D,
   fontSize: "14px",
   fontWeight: 600,
+} as const;
+
+const TERMS_NOTICE_STYLE: CSSProperties = {
+  color: COLORS.GRAY_M,
+  fontSize: "13px",
+  lineHeight: "18px",
+} as const;
+
+const CHECKBOX_ROW_STYLE: CSSProperties = {
+  alignItems: "flex-start",
+  color: COLORS.GRAY_D,
+  cursor: "pointer",
+  display: "flex",
+  fontSize: "14px",
+  gap: "8px",
+  lineHeight: "20px",
 } as const;
 
 const INPUT_STYLE: CSSProperties = {
@@ -237,6 +257,14 @@ function ssoLoginHref(strategyName: string): string {
   return joinUrlPath(appBasePath, "auth", strategyName);
 }
 
+function termsOfServiceHref(): string {
+  return joinUrlPath(appBasePath, "policies/terms");
+}
+
+function privacyPolicyHref(): string {
+  return joinUrlPath(appBasePath, "policies/privacy");
+}
+
 export function defaultAuthRedirectPath(): string {
   return appUrl("projects");
 }
@@ -269,13 +297,17 @@ export function PublicSignInForm({
   const [factorMethod, setFactorMethod] = useState<SecondFactorMethod>("totp");
   const [factorCode, setFactorCode] = useState("");
   const [mfaOrigin, setMfaOrigin] = useState<string | undefined>();
+  const [acceptedSsoTerms, setAcceptedSsoTerms] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
   const [checkingSignInMethod, setCheckingSignInMethod] = useState(false);
   const [signInMethod, setSignInMethod] = useState<SignInMethod>();
   const [error, setError] = useState("");
+  const publicConfig = usePublicConfig();
   const codeFactorMethod = inferSecondFactorInputMethod(factorCode);
   const consentReady = useEssentialConsent();
   const cookieConsentReady = !cookieBannerEnabled || consentReady;
+  const termsUrl = getExternalPoliciesUrl(publicConfig) ?? termsOfServiceHref();
+  const privacyUrl = privacyPolicyHref();
   const ssoStrategy =
     !challengeId && signInMethod?.sso_required
       ? signInMethod.sso_strategy
@@ -457,15 +489,39 @@ export function PublicSignInForm({
               <div style={{ marginBottom: "10px" }}>
                 Continue with {ssoStrategy.display} instead of using a password.
               </div>
+              <label style={{ ...CHECKBOX_ROW_STYLE, marginBottom: "12px" }}>
+                <input
+                  checked={acceptedSsoTerms}
+                  type="checkbox"
+                  onChange={(e) => setAcceptedSsoTerms(e.currentTarget.checked)}
+                />
+                <span>
+                  I accept the{" "}
+                  <a href={termsUrl} target="_blank" rel="noreferrer">
+                    Terms of Service
+                  </a>{" "}
+                  and{" "}
+                  <a href={privacyUrl} target="_blank" rel="noreferrer">
+                    Privacy Policy
+                  </a>
+                  .
+                </span>
+              </label>
               <a
                 href={ssoLoginHref(ssoStrategy.name)}
                 style={{
                   ...BUTTON_STYLE,
+                  opacity: acceptedSsoTerms ? 1 : 0.65,
                   display: "block",
                   textAlign: "center",
                   textDecoration: "none",
                 }}
+                aria-disabled={!acceptedSsoTerms}
                 onClick={(event) => {
+                  if (!acceptedSsoTerms) {
+                    event.preventDefault();
+                    return;
+                  }
                   if (
                     cookieBannerEnabled &&
                     !cookieConsentReady &&
@@ -677,11 +733,16 @@ export function PublicSignUpForm({
   const [password, setPassword] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [marketingConsent, setMarketingConsent] = useState(false);
   const [signingUp, setSigningUp] = useState(false);
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
+  const publicConfig = usePublicConfig();
   const consentReady = useEssentialConsent();
   const cookieConsentReady = !cookieBannerEnabled || consentReady;
+  const termsUrl = getExternalPoliciesUrl(publicConfig) ?? termsOfServiceHref();
+  const privacyUrl = privacyPolicyHref();
   const emailAllowedByDomainPolicy = emailAllowedByPublicSignupPolicy({
     email_address: email,
     policy: signupEmailDomainPolicy,
@@ -724,8 +785,12 @@ export function PublicSignUpForm({
     if (requiresToken && !registrationToken.trim()) {
       return false;
     }
+    if (!acceptedTerms) {
+      return false;
+    }
     return cookieConsentReady && !signingUp;
   }, [
+    acceptedTerms,
     cookieConsentReady,
     email,
     emailAllowedByDomainPolicy,
@@ -754,7 +819,8 @@ export function PublicSignUpForm({
       let result = await postAuthApi<any>({
         endpoint: "auth/sign-up",
         body: {
-          terms: true,
+          terms: acceptedTerms,
+          marketing_consent: marketingConsent,
           email,
           password,
           firstName,
@@ -880,6 +946,36 @@ export function PublicSignUpForm({
           onPressEnter={signUp}
         />
       </div>
+      <label style={CHECKBOX_ROW_STYLE}>
+        <input
+          checked={acceptedTerms}
+          type="checkbox"
+          onChange={(e) => setAcceptedTerms(e.currentTarget.checked)}
+        />
+        <span>
+          I accept the{" "}
+          <a href={termsUrl} target="_blank" rel="noreferrer">
+            Terms of Service
+          </a>{" "}
+          and{" "}
+          <a href={privacyUrl} target="_blank" rel="noreferrer">
+            Privacy Policy
+          </a>
+          .
+        </span>
+      </label>
+      {issues.terms && <div style={TERMS_NOTICE_STYLE}>{issues.terms}</div>}
+      <label style={CHECKBOX_ROW_STYLE}>
+        <input
+          checked={marketingConsent}
+          type="checkbox"
+          onChange={(e) => setMarketingConsent(e.currentTarget.checked)}
+        />
+        <span>
+          Send me occasional platform tips, onboarding help, and product
+          updates. You can change this later in Account Preferences.
+        </span>
+      </label>
       <ActionButton disabled={!canSubmit} onClick={signUp}>
         {signingUp
           ? "Creating account..."

@@ -102,6 +102,8 @@ import {
 import { useCodexLog } from "./use-codex-log";
 import { GitCommitDrawer } from "./git-commit-drawer";
 import { findInChatAndOpenFirstResult } from "./find-in-chat";
+import { sendGitCommitAgentTurn } from "./git-commit-agent-turn";
+import { getDefaultNewThreadSetup } from "./chatroom-thread-panel";
 import { setChatOverlayOpen } from "./drawer-overlay-state";
 import { formatTurnDuration } from "./turn-duration";
 import { CodexQuotaHelp } from "./codex-quota-help";
@@ -2475,16 +2477,18 @@ export default function Message({
     actions.scrollToIndex(index);
   }
 
-  function sendGitBrowserAgentPrompt(prompt: string) {
+  function sendGitBrowserAgentPrompt(
+    prompt: string,
+    options?: { title?: string; workingDirectory?: string },
+  ) {
     if (actions == null) return;
-    const trimmed = `${prompt ?? ""}`.trim();
-    if (!trimmed) return;
-    actions.sendReply({
-      message:
-        typeof (message as any)?.toJS === "function"
-          ? (message as any).toJS()
-          : message,
-      reply: trimmed,
+    sendGitCommitAgentTurn({
+      actions,
+      prompt,
+      targetThreadKey: messageThreadId,
+      defaultNewThreadSetup: getDefaultNewThreadSetup(),
+      title: options?.title,
+      workingDirectory: options?.workingDirectory ?? activityBasePath,
     });
   }
 

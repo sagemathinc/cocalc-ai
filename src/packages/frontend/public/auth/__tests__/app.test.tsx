@@ -233,9 +233,40 @@ describe("PublicAuthApp", () => {
     fireEvent.change(screen.getByPlaceholderText("you@example.com"), {
       target: { value: "new-user@example.edu" },
     });
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /I accept the Terms of Service and Privacy Policy/,
+      }),
+    );
     expect(
       screen.getByRole("button", { name: "Create account" }),
     ).not.toBeDisabled();
+  });
+
+  it("requires explicit Terms of Service and Privacy Policy acceptance on sign-up", async () => {
+    mockedApi.mockResolvedValueOnce(false);
+
+    render(
+      <PublicAuthApp
+        config={config({
+          terms_of_service_url: "https://example.com/terms",
+        })}
+        initialRoute={{ kind: "auth-form", view: "sign-up" }}
+      />,
+    );
+
+    const link = await screen.findByRole("link", {
+      name: "Terms of Service",
+    });
+    expect(link.getAttribute("href")).toBe("https://example.com/terms");
+    expect(screen.getByRole("link", { name: "Privacy Policy" })).not.toBeNull();
+    expect(
+      (
+        screen.getByRole("checkbox", {
+          name: /I accept the Terms of Service and Privacy Policy/,
+        }) as HTMLInputElement
+      ).checked,
+    ).toBe(false);
   });
 
   it("shows registration-token issues on sign-up", async () => {
@@ -272,6 +303,11 @@ describe("PublicAuthApp", () => {
     fireEvent.change(screen.getByPlaceholderText("Last name"), {
       target: { value: "User" },
     });
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /I accept the Terms of Service and Privacy Policy/,
+      }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     expect(
@@ -310,6 +346,11 @@ describe("PublicAuthApp", () => {
     fireEvent.change(screen.getByPlaceholderText("Last name"), {
       target: { value: "User" },
     });
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /I accept the Terms of Service and Privacy Policy/,
+      }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     expect(
@@ -363,6 +404,13 @@ describe("PublicAuthApp", () => {
     expect(
       screen.getByRole("link", { name: "Continue with Cornell SSO" }),
     ).toHaveProperty("href", "http://localhost/auth/cornell");
+    expect(
+      (
+        screen.getByRole("checkbox", {
+          name: /I accept the Terms of Service and Privacy Policy/,
+        }) as HTMLInputElement
+      ).checked,
+    ).toBe(false);
     expect(screen.getByRole("button", { name: "Sign In" })).toHaveProperty(
       "disabled",
       true,
