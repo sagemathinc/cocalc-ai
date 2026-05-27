@@ -83,10 +83,11 @@ export const HostSharedScratchFields: React.FC<
   const supported = !!cap?.supported;
   const watchedSize = Form.useWatch("shared_disk_gb", form);
   const watchedType = Form.useWatch("shared_disk_type", form);
-  const enabled =
-    typeof watchedSize === "number" && Number.isFinite(watchedSize)
-      ? watchedSize > 0
-      : Number(currentSizeGb ?? 0) > 0;
+  const currentSize = Number(currentSizeGb ?? 0);
+  const [scratchEnabled, setScratchEnabled] = React.useState(
+    () => currentSize > 0,
+  );
+  const enabled = currentSize > 0 || scratchEnabled;
   const diskTypes = cap?.disk_types ?? [];
   const defaultDiskType =
     diskTypes.find((entry) => entry.default)?.value ?? diskTypes[0]?.value;
@@ -116,6 +117,7 @@ export const HostSharedScratchFields: React.FC<
 
   React.useEffect(() => {
     if (!supported) {
+      setScratchEnabled(false);
       if (watchedSize != null || watchedType != null) {
         setFields({
           shared_disk_gb: undefined,
@@ -135,6 +137,19 @@ export const HostSharedScratchFields: React.FC<
     watchedSize,
     watchedType,
   ]);
+  React.useEffect(() => {
+    if (currentSize > 0) {
+      setScratchEnabled(true);
+      return;
+    }
+    if (
+      typeof watchedSize === "number" &&
+      Number.isFinite(watchedSize) &&
+      watchedSize > 0
+    ) {
+      setScratchEnabled(true);
+    }
+  }, [currentSize, watchedSize]);
 
   if (!supported) return null;
 
@@ -172,8 +187,9 @@ export const HostSharedScratchFields: React.FC<
           </div>
           <Switch
             checked={enabled}
-            disabled={disabled || Number(currentSizeGb ?? 0) > 0}
+            disabled={disabled || currentSize > 0}
             onChange={(checked) => {
+              setScratchEnabled(checked);
               if (checked) {
                 setFields({
                   shared_disk_gb: Math.max(
