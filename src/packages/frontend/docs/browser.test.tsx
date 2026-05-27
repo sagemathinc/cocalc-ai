@@ -135,6 +135,51 @@ describe("DocsBrowser", () => {
     ).toBeTruthy();
   });
 
+  it("goes from the first page of a category to the previous chapter", () => {
+    const allEntries = listDocsEntries();
+    const categoryOrder = Array.from(
+      new Set(allEntries.map((entry) => entry.category)),
+    );
+    const category = categoryOrder.find((candidate, index) => {
+      const previousCategory = categoryOrder[index - 1];
+      return (
+        previousCategory != null &&
+        allEntries.some((entry) => entry.category === candidate)
+      );
+    });
+    if (category == null) throw new Error("missing previous docs chapter");
+    const entry = allEntries.find(
+      (candidate) => candidate.category === category,
+    );
+    if (entry == null) throw new Error("missing first chapter entry");
+    const entryIndex = allEntries.findIndex(
+      (candidate) => candidate.id === entry.id,
+    );
+    const previousChapter = allEntries
+      .slice(0, entryIndex)
+      .reverse()
+      .find((candidate) => candidate.category !== entry.category);
+    if (previousChapter == null)
+      throw new Error("missing previous chapter entry");
+    const onSelectedEntryChange = jest.fn();
+
+    render(
+      <DocsBrowser
+        initialEntry={entry}
+        onSelectedEntryChange={onSelectedEntryChange}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /Previous Chapter/ })[0],
+    );
+
+    expect(onSelectedEntryChange).toHaveBeenCalledWith(previousChapter);
+    expect(
+      screen.getByRole("heading", { name: previousChapter.title }),
+    ).toBeTruthy();
+  });
+
   it("loads all visible hosts for project host action parameters", async () => {
     const entry = getDocsEntry("hosts/access-and-ram");
     if (entry == null)

@@ -87,6 +87,7 @@ type DocsLinearNavigationState = {
   nextChapter?: DocsEntry;
   onSelectEntry: (entry: DocsEntry) => void;
   previous?: DocsEntry;
+  previousChapter?: DocsEntry;
 };
 
 function clampDocsFontSize(value: number): number {
@@ -962,6 +963,8 @@ function DocsLinearNavigation({
   if (navigation == null || navigation.count <= 1) return null;
 
   const isFlyout = layout === "flyout";
+  const previousEntry = navigation.previous ?? navigation.previousChapter;
+  const previousLabel = navigation.previous ? "Previous" : "Previous Chapter";
   const nextEntry = navigation.next ?? navigation.nextChapter;
   const nextLabel = navigation.next ? "Next" : "Next Chapter";
   const content = (
@@ -981,21 +984,21 @@ function DocsLinearNavigation({
       </Space>
       <Space.Compact block={isFlyout}>
         <Button
-          disabled={navigation.previous == null}
+          disabled={previousEntry == null}
           icon={<ArrowLeftOutlined />}
           onClick={() => {
-            if (navigation.previous != null) {
-              navigation.onSelectEntry(navigation.previous);
+            if (previousEntry != null) {
+              navigation.onSelectEntry(previousEntry);
             }
           }}
           size={isFlyout ? "small" : "middle"}
           title={
-            navigation.previous != null
-              ? `Previous: ${navigation.previous.title}`
+            previousEntry != null
+              ? `${previousLabel}: ${previousEntry.title}`
               : "This is the first page in this section"
           }
         >
-          Previous
+          {previousLabel}
         </Button>
         <Button
           disabled={nextEntry == null}
@@ -1231,6 +1234,10 @@ export function DocsBrowser({
               .find((entry) => entry.category !== selectedEntry.category),
             onSelectEntry: selectEntry,
             previous: categoryEntries[currentIndex - 1],
+            previousChapter: allEntries
+              .slice(0, selectedGlobalIndex)
+              .reverse()
+              .find((entry) => entry.category !== selectedEntry.category),
           }
         : undefined;
     return (
