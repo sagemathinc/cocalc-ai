@@ -35,6 +35,7 @@ import type {
   AgentSessionStatus,
 } from "@cocalc/frontend/chat/agent-session-index";
 import {
+  deleteAgentSessionRecord,
   upsertAgentSessionRecord,
   watchAgentSessionsForProject,
 } from "@cocalc/frontend/chat/agent-session-index";
@@ -65,10 +66,6 @@ import {
   ChatRoomModals,
   type ChatRoomModalHandlers,
 } from "@cocalc/frontend/chat/chatroom-modals";
-import {
-  ChatRoomThreadActions,
-  type ChatRoomThreadActionHandlers,
-} from "@cocalc/frontend/chat/chatroom-thread-actions";
 import { GitCommitDrawer } from "@cocalc/frontend/chat/git-commit-drawer";
 import { ChatRoomThreadMenu } from "@cocalc/frontend/chat/chatroom-thread-menu";
 import CodexConfigButton from "@cocalc/frontend/chat/codex";
@@ -90,6 +87,8 @@ import {
   type AgentPanelRevealDetail,
   type OpenedAgentSessionSelection,
 } from "@cocalc/frontend/project/page/agent-panel-state";
+import { truncateAcpSession } from "@cocalc/frontend/chat/acp-api";
+import { resolvePersistedOrLiveAcpSessionIdForThread } from "@cocalc/frontend/chat/thread-session";
 import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
 import getUrlTransform from "@cocalc/frontend/project/page/url-transform";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
@@ -104,7 +103,10 @@ import {
 import { path_split, tab_to_path } from "@cocalc/util/misc";
 import { joinAbsolutePath } from "@cocalc/util/path-model";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { isCodexModelName } from "@cocalc/util/ai/codex";
+import {
+  isCodexModelName,
+  normalizeCodexSessionId,
+} from "@cocalc/util/ai/codex";
 
 const STATUS_COLORS: Record<AgentSessionStatus, string> = {
   active: "success",
@@ -300,8 +302,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   const [inlineError, setInlineError] = useState<string>("");
   const [modalHandlers, setModalHandlers] =
     useState<ChatRoomModalHandlers | null>(null);
-  const [threadActionHandlers, setThreadActionHandlers] =
-    useState<ChatRoomThreadActionHandlers | null>(null);
   const [automationModalThreadKey, setAutomationModalThreadKey] = useState<
     string | null
   >(null);
@@ -1091,9 +1091,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         openImportModal={modalHandlers?.openImportModal ?? (() => undefined)}
         openForkModal={modalHandlers?.openForkModal ?? (() => undefined)}
         confirmResetThread={() => confirmClearThread(record)}
-        confirmDeleteThread={
-          threadActionHandlers?.confirmDeleteThread ?? (() => undefined)
-        }
+        confirmDeleteThread={() => confirmDeleteInlineThread(record)}
         openChatFile={() => actions?.open_file({ path: record.chat_path })}
         openAutomationModal={openAutomationModal}
         openGitBrowser={openGitBrowserForThread}
@@ -1301,6 +1299,67 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       okText: "Clear",
       cancelText: "Cancel",
       onOk: () => clearThread(record),
+    });
+  }
+
+  async function deleteInlineThread(record: AgentSessionRecord): Promise<void> {
+    const threadKey = `${record.thread_key ?? ""}`.trim();
+    if (!threadKey) return;
+    setUpdatingSessionId(record.session_id);
+    try {
+      if (!inlineActions?.deleteThread) {
+        antdMessage.error("Deleting chats is not available.");
+        return;
+      }
+      const metadata = inlineActions.getThreadMetadata?.(threadKey, {
+        threadId: threadKey,
+      });
+      const maybeSessionId = resolvePersistedOrLiveAcpSessionIdForThread({
+        actions: inlineActions,
+        threadId: threadKey,
+        persistedSessionId: normalizeCodexSessionId(
+          metadata?.acp_config?.sessionId,
+        ),
+      });
+      const deleted = inlineActions.deleteThread(threadKey);
+      if (deleted === 0) {
+        antdMessage.info("This chat has no messages to delete.");
+      }
+      if (maybeSessionId) {
+        void truncateAcpSession({
+          actions: inlineActions,
+          sessionId: maybeSessionId,
+          force: true,
+        }).catch(() => {});
+      }
+      await deleteAgentSessionRecord({
+        project_id: record.project_id || project_id,
+        session_id: record.session_id,
+      });
+      if (
+        inlineSessionId === record.session_id ||
+        openedSelection?.session_id === record.session_id
+      ) {
+        closeInlineSession();
+      }
+      antdMessage.success("Chat deleted.");
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setUpdatingSessionId("");
+    }
+  }
+
+  function confirmDeleteInlineThread(record: AgentSessionRecord): void {
+    const label = displayThreadLabel(normalizedTitle(record));
+    Modal.confirm({
+      title: label ? `Delete chat "${label}"?` : "Delete chat?",
+      content:
+        "This removes all messages in this chat for everyone and removes it from the agent session list. This can only be undone using 'Edit --> Undo', or by browsing TimeTravel.",
+      okText: "Delete",
+      okType: "danger",
+      cancelText: "Cancel",
+      onOk: () => deleteInlineThread(record),
     });
   }
 
@@ -1820,27 +1879,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               selectedThreadKey={inlineSession.thread_key}
               selectedThreadLabel={inlineTitle}
               onHandlers={setModalHandlers}
-            />
-            <ChatRoomThreadActions
-              actions={inlineActions}
-              path={inlineSession.chat_path}
-              selectedThreadKey={inlineSession.thread_key}
-              setSelectedThreadKey={(key) => {
-                if (key == null) {
-                  closeInlineSession();
-                  return;
-                }
-                setOpenedSelection({
-                  session_id: inlineSession.session_id,
-                  chat_path: inlineSession.chat_path,
-                  thread_key: key,
-                  session: {
-                    ...inlineSession,
-                    thread_key: key,
-                  },
-                });
-              }}
-              onHandlers={setThreadActionHandlers}
             />
             <Modal
               title="Thread automation"
