@@ -45,6 +45,12 @@ type DocsBrowserLayout = "page" | "flyout";
 const DOCS_FONT_SIZE_STORAGE_KEY = "cocalc-docs-font-size";
 const DOCS_BROWSER_CARD_STYLE = { fontSize: "inherit" };
 const DOCS_BROWSER_CARD_BODY_STYLE = { fontSize: "inherit" };
+const DOCS_BROWSER_CATEGORY_CARD_STYLE = {
+  ...DOCS_BROWSER_CARD_STYLE,
+  height: "100%",
+  maxHeight: 500,
+  overflow: "auto",
+};
 export const DOCS_FONT_SIZE_MIN = 10;
 export const DOCS_FONT_SIZE_MAX = 32;
 export const DOCS_FONT_SIZE_STEP = 1;
@@ -584,7 +590,7 @@ export function DocsIndexContent({
               >
                 <Card
                   size="small"
-                  style={{ ...DOCS_BROWSER_CARD_STYLE, height: "100%" }}
+                  style={DOCS_BROWSER_CATEGORY_CARD_STYLE}
                   styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
                   title={
                     <Space>
