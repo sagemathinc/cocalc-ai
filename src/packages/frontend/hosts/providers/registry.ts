@@ -144,6 +144,7 @@ type NebiusInstance = {
   name: string;
   platform?: string | null;
   platform_label?: string | null;
+  regions?: string[];
   allowed_for_preemptibles?: boolean | null;
   vcpus?: number | null;
   memory_gib?: number | null;
@@ -1951,6 +1952,10 @@ export const getNebiusInstanceTypeOptions = (
   })();
   let filtered = instances
     .filter((entry) => !!entry?.name)
+    .filter(
+      (entry) =>
+        !region || !entry.regions?.length || entry.regions.includes(region),
+    )
     .filter(
       (entry) =>
         entry.memory_gib == null ||

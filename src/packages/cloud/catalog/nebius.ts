@@ -1,4 +1,5 @@
 import getLogger from "@cocalc/backend/logger";
+import { normalizeNebiusPricingToken } from "@cocalc/util/project-host-pricing";
 import { NebiusClient, type NebiusCreds } from "../nebius/client";
 import type {
   CatalogEntry,
@@ -19,6 +20,70 @@ import { Long } from "@nebius/js-sdk/runtime/protos/index";
 import { fetchNebiusPricingFromDocs } from "./nebius-pricing";
 
 const logger = getLogger("cloud:catalog:nebius");
+
+type DocumentedNebiusPlatform = {
+  platform: string;
+  platform_label: string;
+  regions: string[];
+  allowed_for_preemptibles: boolean;
+  price_aliases: string[];
+  presets: Array<{
+    name: string;
+    vcpus: number;
+    memory_gib: number;
+    gpus: number;
+  }>;
+};
+
+// Nebius' platform API can lag behind the public image and pricing catalogs for
+// newly launched GPU platforms. Keep a documented fallback so the host catalog
+// can expose platform/preset pairs once region images and prices are visible.
+const DOCUMENTED_GPU_PLATFORMS: DocumentedNebiusPlatform[] = [
+  {
+    platform: "gpu-b300-sxm",
+    platform_label: "NVIDIA® B300 NVLink",
+    regions: ["uk-south1"],
+    allowed_for_preemptibles: true,
+    price_aliases: ["NVIDIA B300 NVLink"],
+    presets: [
+      { name: "1gpu-24vcpu-346gb", vcpus: 24, memory_gib: 346, gpus: 1 },
+      { name: "8gpu-192vcpu-2768gb", vcpus: 192, memory_gib: 2768, gpus: 8 },
+    ],
+  },
+  {
+    platform: "gpu-b200-sxm",
+    platform_label: "NVIDIA® B200 NVLink",
+    regions: ["us-central1"],
+    allowed_for_preemptibles: true,
+    price_aliases: ["NVIDIA B200 NVLink"],
+    presets: [
+      { name: "1gpu-20vcpu-224gb", vcpus: 20, memory_gib: 224, gpus: 1 },
+      { name: "8gpu-160vcpu-1792gb", vcpus: 160, memory_gib: 1792, gpus: 8 },
+    ],
+  },
+  {
+    platform: "gpu-b200-sxm-a",
+    platform_label: "NVIDIA® B200 NVLink",
+    regions: ["me-west1"],
+    allowed_for_preemptibles: true,
+    price_aliases: ["NVIDIA B200 NVLink"],
+    presets: [
+      { name: "1gpu-20vcpu-224gb", vcpus: 20, memory_gib: 224, gpus: 1 },
+      { name: "8gpu-160vcpu-1792gb", vcpus: 160, memory_gib: 1792, gpus: 8 },
+    ],
+  },
+  {
+    platform: "gpu-rtx6000",
+    platform_label: "NVIDIA® RTX PRO™ 6000",
+    regions: ["us-central1"],
+    allowed_for_preemptibles: true,
+    price_aliases: ["NVIDIA RTX PRO 6000", "NVIDIA RTX 6000"],
+    presets: [
+      { name: "1gpu-24vcpu-218gb", vcpus: 24, memory_gib: 218, gpus: 1 },
+      { name: "8gpu-192vcpu-1744gb", vcpus: 192, memory_gib: 1744, gpus: 8 },
+    ],
+  },
+];
 
 // Snapshot of Nebius console pricing table (from nebius.html).
 const NEBIUS_CONSOLE_PRICES: NebiusPriceItem[] = [
@@ -516,6 +581,73 @@ async function listPublicImagesForRegion(
   return items;
 }
 
+const normalizedNebiusPriceProduct = (product?: string | null) => {
+  let normalized = `${product ?? ""}`.trim();
+  normalized = normalized.replace(/^preemptible\s+/i, "");
+  normalized = normalized.replace(/\.\s*(cpu|ram|gpu)$/i, "");
+  return normalizeNebiusPricingToken(normalized);
+};
+
+const hasNebiusPriceForPlatform = (
+  prices: NebiusPriceItem[],
+  platform: DocumentedNebiusPlatform,
+  region: string,
+) => {
+  const aliases = platform.price_aliases.map(normalizeNebiusPricingToken);
+  return prices.some((item) => {
+    if (item.region !== region) return false;
+    const product = normalizedNebiusPriceProduct(item.product);
+    return aliases.some(
+      (alias) => product.includes(alias) || alias.includes(product),
+    );
+  });
+};
+
+const imageRecommendsPlatform = (
+  images: Array<{ image: Image; region?: string }>,
+  platform: string,
+  region: string,
+) =>
+  images.some(
+    ({ image, region: imageRegion }) =>
+      imageRegion === region &&
+      (image.spec?.recommendedPlatforms ?? []).includes(platform),
+  );
+
+function addDocumentedNebiusGpuPlatforms(opts: {
+  instance_types: NebiusInstanceType[];
+  images: Array<{ image: Image; region?: string }>;
+  prices: NebiusPriceItem[];
+}) {
+  const seen = new Set(
+    opts.instance_types.map((entry) => `${entry.platform}:${entry.name}`),
+  );
+  for (const platform of DOCUMENTED_GPU_PLATFORMS) {
+    const usableRegions = platform.regions.filter(
+      (region) =>
+        hasNebiusPriceForPlatform(opts.prices, platform, region) &&
+        imageRecommendsPlatform(opts.images, platform.platform, region),
+    );
+    if (!usableRegions.length) continue;
+    for (const preset of platform.presets) {
+      const key = `${platform.platform}:${preset.name}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      opts.instance_types.push({
+        name: preset.name,
+        platform: platform.platform,
+        platform_label: platform.platform_label,
+        regions: usableRegions,
+        allowed_for_preemptibles: platform.allowed_for_preemptibles,
+        vcpus: preset.vcpus,
+        memory_gib: preset.memory_gib,
+        gpus: preset.gpus,
+        gpu_label: platform.platform_label,
+      });
+    }
+  }
+}
+
 export async function fetchNebiusCatalog(
   opts: NebiusCatalogOpts,
 ): Promise<NebiusCatalog> {
@@ -637,6 +769,11 @@ export async function fetchNebiusCatalog(
       },
     );
   }
+  addDocumentedNebiusGpuPlatforms({
+    instance_types,
+    images,
+    prices,
+  });
 
   logger.info("fetchNebiusCatalog", {
     regions: normalizedRegions.length,
