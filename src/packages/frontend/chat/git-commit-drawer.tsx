@@ -230,7 +230,13 @@ interface GitCommitDrawerProps {
   open: boolean;
   onClose: () => void;
   fontSize?: number;
-  onRequestAgentTurn?: (prompt: string) => void | Promise<void>;
+  onRequestAgentTurn?: (
+    prompt: string,
+    options?: {
+      title?: string;
+      workingDirectory?: string;
+    },
+  ) => void | Promise<void>;
   onDirectCommitLogged?: (info: {
     hash: string;
     subject: string;
@@ -1974,7 +1980,10 @@ export function GitCommitDrawer({
     ].join("\n");
     setReviewSubmitBusy(true);
     try {
-      await onRequestAgentTurn(prompt);
+      await onRequestAgentTurn(prompt, {
+        title: "Address commit review",
+        workingDirectory: repoRoot || cwd,
+      });
       const now = Date.now();
       const turnId = `git-review-${now}`;
       const normalizedCommit = normalizeCommitSha(commit);
@@ -2247,7 +2256,10 @@ export function GitCommitDrawer({
         "4. Create an initial commit with a clear message.",
         "5. Summarize exactly what you included/excluded.",
       ].join("\n");
-      await onRequestAgentTurn(prompt);
+      await onRequestAgentTurn(prompt, {
+        title: "Set up git repository",
+        workingDirectory: cwd,
+      });
       if (
         shouldApplyGitRepoBootstrapScopedResult({
           actionToken,
@@ -2501,7 +2513,10 @@ export function GitCommitDrawer({
     setHeadCommitBusy(true);
     setHeadCommitError("");
     try {
-      await onRequestAgentTurn(prompt);
+      await onRequestAgentTurn(prompt, {
+        title: "Commit changes",
+        workingDirectory: repoRoot || cwd,
+      });
       if (
         headCommitActionTokenRef.current === actionToken &&
         headCommitActionScopeRef.current === startedScope &&
