@@ -17,7 +17,7 @@ const MINIMAL = `\\documentclass{article}
 \\end{document}
 `;
 
-const HELP_URL = "/docs/latex/build-papers";
+const HELP_SLUG = "latex/build-papers";
 
 // NOTE: These names are the keys in EDITOR_SPEC in editor.ts, not the type field
 const VIEWERS = ["pdfjs_canvas", "pdf_embed", "build", "output"] as const;
@@ -29,6 +29,7 @@ import { debounce, union } from "lodash";
 import { normalize as path_normalize } from "path";
 
 import { Store, TypedMap } from "@cocalc/frontend/app-framework";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import {
   TableOfContentsEntry,
   TableOfContentsEntryList,
@@ -45,7 +46,6 @@ import {
   project_api,
   server_time,
 } from "@cocalc/frontend/frame-editors/generic/client";
-import { open_new_tab } from "@cocalc/frontend/misc";
 import { once } from "@cocalc/util/async-utils";
 import { ExecOutput } from "@cocalc/util/db-schema/projects";
 import {
@@ -1751,7 +1751,7 @@ export class Actions extends BaseActions<LatexEditorState> {
   }
 
   help(): void {
-    open_new_tab(HELP_URL);
+    openProjectDocs({ projectId: this.project_id, slug: HELP_SLUG });
   }
 
   zoom_page_width(id: string): void {

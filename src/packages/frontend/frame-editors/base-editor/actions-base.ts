@@ -75,7 +75,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import type { PageActions } from "@cocalc/frontend/app/actions";
 import { get_buffer, set_buffer } from "@cocalc/frontend/copy-paste-buffer";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { filenameMode } from "@cocalc/frontend/file-associations";
 import {
   chat,
@@ -102,7 +102,6 @@ import { getSyncDocDescriptor } from "@cocalc/sync/editor/doctypes";
 import { apply_patch, make_patch } from "@cocalc/util/patch";
 import type { SyncString } from "@cocalc/sync/editor/string/sync";
 import { once } from "@cocalc/util/async-utils";
-import { joinUrlPath } from "@cocalc/util/url-path";
 import {
   Options as FormatterOptions,
   Exts as FormatterExts,
@@ -1905,17 +1904,22 @@ export class BaseEditorActions<
   }
 
   help(type: string): void {
-    const url: string = (function () {
-      switch (type) {
-        case "terminal":
-          return joinUrlPath(appBasePath, "docs/terminal/use-terminal");
-        case "time_travel":
-          return joinUrlPath(appBasePath, "docs/files/timetravel");
-        default:
-          return WIKI_HELP_URL + type + "-help";
-      }
-    })();
-    open_new_tab(url);
+    switch (type) {
+      case "terminal":
+        openProjectDocs({
+          projectId: this.project_id,
+          slug: "terminal/use-terminal",
+        });
+        return;
+      case "time_travel":
+        openProjectDocs({
+          projectId: this.project_id,
+          slug: "files/timetravel",
+        });
+        return;
+      default:
+        open_new_tab(WIKI_HELP_URL + type + "-help");
+    }
   }
 
   guide(id: string, type: string): void {
