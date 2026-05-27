@@ -3,6 +3,7 @@ import type { HubApi } from "@cocalc/conat/hub/api";
 export function createBrowserSessionHeartbeat({
   hub,
   getSnapshot,
+  heartbeatIntervalMs,
   retryMs,
   maxRetryMs,
   retryBackoff = 2,
@@ -12,6 +13,7 @@ export function createBrowserSessionHeartbeat({
 }: {
   hub: HubApi;
   getSnapshot: () => Parameters<HubApi["system"]["upsertBrowserSession"]>[0];
+  heartbeatIntervalMs?: number;
   retryMs: number;
   maxRetryMs?: number;
   retryBackoff?: number;
@@ -30,6 +32,7 @@ export function createBrowserSessionHeartbeat({
 } {
   let accountId: string | undefined;
   let timer: NodeJS.Timeout | undefined;
+  let periodicTimer: NodeJS.Timeout | undefined;
   let active = false;
   let suspended = false;
   let inFlight: Promise<void> | undefined;
@@ -46,6 +49,26 @@ export function createBrowserSessionHeartbeat({
       clearTimeout(timer);
       timer = undefined;
     }
+  };
+
+  const clearPeriodicTimer = () => {
+    if (periodicTimer) {
+      clearTimeout(periodicTimer);
+      periodicTimer = undefined;
+    }
+  };
+
+  const schedulePeriodicHeartbeat = () => {
+    clearPeriodicTimer();
+    const interval = Math.floor(Number(heartbeatIntervalMs) || 0);
+    if (!canRun() || interval <= 0) {
+      return;
+    }
+    periodicTimer = setTimeout(() => {
+      void syncNow({ force: true }).finally(() => {
+        schedulePeriodicHeartbeat();
+      });
+    }, interval);
   };
 
   const nextRetryDelay = () => {
@@ -128,12 +151,14 @@ export function createBrowserSessionHeartbeat({
     dirty = true;
     forceNextSync = true;
     lastPublishedSignature = undefined;
+    schedulePeriodicHeartbeat();
   };
 
   const deactivate = (): string | undefined => {
     active = false;
     suspended = false;
     clearTimer();
+    clearPeriodicTimer();
     const currentAccountId = accountId;
     accountId = undefined;
     consecutiveFailures = 0;
@@ -150,6 +175,7 @@ export function createBrowserSessionHeartbeat({
     }
     suspended = true;
     clearTimer();
+    clearPeriodicTimer();
   };
 
   const resume = () => {
@@ -158,6 +184,7 @@ export function createBrowserSessionHeartbeat({
     }
     suspended = false;
     schedule(0);
+    schedulePeriodicHeartbeat();
   };
 
   return {

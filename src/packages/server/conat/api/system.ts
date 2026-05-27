@@ -58,6 +58,7 @@ import {
   createClusterAccount,
   deleteClusterAccount,
   searchClusterAccounts,
+  touchClusterAccountDirectoryEntry,
 } from "@cocalc/server/inter-bay/accounts";
 import {
   drainAccountRehome as drainAccountRehomeInternal,
@@ -263,6 +264,45 @@ import {
 import type { ServiceAdmissionDenialEvent } from "@cocalc/conat/admission/denials";
 
 const logger = getLogger("server:conat:api:system");
+const ACCOUNT_ACTIVITY_TOUCH_MIN_INTERVAL_MS = 120_000;
+const ACCOUNT_ACTIVITY_TOUCH_MAX_CACHE_AGE_MS = 10 * 60_000;
+const accountActivityTouchedAt = new Map<string, number>();
+
+function shouldTouchAccountActivity(account_id: string): boolean {
+  const now = Date.now();
+  const last = accountActivityTouchedAt.get(account_id) ?? 0;
+  if (now - last < ACCOUNT_ACTIVITY_TOUCH_MIN_INTERVAL_MS) {
+    return false;
+  }
+  accountActivityTouchedAt.set(account_id, now);
+  if (accountActivityTouchedAt.size > 10_000) {
+    for (const [id, touchedAt] of accountActivityTouchedAt) {
+      if (now - touchedAt > ACCOUNT_ACTIVITY_TOUCH_MAX_CACHE_AGE_MS) {
+        accountActivityTouchedAt.delete(id);
+      }
+    }
+  }
+  return true;
+}
+
+async function touchAccountActivity(account_id: string): Promise<void> {
+  if (!shouldTouchAccountActivity(account_id)) {
+    return;
+  }
+  try {
+    await callback2(db().touch, { account_id, action: "browser-session" });
+  } catch (err) {
+    accountActivityTouchedAt.delete(account_id);
+    throw err;
+  }
+  touchClusterAccountDirectoryEntry({ account_id }).catch((err) => {
+    logger.debug("failed to touch cluster account directory", {
+      account_id,
+      err: `${err}`,
+    });
+  });
+}
+
 // Non-serializable capability used only by trusted in-process inter-bay handlers.
 // Public Conat API callers cannot supply this value over JSON.
 export const BAY_OPS_INTERNAL_AUTH = Symbol("bay-ops-internal-auth");
@@ -4366,6 +4406,7 @@ export async function upsertBrowserSession({
   if (!account_id) {
     throw Error("must be signed in");
   }
+  await touchAccountActivity(account_id);
   return upsertBrowserSessionRecord({
     account_id,
     browser_id,
