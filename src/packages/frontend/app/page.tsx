@@ -202,7 +202,6 @@ export const Page: React.FC = () => {
         icon={"book"}
         active_top_tab={active_top_tab}
         hide_label={!show_label}
-        on_click={() => page_actions.setState({ docs_slug: undefined })}
         tooltip="Search CoCalc documentation"
       />
     );

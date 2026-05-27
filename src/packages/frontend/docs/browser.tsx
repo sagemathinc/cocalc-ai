@@ -856,6 +856,7 @@ export function DocsBrowser({
   initialEntry,
   layout = "page",
   onRunAction,
+  onSelectedEntryChange,
   privateDetailState,
   privateIndexState,
 }: {
@@ -864,6 +865,7 @@ export function DocsBrowser({
   initialEntry?: DocsEntry;
   layout?: DocsBrowserLayout;
   onRunAction?: (action: DocsBrowserAction) => void | Promise<void>;
+  onSelectedEntryChange?: (entry?: DocsEntry) => void;
   privateDetailState?: DocsPrivateDetailState;
   privateIndexState?: DocsPrivateIndexState;
 }) {
@@ -880,6 +882,13 @@ export function DocsBrowser({
       ),
     [actionAvailability],
   );
+  const selectEntry = useCallback(
+    (entry?: DocsEntry) => {
+      setSelectedEntry(entry);
+      onSelectedEntryChange?.(entry);
+    },
+    [onSelectedEntryChange],
+  );
 
   if (selectedEntry != null) {
     return (
@@ -887,7 +896,7 @@ export function DocsBrowser({
         actionAvailability={actionMap}
         entry={selectedEntry}
         layout={layout}
-        onBack={() => setSelectedEntry(undefined)}
+        onBack={() => selectEntry(undefined)}
         onRunAction={onRunAction}
         privateState={privateDetailState}
       />
@@ -898,7 +907,7 @@ export function DocsBrowser({
     <DocsIndexContent
       docsAccess={docsAccess}
       layout={layout}
-      onSelectEntry={setSelectedEntry}
+      onSelectEntry={selectEntry}
       privateState={privateIndexState}
     />
   );

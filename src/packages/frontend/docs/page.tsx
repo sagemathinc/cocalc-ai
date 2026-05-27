@@ -3,13 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { DownloadOutlined, UploadOutlined } from "@ant-design/icons";
 import { Button, Flex, message, Space, Typography, Upload } from "antd";
-import type { DocsAccess } from "@cocalc/docs";
+import type { DocsAccess, DocsEntry } from "@cocalc/docs";
 import { getDocsEntry, listDocsEntries } from "@cocalc/docs";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   DocsBrowser,
   DocsFontSizeFrame,
@@ -33,11 +33,30 @@ import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { COLORS } from "@cocalc/util/theme";
 
 const { Paragraph, Text, Title } = Typography;
+const APP_DOCS_SELECTED_STORAGE_KEY = "cocalc-app-docs-selected-slug";
+
+function loadStoredAppDocsEntry(docsAccess: DocsAccess): DocsEntry | undefined {
+  if (typeof window === "undefined") return undefined;
+  const storedSlug = window.localStorage
+    .getItem(APP_DOCS_SELECTED_STORAGE_KEY)
+    ?.trim();
+  return storedSlug ? getDocsEntry(storedSlug, docsAccess) : undefined;
+}
+
+function saveStoredAppDocsEntry(entry?: DocsEntry): void {
+  if (typeof window === "undefined") return;
+  if (entry?.slug) {
+    window.localStorage.setItem(APP_DOCS_SELECTED_STORAGE_KEY, entry.slug);
+  } else {
+    window.localStorage.removeItem(APP_DOCS_SELECTED_STORAGE_KEY);
+  }
+}
 
 export function DocsPage({ slug }: { slug?: string }) {
   const [messageApi, contextHolder] = message.useMessage();
   const [privateFilter, setPrivateFilter] = useState<DocsPrivateFilter>("all");
   const importBusyRef = useRef(false);
+  const pageActions = useActions("page");
   const accountFontSize =
     useTypedRedux("account", "font_size") ?? DEFAULT_FONT_SIZE;
   const accountId = `${useTypedRedux("account", "account_id") ?? ""}`.trim();
@@ -56,9 +75,21 @@ export function DocsPage({ slug }: { slug?: string }) {
     [docsAccess],
   );
   const initialEntry = useMemo(
-    () => (slug ? getDocsEntry(slug, docsAccess) : undefined),
+    () =>
+      slug
+        ? getDocsEntry(slug, docsAccess)
+        : loadStoredAppDocsEntry(docsAccess),
     [docsAccess, slug],
   );
+  const initialEntrySlug = initialEntry?.slug;
+
+  useEffect(() => {
+    if (initialEntry == null) return;
+    saveStoredAppDocsEntry(initialEntry);
+    if (!slug) {
+      pageActions.setState({ docs_slug: initialEntry.slug });
+    }
+  }, [initialEntry, initialEntrySlug, pageActions, slug]);
 
   async function runAction(action: DocsBrowserAction): Promise<void> {
     try {
@@ -172,6 +203,10 @@ export function DocsPage({ slug }: { slug?: string }) {
             docsAccess={docsAccess}
             initialEntry={initialEntry}
             onRunAction={runAction}
+            onSelectedEntryChange={(entry) => {
+              pageActions.setState({ docs_slug: entry?.slug });
+              saveStoredAppDocsEntry(entry);
+            }}
             privateDetailState={
               accountId
                 ? {
