@@ -486,6 +486,9 @@ describe("NebiusProvider", () => {
     expect(disksUpdateMock.mock.calls[0][0].metadata.name).toBe(
       "spot-host-scratch",
     );
+    expect(
+      disksUpdateMock.mock.calls[0][0].spec.size.sizeGibibytes.toNumber(),
+    ).toBe(279);
   });
 
   it("creates and attaches shared scratch to an existing instance", async () => {

@@ -1133,6 +1133,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             provider={providerId}
             catalog={catalog}
             currentSizeGb={currentSharedDisk}
+            currentDiskType={currentSharedDiskType}
           />
         )}
         {showAutoGrowControls && (

@@ -1638,12 +1638,12 @@ describe("hosts browser fresh auth gating", () => {
         instance_id: "nebius-instance",
       }),
       expect.objectContaining({
-        shared_disk_gb: 100,
+        shared_disk_gb: 186,
         shared_disk_type: "ssd",
       }),
       { token: "provider-creds" },
     );
-    expect(savedMetadata.machine.shared_disk_gb).toBe(100);
+    expect(savedMetadata.machine.shared_disk_gb).toBe(186);
     expect(savedMetadata.runtime.metadata.shared_disk_id).toBe("scratch-disk");
   });
 
@@ -1706,11 +1706,11 @@ describe("hosts browser fresh auth gating", () => {
 
     expect(resizeSharedScratchDisk).toHaveBeenCalledWith(
       initialMetadata.runtime,
-      150,
+      186,
       { token: "provider-creds" },
     );
-    expect(growSharedScratch).toHaveBeenCalledWith({ disk_gb: 150 });
-    expect(savedMetadata.machine.shared_disk_gb).toBe(150);
+    expect(growSharedScratch).toHaveBeenCalledWith({ disk_gb: 186 });
+    expect(savedMetadata.machine.shared_disk_gb).toBe(186);
     expect(logCloudVmEventMock).toHaveBeenCalledWith(
       expect.objectContaining({
         vm_id: HOST_ID,

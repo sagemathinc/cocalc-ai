@@ -94,20 +94,18 @@ function sharedScratchDiskTypeFor(spec: HostSpec): DiskSpec_DiskType {
   }
 }
 
-const NEBIUS_IO_M3_GIB = 93;
+const NEBIUS_DISK_INCREMENT_GIB = 93;
 
-function normalizeDiskSizeGib(
-  sizeGib: number,
-  type: DiskSpec_DiskType,
-): { sizeGib: number; adjusted: boolean } {
-  if (type !== DiskSpec_DiskType.NETWORK_SSD_IO_M3) {
-    return { sizeGib, adjusted: false };
-  }
-  const min = NEBIUS_IO_M3_GIB;
+function normalizeDiskSizeGib(sizeGib: number): {
+  sizeGib: number;
+  adjusted: boolean;
+} {
+  const min = NEBIUS_DISK_INCREMENT_GIB;
   const rounded =
     sizeGib <= min
       ? min
-      : Math.ceil(sizeGib / NEBIUS_IO_M3_GIB) * NEBIUS_IO_M3_GIB;
+      : Math.ceil(sizeGib / NEBIUS_DISK_INCREMENT_GIB) *
+        NEBIUS_DISK_INCREMENT_GIB;
   return { sizeGib: rounded, adjusted: rounded !== sizeGib };
 }
 
@@ -488,9 +486,9 @@ export class NebiusProvider implements CloudProvider {
     if (storageMode === "persistent") {
       const existingDataDiskId =
         spec.metadata?.data_disk_id ?? spec.metadata?.dataDiskId ?? undefined;
-      const normalized = normalizeDiskSizeGib(spec.disk_gb, dataDiskType);
+      const normalized = normalizeDiskSizeGib(spec.disk_gb);
       if (normalized.adjusted) {
-        logger.info("nebius: adjusting data disk size for IO M3", {
+        logger.info("nebius: adjusting data disk size to provider increment", {
           name,
           from_gb: spec.disk_gb,
           to_gb: normalized.sizeGib,
@@ -530,13 +528,16 @@ export class NebiusProvider implements CloudProvider {
         spec.metadata?.sharedDiskId ??
         undefined;
       scratchDiskType = sharedScratchDiskTypeFor(spec);
-      const normalized = normalizeDiskSizeGib(sharedDiskGb, scratchDiskType);
+      const normalized = normalizeDiskSizeGib(sharedDiskGb);
       if (normalized.adjusted) {
-        logger.info("nebius: adjusting shared scratch disk size for IO M3", {
-          name,
-          from_gb: sharedDiskGb,
-          to_gb: normalized.sizeGib,
-        });
+        logger.info(
+          "nebius: adjusting shared scratch disk size to provider increment",
+          {
+            name,
+            from_gb: sharedDiskGb,
+            to_gb: normalized.sizeGib,
+          },
+        );
       }
       logger.info("nebius: creating shared scratch disk", {
         name,
@@ -798,7 +799,7 @@ export class NebiusProvider implements CloudProvider {
       throw new Error("nebius: no shared scratch disk to resize");
     }
     const diskType = diskTypeFromCode(meta?.scratchDiskTypeCode);
-    const normalized = normalizeDiskSizeGib(newSizeGb, diskType);
+    const normalized = normalizeDiskSizeGib(newSizeGb);
     await updateDiskSize({
       client,
       diskId,
@@ -824,7 +825,7 @@ export class NebiusProvider implements CloudProvider {
     const client = new NebiusClient(creds);
     const meta = runtime.metadata as NebiusRuntimeMeta | undefined;
     const scratchDiskType = sharedScratchDiskTypeFor(spec);
-    const normalized = normalizeDiskSizeGib(sharedDiskGb, scratchDiskType);
+    const normalized = normalizeDiskSizeGib(sharedDiskGb);
     const scratchDiskName =
       spec.metadata?.shared_disk_name ??
       (runtime.metadata as any)?.shared_disk_name ??

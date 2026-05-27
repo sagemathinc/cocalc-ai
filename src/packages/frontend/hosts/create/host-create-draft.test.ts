@@ -519,18 +519,18 @@ describe("host-create-draft", () => {
     expect(draft.shared_disk_type).toBeUndefined();
   });
 
-  it("normalizes Nebius shared scratch IO M3 disks to 93 GB increments", () => {
+  it("normalizes Nebius shared scratch disks to 93 GB increments", () => {
     const draft = normalizeDraft(
       {
         provider: "nebius",
         shared_disk_gb: 100,
-        shared_disk_type: "ssd_io_m3",
+        shared_disk_type: "balanced",
       },
       providerContext("nebius"),
     ).draft;
 
     expect(draft.shared_disk_gb).toBe(186);
-    expect(draft.shared_disk_type).toBe("ssd_io_m3");
+    expect(draft.shared_disk_type).toBe("balanced");
   });
 
   it("keeps Nebius disk sizes constrained even with network SSD selected", () => {
