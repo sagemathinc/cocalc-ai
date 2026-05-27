@@ -12,6 +12,7 @@ import { AgentsPanel } from "./agents";
 const mockOpenFile = jest.fn();
 const mockCreateFile = jest.fn();
 const mockUpsertAgentSessionRecord = jest.fn();
+const mockDeleteAgentSessionRecord = jest.fn();
 const mockOpenFloatingAgentSession = jest.fn();
 const mockGetChatActions = jest.fn();
 const mockInitChat = jest.fn();
@@ -27,6 +28,9 @@ const mockOpenImportModal = jest.fn();
 const mockOpenForkModal = jest.fn();
 const mockConfirmDeleteThread = jest.fn();
 const mockUpsertThreadAutomation = jest.fn();
+const mockTruncateAcpSession = jest.fn();
+const mockAntdMessageInfo = jest.fn();
+const mockAntdMessageError = jest.fn();
 
 function createMockSyncdb(initialState = "ready") {
   let state = initialState;
@@ -72,6 +76,7 @@ function createMockChatActions(initialState = "ready") {
     })),
     setThreadPin: jest.fn(() => true),
     setThreadArchived: jest.fn(() => true),
+    deleteThread: jest.fn(() => 1),
     syncdb: createMockSyncdb(initialState),
   } as any;
 }
@@ -157,7 +162,11 @@ jest.mock("antd", () => {
     Dropdown,
     Empty,
     Modal,
-    message: { success: (...args: any[]) => mockAntdMessageSuccess(...args) },
+    message: {
+      error: (...args: any[]) => mockAntdMessageError(...args),
+      info: (...args: any[]) => mockAntdMessageInfo(...args),
+      success: (...args: any[]) => mockAntdMessageSuccess(...args),
+    },
     Popconfirm,
     Space,
     Switch,
@@ -204,6 +213,8 @@ jest.mock("@cocalc/frontend/chat/agent-session-index", () => ({
     mockWatchAgentSessionsForProject(...args),
   upsertAgentSessionRecord: (...args: any[]) =>
     mockUpsertAgentSessionRecord(...args),
+  deleteAgentSessionRecord: (...args: any[]) =>
+    mockDeleteAgentSessionRecord(...args),
 }));
 
 jest.mock("@cocalc/frontend/chat/register", () => ({
@@ -238,6 +249,7 @@ jest.mock("@cocalc/frontend/chat/use-codex-payment-source", () => ({
 jest.mock("@cocalc/frontend/chat/acp-api", () => ({
   upsertThreadAutomation: (...args: any[]) =>
     mockUpsertThreadAutomation(...args),
+  truncateAcpSession: (...args: any[]) => mockTruncateAcpSession(...args),
 }));
 
 jest.mock("@cocalc/frontend/chat/automation-form", () => {
@@ -361,6 +373,7 @@ describe("AgentsPanel session cards", () => {
     mockOpenFile.mockClear();
     mockCreateFile.mockClear();
     mockUpsertAgentSessionRecord.mockClear();
+    mockDeleteAgentSessionRecord.mockClear();
     mockOpenFloatingAgentSession.mockClear();
     mockGetChatActions.mockReset();
     mockInitChat.mockReset();
@@ -375,6 +388,8 @@ describe("AgentsPanel session cards", () => {
     mockInitChat.mockReturnValue(mockChatActions);
     mockModalConfirm.mockClear();
     mockAntdMessageSuccess.mockClear();
+    mockAntdMessageInfo.mockClear();
+    mockAntdMessageError.mockClear();
     mockEnsureWorkspaceChatPath.mockReset();
     mockEnsureWorkspaceChatDirectory.mockReset();
     mockOpenAppearanceModal.mockClear();
@@ -384,6 +399,7 @@ describe("AgentsPanel session cards", () => {
     mockOpenForkModal.mockClear();
     mockConfirmDeleteThread.mockClear();
     mockUpsertThreadAutomation.mockClear();
+    mockTruncateAcpSession.mockClear();
     mockWatchAgentSessionsForProject.mockReset();
     mockWatchAgentSessionsForProject.mockImplementation(
       async (_args: any, cb: (records: any[]) => void) => {
@@ -394,6 +410,7 @@ describe("AgentsPanel session cards", () => {
     mockSessions = [
       {
         session_id: "session-1",
+        project_id: "project-1",
         account_id: "acct-1",
         chat_path: "/home/user/agent.chat",
         thread_key: "thread-1",
@@ -544,6 +561,43 @@ describe("AgentsPanel session cards", () => {
       false,
       undefined,
       undefined,
+    );
+  });
+
+  it("deletes the agent index record when deleting the inline agent chat", async () => {
+    render(<AgentsPanel project_id="project-1" layout="page" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-session-card-session-1")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByTestId("agent-session-card-session-1"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agents-inline-thread-menu")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByText("Delete chat"));
+
+    expect(mockConfirmDeleteThread).not.toHaveBeenCalled();
+    expect(mockModalConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Delete chat "Agent session"?',
+        okText: "Delete",
+        okType: "danger",
+      }),
+    );
+
+    await act(async () => {
+      await mockModalConfirm.mock.calls[0][0].onOk();
+    });
+
+    expect(mockChatActions.deleteThread).toHaveBeenCalledWith("thread-1");
+    expect(mockDeleteAgentSessionRecord).toHaveBeenCalledWith({
+      project_id: "project-1",
+      session_id: "session-1",
+    });
+    expect(mockAntdMessageSuccess).toHaveBeenCalledWith("Chat deleted.");
+    await waitFor(() =>
+      expect(screen.queryByTestId("agents-inline-chat")).toBeNull(),
     );
   });
 
