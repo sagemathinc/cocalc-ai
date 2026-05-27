@@ -7,8 +7,8 @@ import { useMemo, useRef, useState } from "react";
 
 import { Button, Flex, message, Space, Typography, Upload } from "antd";
 import { DownloadOutlined, UploadOutlined } from "@ant-design/icons";
-import type { DocsAccess } from "@cocalc/docs";
-import { listDocsEntries } from "@cocalc/docs";
+import type { DocsAccess, DocsEntry } from "@cocalc/docs";
+import { getDocsEntry, listDocsEntries } from "@cocalc/docs";
 import {
   DocsBrowser,
   DocsFontSizeFrame,
@@ -34,6 +34,42 @@ import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { COLORS } from "@cocalc/util/theme";
 
 const { Paragraph, Text, Title } = Typography;
+const PROJECT_DOCS_SELECTED_STORAGE_PREFIX =
+  "cocalc-project-docs-selected-slug:";
+
+function projectDocsStorageKey(projectId: string): string {
+  return `${PROJECT_DOCS_SELECTED_STORAGE_PREFIX}${projectId}`;
+}
+
+function loadStoredProjectDocsEntry({
+  docsAccess,
+  projectId,
+}: {
+  docsAccess: DocsAccess;
+  projectId: string;
+}): DocsEntry | undefined {
+  if (typeof window === "undefined") return undefined;
+  const storedSlug = window.localStorage
+    .getItem(projectDocsStorageKey(projectId))
+    ?.trim();
+  return storedSlug ? getDocsEntry(storedSlug, docsAccess) : undefined;
+}
+
+function saveStoredProjectDocsEntry({
+  entry,
+  projectId,
+}: {
+  entry?: DocsEntry;
+  projectId: string;
+}): void {
+  if (typeof window === "undefined") return;
+  const key = projectDocsStorageKey(projectId);
+  if (entry?.slug) {
+    window.localStorage.setItem(key, entry.slug);
+  } else {
+    window.localStorage.removeItem(key);
+  }
+}
 
 export function ProjectDocsPanel({
   layout,
@@ -61,6 +97,14 @@ export function ProjectDocsPanel({
   const allDocsEntries = useMemo(
     () => listDocsEntries(docsAccess),
     [docsAccess],
+  );
+  const initialEntry = useMemo(
+    () =>
+      loadStoredProjectDocsEntry({
+        docsAccess,
+        projectId: project_id,
+      }),
+    [docsAccess, project_id],
   );
 
   async function runAction(action: DocsBrowserAction): Promise<void> {
@@ -183,8 +227,12 @@ export function ProjectDocsPanel({
         <DocsBrowser
           actionAvailability={actionAvailability}
           docsAccess={docsAccess}
+          initialEntry={initialEntry}
           layout={layout}
           onRunAction={runAction}
+          onSelectedEntryChange={(entry) =>
+            saveStoredProjectDocsEntry({ entry, projectId: project_id })
+          }
           privateDetailState={
             accountId
               ? {

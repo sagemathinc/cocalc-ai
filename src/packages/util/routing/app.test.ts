@@ -4,6 +4,10 @@ describe("routing/app", () => {
   it("recognizes host absolute web routes", () => {
     expect(hasHostAbsoluteRoutePrefix("/projects")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/projects/123/files")).toBe(true);
+    expect(hasHostAbsoluteRoutePrefix("/app-docs")).toBe(true);
+    expect(
+      hasHostAbsoluteRoutePrefix("/app-docs/projects/project-secrets"),
+    ).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/auth/sign-in")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/redeem")).toBe(true);
     expect(hasHostAbsoluteRoutePrefix("/redeem/ABC12345")).toBe(true);
@@ -16,6 +20,7 @@ describe("routing/app", () => {
 
   it("exposes shared markers for base-path inference", () => {
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/projects");
+    expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/app-docs");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/auth");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/lang");
     expect(APP_BASE_PATH_ROUTE_MARKERS).toContain("/redeem");

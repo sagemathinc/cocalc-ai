@@ -484,6 +484,16 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
         section: "membership-tiers",
       }),
   },
+  "admin.managed-egress.open": {
+    id: "admin.managed-egress.open",
+    isAvailable: validateAdmin,
+    run: ({ projectId }) =>
+      revealAdminSection({
+        actionId: "admin.managed-egress.open",
+        projectId,
+        section: "managed-egress",
+      }),
+  },
   "admin.project-backup-shards.open": {
     id: "admin.project-backup-shards.open",
     isAvailable: validateAdmin,
@@ -532,6 +542,16 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
         actionId: "admin.software-licenses.open",
         projectId,
         section: "software-licenses",
+      }),
+  },
+  "admin.sso.open": {
+    id: "admin.sso.open",
+    isAvailable: validateAdmin,
+    run: ({ projectId }) =>
+      revealAdminSection({
+        actionId: "admin.sso.open",
+        projectId,
+        section: "sso",
       }),
   },
   "admin.users.open": {
