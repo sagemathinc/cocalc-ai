@@ -703,7 +703,7 @@ describe("purchases membership packages", () => {
       setSiteLicenseManager,
       removeSiteLicenseManager,
     } = await import("./purchases");
-    getBrowserAuthSessionHashMock.mockReturnValueOnce("fresh-session-1");
+    getBrowserAuthSessionHashMock.mockReturnValue("fresh-session-1");
     await updateSiteLicense({
       account_id: "manager-1",
       browser_id: "browser-1",
@@ -713,12 +713,14 @@ describe("purchases membership packages", () => {
     });
     await setSiteLicenseManager({
       account_id: "manager-1",
+      browser_id: "browser-1",
       site_license_id: "license-remote-1",
       target_account_id: "manager-2",
       role: "manager",
     });
     await removeSiteLicenseManager({
       account_id: "manager-1",
+      browser_id: "browser-1",
       site_license_id: "license-remote-1",
       target_account_id: "manager-2",
     });
@@ -977,8 +979,10 @@ describe("purchases membership packages", () => {
     });
 
     const { reviewSiteLicensePoolRequest } = await import("./purchases");
+    getBrowserAuthSessionHashMock.mockReturnValueOnce("fresh-review-session");
     const result = await reviewSiteLicensePoolRequest({
       account_id: "manager-1",
+      browser_id: "browser-1",
       owner_account_id: "owner-1",
       request_id: "request-remote-1",
       action: "approve",
@@ -991,8 +995,27 @@ describe("purchases membership packages", () => {
       action: "approve",
       review_note: "Approved",
     });
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "manager-1",
+      session_hash: "fresh-review-session",
+      allow_actor_impersonation: false,
+    });
     expect(reviewSiteLicensePoolRequestMock).not.toHaveBeenCalled();
     expect(result.state).toBe("approved");
+  });
+
+  it("requires fresh auth before reviewing site-license pool requests", async () => {
+    const { reviewSiteLicensePoolRequest } = await import("./purchases");
+    await expect(
+      reviewSiteLicensePoolRequest({
+        account_id: "manager-1",
+        browser_id: "browser-1",
+        request_id: "request-1",
+        action: "approve",
+      }),
+    ).rejects.toMatchObject({ code: "fresh_auth_required" });
+    expect(reviewSiteLicensePoolRequestMock).not.toHaveBeenCalled();
+    expect(interBayReviewSiteLicensePoolRequestMock).not.toHaveBeenCalled();
   });
 
   it("routes site-license reverification status to the account home bay", async () => {
