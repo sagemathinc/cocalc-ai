@@ -1746,6 +1746,44 @@ if ! mountpoint -q "$MOUNTPOINT"; then
   exit 0
 fi
 MOUNT_SOURCE="$(findmnt -n -o SOURCE "$MOUNTPOINT" 2>/dev/null || true)"
+refresh_block_device() {
+  local source="$1"
+  local resolved parent_name parent part_num base rescan_path
+  resolved="$(readlink -f "$source" 2>/dev/null || printf '%s' "$source")"
+  parent_name="$(lsblk -no PKNAME "$resolved" 2>/dev/null | head -n1 | tr -d '[:space:]' || true)"
+  part_num="$(lsblk -no PARTN "$resolved" 2>/dev/null | head -n1 | tr -d '[:space:]' || true)"
+  if [ -n "$parent_name" ]; then
+    parent="/dev/$parent_name"
+  else
+    parent="$resolved"
+  fi
+  base="$(basename "$parent")"
+  rescan_path="/sys/class/block/$base/device/rescan"
+  if [ -w "$rescan_path" ]; then
+    echo 1 > "$rescan_path" || true
+  fi
+  blockdev --rereadpt "$parent" >/dev/null 2>&1 || true
+  if command -v partprobe >/dev/null 2>&1; then
+    partprobe "$parent" >/dev/null 2>&1 || true
+  fi
+  if command -v udevadm >/dev/null 2>&1; then
+    udevadm settle >/dev/null 2>&1 || true
+  fi
+  if [ -n "$part_num" ]; then
+    if ! command -v growpart >/dev/null 2>&1; then
+      echo "growpart is required to grow partition-backed filesystem $resolved" >&2
+      return 1
+    fi
+    growpart "$parent" "$part_num" >/dev/null 2>&1 || true
+    blockdev --rereadpt "$parent" >/dev/null 2>&1 || true
+    if command -v partprobe >/dev/null 2>&1; then
+      partprobe "$parent" >/dev/null 2>&1 || true
+    fi
+    if command -v udevadm >/dev/null 2>&1; then
+      udevadm settle >/dev/null 2>&1 || true
+    fi
+  fi
+}
 if [ "$MOUNT_SOURCE" = "$IMAGE" ] || [ "${MOUNT_SOURCE#/dev/loop}" != "$MOUNT_SOURCE" ]; then
   if [ ! -f "$IMAGE" ]; then
     exit 0
@@ -1785,6 +1823,7 @@ if [ "$MOUNT_SOURCE" = "$IMAGE" ] || [ "${MOUNT_SOURCE#/dev/loop}" != "$MOUNT_SO
   btrfs filesystem resize max "$MOUNTPOINT" >/dev/null 2>&1 || true
   exit 0
 fi
+refresh_block_device "$MOUNT_SOURCE" || true
 btrfs filesystem resize max "$MOUNTPOINT" >/dev/null 2>&1 || true
 """
     helper_path = Path("/usr/local/sbin/cocalc-grow-btrfs")
@@ -2800,6 +2839,39 @@ PY' bash "$tree"
         deny "shared-scratch-source-not-allowed" "$scratch_source"
         ;;
     esac
+    scratch_source="$(readlink -f "$scratch_source" 2>/dev/null || printf '%s' "$scratch_source")"
+    scratch_parent_name="$(lsblk -no PKNAME "$scratch_source" 2>/dev/null | head -n1 | tr -d '[:space:]' || true)"
+    scratch_part_num="$(lsblk -no PARTN "$scratch_source" 2>/dev/null | head -n1 | tr -d '[:space:]' || true)"
+    if [ -n "$scratch_parent_name" ]; then
+      scratch_parent="/dev/$scratch_parent_name"
+    else
+      scratch_parent="$scratch_source"
+    fi
+    scratch_base="$(basename "$scratch_parent")"
+    scratch_rescan="/sys/class/block/$scratch_base/device/rescan"
+    if [ -w "$scratch_rescan" ]; then
+      echo 1 > "$scratch_rescan" || true
+    fi
+    blockdev --rereadpt "$scratch_parent" >/dev/null 2>&1 || true
+    if command -v partprobe >/dev/null 2>&1; then
+      partprobe "$scratch_parent" >/dev/null 2>&1 || true
+    fi
+    if command -v udevadm >/dev/null 2>&1; then
+      udevadm settle >/dev/null 2>&1 || true
+    fi
+    if [ -n "$scratch_part_num" ]; then
+      if ! command -v growpart >/dev/null 2>&1; then
+        deny "growpart-missing" "cloud-guest-utils"
+      fi
+      growpart "$scratch_parent" "$scratch_part_num" >/dev/null 2>&1 || true
+      blockdev --rereadpt "$scratch_parent" >/dev/null 2>&1 || true
+      if command -v partprobe >/dev/null 2>&1; then
+        partprobe "$scratch_parent" >/dev/null 2>&1 || true
+      fi
+      if command -v udevadm >/dev/null 2>&1; then
+        udevadm settle >/dev/null 2>&1 || true
+      fi
+    fi
     resize2fs "$scratch_source"
     chmod 1777 "$scratch_mount"
     ;;

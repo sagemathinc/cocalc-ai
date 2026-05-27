@@ -1230,6 +1230,7 @@ fi
     "cron",
     "chrony",
     "libatomic1",
+    "cloud-guest-utils",
   ]);
   const envLinesJson = JSON.stringify(scripts.envLines);
   const cloudflaredJson = JSON.stringify(

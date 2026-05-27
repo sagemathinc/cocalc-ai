@@ -6216,7 +6216,7 @@ export async function updateHostMachine({
         await client.growBtrfs({ disk_gb: nextDisk });
       } catch (err) {
         resizeWarning =
-          "disk resized in cloud, but filesystem resize failed; reboot or run /usr/local/sbin/cocalc-grow-btrfs";
+          "disk resized in cloud, but online filesystem resize failed; run sudo /usr/local/sbin/cocalc-runtime-storage grow-btrfs";
         console.warn("growBtrfs failed after disk resize", err);
       }
     }
@@ -6255,7 +6255,7 @@ export async function updateHostMachine({
         await client.growSharedScratch({ disk_gb: sharedScratchResizeGb });
       } catch (err) {
         resizeWarning =
-          "shared scratch disk resized in cloud, but filesystem resize failed; restart the host or run sudo /usr/local/sbin/cocalc-runtime-storage grow-shared-scratch";
+          "shared scratch disk resized in cloud, but online filesystem resize failed; run sudo /usr/local/sbin/cocalc-runtime-storage grow-shared-scratch";
         console.warn("growSharedScratch failed after disk resize", err);
       }
     }

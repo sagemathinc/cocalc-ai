@@ -254,7 +254,7 @@ export const PROVIDERS: Record<ProviderId, ProviderEntry | undefined> = {
       supportsHardRestart: false,
       supportsDiskType: true,
       supportsDiskResize: true,
-      diskResizeRequiresStop: true,
+      diskResizeRequiresStop: false,
       supportsCustomImage: true,
       supportsGpu: true,
       supportsZones: false,

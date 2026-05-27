@@ -937,6 +937,9 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn("privileged-rm-helper", script)
             self.assertIn("grow-shared-scratch)", script)
             self.assertIn("/mnt/cocalc-scratch", script)
+            self.assertIn('echo 1 > "$scratch_rescan"', script)
+            self.assertIn('growpart "$scratch_parent" "$scratch_part_num"', script)
+            self.assertIn('partprobe "$scratch_parent"', script)
             self.assertIn('resize2fs "$scratch_source"', script)
             self.assertIn("podman unshare cat /proc/self/uid_map", script)
             self.assertIn('"to-canonical"', script)
@@ -961,6 +964,37 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn(': >"$rootfs/run/podman-init"', script)
             self.assertIn(': >"$rootfs/run/.containerenv"', script)
             wrapper_path = Path(tmpdir) / "cocalc-runtime-storage"
+            wrapper_path.write_text(script, encoding="utf-8")
+            subprocess.run(["bash", "-n", str(wrapper_path)], check=True)
+
+    def test_btrfs_grow_helper_refreshes_block_device_before_online_resize(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            captured: dict[str, str] = {}
+
+            original_write_text = bootstrap.Path.write_text
+            original_chmod = bootstrap.Path.chmod
+
+            def capture_write(self, data, encoding="utf-8"):
+                captured[str(self)] = data
+                return len(data)
+
+            try:
+                bootstrap.Path.write_text = capture_write
+                bootstrap.Path.chmod = lambda *_args, **_kwargs: None
+                bootstrap.install_btrfs_helper(cfg)
+            finally:
+                bootstrap.Path.write_text = original_write_text
+                bootstrap.Path.chmod = original_chmod
+
+            script = captured["/usr/local/sbin/cocalc-grow-btrfs"]
+            self.assertIn('refresh_block_device "$MOUNT_SOURCE"', script)
+            self.assertIn('echo 1 > "$rescan_path"', script)
+            self.assertIn('growpart "$parent" "$part_num"', script)
+            self.assertIn('partprobe "$parent"', script)
+            wrapper_path = Path(tmpdir) / "cocalc-grow-btrfs"
             wrapper_path.write_text(script, encoding="utf-8")
             subprocess.run(["bash", "-n", str(wrapper_path)], check=True)
 
