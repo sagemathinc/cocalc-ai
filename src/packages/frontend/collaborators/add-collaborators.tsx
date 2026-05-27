@@ -47,6 +47,7 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 import { onCollabInvitesChanged } from "./invite-events";
 
 const INVITE_MESSAGE_MAX_LENGTH = 1000;
+type InviteRole = "collaborator" | "viewer";
 
 interface RegisteredUser {
   sort?: string;
@@ -149,6 +150,7 @@ export const AddCollaborators: React.FC<Props> = ({
   const [manual_invite_links, set_manual_invite_links] = useState<
     ManualInviteLink[]
   >([]);
+  const [invite_role, set_invite_role] = useState<InviteRole>("collaborator");
   const [invite_usage, set_invite_usage] =
     useState<ProjectCollaboratorInviteUsage | null>(null);
   const [invite_usage_error, set_invite_usage_error] = useState<string>("");
@@ -193,7 +195,9 @@ export const AddCollaborators: React.FC<Props> = ({
   const invite_slot_limited =
     invite_usage?.limit != null && invite_slots_remaining != null;
   const invite_slots_exhausted =
-    invite_slot_limited && invite_slots_remaining <= 0;
+    invite_role === "collaborator" &&
+    invite_slot_limited &&
+    invite_slots_remaining <= 0;
 
   function reset(): void {
     set_search("");
@@ -391,6 +395,7 @@ export const AddCollaborators: React.FC<Props> = ({
       false,
       replyto,
       replyto_name,
+      invite_role,
     );
   }
 
@@ -448,7 +453,11 @@ export const AddCollaborators: React.FC<Props> = ({
     const title = project.get("title");
     const target = `'${title}'`;
     const SiteName = redux.getStore("customize").get("site_name") ?? SITE_NAME;
-    const body = `Hello!\n\nPlease collaborate with me using ${SiteName} on ${target}.\n\nBest wishes,\n\n${name}`;
+    const action =
+      invite_role === "viewer"
+        ? "view this project read-only"
+        : "collaborate with me";
+    const body = `Hello!\n\nPlease ${action} using ${SiteName} on ${target}.\n\nBest wishes,\n\n${name}`;
     set_email_to(search);
     set_email_body(body);
   }
@@ -462,8 +471,9 @@ export const AddCollaborators: React.FC<Props> = ({
     const replyto_name = redux.getStore("account").get_fullname();
     const SiteName = redux.getStore("customize").get("site_name") ?? SITE_NAME;
     let subject;
+    const access = invite_role === "viewer" ? "view" : "collaborate on";
     if (replyto_name != null) {
-      subject = `${replyto_name} invited you to '${project?.get("title")}'`;
+      subject = `${replyto_name} invited you to ${access} '${project?.get("title")}'`;
     } else {
       subject = `${SiteName} Invitation to '${project?.get("title")}'`;
     }
@@ -484,6 +494,9 @@ export const AddCollaborators: React.FC<Props> = ({
       silent,
       replyto,
       replyto_name,
+      undefined,
+      undefined,
+      invite_role,
     );
     if (!silent && !allow_urls) {
       // Show a message that they might have to email that person
@@ -623,7 +636,9 @@ export const AddCollaborators: React.FC<Props> = ({
       .map((x) => x.trim())
       .filter((x) => x.length > 0).length;
     const exceedsSlots =
-      invite_slots_remaining != null && recipientCount > invite_slots_remaining;
+      invite_role === "collaborator" &&
+      invite_slots_remaining != null &&
+      recipientCount > invite_slots_remaining;
 
     return (
       <div>
@@ -689,8 +704,46 @@ export const AddCollaborators: React.FC<Props> = ({
         />
         <span>
           Collaborators get full project access. For teaching, add students
-          through the course instead.
+          through the course instead. Viewers get read-only file access and
+          cannot edit files, start runtimes, use terminals, SSH, or manage the
+          project.
         </span>
+      </div>
+    );
+  }
+
+  function render_access_role(): React.JSX.Element {
+    return (
+      <div
+        style={{
+          background: COLORS.GRAY_LLL,
+          border: `1px solid ${COLORS.GRAY_LL}`,
+          borderRadius: 10,
+          marginBottom: 10,
+          padding: 12,
+        }}
+      >
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>Access level</div>
+        <Select
+          style={{ width: "100%" }}
+          value={invite_role}
+          onChange={(value) => set_invite_role(value as InviteRole)}
+          options={[
+            {
+              value: "collaborator",
+              label: "Collaborator: can edit files and use project runtimes",
+            },
+            {
+              value: "viewer",
+              label: "Viewer: read-only files, no runtimes or write access",
+            },
+          ]}
+        />
+        <div style={{ color: COLORS.GRAY_M, fontSize: 12, marginTop: 6 }}>
+          Viewer invites use the full-project read-only preset with sensitive
+          paths excluded: <code>.snapshots</code>, <code>.ssh</code>, and{" "}
+          <code>.local/share/cocalc</code>.
+        </div>
       </div>
     );
   }
@@ -709,6 +762,17 @@ export const AddCollaborators: React.FC<Props> = ({
     }
     if (invite_usage == null || invite_usage.limit == null) {
       return;
+    }
+    if (invite_role === "viewer") {
+      return (
+        <Alert
+          showIcon
+          type="info"
+          style={{ marginBottom: 10 }}
+          message="Viewer invites do not use collaborator slots"
+          description="Viewers have read-only file access and cannot edit files or use project runtimes."
+        />
+      );
     }
     const { current, limit, remaining } = invite_usage;
     const remainingCount = remaining ?? 0;
@@ -1103,6 +1167,7 @@ export const AddCollaborators: React.FC<Props> = ({
     >
       {err && <ErrorDisplay error={err} onClose={() => set_err("")} />}
       {state == "searching" && <Loading />}
+      {render_access_role()}
       {render_invite_slots()}
       {render_search()}
       {render_select_list()}

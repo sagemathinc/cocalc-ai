@@ -79,6 +79,15 @@ Table({
       type: "map",
       desc: "Structured context for scoped invites.",
     },
+    invite_role: {
+      type: "string",
+      pg_type: "varchar(24)",
+      desc: "Project user role granted if this invite is accepted: collaborator or viewer.",
+    },
+    read_policy: {
+      type: "map",
+      desc: "Viewer read policy to apply when invite_role is viewer.",
+    },
     status: {
       type: "string",
       pg_type: "varchar(24)",

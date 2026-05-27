@@ -36,6 +36,8 @@ export class ProjectCollaborators {
     send_email?: boolean;
     invite_context?: Record<string, unknown>;
     invite_scope?: string;
+    invite_role?: "collaborator" | "viewer";
+    read_policy?: ProjectViewerReadPolicy | null;
   }): Promise<any> {
     return await this.conat.hub.projects.inviteCollaboratorWithoutAccount({
       opts,
@@ -52,6 +54,8 @@ export class ProjectCollaborators {
     email?: string;
     subject?: string;
     message?: string;
+    invite_role?: "collaborator" | "viewer";
+    read_policy?: ProjectViewerReadPolicy | null;
   }): Promise<any> {
     return await this.conat.hub.projects.inviteCollaborator({
       opts,

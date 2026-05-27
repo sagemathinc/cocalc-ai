@@ -2303,6 +2303,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     silent?: boolean, // if true, don't show error message on fail
     replyto?: string,
     replyto_name?: string,
+    invite_role: "collaborator" | "viewer" = "collaborator",
   ): Promise<void> {
     await this.redux.getProjectActions(project_id).async_log({
       event: "invite_user",
@@ -2325,6 +2326,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
         email,
         subject,
         message: body,
+        invite_role,
       });
       notifyCollabInvitesChanged(project_id);
     } catch (err) {
@@ -2346,6 +2348,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     replyto_name: string | undefined,
     invite_context?: Record<string, unknown>,
     invite_scope?: string,
+    invite_role: "collaborator" | "viewer" = "collaborator",
   ): Promise<any> {
     await this.redux.getProjectActions(project_id).async_log({
       event: "invite_nonuser",
@@ -2373,6 +2376,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
         message: body,
         invite_context,
         invite_scope,
+        invite_role,
       });
       notifyCollabInvitesChanged(project_id);
       if (!silent) {
