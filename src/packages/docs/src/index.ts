@@ -513,7 +513,7 @@ language servers, background jobs, web apps, databases, and agents.
 
 1. Open the project process or activity view and stop work you do not need.
 2. Restart the notebook kernel or terminal process that is using too much RAM.
-3. Close idle notebooks, terminals, servers, and X11 apps.
+3. Close idle notebooks, terminals, and servers.
 4. Load less data at once, stream data in chunks, or write intermediate results
    to files.
 5. Avoid keeping duplicate large arrays, dataframes, models, or images in
@@ -1279,26 +1279,6 @@ same project so the visual context is not separated from the work.
 
 Whiteboards are project files. Use TimeTravel when you need to inspect earlier
 states or recover from accidental edits.
-`;
-
-const X11_BODY = String.raw`
-## What X11 apps are for
-
-X11 support lets graphical Linux applications run inside a CoCalc project and
-display in the browser. Use it for tools that do not have a native web UI but
-are still useful inside the project environment.
-
-## Run an X11 app
-
-Open an X11 app file or start the relevant graphical program from the project
-environment. The application runs on the project backend, while the browser
-shows the remote desktop window.
-
-## Practical limits
-
-X11 apps can use significant CPU, memory, and bandwidth. Prefer native CoCalc
-editors, notebooks, terminals, or web apps when they fit the task better. Use
-X11 when a specific graphical Linux tool is required.
 `;
 
 const FILE_EXPLORER_BODY = String.raw`
@@ -2383,22 +2363,6 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     summary:
       "Use task files for shared checklists, project plans, and durable TODO lists.",
     title: "Use task files",
-  },
-  {
-    audiences: ["researchers", "students", "teams"],
-    body: X11_BODY.trim(),
-    category: "Projects",
-    id: "projects.x11",
-    image: docsIcon(
-      "/public/docs/terminal-56905fa2.webp",
-      "A graphical Linux application running from a project backend",
-    ),
-    lastReviewed: "2026-05-25",
-    slug: "projects/x11",
-    status: "ready",
-    summary:
-      "Run graphical Linux applications from a project and view them in the browser.",
-    title: "Use X11 apps",
   },
   {
     actions: [
