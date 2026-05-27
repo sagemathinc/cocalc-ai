@@ -360,7 +360,7 @@ describe("PublicAuthApp", () => {
     ).not.toBeNull();
   });
 
-  it("shows Projects but not Settings in the shared nav for authenticated users", () => {
+  it("shows Projects and Settings in the shared nav for authenticated users", () => {
     render(
       <PublicAuthApp
         config={config({ is_authenticated: true })}
@@ -369,7 +369,7 @@ describe("PublicAuthApp", () => {
     );
 
     expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
-    expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
   });
 
   it("routes domain-managed sign-in to the required SSO provider", async () => {
