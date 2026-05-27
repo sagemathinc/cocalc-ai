@@ -409,6 +409,9 @@ export function getNebiusPlatformAliases(platform?: string | null): string[] {
   if (value.includes("h200")) aliases.push("h200 nvlink");
   if (value.includes("b200")) aliases.push("b200 nvlink");
   if (value.includes("b300")) aliases.push("b300 nvlink");
+  if (value.includes("rtx6000") || value.includes("rtx-6000")) {
+    aliases.push("rtx pro 6000", "rtx 6000");
+  }
   if (value.includes("l40s")) aliases.push("l40s pcie");
   return aliases;
 }
@@ -565,27 +568,42 @@ export function estimateNebiusCatalogRateBreakdown(opts: {
     pricing_model: opts.pricing_model,
     instance,
   });
+  const gpuCount = Number(instance.gpus ?? 0);
+  const hasGpu = gpuCount > 0;
+  const hasUnifiedGpuRate =
+    hasGpu &&
+    isFinitePositiveNumber(family?.gpuRate) &&
+    (!isFinitePositiveNumber(family?.cpuRate) ||
+      !isFinitePositiveNumber(family?.ramRate));
   if (
-    !isFinitePositiveNumber(family?.cpuRate) ||
-    !isFinitePositiveNumber(family?.ramRate)
+    !hasUnifiedGpuRate &&
+    (!isFinitePositiveNumber(family?.cpuRate) ||
+      !isFinitePositiveNumber(family?.ramRate))
   ) {
     return undefined;
   }
-  const items: HostPriceBreakdownItem[] = [
-    {
+  const items: HostPriceBreakdownItem[] = [];
+  if (hasUnifiedGpuRate) {
+    items.push({
+      key: "gpu",
+      label: "GPU instance",
+      usd_per_hour: family!.gpuRate! * gpuCount,
+    });
+  } else {
+    items.push({
       key: "vm",
       label: "VM",
       usd_per_hour:
-        family.cpuRate * Number(instance.vcpus ?? 0) +
-        family.ramRate * Number(instance.memory_gib ?? 0),
-    },
-  ];
-  if ((instance.gpus ?? 0) > 0) {
+        family!.cpuRate! * Number(instance.vcpus ?? 0) +
+        family!.ramRate! * Number(instance.memory_gib ?? 0),
+    });
+  }
+  if (hasGpu && !hasUnifiedGpuRate) {
     if (!isFinitePositiveNumber(family.gpuRate)) return undefined;
     items.push({
       key: "gpu",
       label: "GPU",
-      usd_per_hour: family.gpuRate * Number(instance.gpus ?? 0),
+      usd_per_hour: family.gpuRate * gpuCount,
     });
   }
   if (`${opts.storage_mode ?? "persistent"}`.trim() === "persistent") {

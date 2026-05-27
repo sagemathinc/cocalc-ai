@@ -386,4 +386,41 @@ describe("project host pricing", () => {
       }),
     ).toBeCloseTo(2.036983323, 9);
   });
+
+  it("estimates Nebius unified GPU hourly rates without separate CPU/RAM rows", () => {
+    const breakdown = estimateNebiusCatalogRateBreakdown({
+      prices: [
+        {
+          product: "NVIDIA RTX PRO 6000",
+          region: "us-central1",
+          price_usd: "1.8",
+          unit: "GPU hour",
+        },
+        {
+          product: "Network SSD IO M3 disk",
+          region: "us-central1",
+          price_usd: "0.000161111",
+          unit: "GiB hour",
+        },
+      ],
+      region: "us-central1",
+      pricing_model: "on_demand",
+      instance: {
+        name: "gpu-rtx6000_1gpu-24vcpu-218gb",
+        platform: "gpu-rtx6000",
+        platform_label: "NVIDIA RTX PRO 6000",
+        vcpus: 24,
+        memory_gib: 218,
+        gpus: 1,
+        gpu_label: "NVIDIA RTX PRO 6000",
+      },
+      disk_type: "ssd_io_m3",
+      disk_gb: 100,
+      storage_mode: "persistent",
+    });
+
+    expect(breakdown?.items.map((item) => item.key)).toEqual(["gpu", "disk"]);
+    expect(breakdown?.items[0]?.label).toBe("GPU instance");
+    expect(breakdown?.total_usd_per_hour).toBeCloseTo(1.8161111, 9);
+  });
 });

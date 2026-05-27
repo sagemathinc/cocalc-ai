@@ -405,7 +405,9 @@ const optionLooksGpu = (option: HostFieldOption) => {
     (typeof meta.gpus === "number" && meta.gpus > 0) ||
     (typeof meta.gpu_count === "number" && meta.gpu_count > 0) ||
     (typeof meta.gpu === "string" && meta.gpu !== "none") ||
-    /gpu|nvidia|a10|a40|a100|h100|l4/i.test(`${option.value} ${option.label}`)
+    /gpu|nvidia|rtx|a10|a40|a100|h100|h200|b200|b300|l4/i.test(
+      `${option.value} ${option.label}`,
+    )
   );
 };
 
@@ -526,7 +528,6 @@ const selectFirstByPredicate = (
 ) => availableOptionsWithAtLeast16GiBRam(options).find(predicate)?.value;
 
 const NEBIUS_HPC_MACHINE_TYPE = "128vcpu-512gb";
-const NEBIUS_GPU_MACHINE_TYPE = "1gpu-16vcpu-200gb";
 
 const selectExactOption = (
   options: HostFieldOption[] | undefined,
@@ -535,6 +536,24 @@ const selectExactOption = (
   options?.find(
     (option) => optionIsAvailable(option) && option.value === value,
   );
+
+const selectNebiusCpuMachineType = (options: HostFieldOption[] | undefined) =>
+  selectExactOption(options, NEBIUS_HPC_MACHINE_TYPE)?.value ??
+  availableOptionsWithAtLeast16GiBRam(options).find(
+    (option) => !optionLooksGpu(option),
+  )?.value;
+
+const selectNebiusGpuMachineType = (
+  options: HostFieldOption[] | undefined,
+  opts?: { requireSpot?: boolean },
+) =>
+  availableOptionsWithAtLeast16GiBRam(options)
+    .filter(optionLooksGpu)
+    .filter(
+      (option) =>
+        !opts?.requireSpot || isNebiusSpotSupported(options, option.value),
+    )
+    .sort(compareHostOptionsByPrice)[0]?.value;
 
 const setPrimaryComputeOption = (
   draft: HostCreateDraft,
@@ -604,10 +623,14 @@ const setPrimaryComputeOption = (
   }
   const field = draft.provider === "hyperstack" ? "size" : "machine_type";
   if (draft.provider === "nebius") {
+    const nebiusOptions =
+      getFieldOptions("nebius", draft, context).machine_type ?? options[field];
     const selected =
       mode === "cpu"
-        ? selectExactOption(options[field], NEBIUS_HPC_MACHINE_TYPE)?.value
-        : selectExactOption(options[field], NEBIUS_GPU_MACHINE_TYPE)?.value;
+        ? selectNebiusCpuMachineType(nebiusOptions)
+        : selectNebiusGpuMachineType(nebiusOptions, {
+            requireSpot: draft.pricing_model === "spot",
+          });
     if (selected) draft[field] = selected;
     return;
   }
@@ -660,23 +683,18 @@ export function getAvailablePresets(
           (option) => option.value !== "none",
         )
       : draft.provider === "nebius"
-        ? !!selectExactOption(
-            fieldOptions.machine_type,
-            NEBIUS_GPU_MACHINE_TYPE,
-          )
+        ? !!selectNebiusGpuMachineType(fieldOptions.machine_type)
         : !!selectFirstByPredicate(
             fieldOptions[
               draft.provider === "hyperstack" ? "size" : "machine_type"
             ],
             optionLooksGpu,
           );
-  const nebiusSpotOption = selectExactOption(
+  const nebiusSpotOption = selectNebiusGpuMachineType(
     fieldOptions.machine_type,
-    NEBIUS_GPU_MACHINE_TYPE,
+    { requireSpot: true },
   );
-  const spotSupported =
-    draft.provider !== "nebius" ||
-    isNebiusSpotSupported(fieldOptions.machine_type, nebiusSpotOption?.value);
+  const spotSupported = draft.provider !== "nebius" || nebiusSpotOption != null;
   const presets: HostCreatePreset[] = [
     {
       id: "balanced-cpu",
@@ -689,9 +707,7 @@ export function getAvailablePresets(
     {
       id: "low-cost-spot",
       label:
-        draft.provider === "nebius"
-          ? "Low cost Spot H200 GPU"
-          : "Low-cost spot",
+        draft.provider === "nebius" ? "Low cost Spot GPU" : "Low-cost spot",
       description:
         draft.provider === "nebius"
           ? "Use interruptible GPU capacity with automatic restore."
@@ -705,8 +721,7 @@ export function getAvailablePresets(
     },
     {
       id: "gpu-workstation",
-      label:
-        draft.provider === "nebius" ? "Standard H200 GPU" : "GPU workstation",
+      label: draft.provider === "nebius" ? "Standard GPU" : "GPU workstation",
       description:
         draft.provider === "nebius"
           ? "Use an on-demand GPU host."
