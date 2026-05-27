@@ -74,6 +74,7 @@ import {
 } from "./agent-session-index";
 import { resolveAgentSessionIdForThread } from "./thread-session";
 import { findInChatAndOpenFirstResult } from "./find-in-chat";
+import { sendGitCommitAgentTurn } from "./git-commit-agent-turn";
 import type {
   AcpAutomationConfig,
   AcpAutomationState,
@@ -1745,21 +1746,27 @@ export function ChatPanel({
   );
 
   const sendGitBrowserAgentPrompt = useCallback(
-    async (prompt: string) => {
-      const trimmed = `${prompt ?? ""}`.trim();
-      if (!trimmed) return;
+    async (
+      prompt: string,
+      options?: { title?: string; workingDirectory?: string },
+    ) => {
       const targetThreadKey = gitBrowserThreadKey ?? selectedThreadKey;
-      const thread_id = normalizeThreadKey(targetThreadKey);
-      actions.sendChat({
-        extraInput: trimmed,
-        reply_thread_id: thread_id,
-        parent_message_id:
-          `${(actions.getMessagesInThread(thread_id ?? "")?.slice(-1)[0] as any)?.message_id ?? ""}`.trim() ||
-          undefined,
-        preserveSelectedThread: true,
+      sendGitCommitAgentTurn({
+        actions,
+        prompt,
+        targetThreadKey,
+        defaultNewThreadSetup,
+        title: options?.title,
+        workingDirectory: options?.workingDirectory ?? gitBrowserCwd,
       });
     },
-    [actions, gitBrowserThreadKey, selectedThreadKey],
+    [
+      actions,
+      defaultNewThreadSetup,
+      gitBrowserCwd,
+      gitBrowserThreadKey,
+      selectedThreadKey,
+    ],
   );
 
   const logGitBrowserDirectCommit = useCallback(
