@@ -14,12 +14,15 @@ and it displays the file as an editor associated with that path in the project,
 or Loading... if the file is still being loaded.
 */
 
+import { Alert } from "antd";
 import { Map } from "immutable";
 import { debounce } from "lodash";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import Draggable from "react-draggable";
 import { React, redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { KioskModeBanner } from "@cocalc/frontend/app/kiosk-mode-banner";
+import { getExternalSideChatDesc } from "@cocalc/frontend/chat/external-side-chat-selection";
+import { chatMetaFile } from "@cocalc/frontend/chat/paths";
 import type { ChatState } from "@cocalc/frontend/chat/chat-indicator";
 import SideChat from "@cocalc/frontend/chat/side-chat";
 import { Loading } from "@cocalc/frontend/components";
@@ -43,8 +46,6 @@ import { WorkspacesPanel } from "@cocalc/frontend/project/page/flyouts/workspace
 import { ProjectDocsPanel } from "@cocalc/frontend/project/page/flyouts/docs";
 import { editor_id } from "@cocalc/frontend/project/utils";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { chatMetaFile } from "@cocalc/frontend/chat/paths";
-import { getExternalSideChatDesc } from "@cocalc/frontend/chat/external-side-chat-selection";
 import { useProjectContext } from "../context";
 import { AgentsPanel } from "./flyouts/agents";
 import getAnchorTagComponent from "./anchor-tag-component";
@@ -60,6 +61,16 @@ const MAIN_STYLE: React.CSSProperties = {
   position: "absolute",
   inset: 0,
 } as const;
+
+const VIEWER_ALLOWED_TABS = new Set([
+  "active",
+  "docs",
+  "files",
+  "home",
+  "info",
+  "log",
+  "users",
+]);
 
 interface Props {
   tab_name: string; // e.g., 'files', 'new', 'log', 'search', 'settings', 'agents', or 'editor-<path>'
@@ -133,7 +144,7 @@ interface TabContentProps {
 
 const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
   const { tab_name, is_visible } = props;
-  const { project_id } = useProjectContext();
+  const { project_id, projectAccess } = useProjectContext();
 
   const open_files =
     useTypedRedux({ project_id }, "open_files") ?? Map<string, any>();
@@ -169,6 +180,22 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
   // show the kiosk mode banner instead of anything besides a file editor
   if (fullscreen === "kiosk" && !tab_name.startsWith("editor-")) {
     return <KioskModeBanner />;
+  }
+
+  if (
+    projectAccess.role === "viewer" &&
+    !tab_name.startsWith("editor-") &&
+    !VIEWER_ALLOWED_TABS.has(tab_name)
+  ) {
+    return (
+      <Alert
+        showIcon
+        type="info"
+        style={{ margin: "24px" }}
+        message="Viewer access is read-only"
+        description="Viewers can browse and open allowed project files, but cannot create files, start runtimes, use terminals, open app servers, run agents, or change project settings."
+      />
+    );
   }
 
   switch (tab_name) {
@@ -294,6 +321,7 @@ const EditorContent: React.FC<EditorContentProps> = ({
   chatState,
   component,
 }: EditorContentProps) => {
+  const { projectAccess } = useProjectContext();
   const editor_container_ref = useRef<any>(null);
   const sideChatDesc = useMemo(
     () => getExternalSideChatDesc(project_id, path),
@@ -315,7 +343,7 @@ const EditorContent: React.FC<EditorContentProps> = ({
   );
 
   let content: React.JSX.Element;
-  if (chatState == "external") {
+  if (chatState == "external" && projectAccess.role !== "viewer") {
     // 2-column layout with chat
     content = (
       <div

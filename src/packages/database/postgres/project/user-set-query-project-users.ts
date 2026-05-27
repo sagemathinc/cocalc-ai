@@ -8,20 +8,24 @@ import {
   is_object,
   is_valid_uuid_string,
 } from "@cocalc/util/misc";
-
-type UserGroup = "owner" | "collaborator";
+import {
+  isProjectUserRole,
+  type ProjectUserRole,
+  type ProjectViewerReadPolicy,
+} from "@cocalc/util/project-access";
 
 type AllowedUserFields = {
-  group?: UserGroup;
+  group?: ProjectUserRole;
   hide?: boolean;
   ssh_keys?: Record<string, Record<string, unknown> | undefined>;
+  read_policy?: ProjectViewerReadPolicy;
 };
 
 function ensureAllowedKeys(
   user: Record<string, unknown>,
   allowGroupChanges: boolean,
 ): void {
-  const allowed = new Set(["hide", "ssh_keys"]);
+  const allowed = new Set(["hide", "ssh_keys", "read_policy"]);
   for (const key of Object.keys(user)) {
     if (key === "group") {
       if (!allowGroupChanges) {
@@ -35,6 +39,36 @@ function ensureAllowedKeys(
       throw Error(`unknown field '${key}'`);
     }
   }
+}
+
+function sanitizeViewerReadPolicy(
+  read_policy: unknown,
+): ProjectViewerReadPolicy {
+  if (!is_object(read_policy)) {
+    throw Error("read_policy must be an object");
+  }
+  const rules = (read_policy as any).rules;
+  if (!Array.isArray(rules)) {
+    throw Error("read_policy.rules must be an array");
+  }
+  return {
+    rules: rules.map((rule, index) => {
+      if (!is_object(rule)) {
+        throw Error(`read_policy.rules[${index}] must be an object`);
+      }
+      const action = `${(rule as any).action ?? ""}`;
+      if (action !== "include" && action !== "exclude") {
+        throw Error(
+          `read_policy.rules[${index}].action must be 'include' or 'exclude'`,
+        );
+      }
+      const path = `${(rule as any).path ?? ""}`.trim();
+      if (!path) {
+        throw Error(`read_policy.rules[${index}].path must be nonempty`);
+      }
+      return { action, path };
+    }),
+  };
 }
 
 function sanitizeSshKeys(
@@ -107,13 +141,21 @@ export function sanitizeUserSetQueryProjectUsers(
           "changing collaborator group via user_set_query is not allowed",
         );
       }
-      const group = (user as any).group;
-      if (group !== "owner" && group !== "collaborator") {
+      const group = `${(user as any).group ?? ""}`;
+      if (!isProjectUserRole(group)) {
         throw Error(
-          `invalid group value '${group}' - must be 'owner' or 'collaborator'`,
+          `invalid group value '${group}' - must be 'owner', 'collaborator', or 'viewer'`,
         );
       }
       entry.group = group;
+    }
+    if ("read_policy" in user) {
+      if (account_id != null) {
+        throw Error(
+          "changing viewer read_policy via user_set_query is not allowed",
+        );
+      }
+      entry.read_policy = sanitizeViewerReadPolicy((user as any).read_policy);
     }
     if ("hide" in user) {
       if (typeof (user as any).hide !== "boolean") {

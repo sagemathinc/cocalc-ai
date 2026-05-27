@@ -13,7 +13,10 @@ import { db } from "@cocalc/database";
 import { listProjectedMyCollaboratorsForAccount } from "@cocalc/database/postgres/account-collaborator-index";
 import getPool from "@cocalc/database/pool";
 import { callback2 } from "@cocalc/util/async-utils";
-import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
+import {
+  assertLocalProjectCollaborator,
+  getLocalProjectAccessStatus,
+} from "@cocalc/server/conat/project-local-access";
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import type {
   AddCollaborator,
@@ -41,6 +44,12 @@ import {
   ensureAccountSecurityStateReady,
   isAccountBannedCached,
 } from "@cocalc/server/accounts/security-state";
+import {
+  DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY,
+  isProjectUserRole,
+  type ProjectUserRole,
+  type ProjectViewerReadPolicy,
+} from "@cocalc/util/project-access";
 import { RESEND_INVITE_INTERVAL_DAYS } from "@cocalc/util/consts/invites";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
@@ -74,7 +83,7 @@ import { upsertProjectCollabInviteDirectory } from "@cocalc/server/projects/coll
 
 const logger = getLogger("project:collaborators");
 const COLLAB_GROUPS = ["owner", "collaborator"] as const;
-const COLLAB_GROUP_SET = new Set<string>(COLLAB_GROUPS);
+const PROJECT_ACCESS_GROUP_SET = new Set<string>([...COLLAB_GROUPS, "viewer"]);
 const COLLAB_INVITE_EXPIRES_DAYS = 30;
 const COLLAB_INVITE_EXPIRES_INTERVAL = `${COLLAB_INVITE_EXPIRES_DAYS} days`;
 const EMAIL_ONLY_INVITE_TTL_DAYS = 14;
@@ -563,8 +572,9 @@ function collaboratorRowsFromProjectUsers(
     .map(([account_id, info]) => ({
       account_id,
       group: `${info?.group ?? ""}` as ProjectCollaboratorRow["group"],
+      read_policy: info?.read_policy ?? null,
     }))
-    .filter((row) => COLLAB_GROUP_SET.has(row.group))
+    .filter((row) => PROJECT_ACCESS_GROUP_SET.has(row.group))
     .sort((a, b) => {
       const groupOrder =
         (a.group === "owner" ? 0 : 1) - (b.group === "owner" ? 0 : 1);
@@ -654,11 +664,20 @@ export async function removeCollaborator({
     project_id;
   };
 }): Promise<void> {
-  await assertLocalProjectCollaborator({
-    account_id,
-    project_id: opts.project_id,
-  });
-  if (opts.account_id !== account_id) {
+  if (opts.account_id === account_id) {
+    if (
+      (await getLocalProjectAccessStatus({
+        account_id,
+        project_id: opts.project_id,
+      })) !== "local-project-user"
+    ) {
+      throw new Error("user is not a member of this project");
+    }
+  } else {
+    await assertLocalProjectCollaborator({
+      account_id,
+      project_id: opts.project_id,
+    });
     await assertCanManageProjectCollaborators({
       account_id,
       action: "remove collaborators",
@@ -674,6 +693,82 @@ export async function removeCollaborator({
     inviter_account_id: opts.account_id,
     project_id: opts.project_id,
   });
+  await publishProjectAccountFeedEventsBestEffort({
+    project_id: opts.project_id,
+  });
+}
+
+export async function setProjectUserRole({
+  account_id,
+  opts,
+}: {
+  account_id: string;
+  opts: {
+    project_id: string;
+    target_account_id: string;
+    role: Exclude<ProjectUserRole, "owner">;
+    read_policy?: ProjectViewerReadPolicy | null;
+  };
+}): Promise<void> {
+  ensureUuid(account_id, "account_id");
+  ensureUuid(opts.project_id, "project_id");
+  ensureUuid(opts.target_account_id, "target_account_id");
+  if (opts.role !== "collaborator" && opts.role !== "viewer") {
+    throw new Error("role must be collaborator or viewer");
+  }
+  await assertLocalProjectCollaborator({
+    account_id,
+    project_id: opts.project_id,
+  });
+  await assertCanManageProjectCollaborators({
+    account_id,
+    action: "change collaborator roles",
+    project_id: opts.project_id,
+  });
+  const rolePatch =
+    opts.role === "viewer"
+      ? {
+          group: "viewer",
+          read_policy:
+            opts.read_policy ?? DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY,
+        }
+      : { group: "collaborator" };
+  const { rows } = await getPool().query<{ group: string | null }>(
+    `
+      UPDATE projects
+         SET users = jsonb_set(
+           users,
+           ARRAY[$2::text],
+           CASE
+             WHEN $3::text = 'collaborator' THEN
+               (COALESCE(users -> $2::text, '{}'::jsonb) - 'read_policy') || $4::jsonb
+             ELSE
+               COALESCE(users -> $2::text, '{}'::jsonb) || $4::jsonb
+           END,
+           false
+         )
+       WHERE project_id=$1
+         AND users ? $2::text
+         AND users -> $2::text ->> 'group' <> 'owner'
+       RETURNING users -> $2::text ->> 'group' AS "group"
+    `,
+    [
+      opts.project_id,
+      opts.target_account_id,
+      opts.role,
+      JSON.stringify(rolePatch),
+    ],
+  );
+  if (!isProjectUserRole(rows[0]?.group)) {
+    throw new Error("target account is not a non-owner project user");
+  }
+  await appendProjectOutboxEventForProject({
+    db: getPool(),
+    event_type: "project.membership_changed",
+    project_id: opts.project_id,
+    default_bay_id: getConfiguredBayId(),
+  });
+  await syncProjectUsersOnHost({ project_id: opts.project_id });
   await publishProjectAccountFeedEventsBestEffort({
     project_id: opts.project_id,
   });
@@ -1504,13 +1599,14 @@ export async function listCollaborators({
        a.last_name,
        CASE WHEN $2::boolean THEN a.email_address ELSE NULL END AS email_address,
        a.last_active,
-       (u.info ->> 'group')::text AS "group"
+       (u.info ->> 'group')::text AS "group",
+       u.info -> 'read_policy' AS read_policy
      FROM projects p
      CROSS JOIN LATERAL jsonb_each(p.users) AS u(account_id_text, info)
      LEFT JOIN accounts a ON a.account_id=u.account_id_text::uuid
      WHERE p.project_id=$1
        AND u.account_id_text ~* '^[0-9a-f-]{36}$'
-       AND (u.info ->> 'group') IN ('owner','collaborator')
+       AND (u.info ->> 'group') IN ('owner','collaborator','viewer')
      ORDER BY
        CASE WHEN (u.info ->> 'group')='owner' THEN 0 ELSE 1 END,
        a.last_active DESC NULLS LAST,
@@ -1518,7 +1614,7 @@ export async function listCollaborators({
     [project_id, includeEmail],
   );
   return await hydrateCollaboratorRows(
-    rows.filter((row) => COLLAB_GROUP_SET.has(row.group)),
+    rows.filter((row) => PROJECT_ACCESS_GROUP_SET.has(row.group)),
     includeEmail,
   );
 }
@@ -1788,6 +1884,9 @@ async function assertCanManageProjectCollaborators({
   const row = rows[0];
   if (row?.actor_group === "owner") {
     return;
+  }
+  if (row?.actor_group !== "collaborator") {
+    throw new Error(`only project collaborators can ${action}`);
   }
   if (!row?.manage_users_owner_only) {
     return;

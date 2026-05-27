@@ -10,6 +10,7 @@ import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { lite } from "@cocalc/frontend/lite";
 import { BlobCleanupButton } from "@cocalc/frontend/blobs/cleanup-button";
+import { useProjectContext } from "@cocalc/frontend/project/context";
 import { ProjectCollaboratorsContent } from "@cocalc/frontend/project/page/project-collaborators";
 import CloneProject from "@cocalc/frontend/project/explorer/clone";
 import {
@@ -72,6 +73,7 @@ export function useProjectSettingsSections({
   const datastore = useTypedRedux("customize", "datastore");
   const commercial = useTypedRedux("customize", "commercial");
   const student = useStudentProjectFunctionality(project_id);
+  const { projectAccess } = useProjectContext();
 
   const showSSH = !lite && !student.disableSSH;
   const showDatastore =
@@ -100,6 +102,39 @@ export function useProjectSettingsSections({
       navItems: [],
       showNoInternetWarning,
       showNonMemberWarning,
+    };
+  }
+
+  if (projectAccess.role === "viewer") {
+    const sections: ProjectSettingsSection[] = [
+      {
+        id: "people",
+        icon: "users",
+        label: "People",
+        title: "People",
+        description:
+          "Review project access. Viewers can remove themselves, but cannot manage other collaborators.",
+        children: (
+          <ProjectCollaboratorsContent
+            project_id={project_id}
+            layout="flyout"
+          />
+        ),
+      },
+    ];
+    return {
+      sections,
+      navItems: sections.map(
+        ({ id, icon, label, warning, danger }): ProjectSettingsNavItem => ({
+          id,
+          icon,
+          label,
+          warning,
+          danger,
+        }),
+      ),
+      showNoInternetWarning: false,
+      showNonMemberWarning: false,
     };
   }
 

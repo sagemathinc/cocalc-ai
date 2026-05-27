@@ -245,7 +245,7 @@ function register(
   };
 
   function init(Actions) {
-    return (path: string, redux, project_id: string) => {
+    return (path: string, redux, project_id: string, initOptions?: any) => {
       const name = redux_name(project_id, path);
       if (reference_count[name] == undefined) {
         reference_count[name] = 1;
@@ -261,7 +261,7 @@ function register(
       const actions = redux.createActions(name, Actions);
 
       // Call the base class init.  (NOTE: it also calls _init2 if defined.)
-      actions._init(project_id, path, store);
+      actions._init(project_id, path, store, initOptions);
 
       return name;
     };
@@ -301,7 +301,12 @@ function register(
       return async_data.component;
     };
 
-    data.initAsync = async (path: string, redux, project_id: string) => {
+    data.initAsync = async (
+      path: string,
+      redux,
+      project_id: string,
+      initOptions?: any,
+    ) => {
       if (async_data == null) {
         try {
           async_data = await getAsyncData();
@@ -313,7 +318,7 @@ function register(
           throw err;
         }
       }
-      return init(async_data.Actions)(path, redux, project_id);
+      return init(async_data.Actions)(path, redux, project_id, initOptions);
     };
   }
 

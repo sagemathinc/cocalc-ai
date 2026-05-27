@@ -501,7 +501,8 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   },
   "projects.start": {
     decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    reason:
+      "ordinary endpoint authorization is intended; admin/internal-only managed egress overrides are gated in the implementation",
   },
   "projects.stop": {
     decision: "fresh-auth-not-required",

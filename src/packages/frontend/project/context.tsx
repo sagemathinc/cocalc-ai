@@ -57,6 +57,10 @@ import {
   notifyProjectFilesystemChange,
   registerProjectFilesystemChangeHandler,
 } from "./user-filesystem-change";
+import {
+  projectAccessFromRole,
+  type ProjectAccess,
+} from "@cocalc/util/project-access";
 
 type HiddenActiveTabResolution =
   | { kind: "noop" }
@@ -163,6 +167,7 @@ export interface ProjectContextState {
   onCoCalcDocker: boolean;
   project_id: string;
   project?: Project;
+  projectAccess: ProjectAccess;
   notifyUserFilesystemChange: () => void;
   registerUserFilesystemChangeHandler: (
     handler: (() => void) | null | undefined,
@@ -198,6 +203,7 @@ export const emptyProjectContext = {
   onCoCalcCom: true,
   onCoCalcDocker: false,
   project: undefined,
+  projectAccess: projectAccessFromRole({ role: "none" }),
   project_id: "",
   notifyUserFilesystemChange: () => {},
   registerUserFilesystemChangeHandler: () => () => {},
@@ -301,6 +307,22 @@ export function useProjectContextProvider({
   ]);
 
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
+  const projectAccess = useMemo(() => {
+    if (group === "admin") {
+      return projectAccessFromRole({ role: "admin" });
+    }
+    const role =
+      (account_id
+        ? (project?.getIn?.(["users", account_id, "group"]) as
+            | string
+            | undefined)
+        : undefined) ?? group;
+    const read_policy =
+      account_id && role === "viewer"
+        ? project?.getIn?.(["users", account_id, "read_policy"])
+        : undefined;
+    return projectAccessFromRole({ role: role as any, read_policy });
+  }, [account_id, group, project]);
   const workspaces = useProjectWorkspaces(account_id, project_id);
   const previousWorkspaceSelectionRef = useRef<string>("all");
   const previousActivePathRef = useRef<string>("");
@@ -539,6 +561,7 @@ export function useProjectContextProvider({
     onCoCalcDocker,
     project_id,
     project,
+    projectAccess,
     notifyUserFilesystemChange,
     registerUserFilesystemChangeHandler,
     setContentSize,

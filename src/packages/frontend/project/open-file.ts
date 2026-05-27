@@ -34,6 +34,10 @@ import { getProjectLifecycleView } from "@cocalc/frontend/projects/host-operatio
 import { normalize } from "./utils";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { canonicalSyncPath, toAbsoluteProjectPath } from "./sync-path";
+import {
+  getProjectUserRole,
+  isViewerProjectRole,
+} from "@cocalc/frontend/project/realtime-access";
 
 // if true, PRELOAD_BACKGROUND_TABS makes it so all tabs have their file editing
 // preloaded, even background tabs.  This can make the UI much more responsive,
@@ -390,6 +394,41 @@ export async function open_file(
     return;
   }
 
+  if (isViewerProjectOpen(actions)) {
+    const ext = opts.ext ?? filename_extension(displayPath).toLowerCase();
+    let syncPath = displayPath;
+    try {
+      syncPath = await resolveSyncPathWithRetry(
+        actions.fs() as SyncIdentityFs,
+        displayPath,
+        projectHome,
+        { isOpen: tabIsOpened },
+      );
+    } catch (err) {
+      if (isCancelledSyncIdentityResolutionError(err)) {
+        return;
+      }
+      // The viewer fs service still enforces path policy on every read. Keep
+      // opening by display path if canonical identity resolution is temporarily
+      // unavailable, instead of falling back to collaborator realtime.
+      syncPath = displayPath;
+    }
+    actions.open_files?.set(displayPath, "ext", ext);
+    actions.open_files?.set(displayPath, "component", {});
+    actions.open_files?.set(displayPath, "sync_path", syncPath);
+    actions.open_files?.set(displayPath, "chat_width", opts.chat_width);
+    actions.open_files?.set(displayPath, "display_path", displayPath);
+    actions.open_files?.set(displayPath, "fragmentId", opts.fragmentId ?? "");
+    redux.getActions("page").save_session();
+    if (opts.foreground) {
+      actions.foreground_project(opts.change_history);
+      actions.set_active_tab(path_to_tab(displayPath), {
+        change_history: opts.change_history,
+      });
+    }
+    return;
+  }
+
   const continueOpen = async (): Promise<void> => {
     let syncPath: string;
     try {
@@ -560,6 +599,18 @@ export async function open_file(
   }
 
   await continueOpen();
+}
+
+function isViewerProjectOpen(actions: ProjectActions): boolean {
+  const account_id = redux.getStore("account")?.get("account_id");
+  if (!account_id) return false;
+  return isViewerProjectRole(
+    getProjectUserRole({
+      account_id,
+      project_id: actions.project_id,
+      projectsStore: redux.getStore("projects") as any,
+    }),
+  );
 }
 
 function toAbsoluteOpenPath(path: string, projectHome: string): string {

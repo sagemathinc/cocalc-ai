@@ -56,6 +56,7 @@ interface Props {
   onRefreshListing?: () => void;
   autoUpdateListing?: boolean;
   onToggleAutoUpdate?: (checked: boolean) => void;
+  readOnly?: boolean;
 }
 
 export function ActionBar(props: Props) {
@@ -79,6 +80,7 @@ function ActionBarEnabled({
   onRefreshListing,
   autoUpdateListing,
   onToggleAutoUpdate,
+  readOnly = false,
 }: Props) {
   const intl = useIntl();
   const currentParts = current_path.split("/").filter(Boolean);
@@ -267,6 +269,9 @@ function ActionBarEnabled({
   }
 
   function render_check_all_button(): React.JSX.Element | undefined {
+    if (readOnly) {
+      return;
+    }
     if (listing.length === 0) {
       return;
     }
@@ -331,12 +336,19 @@ function ActionBarEnabled({
           <div style={{ display: "inline" }}>
             {" "}
             &mdash;{" "}
-            <FormattedMessage
-              id="project.explorer.action-bar.currently_selected.info"
-              defaultMessage={
-                "Click the checkbox to the left of a file to copy, download, etc."
-              }
-            />
+            {readOnly ? (
+              <FormattedMessage
+                id="project.explorer.action-bar.read_only.info"
+                defaultMessage="Viewer access is read-only."
+              />
+            ) : (
+              <FormattedMessage
+                id="project.explorer.action-bar.currently_selected.info"
+                defaultMessage={
+                  "Click the checkbox to the left of a file to copy, download, etc."
+                }
+              />
+            )}
           </div>
           {refreshButton && <> &middot; {refreshButton}</>}
           {autoUpdateButton && <> &middot; {autoUpdateButton}</>}
@@ -503,6 +515,9 @@ function ActionBarEnabled({
   }
 
   function render_action_buttons(): React.JSX.Element | undefined {
+    if (readOnly) {
+      return;
+    }
     if (inBackups) {
       return render_backup_actions();
     }

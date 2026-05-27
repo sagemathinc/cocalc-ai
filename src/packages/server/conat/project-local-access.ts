@@ -1,6 +1,14 @@
 import getPool from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { is_valid_uuid_string as isValid } from "@cocalc/util/misc";
+import {
+  isProjectCollaboratorRole,
+  isProjectUserRole,
+  projectAccessFromRole,
+  type ProjectAccess,
+  type ProjectUserRole,
+  type ProjectViewerReadPolicy,
+} from "@cocalc/util/project-access";
 
 export const PROJECT_COLLABORATOR_REQUIRED_ERROR =
   "user must be a collaborator on project";
@@ -11,6 +19,11 @@ export type LocalProjectCollaboratorAccessStatus =
   | "local-collaborator"
   | "wrong-bay"
   | "not-collaborator"
+  | "missing-project";
+export type LocalProjectAccessStatus =
+  | "local-project-user"
+  | "wrong-bay"
+  | "not-project-user"
   | "missing-project";
 
 function pool() {
@@ -50,15 +63,22 @@ async function loadProjectAccessRow({
   account_id: string;
   project_id: string;
 }): Promise<
-  { group: string | null; owning_bay_id: string | null } | undefined
+  | {
+      group: string | null;
+      owning_bay_id: string | null;
+      read_policy: ProjectViewerReadPolicy | null;
+    }
+  | undefined
 > {
   const { rows } = await pool().query<{
     group: string | null;
     owning_bay_id: string | null;
+    read_policy: ProjectViewerReadPolicy | null;
   }>(
     `
       SELECT
         users -> $2::text ->> 'group' AS "group",
+        users -> $2::text -> 'read_policy' AS read_policy,
         COALESCE(owning_bay_id, $3) AS owning_bay_id
       FROM projects
       WHERE project_id=$1
@@ -111,9 +131,47 @@ export async function getLocalProjectCollaboratorAccessStatus({
   if (row.owning_bay_id !== getConfiguredBayId()) {
     return "wrong-bay";
   }
-  return row.group === "owner" || row.group === "collaborator"
+  return isProjectCollaboratorRole(row.group)
     ? "local-collaborator"
     : "not-collaborator";
+}
+
+export async function getLocalProjectAccessStatus({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<LocalProjectAccessStatus> {
+  assertValidIds({ account_id, project_id });
+  const row = await loadProjectAccessRow({ account_id, project_id });
+  if (!row) {
+    return "missing-project";
+  }
+  if (row.owning_bay_id !== getConfiguredBayId()) {
+    return "wrong-bay";
+  }
+  return isProjectUserRole(row.group)
+    ? "local-project-user"
+    : "not-project-user";
+}
+
+export async function getLocalProjectAccess({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectAccess> {
+  assertValidIds({ account_id, project_id });
+  const row = await loadProjectAccessRow({ account_id, project_id });
+  if (!row || row.owning_bay_id !== getConfiguredBayId()) {
+    return projectAccessFromRole({});
+  }
+  return projectAccessFromRole({
+    role: row.group as ProjectUserRole | undefined,
+    read_policy: row.read_policy,
+  });
 }
 
 export async function assertLocalProjectCollaborator({

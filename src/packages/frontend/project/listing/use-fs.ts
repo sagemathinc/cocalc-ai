@@ -33,8 +33,10 @@ function isRetryableProjectFsError(err: unknown): boolean {
 // the typing for now)
 export default function useFs({
   project_id,
+  viewer,
 }: {
   project_id: string;
+  viewer?: boolean;
 }): FilesystemClient | null {
   const [fs, setFs] = useState<FilesystemClient | null>(null);
 
@@ -47,7 +49,8 @@ export default function useFs({
         try {
           const nextFs = await webapp_client.conat_client.projectFs({
             project_id,
-            caller: "useFs",
+            caller: viewer ? "useFs.viewer" : "useFs",
+            viewer,
           });
           if (!canceled) {
             setFs(nextFs);
@@ -75,7 +78,7 @@ export default function useFs({
     return () => {
       canceled = true;
     };
-  }, [project_id]);
+  }, [project_id, viewer]);
 
   return fs;
 }

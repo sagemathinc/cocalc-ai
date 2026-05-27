@@ -22,6 +22,7 @@ import {
   respondEmailProjectInvite as respondEmailProjectInviteLocal,
   removeCollaborator as removeCollaboratorLocal,
   respondCollabInvite as respondCollabInviteLocal,
+  setProjectUserRole as setProjectUserRoleLocal,
 } from "@cocalc/server/projects/collaborators";
 import {
   leaveOrDeleteProjectsForAccount,
@@ -1753,6 +1754,22 @@ export async function removeCollaborator({
     .removeCollaborator({ account_id: account_id!, opts });
 }
 
+export async function setProjectUserRole({
+  account_id,
+  opts,
+}: {
+  account_id?: string;
+  opts: Parameters<typeof setProjectUserRoleLocal>[0]["opts"];
+}) {
+  const ownership = await resolveProjectBay(opts.project_id);
+  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
+    return await setProjectUserRoleLocal({ account_id: account_id!, opts });
+  }
+  await getInterBayBridge()
+    .projectCollabInvite(ownership.bay_id)
+    .setProjectUserRole({ account_id: account_id!, opts });
+}
+
 function isCollabInviteNotFound(err: unknown, invite_id: string): boolean {
   const message = err instanceof Error ? err.message : `${err}`;
   return message.includes(`invite '${invite_id}' not found`);
@@ -2201,6 +2218,7 @@ export async function start({
   restore_backup_id,
   autostart,
   managed_egress_override,
+  managed_egress_override_auth,
   wait = true,
 }: {
   account_id: string;
@@ -2212,6 +2230,7 @@ export async function start({
   restore_backup_id?: string;
   autostart?: boolean;
   managed_egress_override?: ManagedProjectEgressOverride;
+  managed_egress_override_auth?: typeof PROJECT_DANGEROUS_INTERNAL_AUTH;
   wait?: boolean;
 }): Promise<{
   op_id: string;
@@ -2227,6 +2246,7 @@ export async function start({
     restore_backup_id,
     autostart,
     managed_egress_override,
+    managed_egress_override_auth,
     wait,
   });
 }
@@ -2261,6 +2281,7 @@ async function runProjectStartLikeAction({
   restore_backup_id,
   autostart,
   managed_egress_override,
+  managed_egress_override_auth,
   wait = true,
 }: {
   kind: "start" | "restart";
@@ -2269,6 +2290,7 @@ async function runProjectStartLikeAction({
   restore_backup_id?: string;
   autostart?: boolean;
   managed_egress_override?: ManagedProjectEgressOverride;
+  managed_egress_override_auth?: typeof PROJECT_DANGEROUS_INTERNAL_AUTH;
   wait?: boolean;
 }): Promise<{
   op_id: string;
@@ -2279,6 +2301,13 @@ async function runProjectStartLikeAction({
 }> {
   await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
   await assertProjectNotHardDeleting({ project_id });
+  if (
+    managed_egress_override != null &&
+    managed_egress_override_auth !== PROJECT_DANGEROUS_INTERNAL_AUTH &&
+    !(await isAdmin(account_id))
+  ) {
+    throw new Error("managed egress override requires admin authorization");
+  }
   try {
     const ownership = await resolveProjectBay(project_id);
     if (ownership == null) {

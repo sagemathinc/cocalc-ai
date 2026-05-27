@@ -68,7 +68,8 @@ export function ProjectCollaboratorsContent({
     );
   } else {
     const ownerOnly = project.get("manage_users_owner_only") === true;
-    const canManageCollaborators = !ownerOnly || canManageAsOwnerOrAdmin;
+    const canManageCollaborators =
+      canManageAsOwnerOrAdmin || (group === "collaborator" && !ownerOnly);
     const inviteControls = (
       <AddCollaborators
         project_id={project.get("project_id")}
@@ -91,11 +92,13 @@ export function ProjectCollaboratorsContent({
           project_id={project.get("project_id")}
         />
         {canManageCollaborators && inviteControls}
-        <InviteInboxPanel
-          project_id={project.get("project_id")}
-          mode="project"
-          showWhenEmpty={true}
-        />
+        {canManageCollaborators && (
+          <InviteInboxPanel
+            project_id={project.get("project_id")}
+            mode="project"
+            showWhenEmpty={true}
+          />
+        )}
       </Space>
     ) : (
       <div>
@@ -115,11 +118,13 @@ export function ProjectCollaboratorsContent({
             {inviteControls}
           </SettingBox>
         )}
-        <InviteInboxPanel
-          project_id={project.get("project_id")}
-          mode="project"
-          showWhenEmpty={true}
-        />
+        {canManageCollaborators && (
+          <InviteInboxPanel
+            project_id={project.get("project_id")}
+            mode="project"
+            showWhenEmpty={true}
+          />
+        )}
       </div>
     );
   }
@@ -221,7 +226,11 @@ function CollaboratorManagementPolicy({
       <Alert
         type="info"
         showIcon
-        message="Only the project owner can manage collaborators on this project."
+        message={
+          ownerOnly
+            ? "Only the project owner can manage collaborators on this project."
+            : "Only project owners and collaborators can manage collaborators on this project."
+        }
         description="You can still remove yourself from the current collaborators list."
       />
     );

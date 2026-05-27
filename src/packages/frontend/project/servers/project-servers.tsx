@@ -4,12 +4,29 @@
  */
 
 import { Icon, Paragraph, Title } from "@cocalc/frontend/components";
+import { Alert } from "antd";
 import { ICON_NAME, ROOT_STYLE, TITLE } from "./consts";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { AppServerPanel } from "../app-server-panel";
 
 export function ProjectServers() {
-  const { project_id } = useProjectContext();
+  const { project_id, projectAccess } = useProjectContext();
+
+  if (!projectAccess.capabilities.useProjectRuntime) {
+    return (
+      <div style={ROOT_STYLE}>
+        <Title level={2}>
+          <Icon name={ICON_NAME} /> {TITLE}
+        </Title>
+        <Alert
+          showIcon
+          type="info"
+          message="Viewer access is read-only"
+          description="Viewers cannot start or open project app servers. Ask an owner or collaborator to upgrade your role if you need runtime access."
+        />
+      </div>
+    );
+  }
 
   return (
     <div style={ROOT_STYLE}>

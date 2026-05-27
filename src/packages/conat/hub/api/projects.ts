@@ -18,6 +18,10 @@ import {
 } from "@cocalc/conat/files/file-server";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
 import type {
+  ProjectUserRole,
+  ProjectViewerReadPolicy,
+} from "@cocalc/util/project-access";
+import type {
   ExecuteCodeOptions,
   ExecuteCodeOutput,
 } from "@cocalc/util/types/execute-code";
@@ -341,7 +345,8 @@ export interface ProjectCollaboratorRow {
   last_name?: string | null;
   email_address?: string | null;
   last_active?: Date | null;
-  group: "owner" | "collaborator";
+  group: ProjectUserRole;
+  read_policy?: ProjectViewerReadPolicy | null;
 }
 
 export interface MyCollaboratorRow {
@@ -543,6 +548,7 @@ export const projects = {
   listCopyRowsByOpId: authFirstRequireAccount,
   cancelPendingCopy: authFirstRequireAccount,
   removeCollaborator: authFirstRequireAccount,
+  setProjectUserRole: authFirstRequireAccount,
   addCollaborator: authFirstRequireAccount,
   createCollabInvite: authFirstRequireAccount,
   listCollabInvites: authFirstRequireAccount,
@@ -811,6 +817,19 @@ export interface Projects {
     opts: {
       account_id;
       project_id;
+    };
+  }) => Promise<void>;
+
+  setProjectUserRole: ({
+    account_id,
+    opts,
+  }: {
+    account_id?: string;
+    opts: {
+      project_id: string;
+      target_account_id: string;
+      role: Exclude<ProjectUserRole, "owner">;
+      read_policy?: ProjectViewerReadPolicy | null;
     };
   }) => Promise<void>;
 

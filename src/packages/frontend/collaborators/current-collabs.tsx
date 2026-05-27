@@ -34,7 +34,12 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
   const ownerOnly = project.get("manage_users_owner_only") === true;
   const currentGroup = project.getIn(["users", current_account_id, "group"]);
   const currentCanManageCollaborators =
-    !ownerOnly || currentGroup === "owner" || isAdmin;
+    isAdmin ||
+    currentGroup === "owner" ||
+    (currentGroup === "collaborator" && !ownerOnly);
+  const [roleSavingAccountId, setRoleSavingAccountId] = React.useState<
+    string | null
+  >(null);
 
   function remove_collaborator(account_id: string) {
     const project_id = project.get("project_id");
@@ -108,6 +113,55 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
     );
   }
 
+  async function set_user_role(
+    account_id: string,
+    role: "collaborator" | "viewer",
+  ) {
+    setRoleSavingAccountId(account_id);
+    try {
+      await redux
+        .getActions("projects")
+        .set_project_user_role(project.get("project_id"), account_id, role);
+    } finally {
+      setRoleSavingAccountId(null);
+    }
+  }
+
+  function user_role_button(account_id: string, group?: string) {
+    if (!currentCanManageCollaborators || group === "owner") {
+      return null;
+    }
+    if (account_id === current_account_id && !isAdmin) {
+      return null;
+    }
+    const nextRole = group === "viewer" ? "collaborator" : "viewer";
+    const label = nextRole === "viewer" ? "Make viewer" : "Make collaborator";
+    const title =
+      nextRole === "viewer"
+        ? "Change this person to a read-only viewer? They will be able to read allowed files, but cannot edit files, run code, use terminals, use SSH, or manage this project."
+        : "Change this viewer back to a full collaborator? They will regain normal project write and runtime access.";
+    return (
+      <Popconfirm
+        title={<div style={{ maxWidth: 360 }}>{title}</div>}
+        onConfirm={() => void set_user_role(account_id, nextRole)}
+        okText={label}
+        cancelText={<CancelText />}
+      >
+        <Button
+          loading={roleSavingAccountId === account_id}
+          size="small"
+          type="text"
+          style={{
+            marginBottom: "0",
+            paddingInline: isFlyout ? 0 : 8,
+          }}
+        >
+          {label}
+        </Button>
+      </Popconfirm>
+    );
+  }
+
   function render_user(user: any, is_last?: boolean) {
     return (
       <div
@@ -167,6 +221,7 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
           }}
         >
           {render_role(user.group)}
+          {user_role_button(user.account_id, user.group)}
           {user_remove_button(user.account_id, user.group)}
         </div>
       </div>
@@ -194,9 +249,10 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
 
   function render_role(group?: string) {
     const isOwner = group === "owner";
+    const isViewer = group === "viewer";
     return (
       <Tag
-        color={isOwner ? "blue" : undefined}
+        color={isOwner ? "blue" : isViewer ? "gold" : undefined}
         style={{ marginInlineEnd: 0, textTransform: "lowercase" }}
       >
         {isOwner && <Icon name="lock" />} {group ?? "collaborator"}
@@ -253,6 +309,8 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
   }
 
   function render_access_summary(users: any[]) {
+    const viewerCount = users.filter((user) => user.group === "viewer").length;
+    const fullAccessCount = users.length - viewerCount;
     return (
       <div
         style={{
@@ -275,13 +333,19 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
           <div>
             <div style={{ fontWeight: 600 }}>Full project access</div>
             <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
-              Edit files, run code, manage settings, and invite people.
+              Collaborators can edit files and use runtimes. Viewers can only
+              read allowed files.
             </div>
           </div>
         </div>
-        <Tag color="blue" style={{ marginInlineEnd: 0 }}>
-          {users.length} {users.length === 1 ? "person" : "people"}
-        </Tag>
+        <div>
+          <Tag color="blue" style={{ marginInlineEnd: 6 }}>
+            {fullAccessCount} full access
+          </Tag>
+          <Tag color="gold" style={{ marginInlineEnd: 0 }}>
+            {viewerCount} {viewerCount === 1 ? "viewer" : "viewers"}
+          </Tag>
+        </div>
       </div>
     );
   }

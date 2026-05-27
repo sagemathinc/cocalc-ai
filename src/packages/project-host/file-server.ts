@@ -85,8 +85,12 @@ import {
 } from "@cocalc/util/project-runtime";
 import {
   fsServer,
+  fsReadOnlyServer,
   DEFAULT_FILE_SERVICE,
+  VIEWER_FILE_SERVICE,
   fsSubject,
+  parseViewerFsSubject,
+  type Filesystem as ConatFilesystem,
 } from "@cocalc/conat/files/fs";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import cpExec from "@cocalc/backend/sandbox/cp";
@@ -132,6 +136,12 @@ import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
 import { resetClonedProjectState } from "./clone-state";
 import { withBackupParallelLimit } from "./backup-queue";
 export { getBackupExecutionStatus } from "./backup-queue";
+import {
+  isProjectViewerRole,
+  normalizeProjectViewerPolicyPath,
+  viewerReadPolicyAllowsPath,
+  type ProjectViewerReadPolicy,
+} from "@cocalc/util/project-access";
 import {
   projectRuntimeRootfsContractLabelsForCurrentHost,
   readCurrentProjectRuntimeUsernsMapFingerprint,
@@ -337,6 +347,151 @@ function projectIdFromSubject(subject: string): string {
     throw Error("not a valid project id");
   }
   return project_id;
+}
+
+function viewerSubjectFromSubject(subject: string): {
+  project_id: string;
+  account_id: string;
+} {
+  const parsed = parseViewerFsSubject(subject);
+  if (!parsed) {
+    throw Error("invalid viewer fs subject");
+  }
+  return parsed;
+}
+
+function getViewerReadPolicy({
+  project_id,
+  account_id,
+}: {
+  project_id: string;
+  account_id: string;
+}): ProjectViewerReadPolicy {
+  const row = getProject(project_id);
+  const userEntry = row?.users?.[account_id];
+  const group = typeof userEntry === "string" ? userEntry : userEntry?.group;
+  if (!isProjectViewerRole(group)) {
+    throw new Error("account is not a viewer on this project");
+  }
+  const readPolicy =
+    typeof userEntry === "string" ? undefined : userEntry?.read_policy;
+  if (!readPolicy || !Array.isArray(readPolicy.rules)) {
+    throw new Error("viewer read policy is not configured");
+  }
+  return readPolicy;
+}
+
+function viewerAccessDenied(path: string): NodeJS.ErrnoException {
+  const err = new Error(
+    `EACCES: permission denied by viewer read policy, open '${path}'`,
+  ) as NodeJS.ErrnoException;
+  err.code = "EACCES";
+  err.errno = -13;
+  err.path = path;
+  err.syscall = "open";
+  return err;
+}
+
+async function assertViewerPathAllowed({
+  fs,
+  readPolicy,
+  path,
+}: {
+  fs: ConatFilesystem;
+  readPolicy: ProjectViewerReadPolicy;
+  path: string;
+}): Promise<string> {
+  if (typeof fs.canonicalSyncIdentityPath !== "function") {
+    throw new Error("project filesystem does not support canonical paths");
+  }
+  const canonical = normalizeProjectViewerPolicyPath(
+    await fs.canonicalSyncIdentityPath(path),
+  );
+  if (
+    canonical == null ||
+    !viewerReadPolicyAllowsPath({ policy: readPolicy, path: canonical })
+  ) {
+    throw viewerAccessDenied(path);
+  }
+  return canonical;
+}
+
+function createViewerReadOnlyFilesystem({
+  fs,
+  readPolicy,
+}: {
+  fs: ConatFilesystem;
+  readPolicy: ProjectViewerReadPolicy;
+}): ConatFilesystem {
+  return {
+    constants: async () => await fs.constants(),
+    describeFile: async (path: string) => {
+      await assertViewerPathAllowed({ fs, readPolicy, path });
+      return await fs.describeFile(path);
+    },
+    exists: async (path: string) => {
+      try {
+        await assertViewerPathAllowed({ fs, readPolicy, path });
+      } catch {
+        return false;
+      }
+      return await fs.exists(path);
+    },
+    lstat: async (path: string) => {
+      await assertViewerPathAllowed({ fs, readPolicy, path });
+      return await fs.lstat(path);
+    },
+    readFile: async (path: string, encoding?: string, lock?: number) => {
+      await assertViewerPathAllowed({ fs, readPolicy, path });
+      return await fs.readFile(path, encoding, lock);
+    },
+    readdir: async (path: string, options?: any) => {
+      if (options?.recursive) {
+        throw new Error("recursive viewer directory listing is not supported");
+      }
+      await assertViewerPathAllowed({ fs, readPolicy, path });
+      const entries = await fs.readdir(path, options);
+      if (!options?.withFileTypes) {
+        const names = entries as string[];
+        const allowed: string[] = [];
+        for (const name of names) {
+          const childPath = path ? `${path}/${name}` : name;
+          try {
+            await assertViewerPathAllowed({
+              fs,
+              readPolicy,
+              path: childPath,
+            });
+            allowed.push(name);
+          } catch {}
+        }
+        return allowed;
+      }
+      const allowed: any[] = [];
+      for (const entry of entries as any[]) {
+        const childPath = path ? `${path}/${entry.name}` : entry.name;
+        try {
+          await assertViewerPathAllowed({ fs, readPolicy, path: childPath });
+          allowed.push(entry);
+        } catch {}
+      }
+      return allowed as any;
+    },
+    readlink: async (path: string) => {
+      await assertViewerPathAllowed({ fs, readPolicy, path });
+      return await fs.readlink(path);
+    },
+    realpath: async (path: string) => {
+      return await assertViewerPathAllowed({ fs, readPolicy, path });
+    },
+    canonicalSyncIdentityPath: async (path: string) => {
+      return await assertViewerPathAllowed({ fs, readPolicy, path });
+    },
+    stat: async (path: string) => {
+      await assertViewerPathAllowed({ fs, readPolicy, path });
+      return await fs.stat(path);
+    },
+  } as ConatFilesystem;
 }
 
 function snapshotRestoreRoot(): string {
@@ -3759,11 +3914,45 @@ export async function initFsServer({
   });
 }
 
-function invalidateProjectFsServer(project_id: string): void {
-  servers?.file?.invalidateSubject?.(fsSubject({ project_id }));
+export async function initViewerFsServer({
+  client,
+  service = VIEWER_FILE_SERVICE,
+}: {
+  client: ConatClient;
+  service?: string;
+}) {
+  logger.debug("initViewerFsServer");
+  return await fsReadOnlyServer({
+    service,
+    client,
+    fs: async (subject?: string) => {
+      if (!subject) {
+        throw Error("fsReadOnlyServer requires subject");
+      }
+      const { project_id, account_id } = viewerSubjectFromSubject(subject);
+      const { path } = await getVolume(project_id);
+      const projectFs = createProjectSandboxFilesystem({
+        project_id,
+        home: path,
+        rootfs: getRootfsMountpoint(project_id),
+        scratch: getScratchMountpoint(project_id),
+        deleteSnapshot: async (name: string) =>
+          await deleteSnapshot({ project_id, name }),
+      });
+      return createViewerReadOnlyFilesystem({
+        fs: projectFs,
+        readPolicy: getViewerReadPolicy({ project_id, account_id }),
+      });
+    },
+  });
 }
 
-let servers: null | { ssh: any; file: any } = null;
+function invalidateProjectFsServer(project_id: string): void {
+  servers?.file?.invalidateSubject?.(fsSubject({ project_id }));
+  servers?.viewerFile?.invalidateAll?.();
+}
+
+let servers: null | { ssh: any; file: any; viewerFile: any } = null;
 
 export async function initFileServer({
   client,
@@ -3856,6 +4045,7 @@ export async function initFileServer({
     publishRootfsImage: reuseInFlight(publishRootfsImage),
     uploadRootfsReleaseArtifact: reuseInFlight(uploadRootfsReleaseArtifact),
   });
+  const viewerFile = await initViewerFsServer({ client });
   logger.debug("initFileServer: fs successfully initialized");
 
   // Expose fast in-host file I/O for ACP/container executor when running
@@ -4071,7 +4261,7 @@ export async function initFileServer({
 
   logger.debug("initFileServer: success");
 
-  servers = { file, ssh };
+  servers = { file, ssh, viewerFile };
   return servers;
 }
 
@@ -4110,9 +4300,10 @@ export function closeFileServer() {
   if (servers == null) {
     return;
   }
-  const { file, ssh } = servers;
+  const { file, ssh, viewerFile } = servers;
   servers = null;
   file.close();
+  viewerFile.close();
   void ssh.close?.();
 }
 
