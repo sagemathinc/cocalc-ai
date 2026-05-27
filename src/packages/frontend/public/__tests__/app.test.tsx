@@ -362,11 +362,12 @@ describe("PublicApp", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Launchpad Pricing" }),
+      screen.getByRole("heading", {
+        name: "Choose Your Launchpad Membership",
+      }),
     ).not.toBeNull();
-    expect(screen.getByText("Membership-first pricing")).not.toBeNull();
     expect(screen.getByText("Member")).not.toBeNull();
-    expect(screen.getAllByRole("link", { name: "Open Store" }).length).toBe(2);
+    expect(screen.getAllByRole("link", { name: "Open Store" }).length).toBe(1);
     expect(
       screen.getByText(/the one planned pay-as-you-go exception/i),
     ).not.toBeNull();

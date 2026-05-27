@@ -126,10 +126,8 @@ function TierSection({
 
 export default function PricingPage({
   isAuthenticated = false,
-  siteName,
 }: {
   isAuthenticated?: boolean;
-  siteName: string;
 }) {
   const [tiers, setTiers] = useState<PublicMembershipTier[]>();
   const [loaded, setLoaded] = useState(false);
@@ -159,46 +157,6 @@ export default function PricingPage({
 
   return (
     <>
-      <PublicSection>
-        <Title level={2} style={{ margin: 0 }}>
-          Membership-first pricing
-        </Title>
-        <Paragraph style={{ margin: 0 }}>
-          {siteName} now sells access primarily through memberships. The
-          complicated legacy model of buying quotas for one individual project
-          is going away. The one intentional pay-as-you-go exception is custom
-          user-owned project hosts under <Text code>/hosts</Text>.
-        </Paragraph>
-        <Paragraph style={{ margin: 0 }}>
-          Visible membership tiers below come directly from this deployment's
-          admin configuration. Use the store for self-serve memberships and
-          vouchers, and use support for campus, institute, or invoice-based
-          purchasing.
-        </Paragraph>
-        <Flex gap={8} wrap>
-          {isAuthenticated ? (
-            <Button href={appPath("settings/store")} type="primary">
-              Open Store
-            </Button>
-          ) : (
-            <>
-              <Button href={appPath("auth/sign-up")} type="primary">
-                Create account
-              </Button>
-              <Button href={appPath("auth/sign-in")}>Sign in</Button>
-            </>
-          )}
-          <Button
-            href={supportPurchasePath(
-              "Membership and campus pricing",
-              "I want to ask about memberships, vouchers, or campus-wide pricing.",
-            )}
-          >
-            Ask Sales
-          </Button>
-        </Flex>
-      </PublicSection>
-
       {visibleTiers.length > 0 ? (
         <PublicGrid columns={3}>
           {visibleTiers.map((tier) => (
