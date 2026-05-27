@@ -1,11 +1,29 @@
 /** @jest-environment jsdom */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+const mockListHosts = jest.fn(async () => []);
+
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: {
+    conat_client: {
+      hub: {
+        hosts: {
+          listHosts: (...args: any[]) => mockListHosts(...args),
+        },
+      },
+    },
+  },
+}));
+
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { getDocsEntry, listDocsEntries } from "@cocalc/docs";
 import { DocsBrowser } from "./browser";
 
 describe("DocsBrowser", () => {
+  beforeEach(() => {
+    mockListHosts.mockClear();
+  });
+
   it("notifies when the detail view returns to the index", () => {
     const entry = getDocsEntry("terminal/use-terminal");
     if (entry == null) throw new Error("missing terminal docs entry");
@@ -101,5 +119,17 @@ describe("DocsBrowser", () => {
     expect(
       screen.getByRole("heading", { name: nextChapter.title }),
     ).toBeTruthy();
+  });
+
+  it("loads all visible hosts for project host action parameters", async () => {
+    const entry = getDocsEntry("hosts/access-and-ram");
+    if (entry == null)
+      throw new Error("missing project host access docs entry");
+
+    render(<DocsBrowser initialEntry={entry} onRunAction={jest.fn()} />);
+
+    await waitFor(() =>
+      expect(mockListHosts).toHaveBeenCalledWith({ show_all: true }),
+    );
   });
 });

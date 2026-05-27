@@ -6,14 +6,10 @@
 /*
 Terminal Editor Actions
 */
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { joinUrlPath } from "@cocalc/util/url-path";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { BaseEditorActions as Actions } from "../base-editor/actions-base";
 import { FrameTree } from "../frame-tree/types";
-import { open_new_tab } from "../../misc";
 import getTour from "./tour";
-
-const HELP_URL = joinUrlPath(appBasePath, "docs/terminal/use-terminal");
 
 interface CmdOpts {
   run?: boolean; // if true (default) also send a return key
@@ -80,7 +76,10 @@ export class TerminalActions extends Actions {
   }
 
   public help(): void {
-    open_new_tab(HELP_URL);
+    openProjectDocs({
+      projectId: this.project_id,
+      slug: "terminal/use-terminal",
+    });
   }
 
   tour(_id, refs) {

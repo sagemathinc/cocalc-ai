@@ -29,7 +29,7 @@ import { Transforms } from "slate";
 import { toggle_checkbox } from "@cocalc/frontend/editors/task-editor/desc-rendering";
 import { parseTableOfContents } from "@cocalc/frontend/markdown";
 import { parseHeader } from "@cocalc/frontend/markdown/header";
-import { open_new_tab } from "@cocalc/frontend/misc";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { ExecuteCodeOutputAsync } from "@cocalc/util/types/execute-code";
 import {
   Actions as CodeEditorActions,
@@ -440,7 +440,7 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
   }
 
   help(): void {
-    open_new_tab("/docs/files/markdown");
+    openProjectDocs({ projectId: this.project_id, slug: "files/markdown" });
   }
 
   slate_help(): void {

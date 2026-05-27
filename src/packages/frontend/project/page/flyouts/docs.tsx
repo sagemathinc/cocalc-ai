@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button, Flex, message, Space, Typography, Upload } from "antd";
 import { DownloadOutlined, UploadOutlined } from "@ant-design/icons";
@@ -16,6 +16,7 @@ import {
   DOCS_BROWSER_MUTED_TITLE_STYLE,
   DOCS_BROWSER_PAGE_STYLE,
   type DocsBrowserAction,
+  type DocsBrowserActionParameters,
 } from "@cocalc/frontend/docs/browser";
 import { DocsPrivateNotesPanel } from "@cocalc/frontend/docs/private-state/panel";
 import {
@@ -27,6 +28,12 @@ import { useDocsPrivateState } from "@cocalc/frontend/docs/private-state/use-doc
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Tooltip } from "@cocalc/frontend/components";
 import {
+  PROJECT_DOCS_OPEN_EVENT,
+  type ProjectDocsOpenDetail,
+  projectDocsStorageKey,
+  saveStoredProjectDocsSlug,
+} from "@cocalc/frontend/docs/navigation";
+import {
   listDocsAppActions,
   revealDocsAction,
 } from "@cocalc/frontend/project/docs-actions";
@@ -34,12 +41,6 @@ import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { COLORS } from "@cocalc/util/theme";
 
 const { Paragraph, Text, Title } = Typography;
-const PROJECT_DOCS_SELECTED_STORAGE_PREFIX =
-  "cocalc-project-docs-selected-slug:";
-
-function projectDocsStorageKey(projectId: string): string {
-  return `${PROJECT_DOCS_SELECTED_STORAGE_PREFIX}${projectId}`;
-}
 
 function loadStoredProjectDocsEntry({
   docsAccess,
@@ -62,13 +63,7 @@ function saveStoredProjectDocsEntry({
   entry?: DocsEntry;
   projectId: string;
 }): void {
-  if (typeof window === "undefined") return;
-  const key = projectDocsStorageKey(projectId);
-  if (entry?.slug) {
-    window.localStorage.setItem(key, entry.slug);
-  } else {
-    window.localStorage.removeItem(key);
-  }
+  saveStoredProjectDocsSlug({ projectId, slug: entry?.slug });
 }
 
 export function ProjectDocsPanel({
@@ -90,6 +85,7 @@ export function ProjectDocsPanel({
     [accountId, isAdmin],
   );
   const docsPrivateState = useDocsPrivateState(accountId);
+  const [requestedEntry, setRequestedEntry] = useState<DocsEntry | undefined>();
   const actionAvailability = useMemo(
     () => listDocsAppActions({ includeAdmin: isAdmin, projectId: project_id }),
     [isAdmin, project_id],
@@ -100,16 +96,42 @@ export function ProjectDocsPanel({
   );
   const initialEntry = useMemo(
     () =>
+      requestedEntry ??
       loadStoredProjectDocsEntry({
         docsAccess,
         projectId: project_id,
       }),
-    [docsAccess, project_id],
+    [docsAccess, project_id, requestedEntry],
   );
 
-  async function runAction(action: DocsBrowserAction): Promise<void> {
+  useEffect(() => {
+    function handleProjectDocsOpen(event: Event): void {
+      const detail = (event as CustomEvent<ProjectDocsOpenDetail>).detail;
+      if (detail?.projectId !== project_id) return;
+      const entry = detail.slug
+        ? getDocsEntry(detail.slug, docsAccess)
+        : undefined;
+      setRequestedEntry(entry);
+      saveStoredProjectDocsEntry({ entry, projectId: project_id });
+    }
+    window.addEventListener(PROJECT_DOCS_OPEN_EVENT, handleProjectDocsOpen);
+    return () =>
+      window.removeEventListener(
+        PROJECT_DOCS_OPEN_EVENT,
+        handleProjectDocsOpen,
+      );
+  }, [docsAccess, project_id]);
+
+  async function runAction(
+    action: DocsBrowserAction,
+    parameters?: DocsBrowserActionParameters,
+  ): Promise<void> {
     try {
-      await revealDocsAction({ actionId: action.id, projectId: project_id });
+      await revealDocsAction({
+        actionId: action.id,
+        parameters,
+        projectId: project_id,
+      });
       await messageApi.success(action.label);
     } catch (err) {
       await messageApi.error(`${err}`);

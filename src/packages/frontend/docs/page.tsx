@@ -16,6 +16,7 @@ import {
   DOCS_BROWSER_MUTED_TITLE_STYLE,
   DOCS_BROWSER_PAGE_STYLE,
   type DocsBrowserAction,
+  type DocsBrowserActionParameters,
 } from "@cocalc/frontend/docs/browser";
 import { DocsPrivateNotesPanel } from "@cocalc/frontend/docs/private-state/panel";
 import {
@@ -31,11 +32,14 @@ import {
 import { set_url } from "@cocalc/frontend/history";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { Tooltip } from "@cocalc/frontend/components";
+import {
+  APP_DOCS_SELECTED_STORAGE_KEY,
+  saveStoredAppDocsSlug,
+} from "@cocalc/frontend/docs/navigation";
 import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { COLORS } from "@cocalc/util/theme";
 
 const { Paragraph, Text, Title } = Typography;
-const APP_DOCS_SELECTED_STORAGE_KEY = "cocalc-app-docs-selected-slug";
 
 function loadStoredAppDocsEntry(docsAccess: DocsAccess): DocsEntry | undefined {
   if (typeof window === "undefined") return undefined;
@@ -46,12 +50,7 @@ function loadStoredAppDocsEntry(docsAccess: DocsAccess): DocsEntry | undefined {
 }
 
 function saveStoredAppDocsEntry(entry?: DocsEntry): void {
-  if (typeof window === "undefined") return;
-  if (entry?.slug) {
-    window.localStorage.setItem(APP_DOCS_SELECTED_STORAGE_KEY, entry.slug);
-  } else {
-    window.localStorage.removeItem(APP_DOCS_SELECTED_STORAGE_KEY);
-  }
+  saveStoredAppDocsSlug(entry?.slug);
 }
 
 export function DocsPage({ slug }: { slug?: string }) {
@@ -94,11 +93,15 @@ export function DocsPage({ slug }: { slug?: string }) {
     }
   }, [initialEntry, initialEntrySlug, pageActions, slug]);
 
-  async function runAction(action: DocsBrowserAction): Promise<void> {
+  async function runAction(
+    action: DocsBrowserAction,
+    parameters?: DocsBrowserActionParameters,
+  ): Promise<void> {
     try {
       await revealDocsAction({
         actionId: action.id,
         includeAdmin: isAdmin,
+        parameters,
         projectId: "",
       });
       await messageApi.success(action.label);

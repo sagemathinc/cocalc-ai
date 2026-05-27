@@ -21,6 +21,7 @@ import {
   Input,
   Row,
   Segmented,
+  Select,
   Space,
   Tag,
   Typography,
@@ -33,7 +34,9 @@ import {
   type DocsEntry,
 } from "@cocalc/docs";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
+import type { Host } from "@cocalc/conat/hub/api/hosts";
 import type {
   DocsPrivateEntrySummary,
   DocsPrivateFilter,
@@ -45,6 +48,12 @@ type DocsBrowserLayout = "page" | "flyout";
 const DOCS_FONT_SIZE_STORAGE_KEY = "cocalc-docs-font-size";
 const DOCS_BROWSER_CARD_STYLE = { fontSize: "inherit" };
 const DOCS_BROWSER_CARD_BODY_STYLE = { fontSize: "inherit" };
+const DOCS_BROWSER_CATEGORY_CARD_STYLE = {
+  ...DOCS_BROWSER_CARD_STYLE,
+  height: "100%",
+  maxHeight: 500,
+  overflow: "auto",
+};
 export const DOCS_FONT_SIZE_MIN = 10;
 export const DOCS_FONT_SIZE_MAX = 32;
 export const DOCS_FONT_SIZE_STEP = 1;
@@ -54,6 +63,8 @@ export type DocsBrowserAction = DocsAction & {
   implemented?: boolean;
   reason?: string;
 };
+
+export type DocsBrowserActionParameters = Record<string, string | undefined>;
 
 export type DocsPrivateIndexState = {
   enabled: boolean;
@@ -584,7 +595,7 @@ export function DocsIndexContent({
               >
                 <Card
                   size="small"
-                  style={{ ...DOCS_BROWSER_CARD_STYLE, height: "100%" }}
+                  style={DOCS_BROWSER_CATEGORY_CARD_STYLE}
                   styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
                   title={
                     <Space>
@@ -672,6 +683,51 @@ function actionState(action: DocsBrowserAction): {
   return { buttonText: action.label, disabled: false, tagText: "open in app" };
 }
 
+function formatProjectHostOption(host: Host): { label: string; value: string } {
+  const region = `${host.region ?? ""}`.trim();
+  return {
+    label: region ? `${host.name} (${region})` : host.name,
+    value: host.id,
+  };
+}
+
+function useProjectHostParameterOptions(enabled: boolean): {
+  error?: string;
+  loading: boolean;
+  options: { label: string; value: string }[];
+} {
+  const [options, setOptions] = useState<{ label: string; value: string }[]>(
+    [],
+  );
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    if (!enabled) return;
+    let canceled = false;
+    setLoading(true);
+    setError(undefined);
+    webapp_client.conat_client.hub.hosts
+      .listHosts({ show_all: true })
+      .then((hosts: Host[]) => {
+        if (canceled) return;
+        setOptions(hosts.map(formatProjectHostOption));
+      })
+      .catch((err) => {
+        if (canceled) return;
+        setError(err instanceof Error ? err.message : `${err}`);
+      })
+      .finally(() => {
+        if (!canceled) setLoading(false);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [enabled]);
+
+  return { error, loading, options };
+}
+
 export function DocsActions({
   actions,
   layout = "page",
@@ -679,9 +735,37 @@ export function DocsActions({
 }: {
   actions?: DocsBrowserAction[];
   layout?: DocsBrowserLayout;
-  onRunAction?: (action: DocsBrowserAction) => void | Promise<void>;
+  onRunAction?: (
+    action: DocsBrowserAction,
+    parameters?: DocsBrowserActionParameters,
+  ) => void | Promise<void>;
 }) {
-  if (!actions?.length) return null;
+  const visibleActions = actions ?? [];
+  const needsProjectHostSelector =
+    onRunAction != null &&
+    visibleActions.some((action) =>
+      action.parameters?.some((parameter) => parameter.type === "project-host"),
+    );
+  const hostOptions = useProjectHostParameterOptions(needsProjectHostSelector);
+  const [parameterValues, setParameterValues] = useState<
+    Record<string, DocsBrowserActionParameters>
+  >({});
+
+  if (!visibleActions.length) return null;
+
+  const setActionParameter = (
+    action: DocsBrowserAction,
+    name: string,
+    value: string | undefined,
+  ) => {
+    setParameterValues((current) => ({
+      ...current,
+      [action.id]: {
+        ...(current[action.id] ?? {}),
+        [name]: value,
+      },
+    }));
+  };
 
   const content = (
     <Flex gap={layout === "flyout" ? "small" : "middle"} vertical>
@@ -696,29 +780,70 @@ export function DocsActions({
         </Paragraph>
       ) : null}
       <Space orientation={layout === "flyout" ? "vertical" : "horizontal"} wrap>
-        {actions.map((action) => {
+        {visibleActions.map((action) => {
           const state = actionState(action);
+          const values = parameterValues[action.id] ?? {};
+          const hasParameters = !!action.parameters?.length;
+          const missingRequiredParameter = action.parameters?.some(
+            (parameter) => parameter.required && !values[parameter.name],
+          );
           return (
-            <Button
+            <Space.Compact
               block={layout === "flyout"}
-              data-cocalc-action-id={action.id}
-              disabled={state.disabled || onRunAction == null}
               key={action.id}
-              onClick={() => void onRunAction?.(action)}
-              size={layout === "flyout" ? "small" : "middle"}
-              title={action.reason ?? action.description}
-              type={
-                !state.disabled && onRunAction != null ? "primary" : "default"
-              }
+              style={layout === "flyout" ? { width: "100%" } : undefined}
             >
-              {state.buttonText}
-            </Button>
+              {action.parameters?.map((parameter) =>
+                parameter.type === "project-host" ? (
+                  <Select
+                    allowClear
+                    disabled={state.disabled || onRunAction == null}
+                    key={parameter.name}
+                    loading={hostOptions.loading}
+                    notFoundContent={
+                      hostOptions.error ??
+                      (hostOptions.loading ? "Loading hosts..." : "No hosts")
+                    }
+                    onChange={(value) =>
+                      setActionParameter(action, parameter.name, value)
+                    }
+                    optionFilterProp="label"
+                    options={hostOptions.options}
+                    placeholder={parameter.placeholder ?? parameter.label}
+                    showSearch
+                    size={layout === "flyout" ? "small" : "middle"}
+                    style={{
+                      minWidth: layout === "flyout" ? 0 : 220,
+                      width: layout === "flyout" ? "60%" : 240,
+                    }}
+                    value={values[parameter.name]}
+                  />
+                ) : null,
+              )}
+              <Button
+                block={layout === "flyout" && !hasParameters}
+                data-cocalc-action-id={action.id}
+                disabled={
+                  state.disabled ||
+                  onRunAction == null ||
+                  missingRequiredParameter
+                }
+                onClick={() => void onRunAction?.(action, values)}
+                size={layout === "flyout" ? "small" : "middle"}
+                title={action.reason ?? action.description}
+                type={
+                  !state.disabled && onRunAction != null ? "primary" : "default"
+                }
+              >
+                {state.buttonText}
+              </Button>
+            </Space.Compact>
           );
         })}
       </Space>
       {layout === "page" ? (
         <Space wrap>
-          {actions.map((action) => {
+          {visibleActions.map((action) => {
             const state = actionState(action);
             return (
               <Tag
@@ -848,7 +973,10 @@ export function DocsDetailContent({
   linearNavigation?: DocsLinearNavigationState;
   layout?: DocsBrowserLayout;
   onBack?: () => void;
-  onRunAction?: (action: DocsBrowserAction) => void | Promise<void>;
+  onRunAction?: (
+    action: DocsBrowserAction,
+    parameters?: DocsBrowserActionParameters,
+  ) => void | Promise<void>;
   privateState?: DocsPrivateDetailState;
 }) {
   const actions = entry.actions?.map((action) => ({
@@ -969,7 +1097,10 @@ export function DocsBrowser({
   docsAccess?: DocsAccess;
   initialEntry?: DocsEntry;
   layout?: DocsBrowserLayout;
-  onRunAction?: (action: DocsBrowserAction) => void | Promise<void>;
+  onRunAction?: (
+    action: DocsBrowserAction,
+    parameters?: DocsBrowserActionParameters,
+  ) => void | Promise<void>;
   onSelectedEntryChange?: (entry?: DocsEntry) => void;
   privateDetailState?: DocsPrivateDetailState;
   privateIndexState?: DocsPrivateIndexState;
