@@ -601,7 +601,9 @@ export function MembershipTiers() {
         <Paragraph style={{ color: COLORS.GRAY }}>
           Templates:
           <Space style={{ marginLeft: "10px" }}>
-            {(["free", "student", "member", "pro"] as const).map((key) => (
+            {(
+              ["free", "basic", "student", "standard", "member", "pro"] as const
+            ).map((key) => (
               <Button key={key} size="small" onClick={() => applyTemplate(key)}>
                 {TIER_TEMPLATES[key].label}
               </Button>
