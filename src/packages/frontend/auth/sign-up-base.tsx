@@ -231,6 +231,7 @@ export default function SignUpFormBase({
       <Space orientation="vertical" size="small" style={{ width: "100%" }}>
         <Checkbox
           checked={acceptedTerms}
+          style={{ cursor: "pointer" }}
           onChange={(e) => setAcceptedTerms(e.target.checked)}
         >
           I accept the{" "}
@@ -256,6 +257,7 @@ export default function SignUpFormBase({
         )}
         <Checkbox
           checked={marketingConsent}
+          style={{ cursor: "pointer" }}
           onChange={(e) => setMarketingConsent(e.target.checked)}
         >
           Send me occasional platform tips, onboarding help, and product

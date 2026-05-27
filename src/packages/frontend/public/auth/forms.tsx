@@ -67,6 +67,7 @@ const TERMS_NOTICE_STYLE: CSSProperties = {
 const CHECKBOX_ROW_STYLE: CSSProperties = {
   alignItems: "flex-start",
   color: COLORS.GRAY_D,
+  cursor: "pointer",
   display: "flex",
   fontSize: "14px",
   gap: "8px",
