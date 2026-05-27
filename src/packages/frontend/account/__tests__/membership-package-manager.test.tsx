@@ -18,6 +18,8 @@ const processPaymentIntents = jest.fn();
 const adminProvisionSiteLicense = jest.fn();
 const addSiteLicensePool = jest.fn();
 const updateSiteLicense = jest.fn();
+const setSiteLicenseManager = jest.fn();
+const removeSiteLicenseManager = jest.fn();
 const updateMembershipPackage = jest.fn();
 const assignMembershipPackageSeat = jest.fn();
 const revokeMembershipPackageSeat = jest.fn();
@@ -89,6 +91,9 @@ jest.mock("@cocalc/frontend/purchases/api", () => ({
     adminProvisionSiteLicense(...args),
   addSiteLicensePool: (...args: any[]) => addSiteLicensePool(...args),
   updateSiteLicense: (...args: any[]) => updateSiteLicense(...args),
+  setSiteLicenseManager: (...args: any[]) => setSiteLicenseManager(...args),
+  removeSiteLicenseManager: (...args: any[]) =>
+    removeSiteLicenseManager(...args),
   updateMembershipPackage: (...args: any[]) => updateMembershipPackage(...args),
   assignMembershipPackageSeat: (...args: any[]) =>
     assignMembershipPackageSeat(...args),
@@ -653,6 +658,80 @@ describe("MembershipPackageManager", () => {
         "Only site-license owners and CoCalc admins can change manager roles.",
       ),
     ).toBeTruthy();
+  });
+
+  it("requires fresh auth before reviewing site-license pool requests", async () => {
+    const sitePackage = {
+      id: "site-1",
+      owner_account_id: "owner-1",
+      kind: "site",
+      membership_class: "pro",
+      seat_count: 50,
+      active_assignment_count: 2,
+      available_seat_count: 48,
+      assignments: [],
+      metadata: {
+        allowed_domains: ["example.edu"],
+        pool_name: "Instructors",
+        site_license_id: "license-1",
+        requires_approval: true,
+        verification_policy: "email-domain",
+        exclusive_group: "instructor",
+      },
+      pool_name: "Instructors",
+      requires_approval: true,
+      verification_policy: "email-domain",
+      exclusive_group: "instructor",
+      pending_request_count: 1,
+    };
+    getMembershipPackages.mockResolvedValue([sitePackage]);
+    getSiteLicenseOverview.mockResolvedValue({
+      site_license: {
+        id: "license-1",
+        name: "Campus License",
+        organization_name: "Example University",
+        owner_account_id: "owner-1",
+        allowed_domains: ["example.edu"],
+        metadata: {},
+      },
+      pools: [sitePackage],
+      managers: [],
+      pending_requests: [
+        {
+          id: "request-1",
+          site_license_id: "license-1",
+          package_id: "site-1",
+          account_id: "student-1",
+          matched_email_address: "ada@example.edu",
+          canonical_identity: "ada@example.edu",
+          requested_membership_class: "pro",
+          state: "pending",
+          requested_at: new Date("2026-05-01T00:00:00Z"),
+        },
+      ],
+      recent_audit_events: [],
+    });
+    reviewSiteLicensePoolRequest.mockResolvedValue({
+      id: "request-1",
+      state: "approved",
+    });
+
+    render(<MembershipPackageManager tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Approval queue")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Approve"));
+
+    await waitFor(() => {
+      expect(runFreshAuthAction).toHaveBeenCalledTimes(1);
+      expect(reviewSiteLicensePoolRequest).toHaveBeenCalledWith({
+        owner_account_id: "owner-1",
+        request_id: "request-1",
+        action: "approve",
+      });
+    });
   });
 
   it("lets admins add a site-license pool from the dashboard", async () => {

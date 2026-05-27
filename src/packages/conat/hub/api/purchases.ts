@@ -744,12 +744,16 @@ export interface Purchases {
   }) => Promise<SiteLicenseOverview>;
   setSiteLicenseManager: (opts?: {
     account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
     site_license_id?: string;
     target_account_id?: string;
     role?: SiteLicenseManagerRole;
   }) => Promise<SiteLicenseOverview>;
   removeSiteLicenseManager: (opts?: {
     account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
     site_license_id?: string;
     target_account_id?: string;
   }) => Promise<SiteLicenseOverview>;
@@ -762,6 +766,8 @@ export interface Purchases {
   }) => Promise<SiteLicensePoolRequest>;
   reviewSiteLicensePoolRequest: (opts?: {
     account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
     owner_account_id?: string;
     request_id?: string;
     action?: "approve" | "reject";

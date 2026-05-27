@@ -1093,12 +1093,14 @@ export function MembershipPackageManager({
               setSiteLicenseReviewLoadingId(request.id);
               setError("");
               try {
-                await reviewSiteLicensePoolRequest({
-                  owner_account_id: overview.site_license.owner_account_id,
-                  request_id: request.id,
-                  action,
+                await runFreshAuthAction(async () => {
+                  await reviewSiteLicensePoolRequest({
+                    owner_account_id: overview.site_license.owner_account_id,
+                    request_id: request.id,
+                    action,
+                  });
+                  await handleChanged();
                 });
-                await handleChanged();
               } catch (err) {
                 setError(`${err}`);
               } finally {
@@ -1126,19 +1128,23 @@ export function MembershipPackageManager({
                 : undefined
             }
             onSetManager={async (site_license_id, target_account_id, role) => {
-              await setSiteLicenseManager({
-                site_license_id,
-                target_account_id,
-                role,
+              await runFreshAuthAction(async () => {
+                await setSiteLicenseManager({
+                  site_license_id,
+                  target_account_id,
+                  role,
+                });
+                await handleChanged();
               });
-              await handleChanged();
             }}
             onRemoveManager={async (site_license_id, target_account_id) => {
-              await removeSiteLicenseManager({
-                site_license_id,
-                target_account_id,
+              await runFreshAuthAction(async () => {
+                await removeSiteLicenseManager({
+                  site_license_id,
+                  target_account_id,
+                });
+                await handleChanged();
               });
-              await handleChanged();
             }}
           />
         </Space>
