@@ -19,6 +19,7 @@ export {
   remove,
   save,
 } from "./file-editors";
+export type { FileEditorInitOptions } from "./file-editors";
 
 import { file_associations } from "./file-associations";
 

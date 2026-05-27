@@ -396,8 +396,26 @@ export async function open_file(
 
   if (isViewerProjectOpen(actions)) {
     const ext = opts.ext ?? filename_extension(displayPath).toLowerCase();
+    let syncPath = displayPath;
+    try {
+      syncPath = await resolveSyncPathWithRetry(
+        actions.fs() as SyncIdentityFs,
+        displayPath,
+        projectHome,
+        { isOpen: tabIsOpened },
+      );
+    } catch (err) {
+      if (isCancelledSyncIdentityResolutionError(err)) {
+        return;
+      }
+      // The viewer fs service still enforces path policy on every read. Keep
+      // opening by display path if canonical identity resolution is temporarily
+      // unavailable, instead of falling back to collaborator realtime.
+      syncPath = displayPath;
+    }
     actions.open_files?.set(displayPath, "ext", ext);
     actions.open_files?.set(displayPath, "component", {});
+    actions.open_files?.set(displayPath, "sync_path", syncPath);
     actions.open_files?.set(displayPath, "chat_width", opts.chat_width);
     actions.open_files?.set(displayPath, "display_path", displayPath);
     actions.open_files?.set(displayPath, "fragmentId", opts.fragmentId ?? "");
