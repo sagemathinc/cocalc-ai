@@ -1900,6 +1900,7 @@ export const useHostsPageViewModel = () => {
             !!editingHost.reprovision_required;
           const canEditMachine =
             isDeprovisioned || isStopped || erroredReprovision;
+          const currentSharedDisk = Number(editingHost.machine?.shared_disk_gb);
           const currentAutoGrow = (editingHost.machine?.metadata?.auto_grow ??
             {}) as Record<string, any>;
           const nextProvider = (values.provider ??
@@ -1978,7 +1979,7 @@ export const useHostsPageViewModel = () => {
             if (typeof machine.shared_disk_gb === "number") {
               update.shared_disk_gb = machine.shared_disk_gb;
             }
-            if (machine.shared_disk_type) {
+            if (machine.shared_disk_type && !currentSharedDisk) {
               update.shared_disk_type = machine.shared_disk_type;
             }
             if (typeof metadata.cpu === "number") {
@@ -2068,7 +2069,6 @@ export const useHostsPageViewModel = () => {
           const currentCpu = Number(editingHost.machine?.metadata?.cpu);
           const currentRam = Number(editingHost.machine?.metadata?.ram_gb);
           const currentDisk = Number(editingHost.machine?.disk_gb);
-          const currentSharedDisk = Number(editingHost.machine?.shared_disk_gb);
           const nextCpu = parsePositive(values.cpu);
           const nextRam = parsePositive(values.ram_gb);
           const nextDisk = parsePositive(values.disk_gb);
@@ -2083,10 +2083,7 @@ export const useHostsPageViewModel = () => {
           if (nextSharedDisk && nextSharedDisk !== currentSharedDisk) {
             update.shared_disk_gb = nextSharedDisk;
           }
-          if (
-            values.shared_disk_type &&
-            values.shared_disk_type !== editingHost.machine?.shared_disk_type
-          ) {
+          if (values.shared_disk_type && !currentSharedDisk) {
             update.shared_disk_type = values.shared_disk_type;
           }
           if (isSelfHost) {
