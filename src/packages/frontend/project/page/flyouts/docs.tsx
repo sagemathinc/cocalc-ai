@@ -248,6 +248,7 @@ export function ProjectDocsPanel({
         </Flex>
         <DocsBrowser
           actionAvailability={actionAvailability}
+          defaultActionParameters={{ projectId: project_id }}
           docsAccess={docsAccess}
           initialEntry={initialEntry}
           layout={layout}

@@ -34,6 +34,7 @@ import {
   type DocsEntry,
 } from "@cocalc/docs";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
@@ -728,12 +729,58 @@ function useProjectHostParameterOptions(enabled: boolean): {
   return { error, loading, options };
 }
 
+function useProjectParameterOptions(enabled: boolean): {
+  options: { label: string; value: string }[];
+} {
+  const [options, setOptions] = useState<{ label: string; value: string }[]>(
+    [],
+  );
+  useEffect(() => {
+    if (!enabled) {
+      setOptions([]);
+      return;
+    }
+    const store = redux.getStore("projects");
+    if (store == null) {
+      setOptions([]);
+      return;
+    }
+    const readOptions = () => {
+      const projectMap = store.get("project_map");
+      if (projectMap == null) return [];
+      const values: { label: string; title: string; value: string }[] = [];
+      for (const [projectId, project] of projectMap) {
+        const title = `${project?.get?.("title") ?? "No Title"}`.trim();
+        const state = `${project?.getIn?.(["state", "state"]) ?? ""}`.trim();
+        values.push({
+          label: state
+            ? `${title || "No Title"} (${state})`
+            : title || "No Title",
+          title: title || "No Title",
+          value: projectId,
+        });
+      }
+      values.sort((a, b) => a.title.localeCompare(b.title));
+      return values.map(({ label, value }) => ({ label, value }));
+    };
+    const updateOptions = () => setOptions(readOptions());
+    store.on("change", updateOptions);
+    updateOptions();
+    return () => {
+      store.removeListener("change", updateOptions);
+    };
+  }, [enabled]);
+  return { options };
+}
+
 export function DocsActions({
   actions,
+  defaultActionParameters,
   layout = "page",
   onRunAction,
 }: {
   actions?: DocsBrowserAction[];
+  defaultActionParameters?: DocsBrowserActionParameters;
   layout?: DocsBrowserLayout;
   onRunAction?: (
     action: DocsBrowserAction,
@@ -746,7 +793,13 @@ export function DocsActions({
     visibleActions.some((action) =>
       action.parameters?.some((parameter) => parameter.type === "project-host"),
     );
+  const needsProjectSelector =
+    onRunAction != null &&
+    visibleActions.some((action) =>
+      action.parameters?.some((parameter) => parameter.type === "project"),
+    );
   const hostOptions = useProjectHostParameterOptions(needsProjectHostSelector);
+  const projectOptions = useProjectParameterOptions(needsProjectSelector);
   const [parameterValues, setParameterValues] = useState<
     Record<string, DocsBrowserActionParameters>
   >({});
@@ -782,7 +835,10 @@ export function DocsActions({
       <Space orientation={layout === "flyout" ? "vertical" : "horizontal"} wrap>
         {visibleActions.map((action) => {
           const state = actionState(action);
-          const values = parameterValues[action.id] ?? {};
+          const values = {
+            ...(defaultActionParameters ?? {}),
+            ...(parameterValues[action.id] ?? {}),
+          };
           const hasParameters = !!action.parameters?.length;
           const missingRequiredParameter = action.parameters?.some(
             (parameter) => parameter.required && !values[parameter.name],
@@ -809,6 +865,26 @@ export function DocsActions({
                     }
                     optionFilterProp="label"
                     options={hostOptions.options}
+                    placeholder={parameter.placeholder ?? parameter.label}
+                    showSearch
+                    size={layout === "flyout" ? "small" : "middle"}
+                    style={{
+                      minWidth: layout === "flyout" ? 0 : 220,
+                      width: layout === "flyout" ? "60%" : 240,
+                    }}
+                    value={values[parameter.name]}
+                  />
+                ) : parameter.type === "project" ? (
+                  <Select
+                    allowClear
+                    disabled={state.disabled || onRunAction == null}
+                    key={parameter.name}
+                    notFoundContent="No projects"
+                    onChange={(value) =>
+                      setActionParameter(action, parameter.name, value)
+                    }
+                    optionFilterProp="label"
+                    options={projectOptions.options}
                     placeholder={parameter.placeholder ?? parameter.label}
                     showSearch
                     size={layout === "flyout" ? "small" : "middle"}
@@ -961,6 +1037,7 @@ function DocsLinearNavigation({
 
 export function DocsDetailContent({
   actionAvailability,
+  defaultActionParameters,
   entry,
   linearNavigation,
   layout = "page",
@@ -969,6 +1046,7 @@ export function DocsDetailContent({
   privateState,
 }: {
   actionAvailability?: Map<string, DocsBrowserAction>;
+  defaultActionParameters?: DocsBrowserActionParameters;
   entry: DocsEntry;
   linearNavigation?: DocsLinearNavigationState;
   layout?: DocsBrowserLayout;
@@ -1014,6 +1092,7 @@ export function DocsDetailContent({
         {privateState?.renderPanel(entry)}
         <DocsActions
           actions={actions}
+          defaultActionParameters={defaultActionParameters}
           layout={layout}
           onRunAction={onRunAction}
         />
@@ -1069,6 +1148,7 @@ export function DocsDetailContent({
       {privateState?.renderPanel(entry)}
       <DocsActions
         actions={actions}
+        defaultActionParameters={defaultActionParameters}
         layout={layout}
         onRunAction={onRunAction}
       />
@@ -1085,6 +1165,7 @@ export function DocsDetailContent({
 
 export function DocsBrowser({
   actionAvailability,
+  defaultActionParameters,
   docsAccess,
   initialEntry,
   layout = "page",
@@ -1094,6 +1175,7 @@ export function DocsBrowser({
   privateIndexState,
 }: {
   actionAvailability?: DocsBrowserAction[];
+  defaultActionParameters?: DocsBrowserActionParameters;
   docsAccess?: DocsAccess;
   initialEntry?: DocsEntry;
   layout?: DocsBrowserLayout;
@@ -1154,6 +1236,7 @@ export function DocsBrowser({
     return (
       <DocsDetailContent
         actionAvailability={actionMap}
+        defaultActionParameters={defaultActionParameters}
         entry={selectedEntry}
         linearNavigation={linearNavigation}
         layout={layout}

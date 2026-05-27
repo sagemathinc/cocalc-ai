@@ -2,6 +2,20 @@
 
 const mockListHosts = jest.fn(async () => []);
 
+if (global.MessageChannel == null) {
+  (global as any).MessageChannel = class {
+    port1 = {
+      close: jest.fn(),
+      onmessage: undefined as ((event: MessageEvent) => void) | undefined,
+    };
+    port2 = {
+      close: jest.fn(),
+      postMessage: (data: unknown) =>
+        setTimeout(() => this.port1.onmessage?.({ data } as MessageEvent), 0),
+    };
+  };
+}
+
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
