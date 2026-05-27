@@ -41,16 +41,20 @@ export class Actions extends CodeEditorActions<TaskEditorState> {
   auxPath: string;
   private taskFastOpenToken = 0;
   private taskFastOpenApplied = false;
+  private taskLiveReady = false;
 
   _init2(): void {
     this.auxPath = aux_file(this.path, "tasks");
     const syncdb = this._syncstring;
     syncdb.on("change", this.syncdbChange);
-    syncdb.once("change", this.ensurePositionsAreUnique);
     this.startOptimisticTaskFastOpen(syncdb);
     syncdb.once("ready", () => {
-      if (!this.taskFastOpenApplied) return;
+      this.taskLiveReady = true;
+      this.setTasks(tasksFromSyncdb(syncdb));
+      this.ensurePositionsAreUnique();
+      const hadFastOpen = this.taskFastOpenApplied;
       this.taskFastOpenApplied = false;
+      if (!hadFastOpen) return;
       if (this.store?.get("status") === FAST_OPEN_TASKS_STATUS) {
         this.setState({ status: "" });
       }
@@ -106,6 +110,11 @@ export class Actions extends CodeEditorActions<TaskEditorState> {
     const store = this.store;
     if (syncdb == null || store == null) {
       // may happen during close
+      return;
+    }
+    if (this.taskFastOpenApplied && !this.taskLiveReady) {
+      // Ignore pre-ready incremental changes while the optimistic preview is
+      // visible. On ready we atomically replace preview state from syncdb.
       return;
     }
     let tasks = store.get("tasks") ?? Map();
@@ -346,8 +355,12 @@ export class Actions extends CodeEditorActions<TaskEditorState> {
 
 export function parseTasksPreviewContent(content: string): Tasks {
   const doc = from_str(content, ["task_id"], ["desc"]);
+  return tasksFromSyncdb(doc);
+}
+
+function tasksFromSyncdb(syncdb): Tasks {
   let tasks: Tasks = Map();
-  doc.get().forEach((task) => {
+  syncdb.get().forEach((task) => {
     const task_id = task.get("task_id");
     if (task_id == null) return;
     tasks = tasks.set(task_id, task as any);
