@@ -499,6 +499,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "project SSH trust mutation",
   },
+  "projects.setProjectUserRole": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
   "projects.start": {
     decision: "fresh-auth-not-required",
     reason:
