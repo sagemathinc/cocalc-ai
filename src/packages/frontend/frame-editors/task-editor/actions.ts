@@ -33,10 +33,14 @@ interface TaskEditorState extends CodeEditorState {
 
 const FRAME_TYPE = "tasks";
 const FAST_OPEN_TASKS_STATUS = "Loading live collaboration...";
+export const MAX_FAST_OPEN_TASKS_BYTES = 1024 * 1024;
 
 export type Store = BaseStore<TaskEditorState>;
 
 export class Actions extends CodeEditorActions<TaskEditorState> {
+  protected syncDocOptions = {
+    ignoreInitialChanges: true,
+  };
   taskActions: { [frameId: string]: TaskActions } = {};
   auxPath: string;
   private taskFastOpenToken = 0;
@@ -72,10 +76,17 @@ export class Actions extends CodeEditorActions<TaskEditorState> {
         const raw = await fs.readFile(this.path, "utf8");
         if (this.isClosed() || token !== this.taskFastOpenToken) return;
         if (syncdb?.get_state?.() === "ready") return;
+        const rawLength = getRawContentLength(raw);
+        if (rawLength != null && rawLength > MAX_FAST_OPEN_TASKS_BYTES) {
+          return;
+        }
         const content =
           typeof raw === "string"
             ? raw
             : ((raw as any)?.toString?.("utf8") ?? `${raw ?? ""}`);
+        if (content.length > MAX_FAST_OPEN_TASKS_BYTES) {
+          return;
+        }
         const tasks = parseTasksPreviewContent(content);
         if (this.isClosed() || token !== this.taskFastOpenToken) return;
         if (syncdb?.get_state?.() === "ready") return;
@@ -351,6 +362,17 @@ export class Actions extends CodeEditorActions<TaskEditorState> {
     }
     return { data, fragmentKey: "id" };
   };
+}
+
+function getRawContentLength(raw: unknown): number | undefined {
+  if (typeof raw === "string") return raw.length;
+  if (raw != null && typeof (raw as any).byteLength === "number") {
+    return (raw as any).byteLength;
+  }
+  if (raw != null && typeof (raw as any).length === "number") {
+    return (raw as any).length;
+  }
+  return undefined;
 }
 
 export function parseTasksPreviewContent(content: string): Tasks {

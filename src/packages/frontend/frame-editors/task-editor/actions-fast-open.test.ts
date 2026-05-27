@@ -1,4 +1,8 @@
-import { Actions, parseTasksPreviewContent } from "./actions";
+import {
+  Actions,
+  MAX_FAST_OPEN_TASKS_BYTES,
+  parseTasksPreviewContent,
+} from "./actions";
 
 describe("task editor fast-open preview", () => {
   it("parses a task syncdb file into task maps", () => {
@@ -42,5 +46,36 @@ describe("task editor fast-open preview", () => {
     );
 
     expect(setTasks).not.toHaveBeenCalled();
+  });
+
+  it("skips large task files before parsing the preview", async () => {
+    const readFile = jest.fn(async () => ({
+      byteLength: MAX_FAST_OPEN_TASKS_BYTES + 1,
+      toString() {
+        throw new Error("large task file should not be decoded");
+      },
+    }));
+    const setTasks = jest.fn();
+    const setState = jest.fn();
+
+    (Actions.prototype as any).startOptimisticTaskFastOpen.call(
+      {
+        _get_project_actions: () => ({ fs: () => ({ readFile }) }),
+        isClosed: () => false,
+        taskFastOpenToken: 0,
+        project_id: "project",
+        path: "large.tasks",
+        setTasks,
+        setState,
+      },
+      { get_state: () => "init" },
+    );
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(readFile).toHaveBeenCalledWith("large.tasks", "utf8");
+    expect(setTasks).not.toHaveBeenCalled();
+    expect(setState).not.toHaveBeenCalled();
   });
 });
