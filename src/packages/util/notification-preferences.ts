@@ -97,7 +97,7 @@ export const NOTIFICATION_CATEGORIES: NotificationCategoryDefinition[] = [
     key: "product",
     label: "Product news",
     description: "Product updates and announcements.",
-    defaultEmailMode: "digest",
+    defaultEmailMode: "off",
   },
   {
     key: "maintenance",
@@ -174,4 +174,42 @@ export function getNotificationCategoryDefinition(
     throw Error(`unknown notification category '${category}'`);
   }
   return definition;
+}
+
+export const MARKETING_CONSENT_OTHER_SETTINGS_KEY = "newsletter";
+
+export function setProductMarketingEmailMode(
+  raw: unknown,
+  enabled: boolean,
+): NotificationPreferences {
+  const preferences = normalizeNotificationPreferences(raw);
+  return {
+    ...preferences,
+    email: {
+      ...preferences.email,
+      product: enabled ? "digest" : "off",
+    },
+  };
+}
+
+export function buildMarketingConsentOtherSettings(
+  enabled: boolean,
+): Record<string, unknown> {
+  return {
+    [MARKETING_CONSENT_OTHER_SETTINGS_KEY]: enabled,
+    [OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY]: setProductMarketingEmailMode(
+      getDefaultNotificationPreferences(),
+      enabled,
+    ),
+  };
+}
+
+export function isMarketingConsentEnabled(otherSettings: unknown): boolean {
+  return (
+    otherSettings != null &&
+    typeof otherSettings === "object" &&
+    (otherSettings as Record<string, unknown>)[
+      MARKETING_CONSENT_OTHER_SETTINGS_KEY
+    ] === true
+  );
 }

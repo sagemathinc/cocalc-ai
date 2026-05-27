@@ -20,7 +20,8 @@ export async function updateMoney(cutoff: string = "2 days") {
     `SELECT DISTINCT statements.account_id AS account_id, accounts.salesloft_id AS salesloft_id FROM statements, accounts WHERE
         statements.time >= now() - interval '${cutoff}'
         AND statements.account_id=accounts.account_id
-        AND statements.interval='day'`,
+        AND statements.interval='day'
+        AND accounts.other_settings->>'newsletter' = 'true'`,
   );
   log.debug(
     "updateMoney ",

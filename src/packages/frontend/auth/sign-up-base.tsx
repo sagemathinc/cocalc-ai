@@ -1,8 +1,11 @@
-import { Alert, Button, Input, Space } from "antd";
+import { Alert, Button, Checkbox, Input, Space } from "antd";
 import { useEffect, useMemo, useState } from "react";
 
 import api from "@cocalc/frontend/client/api";
-import { PolicyTOSPageUrl } from "@cocalc/frontend/customize";
+import {
+  PolicyPrivacyPageUrl,
+  PolicyTOSPageUrl,
+} from "@cocalc/frontend/customize";
 import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import {
   is_valid_email_address as isValidEmailAddress,
@@ -41,6 +44,8 @@ export default function SignUpFormBase({
   const [password, setPassword] = useState<string>("");
   const [firstName, setFirstName] = useState<string>("");
   const [lastName, setLastName] = useState<string>("");
+  const [acceptedTerms, setAcceptedTerms] = useState<boolean>(false);
+  const [marketingConsent, setMarketingConsent] = useState<boolean>(false);
   const [signingUp, setSigningUp] = useState<boolean>(false);
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string>("");
@@ -78,8 +83,12 @@ export default function SignUpFormBase({
     if (requiresToken && !registrationToken.trim()) {
       return false;
     }
+    if (!acceptedTerms) {
+      return false;
+    }
     return !signingUp;
   }, [
+    acceptedTerms,
     email,
     password,
     firstName,
@@ -100,7 +109,8 @@ export default function SignUpFormBase({
       let result = await postAuthApi<any>({
         endpoint: "auth/sign-up",
         body: {
-          terms: true,
+          terms: acceptedTerms,
+          marketing_consent: marketingConsent,
           email,
           password,
           firstName,
@@ -218,15 +228,40 @@ export default function SignUpFormBase({
           onPressEnter={signUp}
         />
       </div>
-      <div
-        style={{ color: COLORS.GRAY_M, fontSize: "13px", lineHeight: "18px" }}
-      >
-        By creating an account, you agree to the{" "}
-        <a href={PolicyTOSPageUrl} target="_blank" rel="noreferrer">
-          Terms of Service
-        </a>
-        .
-      </div>
+      <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+        <Checkbox
+          checked={acceptedTerms}
+          onChange={(e) => setAcceptedTerms(e.target.checked)}
+        >
+          I accept the{" "}
+          <a href={PolicyTOSPageUrl} target="_blank" rel="noreferrer">
+            Terms of Service
+          </a>{" "}
+          and{" "}
+          <a href={PolicyPrivacyPageUrl} target="_blank" rel="noreferrer">
+            Privacy Policy
+          </a>
+          .
+        </Checkbox>
+        {issues.terms && (
+          <div
+            style={{
+              color: COLORS.ANTD_RED_WARN,
+              fontSize: "13px",
+              lineHeight: "18px",
+            }}
+          >
+            {issues.terms}
+          </div>
+        )}
+        <Checkbox
+          checked={marketingConsent}
+          onChange={(e) => setMarketingConsent(e.target.checked)}
+        >
+          Send me occasional platform tips, onboarding help, and product
+          updates. You can change this later in Account Preferences.
+        </Checkbox>
+      </Space>
       <Button
         type="primary"
         size="large"

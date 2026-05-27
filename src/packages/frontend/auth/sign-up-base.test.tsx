@@ -37,13 +37,26 @@ beforeEach(() => {
 });
 
 describe("SignUpFormBase", () => {
-  it("links to the Terms of Service before account creation", () => {
+  it("requires explicit Terms of Service and Privacy Policy acceptance", () => {
     render(
       <SignUpFormBase initialRequiresToken={false} onNavigate={jest.fn()} />,
     );
 
-    const link = screen.getByRole("link", { name: "Terms of Service" });
-    expect(link.getAttribute("href")).toBe("/policies/terms");
+    expect(
+      (
+        screen.getByRole("checkbox", {
+          name: /I accept the Terms of Service and Privacy Policy/,
+        }) as HTMLInputElement
+      ).checked,
+    ).toBe(false);
+    expect(
+      screen
+        .getByRole("link", { name: "Terms of Service" })
+        .getAttribute("href"),
+    ).toBe("/policies/terms");
+    expect(
+      screen.getByRole("link", { name: "Privacy Policy" }).getAttribute("href"),
+    ).toBe("/policies/privacy");
   });
 
   it("shows registration-token issues returned by sign-up", async () => {
@@ -74,6 +87,11 @@ describe("SignUpFormBase", () => {
     fireEvent.change(screen.getByPlaceholderText("Last name"), {
       target: { value: "User" },
     });
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /I accept the Terms of Service and Privacy Policy/,
+      }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     expect(
@@ -81,5 +99,48 @@ describe("SignUpFormBase", () => {
         "Issue with registration token -- Registration token is wrong.",
       ),
     ).not.toBeNull();
+  });
+
+  it("sends marketing consent only when the optional checkbox is selected", async () => {
+    mockedPostAuthApi.mockResolvedValueOnce({
+      account_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    } as any);
+
+    render(
+      <SignUpFormBase initialRequiresToken={false} onNavigate={jest.fn()} />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("you@example.com"), {
+      target: { value: "new-user@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
+      target: { value: "correct horse battery staple 12345!" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("First name"), {
+      target: { value: "New" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Last name"), {
+      target: { value: "User" },
+    });
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /I accept the Terms of Service and Privacy Policy/,
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /Send me occasional platform tips/,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+
+    expect(mockedPostAuthApi).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          terms: true,
+          marketing_consent: true,
+        }),
+      }),
+    );
   });
 });

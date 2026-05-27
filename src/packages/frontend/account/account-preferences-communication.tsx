@@ -12,10 +12,12 @@ import { Icon, IconName } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
+  MARKETING_CONSENT_OTHER_SETTINGS_KEY,
   NOTIFICATION_CATEGORIES,
   NOTIFICATION_EMAIL_MODES,
   OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY,
   normalizeNotificationPreferences,
+  setProductMarketingEmailMode,
   type NotificationCategory,
   type NotificationEmailMode,
 } from "@cocalc/util/notification-preferences";
@@ -54,6 +56,8 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
   const notificationPreferences = normalizeNotificationPreferences(
     rawNotificationPreferences(),
   );
+  const marketingConsent =
+    other_settings?.get?.(MARKETING_CONSENT_OTHER_SETTINGS_KEY) === true;
 
   function setNotificationEmailMode(
     category: NotificationCategory,
@@ -62,6 +66,42 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
     const next = normalizeNotificationPreferences(notificationPreferences);
     next.email[category] = mode;
     on_change(OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY, next);
+    if (category === "product") {
+      on_change(MARKETING_CONSENT_OTHER_SETTINGS_KEY, mode !== "off");
+    }
+  }
+
+  function setMarketingConsent(enabled: boolean) {
+    on_change(MARKETING_CONSENT_OTHER_SETTINGS_KEY, enabled);
+    on_change(
+      OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY,
+      setProductMarketingEmailMode(notificationPreferences, enabled),
+    );
+  }
+
+  function render_marketing_consent() {
+    return (
+      <Alert
+        type="info"
+        showIcon
+        message={
+          <Switch
+            checked={marketingConsent}
+            onChange={(e) => setMarketingConsent(e.target.checked)}
+          >
+            <strong>Occasional platform tips and product updates</strong>
+          </Switch>
+        }
+        description={
+          <Text type="secondary">
+            When enabled, CoCalc may send onboarding tips and product-news email
+            and sync your account contact data to Salesloft for onboarding
+            cadences. When disabled, product-news email is off and Salesloft
+            sync is skipped or removed.
+          </Text>
+        }
+      />
+    );
   }
 
   function toggle_global_banner(val: boolean): void {
@@ -165,6 +205,8 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
         </>
       }
     >
+      {render_marketing_consent()}
+      <div style={{ marginTop: 16 }} />
       {render_notification_email_preferences()}
       <div style={{ marginTop: 16 }} />
       {render_global_banner()}

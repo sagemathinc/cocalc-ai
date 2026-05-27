@@ -508,6 +508,7 @@ export interface AccountDirectoryCreateRequest {
   signup_reason?: string;
   ephemeral?: number;
   customize?: any;
+  other_settings?: Record<string, unknown>;
   trusted_product_access?: boolean;
   trusted_product_access_reason?: string;
 }

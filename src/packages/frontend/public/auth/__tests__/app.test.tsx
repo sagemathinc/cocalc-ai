@@ -195,7 +195,7 @@ describe("PublicAuthApp", () => {
     expect(await screen.findByText("Registration token")).not.toBeNull();
   });
 
-  it("links to the configured Terms of Service on sign-up", async () => {
+  it("requires explicit Terms of Service and Privacy Policy acceptance on sign-up", async () => {
     mockedApi.mockResolvedValueOnce(false);
 
     render(
@@ -211,6 +211,14 @@ describe("PublicAuthApp", () => {
       name: "Terms of Service",
     });
     expect(link.getAttribute("href")).toBe("https://example.com/terms");
+    expect(screen.getByRole("link", { name: "Privacy Policy" })).not.toBeNull();
+    expect(
+      (
+        screen.getByRole("checkbox", {
+          name: /I accept the Terms of Service and Privacy Policy/,
+        }) as HTMLInputElement
+      ).checked,
+    ).toBe(false);
   });
 
   it("shows registration-token issues on sign-up", async () => {
@@ -247,6 +255,11 @@ describe("PublicAuthApp", () => {
     fireEvent.change(screen.getByPlaceholderText("Last name"), {
       target: { value: "User" },
     });
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /I accept the Terms of Service and Privacy Policy/,
+      }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     expect(
@@ -285,6 +298,11 @@ describe("PublicAuthApp", () => {
     fireEvent.change(screen.getByPlaceholderText("Last name"), {
       target: { value: "User" },
     });
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /I accept the Terms of Service and Privacy Policy/,
+      }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     expect(
@@ -338,6 +356,13 @@ describe("PublicAuthApp", () => {
     expect(
       screen.getByRole("link", { name: "Continue with Cornell SSO" }),
     ).toHaveProperty("href", "http://localhost/auth/cornell");
+    expect(
+      (
+        screen.getByRole("checkbox", {
+          name: /I accept the Terms of Service and Privacy Policy/,
+        }) as HTMLInputElement
+      ).checked,
+    ).toBe(false);
     expect(screen.getByRole("button", { name: "Sign In" })).toHaveProperty(
       "disabled",
       true,

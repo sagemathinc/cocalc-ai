@@ -66,6 +66,7 @@ import {
   is_valid_email_address as isValidEmailAddress,
   len,
 } from "@cocalc/util/misc";
+import { buildMarketingConsentOtherSettings } from "@cocalc/util/notification-preferences";
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
@@ -86,8 +87,15 @@ import {
 const logger = getLogger("auth:sign-up");
 
 export async function signUp(req, res) {
-  let { terms, email, password, firstName, lastName, registrationToken } =
-    getParams(req);
+  let {
+    terms,
+    email,
+    password,
+    firstName,
+    lastName,
+    registrationToken,
+    marketing_consent,
+  } = getParams(req);
 
   password = (password ?? "").trim();
   email = (email ?? "").toLowerCase().trim();
@@ -284,6 +292,9 @@ export async function signUp(req, res) {
       home_bay_id: selected_home_bay_id,
       owner_id,
       ephemeral: tokenInfo?.ephemeral,
+      other_settings: buildMarketingConsentOtherSettings(
+        marketing_consent === true,
+      ),
       trusted_product_access: requiresRegistrationToken,
       trusted_product_access_reason: requiresRegistrationToken
         ? "registration_token"
