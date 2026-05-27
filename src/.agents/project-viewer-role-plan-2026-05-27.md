@@ -190,8 +190,8 @@ Examples:
     { "action": "exclude", "path": ".snapshots/**" },
     { "action": "exclude", "path": ".ssh" },
     { "action": "exclude", "path": ".ssh/**" },
-    { "action": "exclude", "path": ".smc" },
-    { "action": "exclude", "path": ".smc/**" }
+    { "action": "exclude", "path": ".local/share/cocalc" },
+    { "action": "exclude", "path": ".local/share/cocalc/**" }
   ]
 }
 ```
@@ -223,16 +223,17 @@ default deny rules unless the product explicitly supports advanced overrides:
 - `.snapshots/**`
 - `.ssh`
 - `.ssh/**`
-- `.smc`
-- `.smc/**`
+- `.local/share/cocalc`
+- `.local/share/cocalc/**`
 
 Rationale:
 
 - `.snapshots` exposes historical state and deleted/renamed content.
 - `.ssh` often contains private keys, known hosts, config, and deployment
   material.
-- `.smc` and similar CoCalc runtime metadata may contain implementation details
-  or tokens that are not intended as project content.
+- `.local/share/cocalc` is the current CoCalc runtime metadata location and
+  may contain implementation details or tokens that are not intended as project
+  content.
 
 Backups are never exposed through viewer access. Backup APIs remain outside the
 viewer capability model even if a backup contains files that would currently
@@ -374,7 +375,8 @@ check.
 - add tests for symlink escapes, `..`, absolute paths, allowed subdirectories,
   and denied sibling directories.
 - add tests for full-project include with `.snapshots`, `.snapshots/**`,
-  `.ssh`, `.ssh/**`, `.smc`, and `.smc/**` excluded.
+  `.ssh`, `.ssh/**`, `.local/share/cocalc`, and
+  `.local/share/cocalc/**` excluded.
 - verify viewer file reads do not start the project runtime.
 
 ### Phase 3: UI Support
