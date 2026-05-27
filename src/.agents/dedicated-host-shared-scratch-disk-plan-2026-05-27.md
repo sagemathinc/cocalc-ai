@@ -68,6 +68,7 @@ working, host-local, not backed up" better than `/data`, `/shared`, or
 - Add a shared scratch disk to an existing host.
 - Grow/enlarge a shared scratch disk.
 - Delete a shared scratch disk, destroying all data on it.
+- Optional automatic grow using a configured increment and maximum size.
 - Preserve scratch data across:
   - host stop/start
   - host reboot
@@ -146,6 +147,9 @@ machine: {
     shared_disk_state?: "none" | "creating" | "attached" | "mounted" | "error";
     shared_disk_last_grow_from_gb?: number;
     shared_disk_last_grow_to_gb?: number;
+    shared_disk_autogrow_enabled?: boolean;
+    shared_disk_autogrow_increment_gb?: number;
+    shared_disk_autogrow_max_gb?: number;
   };
 }
 ```
@@ -159,6 +163,61 @@ Notes:
 - `shared_disk_mount` is stored for diagnostics, but V1 always uses
   `/mnt/cocalc-scratch`.
 - `shared_disk_filesystem` is always `ext4` in V1.
+- Automatic grow fields mirror the durable host disk auto-grow model: grow by a
+  configured increment when low-space policy triggers, but never above the
+  configured maximum.
+
+## Automatic Grow
+
+Shared scratch should support automatic grow in the same product model as the
+main project-host data disk.
+
+Why this matters:
+
+- Users often cannot predict dataset or training artifact size upfront.
+- Overprovisioning scratch to avoid failure can be very expensive.
+- Long-running agent-driven jobs should not fail only because `/scratch` filled
+  up when the user had already authorized a safe maximum.
+
+Configuration:
+
+- `shared_disk_autogrow_enabled`: off by default.
+- `shared_disk_autogrow_increment_gb`: provider-normalized grow increment.
+- `shared_disk_autogrow_max_gb`: hard maximum for automatic grow.
+- Manual grow remains available regardless of automatic grow.
+
+Policy:
+
+- Auto-grow only grows; it never shrinks.
+- Auto-grow must pass the same billing/admission checks as manual grow.
+- Auto-grow must respect provider maximums and provider-specific size
+  normalization, especially Nebius IO M3 93 GiB increments.
+- Auto-grow should use the same online grow path as manual grow.
+- If online filesystem grow fails, surface the failure in host diagnostics and
+  do not repeatedly retry without backoff.
+
+UX:
+
+- Show current size, increment, and maximum in the host edit UI.
+- Make clear that automatic grow can increase pay-as-you-go spend.
+- Show scratch auto-grow events in host status/activity.
+- Do not hide full-disk errors: if max is reached, show that explicitly.
+
+Implementation approach:
+
+- Reuse the main disk auto-grow monitor/policy as much as possible.
+- Collect host-level `/mnt/cocalc-scratch` usage once per host, not once per
+  project, since all projects share the same filesystem.
+- Trigger `resizeSharedScratchDisk` and `growSharedScratch` through the same
+  runtime path used for manual grow.
+
+Tests:
+
+- Auto-grow disabled does nothing.
+- Low free space below threshold grows by the configured increment.
+- Grow caps at `shared_disk_autogrow_max_gb`.
+- Billing/admission rejection prevents grow and records a clear status.
+- Provider-normalized sizes are used for Nebius IO M3.
 
 ## Disk Types
 
@@ -486,6 +545,29 @@ Show:
 - Durability note based on disk type.
 
 This must not be mixed into the project quota progress bar.
+
+### Legacy `/scratch` Wording Cleanup
+
+CoCalc previously used `/scratch` for per-project temporary storage. That
+feature was renamed to `/tmp`. The new dedicated-host `/scratch` is different:
+it is host-scoped shared scratch storage.
+
+Before shipping, audit and update all user-visible wording, comments that drive
+errors, docs, and UI affordances that still imply:
+
+- `/scratch` is the old per-project scratch area.
+- `/scratch` is unsupported and users should use `/tmp`.
+- `/scratch` is copied, backed up, moved, or quota-managed like project
+  storage.
+
+The intended language is:
+
+- `/tmp`: per-project temporary local storage.
+- `/scratch`: optional shared scratch disk on a dedicated project host.
+
+Do not change existing backend behavior for project copy/move until the new
+host-shared `/scratch` semantics are fully routed. It is still correct that
+project backup/move/copy should not silently include host-shared `/scratch`.
 
 ## CLI
 
@@ -918,7 +1000,67 @@ Exit criteria:
 
 - Users can answer "how full is `/scratch`?" from normal UI.
 
-### Phase 9: Public Pool Warning
+### Phase 9: Shared Scratch Auto-Grow
+
+Goal: let administrators opt into safe automatic growth of `/scratch`.
+
+Files to update:
+
+- `src/packages/server/project-host/auto-grow.ts`
+- `src/packages/server/project-host/auto-grow.test.ts`
+- `src/packages/server/project-host/spend.ts`
+- `src/packages/server/conat/api/hosts.ts`
+- `src/packages/conat/hub/api/hosts.ts`
+- `src/packages/frontend/hosts/components/host-edit-modal.tsx`
+- `src/packages/frontend/hosts/components/host-drawer.tsx`
+- `src/packages/frontend/hosts/create/host-create-draft.ts`
+- `src/packages/frontend/hosts/providers/registry.ts`
+
+Tasks:
+
+- Add scratch auto-grow fields to host machine configuration.
+- Reuse the main disk auto-grow scheduler/policy where possible.
+- Sample `/mnt/cocalc-scratch` usage at the host level.
+- Trigger scratch grow when free space crosses the configured threshold.
+- Enforce configured maximum size and billing admission before grow.
+- Record grow attempts, successes, and failures in host diagnostics/activity.
+- Surface auto-grow settings and spend warning in host create/edit UI.
+
+Exit criteria:
+
+- A host with scratch auto-grow enabled expands `/scratch` online when it gets
+  full, up to the configured maximum.
+- A host with auto-grow disabled never grows automatically.
+- Users can see why an automatic grow did or did not happen.
+
+### Phase 10: Legacy Scratch Semantics Cleanup
+
+Goal: eliminate contradictory `/scratch` messaging.
+
+Files to audit/update:
+
+- `src/packages/server/projects/copy.ts`
+- `src/packages/conat/project/runner/types.ts`
+- `src/packages/conat/files/file-server.ts`
+- `src/packages/frontend/components/smart-anchor-tag.tsx`
+- Any docs/help text mentioning legacy `/scratch`.
+
+Tasks:
+
+- Replace old user-facing "use `/tmp` instead of `/scratch`" messages with
+  wording that distinguishes old per-project scratch from new host-shared
+  `/scratch`.
+- Keep backup/copy/move exclusions for host-shared `/scratch`.
+- Ensure file browser, copy, and restore workflows do not imply `/scratch` is
+  durable or portable.
+- Add tests for any changed user-facing error text.
+
+Exit criteria:
+
+- Users see consistent language: `/tmp` is per-project temporary storage;
+  `/scratch` is optional shared host-local storage on dedicated hosts.
+
+### Phase 11: Public Pool Warning
 
 Goal: warn admins when sharing a host that has shared scratch.
 
@@ -939,7 +1081,7 @@ Exit criteria:
 
 - Admins get explicit warning but trusted lab/class deployments remain possible.
 
-### Phase 10: Smoke Runner And Dogfood
+### Phase 12: Smoke Runner And Dogfood
 
 Goal: validate with a real Nebius host before broader exposure.
 
@@ -1087,8 +1229,8 @@ Smoke tests:
 
 ## Open Questions
 
-- Should the one-copy Nebius disk type be offered at all, or hidden in V1?
-- Should changing scratch disk type be supported as delete/recreate only?
+- Should the one-copy Nebius disk type be offered at all, or hidden in V1? (Ans: yes, just make it clear what the durability is and link to the nebius page; it's suitable for some applications -- e.g., a large training data set and is cheaper.)
+- Should changing scratch disk type be supported as delete/recreate only? (ans: yes)
 - Should scratch usage be sampled by the host daemon or queried live by project
-  storage-info?
-- What is the exact provider-safe maximum scratch disk size for each disk type?
+  storage-info? (ans: seems like host daemon, since there can be tons of projects and there's only one /scratch ?)
+- What is the exact provider-safe maximum scratch disk size for each disk type? (ans: https://docs.nebius.com/compute/storage/types has 8TB, 264TB, 264TB, i.e., absolutely frickin' massive.  We have to be very careful about billing admission here since a user could easily create a scratch disk on nebius that cost \$30K/month!)
