@@ -143,4 +143,22 @@ describe("project-host token bay checks", () => {
       }),
     ).rejects.toThrow("not authorized for project-host agent auth token");
   });
+
+  it("rejects host-issued agent tokens for viewers", async () => {
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      expect(sql).toContain("IN ('owner', 'collaborator')");
+      expect(params).toEqual([PROJECT_UUID, HOST_UUID, ACCOUNT_UUID, "bay-0"]);
+      return { rowCount: 0 };
+    });
+
+    const { assertProjectHostAgentTokenAccess } =
+      await import("./project-host-token-auth");
+    await expect(
+      assertProjectHostAgentTokenAccess({
+        account_id: ACCOUNT_UUID,
+        host_id: HOST_UUID,
+        project_id: PROJECT_UUID,
+      }),
+    ).rejects.toThrow("not authorized for project-host agent auth token");
+  });
 });

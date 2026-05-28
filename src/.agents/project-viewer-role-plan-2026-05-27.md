@@ -412,6 +412,8 @@ check.
 - convert broad collaborator checks to capability-specific checks.
 - add regression tests for each indirect runtime/write path found.
 
+Audit record: see `src/.agents/project-viewer-endpoint-audit-2026-05-28.md`.
+
 ### Phase 5: Optional Extensions
 
 - read-only API keys with `file:read`.

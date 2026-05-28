@@ -740,8 +740,10 @@ You can either wait for this host to become available again, or move this ${proj
               <BackupOps project_id={project_id} />
               <RestoreOps project_id={project_id} />
               <MoveOps project_id={project_id} />
-              <CopyOps project_id={project_id} />
             </>
+          )}
+          {(canWriteProjectFiles || readOnlyViewer) && (
+            <CopyOps project_id={project_id} />
           )}
           <div
             style={{
@@ -973,6 +975,7 @@ You can either wait for this host to become available again, or move this ${proj
                       autoUpdateListing={autoUpdateListing}
                       onToggleAutoUpdate={handleAutoUpdateListingChange}
                       readOnly={readOnlyViewer}
+                      allowCopyOut={readOnlyViewer}
                     />
                   )}
                 </div>
@@ -1159,6 +1162,7 @@ You can either wait for this host to become available again, or move this ${proj
                     shiftIsDown={shiftIsDown}
                     onNavigateDirectory={navigateExplorer}
                     readOnly={readOnlyViewer}
+                    allowReadOnlyCopy={readOnlyViewer}
                   />
                 </MaybeFileUploadWrapper>
               </>
@@ -1233,6 +1237,7 @@ function FileListingBody({
   shiftIsDown,
   onNavigateDirectory,
   readOnly,
+  allowReadOnlyCopy,
 }: {
   visibleListing: DirectoryListingEntry[] | null | undefined;
   active_file_sort: { column_name: string; is_descending: boolean };
@@ -1245,6 +1250,7 @@ function FileListingBody({
   shiftIsDown: boolean;
   onNavigateDirectory: (path: string) => void;
   readOnly: boolean;
+  allowReadOnlyCopy: boolean;
 }) {
   if (visibleListing == null) {
     return (
@@ -1266,6 +1272,7 @@ function FileListingBody({
       shiftIsDown={shiftIsDown}
       onNavigateDirectory={onNavigateDirectory}
       readOnly={readOnly}
+      allowReadOnlyCopy={allowReadOnlyCopy}
     />
   );
 }

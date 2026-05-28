@@ -68,6 +68,84 @@ describe("filesystem explicit routing", () => {
     expect(fs0).toHaveBeenCalledTimes(2);
   });
 
+  it("rejects read locks on read-only filesystem service", async () => {
+    const { fsReadOnlyServer } = await import("./fs");
+    const readFile = jest.fn(async () => "ok");
+    let handlers: any;
+    const close = jest.fn();
+    const client = {
+      service: jest.fn(async (_subject, svc) => {
+        handlers = svc;
+        return { close };
+      }),
+    } as any;
+
+    const server = await fsReadOnlyServer({
+      service: "fs-viewer-test",
+      client,
+      fs: jest.fn(async () => ({ readFile }) as any),
+    });
+
+    await expect(
+      handlers.readFile.call(
+        {
+          subject:
+            "fs-viewer-test.project-00000000-0000-4000-8000-000000000000.account-11111111-1111-4111-8111-111111111111",
+        },
+        "/home/user/a.txt",
+        "utf8",
+        1000,
+      ),
+    ).rejects.toMatchObject({ code: "EACCES" });
+    expect(readFile).not.toHaveBeenCalled();
+
+    await expect(
+      handlers.readFile.call(
+        {
+          subject:
+            "fs-viewer-test.project-00000000-0000-4000-8000-000000000000.account-11111111-1111-4111-8111-111111111111",
+        },
+        "/home/user/a.txt",
+        "utf8",
+      ),
+    ).resolves.toBe("ok");
+    expect(readFile).toHaveBeenCalledWith("/home/user/a.txt", "utf8");
+
+    server.close();
+  });
+
+  it("exposes realpath on read-only filesystem service", async () => {
+    const { fsReadOnlyServer } = await import("./fs");
+    const realpath = jest.fn(async (path: string) => `/resolved${path}`);
+    let handlers: any;
+    const close = jest.fn();
+    const client = {
+      service: jest.fn(async (_subject, svc) => {
+        handlers = svc;
+        return { close };
+      }),
+    } as any;
+
+    const server = await fsReadOnlyServer({
+      service: "fs-viewer-test",
+      client,
+      fs: jest.fn(async () => ({ realpath }) as any),
+    });
+
+    await expect(
+      handlers.realpath.call(
+        {
+          subject:
+            "fs-viewer-test.project-00000000-0000-4000-8000-000000000000.account-11111111-1111-4111-8111-111111111111",
+        },
+        "/home/user/a.txt",
+      ),
+    ).resolves.toBe("/resolved/home/user/a.txt");
+    expect(realpath).toHaveBeenCalledWith("/home/user/a.txt");
+
+    server.close();
+  });
+
   it("reuses an existing watch server when the subject is already registered", async () => {
     const { fsClient } = await import("./fs");
     const { EventEmitter } = await import("events");

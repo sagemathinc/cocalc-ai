@@ -66,8 +66,6 @@ const VIEWER_FIXED_TABS = new Set<FixedTab>([
   "active",
   "docs",
   "files",
-  "info",
-  "log",
   "users",
 ]);
 

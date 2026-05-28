@@ -102,6 +102,8 @@ import {
   PROJECT_COLLABORATOR_REQUIRED_ERROR,
   PROJECT_NOT_FOUND_ERROR,
 } from "@cocalc/server/conat/project-local-access";
+import { resolveProjectAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
+import type { ProjectViewerReadPolicy } from "@cocalc/util/project-access";
 import type {
   ChatStoreScope,
   CourseStudentAccessStatus,
@@ -136,7 +138,6 @@ import type {
   ProjectRunQuota,
   WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
-import type { ProjectViewerReadPolicy } from "@cocalc/util/project-access";
 import { validateProjectEnv } from "@cocalc/util/project-secrets";
 import {
   copyProjectSecrets as copyProjectSecretsInDb,
@@ -293,6 +294,27 @@ async function projectFs(project_id: string) {
   });
 }
 
+async function authorizeCopySource({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectViewerReadPolicy | undefined> {
+  const access = await resolveProjectAccessAllowRemote({
+    account_id,
+    project_id,
+  });
+  if (access.capabilities.writeProjectFiles) {
+    await assertCollab({ account_id, project_id });
+    return;
+  }
+  if (access.role === "viewer" && access.read_policy) {
+    return access.read_policy;
+  }
+  throw new Error("user must be a collaborator or viewer on source project");
+}
+
 export async function copyPathBetweenProjects({
   src,
   src_home,
@@ -318,13 +340,21 @@ export async function copyPathBetweenProjects({
     throw Error("user must be signed in");
   }
   const normalizedDests = normalizeCopyDests({ dest, dests });
-  await assertCollab({ account_id, project_id: src.project_id });
+  const src_read_policy = await authorizeCopySource({
+    account_id,
+    project_id: src.project_id,
+  });
+  const authorizedCollabProjectIds = new Set<string>();
+  if (!src_read_policy) {
+    authorizedCollabProjectIds.add(src.project_id);
+  }
   const destProjectIds = Array.from(
     new Set(normalizedDests.map((dest) => dest.project_id)),
   );
   for (const project_id of destProjectIds) {
-    if (project_id !== src.project_id) {
+    if (!authorizedCollabProjectIds.has(project_id)) {
       await assertCollab({ account_id, project_id });
+      authorizedCollabProjectIds.add(project_id);
     }
   }
   const destOwnerAccountIds = new Set<string>();
@@ -347,6 +377,7 @@ export async function copyPathBetweenProjects({
     routing: "hub",
     input: {
       src,
+      ...(src_read_policy ? { src_read_policy } : {}),
       ...(src_home ? { src_home } : {}),
       dests: normalizedDests,
       options,

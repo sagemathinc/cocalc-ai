@@ -160,6 +160,47 @@ describe("project SSH keys", () => {
     expect(await sshKeys(PROJECT_ID)).toEqual({});
   });
 
+  it("does not grant SSH access through viewer keys", async () => {
+    const viewerAccount = "44444444-4444-4444-8444-444444444444";
+    await getPool().query(
+      "INSERT INTO accounts (account_id, email_address, banned, ssh_keys) VALUES ($1, $2, $3, $4)",
+      [
+        viewerAccount,
+        "viewer@example.com",
+        false,
+        JSON.stringify({
+          global: {
+            title: "global viewer",
+            value: "ssh-ed25519 AAAAVIEWER global",
+            creation_date: 456,
+          },
+        }),
+      ],
+    );
+    await getPool().query(
+      "INSERT INTO projects (project_id, title, users, last_edited) VALUES ($1, $2, $3, NOW())",
+      [
+        PROJECT_ID,
+        "Test Project",
+        JSON.stringify({
+          [ACCOUNT_ID]: { group: "owner" },
+          [viewerAccount]: {
+            group: "viewer",
+            ssh_keys: {
+              project: {
+                title: "project viewer",
+                value: "ssh-ed25519 AAAAVIEWER project",
+                creation_date: 789,
+              },
+            },
+          },
+        }),
+      ],
+    );
+
+    expect(await sshKeys(PROJECT_ID)).toEqual({});
+  });
+
   it("refuses to update SSH keys for projects owned by another bay", async () => {
     await getPool().query(
       "INSERT INTO projects (project_id, title, users, last_edited, owning_bay_id) VALUES ($1, $2, $3, NOW(), $4)",

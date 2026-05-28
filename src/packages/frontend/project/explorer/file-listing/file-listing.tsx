@@ -118,6 +118,7 @@ interface Props {
   shiftIsDown: boolean;
   isRunning?: boolean;
   readOnly?: boolean;
+  allowReadOnlyCopy?: boolean;
   sort_by: (column_name: string) => void;
   onNavigateDirectory?: (path: string) => void;
 }
@@ -446,6 +447,7 @@ export function FileListing({
   shiftIsDown,
   file_search = "",
   readOnly = false,
+  allowReadOnlyCopy = false,
   sort_by,
   onNavigateDirectory,
 }: Props) {
@@ -955,21 +957,22 @@ export function FileListing({
 
     return (
       <tr>
-        {!student_project_functionality.disableActions && !readOnly && (
-          <th
-            style={{
-              ...centeredHeaderStyle,
-              width: COL_W.CHECKBOX,
-              cursor: "default",
-            }}
-          >
-            <Checkbox
-              checked={allChecked}
-              indeterminate={someChecked}
-              onChange={handleSelectAll}
-            />
-          </th>
-        )}
+        {!student_project_functionality.disableActions &&
+          (!readOnly || allowReadOnlyCopy) && (
+            <th
+              style={{
+                ...centeredHeaderStyle,
+                width: COL_W.CHECKBOX,
+                cursor: "default",
+              }}
+            >
+              <Checkbox
+                checked={allChecked}
+                indeterminate={someChecked}
+                onChange={handleSelectAll}
+              />
+            </th>
+          )}
         <th style={{ ...centeredHeaderStyle, width: COL_W.TYPE }}>
           <Dropdown
             menu={{
@@ -1063,6 +1066,7 @@ export function FileListing({
   }, [
     student_project_functionality.disableActions,
     readOnly,
+    allowReadOnlyCopy,
     allChecked,
     someChecked,
     handleSelectAll,
@@ -1078,7 +1082,10 @@ export function FileListing({
 
   const numCols = useMemo(() => {
     let n = 4; // public + type + star + name
-    if (!student_project_functionality.disableActions && !readOnly) {
+    if (
+      !student_project_functionality.disableActions &&
+      (!readOnly || allowReadOnlyCopy)
+    ) {
       n += 1;
     }
     n += 1; // date
@@ -1086,7 +1093,12 @@ export function FileListing({
       n += 2; // size + actions
     }
     return n;
-  }, [student_project_functionality.disableActions, readOnly, isNarrow]);
+  }, [
+    student_project_functionality.disableActions,
+    readOnly,
+    allowReadOnlyCopy,
+    isNarrow,
+  ]);
 
   const itemContent = useCallback(
     (_index: number, entry: VirtualEntry) => {
@@ -1128,24 +1140,29 @@ export function FileListing({
 
       return (
         <>
-          {!student_project_functionality.disableActions && !readOnly && (
-            <td
-              style={{
-                ...cellStyle,
-                width: COL_W.CHECKBOX,
-                textAlign: "center",
-              }}
-            >
-              <Checkbox
-                checked={checked_files.has(record.fullPath)}
-                disabled={record.name === ".."}
-                onClick={(e) => e.stopPropagation()}
-                onChange={(e) =>
-                  handleCheckboxChange(record, e.target.checked, e.nativeEvent)
-                }
-              />
-            </td>
-          )}
+          {!student_project_functionality.disableActions &&
+            (!readOnly || allowReadOnlyCopy) && (
+              <td
+                style={{
+                  ...cellStyle,
+                  width: COL_W.CHECKBOX,
+                  textAlign: "center",
+                }}
+              >
+                <Checkbox
+                  checked={checked_files.has(record.fullPath)}
+                  disabled={record.name === ".."}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) =>
+                    handleCheckboxChange(
+                      record,
+                      e.target.checked,
+                      e.nativeEvent,
+                    )
+                  }
+                />
+              </td>
+            )}
           <td
             style={{
               ...cellStyle,
@@ -1273,6 +1290,7 @@ export function FileListing({
     [
       student_project_functionality.disableActions,
       readOnly,
+      allowReadOnlyCopy,
       checked_files,
       current_path,
       handleCheckboxChange,

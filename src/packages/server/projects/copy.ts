@@ -5,12 +5,18 @@ import getPool from "@cocalc/database/pool";
 import { waitForCompletion as waitForLroCompletion } from "@cocalc/conat/lro/client";
 import { type Fileserver } from "@cocalc/conat/files/file-server";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
+import type { FilesystemClient } from "@cocalc/conat/files/fs";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
 import { createBackup as createBackupLro } from "@cocalc/server/conat/api/project-backups";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { insertCopyRowIfMissing, upsertCopyRow } from "./copy-db";
 import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
+import {
+  normalizeProjectViewerPolicyPath,
+  viewerReadPolicyAllowsPath,
+  type ProjectViewerReadPolicy,
+} from "@cocalc/util/project-access";
 
 const logger = getLogger("server:projects:copy");
 
@@ -109,6 +115,98 @@ function normalizeSrcPaths(src: CopySource): string[] {
     normalizeCopyPath(p, `src.path[${idx}]`),
   );
   return normalized;
+}
+
+function viewerCopyDenied(path: string): NodeJS.ErrnoException {
+  const err = new Error(
+    `EACCES: permission denied by viewer read policy, copy '${path}'`,
+  ) as NodeJS.ErrnoException;
+  err.code = "EACCES";
+  err.errno = -13;
+  err.path = path;
+  err.syscall = "copy";
+  return err;
+}
+
+async function canonicalViewerCopyPath({
+  fs,
+  path: srcPath,
+}: {
+  fs: FilesystemClient;
+  path: string;
+}): Promise<string | undefined> {
+  if (typeof fs.canonicalSyncIdentityPath !== "function") {
+    throw new Error("project filesystem does not support canonical paths");
+  }
+  const canonicalIdentity = await fs.canonicalSyncIdentityPath(srcPath);
+  const relativeHomePath = projectRuntimeHomeRelativePath(canonicalIdentity);
+  if (canonicalIdentity.startsWith("/") && relativeHomePath == null) {
+    return undefined;
+  }
+  return normalizeProjectViewerPolicyPath(
+    relativeHomePath ?? canonicalIdentity,
+  );
+}
+
+async function assertViewerCopyPathAllowed({
+  fs,
+  read_policy,
+  path: srcPath,
+}: {
+  fs: FilesystemClient;
+  read_policy: ProjectViewerReadPolicy;
+  path: string;
+}): Promise<void> {
+  const canonical = await canonicalViewerCopyPath({ fs, path: srcPath });
+  if (
+    canonical == null ||
+    !viewerReadPolicyAllowsPath({ policy: read_policy, path: canonical })
+  ) {
+    throw viewerCopyDenied(srcPath);
+  }
+}
+
+export async function assertCopySourceAllowedByReadPolicy({
+  fs,
+  read_policy,
+  src_paths,
+  options,
+}: {
+  fs: FilesystemClient;
+  read_policy: ProjectViewerReadPolicy;
+  src_paths: string[];
+  options?: CopyOptions;
+}): Promise<void> {
+  const seen = new Set<string>();
+  const visit = async (srcPath: string) => {
+    const canonical = await canonicalViewerCopyPath({ fs, path: srcPath });
+    if (canonical == null) {
+      await assertViewerCopyPathAllowed({ fs, read_policy, path: srcPath });
+      return;
+    }
+    const key = `/${canonical}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    await assertViewerCopyPathAllowed({ fs, read_policy, path: srcPath });
+    if (!options?.recursive) {
+      return;
+    }
+    const stat = await fs.stat(srcPath);
+    if (!stat.isDirectory()) {
+      return;
+    }
+    const entries = (await fs.readdir(srcPath, {
+      withFileTypes: true,
+    })) as any[];
+    for (const entry of entries) {
+      await visit(path.posix.join(srcPath, entry.name));
+    }
+  };
+  for (const srcPath of src_paths) {
+    await visit(srcPath);
+  }
 }
 
 function normalizeHomePath(raw?: string): string | undefined {
@@ -417,6 +515,7 @@ export async function copyProjectFiles({
   src_home,
   dests,
   options,
+  src_read_policy,
   account_id,
   op_id,
   progress,
@@ -430,6 +529,7 @@ export async function copyProjectFiles({
   src_home?: string;
   dests: CopyDest[];
   options?: CopyOptions;
+  src_read_policy?: ProjectViewerReadPolicy;
   account_id: string;
   op_id?: string;
   progress?: CopyProgress;
@@ -491,6 +591,19 @@ export async function copyProjectFiles({
     project_id: src.project_id,
     timeout: timeout_ms,
   });
+  if (src_read_policy) {
+    const srcFs = (
+      await getExplicitProjectRoutedClient({
+        project_id: src.project_id,
+      })
+    ).fs({ project_id: src.project_id });
+    await assertCopySourceAllowedByReadPolicy({
+      fs: srcFs,
+      read_policy: src_read_policy,
+      src_paths: srcPaths,
+      options,
+    });
+  }
 
   const localDests: CopyDest[] = [];
   const remoteDests: CopyDestWithHost[] = [];
