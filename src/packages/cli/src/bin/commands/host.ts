@@ -67,6 +67,7 @@ const HOST_SHARED_SCRATCH_DISK_TYPES = new Set([
   "ssd_io_m3",
 ]);
 const NEBIUS_DISK_INCREMENT_GB = 93;
+const HOST_SHARED_SCRATCH_RPC_TIMEOUT_MS = 120_000;
 
 export function assertHostRehomeConfirmed({
   host_id,
@@ -1875,6 +1876,7 @@ export function registerHostCommand(
             `${opts.browserId ?? process.env.COCALC_BROWSER_ID ?? ""}`.trim();
           const payload: Record<string, any> = {
             shared_disk_gb: normalizedSizeGb,
+            timeout: HOST_SHARED_SCRATCH_RPC_TIMEOUT_MS,
           };
           if (browserId) {
             payload.browser_id = browserId;
@@ -1924,6 +1926,7 @@ export function registerHostCommand(
           const updated = await ctx.hub.hosts.updateHostMachine({
             id: h.id,
             delete_shared_scratch: true,
+            timeout: HOST_SHARED_SCRATCH_RPC_TIMEOUT_MS,
             ...(browserId ? { browser_id: browserId } : undefined),
           });
           return {

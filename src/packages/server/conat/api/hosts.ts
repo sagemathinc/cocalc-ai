@@ -5625,6 +5625,7 @@ export async function updateHostMachine({
   pricing_model?: HostPricingModel;
   interruption_restore_policy?: HostInterruptionRestorePolicy;
   spot_recovery_policy?: HostSpotRecoveryPolicy;
+  timeout?: number;
 }): Promise<Host> {
   const owner = requireAccount(account_id);
   const row = await loadOwnedHost(id, owner);
