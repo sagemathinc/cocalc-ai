@@ -1696,10 +1696,22 @@ because the host must unmount it before destroying the disk.
 
 ## Growing and changing scratch
 
-For GCP and Nebius hosts, scratch disk growth is online. It does not require a
-host reboot, and it is one-way: you can grow the disk, but you cannot shrink it
-in place. To shrink or change disk type, delete the scratch disk and recreate it
-at the desired size and type, which destroys all scratch data.
+For GCP hosts, scratch disk growth is online. It does not require a host reboot,
+and projects can keep running while the disk and filesystem are enlarged.
+
+GCP scratch disks can also be configured for automatic grow. When automatic
+grow is enabled, CoCalc watches host-level \`/scratch\` usage, grows by the
+configured increment when free space crosses the threshold, caps growth at the
+configured maximum, and still runs billing/admission checks before increasing
+pay-as-you-go storage.
+
+For Nebius hosts, creating the initial scratch disk can be done without a host
+reboot. Growing an existing Nebius scratch disk later requires a host reboot
+before the larger filesystem is available.
+
+Scratch growth is one-way: you can grow the disk, but you cannot shrink it in
+place. To shrink or change disk type, delete the scratch disk and recreate it at
+the desired size and type, which destroys all scratch data.
 
 Nebius scratch disks are sized in 93 GB increments. If you request a smaller or
 non-aligned size, the UI rounds up to the provider-supported size.
