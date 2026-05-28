@@ -14,6 +14,7 @@ import type {
   ProjectStorageOverview,
   ProjectStorageQuotaSummary,
   ProjectStorageRetainedSummary,
+  ProjectStorageSharedScratchSummary,
   ProjectStorageVisibleSummary,
 } from "@cocalc/conat/project/storage-info";
 import {
@@ -116,6 +117,15 @@ export interface StorageAnalysisResult {
       bytes: number;
       detail?: string;
     } | null;
+    shared_scratch: {
+      label: string;
+      path: "/scratch";
+      used_bytes: number;
+      size_bytes: number;
+      free_bytes: number;
+      available_bytes: number;
+      warning?: string;
+    } | null;
     visible: Record<
       StorageBucketKey,
       {
@@ -199,6 +209,12 @@ function retainedSummary(
   overview: ProjectStorageOverview,
 ): ProjectStorageRetainedSummary | null {
   return overview.retained ?? null;
+}
+
+function sharedScratchSummary(
+  overview: ProjectStorageOverview,
+): ProjectStorageSharedScratchSummary | null {
+  return overview.shared_scratch ?? null;
 }
 
 function metricValue(
@@ -352,6 +368,7 @@ function buildStorageAnalysis({
   const quota = quotaSummary(overview);
   const live = liveSummary(overview);
   const retained = retainedSummary(overview);
+  const sharedScratch = sharedScratchSummary(overview);
   const home = visibleSummary(overview, "home");
   const environment = visibleSummary(overview, "environment");
   const findings: StorageFinding[] = [];
@@ -546,6 +563,17 @@ function buildStorageAnalysis({
             detail: retained.detail,
           }
         : null,
+      shared_scratch: sharedScratch
+        ? {
+            label: sharedScratch.label,
+            path: sharedScratch.path,
+            used_bytes: sharedScratch.used,
+            size_bytes: sharedScratch.size,
+            free_bytes: sharedScratch.free,
+            available_bytes: sharedScratch.available,
+            warning: sharedScratch.warning,
+          }
+        : null,
       visible: {
         home: home
           ? {
@@ -580,6 +608,7 @@ function renderStorageAnalysisHuman(analysis: StorageAnalysisResult): string {
   const quota = analysis.summary.quota;
   const live = analysis.summary.live;
   const retained = analysis.summary.retained;
+  const sharedScratch = analysis.summary.shared_scratch;
   const visible = analysis.summary.visible;
   lines.push(`Storage analysis for ${analysis.title}`);
   lines.push(`Project: ${analysis.project_id}`);
@@ -606,6 +635,11 @@ function renderStorageAnalysisHuman(analysis: StorageAnalysisResult): string {
   if (retained) {
     lines.push(
       `- Retained snapshot/history data: ${formatBytes(retained.bytes)}`,
+    );
+  }
+  if (sharedScratch) {
+    lines.push(
+      `- /scratch: ${formatBytes(sharedScratch.used_bytes)} / ${formatBytes(sharedScratch.size_bytes)} shared host storage; outside project quota and not backed up by CoCalc`,
     );
   }
   if (analysis.history.growth?.quota_used_bytes_per_hour != null) {
@@ -677,6 +711,9 @@ function flattenStorageOverview({
     quota_warning: quota?.warning ?? "",
     live: formatBytes(live?.bytes),
     retained: formatBytes(retained?.bytes),
+    shared_scratch_used: formatBytes(overview.shared_scratch?.used),
+    shared_scratch_size: formatBytes(overview.shared_scratch?.size),
+    shared_scratch_available: formatBytes(overview.shared_scratch?.available),
     home: formatBytes(home?.summaryBytes),
     environment: formatBytes(environment?.summaryBytes),
   };

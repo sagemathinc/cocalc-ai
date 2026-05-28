@@ -4,6 +4,7 @@
  */
 
 import { posix } from "node:path";
+import { statfs } from "node:fs/promises";
 import TTL from "@isaacs/ttlcache";
 import getLogger from "@cocalc/backend/logger";
 import type { Client } from "@cocalc/conat/core/client";
@@ -18,11 +19,12 @@ import type {
   ProjectStorageOverview,
   ProjectStorageOverviewRefresh,
   ProjectStorageRetainedSummary,
+  ProjectStorageSharedScratchSummary,
   ProjectStorageVisibleSummary,
 } from "@cocalc/conat/project/storage-info";
 import { dstream, type DStream } from "@cocalc/conat/sync/dstream";
 import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
-import { fileServerClient } from "./file-server";
+import { fileServerClient, getSharedScratchMountpoint } from "./file-server";
 
 const logger = getLogger("project-host:storage-info");
 
@@ -235,6 +237,26 @@ function buildRetainedSummary({
     bytes,
     detail:
       "Estimate computed as project quota used minus current live files. This usually comes from snapshots retaining deleted or modified data, and can decrease automatically as older snapshots expire.",
+  };
+}
+
+async function getSharedScratchSummary(): Promise<
+  ProjectStorageSharedScratchSummary | undefined
+> {
+  const mount = getSharedScratchMountpoint();
+  if (!mount) return undefined;
+  const stats = await statfs(mount);
+  const size = Math.max(0, stats.blocks * stats.bsize);
+  const free = Math.max(0, stats.bfree * stats.bsize);
+  return {
+    key: "shared_scratch",
+    label: "Host shared scratch",
+    path: "/scratch",
+    used: Math.max(0, size - free),
+    size,
+    free,
+    available: Math.max(0, stats.bavail * stats.bsize),
+    collected_at: new Date().toISOString(),
   };
 }
 
@@ -564,27 +586,35 @@ async function getStorageOverviewImpl({
   const load = (async () => {
     const environmentPath = posix.join(homePath, PROJECT_IMAGE_PATH);
     const fileServer = fileServerClient(client);
-    const [quota, homeUsage, environmentUsage] = await Promise.all([
-      fileServer.getQuota({ project_id }),
-      getStorageBreakdownImpl({
-        client,
-        project_id,
-        path: homePath,
-        force_sample: forced && forceAllowed,
-      }),
-      getStorageBreakdownImpl({
-        client,
-        project_id,
-        path: environmentPath,
-        force_sample: forced && forceAllowed,
-      }).catch((err) => {
-        const text = `${err ?? ""}`.toLowerCase();
-        if (text.includes("no such file") || text.includes("not found")) {
-          return null;
-        }
-        throw err;
-      }),
-    ]);
+    const [quota, homeUsage, environmentUsage, sharedScratch] =
+      await Promise.all([
+        fileServer.getQuota({ project_id }),
+        getStorageBreakdownImpl({
+          client,
+          project_id,
+          path: homePath,
+          force_sample: forced && forceAllowed,
+        }),
+        getStorageBreakdownImpl({
+          client,
+          project_id,
+          path: environmentPath,
+          force_sample: forced && forceAllowed,
+        }).catch((err) => {
+          const text = `${err ?? ""}`.toLowerCase();
+          if (text.includes("no such file") || text.includes("not found")) {
+            return null;
+          }
+          throw err;
+        }),
+        getSharedScratchSummary().catch((err) => {
+          logger.warn("getStorageOverview: unable to sample shared scratch", {
+            project_id,
+            err,
+          });
+          return undefined;
+        }),
+      ]);
 
     const environmentBytes = Math.max(0, environmentUsage?.bytes ?? 0);
     const liveBytes = Math.max(0, homeUsage.bytes);
@@ -641,6 +671,7 @@ async function getStorageOverviewImpl({
         quotaUsed: quota.used,
         liveBytes,
       }),
+      ...(sharedScratch ? { shared_scratch: sharedScratch } : {}),
       visible,
     };
     try {

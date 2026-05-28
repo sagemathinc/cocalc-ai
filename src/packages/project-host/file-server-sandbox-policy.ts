@@ -10,18 +10,21 @@ export function createProjectSandboxFilesystem({
   home,
   rootfs,
   scratch,
+  sharedScratch,
   deleteSnapshot,
 }: {
   project_id: string;
   home: string;
   rootfs: string;
   scratch: string;
+  sharedScratch?: string;
   deleteSnapshot?: (name: string) => Promise<void>;
 }): SandboxedFilesystem {
   const fs = new SandboxedFilesystem(home, {
     host: project_id,
     rootfs,
     scratch,
+    sharedScratch,
     homeAliases: [DEFAULT_PROJECT_RUNTIME_HOME],
   });
   const baseRm = fs.rm.bind(fs);
