@@ -367,11 +367,17 @@ describe("PublicApp", () => {
       }),
     ).not.toBeNull();
     expect(screen.getByText("Member")).not.toBeNull();
+    expect(screen.getByText("$18.75")).not.toBeNull();
+    expect(screen.getByText("/ mo")).not.toBeNull();
+    expect(screen.getByText("Billed annually, saving 25%")).not.toBeNull();
     expect(screen.getByRole("link", { name: /Member/ })).toHaveAttribute(
       "href",
       "/settings/store",
     );
     expect(screen.queryByRole("link", { name: "Open Store" })).toBeNull();
+    fireEvent.click(screen.getByText("Monthly"));
+    expect(screen.getByText("$25.00")).not.toBeNull();
+    expect(screen.getByText("Save 25% with annual billing")).not.toBeNull();
     expect(
       screen.getByText(/the one planned pay-as-you-go exception/i),
     ).not.toBeNull();
