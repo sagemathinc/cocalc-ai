@@ -118,6 +118,31 @@ export const PROVIDERS: Record<ProviderId, ProviderEntry | undefined> = {
       supportsGpu: true,
       supportsZones: true,
       persistentStorage: { supported: true, growable: true },
+      sharedScratchDisk: {
+        supported: true,
+        growable: true,
+        disk_types: [
+          {
+            value: "balanced",
+            label: "Balanced persistent disk",
+            durability: "replicated",
+            default: true,
+            help_url: "https://cloud.google.com/compute/docs/disks",
+          },
+          {
+            value: "ssd",
+            label: "SSD persistent disk",
+            durability: "replicated",
+            help_url: "https://cloud.google.com/compute/docs/disks",
+          },
+          {
+            value: "standard",
+            label: "Standard persistent disk",
+            durability: "replicated",
+            help_url: "https://cloud.google.com/compute/docs/disks",
+          },
+        ],
+      },
       hasRegions: true,
       hasZones: true,
       hasImages: true,

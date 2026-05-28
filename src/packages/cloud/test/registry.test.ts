@@ -6,7 +6,15 @@ describe("cloud registry", () => {
   });
 
   it("advertises shared scratch disk support only for implemented providers", () => {
-    expect(PROVIDERS.gcp?.capabilities.sharedScratchDisk).toBeUndefined();
+    expect(PROVIDERS.gcp?.capabilities.sharedScratchDisk).toMatchObject({
+      supported: true,
+      growable: true,
+    });
+    expect(
+      PROVIDERS.gcp?.capabilities.sharedScratchDisk?.disk_types.find(
+        (entry) => entry.value === "balanced",
+      )?.durability,
+    ).toBe("replicated");
     expect(PROVIDERS.nebius?.capabilities.sharedScratchDisk).toMatchObject({
       supported: true,
       growable: true,

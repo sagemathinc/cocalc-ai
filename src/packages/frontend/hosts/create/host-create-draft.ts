@@ -135,7 +135,7 @@ const defaultDiskTypeForProvider = (provider: HostProvider) =>
   provider === "nebius" ? "ssd_io_m3" : getDiskTypeOptions(provider)[0]?.value;
 
 const defaultSharedDiskTypeForProvider = (provider: HostProvider) =>
-  provider === "nebius" ? "ssd" : undefined;
+  provider === "nebius" ? "ssd" : provider === "gcp" ? "balanced" : undefined;
 
 const normalizeDiskSize = (provider: HostProvider, diskGb: unknown) => {
   const parsed = readPositiveInteger(diskGb) ?? DEFAULT_DISK_GB;
@@ -384,7 +384,7 @@ export function normalizeDraft(
     }
   }
 
-  if (provider !== "nebius") {
+  if (provider !== "nebius" && provider !== "gcp") {
     draft.shared_disk_gb = undefined;
     draft.shared_disk_type = undefined;
   }
