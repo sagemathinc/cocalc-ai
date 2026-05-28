@@ -46,6 +46,8 @@ export type DocsActionId =
   | "hosts.move.open"
   | "hosts.reliability.open"
   | "hosts.runtime.open"
+  | "hosts.storage.open"
+  | "hosts.logs.open"
   | "hosts.spot-recovery.open"
   | "settings.environment.secrets"
   | "project.terminal.open"
@@ -1587,6 +1589,132 @@ the browser tab. Look for version drift, failed reconcile, daemon health,
 rollout phase, and host-specific overrides. Do not treat project bundle,
 project-host daemon, and tools as the same artifact; they affect different
 parts of the runtime stack.
+`;
+
+const PROJECT_HOST_STORAGE_BODY = String.raw`
+## What the storage tab is for
+
+The host **Storage** tab is where you inspect provider disk capacity, storage
+mode, usage, reservations, and host-level storage actions. It is the right
+place to check before growing a disk, moving projects onto a host, draining a
+host, or changing infrastructure that could affect local project data.
+
+Project host storage is not the same thing as a project backup. The host disk
+is where running project files live. Project backups are the portable recovery
+copy that CoCalc can use when moving or restoring projects.
+
+## Persistent and ephemeral storage
+
+Persistent storage is designed to survive ordinary host restarts and provider
+machine replacement according to the provider's disk model. Ephemeral or local
+storage is faster or cheaper for some workloads, but it should be treated as
+recoverable only through project backups and explicit project data copies.
+
+Before placing important projects on a host, check whether the host uses
+persistent storage, ephemeral storage, or provider-specific attached disks. Do
+not assume that files outside the project backup path, such as temporary files,
+will survive deprovision, move, or provider replacement.
+
+## Growing disk
+
+For GCP and Nebius hosts, disk enlarge can be done while the host is running
+and does not require a reboot. Growing disk is one-way: plan for future use,
+but do not treat it as a reversible experiment.
+
+After growing disk, verify the Storage tab and the host status. If usage remains
+high, check whether projects are producing temporary files, caches, datasets,
+or build artifacts that should be moved or deleted instead of simply growing
+the disk again.
+
+## Backups and snapshots
+
+Use project backups for portable project recovery, cross-host moves, and
+protection before lifecycle actions. Use provider snapshots or host-local
+snapshots only when the UI or provider explicitly exposes that workflow for the
+host; they are infrastructure recovery tools, not a substitute for project
+backups.
+
+Before deprovisioning, deleting, moving, or changing storage mode, make sure
+important projects have current backups. If a project has changed region, verify
+that a backup exists in the destination backup region after the move completes.
+
+## Agent notes
+
+When diagnosing storage or advising a lifecycle action:
+
+1. Open the host **Storage** tab for the selected host.
+2. Check storage mode, provider, disk size, current usage, and whether online
+   grow is supported.
+3. Distinguish host disk state from project backup state.
+4. Before deprovision, delete, region move, or storage-mode change, verify
+   project backup freshness and assigned projects.
+5. Warn explicitly that \`/tmp\`, caches, host-local snapshots, and files
+   outside the project backup model may not follow a project move.
+`;
+
+const PROJECT_HOST_LOGS_BODY = String.raw`
+## What host logs are for
+
+The host **Logs** tab shows operational history for the project host itself:
+provisioning, bootstrap, lifecycle actions, software reconcile, daemon state,
+provider errors, and recent host-controller activity. Use it when the host is
+not starting, projects cannot be placed, software is drifting, or a lifecycle
+action looks stuck.
+
+Host logs are different from project logs. A notebook kernel crash, terminal
+process failure, or web app error may be a project problem. A failed provision,
+daemon rollout, provider API error, or unavailable host service is a host
+problem.
+
+## First things to check
+
+Start with the drawer overview and the relevant tab:
+
+1. **Details** for current state and active operations.
+2. **Reliability** for recent online/offline history.
+3. **Runtime** for software lifecycle, drift, and daemon health.
+4. **Logs** for the event stream behind those summaries.
+
+For CLI inspection, use a small recent tail first:
+
+~~~sh
+cocalc host logs <host-id> --tail 200
+~~~
+
+If the recent tail is not enough, narrow by the time of the failed action
+instead of dumping unrelated history.
+
+## Reading log patterns
+
+Provider errors usually point to credentials, quotas, unavailable machine
+types, pricing mode, spot interruptions, region or zone capacity, or network
+setup. Bootstrap errors usually point to package installation, image setup,
+SSH/connector availability, or first-start configuration. Runtime errors point
+to daemon health, version drift, reconcile failures, or project-host service
+rollout.
+
+When a host is recovering from spot interruption or fallback, logs are most
+useful when read together with the spot recovery state and current effective
+pricing.
+
+## Sharing logs safely
+
+Logs may include host ids, project ids, paths, provider names, and operational
+context. Avoid pasting large raw logs into public channels. Prefer a short
+tail around the failure time, plus the host id, action attempted, current
+state, and any active operation id.
+
+## Agent notes
+
+When helping with host debugging:
+
+1. Ask for or select the host id.
+2. Open **Logs**, **Runtime**, and **Reliability** rather than using logs alone.
+3. Capture the action attempted, approximate time, current host state, active
+   operation, and whether the host is spot or standard.
+4. Use \`cocalc host logs <host-id> --tail 200\` for a focused first pass.
+5. Route host inspection to the host-owning bay; do not assume the browser's
+   current project bay owns the host.
 `;
 
 const PROJECT_FILES_BODY = String.raw`
@@ -3222,6 +3350,56 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     summary:
       "Understand runtime software, managed daemons, reconcile, upgrades, drift, and rollbacks.",
     title: "Project host software and daemon lifecycle",
+  },
+  {
+    actions: [
+      {
+        description: "Open a project host drawer on the Storage tab.",
+        executable: true,
+        id: "hosts.storage.open",
+        label: "Open storage",
+        parameters: projectHostActionParameters(),
+      },
+    ],
+    audiences: ["agents", "instructors", "researchers", "teams"],
+    body: PROJECT_HOST_STORAGE_BODY.trim(),
+    category: "Project hosts",
+    id: "hosts.storage",
+    image: docsIcon(
+      "/public/docs/project-hosts-storage-cad76e1f.webp",
+      "A project host with disks backups snapshots and protected project folders",
+    ),
+    lastReviewed: "2026-05-27",
+    slug: "hosts/storage",
+    status: "ready",
+    summary:
+      "Understand host disk capacity, storage mode, backups, snapshots, and online disk growth.",
+    title: "Project host storage, backups, and snapshots",
+  },
+  {
+    actions: [
+      {
+        description: "Open a project host drawer on the Logs tab.",
+        executable: true,
+        id: "hosts.logs.open",
+        label: "Open logs",
+        parameters: projectHostActionParameters(),
+      },
+    ],
+    audiences: ["agents", "instructors", "researchers", "teams"],
+    body: PROJECT_HOST_LOGS_BODY.trim(),
+    category: "Project hosts",
+    id: "hosts.logs",
+    image: docsIcon(
+      "/public/docs/project-hosts-logs-df53d17e.webp",
+      "A project host with logs diagnostics warnings and a magnifying glass",
+    ),
+    lastReviewed: "2026-05-27",
+    slug: "hosts/logs",
+    status: "ready",
+    summary:
+      "Use host logs with runtime and reliability state to debug provisioning, daemon, and provider issues.",
+    title: "Debug project hosts with logs",
   },
   {
     actions: [
