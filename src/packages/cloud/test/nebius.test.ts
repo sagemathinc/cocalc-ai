@@ -570,6 +570,10 @@ describe("NebiusProvider", () => {
   it("creates and attaches shared scratch to an existing instance", async () => {
     disksCreateMock.mockReset().mockResolvedValueOnce(diskOp("scratch-disk"));
     instancesGetMock.mockResolvedValue({
+      metadata: {
+        id: "instance-1",
+        name: "spot-host",
+      },
       spec: {
         serviceAccountId: "svc-1",
         secondaryDisks: [
@@ -613,6 +617,7 @@ describe("NebiusProvider", () => {
     expect(instancesUpdateMock).toHaveBeenCalledTimes(1);
     const updateArgs = instancesUpdateMock.mock.calls[0][0];
     expect(updateArgs.metadata.id).toBe("instance-1");
+    expect(updateArgs.metadata.name).toBe("spot-host");
     expect(
       updateArgs.spec.secondaryDisks.map((disk: any) => disk.deviceId),
     ).toEqual(["data", "scratch"]);

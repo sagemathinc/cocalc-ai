@@ -10,6 +10,8 @@ import { alert_message } from "@cocalc/frontend/alerts";
 import { isFreshAuthRequiredError } from "@cocalc/frontend/auth/fresh-auth";
 import type { HostDrainOptions } from "../types";
 
+const HOST_SHARED_SCRATCH_RPC_TIMEOUT_MS = 120_000;
+
 type HubClient = {
   hosts: {
     startHost: (opts: {
@@ -126,6 +128,7 @@ type HubClient = {
       pricing_model?: "on_demand" | "spot";
       interruption_restore_policy?: "none" | "immediate";
       spot_recovery_policy?: HostSpotRecoveryPolicy;
+      timeout?: number;
     }) => Promise<unknown>;
   };
 };
@@ -422,7 +425,18 @@ export const useHostActions = ({
       return;
     }
     try {
-      await hub.hosts.updateHostMachine({ id, browser_id, ...opts });
+      const scratchOperation =
+        opts.delete_shared_scratch ||
+        opts.shared_disk_gb != null ||
+        opts.shared_disk_type != null;
+      await hub.hosts.updateHostMachine({
+        id,
+        browser_id,
+        ...opts,
+        ...(scratchOperation
+          ? { timeout: HOST_SHARED_SCRATCH_RPC_TIMEOUT_MS }
+          : undefined),
+      });
       await refresh();
     } catch (err) {
       if (isFreshAuthRequiredError(err)) {

@@ -116,10 +116,11 @@ function nebiusDiskPricePerGbHour(
 ) {
   const product = nebiusDiskProduct(diskType);
   if (!product) return undefined;
-  const prices = catalogPayload<
-    Array<{ product: string; price_usd: string; unit: string }>
-  >(catalog, "prices");
-  const item = prices?.find(
+  const prices = catalogPayload<unknown>(catalog, "prices");
+  const items = Array.isArray(prices)
+    ? (prices as Array<{ product: string; price_usd: string; unit: string }>)
+    : [];
+  const item = items.find(
     (price) => price.product === product && /gib/i.test(price.unit),
   );
   const price = Number(item?.price_usd);
@@ -285,7 +286,7 @@ export const HostSharedScratchFields: React.FC<
         padding: "8px 10px",
       }}
     >
-      <Space direction="vertical" style={{ width: "100%" }} size={8}>
+      <Space orientation="vertical" style={{ width: "100%" }} size={8}>
         <Space style={{ justifyContent: "space-between", width: "100%" }}>
           <div>
             <Typography.Text strong>Shared scratch disk</Typography.Text>

@@ -22,6 +22,7 @@ import {
 import { getCurrentProjectRootfsBinding } from "@cocalc/server/projects/rootfs-state";
 import { assertCanRestoreProvisionedProjectStorage } from "@cocalc/server/membership/project-limits";
 import { cancelStaleProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
+import { getLro } from "@cocalc/server/lro/lro-db";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { mapCloudRegionToR2Region, parseR2Region } from "@cocalc/util/consts";
 import { getRoutedHostControlClient } from "./client";
@@ -41,7 +42,17 @@ const START_PROJECT_TIMEOUT_MS = 60 * 60 * 1000;
 const STOP_PROJECT_TIMEOUT_MS = 30 * 1000;
 const RECENT_RUNNING_STATE_MS = 60 * 1000;
 const RECENT_STARTING_STATE_MS = 5 * 60 * 1000;
-const startProjectInFlight = new Map<string, Promise<void>>();
+const TERMINAL_START_LRO_STATUSES = new Set([
+  "succeeded",
+  "failed",
+  "canceled",
+  "expired",
+]);
+type StartProjectInFlight = {
+  op_id?: string;
+  promise: Promise<void>;
+};
+const startProjectInFlight = new Map<string, StartProjectInFlight>();
 const startProjectPhaseTimings = new Map<string, Record<string, number>>();
 
 type HostPlacement = {
@@ -711,8 +722,40 @@ export async function startProjectOnHost(
 ): Promise<void> {
   const existing = startProjectInFlight.get(project_id);
   if (existing) {
-    await existing;
-    return;
+    const requestedOpId = `${opts?.lro_op_id ?? ""}`.trim();
+    const existingOpId = `${existing.op_id ?? ""}`.trim();
+    let reuseExisting = true;
+    if (requestedOpId && existingOpId && requestedOpId !== existingOpId) {
+      const existingLro = await getLro(existingOpId).catch((err) => {
+        log.warn("startProjectOnHost unable to inspect in-flight lro", {
+          project_id,
+          existing_op_id: existingOpId,
+          requested_op_id: requestedOpId,
+          err: `${err}`,
+        });
+        return undefined;
+      });
+      if (
+        existingLro == null ||
+        TERMINAL_START_LRO_STATUSES.has(`${existingLro.status ?? ""}`)
+      ) {
+        log.warn(
+          "startProjectOnHost replacing stale in-memory start for terminal lro",
+          {
+            project_id,
+            existing_op_id: existingOpId,
+            existing_status: existingLro?.status ?? "missing",
+            requested_op_id: requestedOpId,
+          },
+        );
+        startProjectInFlight.delete(project_id);
+        reuseExisting = false;
+      }
+    }
+    if (reuseExisting) {
+      await existing.promise;
+      return;
+    }
   }
   const task = (async () => {
     await cancelStaleProjectStartLros({ project_id });
@@ -866,11 +909,15 @@ export async function startProjectOnHost(
       throw err;
     }
   })();
-  startProjectInFlight.set(project_id, task);
+  const inFlight: StartProjectInFlight = {
+    op_id: opts?.lro_op_id,
+    promise: task,
+  };
+  startProjectInFlight.set(project_id, inFlight);
   try {
     await task;
   } finally {
-    if (startProjectInFlight.get(project_id) === task) {
+    if (startProjectInFlight.get(project_id) === inFlight) {
       startProjectInFlight.delete(project_id);
     }
   }

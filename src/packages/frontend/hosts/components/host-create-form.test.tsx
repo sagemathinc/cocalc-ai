@@ -3,6 +3,7 @@ import { React } from "@cocalc/frontend/app-framework";
 import { renderToStaticMarkup } from "react-dom/server";
 import { HostCreateForm } from "./host-create-form";
 import { addMonthlyDiskPriceLabels } from "./host-create-advanced-fields";
+import { HostSharedScratchFields } from "./host-shared-scratch-fields";
 
 jest.mock("@cocalc/frontend/app-framework", () => {
   const actual = jest.requireActual("@cocalc/frontend/app-framework");
@@ -63,6 +64,46 @@ function TestHostCreateForm() {
   );
 }
 
+function TestSharedScratchWithMismatchedCatalog() {
+  const [form] = Form.useForm();
+  return (
+    <Form form={form}>
+      <HostSharedScratchFields
+        provider="nebius"
+        catalog={{
+          provider: "gcp",
+          entries: [
+            {
+              kind: "prices",
+              scope: "global",
+              payload: {
+                disks: {
+                  "pd-balanced": { "us-west1": 0.0001 },
+                },
+              },
+            },
+          ],
+          provider_capabilities: {
+            nebius: {
+              sharedScratchDisk: {
+                supported: true,
+                disk_types: [
+                  {
+                    value: "ssd_io_m3",
+                    label: "Network SSD IO M3",
+                    durability: "replicated",
+                    default: true,
+                  },
+                ],
+              },
+            },
+          },
+        }}
+      />
+    </Form>
+  );
+}
+
 describe("HostCreateForm", () => {
   it("mounts advanced storage fields before the panel is expanded", () => {
     const html = renderToStaticMarkup(<TestHostCreateForm />);
@@ -118,5 +159,11 @@ describe("HostCreateForm", () => {
     });
 
     expect(options[0].label).toBe("Balanced SSD · $0.08/GB/mo");
+  });
+
+  it("renders Nebius shared scratch fields while a non-Nebius price catalog is still loaded", () => {
+    expect(() =>
+      renderToStaticMarkup(<TestSharedScratchWithMismatchedCatalog />),
+    ).not.toThrow();
   });
 });

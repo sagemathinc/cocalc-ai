@@ -107,4 +107,57 @@ describe("buildHostSpec", () => {
       "Nebius spot instances are not supported for machine type cpu-d3-standard-4 (platform cpu-d3). Choose an on-demand host or a Nebius machine type that supports preemptible instances.",
     );
   });
+
+  it("prefers the newest Nebius CUDA image family for GPU hosts", async () => {
+    loadNebiusInstanceTypesMock.mockResolvedValue([
+      {
+        name: "1gpu-8vcpu-32gb",
+        platform: "gpu-l40s-d",
+        allowed_for_preemptibles: true,
+        gpus: 1,
+        vcpus: 8,
+        memory_gib: 32,
+      },
+    ]);
+    loadNebiusImagesMock.mockResolvedValue([
+      {
+        id: "cuda-12",
+        family: "ubuntu24.04-cuda12",
+        version: "0.2.852",
+        architecture: "AMD64",
+        recommended_platforms: [],
+        region: "eu-north1",
+      },
+      {
+        id: "cuda-13",
+        family: "ubuntu24.04-cuda13.0",
+        version: "0.2.711",
+        architecture: "AMD64",
+        recommended_platforms: ["gpu-l40s-d"],
+        region: "eu-north1",
+      },
+      {
+        id: "driverless",
+        family: "ubuntu24.04-driverless",
+        version: "0.2.999",
+        architecture: "AMD64",
+        recommended_platforms: ["cpu-d3"],
+        region: "eu-north1",
+      },
+    ]);
+
+    const spec = await buildHostSpec({
+      id: "832da43c-d18e-406d-8e1d-c28973378b24",
+      region: "eu-north1",
+      metadata: {
+        machine: {
+          cloud: "nebius",
+          machine_type: "1gpu-8vcpu-32gb",
+          metadata: {},
+        },
+      },
+    });
+
+    expect(spec.metadata?.source_image_family).toBe("ubuntu24.04-cuda13.0");
+  });
 });

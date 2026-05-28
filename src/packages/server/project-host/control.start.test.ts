@@ -26,6 +26,7 @@ let isAdminMock: jest.Mock;
 let interBayHostListMock: jest.Mock;
 let interBayHostControlCreateProjectMock: jest.Mock;
 let interBayHostControlStartProjectMock: jest.Mock;
+let getLroMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -140,6 +141,11 @@ jest.mock("@cocalc/server/projects/start-lro-cleanup", () => ({
     cancelStaleProjectStartLrosMock(...args),
 }));
 
+jest.mock("@cocalc/server/lro/lro-db", () => ({
+  __esModule: true,
+  getLro: (...args: any[]) => getLroMock(...args),
+}));
+
 jest.mock("@cocalc/server/membership/resolve", () => ({
   __esModule: true,
   resolveMembershipForAccount: (...args: any[]) =>
@@ -186,6 +192,7 @@ describe("startProjectOnHost placement", () => {
       project_id: "proj-1",
       state: "running",
     }));
+    getLroMock = jest.fn(async () => undefined);
     releaseMock = jest.fn();
     resolveHostBayMock = jest.fn(async (host_id: string) => ({
       bay_id: host_id === "host-2" ? "bay-7" : "bay-0",
@@ -1502,5 +1509,116 @@ describe("startProjectOnHost placement", () => {
         restore_backup_id: "backup-explicit",
       }),
     );
+  });
+
+  it("replaces an in-memory start when its lro was canceled", async () => {
+    let resolveSecondStart: ((value: any) => void) | undefined;
+    const firstStart = new Promise(() => undefined);
+    const secondStart = new Promise((resolve) => {
+      resolveSecondStart = resolve;
+    });
+    const startProjectMock = jest
+      .fn()
+      .mockReturnValueOnce(firstStart)
+      .mockReturnValueOnce(secondStart);
+    createHostControlClientMock = jest.fn(() => ({
+      startProject: startProjectMock,
+      getProjectStatus: jest.fn(async () => ({ state: "stopped" })),
+    }));
+    getLroMock = jest.fn(async () => ({
+      op_id: "old-op",
+      status: "canceled",
+    }));
+
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
+      if (sql === "SELECT state FROM projects WHERE project_id=$1") {
+        return {
+          rows: [{ state: { state: "opened", time: "2026-03-29T00:00:00Z" } }],
+        };
+      }
+      if (
+        sql ===
+        "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
+      ) {
+        return {
+          rows: [
+            {
+              title: "Retry test",
+              users: { owner: { group: "owner" } },
+              image: DEFAULT_PROJECT_IMAGE,
+              host_id: "host-1",
+              region: "wnam",
+              owning_bay_id: "bay-0",
+              run_quota: null,
+            },
+          ],
+        };
+      }
+      if (
+        sql ===
+        "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL"
+      ) {
+        return {
+          rows: [{ metadata: { machine: {} } }],
+        };
+      }
+      if (
+        sql ===
+        "SELECT id, bay_id, name, region, public_url, internal_url, ssh_server, tier, metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL"
+      ) {
+        return {
+          rows: [
+            {
+              id: "host-1",
+              bay_id: "bay-0",
+              name: "Host 1",
+              region: "us-west1",
+              public_url: null,
+              internal_url: null,
+              ssh_server: null,
+              tier: 0,
+              metadata: { machine: {} },
+            },
+          ],
+        };
+      }
+      if (
+        sql ===
+        "SELECT backup_repo_id, provisioned FROM projects WHERE project_id=$1"
+      ) {
+        return { rows: [{ backup_repo_id: null, provisioned: true }] };
+      }
+      if (sql.includes("SET state=$2::jsonb")) {
+        return { rowCount: 1, rows: [] };
+      }
+      if (sql.includes("UPDATE projects SET last_started")) {
+        return { rowCount: 1, rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    poolConnectMock = jest.fn(async () => ({
+      query: queryMock,
+      release: releaseMock,
+    }));
+
+    const { startProjectOnHost } = await import("./control");
+    void startProjectOnHost("proj-1", { lro_op_id: "old-op" });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(startProjectMock).toHaveBeenCalledTimes(1);
+
+    const retry = startProjectOnHost("proj-1", { lro_op_id: "new-op" });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(getLroMock).toHaveBeenCalledWith("old-op");
+    expect(startProjectMock).toHaveBeenCalledTimes(2);
+
+    resolveSecondStart?.({
+      project_id: "proj-1",
+      state: "running",
+      phase_timings_ms: { runner_start: 1234 },
+    });
+    await retry;
   });
 });

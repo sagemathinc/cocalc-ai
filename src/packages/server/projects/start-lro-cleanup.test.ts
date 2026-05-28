@@ -4,6 +4,7 @@ let queryMock: jest.Mock;
 let updateLroMock: jest.Mock;
 let publishLroSummaryMock: jest.Mock;
 let getProjectActiveOperationMock: jest.Mock;
+let clearProjectActiveOperationMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -34,6 +35,8 @@ jest.mock("@cocalc/server/projects/active-operation", () => ({
   __esModule: true,
   getProjectActiveOperation: (...args: any[]) =>
     getProjectActiveOperationMock(...args),
+  clearProjectActiveOperation: (...args: any[]) =>
+    clearProjectActiveOperationMock(...args),
 }));
 
 describe("supersedeOlderProjectStartLros", () => {
@@ -49,6 +52,7 @@ describe("supersedeOlderProjectStartLros", () => {
     }));
     publishLroSummaryMock = jest.fn(async () => undefined);
     getProjectActiveOperationMock = jest.fn(async () => null);
+    clearProjectActiveOperationMock = jest.fn(async () => undefined);
   });
 
   it("cancels older queued/running project-start lros after a later success", async () => {
@@ -236,5 +240,51 @@ describe("supersedeOlderProjectStartLros", () => {
       status: "canceled",
       error: "superseded by active project start current-op-1",
     });
+  });
+
+  it("clears a stale active operation when its project-start lro is no longer active", async () => {
+    getProjectActiveOperationMock = jest.fn(async () => ({
+      project_id: "proj-1",
+      op_id: "canceled-op-1",
+      kind: "project-start",
+      action: "start",
+      status: "running",
+      updated_at: new Date("2026-05-06T12:05:00.000Z"),
+    }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM long_running_operations")) {
+        return {
+          rows: [
+            {
+              op_id: "new-op-1",
+              scope_type: "project",
+              scope_id: "proj-1",
+              error: null,
+              created_at: "2026-05-06T12:04:50.000Z",
+            },
+          ],
+        };
+      }
+      if (sql === "SELECT state FROM projects WHERE project_id=$1") {
+        return {
+          rows: [{ state: { state: "opened", time: "2026-05-06T12:00:00Z" } }],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { cancelStaleProjectStartLros } = await import("./start-lro-cleanup");
+    const canceled = await cancelStaleProjectStartLros({
+      project_id: "proj-1",
+      keep_op_id: "new-op-1",
+      nowMs: Date.UTC(2026, 4, 6, 12, 5, 0),
+    });
+
+    expect(canceled).toBe(0);
+    expect(clearProjectActiveOperationMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      op_id: "canceled-op-1",
+    });
+    expect(updateLroMock).not.toHaveBeenCalled();
   });
 });
