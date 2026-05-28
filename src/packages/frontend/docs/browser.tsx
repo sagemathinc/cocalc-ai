@@ -38,7 +38,7 @@ import {
   type DocsAction,
   type DocsEntry,
 } from "@cocalc/docs";
-import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import Markdown from "@cocalc/frontend/markdown/component";
 import { COLORS } from "@cocalc/util/theme";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import type {
@@ -270,7 +270,7 @@ export function DocsFontSizeFrame({
 export function DocsMarkdown({ value }: { value: string }) {
   return (
     <div data-testid="docs-markdown">
-      <StaticMarkdown value={value} />
+      <Markdown value={value} />
     </div>
   );
 }
