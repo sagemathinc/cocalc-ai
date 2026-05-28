@@ -9,6 +9,7 @@ import type { CSSProperties } from "react";
 import {
   ArrowRightOutlined,
   BookOutlined,
+  DownloadOutlined,
   SearchOutlined,
   ToolOutlined,
   ArrowLeftOutlined,
@@ -504,6 +505,7 @@ function DocsTocOverview({
   groupedEntries,
   layout = "page",
   linkForEntry,
+  onDownloadHtml,
   onPrint,
   onSelectEntry,
   printHref,
@@ -512,6 +514,7 @@ function DocsTocOverview({
   groupedEntries: { category: string; entries: DocsEntry[] }[];
   layout?: DocsBrowserLayout;
   linkForEntry?: (entry: DocsEntry) => string;
+  onDownloadHtml?: () => void | Promise<void>;
   onPrint?: () => void;
   onSelectEntry?: (entry: DocsEntry) => void;
   printHref?: string;
@@ -570,6 +573,15 @@ function DocsTocOverview({
                 size="small"
               >
                 Print-friendly
+              </Button>
+            ) : null}
+            {onDownloadHtml != null ? (
+              <Button
+                icon={<DownloadOutlined />}
+                onClick={onDownloadHtml}
+                size="small"
+              >
+                Download HTML
               </Button>
             ) : null}
           </Space>
@@ -660,6 +672,7 @@ export function DocsIndexContent({
   docsAccess,
   layout = "page",
   linkForEntry,
+  onDownloadHtml,
   onPrint,
   onSelectEntry,
   printHref,
@@ -668,6 +681,7 @@ export function DocsIndexContent({
   docsAccess?: DocsAccess;
   layout?: DocsBrowserLayout;
   linkForEntry?: (entry: DocsEntry) => string;
+  onDownloadHtml?: () => void | Promise<void>;
   onPrint?: () => void;
   onSelectEntry?: (entry: DocsEntry) => void;
   printHref?: string;
@@ -778,6 +792,7 @@ export function DocsIndexContent({
             groupedEntries={groupedEntries}
             layout={layout}
             linkForEntry={linkForEntry}
+            onDownloadHtml={onDownloadHtml}
             onPrint={onPrint}
             onSelectEntry={onSelectEntry}
             printHref={printHref}
@@ -1363,11 +1378,21 @@ export function DocsDetailContent({
 }
 
 export function DocsPrintContent({
+  downloadHtmlButtonId,
+  downloadHtmlBusy,
   docsAccess,
+  onDownloadHtml,
   onBackHref,
+  printButtonId,
+  showControls = true,
 }: {
+  downloadHtmlButtonId?: string;
+  downloadHtmlBusy?: boolean;
   docsAccess?: DocsAccess;
+  onDownloadHtml?: () => void | Promise<void>;
   onBackHref?: string;
+  printButtonId?: string;
+  showControls?: boolean;
 }) {
   const entries = useMemo(() => listDocsEntries(docsAccess), [docsAccess]);
   const groupedEntries = useMemo(
@@ -1398,24 +1423,39 @@ export function DocsPrintContent({
           }
         `}
       </style>
-      <Flex
-        className="cocalc-docs-print-controls"
-        gap="small"
-        justify="space-between"
-        style={{ marginBottom: 24 }}
-        wrap
-      >
-        <Button href={onBackHref} icon={<ArrowLeftOutlined />}>
-          Back to docs
-        </Button>
-        <Button
-          icon={<PrinterOutlined />}
-          onClick={() => window.print()}
-          type="primary"
+      {showControls ? (
+        <Flex
+          className="cocalc-docs-print-controls"
+          gap="small"
+          justify="space-between"
+          style={{ marginBottom: 24 }}
+          wrap
         >
-          Print
-        </Button>
-      </Flex>
+          <Button href={onBackHref} icon={<ArrowLeftOutlined />}>
+            Back to docs
+          </Button>
+          <Space wrap>
+            {onDownloadHtml != null || downloadHtmlButtonId != null ? (
+              <Button
+                icon={<DownloadOutlined />}
+                id={downloadHtmlButtonId}
+                loading={downloadHtmlBusy}
+                onClick={onDownloadHtml}
+              >
+                Download HTML
+              </Button>
+            ) : null}
+            <Button
+              icon={<PrinterOutlined />}
+              id={printButtonId}
+              onClick={() => window.print()}
+              type="primary"
+            >
+              Print
+            </Button>
+          </Space>
+        </Flex>
+      ) : null}
       <Flex gap="large" vertical>
         <div>
           <Text strong style={DOCS_BROWSER_MUTED_TITLE_STYLE}>
@@ -1505,6 +1545,7 @@ export function DocsBrowser({
   docsAccess,
   initialEntry,
   layout = "page",
+  onDownloadHtml,
   onPrint,
   onRunAction,
   onSelectedEntryChange,
@@ -1519,6 +1560,7 @@ export function DocsBrowser({
   docsAccess?: DocsAccess;
   initialEntry?: DocsEntry;
   layout?: DocsBrowserLayout;
+  onDownloadHtml?: () => void | Promise<void>;
   onPrint?: () => void;
   onRunAction?: (
     action: DocsBrowserAction,
@@ -1554,7 +1596,11 @@ export function DocsBrowser({
 
   if (printMode) {
     return (
-      <DocsPrintContent docsAccess={docsAccess} onBackHref={browserHref} />
+      <DocsPrintContent
+        docsAccess={docsAccess}
+        onBackHref={browserHref}
+        onDownloadHtml={onDownloadHtml}
+      />
     );
   }
 
@@ -1604,6 +1650,7 @@ export function DocsBrowser({
     <DocsIndexContent
       docsAccess={docsAccess}
       layout={layout}
+      onDownloadHtml={onDownloadHtml}
       onPrint={onPrint}
       onSelectEntry={selectEntry}
       printHref={printHref}
