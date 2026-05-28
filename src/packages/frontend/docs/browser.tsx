@@ -61,7 +61,6 @@ const DOCS_BROWSER_CATEGORY_CARD_STYLE = {
 const DOCS_BROWSER_TOC_LINK_STYLE: CSSProperties = {
   background: "transparent",
   border: 0,
-  color: COLORS.BLUE,
   cursor: "pointer",
   display: "block",
   font: "inherit",
@@ -72,6 +71,13 @@ const DOCS_BROWSER_TOC_LINK_STYLE: CSSProperties = {
   textDecoration: "none",
   width: "100%",
 };
+
+function docsBrowserTocLinkStyle(viewed: boolean): CSSProperties {
+  return {
+    ...DOCS_BROWSER_TOC_LINK_STYLE,
+    color: viewed ? COLORS.GRAY_M : COLORS.BLUE_DOC,
+  };
+}
 export const DOCS_FONT_SIZE_MIN = 10;
 export const DOCS_FONT_SIZE_MAX = 32;
 export const DOCS_FONT_SIZE_STEP = 1;
@@ -609,11 +615,6 @@ function DocsTocOverview({
                         {index + 1}.
                       </Text>
                       <span>{entry.title}</span>
-                      {viewed ? (
-                        <Tag color="green" style={{ marginInlineStart: 6 }}>
-                          Viewed
-                        </Tag>
-                      ) : null}
                     </>
                   );
                   const href = linkForEntry?.(entry);
@@ -622,7 +623,7 @@ function DocsTocOverview({
                       <a
                         href={href}
                         key={entry.id}
-                        style={DOCS_BROWSER_TOC_LINK_STYLE}
+                        style={docsBrowserTocLinkStyle(viewed)}
                       >
                         {content}
                       </a>
@@ -632,7 +633,7 @@ function DocsTocOverview({
                     <button
                       key={entry.id}
                       onClick={() => onSelectEntry?.(entry)}
-                      style={DOCS_BROWSER_TOC_LINK_STYLE}
+                      style={docsBrowserTocLinkStyle(viewed)}
                       type="button"
                     >
                       {content}
