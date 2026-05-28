@@ -73,6 +73,7 @@ describe("guarded host auto-grow", () => {
     queryMock = jest.fn();
     createHostControlClientMock = jest.fn(() => ({
       growBtrfs: jest.fn(async () => ({ ok: true })),
+      growSharedScratch: jest.fn(async () => ({ ok: true })),
     }));
     getExplicitHostRoutedClientMock = jest.fn(async () => ({
       client: "router",
@@ -81,15 +82,23 @@ describe("guarded host auto-grow", () => {
       entry: {
         provider: {
           resizeDisk: jest.fn(async () => undefined),
+          resizeSharedScratchDisk: jest.fn(async () => undefined),
         },
       },
       creds: {},
     }));
     getServerProviderMock = jest.fn(() => ({
       entry: {
+        provider: {
+          resizeSharedScratchDisk: jest.fn(async () => undefined),
+        },
         capabilities: {
           supportsDiskResize: true,
           diskResizeRequiresStop: false,
+          sharedScratchDisk: {
+            supported: true,
+            growable: true,
+          },
         },
       },
     }));
@@ -371,6 +380,184 @@ describe("guarded host auto-grow", () => {
         action: "resize",
         status: "success",
         spec: expect.objectContaining({
+          trigger: "background_low_headroom",
+        }),
+      }),
+    );
+  });
+
+  it("recommends background auto-grow for sustained low shared scratch headroom", async () => {
+    const { _test } = await import("./auto-grow");
+    const decision = _test.shouldAutoGrowForSharedScratchBackgroundPressure({
+      window_minutes: 6,
+      point_count: 4,
+      points: [
+        {
+          collected_at: "2026-03-30T02:00:00.000Z",
+          shared_scratch_total_bytes: 200 * 1024 ** 3,
+          shared_scratch_available_bytes: 20 * 1024 ** 3,
+          shared_scratch_used_percent: 90,
+        },
+        {
+          collected_at: "2026-03-30T02:01:00.000Z",
+          shared_scratch_total_bytes: 200 * 1024 ** 3,
+          shared_scratch_available_bytes: 19 * 1024 ** 3,
+          shared_scratch_used_percent: 90.5,
+        },
+        {
+          collected_at: "2026-03-30T02:02:00.000Z",
+          shared_scratch_total_bytes: 200 * 1024 ** 3,
+          shared_scratch_available_bytes: 18 * 1024 ** 3,
+          shared_scratch_used_percent: 91,
+        },
+      ],
+      growth: {
+        window_minutes: 6,
+        shared_scratch_used_bytes_per_hour: 2 * 1024 ** 3,
+      },
+      derived: {
+        window_minutes: 6,
+        disk: { level: "healthy" },
+        shared_scratch: {
+          level: "warning",
+          available_bytes: 18 * 1024 ** 3,
+          hours_to_exhaustion: 9,
+          reason: "Shared scratch could exhaust within 24h",
+        },
+        metadata: { level: "healthy" },
+        alerts: [],
+        admission_allowed: true,
+        auto_grow_recommended: true,
+      },
+    });
+
+    expect(decision).toEqual({
+      recommended: true,
+      reason: "Shared scratch could exhaust within 24h",
+    });
+  });
+
+  it("grows shared scratch for background pressure when metrics justify it", async () => {
+    const resizeSharedScratchDiskMock = jest.fn(async () => undefined);
+    const growSharedScratchMock = jest.fn(async () => ({ ok: true }));
+    getProviderContextMock = jest.fn(async () => ({
+      entry: {
+        provider: {
+          resizeSharedScratchDisk: resizeSharedScratchDiskMock,
+        },
+      },
+      creds: {},
+    }));
+    createHostControlClientMock = jest.fn(() => ({
+      growSharedScratch: growSharedScratchMock,
+    }));
+
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: "host-3",
+              name: "Host 3",
+              region: "us-west1",
+              status: "running",
+              metadata: {
+                runtime: { instance_id: "instance-3" },
+                machine: {
+                  cloud: "gcp",
+                  shared_disk_gb: 200,
+                  shared_disk_type: "balanced",
+                  metadata: {
+                    shared_scratch_auto_grow: {
+                      enabled: true,
+                      max_disk_gb: 500,
+                      growth_step_gb: 50,
+                      min_grow_interval_minutes: 60,
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (sql.includes("UPDATE project_hosts")) {
+        expect(params[0]).toBe("host-3");
+        expect(params[1].machine.shared_disk_gb).toBe(250);
+        expect(
+          params[1].machine.metadata.shared_scratch_auto_grow
+            .last_grow_to_disk_gb,
+        ).toBe(250);
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { maybeAutoGrowSharedScratchForBackgroundPressure } =
+      await import("./auto-grow");
+    const result = await maybeAutoGrowSharedScratchForBackgroundPressure({
+      host_id: "host-3",
+      history: {
+        window_minutes: 6,
+        point_count: 4,
+        points: [
+          {
+            collected_at: "2026-03-30T02:00:00.000Z",
+            shared_scratch_total_bytes: 200 * 1024 ** 3,
+            shared_scratch_available_bytes: 20 * 1024 ** 3,
+            shared_scratch_used_percent: 90,
+          },
+          {
+            collected_at: "2026-03-30T02:01:00.000Z",
+            shared_scratch_total_bytes: 200 * 1024 ** 3,
+            shared_scratch_available_bytes: 19 * 1024 ** 3,
+            shared_scratch_used_percent: 90.5,
+          },
+          {
+            collected_at: "2026-03-30T02:02:00.000Z",
+            shared_scratch_total_bytes: 200 * 1024 ** 3,
+            shared_scratch_available_bytes: 18 * 1024 ** 3,
+            shared_scratch_used_percent: 91,
+          },
+        ],
+        growth: {
+          window_minutes: 6,
+          shared_scratch_used_bytes_per_hour: 2 * 1024 ** 3,
+        },
+        derived: {
+          window_minutes: 6,
+          disk: { level: "healthy" },
+          shared_scratch: {
+            level: "warning",
+            available_bytes: 18 * 1024 ** 3,
+            hours_to_exhaustion: 9,
+            reason: "Shared scratch could exhaust within 24h",
+          },
+          metadata: { level: "healthy" },
+          alerts: [],
+          admission_allowed: true,
+          auto_grow_recommended: true,
+        },
+      },
+    });
+
+    expect(result).toEqual({
+      grown: true,
+      next_disk_gb: 250,
+    });
+    expect(resizeSharedScratchDiskMock).toHaveBeenCalledWith(
+      expect.objectContaining({ instance_id: "instance-3" }),
+      250,
+      {},
+    );
+    expect(growSharedScratchMock).toHaveBeenCalledWith({ disk_gb: 250 });
+    expect(logCloudVmEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        vm_id: "host-3",
+        action: "resize",
+        status: "success",
+        spec: expect.objectContaining({
+          target: "shared_scratch",
           trigger: "background_low_headroom",
         }),
       }),

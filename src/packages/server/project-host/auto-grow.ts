@@ -37,6 +37,24 @@ const DEFAULT_MIN_GROW_INTERVAL_MINUTES = Math.max(
     Number(process.env.COCALC_HOST_AUTO_GROW_MIN_INTERVAL_MINUTES ?? 60),
   ),
 );
+const DEFAULT_SHARED_SCRATCH_MAX_DISK_GB = Math.max(
+  10,
+  Math.floor(
+    Number(
+      process.env.COCALC_HOST_SHARED_SCRATCH_AUTO_GROW_MAX_DISK_GB ??
+        DEFAULT_MAX_DISK_GB,
+    ),
+  ),
+);
+const DEFAULT_SHARED_SCRATCH_GROWTH_STEP_GB = Math.max(
+  1,
+  Math.floor(
+    Number(
+      process.env.COCALC_HOST_SHARED_SCRATCH_AUTO_GROW_STEP_GB ??
+        DEFAULT_GROWTH_STEP_GB,
+    ),
+  ),
+);
 const BACKGROUND_WARNING_AVAILABLE_BYTES = 25 * GIB;
 const BACKGROUND_CRITICAL_AVAILABLE_BYTES = 10 * GIB;
 const BACKGROUND_WARNING_USED_PERCENT = 85;
@@ -130,6 +148,30 @@ function pointAtOrAboveCriticalPressure(
   );
 }
 
+function sharedScratchPointAtOrAboveWarningPressure(
+  point: HostMetricsHistoryPoint,
+): boolean {
+  return (
+    (point.shared_scratch_available_bytes != null &&
+      point.shared_scratch_available_bytes <=
+        BACKGROUND_WARNING_AVAILABLE_BYTES) ||
+    (point.shared_scratch_used_percent != null &&
+      point.shared_scratch_used_percent >= BACKGROUND_WARNING_USED_PERCENT)
+  );
+}
+
+function sharedScratchPointAtOrAboveCriticalPressure(
+  point: HostMetricsHistoryPoint,
+): boolean {
+  return (
+    (point.shared_scratch_available_bytes != null &&
+      point.shared_scratch_available_bytes <=
+        BACKGROUND_CRITICAL_AVAILABLE_BYTES) ||
+    (point.shared_scratch_used_percent != null &&
+      point.shared_scratch_used_percent >= BACKGROUND_CRITICAL_USED_PERCENT)
+  );
+}
+
 function shouldAutoGrowForBackgroundPressure(
   history?: HostMetricsHistory,
 ): BackgroundAutoGrowDecision {
@@ -184,6 +226,63 @@ function shouldAutoGrowForBackgroundPressure(
   };
 }
 
+function shouldAutoGrowForSharedScratchBackgroundPressure(
+  history?: HostMetricsHistory,
+): BackgroundAutoGrowDecision {
+  const derived = history?.derived;
+  const points = history?.points ?? [];
+  const current = points[points.length - 1];
+  if (!derived?.shared_scratch || !current?.shared_scratch_total_bytes) {
+    return {
+      recommended: false,
+      reason: "shared scratch metrics history is unavailable",
+    };
+  }
+  const scratch = derived.shared_scratch;
+  const criticalHours =
+    scratch.hours_to_exhaustion != null &&
+    scratch.hours_to_exhaustion <= BACKGROUND_CRITICAL_HOURS_TO_EXHAUSTION;
+  if (
+    sharedScratchPointAtOrAboveCriticalPressure(current) ||
+    scratch.level === "critical" ||
+    criticalHours
+  ) {
+    return {
+      recommended: true,
+      reason:
+        scratch.reason ??
+        "shared scratch pressure is already at a critical level for this host",
+    };
+  }
+  const recent = points.slice(-BACKGROUND_MIN_RECENT_SAMPLES);
+  const warningHours =
+    scratch.hours_to_exhaustion != null &&
+    scratch.hours_to_exhaustion <= BACKGROUND_WARNING_HOURS_TO_EXHAUSTION;
+  if (
+    recent.length < BACKGROUND_MIN_RECENT_SAMPLES ||
+    !recent.every(sharedScratchPointAtOrAboveWarningPressure)
+  ) {
+    return {
+      recommended: false,
+      reason:
+        "recent metrics do not show sustained low shared scratch headroom",
+    };
+  }
+  if (scratch.level === "warning" || warningHours) {
+    return {
+      recommended: true,
+      reason:
+        scratch.reason ??
+        "recent host metrics show sustained low shared scratch headroom",
+    };
+  }
+  return {
+    recommended: false,
+    reason:
+      "shared scratch pressure is not high enough to justify background auto-grow",
+  };
+}
+
 export function isStorageReservationDeniedError(err: unknown): boolean {
   return reservationErrorText(err)
     .toLowerCase()
@@ -221,12 +320,53 @@ function resolveAutoGrowConfig(row: HostRow): AutoGrowConfig | undefined {
   };
 }
 
+function resolveSharedScratchAutoGrowConfig(
+  row: HostRow,
+): AutoGrowConfig | undefined {
+  const machine: HostMachine = row.metadata?.machine ?? {};
+  if (!(Number(machine.shared_disk_gb ?? 0) > 0)) return;
+  const machineMeta = machine.metadata ?? {};
+  const nested = machineMeta.shared_scratch_auto_grow ?? {};
+  const explicitEnabled =
+    parseBooleanLike(nested.enabled) ??
+    parseBooleanLike(machineMeta.shared_scratch_auto_grow_enabled);
+  if (!explicitEnabled) return;
+  return {
+    enabled: true,
+    max_disk_gb:
+      parsePositiveInt(nested.max_disk_gb) ??
+      parsePositiveInt(machineMeta.shared_scratch_auto_grow_max_disk_gb) ??
+      DEFAULT_SHARED_SCRATCH_MAX_DISK_GB,
+    growth_step_gb:
+      parsePositiveInt(nested.growth_step_gb) ??
+      parsePositiveInt(machineMeta.shared_scratch_auto_grow_growth_step_gb) ??
+      DEFAULT_SHARED_SCRATCH_GROWTH_STEP_GB,
+    min_grow_interval_minutes:
+      parsePositiveInt(nested.min_grow_interval_minutes) ??
+      parsePositiveInt(
+        machineMeta.shared_scratch_auto_grow_min_grow_interval_minutes,
+      ) ??
+      DEFAULT_MIN_GROW_INTERVAL_MINUTES,
+  };
+}
+
 function currentDiskGb(row: HostRow): number | undefined {
   const machine: HostMachine = row.metadata?.machine ?? {};
   const configured = parsePositiveInt(machine.disk_gb);
   if (configured != null) return configured;
   const observedBytes = Number(
     row.metadata?.metrics?.current?.disk_device_total_bytes,
+  );
+  if (!Number.isFinite(observedBytes) || observedBytes <= 0) return undefined;
+  return Math.max(1, Math.ceil(observedBytes / GIB));
+}
+
+function currentSharedScratchDiskGb(row: HostRow): number | undefined {
+  const machine: HostMachine = row.metadata?.machine ?? {};
+  const configured = parsePositiveInt(machine.shared_disk_gb);
+  if (configured != null) return configured;
+  const observedBytes = Number(
+    row.metadata?.metrics?.current?.shared_scratch_total_bytes,
   );
   if (!Number.isFinite(observedBytes) || observedBytes <= 0) return undefined;
   return Math.max(1, Math.ceil(observedBytes / GIB));
@@ -242,6 +382,17 @@ function nextDiskSizeGb(
     config.max_disk_gb,
     currentDiskGbValue + Math.max(1, config.growth_step_gb),
   );
+}
+
+function normalizeSharedScratchDiskSizeGb(
+  providerId: string | undefined,
+  sizeGb: number,
+): number {
+  const size = Math.max(1, Math.floor(sizeGb));
+  if (providerId === "nebius") {
+    return Math.ceil(size / 93) * 93;
+  }
+  return size;
 }
 
 function canAutoGrowNow(
@@ -264,6 +415,42 @@ function canAutoGrowNow(
     return "host uses ephemeral storage";
   }
   const lastGrowAt = row.metadata?.machine?.metadata?.auto_grow?.last_grow_at;
+  const lastGrowMs = Number.isFinite(Date.parse(lastGrowAt ?? ""))
+    ? Date.parse(lastGrowAt)
+    : undefined;
+  if (
+    lastGrowMs != null &&
+    Date.now() - lastGrowMs < config.min_grow_interval_minutes * 60 * 1000
+  ) {
+    return "minimum grow interval has not elapsed";
+  }
+  return undefined;
+}
+
+function canAutoGrowSharedScratchNow(
+  row: HostRow,
+  config: AutoGrowConfig,
+): string | undefined {
+  const machine: HostMachine = row.metadata?.machine ?? {};
+  if (!(Number(machine.shared_disk_gb ?? 0) > 0)) {
+    return "shared scratch disk is not configured";
+  }
+  const providerId = normalizeProviderId(machine.cloud);
+  if (!providerId) {
+    return "host provider is unknown";
+  }
+  const provider = getServerProvider(providerId);
+  if (!provider?.entry.capabilities.sharedScratchDisk?.supported) {
+    return "provider does not support shared scratch disks";
+  }
+  if (!provider.entry.capabilities.sharedScratchDisk.growable) {
+    return "provider does not support shared scratch disk resize";
+  }
+  if (!provider.entry.provider.resizeSharedScratchDisk) {
+    return "provider does not implement shared scratch disk resize";
+  }
+  const lastGrowAt =
+    row.metadata?.machine?.metadata?.shared_scratch_auto_grow?.last_grow_at;
   const lastGrowMs = Number.isFinite(Date.parse(lastGrowAt ?? ""))
     ? Date.parse(lastGrowAt)
     : undefined;
@@ -416,6 +603,133 @@ async function performAutoGrow(
     : { grown: true, next_disk_gb: nextDisk };
 }
 
+async function performSharedScratchAutoGrow(
+  row: HostRow,
+  config: AutoGrowConfig,
+  opts?: {
+    trigger?: "background_low_headroom";
+    reason?: string;
+  },
+): Promise<AutoGrowResult> {
+  const machine: HostMachine = row.metadata?.machine ?? {};
+  const providerId = normalizeProviderId(machine.cloud);
+  const currentDisk = currentSharedScratchDiskGb(row);
+  const rawNextDisk = nextDiskSizeGb(currentDisk, config);
+  const nextDisk =
+    rawNextDisk == null
+      ? undefined
+      : normalizeSharedScratchDiskSizeGb(providerId, rawNextDisk);
+  if (nextDisk == null) {
+    return {
+      grown: false,
+      reason:
+        currentDisk != null && currentDisk >= config.max_disk_gb
+          ? "shared scratch disk is already at the configured auto-grow max disk size"
+          : "host does not have a known shared scratch disk size",
+    };
+  }
+  if (nextDisk > config.max_disk_gb) {
+    return {
+      grown: false,
+      reason:
+        "next shared scratch disk size would exceed the configured auto-grow max disk size",
+    };
+  }
+
+  const blockedReason = canAutoGrowSharedScratchNow(row, config);
+  if (blockedReason) {
+    return { grown: false, reason: blockedReason };
+  }
+  if (!providerId) {
+    return { grown: false, reason: "host provider is unknown" };
+  }
+
+  const runtime = row.metadata?.runtime ?? {};
+  if (!runtime.instance_id) {
+    return {
+      grown: false,
+      reason: "host runtime does not include instance id",
+    };
+  }
+  const { entry, creds } = await getProviderContext(providerId, {
+    region: row.region,
+  });
+  if (!entry.provider.resizeSharedScratchDisk) {
+    return {
+      grown: false,
+      reason: "provider does not implement shared scratch disk resize",
+    };
+  }
+  await entry.provider.resizeSharedScratchDisk(runtime, nextDisk, creds);
+
+  let resizeWarning: string | undefined;
+  const client = await getRoutedHostControlClient({
+    host_id: row.id,
+  });
+  try {
+    await client.growSharedScratch({ disk_gb: nextDisk });
+  } catch (err) {
+    resizeWarning =
+      "shared scratch disk resized in cloud, but online filesystem resize did not complete; retry reconcile or restart the host if the provider has not exposed the new block size yet";
+    log.warn("auto-grow growSharedScratch failed", {
+      host_id: row.id,
+      nextDisk,
+      err,
+    });
+  }
+
+  const nowIso = new Date().toISOString();
+  const nextMachineMeta = {
+    ...(machine.metadata ?? {}),
+    shared_scratch_auto_grow: {
+      ...((machine.metadata ?? {}).shared_scratch_auto_grow ?? {}),
+      enabled: true,
+      max_disk_gb: config.max_disk_gb,
+      growth_step_gb: config.growth_step_gb,
+      min_grow_interval_minutes: config.min_grow_interval_minutes,
+      last_grow_at: nowIso,
+      last_grow_from_disk_gb: currentDisk,
+      last_grow_to_disk_gb: nextDisk,
+    },
+  };
+  const nextMetadata = {
+    ...(row.metadata ?? {}),
+    machine: {
+      ...machine,
+      shared_disk_gb: nextDisk,
+      metadata: nextMachineMeta,
+    },
+    last_action: "auto_grow_shared_scratch",
+    last_action_status: resizeWarning ? `warning: ${resizeWarning}` : "success",
+    last_action_error: resizeWarning ?? null,
+    last_action_at: nowIso,
+  };
+  await pool().query(
+    `UPDATE project_hosts
+     SET metadata=$2, updated=NOW()
+     WHERE id=$1 AND deleted IS NULL`,
+    [row.id, nextMetadata],
+  );
+  await logCloudVmEvent({
+    vm_id: row.id,
+    action: "resize",
+    status: resizeWarning ? "warning" : "success",
+    provider: providerId,
+    spec: {
+      auto_grow: true,
+      target: "shared_scratch",
+      trigger: opts?.trigger ?? "background_low_headroom",
+      reason: opts?.reason,
+      from_disk_gb: currentDisk,
+      to_disk_gb: nextDisk,
+    },
+  });
+
+  return resizeWarning
+    ? { grown: false, next_disk_gb: nextDisk, reason: resizeWarning }
+    : { grown: true, next_disk_gb: nextDisk };
+}
+
 export async function maybeAutoGrowHostDiskForReservationFailure({
   host_id,
   err,
@@ -429,7 +743,8 @@ export async function maybeAutoGrowHostDiskForReservationFailure({
       reason: "error was not a storage reservation denial",
     };
   }
-  const existing = autoGrowInFlight.get(host_id);
+  const inflightKey = `disk:${host_id}`;
+  const existing = autoGrowInFlight.get(inflightKey);
   if (existing) return await existing;
   const task = (async (): Promise<AutoGrowResult> => {
     const row = await loadHostRow(host_id);
@@ -459,12 +774,12 @@ export async function maybeAutoGrowHostDiskForReservationFailure({
       return { grown: false, reason: reservationErrorText(growErr) };
     }
   })();
-  autoGrowInFlight.set(host_id, task);
+  autoGrowInFlight.set(inflightKey, task);
   try {
     return await task;
   } finally {
-    if (autoGrowInFlight.get(host_id) === task) {
-      autoGrowInFlight.delete(host_id);
+    if (autoGrowInFlight.get(inflightKey) === task) {
+      autoGrowInFlight.delete(inflightKey);
     }
   }
 }
@@ -480,7 +795,8 @@ export async function maybeAutoGrowHostDiskForBackgroundPressure({
   if (!decision.recommended) {
     return { grown: false, reason: decision.reason };
   }
-  const existing = autoGrowInFlight.get(host_id);
+  const inflightKey = `disk:${host_id}`;
+  const existing = autoGrowInFlight.get(inflightKey);
   if (existing) return await existing;
   const task = (async (): Promise<AutoGrowResult> => {
     const row = await loadHostRow(host_id);
@@ -510,12 +826,64 @@ export async function maybeAutoGrowHostDiskForBackgroundPressure({
       return { grown: false, reason: reservationErrorText(growErr) };
     }
   })();
-  autoGrowInFlight.set(host_id, task);
+  autoGrowInFlight.set(inflightKey, task);
   try {
     return await task;
   } finally {
-    if (autoGrowInFlight.get(host_id) === task) {
-      autoGrowInFlight.delete(host_id);
+    if (autoGrowInFlight.get(inflightKey) === task) {
+      autoGrowInFlight.delete(inflightKey);
+    }
+  }
+}
+
+export async function maybeAutoGrowSharedScratchForBackgroundPressure({
+  host_id,
+  history,
+}: {
+  host_id: string;
+  history?: HostMetricsHistory;
+}): Promise<AutoGrowResult> {
+  const decision = shouldAutoGrowForSharedScratchBackgroundPressure(history);
+  if (!decision.recommended) {
+    return { grown: false, reason: decision.reason };
+  }
+  const inflightKey = `shared-scratch:${host_id}`;
+  const existing = autoGrowInFlight.get(inflightKey);
+  if (existing) return await existing;
+  const task = (async (): Promise<AutoGrowResult> => {
+    const row = await loadHostRow(host_id);
+    if (!row) return { grown: false, reason: "host not found" };
+    const config = resolveSharedScratchAutoGrowConfig(row);
+    if (!config) {
+      return {
+        grown: false,
+        reason: "shared scratch auto-grow is not enabled for this host",
+      };
+    }
+    log.info("attempting background shared scratch auto-grow", {
+      host_id,
+      reason: decision.reason,
+      config,
+    });
+    try {
+      return await performSharedScratchAutoGrow(row, config, {
+        trigger: "background_low_headroom",
+        reason: decision.reason,
+      });
+    } catch (growErr) {
+      log.warn("background shared scratch auto-grow failed", {
+        host_id,
+        err: growErr,
+      });
+      return { grown: false, reason: reservationErrorText(growErr) };
+    }
+  })();
+  autoGrowInFlight.set(inflightKey, task);
+  try {
+    return await task;
+  } finally {
+    if (autoGrowInFlight.get(inflightKey) === task) {
+      autoGrowInFlight.delete(inflightKey);
     }
   }
 }
@@ -536,4 +904,7 @@ export const _test = {
   canAutoGrowNow,
   currentDiskGb,
   shouldAutoGrowForBackgroundPressure,
+  shouldAutoGrowForSharedScratchBackgroundPressure,
+  resolveSharedScratchAutoGrowConfig,
+  currentSharedScratchDiskGb,
 };

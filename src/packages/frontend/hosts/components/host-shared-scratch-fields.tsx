@@ -191,6 +191,10 @@ export const HostSharedScratchFields: React.FC<
   const supported = !!cap?.supported;
   const watchedSize = Form.useWatch("shared_disk_gb", form);
   const watchedType = Form.useWatch("shared_disk_type", form);
+  const watchedAutoGrowEnabled = Form.useWatch(
+    "shared_scratch_auto_grow_enabled",
+    form,
+  );
   const currentSize = Number(currentSizeGb ?? 0);
   const [scratchEnabled, setScratchEnabled] = React.useState(
     () => currentSize > 0,
@@ -209,6 +213,7 @@ export const HostSharedScratchFields: React.FC<
     };
   });
   const step = provider === "nebius" ? NEBIUS_DISK_INCREMENT_GB : 1;
+  const autoGrowStep = provider === "nebius" ? NEBIUS_DISK_INCREMENT_GB : 50;
   const minSize = Math.max(
     minSharedDiskSize(provider),
     Number(currentSizeGb ?? 0) || 0,
@@ -235,6 +240,7 @@ export const HostSharedScratchFields: React.FC<
         setFields({
           shared_disk_gb: undefined,
           shared_disk_type: undefined,
+          shared_scratch_auto_grow_enabled: false,
         });
       }
       return;
@@ -264,6 +270,44 @@ export const HostSharedScratchFields: React.FC<
       setScratchEnabled(true);
     }
   }, [currentSize, watchedSize]);
+  React.useEffect(() => {
+    if (!watchedAutoGrowEnabled) return;
+    const size = Number(watchedSize ?? currentSize ?? defaultSharedDiskGb);
+    const normalizedSize = normalizeSharedDiskSize({
+      provider,
+      size: Number.isFinite(size) && size > 0 ? size : defaultSharedDiskGb,
+    });
+    const patch: Record<string, any> = {};
+    const currentMax = Number(
+      form.getFieldValue("shared_scratch_auto_grow_max_disk_gb"),
+    );
+    if (!Number.isFinite(currentMax) || currentMax < normalizedSize) {
+      patch.shared_scratch_auto_grow_max_disk_gb = normalizeSharedDiskSize({
+        provider,
+        size: Math.max(normalizedSize + autoGrowStep, normalizedSize * 2),
+      });
+    }
+    if (!form.getFieldValue("shared_scratch_auto_grow_growth_step_gb")) {
+      patch.shared_scratch_auto_grow_growth_step_gb = autoGrowStep;
+    }
+    if (
+      !form.getFieldValue("shared_scratch_auto_grow_min_grow_interval_minutes")
+    ) {
+      patch.shared_scratch_auto_grow_min_grow_interval_minutes = 60;
+    }
+    if (Object.keys(patch).length) {
+      setFields(patch);
+    }
+  }, [
+    autoGrowStep,
+    currentSize,
+    defaultSharedDiskGb,
+    form,
+    provider,
+    setFields,
+    watchedAutoGrowEnabled,
+    watchedSize,
+  ]);
 
   if (!supported) return null;
 
@@ -312,6 +356,7 @@ export const HostSharedScratchFields: React.FC<
                 setFields({
                   shared_disk_gb: undefined,
                   shared_disk_type: undefined,
+                  shared_scratch_auto_grow_enabled: false,
                 });
               }
             }}
@@ -390,6 +435,127 @@ export const HostSharedScratchFields: React.FC<
                 </>
               }
             />
+            <div
+              style={{
+                borderTop: `1px solid ${COLORS.GRAY_LL}`,
+                marginTop: 4,
+                paddingTop: 10,
+              }}
+            >
+              <Form.Item
+                name="shared_scratch_auto_grow_enabled"
+                label="Automatically grow /scratch"
+                valuePropName="checked"
+                extra="When host metrics show sustained low /scratch headroom, grow this disk by a fixed step up to the configured maximum."
+              >
+                <Switch disabled={disabled} />
+              </Form.Item>
+              {watchedAutoGrowEnabled && (
+                <Row gutter={10}>
+                  <Col xs={24} md={8}>
+                    <Form.Item
+                      name="shared_scratch_auto_grow_max_disk_gb"
+                      label="Max size (GB)"
+                      dependencies={["shared_disk_gb"]}
+                      rules={[
+                        ({ getFieldValue }) => ({
+                          validator(_, value) {
+                            const parsed = Number(value);
+                            const configured = Number(
+                              getFieldValue("shared_disk_gb") ??
+                                currentSize ??
+                                0,
+                            );
+                            if (!Number.isFinite(parsed) || parsed <= 0) {
+                              return Promise.reject(
+                                new Error("Enter a maximum scratch size"),
+                              );
+                            }
+                            if (
+                              Number.isFinite(configured) &&
+                              configured > 0 &&
+                              parsed < configured
+                            ) {
+                              return Promise.reject(
+                                new Error(
+                                  `Maximum must be at least ${configured.toLocaleString()} GB`,
+                                ),
+                              );
+                            }
+                            return Promise.resolve();
+                          },
+                        }),
+                      ]}
+                    >
+                      <InputNumber
+                        min={minSize}
+                        max={10000}
+                        step={step}
+                        precision={0}
+                        style={{ width: "100%" }}
+                        disabled={disabled}
+                        onChange={(value) => {
+                          if (
+                            typeof value !== "number" ||
+                            Number.isNaN(value)
+                          ) {
+                            return;
+                          }
+                          setFields({
+                            shared_scratch_auto_grow_max_disk_gb:
+                              normalizeSharedDiskSize({
+                                provider,
+                                size: value,
+                              }),
+                          });
+                        }}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col xs={24} md={8}>
+                    <Form.Item
+                      name="shared_scratch_auto_grow_growth_step_gb"
+                      label="Grow by (GB)"
+                      rules={[
+                        {
+                          required: true,
+                          message: "Enter the scratch growth step",
+                        },
+                      ]}
+                    >
+                      <InputNumber
+                        min={1}
+                        max={2000}
+                        step={step}
+                        precision={0}
+                        style={{ width: "100%" }}
+                        disabled={disabled}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col xs={24} md={8}>
+                    <Form.Item
+                      name="shared_scratch_auto_grow_min_grow_interval_minutes"
+                      label="Cooldown (min)"
+                      rules={[
+                        {
+                          required: true,
+                          message: "Enter the auto-grow cooldown",
+                        },
+                      ]}
+                    >
+                      <InputNumber
+                        min={1}
+                        max={7 * 24 * 60}
+                        precision={0}
+                        style={{ width: "100%" }}
+                        disabled={disabled}
+                      />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              )}
+            </div>
             {allowDelete && onDelete && Number(currentSizeGb ?? 0) > 0 && (
               <div>
                 <Button danger loading={deleting} onClick={onDelete}>

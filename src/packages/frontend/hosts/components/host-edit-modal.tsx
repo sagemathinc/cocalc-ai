@@ -94,6 +94,10 @@ type HostEditModalProps = {
       auto_grow_max_disk_gb?: number;
       auto_grow_growth_step_gb?: number;
       auto_grow_min_grow_interval_minutes?: number;
+      shared_scratch_auto_grow_enabled?: boolean;
+      shared_scratch_auto_grow_max_disk_gb?: number;
+      shared_scratch_auto_grow_growth_step_gb?: number;
+      shared_scratch_auto_grow_min_grow_interval_minutes?: number;
       pricing_model?: HostPricingModel;
       interruption_restore_policy?: HostInterruptionRestorePolicy;
       spot_recovery_policy?: HostSpotRecoveryPolicy;
@@ -518,6 +522,29 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       ? selectedStorageMode !== "ephemeral" && storageSupport.growable
       : showDiskFields && storageMode !== "ephemeral");
   const watchedAutoGrowEnabled = Form.useWatch("auto_grow_enabled", form);
+  const currentSharedScratchAutoGrow = React.useMemo(() => {
+    const metadata = (host?.machine?.metadata ?? {}) as Record<string, any>;
+    const nested = (metadata.shared_scratch_auto_grow ??
+      {}) as HostAutoGrowConfig;
+    return {
+      enabled:
+        nested.enabled ??
+        (typeof metadata.shared_scratch_auto_grow_enabled === "boolean"
+          ? metadata.shared_scratch_auto_grow_enabled
+          : false),
+      max_disk_gb: readPositive(
+        nested.max_disk_gb ?? metadata.shared_scratch_auto_grow_max_disk_gb,
+      ),
+      growth_step_gb: readPositive(
+        nested.growth_step_gb ??
+          metadata.shared_scratch_auto_grow_growth_step_gb,
+      ),
+      min_grow_interval_minutes: readPositive(
+        nested.min_grow_interval_minutes ??
+          metadata.shared_scratch_auto_grow_min_grow_interval_minutes,
+      ),
+    };
+  }, [host]);
   const showAdvancedSection =
     isDeprovisioned &&
     ((providerDescriptor && fieldSchema.advanced.length > 0) ||
@@ -603,6 +630,17 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       auto_grow_growth_step_gb: currentAutoGrow.growth_step_gb ?? 50,
       auto_grow_min_grow_interval_minutes:
         currentAutoGrow.min_grow_interval_minutes ?? 60,
+      shared_scratch_auto_grow_enabled: currentSharedScratchAutoGrow.enabled,
+      shared_scratch_auto_grow_max_disk_gb:
+        currentSharedScratchAutoGrow.max_disk_gb ??
+        (currentSharedDisk
+          ? Math.max(currentSharedDisk * 2, currentSharedDisk + 50)
+          : undefined),
+      shared_scratch_auto_grow_growth_step_gb:
+        currentSharedScratchAutoGrow.growth_step_gb ??
+        (providerId === "nebius" ? NEBIUS_IO_M3_GB : 50),
+      shared_scratch_auto_grow_min_grow_interval_minutes:
+        currentSharedScratchAutoGrow.min_grow_interval_minutes ?? 60,
     });
   }, [
     autoGrowDefaultMaxDisk,
@@ -614,11 +652,16 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     currentDisk,
     currentRam,
     currentSharedDisk,
+    currentSharedScratchAutoGrow.enabled,
+    currentSharedScratchAutoGrow.growth_step_gb,
+    currentSharedScratchAutoGrow.max_disk_gb,
+    currentSharedScratchAutoGrow.min_grow_interval_minutes,
     currentSharedDiskType,
     form,
     host,
     open,
     providerOptions,
+    providerId,
     storageMode,
   ]);
   React.useEffect(() => {

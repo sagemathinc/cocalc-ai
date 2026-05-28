@@ -5594,6 +5594,10 @@ export async function updateHostMachine({
   auto_grow_max_disk_gb,
   auto_grow_growth_step_gb,
   auto_grow_min_grow_interval_minutes,
+  shared_scratch_auto_grow_enabled,
+  shared_scratch_auto_grow_max_disk_gb,
+  shared_scratch_auto_grow_growth_step_gb,
+  shared_scratch_auto_grow_min_grow_interval_minutes,
   pricing_model,
   interruption_restore_policy,
   spot_recovery_policy,
@@ -5622,6 +5626,10 @@ export async function updateHostMachine({
   auto_grow_max_disk_gb?: number;
   auto_grow_growth_step_gb?: number;
   auto_grow_min_grow_interval_minutes?: number;
+  shared_scratch_auto_grow_enabled?: boolean;
+  shared_scratch_auto_grow_max_disk_gb?: number;
+  shared_scratch_auto_grow_growth_step_gb?: number;
+  shared_scratch_auto_grow_min_grow_interval_minutes?: number;
   pricing_model?: HostPricingModel;
   interruption_restore_policy?: HostInterruptionRestorePolicy;
   spot_recovery_policy?: HostSpotRecoveryPolicy;
@@ -5712,6 +5720,8 @@ export async function updateHostMachine({
     shared_disk_type: specMachine.shared_disk_type ?? null,
     storage_mode: specMachine.storage_mode ?? null,
     auto_grow: specMachine.metadata?.auto_grow ?? null,
+    shared_scratch_auto_grow:
+      specMachine.metadata?.shared_scratch_auto_grow ?? null,
     pricing_model:
       normalizeHostPricingModel(metadata.pricing_model) ?? "on_demand",
     interruption_restore_policy:
@@ -5764,6 +5774,22 @@ export async function updateHostMachine({
   const nextAutoGrowMinInterval = parsePositiveInt(
     auto_grow_min_grow_interval_minutes,
     "auto_grow_min_grow_interval_minutes",
+  );
+  const nextSharedScratchAutoGrowEnabled = parseBooleanLike(
+    shared_scratch_auto_grow_enabled,
+    "shared_scratch_auto_grow_enabled",
+  );
+  const nextSharedScratchAutoGrowMaxDisk = parsePositiveInt(
+    shared_scratch_auto_grow_max_disk_gb,
+    "shared_scratch_auto_grow_max_disk_gb",
+  );
+  const nextSharedScratchAutoGrowGrowthStep = parsePositiveInt(
+    shared_scratch_auto_grow_growth_step_gb,
+    "shared_scratch_auto_grow_growth_step_gb",
+  );
+  const nextSharedScratchAutoGrowMinInterval = parsePositiveInt(
+    shared_scratch_auto_grow_min_grow_interval_minutes,
+    "shared_scratch_auto_grow_min_grow_interval_minutes",
   );
   const currentPricingModel =
     normalizeHostPricingModel(
@@ -5946,6 +5972,7 @@ export async function updateHostMachine({
         delete nextMachine.metadata.shared_disk_mount;
         delete nextMachine.metadata.shared_disk_filesystem;
         delete nextMachine.metadata.shared_disk_state;
+        delete nextMachine.metadata.shared_scratch_auto_grow;
       }
       changed = true;
     }
@@ -6075,6 +6102,74 @@ export async function updateHostMachine({
     nextMachine.metadata = {
       ...(nextMachine.metadata ?? {}),
       auto_grow: nextAutoGrow,
+    };
+    changed = true;
+  }
+  const currentSharedScratchAutoGrow = {
+    ...((machine.metadata?.shared_scratch_auto_grow ?? {}) as Record<
+      string,
+      any
+    >),
+  };
+  const nextSharedScratchAutoGrow = {
+    ...((nextMachine.metadata?.shared_scratch_auto_grow ?? {}) as Record<
+      string,
+      any
+    >),
+  };
+  let sharedScratchAutoGrowChanged = false;
+  if (
+    nextSharedScratchAutoGrowEnabled !== undefined &&
+    nextSharedScratchAutoGrowEnabled !== currentSharedScratchAutoGrow.enabled
+  ) {
+    nextSharedScratchAutoGrow.enabled = nextSharedScratchAutoGrowEnabled;
+    sharedScratchAutoGrowChanged = true;
+  }
+  if (
+    nextSharedScratchAutoGrowMaxDisk != null &&
+    nextSharedScratchAutoGrowMaxDisk !==
+      currentSharedScratchAutoGrow.max_disk_gb
+  ) {
+    nextSharedScratchAutoGrow.max_disk_gb = nextSharedScratchAutoGrowMaxDisk;
+    sharedScratchAutoGrowChanged = true;
+  }
+  if (
+    nextSharedScratchAutoGrowGrowthStep != null &&
+    nextSharedScratchAutoGrowGrowthStep !==
+      currentSharedScratchAutoGrow.growth_step_gb
+  ) {
+    nextSharedScratchAutoGrow.growth_step_gb =
+      nextSharedScratchAutoGrowGrowthStep;
+    sharedScratchAutoGrowChanged = true;
+  }
+  if (
+    nextSharedScratchAutoGrowMinInterval != null &&
+    nextSharedScratchAutoGrowMinInterval !==
+      currentSharedScratchAutoGrow.min_grow_interval_minutes
+  ) {
+    nextSharedScratchAutoGrow.min_grow_interval_minutes =
+      nextSharedScratchAutoGrowMinInterval;
+    sharedScratchAutoGrowChanged = true;
+  }
+  if (sharedScratchAutoGrowChanged) {
+    const effectiveSharedDisk = nextMachine.shared_disk_gb;
+    if (nextSharedScratchAutoGrow.enabled && !effectiveSharedDisk) {
+      throw new Error(
+        "shared scratch auto-grow requires a shared scratch disk",
+      );
+    }
+    if (
+      nextSharedScratchAutoGrow.max_disk_gb != null &&
+      effectiveSharedDisk != null &&
+      nextSharedScratchAutoGrow.max_disk_gb < effectiveSharedDisk
+    ) {
+      throw new Error(
+        "shared scratch auto-grow max disk must be at least the configured scratch disk",
+      );
+    }
+    nextMachine.metadata = {
+      ...(nextMachine.metadata ?? {}),
+      shared_scratch_auto_grow: nextSharedScratchAutoGrow,
     };
     changed = true;
   }

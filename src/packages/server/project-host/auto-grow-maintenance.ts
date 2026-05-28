@@ -8,6 +8,7 @@ import getPool from "@cocalc/database/pool";
 import {
   loadBackgroundAutoGrowHistory,
   maybeAutoGrowHostDiskForBackgroundPressure,
+  maybeAutoGrowSharedScratchForBackgroundPressure,
 } from "./auto-grow";
 
 const logger = getLogger("server:project-host:auto-grow-maintenance");
@@ -64,14 +65,26 @@ async function runBackgroundAutoGrowPass(): Promise<void> {
   if (!host_ids.length) return;
   const historyByHost = await loadBackgroundAutoGrowHistory(host_ids);
   for (const host_id of host_ids) {
-    const result = await maybeAutoGrowHostDiskForBackgroundPressure({
+    const diskResult = await maybeAutoGrowHostDiskForBackgroundPressure({
       host_id,
       history: historyByHost.get(host_id),
     });
-    if (result.grown) {
+    if (diskResult.grown) {
       logger.info("background auto-grow completed", {
         host_id,
-        next_disk_gb: result.next_disk_gb,
+        next_disk_gb: diskResult.next_disk_gb,
+      });
+    }
+    const scratchResult = await maybeAutoGrowSharedScratchForBackgroundPressure(
+      {
+        host_id,
+        history: historyByHost.get(host_id),
+      },
+    );
+    if (scratchResult.grown) {
+      logger.info("background shared scratch auto-grow completed", {
+        host_id,
+        next_shared_scratch_disk_gb: scratchResult.next_disk_gb,
       });
     }
   }

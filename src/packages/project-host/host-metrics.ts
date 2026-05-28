@@ -7,6 +7,7 @@ import {
   parseBtrfsUsageOutput,
   parseDfOutput,
   readDiskMetrics,
+  readSharedScratchMetrics,
 } from "./storage-metrics";
 import { getActiveStorageReservationSummary } from "./storage-reservations";
 
@@ -151,7 +152,11 @@ async function collectSnapshot(
   prevCpuSample: CpuSample | undefined,
 ): Promise<{ snapshot: HostCurrentMetrics; cpuSample: CpuSample }> {
   const cpuSample = readCpuSample();
-  const [memory, disk] = await Promise.all([readMeminfo(), readDiskMetrics()]);
+  const [memory, disk, sharedScratch] = await Promise.all([
+    readMeminfo(),
+    readDiskMetrics(),
+    readSharedScratchMetrics(),
+  ]);
   const projects = readProjectCounts();
   const reservation_bytes = getActiveStorageReservationSummary().total_bytes;
   const disk_available_for_admission_bytes =
@@ -168,6 +173,7 @@ async function collectSnapshot(
       load_15: round2(loadavg()[2]),
       ...memory,
       ...disk,
+      ...sharedScratch,
       disk_available_for_admission_bytes,
       reservation_bytes,
       ...projects,

@@ -75,6 +75,10 @@ export type HostCreateDraft = {
   auto_grow_max_disk_gb?: number;
   auto_grow_growth_step_gb?: number;
   auto_grow_min_grow_interval_minutes?: number;
+  shared_scratch_auto_grow_enabled?: boolean;
+  shared_scratch_auto_grow_max_disk_gb?: number;
+  shared_scratch_auto_grow_growth_step_gb?: number;
+  shared_scratch_auto_grow_min_grow_interval_minutes?: number;
 };
 
 export type HostCreateDraftContext = {
@@ -212,6 +216,31 @@ const readAutoGrow = (host: Host) => {
   };
 };
 
+const readSharedScratchAutoGrow = (host: Host) => {
+  const metadata = (host.machine?.metadata ?? {}) as Record<string, any>;
+  const nested = (metadata.shared_scratch_auto_grow ?? {}) as Record<
+    string,
+    any
+  >;
+  return {
+    enabled:
+      nested.enabled ??
+      (typeof metadata.shared_scratch_auto_grow_enabled === "boolean"
+        ? metadata.shared_scratch_auto_grow_enabled
+        : false),
+    max_disk_gb: readPositiveInteger(
+      nested.max_disk_gb ?? metadata.shared_scratch_auto_grow_max_disk_gb,
+    ),
+    growth_step_gb: readPositiveInteger(
+      nested.growth_step_gb ?? metadata.shared_scratch_auto_grow_growth_step_gb,
+    ),
+    min_grow_interval_minutes: readPositiveInteger(
+      nested.min_grow_interval_minutes ??
+        metadata.shared_scratch_auto_grow_min_grow_interval_minutes,
+    ),
+  };
+};
+
 export function buildDefaultDraft(
   context: HostCreateDraftContext,
 ): HostCreateDraft {
@@ -245,6 +274,7 @@ export function buildSimilarDraft(
   const interruptionRestorePolicy =
     host.interruption_restore_policy ?? defaultRestorePolicy(pricingModel);
   const autoGrow = readAutoGrow(host);
+  const sharedScratchAutoGrow = readSharedScratchAutoGrow(host);
   return normalizeDraft(
     {
       name: similarName(host.name),
@@ -279,6 +309,12 @@ export function buildSimilarDraft(
       auto_grow_max_disk_gb: autoGrow.max_disk_gb,
       auto_grow_growth_step_gb: autoGrow.growth_step_gb,
       auto_grow_min_grow_interval_minutes: autoGrow.min_grow_interval_minutes,
+      shared_scratch_auto_grow_enabled: sharedScratchAutoGrow.enabled,
+      shared_scratch_auto_grow_max_disk_gb: sharedScratchAutoGrow.max_disk_gb,
+      shared_scratch_auto_grow_growth_step_gb:
+        sharedScratchAutoGrow.growth_step_gb,
+      shared_scratch_auto_grow_min_grow_interval_minutes:
+        sharedScratchAutoGrow.min_grow_interval_minutes,
     },
     context,
   ).draft;
@@ -336,6 +372,16 @@ export function normalizeDraft(
     ),
     auto_grow_min_grow_interval_minutes: readPositiveInteger(
       input.auto_grow_min_grow_interval_minutes,
+    ),
+    shared_scratch_auto_grow_enabled: input.shared_scratch_auto_grow_enabled,
+    shared_scratch_auto_grow_max_disk_gb: readPositiveInteger(
+      input.shared_scratch_auto_grow_max_disk_gb,
+    ),
+    shared_scratch_auto_grow_growth_step_gb: readPositiveInteger(
+      input.shared_scratch_auto_grow_growth_step_gb,
+    ),
+    shared_scratch_auto_grow_min_grow_interval_minutes: readPositiveInteger(
+      input.shared_scratch_auto_grow_min_grow_interval_minutes,
     ),
   };
 
@@ -399,6 +445,12 @@ export function normalizeDraft(
     provider,
     draft.shared_disk_gb,
   );
+  if (!draft.shared_disk_gb) {
+    draft.shared_scratch_auto_grow_enabled = false;
+    draft.shared_scratch_auto_grow_max_disk_gb = undefined;
+    draft.shared_scratch_auto_grow_growth_step_gb = undefined;
+    draft.shared_scratch_auto_grow_min_grow_interval_minutes = undefined;
+  }
 
   if (provider === "nebius") {
     const spotSupported = isNebiusSpotSupported(

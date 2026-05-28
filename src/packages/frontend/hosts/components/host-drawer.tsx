@@ -1858,6 +1858,68 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     ? "Delete this host?"
     : "Deprovision this host?";
   const deleteOkText = deleteWithoutDeprovision ? "Delete" : "Deprovision";
+  const sharedScratchCard = (
+    <Card size="small" title="Shared scratch disk">
+      {hasSharedScratch ? (
+        <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+          <Space wrap>
+            <Tag color="blue">
+              {sharedScratchGb.toLocaleString()} GB at /scratch
+            </Tag>
+            {sharedScratchType && <Tag>{sharedScratchType}</Tag>}
+            <Tag>not backed up</Tag>
+          </Space>
+          <Typography.Text type="secondary">
+            This is host-local shared working storage mounted into projects at{" "}
+            <code>/scratch</code>. It is not included in project quota and does
+            not move with projects.
+          </Typography.Text>
+          <Typography.Text type="secondary">
+            It uses provider network block storage, not local SSD. Projects may
+            need to be restarted after scratch is added or deleted.
+          </Typography.Text>
+          <Space wrap>
+            {canManageLifecycle && (
+              <Button size="small" onClick={() => onEdit(host)}>
+                Edit scratch
+              </Button>
+            )}
+            {onDeleteSharedScratch && canManageLifecycle && (
+              <Popconfirm
+                title="Delete shared scratch disk?"
+                description={
+                  <div style={{ maxWidth: 360 }}>
+                    This destroys all data in <code>/scratch</code>. If the host
+                    is running, deletion first tries to unmount the scratch
+                    filesystem and fails if projects are still using it.
+                  </div>
+                }
+                okButtonProps={{ danger: true }}
+                okText="Delete scratch"
+                cancelText="Cancel"
+                onConfirm={() => onDeleteSharedScratch(host.id)}
+              >
+                <Button size="small" danger>
+                  Delete scratch
+                </Button>
+              </Popconfirm>
+            )}
+          </Space>
+        </Space>
+      ) : (
+        <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+          <Typography.Text type="secondary">
+            No shared <code>/scratch</code> disk is configured.
+          </Typography.Text>
+          {canManageLifecycle && (
+            <Button size="small" onClick={() => onEdit(host)}>
+              Add scratch disk
+            </Button>
+          )}
+        </Space>
+      )}
+    </Card>
+  );
   const overviewContent = host ? (
     <Space orientation="vertical" style={{ width: "100%" }} size="middle">
       {!showUpgradeProgress && (
@@ -1964,67 +2026,6 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
       <Card size="small" title="Daemon health">
         <HostDaemonHealthSummary host={host} />
       </Card>
-      <Card size="small" title="Shared scratch disk">
-        {hasSharedScratch ? (
-          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-            <Space wrap>
-              <Tag color="blue">
-                {sharedScratchGb.toLocaleString()} GB at /scratch
-              </Tag>
-              {sharedScratchType && <Tag>{sharedScratchType}</Tag>}
-              <Tag>not backed up</Tag>
-            </Space>
-            <Typography.Text type="secondary">
-              This is host-local shared working storage mounted into projects at{" "}
-              <code>/scratch</code>. It is not included in project quota and
-              does not move with projects.
-            </Typography.Text>
-            <Typography.Text type="secondary">
-              It uses provider network block storage, not local SSD. Projects
-              may need to be restarted after scratch is added or deleted.
-            </Typography.Text>
-            <Space wrap>
-              {canManageLifecycle && (
-                <Button size="small" onClick={() => onEdit(host)}>
-                  Edit scratch
-                </Button>
-              )}
-              {onDeleteSharedScratch && canManageLifecycle && (
-                <Popconfirm
-                  title="Delete shared scratch disk?"
-                  description={
-                    <div style={{ maxWidth: 360 }}>
-                      This destroys all data in <code>/scratch</code>. If the
-                      host is running, deletion first tries to unmount the
-                      scratch filesystem and fails if projects are still using
-                      it.
-                    </div>
-                  }
-                  okButtonProps={{ danger: true }}
-                  okText="Delete scratch"
-                  cancelText="Cancel"
-                  onConfirm={() => onDeleteSharedScratch(host.id)}
-                >
-                  <Button size="small" danger>
-                    Delete scratch
-                  </Button>
-                </Popconfirm>
-              )}
-            </Space>
-          </Space>
-        ) : (
-          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-            <Typography.Text type="secondary">
-              No shared <code>/scratch</code> disk is configured.
-            </Typography.Text>
-            {canManageLifecycle && (
-              <Button size="small" onClick={() => onEdit(host)}>
-                Add scratch disk
-              </Button>
-            )}
-          </Space>
-        )}
-      </Card>
       <Card size="small" title="Current metrics">
         <HostCurrentMetrics host={host} />
       </Card>
@@ -2118,11 +2119,14 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     </Space>
   ) : null;
   const storageContent = host ? (
-    <HostRootfsCachePanel
-      host={host}
-      canManage={!!canManageRootfs}
-      inventory={rootfsInventory}
-    />
+    <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+      {sharedScratchCard}
+      <HostRootfsCachePanel
+        host={host}
+        canManage={!!canManageRootfs}
+        inventory={rootfsInventory}
+      />
+    </Space>
   ) : null;
   const logsContent = host ? (
     <Space orientation="vertical" style={{ width: "100%" }} size="middle">

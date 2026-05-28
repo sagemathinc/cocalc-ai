@@ -24,6 +24,9 @@ import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import { trunc_middle } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import getStorageOverview, {
+  getCachedStorageOverview,
+} from "../disk-usage/storage-overview";
 import { createPathSegmentLink } from "./path-segment-link";
 
 interface Props {
@@ -50,6 +53,8 @@ const DROPDOWN_MENU_STYLE: React.CSSProperties = {
   overflowX: "hidden",
   maxWidth: 350,
 };
+
+type SourceKey = "home" | "root" | "tmp" | "scratch";
 
 function historyMenuItems(
   paths: string[],
@@ -224,6 +229,35 @@ export const PathNavigator: React.FC<Props> = React.memo(
       typeof resolvedHome === "string" && resolvedHome.length > 0
         ? normalizeAbsolutePath(resolvedHome)
         : getProjectHomeDirectory(project_id);
+    const [sharedScratchAvailable, setSharedScratchAvailable] = React.useState(
+      () =>
+        getCachedStorageOverview({ project_id, home: homePath })
+          ?.shared_scratch != null,
+    );
+
+    React.useEffect(() => {
+      let cancelled = false;
+      const cached = getCachedStorageOverview({ project_id, home: homePath });
+      setSharedScratchAvailable(cached?.shared_scratch != null);
+      if (!showSourceSelector) {
+        return () => {
+          cancelled = true;
+        };
+      }
+      void getStorageOverview({ project_id, home: homePath, cache: true })
+        .then((overview) => {
+          if (!cancelled) {
+            setSharedScratchAvailable(overview.shared_scratch != null);
+          }
+        })
+        .catch(() => {
+          // The selector is best-effort; file browsing still validates paths.
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, [homePath, project_id, showSourceSelector]);
+
     const navigate = (path: string) => {
       if (onNavigate) {
         onNavigate(path);
@@ -246,7 +280,7 @@ export const PathNavigator: React.FC<Props> = React.memo(
 
     const sourceForPath = (
       path: string,
-    ): { key: "home" | "root" | "tmp"; rootPath: string } => {
+    ): { key: SourceKey; rootPath: string } => {
       if (!path.startsWith("/")) {
         return { key: "home", rootPath: homePath };
       }
@@ -258,6 +292,12 @@ export const PathNavigator: React.FC<Props> = React.memo(
       }
       if (path === "/tmp" || path.startsWith("/tmp/")) {
         return { key: "tmp", rootPath: "/tmp" };
+      }
+      if (
+        sharedScratchAvailable &&
+        (path === "/scratch" || path.startsWith("/scratch/"))
+      ) {
+        return { key: "scratch", rootPath: "/scratch" };
       }
       return { key: "root", rootPath: "/" };
     };
@@ -306,13 +346,28 @@ export const PathNavigator: React.FC<Props> = React.memo(
         label: "/tmp",
         onClick: () => navigate("/tmp"),
       },
+      ...(sharedScratchAvailable
+        ? [
+            {
+              key: "scratch",
+              label: "/scratch",
+              onClick: () => navigate("/scratch"),
+            },
+          ]
+        : []),
     ];
-    const sourceTitle =
-      currentSource.key === "home"
-        ? "Home"
-        : currentSource.key === "root"
-          ? "/"
-          : "/tmp";
+    const sourceTitle = (() => {
+      switch (currentSource.key) {
+        case "home":
+          return "Home";
+        case "root":
+          return "/";
+        case "scratch":
+          return "/scratch";
+        case "tmp":
+          return "/tmp";
+      }
+    })();
 
     function make_path() {
       const v: any[] = [];

@@ -32,6 +32,8 @@ const FORM_SYNC_FIELDS: Array<keyof HostCreateDraft> = [
   "disk_gb",
   "disk",
   "disk_type",
+  "shared_disk_gb",
+  "shared_disk_type",
   "region",
   "zone",
   "machine_type",
@@ -47,6 +49,10 @@ const FORM_SYNC_FIELDS: Array<keyof HostCreateDraft> = [
   "auto_grow_max_disk_gb",
   "auto_grow_growth_step_gb",
   "auto_grow_min_grow_interval_minutes",
+  "shared_scratch_auto_grow_enabled",
+  "shared_scratch_auto_grow_max_disk_gb",
+  "shared_scratch_auto_grow_growth_step_gb",
+  "shared_scratch_auto_grow_min_grow_interval_minutes",
 ];
 
 const CATALOG_NORMALIZATION_EXEMPT_FIELDS = new Set<keyof HostCreateDraft>([

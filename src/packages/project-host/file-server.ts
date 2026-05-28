@@ -3808,6 +3808,7 @@ export async function initFsServer({
         home: path,
         rootfs: getRootfsMountpoint(project_id),
         scratch: getScratchMountpoint(project_id),
+        sharedScratch: getSharedScratchMountpoint(),
         deleteSnapshot: async (name: string) =>
           await deleteSnapshot({ project_id, name }),
       });
@@ -3841,6 +3842,7 @@ export async function initViewerFsServer({
         home: path,
         rootfs: getRootfsMountpoint(project_id),
         scratch: getScratchMountpoint(project_id),
+        sharedScratch: getSharedScratchMountpoint(),
         deleteSnapshot: async (name: string) =>
           await deleteSnapshot({ project_id, name }),
       });
