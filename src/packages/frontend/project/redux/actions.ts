@@ -208,6 +208,7 @@ const PUBLIC_RENDERER_ONLY_EXTENSIONS = new Set([
   "sage-chat",
   "slides",
   "tasks",
+  "tex",
 ]);
 
 function canUseFrameEditorReadOnlyPreview(path: string, ext?: string): boolean {

@@ -237,6 +237,7 @@ export function Explorer() {
     ...sortDesc(active_file_sort),
     cacheId: actions?.getCacheId(),
     mask,
+    watch: !readOnlyViewer,
   });
   const {
     listing: backupsListing,
@@ -970,8 +971,12 @@ You can either wait for this host to become available again, or move this ${proj
                       current_path={effective_current_path}
                       actions={actions}
                       refreshBackups={refreshBackups}
-                      hasPendingUpdate={hasPendingListingUpdate}
-                      onRefreshListing={flushListingUpdates}
+                      hasPendingUpdate={
+                        readOnlyViewer || hasPendingListingUpdate
+                      }
+                      onRefreshListing={
+                        readOnlyViewer ? refresh : flushListingUpdates
+                      }
                       autoUpdateListing={autoUpdateListing}
                       onToggleAutoUpdate={handleAutoUpdateListingChange}
                       readOnly={readOnlyViewer}

@@ -114,6 +114,7 @@ export default function useFiles({
   path,
   throttleUpdate = DEFAULT_THROTTLE_FILE_UPDATE,
   cacheId,
+  watch = true,
 }: {
   // fs = undefined is supported and just waits until you provide a fs that is defined
   fs?: FilesystemClientLike | null;
@@ -123,6 +124,7 @@ export default function useFiles({
   // An example cacheId could be {project_id}.
   // This is used to speed up the first load, and can also be fetched synchronously.
   cacheId?: JSONValue;
+  watch?: boolean;
 }): {
   files: Files | null;
   error: null | ConatErrorLike;
@@ -209,6 +211,9 @@ export default function useFiles({
           cur.path === path && cur.files == null ? cur : { path, files: null },
         );
       }
+      if (!watch) {
+        return;
+      }
       const attachListing = async (attempt = 0): Promise<void> => {
         try {
           const listing = await fs.listing(path);
@@ -265,7 +270,7 @@ export default function useFiles({
       listingRef.current?.close();
       delete listingRef.current;
     },
-    [fs, path, counter],
+    [fs, path, counter, watch],
   );
 
   const files = filesState.path === path ? filesState.files : null;

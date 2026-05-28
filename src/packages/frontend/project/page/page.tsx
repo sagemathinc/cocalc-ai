@@ -4,7 +4,7 @@
  */
 
 import { DndContext, useDraggable } from "@dnd-kit/core";
-import { Alert, Button, Modal, Space } from "antd";
+import { Alert, Button, Modal, Space, Tag } from "antd";
 import {
   React,
   redux,
@@ -564,8 +564,21 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
         />
         {renderFlyoutHeader()}
         <div style={{ flex: 1, overflow: "hidden", display: "flex" }}>
-          {projectCtx.projectAccess.capabilities.useProjectRuntime && (
-            <StartButton minimal style={{ margin: "2px 4px 0px 4px" }} />
+          {projectCtx.projectAccess.role === "viewer" ? (
+            <Tag
+              color={COLORS.BLUE_D}
+              style={{
+                alignSelf: "center",
+                margin: "2px 6px 0px 4px",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Read only
+            </Tag>
+          ) : (
+            projectCtx.projectAccess.capabilities.useProjectRuntime && (
+              <StartButton minimal style={{ margin: "2px 4px 0px 4px" }} />
+            )
           )}
           <ProjectTabs project_id={project_id} />
         </div>
