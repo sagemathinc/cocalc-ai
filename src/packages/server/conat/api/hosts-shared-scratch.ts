@@ -5,11 +5,11 @@
 
 import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
 import { normalizeProviderId } from "@cocalc/cloud";
-import { MIN_PROJECT_HOST_DISK_GB } from "@cocalc/util/project-host-limits";
 
 export const SHARED_SCRATCH_HOST_MOUNT = "/mnt/cocalc-scratch";
 export const SHARED_SCRATCH_FILESYSTEM = "ext4";
 export const NEBIUS_DISK_INCREMENT_GB = 93;
+export const GCP_SHARED_SCRATCH_MIN_GB = 10;
 
 type ScratchDiskType = NonNullable<HostMachine["shared_disk_type"]>;
 
@@ -35,6 +35,17 @@ export function defaultSharedScratchDiskType(
       return "ssd";
     default:
       return undefined;
+  }
+}
+
+export function minSharedScratchDiskSizeGib(cloud?: string | null): number {
+  switch (normalizeProviderId(cloud)) {
+    case "gcp":
+      return GCP_SHARED_SCRATCH_MIN_GB;
+    case "nebius":
+      return NEBIUS_DISK_INCREMENT_GB;
+    default:
+      return 1;
   }
 }
 
@@ -67,7 +78,10 @@ export function normalizeSharedScratchDiskSizeGib({
   cloud?: string | null;
   sizeGb: number;
 }): number {
-  const normalized = Math.max(MIN_PROJECT_HOST_DISK_GB, Math.floor(sizeGb));
+  const normalized = Math.max(
+    minSharedScratchDiskSizeGib(cloud),
+    Math.floor(sizeGb),
+  );
   if (normalizeProviderId(cloud) === "nebius") {
     return (
       Math.ceil(normalized / NEBIUS_DISK_INCREMENT_GB) *

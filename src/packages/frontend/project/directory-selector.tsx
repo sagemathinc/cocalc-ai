@@ -60,11 +60,12 @@ interface Props {
   allowAbsolutePaths?: boolean;
 }
 
-type RootSource = "home" | "root" | "tmp";
+type RootSource = "home" | "root" | "tmp" | "scratch";
 
 function sourceForPath(
   path: string,
   homePath: string,
+  sharedScratchPath?: string,
 ): { source: RootSource; rootPath: string } {
   if (!path.startsWith("/")) {
     return { source: "home", rootPath: homePath };
@@ -77,6 +78,12 @@ function sourceForPath(
   }
   if (path === "/tmp" || path.startsWith("/tmp/")) {
     return { source: "tmp", rootPath: "/tmp" };
+  }
+  if (
+    sharedScratchPath &&
+    (path === sharedScratchPath || path.startsWith(`${sharedScratchPath}/`))
+  ) {
+    return { source: "scratch", rootPath: sharedScratchPath };
   }
   return { source: "root", rootPath: "/" };
 }
@@ -152,13 +159,18 @@ export default function DirectorySelector({
     typeof resolvedHome === "string" && resolvedHome.length > 0
       ? normalizeAbsolutePath(resolvedHome)
       : getProjectHomeDirectory(project_id);
+  const resolvedScratch = availableFeatures?.get("sharedScratchMount");
+  const sharedScratchPath =
+    typeof resolvedScratch === "string" && resolvedScratch.length > 0
+      ? normalizeAbsolutePath(resolvedScratch)
+      : undefined;
   const initialPath = startingPath ?? frameContext.path ?? "";
   const normalizedInitialAbs = normalizeAbsolutePath(
     initialPath || homePath,
     homePath,
   );
   const initialRootPath = allowAbsolutePaths
-    ? sourceForPath(normalizedInitialAbs, homePath).rootPath
+    ? sourceForPath(normalizedInitialAbs, homePath, sharedScratchPath).rootPath
     : "";
   const [rootPath, setRootPath] = useState<string>(initialRootPath);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => {
@@ -179,13 +191,16 @@ export default function DirectorySelector({
   const rootSource = sourceForPath(
     allowAbsolutePaths ? rootPath : homePath,
     homePath,
+    sharedScratchPath,
   );
   const rootTitle =
     rootSource.source === "home"
       ? "Home"
       : rootSource.source === "root"
         ? "/"
-        : "/tmp";
+        : rootSource.source === "tmp"
+          ? "/tmp"
+          : (sharedScratchPath ?? "/scratch");
   const rootDisplayName =
     rootSource.source === "home" ? "Home Folder" : rootSource.rootPath;
 
@@ -242,6 +257,19 @@ export default function DirectorySelector({
         setSelectedPaths(new Set());
       },
     },
+    ...(sharedScratchPath
+      ? [
+          {
+            key: "scratch",
+            label: sharedScratchPath,
+            onClick: () => {
+              setRootPath(sharedScratchPath);
+              setExpandedPaths(new Set([sharedScratchPath]));
+              setSelectedPaths(new Set());
+            },
+          },
+        ]
+      : []),
   ];
   return (
     <Card

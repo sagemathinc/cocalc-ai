@@ -1647,6 +1647,58 @@ describe("hosts browser fresh auth gating", () => {
     expect(savedMetadata.runtime.metadata.shared_disk_id).toBe("scratch-disk");
   });
 
+  it("records shared scratch config for an off host without provider calls", async () => {
+    getProviderContextMock = jest.fn(async () => {
+      throw new Error("provider context should not be needed");
+    });
+    const initialMetadata = {
+      owner: ACCOUNT_ID,
+      machine: {
+        cloud: "nebius",
+        disk_gb: 200,
+        machine_type: "cpu-d3",
+        metadata: { cpu: 4, ram_gb: 16 },
+      },
+      pricing_model: "on_demand",
+    };
+    let savedMetadata: any;
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "off",
+              metadata: savedMetadata ?? initialMetadata,
+            },
+          ],
+        };
+      }
+      if (sql.includes("UPDATE project_hosts SET region=$2")) {
+        savedMetadata = params?.[2];
+        return { rowCount: 1, rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { updateHostMachine } = await import("./hosts");
+    await updateHostMachine({
+      account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
+      id: HOST_ID,
+      shared_disk_gb: 100,
+    });
+
+    expect(getProviderContextMock).not.toHaveBeenCalled();
+    expect(savedMetadata.machine.shared_disk_gb).toBe(186);
+    expect(savedMetadata.machine.shared_disk_type).toBe("ssd");
+    expect(savedMetadata.machine.metadata.shared_disk_mount).toBe(
+      "/mnt/cocalc-scratch",
+    );
+  });
+
   it("grows an existing shared scratch disk in the provider and host filesystem", async () => {
     const resizeSharedScratchDisk = jest.fn(async () => undefined);
     const growSharedScratch = jest.fn(async () => ({ ok: true }));

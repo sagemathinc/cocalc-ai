@@ -147,7 +147,7 @@ export function HostActionsPanel({
       host.status === "starting" ||
       host.status === "restarting");
   const allowEmergencyStop =
-    activeStartLikeOperation &&
+    hostOpActive &&
     STOPPABLE_HOST_STATUSES.has(String(host.status)) &&
     caps?.supportsStop !== false &&
     host.machine?.storage_mode !== "ephemeral";
@@ -155,7 +155,9 @@ export function HostActionsPanel({
     host.status === "stopping"
       ? "Stopping"
       : allowEmergencyStop
-        ? "Emergency stop"
+        ? activeStartLikeOperation
+          ? "Emergency stop"
+          : "Stop anyway"
         : "Stop";
   const allowStop =
     !isDeleted &&
@@ -424,13 +426,13 @@ export function HostActionsPanel({
             closeMore();
             onDelete();
           }}
-          disabled={isDeleted || hostOpActive}
+          disabled={isDeleted}
         >
           <Button
             block
             type="text"
             danger
-            disabled={isDeleted || hostOpActive}
+            disabled={isDeleted}
             icon={<DeleteOutlined />}
             style={actionButtonStyle}
           >
@@ -442,7 +444,7 @@ export function HostActionsPanel({
           block
           type="text"
           danger
-          disabled={isDeleted || hostOpActive}
+          disabled={isDeleted}
           icon={<DeleteOutlined />}
           style={actionButtonStyle}
           onClick={() => {
@@ -473,14 +475,13 @@ export function HostActionsPanel({
     <Space
       direction="vertical"
       size={6}
-      style={{ maxWidth: mode === "card" ? undefined : 260, width: "100%" }}
+      style={{ maxWidth: mode === "card" ? undefined : 230, width: "100%" }}
     >
       <Space
         size={6}
-        wrap={mode === "card"}
+        wrap
         style={{
           width: "100%",
-          flexWrap: mode === "card" ? undefined : "nowrap",
         }}
       >
         <Button
@@ -528,7 +529,11 @@ export function HostActionsPanel({
           style={{ fontSize: 12, lineHeight: 1.3 }}
         >
           {blockedActionsReason}
-          {allowEmergencyStop ? " Emergency stop is still available." : ""}
+          {allowEmergencyStop
+            ? " Stop is still available."
+            : canManageLifecycle && !isDeleted
+              ? " Deprovision is still available."
+              : ""}
         </Typography.Text>
       ) : null}
       {mode === "card" && hostOpActive ? (

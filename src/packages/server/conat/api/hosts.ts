@@ -5971,7 +5971,8 @@ export async function updateHostMachine({
     if (
       !isDeprovisioned &&
       currentSharedDisk <= 0 &&
-      normalizedSharedDisk > 0
+      normalizedSharedDisk > 0 &&
+      !!`${metadata.runtime?.instance_id ?? ""}`.trim()
     ) {
       sharedScratchEnsureGb = normalizedSharedDisk;
     }
