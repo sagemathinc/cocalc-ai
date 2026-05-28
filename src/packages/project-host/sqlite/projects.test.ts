@@ -101,4 +101,22 @@ describe("project sqlite runtime ports", () => {
     });
     expect(getProject(project_id)?.secret_names).toEqual([]);
   });
+
+  it("returns mirrored project users for project-host auth and viewer policy checks", () => {
+    const account_id = "6426eb12-2e1e-4dcb-b7e5-ed891a129f4b";
+    const users = {
+      [account_id]: {
+        group: "viewer",
+        read_policy: { rules: [{ action: "include", path: "foo/bar/**" }] },
+      },
+    };
+
+    upsertProject({
+      project_id,
+      state: "running",
+      users,
+    });
+
+    expect(getProject(project_id)?.users).toEqual(users);
+  });
 });
