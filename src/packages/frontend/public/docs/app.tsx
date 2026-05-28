@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { Button, Empty, Flex, Typography } from "antd";
 import { docsPath, getDocsEntry, type DocsEntry } from "@cocalc/docs";
@@ -12,6 +12,7 @@ import {
   DocsIndexContent,
   DocsPrintContent,
 } from "@cocalc/frontend/docs/browser";
+import { downloadStandaloneDocsHtml } from "@cocalc/frontend/docs/download-html";
 import {
   appPath,
   getSiteName,
@@ -30,6 +31,7 @@ interface PublicDocsAppProps {
 
 function DocsIndex({ config }: { config?: PublicConfig }) {
   const siteName = getSiteName(config);
+  const [downloadHtmlBusy, setDownloadHtmlBusy] = useState(false);
 
   useEffect(() => {
     document.title = `Documentation - ${siteName}`;
@@ -62,8 +64,21 @@ function DocsIndex({ config }: { config?: PublicConfig }) {
           </div>
           <DocsIndexContent
             linkForEntry={(entry) => appPath(docsPath(entry.slug))}
+            onDownloadHtml={async () => {
+              setDownloadHtmlBusy(true);
+              try {
+                await downloadStandaloneDocsHtml({
+                  onBackHref: appPath(docsPath("")),
+                });
+              } finally {
+                setDownloadHtmlBusy(false);
+              }
+            }}
             printHref={appPath(docsPath("print"))}
           />
+          {downloadHtmlBusy ? (
+            <Text type="secondary">Preparing HTML download...</Text>
+          ) : null}
         </Flex>
       </section>
     </PublicSectionShell>
@@ -72,6 +87,7 @@ function DocsIndex({ config }: { config?: PublicConfig }) {
 
 function DocsPrint({ config }: { config?: PublicConfig }) {
   const siteName = getSiteName(config);
+  const [downloadHtmlBusy, setDownloadHtmlBusy] = useState(false);
 
   useEffect(() => {
     document.title = `Printable documentation - ${siteName}`;
@@ -80,7 +96,20 @@ function DocsPrint({ config }: { config?: PublicConfig }) {
   return (
     <PublicSectionShell active="docs" config={config}>
       <section>
-        <DocsPrintContent onBackHref={appPath(docsPath(""))} />
+        <DocsPrintContent
+          downloadHtmlBusy={downloadHtmlBusy}
+          onBackHref={appPath(docsPath(""))}
+          onDownloadHtml={async () => {
+            setDownloadHtmlBusy(true);
+            try {
+              await downloadStandaloneDocsHtml({
+                onBackHref: appPath(docsPath("")),
+              });
+            } finally {
+              setDownloadHtmlBusy(false);
+            }
+          }}
+        />
       </section>
     </PublicSectionShell>
   );

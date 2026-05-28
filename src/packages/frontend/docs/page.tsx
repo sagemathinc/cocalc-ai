@@ -20,7 +20,10 @@ import {
   type DocsBrowserAction,
   type DocsBrowserActionParameters,
 } from "@cocalc/frontend/docs/browser";
-import { DocsPrivateNotesPanel } from "@cocalc/frontend/docs/private-state/panel";
+import {
+  DocsLearnedControl,
+  DocsPrivateNotesPanel,
+} from "@cocalc/frontend/docs/private-state/panel";
 import {
   exportDocsPrivateStateBundle,
   importDocsPrivateStateBundle,
@@ -38,13 +41,17 @@ import {
   APP_DOCS_SELECTED_STORAGE_KEY,
   saveStoredAppDocsSlug,
 } from "@cocalc/frontend/docs/navigation";
+import {
+  downloadStandaloneDocsHtml,
+  wrapDocsPrintHtml,
+} from "@cocalc/frontend/docs/download-html";
 import { open_popup_window } from "@cocalc/frontend/misc/open-browser-tab";
-import { BASE_URL } from "@cocalc/frontend/misc";
-import { resource_links_string } from "@cocalc/frontend/misc/resource-links";
 import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { COLORS } from "@cocalc/util/theme";
 
 const { Paragraph, Text, Title } = Typography;
+const DOCS_PRINT_BUTTON_ID = "cocalc-docs-print-button";
+const DOCS_DOWNLOAD_HTML_BUTTON_ID = "cocalc-docs-download-html-button";
 
 function loadStoredAppDocsEntry(docsAccess: DocsAccess): DocsEntry | undefined {
   if (typeof window === "undefined") return undefined;
@@ -119,46 +126,108 @@ export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
   }
 
   function openPrintPopup(): void {
-    const popup = open_popup_window("about:blank", {
+    const html = renderToStaticMarkup(
+      <DocsPrintContent
+        downloadHtmlButtonId={DOCS_DOWNLOAD_HTML_BUTTON_ID}
+        docsAccess={docsAccess}
+        onBackHref={getPageUrlPath({ page: "docs" })}
+        printButtonId={DOCS_PRINT_BUTTON_ID}
+      />,
+    );
+    const documentHtml = wrapDocsPrintHtml(
+      `${html}
+    <script>
+      async function cocalcBlobToDataUrl(blob) {
+        return await new Promise(function(resolve, reject) {
+          const reader = new FileReader();
+          reader.onerror = function() { reject(reader.error); };
+          reader.onload = function() { resolve(String(reader.result)); };
+          reader.readAsDataURL(blob);
+        });
+      }
+      async function cocalcDownloadDocsHtml() {
+        const button = document.getElementById("${DOCS_DOWNLOAD_HTML_BUTTON_ID}");
+        if (button != null) button.textContent = "Preparing...";
+        try {
+          const clone = document.documentElement.cloneNode(true);
+          clone.querySelectorAll(".cocalc-docs-print-controls").forEach(function(node) {
+            node.remove();
+          });
+          const images = clone.querySelectorAll("img[src]");
+          for (const image of images) {
+            const src = image.getAttribute("src");
+            if (!src || src.startsWith("data:")) continue;
+            const url = new URL(src, document.baseURI).href;
+            const response = await fetch(url);
+            if (!response.ok) throw Error("unable to fetch " + url);
+            image.setAttribute("src", await cocalcBlobToDataUrl(await response.blob()));
+          }
+          const blobUrl = URL.createObjectURL(new Blob(["<!doctype html>\\n" + clone.outerHTML], {
+            type: "text/html"
+          }));
+          const a = document.createElement("a");
+          a.href = blobUrl;
+          a.download = "cocalc-docs.html";
+          a.click();
+          setTimeout(function() { URL.revokeObjectURL(blobUrl); }, 1000);
+        } catch (err) {
+          alert(String(err));
+        } finally {
+          if (button != null) button.textContent = "Download HTML";
+        }
+      }
+      window.onload = function() {
+        const printButton = document.getElementById("${DOCS_PRINT_BUTTON_ID}");
+        if (printButton != null) printButton.onclick = function() { window.print(); };
+        const downloadButton = document.getElementById("${DOCS_DOWNLOAD_HTML_BUTTON_ID}");
+        if (downloadButton != null) downloadButton.onclick = cocalcDownloadDocsHtml;
+        setTimeout(function() { window.print(); }, 50);
+      };
+    </script>
+  `,
+      { autoPrint: false },
+    );
+    const url = URL.createObjectURL(
+      new Blob([documentHtml], { type: "text/html" }),
+    );
+    const popup = open_popup_window(url, {
       height: 900,
       noopener: false,
       width: 1100,
     });
-    if (popup == null) return;
-    const html = renderToStaticMarkup(
-      <DocsPrintContent
-        docsAccess={docsAccess}
-        onBackHref={getPageUrlPath({ page: "docs" })}
-      />,
-    );
-    popup.document.write(`<!doctype html>
-<html lang="en">
-  <head>
-    <title>CoCalc documentation</title>
-    <meta charset="utf-8" />
-    <meta name="google" content="notranslate" />
-    ${resource_links_string(BASE_URL)}
-    <style>
-      html, body { background: white; }
-      body { margin: 0; padding: 24px; }
-      @media print { body { padding: 0; } }
-    </style>
-  </head>
-  <body>
-    ${html}
-    <script>
-      window.onload = function() {
-        setTimeout(function() { window.print(); }, 50);
-      };
-    </script>
-  </body>
-</html>`);
-    popup.document.close();
+    if (popup == null) {
+      URL.revokeObjectURL(url);
+      return;
+    }
+    try {
+      popup.addEventListener(
+        "beforeunload",
+        () => {
+          URL.revokeObjectURL(url);
+        },
+        { once: true },
+      );
+      popup.focus();
+    } catch {
+      // The blob URL remains usable even if the browser does not expose the popup window.
+    }
+  }
+
+  async function downloadHtml(): Promise<void> {
+    try {
+      await downloadStandaloneDocsHtml({
+        docsAccess,
+        onBackHref: getPageUrlPath({ page: "docs" }),
+      });
+      await messageApi.success("Downloaded self-contained HTML docs.");
+    } catch (err) {
+      await messageApi.error(`${err}`);
+    }
   }
 
   const privateToolbar = accountId ? (
     <Space wrap>
-      <Tooltip title="Export your private docs notes and starred pages as a JSON backup or transfer file">
+      <Tooltip title="Export your private docs notes, learned pages, and starred pages as a JSON backup or transfer file">
         <Button
           icon={<DownloadOutlined />}
           onClick={async () => {
@@ -176,7 +245,7 @@ export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
               a.click();
               URL.revokeObjectURL(url);
               await messageApi.success(
-                "Exported private notes and starred state.",
+                "Exported private notes, learned pages, and starred state.",
               );
             } catch (err) {
               await messageApi.error(`${err}`);
@@ -215,7 +284,7 @@ export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
         }}
         showUploadList={false}
       >
-        <Tooltip title="Import private docs notes and starred pages from a JSON export, merging without duplicate notes">
+        <Tooltip title="Import private docs notes, learned pages, and starred pages from a JSON export, merging without duplicate notes">
           <Button icon={<UploadOutlined />} size="small">
             Import
           </Button>
@@ -265,6 +334,7 @@ export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
             browserHref={getPageUrlPath({ page: "docs" })}
             docsAccess={docsAccess}
             initialEntry={initialEntry}
+            onDownloadHtml={downloadHtml}
             onPrint={openPrintPopup}
             onRunAction={runAction}
             onSelectedEntryChange={(entry) => {
@@ -290,6 +360,14 @@ export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
                         onDeleteNote={docsPrivateState.deleteNote}
                         onSaveNote={docsPrivateState.saveNote}
                         onToggleStar={docsPrivateState.toggleStar}
+                        summary={docsPrivateState.summaries[entry.id]}
+                      />
+                    ),
+                    renderLearnedControl: (entry) => (
+                      <DocsLearnedControl
+                        entry={entry}
+                        loading={docsPrivateState.loading}
+                        onSetLearned={docsPrivateState.setLearned}
                         summary={docsPrivateState.summaries[entry.id]}
                       />
                     ),

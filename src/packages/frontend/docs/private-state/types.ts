@@ -7,7 +7,13 @@ export const DOCS_PRIVATE_STATE_STORE = "cocalc-docs-private-state-v1";
 export const DOCS_PRIVATE_STATE_EXPORT_KIND =
   "cocalc-docs-private-state-export-v1";
 
-export type DocsPrivateFilter = "all" | "starred" | "unstarred" | "notes";
+export type DocsPrivateFilter =
+  | "all"
+  | "starred"
+  | "unstarred"
+  | "learned"
+  | "unlearned"
+  | "notes";
 
 export type DocsPageStateV1 = {
   version: 1;
@@ -16,6 +22,8 @@ export type DocsPageStateV1 = {
   slug: string;
   starred: boolean;
   starred_updated_at?: number;
+  learned_at?: number;
+  learned_updated_at?: number;
   last_viewed_at?: number;
   created_at: number;
   updated_at: number;
@@ -65,5 +73,6 @@ export type DocsPrivateEntrySummary = {
   starred: boolean;
   noteCount: number;
   noteText: string;
+  learnedAt?: number;
   lastViewedAt?: number;
 };
