@@ -119,19 +119,13 @@ export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
   }
 
   function openPrintPopup(): void {
-    const popup = open_popup_window("about:blank", {
-      height: 900,
-      noopener: false,
-      width: 1100,
-    });
-    if (popup == null) return;
     const html = renderToStaticMarkup(
       <DocsPrintContent
         docsAccess={docsAccess}
         onBackHref={getPageUrlPath({ page: "docs" })}
       />,
     );
-    popup.document.write(`<!doctype html>
+    const documentHtml = `<!doctype html>
 <html lang="en">
   <head>
     <title>CoCalc documentation</title>
@@ -152,8 +146,31 @@ export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
       };
     </script>
   </body>
-</html>`);
-    popup.document.close();
+</html>`;
+    const url = URL.createObjectURL(
+      new Blob([documentHtml], { type: "text/html" }),
+    );
+    const popup = open_popup_window(url, {
+      height: 900,
+      noopener: false,
+      width: 1100,
+    });
+    if (popup == null) {
+      URL.revokeObjectURL(url);
+      return;
+    }
+    try {
+      popup.addEventListener(
+        "beforeunload",
+        () => {
+          URL.revokeObjectURL(url);
+        },
+        { once: true },
+      );
+      popup.focus();
+    } catch {
+      // The blob URL remains usable even if the browser does not expose the popup window.
+    }
   }
 
   const privateToolbar = accountId ? (
