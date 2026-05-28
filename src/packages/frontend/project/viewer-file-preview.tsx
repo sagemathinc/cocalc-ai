@@ -47,7 +47,9 @@ export default function ViewerFilePreview({ project_id, path }: Props) {
         const ext = filename_extension(path).toLowerCase();
         if (isImage(ext) || isVideo(ext) || isAudio(ext) || isPDF(ext)) {
           const raw = await fs.readFile(path);
-          rawUrl = URL.createObjectURL(new Blob([toBlobPart(raw)]));
+          rawUrl = URL.createObjectURL(
+            new Blob([toBlobPart(raw)], { type: mediaMimeType(ext) }),
+          );
           if (!cancelled) {
             setState({ loading: false, rawUrl });
           }
@@ -138,4 +140,12 @@ function toBlobPart(data: unknown): BlobPart {
     return new Uint8Array((data as any).data);
   }
   return String(data ?? "");
+}
+
+function mediaMimeType(ext: string): string {
+  if (isPDF(ext)) return "application/pdf";
+  if (isImage(ext)) return `image/${ext === "jpg" ? "jpeg" : ext}`;
+  if (isVideo(ext)) return `video/${ext}`;
+  if (isAudio(ext)) return `audio/${ext}`;
+  return "application/octet-stream";
 }

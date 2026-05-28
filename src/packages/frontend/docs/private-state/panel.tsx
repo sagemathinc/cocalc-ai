@@ -3,12 +3,27 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { EditOutlined, StarFilled, StarOutlined } from "@ant-design/icons";
+import {
+  CheckCircleFilled,
+  CheckCircleOutlined,
+  EditOutlined,
+  StarFilled,
+  StarOutlined,
+} from "@ant-design/icons";
 import type { DocsEntry } from "@cocalc/docs";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { COLORS } from "@cocalc/util/theme";
-import { Alert, Button, Card, Flex, Popconfirm, Space, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Checkbox,
+  Flex,
+  Popconfirm,
+  Space,
+  Typography,
+} from "antd";
 import { useEffect, useState } from "react";
 
 import type { DocsPageNoteV1, DocsPrivateEntrySummary } from "./types";
@@ -238,6 +253,52 @@ export function DocsPrivateNotesPanel({
           </Flex>
         ) : null}
       </Flex>
+    </Card>
+  );
+}
+
+export function DocsLearnedControl({
+  entry,
+  loading,
+  onSetLearned,
+  summary,
+}: {
+  entry: DocsEntry;
+  loading?: boolean;
+  onSetLearned: (entry: DocsEntry, learned: boolean) => void | Promise<void>;
+  summary?: DocsPrivateEntrySummary;
+}) {
+  const learned = Boolean(summary?.learnedAt);
+  return (
+    <Card
+      size="small"
+      style={{
+        background: learned ? COLORS.BS_GREEN_LL : "#fff",
+        border: `1px solid ${learned ? COLORS.BS_GREEN : COLORS.GRAY_LL}`,
+        boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)",
+      }}
+    >
+      <Flex align="center" gap="middle" justify="space-between" wrap>
+        <Checkbox
+          checked={learned}
+          disabled={loading}
+          onChange={(event) => void onSetLearned(entry, event.target.checked)}
+        >
+          <Space>
+            {learned ? (
+              <CheckCircleFilled style={{ color: COLORS.BS_GREEN_D }} />
+            ) : (
+              <CheckCircleOutlined style={{ color: COLORS.GRAY_M }} />
+            )}
+            <Text strong>Done - I learned this page</Text>
+          </Space>
+        </Checkbox>
+      </Flex>
+      {learned && summary?.learnedAt ? (
+        <Text type="secondary" style={{ display: "block", marginTop: 8 }}>
+          Marked learned {new Date(summary.learnedAt).toLocaleString()}
+        </Text>
+      ) : null}
     </Card>
   );
 }

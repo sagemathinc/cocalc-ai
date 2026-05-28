@@ -59,7 +59,10 @@ export async function hubCallByName<T>({
   debug?: (event: string, data: Record<string, unknown>) => void;
 }): Promise<T> {
   const timeoutMs = timeout ?? ctx.timeoutMs;
-  const rpcTimeoutMs = Math.max(1_000, Math.min(timeoutMs, ctx.rpcTimeoutMs));
+  const rpcTimeoutMs =
+    timeout == null
+      ? Math.max(1_000, Math.min(timeoutMs, ctx.rpcTimeoutMs))
+      : Math.max(1_000, Math.min(timeoutMs, ctx.timeoutMs));
   debug?.("hubCallAccount", {
     name,
     timeoutMs,
@@ -104,7 +107,7 @@ const HUB_API_GROUPS: HubGroupName[] = [
 ];
 
 export function createHubApiForContext(
-  callByName: <T>(name: string, args?: any[]) => Promise<T>,
+  callByName: <T>(name: string, args?: any[], timeout?: number) => Promise<T>,
 ): HubApi {
   const hub = {} as Record<
     HubGroupName,
@@ -119,7 +122,7 @@ export function createHubApiForContext(
             return undefined;
           }
           return async (...args: any[]) =>
-            await callByName(`${group}.${property}`, args);
+            await callByName(`${group}.${property}`, args, args[0]?.timeout);
         },
       },
     );

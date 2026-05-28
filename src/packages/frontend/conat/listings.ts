@@ -105,6 +105,9 @@ export class Listings extends EventEmitter {
       throw Error("listings not ready");
     }
     if (this.listingsClient == null) return;
+    if (typeof (this.listingsClient as any).watch !== "function") {
+      return;
+    }
     while (this.state != ("closed" as any) && this.listingsClient != null) {
       try {
         await this.listingsClient.watch(path, force);

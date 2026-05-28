@@ -7,6 +7,7 @@ import type { Filesystem as ConatFilesystem } from "@cocalc/conat/files/fs";
 import {
   normalizeProjectViewerPolicyPath,
   viewerReadPolicyAllowsPath,
+  viewerReadPolicyMayAllowDescendant,
   type ProjectViewerReadPolicy,
 } from "@cocalc/util/project-access";
 import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
@@ -49,6 +50,67 @@ async function assertViewerPathAllowed({
   return canonical;
 }
 
+async function canonicalProjectRelativePath({
+  fs,
+  path,
+}: {
+  fs: ConatFilesystem;
+  path: string;
+}): Promise<string | undefined> {
+  if (typeof fs.canonicalSyncIdentityPath !== "function") {
+    throw new Error("project filesystem does not support canonical paths");
+  }
+  const canonicalIdentity = await fs.canonicalSyncIdentityPath(path);
+  const relativeHomePath = projectRuntimeHomeRelativePath(canonicalIdentity);
+  return canonicalIdentity.startsWith("/") && relativeHomePath == null
+    ? undefined
+    : normalizeProjectViewerPolicyPath(relativeHomePath ?? canonicalIdentity);
+}
+
+function joinViewerPath(parent: string, name: string): string {
+  if (!parent || parent === ".") {
+    return name;
+  }
+  return `${parent.replace(/\/+$/, "")}/${name}`;
+}
+
+function joinCanonicalPath(parent: string, name: string): string {
+  return parent ? `${parent}/${name}` : name;
+}
+
+function isDirectoryListingEntry(info: any): boolean {
+  return info?.isDir === true || info?.type === "d";
+}
+
+async function viewerChildVisibleInListing({
+  fs,
+  readPolicy,
+  parentPath,
+  parentCanonical,
+  name,
+  info,
+}: {
+  fs: ConatFilesystem;
+  readPolicy: ProjectViewerReadPolicy;
+  parentPath: string;
+  parentCanonical: string;
+  name: string;
+  info: any;
+}): Promise<boolean> {
+  const childPath = joinViewerPath(parentPath, name);
+  try {
+    await assertViewerPathAllowed({ fs, readPolicy, path: childPath });
+    return true;
+  } catch {}
+  if (!isDirectoryListingEntry(info)) {
+    return false;
+  }
+  return viewerReadPolicyMayAllowDescendant({
+    policy: readPolicy,
+    path: joinCanonicalPath(parentCanonical, name),
+  });
+}
+
 export function createViewerReadOnlyFilesystem({
   fs,
   readPolicy,
@@ -69,6 +131,39 @@ export function createViewerReadOnlyFilesystem({
         return false;
       }
       return await fs.exists(path);
+    },
+    getListing: async (path: string) => {
+      const canonical = await canonicalProjectRelativePath({ fs, path });
+      if (canonical == null) {
+        throw viewerAccessDenied(path);
+      }
+      if (
+        !viewerReadPolicyAllowsPath({ policy: readPolicy, path: canonical }) &&
+        !viewerReadPolicyMayAllowDescendant({
+          policy: readPolicy,
+          path: canonical,
+        })
+      ) {
+        throw viewerAccessDenied(path);
+      }
+      const listing = await fs.getListing(path);
+      const files = listing?.files ?? {};
+      const filtered: typeof files = {};
+      for (const [name, info] of Object.entries(files)) {
+        if (
+          await viewerChildVisibleInListing({
+            fs,
+            readPolicy,
+            parentPath: path,
+            parentCanonical: canonical,
+            name,
+            info,
+          })
+        ) {
+          filtered[name] = info;
+        }
+      }
+      return { ...listing, files: filtered };
     },
     lstat: async (path: string) => {
       await assertViewerPathAllowed({ fs, readPolicy, path });

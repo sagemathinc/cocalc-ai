@@ -7,7 +7,7 @@ TESTS: See packages/test/project/listing/
 */
 
 import useAsyncEffect from "use-async-effect";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { throttle } from "lodash";
 import useCounter from "@cocalc/frontend/app-framework/counter-hook";
 import LRU from "lru-cache";
@@ -114,6 +114,7 @@ export default function useFiles({
   path,
   throttleUpdate = DEFAULT_THROTTLE_FILE_UPDATE,
   cacheId,
+  watch = true,
 }: {
   // fs = undefined is supported and just waits until you provide a fs that is defined
   fs?: FilesystemClientLike | null;
@@ -123,6 +124,7 @@ export default function useFiles({
   // An example cacheId could be {project_id}.
   // This is used to speed up the first load, and can also be fetched synchronously.
   cacheId?: JSONValue;
+  watch?: boolean;
 }): {
   files: Files | null;
   error: null | ConatErrorLike;
@@ -136,12 +138,22 @@ export default function useFiles({
     path: string;
     error: ConatErrorLike | null;
   }>({ path, error: null });
-  const { val: counter, inc: refresh } = useCounter();
+  const { val: counter, inc: refreshCounter } = useCounter();
   const listingRef = useRef<any>(null);
   const throttledUpdateRef = useRef<undefined | { cancel?: () => void }>(
     undefined,
   );
   const requestId = useRef(0);
+  const refresh = useCallback(() => {
+    if (cacheId != null) {
+      clearCached({ cacheId, path });
+    }
+    setErrorState((cur) =>
+      cur.path === path && cur.error == null ? cur : { path, error: null },
+    );
+    setFilesState({ path, files: null });
+    refreshCounter();
+  }, [cacheId, path, refreshCounter]);
 
   useAsyncEffect(
     async () => {
@@ -209,6 +221,9 @@ export default function useFiles({
           cur.path === path && cur.files == null ? cur : { path, files: null },
         );
       }
+      if (!watch) {
+        return;
+      }
       const attachListing = async (attempt = 0): Promise<void> => {
         try {
           const listing = await fs.listing(path);
@@ -265,7 +280,7 @@ export default function useFiles({
       listingRef.current?.close();
       delete listingRef.current;
     },
-    [fs, path, counter],
+    [cacheId, fs, path, counter, throttleUpdate, watch],
   );
 
   const files = filesState.path === path ? filesState.files : null;
@@ -276,6 +291,13 @@ export default function useFiles({
 
 function key(cacheId: JSONValue, path: string) {
   return JSON.stringify({ cacheId, path });
+}
+
+function clearCached({ cacheId, path }: { cacheId: JSONValue; path: string }) {
+  const k = key(cacheId, path);
+  cache.delete(k);
+  failed.delete(k);
+  notifyCacheListeners();
 }
 
 function isListingTimeoutError(err: unknown): boolean {
@@ -345,7 +367,7 @@ async function ensureCached({
     return;
   }
   try {
-    const { files } = await fs.listing(path);
+    const { files } = await getListingSnapshot({ fs, path });
     if (files) {
       cache.set(k, files);
       notifyCacheListeners();

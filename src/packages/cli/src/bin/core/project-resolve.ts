@@ -9,6 +9,8 @@ export type ProjectLike = {
   state?: { state?: string } | null;
   last_edited?: string | Date | null;
   deleted?: string | Date | boolean | null;
+  users?: Record<string, any> | null;
+  users_summary?: Record<string, any> | null;
 };
 
 export type HostLike = {
@@ -138,14 +140,18 @@ export async function userQueryTable<T>(
 function mapProjectedProjectRow<W extends ProjectLike>(
   row: AccountProjectIndexRow,
 ): W {
-  return {
+  const project = {
     project_id: row.project_id,
     title: row.title,
     host_id: row.host_id ?? null,
     state: row.state_summary ?? null,
     last_edited: row.last_edited ?? row.updated_at ?? null,
     deleted: false,
-  } as W;
+  };
+  if (row.users_summary != null) {
+    (project as ProjectLike).users_summary = row.users_summary;
+  }
+  return project as W;
 }
 
 async function queryProjectedProjects<W extends ProjectLike = ProjectLike>({
@@ -167,6 +173,7 @@ async function queryProjectedProjects<W extends ProjectLike = ProjectLike>({
     host_id: null,
     title: null,
     state_summary: null,
+    users_summary: null,
     last_edited: null,
     sort_key: null,
     updated_at: null,
@@ -237,6 +244,7 @@ export async function queryProjects<W extends ProjectLike = ProjectLike>({
     title: null,
     host_id: null,
     state: null,
+    users: null,
     last_edited: null,
     deleted: null,
   };

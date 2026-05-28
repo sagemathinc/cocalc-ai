@@ -1780,6 +1780,7 @@ export interface Hosts {
     funding_mode?: HostFundingMode;
     pricing_model?: HostPricingModel;
     interruption_restore_policy?: HostInterruptionRestorePolicy;
+    timeout?: number;
   }) => Promise<Host>;
   upgradeHostSoftware: (opts: {
     account_id?: string;

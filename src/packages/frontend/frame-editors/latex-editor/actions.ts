@@ -181,6 +181,10 @@ export class Actions extends BaseActions<LatexEditorState> {
     return `/tmp/${sha1(this.path)}`;
   }
 
+  private is_read_only_preview(): boolean {
+    return this.store?.get("read_only") === true;
+  }
+
   _init2(): void {
     this.set_gutter = this.set_gutter.bind(this);
     // Debounce update_pdf with 500ms delay, trailing only, has to work when PDF watcher fires during the build
@@ -192,6 +196,14 @@ export class Actions extends BaseActions<LatexEditorState> {
     this.init_ext_filename(); // safe to set before syncstring init
     this._init_syncstring_value();
     this.init_ext_path(); // must come after syncstring init
+    if (this.is_read_only_preview()) {
+      this.word_count = async () => {};
+      this._syncstring.on(
+        "change",
+        debounce(this.updateTableOfContents.bind(this), 1500),
+      );
+      return;
+    }
     this.init_latexmk();
     // This breaks browser spellcheck.
     // this._init_spellcheck();
@@ -213,6 +225,7 @@ export class Actions extends BaseActions<LatexEditorState> {
 
   // Watch the directory containing the PDF file for changes
   private async _init_pdf_directory_watcher(): Promise<void> {
+    if (this.is_read_only_preview()) return;
     const pdfPath = pdf_path(this.path);
     this.pdf_watcher = new PDFWatcher(
       this.project_id,
@@ -229,6 +242,7 @@ export class Actions extends BaseActions<LatexEditorState> {
   // confusing, with latex we at least do something to
   // prevent having a truly empty document.
   private ensureNonempty() {
+    if (this.is_read_only_preview()) return;
     if (this.store && !this.store.get("value")?.trim()) {
       this.set_value(MINIMAL);
       this.build();
@@ -279,6 +293,7 @@ export class Actions extends BaseActions<LatexEditorState> {
   }
 
   private init_latexmk(): void {
+    if (this.is_read_only_preview()) return;
     const handlePersistedSourceChange = reuseInFlight(async () => {
       await this.maybeBuildAfterPersistedSourceChange();
     });
@@ -287,6 +302,7 @@ export class Actions extends BaseActions<LatexEditorState> {
   }
 
   private async maybeBuildAfterPersistedSourceChange(): Promise<void> {
+    if (this.is_read_only_preview()) return;
     if (this.not_ready()) return;
     const account: any = this.redux.getStore("account");
     if (!account?.getIn(["editor_settings", "build_on_save"])) {
@@ -326,6 +342,7 @@ export class Actions extends BaseActions<LatexEditorState> {
    * % !TeX cocalc = the exact command line
    */
   public async init_build_directive(cocalcOnly = false): Promise<void> {
+    if (this.is_read_only_preview()) return;
     // check if there is an engine configured
     // https://github.com/sagemathinc/cocalc/issues/2839
     if (this.engine_config !== undefined) return;
@@ -471,7 +488,7 @@ export class Actions extends BaseActions<LatexEditorState> {
     set_cmd();
     this._syncdb.on("change", set_cmd);
 
-    if (this.is_likely_master()) {
+    if (this.is_likely_master() && !this.is_read_only_preview()) {
       // We now definitely have the build command set and the document loaded,
       // and it is likely a master latex file, so let's kick off our initial build.
       this.force_build();
@@ -733,6 +750,7 @@ export class Actions extends BaseActions<LatexEditorState> {
 
   // supports the "Force Rebuild" button.
   async force_build(id?: string): Promise<void> {
+    if (this.is_read_only_preview()) return;
     await this.build(id, true);
   }
 
@@ -762,12 +780,14 @@ export class Actions extends BaseActions<LatexEditorState> {
   // TODO: this could get moved up to the base class, when
   // switch_to_files is moved.
   private async save_all(explicit: boolean): Promise<void> {
+    if (this.is_read_only_preview()) return;
     for (const actions of this.all_actions()) {
       await actions.save(explicit);
     }
   }
 
   public async explicit_save() {
+    if (this.is_read_only_preview()) return;
     const account = this.redux.getStore("account");
     if (
       !account?.getIn(["editor_settings", "build_on_save"]) ||
@@ -791,6 +811,7 @@ export class Actions extends BaseActions<LatexEditorState> {
   // used by generic framework – this is bound to the instance, otherwise "this" is undefined, hence
   // make sure to use an arrow function!
   build = async (id?: string, force: boolean = false): Promise<void> => {
+    if (this.is_read_only_preview()) return;
     this.set_error("");
     this.set_status("");
     if (id) {
@@ -821,6 +842,7 @@ export class Actions extends BaseActions<LatexEditorState> {
   };
 
   async clean(): Promise<void> {
+    if (this.is_read_only_preview()) return;
     await this.build_action("clean");
   }
 
@@ -1693,6 +1715,7 @@ export class Actions extends BaseActions<LatexEditorState> {
 
   // TODO: is this used in any way besides build_action("clean") ?
   private async build_action(action: string, force?: boolean): Promise<void> {
+    if (this.is_read_only_preview()) return;
     if (force === undefined) {
       force = false;
     }
@@ -1831,6 +1854,10 @@ export class Actions extends BaseActions<LatexEditorState> {
   }
 
   set_build_command(command: string | string[]): void {
+    if (this.is_read_only_preview()) {
+      this.setState({ build_command: fromJS(command) });
+      return;
+    }
     if (this._syncdb == null) throw Error("syncdb must be defined");
     // I deleted the insane time:now in this syncdb set, since that
     // would seem to generate an insane amount of traffic (and I'm

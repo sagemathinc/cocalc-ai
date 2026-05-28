@@ -167,9 +167,14 @@ export const WORKSPACE_STORE_FOREGROUND_LOADING_TIMEOUT_MS = 15_000;
 export function useProjectWorkspaces(
   account_id: string | undefined,
   project_id: string,
+  {
+    enabled = true,
+  }: {
+    enabled?: boolean;
+  } = {},
 ): ProjectWorkspaceState {
   const canPersist =
-    typeof account_id === "string" && account_id.trim().length > 0;
+    enabled && typeof account_id === "string" && account_id.trim().length > 0;
   const [loading, setLoading] = useState(canPersist);
   const [records, setRecords] = useState<WorkspaceRecord[]>([]);
   const [order, setOrderState] = useState<string[]>([]);

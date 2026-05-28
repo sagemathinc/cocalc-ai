@@ -6,6 +6,8 @@
 import type { CSSProperties, JSX } from "react";
 import type { IFileContext } from "@cocalc/frontend/lib/file-context";
 import Markdown from "@cocalc/frontend/editors/slate/static-markdown-public";
+import { normalizeChatMessage } from "@cocalc/frontend/chat/normalize";
+import { parseChatPreviewRows } from "@cocalc/frontend/chat/preview";
 import { withViewerFileContext } from "../viewer-file-context";
 
 type ChatRow = {
@@ -34,27 +36,10 @@ function escapeInline(value: string): string {
 }
 
 function buildChatMarkdown(content: string): string {
-  const lines = content.split(/\r?\n/);
   const rows: ChatRow[] = [];
   const threadNames = new Map<string, string>();
-
-  for (const line of lines) {
-    const raw = line.trim();
-    if (!raw) continue;
-    try {
-      const parsed = JSON.parse(raw) as ChatRow;
-      if (parsed.event === "chat-thread-config" && parsed.thread_id) {
-        const name = `${parsed.name ?? ""}`.trim();
-        if (name) {
-          threadNames.set(parsed.thread_id, name);
-        }
-      }
-      if (parsed.event === "chat") {
-        rows.push(parsed);
-      }
-    } catch {
-      continue;
-    }
+  for (const row of parseChatPreviewRows(content).rows) {
+    recordChatRow({ row: row as ChatRow, rows, threadNames });
   }
 
   rows.sort((a, b) => {
@@ -100,6 +85,27 @@ function buildChatMarkdown(content: string): string {
 
   const markdown = out.join("\n").trim();
   return markdown || "No chat messages were found in this file.";
+}
+
+function recordChatRow({
+  row,
+  rows,
+  threadNames,
+}: {
+  row: ChatRow;
+  rows: ChatRow[];
+  threadNames: Map<string, string>;
+}): void {
+  if (row?.event === "chat-thread-config" && row.thread_id) {
+    const name = `${row.name ?? ""}`.trim();
+    if (name) {
+      threadNames.set(row.thread_id, name);
+    }
+  }
+  if (row?.event === "chat") {
+    const normalized = normalizeChatMessage(row).message ?? row;
+    rows.push(normalized as ChatRow);
+  }
 }
 
 export default function PublicViewerChatRenderer({

@@ -265,6 +265,9 @@ interface Options {
   // optional path to treat as disk-backed temporary storage when
   // mounted/available. This is exposed at /tmp.
   scratch?: string;
+  // optional path to treat as host-shared scratch storage when
+  // mounted/available. This is exposed at /scratch.
+  sharedScratch?: string;
   // absolute paths to treat as aliases for the project home mount.
   homeAliases?: string[];
   host?: string;
@@ -304,6 +307,8 @@ const INTERNAL_METHODS = new Set([
   "rootfsEnabled",
   "scratch",
   "scratchEnabled",
+  "sharedScratch",
+  "sharedScratchEnabled",
   "allowSafeModeHardlink",
   "allowSafeModeSymlink",
   "openAt2Disabled",
@@ -347,6 +352,8 @@ export class SandboxedFilesystem {
   private rootfsEnabled = false;
   public readonly scratch?: string;
   private scratchEnabled = false;
+  public readonly sharedScratch?: string;
+  private sharedScratchEnabled = false;
   public readonly allowSafeModeHardlink: boolean;
   public readonly allowSafeModeSymlink: boolean;
   private readonly openAt2Disabled: boolean;
@@ -374,6 +381,7 @@ export class SandboxedFilesystem {
       readonly = false,
       rootfs,
       scratch,
+      sharedScratch,
       homeAliases,
       host = "global",
       rusticRepo: repo,
@@ -387,6 +395,7 @@ export class SandboxedFilesystem {
     this.readonly = !!readonly;
     this.rootfs = rootfs;
     this.scratch = scratch;
+    this.sharedScratch = sharedScratch;
     this.host = host;
     this.allowSafeModeHardlink = allowSafeModeHardlink;
     this.allowSafeModeSymlink = allowSafeModeSymlink;
@@ -902,11 +911,36 @@ export class SandboxedFilesystem {
     );
   }
 
+  private async requireSharedScratchForAbsolutePath(
+    requestedAbsolutePath: string,
+  ): Promise<string> {
+    if (!this.sharedScratch) {
+      throw new Error(
+        `shared scratch is not mounted; cannot access absolute path '${requestedAbsolutePath}'`,
+      );
+    }
+    if (this.sharedScratchEnabled) {
+      return this.sharedScratch;
+    }
+    try {
+      const st = await stat(this.sharedScratch);
+      if (st.isDirectory()) {
+        this.sharedScratchEnabled = true;
+        return this.sharedScratch;
+      }
+    } catch {
+      // handled below
+    }
+    throw new Error(
+      `shared scratch is not mounted; cannot access absolute path '${requestedAbsolutePath}'. Start the workspace and try again.`,
+    );
+  }
+
   private async resolvePathInSandbox(path: string): Promise<{
     pathInSandbox: string;
     sandboxBasePath: string;
     absoluteHomeAlias?: string;
-    absoluteTempAlias?: "tmp";
+    absoluteTempAlias?: "tmp" | "scratch";
   }> {
     const resolvedInput = resolve("/", path);
     const isAbsoluteInput = path.startsWith("/");
@@ -950,8 +984,24 @@ export class SandboxedFilesystem {
       };
     }
 
+    if (this.sharedScratch && isAbsoluteScratchAlias) {
+      const sharedScratchBase =
+        await this.requireSharedScratchForAbsolutePath(resolvedInput);
+      const prefix = "/scratch";
+      const rel =
+        resolvedInput == prefix ? "" : resolvedInput.slice(prefix.length + 1);
+      return {
+        pathInSandbox: join(sharedScratchBase, rel),
+        sandboxBasePath: sharedScratchBase,
+        absoluteHomeAlias: undefined,
+        absoluteTempAlias: "scratch",
+      };
+    }
+
     if (isAbsoluteScratchAlias) {
-      throw new Error(`'/scratch' is no longer supported. Use '/tmp' instead.`);
+      throw new Error(
+        "'/scratch' is only available on dedicated project hosts with shared scratch enabled. Use '/tmp' for per-project temporary storage.",
+      );
     }
 
     const rootBase = await this.requireRootfsForAbsolutePath(resolvedInput);
@@ -1031,7 +1081,7 @@ export class SandboxedFilesystem {
     pathInSandbox: string;
     sandboxBasePath: string;
     absoluteHomeAlias?: string;
-    absoluteTempAlias?: "tmp";
+    absoluteTempAlias?: "tmp" | "scratch";
     compareBasePath?: string;
   }): string => {
     const rel = this.toSandboxRelativePath(
@@ -1048,7 +1098,7 @@ export class SandboxedFilesystem {
         : `${absoluteHomeAlias}/${rel}`;
     }
     if (absoluteTempAlias) {
-      const prefix = "/tmp";
+      const prefix = absoluteTempAlias === "scratch" ? "/scratch" : "/tmp";
       if (rel === "" || rel === "/") {
         return prefix;
       }

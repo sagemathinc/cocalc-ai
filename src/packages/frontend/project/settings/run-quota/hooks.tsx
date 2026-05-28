@@ -39,9 +39,10 @@ import {
 export function useRunQuota(
   project_id: string,
   projectIsRunning: boolean | null,
+  { enabled = true }: { enabled?: boolean } = {},
 ): DisplayQuota {
   const [runQuota, setRunQuota] = useState<DisplayQuota>({});
-  const { runQuota: rq } = useProjectRunQuota(project_id);
+  const { runQuota: rq } = useProjectRunQuota(project_id, { enabled });
   // NOTE: even if project is NOT running, we do know the run quota
   // the problem is this information is not accurate, because only upon
   // startup the validity of a license is determined.

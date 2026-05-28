@@ -53,6 +53,7 @@ HOST_CRITICAL_OOM_SCORE_ADJ = -900
 DEFAULT_PROJECT_POOL_CGROUP = "/sys/fs/cgroup/cocalc-project-pool"
 DEFAULT_PROJECT_POOL_MEMORY_RESERVE_MB = 3072
 MIN_PROJECT_POOL_MEMORY_MB = 1024
+NVIDIA_CDI_PODMAN4_VERSION = "0.5.0"
 PROJECT_HOST_RUNTIME_SUBID_RANGES = (
     (231072, ROOTLESS_SUBID_ALIGNMENT),
     (327680, ROOTLESS_SUBID_MIN_TOTAL - ROOTLESS_SUBID_ALIGNMENT),
@@ -85,6 +86,70 @@ HOST_OWNED_DATA_FILES = (
 )
 HOST_OWNED_SQLITE_RE = re.compile(r"^(sqlite\.db|sync-fs\.sqlite)(?:-(?:wal|shm))?$")
 ENV_ASSIGNMENT_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+NVIDIA_CDI_NORMALIZER_SCRIPT = f"""#!/usr/bin/env python3
+import sys
+from pathlib import Path
+
+COMPAT_VERSION = "{NVIDIA_CDI_PODMAN4_VERSION}"
+CDI_PATHS = (Path("/etc/cdi/nvidia.yaml"), Path("/var/run/cdi/nvidia.yaml"))
+
+
+def strip_yaml_field(lines, field):
+    out = []
+    i = 0
+    needle = f"{{field}}:"
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        if stripped == needle:
+            indent = len(line) - len(line.lstrip(" "))
+            i += 1
+            while i < len(lines):
+                next_line = lines[i]
+                next_stripped = next_line.strip()
+                if not next_stripped:
+                    i += 1
+                    continue
+                next_indent = len(next_line) - len(next_line.lstrip(" "))
+                if next_indent > indent:
+                    i += 1
+                    continue
+                break
+            continue
+        out.append(line)
+        i += 1
+    return out
+
+
+def normalize(path):
+    if not path.exists():
+        return False
+    original = path.read_text(encoding="utf-8")
+    lines = original.splitlines(keepends=True)
+    lines = strip_yaml_field(lines, "additionalGids")
+    changed_version = False
+    for i, line in enumerate(lines):
+        if line.startswith("cdiVersion:"):
+            replacement = f"cdiVersion: {{COMPAT_VERSION}}\\n"
+            if line != replacement:
+                lines[i] = replacement
+                changed_version = True
+            break
+    updated = "".join(lines)
+    if updated == original and not changed_version:
+        return False
+    path.write_text(updated, encoding="utf-8")
+    path.chmod(0o644)
+    return True
+
+
+changed = False
+paths = [Path(arg) for arg in sys.argv[1:]] or list(CDI_PATHS)
+for path in paths:
+    changed = normalize(path) or changed
+raise SystemExit(0)
+"""
 
 
 @dataclass(frozen=True)
@@ -886,6 +951,23 @@ def run_best_effort(cfg: BootstrapConfig, args: list[str], desc: str) -> None:
         run_cmd(cfg, args, desc, check=False)
     except Exception as exc:
         log_line(cfg, f"bootstrap: {desc} failed (ignored): {exc}")
+
+
+def install_nvidia_cdi_normalizer() -> None:
+    path = Path("/usr/local/sbin/cocalc-nvidia-cdi-normalize")
+    path.write_text(NVIDIA_CDI_NORMALIZER_SCRIPT, encoding="utf-8")
+    os.chmod(path, 0o755)
+
+
+def normalize_nvidia_cdi_for_podman(cfg: BootstrapConfig) -> None:
+    # Ubuntu 24.04 currently ships Podman 4.9, which does not understand the
+    # NVIDIA Toolkit 1.19 default CDI 0.7 spec. Normalize to the older subset
+    # that Podman 4 accepts so rootless project containers can resolve GPUs.
+    run_best_effort(
+        cfg,
+        ["/usr/local/sbin/cocalc-nvidia-cdi-normalize"],
+        "normalize nvidia cdi for podman",
+    )
 
 
 def ensure_platform(cfg: BootstrapConfig) -> None:
@@ -4405,7 +4487,9 @@ def install_gpu_support(cfg: BootstrapConfig) -> None:
         timeout=180,
     )
     run_best_effort(cfg, ["ldconfig"], "ldconfig")
+    install_nvidia_cdi_normalizer()
     run_best_effort(cfg, ["nvidia-ctk", "cdi", "generate", "--output=/etc/cdi/nvidia.yaml"], "nvidia cdi generate")
+    normalize_nvidia_cdi_for_podman(cfg)
     run_best_effort(cfg, ["usermod", "-aG", "video,render", cfg.ssh_user], "usermod nvidia groups")
     helper = """#!/usr/bin/env bash
 set -euo pipefail
@@ -4416,11 +4500,13 @@ if [ ! -x /usr/bin/nvidia-ctk ]; then
   exit 0
 fi
 if [ -f /etc/cdi/nvidia.yaml ]; then
+  /usr/local/sbin/cocalc-nvidia-cdi-normalize || true
   exit 0
 fi
 ldconfig || true
 if command -v nvidia-smi >/dev/null 2>&1 || ldconfig -p 2>/dev/null | grep -q libnvidia-ml.so.1; then
   /usr/bin/nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml || exit 0
+  /usr/local/sbin/cocalc-nvidia-cdi-normalize || true
 fi
 exit 0
 """

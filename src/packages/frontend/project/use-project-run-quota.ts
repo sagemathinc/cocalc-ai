@@ -14,6 +14,10 @@ import {
   subscribeProjectFieldValue,
   useProjectField,
 } from "./use-project-field";
+import {
+  getProjectUserRole,
+  isCollaboratorProjectRole,
+} from "./realtime-access";
 
 const runQuotaFieldState =
   createProjectFieldState<ProjectRunQuota>("run_quota");
@@ -98,7 +102,20 @@ export function useProjectRunQuotaPrefetch(
   return version;
 }
 
-export function useProjectRunQuota(project_id: string) {
+export function useProjectRunQuota(
+  project_id: string,
+  { enabled = true }: { enabled?: boolean } = {},
+) {
+  const account_id = useTypedRedux("account", "account_id");
+  const is_admin = !!useTypedRedux("account", "is_admin");
+  const project_map = useTypedRedux("projects", "project_map");
+  const role = getProjectUserRole({
+    account_id,
+    project_id,
+    projectsStore: { getIn: (path) => project_map?.getIn(path) },
+  });
+  const collaboratorEnabled =
+    enabled && (is_admin || isCollaboratorProjectRole(role));
   const projectStatus = useTypedRedux({ project_id }, "status");
   const projectState = `${projectStatus?.get("state") ?? ""}`.trim();
   const {
@@ -110,14 +127,15 @@ export function useProjectRunQuota(project_id: string) {
     project_id,
     projectMapField: "run_quota",
     fetch: fetchProjectRunQuota,
+    enabled: collaboratorEnabled,
   });
 
   useEffect(() => {
-    if (!project_id) {
+    if (!collaboratorEnabled || !project_id) {
       return;
     }
     refresh();
-  }, [project_id, projectState, refresh]);
+  }, [collaboratorEnabled, project_id, projectState, refresh]);
 
   return {
     runQuota,

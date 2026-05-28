@@ -7,7 +7,10 @@ import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { publishLroSummary } from "@cocalc/server/lro/stream";
 import { updateLro } from "@cocalc/server/lro/lro-db";
-import { getProjectActiveOperation } from "@cocalc/server/projects/active-operation";
+import {
+  clearProjectActiveOperation,
+  getProjectActiveOperation,
+} from "@cocalc/server/projects/active-operation";
 
 const log = getLogger("server:projects:start-lro-cleanup");
 
@@ -120,6 +123,26 @@ export async function cancelStaleProjectStartLros({
     activeOp?.kind === "project-start" && activeOp.status === "running"
       ? `${activeOp.op_id ?? ""}`.trim()
       : "";
+  const activeLroOpIds = new Set(
+    rows.map((row) => `${row.op_id ?? ""}`.trim()).filter(Boolean),
+  );
+  const currentActiveStartOpId = activeLroOpIds.has(currentActiveOpId)
+    ? currentActiveOpId
+    : "";
+  if (currentActiveOpId && !currentActiveStartOpId) {
+    try {
+      await clearProjectActiveOperation({
+        project_id,
+        op_id: currentActiveOpId,
+      });
+    } catch (err) {
+      log.warn("unable to clear stale project-start active operation", {
+        project_id,
+        op_id: currentActiveOpId,
+        err: `${err}`,
+      });
+    }
+  }
 
   let projectState: string | undefined;
   let projectStateTimeMs: number | undefined;
@@ -150,15 +173,15 @@ export async function cancelStaleProjectStartLros({
     if (!opId || opId === targetOpId) {
       continue;
     }
-    if (currentActiveOpId) {
-      if (opId === currentActiveOpId) {
+    if (currentActiveStartOpId) {
+      if (opId === currentActiveStartOpId) {
         continue;
       }
       await cancelProjectStartLro({
         project_id,
         op_id: opId,
         error: row.error,
-        context: `superseded by active project start ${currentActiveOpId}`,
+        context: `superseded by active project start ${currentActiveStartOpId}`,
       });
       canceled += 1;
       continue;

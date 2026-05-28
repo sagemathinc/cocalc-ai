@@ -421,6 +421,7 @@ export async function open_file(
     actions.open_files?.set(displayPath, "fragmentId", opts.fragmentId ?? "");
     redux.getActions("page").save_session();
     if (opts.foreground) {
+      actions.set_current_path(path_split(displayPath).head);
       actions.foreground_project(opts.change_history);
       actions.set_active_tab(path_to_tab(displayPath), {
         change_history: opts.change_history,

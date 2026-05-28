@@ -24,6 +24,8 @@ describe("docs private state store", () => {
         entry_id: entry.id,
         slug: entry.slug,
         starred: true,
+        learned_at: 11,
+        learned_updated_at: 11,
         created_at: 10,
         updated_at: 12,
         revision: 2,
@@ -33,6 +35,8 @@ describe("docs private state store", () => {
       entry_id: entry.id,
       slug: entry.slug,
       starred: true,
+      learned_at: 11,
+      learned_updated_at: 11,
       revision: 2,
     });
 
@@ -125,6 +129,8 @@ describe("docs private state store", () => {
           slug: "old/slug",
           starred: false,
           starred_updated_at: 10,
+          learned_at: 5,
+          learned_updated_at: 5,
           last_viewed_at: 4,
           created_at: 1,
           updated_at: 10,
@@ -160,6 +166,8 @@ describe("docs private state store", () => {
             slug: "remote/slug",
             starred: true,
             starred_updated_at: 20,
+            learned_at: 25,
+            learned_updated_at: 26,
             last_viewed_at: 30,
             created_at: 1,
             updated_at: 20,
@@ -191,6 +199,8 @@ describe("docs private state store", () => {
     expect(pending[`page:${entry.id}`]).toMatchObject({
       slug: entry.slug,
       starred: true,
+      learned_at: 25,
+      learned_updated_at: 26,
       last_viewed_at: 30,
     });
     expect(pending[docsNoteKey(entry.id, "local-note")]).toBeUndefined();

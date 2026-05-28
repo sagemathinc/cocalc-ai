@@ -70,6 +70,8 @@ export function sanitizeDocsPageState(
   const createdAt = validTimestamp(raw.created_at, now);
   const updatedAt = validTimestamp(raw.updated_at, createdAt);
   const starredUpdatedAt = Number(raw.starred_updated_at);
+  const learnedAt = Number(raw.learned_at);
+  const learnedUpdatedAt = Number(raw.learned_updated_at);
   const lastViewedAt = Number(raw.last_viewed_at);
   const revision = Number(raw.revision);
   return {
@@ -80,6 +82,10 @@ export function sanitizeDocsPageState(
     starred: Boolean(raw.starred),
     starred_updated_at: Number.isFinite(starredUpdatedAt)
       ? starredUpdatedAt
+      : undefined,
+    learned_at: Number.isFinite(learnedAt) ? learnedAt : undefined,
+    learned_updated_at: Number.isFinite(learnedUpdatedAt)
+      ? learnedUpdatedAt
       : undefined,
     last_viewed_at: Number.isFinite(lastViewedAt) ? lastViewedAt : undefined,
     created_at: createdAt,
@@ -173,11 +179,17 @@ export function createDocsPageState({
   accountId: string;
   entry: Pick<DocsEntry, "id" | "slug">;
   page?: DocsPageStateV1;
-  patch?: Partial<Pick<DocsPageStateV1, "starred" | "last_viewed_at">>;
+  patch?: Partial<Pick<DocsPageStateV1, "starred" | "last_viewed_at">> & {
+    learned_at?: number | null;
+  };
 }): DocsPageStateV1 {
   const now = Date.now();
   const starredChanged =
     patch?.starred != null && Boolean(patch.starred) !== Boolean(page?.starred);
+  const learnedPatched = patch != null && "learned_at" in patch;
+  const learnedAt = learnedPatched
+    ? (patch.learned_at ?? undefined)
+    : page?.learned_at;
   return {
     version: 1,
     account_id: accountId,
@@ -188,6 +200,8 @@ export function createDocsPageState({
       ? now
       : (page?.starred_updated_at ??
         (patch?.starred != null ? now : undefined)),
+    learned_at: learnedAt,
+    learned_updated_at: learnedPatched ? now : page?.learned_updated_at,
     last_viewed_at: patch?.last_viewed_at ?? page?.last_viewed_at,
     created_at: page?.created_at ?? now,
     updated_at: now,
@@ -309,6 +323,13 @@ export function mergeDocsPrivateStateImport({
     const importedStarredWins =
       (page.starred_updated_at ?? page.updated_at ?? 0) >
       (existingPage?.starred_updated_at ?? existingPage?.updated_at ?? 0);
+    const importedLearnedWins =
+      (page.learned_updated_at ?? page.updated_at ?? 0) >
+      (existingPage?.learned_updated_at ?? existingPage?.updated_at ?? 0);
+    const learnedUpdatedAt = Math.max(
+      page.learned_updated_at ?? 0,
+      existingPage?.learned_updated_at ?? 0,
+    );
     const next: DocsPageStateV1 = {
       version: 1,
       account_id: accountId,
@@ -325,6 +346,10 @@ export function mergeDocsPrivateStateImport({
         page.last_viewed_at ?? 0,
         existingPage?.last_viewed_at ?? 0,
       ),
+      learned_at: importedLearnedWins
+        ? page.learned_at
+        : existingPage?.learned_at,
+      learned_updated_at: learnedUpdatedAt > 0 ? learnedUpdatedAt : undefined,
       created_at: Math.min(
         page.created_at,
         existingPage?.created_at ?? page.created_at,
@@ -336,6 +361,8 @@ export function mergeDocsPrivateStateImport({
       existingPage != null &&
       existingPage.starred === next.starred &&
       existingPage.starred_updated_at === next.starred_updated_at &&
+      existingPage.learned_at === next.learned_at &&
+      existingPage.learned_updated_at === next.learned_updated_at &&
       existingPage.last_viewed_at === next.last_viewed_at &&
       existingPage.slug === next.slug
     ) {

@@ -72,18 +72,18 @@ type ProjectIdentity = {
 type ProjectFilesystem = {
   getListing: (path: string) => Promise<any>;
   readFile: (path: string, encoding?: string) => Promise<any>;
-  writeFile: (path: string, data: Buffer) => Promise<void>;
-  rm: (
+  writeFile?: (path: string, data: Buffer) => Promise<void>;
+  rm?: (
     path: string,
     options: { recursive?: boolean; force?: boolean; sudo?: boolean },
   ) => Promise<void>;
-  mkdir: (path: string, options?: { recursive?: boolean }) => Promise<void>;
-  ripgrep: (
+  mkdir?: (path: string, options?: { recursive?: boolean }) => Promise<void>;
+  ripgrep?: (
     path: string,
     pattern: string,
     options: { options?: string[]; timeout: number; maxSize: number },
   ) => Promise<any>;
-  fd: (
+  fd?: (
     path: string,
     options: {
       pattern?: string;
@@ -99,7 +99,11 @@ export type ProjectFileOpsDeps<Ctx> = {
     ctx: Ctx,
     projectIdentifier?: string,
     cwd?: string,
-  ) => Promise<{ project: ProjectIdentity; fs: ProjectFilesystem }>;
+  ) => Promise<{
+    project: ProjectIdentity;
+    fs: ProjectFilesystem;
+    readOnly?: boolean;
+  }>;
   resolveProjectFromArgOrContext: (
     ctx: Ctx,
     projectIdentifier?: string,
@@ -132,6 +136,35 @@ function joinProjectPath(...parts: string[]): string {
 
 function assertProjectCheck(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
+}
+
+function assertWritableProjectFilesystem(readOnly: boolean | undefined): void {
+  if (readOnly) {
+    throw new Error(
+      "viewer project access is read-only; this command requires collaborator access",
+    );
+  }
+}
+
+function assertSearchableProjectFilesystem(
+  readOnly: boolean | undefined,
+): void {
+  if (readOnly) {
+    throw new Error(
+      "viewer project access is read-only; search commands are not available for viewers yet",
+    );
+  }
+}
+
+function requireProjectFilesystemMethod<K extends keyof ProjectFilesystem>(
+  fs: ProjectFilesystem,
+  method: K,
+): NonNullable<ProjectFilesystem[K]> {
+  const fn = fs[method];
+  if (typeof fn !== "function") {
+    throw new Error(`project filesystem does not support ${String(method)}`);
+  }
+  return fn as NonNullable<ProjectFilesystem[K]>;
 }
 
 export function parsePositiveInteger(
@@ -229,15 +262,18 @@ export function createProjectFileOps<Ctx>(deps: ProjectFileOpsDeps<Ctx>) {
     parents: boolean;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const { project, fs } = await resolveProjectFilesystem(
+    const { project, fs, readOnly } = await resolveProjectFilesystem(
       ctx,
       projectIdentifier,
       cwd,
     );
+    assertWritableProjectFilesystem(readOnly);
     if (parents) {
-      await fs.mkdir(dirname(dest), { recursive: true });
+      await requireProjectFilesystemMethod(fs, "mkdir")(dirname(dest), {
+        recursive: true,
+      });
     }
-    await fs.writeFile(dest, data);
+    await requireProjectFilesystemMethod(fs, "writeFile")(dest, data);
     return {
       project_id: project.project_id,
       dest,
@@ -290,12 +326,13 @@ export function createProjectFileOps<Ctx>(deps: ProjectFileOpsDeps<Ctx>) {
     sudo?: boolean;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const { project, fs } = await resolveProjectFilesystem(
+    const { project, fs, readOnly } = await resolveProjectFilesystem(
       ctx,
       projectIdentifier,
       cwd,
     );
-    await fs.rm(path, {
+    assertWritableProjectFilesystem(readOnly);
+    await requireProjectFilesystemMethod(fs, "rm")(path, {
       recursive,
       force,
       sudo,
@@ -323,12 +360,15 @@ export function createProjectFileOps<Ctx>(deps: ProjectFileOpsDeps<Ctx>) {
     parents: boolean;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const { project, fs } = await resolveProjectFilesystem(
+    const { project, fs, readOnly } = await resolveProjectFilesystem(
       ctx,
       projectIdentifier,
       cwd,
     );
-    await fs.mkdir(path, { recursive: parents });
+    assertWritableProjectFilesystem(readOnly);
+    await requireProjectFilesystemMethod(fs, "mkdir")(path, {
+      recursive: parents,
+    });
     return {
       project_id: project.project_id,
       path,
@@ -356,16 +396,21 @@ export function createProjectFileOps<Ctx>(deps: ProjectFileOpsDeps<Ctx>) {
     options?: string[];
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const { project, fs } = await resolveProjectFilesystem(
+    const { project, fs, readOnly } = await resolveProjectFilesystem(
       ctx,
       projectIdentifier,
       cwd,
     );
-    const result = await fs.ripgrep(path?.trim() || ".", pattern, {
-      options,
-      timeout: timeoutMs,
-      maxSize: maxBytes,
-    });
+    assertSearchableProjectFilesystem(readOnly);
+    const result = await requireProjectFilesystemMethod(fs, "ripgrep")(
+      path?.trim() || ".",
+      pattern,
+      {
+        options,
+        timeout: timeoutMs,
+        maxSize: maxBytes,
+      },
+    );
     const stdout = asUtf8((result as any)?.stdout);
     const stderr = asUtf8((result as any)?.stderr);
     const exit_code = normalizeProcessExitCode(
@@ -403,17 +448,21 @@ export function createProjectFileOps<Ctx>(deps: ProjectFileOpsDeps<Ctx>) {
     options?: string[];
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const { project, fs } = await resolveProjectFilesystem(
+    const { project, fs, readOnly } = await resolveProjectFilesystem(
       ctx,
       projectIdentifier,
       cwd,
     );
-    const result = await fs.fd(path?.trim() || ".", {
-      pattern: pattern?.trim() || undefined,
-      options,
-      timeout: timeoutMs,
-      maxSize: maxBytes,
-    });
+    assertSearchableProjectFilesystem(readOnly);
+    const result = await requireProjectFilesystemMethod(fs, "fd")(
+      path?.trim() || ".",
+      {
+        pattern: pattern?.trim() || undefined,
+        options,
+        timeout: timeoutMs,
+        maxSize: maxBytes,
+      },
+    );
     const stdout = asUtf8((result as any)?.stdout);
     const stderr = asUtf8((result as any)?.stderr);
     const exit_code = normalizeProcessExitCode(

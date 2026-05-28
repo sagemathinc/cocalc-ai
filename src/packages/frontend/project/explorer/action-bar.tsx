@@ -312,15 +312,23 @@ function ActionBarEnabled({
   }
 
   function render_currently_selected(): React.JSX.Element | undefined {
+    const refreshButton = hasPendingUpdate ? (
+      <RefreshButton onClick={onRefreshListing} />
+    ) : null;
     if (listing.length === 0) {
-      return;
+      return readOnly && refreshButton ? (
+        <div style={ROW_INFO_STYLE}>
+          <FormattedMessage
+            id="project.explorer.action-bar.read_only.empty"
+            defaultMessage="Read-only listing."
+          />{" "}
+          {refreshButton}
+        </div>
+      ) : undefined;
     }
     const checked = checked_files.size;
     const total = listing.length;
     const style = ROW_INFO_STYLE;
-    const refreshButton = hasPendingUpdate ? (
-      <RefreshButton onClick={onRefreshListing} />
-    ) : null;
     const autoUpdateButton =
       autoUpdateListing && onToggleAutoUpdate != null ? (
         <AutoUpdateButton

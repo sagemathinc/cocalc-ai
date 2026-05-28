@@ -98,7 +98,9 @@ import { ensure_project_running } from "@cocalc/frontend/project/project-start-w
 import { AvailableFeatures } from "@cocalc/frontend/project_configuration";
 import { type SyncOpts, type PatchId } from "@cocalc/sync";
 import { SyncDB } from "@cocalc/sync/editor/db";
+import { from_str as syncdbFromString } from "@cocalc/sync/editor/db/doc";
 import { getSyncDocDescriptor } from "@cocalc/sync/editor/doctypes";
+import { from_str as immerdbFromString } from "@cocalc/sync/editor/immer-db/doc";
 import { apply_patch, make_patch } from "@cocalc/util/patch";
 import type { SyncString } from "@cocalc/sync/editor/string/sync";
 import { once } from "@cocalc/util/async-utils";
@@ -150,7 +152,7 @@ import {
   syncstring,
   syncstring2,
 } from "../generic/client";
-import { FakeSyncstring } from "../generic/syncstring-fake";
+import { FakeSyncdb, FakeSyncstring } from "../generic/syncstring-fake";
 import { MergeCoordinator } from "../code-editor/sync";
 import { SyncAdapter } from "../code-editor/sync-adapter";
 import "../generic/codemirror-plugins";
@@ -542,16 +544,14 @@ export class BaseEditorActions<
   }
 
   private initReadOnlyPreview(): void {
-    if (this.doctype !== "syncstring") {
+    const syncdoc = this.createReadOnlyPreviewSyncdoc();
+    if (syncdoc == null) {
       this.topError(
-        `Read-only preview is only supported for syncstring documents, not doctype '${this.doctype}'.`,
+        `Read-only preview is not supported for doctype '${this.doctype}'.`,
       );
       return;
     }
-    this._syncstring = new FakeSyncstring({
-      readOnly: true,
-      autoReady: false,
-    }) as unknown as SyncString;
+    this._syncstring = syncdoc as unknown as SyncString;
 
     restart_open_timer(this.project_id, this.path, {
       source: "read_only_preview",
@@ -587,10 +587,12 @@ export class BaseEditorActions<
         this._syncstring.from_str(value);
         this._syncstring_init = true;
         this._syncstring_metadata();
-        this._init_settings();
-        this._init_syncstring_value();
-        this.afterSyncReady();
-        this._syncstring.emit("change");
+        if (this.doctype === "syncstring") {
+          this._init_settings();
+          this._init_syncstring_value();
+          this.afterSyncReady();
+          this._syncstring.emit("change");
+        }
         (this._syncstring as any).setReady?.();
         this.setState({
           is_loaded: true,
@@ -615,6 +617,34 @@ export class BaseEditorActions<
         this.topError(`Unable to load read-only preview: ${err}`);
       }
     })();
+  }
+
+  private createReadOnlyPreviewSyncdoc(): unknown | undefined {
+    if (this.doctype === "syncstring") {
+      return new FakeSyncstring({
+        readOnly: true,
+        autoReady: false,
+      });
+    }
+    if (this.primary_keys == null || this.primary_keys.length <= 0) {
+      return;
+    }
+    if (this.doctype === "syncdb") {
+      return new FakeSyncdb({
+        readOnly: true,
+        opts: this.syncDocOptions as Record<string, unknown>,
+        fromString: (value) =>
+          syncdbFromString(value, this.primary_keys, this.string_cols),
+      });
+    }
+    if (this.doctype === "immer") {
+      return new FakeSyncdb({
+        readOnly: true,
+        opts: this.syncDocOptions as Record<string, unknown>,
+        fromString: (value) =>
+          immerdbFromString(value, this.primary_keys, this.string_cols),
+      });
+    }
   }
 
   // Init setting of value whenever syncstring changes --

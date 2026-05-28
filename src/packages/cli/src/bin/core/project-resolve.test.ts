@@ -141,6 +141,44 @@ test("queryProjects prefers account_project_index rows when enabled", async () =
   ]);
 });
 
+test("queryProjects preserves projected user summaries for viewer role detection", async () => {
+  process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS = "prefer";
+  const rows = await queryProjects({
+    ctx: createContext((table) => {
+      if (table === "account_project_index") {
+        return [
+          {
+            account_id: ACCOUNT_ID,
+            project_id: "12121212-1212-4212-8212-121212121212",
+            title: "Viewer Project",
+            host_id: "34343434-3434-4434-8434-343434343434",
+            users_summary: {
+              [ACCOUNT_ID]: { group: "viewer" },
+            },
+            is_hidden: false,
+          },
+        ];
+      }
+      return [];
+    }),
+    limit: 10,
+  });
+
+  assert.deepEqual(rows, [
+    {
+      project_id: "12121212-1212-4212-8212-121212121212",
+      title: "Viewer Project",
+      host_id: "34343434-3434-4434-8434-343434343434",
+      state: null,
+      last_edited: null,
+      deleted: false,
+      users_summary: {
+        [ACCOUNT_ID]: { group: "viewer" },
+      },
+    },
+  ]);
+});
+
 test("queryProjects filters hidden account_project_index rows", async () => {
   process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS = "prefer";
   const rows = await queryProjects({

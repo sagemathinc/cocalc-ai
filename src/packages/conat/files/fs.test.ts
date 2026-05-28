@@ -146,6 +146,42 @@ describe("filesystem explicit routing", () => {
     server.close();
   });
 
+  it("exposes getListing on read-only filesystem service", async () => {
+    const { fsReadOnlyServer } = await import("./fs");
+    const getListing = jest.fn(async () => ({
+      files: { "a.txt": { type: "f", size: 1, mtime: 1 } },
+    }));
+    let handlers: any;
+    const close = jest.fn();
+    const client = {
+      service: jest.fn(async (_subject, svc) => {
+        handlers = svc;
+        return { close };
+      }),
+    } as any;
+
+    const server = await fsReadOnlyServer({
+      service: "fs-viewer-test",
+      client,
+      fs: jest.fn(async () => ({ getListing }) as any),
+    });
+
+    await expect(
+      handlers.getListing.call(
+        {
+          subject:
+            "fs-viewer-test.project-00000000-0000-4000-8000-000000000000.account-11111111-1111-4111-8111-111111111111",
+        },
+        "/home/user",
+      ),
+    ).resolves.toMatchObject({
+      files: { "a.txt": { type: "f" } },
+    });
+    expect(getListing).toHaveBeenCalledWith("/home/user");
+
+    server.close();
+  });
+
   it("reuses an existing watch server when the subject is already registered", async () => {
     const { fsClient } = await import("./fs");
     const { EventEmitter } = await import("events");

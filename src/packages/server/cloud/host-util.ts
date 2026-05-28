@@ -78,6 +78,14 @@ const parseVersionParts = (value?: string | null): number[] | undefined => {
   return nums.length ? nums : undefined;
 };
 
+const parseNebiusCudaVersion = (
+  family?: string | null,
+): number[] | undefined => {
+  if (!family) return undefined;
+  const match = family.match(/cuda(\d+(?:\.\d+)*)/i);
+  return parseVersionParts(match?.[1]);
+};
+
 const compareVersionParts = (a?: number[], b?: number[]): number => {
   if (!a && !b) return 0;
   if (!a) return -1;
@@ -235,6 +243,13 @@ const pickNebiusImageFamily = (
     const ubuntuA = parseUbuntuVersion(a.family) ?? 0;
     const ubuntuB = parseUbuntuVersion(b.family) ?? 0;
     if (ubuntuA !== ubuntuB) return ubuntuB - ubuntuA;
+    if (wantsGpu) {
+      const cudaCmp = compareVersionParts(
+        parseNebiusCudaVersion(a.family),
+        parseNebiusCudaVersion(b.family),
+      );
+      if (cudaCmp !== 0) return cudaCmp < 0 ? 1 : -1;
+    }
     const versionCmp = compareVersionParts(
       parseVersionParts(a.version),
       parseVersionParts(b.version),

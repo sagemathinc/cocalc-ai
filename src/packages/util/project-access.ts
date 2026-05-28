@@ -262,3 +262,72 @@ export function viewerReadPolicyAllowsPath({
   }
   return included;
 }
+
+function firstGlobIndex(path: string): number {
+  const indexes = ["*", "?", "["]
+    .map((char) => path.indexOf(char))
+    .filter((index) => index >= 0);
+  return indexes.length ? Math.min(...indexes) : -1;
+}
+
+function viewerIncludeRuleMayMatchDescendant({
+  rulePath,
+  path,
+}: {
+  rulePath: string;
+  path: string;
+}): boolean {
+  const normalizedRulePath = normalizeProjectViewerPolicyPath(rulePath);
+  if (normalizedRulePath == null) {
+    return false;
+  }
+  if (normalizedRulePath === "") {
+    return true;
+  }
+  if (path === "") {
+    return true;
+  }
+  if (
+    normalizedRulePath === path ||
+    normalizedRulePath.startsWith(`${path}/`)
+  ) {
+    return true;
+  }
+  const globIndex = firstGlobIndex(normalizedRulePath);
+  if (globIndex < 0) {
+    return false;
+  }
+  const literalPrefix = normalizedRulePath.slice(0, globIndex);
+  const slash = literalPrefix.lastIndexOf("/");
+  const literalBase = slash >= 0 ? literalPrefix.slice(0, slash) : "";
+  return literalBase === path || literalBase.startsWith(`${path}/`);
+}
+
+export function viewerReadPolicyMayAllowDescendant({
+  policy,
+  path,
+}: {
+  policy?: ProjectViewerReadPolicy | null;
+  path: string;
+}): boolean {
+  const normalizedPath = normalizeProjectViewerPolicyPath(path);
+  if (normalizedPath == null || !Array.isArray(policy?.rules)) {
+    return false;
+  }
+  for (const rule of policy.rules) {
+    if (rule?.action !== "exclude") {
+      continue;
+    }
+    if (viewerReadRuleMatches({ rulePath: rule.path, path: normalizedPath })) {
+      return false;
+    }
+  }
+  return policy.rules.some(
+    (rule) =>
+      rule?.action === "include" &&
+      viewerIncludeRuleMayMatchDescendant({
+        rulePath: rule.path,
+        path: normalizedPath,
+      }),
+  );
+}

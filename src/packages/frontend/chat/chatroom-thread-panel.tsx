@@ -289,6 +289,7 @@ interface ChatRoomThreadPanelProps {
     cwdOverride?: string;
     commitHash: string;
   }) => void;
+  readOnly?: boolean;
 }
 
 export function ChatRoomThreadPanel({
@@ -328,6 +329,7 @@ export function ChatRoomThreadPanel({
   sidebarHidden = false,
   onToggleSidebar,
   onOpenGitBrowser,
+  readOnly = false,
 }: ChatRoomThreadPanelProps) {
   const defaultSessionMode = getDefaultCodexSessionMode();
   const accountOtherSettings = useTypedRedux("account", "other_settings");
@@ -1419,6 +1421,7 @@ export function ChatRoomThreadPanel({
   }
 
   const shouldShowCodexConfig = Boolean(
+    !readOnly &&
     selectedThreadId &&
     (selectedThreadMeta?.agent_kind === "acp" ||
       selectedThreadMeta?.acp_config != null ||
@@ -1503,7 +1506,8 @@ export function ChatRoomThreadPanel({
           </Space>
         </div>
       )}
-      {selectedRunningCodexMessage != null &&
+      {!readOnly &&
+      selectedRunningCodexMessage != null &&
       selectedRunningCodexDate != null ? (
         <div
           style={{
@@ -2280,12 +2284,13 @@ export function ChatRoomThreadPanel({
           activityJumpToken={activityJumpToken}
           notifyOnTurnFinish={notifyOnTurnFinish}
           onNotifyOnTurnFinishChange={onNotifyOnTurnFinishChange}
-          onOpenGitBrowser={onOpenGitBrowser}
+          onOpenGitBrowser={readOnly ? undefined : onOpenGitBrowser}
           suppressInlineCodexStatusDate={
             selectedRunningCodexDate != null
               ? `${selectedRunningCodexDate}`
               : undefined
           }
+          readOnly={readOnly}
         />
       </div>
     </div>

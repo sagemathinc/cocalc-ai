@@ -913,7 +913,13 @@ export class NebiusProvider implements CloudProvider {
       );
       const op = await client.instances.update(
         UpdateInstanceRequest.create({
-          metadata: ResourceMetadata.create({ id: runtime.instance_id }),
+          metadata: ResourceMetadata.create({
+            id: runtime.instance_id,
+            name:
+              instance.metadata?.name ??
+              (runtime.metadata as any)?.instance_name ??
+              spec.name,
+          }),
           spec: InstanceSpec.create({
             ...(instance.spec ?? {}),
             secondaryDisks,

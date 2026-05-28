@@ -356,6 +356,13 @@ export function getProject(project_id: string): ProjectRow | undefined {
     "SELECT project_id, title, state, state_reported, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, project_bundle_version, tools_version, secret_token, authorized_keys, run_quota, secret_names FROM projects WHERE project_id=?",
   );
   const row = stmt.get(project_id) as any;
+  if (!row) {
+    return undefined;
+  }
+  const mirror = getRow("projects", JSON.stringify({ project_id })) as any;
+  if (mirror?.users != null) {
+    row.users = mirror.users;
+  }
   if (row?.run_quota) {
     row.run_quota = parseRunQuota(row.run_quota);
   }

@@ -671,6 +671,7 @@ export default function DiskUsage({
     visible,
     live,
     retained,
+    sharedScratch,
     collectedAt,
     loading,
     error,
@@ -746,7 +747,12 @@ export default function DiskUsage({
       ? 0
       : Math.round((100 * quota.used) / quota.size);
   const quotaStatus = percent > 80 ? "exception" : undefined;
-  const hasSummaryData = quota != null || live != null || retained != null;
+  const scratchPercent =
+    sharedScratch == null || sharedScratch.size <= 0
+      ? 0
+      : Math.round((100 * sharedScratch.used) / sharedScratch.size);
+  const hasSummaryData =
+    quota != null || live != null || retained != null || sharedScratch != null;
   const visibleTotal = Math.max(
     visible.reduce((sum, bucket) => sum + bucket.summaryBytes, 0),
     1,
@@ -1019,7 +1025,7 @@ export default function DiskUsage({
               <Text type="secondary">Refreshing…</Text>
             ) : null}
           </Space>
-          {(live != null || retained != null) && (
+          {(live != null || retained != null || sharedScratch != null) && (
             <div
               style={{
                 color: COLORS.GRAY_D,
@@ -1038,6 +1044,9 @@ export default function DiskUsage({
                   : undefined,
                 retained != null
                   ? `Retained ${human_readable_size(retained.bytes)}`
+                  : undefined,
+                sharedScratch != null
+                  ? `/scratch ${human_readable_size(sharedScratch.used)} / ${human_readable_size(sharedScratch.size)}`
                   : undefined,
               ]
                 .filter(Boolean)
@@ -1070,6 +1079,12 @@ export default function DiskUsage({
           ) : null}
           {retained != null ? (
             <Tag>Retained {human_readable_size(retained.bytes)}</Tag>
+          ) : null}
+          {sharedScratch != null ? (
+            <Tag>
+              /scratch {human_readable_size(sharedScratch.used)} /{" "}
+              {human_readable_size(sharedScratch.size)}
+            </Tag>
           ) : null}
           {loading && hasSummaryData ? (
             <Text type="secondary">Refreshing…</Text>
@@ -1386,6 +1401,67 @@ export default function DiskUsage({
                       ) : null}
                     </div>
                   )}
+                </>
+              )}
+              {sharedScratch != null && (
+                <>
+                  <hr />
+                  <div style={{ marginBottom: "10px" }}>
+                    <b>Host shared scratch (/scratch)</b>
+                  </div>
+                  <div style={{ marginBottom: "10px", color: COLORS.GRAY_D }}>
+                    <div
+                      style={{
+                        alignItems: "center",
+                        display: "flex",
+                        gap: "10px",
+                        marginBottom: "8px",
+                      }}
+                    >
+                      <Progress
+                        style={{ flex: 1, marginBottom: 0 }}
+                        percent={scratchPercent}
+                        showInfo={false}
+                      />
+                      <div style={{ minWidth: "180px", textAlign: "right" }}>
+                        {human_readable_size(sharedScratch.used)} /{" "}
+                        {human_readable_size(sharedScratch.size)}
+                      </div>
+                    </div>
+                    <div style={{ color: COLORS.GRAY_M, marginTop: "6px" }}>
+                      <code>/scratch</code> is big, fast host-local working
+                      storage. It is shared by all projects on this project
+                      host, outside this project&apos;s storage quota, and not
+                      backed up by CoCalc.
+                    </div>
+                    <Alert
+                      showIcon
+                      style={{ marginTop: "10px" }}
+                      type="info"
+                      title="Shared workspace"
+                      description="Other projects on this host can read, write, and delete files in /scratch. Keep durable project files in Home, and use /scratch for large datasets, caches, and temporary training outputs."
+                    />
+                    <Button
+                      onClick={() => handleBrowsePath("/scratch")}
+                      size="small"
+                      style={{ marginTop: "10px" }}
+                    >
+                      Browse /scratch
+                    </Button>
+                    {sharedScratch.warning ? (
+                      <Alert
+                        showIcon
+                        style={{ marginTop: "10px" }}
+                        type="warning"
+                        title="Scratch usage warning"
+                        description={sharedScratch.warning}
+                      />
+                    ) : null}
+                    <div style={{ color: COLORS.GRAY_M, marginTop: "8px" }}>
+                      Available to unprivileged processes:{" "}
+                      {human_readable_size(sharedScratch.available)}.
+                    </div>
+                  </div>
                 </>
               )}
               {percent >= 100 && (

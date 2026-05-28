@@ -117,9 +117,13 @@ class ProjectPresenceChannel extends EventEmitter {
     if (lite) {
       return;
     }
-    void this.connect().then(() => {
-      this.sub?.set(message);
-    });
+    void this.connect()
+      .then(() => {
+        this.sub?.set(message);
+      })
+      .catch((err) => {
+        console.warn("WARNING: document presence publish error -- ", err);
+      });
   }
 
   getUsers(opts: { path?: string; max_age_s?: number }): PresenceUsers {

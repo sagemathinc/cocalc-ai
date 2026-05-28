@@ -12,6 +12,7 @@ import type {
   ProjectStorageOverviewRefresh,
   ProjectStorageQuotaSummary,
   ProjectStorageRetainedSummary,
+  ProjectStorageSharedScratchSummary,
   ProjectStorageVisibleSummary,
 } from "@cocalc/conat/project/storage-info";
 
@@ -24,6 +25,8 @@ export type StorageVisibleSummary = ProjectStorageVisibleSummary;
 export type StorageLiveSummary = ProjectStorageLiveSummary;
 
 export type StorageRetainedSummary = ProjectStorageRetainedSummary;
+
+export type StorageSharedScratchSummary = ProjectStorageSharedScratchSummary;
 
 export type StorageRefreshSummary = ProjectStorageOverviewRefresh;
 
@@ -44,6 +47,10 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
   const [retained, setRetained] = useState<StorageRetainedSummary | null>(
     () => cachedOverview?.retained ?? null,
   );
+  const [sharedScratch, setSharedScratch] =
+    useState<StorageSharedScratchSummary | null>(
+      () => cachedOverview?.shared_scratch ?? null,
+    );
   const [error, setError] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [quotas, setQuotas] = useState<StorageQuotaSummary[]>(
@@ -63,6 +70,7 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
     setVisible(overview.visible);
     setLive(overview.live);
     setRetained(overview.retained);
+    setSharedScratch(overview.shared_scratch ?? null);
     setQuotas(overview.quotas);
     setCollectedAt(overview.collected_at);
     setRefreshSummary(overview.refresh);
@@ -76,6 +84,7 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
         setVisible(cachedOverview?.visible ?? []);
         setLive(cachedOverview?.live ?? null);
         setRetained(cachedOverview?.retained ?? null);
+        setSharedScratch(cachedOverview?.shared_scratch ?? null);
         setQuotas(cachedOverview?.quotas ?? []);
         setCollectedAt(cachedOverview?.collected_at);
         setRefreshSummary(cachedOverview?.refresh);
@@ -108,6 +117,7 @@ export default function useDiskUsage({ project_id }: { project_id: string }) {
     visible,
     live,
     retained,
+    sharedScratch,
     collectedAt,
     refreshSummary,
     loading,

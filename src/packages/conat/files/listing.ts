@@ -88,11 +88,12 @@ export class Listing extends EventEmitter {
     this.files = files;
     this.truncated = truncated;
     this.emit("ready");
+    if (typeof fs.watch !== "function") {
+      return;
+    }
     // closeOnUnlink is critical so that btrfs snapshots don't get locked when
     // we try to delete them.
-    void this.attachWatch(
-      fs.watch(path, { closeOnUnlink: true, stats: true }),
-    );
+    void this.attachWatch(fs.watch(path, { closeOnUnlink: true, stats: true }));
   };
 
   private attachWatch = async (watchPromise: Promise<any>) => {

@@ -1,8 +1,10 @@
 import type { ProjectStorageHistoryPoint } from "@cocalc/conat/project/storage-info";
 
 const fileServerClientMock = jest.fn();
+const getSharedScratchMountpointMock = jest.fn();
 const fsClientMock = jest.fn();
 const dstreamMock = jest.fn();
+const statfsMock = jest.fn();
 
 jest.mock("@cocalc/backend/logger", () => {
   const factory = () => ({
@@ -20,7 +22,17 @@ jest.mock("@cocalc/backend/logger", () => {
 
 jest.mock("./file-server", () => ({
   fileServerClient: (...args: any[]) => fileServerClientMock(...args),
+  getSharedScratchMountpoint: (...args: any[]) =>
+    getSharedScratchMountpointMock(...args),
 }));
+
+jest.mock("node:fs/promises", () => {
+  const actual = jest.requireActual("node:fs/promises");
+  return {
+    ...actual,
+    statfs: (...args: any[]) => statfsMock(...args),
+  };
+});
 
 jest.mock("@cocalc/conat/files/fs", () => ({
   fsSubject: ({ project_id }: { project_id: string }) =>
@@ -50,6 +62,7 @@ describe("project storage info service", () => {
   beforeEach(() => {
     jest.resetModules();
     jest.clearAllMocks();
+    getSharedScratchMountpointMock.mockReturnValue(undefined);
   });
 
   it("builds overview data and records a local history sample", async () => {
@@ -96,6 +109,59 @@ describe("project storage info service", () => {
     expect(duMock).toHaveBeenCalledWith("/root", {
       options: ["-B", "1", "-x", "-d", "1"],
       timeout: 10_000,
+    });
+  });
+
+  it("includes host-level shared scratch capacity when mounted", async () => {
+    const stream = makeStream();
+    const duMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: Buffer.from("120 /root/cache\n120 /root\n"),
+        stderr: Buffer.alloc(0),
+        code: 0,
+      })
+      .mockRejectedValueOnce(new Error("not found"));
+    dstreamMock.mockResolvedValue(stream);
+    fileServerClientMock.mockReturnValue({
+      getQuota: jest.fn(async () => ({
+        used: 50,
+        size: 100,
+        qgroupid: "0/2",
+        scope: "subvolume",
+      })),
+    });
+    fsClientMock.mockReturnValue({
+      du: duMock,
+    });
+    getSharedScratchMountpointMock.mockReturnValue("/mnt/cocalc-scratch");
+    statfsMock.mockResolvedValue({
+      blocks: 100,
+      bsize: 10,
+      bfree: 30,
+      bavail: 20,
+    });
+
+    const { handleProjectStorageOverviewRequest } =
+      await import("./storage-info-service");
+    const overview = await handleProjectStorageOverviewRequest.call(
+      {
+        subject: "project.11111111-1111-4111-8111-111111111111.storage-info.-",
+      },
+      { home: "/root" },
+      {} as any,
+    );
+
+    expect(statfsMock).toHaveBeenCalledWith("/mnt/cocalc-scratch");
+    expect(overview.shared_scratch).toEqual({
+      key: "shared_scratch",
+      label: "Host shared scratch",
+      path: "/scratch",
+      used: 700,
+      size: 1000,
+      free: 300,
+      available: 200,
+      collected_at: expect.any(String),
     });
   });
 

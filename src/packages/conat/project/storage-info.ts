@@ -47,12 +47,25 @@ export interface ProjectStorageRetainedSummary {
   detail?: string;
 }
 
+export interface ProjectStorageSharedScratchSummary {
+  key: "shared_scratch";
+  label: string;
+  path: "/scratch";
+  used: number;
+  size: number;
+  free: number;
+  available: number;
+  collected_at: string;
+  warning?: string;
+}
+
 export interface ProjectStorageOverview {
   collected_at: string;
   refresh?: ProjectStorageOverviewRefresh;
   quotas: ProjectStorageQuotaSummary[];
   live: ProjectStorageLiveSummary;
   retained: ProjectStorageRetainedSummary;
+  shared_scratch?: ProjectStorageSharedScratchSummary;
   visible: ProjectStorageVisibleSummary[];
 }
 
