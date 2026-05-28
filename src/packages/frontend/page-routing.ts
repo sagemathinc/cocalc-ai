@@ -45,7 +45,7 @@ export type ParsedPageTarget =
       page: "notifications";
       tab?: "mentions";
     }
-  | { page: "docs"; slug?: string }
+  | { page: "docs"; print?: boolean; slug?: string }
   | { page: "file-use" }
   | { page: "admin"; route: AdminRoute }
   | { page: "hosts" }
@@ -94,6 +94,12 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
     case "notifications":
       return { page: "notifications" };
     case "app-docs":
+      if (segments[1] === "print") {
+        return {
+          page: "docs",
+          print: true,
+        };
+      }
       return {
         page: "docs",
         slug: segments.slice(1).filter(Boolean).join("/") || undefined,
@@ -158,6 +164,9 @@ export function getPageTargetPath(parsed: ParsedPageTarget): string {
     case "notifications":
       return "notifications";
     case "docs":
+      if (parsed.print) {
+        return "app-docs/print";
+      }
       return parsed.slug ? `app-docs/${parsed.slug}` : "app-docs";
     case "file-use":
       return "file-use";

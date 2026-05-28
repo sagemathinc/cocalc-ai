@@ -53,7 +53,7 @@ function saveStoredAppDocsEntry(entry?: DocsEntry): void {
   saveStoredAppDocsSlug(entry?.slug);
 }
 
-export function DocsPage({ slug }: { slug?: string }) {
+export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
   const [messageApi, contextHolder] = message.useMessage();
   const [privateFilter, setPrivateFilter] = useState<DocsPrivateFilter>("all");
   const importBusyRef = useRef(false);
@@ -77,21 +77,24 @@ export function DocsPage({ slug }: { slug?: string }) {
   );
   const initialEntry = useMemo(
     () =>
-      slug
-        ? getDocsEntry(slug, docsAccess)
-        : loadStoredAppDocsEntry(docsAccess),
-    [docsAccess, slug],
+      print
+        ? undefined
+        : slug
+          ? getDocsEntry(slug, docsAccess)
+          : loadStoredAppDocsEntry(docsAccess),
+    [docsAccess, print, slug],
   );
   const initialEntrySlug = initialEntry?.slug;
 
   useEffect(() => {
+    if (print) return;
     if (initialEntry == null) return;
     saveStoredAppDocsEntry(initialEntry);
     if (!slug) {
-      pageActions.setState({ docs_slug: initialEntry.slug });
+      pageActions.setState({ docs_print: false, docs_slug: initialEntry.slug });
       set_url(getPageUrlPath({ page: "docs", slug: initialEntry.slug }));
     }
-  }, [initialEntry, initialEntrySlug, pageActions, slug]);
+  }, [initialEntry, initialEntrySlug, pageActions, print, slug]);
 
   async function runAction(
     action: DocsBrowserAction,
@@ -182,38 +185,54 @@ export function DocsPage({ slug }: { slug?: string }) {
     <div style={{ minHeight: 0, overflow: "auto" }}>
       <div style={DOCS_BROWSER_PAGE_STYLE}>
         {contextHolder}
-        <DocsFontSizeFrame defaultFontSize={accountFontSize}>
+        <DocsFontSizeFrame
+          defaultFontSize={accountFontSize}
+          showControls={!print}
+        >
           <Flex gap="middle" vertical>
-            <div>
-              <Text strong style={DOCS_BROWSER_MUTED_TITLE_STYLE}>
-                CoCalc docs
-              </Text>
-              <Title level={1} style={{ lineHeight: 1.15, marginBottom: 0 }}>
-                Help for this CoCalc site
-              </Title>
-            </div>
-            <Paragraph
-              style={{
-                color: COLORS.GRAY_M,
-                marginBottom: 20,
-                maxWidth: 760,
-              }}
-            >
-              Search current CoCalc-ai docs from anywhere in the app. Signed-in
-              docs, account-wide private notes, and admin-only pages appear here
-              when your account has access.
-            </Paragraph>
+            {!print ? (
+              <>
+                <div>
+                  <Text strong style={DOCS_BROWSER_MUTED_TITLE_STYLE}>
+                    CoCalc docs
+                  </Text>
+                  <Title
+                    level={1}
+                    style={{ lineHeight: 1.15, marginBottom: 0 }}
+                  >
+                    Help for this CoCalc site
+                  </Title>
+                </div>
+                <Paragraph
+                  style={{
+                    color: COLORS.GRAY_M,
+                    marginBottom: 20,
+                    maxWidth: 760,
+                  }}
+                >
+                  Search current CoCalc-ai docs from anywhere in the app.
+                  Signed-in docs, account-wide private notes, and admin-only
+                  pages appear here when your account has access.
+                </Paragraph>
+              </>
+            ) : null}
           </Flex>
           <DocsBrowser
             actionAvailability={actionAvailability}
+            browserHref={getPageUrlPath({ page: "docs" })}
             docsAccess={docsAccess}
             initialEntry={initialEntry}
             onRunAction={runAction}
             onSelectedEntryChange={(entry) => {
-              pageActions.setState({ docs_slug: entry?.slug });
+              pageActions.setState({
+                docs_print: false,
+                docs_slug: entry?.slug,
+              });
               set_url(getPageUrlPath({ page: "docs", slug: entry?.slug }));
               saveStoredAppDocsEntry(entry);
             }}
+            printHref={getPageUrlPath({ page: "docs", print: true })}
+            printMode={print}
             privateDetailState={
               accountId
                 ? {

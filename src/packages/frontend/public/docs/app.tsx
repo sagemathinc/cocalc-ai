@@ -10,6 +10,7 @@ import { docsPath, getDocsEntry, type DocsEntry } from "@cocalc/docs";
 import {
   DocsDetailContent,
   DocsIndexContent,
+  DocsPrintContent,
 } from "@cocalc/frontend/docs/browser";
 import {
   appPath,
@@ -61,8 +62,25 @@ function DocsIndex({ config }: { config?: PublicConfig }) {
           </div>
           <DocsIndexContent
             linkForEntry={(entry) => appPath(docsPath(entry.slug))}
+            printHref={appPath(docsPath("print"))}
           />
         </Flex>
+      </section>
+    </PublicSectionShell>
+  );
+}
+
+function DocsPrint({ config }: { config?: PublicConfig }) {
+  const siteName = getSiteName(config);
+
+  useEffect(() => {
+    document.title = `Printable documentation - ${siteName}`;
+  }, [siteName]);
+
+  return (
+    <PublicSectionShell active="docs" config={config}>
+      <section>
+        <DocsPrintContent onBackHref={appPath(docsPath(""))} />
       </section>
     </PublicSectionShell>
   );
@@ -117,6 +135,9 @@ export default function PublicDocsApp({
 }: PublicDocsAppProps) {
   if (initialRoute.view === "docs-index") {
     return <DocsIndex config={config} />;
+  }
+  if (initialRoute.view === "docs-print") {
+    return <DocsPrint config={config} />;
   }
 
   const entry = getDocsEntry(initialRoute.slug);

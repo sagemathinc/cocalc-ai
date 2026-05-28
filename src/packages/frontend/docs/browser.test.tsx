@@ -58,6 +58,55 @@ describe("DocsBrowser", () => {
     expect(screen.getByRole("heading", { name: entry.title })).toBeTruthy();
   });
 
+  it("shows table of contents progress and continues to the first unviewed page", () => {
+    const entries = listDocsEntries();
+    const firstEntry = entries[0];
+    const secondEntry = entries[1];
+    if (firstEntry == null || secondEntry == null) {
+      throw new Error("missing docs entries");
+    }
+    const onSelectedEntryChange = jest.fn();
+
+    render(
+      <DocsBrowser
+        onSelectedEntryChange={onSelectedEntryChange}
+        privateIndexState={{
+          enabled: true,
+          filter: "all",
+          onFilterChange: jest.fn(),
+          summaries: {
+            [firstEntry.id]: {
+              lastViewedAt: 1,
+              noteCount: 0,
+              noteText: "",
+              starred: false,
+            },
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getAllByText(/1 \/ .* viewed/)[0]).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Continue reading/ }));
+
+    expect(onSelectedEntryChange).toHaveBeenCalledWith(secondEntry);
+    expect(
+      screen.getByRole("heading", { name: secondEntry.title }),
+    ).toBeTruthy();
+  });
+
+  it("renders all docs in a print-friendly single page mode", () => {
+    render(<DocsBrowser browserHref="/app-docs" printMode />);
+
+    expect(
+      screen.getByRole("heading", { name: "Complete documentation" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: /Back to docs/ }).getAttribute("href"),
+    ).toBe("/app-docs");
+    expect(screen.getByText("Print")).toBeTruthy();
+  });
+
   it("navigates linearly within the current docs category", () => {
     const allEntries = listDocsEntries();
     const entry = allEntries.find(

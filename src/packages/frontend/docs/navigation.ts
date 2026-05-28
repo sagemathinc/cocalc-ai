@@ -58,7 +58,7 @@ export function openAppDocs(slug?: string): void {
   const normalized = normalizeDocsSlug(slug);
   saveStoredAppDocsSlug(normalized);
   const pageActions = redux.getActions("page");
-  pageActions?.setState?.({ docs_slug: normalized });
+  pageActions?.setState?.({ docs_print: false, docs_slug: normalized });
   pageActions?.set_active_tab?.("docs", true);
 }
 
