@@ -141,6 +141,9 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
         mark_open_phase(this.project_id, this.path, "handoff_done");
       }
     });
+    syncdb.on("reload", () => {
+      initFromSyncDB({ syncdb, store });
+    });
     syncdb.on("change", (changes) => {
       handleSyncDBChange({ store, syncdb, changes });
     });

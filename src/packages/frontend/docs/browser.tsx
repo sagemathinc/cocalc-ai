@@ -9,6 +9,8 @@ import type { CSSProperties } from "react";
 import {
   ArrowRightOutlined,
   BookOutlined,
+  CheckCircleFilled,
+  DownloadOutlined,
   SearchOutlined,
   ToolOutlined,
   ArrowLeftOutlined,
@@ -36,9 +38,7 @@ import {
   type DocsAction,
   type DocsEntry,
 } from "@cocalc/docs";
-import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
-import { redux } from "@cocalc/frontend/app-framework";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
+import Markdown from "@cocalc/frontend/markdown/component";
 import { COLORS } from "@cocalc/util/theme";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import type {
@@ -100,6 +100,7 @@ export type DocsPrivateIndexState = {
 
 export type DocsPrivateDetailState = {
   renderPanel: (entry: DocsEntry) => React.ReactNode;
+  renderLearnedControl?: (entry: DocsEntry) => React.ReactNode;
 };
 
 type DocsLinearNavigationState = {
@@ -269,7 +270,7 @@ export function DocsFontSizeFrame({
 export function DocsMarkdown({ value }: { value: string }) {
   return (
     <div data-testid="docs-markdown">
-      <StaticMarkdown value={value} />
+      <Markdown value={value} />
     </div>
   );
 }
@@ -388,8 +389,10 @@ export function DocsCard({
               </Tag>
             ))}
             {privateSummary?.starred ? <Tag color="gold">Starred</Tag> : null}
-            {privateSummary?.lastViewedAt ? (
-              <Tag color="green">Viewed</Tag>
+            {privateSummary?.learnedAt ? (
+              <Tag color="green" icon={<CheckCircleFilled />}>
+                Learned
+              </Tag>
             ) : null}
             {(privateSummary?.noteCount ?? 0) > 0 ? (
               <Tag>
@@ -453,8 +456,10 @@ export function DocsCard({
               </Tag>
             ))}
             {privateSummary?.starred ? <Tag color="gold">Starred</Tag> : null}
-            {privateSummary?.lastViewedAt ? (
-              <Tag color="green">Viewed</Tag>
+            {privateSummary?.learnedAt ? (
+              <Tag color="green" icon={<CheckCircleFilled />}>
+                Learned
+              </Tag>
             ) : null}
             {(privateSummary?.noteCount ?? 0) > 0 ? (
               <Tag>
@@ -504,6 +509,7 @@ function DocsTocOverview({
   groupedEntries,
   layout = "page",
   linkForEntry,
+  onDownloadHtml,
   onPrint,
   onSelectEntry,
   printHref,
@@ -512,6 +518,7 @@ function DocsTocOverview({
   groupedEntries: { category: string; entries: DocsEntry[] }[];
   layout?: DocsBrowserLayout;
   linkForEntry?: (entry: DocsEntry) => string;
+  onDownloadHtml?: () => void | Promise<void>;
   onPrint?: () => void;
   onSelectEntry?: (entry: DocsEntry) => void;
   printHref?: string;
@@ -520,19 +527,22 @@ function DocsTocOverview({
   if (groupedEntries.length === 0) return null;
 
   const allEntries = groupedEntries.flatMap(({ entries }) => entries);
-  const firstUnviewedEntry = allEntries.find(
-    (entry) => privateSummaries?.[entry.id]?.lastViewedAt == null,
+  const firstUnlearnedEntry = allEntries.find(
+    (entry) => privateSummaries?.[entry.id]?.learnedAt == null,
   );
-  const lastViewedEntry = allEntries
-    .filter((entry) => privateSummaries?.[entry.id]?.lastViewedAt != null)
+  const lastLearnedEntry = allEntries
+    .filter((entry) => privateSummaries?.[entry.id]?.learnedAt != null)
     .sort(
       (a, b) =>
-        (privateSummaries?.[b.id]?.lastViewedAt ?? 0) -
-        (privateSummaries?.[a.id]?.lastViewedAt ?? 0),
+        (privateSummaries?.[b.id]?.learnedAt ?? 0) -
+        (privateSummaries?.[a.id]?.learnedAt ?? 0),
     )[0];
-  const continueEntry = firstUnviewedEntry ?? lastViewedEntry ?? allEntries[0];
+  const showContinueLearning = privateSummaries != null;
+  const continueEntry = showContinueLearning
+    ? (firstUnlearnedEntry ?? lastLearnedEntry ?? allEntries[0])
+    : undefined;
   const continueLabel =
-    firstUnviewedEntry != null ? "Continue reading" : "Review last viewed";
+    firstUnlearnedEntry != null ? "Continue learning" : "Review learned";
   const continueHref =
     continueEntry != null ? linkForEntry?.(continueEntry) : undefined;
 
@@ -572,6 +582,15 @@ function DocsTocOverview({
                 Print-friendly
               </Button>
             ) : null}
+            {onDownloadHtml != null ? (
+              <Button
+                icon={<DownloadOutlined />}
+                onClick={onDownloadHtml}
+                size="small"
+              >
+                Download HTML
+              </Button>
+            ) : null}
           </Space>
         </Flex>
       }
@@ -588,10 +607,10 @@ function DocsTocOverview({
                     {
                       entries.filter(
                         (entry) =>
-                          privateSummaries[entry.id]?.lastViewedAt != null,
+                          privateSummaries[entry.id]?.learnedAt != null,
                       ).length
                     }{" "}
-                    / {entries.length} viewed
+                    / {entries.length} learned
                   </Text>
                 ) : null}
               </Space>
@@ -601,7 +620,7 @@ function DocsTocOverview({
                     (100 *
                       entries.filter(
                         (entry) =>
-                          privateSummaries[entry.id]?.lastViewedAt != null,
+                          privateSummaries[entry.id]?.learnedAt != null,
                       ).length) /
                       entries.length,
                   )}
@@ -613,6 +632,8 @@ function DocsTocOverview({
                 {entries.map((entry, index) => {
                   const viewed =
                     privateSummaries?.[entry.id]?.lastViewedAt != null;
+                  const learned =
+                    privateSummaries?.[entry.id]?.learnedAt != null;
                   const content = (
                     <>
                       <Text
@@ -622,6 +643,14 @@ function DocsTocOverview({
                         {index + 1}.
                       </Text>
                       <span>{entry.title}</span>
+                      {learned ? (
+                        <CheckCircleFilled
+                          style={{
+                            color: COLORS.BS_GREEN_D,
+                            marginLeft: 6,
+                          }}
+                        />
+                      ) : null}
                     </>
                   );
                   const href = linkForEntry?.(entry);
@@ -660,6 +689,7 @@ export function DocsIndexContent({
   docsAccess,
   layout = "page",
   linkForEntry,
+  onDownloadHtml,
   onPrint,
   onSelectEntry,
   printHref,
@@ -668,6 +698,7 @@ export function DocsIndexContent({
   docsAccess?: DocsAccess;
   layout?: DocsBrowserLayout;
   linkForEntry?: (entry: DocsEntry) => string;
+  onDownloadHtml?: () => void | Promise<void>;
   onPrint?: () => void;
   onSelectEntry?: (entry: DocsEntry) => void;
   printHref?: string;
@@ -705,6 +736,10 @@ export function DocsIndexContent({
           return Boolean(summary?.starred);
         case "unstarred":
           return !summary?.starred;
+        case "learned":
+          return summary?.learnedAt != null;
+        case "unlearned":
+          return summary?.learnedAt == null;
         case "notes":
           return (summary?.noteCount ?? 0) > 0;
         default:
@@ -754,6 +789,8 @@ export function DocsIndexContent({
               { label: "All", value: "all" },
               { label: "Starred", value: "starred" },
               { label: "Unstarred", value: "unstarred" },
+              { label: "Learned", value: "learned" },
+              { label: "Unlearned", value: "unlearned" },
               { label: "With notes", value: "notes" },
             ]}
             size="small"
@@ -778,6 +815,7 @@ export function DocsIndexContent({
             groupedEntries={groupedEntries}
             layout={layout}
             linkForEntry={linkForEntry}
+            onDownloadHtml={onDownloadHtml}
             onPrint={onPrint}
             onSelectEntry={onSelectEntry}
             printHref={printHref}
@@ -905,8 +943,10 @@ function useProjectHostParameterOptions(enabled: boolean): {
     let canceled = false;
     setLoading(true);
     setError(undefined);
-    webapp_client.conat_client.hub.hosts
-      .listHosts({ show_all: true })
+    import("@cocalc/frontend/webapp-client")
+      .then(({ webapp_client }) =>
+        webapp_client.conat_client.hub.hosts.listHosts({ show_all: true }),
+      )
       .then((hosts: Host[]) => {
         if (canceled) return;
         setOptions(hosts.map(formatProjectHostOption));
@@ -933,38 +973,45 @@ function useProjectParameterOptions(enabled: boolean): {
     [],
   );
   useEffect(() => {
+    let canceled = false;
+    let cleanup: (() => void) | undefined;
     if (!enabled) {
       setOptions([]);
       return;
     }
-    const store = redux.getStore("projects");
-    if (store == null) {
-      setOptions([]);
-      return;
-    }
-    const readOptions = () => {
-      const projectMap = store.get("project_map");
-      if (projectMap == null) return [];
-      const values: { label: string; title: string; value: string }[] = [];
-      for (const [projectId, project] of projectMap) {
-        const title = `${project?.get?.("title") ?? "No Title"}`.trim();
-        const state = `${project?.getIn?.(["state", "state"]) ?? ""}`.trim();
-        values.push({
-          label: state
-            ? `${title || "No Title"} (${state})`
-            : title || "No Title",
-          title: title || "No Title",
-          value: projectId,
-        });
+    void import("@cocalc/frontend/app-framework").then(({ redux }) => {
+      if (canceled) return;
+      const store = redux.getStore("projects");
+      if (store == null) {
+        setOptions([]);
+        return;
       }
-      values.sort((a, b) => a.title.localeCompare(b.title));
-      return values.map(({ label, value }) => ({ label, value }));
-    };
-    const updateOptions = () => setOptions(readOptions());
-    store.on("change", updateOptions);
-    updateOptions();
+      const readOptions = () => {
+        const projectMap = store.get("project_map");
+        if (projectMap == null) return [];
+        const values: { label: string; title: string; value: string }[] = [];
+        for (const [projectId, project] of projectMap) {
+          const title = `${project?.get?.("title") ?? "No Title"}`.trim();
+          const state = `${project?.getIn?.(["state", "state"]) ?? ""}`.trim();
+          values.push({
+            label: state
+              ? `${title || "No Title"} (${state})`
+              : title || "No Title",
+            title: title || "No Title",
+            value: projectId,
+          });
+        }
+        values.sort((a, b) => a.title.localeCompare(b.title));
+        return values.map(({ label, value }) => ({ label, value }));
+      };
+      const updateOptions = () => setOptions(readOptions());
+      store.on("change", updateOptions);
+      updateOptions();
+      cleanup = () => store.removeListener("change", updateOptions);
+    });
     return () => {
-      store.removeListener("change", updateOptions);
+      canceled = true;
+      cleanup?.();
     };
   }, [enabled]);
   return { options };
@@ -1298,6 +1345,8 @@ export function DocsDetailContent({
         <div style={DOCS_BROWSER_FLYOUT_MARKDOWN_STYLE}>
           <DocsMarkdown value={entry.body} />
         </div>
+        {privateState?.renderLearnedControl?.(entry)}
+        <DocsLinearNavigation layout={layout} navigation={linearNavigation} />
       </Flex>
     );
   }
@@ -1357,17 +1406,28 @@ export function DocsDetailContent({
       >
         <DocsMarkdown value={entry.body} />
       </Card>
+      {privateState?.renderLearnedControl?.(entry)}
       <DocsLinearNavigation layout={layout} navigation={linearNavigation} />
     </Flex>
   );
 }
 
 export function DocsPrintContent({
+  downloadHtmlButtonId,
+  downloadHtmlBusy,
   docsAccess,
+  onDownloadHtml,
   onBackHref,
+  printButtonId,
+  showControls = true,
 }: {
+  downloadHtmlButtonId?: string;
+  downloadHtmlBusy?: boolean;
   docsAccess?: DocsAccess;
+  onDownloadHtml?: () => void | Promise<void>;
   onBackHref?: string;
+  printButtonId?: string;
+  showControls?: boolean;
 }) {
   const entries = useMemo(() => listDocsEntries(docsAccess), [docsAccess]);
   const groupedEntries = useMemo(
@@ -1379,6 +1439,83 @@ export function DocsPrintContent({
     <div className="cocalc-docs-print-page">
       <style>
         {`
+          .cocalc-docs-print-page {
+            box-sizing: border-box;
+            margin: 0 auto;
+            max-width: 980px;
+            overflow-wrap: anywhere;
+            width: 100%;
+          }
+          .cocalc-docs-print-page *,
+          .cocalc-docs-print-page *::before,
+          .cocalc-docs-print-page *::after {
+            box-sizing: border-box;
+          }
+          .cocalc-docs-print-page img {
+            height: auto;
+            max-width: 100%;
+          }
+          .cocalc-docs-print-page pre,
+          .cocalc-docs-print-page code {
+            max-width: 100%;
+            white-space: pre-wrap;
+            word-break: break-word;
+          }
+          .cocalc-docs-print-page pre,
+          .cocalc-docs-print-page table {
+            overflow-x: auto;
+          }
+          .cocalc-docs-print-page table {
+            display: block;
+            max-width: 100%;
+          }
+          .cocalc-docs-print-page .ant-card {
+            max-width: 100%;
+            overflow: hidden;
+          }
+          .cocalc-docs-print-page .ant-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 18px 0;
+            margin-left: 0 !important;
+            margin-right: 0 !important;
+          }
+          .cocalc-docs-print-page .ant-col {
+            flex: 1 1 260px;
+            max-width: 100%;
+            padding-left: 9px;
+            padding-right: 9px;
+          }
+          @media screen and (max-width: 640px) {
+            .cocalc-docs-print-page {
+              max-width: none;
+            }
+            .cocalc-docs-print-page h1 {
+              font-size: 1.75rem !important;
+              line-height: 1.15 !important;
+            }
+            .cocalc-docs-print-page h2 {
+              font-size: 1.35rem !important;
+              line-height: 1.2 !important;
+            }
+            .cocalc-docs-print-page .ant-card-body {
+              padding: 14px !important;
+            }
+            .cocalc-docs-print-page .ant-col {
+              flex-basis: 100%;
+              padding-left: 0 !important;
+              padding-right: 0 !important;
+            }
+            .cocalc-docs-print-controls {
+              align-items: stretch !important;
+              flex-direction: column !important;
+            }
+            .cocalc-docs-print-controls .ant-space,
+            .cocalc-docs-print-controls a,
+            .cocalc-docs-print-controls button {
+              width: 100%;
+            }
+          }
           @media print {
             .cocalc-docs-print-controls {
               display: none !important;
@@ -1398,24 +1535,39 @@ export function DocsPrintContent({
           }
         `}
       </style>
-      <Flex
-        className="cocalc-docs-print-controls"
-        gap="small"
-        justify="space-between"
-        style={{ marginBottom: 24 }}
-        wrap
-      >
-        <Button href={onBackHref} icon={<ArrowLeftOutlined />}>
-          Back to docs
-        </Button>
-        <Button
-          icon={<PrinterOutlined />}
-          onClick={() => window.print()}
-          type="primary"
+      {showControls ? (
+        <Flex
+          className="cocalc-docs-print-controls"
+          gap="small"
+          justify="space-between"
+          style={{ marginBottom: 24 }}
+          wrap
         >
-          Print
-        </Button>
-      </Flex>
+          <Button href={onBackHref} icon={<ArrowLeftOutlined />}>
+            Back to docs
+          </Button>
+          <Space wrap>
+            {onDownloadHtml != null || downloadHtmlButtonId != null ? (
+              <Button
+                icon={<DownloadOutlined />}
+                id={downloadHtmlButtonId}
+                loading={downloadHtmlBusy}
+                onClick={onDownloadHtml}
+              >
+                Download HTML
+              </Button>
+            ) : null}
+            <Button
+              icon={<PrinterOutlined />}
+              id={printButtonId}
+              onClick={() => window.print()}
+              type="primary"
+            >
+              Print
+            </Button>
+          </Space>
+        </Flex>
+      ) : null}
       <Flex gap="large" vertical>
         <div>
           <Text strong style={DOCS_BROWSER_MUTED_TITLE_STYLE}>
@@ -1505,6 +1657,7 @@ export function DocsBrowser({
   docsAccess,
   initialEntry,
   layout = "page",
+  onDownloadHtml,
   onPrint,
   onRunAction,
   onSelectedEntryChange,
@@ -1519,6 +1672,7 @@ export function DocsBrowser({
   docsAccess?: DocsAccess;
   initialEntry?: DocsEntry;
   layout?: DocsBrowserLayout;
+  onDownloadHtml?: () => void | Promise<void>;
   onPrint?: () => void;
   onRunAction?: (
     action: DocsBrowserAction,
@@ -1554,7 +1708,11 @@ export function DocsBrowser({
 
   if (printMode) {
     return (
-      <DocsPrintContent docsAccess={docsAccess} onBackHref={browserHref} />
+      <DocsPrintContent
+        docsAccess={docsAccess}
+        onBackHref={browserHref}
+        onDownloadHtml={onDownloadHtml}
+      />
     );
   }
 
@@ -1604,6 +1762,7 @@ export function DocsBrowser({
     <DocsIndexContent
       docsAccess={docsAccess}
       layout={layout}
+      onDownloadHtml={onDownloadHtml}
       onPrint={onPrint}
       onSelectEntry={selectEntry}
       printHref={printHref}

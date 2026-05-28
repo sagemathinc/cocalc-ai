@@ -34,6 +34,7 @@ import {
   type FilesystemClient,
 } from "@cocalc/conat/files/fs";
 import { projectApiClient, type ProjectApi } from "@cocalc/conat/project/api";
+import { isProjectViewerRole } from "@cocalc/util/project-access";
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import { createBrowserSessionClient } from "@cocalc/conat/service/browser-session";
 import { FALLBACK_ACCOUNT_UUID, isValidUUID } from "@cocalc/util/misc";
@@ -268,6 +269,8 @@ type ProjectRow = {
   state?: { state?: string } | null;
   last_edited?: string | Date | null;
   deleted?: string | Date | boolean | null;
+  users?: Record<string, any> | null;
+  users_summary?: Record<string, any> | null;
 };
 
 type HostRow = {
@@ -1468,6 +1471,15 @@ async function resolveProjectFromArgOrContext(
   });
 }
 
+function projectUserRole(
+  project: Pick<ProjectRow, "users" | "users_summary">,
+  accountId: string,
+): string | undefined {
+  const entry =
+    project.users?.[accountId] ?? project.users_summary?.[accountId];
+  return typeof entry === "string" ? entry : entry?.group;
+}
+
 function normalizeUserSearchName(row: UserSearchResult): string {
   return normalizeUserSearchNameCore(row);
 }
@@ -1745,7 +1757,7 @@ async function resolveProjectFilesystem(
   ctx: CommandContext,
   projectIdentifier?: string,
   cwd = process.cwd(),
-): Promise<{ project: ProjectRow; fs: FilesystemClient }> {
+): Promise<{ project: ProjectRow; fs: FilesystemClient; readOnly?: boolean }> {
   const project = await resolveProjectFromArgOrContext(
     ctx,
     projectIdentifier,
@@ -1757,10 +1769,20 @@ async function resolveProjectFilesystem(
       `internal error: routed client missing for host ${routed.host_id}`,
     );
   }
+  const readOnly = isProjectViewerRole(projectUserRole(project, ctx.accountId));
+  const timeout = Math.max(30_000, Math.min(ctx.timeoutMs, 30 * 60_000));
+  if (readOnly) {
+    const fs = routed.client.viewerFs({
+      project_id: project.project_id,
+      account_id: ctx.accountId,
+      timeout,
+    });
+    return { project, fs, readOnly };
+  }
   const fs = fsClient({
     client: routed.client,
     subject: fsSubject({ project_id: project.project_id }),
-    timeout: Math.max(30_000, Math.min(ctx.timeoutMs, 30 * 60_000)),
+    timeout,
   });
   return { project, fs };
 }

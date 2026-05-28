@@ -27,6 +27,8 @@ export interface MembershipTierRecord extends MembershipTierPricing {
   id: MembershipClass;
   label?: string;
   store_visible?: boolean;
+  store_description?: string;
+  store_highlights?: readonly string[];
   course_store_visible?: boolean;
   priority?: number;
   disabled?: boolean;
@@ -65,7 +67,8 @@ export async function getMembershipTiers({
 } = {}): Promise<MembershipTierRecord[]> {
   const pool = client ?? getPool("medium");
   const { rows } = await pool.query(
-    `SELECT id, label, store_visible, course_store_visible, priority,
+    `SELECT id, label, store_visible, store_description, store_highlights,
+            course_store_visible, priority,
             price_monthly, price_yearly, trial_days, course_price, course_duration_days,
             course_grace_days,
             project_defaults, ai_limits, features, usage_limits, disabled
@@ -116,7 +119,8 @@ export async function getMembershipTierById({
 }): Promise<MembershipTierRecord | undefined> {
   const pool = client ?? getPool("medium");
   const { rows } = await pool.query(
-    `SELECT id, label, store_visible, course_store_visible, priority,
+    `SELECT id, label, store_visible, store_description, store_highlights,
+            course_store_visible, priority,
             price_monthly, price_yearly, trial_days, course_price, course_duration_days,
             course_grace_days,
             project_defaults, ai_limits, features, usage_limits, disabled

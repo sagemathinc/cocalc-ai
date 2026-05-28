@@ -38,6 +38,7 @@ function snapshotSummaries(
       starred: Boolean(page.starred),
       noteCount: 0,
       noteText: "",
+      learnedAt: page.learned_at,
       lastViewedAt: page.last_viewed_at,
     };
   }
@@ -161,6 +162,13 @@ export function useDocsPrivateState(accountId?: string) {
     [updatePage],
   );
 
+  const setLearned = useCallback(
+    async (entry: DocsEntry, learned: boolean) => {
+      await updatePage(entry, { learned_at: learned ? Date.now() : null });
+    },
+    [updatePage],
+  );
+
   const saveNote = useCallback(
     async (entry: DocsEntry, body: string, note?: DocsPageNoteV1) => {
       if (!normalizedAccountId || dkvRef.current == null) return;
@@ -230,6 +238,7 @@ export function useDocsPrivateState(accountId?: string) {
     markViewed,
     notesForEntry,
     saveNote,
+    setLearned,
     snapshot,
     summaries,
     toggleStar,

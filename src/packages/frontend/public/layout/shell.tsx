@@ -559,10 +559,10 @@ export function PublicGrid({
   columns,
 }: {
   children: ReactNode;
-  columns: 2 | 3;
+  columns: 2 | 3 | 4;
 }) {
   const childArray = Children.toArray(children);
-  const xlSpan = columns === 3 ? 8 : 12;
+  const xlSpan = columns === 4 ? 6 : columns === 3 ? 8 : 12;
 
   return (
     <Row gutter={[16, 16]}>

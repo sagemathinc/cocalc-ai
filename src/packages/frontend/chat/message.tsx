@@ -292,6 +292,7 @@ interface Props {
   attachedSteers?: AttachedSteerMessage[];
   activitySteers?: AttachedSteerMessage[];
   suppressInlineCodexStatus?: boolean;
+  read_only?: boolean;
   expandedCodexActivity?: boolean;
   onExpandedCodexActivityChange?: (visible: boolean) => void;
   allowAsyncCompletedCodexActivityLoad?: boolean;
@@ -353,6 +354,7 @@ export default function Message({
   attachedSteers,
   activitySteers,
   suppressInlineCodexStatus = false,
+  read_only = false,
   expandedCodexActivity = false,
   onExpandedCodexActivityChange,
   allowAsyncCompletedCodexActivityLoad = false,
@@ -412,7 +414,11 @@ export default function Message({
     [isCodexThread],
   );
   const showEditButton =
-    project_id != null && path != null && actions != null && !isEditing;
+    !read_only &&
+    project_id != null &&
+    path != null &&
+    actions != null &&
+    !isEditing;
 
   const editor_name = useMemo(() => {
     return get_user_name(firstHistoryEntry?.author_id);
@@ -1550,15 +1556,6 @@ export default function Message({
       isLastMessageInThread,
     });
     const buttons: ReactNode[] = [
-      <Tooltip key="git-browser" placement="bottom" title="Open git browser">
-        <Button
-          size="small"
-          type="text"
-          style={{ color: COLORS.GRAY_M }}
-          onClick={openGitBrowserFromMessage}
-          icon={<Icon name="git" />}
-        />
-      </Tooltip>,
       <Tooltip key="focus" placement="top" title="Focus this message">
         <Button
           size="small"
@@ -1570,6 +1567,19 @@ export default function Message({
         </Button>
       </Tooltip>,
     ];
+    if (!read_only) {
+      buttons.unshift(
+        <Tooltip key="git-browser" placement="bottom" title="Open git browser">
+          <Button
+            size="small"
+            type="text"
+            style={{ color: COLORS.GRAY_M }}
+            onClick={openGitBrowserFromMessage}
+            icon={<Icon name="git" />}
+          />
+        </Tooltip>,
+      );
+    }
 
     if (showShowActivityButton && onExpandedCodexActivityChange) {
       buttons.splice(

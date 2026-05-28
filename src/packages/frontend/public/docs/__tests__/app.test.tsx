@@ -11,11 +11,6 @@ import {
 import PublicDocsApp from "../app";
 import { getDocsRouteFromPath } from "../routes";
 
-jest.mock("@cocalc/frontend/editors/slate/static-markdown", () => ({
-  __esModule: true,
-  default: ({ value }: { value: string }) => <div>{value}</div>,
-}));
-
 describe("public/docs", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -155,6 +150,9 @@ describe("public/docs", () => {
     expect(
       screen.getByRole("link", { name: /Print-friendly/ }),
     ).toHaveAttribute("href", "/docs/print");
+    expect(
+      screen.queryByRole("link", { name: /Continue learning/ }),
+    ).toBeNull();
     expect(
       screen.queryByRole("link", { name: /Manage users as an admin/ }),
     ).toBeNull();

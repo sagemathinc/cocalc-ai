@@ -4,7 +4,7 @@
  */
 
 import { DndContext, useDraggable } from "@dnd-kit/core";
-import { Alert, Button, Modal, Space } from "antd";
+import { Alert, Button, Modal, Space, Tag } from "antd";
 import {
   React,
   redux,
@@ -113,6 +113,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
     is_active,
     mainWidthPx,
   });
+  const isViewer = projectCtx.projectAccess.role === "viewer";
   const host_id = useTypedRedux("projects", "project_map")?.getIn([
     project_id,
     "host_id",
@@ -564,8 +565,21 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
         />
         {renderFlyoutHeader()}
         <div style={{ flex: 1, overflow: "hidden", display: "flex" }}>
-          {projectCtx.projectAccess.capabilities.useProjectRuntime && (
-            <StartButton minimal style={{ margin: "2px 4px 0px 4px" }} />
+          {isViewer ? (
+            <Tag
+              color={COLORS.BLUE_D}
+              style={{
+                alignSelf: "center",
+                margin: "2px 6px 0px 4px",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Read only
+            </Tag>
+          ) : (
+            projectCtx.projectAccess.capabilities.useProjectRuntime && (
+              <StartButton minimal style={{ margin: "2px 4px 0px 4px" }} />
+            )
           )}
           <ProjectTabs project_id={project_id} />
         </div>
@@ -740,10 +754,16 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
             }}
           />
         ) : null}
-        {!hardDeleteBlocked && <DiskSpaceWarning project_id={project_id} />}
-        {!hardDeleteBlocked && <RamWarning project_id={project_id} />}
-        {!hardDeleteBlocked && <OOMWarning project_id={project_id} />}
-        {!hardDeleteBlocked && <ProjectWarningBanner />}
+        {!hardDeleteBlocked && !isViewer && (
+          <DiskSpaceWarning project_id={project_id} />
+        )}
+        {!hardDeleteBlocked && !isViewer && (
+          <RamWarning project_id={project_id} />
+        )}
+        {!hardDeleteBlocked && !isViewer && (
+          <OOMWarning project_id={project_id} />
+        )}
+        {!hardDeleteBlocked && !isViewer && <ProjectWarningBanner />}
         {renderHostUnavailableBanner()}
         {renderTopRow()}
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>

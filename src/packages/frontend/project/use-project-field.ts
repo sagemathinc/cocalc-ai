@@ -251,12 +251,14 @@ export function useProjectField<T>({
   projectMapField,
   fetch,
   initialValue,
+  enabled = true,
 }: {
   state: ProjectFieldState<T>;
   project_id: string;
   projectMapField: string;
   fetch: (project_id: string) => Promise<T | null>;
   initialValue?: unknown;
+  enabled?: boolean;
 }) {
   const projectMapValue = useTypedRedux("projects", "project_map")?.getIn([
     project_id,
@@ -264,15 +266,20 @@ export function useProjectField<T>({
   ]);
   const [counter, setCounter] = useState<number>(0);
   const [value, setValueState] = useState<T | null>(() =>
-    currentProjectFieldValue({
-      state,
-      project_id,
-      projectMapValue,
-      initialValue,
-    }),
+    enabled
+      ? currentProjectFieldValue({
+          state,
+          project_id,
+          projectMapValue,
+          initialValue,
+        })
+      : null,
   );
   const requestSeq = useRef<number>(0);
-  const refresh = useCallback(() => setCounter((prev) => prev + 1), []);
+  const refresh = useCallback(() => {
+    if (!enabled) return;
+    setCounter((prev) => prev + 1);
+  }, [enabled]);
 
   const setValue = useCallback(
     (nextValue: T | null) => {
@@ -286,6 +293,10 @@ export function useProjectField<T>({
   );
 
   useEffect(() => {
+    if (!enabled) {
+      setValueState(null);
+      return;
+    }
     setValueState(
       currentProjectFieldValue({
         state,
@@ -294,9 +305,12 @@ export function useProjectField<T>({
         initialValue,
       }),
     );
-  }, [initialValue, projectMapValue, project_id, state]);
+  }, [enabled, initialValue, projectMapValue, project_id, state]);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
     let listeners = state.listeners.get(project_id);
     if (!listeners) {
       listeners = new Set();
@@ -310,9 +324,12 @@ export function useProjectField<T>({
         state.listeners.delete(project_id);
       }
     };
-  }, [project_id, state]);
+  }, [enabled, project_id, state]);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
     let refreshers = state.refreshers.get(project_id);
     if (!refreshers) {
       refreshers = new Set();
@@ -326,23 +343,32 @@ export function useProjectField<T>({
         state.refreshers.delete(project_id);
       }
     };
-  }, [project_id, refresh, state]);
+  }, [enabled, project_id, refresh, state]);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
     if (projectMapValue !== undefined) {
       setValue((projectMapValue as T | null) ?? null);
     }
-  }, [projectMapValue, setValue]);
+  }, [enabled, projectMapValue, setValue]);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
     if (initialValue !== undefined) {
       setValue((initialValue as T | null) ?? null);
     }
-  }, [initialValue, setValue]);
+  }, [enabled, initialValue, setValue]);
 
   useAsyncEffect(
     async (isMounted) => {
       if (!project_id) {
+        return;
+      }
+      if (!enabled) {
         return;
       }
       if (
@@ -367,6 +393,7 @@ export function useProjectField<T>({
     [
       counter,
       fetch,
+      enabled,
       initialValue,
       project_id,
       projectMapValue,

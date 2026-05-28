@@ -477,6 +477,7 @@ export interface ChatPanelProps {
     control: ChatInputControl | null,
     root: ParentNode | null,
   ) => void;
+  readOnly?: boolean;
 }
 
 function getDescValue(desc: NodeDesc | undefined, key: string) {
@@ -521,6 +522,7 @@ export function ChatPanel({
   isVisible = true,
   tabIsVisible = true,
   onComposerReady,
+  readOnly = false,
 }: ChatPanelProps) {
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
   const storeName = chatActionsStoreName(actions);
@@ -793,6 +795,7 @@ export function ChatPanel({
     }
   }, [clearComposerDraft, composerDraftKey, selectedThreadKey, setInput]);
   useEffect(() => {
+    if (readOnly) return;
     if (!actions.syncdb || !actions.isSyncdbReady()) return;
     let cancelled = false;
     void (async () => {
@@ -857,7 +860,7 @@ export function ChatPanel({
     return () => {
       cancelled = true;
     };
-  }, [actions, docVersion, path, project_id]);
+  }, [actions, docVersion, path, project_id, readOnly]);
   const hasInput = input.trim().length > 0;
   const isSelectedThreadAI = selectedThread?.isAI ?? false;
   const selectedThreadId = useMemo(
@@ -1104,6 +1107,7 @@ export function ChatPanel({
   }, [isSelectedThreadAI, selectedThreadId, selectedThreadMessages, acpState]);
 
   useEffect(() => {
+    if (readOnly) return;
     if (!project_id || !path?.trim() || !account_id?.trim()) {
       priorThreadCompletionSnapshotsRef.current = new Map();
       return;
@@ -1154,9 +1158,11 @@ export function ChatPanel({
     project_id,
     threads,
     messages,
+    readOnly,
   ]);
 
   useEffect(() => {
+    if (readOnly) return;
     if (
       !isChatForeground ||
       !project_id ||
@@ -1170,9 +1176,12 @@ export function ChatPanel({
       account_id,
       chat_path: path,
     }).catch(() => {});
-  }, [account_id, isChatForeground, path, project_id]);
+  }, [account_id, isChatForeground, path, project_id, readOnly]);
 
   const agentSessionRecords = useMemo<AgentSessionRecord[]>(() => {
+    if (readOnly) {
+      return [];
+    }
     if (typeof account_id !== "string" || !account_id.trim()) {
       return [];
     }
@@ -1263,6 +1272,7 @@ export function ChatPanel({
     archivedThreads,
     path,
     project_id,
+    readOnly,
     threads,
   ]);
 
@@ -1289,7 +1299,8 @@ export function ChatPanel({
     refresh: refreshCodexPaymentSource,
   } = useCodexPaymentSource({
     projectId: project_id,
-    enabled: isSelectedThreadAI || newThreadSetup.agentMode === "codex",
+    enabled:
+      !readOnly && (isSelectedThreadAI || newThreadSetup.agentMode === "codex"),
   });
 
   const indexedThreads = useMemo(() => {
@@ -1364,8 +1375,9 @@ export function ChatPanel({
   }, [singleThreadView, selectedThreadKey, threads, actions]);
 
   const mark_as_read = useCallback(() => {
+    if (readOnly) return;
     markChatAsReadIfUnseen(project_id, path);
-  }, [project_id, path]);
+  }, [project_id, path, readOnly]);
 
   useEffect(() => {
     if (!singleThreadView) {
@@ -2092,55 +2104,60 @@ export function ChatPanel({
         allowSidebarToggle={!hideSidebar && !isCompact && !isExternalSideChat}
         sidebarHidden={sidebarHidden}
         onToggleSidebar={() => setSidebarHidden((hidden) => !hidden)}
+        readOnly={readOnly}
       />
       {automationBanner}
-      <ChatRoomComposer
-        actions={actions}
-        project_id={project_id}
-        path={path}
-        fontSize={fontSize}
-        composerDraftKey={composerDraftKey}
-        composerSession={composerSession}
-        input={input}
-        setInput={setComposerInput}
-        on_send={on_send}
-        on_send_immediately={on_send_immediately}
-        submitMentionsRef={submitMentionsRef}
-        hasInput={hasInput}
-        isSelectedThreadAI={isSelectedThreadAI}
-        hasActiveAcpTurn={hasRunningAcpTurn}
-        threads={threads}
-        selectedThread={selectedThread}
-        onComposerFocusChange={() => undefined}
-        onComposerReady={onComposerReady}
-        codexPaymentSource={codexPaymentSource}
-        codexPaymentSourceLoading={codexPaymentSourceLoading}
-      />
-      <CodexPaymentCredentialsModal
-        open={codexPaymentConfigOpen}
-        projectId={project_id}
-        refreshPaymentSource={refreshCodexPaymentSource}
-        onClose={() => setCodexPaymentConfigOpen(false)}
-      />
-      <Modal
-        title="Thread automation"
-        open={automationModalOpen}
-        destroyOnHidden
-        onCancel={() => setAutomationModalOpen(false)}
-        onOk={() => {
-          void handleAutomationModalSave();
-        }}
-        okText="Save"
-        confirmLoading={automationSaving}
-      >
-        <AutomationConfigFields
-          draft={automationDraft}
-          allowCodexRunKind={automationModalAllowsCodex}
-          onChange={(patch) =>
-            setAutomationDraft((prev) => ({ ...prev, ...patch }))
-          }
-        />
-      </Modal>
+      {!readOnly ? (
+        <>
+          <ChatRoomComposer
+            actions={actions}
+            project_id={project_id}
+            path={path}
+            fontSize={fontSize}
+            composerDraftKey={composerDraftKey}
+            composerSession={composerSession}
+            input={input}
+            setInput={setComposerInput}
+            on_send={on_send}
+            on_send_immediately={on_send_immediately}
+            submitMentionsRef={submitMentionsRef}
+            hasInput={hasInput}
+            isSelectedThreadAI={isSelectedThreadAI}
+            hasActiveAcpTurn={hasRunningAcpTurn}
+            threads={threads}
+            selectedThread={selectedThread}
+            onComposerFocusChange={() => undefined}
+            onComposerReady={onComposerReady}
+            codexPaymentSource={codexPaymentSource}
+            codexPaymentSourceLoading={codexPaymentSourceLoading}
+          />
+          <CodexPaymentCredentialsModal
+            open={codexPaymentConfigOpen}
+            projectId={project_id}
+            refreshPaymentSource={refreshCodexPaymentSource}
+            onClose={() => setCodexPaymentConfigOpen(false)}
+          />
+          <Modal
+            title="Thread automation"
+            open={automationModalOpen}
+            destroyOnHidden
+            onCancel={() => setAutomationModalOpen(false)}
+            onOk={() => {
+              void handleAutomationModalSave();
+            }}
+            okText="Save"
+            confirmLoading={automationSaving}
+          >
+            <AutomationConfigFields
+              draft={automationDraft}
+              allowCodexRunKind={automationModalAllowsCodex}
+              onChange={(patch) =>
+                setAutomationDraft((prev) => ({ ...prev, ...patch }))
+              }
+            />
+          </Modal>
+        </>
+      ) : null}
     </div>
   );
 
@@ -2212,37 +2229,41 @@ export function ChatPanel({
         }}
         newChatSelected={!selectedThreadKey}
       />
-      <ChatRoomModals
-        actions={actions}
-        path={path}
-        selectedThreadKey={selectedThreadKey}
-        selectedThreadLabel={selectedThread?.label}
-        onHandlers={setModalHandlers}
-      />
-      <ChatRoomThreadActions
-        actions={actions}
-        path={path}
-        selectedThreadKey={selectedThreadKey}
-        setSelectedThreadKey={setSelectedThreadKey}
-        onHandlers={setThreadActionHandlers}
-      />
-      <GitCommitDrawer
-        projectId={project_id}
-        sourcePath={path}
-        cwdOverride={gitBrowserCwd}
-        commitHash={gitBrowserCommitHash}
-        commitSelectionRequestToken={gitBrowserCommitSelectionRequestToken}
-        open={gitBrowserOpen}
-        onClose={() => {
-          setGitBrowserOpen(false);
-          setGitBrowserThreadKey(undefined);
-        }}
-        fontSize={fontSize}
-        onRequestAgentTurn={sendGitBrowserAgentPrompt}
-        onDirectCommitLogged={logGitBrowserDirectCommit}
-        onFindInChat={findCommitInCurrentChat}
-        onOpenActivityLog={openActivityFromGitBrowser}
-      />
+      {!readOnly ? (
+        <>
+          <ChatRoomModals
+            actions={actions}
+            path={path}
+            selectedThreadKey={selectedThreadKey}
+            selectedThreadLabel={selectedThread?.label}
+            onHandlers={setModalHandlers}
+          />
+          <ChatRoomThreadActions
+            actions={actions}
+            path={path}
+            selectedThreadKey={selectedThreadKey}
+            setSelectedThreadKey={setSelectedThreadKey}
+            onHandlers={setThreadActionHandlers}
+          />
+          <GitCommitDrawer
+            projectId={project_id}
+            sourcePath={path}
+            cwdOverride={gitBrowserCwd}
+            commitHash={gitBrowserCommitHash}
+            commitSelectionRequestToken={gitBrowserCommitSelectionRequestToken}
+            open={gitBrowserOpen}
+            onClose={() => {
+              setGitBrowserOpen(false);
+              setGitBrowserThreadKey(undefined);
+            }}
+            fontSize={fontSize}
+            onRequestAgentTurn={sendGitBrowserAgentPrompt}
+            onDirectCommitLogged={logGitBrowserDirectCommit}
+            onFindInChat={findCommitInCurrentChat}
+            onOpenActivityLog={openActivityFromGitBrowser}
+          />
+        </>
+      ) : null}
     </div>
   );
 }
@@ -2261,6 +2282,7 @@ function ChatRoomInner({
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
   // subscribe to syncdbReady to force re-render when sync attaches
   useEditor("syncdbReady");
+  const readOnly = useEditor("read_only" as any) === true;
   const readStateVersion = useEditor("readStateVersion");
   return (
     <ChatPanel
@@ -2277,6 +2299,7 @@ function ChatRoomInner({
       onFocus={onFocus}
       isVisible={is_visible}
       tabIsVisible={tab_is_visible}
+      readOnly={readOnly}
     />
   );
 }

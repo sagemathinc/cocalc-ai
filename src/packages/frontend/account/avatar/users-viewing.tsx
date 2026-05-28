@@ -18,6 +18,10 @@ import {
   subscribeToDocumentPresence,
 } from "@cocalc/frontend/document-presence/service";
 import { Avatar } from "./avatar";
+import {
+  getProjectUserRole,
+  isViewerProjectRole,
+} from "@cocalc/frontend/project/realtime-access";
 
 // How frequently all UsersViewing components are completely updated.
 // This is only needed to ensure that faces fade out; any newly added faces
@@ -73,28 +77,29 @@ function useUsersViewing(
   project_id?: string,
   path?: string,
   max_age_s?: number,
+  enabled: boolean = true,
 ) {
   const [counter, set_counter] = useState(0); // used to force update periodically.
 
   useEffect(() => {
-    if (project_id == null) {
+    if (!enabled || project_id == null) {
       return;
     }
     return subscribeToDocumentPresence(project_id, () => {
       set_counter((counter) => counter + 1);
     });
-  }, [project_id]);
+  }, [enabled, project_id]);
 
   const users = useMemo(
     () =>
-      project_id == null
+      !enabled || project_id == null
         ? undefined
         : getDocumentPresenceUsers({
             project_id,
             path,
             max_age_s,
           }),
-    [counter, project_id, path, max_age_s],
+    [counter, enabled, project_id, path, max_age_s],
   );
 
   useInterval(() => {
@@ -114,13 +119,22 @@ export function UsersViewing(props: Readonly<Props>) {
     size = 24,
   } = props;
 
-  const { users } = useUsersViewing(project_id, path, max_age_s);
-
   // so we can exclude ourselves from list of faces
   const our_account_id: string | undefined = useTypedRedux(
     "account",
     "account_id",
   );
+  const project_map = useTypedRedux("projects", "project_map");
+  const isViewer =
+    project_id != null &&
+    isViewerProjectRole(
+      getProjectUserRole({
+        account_id: our_account_id,
+        project_id,
+        projectsStore: { getIn: project_map?.getIn?.bind(project_map) },
+      }),
+    );
+  const { users } = useUsersViewing(project_id, path, max_age_s, !isViewer);
 
   function render_active_users(users) {
     const v: {
@@ -159,7 +173,7 @@ export function UsersViewing(props: Readonly<Props>) {
     return r;
   }
 
-  if (our_account_id == null) {
+  if (our_account_id == null || isViewer) {
     return null;
   }
 

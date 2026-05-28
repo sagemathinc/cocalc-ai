@@ -2,7 +2,9 @@ import { DEFAULT_QUOTAS } from "@cocalc/util/upgrade-spec";
 
 export const TEMPLATE_PRIORITY = {
   free: 0,
+  basic: 10,
   student: 10,
+  standard: 20,
   member: 20,
   instructor: 25,
   researcher: 27,
@@ -14,6 +16,66 @@ function quotaTemplate(overrides: Record<string, number>) {
 }
 
 const MIN_AI_LIMIT = 50;
+
+const STORE_MARKETING = {
+  free: {
+    store_description:
+      "Start using CoCalc with just enough resources to explore the platform and do basic work.",
+    store_highlights: [],
+  },
+  basic: {
+    store_description: "For occasional light use.",
+    store_highlights: [
+      "More shared resources",
+      "Access better shared hosts",
+      "Modest included AI usage",
+    ],
+  },
+  student: {
+    store_description:
+      "A term-length membership for students who need course access without a recurring subscription.",
+    store_highlights: [
+      "One-time course payment",
+      "Resources for class projects",
+      "Access throughout the academic term",
+    ],
+  },
+  standard: {
+    store_description: "A solid choice for everyday work.",
+    store_highlights: [
+      "Stronger shared resources",
+      "Dedicated project host access, including GPU",
+      "Larger included AI allowance",
+    ],
+  },
+  instructor: {
+    store_description:
+      "For instructors managing courses, larger classes, and many collaborators.",
+    store_highlights: [
+      "Higher project and storage limits",
+      "Course-scale invitation limits",
+      "More room for teaching workflows",
+    ],
+  },
+  researcher: {
+    store_description:
+      "For research workflows that need more compute headroom, storage, and custom images.",
+    store_highlights: [
+      "Higher compute and storage limits",
+      "Larger custom RootFS image allowance",
+      "Advanced OCI RootFS image import",
+    ],
+  },
+  pro: {
+    store_description:
+      "For advanced users and teams working on demanding projects.",
+    store_highlights: [
+      "Best shared resources",
+      "Run CoCalc Launchpad wherever you want to stay in full control",
+      "Largest included AI allowance",
+    ],
+  },
+} as const;
 
 function usageLimitsTemplate(
   shared_compute_priority: number,
@@ -160,6 +222,7 @@ export const TIER_TEMPLATES = {
   free: {
     id: "free",
     label: "Free",
+    ...STORE_MARKETING.free,
     store_visible: false,
     course_store_visible: false,
     price_monthly: 0,
@@ -222,6 +285,7 @@ export const TIER_TEMPLATES = {
   student: {
     id: "student",
     label: "Student",
+    ...STORE_MARKETING.student,
     store_visible: false,
     course_store_visible: true,
     price_monthly: 8,
@@ -283,14 +347,81 @@ export const TIER_TEMPLATES = {
       }),
     }),
   },
+  basic: {
+    id: "basic",
+    label: "Basic",
+    ...STORE_MARKETING.basic,
+    store_visible: false,
+    course_store_visible: false,
+    price_monthly: 8,
+    price_yearly: 9 * 8,
+    course_price: undefined,
+    course_duration_days: undefined,
+    course_grace_days: undefined,
+    priority: TEMPLATE_PRIORITY.basic,
+    project_defaults: quotaTemplate({
+      network: 1,
+      member_host: 1,
+      disk_quota: 1000,
+      mintime: 1800,
+      memory: 4000,
+      cores: 1,
+    }),
+    ai_limits: aiLimitsFromYearly(9 * 8),
+    features: {
+      create_hosts: false,
+      project_host_tier: 0,
+    },
+    usage_limits: usageLimitsTemplate(2, 3, {
+      notification_email_send_limit_5h: 50,
+      notification_email_send_limit_7d: 200,
+      ...acpUsageLimits({
+        queuedPerAccount: 100,
+        queuedPerThread: 20,
+        created5hPerAccount: 100,
+        created7dPerAccount: 500,
+        runningPerAccount: 10,
+        runningPerProject: 10,
+        activeAutomationsPerProject: 3,
+      }),
+      ...rootfsUsageLimits({
+        count: 0,
+        totalStorageGb: 0,
+        maxStorageGb: 0,
+        ociImages: false,
+      }),
+      ...blobUsageLimits({
+        accountStorageGb: 1,
+        accountCount: 1000,
+        projectStorageGb: 0.5,
+        projectCount: 500,
+      }),
+      ...inviteUsageLimits({
+        sendEnabled: false,
+        dailyCount: 20,
+        hourlyCount: 10,
+        recipientsPerBatch: 10,
+        pendingPerProject: 25,
+        pendingPerCourse: 50,
+        resendCooldownMinutes: 15,
+        customMessageMaxChars: 300,
+        allowProjectTitle: false,
+        allowCourseTitle: false,
+        allowUrls: false,
+        projectCollaboratorsAndPendingInvites: 25,
+        courseStudentsAndPendingInvites: 50,
+      }),
+    }),
+  },
   member: {
     id: "member",
     label: "Member",
+    ...STORE_MARKETING.standard,
     store_visible: true,
     course_store_visible: false,
     priority: TEMPLATE_PRIORITY.member,
-    price_monthly: 25,
-    price_yearly: 25 * 9,
+    price_monthly: 24,
+    price_yearly: 18 * 12,
     course_price: undefined,
     course_duration_days: undefined,
     course_grace_days: undefined,
@@ -302,7 +433,75 @@ export const TIER_TEMPLATES = {
       cores: 2,
       mintime: 3600,
     }),
-    ai_limits: aiLimitsFromYearly(25 * 9),
+    ai_limits: aiLimitsFromYearly(18 * 12),
+    features: {
+      create_hosts: true,
+      project_host_tier: 1,
+    },
+    usage_limits: usageLimitsTemplate(3, 3, {
+      notification_email_send_limit_5h: 200,
+      notification_email_send_limit_7d: 1000,
+      prepaid_host_usage_limit_5h_usd: 300,
+      prepaid_host_usage_limit_7d_usd: 1000,
+      ...acpUsageLimits({
+        queuedPerAccount: 100,
+        queuedPerThread: 20,
+        created5hPerAccount: 100,
+        created7dPerAccount: 500,
+        runningPerAccount: 10,
+        runningPerProject: 10,
+        activeAutomationsPerProject: 3,
+      }),
+      ...rootfsUsageLimits({
+        count: 20,
+        totalStorageGb: 25,
+        maxStorageGb: 10,
+        ociImages: false,
+      }),
+      ...blobUsageLimits({
+        accountStorageGb: 5,
+        accountCount: 5000,
+        projectStorageGb: 1,
+        projectCount: 1000,
+      }),
+      ...inviteUsageLimits({
+        sendEnabled: true,
+        dailyCount: 50,
+        hourlyCount: 20,
+        recipientsPerBatch: 25,
+        pendingPerProject: 50,
+        pendingPerCourse: 100,
+        resendCooldownMinutes: 15,
+        customMessageMaxChars: 600,
+        allowProjectTitle: true,
+        allowCourseTitle: true,
+        allowUrls: false,
+        projectCollaboratorsAndPendingInvites: 50,
+        courseStudentsAndPendingInvites: 100,
+      }),
+    }),
+  },
+  standard: {
+    id: "standard",
+    label: "Standard",
+    ...STORE_MARKETING.standard,
+    store_visible: false,
+    course_store_visible: false,
+    priority: TEMPLATE_PRIORITY.standard,
+    price_monthly: 24,
+    price_yearly: 18 * 12,
+    course_price: undefined,
+    course_duration_days: undefined,
+    course_grace_days: undefined,
+    project_defaults: quotaTemplate({
+      network: 1,
+      member_host: 1,
+      disk_quota: 10000,
+      memory: 8000,
+      cores: 2,
+      mintime: 3600,
+    }),
+    ai_limits: aiLimitsFromYearly(18 * 12),
     features: {
       create_hosts: true,
       project_host_tier: 1,
@@ -353,6 +552,7 @@ export const TIER_TEMPLATES = {
   instructor: {
     id: "instructor",
     label: "Instructor",
+    ...STORE_MARKETING.instructor,
     store_visible: true,
     course_store_visible: false,
     priority: TEMPLATE_PRIORITY.instructor,
@@ -421,6 +621,7 @@ export const TIER_TEMPLATES = {
   researcher: {
     id: "researcher",
     label: "Researcher",
+    ...STORE_MARKETING.researcher,
     store_visible: false,
     course_store_visible: false,
     priority: TEMPLATE_PRIORITY.researcher,
@@ -489,11 +690,12 @@ export const TIER_TEMPLATES = {
   pro: {
     id: "pro",
     label: "Pro",
+    ...STORE_MARKETING.pro,
     store_visible: true,
     course_store_visible: false,
     priority: TEMPLATE_PRIORITY.pro,
-    price_monthly: 150,
-    price_yearly: 150 * 9,
+    price_monthly: 160,
+    price_yearly: 120 * 12,
     course_price: undefined,
     course_duration_days: undefined,
     course_grace_days: undefined,
@@ -505,7 +707,7 @@ export const TIER_TEMPLATES = {
       cores: 3,
       mintime: 8 * 3600,
     }),
-    ai_limits: aiLimitsFromYearly(150 * 9),
+    ai_limits: aiLimitsFromYearly(120 * 12),
     features: {
       create_hosts: true,
       project_host_tier: 2,
@@ -565,6 +767,8 @@ type TierTemplateFields = {
   id?: string;
   label?: string;
   store_visible?: boolean;
+  store_description?: string;
+  store_highlights?: readonly string[];
   course_store_visible?: boolean;
   course_price?: number;
   course_duration_days?: number;
@@ -609,6 +813,13 @@ export function applyMembershipTierTemplateFallbacks<
     ...tier,
     label: tier.label ?? template.label,
     store_visible: tier.store_visible ?? template.store_visible,
+    store_description:
+      tier.store_description ?? templateFields.store_description,
+    store_highlights:
+      tier.store_highlights ??
+      (templateFields.store_highlights == null
+        ? undefined
+        : [...templateFields.store_highlights]),
     course_store_visible:
       tier.course_store_visible ?? template.course_store_visible,
     course_price: tier.course_price ?? template.course_price,
