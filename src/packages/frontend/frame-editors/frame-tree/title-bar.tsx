@@ -60,6 +60,10 @@ import type { FrameDragData } from "./dnd/frame-dnd-provider";
 import { buildSwitchToFileItems } from "./style";
 import TitleBarTour from "./title-bar-tour";
 import { ConnectionStatus, EditorDescription, EditorSpec } from "./types";
+import {
+  frameTitleBarMenuVisible,
+  frameTitleBarTerminalButtonVisible,
+} from "./read-only-title-bar";
 
 // Certain special frame editors (e.g., for latex) have extra
 // actions that are not defined in the base code editor actions.
@@ -353,7 +357,13 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
 
   function render_terminal_button() {
     const terminalsDisabled = !!student_project_functionality.disableTerminals;
-    if (terminalsDisabled || props.type === "terminal") {
+    if (
+      !frameTitleBarTerminalButtonVisible({
+        readOnlyPreview: read_only_preview,
+        terminalsDisabled,
+        type: props.type,
+      })
+    ) {
       return null;
     }
     const tooltip = intl.formatMessage({
@@ -743,6 +753,14 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
     const v: { menu: React.JSX.Element; pos: number }[] = [];
     for (const name in MENUS) {
       if (name === "app") continue;
+      if (
+        !frameTitleBarMenuVisible({
+          name,
+          readOnlyPreview: read_only_preview,
+        })
+      ) {
+        continue;
+      }
       const x = renderMenu(name);
       if (x != null) {
         v.push(x);

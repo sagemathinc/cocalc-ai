@@ -2,7 +2,40 @@
 
 Date: 2026-05-27
 
-Status: design plan.
+Status: closed for the authenticated viewer first milestone.
+
+## Current Milestone Status
+
+The authenticated project viewer milestone is implemented in the current
+branch:
+
+- shared project access now distinguishes `owner`, `collaborator`, `viewer`,
+  and `none`.
+- viewer file traffic uses a direct project-host `fs-viewer` service rather
+  than hub-mediated file reads.
+- viewer read policies are enforced at the project-host filesystem boundary.
+- viewer listings include navigable ancestors of allowed paths, so scoped
+  viewers can browse down to their allowed content.
+- viewer copy-out is allowed only into destination projects where the same
+  account has normal collaborator access.
+- the People panel supports viewer invites, role changes, and read-policy
+  presets.
+- viewer-mode UI hides or disables runtime/write/admin surfaces and provides
+  read-only file browsing/previews.
+- read-only preview title bars show only the `View` menu, hide terminal
+  launch affordances, and use a high-contrast read-only indicator.
+- endpoint-audit regression tests cover high-risk runtime, proxy/app-server,
+  terminal, Jupyter, Codex, SSH, secrets, snapshots, backups, settings, and
+  collaborator-management paths.
+
+Phase 5 optional extensions are explicitly out of scope for this milestone.
+Do not block release on read-only API keys, read-only share links,
+viewer-specific project-list filters, directory-preset expansion, or advanced
+raw rule editing.
+
+No remaining first-milestone product work is tracked in this plan. Future
+viewer bugs should be filed and fixed as normal regressions rather than keeping
+this design plan open.
 
 ## Goal
 
@@ -376,6 +409,8 @@ check.
 
 ### Phase 1: Shared Types And Access Helpers
 
+Status: implemented.
+
 - add `viewer` to shared project user role types.
 - add central capability derivation.
 - add local and remote `getProjectAccess` helpers.
@@ -384,6 +419,8 @@ check.
 - add unit tests proving viewers are not collaborators.
 
 ### Phase 2: Read-Only File API
+
+Status: implemented.
 
 - add a direct project-host read-only file API surface for viewers on a
   distinct viewer subject; do not proxy viewer file data through the hub.
@@ -401,6 +438,8 @@ check.
 
 ### Phase 3: UI Support
 
+Status: implemented.
+
 - add viewer role controls in the People panel.
 - add read-policy presets and a selected-files/directories UI.
 - add read-only project/file UI mode.
@@ -408,19 +447,26 @@ check.
 
 ### Phase 4: Endpoint Audit
 
+Status: implemented.
+
 - audit project RPCs and project-host subjects.
 - convert broad collaborator checks to capability-specific checks.
 - add regression tests for each indirect runtime/write path found.
 
 Audit record: see `src/.agents/project-viewer-endpoint-audit-2026-05-28.md`.
 
-### Phase 5: Optional Extensions
+### Out Of Scope: Optional Extensions
+
+The following are not part of the first release milestone:
 
 - read-only API keys with `file:read`.
 - read-only share links backed by the same capability machinery.
 - viewer-specific project list filters.
 - directory presets such as `docs/`, `public/`, or full project read-only.
 - advanced rule editor for explicit include/exclude policies.
+
+These should be treated as separate product projects after the authenticated
+viewer milestone ships.
 
 ## Resolved Product Decisions
 
@@ -448,3 +494,15 @@ Audit record: see `src/.agents/project-viewer-endpoint-audit-2026-05-28.md`.
 The first milestone should prove the access-control boundary with the smallest
 useful feature: authenticated users can read explicitly allowed project files
 without being able to write or run anything.
+
+## Focused Regression Commands
+
+Run these before release after viewer-related changes:
+
+```sh
+cd src/packages/project-host && pnpm test file-server-viewer-read-only.test.ts conat-auth.test.ts
+cd src/packages/server && pnpm test conat/api/project-viewer-endpoint-audit.test.ts conat/api/projects.copy-path-between-projects.test.ts conat/project-local-access.test.ts conat/project-remote-access.test.ts projects/copy-viewer-read-policy.test.ts projects/project-ssh-keys.test.ts conat/api/project-host-token-auth.test.ts projects/get.test.ts
+cd src/packages/cli && pnpm test src/bin/core/project-file.test.ts src/bin/core/project-resolve.test.ts
+cd src/packages/database && pnpm test postgres/account-project-index-projector.test.ts user-query/queries.test.ts
+cd src/packages/frontend && pnpm test project/page/activity-bar-tabs.test.tsx project/file-action-modal.test.tsx project/page/flyouts/settings.test.tsx frame-editors/frame-tree/__tests__/read-only-title-bar.test.ts frame-editors/frame-tree/__tests__/save-button-status.test.ts
+```

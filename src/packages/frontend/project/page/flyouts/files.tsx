@@ -76,6 +76,7 @@ import {
   hostLabel,
 } from "@cocalc/frontend/projects/host-operational";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
+import FileOperationLros from "@cocalc/frontend/project/explorer/file-operation-lros";
 import {
   isHostRoutingUnavailableError,
   shouldSuppressTransientRoutingError,
@@ -123,6 +124,7 @@ export function FilesFlyout({
   const {
     isRunning: projectIsRunning,
     project_id,
+    projectAccess,
     actions,
     manageStarredFiles,
     registerUserFilesystemChangeHandler,
@@ -131,6 +133,8 @@ export function FilesFlyout({
   const rootRef = useRef<HTMLDivElement>(null as any);
   const refInput = useRef<InputRef>(null as any);
   const [rootHeightPx, setRootHeightPx] = useState<number>(0);
+  const readOnlyViewer = projectAccess.role === "viewer";
+  const canWriteProjectFiles = projectAccess.capabilities.writeProjectFiles;
   const [showCheckboxIndex, setShowCheckboxIndex] = useState<number | null>(
     null,
   );
@@ -1011,6 +1015,11 @@ export function FilesFlyout({
             setError={effectiveRefresh}
           />
         )}
+      <FileOperationLros
+        project_id={project_id}
+        canWriteProjectFiles={canWriteProjectFiles}
+        readOnlyViewer={readOnlyViewer}
+      />
       <FilesHeader
         activeFile={activeFile}
         getFile={getFile}

@@ -1,8 +1,12 @@
 # Release Blocker Triage, 2026-05-24
 
+Overall status: `closed`
+
 Source list: `/home/user/scratch/wstein.md`.
 
 Purpose: track the known pre-release blocker queue in one repo-visible place. Some items are bugs; others are product, architecture, or operational readiness work. Treat this as the working queue and update statuses as items are fixed, deferred, or split into dedicated plans.
+
+Closure note, 2026-05-28: all release-blocking items in this document are resolved. Per-item "Next action" sections below are retained as historical triage context, not as an active queue.
 
 Status values:
 
@@ -11,8 +15,9 @@ Status values:
 - `blocked`: needs an external decision, account, vendor, legal text, or production data.
 - `done`: implemented, validated, and no longer release-blocking.
 - `defer`: intentionally not required for first public release.
+- `closed`: the overall triage document is complete and no longer active.
 
-## Executive Priority
+## Completed Release Blockers
 
 1. Project-host access and random assignment fallback.
 2. GPU host validation for Nebius H200.
@@ -63,7 +68,7 @@ Next action:
 
 ### 2. GPU Host Validation For Nebius H200
 
-Status: `open`
+Status: `done`
 
 Severity: high.
 
@@ -335,7 +340,7 @@ Next action:
 
 ### 13. Terms Of Service Link On Account Creation
 
-Status: `closed`
+Status: `done`
 
 Severity: medium.
 
@@ -343,17 +348,12 @@ Known issue:
 
 - GitHub issue: https://github.com/sagemathinc/cocalc-ai/issues/13
 
-Blocker:
+Implemented outcome:
 
-- Requires terms of service text or canonical URL.
-
-Expected outcome:
-
-- Account creation page links to ToS once ToS exists.
-
-Next action:
-
-- Once ToS URL exists, add link to account creation page and any relevant sign-up copy.
+- Account creation includes a mandatory off-by-default Terms of Service and Privacy Policy acceptance checkbox with links.
+- Account creation includes an optional off-by-default product tips and updates checkbox.
+- Account preferences exposes the same product tips and updates preference.
+- SSO/account creation paths are handled by requiring acceptance when needed rather than relying only on password-signup copy.
 
 ## Track D: Chat, Codex, And Automation UX
 
@@ -378,7 +378,7 @@ Next action:
 
 ### 15. Git Browser Sticky File Path Click Behavior
 
-Status: `open`
+Status: `done`
 
 Severity: low-medium.
 
@@ -400,7 +400,7 @@ Next action:
 
 ### 16. Flyout File Explorer LRO Visibility
 
-Status: `open`
+Status: `done`
 
 Severity: medium-high.
 
@@ -423,7 +423,7 @@ Next action:
 
 ### 17. Terminal Reconnect Flash
 
-Status: `open`
+Status: `done`
 
 Severity: medium.
 
@@ -440,27 +440,14 @@ Next action:
 - Reproduce with controlled disconnect.
 - Determine whether terminal session identity can be compared before replacing visible content.
 
-## Recommended Work Order
+## Closure Summary
 
-1. Fix project-host access and assignment fallback.
-2. Validate/fix Nebius H200 GPU image/runtime.
-3. Implement project-host restart recovery.
-4. Formalize project startup script support.
-5. Decide RootFS rustic sharding.
-6. Implement backup-all-projects host LRO.
-7. Fix flyout file explorer LRO visibility.
-8. Add RootFS scan detail links.
-9. Add membership tier benefit explanations everywhere tiers can be selected or purchased.
-10. Implement subscription free trial if product launch requires it.
-11. Add ToS link after legal URL exists.
-12. Add scheduled automation notification config.
-13. Add spot uptime dashboard/recovery banner.
-14. Redesign host runtime control page.
-15. Polish git browser sticky path behavior.
-16. Improve terminal reconnect behavior.
-17. Decide Codex file watch / TimeTravel load policy.
+- All 17 release-blocking items are resolved and marked `done`.
+- No items remain `open`, `active`, `blocked`, or `defer`.
+- Any future polish, scaling, or follow-up work should be tracked in new focused plans or issues instead of reopening this triage queue.
 
 ## Update Log
 
 - 2026-05-24: Initial triage created from `/home/user/scratch/wstein.md`.
 - 2026-05-24: Added membership tier benefit explanations as a high-severity product release blocker.
+- 2026-05-28: Closed the triage after all release-blocking items were implemented or otherwise resolved.
