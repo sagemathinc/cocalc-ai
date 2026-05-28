@@ -264,4 +264,47 @@ describe("project-host Conat auth", () => {
       }),
     ).resolves.toBe(false);
   });
+
+  it("denies viewer access to normal project-host data-plane subjects", async () => {
+    mockGetRow.mockReturnValue({
+      users: {
+        [account_id]: {
+          group: "viewer",
+          read_policy: { rules: [{ action: "include", path: "." }] },
+        },
+      },
+    });
+    const { isAllowed } = createProjectHostConatAuth({ host_id });
+
+    const blockedSubjects = [
+      `fs.project-${project_id}`,
+      `file-server.${project_id}.api`,
+      `project.${project_id}.run`,
+      `project.${project_id}.terminal.-`,
+      `project.${project_id}.storage-info.-`,
+      `project.${project_id}.archive-info.-`,
+      `project.${project_id}.touch.-`,
+      `persist.project-${project_id}`,
+      `acp.project-${project_id}`,
+      `codex.project-${project_id}.device-auth`,
+      `hub.project.${project_id}.api`,
+    ];
+
+    for (const subject of blockedSubjects) {
+      await expect(
+        isAllowed({
+          user: { account_id },
+          type: "pub",
+          subject,
+        }),
+      ).resolves.toBe(false);
+      await expect(
+        isAllowed({
+          user: { account_id },
+          type: "sub",
+          subject,
+        }),
+      ).resolves.toBe(false);
+    }
+  });
 });
