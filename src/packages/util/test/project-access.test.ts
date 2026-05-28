@@ -7,6 +7,7 @@ import {
   isProjectCollaboratorRole,
   projectAccessFromUsers,
   viewerReadPolicyAllowsPath,
+  viewerReadPolicyMayAllowDescendant,
 } from "@cocalc/util/project-access";
 
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
@@ -115,6 +116,49 @@ describe("viewer read policy path matching", () => {
       rules: [{ action: "include" as const, path: "." }],
     };
     expect(viewerReadPolicyAllowsPath({ policy, path: "../secret" })).toBe(
+      false,
+    );
+  });
+
+  it("detects visible ancestors for selected viewer paths", () => {
+    const policy = {
+      rules: [{ action: "include" as const, path: "foo/bar/**" }],
+    };
+    expect(viewerReadPolicyMayAllowDescendant({ policy, path: "" })).toBe(true);
+    expect(viewerReadPolicyMayAllowDescendant({ policy, path: "foo" })).toBe(
+      true,
+    );
+    expect(
+      viewerReadPolicyMayAllowDescendant({ policy, path: "foo/bar" }),
+    ).toBe(true);
+    expect(
+      viewerReadPolicyMayAllowDescendant({ policy, path: "private" }),
+    ).toBe(false);
+  });
+
+  it("does not expose descendants below excluded viewer paths", () => {
+    const policy = {
+      rules: [
+        { action: "include" as const, path: "." },
+        { action: "exclude" as const, path: ".ssh" },
+        { action: "exclude" as const, path: ".ssh/**" },
+      ],
+    };
+    expect(viewerReadPolicyMayAllowDescendant({ policy, path: "" })).toBe(true);
+    expect(viewerReadPolicyMayAllowDescendant({ policy, path: ".ssh" })).toBe(
+      false,
+    );
+  });
+
+  it("supports glob include ancestors for viewer navigation", () => {
+    const policy = {
+      rules: [{ action: "include" as const, path: "docs/*.md" }],
+    };
+    expect(viewerReadPolicyMayAllowDescendant({ policy, path: "" })).toBe(true);
+    expect(viewerReadPolicyMayAllowDescendant({ policy, path: "docs" })).toBe(
+      true,
+    );
+    expect(viewerReadPolicyMayAllowDescendant({ policy, path: "src" })).toBe(
       false,
     );
   });

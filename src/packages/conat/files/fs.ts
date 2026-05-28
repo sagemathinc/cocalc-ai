@@ -434,6 +434,7 @@ export type ReadOnlyFilesystem = Pick<
   | "constants"
   | "describeFile"
   | "exists"
+  | "getListing"
   | "lstat"
   | "readFile"
   | "readdir"
@@ -492,6 +493,9 @@ export async function fsReadOnlyServer({
     },
     async exists(path: string): Promise<boolean> {
       return await (await fs(this.subject)).exists(path);
+    },
+    async getListing(path: string) {
+      return await (await fs(this.subject)).getListing(path);
     },
     async lstat(path: string): Promise<IStats> {
       return await (await fs(this.subject)).lstat(path);

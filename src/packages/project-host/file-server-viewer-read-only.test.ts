@@ -14,6 +14,7 @@ function mockFilesystem(
     constants: jest.fn(async () => ({})),
     describeFile: jest.fn(async () => ({ mime: "text/plain" })),
     exists: jest.fn(async () => true),
+    getListing: jest.fn(async () => ({ files: {} })),
     lstat: jest.fn(async () => ({}) as any),
     readFile: jest.fn(async () => "content"),
     readdir: jest.fn(async () => []),
@@ -93,6 +94,78 @@ describe("viewer read-only filesystem boundary", () => {
     });
 
     await expect(viewerFs.readdir("public")).resolves.toEqual(["ok.txt"]);
+  });
+
+  it("filters getListing results through the viewer read policy", async () => {
+    const fs = mockFilesystem({
+      canonicalSyncIdentityPath: jest.fn(async (path: string) =>
+        path === "public/private-link" ? "/home/user/private/secret.txt" : path,
+      ),
+      getListing: jest.fn(async () => ({
+        files: {
+          "ok.txt": { type: "f", size: 1, mtime: 1 },
+          "private-link": { type: "l", size: 1, mtime: 1 },
+        },
+      })),
+    });
+    const viewerFs = createViewerReadOnlyFilesystem({
+      fs,
+      readPolicy: { rules: [{ action: "include", path: "public/**" }] },
+    });
+
+    await expect(viewerFs.getListing("public")).resolves.toMatchObject({
+      files: {
+        "ok.txt": { type: "f" },
+      },
+    });
+    await expect(viewerFs.getListing("public")).resolves.not.toHaveProperty([
+      "files",
+      "private-link",
+    ]);
+  });
+
+  it("shows only navigable ancestors when listing above allowed viewer paths", async () => {
+    const fs = mockFilesystem({
+      canonicalSyncIdentityPath: jest.fn(async (path: string) =>
+        path === "/home/user" ? "/home/user" : path,
+      ),
+      getListing: jest.fn(async () => ({
+        files: {
+          foo: { type: "d", isDir: true, size: 0, mtime: 1 },
+          private: { type: "d", isDir: true, size: 0, mtime: 1 },
+          "README.md": { type: "f", size: 1, mtime: 1 },
+        },
+      })),
+    });
+    const viewerFs = createViewerReadOnlyFilesystem({
+      fs,
+      readPolicy: { rules: [{ action: "include", path: "foo/bar/**" }] },
+    });
+
+    await expect(viewerFs.getListing("/home/user")).resolves.toMatchObject({
+      files: {
+        foo: { type: "d" },
+      },
+    });
+    await expect(viewerFs.getListing("/home/user")).resolves.not.toHaveProperty(
+      ["files", "private"],
+    );
+    await expect(viewerFs.getListing("/home/user")).resolves.not.toHaveProperty(
+      ["files", "README.md"],
+    );
+  });
+
+  it("rejects listings outside allowed paths and their ancestors", async () => {
+    const fs = mockFilesystem();
+    const viewerFs = createViewerReadOnlyFilesystem({
+      fs,
+      readPolicy: { rules: [{ action: "include", path: "foo/bar/**" }] },
+    });
+
+    await expect(viewerFs.getListing("private")).rejects.toMatchObject({
+      code: "EACCES",
+    });
+    expect(fs.getListing).not.toHaveBeenCalled();
   });
 
   it("enforces full-project default sensitive-path excludes at the project-host boundary", async () => {
