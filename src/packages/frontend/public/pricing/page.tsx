@@ -676,39 +676,6 @@ export default function PricingPage({
 
       <PublicSection>
         <Title level={2} style={{ margin: 0 }}>
-          What you can buy
-        </Title>
-        <PublicGrid columns={3}>
-          <PublicSection>
-            <Title level={4}>Individual memberships</Title>
-            <Paragraph style={{ marginBottom: 0 }}>
-              The main product is a recurring membership. Admins define the
-              actual tiers and prices, and those tiers determine the defaults
-              for project resources, AI usage, and feature access.
-            </Paragraph>
-          </PublicSection>
-          <PublicSection>
-            <Title level={4}>Vouchers</Title>
-            <Paragraph style={{ marginBottom: 0 }}>
-              Vouchers let an instructor, department, or organization prepay
-              credit and distribute redeemable codes. They are a practical way
-              to cover accounts today without waiting for the fuller team and
-              campus purchasing flows.
-            </Paragraph>
-          </PublicSection>
-          <PublicSection>
-            <Title level={4}>Self-hosted software</Title>
-            <Paragraph style={{ marginBottom: 0 }}>
-              CoCalc Plus and CoCalc Launchpad are separate software offerings
-              for local and self-hosted deployments. They are not project-level
-              quota purchases.
-            </Paragraph>
-          </PublicSection>
-        </PublicGrid>
-      </PublicSection>
-
-      <PublicSection>
-        <Title level={2} style={{ margin: 0 }}>
           Teaching and course payment options
         </Title>
         <PublicGrid columns={3}>
