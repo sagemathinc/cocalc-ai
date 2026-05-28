@@ -39,8 +39,6 @@ import {
   type DocsEntry,
 } from "@cocalc/docs";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
-import { redux } from "@cocalc/frontend/app-framework";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import type {
@@ -943,8 +941,10 @@ function useProjectHostParameterOptions(enabled: boolean): {
     let canceled = false;
     setLoading(true);
     setError(undefined);
-    webapp_client.conat_client.hub.hosts
-      .listHosts({ show_all: true })
+    import("@cocalc/frontend/webapp-client")
+      .then(({ webapp_client }) =>
+        webapp_client.conat_client.hub.hosts.listHosts({ show_all: true }),
+      )
       .then((hosts: Host[]) => {
         if (canceled) return;
         setOptions(hosts.map(formatProjectHostOption));
@@ -971,38 +971,45 @@ function useProjectParameterOptions(enabled: boolean): {
     [],
   );
   useEffect(() => {
+    let canceled = false;
+    let cleanup: (() => void) | undefined;
     if (!enabled) {
       setOptions([]);
       return;
     }
-    const store = redux.getStore("projects");
-    if (store == null) {
-      setOptions([]);
-      return;
-    }
-    const readOptions = () => {
-      const projectMap = store.get("project_map");
-      if (projectMap == null) return [];
-      const values: { label: string; title: string; value: string }[] = [];
-      for (const [projectId, project] of projectMap) {
-        const title = `${project?.get?.("title") ?? "No Title"}`.trim();
-        const state = `${project?.getIn?.(["state", "state"]) ?? ""}`.trim();
-        values.push({
-          label: state
-            ? `${title || "No Title"} (${state})`
-            : title || "No Title",
-          title: title || "No Title",
-          value: projectId,
-        });
+    void import("@cocalc/frontend/app-framework").then(({ redux }) => {
+      if (canceled) return;
+      const store = redux.getStore("projects");
+      if (store == null) {
+        setOptions([]);
+        return;
       }
-      values.sort((a, b) => a.title.localeCompare(b.title));
-      return values.map(({ label, value }) => ({ label, value }));
-    };
-    const updateOptions = () => setOptions(readOptions());
-    store.on("change", updateOptions);
-    updateOptions();
+      const readOptions = () => {
+        const projectMap = store.get("project_map");
+        if (projectMap == null) return [];
+        const values: { label: string; title: string; value: string }[] = [];
+        for (const [projectId, project] of projectMap) {
+          const title = `${project?.get?.("title") ?? "No Title"}`.trim();
+          const state = `${project?.getIn?.(["state", "state"]) ?? ""}`.trim();
+          values.push({
+            label: state
+              ? `${title || "No Title"} (${state})`
+              : title || "No Title",
+            title: title || "No Title",
+            value: projectId,
+          });
+        }
+        values.sort((a, b) => a.title.localeCompare(b.title));
+        return values.map(({ label, value }) => ({ label, value }));
+      };
+      const updateOptions = () => setOptions(readOptions());
+      store.on("change", updateOptions);
+      updateOptions();
+      cleanup = () => store.removeListener("change", updateOptions);
+    });
     return () => {
-      store.removeListener("change", updateOptions);
+      canceled = true;
+      cleanup?.();
     };
   }, [enabled]);
   return { options };
