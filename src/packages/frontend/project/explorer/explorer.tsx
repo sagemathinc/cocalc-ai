@@ -30,10 +30,7 @@ import AskNewFilename from "../ask-filename";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { selectionForPathFollowThrough } from "@cocalc/frontend/project/workspaces/state";
 import { ActionBar } from "./action-bar";
-import BackupOps from "./backup-ops";
-import CopyOps from "./copy-ops";
-import MoveOps from "./move-ops";
-import RestoreOps from "./restore-ops";
+import FileOperationLros from "./file-operation-lros";
 import { FileListing } from "./file-listing";
 import type { DirectoryListingEntry } from "./types";
 import { default_ext } from "./file-listing/utils";
@@ -735,16 +732,11 @@ You can either wait for this host to become available again, or move this ${proj
             on_clear={() => actions.clear_all_activity()}
             style={{ top: "100px" }}
           />
-          {canWriteProjectFiles && (
-            <>
-              <BackupOps project_id={project_id} />
-              <RestoreOps project_id={project_id} />
-              <MoveOps project_id={project_id} />
-            </>
-          )}
-          {(canWriteProjectFiles || readOnlyViewer) && (
-            <CopyOps project_id={project_id} />
-          )}
+          <FileOperationLros
+            project_id={project_id}
+            canWriteProjectFiles={canWriteProjectFiles}
+            readOnlyViewer={readOnlyViewer}
+          />
           <div
             style={{
               display: "flex",

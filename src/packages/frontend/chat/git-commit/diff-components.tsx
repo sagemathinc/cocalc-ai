@@ -8,6 +8,8 @@
 import { Button, Space, Typography } from "antd";
 import { useMemo, useRef } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
+import { getAntdNotificationInstance } from "@cocalc/frontend/app/antd-notification";
+import { copyTextToClipboard } from "@cocalc/frontend/components/copy-button";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { filenameMode } from "@cocalc/frontend/file-associations";
 import { COLORS } from "@cocalc/util/theme";
@@ -535,6 +537,30 @@ export const DiffFileSection = memo(function DiffFileSection({
     0,
     file.lines.length - visibleLines.length,
   );
+  const copyFilePath = async () => {
+    const copied = await copyTextToClipboard({ text: file.path });
+    if (!copied) {
+      alert_message({
+        type: "error",
+        message: `Unable to copy file path '${file.path}'.`,
+      });
+      return;
+    }
+    getAntdNotificationInstance().success({
+      title: "Copied file path",
+      description: (
+        <Typography.Text code style={{ whiteSpace: "pre-wrap" }}>
+          {file.path}
+        </Typography.Text>
+      ),
+      actions: (
+        <Button size="small" onClick={() => void onOpenFile(file.path)}>
+          Open
+        </Button>
+      ),
+      duration: 5,
+    });
+  };
   return (
     <div
       ref={fileSectionRef}
@@ -575,6 +601,7 @@ export const DiffFileSection = memo(function DiffFileSection({
             fontWeight: 700,
             fontSize: Math.max(13, fontSize),
             color: DIFF_FILE_HEADER_TEXT,
+            cursor: "copy",
           }}
           onMouseDown={(evt) => {
             if (!shouldSuppressActionForSelection()) return;
@@ -585,24 +612,32 @@ export const DiffFileSection = memo(function DiffFileSection({
             if (shouldSuppressActionForSelection()) {
               return;
             }
-            void onOpenFile(file.path);
+            void copyFilePath();
           }}
+          title="Copy file path"
         >
           {file.path}
         </Button>
-        <Typography.Text
-          style={{
-            fontSize: 11,
-            color: DIFF_FILE_HEADER_SECONDARY,
-          }}
-        >
-          {filenameMode(file.path, "text")}
-          {fileComments.length > 0 ? ` · ${fileComments.length} comments` : ""}
-          {matchedFindCount > 0 ? ` · ${matchedFindCount} matches` : ""}
-          {remainingLineCount > 0
-            ? ` · showing ${visibleLines.length.toLocaleString()} / ${file.lines.length.toLocaleString()} diff lines`
-            : ""}
-        </Typography.Text>
+        <Space size="small" style={{ marginLeft: "auto" }}>
+          <Typography.Text
+            style={{
+              fontSize: 11,
+              color: DIFF_FILE_HEADER_SECONDARY,
+            }}
+          >
+            {filenameMode(file.path, "text")}
+            {fileComments.length > 0
+              ? ` · ${fileComments.length} comments`
+              : ""}
+            {matchedFindCount > 0 ? ` · ${matchedFindCount} matches` : ""}
+            {remainingLineCount > 0
+              ? ` · showing ${visibleLines.length.toLocaleString()} / ${file.lines.length.toLocaleString()} diff lines`
+              : ""}
+          </Typography.Text>
+          <Button size="small" onClick={() => void onOpenFile(file.path)}>
+            Open
+          </Button>
+        </Space>
       </div>
       <DiffBlock
         filePath={file.path}
