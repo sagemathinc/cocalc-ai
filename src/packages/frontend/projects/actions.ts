@@ -49,6 +49,10 @@ import {
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import { isTerminal } from "@cocalc/frontend/lro/utils";
 import { extractRuntimeSponsorDenial } from "@cocalc/util/runtime-sponsor-denial";
+import {
+  DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY,
+  type ProjectViewerReadPolicy,
+} from "@cocalc/util/project-access";
 
 import type {
   CourseInfo,
@@ -2260,6 +2264,49 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
   }
 
+  public async set_project_user_role(
+    project_id: string,
+    target_account_id: string,
+    role: "collaborator" | "viewer",
+    read_policy?: ProjectViewerReadPolicy | null,
+  ): Promise<void> {
+    try {
+      await webapp_client.project_collaborators.set_role({
+        project_id,
+        target_account_id,
+        role,
+        read_policy,
+      });
+      const project_map = store.get("project_map");
+      if (project_map?.has(project_id)) {
+        const userPath = [project_id, "users", target_account_id];
+        const currentUser =
+          (project_map.getIn(userPath) as Map<string, any> | undefined) ??
+          Map<string, any>();
+        const nextUser =
+          role === "viewer"
+            ? currentUser
+                .set("group", role)
+                .set(
+                  "read_policy",
+                  fromJS(
+                    read_policy ?? DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY,
+                  ),
+                )
+            : currentUser.set("group", role).delete("read_policy");
+        this.setState({
+          project_map: project_map.setIn(userPath, nextUser),
+        } as ProjectsState);
+      }
+    } catch (err) {
+      alert_message({
+        type: "error",
+        message: `Error changing project user role -- ${err}`,
+      });
+      throw err;
+    }
+  }
+
   // this is for inviting existing users, the email is only known by the back-end
   public async invite_collaborator(
     project_id: string,
@@ -2269,6 +2316,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
     silent?: boolean, // if true, don't show error message on fail
     replyto?: string,
     replyto_name?: string,
+    invite_role: "collaborator" | "viewer" = "collaborator",
+    read_policy?: ProjectViewerReadPolicy | null,
   ): Promise<void> {
     await this.redux.getProjectActions(project_id).async_log({
       event: "invite_user",
@@ -2291,6 +2340,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
         email,
         subject,
         message: body,
+        invite_role,
+        read_policy,
       });
       notifyCollabInvitesChanged(project_id);
     } catch (err) {
@@ -2312,6 +2363,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
     replyto_name: string | undefined,
     invite_context?: Record<string, unknown>,
     invite_scope?: string,
+    invite_role: "collaborator" | "viewer" = "collaborator",
+    read_policy?: ProjectViewerReadPolicy | null,
   ): Promise<any> {
     await this.redux.getProjectActions(project_id).async_log({
       event: "invite_nonuser",
@@ -2339,6 +2392,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
         message: body,
         invite_context,
         invite_scope,
+        invite_role,
+        read_policy,
       });
       notifyCollabInvitesChanged(project_id);
       if (!silent) {

@@ -111,6 +111,7 @@ interface Props {
   onTerminalCommand?: () => void;
   file_creation_error?: string;
   disabled?: boolean;
+  readOnly?: boolean;
   ext_selection?: string;
 }
 
@@ -126,6 +127,7 @@ export const SearchBar = memo(
     onTerminalCommand,
     file_creation_error,
     disabled = false,
+    readOnly = false,
     ext_selection,
   }: Props) => {
     const intl = useIntl();
@@ -137,6 +139,16 @@ export const SearchBar = memo(
     } = useExplorerSearchHistory(project_id);
     const numDisplayedFiles =
       useTypedRedux({ project_id }, "numDisplayedFiles") ?? 0;
+    const placeholder = readOnly
+      ? intl.formatMessage({
+          id: "project.explorer.search-bar.read-only-placeholder",
+          defaultMessage: "Filter files...",
+        })
+      : intl.formatMessage({
+          id: "project.explorer.search-bar.placeholder",
+          defaultMessage:
+            'Filter files or "@", "!" or "/" for Agent / Terminal...',
+        });
 
     // edit → run → edit
     // TODO use "state" to show a progress spinner while a command is running
@@ -415,17 +427,29 @@ export const SearchBar = memo(
         return;
       }
       if (isTerminalMode(value)) {
+        if (readOnly) {
+          set_error("Viewers cannot run terminal commands in this project.");
+          return;
+        }
         if (value.slice(1).trim().length > 0) {
           addHistoryEntry(value);
         }
         const command = value.slice(1, value.length);
         execute_command(command);
       } else if (isAgentMode(value)) {
+        if (readOnly) {
+          set_error("Viewers cannot run agents in this project.");
+          return;
+        }
         if (extractAgentPrompt(value).length > 0) {
           addHistoryEntry(value);
         }
         void execute_agent_prompt(value);
       } else if (file_search.length > 0 && shift_down) {
+        if (readOnly) {
+          set_error("Viewers cannot create files or folders in this project.");
+          return;
+        }
         addHistoryEntry(value);
         // only create a file, if shift is pressed as well to avoid creating
         // jupyter notebooks (default file-type) by accident.
@@ -525,11 +549,7 @@ export const SearchBar = memo(
         <SearchInput
           autoFocus
           autoSelect
-          placeholder={intl.formatMessage({
-            id: "project.explorer.search-bar.placeholder",
-            defaultMessage:
-              'Filter files or "@", "!" or "/" for Agent / Terminal...',
-          })}
+          placeholder={placeholder}
           value={file_search}
           on_change={on_change}
           on_submit={search_submit}

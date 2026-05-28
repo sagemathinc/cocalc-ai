@@ -117,6 +117,7 @@ type HostDrawerViewModel = {
   onCreateSimilar?: (host: Host) => void;
   onEdit: (host: Host) => void;
   onDelete?: (id: string, opts?: HostDeleteOptions) => void | Promise<void>;
+  onDeleteSharedScratch?: (id: string) => void | Promise<void>;
   onUpgrade?: (host: Host) => void;
   onUpgradeAll?: (host: Host) => void;
   onReconcile?: (host: Host) => void;
@@ -339,6 +340,8 @@ type HostConfigSpec = {
   ram_gb?: number | null;
   disk_gb?: number | null;
   disk_type?: string | null;
+  shared_disk_gb?: number | null;
+  shared_disk_type?: string | null;
   storage_mode?: string | null;
 };
 
@@ -359,6 +362,8 @@ const SPEC_LABELS: Record<keyof HostConfigSpec, string> = {
   ram_gb: "RAM",
   disk_gb: "Disk",
   disk_type: "Disk type",
+  shared_disk_gb: "Shared scratch",
+  shared_disk_type: "Shared scratch type",
   storage_mode: "Storage",
 };
 
@@ -1275,7 +1280,9 @@ const normalizeSpecValue = (
   value: HostConfigSpec[keyof HostConfigSpec],
 ): string => {
   if (value == null || value === "") return "none";
-  if (key === "ram_gb" || key === "disk_gb") return `${value} GB`;
+  if (key === "ram_gb" || key === "disk_gb" || key === "shared_disk_gb") {
+    return `${value} GB`;
+  }
   if (key === "cpu") return `${value} vCPU`;
   return String(value);
 };
@@ -1487,6 +1494,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     onCreateSimilar,
     onEdit,
     onDelete,
+    onDeleteSharedScratch,
     onUpgradeAll,
     onReconcile,
     onRefreshCloudStatus,
@@ -1585,6 +1593,10 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
       compact: true,
     },
   );
+  const sharedScratchGb = Number(host?.machine?.shared_disk_gb ?? 0);
+  const hasSharedScratch =
+    Number.isFinite(sharedScratchGb) && sharedScratchGb > 0;
+  const sharedScratchType = `${host?.machine?.shared_disk_type ?? ""}`.trim();
   const showHostResources = !!host && (hostCpu || hostRam || hostDisk);
   const size = host ? getHostSizeDisplay(host) : undefined;
   const connectorOnline =
@@ -1951,6 +1963,67 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
       </Card>
       <Card size="small" title="Daemon health">
         <HostDaemonHealthSummary host={host} />
+      </Card>
+      <Card size="small" title="Shared scratch disk">
+        {hasSharedScratch ? (
+          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+            <Space wrap>
+              <Tag color="blue">
+                {sharedScratchGb.toLocaleString()} GB at /scratch
+              </Tag>
+              {sharedScratchType && <Tag>{sharedScratchType}</Tag>}
+              <Tag>not backed up</Tag>
+            </Space>
+            <Typography.Text type="secondary">
+              This is host-local shared working storage mounted into projects at{" "}
+              <code>/scratch</code>. It is not included in project quota and
+              does not move with projects.
+            </Typography.Text>
+            <Typography.Text type="secondary">
+              It uses provider network block storage, not local SSD. Projects
+              may need to be restarted after scratch is added or deleted.
+            </Typography.Text>
+            <Space wrap>
+              {canManageLifecycle && (
+                <Button size="small" onClick={() => onEdit(host)}>
+                  Edit scratch
+                </Button>
+              )}
+              {onDeleteSharedScratch && canManageLifecycle && (
+                <Popconfirm
+                  title="Delete shared scratch disk?"
+                  description={
+                    <div style={{ maxWidth: 360 }}>
+                      This destroys all data in <code>/scratch</code>. If the
+                      host is running, deletion first tries to unmount the
+                      scratch filesystem and fails if projects are still using
+                      it.
+                    </div>
+                  }
+                  okButtonProps={{ danger: true }}
+                  okText="Delete scratch"
+                  cancelText="Cancel"
+                  onConfirm={() => onDeleteSharedScratch(host.id)}
+                >
+                  <Button size="small" danger>
+                    Delete scratch
+                  </Button>
+                </Popconfirm>
+              )}
+            </Space>
+          </Space>
+        ) : (
+          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+            <Typography.Text type="secondary">
+              No shared <code>/scratch</code> disk is configured.
+            </Typography.Text>
+            {canManageLifecycle && (
+              <Button size="small" onClick={() => onEdit(host)}>
+                Add scratch disk
+              </Button>
+            )}
+          </Space>
+        )}
       </Card>
       <Card size="small" title="Current metrics">
         <HostCurrentMetrics host={host} />

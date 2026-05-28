@@ -61,6 +61,28 @@ describe("project-host token bay checks", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("allows browser-issued project-host token access for a local viewer", async () => {
+    queryMock = jest.fn(async () => ({
+      rows: [
+        {
+          host_id: HOST_UUID,
+          project_owning_bay_id: "bay-0",
+          group: "viewer",
+        },
+      ],
+    }));
+
+    const { assertAccountProjectHostTokenProjectAccess } =
+      await import("./project-host-token-auth");
+    await expect(
+      assertAccountProjectHostTokenProjectAccess({
+        account_id: ACCOUNT_UUID,
+        host_id: HOST_UUID,
+        project_id: PROJECT_UUID,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("allows remote collaborator browser-issued project-host token access when the owning bay confirms visibility", async () => {
     queryMock = jest.fn(async () => ({ rows: [] }));
     resolveProjectBayMock = jest.fn(async () => ({
@@ -107,6 +129,24 @@ describe("project-host token bay checks", () => {
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       expect(sql).toContain("COALESCE(projects.owning_bay_id, $4)");
       expect(sql).toContain("projects.deleted IS NOT true");
+      expect(params).toEqual([PROJECT_UUID, HOST_UUID, ACCOUNT_UUID, "bay-0"]);
+      return { rowCount: 0 };
+    });
+
+    const { assertProjectHostAgentTokenAccess } =
+      await import("./project-host-token-auth");
+    await expect(
+      assertProjectHostAgentTokenAccess({
+        account_id: ACCOUNT_UUID,
+        host_id: HOST_UUID,
+        project_id: PROJECT_UUID,
+      }),
+    ).rejects.toThrow("not authorized for project-host agent auth token");
+  });
+
+  it("rejects host-issued agent tokens for viewers", async () => {
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      expect(sql).toContain("IN ('owner', 'collaborator')");
       expect(params).toEqual([PROJECT_UUID, HOST_UUID, ACCOUNT_UUID, "bay-0"]);
       return { rowCount: 0 };
     });

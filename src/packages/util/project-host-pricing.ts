@@ -66,7 +66,12 @@ export interface GcpCatalogPrices {
 
 export type HostPricingModel = "on_demand" | "spot";
 
-export type HostPriceBreakdownItemKey = "vm" | "gpu" | "disk" | "public_ipv4";
+export type HostPriceBreakdownItemKey =
+  | "vm"
+  | "gpu"
+  | "disk"
+  | "shared_scratch_disk"
+  | "public_ipv4";
 
 export type HostPriceBreakdownItem = {
   key: HostPriceBreakdownItemKey;
@@ -94,6 +99,8 @@ export type GcpCatalogRateEstimateInput = {
   memory_gib?: number | null;
   disk_gb?: number | null;
   disk_type?: string | null;
+  shared_disk_gb?: number | null;
+  shared_disk_type?: string | null;
   storage_mode?: string | null;
   gpu_type?: string | null;
   gpu_count?: number | null;
@@ -261,6 +268,11 @@ function isFinitePositiveNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
+function positiveDiskGb(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
 function readRate(
   map: Record<string, number> | undefined,
   key: string,
@@ -365,7 +377,7 @@ export function estimateGcpCatalogRateBreakdown(
     });
   }
   const diskType = gcpDiskCatalogKeyFromSelection(input);
-  const diskGb = Number(input.disk_gb ?? 0);
+  const diskGb = positiveDiskGb(input.disk_gb);
   if (diskType && diskGb > 0) {
     const diskRate = readRate(catalog.disks?.[diskType], region);
     if (!isFinitePositiveNumber(diskRate)) return undefined;
@@ -373,6 +385,20 @@ export function estimateGcpCatalogRateBreakdown(
       key: "disk",
       label: "Persistent disk",
       usd_per_hour: diskRate * diskGb,
+    });
+  }
+  const sharedDiskGb = positiveDiskGb(input.shared_disk_gb);
+  const sharedDiskType = gcpDiskCatalogKeyFromSelection({
+    disk_type: input.shared_disk_type,
+    storage_mode: "persistent",
+  });
+  if (sharedDiskType && sharedDiskGb > 0) {
+    const diskRate = readRate(catalog.disks?.[sharedDiskType], region);
+    if (!isFinitePositiveNumber(diskRate)) return undefined;
+    items.push({
+      key: "shared_scratch_disk",
+      label: "Shared scratch disk",
+      usd_per_hour: diskRate * sharedDiskGb,
     });
   }
   items.push({
@@ -409,6 +435,9 @@ export function getNebiusPlatformAliases(platform?: string | null): string[] {
   if (value.includes("h200")) aliases.push("h200 nvlink");
   if (value.includes("b200")) aliases.push("b200 nvlink");
   if (value.includes("b300")) aliases.push("b300 nvlink");
+  if (value.includes("rtx6000") || value.includes("rtx-6000")) {
+    aliases.push("rtx pro 6000", "rtx 6000");
+  }
   if (value.includes("l40s")) aliases.push("l40s pcie");
   return aliases;
 }
@@ -542,6 +571,8 @@ export function estimateNebiusCatalogRateUsdPerHour(opts: {
   instance?: NebiusCatalogInstanceType | null;
   disk_type?: string | null;
   disk_gb?: number | null;
+  shared_disk_type?: string | null;
+  shared_disk_gb?: number | null;
   storage_mode?: string | null;
 }): number | undefined {
   return estimateNebiusCatalogRateBreakdown(opts)?.total_usd_per_hour;
@@ -554,6 +585,8 @@ export function estimateNebiusCatalogRateBreakdown(opts: {
   instance?: NebiusCatalogInstanceType | null;
   disk_type?: string | null;
   disk_gb?: number | null;
+  shared_disk_type?: string | null;
+  shared_disk_gb?: number | null;
   storage_mode?: string | null;
 }): HostPriceBreakdown | undefined {
   const region = `${opts.region ?? ""}`.trim();
@@ -565,31 +598,46 @@ export function estimateNebiusCatalogRateBreakdown(opts: {
     pricing_model: opts.pricing_model,
     instance,
   });
+  const gpuCount = Number(instance.gpus ?? 0);
+  const hasGpu = gpuCount > 0;
+  const hasUnifiedGpuRate =
+    hasGpu &&
+    isFinitePositiveNumber(family?.gpuRate) &&
+    (!isFinitePositiveNumber(family?.cpuRate) ||
+      !isFinitePositiveNumber(family?.ramRate));
   if (
-    !isFinitePositiveNumber(family?.cpuRate) ||
-    !isFinitePositiveNumber(family?.ramRate)
+    !hasUnifiedGpuRate &&
+    (!isFinitePositiveNumber(family?.cpuRate) ||
+      !isFinitePositiveNumber(family?.ramRate))
   ) {
     return undefined;
   }
-  const items: HostPriceBreakdownItem[] = [
-    {
+  const items: HostPriceBreakdownItem[] = [];
+  if (hasUnifiedGpuRate) {
+    items.push({
+      key: "gpu",
+      label: "GPU instance",
+      usd_per_hour: family!.gpuRate! * gpuCount,
+    });
+  } else {
+    items.push({
       key: "vm",
       label: "VM",
       usd_per_hour:
-        family.cpuRate * Number(instance.vcpus ?? 0) +
-        family.ramRate * Number(instance.memory_gib ?? 0),
-    },
-  ];
-  if ((instance.gpus ?? 0) > 0) {
+        family!.cpuRate! * Number(instance.vcpus ?? 0) +
+        family!.ramRate! * Number(instance.memory_gib ?? 0),
+    });
+  }
+  if (hasGpu && !hasUnifiedGpuRate) {
     if (!isFinitePositiveNumber(family.gpuRate)) return undefined;
     items.push({
       key: "gpu",
       label: "GPU",
-      usd_per_hour: family.gpuRate * Number(instance.gpus ?? 0),
+      usd_per_hour: family.gpuRate * gpuCount,
     });
   }
   if (`${opts.storage_mode ?? "persistent"}`.trim() === "persistent") {
-    const diskGb = Number(opts.disk_gb ?? 0);
+    const diskGb = positiveDiskGb(opts.disk_gb);
     const diskProduct = nebiusDiskProductForType(opts.disk_type);
     if (diskGb > 0 && diskProduct) {
       const diskRate = nebiusHourlyUnitRate(
@@ -607,6 +655,24 @@ export function estimateNebiusCatalogRateBreakdown(opts: {
         usd_per_hour: diskRate * diskGb,
       });
     }
+  }
+  const sharedDiskGb = positiveDiskGb(opts.shared_disk_gb);
+  const sharedDiskProduct = nebiusDiskProductForType(opts.shared_disk_type);
+  if (sharedDiskGb > 0 && sharedDiskProduct) {
+    const diskRate = nebiusHourlyUnitRate(
+      opts.prices.find(
+        (item) =>
+          item.region === region &&
+          item.product === sharedDiskProduct &&
+          /gib/i.test(item.unit),
+      ),
+    );
+    if (!isFinitePositiveNumber(diskRate)) return undefined;
+    items.push({
+      key: "shared_scratch_disk",
+      label: "Shared scratch disk",
+      usd_per_hour: diskRate * sharedDiskGb,
+    });
   }
   return {
     items,

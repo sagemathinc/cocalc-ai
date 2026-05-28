@@ -70,4 +70,31 @@ describe("TaskActions.enable_key_handler", () => {
       false,
     );
   });
+
+  it("does not recursively clear already-empty selected hashtags", () => {
+    const clearAllHashtags = jest.fn();
+    const setFrameData = jest.fn();
+
+    (TaskActions.prototype as any).__update_visible.call({
+      store: {
+        get(key: string) {
+          if (key === "tasks") return fromJS({});
+          return undefined;
+        },
+      },
+      getFrameData(key: string) {
+        if (key === "local_view_state") {
+          return fromJS({ selected_hashtags: {} });
+        }
+        if (key === "local_task_state") return fromJS({});
+        if (key === "counts") return fromJS({});
+        return undefined;
+      },
+      clear_all_hashtags: clearAllHashtags,
+      setFrameData,
+    });
+
+    expect(clearAllHashtags).not.toHaveBeenCalled();
+    expect(setFrameData).toHaveBeenCalledTimes(1);
+  });
 });

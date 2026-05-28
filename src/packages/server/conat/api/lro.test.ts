@@ -160,6 +160,26 @@ describe("lro host authorization", () => {
     ).rejects.toThrow("not authorized");
   });
 
+  it("allows an operation creator to read their own operation", async () => {
+    getLroMock = jest.fn(async () => ({
+      op_id: "op-created",
+      kind: "copy-path-between-projects",
+      scope_type: "project",
+      scope_id: "viewer-source-project",
+      status: "running",
+      created_by: "creator-1",
+    }));
+    queryMock = jest.fn(async () => {
+      throw new Error("scope access should not be checked for creator reads");
+    });
+
+    const { get } = await import("./lro");
+    await expect(
+      get({ account_id: "creator-1", op_id: "op-created" }),
+    ).resolves.toMatchObject({ op_id: "op-created" });
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
   it("does not let project collaborators cancel host operations", async () => {
     const { cancel } = await import("./lro");
 

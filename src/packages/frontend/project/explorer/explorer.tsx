@@ -13,6 +13,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import {
@@ -34,6 +35,7 @@ import CopyOps from "./copy-ops";
 import MoveOps from "./move-ops";
 import RestoreOps from "./restore-ops";
 import { FileListing } from "./file-listing";
+import type { DirectoryListingEntry } from "./types";
 import { default_ext } from "./file-listing/utils";
 import { MiscSideButtons } from "./misc-side-buttons";
 import { NewButton } from "./new-button";
@@ -141,10 +143,14 @@ export function Explorer() {
   const projectLabelLower = projectLabel.toLowerCase();
   const {
     actions,
+    projectAccess,
     project_id,
     registerUserFilesystemChangeHandler,
     workspaces,
   } = useProjectContext();
+  const readOnlyViewer = projectAccess.role === "viewer";
+  const canWriteProjectFiles = projectAccess.capabilities.writeProjectFiles;
+  const canUseProjectRuntime = projectAccess.capabilities.useProjectRuntime;
 
   const newFileRef = useRef<any>(null);
   const searchAndTerminalBar = useRef<any>(null);
@@ -210,7 +216,7 @@ export function Explorer() {
       DEFAULT_ACTIVE_FILE_SORT,
   );
 
-  const fs = useFs({ project_id });
+  const fs = useFs({ project_id, viewer: readOnlyViewer });
   const inBackupsPath = isBackupsPath(effective_current_path);
   const inSnapshotsPath = isSnapshotsPath(effective_current_path);
   const homePath =
@@ -272,10 +278,13 @@ export function Explorer() {
       refreshBackups();
     }
   }, [backupOps, refreshBackups]);
-  if (inBackupsPath) {
+  if (inBackupsPath && !readOnlyViewer) {
     listing = backupsListing;
     listingError = backupsError;
     refresh = refreshBackups;
+  } else if (inBackupsPath && readOnlyViewer) {
+    listing = null;
+    listingError = new Error("Viewers cannot browse project backups.");
   }
   const showHidden = useTypedRedux({ project_id }, "show_hidden");
   const flyout = useTypedRedux({ project_id }, "flyout");
@@ -356,6 +365,7 @@ export function Explorer() {
     });
   }, [allowListingUpdatesFor, refreshBackups]);
   const showDirectoryTreeAvailable =
+    !readOnlyViewer &&
     !IS_MOBILE &&
     !inBackupsPath &&
     !inSnapshotsPath &&
@@ -532,6 +542,13 @@ export function Explorer() {
   }
 
   const create_file = (ext, switch_over) => {
+    if (!canWriteProjectFiles) {
+      actions.setState({
+        file_creation_error:
+          "Viewer access is read-only; you cannot create files in this project.",
+      });
+      return;
+    }
     if (switch_over == undefined) {
       switch_over = true;
     }
@@ -556,6 +573,13 @@ export function Explorer() {
   };
 
   const create_folder = (switch_over = true): void => {
+    if (!canWriteProjectFiles) {
+      actions.setState({
+        file_creation_error:
+          "Viewer access is read-only; you cannot create folders in this project.",
+      });
+      return;
+    }
     actions.createFolder({
       name: file_search ?? "",
       current_path: effective_current_path,
@@ -665,12 +689,14 @@ You can either wait for this host to become available again, or move this ${proj
           <Button size="large" style={{ margin: "auto" }} onClick={refresh}>
             <Icon name="refresh" /> Wait / Refresh
           </Button>
-          <MoveProject
-            project_id={project_id}
-            size="large"
-            label="Move Project"
-            showHostName={false}
-          />
+          {canUseProjectRuntime && (
+            <MoveProject
+              project_id={project_id}
+              size="large"
+              label="Move Project"
+              showHostName={false}
+            />
+          )}
         </Space.Compact>
       </div>
     );
@@ -709,10 +735,16 @@ You can either wait for this host to become available again, or move this ${proj
             on_clear={() => actions.clear_all_activity()}
             style={{ top: "100px" }}
           />
-          <BackupOps project_id={project_id} />
-          <RestoreOps project_id={project_id} />
-          <MoveOps project_id={project_id} />
-          <CopyOps project_id={project_id} />
+          {canWriteProjectFiles && (
+            <>
+              <BackupOps project_id={project_id} />
+              <RestoreOps project_id={project_id} />
+              <MoveOps project_id={project_id} />
+            </>
+          )}
+          {(canWriteProjectFiles || readOnlyViewer) && (
+            <CopyOps project_id={project_id} />
+          )}
           <div
             style={{
               display: "flex",
@@ -750,7 +782,7 @@ You can either wait for this host to become available again, or move this ${proj
                 </div>
               </div>
             </div>
-            {!IS_MOBILE && (
+            {!IS_MOBILE && canWriteProjectFiles && (
               <div
                 style={{
                   flex: "0 1 auto",
@@ -782,6 +814,7 @@ You can either wait for this host to become available again, or move this ${proj
                   create_file={create_file}
                   create_folder={create_folder}
                   onTerminalCommand={() => allowListingUpdatesFor()}
+                  readOnly={readOnlyViewer}
                 />
               </div>
             )}
@@ -941,6 +974,8 @@ You can either wait for this host to become available again, or move this ${proj
                       onRefreshListing={flushListingUpdates}
                       autoUpdateListing={autoUpdateListing}
                       onToggleAutoUpdate={handleAutoUpdateListingChange}
+                      readOnly={readOnlyViewer}
+                      allowCopyOut={readOnlyViewer}
                     />
                   )}
                 </div>
@@ -955,12 +990,13 @@ You can either wait for this host to become available again, or move this ${proj
                   <MiscSideButtons
                     refreshSnapshots={refreshSnapshotsAfterUserAction}
                     refreshBackups={refreshBackupsAfterUserAction}
+                    readOnly={readOnlyViewer}
                   />
                 </div>
               </div>
             </div>
 
-            {shouldShowStartProjectWarning && (
+            {shouldShowStartProjectWarning && canUseProjectRuntime && (
               <Alert
                 type="info"
                 showIcon
@@ -990,7 +1026,7 @@ You can either wait for this host to become available again, or move this ${proj
               />
             )}
 
-            {shouldShowArchivedProjectWarning && (
+            {shouldShowArchivedProjectWarning && canUseProjectRuntime && (
               <Alert
                 type="info"
                 showIcon
@@ -1021,7 +1057,7 @@ You can either wait for this host to become available again, or move this ${proj
               />
             )}
 
-            {shouldShowNewProjectWarning && (
+            {shouldShowNewProjectWarning && canUseProjectRuntime && (
               <Alert
                 type="info"
                 showIcon
@@ -1071,7 +1107,7 @@ You can either wait for this host to become available again, or move this ${proj
                     >
                       <Icon name="refresh" /> Refresh
                     </Button>
-                    {listingError.code == "ENOENT" && (
+                    {listingError.code == "ENOENT" && canWriteProjectFiles && (
                       <Button
                         size="large"
                         style={{ margin: "auto" }}
@@ -1096,56 +1132,39 @@ You can either wait for this host to become available again, or move this ${proj
 
             {!listingError && (
               <>
-                <FileUploadWrapper
+                <MaybeFileUploadWrapper
+                  enabled={canWriteProjectFiles}
                   project_id={project_id}
                   dest_path={effective_current_path}
-                  config={{ clickable: ".upload-button" }}
-                  event_handlers={{
-                    sending: () =>
-                      refreshListingAfterUserAction({
-                        allowUpdatesFor: allowListingUpdatesFor,
-                        refresh,
-                      }),
-                    complete: () =>
-                      refreshListingAfterUserAction({
-                        allowUpdatesFor: allowListingUpdatesFor,
-                        refresh,
-                      }),
-                  }}
-                  style={{
-                    flex: "1 1 auto",
-                    minWidth: 0,
-                    display: "flex",
-                    flexDirection: "column",
-                  }}
-                  className="smc-vfill"
+                  onUploadActivity={() =>
+                    refreshListingAfterUserAction({
+                      allowUpdatesFor: allowListingUpdatesFor,
+                      refresh,
+                    })
+                  }
                 >
-                  {visibleListing == null ? (
-                    <div style={{ textAlign: "center" }}>
-                      <Loading delay={1000} theme="medium" />
-                    </div>
-                  ) : (
-                    <FileListing
-                      active_file_sort={active_file_sort}
-                      sort_by={(column_name: string) => {
-                        allowNextListingUpdate();
-                        void setSort({
-                          project_id,
-                          path: effective_current_path,
-                          column_name,
-                        });
-                      }}
-                      listing={visibleListing}
-                      file_search={file_search}
-                      checked_files={checked_files}
-                      current_path={effective_current_path}
-                      actions={actions}
-                      project_id={project_id}
-                      shiftIsDown={shiftIsDown}
-                      onNavigateDirectory={navigateExplorer}
-                    />
-                  )}
-                </FileUploadWrapper>
+                  <FileListingBody
+                    visibleListing={visibleListing}
+                    active_file_sort={active_file_sort}
+                    sort_by={(column_name: string) => {
+                      allowNextListingUpdate();
+                      void setSort({
+                        project_id,
+                        path: effective_current_path,
+                        column_name,
+                      });
+                    }}
+                    file_search={file_search}
+                    checked_files={checked_files}
+                    current_path={effective_current_path}
+                    actions={actions}
+                    project_id={project_id}
+                    shiftIsDown={shiftIsDown}
+                    onNavigateDirectory={navigateExplorer}
+                    readOnly={readOnlyViewer}
+                    allowReadOnlyCopy={readOnlyViewer}
+                  />
+                </MaybeFileUploadWrapper>
               </>
             )}
           </div>
@@ -1160,5 +1179,100 @@ You can either wait for this host to become available again, or move this ${proj
         />
       </div>
     </FileDndProvider>
+  );
+}
+
+function MaybeFileUploadWrapper({
+  children,
+  dest_path,
+  enabled,
+  onUploadActivity,
+  project_id,
+}: {
+  children: ReactNode;
+  dest_path: string;
+  enabled: boolean;
+  onUploadActivity: () => void;
+  project_id: string;
+}) {
+  const style = {
+    flex: "1 1 auto",
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+  } as const;
+  if (!enabled) {
+    return (
+      <div className="smc-vfill" style={style}>
+        {children}
+      </div>
+    );
+  }
+  return (
+    <FileUploadWrapper
+      project_id={project_id}
+      dest_path={dest_path}
+      config={{ clickable: ".upload-button" }}
+      event_handlers={{
+        sending: onUploadActivity,
+        complete: onUploadActivity,
+      }}
+      style={style}
+      className="smc-vfill"
+    >
+      {children}
+    </FileUploadWrapper>
+  );
+}
+
+function FileListingBody({
+  visibleListing,
+  active_file_sort,
+  sort_by,
+  file_search,
+  checked_files,
+  current_path,
+  actions,
+  project_id,
+  shiftIsDown,
+  onNavigateDirectory,
+  readOnly,
+  allowReadOnlyCopy,
+}: {
+  visibleListing: DirectoryListingEntry[] | null | undefined;
+  active_file_sort: { column_name: string; is_descending: boolean };
+  sort_by: (column_name: string) => void;
+  file_search: string;
+  checked_files: any;
+  current_path: string;
+  actions: any;
+  project_id: string;
+  shiftIsDown: boolean;
+  onNavigateDirectory: (path: string) => void;
+  readOnly: boolean;
+  allowReadOnlyCopy: boolean;
+}) {
+  if (visibleListing == null) {
+    return (
+      <div style={{ textAlign: "center" }}>
+        <Loading delay={1000} theme="medium" />
+      </div>
+    );
+  }
+  return (
+    <FileListing
+      active_file_sort={active_file_sort}
+      sort_by={sort_by}
+      listing={visibleListing}
+      file_search={file_search}
+      checked_files={checked_files}
+      current_path={current_path}
+      actions={actions}
+      project_id={project_id}
+      shiftIsDown={shiftIsDown}
+      onNavigateDirectory={onNavigateDirectory}
+      readOnly={readOnly}
+      allowReadOnlyCopy={allowReadOnlyCopy}
+    />
   );
 }

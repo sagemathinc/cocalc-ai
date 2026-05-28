@@ -10,6 +10,7 @@ const mockSetOtherSettings = jest.fn();
 let mockAccountStoreReady = true;
 let mockLite = true;
 let mockPageState: Record<string, any> = {};
+let mockProjectAccessRole: "owner" | "collaborator" | "viewer" = "collaborator";
 
 const mockPageStore = {
   get: (key: string) => mockPageState[key],
@@ -129,6 +130,12 @@ jest.mock("@cocalc/frontend/project/context", () => ({
     },
     project_id: "project-1",
     active_project_tab: "files",
+    projectAccess: {
+      role: mockProjectAccessRole,
+      capabilities: {
+        useProjectRuntime: mockProjectAccessRole !== "viewer",
+      },
+    },
     workspaces: { current: null },
   }),
 }));
@@ -194,6 +201,7 @@ describe("VerticalFixedTabs overflow actions", () => {
     mockAccountStoreReady = true;
     mockLite = true;
     mockPageState = {};
+    mockProjectAccessRole = "collaborator";
     window.localStorage.clear();
     (global as any).ResizeObserver = class {
       observe() {}
@@ -230,6 +238,18 @@ describe("VerticalFixedTabs overflow actions", () => {
     expect(screen.queryByTestId("menu-overflow:log")).toBeNull();
     expect(screen.queryByTestId("account-settings-button")).toBeNull();
   });
+
+  it("hides runtime, log, and process tabs from viewers", () => {
+    mockProjectAccessRole = "viewer";
+
+    render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
+
+    expect(screen.getByTestId("rail-files")).toBeTruthy();
+    expect(screen.queryByTestId("rail-info")).toBeNull();
+    expect(screen.queryByTestId("menu-overflow:log")).toBeNull();
+    expect(screen.queryByTestId("menu-overflow:info")).toBeNull();
+    expect(screen.queryByTestId("menu-overflow:servers")).toBeNull();
+  });
 });
 
 describe("ProjectTabs settings affordance", () => {
@@ -257,6 +277,7 @@ describe("HiddenActivityBarLauncher", () => {
     mockSetOtherSettings.mockReset();
     mockAccountStoreReady = true;
     mockPageState = {};
+    mockProjectAccessRole = "collaborator";
   });
 
   it("opens a flyout from the hidden launcher on ordinary click", () => {
@@ -293,6 +314,16 @@ describe("HiddenActivityBarLauncher", () => {
     fireEvent.click(screen.getByTestId("menu-overflow:toggle-activity-bar"));
 
     expect(getActivityBarCollapsed()).toBe(true);
+  });
+
+  it("hides log and process tabs from viewer hidden-launcher menus", () => {
+    mockProjectAccessRole = "viewer";
+
+    render(<HiddenActivityBarLauncher />);
+
+    expect(screen.queryByTestId("menu-launcher:log")).toBeNull();
+    expect(screen.queryByTestId("menu-launcher:info")).toBeNull();
+    expect(screen.queryByTestId("menu-launcher:servers")).toBeNull();
   });
 });
 

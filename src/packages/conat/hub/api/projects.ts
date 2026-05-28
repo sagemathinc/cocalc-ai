@@ -18,6 +18,10 @@ import {
 } from "@cocalc/conat/files/file-server";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
 import type {
+  ProjectUserRole,
+  ProjectViewerReadPolicy,
+} from "@cocalc/util/project-access";
+import type {
   ExecuteCodeOptions,
   ExecuteCodeOutput,
 } from "@cocalc/util/types/execute-code";
@@ -302,6 +306,8 @@ export interface ProjectCollabInviteRow {
   resend_count?: number | null;
   scope?: string | null;
   context?: Record<string, unknown> | null;
+  invite_role?: Exclude<ProjectUserRole, "owner"> | null;
+  read_policy?: ProjectViewerReadPolicy | null;
   invite_url?: string | null;
   status: ProjectCollabInviteStatus;
   message?: string | null;
@@ -341,7 +347,8 @@ export interface ProjectCollaboratorRow {
   last_name?: string | null;
   email_address?: string | null;
   last_active?: Date | null;
-  group: "owner" | "collaborator";
+  group: ProjectUserRole;
+  read_policy?: ProjectViewerReadPolicy | null;
 }
 
 export interface MyCollaboratorRow {
@@ -543,6 +550,7 @@ export const projects = {
   listCopyRowsByOpId: authFirstRequireAccount,
   cancelPendingCopy: authFirstRequireAccount,
   removeCollaborator: authFirstRequireAccount,
+  setProjectUserRole: authFirstRequireAccount,
   addCollaborator: authFirstRequireAccount,
   createCollabInvite: authFirstRequireAccount,
   listCollabInvites: authFirstRequireAccount,
@@ -814,6 +822,19 @@ export interface Projects {
     };
   }) => Promise<void>;
 
+  setProjectUserRole: ({
+    account_id,
+    opts,
+  }: {
+    account_id?: string;
+    opts: {
+      project_id: string;
+      target_account_id: string;
+      role: Exclude<ProjectUserRole, "owner">;
+      read_policy?: ProjectViewerReadPolicy | null;
+    };
+  }) => Promise<void>;
+
   addCollaborator: ({
     account_id,
     opts,
@@ -893,6 +914,8 @@ export interface Projects {
       email?: string;
       subject?: string;
       message?: string;
+      invite_role?: Exclude<ProjectUserRole, "owner">;
+      read_policy?: ProjectViewerReadPolicy | null;
     };
   }) => Promise<void>;
 
@@ -914,6 +937,8 @@ export interface Projects {
       send_email?: boolean;
       invite_context?: Record<string, unknown>;
       invite_scope?: string;
+      invite_role?: Exclude<ProjectUserRole, "owner">;
+      read_policy?: ProjectViewerReadPolicy | null;
     };
   }) => Promise<{
     invites: ProjectCollabInviteRow[];

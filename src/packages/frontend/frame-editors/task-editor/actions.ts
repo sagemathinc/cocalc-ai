@@ -21,24 +21,99 @@ import { delay } from "awaiting";
 import type { FragmentId } from "@cocalc/frontend/misc/fragment-id";
 import type { Tasks } from "@cocalc/frontend/editors/task-editor/types";
 import { DONE } from "./search";
+import {
+  log_opened_time,
+  mark_open_phase,
+} from "@cocalc/frontend/project/open-file";
+import { from_str } from "@cocalc/sync/editor/db/doc";
 
 interface TaskEditorState extends CodeEditorState {
   tasks?: Tasks;
 }
 
 const FRAME_TYPE = "tasks";
+const FAST_OPEN_TASKS_STATUS = "Loading live collaboration...";
+export const MAX_FAST_OPEN_TASKS_BYTES = 1024 * 1024;
 
 export type Store = BaseStore<TaskEditorState>;
 
 export class Actions extends CodeEditorActions<TaskEditorState> {
+  protected syncDocOptions = {
+    ignoreInitialChanges: true,
+  };
   taskActions: { [frameId: string]: TaskActions } = {};
   auxPath: string;
+  private taskFastOpenToken = 0;
+  private taskFastOpenApplied = false;
+  private taskLiveReady = false;
 
   _init2(): void {
     this.auxPath = aux_file(this.path, "tasks");
     const syncdb = this._syncstring;
     syncdb.on("change", this.syncdbChange);
-    syncdb.once("change", this.ensurePositionsAreUnique);
+    this.startOptimisticTaskFastOpen(syncdb);
+    syncdb.once("ready", () => {
+      this.taskLiveReady = true;
+      this.setTasks(tasksFromSyncdb(syncdb));
+      this.ensurePositionsAreUnique();
+      const hadFastOpen = this.taskFastOpenApplied;
+      this.taskFastOpenApplied = false;
+      if (!hadFastOpen) return;
+      if (this.store?.get("status") === FAST_OPEN_TASKS_STATUS) {
+        this.setState({ status: "" });
+      }
+      this.setState({ rtc_status: "live" });
+      mark_open_phase(this.project_id, this.path, "handoff_done");
+    });
+  }
+
+  private startOptimisticTaskFastOpen(syncdb: any): void {
+    const fs = this._get_project_actions()?.fs?.();
+    if (typeof fs?.readFile !== "function") return;
+    const token = ++this.taskFastOpenToken;
+    void (async () => {
+      try {
+        const raw = await fs.readFile(this.path, "utf8");
+        if (this.isClosed() || token !== this.taskFastOpenToken) return;
+        if (syncdb?.get_state?.() === "ready") return;
+        const rawLength = getRawContentLength(raw);
+        if (rawLength != null && rawLength > MAX_FAST_OPEN_TASKS_BYTES) {
+          return;
+        }
+        const content =
+          typeof raw === "string"
+            ? raw
+            : ((raw as any)?.toString?.("utf8") ?? `${raw ?? ""}`);
+        if (content.length > MAX_FAST_OPEN_TASKS_BYTES) {
+          return;
+        }
+        const tasks = parseTasksPreviewContent(content);
+        if (this.isClosed() || token !== this.taskFastOpenToken) return;
+        if (syncdb?.get_state?.() === "ready") return;
+        this.setTasks(tasks);
+        this.taskFastOpenApplied = true;
+        this.setState({
+          is_loaded: true,
+          read_only: true,
+          status: FAST_OPEN_TASKS_STATUS,
+          rtc_status: "loading",
+        });
+        mark_open_phase(this.project_id, this.path, "optimistic_ready", {
+          bytes: content.length,
+          tasks: tasks.size,
+        });
+        log_opened_time(this.project_id, this.path);
+      } catch {
+        // Fall back to normal syncdb initialization.
+      }
+    })();
+  }
+
+  private setTasks(tasks: Tasks): void {
+    this.store.setState({ tasks });
+    for (const id in this.taskActions) {
+      this.taskActions[id]._update_visible();
+    }
   }
 
   private syncdbChange(changes) {
@@ -46,6 +121,11 @@ export class Actions extends CodeEditorActions<TaskEditorState> {
     const store = this.store;
     if (syncdb == null || store == null) {
       // may happen during close
+      return;
+    }
+    if (this.taskFastOpenApplied && !this.taskLiveReady) {
+      // Ignore pre-ready incremental changes while the optimistic preview is
+      // visible. On ready we atomically replace preview state from syncdb.
       return;
     }
     let tasks = store.get("tasks") ?? Map();
@@ -61,10 +141,7 @@ export class Actions extends CodeEditorActions<TaskEditorState> {
       }
     });
 
-    store.setState({ tasks });
-    for (const id in this.taskActions) {
-      this.taskActions[id]._update_visible();
-    }
+    this.setTasks(tasks);
   }
 
   private ensurePositionsAreUnique() {
@@ -285,4 +362,30 @@ export class Actions extends CodeEditorActions<TaskEditorState> {
     }
     return { data, fragmentKey: "id" };
   };
+}
+
+function getRawContentLength(raw: unknown): number | undefined {
+  if (typeof raw === "string") return raw.length;
+  if (raw != null && typeof (raw as any).byteLength === "number") {
+    return (raw as any).byteLength;
+  }
+  if (raw != null && typeof (raw as any).length === "number") {
+    return (raw as any).length;
+  }
+  return undefined;
+}
+
+export function parseTasksPreviewContent(content: string): Tasks {
+  const doc = from_str(content, ["task_id"], ["desc"]);
+  return tasksFromSyncdb(doc);
+}
+
+function tasksFromSyncdb(syncdb): Tasks {
+  let tasks: Tasks = Map();
+  syncdb.get().forEach((task) => {
+    const task_id = task.get("task_id");
+    if (task_id == null) return;
+    tasks = tasks.set(task_id, task as any);
+  });
+  return tasks;
 }

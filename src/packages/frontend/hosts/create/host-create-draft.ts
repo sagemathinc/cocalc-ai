@@ -58,6 +58,8 @@ export type HostCreateDraft = {
   disk_gb?: number;
   disk?: number;
   disk_type?: string;
+  shared_disk_gb?: number;
+  shared_disk_type?: string;
   region?: string;
   zone?: string;
   machine_type?: string;
@@ -94,7 +96,8 @@ export type NormalizedHostCreateDraft = {
 const DEFAULT_NAME = "My host";
 const DEFAULT_DISK_GB = 100;
 const MIN_DISK_GB = MIN_PROJECT_HOST_DISK_GB;
-const NEBIUS_IO_M3_INCREMENT_GB = 93;
+const NEBIUS_DISK_INCREMENT_GB = 93;
+const GCP_SHARED_SCRATCH_MIN_GB = 10;
 
 const MANAGED_PROVIDERS = new Set<HostProvider>([
   "gcp",
@@ -132,12 +135,28 @@ const readPositiveInteger = (value: unknown): number | undefined => {
 const defaultDiskTypeForProvider = (provider: HostProvider) =>
   provider === "nebius" ? "ssd_io_m3" : getDiskTypeOptions(provider)[0]?.value;
 
+const defaultSharedDiskTypeForProvider = (provider: HostProvider) =>
+  provider === "nebius" ? "ssd" : provider === "gcp" ? "balanced" : undefined;
+
 const normalizeDiskSize = (provider: HostProvider, diskGb: unknown) => {
   const parsed = readPositiveInteger(diskGb) ?? DEFAULT_DISK_GB;
   const size = Math.max(MIN_DISK_GB, parsed);
   if (provider === "nebius") {
     return (
-      Math.ceil(size / NEBIUS_IO_M3_INCREMENT_GB) * NEBIUS_IO_M3_INCREMENT_GB
+      Math.ceil(size / NEBIUS_DISK_INCREMENT_GB) * NEBIUS_DISK_INCREMENT_GB
+    );
+  }
+  return size;
+};
+
+const normalizeSharedDiskSize = (provider: HostProvider, diskGb: unknown) => {
+  const parsed = readPositiveInteger(diskGb);
+  if (parsed == null) return undefined;
+  const min = provider === "gcp" ? GCP_SHARED_SCRATCH_MIN_GB : 1;
+  const size = Math.max(min, parsed);
+  if (provider === "nebius") {
+    return (
+      Math.ceil(size / NEBIUS_DISK_INCREMENT_GB) * NEBIUS_DISK_INCREMENT_GB
     );
   }
   return size;
@@ -238,6 +257,8 @@ export function buildSimilarDraft(
       ram_gb: readPositiveInteger(host.machine?.metadata?.ram_gb),
       disk_gb: disk,
       disk,
+      shared_disk_gb: readPositiveInteger(host.machine?.shared_disk_gb),
+      shared_disk_type: host.machine?.shared_disk_type ?? undefined,
       region: host.region ?? undefined,
       zone: host.machine?.zone ?? undefined,
       machine_type: host.machine?.machine_type ?? undefined,
@@ -295,6 +316,8 @@ export function normalizeDraft(
     disk_gb: readPositiveInteger(input.disk_gb ?? input.disk),
     disk: readPositiveInteger(input.disk ?? input.disk_gb),
     disk_type: input.disk_type,
+    shared_disk_gb: readPositiveInteger(input.shared_disk_gb),
+    shared_disk_type: input.shared_disk_type,
     region: input.region,
     zone: input.zone,
     machine_type: input.machine_type,
@@ -363,6 +386,20 @@ export function normalizeDraft(
     }
   }
 
+  if (provider !== "nebius" && provider !== "gcp") {
+    draft.shared_disk_gb = undefined;
+    draft.shared_disk_type = undefined;
+  }
+
+  const sharedDiskType = draft.shared_disk_gb
+    ? (draft.shared_disk_type ?? defaultSharedDiskTypeForProvider(provider))
+    : undefined;
+  draft.shared_disk_type = sharedDiskType;
+  draft.shared_disk_gb = normalizeSharedDiskSize(
+    provider,
+    draft.shared_disk_gb,
+  );
+
   if (provider === "nebius") {
     const spotSupported = isNebiusSpotSupported(
       fieldOptions.machine_type,
@@ -405,7 +442,9 @@ const optionLooksGpu = (option: HostFieldOption) => {
     (typeof meta.gpus === "number" && meta.gpus > 0) ||
     (typeof meta.gpu_count === "number" && meta.gpu_count > 0) ||
     (typeof meta.gpu === "string" && meta.gpu !== "none") ||
-    /gpu|nvidia|a10|a40|a100|h100|l4/i.test(`${option.value} ${option.label}`)
+    /gpu|nvidia|rtx|a10|a40|a100|h100|h200|b200|b300|l4/i.test(
+      `${option.value} ${option.label}`,
+    )
   );
 };
 
@@ -526,7 +565,6 @@ const selectFirstByPredicate = (
 ) => availableOptionsWithAtLeast16GiBRam(options).find(predicate)?.value;
 
 const NEBIUS_HPC_MACHINE_TYPE = "128vcpu-512gb";
-const NEBIUS_GPU_MACHINE_TYPE = "1gpu-16vcpu-200gb";
 
 const selectExactOption = (
   options: HostFieldOption[] | undefined,
@@ -535,6 +573,24 @@ const selectExactOption = (
   options?.find(
     (option) => optionIsAvailable(option) && option.value === value,
   );
+
+const selectNebiusCpuMachineType = (options: HostFieldOption[] | undefined) =>
+  selectExactOption(options, NEBIUS_HPC_MACHINE_TYPE)?.value ??
+  availableOptionsWithAtLeast16GiBRam(options).find(
+    (option) => !optionLooksGpu(option),
+  )?.value;
+
+const selectNebiusGpuMachineType = (
+  options: HostFieldOption[] | undefined,
+  opts?: { requireSpot?: boolean },
+) =>
+  availableOptionsWithAtLeast16GiBRam(options)
+    .filter(optionLooksGpu)
+    .filter(
+      (option) =>
+        !opts?.requireSpot || isNebiusSpotSupported(options, option.value),
+    )
+    .sort(compareHostOptionsByPrice)[0]?.value;
 
 const setPrimaryComputeOption = (
   draft: HostCreateDraft,
@@ -604,10 +660,14 @@ const setPrimaryComputeOption = (
   }
   const field = draft.provider === "hyperstack" ? "size" : "machine_type";
   if (draft.provider === "nebius") {
+    const nebiusOptions =
+      getFieldOptions("nebius", draft, context).machine_type ?? options[field];
     const selected =
       mode === "cpu"
-        ? selectExactOption(options[field], NEBIUS_HPC_MACHINE_TYPE)?.value
-        : selectExactOption(options[field], NEBIUS_GPU_MACHINE_TYPE)?.value;
+        ? selectNebiusCpuMachineType(nebiusOptions)
+        : selectNebiusGpuMachineType(nebiusOptions, {
+            requireSpot: draft.pricing_model === "spot",
+          });
     if (selected) draft[field] = selected;
     return;
   }
@@ -660,23 +720,18 @@ export function getAvailablePresets(
           (option) => option.value !== "none",
         )
       : draft.provider === "nebius"
-        ? !!selectExactOption(
-            fieldOptions.machine_type,
-            NEBIUS_GPU_MACHINE_TYPE,
-          )
+        ? !!selectNebiusGpuMachineType(fieldOptions.machine_type)
         : !!selectFirstByPredicate(
             fieldOptions[
               draft.provider === "hyperstack" ? "size" : "machine_type"
             ],
             optionLooksGpu,
           );
-  const nebiusSpotOption = selectExactOption(
+  const nebiusSpotOption = selectNebiusGpuMachineType(
     fieldOptions.machine_type,
-    NEBIUS_GPU_MACHINE_TYPE,
+    { requireSpot: true },
   );
-  const spotSupported =
-    draft.provider !== "nebius" ||
-    isNebiusSpotSupported(fieldOptions.machine_type, nebiusSpotOption?.value);
+  const spotSupported = draft.provider !== "nebius" || nebiusSpotOption != null;
   const presets: HostCreatePreset[] = [
     {
       id: "balanced-cpu",
@@ -689,9 +744,7 @@ export function getAvailablePresets(
     {
       id: "low-cost-spot",
       label:
-        draft.provider === "nebius"
-          ? "Low cost Spot H200 GPU"
-          : "Low-cost spot",
+        draft.provider === "nebius" ? "Low cost Spot GPU" : "Low-cost spot",
       description:
         draft.provider === "nebius"
           ? "Use interruptible GPU capacity with automatic restore."
@@ -705,8 +758,7 @@ export function getAvailablePresets(
     },
     {
       id: "gpu-workstation",
-      label:
-        draft.provider === "nebius" ? "Standard H200 GPU" : "GPU workstation",
+      label: draft.provider === "nebius" ? "Standard GPU" : "GPU workstation",
       description:
         draft.provider === "nebius"
           ? "Use an on-demand GPU host."
@@ -744,6 +796,7 @@ export function buildSubmitDraft(
 ): HostCreateDraft {
   const formDisk = readPositiveInteger(formValues.disk);
   const formDiskGb = readPositiveInteger(formValues.disk_gb);
+  const formSharedDiskGb = readPositiveInteger(formValues.shared_disk_gb);
   return normalizeDraft(
     {
       ...formValues,
@@ -757,6 +810,9 @@ export function buildSubmitDraft(
           : canonicalDraft.name,
       disk: formDisk ?? canonicalDraft.disk,
       disk_gb: formDiskGb ?? canonicalDraft.disk_gb,
+      shared_disk_gb: formSharedDiskGb ?? canonicalDraft.shared_disk_gb,
+      shared_disk_type:
+        formValues.shared_disk_type ?? canonicalDraft.shared_disk_type,
     },
     context,
   ).draft;

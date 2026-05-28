@@ -9,6 +9,10 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   ...jest.requireActual("@cocalc/frontend/app-framework"),
   useTypedRedux: jest.fn(() => ({ mode: "allow_all" })),
 }));
+jest.mock("@cocalc/frontend/customize", () => ({
+  PolicyPrivacyPageUrl: "/policies/privacy",
+  PolicyTOSPageUrl: "/policies/terms",
+}));
 jest.mock("@cocalc/frontend/client/api", () => jest.fn());
 jest.mock("./api", () => ({
   postAuthApi: jest.fn(),

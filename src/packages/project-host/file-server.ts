@@ -85,8 +85,11 @@ import {
 } from "@cocalc/util/project-runtime";
 import {
   fsServer,
+  fsReadOnlyServer,
   DEFAULT_FILE_SERVICE,
+  VIEWER_FILE_SERVICE,
   fsSubject,
+  parseViewerFsSubject,
 } from "@cocalc/conat/files/fs";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import cpExec from "@cocalc/backend/sandbox/cp";
@@ -132,6 +135,11 @@ import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
 import { resetClonedProjectState } from "./clone-state";
 import { withBackupParallelLimit } from "./backup-queue";
 export { getBackupExecutionStatus } from "./backup-queue";
+import {
+  isProjectViewerRole,
+  type ProjectViewerReadPolicy,
+} from "@cocalc/util/project-access";
+import { createViewerReadOnlyFilesystem } from "./viewer-read-only-filesystem";
 import {
   projectRuntimeRootfsContractLabelsForCurrentHost,
   readCurrentProjectRuntimeUsernsMapFingerprint,
@@ -337,6 +345,38 @@ function projectIdFromSubject(subject: string): string {
     throw Error("not a valid project id");
   }
   return project_id;
+}
+
+function viewerSubjectFromSubject(subject: string): {
+  project_id: string;
+  account_id: string;
+} {
+  const parsed = parseViewerFsSubject(subject);
+  if (!parsed) {
+    throw Error("invalid viewer fs subject");
+  }
+  return parsed;
+}
+
+function getViewerReadPolicy({
+  project_id,
+  account_id,
+}: {
+  project_id: string;
+  account_id: string;
+}): ProjectViewerReadPolicy {
+  const row = getProject(project_id);
+  const userEntry = row?.users?.[account_id];
+  const group = typeof userEntry === "string" ? userEntry : userEntry?.group;
+  if (!isProjectViewerRole(group)) {
+    throw new Error("account is not a viewer on this project");
+  }
+  const readPolicy =
+    typeof userEntry === "string" ? undefined : userEntry?.read_policy;
+  if (!readPolicy || !Array.isArray(readPolicy.rules)) {
+    throw new Error("viewer read policy is not configured");
+  }
+  return readPolicy;
 }
 
 function snapshotRestoreRoot(): string {
@@ -3759,11 +3799,45 @@ export async function initFsServer({
   });
 }
 
-function invalidateProjectFsServer(project_id: string): void {
-  servers?.file?.invalidateSubject?.(fsSubject({ project_id }));
+export async function initViewerFsServer({
+  client,
+  service = VIEWER_FILE_SERVICE,
+}: {
+  client: ConatClient;
+  service?: string;
+}) {
+  logger.debug("initViewerFsServer");
+  return await fsReadOnlyServer({
+    service,
+    client,
+    fs: async (subject?: string) => {
+      if (!subject) {
+        throw Error("fsReadOnlyServer requires subject");
+      }
+      const { project_id, account_id } = viewerSubjectFromSubject(subject);
+      const { path } = await getVolume(project_id);
+      const projectFs = createProjectSandboxFilesystem({
+        project_id,
+        home: path,
+        rootfs: getRootfsMountpoint(project_id),
+        scratch: getScratchMountpoint(project_id),
+        deleteSnapshot: async (name: string) =>
+          await deleteSnapshot({ project_id, name }),
+      });
+      return createViewerReadOnlyFilesystem({
+        fs: projectFs,
+        readPolicy: getViewerReadPolicy({ project_id, account_id }),
+      });
+    },
+  });
 }
 
-let servers: null | { ssh: any; file: any } = null;
+function invalidateProjectFsServer(project_id: string): void {
+  servers?.file?.invalidateSubject?.(fsSubject({ project_id }));
+  servers?.viewerFile?.invalidateAll?.();
+}
+
+let servers: null | { ssh: any; file: any; viewerFile: any } = null;
 
 export async function initFileServer({
   client,
@@ -3856,6 +3930,7 @@ export async function initFileServer({
     publishRootfsImage: reuseInFlight(publishRootfsImage),
     uploadRootfsReleaseArtifact: reuseInFlight(uploadRootfsReleaseArtifact),
   });
+  const viewerFile = await initViewerFsServer({ client });
   logger.debug("initFileServer: fs successfully initialized");
 
   // Expose fast in-host file I/O for ACP/container executor when running
@@ -4071,7 +4146,7 @@ export async function initFileServer({
 
   logger.debug("initFileServer: success");
 
-  servers = { file, ssh };
+  servers = { file, ssh, viewerFile };
   return servers;
 }
 
@@ -4110,9 +4185,10 @@ export function closeFileServer() {
   if (servers == null) {
     return;
   }
-  const { file, ssh } = servers;
+  const { file, ssh, viewerFile } = servers;
   servers = null;
   file.close();
+  viewerFile.close();
   void ssh.close?.();
 }
 

@@ -920,11 +920,15 @@ export async function addSiteLicensePool({
 
 export async function setSiteLicenseManager({
   account_id,
+  browser_id,
+  session_hash,
   site_license_id,
   target_account_id,
   role,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
   site_license_id?: string;
   target_account_id?: string;
   role?: SiteLicenseManagerRole;
@@ -933,6 +937,12 @@ export async function setSiteLicenseManager({
   const siteLicenseId = `${site_license_id ?? ""}`.trim();
   const targetAccountId = `${target_account_id ?? ""}`.trim();
   const normalizedRole = `${role ?? ""}`.trim() as SiteLicenseManagerRole;
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
   const opts = {
     actor_account_id: actorId,
     site_license_id: siteLicenseId,
@@ -947,14 +957,24 @@ export async function setSiteLicenseManager({
 
 export async function removeSiteLicenseManager({
   account_id,
+  browser_id,
+  session_hash,
   site_license_id,
   target_account_id,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
   site_license_id?: string;
   target_account_id?: string;
 } = {}): Promise<SiteLicenseOverview> {
   const actorId = requireAccount(account_id);
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
   const opts = {
     actor_account_id: actorId,
     site_license_id: `${site_license_id ?? ""}`.trim(),
@@ -1022,17 +1042,27 @@ export async function requestSiteLicensePool({
 
 export async function reviewSiteLicensePoolRequest({
   account_id,
+  browser_id,
+  session_hash,
   request_id,
   action,
   review_note,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
   owner_account_id?: string;
   request_id?: string;
   action?: "approve" | "reject";
   review_note?: string | null;
 } = {}): Promise<SiteLicensePoolRequest> {
   const actorId = requireAccount(account_id);
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
   if (!isSeedBay()) {
     return await getSeedSiteLicenseClient().reviewSiteLicensePoolRequest({
       actor_account_id: actorId,

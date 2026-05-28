@@ -73,7 +73,7 @@ export function create_key_handler(actions): (any) => void {
     } else if (evt.which === 40 || evt.which === 74) {
       // down
       if (mod) {
-        if (is_sortable(actions)) {
+        if (!read_only && is_sortable(actions)) {
           actions.move_task_delta(1);
         }
       } else {
@@ -83,7 +83,7 @@ export function create_key_handler(actions): (any) => void {
     } else if (evt.which === 38 || evt.which === 75) {
       // up
       if (mod) {
-        if (is_sortable(actions)) {
+        if (!read_only && is_sortable(actions)) {
           actions.move_task_delta(-1);
         }
       } else {

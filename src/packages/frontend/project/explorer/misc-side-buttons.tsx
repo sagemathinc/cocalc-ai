@@ -40,9 +40,11 @@ const OPEN_MSG = defineMessage({
 export function MiscSideButtons({
   refreshSnapshots,
   refreshBackups,
+  readOnly = false,
 }: {
   refreshSnapshots?: () => void;
   refreshBackups?: () => void;
+  readOnly?: boolean;
 }) {
   const { actions, project_id } = useProjectContext();
   const show_hidden = useTypedRedux({ project_id }, "show_hidden");
@@ -219,6 +221,9 @@ export function MiscSideButtons({
     if (student_project_functionality.disableUploads) {
       return <span />;
     }
+    if (readOnly) {
+      return;
+    }
     return (
       <Button
         bsSize="small"
@@ -233,10 +238,10 @@ export function MiscSideButtons({
 
   return (
     <Space style={{ display: "inline-flex" }}>
-      {isSnapshotsPath(effective_current_path) && (
+      {isSnapshotsPath(effective_current_path) && !readOnly && (
         <Snapshots onCreated={refreshSnapshots} />
       )}
-      {isBackupsPath(effective_current_path) && (
+      {isBackupsPath(effective_current_path) && !readOnly && (
         <Backups onCreated={refreshBackups} />
       )}
       {SHOW_APPS && (
@@ -248,8 +253,8 @@ export function MiscSideButtons({
       <Space.Compact>{render_upload_button()}</Space.Compact>
       <Space.Compact>
         {render_hidden_toggle()}
-        {!lite && render_recovery()}
-        {!lite && <CloneProject project_id={project_id} />}
+        {!lite && !readOnly && render_recovery()}
+        {!lite && !readOnly && <CloneProject project_id={project_id} />}
         {!lite && <TourButton project_id={project_id} />}
       </Space.Compact>
     </Space>

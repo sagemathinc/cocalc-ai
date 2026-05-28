@@ -54,6 +54,30 @@ describe("buildHostSpec", () => {
     expect(spec.metadata.boot_disk_gb).toBe(25);
   });
 
+  it("passes runtime shared scratch disk identity into recreate specs", async () => {
+    const spec = await buildHostSpec({
+      id: "832da43c-d18e-406d-8e1d-c28973378b24",
+      region: "eu-north1",
+      metadata: {
+        runtime: {
+          metadata: {
+            shared_disk_id: "scratch-disk-id",
+            shared_disk_name: "host-scratch",
+          },
+        },
+        machine: {
+          cloud: "gcp",
+          shared_disk_gb: 500,
+          shared_disk_type: "balanced",
+          metadata: {},
+        },
+      },
+    });
+
+    expect(spec.metadata.shared_disk_id).toBe("scratch-disk-id");
+    expect(spec.metadata.shared_disk_name).toBe("host-scratch");
+  });
+
   it("rejects Nebius spot hosts on platforms that disallow preemptibles", async () => {
     loadNebiusInstanceTypesMock.mockResolvedValue([
       {

@@ -499,9 +499,14 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "project SSH trust mutation",
   },
-  "projects.start": {
+  "projects.setProjectUserRole": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
+  },
+  "projects.start": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "ordinary endpoint authorization is intended; admin/internal-only managed egress overrides are gated in the implementation",
   },
   "projects.stop": {
     decision: "fresh-auth-not-required",
@@ -537,18 +542,20 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
       "user request is gated by verified email/domain and manager approval policy",
   },
   "purchases.removeSiteLicenseManager": {
-    decision: "fresh-auth-not-required",
-    reason:
-      "manager removal is scoped to site-license owners/admins and does not directly change entitlements",
+    decision: "fresh-auth-required",
+    reason: "site-license manager authority mutation",
   },
   "purchases.revokeMembershipPackageSeat": {
     decision: "fresh-auth-required",
     reason: "paid membership seat revocation",
   },
   "purchases.setSiteLicenseManager": {
-    decision: "fresh-auth-not-required",
-    reason:
-      "manager assignment is scoped to site-license owners/admins and does not directly change entitlements",
+    decision: "fresh-auth-required",
+    reason: "site-license manager authority mutation",
+  },
+  "purchases.reviewSiteLicensePoolRequest": {
+    decision: "fresh-auth-required",
+    reason: "site-license pool approval can grant paid membership seats",
   },
   "purchases.updateMembershipPackage": {
     decision: "fresh-auth-required",

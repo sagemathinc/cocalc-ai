@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Card, Popconfirm, Tag } from "antd";
+import { Button, Card, Modal, Popconfirm, Tag } from "antd";
 import React from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { CSS, redux, useRedux } from "@cocalc/frontend/app-framework";
@@ -16,6 +16,14 @@ import { COLORS } from "@cocalc/util/theme";
 import { FIX_BORDER } from "../project/page/common";
 import { User } from "../users";
 import { Avatar } from "../account/avatar/avatar";
+import {
+  ViewerReadPolicyEditor,
+  viewerReadPolicySummary,
+} from "./viewer-read-policy";
+import {
+  DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY,
+  type ProjectViewerReadPolicy,
+} from "@cocalc/util/project-access";
 
 interface Props {
   project: Project;
@@ -34,7 +42,16 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
   const ownerOnly = project.get("manage_users_owner_only") === true;
   const currentGroup = project.getIn(["users", current_account_id, "group"]);
   const currentCanManageCollaborators =
-    !ownerOnly || currentGroup === "owner" || isAdmin;
+    isAdmin ||
+    currentGroup === "owner" ||
+    (currentGroup === "collaborator" && !ownerOnly);
+  const [roleSavingAccountId, setRoleSavingAccountId] = React.useState<
+    string | null
+  >(null);
+  const [viewerRoleDialog, setViewerRoleDialog] = React.useState<{
+    account_id: string;
+    read_policy: ProjectViewerReadPolicy;
+  } | null>(null);
 
   function remove_collaborator(account_id: string) {
     const project_id = project.get("project_id");
@@ -108,6 +125,118 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
     );
   }
 
+  async function set_user_role(
+    account_id: string,
+    role: "collaborator" | "viewer",
+    read_policy?: ProjectViewerReadPolicy | null,
+  ) {
+    setRoleSavingAccountId(account_id);
+    try {
+      await redux
+        .getActions("projects")
+        .set_project_user_role(
+          project.get("project_id"),
+          account_id,
+          role,
+          read_policy,
+        );
+    } finally {
+      setRoleSavingAccountId(null);
+    }
+  }
+
+  function user_role_button(
+    account_id: string,
+    group?: string,
+    read_policy?: ProjectViewerReadPolicy | null,
+  ) {
+    if (!currentCanManageCollaborators || group === "owner") {
+      return null;
+    }
+    if (account_id === current_account_id && !isAdmin) {
+      return null;
+    }
+    const nextRole = group === "viewer" ? "collaborator" : "viewer";
+    const label = nextRole === "viewer" ? "Make viewer" : "Make collaborator";
+    if (nextRole === "viewer") {
+      return (
+        <Button
+          loading={roleSavingAccountId === account_id}
+          size="small"
+          type="text"
+          style={{
+            marginBottom: "0",
+            paddingInline: isFlyout ? 0 : 8,
+          }}
+          onClick={() =>
+            setViewerRoleDialog({
+              account_id,
+              read_policy:
+                read_policy ?? DEFAULT_PROJECT_VIEWER_FULL_READ_POLICY,
+            })
+          }
+        >
+          {label}
+        </Button>
+      );
+    }
+    const title =
+      "Change this viewer back to a full collaborator? They will regain normal project write and runtime access.";
+    return (
+      <Popconfirm
+        title={<div style={{ maxWidth: 360 }}>{title}</div>}
+        onConfirm={() => void set_user_role(account_id, nextRole)}
+        okText={label}
+        cancelText={<CancelText />}
+      >
+        <Button
+          loading={roleSavingAccountId === account_id}
+          size="small"
+          type="text"
+          style={{
+            marginBottom: "0",
+            paddingInline: isFlyout ? 0 : 8,
+          }}
+        >
+          {label}
+        </Button>
+      </Popconfirm>
+    );
+  }
+
+  function render_viewer_role_modal(): React.JSX.Element | undefined {
+    if (viewerRoleDialog == null) {
+      return;
+    }
+    return (
+      <Modal
+        title="Make this user a viewer"
+        open
+        okText="Make viewer"
+        cancelText={<CancelText />}
+        confirmLoading={roleSavingAccountId === viewerRoleDialog.account_id}
+        onCancel={() => setViewerRoleDialog(null)}
+        onOk={() => {
+          const { account_id, read_policy } = viewerRoleDialog;
+          void set_user_role(account_id, "viewer", read_policy).then(() =>
+            setViewerRoleDialog(null),
+          );
+        }}
+      >
+        <p>
+          Viewers can read allowed files, but cannot edit files, run code, use
+          terminals, use SSH, or manage this project.
+        </p>
+        <ViewerReadPolicyEditor
+          value={viewerRoleDialog.read_policy}
+          onChange={(read_policy) =>
+            setViewerRoleDialog({ ...viewerRoleDialog, read_policy })
+          }
+        />
+      </Modal>
+    );
+  }
+
   function render_user(user: any, is_last?: boolean) {
     return (
       <div
@@ -166,7 +295,8 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
             whiteSpace: "nowrap",
           }}
         >
-          {render_role(user.group)}
+          {render_role(user.group, user.read_policy)}
+          {user_role_button(user.account_id, user.group, user.read_policy)}
           {user_remove_button(user.account_id, user.group)}
         </div>
       </div>
@@ -192,15 +322,36 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
     );
   }
 
-  function render_role(group?: string) {
+  function render_role(
+    group?: string,
+    read_policy?: ProjectViewerReadPolicy | null,
+  ) {
     const isOwner = group === "owner";
+    const isViewer = group === "viewer";
     return (
-      <Tag
-        color={isOwner ? "blue" : undefined}
-        style={{ marginInlineEnd: 0, textTransform: "lowercase" }}
-      >
-        {isOwner && <Icon name="lock" />} {group ?? "collaborator"}
-      </Tag>
+      <span>
+        <Tag
+          color={isOwner ? "blue" : isViewer ? "gold" : undefined}
+          style={{ marginInlineEnd: 0, textTransform: "lowercase" }}
+        >
+          {isOwner && <Icon name="lock" />} {group ?? "collaborator"}
+        </Tag>
+        {isViewer && (
+          <div
+            style={{
+              color: COLORS.GRAY_M,
+              fontSize: 11,
+              marginTop: 3,
+              maxWidth: 220,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+            title={viewerReadPolicySummary(read_policy)}
+          >
+            {viewerReadPolicySummary(read_policy)}
+          </div>
+        )}
+      </span>
     );
   }
 
@@ -210,7 +361,14 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
       return [];
     }
     const users = u
-      .map((v, k) => ({ account_id: k, group: v.get("group") }))
+      .map((v, k) => {
+        const read_policy = v.get("read_policy") as any;
+        return {
+          account_id: k,
+          group: v.get("group"),
+          read_policy: read_policy?.toJS?.() ?? read_policy,
+        };
+      })
       .toList()
       .toJS();
     return sort_by_activity(users, project.get("project_id"));
@@ -253,6 +411,8 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
   }
 
   function render_access_summary(users: any[]) {
+    const viewerCount = users.filter((user) => user.group === "viewer").length;
+    const fullAccessCount = users.length - viewerCount;
     return (
       <div
         style={{
@@ -275,13 +435,19 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
           <div>
             <div style={{ fontWeight: 600 }}>Full project access</div>
             <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
-              Edit files, run code, manage settings, and invite people.
+              Collaborators can edit files and use runtimes. Viewers can only
+              read allowed files.
             </div>
           </div>
         </div>
-        <Tag color="blue" style={{ marginInlineEnd: 0 }}>
-          {users.length} {users.length === 1 ? "person" : "people"}
-        </Tag>
+        <div>
+          <Tag color="blue" style={{ marginInlineEnd: 6 }}>
+            {fullAccessCount} full access
+          </Tag>
+          <Tag color="gold" style={{ marginInlineEnd: 0 }}>
+            {viewerCount} {viewerCount === 1 ? "viewer" : "viewers"}
+          </Tag>
+        </div>
       </div>
     );
   }
@@ -291,6 +457,7 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
       const users = get_users();
       return (
         <SettingBox title="Current Collaborators" icon="user">
+          {render_viewer_role_modal()}
           {render_access_summary(users)}
           {render_collaborators_list(users)}
         </SettingBox>
@@ -300,6 +467,7 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
       const users = get_users();
       return (
         <div style={{ paddingLeft: "5px", paddingRight: "5px" }}>
+          {render_viewer_role_modal()}
           <div
             style={{
               alignItems: "center",

@@ -41,6 +41,9 @@ describe("runtime slot admission", () => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
         return { rows: [], rowCount: null };
       }
+      if (sql.includes("pg_advisory_xact_lock")) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes("UPDATE project_runtime_slots")) {
         return { rows: [], rowCount: 0 };
       }
@@ -88,6 +91,9 @@ describe("runtime slot admission", () => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
         return { rows: [], rowCount: null };
       }
+      if (sql.includes("pg_advisory_xact_lock")) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes("UPDATE project_runtime_slots")) {
         return { rows: [], rowCount: 0 };
       }
@@ -119,6 +125,9 @@ describe("runtime slot admission", () => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
         return { rows: [], rowCount: null };
       }
+      if (sql.includes("pg_advisory_xact_lock")) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes("UPDATE project_runtime_slots")) {
         return { rows: [], rowCount: 0 };
       }
@@ -137,5 +146,29 @@ describe("runtime slot admission", () => {
       }),
     ).rejects.toThrow("runtime sponsor account is banned");
     expect(queryMock).toHaveBeenCalledWith("ROLLBACK");
+  });
+
+  it("locks runtime slot admission before reading active slots", async () => {
+    const { reserveProjectRuntimeSlotLocal } = await import("./runtime-slots");
+    await reserveProjectRuntimeSlotLocal({
+      sponsor_account_id: "sponsor",
+      project_id: "project-1",
+      owning_bay_id: "bay-0",
+      actor_account_id: "actor",
+    });
+
+    const calls = queryMock.mock.calls.map((call) => `${call[0]}`);
+    const lockIndex = calls.findIndex((sql) =>
+      sql.includes("pg_advisory_xact_lock"),
+    );
+    const activeSlotsIndex = calls.findIndex((sql) =>
+      sql.includes("SELECT sponsor_account_id"),
+    );
+    expect(lockIndex).toBeGreaterThan(calls.indexOf("BEGIN"));
+    expect(lockIndex).toBeLessThan(activeSlotsIndex);
+    expect(queryMock).toHaveBeenCalledWith(
+      "SELECT pg_advisory_xact_lock(hashtext($1))",
+      ["project-runtime-slot-admission:sponsor"],
+    );
   });
 });

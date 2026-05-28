@@ -95,7 +95,7 @@ Next action:
 
 ### 3. Project-Host Restart Recovery
 
-Status: `open`
+Status: `done`
 
 Severity: high.
 
@@ -176,7 +176,7 @@ Next action:
 
 ### 6. Spot Uptime Dashboard And Recovery Banner
 
-Status: `open`
+Status: `done`
 
 Severity: medium.
 
@@ -200,7 +200,7 @@ Next action:
 
 ### 7. Host Runtime Control Page Redesign
 
-Status: `open`
+Status: `done`
 
 Severity: medium.
 
@@ -221,7 +221,7 @@ Next action:
 
 ### 8. RootFS Rustic Repo Sharding Decision
 
-Status: `open`
+Status: `done`
 
 Severity: high.
 
@@ -245,7 +245,7 @@ Next action:
 
 ### 9. RootFS Scan Details Link
 
-Status: `open`
+Status: `done`
 
 Severity: medium.
 
@@ -264,7 +264,7 @@ Next action:
 
 ### 10. Codex File Watch / TimeTravel Load Policy
 
-Status: `open`
+Status: `done`
 
 Severity: medium.
 
@@ -290,7 +290,7 @@ Next action:
 
 ### 11. Membership Tier Benefit Explanations
 
-Status: `open`
+Status: `done`
 
 Severity: high.
 
@@ -317,7 +317,7 @@ Next action:
 
 ### 12. Subscription Free Trial
 
-Status: `open`
+Status: `done`
 
 Severity: high if pricing launch depends on it; otherwise medium.
 
@@ -335,7 +335,7 @@ Next action:
 
 ### 13. Terms Of Service Link On Account Creation
 
-Status: `blocked`
+Status: `closed`
 
 Severity: medium.
 
@@ -359,7 +359,7 @@ Next action:
 
 ### 14. Scheduled Automation Notification Config
 
-Status: `open`
+Status: `done`
 
 Severity: medium.
 

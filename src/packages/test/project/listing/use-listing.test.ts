@@ -142,12 +142,10 @@ describe("test sorting many files with useListing", () => {
     await fs.writeFile("b.txt", "b");
     await fs.writeFile("huge.txt", "b".repeat(1000));
 
-    // make b.txt old
-    await fs.utimes(
-      "b.txt",
-      (Date.now() - 60_000) / 1000,
-      (Date.now() - 60_000) / 1000,
-    );
+    const baseTime = (Date.now() - 60_000) / 1000;
+    await fs.utimes("b.txt", baseTime, baseTime);
+    await fs.utimes("a.txt", baseTime + 10, baseTime + 10);
+    await fs.utimes("huge.txt", baseTime + 20, baseTime + 20);
   });
 
   it("test useListing with many files and sorting", async () => {

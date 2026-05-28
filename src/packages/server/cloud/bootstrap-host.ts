@@ -483,6 +483,10 @@ export type BootstrapScripts = {
   rootReserveGb: string;
   dataDiskDevices: string;
   dataDiskCandidates: string;
+  sharedScratchEnabled: boolean;
+  sharedScratchDiskDevices: string;
+  sharedScratchHostMount: string;
+  sharedScratchProjectMount: string;
   envFile: string;
   envLines: string[];
   nodeVersion: string;
@@ -941,6 +945,12 @@ export async function buildBootstrapScripts(
   const provider = providerId ? getServerProvider(providerId) : undefined;
   const dataDiskDevices =
     provider?.getBootstrapDataDiskDevices?.(spec, storageMode) ?? "";
+  const sharedScratchEnabled = Number(spec.shared_disk_gb ?? 0) > 0;
+  const sharedScratchDiskDevices = sharedScratchEnabled
+    ? (provider?.getBootstrapSharedScratchDiskDevices?.(spec) ?? "")
+    : "";
+  const sharedScratchHostMount = "/mnt/cocalc-scratch";
+  const sharedScratchProjectMount = "/scratch";
   const imageSizeGb = resolveBootstrapImageSizeGb({
     providerId,
     isSelfHost,
@@ -1044,6 +1054,9 @@ export async function buildBootstrapScripts(
     `COCALC_SYNC_PROJECTS=/mnt/cocalc/project-[project_id]/.local/share/cocalc/persist`,
     `COCALC_BTRFS_IMAGE_GB=${imageSizeGb}`,
     `COCALC_BTRFS_ROOT_RESERVE_GB=${rootReserveGb}`,
+    `COCALC_SHARED_SCRATCH_ENABLED=${sharedScratchEnabled ? "1" : "0"}`,
+    `COCALC_SHARED_SCRATCH_HOST_MOUNT=${sharedScratchHostMount}`,
+    `COCALC_SHARED_SCRATCH_PROJECT_MOUNT=${sharedScratchProjectMount}`,
     `COCALC_PROJECT_HOST_SOFTWARE_BASE_URL=${softwareBaseUrl}`,
     `COCALC_PROJECT_HOST_BUNDLE_ROOT=${projectHostBundlesRoot}`,
     `COCALC_PROJECT_HOST_CURRENT=${projectHostCurrent}`,
@@ -1133,6 +1146,10 @@ export async function buildBootstrapScripts(
     rootReserveGb,
     dataDiskDevices,
     dataDiskCandidates,
+    sharedScratchEnabled,
+    sharedScratchDiskDevices,
+    sharedScratchHostMount,
+    sharedScratchProjectMount,
     envFile,
     envLines,
     nodeVersion,
@@ -1213,6 +1230,7 @@ fi
     "cron",
     "chrony",
     "libatomic1",
+    "cloud-guest-utils",
   ]);
   const envLinesJson = JSON.stringify(scripts.envLines);
   const cloudflaredJson = JSON.stringify(
@@ -1323,6 +1341,7 @@ cat <<EOF_COCALC_BOOTSTRAP_HOST_FACTS > "$BOOTSTRAP_DIR/bootstrap-host-facts.jso
   "env_file": "${scripts.envFile}",
   "data_disk_devices": "${scripts.dataDiskDevices}",
   "data_disk_candidates": "${scripts.dataDiskCandidates}",
+  "shared_scratch_disk_devices": "${scripts.sharedScratchDiskDevices}",
   "project_host_bundle_root": "${scripts.projectHostBundlesRoot}",
   "project_bundle_root": "${scripts.projectBundlesRoot}",
   "tools_root": "${scripts.toolsRoot}"
@@ -1337,6 +1356,12 @@ cat <<EOF_COCALC_BOOTSTRAP_DESIRED_STATE > "$BOOTSTRAP_DIR/bootstrap-desired-sta
   "env_lines": ${envLinesJson},
   "node_version": "${scripts.nodeVersion}",
   "bootstrap_done_paths": ["/mnt/cocalc/data/.bootstrap_done", "/var/lib/cocalc/.bootstrap_done"],
+  "shared_scratch": {
+    "enabled": ${scripts.sharedScratchEnabled ? "true" : "false"},
+    "mount": "${scripts.sharedScratchHostMount}",
+    "project_mount": "${scripts.sharedScratchProjectMount}",
+    "filesystem": "ext4"
+  },
   "bootstrap": {
     "selector": "${scripts.bootstrapSelector}",
     "url": "${scripts.bootstrapPyUrl}"

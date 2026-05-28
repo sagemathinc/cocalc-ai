@@ -10,6 +10,7 @@ import {
 import {
   checkCommonPermissions,
   extractProjectSubject,
+  extractViewerFileSubject,
   getCoCalcUserId,
   getCoCalcUserType,
   isAccountAllowed as isAccountSubjectAllowed,
@@ -17,6 +18,7 @@ import {
   isProjectCollaboratorGroup,
   type CoCalcUser,
 } from "@cocalc/conat/auth/subject-policy";
+import { isProjectViewerRole } from "@cocalc/util/project-access";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import TTL from "@isaacs/ttlcache";
@@ -140,6 +142,25 @@ function isProjectCollaboratorLocal({
   const userEntry = row?.users?.[account_id];
   const group = typeof userEntry === "string" ? userEntry : userEntry?.group;
   const allowed = isProjectCollaboratorGroup(group);
+  collaboratorCache.set(key, allowed);
+  return allowed;
+}
+
+function isProjectViewerLocal({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): boolean {
+  const key = `viewer:${account_id}:${project_id}`;
+  if (collaboratorCache.has(key)) {
+    return collaboratorCache.get(key)!;
+  }
+  const row = getRow("projects", JSON.stringify({ project_id }));
+  const userEntry = row?.users?.[account_id];
+  const group = typeof userEntry === "string" ? userEntry : userEntry?.group;
+  const allowed = isProjectViewerRole(group);
   collaboratorCache.set(key, allowed);
   return allowed;
 }
@@ -320,6 +341,17 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
     } else if (isAccountSubjectAllowed({ account_id: userId, subject })) {
       allowed = true;
     } else {
+      const viewerFileSubject = extractViewerFileSubject(subject);
+      if (viewerFileSubject) {
+        allowed =
+          viewerFileSubject.account_id === userId &&
+          isProjectViewerLocal({
+            account_id: userId,
+            project_id: viewerFileSubject.project_id,
+          });
+        authDecisionCache.set(cacheKey, allowed);
+        return allowed;
+      }
       const project_id = extractProjectSubject(subject);
       if (project_id) {
         allowed = isProjectCollaboratorLocal({

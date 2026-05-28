@@ -69,6 +69,8 @@ export async function ensureProjectCollabInviteInboxSchema(): Promise<void> {
       inviter_account_id UUID NOT NULL,
       invitee_account_id UUID NOT NULL,
       message TEXT,
+      invite_role VARCHAR(24),
+      read_policy JSONB,
       status VARCHAR(32) NOT NULL,
       responder_action VARCHAR(32),
       created TIMESTAMP NOT NULL,
@@ -76,6 +78,11 @@ export async function ensureProjectCollabInviteInboxSchema(): Promise<void> {
       responded TIMESTAMP,
       expires TIMESTAMP
     )
+  `);
+  await pool.query(`
+    ALTER TABLE ${TABLE}
+      ADD COLUMN IF NOT EXISTS invite_role VARCHAR(24),
+      ADD COLUMN IF NOT EXISTS read_policy JSONB
   `);
   await pool.query(
     `CREATE INDEX IF NOT EXISTS ${TABLE}_invitee_idx ON ${TABLE} (invitee_account_id, created DESC)`,
@@ -100,9 +107,9 @@ export async function upsertProjectedCollabInviteDirect({
     `INSERT INTO ${TABLE}
       (invite_id, source_bay_id, project_id, project_title, project_description,
        inviter_account_id, invitee_account_id, message, status, responder_action,
-       created, updated, responded, expires)
+       invite_role, read_policy, created, updated, responded, expires)
      VALUES
-      ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15,$16)
      ON CONFLICT (invite_id)
      DO UPDATE SET
        source_bay_id=EXCLUDED.source_bay_id,
@@ -112,6 +119,8 @@ export async function upsertProjectedCollabInviteDirect({
        inviter_account_id=EXCLUDED.inviter_account_id,
        invitee_account_id=EXCLUDED.invitee_account_id,
        message=EXCLUDED.message,
+       invite_role=EXCLUDED.invite_role,
+       read_policy=EXCLUDED.read_policy,
        status=EXCLUDED.status,
        responder_action=EXCLUDED.responder_action,
        created=EXCLUDED.created,
@@ -129,6 +138,8 @@ export async function upsertProjectedCollabInviteDirect({
       invite.message ?? null,
       invite.status,
       invite.responder_action ?? null,
+      invite.invite_role ?? null,
+      invite.read_policy ? JSON.stringify(invite.read_policy) : null,
       invite.created,
       invite.updated,
       invite.responded ?? null,
@@ -169,7 +180,8 @@ export async function listProjectedInboundCollabInvites({
   const { rows } = await getPool().query(
     `SELECT invite_id, project_id, project_title, project_description,
             inviter_account_id, invitee_account_id, message, status,
-            responder_action, created, updated, responded, expires
+            responder_action, invite_role, read_policy,
+            created, updated, responded, expires
        FROM ${TABLE}
       WHERE ${where.join(" AND ")}
       ORDER BY created DESC
@@ -197,7 +209,8 @@ export async function getProjectedInboundCollabInvite({
   const { rows } = await getPool().query(
     `SELECT source_bay_id, invite_id, project_id, project_title, project_description,
             inviter_account_id, invitee_account_id, message, status,
-            responder_action, created, updated, responded, expires
+            responder_action, invite_role, read_policy,
+            created, updated, responded, expires
        FROM ${TABLE}
       WHERE invite_id=$1
         AND invitee_account_id=$2

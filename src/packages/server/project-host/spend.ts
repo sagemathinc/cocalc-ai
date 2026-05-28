@@ -57,6 +57,8 @@ export interface DedicatedHostRateEstimateInput {
   machine_type?: string | null;
   disk_gb?: number | null;
   disk_type?: string | null;
+  shared_disk_gb?: number | null;
+  shared_disk_type?: string | null;
   storage_mode?: string | null;
   gpu_type?: string | null;
   gpu_count?: number | null;
@@ -753,6 +755,8 @@ async function estimateNebiusRateUsdPerHour(
       instance,
       disk_type: input.disk_type,
       disk_gb: input.disk_gb,
+      shared_disk_type: input.shared_disk_type,
+      shared_disk_gb: input.shared_disk_gb,
       storage_mode: input.storage_mode,
     }),
     getDedicatedHostSurchargeFraction("nebius", settings),

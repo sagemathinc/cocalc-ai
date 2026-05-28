@@ -98,6 +98,7 @@ const ACTIVE_SLOT_STATES = ["starting", "running"] as const;
 const DEFAULT_RUNTIME_SLOT_TTL_MS = 15 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
 const HEARTBEAT_TTL_MS = 30 * 60 * 1000;
+const RUNTIME_SLOT_ADMISSION_LOCK_PREFIX = "project-runtime-slot-admission:";
 let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 
 function logRuntimeSlotEvent(
@@ -121,6 +122,15 @@ function normalizePositiveInteger(value: unknown): number | undefined {
 
 function expirationDate(ttl_ms: number | undefined): Date {
   return new Date(Date.now() + (ttl_ms ?? DEFAULT_RUNTIME_SLOT_TTL_MS));
+}
+
+async function lockRuntimeSponsorSlotAdmission(
+  client: Queryable,
+  sponsor_account_id: string,
+): Promise<void> {
+  await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+    `${RUNTIME_SLOT_ADMISSION_LOCK_PREFIX}${sponsor_account_id}`,
+  ]);
 }
 
 async function expireStaleRuntimeSlots(client: Queryable): Promise<void> {
@@ -239,6 +249,7 @@ async function reserveProjectRuntimeSlotInTransaction(
   client: PoolClient,
   opts: ReserveProjectRuntimeSlotOptions,
 ): Promise<ReserveProjectRuntimeSlotResult> {
+  await lockRuntimeSponsorSlotAdmission(client, opts.sponsor_account_id);
   await expireStaleRuntimeSlots(client);
   await assertRuntimeSponsorNotBanned(client, opts.sponsor_account_id);
   const activeSlots = await loadActiveSlotsForSponsor(

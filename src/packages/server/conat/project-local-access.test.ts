@@ -98,6 +98,36 @@ describe("project local access", () => {
     ).rejects.toThrow(PROJECT_COLLABORATOR_REQUIRED_ERROR);
   });
 
+  it("recognizes viewers as project users with only read capabilities", async () => {
+    queryMock = jest.fn(async () => ({
+      rows: [
+        {
+          group: "viewer",
+          owning_bay_id: "bay-0",
+          read_policy: {
+            rules: [{ action: "include", path: "public/**" }],
+          },
+        },
+      ],
+    }));
+    const { getLocalProjectAccessStatus, getLocalProjectAccess } =
+      await import("./project-local-access");
+    await expect(
+      getLocalProjectAccessStatus({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toBe("local-project-user");
+    const access = await getLocalProjectAccess({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(access.role).toBe("viewer");
+    expect(access.capabilities.readProjectFiles).toBe(true);
+    expect(access.capabilities.writeProjectFiles).toBe(false);
+    expect(access.capabilities.useProjectRuntime).toBe(false);
+  });
+
   it("throws for missing projects when checking local ownership", async () => {
     queryMock = jest.fn(async () => ({ rows: [] }));
     const {

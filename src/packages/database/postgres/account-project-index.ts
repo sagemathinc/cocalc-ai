@@ -9,7 +9,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 const VISIBLE_PROJECT_GROUP_SQL = `COALESCE(
   users #>> ARRAY[$1::TEXT, 'group']::TEXT[],
   ''
-) IN ('owner', 'collaborator')`;
+) IN ('owner', 'collaborator', 'viewer')`;
 
 export interface RebuildAccountProjectIndexResult {
   bay_id: string;

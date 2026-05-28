@@ -8,6 +8,7 @@ import {
   getGcpMachineTypeOptions,
   getNebiusRegionOptions,
   getProviderEnablement,
+  getProviderOptions,
   getProviderOptionsList,
   getProviderPriceEstimate,
   isNebiusSpotSupported,
@@ -108,6 +109,38 @@ describe("buildCreateHostPayload", () => {
     expect(payload.machine?.disk_gb).toBe(93);
     expect(payload.pricing_model).toBe("on_demand");
     expect(payload.interruption_restore_policy).toBe("immediate");
+  });
+
+  it("includes shared scratch fields in create payloads", () => {
+    const payload = buildCreateHostPayload(
+      {
+        provider: "nebius",
+        name: "Scratch Host",
+        region: "us-central1",
+        machine_type: "cpu-standard-v3",
+        disk_gb: 100,
+        disk_type: "ssd",
+        shared_disk_gb: 500,
+        shared_disk_type: "ssd",
+      },
+      {
+        fieldOptions: {
+          region: [{ value: "us-central1", label: "US Central 1" }],
+          machine_type: [
+            {
+              value: "cpu-standard-v3",
+              label: "cpu-standard-v3",
+              meta: { vcpus: 4, memory_gib: 16 },
+            },
+          ],
+        },
+      },
+    );
+
+    expect(payload.machine).toMatchObject({
+      shared_disk_gb: 500,
+      shared_disk_type: "ssd",
+    });
   });
 
   it("includes explicit spot pricing fields", () => {
@@ -822,6 +855,101 @@ describe("catalog-backed pricing labels", () => {
 
     expect(estimate?.usd_per_hour).toBeCloseTo(2.036983323, 9);
     expect(estimate?.hourly_label).toContain("/hr");
+  });
+
+  it("returns a provider price estimate for Nebius unified RTX GPU selections", () => {
+    const catalog = testCatalog([
+      {
+        kind: "instance_types",
+        scope: "global",
+        payload: [
+          {
+            name: "gpu-rtx6000_1gpu-24vcpu-218gb",
+            platform: "gpu-rtx6000",
+            platform_label: "NVIDIA RTX PRO 6000",
+            vcpus: 24,
+            memory_gib: 218,
+            gpus: 1,
+            gpu_label: "NVIDIA RTX PRO 6000",
+          },
+        ],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: [
+          {
+            product: "NVIDIA RTX PRO 6000",
+            region: "us-central1",
+            price_usd: "1.8",
+            unit: "GPU hour",
+          },
+          {
+            product: "Network SSD IO M3 disk",
+            region: "us-central1",
+            price_usd: "0.000161111",
+            unit: "GiB hour",
+          },
+        ],
+      },
+    ]);
+
+    const estimate = getProviderPriceEstimate("nebius", catalog, {
+      region: "us-central1",
+      machine_type: "gpu-rtx6000_1gpu-24vcpu-218gb",
+      pricing_model: "on_demand",
+      storage_mode: "persistent",
+      disk_type: "ssd_io_m3",
+      disk_gb: 100,
+    });
+
+    expect(estimate?.usd_per_hour).toBeCloseTo(1.8161111, 9);
+    expect(estimate?.line_items.map((item) => item.label)).toContain(
+      "GPU instance",
+    );
+  });
+
+  it("filters Nebius region-scoped GPU platforms by selected region", () => {
+    const catalog = testCatalog([
+      {
+        kind: "instance_types",
+        scope: "global",
+        payload: [
+          {
+            name: "1gpu-20vcpu-224gb",
+            platform: "gpu-b200-sxm",
+            platform_label: "NVIDIA B200 NVLink",
+            regions: ["us-central1"],
+            vcpus: 20,
+            memory_gib: 224,
+            gpus: 1,
+            gpu_label: "NVIDIA B200 NVLink",
+          },
+          {
+            name: "1gpu-20vcpu-224gb",
+            platform: "gpu-b200-sxm-a",
+            platform_label: "NVIDIA B200 NVLink",
+            regions: ["me-west1"],
+            vcpus: 20,
+            memory_gib: 224,
+            gpus: 1,
+            gpu_label: "NVIDIA B200 NVLink",
+          },
+        ],
+      },
+    ]);
+
+    const usOptions = getProviderOptions("nebius", catalog, {
+      region: "us-central1",
+    }).machine_type;
+    const meOptions = getProviderOptions("nebius", catalog, {
+      region: "me-west1",
+    }).machine_type;
+
+    expect(usOptions).toHaveLength(1);
+    expect(meOptions).toHaveLength(1);
+    expect((usOptions[0]?.meta as any)?.platform).toBe("gpu-b200-sxm");
+    expect((meOptions[0]?.meta as any)?.platform).toBe("gpu-b200-sxm-a");
   });
 
   it("labels missing Nebius regional prices explicitly once a machine is selected", () => {

@@ -10,9 +10,15 @@ import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
 import { materializeProjectHost } from "@cocalc/server/conat/route-project";
 import {
+  getLocalProjectAccessStatus,
   getLocalProjectCollaboratorAccessStatus,
   PROJECT_COLLABORATOR_REQUIRED_ERROR,
 } from "@cocalc/server/conat/project-local-access";
+import {
+  isProjectCollaboratorRole,
+  projectAccessFromUsers,
+  type ProjectAccess,
+} from "@cocalc/util/project-access";
 
 async function loadLocalProjectReference({
   account_id,
@@ -76,6 +82,23 @@ export async function resolveProjectReferenceAllowRemote({
   account_id: string;
   project_id: string;
 }): Promise<ProjectReference | null> {
+  const reference = await resolveProjectReferenceForProjectUserAllowRemote({
+    account_id,
+    project_id,
+  });
+  if (!isProjectCollaboratorRole(reference?.users?.[account_id]?.group)) {
+    return null;
+  }
+  return reference;
+}
+
+async function resolveProjectReferenceForProjectUserAllowRemote({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectReference | null> {
   const access = await getLocalProjectCollaboratorAccessStatus({
     account_id,
     project_id,
@@ -95,10 +118,44 @@ export async function resolveProjectReferenceAllowRemote({
   const remote = await getInterBayBridge()
     .projectReference(ownership.bay_id)
     .get({ account_id, project_id });
-  if (remote != null) {
+  if (
+    remote != null &&
+    isProjectCollaboratorRole(remote.users?.[account_id]?.group)
+  ) {
     await warmProjectRoute(project_id);
   }
   return remote;
+}
+
+export async function resolveProjectAccessAllowRemote({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectAccess> {
+  const localStatus = await getLocalProjectAccessStatus({
+    account_id,
+    project_id,
+  });
+  if (localStatus === "local-project-user") {
+    const local = await loadLocalProjectReference({ account_id, project_id });
+    return projectAccessFromUsers({
+      account_id,
+      users: local?.users,
+    });
+  }
+  const ownership = await resolveProjectBay(project_id);
+  if (!ownership || ownership.bay_id === getConfiguredBayId()) {
+    return projectAccessFromUsers({ account_id, users: undefined });
+  }
+  const remote = await getInterBayBridge()
+    .projectReference(ownership.bay_id)
+    .get({ account_id, project_id });
+  return projectAccessFromUsers({
+    account_id,
+    users: remote?.users,
+  });
 }
 
 export async function hasProjectCollaboratorAccessAllowRemote({

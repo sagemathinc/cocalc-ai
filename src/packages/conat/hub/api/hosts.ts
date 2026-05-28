@@ -366,6 +366,8 @@ export interface HostMachine {
   storage_mode?: "ephemeral" | "persistent";
   disk_gb?: number;
   disk_type?: "ssd" | "balanced" | "standard" | "ssd_io_m3";
+  shared_disk_gb?: number;
+  shared_disk_type?: "ssd" | "balanced" | "standard" | "ssd_io_m3";
   zone?: string;
   source_image?: string;
   bootstrap_url?: string;
@@ -431,6 +433,17 @@ export interface HostProviderCapabilities {
   persistentStorage: {
     supported: boolean;
     growable: boolean;
+  };
+  sharedScratchDisk?: {
+    supported: boolean;
+    growable: boolean;
+    disk_types: Array<{
+      value: "ssd" | "balanced" | "standard" | "ssd_io_m3";
+      label: string;
+      durability: "single-copy" | "replicated" | "highly-replicated";
+      default?: boolean;
+      help_url?: string;
+    }>;
   };
   hasRegions?: boolean;
   hasZones?: boolean;
@@ -1749,6 +1762,9 @@ export interface Hosts {
     ram_gb?: number;
     disk_gb?: number;
     disk_type?: HostMachine["disk_type"];
+    shared_disk_gb?: number;
+    shared_disk_type?: HostMachine["shared_disk_type"];
+    delete_shared_scratch?: boolean;
     machine_type?: HostMachine["machine_type"];
     gpu_type?: HostMachine["gpu_type"];
     gpu_count?: number;

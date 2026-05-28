@@ -10,6 +10,7 @@ let triggerCopyLroWorkerMock: jest.Mock;
 let triggerCourseCollectLroWorkerMock: jest.Mock;
 let getProjectOwnerAccountIdMock: jest.Mock;
 let assertCanIncreaseAccountStorageMock: jest.Mock;
+let resolveProjectAccessAllowRemoteMock: jest.Mock;
 
 jest.mock("@cocalc/server/projects/create", () => ({
   __esModule: true,
@@ -39,6 +40,12 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
 
 jest.mock("@cocalc/server/projects/collaborators", () => ({
   __esModule: true,
+}));
+
+jest.mock("@cocalc/server/conat/project-remote-access", () => ({
+  __esModule: true,
+  resolveProjectAccessAllowRemote: (...args: any[]) =>
+    resolveProjectAccessAllowRemoteMock(...args),
 }));
 
 jest.mock("@cocalc/conat/files/file-server", () => ({
@@ -145,6 +152,10 @@ describe("projects.copyPathBetweenProjects", () => {
     triggerCourseCollectLroWorkerMock = jest.fn();
     getProjectOwnerAccountIdMock = jest.fn(async () => "owner-1");
     assertCanIncreaseAccountStorageMock = jest.fn(async () => undefined);
+    resolveProjectAccessAllowRemoteMock = jest.fn(async () => ({
+      role: "collaborator",
+      capabilities: { writeProjectFiles: true },
+    }));
   });
 
   it("requires a signed-in user", async () => {
@@ -167,6 +178,10 @@ describe("projects.copyPathBetweenProjects", () => {
     });
 
     expect(assertCollabMock).toHaveBeenCalledTimes(2);
+    expect(resolveProjectAccessAllowRemoteMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      project_id: "src-project",
+    });
     expect(assertCollabMock).toHaveBeenNthCalledWith(1, {
       account_id: "acct-1",
       project_id: "src-project",
@@ -185,6 +200,36 @@ describe("projects.copyPathBetweenProjects", () => {
       dest: { project_id: "src-project", path: "/root/b.txt" },
     });
     expect(assertCollabMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows viewer source copy-out only to collaborator destination projects", async () => {
+    const readPolicy = { rules: [{ action: "include", path: "public/**" }] };
+    resolveProjectAccessAllowRemoteMock = jest.fn(async () => ({
+      role: "viewer",
+      read_policy: readPolicy,
+      capabilities: { writeProjectFiles: false },
+    }));
+    const { copyPathBetweenProjects } = await import("./projects");
+    await copyPathBetweenProjects({
+      account_id: "acct-1",
+      src: { project_id: "src-project", path: "public/a.txt" },
+      dest: { project_id: "dest-project", path: "copied/a.txt" },
+    });
+
+    expect(assertCollabMock).toHaveBeenCalledTimes(1);
+    expect(assertCollabMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      project_id: "dest-project",
+    });
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          src: { project_id: "src-project", path: "public/a.txt" },
+          src_read_policy: readPolicy,
+          dests: [{ project_id: "dest-project", path: "copied/a.txt" }],
+        }),
+      }),
+    );
   });
 
   it("creates and publishes an LRO and returns stream metadata", async () => {

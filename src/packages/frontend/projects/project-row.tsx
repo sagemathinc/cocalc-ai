@@ -26,7 +26,7 @@ import {
 } from "@cocalc/frontend/components";
 
 import { COLORS } from "@cocalc/util/theme";
-import { Button } from "antd";
+import { Button, Tag } from "antd";
 import { ProjectAvatarImage } from "./project-avatar";
 import { ProjectUsers } from "./project-users";
 import { projectThemeColor } from "./theme";
@@ -42,6 +42,7 @@ export const ProjectRow: React.FC<Props> = ({ project_id, index }: Props) => {
   const [selection_at_last_mouse_down, set_selection_at_last_mouse_down] =
     useState<string>("");
   const project = useRedux(["projects", "project_map", project_id]);
+  const account_id = useRedux("account", "account_id");
 
   const [add_collab, set_add_collab] = useState<boolean>(false);
 
@@ -124,6 +125,26 @@ export const ProjectRow: React.FC<Props> = ({ project_id, index }: Props) => {
       return;
     }
     return <Markdown style={{ color: COLORS.GRAY }} value={desc} />;
+  }
+
+  function render_role_tag(): React.JSX.Element | undefined {
+    const role = project?.getIn(["users", account_id, "group"]);
+    switch (role) {
+      case "owner":
+        return (
+          <Tag color="blue" style={{ marginLeft: 8 }}>
+            Owner
+          </Tag>
+        );
+      case "collaborator":
+        return <Tag style={{ marginLeft: 8 }}>Collaborator</Tag>;
+      case "viewer":
+        return (
+          <Tag color="gold" style={{ marginLeft: 8 }}>
+            Viewer
+          </Tag>
+        );
+    }
   }
 
   function handle_mouse_down(): void {
@@ -212,6 +233,7 @@ export const ProjectRow: React.FC<Props> = ({ project_id, index }: Props) => {
             >
               <Markdown value={project.get("title")} />
             </a>
+            {render_role_tag()}
           </div>
           <TimeAgo date={project.get("last_edited")} />
         </Col>

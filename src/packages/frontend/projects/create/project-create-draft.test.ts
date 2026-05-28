@@ -145,6 +145,29 @@ describe("project create draft", () => {
     expect(draft.host_id).toBeUndefined();
   });
 
+  it("updates the backup region when selecting a host in another region", () => {
+    const selectedHost = host({
+      id: "europe-host",
+      name: "Europe host",
+      region: "eu-north1",
+    });
+    const ctx = context({ preferredRegion: "wnam" });
+    const draft = setProjectDraftHost(
+      createInitialProjectDraft(ctx),
+      selectedHost,
+      ctx,
+    );
+
+    expect(draft.host_id).toBe("europe-host");
+    expect(draft.region).toBe("weur");
+    expect(projectDraftToCreateOptions(draft)).toEqual(
+      expect.objectContaining({
+        host_id: "europe-host",
+        region: "weur",
+      }),
+    );
+  });
+
   it("maps create without open to start false", () => {
     const draft = setProjectDraftStart(
       createInitialProjectDraft(context()),

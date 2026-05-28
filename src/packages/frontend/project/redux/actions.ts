@@ -119,11 +119,22 @@ import { RootfsPublishOpsManager } from "@cocalc/frontend/project/rootfs-publish
 import { MoveOpsManager } from "@cocalc/frontend/project/move-ops";
 import { StartOpsManager } from "@cocalc/frontend/project/start-ops";
 import { isCollaboratorRealtimeAccessError } from "@cocalc/frontend/project/collaborator-realtime";
-import { canUseCollaboratorProjectRealtime } from "@cocalc/frontend/project/realtime-access";
+import {
+  canUseCollaboratorProjectRealtime,
+  getProjectUserRole,
+  isViewerProjectRole,
+} from "@cocalc/frontend/project/realtime-access";
+import {
+  isAudio,
+  isImage,
+  isPDF,
+  isVideo,
+} from "@cocalc/frontend/file-extensions";
 import { getSearch } from "@cocalc/frontend/project/explorer/config";
 import dust from "@cocalc/frontend/project/disk-usage/dust";
 import { withProjectHostBase } from "@cocalc/frontend/project/host-url";
 import { EditorLoadError } from "../../file-editors-error";
+import ViewerFilePreview from "@cocalc/frontend/project/viewer-file-preview";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { isJupyterPath } from "@cocalc/util/jupyter/names";
@@ -140,6 +151,7 @@ import {
 } from "@cocalc/frontend/project/log-state";
 import { publishProjectDetailInvalidation } from "@cocalc/frontend/project/use-project-field";
 import { createSharedLroListClient } from "@cocalc/frontend/lro/shared-list";
+import { getSyncDocDescriptor } from "@cocalc/sync/editor/doctypes";
 import {
   buildProjectLogRowsFromStream,
   filterProjectLogRows,
@@ -188,6 +200,31 @@ const { defaults, required } = misc;
 
 const FROM_WEB_TIMEOUT_S = 45;
 const PROJECT_LOG_BATCH_LIMIT = 750;
+const PUBLIC_RENDERER_ONLY_EXTENSIONS = new Set([
+  "board",
+  "chat",
+  "ipynb",
+  "pdf",
+  "sage-chat",
+  "slides",
+  "tasks",
+]);
+
+function canUseFrameEditorReadOnlyPreview(path: string, ext?: string): boolean {
+  const resolvedExt = `${ext ?? misc.filename_extension(path) ?? ""}`
+    .trim()
+    .toLowerCase();
+  if (PUBLIC_RENDERER_ONLY_EXTENSIONS.has(resolvedExt)) return false;
+  if (
+    isImage(resolvedExt) ||
+    isVideo(resolvedExt) ||
+    isAudio(resolvedExt) ||
+    isPDF(resolvedExt)
+  ) {
+    return false;
+  }
+  return getSyncDocDescriptor(path).doctype === "syncstring";
+}
 
 export const QUERIES = {
   project_log: {
@@ -1439,6 +1476,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     async (
       path: string,
       ext?: string, // use this extension even instead of path's extension.
+      initOptions?: project_file.FileEditorInitOptions,
     ): Promise<string | undefined> => {
       const cur = redux.getEditorActions(this.project_id, path);
       if (cur != null) {
@@ -1463,7 +1501,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         path,
         this.redux,
         this.project_id,
-        undefined,
+        initOptions,
         ext,
       );
       return name;
@@ -1473,8 +1511,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   private init_file_react_redux = async (
     path: string,
     ext?: string,
+    initOptions?: project_file.FileEditorInitOptions,
   ): Promise<{ name: string | undefined; Editor: any }> => {
-    const name = await this.initFileRedux(path, ext);
+    const name = await this.initFileRedux(path, ext, initOptions);
 
     // Make the Editor react component
     const Editor = await project_file.generateAsync(
@@ -1497,7 +1536,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (info == null) {
       return;
     }
-    if (info.redux_name != null && info.Editor != null) {
+    if (
+      info.Editor != null &&
+      (info.redux_name != null || this.isViewerProjectUser())
+    ) {
       if (!opts.noFocus) {
         this.show_file(path);
       }
@@ -1507,10 +1549,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     void (async () => {
       try {
         const syncPath = this.get_sync_path(path);
-        const { name, Editor } = await this.init_file_react_redux(
-          syncPath,
-          this.open_files?.get(path, "ext"),
-        );
+        const ext = this.open_files?.get(path, "ext");
+        const isViewer = this.isViewerProjectUser();
+        const { name, Editor } =
+          isViewer && !canUseFrameEditorReadOnlyPreview(syncPath, ext)
+            ? { name: undefined, Editor: ViewerFilePreview }
+            : await this.init_file_react_redux(
+                syncPath,
+                ext,
+                isViewer ? { readOnlyPreview: true } : undefined,
+              );
         const current_info = this.get_store()
           ?.get("open_files")
           .getIn([path, "component"]) as any;
@@ -1551,6 +1599,18 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
     })();
   };
+
+  private isViewerProjectUser(): boolean {
+    const account_id = redux.getStore("account")?.get("account_id");
+    if (!account_id) return false;
+    return isViewerProjectRole(
+      getProjectUserRole({
+        account_id,
+        project_id: this.project_id,
+        projectsStore: redux.getStore("projects") as any,
+      }),
+    );
+  }
 
   public ensure_open_file_component = (
     path: string,
