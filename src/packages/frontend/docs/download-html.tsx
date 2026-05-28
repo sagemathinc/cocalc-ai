@@ -80,6 +80,7 @@ export function wrapDocsPrintHtml(
     <style>
       html, body { background: white; }
       body { margin: 0; padding: 24px; }
+      @media screen and (max-width: 640px) { body { padding: 12px; } }
       @media print { body { padding: 0; } }
     </style>
   </head>

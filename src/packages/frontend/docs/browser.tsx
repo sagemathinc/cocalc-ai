@@ -1404,6 +1404,83 @@ export function DocsPrintContent({
     <div className="cocalc-docs-print-page">
       <style>
         {`
+          .cocalc-docs-print-page {
+            box-sizing: border-box;
+            margin: 0 auto;
+            max-width: 980px;
+            overflow-wrap: anywhere;
+            width: 100%;
+          }
+          .cocalc-docs-print-page *,
+          .cocalc-docs-print-page *::before,
+          .cocalc-docs-print-page *::after {
+            box-sizing: border-box;
+          }
+          .cocalc-docs-print-page img {
+            height: auto;
+            max-width: 100%;
+          }
+          .cocalc-docs-print-page pre,
+          .cocalc-docs-print-page code {
+            max-width: 100%;
+            white-space: pre-wrap;
+            word-break: break-word;
+          }
+          .cocalc-docs-print-page pre,
+          .cocalc-docs-print-page table {
+            overflow-x: auto;
+          }
+          .cocalc-docs-print-page table {
+            display: block;
+            max-width: 100%;
+          }
+          .cocalc-docs-print-page .ant-card {
+            max-width: 100%;
+            overflow: hidden;
+          }
+          .cocalc-docs-print-page .ant-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 18px 0;
+            margin-left: 0 !important;
+            margin-right: 0 !important;
+          }
+          .cocalc-docs-print-page .ant-col {
+            flex: 1 1 260px;
+            max-width: 100%;
+            padding-left: 9px;
+            padding-right: 9px;
+          }
+          @media screen and (max-width: 640px) {
+            .cocalc-docs-print-page {
+              max-width: none;
+            }
+            .cocalc-docs-print-page h1 {
+              font-size: 1.75rem !important;
+              line-height: 1.15 !important;
+            }
+            .cocalc-docs-print-page h2 {
+              font-size: 1.35rem !important;
+              line-height: 1.2 !important;
+            }
+            .cocalc-docs-print-page .ant-card-body {
+              padding: 14px !important;
+            }
+            .cocalc-docs-print-page .ant-col {
+              flex-basis: 100%;
+              padding-left: 0 !important;
+              padding-right: 0 !important;
+            }
+            .cocalc-docs-print-controls {
+              align-items: stretch !important;
+              flex-direction: column !important;
+            }
+            .cocalc-docs-print-controls .ant-space,
+            .cocalc-docs-print-controls a,
+            .cocalc-docs-print-controls button {
+              width: 100%;
+            }
+          }
           @media print {
             .cocalc-docs-print-controls {
               display: none !important;
