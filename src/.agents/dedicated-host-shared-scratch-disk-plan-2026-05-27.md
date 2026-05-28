@@ -1,8 +1,23 @@
 # Dedicated Project Host Shared Scratch Disk Plan
 
-Status: implementation plan
+Status: complete-for-now
 
 Date: 2026-05-27
+
+Completion note, 2026-05-28:
+
+- V1 shared scratch is implemented for dedicated project hosts, including
+  create/edit, add, grow, delete, provider pricing/spend, project container
+  mount at `/scratch`, disk usage reporting, file browser access, host drawer
+  storage UI, public shared pool warning, and GCP-only automatic grow.
+- The remaining items in this document are intentionally deferred scope: formal
+  smoke-runner automation, cross-host scratch migration/copying, per-project
+  scratch isolation or quotas, backups/snapshots/R2 integration for scratch,
+  local SSD scratch, preserving scratch after explicit host deletion, and rich
+  historical scratch usage sampling.
+- Nebius supports manual grow, but not automatic grow, because its current
+  online resize path may require a VM restart before the larger block size is
+  visible to the guest.
 
 ## Problem
 
@@ -1233,4 +1248,4 @@ Smoke tests:
 - Should changing scratch disk type be supported as delete/recreate only? (ans: yes)
 - Should scratch usage be sampled by the host daemon or queried live by project
   storage-info? (ans: seems like host daemon, since there can be tons of projects and there's only one /scratch ?)
-- What is the exact provider-safe maximum scratch disk size for each disk type? (ans: https://docs.nebius.com/compute/storage/types has 8TB, 264TB, 264TB, i.e., absolutely frickin' massive.  We have to be very careful about billing admission here since a user could easily create a scratch disk on nebius that cost \$30K/month!)
+- What is the exact provider-safe maximum scratch disk size for each disk type? (ans: https://docs.nebius.com/compute/storage/types has 8TB, 264TB, 264TB, i.e., absolutely frickin' massive. We have to be very careful about billing admission here since a user could easily create a scratch disk on nebius that cost \$30K/month!)

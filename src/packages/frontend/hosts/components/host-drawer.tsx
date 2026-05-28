@@ -2394,6 +2394,22 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             tier greater than or equal to this value may create or move projects
             here without delegated host access.
           </Typography.Text>
+          {hasSharedScratch && (
+            <Alert
+              type="warning"
+              showIcon
+              message="Shared /scratch is visible to every project on this host"
+              description={
+                <>
+                  This host has shared <code>/scratch</code> storage. Every
+                  project placed on this host can read and write the same
+                  scratch filesystem. Only enable public/shared access if these
+                  users are meant to share this data, for example a trusted lab
+                  or class.
+                </>
+              }
+            />
+          )}
           <Space wrap>
             <Switch
               checked={poolAccessEnabled}
