@@ -3,6 +3,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
+import { isProjectUserRole } from "@cocalc/util/project-access";
 
 function pool() {
   return getPool();
@@ -69,7 +70,7 @@ export async function assertAccountProjectHostTokenProjectAccess({
   if (row.host_id !== host_id) {
     throw new Error("project is not assigned to the requested host");
   }
-  if (row.group === "owner" || row.group === "collaborator") {
+  if (isProjectUserRole(row.group)) {
     return;
   }
   throw new Error("not authorized for project-host access token");

@@ -21,7 +21,10 @@ import {
   stopProjectOnHost,
 } from "../project-host/control";
 import { getConfiguredBayId } from "../bay-config";
-import { start as startProjectLro } from "../conat/api/projects";
+import {
+  PROJECT_DANGEROUS_INTERNAL_AUTH,
+  start as startProjectLro,
+} from "../conat/api/projects";
 import { createBackup as createBackupLro } from "../conat/api/project-backups";
 import type { ManagedBackupEgressOverride } from "@cocalc/conat/files/file-server";
 import { resolveHostConnection } from "../conat/api/hosts";
@@ -1601,6 +1604,9 @@ export async function moveProjectToHost(
               project_id: context.project_id,
               ...(finalBackupId ? { restore_backup_id: finalBackupId } : {}),
               managed_egress_override: input.managed_egress_override,
+              managed_egress_override_auth: input.managed_egress_override
+                ? PROJECT_DANGEROUS_INTERNAL_AUTH
+                : undefined,
               wait: false,
             });
             progress({

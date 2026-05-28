@@ -12,7 +12,7 @@ import {
   BaseEditorActions as Actions,
   CodeEditorState,
 } from "../base-editor/actions-base";
-import { open_new_tab } from "@cocalc/frontend/misc";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 
 export interface CourseEditorState extends CodeEditorState {
   modal?: string;
@@ -113,7 +113,10 @@ export class CourseEditorActions extends Actions<CourseEditorState> {
   }
 
   help = (): void => {
-    open_new_tab("/docs/teaching/course-workflow");
+    openProjectDocs({
+      projectId: this.project_id,
+      slug: "teaching/course-workflow",
+    });
   };
 
   setModal = (modal: string) => {

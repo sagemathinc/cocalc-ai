@@ -94,14 +94,16 @@ export function TaskEditor({
     <div className={"smc-vfill"}>
       <Row>
         <Col md={7} style={{ display: "flex", marginTop: "5px" }}>
-          <Button
-            style={{ marginLeft: "5px" }}
-            onClick={() => {
-              actions.new_task();
-            }}
-          >
-            <Icon name="plus-circle" /> New Task
-          </Button>
+          {!read_only && (
+            <Button
+              style={{ marginLeft: "5px" }}
+              onClick={() => {
+                actions.new_task();
+              }}
+            >
+              <Icon name="plus-circle" /> New Task
+            </Button>
+          )}
           <Find
             style={{ flex: 1 }}
             actions={actions}
@@ -132,7 +134,18 @@ export function TaskEditor({
       </Row>
       <Headings actions={actions} sort={local_view_state.get("sort")} />
       <div style={{ paddingTop: "5px" }} />
-      {visible.size == 0 ? (
+      {visible.size == 0 && read_only ? (
+        <div
+          style={{
+            fontSize: "24px",
+            textAlign: "center",
+            padding: "15px",
+            color: "#999",
+          }}
+        >
+          No visible tasks.
+        </div>
+      ) : visible.size == 0 ? (
         <a
           onClick={actions.new_task}
           style={{

@@ -75,7 +75,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import type { PageActions } from "@cocalc/frontend/app/actions";
 import { get_buffer, set_buffer } from "@cocalc/frontend/copy-paste-buffer";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { filenameMode } from "@cocalc/frontend/file-associations";
 import {
   chat,
@@ -102,7 +102,6 @@ import { getSyncDocDescriptor } from "@cocalc/sync/editor/doctypes";
 import { apply_patch, make_patch } from "@cocalc/util/patch";
 import type { SyncString } from "@cocalc/sync/editor/string/sync";
 import { once } from "@cocalc/util/async-utils";
-import { joinUrlPath } from "@cocalc/util/url-path";
 import {
   Options as FormatterOptions,
   Exts as FormatterExts,
@@ -151,6 +150,7 @@ import {
   syncstring,
   syncstring2,
 } from "../generic/client";
+import { FakeSyncstring } from "../generic/syncstring-fake";
 import { MergeCoordinator } from "../code-editor/sync";
 import { SyncAdapter } from "../code-editor/sync-adapter";
 import "../generic/codemirror-plugins";
@@ -229,6 +229,10 @@ export interface CodeEditorState {
   pdf_dark_mode_disabled?: { [id: string]: boolean };
 }
 
+export interface BaseEditorInitOptions {
+  readOnlyPreview?: boolean;
+}
+
 export class BaseEditorActions<
   T extends CodeEditorState = CodeEditorState,
 > extends BaseActions<T | CodeEditorState> {
@@ -268,6 +272,7 @@ export class BaseEditorActions<
   private optimisticFastOpenValue?: string;
   private optimisticFastOpenApplied: boolean = false;
   private optimisticFastOpenStatusToken: number = 0;
+  private readOnlyPreview: boolean = false;
   // True when the next syncstring change event is expected to be our own commit,
   // so remote handling can skip re-merging our own write.
   private _suppress_remote_once: boolean = false;
@@ -477,7 +482,12 @@ export class BaseEditorActions<
     this.string_cols = descriptor.string_cols;
   }
 
-  _init(project_id: string, path: string, store: any): void {
+  _init(
+    project_id: string,
+    path: string,
+    store: any,
+    initOptions?: BaseEditorInitOptions,
+  ): void {
     this._save_local_view_state = debounce(
       () => this.__save_local_view_state(),
       1500,
@@ -497,9 +507,23 @@ export class BaseEditorActions<
       trailing: true,
     });
 
+    this.readOnlyPreview = !!initOptions?.readOnlyPreview;
+    if (this.readOnlyPreview) {
+      this.initReadOnlyPreview();
+      return;
+    }
+
     this._init_syncstring();
     this.initReconnectResource();
 
+    this.setInitialState();
+
+    if ((this as any)._init2) {
+      (this as any)._init2();
+    }
+  }
+
+  private setInitialState(): void {
     this.setState({
       value: "Loading...",
       local_view_state: this._load_local_view_state(),
@@ -515,10 +539,82 @@ export class BaseEditorActions<
       settings: fromJS(this._default_settings()),
       complete: Map(),
     });
+  }
+
+  private initReadOnlyPreview(): void {
+    if (this.doctype !== "syncstring") {
+      this.topError(
+        `Read-only preview is only supported for syncstring documents, not doctype '${this.doctype}'.`,
+      );
+      return;
+    }
+    this._syncstring = new FakeSyncstring({
+      readOnly: true,
+      autoReady: false,
+    }) as unknown as SyncString;
+
+    restart_open_timer(this.project_id, this.path, {
+      source: "read_only_preview",
+    });
+    this.setInitialState();
+    this.setState({
+      read_only: true,
+      status: "Loading read-only preview...",
+      rtc_status: "loading",
+    });
 
     if ((this as any)._init2) {
       (this as any)._init2();
     }
+
+    const fs = this._get_project_actions()?.fs?.();
+    if (typeof fs?.readFile !== "function") {
+      this.setState({ rtc_status: "error" });
+      this.topError(
+        "Project filesystem is not available for read-only preview.",
+      );
+      return;
+    }
+
+    void (async () => {
+      try {
+        const raw = await fs.readFile(this.path, "utf8");
+        if (this.isClosed()) return;
+        const value =
+          typeof raw === "string"
+            ? raw
+            : ((raw as any)?.toString?.("utf8") ?? `${raw ?? ""}`);
+        this._syncstring.from_str(value);
+        this._syncstring_init = true;
+        this._syncstring_metadata();
+        this._init_settings();
+        this._init_syncstring_value();
+        this.afterSyncReady();
+        this._syncstring.emit("change");
+        (this._syncstring as any).setReady?.();
+        this.setState({
+          is_loaded: true,
+          read_only: true,
+          status: "",
+          rtc_status: "live",
+        });
+        mark_open_phase(this.project_id, this.path, "optimistic_ready", {
+          bytes: value.length,
+          read_only: true,
+        });
+        log_opened_time(this.project_id, this.path);
+      } catch (err) {
+        if (this.isClosed()) return;
+        (this._syncstring as any).setReady?.(err as Error);
+        this.setState({
+          is_loaded: true,
+          read_only: true,
+          rtc_status: "error",
+          status: "",
+        });
+        this.topError(`Unable to load read-only preview: ${err}`);
+      }
+    })();
   }
 
   // Init setting of value whenever syncstring changes --
@@ -1905,17 +2001,22 @@ export class BaseEditorActions<
   }
 
   help(type: string): void {
-    const url: string = (function () {
-      switch (type) {
-        case "terminal":
-          return joinUrlPath(appBasePath, "docs/terminal/use-terminal");
-        case "time_travel":
-          return joinUrlPath(appBasePath, "docs/files/timetravel");
-        default:
-          return WIKI_HELP_URL + type + "-help";
-      }
-    })();
-    open_new_tab(url);
+    switch (type) {
+      case "terminal":
+        openProjectDocs({
+          projectId: this.project_id,
+          slug: "terminal/use-terminal",
+        });
+        return;
+      case "time_travel":
+        openProjectDocs({
+          projectId: this.project_id,
+          slug: "files/timetravel",
+        });
+        return;
+      default:
+        open_new_tab(WIKI_HELP_URL + type + "-help");
+    }
   }
 
   guide(id: string, type: string): void {

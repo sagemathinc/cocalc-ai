@@ -66,6 +66,7 @@ interface Props {
   project_id: string;
   actions: ProjectActions;
   onUserFilesystemChange?: () => void;
+  readOnlySource?: boolean;
 }
 
 export function ActionBox({
@@ -76,6 +77,7 @@ export function ActionBox({
   project_id,
   actions,
   onUserFilesystemChange,
+  readOnlySource = false,
 }: Props) {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
@@ -85,13 +87,17 @@ export function ActionBox({
     "copy_destination_project_id",
   );
   const [copy_destination_directory, set_copy_destination_directory] =
-    useState<string>(dnd_copy_dest ? "" : current_path);
+    useState<string>(readOnlySource || dnd_copy_dest ? "" : current_path);
   const [copy_destination_project_id, set_copy_destination_project_id] =
-    useState<string | undefined>(dnd_copy_dest ?? project_id);
+    useState<string | undefined>(
+      readOnlySource ? undefined : (dnd_copy_dest ?? project_id),
+    );
   const [move_destination, set_move_destination] =
     useState<string>(current_path);
   const [show_different_project, set_show_different_project] =
-    useState<boolean>(!!dnd_copy_dest && dnd_copy_dest !== project_id);
+    useState<boolean>(
+      readOnlySource || (!!dnd_copy_dest && dnd_copy_dest !== project_id),
+    );
   const [overwrite, set_overwrite] = useState<boolean>(true);
   const [deleteWithSudo, setDeleteWithSudo] = useState<boolean>(false);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
@@ -112,13 +118,13 @@ export function ActionBox({
         };
 
   useEffect(() => {
-    if (!dnd_copy_dest || dnd_copy_dest === project_id) {
+    if (readOnlySource || !dnd_copy_dest || dnd_copy_dest === project_id) {
       return;
     }
     set_show_different_project(true);
     set_copy_destination_project_id(dnd_copy_dest);
     set_copy_destination_directory("");
-  }, [dnd_copy_dest, project_id]);
+  }, [dnd_copy_dest, project_id, readOnlySource]);
 
   useEffect(() => {
     return () => {
@@ -440,6 +446,14 @@ export function ActionBox({
       });
       return;
     }
+    if (readOnlySource && destination_project_id === project_id) {
+      alert_message({
+        type: "error",
+        title: "Copy failed",
+        message: "Viewers can only copy files out to a different project.",
+      });
+      return;
+    }
     if (
       destination_project_id != undefined &&
       project_id !== destination_project_id
@@ -474,6 +488,9 @@ export function ActionBox({
     if (!copy_destination_project_id) {
       return false;
     }
+    if (readOnlySource && project_id === copy_destination_project_id) {
+      return false;
+    }
     if (input === current_path && project_id === copy_destination_project_id) {
       return false;
     }
@@ -494,28 +511,36 @@ export function ActionBox({
     return (
       <>
         <div style={{ display: "flex" }}>
-          <h4>Items </h4>
+          <h4>{readOnlySource ? "Read-only items" : "Items"} </h4>
 
-          <div style={{ flex: 1, textAlign: "right" }}>
-            <AntdButton
-              onClick={() => {
-                const show = !show_different_project;
-                set_show_different_project(show);
-                if (show) {
-                  set_copy_destination_project_id(project_id);
-                  set_copy_destination_directory(current_path);
-                } else {
-                  set_copy_destination_project_id(project_id);
-                  set_copy_destination_directory("");
-                }
-              }}
-            >
-              {show_different_project
-                ? "Copy to this project..."
-                : "Copy to a different project..."}
-            </AntdButton>
-          </div>
+          {!readOnlySource && (
+            <div style={{ flex: 1, textAlign: "right" }}>
+              <AntdButton
+                onClick={() => {
+                  const show = !show_different_project;
+                  set_show_different_project(show);
+                  if (show) {
+                    set_copy_destination_project_id(project_id);
+                    set_copy_destination_directory(current_path);
+                  } else {
+                    set_copy_destination_project_id(project_id);
+                    set_copy_destination_directory("");
+                  }
+                }}
+              >
+                {show_different_project
+                  ? "Copy to this project..."
+                  : "Copy to a different project..."}
+              </AntdButton>
+            </div>
+          )}
         </div>
+        {readOnlySource && (
+          <Alert bsStyle="info">
+            Viewer access is read-only. You can copy allowed files to a project
+            where you are a collaborator.
+          </Alert>
+        )}
         <div>{render_selected_files_list()}</div>
       </>
     );

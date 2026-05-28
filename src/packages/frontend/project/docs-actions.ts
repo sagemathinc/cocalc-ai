@@ -22,6 +22,7 @@ import {
   separate_file_extension,
   tab_to_path,
 } from "@cocalc/util/misc";
+import { openHostDrawer } from "@cocalc/frontend/hosts/open-host-drawer";
 
 export const PROJECT_SECRETS_DOCS_ACTION_EVENT =
   "cocalc:docs-action:project-secrets";
@@ -48,6 +49,8 @@ export interface ProjectPeopleDocsActionDetail {
 
 export type DocsActionRevealResult = {
   action_id: DocsActionId;
+  drawer_tab?: string;
+  host_id?: string;
   opened: true;
   path?: string;
   panel?: string;
@@ -55,6 +58,8 @@ export type DocsActionRevealResult = {
   source_path?: string;
   tab?: string;
 };
+
+export type DocsActionParameters = Record<string, string | undefined>;
 
 export type DocsActionAvailability = DocsActionSummary & {
   available: boolean;
@@ -70,9 +75,28 @@ type DocsAppAction = {
   }) => string | true;
   run: (context: {
     includeAdmin?: boolean;
+    parameters?: DocsActionParameters;
     projectId: string;
   }) => DocsActionRevealResult | Promise<DocsActionRevealResult>;
 };
+
+function actionNeedsProjectParameter(action: DocsActionSummary): boolean {
+  return (
+    action.parameters?.some(
+      (parameter) => parameter.type === "project" && parameter.required,
+    ) === true
+  );
+}
+
+function effectiveProjectId({
+  parameters,
+  projectId,
+}: {
+  parameters?: DocsActionParameters;
+  projectId: string;
+}): string {
+  return `${parameters?.projectId ?? projectId ?? ""}`.trim();
+}
 
 type ProjectActionSubset = {
   construct_absolute_path?: (
@@ -189,6 +213,53 @@ function selectAdmin(route: AdminRoute, search = ""): void {
   if (typeof window !== "undefined") {
     set_url_with_search(getAdminUrlPath(route), search);
   }
+}
+
+function revealHostsPage({
+  actionId,
+  hostId,
+  projectId,
+  tab,
+}: {
+  actionId: DocsActionId;
+  hostId?: string;
+  projectId: string;
+  tab?: string;
+}): DocsActionRevealResult {
+  const normalizedHostId = `${hostId ?? ""}`.trim();
+  const normalizedTab = `${tab ?? ""}`.trim();
+  if (normalizedHostId) {
+    openHostDrawer({
+      hostId: normalizedHostId,
+      tab: normalizedTab || undefined,
+    });
+    return {
+      action_id: actionId,
+      drawer_tab: normalizedTab || undefined,
+      host_id: normalizedHostId,
+      opened: true,
+      project_id: projectId,
+      tab: "hosts",
+    };
+  }
+  const pageActions = redux.getActions("page") as
+    | {
+        set_active_tab?: (
+          key: string,
+          changeHistory?: boolean,
+        ) => Promise<void>;
+      }
+    | undefined;
+  void pageActions?.set_active_tab?.("hosts", false);
+  if (typeof window !== "undefined") {
+    set_url_with_search("/hosts", "");
+  }
+  return {
+    action_id: actionId,
+    opened: true,
+    project_id: projectId,
+    tab: "hosts",
+  };
 }
 
 function revealAdminSection({
@@ -564,6 +635,98 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
         section: "user-search",
       }),
   },
+  "hosts.open": {
+    id: "hosts.open",
+    run: ({ projectId }) =>
+      revealHostsPage({ actionId: "hosts.open", projectId }),
+  },
+  "hosts.access.open": {
+    id: "hosts.access.open",
+    run: ({ parameters, projectId }) =>
+      revealHostsPage({
+        actionId: "hosts.access.open",
+        hostId: parameters?.hostId,
+        projectId,
+        tab: "access",
+      }),
+  },
+  "hosts.change-rules.open": {
+    id: "hosts.change-rules.open",
+    run: ({ parameters, projectId }) =>
+      revealHostsPage({
+        actionId: "hosts.change-rules.open",
+        hostId: parameters?.hostId,
+        projectId,
+      }),
+  },
+  "hosts.lifecycle.open": {
+    id: "hosts.lifecycle.open",
+    run: ({ parameters, projectId }) =>
+      revealHostsPage({
+        actionId: "hosts.lifecycle.open",
+        hostId: parameters?.hostId,
+        projectId,
+      }),
+  },
+  "hosts.move.open": {
+    id: "hosts.move.open",
+    run: ({ parameters, projectId }) =>
+      revealHostsPage({
+        actionId: "hosts.move.open",
+        hostId: parameters?.hostId,
+        projectId,
+        tab: "projects",
+      }),
+  },
+  "hosts.reliability.open": {
+    id: "hosts.reliability.open",
+    run: ({ parameters, projectId }) =>
+      revealHostsPage({
+        actionId: "hosts.reliability.open",
+        hostId: parameters?.hostId,
+        projectId,
+        tab: "reliability",
+      }),
+  },
+  "hosts.runtime.open": {
+    id: "hosts.runtime.open",
+    run: ({ parameters, projectId }) =>
+      revealHostsPage({
+        actionId: "hosts.runtime.open",
+        hostId: parameters?.hostId,
+        projectId,
+        tab: "runtime",
+      }),
+  },
+  "hosts.storage.open": {
+    id: "hosts.storage.open",
+    run: ({ parameters, projectId }) =>
+      revealHostsPage({
+        actionId: "hosts.storage.open",
+        hostId: parameters?.hostId,
+        projectId,
+        tab: "storage",
+      }),
+  },
+  "hosts.logs.open": {
+    id: "hosts.logs.open",
+    run: ({ parameters, projectId }) =>
+      revealHostsPage({
+        actionId: "hosts.logs.open",
+        hostId: parameters?.hostId,
+        projectId,
+        tab: "logs",
+      }),
+  },
+  "hosts.spot-recovery.open": {
+    id: "hosts.spot-recovery.open",
+    run: ({ parameters, projectId }) =>
+      revealHostsPage({
+        actionId: "hosts.spot-recovery.open",
+        hostId: parameters?.hostId,
+        projectId,
+      }),
+  },
   "settings.environment.secrets": {
     id: "settings.environment.secrets",
     isAvailable: ({ projectId }) => validateProjectId(projectId),
@@ -624,6 +787,13 @@ export function listDocsAppActions({
 }): DocsActionAvailability[] {
   return listDocsActions({ includeAdmin }).map((action) => {
     const appAction = getDocsAppAction(action.id);
+    if (appAction && !projectId && actionNeedsProjectParameter(action)) {
+      return {
+        ...action,
+        available: true,
+        implemented: true,
+      };
+    }
     const available =
       appAction?.isAvailable?.({ includeAdmin, projectId }) ?? !!appAction;
     return {
@@ -638,10 +808,12 @@ export function listDocsAppActions({
 export function revealDocsAction({
   actionId,
   includeAdmin = accountIsAdmin(),
+  parameters,
   projectId,
 }: {
   actionId: string;
   includeAdmin?: boolean;
+  parameters?: DocsActionParameters;
   projectId: string;
 }): DocsActionRevealResult | Promise<DocsActionRevealResult> {
   if (!isDocsActionId(actionId)) {
@@ -658,10 +830,11 @@ export function revealDocsAction({
   if (!appAction) {
     throw Error(`docs action '${actionId}' has no browser implementation`);
   }
+  const runProjectId = effectiveProjectId({ parameters, projectId });
   const available =
-    appAction.isAvailable?.({ includeAdmin, projectId }) ?? true;
+    appAction.isAvailable?.({ includeAdmin, projectId: runProjectId }) ?? true;
   if (available !== true) {
     throw Error(`docs action '${actionId}' is not available: ${available}`);
   }
-  return appAction.run({ projectId });
+  return appAction.run({ parameters, projectId: runProjectId });
 }

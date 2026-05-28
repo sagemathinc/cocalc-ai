@@ -4,6 +4,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import { DownloadOutlined, UploadOutlined } from "@ant-design/icons";
 import { Button, Flex, message, Space, Typography, Upload } from "antd";
@@ -13,9 +14,11 @@ import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   DocsBrowser,
   DocsFontSizeFrame,
+  DocsPrintContent,
   DOCS_BROWSER_MUTED_TITLE_STYLE,
   DOCS_BROWSER_PAGE_STYLE,
   type DocsBrowserAction,
+  type DocsBrowserActionParameters,
 } from "@cocalc/frontend/docs/browser";
 import { DocsPrivateNotesPanel } from "@cocalc/frontend/docs/private-state/panel";
 import {
@@ -31,11 +34,17 @@ import {
 import { set_url } from "@cocalc/frontend/history";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { Tooltip } from "@cocalc/frontend/components";
+import {
+  APP_DOCS_SELECTED_STORAGE_KEY,
+  saveStoredAppDocsSlug,
+} from "@cocalc/frontend/docs/navigation";
+import { open_popup_window } from "@cocalc/frontend/misc/open-browser-tab";
+import { BASE_URL } from "@cocalc/frontend/misc";
+import { resource_links_string } from "@cocalc/frontend/misc/resource-links";
 import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { COLORS } from "@cocalc/util/theme";
 
 const { Paragraph, Text, Title } = Typography;
-const APP_DOCS_SELECTED_STORAGE_KEY = "cocalc-app-docs-selected-slug";
 
 function loadStoredAppDocsEntry(docsAccess: DocsAccess): DocsEntry | undefined {
   if (typeof window === "undefined") return undefined;
@@ -46,15 +55,10 @@ function loadStoredAppDocsEntry(docsAccess: DocsAccess): DocsEntry | undefined {
 }
 
 function saveStoredAppDocsEntry(entry?: DocsEntry): void {
-  if (typeof window === "undefined") return;
-  if (entry?.slug) {
-    window.localStorage.setItem(APP_DOCS_SELECTED_STORAGE_KEY, entry.slug);
-  } else {
-    window.localStorage.removeItem(APP_DOCS_SELECTED_STORAGE_KEY);
-  }
+  saveStoredAppDocsSlug(entry?.slug);
 }
 
-export function DocsPage({ slug }: { slug?: string }) {
+export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
   const [messageApi, contextHolder] = message.useMessage();
   const [privateFilter, setPrivateFilter] = useState<DocsPrivateFilter>("all");
   const importBusyRef = useRef(false);
@@ -78,33 +82,78 @@ export function DocsPage({ slug }: { slug?: string }) {
   );
   const initialEntry = useMemo(
     () =>
-      slug
-        ? getDocsEntry(slug, docsAccess)
-        : loadStoredAppDocsEntry(docsAccess),
-    [docsAccess, slug],
+      print
+        ? undefined
+        : slug
+          ? getDocsEntry(slug, docsAccess)
+          : loadStoredAppDocsEntry(docsAccess),
+    [docsAccess, print, slug],
   );
   const initialEntrySlug = initialEntry?.slug;
 
   useEffect(() => {
+    if (print) return;
     if (initialEntry == null) return;
     saveStoredAppDocsEntry(initialEntry);
     if (!slug) {
-      pageActions.setState({ docs_slug: initialEntry.slug });
+      pageActions.setState({ docs_print: false, docs_slug: initialEntry.slug });
       set_url(getPageUrlPath({ page: "docs", slug: initialEntry.slug }));
     }
-  }, [initialEntry, initialEntrySlug, pageActions, slug]);
+  }, [initialEntry, initialEntrySlug, pageActions, print, slug]);
 
-  async function runAction(action: DocsBrowserAction): Promise<void> {
+  async function runAction(
+    action: DocsBrowserAction,
+    parameters?: DocsBrowserActionParameters,
+  ): Promise<void> {
     try {
       await revealDocsAction({
         actionId: action.id,
         includeAdmin: isAdmin,
+        parameters,
         projectId: "",
       });
       await messageApi.success(action.label);
     } catch (err) {
       await messageApi.error(`${err}`);
     }
+  }
+
+  function openPrintPopup(): void {
+    const popup = open_popup_window("about:blank", {
+      height: 900,
+      noopener: false,
+      width: 1100,
+    });
+    if (popup == null) return;
+    const html = renderToStaticMarkup(
+      <DocsPrintContent
+        docsAccess={docsAccess}
+        onBackHref={getPageUrlPath({ page: "docs" })}
+      />,
+    );
+    popup.document.write(`<!doctype html>
+<html lang="en">
+  <head>
+    <title>CoCalc documentation</title>
+    <meta charset="utf-8" />
+    <meta name="google" content="notranslate" />
+    ${resource_links_string(BASE_URL)}
+    <style>
+      html, body { background: white; }
+      body { margin: 0; padding: 24px; }
+      @media print { body { padding: 0; } }
+    </style>
+  </head>
+  <body>
+    ${html}
+    <script>
+      window.onload = function() {
+        setTimeout(function() { window.print(); }, 50);
+      };
+    </script>
+  </body>
+</html>`);
+    popup.document.close();
   }
 
   const privateToolbar = accountId ? (
@@ -179,38 +228,54 @@ export function DocsPage({ slug }: { slug?: string }) {
     <div style={{ minHeight: 0, overflow: "auto" }}>
       <div style={DOCS_BROWSER_PAGE_STYLE}>
         {contextHolder}
-        <DocsFontSizeFrame defaultFontSize={accountFontSize}>
+        <DocsFontSizeFrame
+          defaultFontSize={accountFontSize}
+          showControls={!print}
+        >
           <Flex gap="middle" vertical>
-            <div>
-              <Text strong style={DOCS_BROWSER_MUTED_TITLE_STYLE}>
-                CoCalc docs
-              </Text>
-              <Title level={1} style={{ lineHeight: 1.15, marginBottom: 0 }}>
-                Help for this CoCalc site
-              </Title>
-            </div>
-            <Paragraph
-              style={{
-                color: COLORS.GRAY_M,
-                marginBottom: 20,
-                maxWidth: 760,
-              }}
-            >
-              Search current CoCalc-ai docs from anywhere in the app. Signed-in
-              docs, account-wide private notes, and admin-only pages appear here
-              when your account has access.
-            </Paragraph>
+            {!print ? (
+              <>
+                <div>
+                  <Text strong style={DOCS_BROWSER_MUTED_TITLE_STYLE}>
+                    CoCalc docs
+                  </Text>
+                  <Title
+                    level={1}
+                    style={{ lineHeight: 1.15, marginBottom: 0 }}
+                  >
+                    Help for this CoCalc site
+                  </Title>
+                </div>
+                <Paragraph
+                  style={{
+                    color: COLORS.GRAY_M,
+                    marginBottom: 20,
+                    maxWidth: 760,
+                  }}
+                >
+                  Search current CoCalc-ai docs from anywhere in the app.
+                  Signed-in docs, account-wide private notes, and admin-only
+                  pages appear here when your account has access.
+                </Paragraph>
+              </>
+            ) : null}
           </Flex>
           <DocsBrowser
             actionAvailability={actionAvailability}
+            browserHref={getPageUrlPath({ page: "docs" })}
             docsAccess={docsAccess}
             initialEntry={initialEntry}
+            onPrint={openPrintPopup}
             onRunAction={runAction}
             onSelectedEntryChange={(entry) => {
-              pageActions.setState({ docs_slug: entry?.slug });
+              pageActions.setState({
+                docs_print: false,
+                docs_slug: entry?.slug,
+              });
               set_url(getPageUrlPath({ page: "docs", slug: entry?.slug }));
               saveStoredAppDocsEntry(entry);
             }}
+            printMode={print}
             privateDetailState={
               accountId
                 ? {

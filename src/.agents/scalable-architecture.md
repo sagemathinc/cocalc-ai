@@ -43,6 +43,31 @@ The correct architecture is:
 
 Launchpad should become exactly one bay with no cross-bay routing.
 
+## Core Control/Data Plane Principle
+
+The control plane authorizes, routes, synchronizes state, records durable
+metadata, and issues scoped project-host access. It should not carry
+steady-state project data traffic unless there is a specific, documented
+exception.
+
+Once a user is interacting with a project, traffic should flow directly between
+the user/client and the project host whenever possible. This includes files,
+terminals, Jupyter kernels, Codex/ACP traffic, project app/server proxying,
+previews, and other project data-plane operations.
+
+This matters because direct project-host traffic:
+
+- keeps latency low.
+- avoids unnecessary hub/control-plane egress and CPU cost.
+- lets active project work continue through hub restarts or transient
+  control-plane glitches.
+- keeps permission boundaries close to the resource being protected.
+
+If a new access mode needs narrower permissions, add a project-host service,
+subject, token, or capability boundary for that mode. Do not proxy project data
+through the hub as a shortcut. For example, read-only project viewers should use
+a project-host read-only file service rather than hub-mediated file reads.
+
 Terminology note:
 
 - this document uses `bay` instead of `cell`

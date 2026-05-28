@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { encryptSecretSettingValue } from "@cocalc/util/secret-settings-crypto";
 
 let assertLocalProjectCollaboratorMock: jest.Mock;
+let getLocalProjectAccessStatusMock: jest.Mock;
 let assertProjectCollaboratorAccessAllowRemoteMock: jest.Mock;
 let queryMock: jest.Mock;
 let callback2Mock: jest.Mock;
@@ -23,6 +24,8 @@ jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
   assertLocalProjectCollaborator: (...args: any[]) =>
     assertLocalProjectCollaboratorMock(...args),
+  getLocalProjectAccessStatus: (...args: any[]) =>
+    getLocalProjectAccessStatusMock(...args),
 }));
 
 jest.mock("@cocalc/server/conat/project-remote-access", () => ({
@@ -186,6 +189,7 @@ describe("project collaborators local bay access", () => {
   beforeEach(() => {
     jest.resetModules();
     assertLocalProjectCollaboratorMock = jest.fn(async () => undefined);
+    getLocalProjectAccessStatusMock = jest.fn(async () => "local-project-user");
     assertProjectCollaboratorAccessAllowRemoteMock = jest.fn(async () => ({
       project_id: PROJECT_ID,
       title: "Test Project",
@@ -196,7 +200,14 @@ describe("project collaborators local bay access", () => {
         [TARGET_ACCOUNT_ID]: { group: "collaborator" },
       },
     }));
-    queryMock = jest.fn(async () => ({ rows: [] }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("AS actor_group")) {
+        return {
+          rows: [{ actor_group: "owner", manage_users_owner_only: false }],
+        };
+      }
+      return { rows: [] };
+    });
     callback2Mock = jest.fn(async (fn, opts) => await fn(opts));
     isAdminMock = jest.fn(async () => false);
     ensureAccountSecurityStateReadyMock = jest.fn(async () => undefined);
@@ -392,6 +403,72 @@ describe("project collaborators local bay access", () => {
     ).rejects.toThrow("only project owners can invite collaborators");
   });
 
+  it("creates pending viewer invites for existing accounts", async () => {
+    const inviteId = "77777777-7777-4777-8777-777777777777";
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("AS actor_group")) {
+        return {
+          rows: [{ actor_group: "owner", manage_users_owner_only: false }],
+        };
+      }
+      if (sql.includes("AS existing_group")) {
+        return { rows: [{ existing_group: null }] };
+      }
+      if (sql.includes("FROM project_collab_invite_blocks")) {
+        return { rows: [{ blocked: false }] };
+      }
+      if (
+        sql.includes("SELECT invite_id") &&
+        sql.includes("status='pending'")
+      ) {
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO project_collab_invites")) {
+        return { rows: [] };
+      }
+      if (sql.includes("FROM project_collab_invites i")) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              inviter_account_id: ACCOUNT_ID,
+              invitee_account_id: TARGET_ACCOUNT_ID,
+              invite_role: "viewer",
+              read_policy: { rules: [{ action: "include", path: "." }] },
+              status: "pending",
+              created: new Date("2026-04-01T00:00:00Z"),
+              updated: new Date("2026-04-01T00:00:00Z"),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { createCollabInvite } = await import("./collaborators");
+    await expect(
+      createCollabInvite({
+        account_id: ACCOUNT_ID,
+        invitee_account_id: TARGET_ACCOUNT_ID,
+        invite_role: "viewer",
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toEqual({
+      created: true,
+      invite: expect.objectContaining({
+        invite_id: inviteId,
+        invite_role: "viewer",
+        read_policy: expect.objectContaining({ rules: expect.any(Array) }),
+      }),
+    });
+
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO project_collab_invites"),
+      expect.arrayContaining(["viewer"]),
+    );
+  });
+
   it("rejects email invites from collaborators when owner-only management is enabled", async () => {
     queryMock = jest.fn(async (sql: string) => {
       if (sql.includes("AS actor_group")) {
@@ -456,6 +533,11 @@ describe("project collaborators local bay access", () => {
         group: "collaborator",
         name: "Collab",
       }),
+      expect.objectContaining({
+        account_id: "44444444-4444-4444-8444-444444444444",
+        group: "viewer",
+        name: "Viewer",
+      }),
     ]);
     expect(assertProjectCollaboratorAccessAllowRemoteMock).toHaveBeenCalledWith(
       {
@@ -499,6 +581,11 @@ describe("project collaborators local bay access", () => {
       expect.objectContaining({
         account_id: TARGET_ACCOUNT_ID,
         group: "collaborator",
+        name: "Remote Collab",
+      }),
+      expect.objectContaining({
+        account_id: "44444444-4444-4444-8444-444444444444",
+        group: "viewer",
         name: "Remote Collab",
       }),
     ]);
@@ -793,6 +880,100 @@ describe("project collaborators local bay access", () => {
     );
   });
 
+  it("accepts viewer invites without granting collaborator access", async () => {
+    const inviteId = "77777777-7777-4777-8777-777777777777";
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes(
+          "SELECT invite_id, project_id, inviter_account_id, invitee_account_id",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              invitee_account_id: ACCOUNT_ID,
+              invite_role: "viewer",
+              read_policy: { rules: [{ action: "include", path: "." }] },
+              status: "pending",
+            },
+          ],
+        };
+      }
+      if (sql.includes("AS inviter_group")) {
+        return {
+          rows: [{ inviter_group: "owner", manage_users_owner_only: false }],
+        };
+      }
+      if (sql.includes("AS existing_group")) {
+        return { rows: [{ existing_group: null }] };
+      }
+      if (sql.includes("UPDATE projects")) {
+        return { rows: [] };
+      }
+      if (sql.includes("UPDATE project_collab_invites")) {
+        return { rows: [] };
+      }
+      if (sql.includes("FROM project_collab_invites i")) {
+        return {
+          rows: [
+            {
+              invite_id: inviteId,
+              project_id: PROJECT_ID,
+              inviter_account_id: TARGET_ACCOUNT_ID,
+              invitee_account_id: ACCOUNT_ID,
+              invite_source: "account",
+              invite_role: "viewer",
+              read_policy: { rules: [{ action: "include", path: "." }] },
+              status: "accepted",
+              responder_action: "accept",
+              created: new Date("2026-04-08T21:00:00Z"),
+              updated: new Date("2026-04-08T21:01:00Z"),
+              responded: new Date("2026-04-08T21:01:00Z"),
+              expires: new Date("2026-05-08T21:00:00Z"),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { respondCollabInvite } = await import("./collaborators");
+    await expect(
+      respondCollabInvite({
+        account_id: ACCOUNT_ID,
+        invite_id: inviteId,
+        action: "accept",
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        invite_id: inviteId,
+        invite_role: "viewer",
+        status: "accepted",
+      }),
+    );
+
+    expect(addUserToProject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        group: "viewer",
+        project_id: PROJECT_ID,
+      }),
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("jsonb_set"),
+      expect.arrayContaining([PROJECT_ID, ACCOUNT_ID, "viewer"]),
+    );
+    const { appendProjectOutboxEventForProject } =
+      await import("@cocalc/database/postgres/project-events-outbox");
+    expect(appendProjectOutboxEventForProject).toHaveBeenCalledWith({
+      event_type: "project.membership_changed",
+      project_id: PROJECT_ID,
+    });
+  });
+
   it("blocks untrusted accounts from accepting projected invites", async () => {
     queryMock = jest.fn(async () => ({ rows: [] }));
     assertAccountTrustedForProductAccessMock = jest.fn(async () => {
@@ -813,6 +994,11 @@ describe("project collaborators local bay access", () => {
 
   it("stores inviter metadata for email-only invites", async () => {
     queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("AS actor_group")) {
+        return {
+          rows: [{ actor_group: "owner", manage_users_owner_only: false }],
+        };
+      }
       if (sql.includes("FROM project_collab_invites i")) {
         return {
           rows: [
@@ -928,6 +1114,11 @@ describe("project collaborators local bay access", () => {
       async () => "no email sent, because email_backend is 'none'",
     );
     queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("AS actor_group")) {
+        return {
+          rows: [{ actor_group: "owner", manage_users_owner_only: false }],
+        };
+      }
       if (sql.includes("FROM project_collab_invites i")) {
         return {
           rows: [
@@ -992,6 +1183,11 @@ describe("project collaborators local bay access", () => {
       },
     }));
     queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("AS actor_group")) {
+        return {
+          rows: [{ actor_group: "owner", manage_users_owner_only: false }],
+        };
+      }
       if (sql.includes("context ->> 'course_project_id'")) {
         return { rows: [{ count: 1 }] };
       }
@@ -1036,6 +1232,11 @@ describe("project collaborators local bay access", () => {
       },
     }));
     queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("AS actor_group")) {
+        return {
+          rows: [{ actor_group: "owner", manage_users_owner_only: false }],
+        };
+      }
       if (sql.includes("course ->> 'type' = 'student'")) {
         return { rows: [{ students: 3, pending_invites: 0 }] };
       }

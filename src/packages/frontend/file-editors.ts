@@ -29,6 +29,10 @@ declare let DEBUG: boolean;
 
 type Elt = any;
 
+export interface FileEditorInitOptions {
+  readOnlyPreview?: boolean;
+}
+
 /*
 component : rclass|function
 generator : function (path, redux, project_id) -> rclass|function
@@ -53,13 +57,13 @@ interface FileEditorSpec {
     path: string,
     redux: any,
     project_id: string | undefined,
-    content?: string,
+    content?: string | FileEditorInitOptions,
   ) => Promise<string>; // returned string = redux name
   init?: (
     path: string,
     redux: any,
     project_id: string | undefined,
-    content?: string,
+    content?: string | FileEditorInitOptions,
   ) => string; // returned string = redux name
   remove?:
     | ((path: string, redux: any, project_id: string | undefined) => string) // returned string = redux name  or undefined if not using redux
@@ -190,7 +194,7 @@ export async function initializeAsync(
   path: string,
   redux,
   project_id: string | undefined,
-  content?: string,
+  content?: string | FileEditorInitOptions,
   ext?: string,
 ): Promise<string | undefined> {
   const editor = get_ed(project_id, path, ext);
@@ -218,7 +222,7 @@ export function initialize(
   path: string,
   redux,
   project_id: string | undefined,
-  content?: string,
+  content?: string | FileEditorInitOptions,
 ): string | undefined {
   const editor = get_ed(project_id, path);
   if (editor.init == null) {

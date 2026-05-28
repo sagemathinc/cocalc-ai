@@ -32,6 +32,7 @@ type UseHostDrawerViewModelArgs = {
   onClose: () => void;
   onEdit: (host: Host) => void;
   onDelete?: (id: string, opts?: HostDeleteOptions) => void | Promise<void>;
+  onDeleteSharedScratch?: (id: string) => void | Promise<void>;
   onUpgrade?: (host: Host) => void;
   onUpgradeAll?: (host: Host) => void;
   onReconcile?: (host: Host) => void;
@@ -193,6 +194,7 @@ export const useHostDrawerViewModel = ({
   onClose,
   onEdit,
   onDelete,
+  onDeleteSharedScratch,
   onUpgrade,
   onUpgradeAll,
   onReconcile,
@@ -239,6 +241,7 @@ export const useHostDrawerViewModel = ({
     onClose,
     onEdit,
     onDelete,
+    onDeleteSharedScratch,
     onUpgrade,
     onUpgradeAll,
     onReconcile,

@@ -8,12 +8,10 @@ Jupyter Frame Editor Actions
 */
 
 import { delay } from "awaiting";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { markdown_to_slate } from "@cocalc/frontend/editors/slate/markdown-to-slate";
 import { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
 import { toFragmentId } from "@cocalc/frontend/jupyter/heading-tag";
-import { open_new_tab } from "@cocalc/frontend/misc";
-import { joinUrlPath } from "@cocalc/util/url-path";
 import type { FragmentId } from "@cocalc/frontend/misc/fragment-id";
 import {
   BaseEditorActions as BaseActions,
@@ -716,7 +714,10 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
   }
 
   help(): void {
-    open_new_tab(joinUrlPath(appBasePath, "docs/jupyter/use-jupyter"));
+    openProjectDocs({
+      projectId: this.project_id,
+      slug: "jupyter/use-jupyter",
+    });
   }
 
   about = () => {

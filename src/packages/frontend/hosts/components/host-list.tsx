@@ -786,9 +786,9 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       title: "Host",
       dataIndex: "name",
       key: "name",
-      width: 240,
+      width: 220,
       onCell: () => ({
-        style: { minWidth: 240, maxWidth: 240 },
+        style: { minWidth: 200, maxWidth: 220 },
       }),
       sorter: true,
       sortDirections: ["ascend", "descend"],
@@ -805,12 +805,12 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     {
       title: "Configuration",
       key: "configuration",
-      width: 330,
+      width: 290,
       onCell: () => ({
-        style: { minWidth: 330, maxWidth: 330 },
+        style: { minWidth: 260, maxWidth: 290 },
       }),
       render: (_: string, host: Host) => (
-        <HostConfigurationCell host={host} maxWidth={300} />
+        <HostConfigurationCell host={host} maxWidth={260} />
       ),
     },
     {
@@ -862,7 +862,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     {
       title: "Actions",
       key: "actions",
-      width: 300,
+      width: 250,
       render: (_: string, host: Host) => {
         const op = hostOps?.[host.id];
         const projectHostRolloutPhase = currentProjectHostRolloutPhase({

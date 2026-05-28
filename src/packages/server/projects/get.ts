@@ -95,7 +95,7 @@ export default async function getProjects({
         AND COALESCE(
           users #>> ARRAY[$1::TEXT, 'group']::TEXT[],
           ''
-        ) IN ('owner', 'collaborator')
+        ) IN ('owner', 'collaborator', 'viewer')
         AND (users#>>'{${account_id},hide}')::BOOLEAN IS NOT TRUE
       ORDER BY last_edited DESC
       LIMIT $2`,

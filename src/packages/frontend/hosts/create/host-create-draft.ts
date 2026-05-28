@@ -58,6 +58,8 @@ export type HostCreateDraft = {
   disk_gb?: number;
   disk?: number;
   disk_type?: string;
+  shared_disk_gb?: number;
+  shared_disk_type?: string;
   region?: string;
   zone?: string;
   machine_type?: string;
@@ -94,7 +96,8 @@ export type NormalizedHostCreateDraft = {
 const DEFAULT_NAME = "My host";
 const DEFAULT_DISK_GB = 100;
 const MIN_DISK_GB = MIN_PROJECT_HOST_DISK_GB;
-const NEBIUS_IO_M3_INCREMENT_GB = 93;
+const NEBIUS_DISK_INCREMENT_GB = 93;
+const GCP_SHARED_SCRATCH_MIN_GB = 10;
 
 const MANAGED_PROVIDERS = new Set<HostProvider>([
   "gcp",
@@ -132,12 +135,28 @@ const readPositiveInteger = (value: unknown): number | undefined => {
 const defaultDiskTypeForProvider = (provider: HostProvider) =>
   provider === "nebius" ? "ssd_io_m3" : getDiskTypeOptions(provider)[0]?.value;
 
+const defaultSharedDiskTypeForProvider = (provider: HostProvider) =>
+  provider === "nebius" ? "ssd" : provider === "gcp" ? "balanced" : undefined;
+
 const normalizeDiskSize = (provider: HostProvider, diskGb: unknown) => {
   const parsed = readPositiveInteger(diskGb) ?? DEFAULT_DISK_GB;
   const size = Math.max(MIN_DISK_GB, parsed);
   if (provider === "nebius") {
     return (
-      Math.ceil(size / NEBIUS_IO_M3_INCREMENT_GB) * NEBIUS_IO_M3_INCREMENT_GB
+      Math.ceil(size / NEBIUS_DISK_INCREMENT_GB) * NEBIUS_DISK_INCREMENT_GB
+    );
+  }
+  return size;
+};
+
+const normalizeSharedDiskSize = (provider: HostProvider, diskGb: unknown) => {
+  const parsed = readPositiveInteger(diskGb);
+  if (parsed == null) return undefined;
+  const min = provider === "gcp" ? GCP_SHARED_SCRATCH_MIN_GB : 1;
+  const size = Math.max(min, parsed);
+  if (provider === "nebius") {
+    return (
+      Math.ceil(size / NEBIUS_DISK_INCREMENT_GB) * NEBIUS_DISK_INCREMENT_GB
     );
   }
   return size;
@@ -238,6 +257,8 @@ export function buildSimilarDraft(
       ram_gb: readPositiveInteger(host.machine?.metadata?.ram_gb),
       disk_gb: disk,
       disk,
+      shared_disk_gb: readPositiveInteger(host.machine?.shared_disk_gb),
+      shared_disk_type: host.machine?.shared_disk_type ?? undefined,
       region: host.region ?? undefined,
       zone: host.machine?.zone ?? undefined,
       machine_type: host.machine?.machine_type ?? undefined,
@@ -295,6 +316,8 @@ export function normalizeDraft(
     disk_gb: readPositiveInteger(input.disk_gb ?? input.disk),
     disk: readPositiveInteger(input.disk ?? input.disk_gb),
     disk_type: input.disk_type,
+    shared_disk_gb: readPositiveInteger(input.shared_disk_gb),
+    shared_disk_type: input.shared_disk_type,
     region: input.region,
     zone: input.zone,
     machine_type: input.machine_type,
@@ -362,6 +385,20 @@ export function normalizeDraft(
       draft.disk = diskGb;
     }
   }
+
+  if (provider !== "nebius" && provider !== "gcp") {
+    draft.shared_disk_gb = undefined;
+    draft.shared_disk_type = undefined;
+  }
+
+  const sharedDiskType = draft.shared_disk_gb
+    ? (draft.shared_disk_type ?? defaultSharedDiskTypeForProvider(provider))
+    : undefined;
+  draft.shared_disk_type = sharedDiskType;
+  draft.shared_disk_gb = normalizeSharedDiskSize(
+    provider,
+    draft.shared_disk_gb,
+  );
 
   if (provider === "nebius") {
     const spotSupported = isNebiusSpotSupported(
@@ -759,6 +796,7 @@ export function buildSubmitDraft(
 ): HostCreateDraft {
   const formDisk = readPositiveInteger(formValues.disk);
   const formDiskGb = readPositiveInteger(formValues.disk_gb);
+  const formSharedDiskGb = readPositiveInteger(formValues.shared_disk_gb);
   return normalizeDraft(
     {
       ...formValues,
@@ -772,6 +810,9 @@ export function buildSubmitDraft(
           : canonicalDraft.name,
       disk: formDisk ?? canonicalDraft.disk,
       disk_gb: formDiskGb ?? canonicalDraft.disk_gb,
+      shared_disk_gb: formSharedDiskGb ?? canonicalDraft.shared_disk_gb,
+      shared_disk_type:
+        formValues.shared_disk_type ?? canonicalDraft.shared_disk_type,
     },
     context,
   ).draft;

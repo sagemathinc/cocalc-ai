@@ -35,7 +35,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 import { publishAccountFeedEventBestEffort } from "./feed";
 
 const logger = getLogger("server:account:project-feed");
-const VISIBLE_PROJECT_GROUPS = new Set(["owner", "collaborator"]);
+const VISIBLE_PROJECT_GROUPS = new Set(["owner", "collaborator", "viewer"]);
 type Queryable = {
   query: (
     sql: string,

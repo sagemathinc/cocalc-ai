@@ -87,6 +87,10 @@ import type {
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
 import type { MoneyValue } from "@cocalc/util/money";
+import type {
+  ProjectUserRole,
+  ProjectViewerReadPolicy,
+} from "@cocalc/util/project-access";
 import type { RootfsImageManifest } from "@cocalc/util/rootfs-images";
 
 export interface BayOwnership {
@@ -1277,6 +1281,8 @@ export interface ProjectCollabInviteCreateRequest {
   invitee_account_id: string;
   message?: string;
   direct?: boolean;
+  invite_role?: Exclude<ProjectUserRole, "owner">;
+  read_policy?: ProjectViewerReadPolicy | null;
 }
 
 export interface ProjectCollabInviteCreateResultWire {
@@ -1299,6 +1305,8 @@ export interface ProjectCollabInviteWithoutAccountRequest {
     send_email?: boolean;
     invite_context?: Record<string, unknown>;
     invite_scope?: string;
+    invite_role?: Exclude<ProjectUserRole, "owner">;
+    read_policy?: ProjectViewerReadPolicy | null;
   };
 }
 
@@ -1377,6 +1385,16 @@ export interface ProjectRemoveCollaboratorRequest {
   opts: {
     account_id: string;
     project_id: string;
+  };
+}
+
+export interface ProjectSetUserRoleRequest {
+  account_id: string;
+  opts: {
+    project_id: string;
+    target_account_id: string;
+    role: Exclude<ProjectUserRole, "owner">;
+    read_policy?: ProjectViewerReadPolicy | null;
   };
 }
 
@@ -1501,6 +1519,8 @@ export type HostControlMethod =
   | "upgrade-software"
   | "rollout-managed-components"
   | "grow-btrfs"
+  | "grow-shared-scratch"
+  | "unmount-shared-scratch"
   | "get-runtime-log"
   | "get-project-runtime-log"
   | "list-rootfs-images"
@@ -1620,6 +1640,7 @@ export type ProjectCollabInviteMethod =
   | "list"
   | "usage"
   | "remove-collaborator"
+  | "set-project-user-role"
   | "leave-or-delete-projects"
   | "set-projects-hidden"
   | "set-manage-users-owner-only"
@@ -2238,6 +2259,14 @@ export interface InterBayHostControlApi {
     host_id: string;
     grow: HostControlArg<"growBtrfs">;
   }) => Promise<{ ok: boolean }>;
+  growSharedScratch: (opts: {
+    host_id: string;
+    grow: HostControlArg<"growSharedScratch">;
+  }) => Promise<{ ok: boolean }>;
+  unmountSharedScratch: (opts: {
+    host_id: string;
+    unmount: HostControlArg<"unmountSharedScratch">;
+  }) => Promise<{ ok: boolean }>;
   getRuntimeLog: (opts: {
     host_id: string;
     get: HostControlArg<"getRuntimeLog">;
@@ -2582,6 +2611,7 @@ export interface InterBayProjectCollabInviteApi {
     opts: ProjectCollabInviteListRequest,
   ) => Promise<ProjectCollabInviteWire[]>;
   removeCollaborator: (opts: ProjectRemoveCollaboratorRequest) => Promise<void>;
+  setProjectUserRole: (opts: ProjectSetUserRoleRequest) => Promise<void>;
   getUsage: (
     opts: ProjectCollaboratorInviteUsageRequest,
   ) => Promise<ProjectCollaboratorInviteUsageWire>;
@@ -2709,6 +2739,8 @@ const HOST_CONTROL_METHOD_SPECS = [
   { name: "upgradeSoftware", method: "upgrade-software" },
   { name: "rolloutManagedComponents", method: "rollout-managed-components" },
   { name: "growBtrfs", method: "grow-btrfs" },
+  { name: "growSharedScratch", method: "grow-shared-scratch" },
+  { name: "unmountSharedScratch", method: "unmount-shared-scratch" },
   { name: "getRuntimeLog", method: "get-runtime-log" },
   { name: "getProjectRuntimeLog", method: "get-project-runtime-log" },
   { name: "listRootfsImages", method: "list-rootfs-images" },
@@ -5729,6 +5761,15 @@ export function createInterBayProjectCollabInviteClient({
       method: "remove-collaborator",
     }),
   });
+  const setProjectUserRoleClient = createServiceClient<
+    Pick<InterBayProjectCollabInviteApi, "setProjectUserRole">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectCollabInviteSubject({
+      dest_bay,
+      method: "set-project-user-role",
+    }),
+  });
   const usageClient = createServiceClient<
     Pick<InterBayProjectCollabInviteApi, "getUsage">
   >({
@@ -5777,6 +5818,8 @@ export function createInterBayProjectCollabInviteClient({
     list: async (opts) => await listClient.list(opts),
     removeCollaborator: async (opts) =>
       await removeCollaboratorClient.removeCollaborator(opts),
+    setProjectUserRole: async (opts) =>
+      await setProjectUserRoleClient.setProjectUserRole(opts),
     getUsage: async (opts) => await usageClient.getUsage(opts),
     leaveOrDeleteProjects: async (opts) =>
       await leaveOrDeleteProjectsClient.leaveOrDeleteProjects(opts),
@@ -5958,6 +6001,19 @@ export function createInterBayProjectCollabInviteHandlers({
       }),
       impl: {
         removeCollaborator: async (opts) => await impl.removeCollaborator(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayProjectCollabInviteApi, "setProjectUserRole">
+    >({
+      ...options,
+      service: "inter-bay-project-collab-invite",
+      subject: projectCollabInviteSubject({
+        dest_bay: bay_id,
+        method: "set-project-user-role",
+      }),
+      impl: {
+        setProjectUserRole: async (opts) => await impl.setProjectUserRole(opts),
       },
     }),
     createServiceHandler<

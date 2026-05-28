@@ -27,6 +27,11 @@ def make_cfg(tmpdir: str) -> bootstrap.BootstrapConfig:
         root_reserve_gb_raw="25",
         data_disk_devices="",
         data_disk_candidates="",
+        shared_scratch_enabled=False,
+        shared_scratch_devices="",
+        shared_scratch_mount="/mnt/cocalc-scratch",
+        shared_scratch_project_mount="/scratch",
+        shared_scratch_filesystem="ext4",
         apt_packages=[],
         has_gpu=False,
         ssh_user="missing-runtime-user",
@@ -45,6 +50,86 @@ def make_cfg(tmpdir: str) -> bootstrap.BootstrapConfig:
         ca_cert_path=None,
         bootstrap_done_paths=[],
     )
+
+
+class BootstrapSharedScratchTest(unittest.TestCase):
+    def test_setup_shared_scratch_formats_mounts_and_records_fstab(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            device = Path(tmpdir) / "scratch-device"
+            device.touch()
+            mount = Path(tmpdir) / "mnt" / "scratch"
+            cfg = replace(
+                make_cfg(tmpdir),
+                shared_scratch_enabled=True,
+                shared_scratch_devices=str(device),
+                shared_scratch_mount=str(mount),
+            )
+            run_calls = []
+            best_effort_calls = []
+            fstab_lines = []
+            chmod_calls = []
+
+            original_check_output = subprocess.check_output
+            original_run_cmd = bootstrap.run_cmd
+            original_run_best_effort = bootstrap.run_best_effort
+            original_update_fstab = bootstrap.update_fstab
+            original_chmod = os.chmod
+            original_log_line = bootstrap.log_line
+
+            def fake_check_output(args, text=False, **_kwargs):
+                if args[:4] == ["lsblk", "-nr", "-o", "MOUNTPOINT"]:
+                    return "" if text else b""
+                if args[:4] == ["lsblk", "-nb", "-o", "SIZE"]:
+                    value = str(200 * 1024 * 1024 * 1024) + "\n"
+                    return value if text else value.encode()
+                if args[:3] == ["lsblk", "-no", "FSTYPE"]:
+                    return "" if text else b""
+                if args[:5] == ["blkid", "-s", "UUID", "-o", "value"]:
+                    return "scratch-uuid\n" if text else b"scratch-uuid\n"
+                return original_check_output(args, text=text, **_kwargs)
+
+            try:
+                subprocess.check_output = fake_check_output
+                bootstrap.run_cmd = lambda _cfg, args, desc, **_kwargs: run_calls.append(
+                    (args, desc)
+                )
+                bootstrap.run_best_effort = (
+                    lambda _cfg, args, desc, **_kwargs: best_effort_calls.append(
+                        (args, desc)
+                    )
+                )
+                bootstrap.update_fstab = lambda line, **_kwargs: fstab_lines.append(
+                    line
+                )
+                os.chmod = lambda path, mode: chmod_calls.append((path, mode))
+                bootstrap.log_line = lambda *_args, **_kwargs: None
+
+                bootstrap.setup_shared_scratch(cfg)
+            finally:
+                subprocess.check_output = original_check_output
+                bootstrap.run_cmd = original_run_cmd
+                bootstrap.run_best_effort = original_run_best_effort
+                bootstrap.update_fstab = original_update_fstab
+                os.chmod = original_chmod
+                bootstrap.log_line = original_log_line
+
+            self.assertIn(
+                (["mkfs.ext4", "-F", str(device)], "mkfs.ext4 shared scratch"),
+                run_calls,
+            )
+            self.assertIn(
+                (["mount", str(device), str(mount)], "mount shared scratch disk"),
+                run_calls,
+            )
+            self.assertEqual(
+                fstab_lines,
+                [f"UUID=scratch-uuid {mount} ext4 defaults,nofail 0 2 # cocalc-scratch"],
+            )
+            self.assertIn(
+                (["resize2fs", str(device)], "resize shared scratch filesystem"),
+                best_effort_calls,
+            )
+            self.assertEqual(chmod_calls, [(str(mount), 0o1777)])
 
 
 class BootstrapRuntimeShellEnvTest(unittest.TestCase):
@@ -850,6 +935,15 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn("sandbox-rmdir)", script)
             self.assertIn("allow_privileged_delete_root", script)
             self.assertIn("privileged-rm-helper", script)
+            self.assertIn("grow-shared-scratch)", script)
+            self.assertIn("/mnt/cocalc-scratch", script)
+            self.assertIn('echo 1 > "$scratch_rescan"', script)
+            self.assertIn('growpart "$scratch_parent" "$scratch_part_num"', script)
+            self.assertIn('partprobe "$scratch_parent"', script)
+            self.assertIn('resize2fs "$scratch_source"', script)
+            self.assertIn('scratch_target_gib="${1:-}"', script)
+            self.assertIn('blockdev --getsize64 "$scratch_parent"', script)
+            self.assertIn("shared-scratch-grow-incomplete", script)
             self.assertIn("podman unshare cat /proc/self/uid_map", script)
             self.assertIn('"to-canonical"', script)
             self.assertIn('"to-host"', script)
@@ -873,6 +967,37 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn(': >"$rootfs/run/podman-init"', script)
             self.assertIn(': >"$rootfs/run/.containerenv"', script)
             wrapper_path = Path(tmpdir) / "cocalc-runtime-storage"
+            wrapper_path.write_text(script, encoding="utf-8")
+            subprocess.run(["bash", "-n", str(wrapper_path)], check=True)
+
+    def test_btrfs_grow_helper_refreshes_block_device_before_online_resize(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            captured: dict[str, str] = {}
+
+            original_write_text = bootstrap.Path.write_text
+            original_chmod = bootstrap.Path.chmod
+
+            def capture_write(self, data, encoding="utf-8"):
+                captured[str(self)] = data
+                return len(data)
+
+            try:
+                bootstrap.Path.write_text = capture_write
+                bootstrap.Path.chmod = lambda *_args, **_kwargs: None
+                bootstrap.install_btrfs_helper(cfg)
+            finally:
+                bootstrap.Path.write_text = original_write_text
+                bootstrap.Path.chmod = original_chmod
+
+            script = captured["/usr/local/sbin/cocalc-grow-btrfs"]
+            self.assertIn('refresh_block_device "$MOUNT_SOURCE"', script)
+            self.assertIn('echo 1 > "$rescan_path"', script)
+            self.assertIn('growpart "$parent" "$part_num"', script)
+            self.assertIn('partprobe "$parent"', script)
+            wrapper_path = Path(tmpdir) / "cocalc-grow-btrfs"
             wrapper_path.write_text(script, encoding="utf-8")
             subprocess.run(["bash", "-n", str(wrapper_path)], check=True)
 

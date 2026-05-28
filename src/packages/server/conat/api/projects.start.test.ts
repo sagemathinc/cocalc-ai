@@ -241,6 +241,23 @@ describe("projects.start", () => {
     expect(publishLroSummaryMock).toHaveBeenCalled();
   });
 
+  it("rejects non-admin managed egress override before creating a start lro", async () => {
+    const { start } = await import("./projects");
+
+    await expect(
+      start({
+        account_id: "acct-1",
+        project_id: "proj-1",
+        managed_egress_override: "admin-host-drain",
+        wait: false,
+      }),
+    ).rejects.toThrow("managed egress override requires admin authorization");
+
+    expect(interBayCheckStartAdmissionMock).not.toHaveBeenCalled();
+    expect(createLroMock).not.toHaveBeenCalled();
+    expect(interBayStartMock).not.toHaveBeenCalled();
+  });
+
   it("stores structured runtime sponsor denial details on failed start lro", async () => {
     const { encodeRuntimeSponsorDenial } =
       await import("@cocalc/util/runtime-sponsor-denial");

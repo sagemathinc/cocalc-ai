@@ -353,10 +353,12 @@ export function setProjectDraftHost(
   host: Host | undefined,
   context: ProjectCreateContext,
 ): ProjectCreateDraft {
+  const hostRegion = host ? mapCloudRegionToR2Region(host.region) : undefined;
   return normalizeProjectDraft(
     {
       ...draft,
       host_id: host?.id,
+      region: hostRegion ?? draft.region,
       host_touched: true,
     },
     { ...context, selectedHost: host },

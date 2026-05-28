@@ -4,6 +4,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 
 import {
   ArrowRightOutlined,
@@ -11,6 +12,7 @@ import {
   SearchOutlined,
   ToolOutlined,
   ArrowLeftOutlined,
+  PrinterOutlined,
 } from "@ant-design/icons";
 import {
   Button,
@@ -19,8 +21,10 @@ import {
   Empty,
   Flex,
   Input,
+  Progress,
   Row,
   Segmented,
+  Select,
   Space,
   Tag,
   Typography,
@@ -33,7 +37,10 @@ import {
   type DocsEntry,
 } from "@cocalc/docs";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { redux } from "@cocalc/frontend/app-framework";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
+import type { Host } from "@cocalc/conat/hub/api/hosts";
 import type {
   DocsPrivateEntrySummary,
   DocsPrivateFilter,
@@ -45,6 +52,32 @@ type DocsBrowserLayout = "page" | "flyout";
 const DOCS_FONT_SIZE_STORAGE_KEY = "cocalc-docs-font-size";
 const DOCS_BROWSER_CARD_STYLE = { fontSize: "inherit" };
 const DOCS_BROWSER_CARD_BODY_STYLE = { fontSize: "inherit" };
+const DOCS_BROWSER_CATEGORY_CARD_STYLE = {
+  ...DOCS_BROWSER_CARD_STYLE,
+  height: "100%",
+  maxHeight: 500,
+  overflow: "auto",
+};
+const DOCS_BROWSER_TOC_LINK_STYLE: CSSProperties = {
+  background: "transparent",
+  border: 0,
+  cursor: "pointer",
+  display: "block",
+  font: "inherit",
+  lineHeight: 1.35,
+  margin: 0,
+  padding: "2px 0",
+  textAlign: "left",
+  textDecoration: "none",
+  width: "100%",
+};
+
+function docsBrowserTocLinkStyle(viewed: boolean): CSSProperties {
+  return {
+    ...DOCS_BROWSER_TOC_LINK_STYLE,
+    color: viewed ? COLORS.GRAY_M : COLORS.BLUE_DOC,
+  };
+}
 export const DOCS_FONT_SIZE_MIN = 10;
 export const DOCS_FONT_SIZE_MAX = 32;
 export const DOCS_FONT_SIZE_STEP = 1;
@@ -54,6 +87,8 @@ export type DocsBrowserAction = DocsAction & {
   implemented?: boolean;
   reason?: string;
 };
+
+export type DocsBrowserActionParameters = Record<string, string | undefined>;
 
 export type DocsPrivateIndexState = {
   enabled: boolean;
@@ -75,6 +110,7 @@ type DocsLinearNavigationState = {
   nextChapter?: DocsEntry;
   onSelectEntry: (entry: DocsEntry) => void;
   previous?: DocsEntry;
+  previousChapter?: DocsEntry;
 };
 
 function clampDocsFontSize(value: number): number {
@@ -158,10 +194,12 @@ export function DocsFontSizeFrame({
   children,
   defaultFontSize = 14,
   layout = "page",
+  showControls = true,
 }: {
   children: React.ReactNode;
   defaultFontSize?: number;
   layout?: DocsBrowserLayout;
+  showControls?: boolean;
 }) {
   const {
     canDecreaseFontSize,
@@ -174,47 +212,49 @@ export function DocsFontSizeFrame({
 
   return (
     <div style={{ position: "relative" }}>
-      <Flex
-        justify="end"
-        style={{
-          marginBottom: layout === "flyout" ? 8 : 12,
-          position: "relative",
-          zIndex: 1,
-        }}
-      >
-        <Space.Compact
-          size="small"
+      {showControls ? (
+        <Flex
+          justify="end"
           style={{
-            background: "white",
-            borderRadius: 6,
-            boxShadow: "0 1px 4px rgba(15, 23, 42, 0.12)",
+            marginBottom: layout === "flyout" ? 8 : 12,
+            position: "relative",
+            zIndex: 1,
           }}
         >
-          <Button
-            aria-label="Decrease docs font size"
-            disabled={!canDecreaseFontSize}
-            onClick={decreaseFontSize}
-            title="Decrease docs font size"
+          <Space.Compact
+            size="small"
+            style={{
+              background: "white",
+              borderRadius: 6,
+              boxShadow: "0 1px 4px rgba(15, 23, 42, 0.12)",
+            }}
           >
-            A-
-          </Button>
-          <Button
-            aria-label="Reset docs font size"
-            onClick={resetFontSize}
-            title="Reset docs font size"
-          >
-            {fontSize}px
-          </Button>
-          <Button
-            aria-label="Increase docs font size"
-            disabled={!canIncreaseFontSize}
-            onClick={increaseFontSize}
-            title="Increase docs font size"
-          >
-            A+
-          </Button>
-        </Space.Compact>
-      </Flex>
+            <Button
+              aria-label="Decrease docs font size"
+              disabled={!canDecreaseFontSize}
+              onClick={decreaseFontSize}
+              title="Decrease docs font size"
+            >
+              A-
+            </Button>
+            <Button
+              aria-label="Reset docs font size"
+              onClick={resetFontSize}
+              title="Reset docs font size"
+            >
+              {fontSize}px
+            </Button>
+            <Button
+              aria-label="Increase docs font size"
+              disabled={!canIncreaseFontSize}
+              onClick={increaseFontSize}
+              title="Increase docs font size"
+            >
+              A+
+            </Button>
+          </Space.Compact>
+        </Flex>
+      ) : null}
       <div
         className="cocalc-docs-font-scope"
         data-testid="docs-font-scope"
@@ -460,17 +500,177 @@ export function DocsCard({
   );
 }
 
+function DocsTocOverview({
+  groupedEntries,
+  layout = "page",
+  linkForEntry,
+  onPrint,
+  onSelectEntry,
+  printHref,
+  privateSummaries,
+}: {
+  groupedEntries: { category: string; entries: DocsEntry[] }[];
+  layout?: DocsBrowserLayout;
+  linkForEntry?: (entry: DocsEntry) => string;
+  onPrint?: () => void;
+  onSelectEntry?: (entry: DocsEntry) => void;
+  printHref?: string;
+  privateSummaries?: Record<string, DocsPrivateEntrySummary>;
+}) {
+  if (groupedEntries.length === 0) return null;
+
+  const allEntries = groupedEntries.flatMap(({ entries }) => entries);
+  const firstUnviewedEntry = allEntries.find(
+    (entry) => privateSummaries?.[entry.id]?.lastViewedAt == null,
+  );
+  const lastViewedEntry = allEntries
+    .filter((entry) => privateSummaries?.[entry.id]?.lastViewedAt != null)
+    .sort(
+      (a, b) =>
+        (privateSummaries?.[b.id]?.lastViewedAt ?? 0) -
+        (privateSummaries?.[a.id]?.lastViewedAt ?? 0),
+    )[0];
+  const continueEntry = firstUnviewedEntry ?? lastViewedEntry ?? allEntries[0];
+  const continueLabel =
+    firstUnviewedEntry != null ? "Continue reading" : "Review last viewed";
+  const continueHref =
+    continueEntry != null ? linkForEntry?.(continueEntry) : undefined;
+
+  return (
+    <Card
+      size="small"
+      style={DOCS_BROWSER_CARD_STYLE}
+      styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
+      title={
+        <Flex align="center" gap="small" justify="space-between" wrap>
+          <Space>
+            <BookOutlined />
+            <span>Table of contents</span>
+          </Space>
+          <Space wrap>
+            {continueEntry != null ? (
+              <Button
+                href={continueHref}
+                onClick={
+                  continueHref == null
+                    ? () => onSelectEntry?.(continueEntry)
+                    : undefined
+                }
+                size="small"
+                type="primary"
+              >
+                {continueLabel}
+              </Button>
+            ) : null}
+            {printHref != null || onPrint != null ? (
+              <Button
+                href={onPrint == null ? printHref : undefined}
+                icon={<PrinterOutlined />}
+                onClick={onPrint}
+                size="small"
+              >
+                Print-friendly
+              </Button>
+            ) : null}
+          </Space>
+        </Flex>
+      }
+    >
+      <Row gutter={[18, 18]}>
+        {groupedEntries.map(({ category, entries }) => (
+          <Col key={category} lg={layout === "flyout" ? 24 : 8} md={12} xs={24}>
+            <Flex gap={6} vertical>
+              <Space size={6} wrap>
+                <Text strong>{category}</Text>
+                <Text type="secondary">({entries.length})</Text>
+                {privateSummaries != null ? (
+                  <Text type="secondary">
+                    {
+                      entries.filter(
+                        (entry) =>
+                          privateSummaries[entry.id]?.lastViewedAt != null,
+                      ).length
+                    }{" "}
+                    / {entries.length} viewed
+                  </Text>
+                ) : null}
+              </Space>
+              {privateSummaries != null ? (
+                <Progress
+                  percent={Math.round(
+                    (100 *
+                      entries.filter(
+                        (entry) =>
+                          privateSummaries[entry.id]?.lastViewedAt != null,
+                      ).length) /
+                      entries.length,
+                  )}
+                  showInfo={false}
+                  size="small"
+                />
+              ) : null}
+              <Flex gap={2} vertical>
+                {entries.map((entry, index) => {
+                  const viewed =
+                    privateSummaries?.[entry.id]?.lastViewedAt != null;
+                  const content = (
+                    <>
+                      <Text
+                        type="secondary"
+                        style={{ display: "inline-block", width: "2.2em" }}
+                      >
+                        {index + 1}.
+                      </Text>
+                      <span>{entry.title}</span>
+                    </>
+                  );
+                  const href = linkForEntry?.(entry);
+                  if (href != null) {
+                    return (
+                      <a
+                        href={href}
+                        key={entry.id}
+                        style={docsBrowserTocLinkStyle(viewed)}
+                      >
+                        {content}
+                      </a>
+                    );
+                  }
+                  return (
+                    <button
+                      key={entry.id}
+                      onClick={() => onSelectEntry?.(entry)}
+                      style={docsBrowserTocLinkStyle(viewed)}
+                      type="button"
+                    >
+                      {content}
+                    </button>
+                  );
+                })}
+              </Flex>
+            </Flex>
+          </Col>
+        ))}
+      </Row>
+    </Card>
+  );
+}
+
 export function DocsIndexContent({
   docsAccess,
   layout = "page",
   linkForEntry,
+  onPrint,
   onSelectEntry,
+  printHref,
   privateState,
 }: {
   docsAccess?: DocsAccess;
   layout?: DocsBrowserLayout;
   linkForEntry?: (entry: DocsEntry) => string;
+  onPrint?: () => void;
   onSelectEntry?: (entry: DocsEntry) => void;
+  printHref?: string;
   privateState?: DocsPrivateIndexState;
 }) {
   const [query, setQuery] = useState("");
@@ -574,6 +774,15 @@ export function DocsIndexContent({
               {groupedEntries.length === 1 ? "y" : "ies"}
             </Text>
           </Space>
+          <DocsTocOverview
+            groupedEntries={groupedEntries}
+            layout={layout}
+            linkForEntry={linkForEntry}
+            onPrint={onPrint}
+            onSelectEntry={onSelectEntry}
+            printHref={printHref}
+            privateSummaries={privateState?.summaries}
+          />
           <Row gutter={[16, 16]}>
             {groupedEntries.map(({ category, entries: categoryEntries }) => (
               <Col
@@ -584,7 +793,7 @@ export function DocsIndexContent({
               >
                 <Card
                   size="small"
-                  style={{ ...DOCS_BROWSER_CARD_STYLE, height: "100%" }}
+                  style={DOCS_BROWSER_CATEGORY_CARD_STYLE}
                   styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
                   title={
                     <Space>
@@ -672,16 +881,141 @@ function actionState(action: DocsBrowserAction): {
   return { buttonText: action.label, disabled: false, tagText: "open in app" };
 }
 
+function formatProjectHostOption(host: Host): { label: string; value: string } {
+  const region = `${host.region ?? ""}`.trim();
+  return {
+    label: region ? `${host.name} (${region})` : host.name,
+    value: host.id,
+  };
+}
+
+function useProjectHostParameterOptions(enabled: boolean): {
+  error?: string;
+  loading: boolean;
+  options: { label: string; value: string }[];
+} {
+  const [options, setOptions] = useState<{ label: string; value: string }[]>(
+    [],
+  );
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    if (!enabled) return;
+    let canceled = false;
+    setLoading(true);
+    setError(undefined);
+    webapp_client.conat_client.hub.hosts
+      .listHosts({ show_all: true })
+      .then((hosts: Host[]) => {
+        if (canceled) return;
+        setOptions(hosts.map(formatProjectHostOption));
+      })
+      .catch((err) => {
+        if (canceled) return;
+        setError(err instanceof Error ? err.message : `${err}`);
+      })
+      .finally(() => {
+        if (!canceled) setLoading(false);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [enabled]);
+
+  return { error, loading, options };
+}
+
+function useProjectParameterOptions(enabled: boolean): {
+  options: { label: string; value: string }[];
+} {
+  const [options, setOptions] = useState<{ label: string; value: string }[]>(
+    [],
+  );
+  useEffect(() => {
+    if (!enabled) {
+      setOptions([]);
+      return;
+    }
+    const store = redux.getStore("projects");
+    if (store == null) {
+      setOptions([]);
+      return;
+    }
+    const readOptions = () => {
+      const projectMap = store.get("project_map");
+      if (projectMap == null) return [];
+      const values: { label: string; title: string; value: string }[] = [];
+      for (const [projectId, project] of projectMap) {
+        const title = `${project?.get?.("title") ?? "No Title"}`.trim();
+        const state = `${project?.getIn?.(["state", "state"]) ?? ""}`.trim();
+        values.push({
+          label: state
+            ? `${title || "No Title"} (${state})`
+            : title || "No Title",
+          title: title || "No Title",
+          value: projectId,
+        });
+      }
+      values.sort((a, b) => a.title.localeCompare(b.title));
+      return values.map(({ label, value }) => ({ label, value }));
+    };
+    const updateOptions = () => setOptions(readOptions());
+    store.on("change", updateOptions);
+    updateOptions();
+    return () => {
+      store.removeListener("change", updateOptions);
+    };
+  }, [enabled]);
+  return { options };
+}
+
 export function DocsActions({
   actions,
+  defaultActionParameters,
   layout = "page",
   onRunAction,
 }: {
   actions?: DocsBrowserAction[];
+  defaultActionParameters?: DocsBrowserActionParameters;
   layout?: DocsBrowserLayout;
-  onRunAction?: (action: DocsBrowserAction) => void | Promise<void>;
+  onRunAction?: (
+    action: DocsBrowserAction,
+    parameters?: DocsBrowserActionParameters,
+  ) => void | Promise<void>;
 }) {
-  if (!actions?.length) return null;
+  const visibleActions = actions ?? [];
+  const needsProjectHostSelector =
+    onRunAction != null &&
+    visibleActions.some((action) =>
+      action.parameters?.some((parameter) => parameter.type === "project-host"),
+    );
+  const needsProjectSelector =
+    onRunAction != null &&
+    visibleActions.some((action) =>
+      action.parameters?.some((parameter) => parameter.type === "project"),
+    );
+  const hostOptions = useProjectHostParameterOptions(needsProjectHostSelector);
+  const projectOptions = useProjectParameterOptions(needsProjectSelector);
+  const [parameterValues, setParameterValues] = useState<
+    Record<string, DocsBrowserActionParameters>
+  >({});
+
+  if (!visibleActions.length) return null;
+
+  const setActionParameter = (
+    action: DocsBrowserAction,
+    name: string,
+    value: string | undefined,
+  ) => {
+    setParameterValues((current) => ({
+      ...current,
+      [action.id]: {
+        ...(current[action.id] ?? {}),
+        [name]: value,
+      },
+    }));
+  };
 
   const content = (
     <Flex gap={layout === "flyout" ? "small" : "middle"} vertical>
@@ -696,29 +1030,93 @@ export function DocsActions({
         </Paragraph>
       ) : null}
       <Space orientation={layout === "flyout" ? "vertical" : "horizontal"} wrap>
-        {actions.map((action) => {
+        {visibleActions.map((action) => {
           const state = actionState(action);
+          const values = {
+            ...(defaultActionParameters ?? {}),
+            ...(parameterValues[action.id] ?? {}),
+          };
+          const hasParameters = !!action.parameters?.length;
+          const missingRequiredParameter = action.parameters?.some(
+            (parameter) => parameter.required && !values[parameter.name],
+          );
           return (
-            <Button
+            <Space.Compact
               block={layout === "flyout"}
-              data-cocalc-action-id={action.id}
-              disabled={state.disabled || onRunAction == null}
               key={action.id}
-              onClick={() => void onRunAction?.(action)}
-              size={layout === "flyout" ? "small" : "middle"}
-              title={action.reason ?? action.description}
-              type={
-                !state.disabled && onRunAction != null ? "primary" : "default"
-              }
+              style={layout === "flyout" ? { width: "100%" } : undefined}
             >
-              {state.buttonText}
-            </Button>
+              {action.parameters?.map((parameter) =>
+                parameter.type === "project-host" ? (
+                  <Select
+                    allowClear
+                    disabled={state.disabled || onRunAction == null}
+                    key={parameter.name}
+                    loading={hostOptions.loading}
+                    notFoundContent={
+                      hostOptions.error ??
+                      (hostOptions.loading ? "Loading hosts..." : "No hosts")
+                    }
+                    onChange={(value) =>
+                      setActionParameter(action, parameter.name, value)
+                    }
+                    optionFilterProp="label"
+                    options={hostOptions.options}
+                    placeholder={parameter.placeholder ?? parameter.label}
+                    showSearch
+                    size={layout === "flyout" ? "small" : "middle"}
+                    style={{
+                      minWidth: layout === "flyout" ? 0 : 220,
+                      width: layout === "flyout" ? "60%" : 240,
+                    }}
+                    value={values[parameter.name]}
+                  />
+                ) : parameter.type === "project" ? (
+                  <Select
+                    allowClear
+                    disabled={state.disabled || onRunAction == null}
+                    key={parameter.name}
+                    notFoundContent="No projects"
+                    onChange={(value) =>
+                      setActionParameter(action, parameter.name, value)
+                    }
+                    optionFilterProp="label"
+                    options={projectOptions.options}
+                    placeholder={parameter.placeholder ?? parameter.label}
+                    showSearch
+                    size={layout === "flyout" ? "small" : "middle"}
+                    style={{
+                      minWidth: layout === "flyout" ? 0 : 220,
+                      width: layout === "flyout" ? "60%" : 240,
+                    }}
+                    value={values[parameter.name]}
+                  />
+                ) : null,
+              )}
+              <Button
+                block={layout === "flyout" && !hasParameters}
+                data-cocalc-action-id={action.id}
+                disabled={
+                  state.disabled ||
+                  onRunAction == null ||
+                  missingRequiredParameter
+                }
+                onClick={() => void onRunAction?.(action, values)}
+                size={layout === "flyout" ? "small" : "middle"}
+                title={action.reason ?? action.description}
+                type={
+                  !state.disabled && onRunAction != null ? "primary" : "default"
+                }
+              >
+                {state.buttonText}
+              </Button>
+            </Space.Compact>
           );
         })}
       </Space>
       {layout === "page" ? (
         <Space wrap>
-          {actions.map((action) => {
+          {visibleActions.map((action) => {
             const state = actionState(action);
             return (
               <Tag
@@ -761,6 +1159,8 @@ function DocsLinearNavigation({
   if (navigation == null || navigation.count <= 1) return null;
 
   const isFlyout = layout === "flyout";
+  const previousEntry = navigation.previous ?? navigation.previousChapter;
+  const previousLabel = navigation.previous ? "Previous" : "Previous Chapter";
   const nextEntry = navigation.next ?? navigation.nextChapter;
   const nextLabel = navigation.next ? "Next" : "Next Chapter";
   const content = (
@@ -780,21 +1180,21 @@ function DocsLinearNavigation({
       </Space>
       <Space.Compact block={isFlyout}>
         <Button
-          disabled={navigation.previous == null}
+          disabled={previousEntry == null}
           icon={<ArrowLeftOutlined />}
           onClick={() => {
-            if (navigation.previous != null) {
-              navigation.onSelectEntry(navigation.previous);
+            if (previousEntry != null) {
+              navigation.onSelectEntry(previousEntry);
             }
           }}
           size={isFlyout ? "small" : "middle"}
           title={
-            navigation.previous != null
-              ? `Previous: ${navigation.previous.title}`
+            previousEntry != null
+              ? `${previousLabel}: ${previousEntry.title}`
               : "This is the first page in this section"
           }
         >
-          Previous
+          {previousLabel}
         </Button>
         <Button
           disabled={nextEntry == null}
@@ -836,6 +1236,7 @@ function DocsLinearNavigation({
 
 export function DocsDetailContent({
   actionAvailability,
+  defaultActionParameters,
   entry,
   linearNavigation,
   layout = "page",
@@ -844,11 +1245,15 @@ export function DocsDetailContent({
   privateState,
 }: {
   actionAvailability?: Map<string, DocsBrowserAction>;
+  defaultActionParameters?: DocsBrowserActionParameters;
   entry: DocsEntry;
   linearNavigation?: DocsLinearNavigationState;
   layout?: DocsBrowserLayout;
   onBack?: () => void;
-  onRunAction?: (action: DocsBrowserAction) => void | Promise<void>;
+  onRunAction?: (
+    action: DocsBrowserAction,
+    parameters?: DocsBrowserActionParameters,
+  ) => void | Promise<void>;
   privateState?: DocsPrivateDetailState;
 }) {
   const actions = entry.actions?.map((action) => ({
@@ -886,6 +1291,7 @@ export function DocsDetailContent({
         {privateState?.renderPanel(entry)}
         <DocsActions
           actions={actions}
+          defaultActionParameters={defaultActionParameters}
           layout={layout}
           onRunAction={onRunAction}
         />
@@ -941,6 +1347,7 @@ export function DocsDetailContent({
       {privateState?.renderPanel(entry)}
       <DocsActions
         actions={actions}
+        defaultActionParameters={defaultActionParameters}
         layout={layout}
         onRunAction={onRunAction}
       />
@@ -955,22 +1362,171 @@ export function DocsDetailContent({
   );
 }
 
+export function DocsPrintContent({
+  docsAccess,
+  onBackHref,
+}: {
+  docsAccess?: DocsAccess;
+  onBackHref?: string;
+}) {
+  const entries = useMemo(() => listDocsEntries(docsAccess), [docsAccess]);
+  const groupedEntries = useMemo(
+    () => groupDocsEntriesByCategory(entries),
+    [entries],
+  );
+
+  return (
+    <div className="cocalc-docs-print-page">
+      <style>
+        {`
+          @media print {
+            .cocalc-docs-print-controls {
+              display: none !important;
+            }
+            .cocalc-docs-print-page {
+              color: black;
+              max-width: none !important;
+            }
+            .cocalc-docs-print-entry {
+              break-before: page;
+              page-break-before: always;
+            }
+            .cocalc-docs-print-entry:first-of-type {
+              break-before: auto;
+              page-break-before: auto;
+            }
+          }
+        `}
+      </style>
+      <Flex
+        className="cocalc-docs-print-controls"
+        gap="small"
+        justify="space-between"
+        style={{ marginBottom: 24 }}
+        wrap
+      >
+        <Button href={onBackHref} icon={<ArrowLeftOutlined />}>
+          Back to docs
+        </Button>
+        <Button
+          icon={<PrinterOutlined />}
+          onClick={() => window.print()}
+          type="primary"
+        >
+          Print
+        </Button>
+      </Flex>
+      <Flex gap="large" vertical>
+        <div>
+          <Text strong style={DOCS_BROWSER_MUTED_TITLE_STYLE}>
+            CoCalc docs
+          </Text>
+          <Title style={{ marginBottom: 8 }}>Complete documentation</Title>
+          <Text type="secondary">
+            {entries.length} page{entries.length === 1 ? "" : "s"} in{" "}
+            {groupedEntries.length} chapter
+            {groupedEntries.length === 1 ? "" : "s"}
+          </Text>
+        </div>
+        <Card
+          size="small"
+          style={DOCS_BROWSER_CARD_STYLE}
+          styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
+        >
+          <Title level={2}>Table of contents</Title>
+          <Row gutter={[18, 18]}>
+            {groupedEntries.map(({ category, entries: categoryEntries }) => (
+              <Col key={category} lg={8} md={12} xs={24}>
+                <Flex gap={4} vertical>
+                  <Text strong>{category}</Text>
+                  {categoryEntries.map((entry, index) => (
+                    <a href={`#${entry.id}`} key={entry.id}>
+                      {index + 1}. {entry.title}
+                    </a>
+                  ))}
+                </Flex>
+              </Col>
+            ))}
+          </Row>
+        </Card>
+        {groupedEntries.map(({ category, entries: categoryEntries }) => (
+          <section key={category}>
+            <Title level={2}>{category}</Title>
+            <Flex gap="large" vertical>
+              {categoryEntries.map((entry, index) => (
+                <article
+                  className="cocalc-docs-print-entry"
+                  id={entry.id}
+                  key={entry.id}
+                >
+                  <Card
+                    style={DOCS_BROWSER_CARD_STYLE}
+                    styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
+                  >
+                    <Flex gap="middle" vertical>
+                      <Space wrap>
+                        <Tag>{category}</Tag>
+                        <Text type="secondary">
+                          Page {index + 1} of {categoryEntries.length}
+                        </Text>
+                        <Text type="secondary">
+                          Reviewed {entry.lastReviewed}
+                        </Text>
+                      </Space>
+                      <Title level={2} style={{ margin: 0 }}>
+                        {entry.title}
+                      </Title>
+                      <Paragraph style={{ fontSize: "1.125em", margin: 0 }}>
+                        {entry.summary}
+                      </Paragraph>
+                      <DocsEntryImage entry={entry} mode="detail" />
+                    </Flex>
+                  </Card>
+                  <Card
+                    style={{ ...DOCS_BROWSER_CARD_STYLE, marginTop: 12 }}
+                    styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
+                  >
+                    <DocsMarkdown value={entry.body} />
+                  </Card>
+                </article>
+              ))}
+            </Flex>
+          </section>
+        ))}
+      </Flex>
+    </div>
+  );
+}
+
 export function DocsBrowser({
   actionAvailability,
+  browserHref,
+  defaultActionParameters,
   docsAccess,
   initialEntry,
   layout = "page",
+  onPrint,
   onRunAction,
   onSelectedEntryChange,
+  printHref,
+  printMode = false,
   privateDetailState,
   privateIndexState,
 }: {
   actionAvailability?: DocsBrowserAction[];
+  browserHref?: string;
+  defaultActionParameters?: DocsBrowserActionParameters;
   docsAccess?: DocsAccess;
   initialEntry?: DocsEntry;
   layout?: DocsBrowserLayout;
-  onRunAction?: (action: DocsBrowserAction) => void | Promise<void>;
+  onPrint?: () => void;
+  onRunAction?: (
+    action: DocsBrowserAction,
+    parameters?: DocsBrowserActionParameters,
+  ) => void | Promise<void>;
   onSelectedEntryChange?: (entry?: DocsEntry) => void;
+  printHref?: string;
+  printMode?: boolean;
   privateDetailState?: DocsPrivateDetailState;
   privateIndexState?: DocsPrivateIndexState;
 }) {
@@ -996,6 +1552,12 @@ export function DocsBrowser({
     [onSelectedEntryChange],
   );
 
+  if (printMode) {
+    return (
+      <DocsPrintContent docsAccess={docsAccess} onBackHref={browserHref} />
+    );
+  }
+
   if (selectedEntry != null) {
     const selectedGlobalIndex = allEntries.findIndex(
       (entry) => entry.id === selectedEntry.id,
@@ -1018,11 +1580,16 @@ export function DocsBrowser({
               .find((entry) => entry.category !== selectedEntry.category),
             onSelectEntry: selectEntry,
             previous: categoryEntries[currentIndex - 1],
+            previousChapter: allEntries
+              .slice(0, selectedGlobalIndex)
+              .reverse()
+              .find((entry) => entry.category !== selectedEntry.category),
           }
         : undefined;
     return (
       <DocsDetailContent
         actionAvailability={actionMap}
+        defaultActionParameters={defaultActionParameters}
         entry={selectedEntry}
         linearNavigation={linearNavigation}
         layout={layout}
@@ -1037,7 +1604,9 @@ export function DocsBrowser({
     <DocsIndexContent
       docsAccess={docsAccess}
       layout={layout}
+      onPrint={onPrint}
       onSelectEntry={selectEntry}
+      printHref={printHref}
       privateState={privateIndexState}
     />
   );

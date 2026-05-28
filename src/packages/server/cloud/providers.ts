@@ -42,6 +42,7 @@ export type ServerProviderEntry = {
     spec: HostSpec,
     storageMode?: string,
   ) => string;
+  getBootstrapSharedScratchDiskDevices?: (spec: HostSpec) => string;
 };
 
 const pool = () => getPool("medium");
@@ -248,6 +249,8 @@ const SERVER_PROVIDER_OVERRIDES: Record<ProviderId, ServerProviderOverrides> = {
       storageMode === "ephemeral"
         ? "/dev/disk/by-id/google-local-nvme-ssd-0 /dev/disk/by-id/google-local-ssd-0"
         : `/dev/disk/by-id/google-${spec.name}-data`,
+    getBootstrapSharedScratchDiskDevices: (spec) =>
+      `/dev/disk/by-id/google-${spec.name}-scratch`,
   },
   hyperstack: {
     getCreds: async ({ settings, sshPublicKeys, prefix }) => {
@@ -306,6 +309,8 @@ const SERVER_PROVIDER_OVERRIDES: Record<ProviderId, ServerProviderOverrides> = {
     getCatalogFetchOptions: getNebiusCatalogFetchOptions,
     getBootstrapDataDiskDevices: () =>
       "/dev/vdb /dev/vdc /dev/xvdb /dev/xvdc /dev/sdb /dev/sdc /dev/nvme1n1 /dev/nvme2n1",
+    getBootstrapSharedScratchDiskDevices: () =>
+      "/dev/disk/by-id/virtio-scratch /dev/vdc /dev/xvdc /dev/sdc /dev/nvme2n1 /dev/vdb /dev/xvdb /dev/sdb /dev/nvme1n1",
   },
   local: {
     getCreds: () => ({}),

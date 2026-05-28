@@ -10,8 +10,8 @@ R Markdown Editor Actions
 // cSpell:ignore rnorm
 
 import { debounce } from "lodash";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { markdown_to_html_frontmatter } from "@cocalc/frontend/markdown";
-import { open_new_tab } from "@cocalc/frontend/misc";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import {
   Actions as BaseActions,
@@ -23,7 +23,7 @@ import { ExecuteCodeOutputAsync } from "@cocalc/util/types/execute-code";
 import { Actions as MarkdownActions } from "../markdown-editor/actions";
 import { convert } from "./rmd-converter";
 import { checkProducedFiles } from "./utils";
-const HELP_URL = "/docs/editors/r-markdown";
+const HELP_SLUG = "editors/r-markdown";
 
 const MINIMAL = `---
 title: "Title"
@@ -297,7 +297,7 @@ export class Actions extends MarkdownActions {
   delete_trailing_whitespace(): void {}
 
   help(): void {
-    open_new_tab(HELP_URL);
+    openProjectDocs({ projectId: this.project_id, slug: HELP_SLUG });
   }
 
   private ensureNonempty() {

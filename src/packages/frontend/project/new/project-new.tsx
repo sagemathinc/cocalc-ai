@@ -4,6 +4,7 @@
  */
 
 import { Col, Row } from "@cocalc/frontend/antd-bootstrap";
+import { Alert } from "antd";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import NewFilePage from "./new-file-page";
 import { ROOT_STYLE } from "../servers/consts";
@@ -13,7 +14,19 @@ interface Props {
 }
 
 export function ProjectNew({ project_id }: Props): React.JSX.Element {
-  const { mainWidthPx } = useProjectContext();
+  const { mainWidthPx, projectAccess } = useProjectContext();
+
+  if (!projectAccess.capabilities.writeProjectFiles) {
+    return (
+      <Alert
+        showIcon
+        type="info"
+        style={{ margin: "24px" }}
+        message="Viewer access is read-only"
+        description="Viewers can browse and open allowed files, but cannot create new files or folders in this project."
+      />
+    );
+  }
 
   const isWide = mainWidthPx > 800;
   const offset = isWide ? 1 : 0;

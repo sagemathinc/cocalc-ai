@@ -78,6 +78,7 @@ export const ActiveContent: React.FC = React.memo(() => {
 
   const active_top_tab = useTypedRedux("page", "active_top_tab");
   const admin_route = useTypedRedux("page", "admin_route");
+  const docs_print = useTypedRedux("page", "docs_print");
   const docs_slug = useTypedRedux("page", "docs_slug");
   const fullscreen = useTypedRedux("page", "fullscreen");
   const get_api_key = useTypedRedux("page", "get_api_key");
@@ -195,7 +196,11 @@ export const ActiveContent: React.FC = React.memo(() => {
         overlay = renderLayer("file-use", true, <FileUsePage />);
         break;
       case "docs":
-        overlay = renderLayer("docs", true, <DocsPage slug={docs_slug} />);
+        overlay = renderLayer(
+          "docs",
+          true,
+          <DocsPage print={docs_print} slug={docs_slug} />,
+        );
         break;
       case "hosts":
         overlay = renderLayer("hosts", true, <HostsPage />);

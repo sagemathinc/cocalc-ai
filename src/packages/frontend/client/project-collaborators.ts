@@ -12,7 +12,9 @@ import type {
   ProjectCollabInviteRow,
   ProjectCollabInviteStatus,
   ProjectCollaboratorInviteUsage,
+  ProjectCollaboratorRow,
 } from "@cocalc/conat/hub/api/projects";
+import type { ProjectViewerReadPolicy } from "@cocalc/util/project-access";
 
 export class ProjectCollaborators {
   private conat: ConatClient;
@@ -34,6 +36,8 @@ export class ProjectCollaborators {
     send_email?: boolean;
     invite_context?: Record<string, unknown>;
     invite_scope?: string;
+    invite_role?: "collaborator" | "viewer";
+    read_policy?: ProjectViewerReadPolicy | null;
   }): Promise<any> {
     return await this.conat.hub.projects.inviteCollaboratorWithoutAccount({
       opts,
@@ -50,6 +54,8 @@ export class ProjectCollaborators {
     email?: string;
     subject?: string;
     message?: string;
+    invite_role?: "collaborator" | "viewer";
+    read_policy?: ProjectViewerReadPolicy | null;
   }): Promise<any> {
     return await this.conat.hub.projects.inviteCollaborator({
       opts,
@@ -63,6 +69,15 @@ export class ProjectCollaborators {
     return await this.conat.hub.projects.removeCollaborator({
       opts,
     });
+  }
+
+  public async set_role(opts: {
+    project_id: string;
+    target_account_id: string;
+    role: Exclude<ProjectCollaboratorRow["group"], "owner">;
+    read_policy?: ProjectViewerReadPolicy | null;
+  }): Promise<void> {
+    await this.conat.hub.projects.setProjectUserRole({ opts });
   }
 
   // Directly add one (or more) collaborators to (one or more) projects via

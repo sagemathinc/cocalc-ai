@@ -696,7 +696,27 @@ export function parseRow(
     }
     return bootstrap;
   };
-  const machine: HostMachine | undefined = metadata.machine;
+  const rawMachine: HostMachine | undefined = metadata.machine;
+  const runtimeMetadata =
+    metadata.runtime?.metadata && typeof metadata.runtime.metadata === "object"
+      ? metadata.runtime.metadata
+      : undefined;
+  const machine: HostMachine | undefined = rawMachine
+    ? {
+        ...rawMachine,
+        metadata: {
+          ...(rawMachine.metadata ?? {}),
+          ...(runtimeMetadata?.shared_disk_id != null &&
+          rawMachine.metadata?.shared_disk_id == null
+            ? { shared_disk_id: runtimeMetadata.shared_disk_id }
+            : {}),
+          ...(runtimeMetadata?.shared_disk_name != null &&
+          rawMachine.metadata?.shared_disk_name == null
+            ? { shared_disk_name: runtimeMetadata.shared_disk_name }
+            : {}),
+        },
+      }
+    : undefined;
   const rawCurrentMetrics = metadata.metrics?.current;
   const currentMetrics: HostCurrentMetrics | undefined =
     rawCurrentMetrics && typeof rawCurrentMetrics === "object"

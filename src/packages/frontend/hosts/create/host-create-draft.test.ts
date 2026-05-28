@@ -506,6 +506,46 @@ describe("host-create-draft", () => {
     expect(draft.disk).toBe(75);
   });
 
+  it("keeps shared scratch for GCP", () => {
+    const draft = normalizeDraft(
+      {
+        provider: "gcp",
+        shared_disk_gb: 50,
+      },
+      providerContext("gcp"),
+    ).draft;
+
+    expect(draft.shared_disk_gb).toBe(50);
+    expect(draft.shared_disk_type).toBe("balanced");
+  });
+
+  it("uses 10 GB as the minimum shared scratch size for GCP", () => {
+    const draft = normalizeDraft(
+      {
+        provider: "gcp",
+        shared_disk_gb: 1,
+      },
+      providerContext("gcp"),
+    ).draft;
+
+    expect(draft.shared_disk_gb).toBe(10);
+    expect(draft.shared_disk_type).toBe("balanced");
+  });
+
+  it("normalizes Nebius shared scratch disks to 93 GB increments", () => {
+    const draft = normalizeDraft(
+      {
+        provider: "nebius",
+        shared_disk_gb: 100,
+        shared_disk_type: "balanced",
+      },
+      providerContext("nebius"),
+    ).draft;
+
+    expect(draft.shared_disk_gb).toBe(186);
+    expect(draft.shared_disk_type).toBe("balanced");
+  });
+
   it("keeps Nebius disk sizes constrained even with network SSD selected", () => {
     const draft = normalizeDraft(
       {

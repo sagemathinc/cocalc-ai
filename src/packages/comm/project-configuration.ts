@@ -61,6 +61,7 @@ export interface MainCapabilities {
   runtimeUid?: number | null;
   runtimeGid?: number | null;
   sudoAvailable?: boolean;
+  sharedScratchMount?: string | null;
 }
 
 export interface Available {
@@ -95,6 +96,7 @@ export interface Available {
   runtimeUid?: number | null;
   runtimeGid?: number | null;
   sudoAvailable?: boolean;
+  sharedScratchMount?: string | null;
 }
 
 export const NO_AVAIL: Readonly<Available> = {
@@ -129,6 +131,7 @@ export const NO_AVAIL: Readonly<Available> = {
   runtimeUid: null,
   runtimeGid: null,
   sudoAvailable: false,
+  sharedScratchMount: null,
 } as const;
 
 export const ALL_AVAIL: Readonly<Available> = {
@@ -163,4 +166,5 @@ export const ALL_AVAIL: Readonly<Available> = {
   runtimeUid: DEFAULT_PROJECT_RUNTIME_UID,
   runtimeGid: DEFAULT_PROJECT_RUNTIME_GID,
   sudoAvailable: true,
+  sharedScratchMount: null,
 } as const;

@@ -11,6 +11,7 @@ const mockGetProjectActions = jest.fn();
 const mockGetFilenamesInCurrentDir = jest.fn();
 const mockOpenFile = jest.fn();
 const mockSetUrlWithSearch = jest.fn();
+const mockOpenHostDrawer = jest.fn();
 let mockIsAdmin = false;
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -34,6 +35,10 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 
 jest.mock("@cocalc/frontend/history", () => ({
   set_url_with_search: (...args: any[]) => mockSetUrlWithSearch(...args),
+}));
+
+jest.mock("@cocalc/frontend/hosts/open-host-drawer", () => ({
+  openHostDrawer: (...args: any[]) => mockOpenHostDrawer(...args),
 }));
 
 import {
@@ -90,8 +95,136 @@ describe("project docs actions", () => {
         "settings.people.collaborators",
         "file.timetravel.open",
         "project.codex.open",
+        "hosts.open",
       ]),
     );
+  });
+
+  it("opens the project hosts page", async () => {
+    const result = await revealDocsAction({
+      actionId: "hosts.open",
+      projectId: "project-1",
+    });
+
+    expect(mockSetPageActiveTab).toHaveBeenCalledWith("hosts", false);
+    expect(mockSetUrlWithSearch).toHaveBeenCalledWith("/hosts", "");
+    expect(result).toMatchObject({
+      action_id: "hosts.open",
+      opened: true,
+      tab: "hosts",
+    });
+  });
+
+  it("opens a project host drawer on the access tab", async () => {
+    const result = await revealDocsAction({
+      actionId: "hosts.access.open",
+      parameters: { hostId: "host-1" },
+      projectId: "project-1",
+    });
+
+    expect(mockOpenHostDrawer).toHaveBeenCalledWith({
+      hostId: "host-1",
+      tab: "access",
+    });
+    expect(result).toMatchObject({
+      action_id: "hosts.access.open",
+      drawer_tab: "access",
+      host_id: "host-1",
+      opened: true,
+      project_id: "project-1",
+      tab: "hosts",
+    });
+  });
+
+  it("opens selected project host drawer tabs", async () => {
+    const reliability = await revealDocsAction({
+      actionId: "hosts.reliability.open",
+      parameters: { hostId: "host-1" },
+      projectId: "project-1",
+    });
+
+    expect(mockOpenHostDrawer).toHaveBeenCalledWith({
+      hostId: "host-1",
+      tab: "reliability",
+    });
+    expect(reliability).toMatchObject({
+      action_id: "hosts.reliability.open",
+      drawer_tab: "reliability",
+      host_id: "host-1",
+      opened: true,
+      project_id: "project-1",
+      tab: "hosts",
+    });
+
+    const runtime = await revealDocsAction({
+      actionId: "hosts.runtime.open",
+      parameters: { hostId: "host-1" },
+      projectId: "project-1",
+    });
+
+    expect(mockOpenHostDrawer).toHaveBeenCalledWith({
+      hostId: "host-1",
+      tab: "runtime",
+    });
+    expect(runtime).toMatchObject({
+      action_id: "hosts.runtime.open",
+      drawer_tab: "runtime",
+    });
+
+    const storage = await revealDocsAction({
+      actionId: "hosts.storage.open",
+      parameters: { hostId: "host-1" },
+      projectId: "project-1",
+    });
+
+    expect(mockOpenHostDrawer).toHaveBeenCalledWith({
+      hostId: "host-1",
+      tab: "storage",
+    });
+    expect(storage).toMatchObject({
+      action_id: "hosts.storage.open",
+      drawer_tab: "storage",
+    });
+
+    const logs = await revealDocsAction({
+      actionId: "hosts.logs.open",
+      parameters: { hostId: "host-1" },
+      projectId: "project-1",
+    });
+
+    expect(mockOpenHostDrawer).toHaveBeenCalledWith({
+      hostId: "host-1",
+      tab: "logs",
+    });
+    expect(logs).toMatchObject({
+      action_id: "hosts.logs.open",
+      drawer_tab: "logs",
+    });
+  });
+
+  it("keeps project-parameter actions available without an ambient project", () => {
+    const actions = listDocsAppActions({ projectId: "" });
+    const terminalAction = actions.find(
+      (action) => action.id === "project.terminal.open",
+    );
+
+    expect(terminalAction).toMatchObject({
+      available: true,
+      implemented: true,
+    });
+  });
+
+  it("runs project-parameter actions against the selected project", async () => {
+    await revealDocsAction({
+      actionId: "project.codex.open",
+      parameters: { projectId: "project-1" },
+      projectId: "",
+    });
+
+    expect(mockGetProjectActions).toHaveBeenCalledWith("project-1");
+    expect(mockSetProjectActiveTab).toHaveBeenCalledWith("agents", {
+      change_history: true,
+    });
   });
 
   it("hides admin docs actions from non-admins and exposes them to admins", () => {

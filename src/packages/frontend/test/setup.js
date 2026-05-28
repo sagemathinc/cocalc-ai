@@ -37,6 +37,26 @@ if (typeof global.ResizeObserver === "undefined") {
   }
 }
 
+if (typeof global.MessageChannel === "undefined") {
+  const MessageChannel = class MessageChannel {
+    constructor() {
+      this.port1 = {
+        close: jest.fn(),
+        onmessage: undefined,
+      };
+      this.port2 = {
+        close: jest.fn(),
+        postMessage: (data) =>
+          setTimeout(() => this.port1.onmessage?.({ data }), 0),
+      };
+    }
+  };
+  global.MessageChannel = MessageChannel;
+  if (typeof window !== "undefined") {
+    window.MessageChannel = MessageChannel;
+  }
+}
+
 // Minimal jQuery stub for bootstrap-fixes and related side effects in tests.
 global.$ = function () {
   return {

@@ -60,6 +60,13 @@ const HOST_CREATE_FUNDING_MODES = new Set([
   "account-postpaid",
   "site-funded",
 ]);
+const HOST_SHARED_SCRATCH_DISK_TYPES = new Set([
+  "ssd",
+  "balanced",
+  "standard",
+  "ssd_io_m3",
+]);
+const NEBIUS_DISK_INCREMENT_GB = 93;
 
 export function assertHostRehomeConfirmed({
   host_id,
@@ -281,6 +288,59 @@ function parseMetricsWindowMinutes(window?: string): number {
   if (unit === "m") return value;
   if (unit === "h") return value * 60;
   return value * 24 * 60;
+}
+
+function readSharedScratchDiskType(host: any): string {
+  const explicit = `${host?.machine?.shared_disk_type ?? ""}`.trim();
+  if (explicit) return explicit;
+  const code = Number(host?.runtime?.metadata?.scratchDiskTypeCode);
+  switch (code) {
+    case 2:
+      return "standard";
+    case 3:
+      return "balanced";
+    case 4:
+      return "ssd_io_m3";
+    case 1:
+      return "ssd";
+    default:
+      return "";
+  }
+}
+
+function normalizeSharedScratchSizeForHost(host: any, sizeGb: number): number {
+  if (`${host?.machine?.cloud ?? ""}`.trim().toLowerCase() !== "nebius") {
+    return sizeGb;
+  }
+  return Math.max(
+    NEBIUS_DISK_INCREMENT_GB,
+    Math.ceil(sizeGb / NEBIUS_DISK_INCREMENT_GB) * NEBIUS_DISK_INCREMENT_GB,
+  );
+}
+
+function sharedScratchSummary(host: any) {
+  const sizeGb = Number(host?.machine?.shared_disk_gb ?? 0);
+  const diskType = readSharedScratchDiskType(host);
+  return {
+    host_id: host.id,
+    name: host.name ?? "",
+    provider: host.machine?.cloud ?? "",
+    status: host.status ?? "",
+    shared_disk_gb:
+      Number.isFinite(sizeGb) && sizeGb > 0 ? Math.floor(sizeGb) : null,
+    shared_disk_type: diskType || null,
+    mount: host.machine?.metadata?.shared_disk_mount ?? null,
+    filesystem: host.machine?.metadata?.shared_disk_filesystem ?? null,
+    provider_disk_id:
+      host.runtime?.metadata?.diskIds?.scratch ??
+      host.runtime?.metadata?.shared_disk_id ??
+      host.machine?.metadata?.shared_disk_id ??
+      null,
+    provider_disk_name:
+      host.runtime?.metadata?.shared_disk_name ??
+      host.machine?.metadata?.shared_disk_name ??
+      null,
+  };
 }
 
 function parseHostProjectsStateFilter(opts: {
@@ -1761,6 +1821,121 @@ export function registerHostCommand(
         };
       });
     });
+
+  const scratch = host
+    .command("scratch")
+    .description("manage a host shared /scratch disk");
+
+  scratch
+    .command("get <host>")
+    .description("show host shared /scratch disk configuration")
+    .action(async (hostIdentifier: string, command: Command) => {
+      await withContext(command, "host scratch get", async (ctx) => {
+        const h = await resolveHostForInformationalLookup(ctx, hostIdentifier);
+        return sharedScratchSummary(h);
+      });
+    });
+
+  scratch
+    .command("set <host>")
+    .description("create or grow a host shared /scratch disk")
+    .requiredOption("--size-gb <gb>", "shared scratch disk size in GB")
+    .option(
+      "--browser-id <id>",
+      "browser session id for fresh-auth checks; defaults to COCALC_BROWSER_ID",
+    )
+    .option(
+      "--type <type>",
+      "disk type: ssd|balanced|standard|ssd_io_m3 (only used when creating scratch)",
+    )
+    .action(
+      async (
+        hostIdentifier: string,
+        opts: { sizeGb: string; type?: string; browserId?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "host scratch set", async (ctx) => {
+          const h = await resolveHost(ctx, hostIdentifier, {
+            include_deleted: true,
+            admin_view: true,
+          });
+          const sizeGb = parseOptionalPositiveInteger(opts.sizeGb, "--size-gb");
+          if (sizeGb == null) {
+            throw new Error("--size-gb is required");
+          }
+          const diskType = `${opts.type ?? ""}`.trim().toLowerCase();
+          if (diskType && !HOST_SHARED_SCRATCH_DISK_TYPES.has(diskType)) {
+            throw new Error(
+              `--type must be one of: ${Array.from(HOST_SHARED_SCRATCH_DISK_TYPES).join(", ")}`,
+            );
+          }
+          const currentSize = Number(h?.machine?.shared_disk_gb ?? 0);
+          const normalizedSizeGb = normalizeSharedScratchSizeForHost(h, sizeGb);
+          const browserId =
+            `${opts.browserId ?? process.env.COCALC_BROWSER_ID ?? ""}`.trim();
+          const payload: Record<string, any> = {
+            shared_disk_gb: normalizedSizeGb,
+          };
+          if (browserId) {
+            payload.browser_id = browserId;
+          }
+          if (diskType && !(Number.isFinite(currentSize) && currentSize > 0)) {
+            payload.shared_disk_type = diskType;
+          }
+          const updated = await ctx.hub.hosts.updateHostMachine({
+            id: h.id,
+            ...payload,
+          });
+          return {
+            ...sharedScratchSummary(updated),
+            requested_shared_disk_gb: sizeGb,
+            normalized_shared_disk_gb: normalizedSizeGb,
+          };
+        });
+      },
+    );
+
+  scratch
+    .command("delete <host>")
+    .description("delete a host shared /scratch disk and all data on it")
+    .option("--yes", "confirm destructive delete")
+    .option(
+      "--browser-id <id>",
+      "browser session id for fresh-auth checks; defaults to COCALC_BROWSER_ID",
+    )
+    .action(
+      async (
+        hostIdentifier: string,
+        opts: { yes?: boolean; browserId?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "host scratch delete", async (ctx) => {
+          const h = await resolveHost(ctx, hostIdentifier, {
+            include_deleted: true,
+            admin_view: true,
+          });
+          if (!opts.yes) {
+            throw new Error(
+              `refusing to delete shared scratch for '${h.id}' without --yes`,
+            );
+          }
+          const browserId =
+            `${opts.browserId ?? process.env.COCALC_BROWSER_ID ?? ""}`.trim();
+          const updated = await ctx.hub.hosts.updateHostMachine({
+            id: h.id,
+            delete_shared_scratch: true,
+            ...(browserId ? { browser_id: browserId } : undefined),
+          });
+          return {
+            host_id: updated.id,
+            name: updated.name ?? "",
+            deleted_shared_scratch: true,
+            shared_disk_gb: updated.machine?.shared_disk_gb ?? null,
+            shared_disk_type: readSharedScratchDiskType(updated) || null,
+          };
+        });
+      },
+    );
 
   host
     .command("projects <host>")
@@ -3459,6 +3634,11 @@ Examples:
       "--disk-type <diskType>",
       "disk type: ssd|balanced|standard|ssd_io_m3",
     )
+    .option("--shared-disk-gb <diskGb>", "shared /scratch disk size in GB")
+    .option(
+      "--shared-disk-type <diskType>",
+      "shared /scratch disk type: ssd|balanced|standard|ssd_io_m3",
+    )
     .option(
       "--storage-mode <storageMode>",
       "storage mode: persistent|ephemeral",
@@ -3484,6 +3664,8 @@ Examples:
           zone?: string;
           diskGb?: string;
           diskType?: string;
+          sharedDiskGb?: string;
+          sharedDiskType?: string;
           storageMode?: string;
           fundingMode?: string;
           machineJson?: string;
@@ -3524,6 +3706,26 @@ Examples:
               );
             }
             machine.disk_type = diskTypeRaw as HostMachine["disk_type"];
+          }
+
+          const sharedDiskGb = parseOptionalPositiveInteger(
+            opts.sharedDiskGb,
+            "--shared-disk-gb",
+          );
+          if (sharedDiskGb != null) {
+            machine.shared_disk_gb = sharedDiskGb;
+          }
+          const sharedDiskTypeRaw = `${opts.sharedDiskType ?? ""}`
+            .trim()
+            .toLowerCase();
+          if (sharedDiskTypeRaw) {
+            if (!HOST_SHARED_SCRATCH_DISK_TYPES.has(sharedDiskTypeRaw)) {
+              throw new Error(
+                `--shared-disk-type must be one of: ${Array.from(HOST_SHARED_SCRATCH_DISK_TYPES).join(", ")}`,
+              );
+            }
+            machine.shared_disk_type =
+              sharedDiskTypeRaw as HostMachine["shared_disk_type"];
           }
 
           const storageModeRaw = `${opts.storageMode ?? ""}`

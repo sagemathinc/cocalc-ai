@@ -24,6 +24,7 @@ const IpynbRenderer = lazy(() => import("./renderers/ipynb"));
 const BoardRenderer = lazy(() => import("./renderers/board"));
 const SlidesRenderer = lazy(() => import("./renderers/slides"));
 const ChatRenderer = lazy(() => import("./renderers/chat"));
+const TasksRenderer = lazy(() => import("./renderers/tasks"));
 
 export interface PublicViewerFileContentsProps {
   content?: string;
@@ -163,6 +164,19 @@ export default function PublicViewerFileContents({
           content={content}
           fileContext={resolvedFileContext}
           style={style}
+        />
+      </Suspense>
+    );
+  }
+
+  if (ext === "tasks") {
+    return (
+      <Suspense fallback={<LoadingRenderer />}>
+        <TasksRenderer
+          content={content}
+          path={path}
+          project_id={fileContext?.project_id}
+          fontSize={fontSize}
         />
       </Suspense>
     );

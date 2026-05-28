@@ -195,6 +195,25 @@ export function extractProjectSubject(subject: string): string {
   return "";
 }
 
+export function extractViewerFileSubject(
+  subject: string,
+): { project_id: string; account_id: string } | undefined {
+  const parts = subject.split(".");
+  if (parts.length !== 3 || parts[0] !== "fs-viewer") {
+    return;
+  }
+  const project_id = parts[1]?.startsWith("project-")
+    ? parts[1].slice("project-".length)
+    : "";
+  const account_id = parts[2]?.startsWith("account-")
+    ? parts[2].slice("account-".length)
+    : "";
+  if (!isValidUUID(project_id) || !isValidUUID(account_id)) {
+    return;
+  }
+  return { project_id, account_id };
+}
+
 export function extractHostSubject(subject: string): string {
   const parts = subject.split(".");
   if (parts[1] === "host") {

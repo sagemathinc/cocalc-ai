@@ -1030,6 +1030,34 @@ export async function startMasterRegistration({
         }
         return { ok: true };
       },
+      async growSharedScratch({ disk_gb }) {
+        const args = ["-n", STORAGE_WRAPPER, "grow-shared-scratch"];
+        if (disk_gb != null) args.push(String(disk_gb));
+        const { stdout, stderr, exit_code } = await executeCode({
+          command: "sudo",
+          args,
+          timeout: 60,
+        });
+        if (exit_code) {
+          throw new Error(
+            `grow-shared-scratch failed (exit ${exit_code}): ${stderr || stdout || ""}`.trim(),
+          );
+        }
+        return { ok: true };
+      },
+      async unmountSharedScratch() {
+        const { stdout, stderr, exit_code } = await executeCode({
+          command: "sudo",
+          args: ["-n", STORAGE_WRAPPER, "unmount-shared-scratch"],
+          timeout: 60,
+        });
+        if (exit_code) {
+          throw new Error(
+            `unmount-shared-scratch failed (exit ${exit_code}): ${stderr || stdout || ""}`.trim(),
+          );
+        }
+        return { ok: true };
+      },
       async getRuntimeLog({ lines, source }) {
         return await readRuntimeLogTail(source, lines);
       },

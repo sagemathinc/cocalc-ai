@@ -1578,7 +1578,7 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
               expect.objectContaining({
                 account_id: "test-account",
                 project_id: "project-1",
-                groups: ["owner", "collaborator"],
+                groups: ["owner", "collaborator", "viewer"],
               }),
             );
             restore();
@@ -2007,7 +2007,45 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
             },
           });
         }).toThrow(
-          "invalid group value 'invalid-group' - must be 'owner' or 'collaborator'",
+          "invalid group value 'invalid-group' - must be 'owner', 'collaborator', or 'viewer'",
+        );
+      });
+
+      test("should allow viewer group and read policy in system operations", () => {
+        const result = db._user_set_query_project_users({
+          users: {
+            [accountId]: {
+              group: "viewer",
+              read_policy: {
+                rules: [{ action: "include", path: "public/**" }],
+              },
+            },
+          },
+        });
+        expect(result?.[accountId]).toEqual({
+          group: "viewer",
+          read_policy: {
+            rules: [{ action: "include", path: "public/**" }],
+          },
+        });
+      });
+
+      test("should reject read policy changes for user queries", () => {
+        expect(() => {
+          db._user_set_query_project_users(
+            {
+              users: {
+                [accountId]: {
+                  read_policy: {
+                    rules: [{ action: "include", path: "public/**" }],
+                  },
+                },
+              },
+            },
+            accountId,
+          );
+        }).toThrow(
+          "changing viewer read_policy via user_set_query is not allowed",
         );
       });
 

@@ -499,9 +499,14 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "project SSH trust mutation",
   },
-  "projects.start": {
+  "projects.setProjectUserRole": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
+  },
+  "projects.start": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "ordinary endpoint authorization is intended; admin/internal-only managed egress overrides are gated in the implementation",
   },
   "projects.stop": {
     decision: "fresh-auth-not-required",

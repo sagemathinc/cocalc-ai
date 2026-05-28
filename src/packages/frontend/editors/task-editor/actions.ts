@@ -153,7 +153,11 @@ export class TaskActions extends Actions<TaskState> {
       current_task_id,
     );
 
-    if (obj.visible.size == 0 && view.get("search")?.trim().length == 0) {
+    if (
+      obj.visible.size == 0 &&
+      view.get("search")?.trim().length == 0 &&
+      (view.get("selected_hashtags")?.size ?? 0) > 0
+    ) {
       // Deal with a weird edge case: https://github.com/sagemathinc/cocalc/issues/4763
       // If nothing is visible and the search is blank, clear any selected hashtags.
       this.clear_all_hashtags();

@@ -3,10 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import api from "@cocalc/frontend/client/api";
-import {
-  PolicyPrivacyPageUrl,
-  PolicyTOSPageUrl,
-} from "@cocalc/frontend/customize";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import {
   emailAllowedByPublicSignupPolicy,
@@ -17,10 +14,14 @@ import {
   len,
 } from "@cocalc/util/misc";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
+import { joinUrlPath } from "@cocalc/util/url-path";
 import { isWrongBayAuthResponse, postAuthApi, retryAuthOnHomeBay } from "./api";
 import type { AuthView } from "./types";
 import { appUrl } from "./util";
 import { COLORS } from "@cocalc/util/theme";
+
+const PolicyPrivacyPageUrl = joinUrlPath(appBasePath, "policies/privacy");
+const PolicyTOSPageUrl = joinUrlPath(appBasePath, "policies/terms");
 
 interface SignUpFormBaseProps {
   initialRequiresToken?: boolean;

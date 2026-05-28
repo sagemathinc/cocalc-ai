@@ -28,6 +28,17 @@ import {
 } from "./usage-status";
 
 const log = getLogger("server:membership:project-limits");
+let projectCollabInviteRoleSchemaReady: Promise<void> | undefined;
+
+async function ensureProjectCollabInviteRoleSchema(): Promise<void> {
+  projectCollabInviteRoleSchemaReady ??= (async () => {
+    await getPool().query(`
+      ALTER TABLE project_collab_invites
+        ADD COLUMN IF NOT EXISTS invite_role VARCHAR(24)
+    `);
+  })();
+  await projectCollabInviteRoleSchemaReady;
+}
 
 export {
   getProjectOwnerAccountId,
@@ -277,6 +288,7 @@ export async function assertCanOwnAdditionalProject({
 export async function getProjectCollaboratorsAndPendingInviteCount(
   project_id: string,
 ): Promise<number> {
+  await ensureProjectCollabInviteRoleSchema();
   const pool = getPool("medium");
   const { rows } = await pool.query<{
     collaborators: string | number;
@@ -302,6 +314,7 @@ export async function getProjectCollaboratorsAndPendingInviteCount(
           FROM project_collab_invites
           WHERE project_id = $1
             AND status = 'pending'
+            AND COALESCE(invite_role, 'collaborator') = 'collaborator'
         ), 0) AS pending_invites
     `,
     [project_id],

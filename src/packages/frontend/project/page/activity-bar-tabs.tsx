@@ -62,6 +62,23 @@ const INDICATOR_STYLE: React.CSSProperties = {
 } as const;
 
 export const FIXED_TABS_BG_COLOR = "rgba(0, 0, 0, 0.02)";
+const VIEWER_FIXED_TABS = new Set<FixedTab>([
+  "active",
+  "docs",
+  "files",
+  "users",
+]);
+
+function filterTabsForProjectAccess({
+  names,
+  viewer,
+}: {
+  names: readonly FixedTab[];
+  viewer: boolean;
+}): FixedTab[] {
+  if (!viewer) return [...names];
+  return names.filter((name) => VIEWER_FIXED_TABS.has(name));
+}
 
 interface PTProps {
   project_id: string;
@@ -69,6 +86,7 @@ interface PTProps {
 
 export default function ProjectTabs(props: PTProps) {
   const { project_id } = props;
+  const { projectAccess } = useProjectContext();
   const openFiles = useTypedRedux({ project_id }, "open_files_order");
   const activeTab = useTypedRedux({ project_id }, "active_project_tab");
   const sshRemoteTarget = useTypedRedux("customize", "ssh_remote_target");
@@ -98,15 +116,17 @@ export default function ProjectTabs(props: PTProps) {
             activeTab={activeTab}
           />
         </div>
-        <div
-          style={{
-            display: "inline-flex",
-            marginLeft: "-10px",
-          }}
-        >
-          <ChatIndicatorTab activeTab={activeTab} project_id={project_id} />
-        </div>
-        {lite && (
+        {projectAccess?.role !== "viewer" && (
+          <div
+            style={{
+              display: "inline-flex",
+              marginLeft: "-10px",
+            }}
+          >
+            <ChatIndicatorTab activeTab={activeTab} project_id={project_id} />
+          </div>
+        )}
+        {lite && projectAccess?.role !== "viewer" && (
           <>
             {sshRemoteTarget ? <RemoteSshButton /> : <SshButton />}
             <SshUpgradeButton />
@@ -130,6 +150,7 @@ export function VerticalFixedTabs({
     actions,
     project_id,
     active_project_tab: activeTab,
+    projectAccess,
     workspaces,
   } = useProjectContext();
   const accountStoreReady = useAccountStoreReady();
@@ -146,10 +167,18 @@ export function VerticalFixedTabs({
   const { order: tabOrder, hidden: hiddenTabs } = useActivityBarPreferences({
     liteMode: lite,
   });
-  const { visible: pinnedTabs, overflow: overflowTabs } = useMemo(
-    () => splitRailTabs(tabOrder, hiddenTabs),
-    [hiddenTabs, tabOrder],
-  );
+  const viewer = projectAccess?.role === "viewer";
+  const { visible: pinnedTabs, overflow: overflowTabs } = useMemo(() => {
+    const filteredOrder = filterTabsForProjectAccess({
+      names: tabOrder,
+      viewer,
+    });
+    const filteredHidden = filterTabsForProjectAccess({
+      names: hiddenTabs,
+      viewer,
+    });
+    return splitRailTabs(filteredOrder, filteredHidden);
+  }, [hiddenTabs, tabOrder, viewer]);
 
   const calcCondensed = throttle(
     () => {
@@ -429,7 +458,7 @@ export function VerticalFixedTabs({
 
 export function HiddenActivityBarLauncher() {
   const intl = useIntl();
-  const { actions, project_id } = useProjectContext();
+  const { actions, project_id, projectAccess } = useProjectContext();
   const accountStoreReady = useAccountStoreReady();
   const { showActBarLabels } = useAppContext();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -439,9 +468,10 @@ export function HiddenActivityBarLauncher() {
   });
   if (!accountStoreReady) return null;
 
+  const viewer = projectAccess?.role === "viewer";
   const items = createRailMenuItems({
     intl,
-    names: tabOrder,
+    names: filterTabsForProjectAccess({ names: tabOrder, viewer }),
     onCustomize: () => setShowCustomize(true),
     onToggleActivityBar: () => {
       setActivityBarCollapsed(false);

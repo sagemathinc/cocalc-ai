@@ -53,6 +53,7 @@ jest.mock("@cocalc/project-runner/run/rootfs", () => ({
 
 jest.mock("@cocalc/project-runner/run/podman", () => ({
   networkArgument: jest.fn(() => "--network=pasta:--map-gw"),
+  resolveSharedScratchMount: jest.fn(async () => undefined),
 }));
 
 jest.mock("@cocalc/backend/podman", () => ({

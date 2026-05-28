@@ -67,7 +67,7 @@ import {
 } from "@cocalc/frontend/components";
 import parseTableOfContents from "./table-of-contents";
 import { delay } from "awaiting";
-import { open_new_tab } from "@cocalc/frontend/misc";
+import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import debug from "debug";
 import { moveCell } from "@cocalc/jupyter/util/cell-utils";
 import { migrateToNewPageNumbers } from "./migrate";
@@ -1470,7 +1470,7 @@ export class Actions<T extends State = State> extends BaseActions<T | State> {
   }
 
   help(): void {
-    open_new_tab("/docs/files/whiteboard");
+    openProjectDocs({ projectId: this.project_id, slug: "files/whiteboard" });
   }
 
   defaultPageId(): string {

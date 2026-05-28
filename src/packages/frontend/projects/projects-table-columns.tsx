@@ -79,6 +79,7 @@ export interface ProjectTableRecord {
   description: string;
   host?: string;
   last_edited?: Date;
+  currentRole?: "owner" | "collaborator" | "viewer";
   color?: string;
   state?: any; // immutable Map
   deleting?: boolean;
@@ -88,6 +89,27 @@ export interface ProjectTableRecord {
   deletionBlocked?: boolean;
   hidden: boolean;
   collaborators: string[]; // Array of collaborator account_ids (excluding current user)
+}
+
+function projectRoleTag(role: ProjectTableRecord["currentRole"]) {
+  switch (role) {
+    case "owner":
+      return (
+        <Tag color="blue" style={{ marginLeft: 8 }}>
+          Owner
+        </Tag>
+      );
+    case "collaborator":
+      return <Tag style={{ marginLeft: 8 }}>Collaborator</Tag>;
+    case "viewer":
+      return (
+        <Tag color="gold" style={{ marginLeft: 8 }}>
+          Viewer
+        </Tag>
+      );
+    default:
+      return null;
+  }
 }
 
 /**
@@ -226,6 +248,7 @@ export function getProjectTableColumns(
                 <Text strong={strong} disabled={deleting || deletionScheduled}>
                   {record.title || "Untitled"}
                 </Text>
+                {projectRoleTag(record.currentRole)}
                 {deletionScheduled && (
                   <Tag color="orange" style={{ marginLeft: "8px" }}>
                     Scheduled for deletion

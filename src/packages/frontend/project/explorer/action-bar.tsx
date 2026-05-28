@@ -56,6 +56,8 @@ interface Props {
   onRefreshListing?: () => void;
   autoUpdateListing?: boolean;
   onToggleAutoUpdate?: (checked: boolean) => void;
+  readOnly?: boolean;
+  allowCopyOut?: boolean;
 }
 
 export function ActionBar(props: Props) {
@@ -79,6 +81,8 @@ function ActionBarEnabled({
   onRefreshListing,
   autoUpdateListing,
   onToggleAutoUpdate,
+  readOnly = false,
+  allowCopyOut = false,
 }: Props) {
   const intl = useIntl();
   const currentParts = current_path.split("/").filter(Boolean);
@@ -267,6 +271,9 @@ function ActionBarEnabled({
   }
 
   function render_check_all_button(): React.JSX.Element | undefined {
+    if (readOnly && !allowCopyOut) {
+      return;
+    }
     if (listing.length === 0) {
       return;
     }
@@ -331,12 +338,19 @@ function ActionBarEnabled({
           <div style={{ display: "inline" }}>
             {" "}
             &mdash;{" "}
-            <FormattedMessage
-              id="project.explorer.action-bar.currently_selected.info"
-              defaultMessage={
-                "Click the checkbox to the left of a file to copy, download, etc."
-              }
-            />
+            {readOnly ? (
+              <FormattedMessage
+                id="project.explorer.action-bar.read_only.info"
+                defaultMessage="Viewer access is read-only. Select files to copy them to another project."
+              />
+            ) : (
+              <FormattedMessage
+                id="project.explorer.action-bar.currently_selected.info"
+                defaultMessage={
+                  "Click the checkbox to the left of a file to copy, download, etc."
+                }
+              />
+            )}
           </div>
           {refreshButton && <> &middot; {refreshButton}</>}
           {autoUpdateButton && <> &middot; {autoUpdateButton}</>}
@@ -503,6 +517,9 @@ function ActionBarEnabled({
   }
 
   function render_action_buttons(): React.JSX.Element | undefined {
+    if (readOnly && !allowCopyOut) {
+      return;
+    }
     if (inBackups) {
       return render_backup_actions();
     }
@@ -517,6 +534,8 @@ function ActionBarEnabled({
     )[];
     if (checked_files.size === 0) {
       return;
+    } else if (readOnly) {
+      action_buttons = ["copy"];
     } else if (checked_files.size === 1) {
       let isDir;
       const item = checked_files.first();
