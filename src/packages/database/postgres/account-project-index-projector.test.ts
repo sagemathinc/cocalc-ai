@@ -383,7 +383,7 @@ describe("account_project_index projector", () => {
         `SELECT users_summary -> $2::TEXT ->> 'group' AS role
            FROM account_project_index
           WHERE project_id = $1::UUID
-            AND account_id = $2`,
+            AND account_id = $2::UUID`,
         [PROJECT_ID, ACCOUNT_LOCAL],
       ),
     ).resolves.toMatchObject({
