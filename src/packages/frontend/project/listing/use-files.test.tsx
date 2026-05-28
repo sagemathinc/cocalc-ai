@@ -27,6 +27,7 @@ function mockResetHooks() {
 }
 
 jest.mock("react", () => ({
+  useCallback: (callback: unknown) => callback,
   useEffect: (effect: () => void | (() => void), inputs: unknown[] = []) => {
     const i = mockHookIndex++;
     const slot = (mockEffectSlots[i] ??= {});
@@ -103,6 +104,11 @@ async function flushEffects() {
 function useFilesForTest({ fs, path }: { fs: any; path: string }) {
   mockResetHookCursor();
   return useFiles({ fs, path, throttleUpdate: 1 });
+}
+
+function useFilesForTestWithOptions(opts: Parameters<typeof useFiles>[0]) {
+  mockResetHookCursor();
+  return useFiles({ throttleUpdate: 1, ...opts });
 }
 
 describe("useFiles", () => {
@@ -296,5 +302,84 @@ describe("useFiles", () => {
     expect(result.files).toEqual({
       "live.txt": { mtime: 0, isDir: false, size: 1 },
     });
+  });
+
+  it("uses one-shot listings for read-only neighbor cache prefetches", async () => {
+    const fs = {
+      getListing: jest.fn(async (path: string) => ({
+        files:
+          path === "/parent"
+            ? { child: { mtime: 0, isDir: true, size: 0 } }
+            : {},
+      })),
+      listing: jest.fn(),
+    };
+
+    useFilesForTestWithOptions({
+      fs,
+      path: "/parent",
+      cacheId: { project_id: "project-1", viewer: true },
+      watch: false,
+    });
+    await flushEffects();
+
+    expect(fs.getListing).toHaveBeenCalledWith("/parent");
+    expect(fs.getListing).toHaveBeenCalledWith("/parent/child");
+    expect(fs.listing).not.toHaveBeenCalled();
+  });
+
+  it("refresh clears cached contents and fetches a fresh read-only listing", async () => {
+    let refreshFetches = 0;
+    const fs = {
+      getListing: jest.fn(async (path: string) => {
+        if (path !== "/refresh") {
+          return { files: {} };
+        }
+        refreshFetches += 1;
+        return refreshFetches === 1
+          ? { files: { "old.txt": { mtime: 0, isDir: false, size: 1 } } }
+          : { files: { "new.txt": { mtime: 0, isDir: false, size: 1 } } };
+      }),
+      listing: jest.fn(),
+    };
+
+    let result = useFilesForTestWithOptions({
+      fs,
+      path: "/refresh",
+      cacheId: { project_id: "project-1", viewer: true },
+      watch: false,
+    });
+    await flushEffects();
+
+    result = useFilesForTestWithOptions({
+      fs,
+      path: "/refresh",
+      cacheId: { project_id: "project-1", viewer: true },
+      watch: false,
+    });
+    expect(result.files).toEqual({
+      "old.txt": { mtime: 0, isDir: false, size: 1 },
+    });
+
+    result.refresh();
+    result = useFilesForTestWithOptions({
+      fs,
+      path: "/refresh",
+      cacheId: { project_id: "project-1", viewer: true },
+      watch: false,
+    });
+    expect(result.files).toBeNull();
+    await flushEffects();
+
+    result = useFilesForTestWithOptions({
+      fs,
+      path: "/refresh",
+      cacheId: { project_id: "project-1", viewer: true },
+      watch: false,
+    });
+    expect(result.files).toEqual({
+      "new.txt": { mtime: 0, isDir: false, size: 1 },
+    });
+    expect(fs.listing).not.toHaveBeenCalled();
   });
 });
