@@ -1925,6 +1925,10 @@ export const useHostsPageViewModel = () => {
         auto_grow_max_disk_gb?: number;
         auto_grow_growth_step_gb?: number;
         auto_grow_min_grow_interval_minutes?: number;
+        shared_scratch_auto_grow_enabled?: boolean;
+        shared_scratch_auto_grow_max_disk_gb?: number;
+        shared_scratch_auto_grow_growth_step_gb?: number;
+        shared_scratch_auto_grow_min_grow_interval_minutes?: number;
         pricing_model?: HostPricingModel;
         interruption_restore_policy?: HostInterruptionRestorePolicy;
         spot_recovery_policy?: HostSpotRecoveryPolicy;
@@ -1948,6 +1952,8 @@ export const useHostsPageViewModel = () => {
           const currentSharedDisk = Number(editingHost.machine?.shared_disk_gb);
           const currentAutoGrow = (editingHost.machine?.metadata?.auto_grow ??
             {}) as Record<string, any>;
+          const currentSharedScratchAutoGrow = (editingHost.machine?.metadata
+            ?.shared_scratch_auto_grow ?? {}) as Record<string, any>;
           const nextProvider = (values.provider ??
             (editingHost.machine?.cloud as HostProvider | undefined) ??
             "none") as HostProvider;
@@ -1958,10 +1964,60 @@ export const useHostsPageViewModel = () => {
             "persistent";
           const supportsAutoGrowConfig =
             nextProvider === "gcp" && nextStorageMode !== "ephemeral";
+          const supportsSharedScratchAutoGrowConfig =
+            nextProvider === "gcp" || nextProvider === "nebius";
           const parsePositive = (value: unknown) => {
             const parsed = Number(value);
             if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
             return Math.floor(parsed);
+          };
+          const appendSharedScratchAutoGrowUpdate = (
+            update: Record<string, any>,
+            effectiveSharedDisk?: number,
+          ) => {
+            if (
+              !supportsSharedScratchAutoGrowConfig ||
+              !(Number(effectiveSharedDisk ?? 0) > 0)
+            ) {
+              return;
+            }
+            if (
+              typeof values.shared_scratch_auto_grow_enabled === "boolean" &&
+              values.shared_scratch_auto_grow_enabled !==
+                currentSharedScratchAutoGrow.enabled
+            ) {
+              update.shared_scratch_auto_grow_enabled =
+                values.shared_scratch_auto_grow_enabled;
+            }
+            const nextMaxDisk = parsePositive(
+              values.shared_scratch_auto_grow_max_disk_gb,
+            );
+            if (
+              nextMaxDisk != null &&
+              nextMaxDisk !== currentSharedScratchAutoGrow.max_disk_gb
+            ) {
+              update.shared_scratch_auto_grow_max_disk_gb = nextMaxDisk;
+            }
+            const nextGrowthStep = parsePositive(
+              values.shared_scratch_auto_grow_growth_step_gb,
+            );
+            if (
+              nextGrowthStep != null &&
+              nextGrowthStep !== currentSharedScratchAutoGrow.growth_step_gb
+            ) {
+              update.shared_scratch_auto_grow_growth_step_gb = nextGrowthStep;
+            }
+            const nextMinInterval = parsePositive(
+              values.shared_scratch_auto_grow_min_grow_interval_minutes,
+            );
+            if (
+              nextMinInterval != null &&
+              nextMinInterval !==
+                currentSharedScratchAutoGrow.min_grow_interval_minutes
+            ) {
+              update.shared_scratch_auto_grow_min_grow_interval_minutes =
+                nextMinInterval;
+            }
           };
           const currentPricingModel = editingHost.pricing_model ?? "on_demand";
           const currentInterruptionRestorePolicy =
@@ -2103,6 +2159,10 @@ export const useHostsPageViewModel = () => {
                   nextAutoGrowMinInterval;
               }
             }
+            appendSharedScratchAutoGrowUpdate(
+              update,
+              machine.shared_disk_gb ?? currentSharedDisk,
+            );
             if (Object.keys(update).length > 0) {
               await updateHostMachine(id, update);
             }
@@ -2310,6 +2370,10 @@ export const useHostsPageViewModel = () => {
                 nextAutoGrowMinInterval;
             }
           }
+          appendSharedScratchAutoGrowUpdate(
+            update,
+            nextSharedDisk ?? currentSharedDisk,
+          );
 
           if (Object.keys(update).length > 0) {
             await updateHostMachine(id, update);

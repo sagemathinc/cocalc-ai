@@ -125,6 +125,10 @@ type HubClient = {
       auto_grow_max_disk_gb?: number;
       auto_grow_growth_step_gb?: number;
       auto_grow_min_grow_interval_minutes?: number;
+      shared_scratch_auto_grow_enabled?: boolean;
+      shared_scratch_auto_grow_max_disk_gb?: number;
+      shared_scratch_auto_grow_growth_step_gb?: number;
+      shared_scratch_auto_grow_min_grow_interval_minutes?: number;
       pricing_model?: "on_demand" | "spot";
       interruption_restore_policy?: "none" | "immediate";
       spot_recovery_policy?: HostSpotRecoveryPolicy;
@@ -416,6 +420,10 @@ export const useHostActions = ({
       auto_grow_max_disk_gb?: number;
       auto_grow_growth_step_gb?: number;
       auto_grow_min_grow_interval_minutes?: number;
+      shared_scratch_auto_grow_enabled?: boolean;
+      shared_scratch_auto_grow_max_disk_gb?: number;
+      shared_scratch_auto_grow_growth_step_gb?: number;
+      shared_scratch_auto_grow_min_grow_interval_minutes?: number;
       pricing_model?: "on_demand" | "spot";
       interruption_restore_policy?: "none" | "immediate";
       spot_recovery_policy?: HostSpotRecoveryPolicy;
@@ -428,7 +436,11 @@ export const useHostActions = ({
       const scratchOperation =
         opts.delete_shared_scratch ||
         opts.shared_disk_gb != null ||
-        opts.shared_disk_type != null;
+        opts.shared_disk_type != null ||
+        opts.shared_scratch_auto_grow_enabled != null ||
+        opts.shared_scratch_auto_grow_max_disk_gb != null ||
+        opts.shared_scratch_auto_grow_growth_step_gb != null ||
+        opts.shared_scratch_auto_grow_min_grow_interval_minutes != null;
       await hub.hosts.updateHostMachine({
         id,
         browser_id,

@@ -618,6 +618,9 @@ export interface HostCurrentMetrics {
   disk_device_total_bytes?: number;
   disk_device_used_bytes?: number;
   disk_unallocated_bytes?: number;
+  shared_scratch_total_bytes?: number;
+  shared_scratch_used_bytes?: number;
+  shared_scratch_available_bytes?: number;
   btrfs_data_total_bytes?: number;
   btrfs_data_used_bytes?: number;
   btrfs_metadata_total_bytes?: number;
@@ -653,12 +656,14 @@ export interface HostPressureState {
 
 export interface HostMetricsHistoryPoint extends HostCurrentMetrics {
   disk_used_percent?: number;
+  shared_scratch_used_percent?: number;
   metadata_used_percent?: number;
 }
 
 export interface HostMetricsHistoryGrowth {
   window_minutes: number;
   disk_used_bytes_per_hour?: number;
+  shared_scratch_used_bytes_per_hour?: number;
   metadata_used_bytes_per_hour?: number;
 }
 
@@ -673,7 +678,7 @@ export interface HostMetricsRiskState {
 }
 
 export interface HostMetricsAlert {
-  kind: "disk" | "metadata";
+  kind: "disk" | "metadata" | "shared_scratch";
   level: Exclude<HostMetricsRiskLevel, "healthy">;
   message: string;
 }
@@ -681,6 +686,7 @@ export interface HostMetricsAlert {
 export interface HostMetricsDerived {
   window_minutes: number;
   disk: HostMetricsRiskState;
+  shared_scratch?: HostMetricsRiskState;
   metadata: HostMetricsRiskState;
   alerts: HostMetricsAlert[];
   admission_allowed: boolean;
@@ -1777,6 +1783,10 @@ export interface Hosts {
     auto_grow_max_disk_gb?: number;
     auto_grow_growth_step_gb?: number;
     auto_grow_min_grow_interval_minutes?: number;
+    shared_scratch_auto_grow_enabled?: boolean;
+    shared_scratch_auto_grow_max_disk_gb?: number;
+    shared_scratch_auto_grow_growth_step_gb?: number;
+    shared_scratch_auto_grow_min_grow_interval_minutes?: number;
     funding_mode?: HostFundingMode;
     pricing_model?: HostPricingModel;
     interruption_restore_policy?: HostInterruptionRestorePolicy;

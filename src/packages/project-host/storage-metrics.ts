@@ -155,6 +155,20 @@ export function parseDfOutput(output: string): Partial<HostCurrentMetrics> {
   };
 }
 
+function readTruthyEnv(value: string | undefined): boolean {
+  const normalized = `${value ?? ""}`.trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(normalized);
+}
+
+function resolveSharedScratchMount(): string | undefined {
+  if (!readTruthyEnv(process.env.COCALC_SHARED_SCRATCH_ENABLED)) {
+    return undefined;
+  }
+  const mount =
+    `${process.env.COCALC_SHARED_SCRATCH_HOST_MOUNT ?? "/mnt/cocalc-scratch"}`.trim();
+  return mount.startsWith("/") ? mount : undefined;
+}
+
 export async function readDiskMetrics(
   mount = resolveStorageMount(),
 ): Promise<Partial<HostCurrentMetrics>> {
@@ -180,4 +194,22 @@ export async function readDiskMetrics(
     mount,
   ]);
   return dfOutput ? parseDfOutput(dfOutput) : {};
+}
+
+export async function readSharedScratchMetrics(): Promise<
+  Partial<HostCurrentMetrics>
+> {
+  const mount = resolveSharedScratchMount();
+  if (!mount) return {};
+  const dfOutput = await runCommand("df", [
+    "-B1",
+    "--output=size,used,avail",
+    mount,
+  ]);
+  const parsed = dfOutput ? parseDfOutput(dfOutput) : {};
+  return {
+    shared_scratch_total_bytes: parsed.disk_device_total_bytes,
+    shared_scratch_used_bytes: parsed.disk_device_used_bytes,
+    shared_scratch_available_bytes: parsed.disk_available_conservative_bytes,
+  };
 }
