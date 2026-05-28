@@ -308,4 +308,33 @@ describe("parseRow bootstrap lifecycle normalization", () => {
       fallback_started_at: "2026-05-03T20:10:00.000Z",
     });
   });
+
+  it("copies shared scratch provider identity into machine metadata", () => {
+    const host = parseRow({
+      id: "host-scratch",
+      name: "host-scratch",
+      status: "running",
+      region: "us-south1",
+      metadata: {
+        machine: {
+          cloud: "gcp",
+          shared_disk_gb: 75,
+          shared_disk_type: "balanced",
+          metadata: {
+            shared_disk_mount: "/mnt/cocalc-scratch",
+            shared_disk_filesystem: "ext4",
+          },
+        },
+        runtime: {
+          metadata: {
+            shared_disk_id: "host-scratch-disk",
+            shared_disk_name: "host-scratch-disk",
+          },
+        },
+      },
+    });
+
+    expect(host.machine?.metadata?.shared_disk_id).toBe("host-scratch-disk");
+    expect(host.machine?.metadata?.shared_disk_name).toBe("host-scratch-disk");
+  });
 });

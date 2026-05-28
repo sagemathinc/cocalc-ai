@@ -148,9 +148,24 @@ function privateIpFromInstance(instance: any): string {
 function dataDiskUriFromInstance(instance: any): string | undefined {
   const disks = instance?.disks ?? [];
   const dataDisk =
-    disks.find((disk) => !disk.boot && disk.type !== "SCRATCH") ??
-    disks.find((disk) => !disk.boot);
+    disks.find(
+      (disk) =>
+        !disk.boot &&
+        disk.type !== "SCRATCH" &&
+        !`${disk.deviceName ?? ""}`.endsWith("-scratch"),
+    ) ?? disks.find((disk) => !disk.boot);
   return dataDisk?.source ?? undefined;
+}
+
+function attachedDiskName(disk: any): string | undefined {
+  return (
+    disk?.deviceName ??
+    (disk?.source ? `${disk.source}`.split("/").pop() : undefined)
+  );
+}
+
+function attachedDiskSource(disk: any): string | undefined {
+  return disk?.source ?? undefined;
 }
 
 function spotScheduling() {
@@ -186,7 +201,15 @@ function onDemandScheduling(opts: { gpu?: boolean }) {
 }
 
 function diskTypeFor(spec: HostSpec): string {
-  switch (spec.disk_type) {
+  return gcpDiskTypeFor(spec.disk_type);
+}
+
+function sharedScratchDiskTypeFor(spec: HostSpec): string {
+  return gcpDiskTypeFor(spec.shared_disk_type ?? "balanced");
+}
+
+function gcpDiskTypeFor(type?: HostSpec["disk_type"]): string {
+  switch (type) {
     case "ssd":
       return "pd-ssd";
     case "balanced":
@@ -427,6 +450,36 @@ async function setStandardSchedulingViaRest(opts: {
   });
 }
 
+async function resolveSharedScratchDiskName(opts: {
+  runtime: HostRuntime;
+  credentials: { projectId: string; credentials: any };
+}): Promise<string> {
+  const metadata = (opts.runtime.metadata ?? {}) as Record<string, any>;
+  let diskName =
+    metadata.shared_disk_name ??
+    metadata.shared_disk_id ??
+    (metadata.shared_disk_uri
+      ? `${metadata.shared_disk_uri}`.split("/").pop()
+      : undefined);
+  if (!diskName && opts.runtime.zone) {
+    const instanceClient = new InstancesClient(opts.credentials);
+    const [instance] = await instanceClient.get({
+      project: opts.credentials.projectId,
+      zone: opts.runtime.zone,
+      instance: opts.runtime.instance_id,
+    });
+    const disks = instance?.disks ?? [];
+    const scratchDisk = disks.find((disk) =>
+      `${attachedDiskName(disk) ?? ""}`.endsWith("-scratch"),
+    );
+    diskName = attachedDiskName(scratchDisk);
+  }
+  if (!diskName) {
+    throw new Error("gcp: no shared scratch disk to resize");
+  }
+  return diskName;
+}
+
 export class GcpProvider implements CloudProvider {
   mapStatus(status?: string): string | undefined {
     if (!status) return undefined;
@@ -465,6 +518,9 @@ export class GcpProvider implements CloudProvider {
     const diskType = `projects/${credentials.projectId}/zones/${zone}/diskTypes/${diskTypeFor(
       spec,
     )}`;
+    const sharedScratchDiskType = `projects/${credentials.projectId}/zones/${zone}/diskTypes/${sharedScratchDiskTypeFor(
+      spec,
+    )}`;
     const sourceImage = await resolveSourceImage({ spec, credentials });
     const bootDiskGb =
       spec.metadata?.boot_disk_gb ??
@@ -498,7 +554,10 @@ export class GcpProvider implements CloudProvider {
       },
     ];
     const dataDiskName = spec.metadata?.data_disk_name ?? `${spec.name}-data`;
+    const sharedScratchDiskName =
+      spec.metadata?.shared_disk_name ?? `${spec.name}-scratch`;
     let dataDiskSource: string | undefined;
+    let sharedScratchDiskSource: string | undefined;
     if (storageMode === "ephemeral") {
       // Attach one local SSD for fast ephemeral storage.
       disks.push({
@@ -535,6 +594,41 @@ export class GcpProvider implements CloudProvider {
                 diskName: dataDiskName,
                 diskSizeGb: `${spec.disk_gb}`,
                 diskType,
+              },
+            }),
+      });
+    }
+
+    const sharedDiskGb = Number(spec.shared_disk_gb ?? 0);
+    if (Number.isFinite(sharedDiskGb) && sharedDiskGb > 0) {
+      const diskClient = new DisksClient(credentials);
+      const existingScratchDiskName =
+        spec.metadata?.shared_disk_id ??
+        spec.metadata?.sharedDiskId ??
+        sharedScratchDiskName;
+      try {
+        const [disk] = await diskClient.get({
+          project: credentials.projectId,
+          zone,
+          disk: existingScratchDiskName,
+        });
+        sharedScratchDiskSource = disk?.selfLink ?? undefined;
+      } catch (err) {
+        if (!isNotFoundError(err)) {
+          throw err;
+        }
+      }
+      disks.push({
+        autoDelete: false,
+        boot: false,
+        deviceName: sharedScratchDiskName,
+        ...(sharedScratchDiskSource
+          ? { source: sharedScratchDiskSource }
+          : {
+              initializeParams: {
+                diskName: sharedScratchDiskName,
+                diskSizeGb: `${Math.floor(sharedDiskGb)}`,
+                diskType: sharedScratchDiskType,
               },
             }),
       });
@@ -620,6 +714,22 @@ export class GcpProvider implements CloudProvider {
           data_disk_gb: spec.disk_gb,
           data_disk_name: dataDiskName,
           data_disk_uri: dataDiskSource ?? dataDiskUriFromInstance(instance),
+          ...(Number.isFinite(sharedDiskGb) && sharedDiskGb > 0
+            ? {
+                shared_disk_gb: Math.floor(sharedDiskGb),
+                shared_disk_type: spec.shared_disk_type ?? "balanced",
+                shared_disk_id: sharedScratchDiskName,
+                shared_disk_name: sharedScratchDiskName,
+                shared_disk_uri:
+                  sharedScratchDiskSource ??
+                  attachedDiskSource(
+                    (instance?.disks ?? []).find(
+                      (disk) =>
+                        attachedDiskName(disk) === sharedScratchDiskName,
+                    ),
+                  ),
+              }
+            : {}),
           ssh_public_key: spec.metadata?.ssh_public_key,
           ssh_public_keys: sshPublicKeys,
           ssh_user: sshUserFor(spec),
@@ -1052,6 +1162,7 @@ export class GcpProvider implements CloudProvider {
     const client = new InstancesClient(credentials);
     const diskClient = new DisksClient(credentials);
     let dataDiskName: string | undefined;
+    let scratchDiskName: string | undefined;
     try {
       try {
         const [instance] = await client.get({
@@ -1060,18 +1171,45 @@ export class GcpProvider implements CloudProvider {
           instance: runtime.instance_id,
         });
         const disks = instance?.disks ?? [];
+        const metadata = (runtime.metadata ?? {}) as Record<string, any>;
+        const scratchNameFromRuntime =
+          metadata.shared_disk_name ?? metadata.shared_disk_id;
+        const scratchDisk = disks.find((disk) => {
+          const name = attachedDiskName(disk);
+          return (
+            name === scratchNameFromRuntime ||
+            `${name ?? ""}`.endsWith("-scratch")
+          );
+        });
         const dataDisk =
-          disks.find((disk) => !disk.boot && disk.type !== "SCRATCH") ??
-          disks.find((disk) => !disk.boot);
-        dataDiskName =
-          dataDisk?.deviceName ??
-          (dataDisk?.source ? dataDisk.source.split("/").pop() : undefined);
+          disks.find(
+            (disk) =>
+              !disk.boot &&
+              disk.type !== "SCRATCH" &&
+              attachedDiskName(disk) !== attachedDiskName(scratchDisk),
+          ) ??
+          disks.find(
+            (disk) =>
+              !disk.boot &&
+              attachedDiskName(disk) !== attachedDiskName(scratchDisk),
+          );
+        dataDiskName = attachedDiskName(dataDisk);
+        scratchDiskName = attachedDiskName(scratchDisk);
         if (opts?.preserveDataDisk && dataDiskName) {
           await client.setDiskAutoDelete({
             project: credentials.projectId,
             zone: runtime.zone,
             instance: runtime.instance_id,
             deviceName: dataDiskName,
+            autoDelete: false,
+          });
+        }
+        if (opts?.preserveDataDisk && scratchDiskName) {
+          await client.setDiskAutoDelete({
+            project: credentials.projectId,
+            zone: runtime.zone,
+            instance: runtime.instance_id,
+            deviceName: scratchDiskName,
             autoDelete: false,
           });
         }
@@ -1110,6 +1248,29 @@ export class GcpProvider implements CloudProvider {
               instance_id: runtime.instance_id,
               zone: runtime.zone,
               disk: dataDiskName,
+              err,
+            });
+          }
+        }
+      }
+      if (!opts?.preserveDataDisk && scratchDiskName) {
+        try {
+          const [diskResponse] = await diskClient.delete({
+            project: credentials.projectId,
+            zone: runtime.zone,
+            disk: scratchDiskName,
+          });
+          await waitUntilOperationComplete({
+            response: diskResponse,
+            zone: runtime.zone,
+            credentials,
+          });
+        } catch (err) {
+          if (!isNotFoundError(err)) {
+            logger.warn("gcp.deleteHost shared scratch disk delete failed", {
+              instance_id: runtime.instance_id,
+              zone: runtime.zone,
+              disk: scratchDiskName,
               err,
             });
           }
@@ -1173,6 +1334,179 @@ export class GcpProvider implements CloudProvider {
       zone: runtime.zone,
       credentials,
     });
+  }
+
+  async resizeSharedScratchDisk(
+    runtime: HostRuntime,
+    newSizeGb: number,
+    creds: any,
+  ): Promise<void> {
+    const credentials = parseCredentials(creds ?? {});
+    if (!runtime.zone) {
+      throw new Error("gcp.resizeSharedScratchDisk requires zone");
+    }
+    const diskName = await resolveSharedScratchDiskName({
+      runtime,
+      credentials,
+    });
+    const diskClient = new DisksClient(credentials);
+    const [response] = await diskClient.resize({
+      project: credentials.projectId,
+      zone: runtime.zone,
+      disk: diskName,
+      disksResizeRequestResource: { sizeGb: Math.floor(newSizeGb) },
+    });
+    await waitUntilOperationComplete({
+      response,
+      zone: runtime.zone,
+      credentials,
+    });
+  }
+
+  async ensureSharedScratchDisk(
+    runtime: HostRuntime,
+    spec: HostSpec,
+    creds: any,
+  ): Promise<HostRuntime> {
+    const credentials = parseCredentials(creds ?? {});
+    if (!runtime.zone) {
+      throw new Error("gcp.ensureSharedScratchDisk requires zone");
+    }
+    const zone = runtime.zone;
+    const diskClient = new DisksClient(credentials);
+    const instanceClient = new InstancesClient(credentials) as any;
+    const sharedDiskGb = Number(spec.shared_disk_gb ?? 0);
+    if (!Number.isFinite(sharedDiskGb) || sharedDiskGb <= 0) {
+      throw new Error("gcp: shared scratch disk size is required");
+    }
+    const diskName =
+      spec.metadata?.shared_disk_name ??
+      (runtime.metadata as any)?.shared_disk_name ??
+      (runtime.metadata as any)?.shared_disk_id ??
+      `${spec.name}-scratch`;
+    const diskType = `projects/${credentials.projectId}/zones/${zone}/diskTypes/${sharedScratchDiskTypeFor(
+      spec,
+    )}`;
+    let diskSource: string | undefined;
+    try {
+      const [disk] = await diskClient.get({
+        project: credentials.projectId,
+        zone,
+        disk: diskName,
+      });
+      diskSource = disk?.selfLink ?? undefined;
+    } catch (err) {
+      if (!isNotFoundError(err)) throw err;
+      const [response] = await diskClient.insert({
+        project: credentials.projectId,
+        zone,
+        diskResource: {
+          name: diskName,
+          sizeGb: `${Math.floor(sharedDiskGb)}`,
+          type: diskType,
+        },
+      } as any);
+      await waitUntilOperationComplete({ response, zone, credentials });
+      const [disk] = await diskClient.get({
+        project: credentials.projectId,
+        zone,
+        disk: diskName,
+      });
+      diskSource =
+        disk?.selfLink ??
+        `projects/${credentials.projectId}/zones/${zone}/disks/${diskName}`;
+    }
+    const [instance] = await instanceClient.get({
+      project: credentials.projectId,
+      zone,
+      instance: runtime.instance_id,
+    });
+    const disks = instance?.disks ?? [];
+    const attached = disks.some((disk) => attachedDiskName(disk) === diskName);
+    if (!attached) {
+      const [response] = await instanceClient.attachDisk({
+        project: credentials.projectId,
+        zone,
+        instance: runtime.instance_id,
+        attachedDiskResource: {
+          autoDelete: false,
+          boot: false,
+          deviceName: diskName,
+          source:
+            diskSource ??
+            `projects/${credentials.projectId}/zones/${zone}/disks/${diskName}`,
+        },
+      });
+      await waitUntilOperationComplete({ response, zone, credentials });
+    }
+    return {
+      ...runtime,
+      metadata: {
+        ...(runtime.metadata ?? {}),
+        shared_disk_gb: Math.floor(sharedDiskGb),
+        shared_disk_type: spec.shared_disk_type ?? "balanced",
+        shared_disk_id: diskName,
+        shared_disk_name: diskName,
+        shared_disk_uri:
+          diskSource ??
+          `projects/${credentials.projectId}/zones/${zone}/disks/${diskName}`,
+      },
+    };
+  }
+
+  async deleteSharedScratchDisk(
+    runtime: HostRuntime,
+    creds: any,
+  ): Promise<void> {
+    const credentials = parseCredentials(creds ?? {});
+    if (!runtime.zone) {
+      throw new Error("gcp.deleteSharedScratchDisk requires zone");
+    }
+    const diskName = await resolveSharedScratchDiskName({
+      runtime,
+      credentials,
+    });
+    const instanceClient = new InstancesClient(credentials) as any;
+    try {
+      const [instance] = await instanceClient.get({
+        project: credentials.projectId,
+        zone: runtime.zone,
+        instance: runtime.instance_id,
+      });
+      const attached = (instance?.disks ?? []).some(
+        (disk) => attachedDiskName(disk) === diskName,
+      );
+      if (attached) {
+        const [response] = await instanceClient.detachDisk({
+          project: credentials.projectId,
+          zone: runtime.zone,
+          instance: runtime.instance_id,
+          deviceName: diskName,
+        });
+        await waitUntilOperationComplete({
+          response,
+          zone: runtime.zone,
+          credentials,
+        });
+      }
+    } catch (err) {
+      if (!isNotFoundError(err)) throw err;
+    }
+    const diskClient = new DisksClient(credentials);
+    try {
+      const [response] = await diskClient.delete({
+        project: credentials.projectId,
+        zone: runtime.zone,
+        disk: diskName,
+      });
+      await waitUntilOperationComplete({
+        response,
+        zone: runtime.zone,
+        credentials,
+      });
+    } catch (err) {
+      if (!isNotFoundError(err)) throw err;
+    }
   }
 
   async getStatus(

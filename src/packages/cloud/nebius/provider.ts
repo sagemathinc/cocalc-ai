@@ -94,20 +94,18 @@ function sharedScratchDiskTypeFor(spec: HostSpec): DiskSpec_DiskType {
   }
 }
 
-const NEBIUS_IO_M3_GIB = 93;
+const NEBIUS_DISK_INCREMENT_GIB = 93;
 
-function normalizeDiskSizeGib(
-  sizeGib: number,
-  type: DiskSpec_DiskType,
-): { sizeGib: number; adjusted: boolean } {
-  if (type !== DiskSpec_DiskType.NETWORK_SSD_IO_M3) {
-    return { sizeGib, adjusted: false };
-  }
-  const min = NEBIUS_IO_M3_GIB;
+function normalizeDiskSizeGib(sizeGib: number): {
+  sizeGib: number;
+  adjusted: boolean;
+} {
+  const min = NEBIUS_DISK_INCREMENT_GIB;
   const rounded =
     sizeGib <= min
       ? min
-      : Math.ceil(sizeGib / NEBIUS_IO_M3_GIB) * NEBIUS_IO_M3_GIB;
+      : Math.ceil(sizeGib / NEBIUS_DISK_INCREMENT_GIB) *
+        NEBIUS_DISK_INCREMENT_GIB;
   return { sizeGib: rounded, adjusted: rounded !== sizeGib };
 }
 
@@ -118,6 +116,32 @@ function blockSizeBytes(): Long {
 function diskTypeFromCode(code?: number): DiskSpec_DiskType {
   if (code == null) return DiskSpec_DiskType.NETWORK_SSD;
   return DiskSpec_DiskType.fromNumber(code);
+}
+
+function numericLong(value: unknown): number | undefined {
+  if (value == null) return undefined;
+  const converted =
+    typeof (value as { toNumber?: unknown }).toNumber === "function"
+      ? (value as { toNumber: () => number }).toNumber()
+      : Number(value);
+  if (!Number.isFinite(converted)) return undefined;
+  return converted;
+}
+
+function diskSizeGib(disk: any): number | undefined {
+  const size = disk?.spec?.size;
+  if (!size) return undefined;
+  const value =
+    numericLong(size.sizeGibibytes) ??
+    (size.sizeMebibytes != null
+      ? numericLong(size.sizeMebibytes)! / 1024
+      : size.sizeKibibytes != null
+        ? numericLong(size.sizeKibibytes)! / 1024 / 1024
+        : size.sizeBytes != null
+          ? numericLong(size.sizeBytes)! / 1024 / 1024 / 1024
+          : undefined);
+  if (!Number.isFinite(value)) return undefined;
+  return value;
 }
 
 async function updateDiskSize({
@@ -135,11 +159,16 @@ async function updateDiskSize({
 }) {
   const disk = await client.disks.get(GetDiskRequest.create({ id: diskId }));
   const name = `${disk?.metadata?.name ?? fallbackName ?? ""}`.trim();
+  const parentId = `${disk?.metadata?.parentId ?? ""}`.trim();
   const op = await client.disks.update(
     UpdateDiskRequest.create({
       metadata: ResourceMetadata.create({
         id: diskId,
+        ...(parentId ? { parentId } : {}),
         ...(name ? { name } : {}),
+        ...(disk?.metadata?.resourceVersion != null
+          ? { resourceVersion: disk.metadata.resourceVersion }
+          : {}),
       }),
       spec: DiskSpec.create({
         type: diskType,
@@ -152,6 +181,13 @@ async function updateDiskSize({
     }),
   );
   await op.wait();
+  const updated = await client.disks.get(GetDiskRequest.create({ id: diskId }));
+  const actualSizeGib = diskSizeGib(updated);
+  if (actualSizeGib != null && actualSizeGib < sizeGib) {
+    throw new Error(
+      `nebius: disk resize did not take effect for ${diskId}; requested ${sizeGib} GiB, provider reports ${actualSizeGib} GiB`,
+    );
+  }
 }
 
 function normalizeIp(value?: string | null): string | undefined {
@@ -488,9 +524,9 @@ export class NebiusProvider implements CloudProvider {
     if (storageMode === "persistent") {
       const existingDataDiskId =
         spec.metadata?.data_disk_id ?? spec.metadata?.dataDiskId ?? undefined;
-      const normalized = normalizeDiskSizeGib(spec.disk_gb, dataDiskType);
+      const normalized = normalizeDiskSizeGib(spec.disk_gb);
       if (normalized.adjusted) {
-        logger.info("nebius: adjusting data disk size for IO M3", {
+        logger.info("nebius: adjusting data disk size to provider increment", {
           name,
           from_gb: spec.disk_gb,
           to_gb: normalized.sizeGib,
@@ -530,13 +566,16 @@ export class NebiusProvider implements CloudProvider {
         spec.metadata?.sharedDiskId ??
         undefined;
       scratchDiskType = sharedScratchDiskTypeFor(spec);
-      const normalized = normalizeDiskSizeGib(sharedDiskGb, scratchDiskType);
+      const normalized = normalizeDiskSizeGib(sharedDiskGb);
       if (normalized.adjusted) {
-        logger.info("nebius: adjusting shared scratch disk size for IO M3", {
-          name,
-          from_gb: sharedDiskGb,
-          to_gb: normalized.sizeGib,
-        });
+        logger.info(
+          "nebius: adjusting shared scratch disk size to provider increment",
+          {
+            name,
+            from_gb: sharedDiskGb,
+            to_gb: normalized.sizeGib,
+          },
+        );
       }
       logger.info("nebius: creating shared scratch disk", {
         name,
@@ -798,7 +837,7 @@ export class NebiusProvider implements CloudProvider {
       throw new Error("nebius: no shared scratch disk to resize");
     }
     const diskType = diskTypeFromCode(meta?.scratchDiskTypeCode);
-    const normalized = normalizeDiskSizeGib(newSizeGb, diskType);
+    const normalized = normalizeDiskSizeGib(newSizeGb);
     await updateDiskSize({
       client,
       diskId,
@@ -824,7 +863,7 @@ export class NebiusProvider implements CloudProvider {
     const client = new NebiusClient(creds);
     const meta = runtime.metadata as NebiusRuntimeMeta | undefined;
     const scratchDiskType = sharedScratchDiskTypeFor(spec);
-    const normalized = normalizeDiskSizeGib(sharedDiskGb, scratchDiskType);
+    const normalized = normalizeDiskSizeGib(sharedDiskGb);
     const scratchDiskName =
       spec.metadata?.shared_disk_name ??
       (runtime.metadata as any)?.shared_disk_name ??

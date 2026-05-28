@@ -51,4 +51,31 @@ describe("buildHostEditSelection", () => {
     expect(selection.storage_mode).toBe("persistent");
     expect(selection.price_display).toBe("monthly");
   });
+
+  it("uses the runtime shared scratch type when machine metadata is missing it", () => {
+    const selection = buildHostEditSelection({
+      host: {
+        region: "us-central1",
+        funding_mode: "account-postpaid",
+        pricing_model: "on_demand",
+        machine: {
+          machine_type: "4vcpu-16gb",
+          disk_type: "ssd_io_m3",
+          disk_gb: 93,
+          shared_disk_gb: 186,
+          storage_mode: "persistent",
+        },
+        runtime: {
+          metadata: {
+            scratchDiskTypeCode: 3,
+          },
+        },
+      } as any,
+      price_display: "monthly",
+      pricing_settings: {},
+    });
+
+    expect(selection.shared_disk_gb).toBe(186);
+    expect(selection.shared_disk_type).toBe("balanced");
+  });
 });

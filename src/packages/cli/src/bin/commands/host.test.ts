@@ -905,10 +905,11 @@ test("host scratch set grows existing shared scratch without sending disk type",
   ]);
 
   assert.equal(capture.hostMachineUpdates?.[0]?.id, "host-1");
-  assert.equal(capture.hostMachineUpdates?.[0]?.shared_disk_gb, 200);
+  assert.equal(capture.hostMachineUpdates?.[0]?.shared_disk_gb, 279);
   assert.equal(capture.hostMachineUpdates?.[0]?.shared_disk_type, undefined);
   assert.equal(capture.data.host_id, "host-1");
   assert.equal(capture.data.requested_shared_disk_gb, 200);
+  assert.equal(capture.data.normalized_shared_disk_gb, 279);
 });
 
 test("host scratch delete requires confirmation and sends delete flag", async () => {

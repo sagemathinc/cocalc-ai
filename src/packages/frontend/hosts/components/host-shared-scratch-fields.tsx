@@ -17,7 +17,7 @@ import { MIN_PROJECT_HOST_DISK_GB } from "@cocalc/util/project-host-limits";
 import { COLORS } from "@cocalc/util/theme";
 
 const DEFAULT_SHARED_DISK_GB = 500;
-const NEBIUS_IO_M3_GB = 93;
+const NEBIUS_DISK_INCREMENT_GB = 93;
 
 const DURABILITY_LABELS = {
   "single-copy": "single copy",
@@ -27,17 +27,17 @@ const DURABILITY_LABELS = {
 
 const normalizeSharedDiskSize = ({
   provider,
-  diskType,
   size,
 }: {
   provider?: HostProvider;
-  diskType?: string;
   size: number;
 }) => {
   const min = MIN_PROJECT_HOST_DISK_GB;
   const next = Math.max(min, Math.floor(size));
-  if (provider === "nebius" && diskType === "ssd_io_m3") {
-    return Math.ceil(next / NEBIUS_IO_M3_GB) * NEBIUS_IO_M3_GB;
+  if (provider === "nebius") {
+    return (
+      Math.ceil(next / NEBIUS_DISK_INCREMENT_GB) * NEBIUS_DISK_INCREMENT_GB
+    );
   }
   return next;
 };
@@ -52,6 +52,7 @@ type HostSharedScratchFieldsProps = {
   deleting?: boolean;
   draftManaged?: boolean;
   onDraftPatch?: (patch: Record<string, any>) => void;
+  currentDiskType?: string;
 };
 
 export function supportsSharedScratch(
@@ -75,6 +76,7 @@ export const HostSharedScratchFields: React.FC<
   deleting,
   draftManaged,
   onDraftPatch,
+  currentDiskType,
 }) => {
   const form = Form.useFormInstance();
   const cap = provider
@@ -95,11 +97,7 @@ export const HostSharedScratchFields: React.FC<
     value: entry.value,
     label: `${entry.label} (${DURABILITY_LABELS[entry.durability]})`,
   }));
-  const selectedDiskType = watchedType ?? defaultDiskType;
-  const step =
-    provider === "nebius" && selectedDiskType === "ssd_io_m3"
-      ? NEBIUS_IO_M3_GB
-      : 1;
+  const step = provider === "nebius" ? NEBIUS_DISK_INCREMENT_GB : 1;
   const minSize = Math.max(
     MIN_PROJECT_HOST_DISK_GB,
     Number(currentSizeGb ?? 0) || 0,
@@ -126,10 +124,11 @@ export const HostSharedScratchFields: React.FC<
       }
       return;
     }
-    if (enabled && !watchedType && defaultDiskType) {
-      setFields({ shared_disk_type: defaultDiskType });
+    if (enabled && !watchedType && (currentDiskType || defaultDiskType)) {
+      setFields({ shared_disk_type: currentDiskType ?? defaultDiskType });
     }
   }, [
+    currentDiskType,
     defaultDiskType,
     enabled,
     setFields,
@@ -157,7 +156,6 @@ export const HostSharedScratchFields: React.FC<
     if (typeof value !== "number" || Number.isNaN(value)) return;
     const normalized = normalizeSharedDiskSize({
       provider,
-      diskType: selectedDiskType,
       size: value,
     });
     setFields({ shared_disk_gb: normalized });
@@ -196,7 +194,6 @@ export const HostSharedScratchFields: React.FC<
                     minSize,
                     normalizeSharedDiskSize({
                       provider,
-                      diskType: defaultDiskType,
                       size: DEFAULT_SHARED_DISK_GB,
                     }),
                   ),
@@ -278,6 +275,9 @@ export const HostSharedScratchFields: React.FC<
                   quota. It is provider network block storage, not local SSD.
                   Projects must be restarted before they see newly added
                   scratch.
+                  {provider === "nebius"
+                    ? " Nebius scratch disks are sized in 93 GB increments."
+                    : ""}
                 </>
               }
             />

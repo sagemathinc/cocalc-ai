@@ -2827,6 +2827,7 @@ PY' bash "$tree"
     if [ "$#" -eq 1 ] && ! echo "$1" | grep -Eq '^[0-9]+$'; then
       deny "grow-shared-scratch-bad-args" "non-numeric-argument"
     fi
+    scratch_target_gib="${1:-}"
     scratch_mount="/mnt/cocalc-scratch"
     if ! mountpoint -q "$scratch_mount"; then
       deny "shared-scratch-not-mounted" "$scratch_mount"
@@ -2873,6 +2874,13 @@ PY' bash "$tree"
       fi
     fi
     resize2fs "$scratch_source"
+    if [ -n "$scratch_target_gib" ]; then
+      scratch_actual_bytes="$(blockdev --getsize64 "$scratch_parent" 2>/dev/null || blockdev --getsize64 "$scratch_source" 2>/dev/null || printf '0')"
+      scratch_target_bytes=$((scratch_target_gib * 1024 * 1024 * 1024))
+      if [ "$scratch_actual_bytes" -lt "$scratch_target_bytes" ]; then
+        deny "shared-scratch-grow-incomplete" "device_size_bytes=${scratch_actual_bytes} target_gib=${scratch_target_gib}"
+      fi
+    fi
     chmod 1777 "$scratch_mount"
     ;;
   unmount-shared-scratch)

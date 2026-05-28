@@ -5950,9 +5950,6 @@ export async function updateHostMachine({
     }
   } else if (nextSharedDisk != null) {
     const currentSharedDisk = Number(machine.shared_disk_gb ?? 0);
-    if (!isDeprovisioned && currentSharedDisk <= 0 && nextSharedDisk > 0) {
-      sharedScratchEnsureGb = nextSharedDisk;
-    }
     if (
       shared_disk_type != null &&
       machine.shared_disk_type != null &&
@@ -5970,6 +5967,14 @@ export async function updateHostMachine({
       current: machine,
       allowShrink: isDeprovisioned,
     });
+    const normalizedSharedDisk = Number(nextMachine.shared_disk_gb ?? 0);
+    if (
+      !isDeprovisioned &&
+      currentSharedDisk <= 0 &&
+      normalizedSharedDisk > 0
+    ) {
+      sharedScratchEnsureGb = normalizedSharedDisk;
+    }
     if (
       nextMachine.shared_disk_gb !== machine.shared_disk_gb ||
       nextMachine.shared_disk_type !== machine.shared_disk_type
@@ -5979,9 +5984,9 @@ export async function updateHostMachine({
     if (
       !isDeprovisioned &&
       currentSharedDisk > 0 &&
-      nextSharedDisk > currentSharedDisk
+      normalizedSharedDisk > currentSharedDisk
     ) {
-      sharedScratchResizeGb = nextSharedDisk;
+      sharedScratchResizeGb = normalizedSharedDisk;
     }
   } else if (shared_disk_type != null) {
     if (!nextMachine.shared_disk_gb) {
@@ -6279,7 +6284,8 @@ export async function updateHostMachine({
         await client.growSharedScratch({ disk_gb: sharedScratchResizeGb });
       } catch (err) {
         resizeWarning =
-          "shared scratch disk resized in cloud, but online filesystem resize failed; run sudo /usr/local/sbin/cocalc-runtime-storage grow-shared-scratch";
+          "shared scratch disk resized in cloud, but online filesystem resize did not complete; retry reconcile or restart the host if the provider has not exposed the new block size yet";
+        reconcileSharedScratchMount = true;
         console.warn("growSharedScratch failed after disk resize", err);
       }
     }

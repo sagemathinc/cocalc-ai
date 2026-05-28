@@ -96,7 +96,7 @@ export type NormalizedHostCreateDraft = {
 const DEFAULT_NAME = "My host";
 const DEFAULT_DISK_GB = 100;
 const MIN_DISK_GB = MIN_PROJECT_HOST_DISK_GB;
-const NEBIUS_IO_M3_INCREMENT_GB = 93;
+const NEBIUS_DISK_INCREMENT_GB = 93;
 
 const MANAGED_PROVIDERS = new Set<HostProvider>([
   "gcp",
@@ -135,30 +135,26 @@ const defaultDiskTypeForProvider = (provider: HostProvider) =>
   provider === "nebius" ? "ssd_io_m3" : getDiskTypeOptions(provider)[0]?.value;
 
 const defaultSharedDiskTypeForProvider = (provider: HostProvider) =>
-  provider === "nebius" ? "ssd" : undefined;
+  provider === "nebius" ? "ssd" : provider === "gcp" ? "balanced" : undefined;
 
 const normalizeDiskSize = (provider: HostProvider, diskGb: unknown) => {
   const parsed = readPositiveInteger(diskGb) ?? DEFAULT_DISK_GB;
   const size = Math.max(MIN_DISK_GB, parsed);
   if (provider === "nebius") {
     return (
-      Math.ceil(size / NEBIUS_IO_M3_INCREMENT_GB) * NEBIUS_IO_M3_INCREMENT_GB
+      Math.ceil(size / NEBIUS_DISK_INCREMENT_GB) * NEBIUS_DISK_INCREMENT_GB
     );
   }
   return size;
 };
 
-const normalizeSharedDiskSize = (
-  provider: HostProvider,
-  diskType: string | undefined,
-  diskGb: unknown,
-) => {
+const normalizeSharedDiskSize = (provider: HostProvider, diskGb: unknown) => {
   const parsed = readPositiveInteger(diskGb);
   if (parsed == null) return undefined;
   const size = Math.max(MIN_DISK_GB, parsed);
-  if (provider === "nebius" && diskType === "ssd_io_m3") {
+  if (provider === "nebius") {
     return (
-      Math.ceil(size / NEBIUS_IO_M3_INCREMENT_GB) * NEBIUS_IO_M3_INCREMENT_GB
+      Math.ceil(size / NEBIUS_DISK_INCREMENT_GB) * NEBIUS_DISK_INCREMENT_GB
     );
   }
   return size;
@@ -388,7 +384,7 @@ export function normalizeDraft(
     }
   }
 
-  if (provider !== "nebius") {
+  if (provider !== "nebius" && provider !== "gcp") {
     draft.shared_disk_gb = undefined;
     draft.shared_disk_type = undefined;
   }
@@ -399,7 +395,6 @@ export function normalizeDraft(
   draft.shared_disk_type = sharedDiskType;
   draft.shared_disk_gb = normalizeSharedDiskSize(
     provider,
-    sharedDiskType,
     draft.shared_disk_gb,
   );
 

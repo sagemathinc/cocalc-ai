@@ -4,6 +4,12 @@ import type { HostSpec } from "../types";
 const insertMock = jest.fn();
 const getMock = jest.fn();
 const diskGetMock = jest.fn();
+const diskInsertMock = jest.fn();
+const diskResizeMock = jest.fn();
+const diskDeleteMock = jest.fn();
+const attachDiskMock = jest.fn();
+const detachDiskMock = jest.fn();
+const setDiskAutoDeleteMock = jest.fn();
 const startMock = jest.fn();
 const stopMock = jest.fn();
 const deleteMock = jest.fn();
@@ -19,11 +25,17 @@ jest.mock("@google-cloud/compute", () => {
   }
   class DisksClient {
     get = diskGetMock;
+    insert = diskInsertMock;
+    resize = diskResizeMock;
+    delete = diskDeleteMock;
     constructor(_opts?: any) {}
   }
   class InstancesClient {
     insert = insertMock;
     get = getMock;
+    attachDisk = attachDiskMock;
+    detachDisk = detachDiskMock;
+    setDiskAutoDelete = setDiskAutoDeleteMock;
     start = startMock;
     stop = stopMock;
     delete = deleteMock;
@@ -59,6 +71,12 @@ describe("GcpProvider", () => {
     insertMock.mockReset();
     getMock.mockReset();
     diskGetMock.mockReset();
+    diskInsertMock.mockReset();
+    diskResizeMock.mockReset();
+    diskDeleteMock.mockReset();
+    attachDiskMock.mockReset();
+    detachDiskMock.mockReset();
+    setDiskAutoDeleteMock.mockReset();
     startMock.mockReset();
     stopMock.mockReset();
     deleteMock.mockReset();
@@ -143,6 +161,72 @@ describe("GcpProvider", () => {
     expect(insertArgs.instanceResource.scheduling?.onHostMaintenance).toBe(
       "TERMINATE",
     );
+  });
+
+  it("creates a host with a shared scratch disk", async () => {
+    insertMock.mockResolvedValueOnce([
+      { latestResponse: { name: "op-scratch", status: "DONE" } },
+    ]);
+    waitMock.mockResolvedValueOnce([{ status: "DONE" }]);
+    getMock.mockResolvedValueOnce([
+      {
+        name: "ph-test",
+        hostname: "ph-test.c.proj-1.internal",
+        disks: [
+          {
+            boot: false,
+            deviceName: "ph-test-data",
+            source: "projects/proj-1/zones/us-west1-a/disks/ph-test-data",
+          },
+          {
+            boot: false,
+            deviceName: "ph-test-scratch",
+            source: "projects/proj-1/zones/us-west1-a/disks/ph-test-scratch",
+          },
+        ],
+        networkInterfaces: [
+          {
+            networkIP: "10.180.0.19",
+            accessConfigs: [{ natIP: "203.0.113.13" }],
+          },
+        ],
+      },
+    ]);
+    diskGetMock.mockRejectedValue({ code: 404 });
+
+    const provider = new GcpProvider();
+    const runtime = await provider.createHost(
+      buildSpec({
+        shared_disk_gb: 500,
+        shared_disk_type: "balanced",
+      }),
+      {
+        project_id: "proj-1",
+        client_email: "svc@example.com",
+        private_key: "key",
+      },
+    );
+
+    const disks = insertMock.mock.calls[0][0].instanceResource.disks;
+    expect(disks).toHaveLength(3);
+    expect(disks[2]).toMatchObject({
+      autoDelete: false,
+      boot: false,
+      deviceName: "ph-test-scratch",
+      initializeParams: {
+        diskName: "ph-test-scratch",
+        diskSizeGb: "500",
+        diskType: expect.stringContaining("/diskTypes/pd-balanced"),
+      },
+    });
+    expect(runtime.metadata).toMatchObject({
+      data_disk_name: "ph-test-data",
+      shared_disk_gb: 500,
+      shared_disk_type: "balanced",
+      shared_disk_id: "ph-test-scratch",
+      shared_disk_name: "ph-test-scratch",
+      shared_disk_uri: "projects/proj-1/zones/us-west1-a/disks/ph-test-scratch",
+    });
   });
 
   it("creates spot instances with spot scheduling", async () => {
@@ -285,6 +369,159 @@ describe("GcpProvider", () => {
       zone: "us-west1-b",
       instance: "ph-test",
     });
+  });
+
+  it("preserves shared scratch when preserving the data disk", async () => {
+    getMock.mockResolvedValueOnce([
+      {
+        disks: [
+          { boot: false, deviceName: "ph-test-data" },
+          { boot: false, deviceName: "ph-test-scratch" },
+        ],
+      },
+    ]);
+    deleteMock.mockResolvedValueOnce([{}]);
+
+    const provider = new GcpProvider();
+    await provider.deleteHost(
+      {
+        provider: "gcp",
+        instance_id: "ph-test",
+        zone: "us-west1-b",
+        ssh_user: "ubuntu",
+        metadata: { shared_disk_name: "ph-test-scratch" },
+      },
+      {
+        project_id: "proj-1",
+        client_email: "svc@example.com",
+        private_key: "key",
+      },
+      { preserveDataDisk: true },
+    );
+
+    expect(setDiskAutoDeleteMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceName: "ph-test-data",
+        autoDelete: false,
+      }),
+    );
+    expect(setDiskAutoDeleteMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceName: "ph-test-scratch",
+        autoDelete: false,
+      }),
+    );
+    expect(diskDeleteMock).not.toHaveBeenCalled();
+  });
+
+  it("creates and attaches shared scratch to an existing instance", async () => {
+    diskGetMock.mockRejectedValueOnce({ code: 404 }).mockResolvedValueOnce([
+      {
+        selfLink: "projects/proj-1/zones/us-west1-a/disks/ph-test-scratch",
+      },
+    ]);
+    diskInsertMock.mockResolvedValueOnce([
+      { latestResponse: { name: "op-create-scratch", status: "DONE" } },
+    ]);
+    getMock.mockResolvedValueOnce([{ disks: [] }]);
+    attachDiskMock.mockResolvedValueOnce([
+      { latestResponse: { name: "op-attach-scratch", status: "DONE" } },
+    ]);
+    waitMock
+      .mockResolvedValueOnce([{ status: "DONE" }])
+      .mockResolvedValueOnce([{ status: "DONE" }]);
+
+    const provider = new GcpProvider();
+    const runtime = await provider.ensureSharedScratchDisk!(
+      {
+        provider: "gcp",
+        instance_id: "ph-test",
+        zone: "us-west1-a",
+        ssh_user: "ubuntu",
+        metadata: {},
+      },
+      buildSpec({
+        shared_disk_gb: 250,
+        shared_disk_type: "ssd",
+      }),
+      {
+        project_id: "proj-1",
+        client_email: "svc@example.com",
+        private_key: "key",
+      },
+    );
+
+    expect(diskInsertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        diskResource: expect.objectContaining({
+          name: "ph-test-scratch",
+          sizeGb: "250",
+          type: expect.stringContaining("/diskTypes/pd-ssd"),
+        }),
+      }),
+    );
+    expect(attachDiskMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attachedDiskResource: expect.objectContaining({
+          deviceName: "ph-test-scratch",
+          autoDelete: false,
+        }),
+      }),
+    );
+    expect(runtime.metadata).toMatchObject({
+      shared_disk_id: "ph-test-scratch",
+      shared_disk_name: "ph-test-scratch",
+      shared_disk_gb: 250,
+      shared_disk_type: "ssd",
+    });
+  });
+
+  it("resizes and deletes shared scratch disks", async () => {
+    diskResizeMock.mockResolvedValueOnce([
+      { latestResponse: { name: "op-resize-scratch", status: "DONE" } },
+    ]);
+    getMock.mockResolvedValueOnce([
+      { disks: [{ boot: false, deviceName: "ph-test-scratch" }] },
+    ]);
+    detachDiskMock.mockResolvedValueOnce([
+      { latestResponse: { name: "op-detach-scratch", status: "DONE" } },
+    ]);
+    diskDeleteMock.mockResolvedValueOnce([
+      { latestResponse: { name: "op-delete-scratch", status: "DONE" } },
+    ]);
+    waitMock
+      .mockResolvedValueOnce([{ status: "DONE" }])
+      .mockResolvedValueOnce([{ status: "DONE" }])
+      .mockResolvedValueOnce([{ status: "DONE" }]);
+
+    const provider = new GcpProvider();
+    const runtime = {
+      provider: "gcp" as const,
+      instance_id: "ph-test",
+      zone: "us-west1-a",
+      ssh_user: "ubuntu",
+      metadata: { shared_disk_name: "ph-test-scratch" },
+    };
+    const creds = {
+      project_id: "proj-1",
+      client_email: "svc@example.com",
+      private_key: "key",
+    };
+    await provider.resizeSharedScratchDisk!(runtime, 500, creds);
+    await provider.deleteSharedScratchDisk!(runtime, creds);
+
+    expect(diskResizeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        disk: "ph-test-scratch",
+        disksResizeRequestResource: { sizeGb: 500 },
+      }),
+    );
+    expect(detachDiskMock).toHaveBeenCalledWith(
+      expect.objectContaining({ deviceName: "ph-test-scratch" }),
+    );
+    expect(diskDeleteMock).toHaveBeenCalledWith(
+      expect.objectContaining({ disk: "ph-test-scratch" }),
+    );
   });
 
   it("treats start as a no-op when the instance is already running", async () => {

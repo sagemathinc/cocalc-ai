@@ -66,6 +66,7 @@ const HOST_SHARED_SCRATCH_DISK_TYPES = new Set([
   "standard",
   "ssd_io_m3",
 ]);
+const NEBIUS_DISK_INCREMENT_GB = 93;
 
 export function assertHostRehomeConfirmed({
   host_id,
@@ -307,6 +308,16 @@ function readSharedScratchDiskType(host: any): string {
   }
 }
 
+function normalizeSharedScratchSizeForHost(host: any, sizeGb: number): number {
+  if (`${host?.machine?.cloud ?? ""}`.trim().toLowerCase() !== "nebius") {
+    return sizeGb;
+  }
+  return Math.max(
+    NEBIUS_DISK_INCREMENT_GB,
+    Math.ceil(sizeGb / NEBIUS_DISK_INCREMENT_GB) * NEBIUS_DISK_INCREMENT_GB,
+  );
+}
+
 function sharedScratchSummary(host: any) {
   const sizeGb = Number(host?.machine?.shared_disk_gb ?? 0);
   const diskType = readSharedScratchDiskType(host);
@@ -323,8 +334,12 @@ function sharedScratchSummary(host: any) {
     provider_disk_id:
       host.runtime?.metadata?.diskIds?.scratch ??
       host.runtime?.metadata?.shared_disk_id ??
+      host.machine?.metadata?.shared_disk_id ??
       null,
-    provider_disk_name: host.runtime?.metadata?.shared_disk_name ?? null,
+    provider_disk_name:
+      host.runtime?.metadata?.shared_disk_name ??
+      host.machine?.metadata?.shared_disk_name ??
+      null,
   };
 }
 
@@ -1855,9 +1870,12 @@ export function registerHostCommand(
             );
           }
           const currentSize = Number(h?.machine?.shared_disk_gb ?? 0);
+          const normalizedSizeGb = normalizeSharedScratchSizeForHost(h, sizeGb);
           const browserId =
             `${opts.browserId ?? process.env.COCALC_BROWSER_ID ?? ""}`.trim();
-          const payload: Record<string, any> = { shared_disk_gb: sizeGb };
+          const payload: Record<string, any> = {
+            shared_disk_gb: normalizedSizeGb,
+          };
           if (browserId) {
             payload.browser_id = browserId;
           }
@@ -1871,6 +1889,7 @@ export function registerHostCommand(
           return {
             ...sharedScratchSummary(updated),
             requested_shared_disk_gb: sizeGb,
+            normalized_shared_disk_gb: normalizedSizeGb,
           };
         });
       },

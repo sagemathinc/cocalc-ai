@@ -456,7 +456,7 @@ describe("hosts.createHost", () => {
       if (sql.startsWith("INSERT INTO project_hosts ")) {
         expect(params[4]?.machine).toMatchObject({
           cloud: "nebius",
-          shared_disk_gb: 75,
+          shared_disk_gb: 93,
           shared_disk_type: "ssd",
           metadata: {
             shared_disk_mount: "/mnt/cocalc-scratch",
@@ -483,7 +483,7 @@ describe("hosts.createHost", () => {
                 gpu: false,
                 machine: {
                   cloud: "nebius",
-                  shared_disk_gb: 75,
+                  shared_disk_gb: 93,
                   shared_disk_type: "ssd",
                 },
               },
