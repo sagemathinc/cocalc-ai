@@ -106,6 +106,17 @@ function annualSavingsPercent(tier: PublicMembershipTier): number | undefined {
   return savings > 0 ? savings : undefined;
 }
 
+function formatMonthlyDisplayPrice(value: number): {
+  amount: string;
+  suffix: string;
+} {
+  const rounded = Math.round(value);
+  if (Math.abs(value - rounded) < 0.005) {
+    return { amount: currency(rounded, 0), suffix: "/ month" };
+  }
+  return { amount: currency(value), suffix: "/ mo" };
+}
+
 function PricingBillingSelector({
   billingInterval,
   setBillingInterval,
@@ -155,15 +166,12 @@ function PricingTierPayment({
   if (!isFreeTier(tier)) {
     const savings = annualSavingsPercent(tier);
     if (billingInterval === "month") {
-      price = {
-        amount: currency(priceValue(tier.price_monthly) ?? 0),
-        suffix: "/ mo",
-      };
+      price = formatMonthlyDisplayPrice(priceValue(tier.price_monthly) ?? 0);
       billingLine =
         savings != null ? `Save ${savings}% with annual billing` : "\u00a0";
     } else {
       const yearly = priceValue(tier.price_yearly) ?? 0;
-      price = { amount: currency(yearly / 12), suffix: "/ mo" };
+      price = formatMonthlyDisplayPrice(yearly / 12);
       billingLine =
         savings != null
           ? `Billed annually, saving ${savings}%`

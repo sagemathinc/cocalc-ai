@@ -101,6 +101,13 @@ function normalizedOptionalNumber(value: unknown): number | undefined {
     : undefined;
 }
 
+function yearlyPriceMonthlyDisplay(value: unknown): string {
+  const yearly = normalizedOptionalNumber(value);
+  return yearly == null
+    ? "Effective monthly price appears here."
+    : `${currency(yearly / 12)} / month billed annually`;
+}
+
 function normalizedOptionalString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -695,8 +702,24 @@ export function MembershipTiers() {
           <Form.Item name="price_monthly" label="Monthly price">
             <InputNumber min={0} step={1} />
           </Form.Item>
-          <Form.Item name="price_yearly" label="Yearly price">
-            <InputNumber min={0} step={1} />
+          <Form.Item label="Yearly price">
+            <Space>
+              <Form.Item name="price_yearly" noStyle>
+                <InputNumber min={0} step={1} />
+              </Form.Item>
+              <Form.Item
+                noStyle
+                shouldUpdate={(prev, next) =>
+                  prev.price_yearly !== next.price_yearly
+                }
+              >
+                {({ getFieldValue }) => (
+                  <Text type="secondary">
+                    {yearlyPriceMonthlyDisplay(getFieldValue("price_yearly"))}
+                  </Text>
+                )}
+              </Form.Item>
+            </Space>
           </Form.Item>
           <Form.Item name="trial_days" label="Trial days">
             <InputNumber min={0} step={1} precision={0} />

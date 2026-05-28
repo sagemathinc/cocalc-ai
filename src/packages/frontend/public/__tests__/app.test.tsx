@@ -385,7 +385,8 @@ describe("PublicApp", () => {
     );
     expect(screen.queryByRole("link", { name: "Open Store" })).toBeNull();
     fireEvent.click(screen.getByText("Monthly"));
-    expect(screen.getByText("$25.00")).not.toBeNull();
+    expect(screen.getByText("$25")).not.toBeNull();
+    expect(screen.getByText("/ month")).not.toBeNull();
     expect(screen.getByText("Save 25% with annual billing")).not.toBeNull();
     expect(
       screen.getByText(/the one planned pay-as-you-go exception/i),

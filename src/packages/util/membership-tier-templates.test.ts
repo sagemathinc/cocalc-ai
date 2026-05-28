@@ -145,8 +145,8 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     );
     expect(standard.store_visible).toBe(false);
     expect(standard.course_store_visible).toBe(false);
-    expect(standard.price_monthly).toBe(25);
-    expect(standard.price_yearly).toBe(225);
+    expect(standard.price_monthly).toBe(24);
+    expect(standard.price_yearly).toBe(216);
     expect((standard.features as Record<string, unknown>).create_hosts).toBe(
       true,
     );

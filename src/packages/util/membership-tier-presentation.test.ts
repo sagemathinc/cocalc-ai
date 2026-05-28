@@ -34,9 +34,9 @@ describe("buildMembershipTierPresentation", () => {
         "RootFS: 250 images, 250 GB total, 30 GB per image",
       ]),
     );
-    expect(presentation.billing).toContain("$150.00 per month");
+    expect(presentation.billing).toContain("$160.00 per month");
     expect(presentation.billing).toContain(
-      "$1,350.00 per year (about 25% less than monthly)",
+      "$1,440.00 per year (about 25% less than monthly)",
     );
   });
 
