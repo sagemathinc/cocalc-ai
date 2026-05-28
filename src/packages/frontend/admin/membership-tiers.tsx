@@ -101,8 +101,19 @@ function normalizedOptionalNumber(value: unknown): number | undefined {
     : undefined;
 }
 
+function normalizedOptionalPrice(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const numberValue = Number(value);
+    return Number.isFinite(numberValue) ? numberValue : undefined;
+  }
+  return undefined;
+}
+
 function yearlyPriceMonthlyDisplay(value: unknown): string {
-  const yearly = normalizedOptionalNumber(value);
+  const yearly = normalizedOptionalPrice(value);
   return yearly == null
     ? "Effective monthly price appears here."
     : `${currency(yearly / 12)} / month billed annually`;
