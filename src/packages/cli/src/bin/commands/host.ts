@@ -334,8 +334,12 @@ function sharedScratchSummary(host: any) {
     provider_disk_id:
       host.runtime?.metadata?.diskIds?.scratch ??
       host.runtime?.metadata?.shared_disk_id ??
+      host.machine?.metadata?.shared_disk_id ??
       null,
-    provider_disk_name: host.runtime?.metadata?.shared_disk_name ?? null,
+    provider_disk_name:
+      host.runtime?.metadata?.shared_disk_name ??
+      host.machine?.metadata?.shared_disk_name ??
+      null,
   };
 }
 
