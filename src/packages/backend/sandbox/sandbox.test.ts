@@ -1360,21 +1360,57 @@ describeIfLinux("rootfs option sandbox", () => {
     );
     await expect(
       fsMissingScratch.writeFile("/scratch/legacy.txt", "blocked"),
-    ).rejects.toThrow("'/scratch' is no longer supported. Use '/tmp' instead.");
+    ).rejects.toThrow(
+      "'/scratch' is only available on dedicated project hosts with shared scratch enabled. Use '/tmp' for per-project temporary storage.",
+    );
     await fsMissingScratch.writeFile("/home/user/home-still-ok.txt", "home-ok");
     expect(
       await fsMissingScratch.readFile("/home/user/home-still-ok.txt", "utf8"),
     ).toBe("home-ok");
   });
 
-  it("rejects the removed /scratch alias even when temp storage exists", async () => {
+  it("rejects /scratch when host shared scratch is not configured", async () => {
     scratch = join(tempDir, "test-scratch-mounted-legacy-alias");
     await mkdir(scratch, { recursive: true });
     const fsScratch = new SandboxedFilesystem(home, { rootfs, scratch });
 
     await expect(
       fsScratch.writeFile("/scratch/from-scratch.txt", "from-scratch"),
-    ).rejects.toThrow("'/scratch' is no longer supported. Use '/tmp' instead.");
+    ).rejects.toThrow(
+      "'/scratch' is only available on dedicated project hosts with shared scratch enabled. Use '/tmp' for per-project temporary storage.",
+    );
+  });
+
+  it("routes /scratch paths to host shared scratch when configured", async () => {
+    const sharedScratch = join(tempDir, "test-shared-scratch-mounted");
+    await mkdir(sharedScratch, { recursive: true });
+    const fsSharedScratch = new SandboxedFilesystem(home, {
+      rootfs,
+      scratch,
+      sharedScratch,
+    });
+
+    await fsSharedScratch.writeFile("/scratch/from-shared.txt", "from-shared");
+
+    expect(
+      await fsSharedScratch.readFile("/scratch/from-shared.txt", "utf8"),
+    ).toBe("from-shared");
+    expect(await readFile(join(sharedScratch, "from-shared.txt"), "utf8")).toBe(
+      "from-shared",
+    );
+    await expect(
+      readFile(join(rootfs, "scratch", "from-shared.txt"), "utf8"),
+    ).rejects.toThrow();
+    expect(
+      await (fsSharedScratch as any).canonicalSyncFsPath(
+        "/scratch/from-shared.txt",
+      ),
+    ).toBe(join(sharedScratch, "from-shared.txt"));
+    expect(
+      await (fsSharedScratch as any).canonicalSyncIdentityPath(
+        "/scratch/from-shared.txt",
+      ),
+    ).toBe("/scratch/from-shared.txt");
   });
 });
 

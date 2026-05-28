@@ -23,9 +23,10 @@ function deferred<T>() {
 }
 
 function TestComponent({ project_id }: { project_id: string }) {
-  const { visible, quotas, live, retained, error } = useDiskUsage({
-    project_id,
-  });
+  const { visible, quotas, live, retained, sharedScratch, error } =
+    useDiskUsage({
+      project_id,
+    });
   return (
     <div>
       <span data-testid="summary-usage">{visible[0]?.summaryBytes ?? ""}</span>
@@ -34,6 +35,7 @@ function TestComponent({ project_id }: { project_id: string }) {
       <span data-testid="quota-warning">{quotas[0]?.warning ?? ""}</span>
       <span data-testid="live">{live?.bytes ?? ""}</span>
       <span data-testid="retained">{retained?.bytes ?? ""}</span>
+      <span data-testid="shared-scratch">{sharedScratch?.used ?? ""}</span>
       <span data-testid="error">{error ? `${error}` : ""}</span>
     </div>
   );
@@ -66,12 +68,14 @@ function overview({
     label: "Retained snapshot/history data",
     bytes: 0,
   },
+  shared_scratch,
 }: {
   used?: number;
   warning?: string;
   visible?: any[];
   live?: any;
   retained?: any;
+  shared_scratch?: any;
 } = {}) {
   return {
     collected_at: "2026-03-31T12:00:00.000Z",
@@ -86,6 +90,7 @@ function overview({
     ],
     live,
     retained,
+    shared_scratch,
     visible,
   };
 }
@@ -146,6 +151,16 @@ describe("useDiskUsage", () => {
           label: "Retained snapshot/history data",
           bytes: 4_000_000,
         },
+        shared_scratch: {
+          key: "shared_scratch",
+          label: "Host shared scratch",
+          path: "/scratch",
+          used: 7_000_000,
+          size: 10_000_000,
+          free: 3_000_000,
+          available: 2_000_000,
+          collected_at: "2026-03-31T12:00:00.000Z",
+        },
       }),
     );
 
@@ -157,6 +172,7 @@ describe("useDiskUsage", () => {
       expect(screen.getByTestId("quota").textContent).toBe("17");
       expect(screen.getByTestId("live").textContent).toBe("111");
       expect(screen.getByTestId("retained").textContent).toBe("4000000");
+      expect(screen.getByTestId("shared-scratch").textContent).toBe("7000000");
     });
   });
 

@@ -938,6 +938,25 @@ export function getScratchMountpoint(project_id: string): string {
   return join(getMountPoint(), scratchVolName(project_id));
 }
 
+function truthyEnv(value: string | undefined): boolean {
+  const normalized = `${value ?? ""}`.trim().toLowerCase();
+  return (
+    normalized === "1" ||
+    normalized === "true" ||
+    normalized === "yes" ||
+    normalized === "on"
+  );
+}
+
+export function getSharedScratchMountpoint(): string | undefined {
+  if (!truthyEnv(process.env.COCALC_SHARED_SCRATCH_ENABLED)) {
+    return undefined;
+  }
+  const mount =
+    `${process.env.COCALC_SHARED_SCRATCH_HOST_MOUNT ?? "/mnt/cocalc-scratch"}`.trim();
+  return mount.startsWith("/") ? mount : undefined;
+}
+
 export function getProjectSandboxFilesystem(
   project_id: string,
 ): SandboxedFilesystem {
@@ -946,6 +965,7 @@ export function getProjectSandboxFilesystem(
     home: projectMountpoint(project_id),
     rootfs: getRootfsMountpoint(project_id),
     scratch: getScratchMountpoint(project_id),
+    sharedScratch: getSharedScratchMountpoint(),
   });
 }
 

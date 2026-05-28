@@ -114,6 +114,7 @@ describe("DiskUsage backup UI", () => {
         label: "Retained snapshot/history data",
         bytes: 10,
       },
+      sharedScratch: null,
       loading: false,
       error: null,
       setError: jest.fn(),
@@ -165,6 +166,7 @@ describe("DiskUsage backup UI", () => {
         label: "Retained snapshot/history data",
         bytes: 0,
       },
+      shared_scratch: undefined,
       visible: [
         {
           key: "home",
@@ -193,5 +195,70 @@ describe("DiskUsage backup UI", () => {
         screen.getByText("Recomputed storage usage just now."),
       ).toBeInTheDocument();
     });
+  });
+
+  it("shows shared scratch as host storage outside project quota", async () => {
+    useTypedRedux.mockReturnValue(ImmutableMap());
+    useDiskUsageMock.mockReturnValue({
+      visible: [
+        {
+          key: "home",
+          label: "/home/user",
+          summaryLabel: "Home",
+          path: "/home/user",
+          summaryBytes: 111,
+          usage: {
+            path: "/home/user",
+            bytes: 111,
+            children: [],
+            collected_at: "2026-05-05T18:00:00.000Z",
+          },
+        },
+      ],
+      live: {
+        key: "live",
+        label: "Live files",
+        path: "/home/user",
+        bytes: 111,
+      },
+      collectedAt: "2026-05-05T18:00:00.000Z",
+      retained: {
+        key: "retained",
+        label: "Retained snapshot/history data",
+        bytes: 10,
+      },
+      sharedScratch: {
+        key: "shared_scratch",
+        label: "Host shared scratch",
+        path: "/scratch",
+        used: 40,
+        size: 100,
+        free: 60,
+        available: 50,
+        collected_at: "2026-05-05T18:00:00.000Z",
+      },
+      loading: false,
+      error: null,
+      setError: jest.fn(),
+      applyOverview: applyOverviewMock,
+      quotas: [{ key: "project", label: "Project quota", used: 17, size: 100 }],
+    });
+
+    render(<DiskUsage compact project_id="project-1" />);
+
+    fireEvent.click(screen.getByRole("button"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Host shared scratch (/scratch)"),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(/outside this project's storage quota/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/not backed up by CoCalc/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Other projects on this host can read/),
+    ).toBeInTheDocument();
   });
 });

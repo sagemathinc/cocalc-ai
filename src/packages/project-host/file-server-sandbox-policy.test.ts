@@ -48,7 +48,7 @@ describe("file-server sandbox policy", () => {
       "temporary storage is not mounted; cannot access absolute path '/tmp/data.txt'. Start the workspace and try again.",
     );
     await expect(fs.writeFile("/scratch/data.txt", "blocked")).rejects.toThrow(
-      "'/scratch' is no longer supported. Use '/tmp' instead.",
+      "'/scratch' is only available on dedicated project hosts with shared scratch enabled. Use '/tmp' for per-project temporary storage.",
     );
   });
 
@@ -83,7 +83,33 @@ describe("file-server sandbox policy", () => {
       "rootfs-root",
     );
     await expect(fs.writeFile("/scratch/legacy.txt", "legacy")).rejects.toThrow(
-      "'/scratch' is no longer supported. Use '/tmp' instead.",
+      "'/scratch' is only available on dedicated project hosts with shared scratch enabled. Use '/tmp' for per-project temporary storage.",
+    );
+  });
+
+  it("routes writes to host shared scratch when configured", async () => {
+    const base = await mkTempDir("cocalc-fs-policy-");
+    const home = join(base, "home");
+    const rootfs = join(base, "rootfs");
+    const scratch = join(base, "scratch");
+    const sharedScratch = join(base, "shared-scratch");
+    await mkdir(home, { recursive: true });
+    await mkdir(rootfs, { recursive: true });
+    await mkdir(scratch, { recursive: true });
+    await mkdir(sharedScratch, { recursive: true });
+
+    const fs = createProjectSandboxFilesystem({
+      project_id,
+      home,
+      rootfs,
+      scratch,
+      sharedScratch,
+    });
+
+    await fs.writeFile("/scratch/data.txt", "shared");
+
+    expect(await readFile(join(sharedScratch, "data.txt"), "utf8")).toBe(
+      "shared",
     );
   });
 
