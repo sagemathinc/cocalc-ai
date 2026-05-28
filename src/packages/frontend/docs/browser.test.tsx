@@ -58,7 +58,7 @@ describe("DocsBrowser", () => {
     expect(screen.getByRole("heading", { name: entry.title })).toBeTruthy();
   });
 
-  it("shows table of contents progress and continues to the first unviewed page", () => {
+  it("shows table of contents progress and continues to the first unlearned page", () => {
     const entries = listDocsEntries();
     const firstEntry = entries[0];
     const secondEntry = entries[1];
@@ -76,6 +76,7 @@ describe("DocsBrowser", () => {
           onFilterChange: jest.fn(),
           summaries: {
             [firstEntry.id]: {
+              learnedAt: 1,
               lastViewedAt: 1,
               noteCount: 0,
               noteText: "",
@@ -86,8 +87,8 @@ describe("DocsBrowser", () => {
       />,
     );
 
-    expect(screen.getAllByText(/1 \/ .* viewed/)[0]).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Continue reading/ }));
+    expect(screen.getAllByText(/1 \/ .* learned/)[0]).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Continue learning/ }));
 
     expect(onSelectedEntryChange).toHaveBeenCalledWith(secondEntry);
     expect(
