@@ -54,6 +54,7 @@ const SCROLLBACK = 5000;
 const MAX_HISTORY_LENGTH = 100 * SCROLLBACK;
 
 const SPAWN_TIMEOUT = 5000;
+const TRANSIENT_RECONNECT_OPACITY = "0.62";
 
 const EXIT_MESSAGE = "\r\n[Process completed - press any key]\r\n";
 const ANSI_RESET = "\x1b[0m";
@@ -230,6 +231,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   private workingDir?: string;
   private terminalThemeOverride: string | null = null;
   private appliedTerminalTheme: string | null = null;
+  private transientReconnectStyleActive = false;
 
   private fitAddon: FitAddon;
   private webLinksAddon: WebLinksAddon;
@@ -625,7 +627,28 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   private ptyExited = false;
   private manualStartMessageShown = false;
 
+  private setTransientReconnectStyle = (active: boolean): void => {
+    if (this.transientReconnectStyleActive === active) {
+      return;
+    }
+    this.transientReconnectStyleActive = active;
+    if (active) {
+      this.element.style.opacity = TRANSIENT_RECONNECT_OPACITY;
+      this.element.style.transition = "opacity 120ms ease-in-out";
+    } else {
+      this.element.style.opacity = "";
+      this.element.style.transition = "";
+    }
+  };
+
+  private markTransientDisconnect = (): void => {
+    if ((this.history?.length ?? 0) > 0) {
+      this.setTransientReconnectStyle(true);
+    }
+  };
+
   private showManualStartMessage = async (): Promise<void> => {
+    this.setTransientReconnectStyle(false);
     this.set_connection_status("disconnected");
     if (this.manualStartMessageShown) {
       return;
@@ -654,16 +677,20 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       }
       this.clearProjectStartingRetry();
       this.manualStartMessageShown = false;
+      const preserveVisibleContent = (this.history?.length ?? 0) > 0;
+      this.setTransientReconnectStyle(preserveVisibleContent);
 
       if (this.pty != null) {
         this.pty.close();
         this.pty = null;
       }
 
-      this.terminal.reset();
-      await this.handleDataFromProject(
-        connectingTerminalMessage(this.terminal.cols),
-      );
+      if (!preserveVisibleContent) {
+        this.terminal.reset();
+        await this.handleDataFromProject(
+          connectingTerminalMessage(this.terminal.cols),
+        );
+      }
 
       const pty = webapp_client.conat_client.terminalClient({
         project_id: this.project_id,
@@ -711,6 +738,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
 
       pty.socket.on("disconnected", async () => {
         this.set_connection_status("disconnected");
+        this.markTransientDisconnect();
         this.reconnectResource?.requestReconnect({
           reason: "terminal_socket_disconnected",
         });
@@ -718,6 +746,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
 
       pty.socket.on("closed", async () => {
         this.set_connection_status("disconnected");
+        this.markTransientDisconnect();
         this.reconnectResource?.requestReconnect({
           reason: "terminal_socket_closed",
         });
@@ -774,10 +803,13 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
         }
         */
         this.set_connection_status("connected");
-        this.terminal.reset();
+        if (!preserveVisibleContent || history) {
+          this.terminal.reset();
+        }
         if (history) {
           await this.handleDataFromProject(history, { fromHistory: true });
         }
+        this.setTransientReconnectStyle(false);
         this.flushWriteBuffer();
         pty.once("ready", () => {
           this.flushWriteBuffer();
@@ -797,6 +829,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       // is not running or offline.
       //      console.log("error spawning pty", err);
       this.set_connection_status("disconnected");
+      this.markTransientDisconnect();
       this.reconnectResource?.requestReconnect({
         reason: "terminal_connect_failed",
       });

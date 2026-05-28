@@ -378,7 +378,7 @@ Next action:
 
 ### 15. Git Browser Sticky File Path Click Behavior
 
-Status: `open`
+Status: `done`
 
 Severity: low-medium.
 
@@ -400,7 +400,7 @@ Next action:
 
 ### 16. Flyout File Explorer LRO Visibility
 
-Status: `open`
+Status: `done`
 
 Severity: medium-high.
 
@@ -423,7 +423,7 @@ Next action:
 
 ### 17. Terminal Reconnect Flash
 
-Status: `open`
+Status: `done`
 
 Severity: medium.
 

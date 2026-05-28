@@ -56,12 +56,20 @@ import {
   shouldApplyIncomingGitCommitSelectionRequest,
   shouldFallbackToFirstVisibleGitCommit,
 } from "../git-commit-drawer";
-import { act, fireEvent, render } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 
 let latestMarkdownInputProps: any = null;
+const mockCopyTextToClipboard = jest.fn();
+const mockNotificationSuccess = jest.fn();
 const noopAsync = async () => {};
 const stableDiffLines = ["@@ -1 +1 @@", "-old", "+new"];
 const stableComments: any[] = [];
+
+beforeEach(() => {
+  mockCopyTextToClipboard.mockReset();
+  mockCopyTextToClipboard.mockResolvedValue(true);
+  mockNotificationSuccess.mockReset();
+});
 
 jest.mock("@cocalc/frontend/editors/markdown-input/multimode", () => ({
   __esModule: true,
@@ -90,6 +98,26 @@ jest.mock("react-virtuoso", () => {
         Footer ? React.createElement(Footer) : null,
       );
     }),
+  };
+});
+
+jest.mock("@cocalc/frontend/components/copy-button", () => ({
+  __esModule: true,
+  copyTextToClipboard: (...args: any[]) => mockCopyTextToClipboard(...args),
+  default: () => null,
+}));
+
+jest.mock("@cocalc/frontend/app/antd-notification", () => {
+  const notification = {
+    destroy: jest.fn(),
+    error: jest.fn(),
+    info: jest.fn(),
+    open: jest.fn(),
+    success: (...args: any[]) => mockNotificationSuccess(...args),
+    warning: jest.fn(),
+  };
+  return {
+    getAntdNotificationInstance: () => notification,
   };
 });
 
@@ -1626,6 +1654,62 @@ describe("git commit drawer merge commit formatting", () => {
     expect((spacer as HTMLDivElement).style.height).toBe(
       `${GIT_DIFF_LIST_FOOTER_SPACER_HEIGHT}px`,
     );
+  });
+
+  it("copies sticky diff file paths instead of opening immediately", async () => {
+    const openFile = jest.fn(async () => {});
+    render(
+      React.createElement(GitDiffFilesPanel, {
+        files: [{ path: "src/example.ts", lines: stableDiffLines }],
+        drawerScrollParent: null,
+        virtuosoRef: { current: null },
+        fontSize: 14,
+        editorTheme: null,
+        reviewEditorScope: "scope:test",
+        inlineCommentsByFile: new Map(),
+        showResolvedComments: false,
+        isHeadSelected: false,
+        visibleDiffLinesByFile: {},
+        onOpenFile: openFile,
+        onShowMoreLines: () => {},
+        activeDraftBody: "",
+        activeEditingBody: "",
+        pendingKey: "",
+        onOpenDraft: () => {},
+        onDraftBodyChange: () => {},
+        onCancelDraft: () => {},
+        onOpenEdit: () => {},
+        onEditingBodyChange: () => {},
+        onCancelEdit: () => {},
+        onCreateComment: noopAsync,
+        onUpdateComment: noopAsync,
+        onResolveComment: noopAsync,
+        onReopenComment: noopAsync,
+        diffFindMatchCounts: new Map(),
+        diffFindMatchedLineIndexes: new Map(),
+      }),
+    );
+
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "src/example.ts",
+        }),
+      );
+    });
+
+    expect(mockCopyTextToClipboard).toHaveBeenCalledWith({
+      text: "src/example.ts",
+    });
+    expect(openFile).not.toHaveBeenCalled();
+
+    const notification = mockNotificationSuccess.mock.calls.at(-1)?.[0];
+    expect(notification?.title).toBe("Copied file path");
+
+    await act(async () => {
+      notification.actions.props.onClick();
+    });
+    expect(openFile).toHaveBeenCalledWith("src/example.ts");
   });
 
   it("builds stable file section ids for changed-file navigation", () => {
