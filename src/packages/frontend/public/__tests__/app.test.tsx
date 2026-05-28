@@ -341,6 +341,7 @@ describe("PublicApp", () => {
             id: "member",
             label: "Member",
             ai_limits: { units_5h: 150, units_7d: 500 },
+            features: { create_hosts: true },
             price_monthly: 25,
             price_yearly: 225,
             priority: 20,
@@ -349,6 +350,17 @@ describe("PublicApp", () => {
               memory: 8000,
               mintime: 3600,
             },
+            usage_limits: {
+              max_backups_per_project: 5,
+              max_sponsored_running_projects: 3,
+              project_max_collaborators_and_pending_invites: 50,
+              total_storage_hard_bytes: 125_000_000_000,
+            },
+            store_description: "A solid choice for everyday work.",
+            store_highlights: [
+              "Stronger shared resources",
+              "Dedicated project host access",
+            ],
             store_visible: true,
           },
         ],
@@ -362,13 +374,58 @@ describe("PublicApp", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Launchpad Pricing" }),
+      screen.getByRole("heading", {
+        name: "Choose Your Launchpad Membership",
+      }),
     ).not.toBeNull();
-    expect(screen.getByText("Membership-first pricing")).not.toBeNull();
-    expect(screen.getByText("Member")).not.toBeNull();
-    expect(screen.getAllByRole("link", { name: "Open Store" }).length).toBe(2);
+    expect(screen.getAllByText("Member").length).toBeGreaterThan(0);
     expect(
-      screen.getByText(/the one planned pay-as-you-go exception/i),
+      screen.getByText("A solid choice for everyday work."),
+    ).not.toBeNull();
+    expect(screen.getByText("Dedicated project host access")).not.toBeNull();
+    expect(screen.getByText("$18.75")).not.toBeNull();
+    expect(screen.getByText("/ mo")).not.toBeNull();
+    expect(screen.getByText("Billed annually, saving 25%")).not.toBeNull();
+    expect(
+      screen.getByRole("table", { name: "Membership comparison" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Compare Memberships" }),
+    ).not.toBeNull();
+    expect(screen.getByText("Project Limits")).not.toBeNull();
+    expect(screen.getByText("Global Limits")).not.toBeNull();
+    expect(screen.getByText("Functionality")).not.toBeNull();
+    expect(screen.getByText("8 GB")).not.toBeNull();
+    expect(screen.getByText("10 GB")).not.toBeNull();
+    expect(screen.getByText("1 hour")).not.toBeNull();
+    expect(screen.getByText("125 GB")).not.toBeNull();
+    expect(screen.getByText("Included AI per 5 hours")).not.toBeNull();
+    expect(screen.getByText("Included AI per 7 days")).not.toBeNull();
+    expect(screen.getByText("150 units")).not.toBeNull();
+    expect(screen.getByText("500 units")).not.toBeNull();
+    expect(screen.getByRole("link", { name: /Member/ })).toHaveAttribute(
+      "href",
+      "/settings/store",
+    );
+    expect(screen.queryByRole("link", { name: "Open Store" })).toBeNull();
+    fireEvent.click(screen.getByText("Monthly"));
+    expect(screen.getByText("$25")).not.toBeNull();
+    expect(screen.getByText("/ month")).not.toBeNull();
+    expect(screen.getByText("Save 25% with annual billing")).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "For Teams and Organizations" }),
+    ).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "Team seats" })).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Organization licenses" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Dedicated project hosts" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
+        name: "Quotes and customized invoices",
+      }),
     ).not.toBeNull();
   });
 

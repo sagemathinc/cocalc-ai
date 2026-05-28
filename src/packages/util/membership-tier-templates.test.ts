@@ -115,6 +115,47 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(tier.course_grace_days).toBe(14);
   });
 
+  it("defines hidden basic and standard individual membership templates", () => {
+    const free = applyMembershipTierTemplateFallbacks({ id: "free" });
+    const basic = applyMembershipTierTemplateFallbacks({ id: "basic" });
+    const standard = applyMembershipTierTemplateFallbacks({ id: "standard" });
+
+    expect(free.store_description).toMatch(/explore the platform/);
+    expect(free.store_highlights).toEqual([]);
+
+    expect(basic.label).toBe("Basic");
+    expect(basic.store_description).toMatch(/occasional light use/);
+    expect(basic.store_highlights).toContain("More shared resources");
+    expect(basic.store_visible).toBe(false);
+    expect(basic.course_store_visible).toBe(false);
+    expect(basic.price_monthly).toBe(8);
+    expect(basic.price_yearly).toBe(72);
+    expect((basic.project_defaults as Record<string, unknown>).disk_quota).toBe(
+      1000,
+    );
+    expect(
+      (basic.usage_limits as Record<string, unknown>)
+        .max_sponsored_running_projects,
+    ).toBe(3);
+
+    expect(standard.label).toBe("Standard");
+    expect(standard.store_description).toMatch(/everyday work/);
+    expect(standard.store_highlights).toContain(
+      "Dedicated project host access, including GPU",
+    );
+    expect(standard.store_visible).toBe(false);
+    expect(standard.course_store_visible).toBe(false);
+    expect(standard.price_monthly).toBe(24);
+    expect(standard.price_yearly).toBe(216);
+    expect((standard.features as Record<string, unknown>).create_hosts).toBe(
+      true,
+    );
+    expect(
+      (standard.usage_limits as Record<string, unknown>)
+        .prepaid_host_usage_limit_7d_usd,
+    ).toBe(1000);
+  });
+
   it("defines an instructor tier with course-scale invite limits", () => {
     const tier = applyMembershipTierTemplateFallbacks({
       id: "instructor",

@@ -14,7 +14,7 @@ export default function PublicPricingApp({
   config?: PublicConfig;
 }) {
   const siteName = getSiteName(config);
-  const title = `${siteName} Pricing`;
+  const title = `Choose Your ${siteName} Membership`;
 
   useEffect(() => {
     document.title = title;
@@ -22,10 +22,7 @@ export default function PublicPricingApp({
 
   return (
     <PublicSectionShell active="pricing" config={config} title={title}>
-      <PricingPage
-        isAuthenticated={!!config?.is_authenticated}
-        siteName={siteName}
-      />
+      <PricingPage isAuthenticated={!!config?.is_authenticated} />
     </PublicSectionShell>
   );
 }

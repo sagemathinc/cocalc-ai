@@ -12,6 +12,8 @@ export interface MembershipTierPresentationInput {
   price_monthly?: unknown;
   price_yearly?: unknown;
   trial_days?: unknown;
+  store_description?: string;
+  store_highlights?: readonly string[];
   course_price?: unknown;
   course_duration_days?: unknown;
   course_grace_days?: unknown;
@@ -33,7 +35,10 @@ export interface MembershipTierPresentation {
 
 const DEFAULT_TAGLINES: Record<string, string> = {
   free: "A light entry point for evaluation and occasional use.",
+  basic:
+    "An affordable paid membership for individual learning and light work.",
   student: "A class-focused membership for course access.",
+  standard: "The standard paid membership for serious day-to-day work.",
   member: "The standard paid membership for serious day-to-day work.",
   instructor: "More headroom for teaching, courses, and many collaborators.",
   researcher: "Higher compute and image limits for research workloads.",

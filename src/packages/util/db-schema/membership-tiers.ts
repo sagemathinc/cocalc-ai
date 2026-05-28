@@ -31,6 +31,8 @@ Table({
           id: null,
           label: null,
           store_visible: null,
+          store_description: null,
+          store_highlights: null,
           course_store_visible: null,
           priority: null,
           price_monthly: null,
@@ -55,6 +57,8 @@ Table({
           id: null,
           label: null,
           store_visible: null,
+          store_description: null,
+          store_highlights: null,
           course_store_visible: null,
           priority: null,
           price_monthly: null,
@@ -92,6 +96,15 @@ Table({
     store_visible: {
       type: "boolean",
       desc: "Whether to show this tier in the store UI.",
+    },
+    store_description: {
+      type: "string",
+      desc: "Short public description shown on the pricing/store page.",
+    },
+    store_highlights: {
+      type: "array",
+      pg_type: "TEXT[]",
+      desc: "Public pricing/store bullet points, one short string per item.",
     },
     course_store_visible: {
       type: "boolean",
