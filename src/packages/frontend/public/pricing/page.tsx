@@ -676,131 +676,81 @@ export default function PricingPage({
 
       <PublicSection>
         <Title level={2} style={{ margin: 0 }}>
-          Teaching and course payment options
+          For Teams and Organizations
         </Title>
-        <PublicGrid columns={3}>
+        <PublicGrid columns={2}>
           <PublicSection>
             <Space orientation="vertical" size="middle">
-              <Flex align="center" gap={8} wrap>
-                <Title level={4} style={{ margin: 0 }}>
-                  Students pay directly
-                </Title>
-                <Tag color="processing">Planned student tier</Tag>
-              </Flex>
+              <Title level={3} style={{ margin: 0 }}>
+                Team seats
+              </Title>
               <Paragraph style={{ margin: 0 }}>
-                The long-term course model is a one-off four-month student
-                membership. It does not renew automatically and is meant for a
-                single academic term, even if the student is enrolled in more
-                than one class at once.
+                Buy membership seats for a group, then assign them to the people
+                who need access. One account manages payment while each person
+                works from their own CoCalc account.
               </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                This dedicated student-membership flow is a second-round
-                deliverable after the Next.js removal itself lands.
-              </Paragraph>
+              <Button href={appPath("settings/licenses")}>
+                Manage team seats
+              </Button>
             </Space>
           </PublicSection>
 
           <PublicSection>
             <Space orientation="vertical" size="middle">
-              <Flex align="center" gap={8} wrap>
-                <Title level={4} style={{ margin: 0 }}>
-                  Instructor or institute pays
-                </Title>
-                <Tag color="green">Current path</Tag>
-              </Flex>
+              <Title level={3} style={{ margin: 0 }}>
+                Organization licenses
+              </Title>
               <Paragraph style={{ margin: 0 }}>
-                Today the practical way to cover a course is for an instructor
-                or institution to buy memberships or vouchers on behalf of
-                students. That can be done through the in-app store, admin
-                assisted purchase, or voucher batches.
-              </Paragraph>
-              <Flex gap={8} wrap>
-                <Button href={appPath("redeem")}>Redeem a voucher</Button>
-                <Button
-                  href={supportPurchasePath(
-                    "Cover memberships for a course",
-                    "I want to cover memberships for students in a class.",
-                  )}
-                >
-                  Contact sales
-                </Button>
-              </Flex>
-            </Space>
-          </PublicSection>
-
-          <PublicSection>
-            <Space orientation="vertical" size="middle">
-              <Flex align="center" gap={8} wrap>
-                <Title level={4} style={{ margin: 0 }}>
-                  Campus-wide site license
-                </Title>
-                <Tag color="gold">Important next step</Tag>
-              </Flex>
-              <Paragraph style={{ margin: 0 }}>
-                The future institutional model is that verified campus email
-                accounts automatically receive a configured membership tier.
-                That is not implemented yet, but it is a major planned product
-                direction and the right path for broad campus adoption.
+                Departments, universities, labs, companies, and research groups
+                can arrange access for many people under one license.
               </Paragraph>
               <Button
                 href={supportPurchasePath(
-                  "Campus-wide site license",
-                  "I want to discuss a campus-wide CoCalc membership deployment.",
+                  "Organization license",
+                  "I want to discuss a CoCalc organization license.",
                 )}
               >
-                Ask about campus pricing
+                Contact sales
+              </Button>
+            </Space>
+          </PublicSection>
+
+          <PublicSection>
+            <Space orientation="vertical" size="middle">
+              <Title level={3} style={{ margin: 0 }}>
+                Dedicated project hosts
+              </Title>
+              <Paragraph style={{ margin: 0 }}>
+                Run projects on dedicated compute when shared resources are not
+                enough. Memberships determine which dedicated host options are
+                available to your account.
+              </Paragraph>
+              <Button href={appPath("hosts")}>Open project hosts</Button>
+            </Space>
+          </PublicSection>
+
+          <PublicSection>
+            <Space orientation="vertical" size="middle">
+              <Title level={3} style={{ margin: 0 }}>
+                Quotes and customized invoices
+              </Title>
+              <Paragraph style={{ margin: 0 }}>
+                For purchases above $100 or billing workflows that do not fit
+                self-service checkout, contact us for a quote or customized
+                invoice.
+              </Paragraph>
+              <Button
+                href={supportPurchasePath(
+                  "Quote or customized invoice",
+                  "I want to request a quote or customized invoice for CoCalc.",
+                )}
+              >
+                Request a quote
               </Button>
             </Space>
           </PublicSection>
         </PublicGrid>
       </PublicSection>
-
-      <PublicGrid columns={3}>
-        <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
-            Subscription options
-          </Title>
-          <Paragraph style={{ margin: 0 }}>
-            Memberships can be configured monthly and yearly. Yearly pricing is
-            usually the lower-friction option for individuals or labs that know
-            they want the service for the full academic or business year.
-          </Paragraph>
-          <Paragraph style={{ margin: 0 }}>
-            For purchasing workflows that do not fit self-service card checkout,
-            use support to request invoicing, purchase-order handling, or
-            assisted purchases.
-          </Paragraph>
-        </PublicSection>
-
-        <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
-            On-premises and self-hosted installs
-          </Title>
-          <Paragraph style={{ margin: 0 }}>
-            If you want to run CoCalc yourself, use the existing software
-            offerings instead of the hosted membership flow.
-          </Paragraph>
-          <Flex gap={8} wrap>
-            <Button href={appPath("products/cocalc-plus")}>CoCalc Plus</Button>
-            <Button href={appPath("products/cocalc-launchpad")}>
-              CoCalc Launchpad
-            </Button>
-          </Flex>
-        </PublicSection>
-
-        <PublicSection>
-          <Title level={3} style={{ margin: 0 }}>
-            User-owned project hosts
-          </Title>
-          <Paragraph style={{ margin: 0 }}>
-            Custom project hosts are the one planned pay-as-you-go exception.
-            Membership controls whether you can rent them and what spending
-            model applies, but the host billing flow itself lives under
-            <Text code> /hosts </Text> and is a separate second-round follow-up.
-          </Paragraph>
-          <Button href={appPath("hosts")}>Project hosts</Button>
-        </PublicSection>
-      </PublicGrid>
     </>
   );
 }

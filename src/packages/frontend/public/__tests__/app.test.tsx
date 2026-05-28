@@ -413,7 +413,19 @@ describe("PublicApp", () => {
     expect(screen.getByText("/ month")).not.toBeNull();
     expect(screen.getByText("Save 25% with annual billing")).not.toBeNull();
     expect(
-      screen.getByText(/the one planned pay-as-you-go exception/i),
+      screen.getByRole("heading", { name: "For Teams and Organizations" }),
+    ).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "Team seats" })).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Organization licenses" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Dedicated project hosts" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
+        name: "Quotes and customized invoices",
+      }),
     ).not.toBeNull();
   });
 
