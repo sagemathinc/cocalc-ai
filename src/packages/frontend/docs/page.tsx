@@ -131,6 +131,7 @@ export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
     <title>CoCalc documentation</title>
     <meta charset="utf-8" />
     <meta name="google" content="notranslate" />
+    <base href="${BASE_URL}/" />
     ${resource_links_string(BASE_URL)}
     <style>
       html, body { background: white; }
