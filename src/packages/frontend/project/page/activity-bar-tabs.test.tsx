@@ -7,6 +7,7 @@ const mockSetActiveTab = jest.fn();
 const mockToggleFlyout = jest.fn();
 const mockToggleActionButtons = jest.fn();
 const mockSetOtherSettings = jest.fn();
+const mockConfirmRemoveMyselfFromProject = jest.fn();
 let mockAccountStoreReady = true;
 let mockLite = true;
 let mockPageState: Record<string, any> = {};
@@ -66,6 +67,7 @@ jest.mock("antd", () => {
 
 jest.mock("react-intl", () => ({
   defineMessage: (value: any) => value,
+  defineMessages: (value: any) => value,
   useIntl: () => ({
     formatMessage: (value: any, vars?: any) => {
       const text = value?.defaultMessage ?? value?.id ?? "";
@@ -92,6 +94,9 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
           return undefined;
         },
       };
+    }
+    if (store === "account" && key === "account_id") {
+      return "account-1";
     }
     return undefined;
   },
@@ -138,6 +143,11 @@ jest.mock("@cocalc/frontend/project/context", () => ({
     },
     workspaces: { current: null },
   }),
+}));
+
+jest.mock("@cocalc/frontend/projects/remove-myself", () => ({
+  confirmRemoveMyselfFromProject: (opts: any) =>
+    mockConfirmRemoveMyselfFromProject(opts),
 }));
 
 jest.mock("@cocalc/frontend/lite", () => ({
@@ -198,6 +208,7 @@ describe("VerticalFixedTabs overflow actions", () => {
     mockToggleFlyout.mockReset();
     mockToggleActionButtons.mockReset();
     mockSetOtherSettings.mockReset();
+    mockConfirmRemoveMyselfFromProject.mockReset();
     mockAccountStoreReady = true;
     mockLite = true;
     mockPageState = {};
@@ -250,6 +261,21 @@ describe("VerticalFixedTabs overflow actions", () => {
     expect(screen.queryByTestId("menu-overflow:info")).toBeNull();
     expect(screen.queryByTestId("menu-overflow:servers")).toBeNull();
   });
+
+  it("lets viewers remove themselves from the overflow rail menu", () => {
+    mockProjectAccessRole = "viewer";
+
+    render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
+
+    fireEvent.click(screen.getByTestId("menu-overflow:remove-self"));
+
+    expect(mockConfirmRemoveMyselfFromProject).toHaveBeenCalledWith({
+      project_id: "project-1",
+      account_id: "account-1",
+      projectLabel: "Project",
+      projectLabelLower: "project",
+    });
+  });
 });
 
 describe("ProjectTabs settings affordance", () => {
@@ -275,6 +301,7 @@ describe("HiddenActivityBarLauncher", () => {
     mockToggleFlyout.mockReset();
     mockToggleActionButtons.mockReset();
     mockSetOtherSettings.mockReset();
+    mockConfirmRemoveMyselfFromProject.mockReset();
     mockAccountStoreReady = true;
     mockPageState = {};
     mockProjectAccessRole = "collaborator";
@@ -324,6 +351,21 @@ describe("HiddenActivityBarLauncher", () => {
     expect(screen.queryByTestId("menu-launcher:log")).toBeNull();
     expect(screen.queryByTestId("menu-launcher:info")).toBeNull();
     expect(screen.queryByTestId("menu-launcher:servers")).toBeNull();
+  });
+
+  it("lets viewers remove themselves from the hidden rail launcher menu", () => {
+    mockProjectAccessRole = "viewer";
+
+    render(<HiddenActivityBarLauncher />);
+
+    fireEvent.click(screen.getByTestId("menu-launcher:remove-self"));
+
+    expect(mockConfirmRemoveMyselfFromProject).toHaveBeenCalledWith({
+      project_id: "project-1",
+      account_id: "account-1",
+      projectLabel: "Project",
+      projectLabelLower: "project",
+    });
   });
 });
 
