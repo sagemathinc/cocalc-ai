@@ -98,6 +98,7 @@ async function handleCopyOp(op: LroSummary): Promise<void> {
       : [];
   const options = input.options;
   const src_home = input.src_home;
+  const src_read_policy = input.src_read_policy;
   const account_id = op.created_by ?? input.account_id;
 
   if (!account_id || !src || !dests.length) {
@@ -178,6 +179,7 @@ async function handleCopyOp(op: LroSummary): Promise<void> {
     const result = await copyProjectFiles({
       src,
       src_home,
+      src_read_policy,
       dests,
       options,
       account_id,

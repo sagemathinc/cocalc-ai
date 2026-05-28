@@ -102,12 +102,14 @@ export async function get({
 }): Promise<LroSummary | undefined> {
   const row = await getLro(op_id);
   if (!row) return undefined;
-  await assertScopeAccess({
-    account_id,
-    scope_type: row.scope_type,
-    scope_id: row.scope_id,
-    mode: "read",
-  });
+  if (!account_id || account_id !== row.created_by) {
+    await assertScopeAccess({
+      account_id,
+      scope_type: row.scope_type,
+      scope_id: row.scope_id,
+      mode: "read",
+    });
+  }
   return row;
 }
 
@@ -138,11 +140,13 @@ export async function cancel({
 }): Promise<void> {
   const row = await getLro(op_id);
   if (!row) return;
-  await assertScopeAccess({
-    account_id,
-    scope_type: row.scope_type,
-    scope_id: row.scope_id,
-  });
+  if (!account_id || account_id !== row.created_by) {
+    await assertScopeAccess({
+      account_id,
+      scope_type: row.scope_type,
+      scope_id: row.scope_id,
+    });
+  }
   const updated = await updateLro({
     op_id,
     status: "canceled",
@@ -171,11 +175,13 @@ export async function dismiss({
 }): Promise<void> {
   const row = await getLro(op_id);
   if (!row) return;
-  await assertScopeAccess({
-    account_id,
-    scope_type: row.scope_type,
-    scope_id: row.scope_id,
-  });
+  if (!account_id || account_id !== row.created_by) {
+    await assertScopeAccess({
+      account_id,
+      scope_type: row.scope_type,
+      scope_id: row.scope_id,
+    });
+  }
   if (!DISMISSABLE_STATUSES.includes(row.status)) {
     throw new Error("can only dismiss completed operations");
   }
