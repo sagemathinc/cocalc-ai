@@ -438,9 +438,19 @@ export type ReadOnlyFilesystem = Pick<
   | "readFile"
   | "readdir"
   | "readlink"
+  | "realpath"
   | "stat"
 > &
   Pick<Required<Filesystem>, "canonicalSyncIdentityPath">;
+
+function rejectReadOnlyLock(lock: unknown): void {
+  if (lock == null || lock === 0) return;
+  const err = new Error(
+    "read-only filesystem does not support read locks",
+  ) as Error & { code?: string };
+  err.code = "EACCES";
+  throw err;
+}
 
 export async function fsReadOnlyServer({
   service,
@@ -487,7 +497,8 @@ export async function fsReadOnlyServer({
       return await (await fs(this.subject)).lstat(path);
     },
     async readFile(path: string, encoding?, lock?) {
-      return await (await fs(this.subject)).readFile(path, encoding, lock);
+      rejectReadOnlyLock(lock);
+      return await (await fs(this.subject)).readFile(path, encoding);
     },
     async readdir(path: string, options?) {
       const files = await (await fs(this.subject)).readdir(path, options);
@@ -501,6 +512,9 @@ export async function fsReadOnlyServer({
     },
     async readlink(path: string) {
       return await (await fs(this.subject)).readlink(path);
+    },
+    async realpath(path: string) {
+      return await (await fs(this.subject)).realpath(path);
     },
     async canonicalSyncIdentityPath(path: string) {
       const filesystem = await fs(this.subject);
