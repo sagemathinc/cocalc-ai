@@ -537,8 +537,10 @@ function DocsTocOverview({
         (privateSummaries?.[b.id]?.learnedAt ?? 0) -
         (privateSummaries?.[a.id]?.learnedAt ?? 0),
     )[0];
-  const continueEntry =
-    firstUnlearnedEntry ?? lastLearnedEntry ?? allEntries[0];
+  const showContinueLearning = privateSummaries != null;
+  const continueEntry = showContinueLearning
+    ? (firstUnlearnedEntry ?? lastLearnedEntry ?? allEntries[0])
+    : undefined;
   const continueLabel =
     firstUnlearnedEntry != null ? "Continue learning" : "Review learned";
   const continueHref =

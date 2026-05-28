@@ -1025,7 +1025,7 @@ export default function DiskUsage({
               <Text type="secondary">Refreshing…</Text>
             ) : null}
           </Space>
-          {(live != null || retained != null || sharedScratch != null) && (
+          {sharedScratch != null && (
             <div
               style={{
                 color: COLORS.GRAY_D,
@@ -1038,19 +1038,8 @@ export default function DiskUsage({
                 whiteSpace: "nowrap",
               }}
             >
-              {[
-                live != null
-                  ? `Live ${human_readable_size(live.bytes)}`
-                  : undefined,
-                retained != null
-                  ? `Retained ${human_readable_size(retained.bytes)}`
-                  : undefined,
-                sharedScratch != null
-                  ? `/scratch ${human_readable_size(sharedScratch.used)} / ${human_readable_size(sharedScratch.size)}`
-                  : undefined,
-              ]
-                .filter(Boolean)
-                .join(" • ")}
+              /scratch {human_readable_size(sharedScratch.used)} /{" "}
+              {human_readable_size(sharedScratch.size)}
             </div>
           )}
         </div>
@@ -1074,12 +1063,6 @@ export default function DiskUsage({
           <Tag style={backupSummary.style} title={backupSummary.absolute}>
             {backupSummary.label}
           </Tag>
-          {live != null ? (
-            <Tag>Live {human_readable_size(live.bytes)}</Tag>
-          ) : null}
-          {retained != null ? (
-            <Tag>Retained {human_readable_size(retained.bytes)}</Tag>
-          ) : null}
           {sharedScratch != null ? (
             <Tag>
               /scratch {human_readable_size(sharedScratch.used)} /{" "}

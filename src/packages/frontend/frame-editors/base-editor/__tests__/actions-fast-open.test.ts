@@ -12,8 +12,9 @@ const FAST_OPEN_HANDOFF_DIFF_STATUS =
   "Updated to the latest live collaboration state.";
 
 async function flushPromises(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let i = 0; i < 5; i += 1) {
+    await Promise.resolve();
+  }
 }
 
 function makeRedux(): AppRedux {
@@ -68,6 +69,17 @@ class FastOpenHarness extends TextEditorActions {
 
   setSyncString(sync: Partial<SyncString>): void {
     this._syncstring = sync as SyncString;
+  }
+
+  async startReadOnlyPreview(): Promise<void> {
+    (this as any).readOnlyPreview = true;
+    (this as any).initReadOnlyPreview();
+    await flushPromises();
+  }
+
+  async reloadReadOnly(): Promise<void> {
+    this.reloadReadOnlyPreview();
+    await flushPromises();
   }
 
   async startOptimistic(): Promise<void> {
@@ -208,6 +220,30 @@ describe("fast-open optimistic state machine", () => {
       PATH,
       "optimistic_ready",
       expect.anything(),
+    );
+  });
+
+  it("reloads read-only previews from disk without reopening the file", async () => {
+    const actions = new FastOpenHarness();
+    actions.setReadFileResult("first");
+
+    await actions.startReadOnlyPreview();
+
+    expect(actions.getState("read_only")).toBe(true);
+    expect(actions.getState("read_only_preview")).toBe(true);
+    expect(actions.getState("value")).toBe("first");
+
+    actions.setReadFileResult("second");
+    await actions.reloadReadOnly();
+
+    expect(actions.getState("read_only")).toBe(true);
+    expect(actions.getState("read_only_preview")).toBe(true);
+    expect(actions.getState("value")).toBe("second");
+    expect(markOpenPhase).toHaveBeenCalledWith(
+      PROJECT_ID,
+      PATH,
+      "read_only_reload",
+      { bytes: "second".length, read_only: true },
     );
   });
 });

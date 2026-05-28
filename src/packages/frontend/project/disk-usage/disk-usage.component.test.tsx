@@ -135,6 +135,8 @@ describe("DiskUsage backup UI", () => {
     render(<DiskUsage compact project_id="project-1" />);
 
     expect(screen.getByText("Backups")).toBeInTheDocument();
+    expect(screen.queryByText(/Live/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Retained/)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button"));
 

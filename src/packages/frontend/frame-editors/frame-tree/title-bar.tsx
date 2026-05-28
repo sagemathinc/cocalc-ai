@@ -229,6 +229,10 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
 
   // These come from editor_actions's store:
   const read_only: boolean = useRedux([props.editor_actions.name, "read_only"]);
+  const read_only_preview: boolean = !!useRedux([
+    props.editor_actions.name,
+    "read_only_preview",
+  ]);
   const rtc_status: "loading" | "live" | "error" | "reconnecting" | undefined =
     useRedux([props.editor_actions.name, "rtc_status"]);
 
@@ -621,6 +625,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
           props.editor_actions.set_show_uncommitted_changes
         }
         read_only={read_only}
+        read_only_reload={read_only_preview}
         is_connecting={
           rtc_status === "loading" || rtc_status === "reconnecting"
         }
@@ -631,7 +636,11 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
         style={button_style()}
         onClick={() => {
           props.actions.set_active_id(props.id, true);
-          props.editor_actions.save(true);
+          if (read_only_preview) {
+            props.editor_actions.reloadReadOnlyPreview();
+          } else {
+            props.editor_actions.save(true);
+          }
           props.actions.focus(props.id);
         }}
       />

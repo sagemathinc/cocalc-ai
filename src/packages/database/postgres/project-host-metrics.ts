@@ -47,6 +47,9 @@ type ProjectHostMetricsSampleRow = {
   disk_device_total_bytes: number | string | null;
   disk_device_used_bytes: number | string | null;
   disk_unallocated_bytes: number | string | null;
+  shared_scratch_total_bytes: number | string | null;
+  shared_scratch_used_bytes: number | string | null;
+  shared_scratch_available_bytes: number | string | null;
   btrfs_data_total_bytes: number | string | null;
   btrfs_data_used_bytes: number | string | null;
   btrfs_metadata_total_bytes: number | string | null;
@@ -140,6 +143,15 @@ function computeDiskUsedPercent(point: HostCurrentMetrics): number | undefined {
   return Math.max(0, Math.min(100, ((total - available) / total) * 100));
 }
 
+function computeSharedScratchUsedPercent(
+  point: HostCurrentMetrics,
+): number | undefined {
+  return computePercent(
+    point.shared_scratch_used_bytes,
+    point.shared_scratch_total_bytes,
+  );
+}
+
 function toPoint(row: ProjectHostMetricsSampleRow): HostMetricsHistoryPoint {
   const point: HostMetricsHistoryPoint = {
     collected_at: new Date(row.collected_at).toISOString(),
@@ -156,6 +168,11 @@ function toPoint(row: ProjectHostMetricsSampleRow): HostMetricsHistoryPoint {
     disk_device_total_bytes: toInteger(row.disk_device_total_bytes),
     disk_device_used_bytes: toInteger(row.disk_device_used_bytes),
     disk_unallocated_bytes: toInteger(row.disk_unallocated_bytes),
+    shared_scratch_total_bytes: toInteger(row.shared_scratch_total_bytes),
+    shared_scratch_used_bytes: toInteger(row.shared_scratch_used_bytes),
+    shared_scratch_available_bytes: toInteger(
+      row.shared_scratch_available_bytes,
+    ),
     btrfs_data_total_bytes: toInteger(row.btrfs_data_total_bytes),
     btrfs_data_used_bytes: toInteger(row.btrfs_data_used_bytes),
     btrfs_metadata_total_bytes: toInteger(row.btrfs_metadata_total_bytes),
@@ -181,6 +198,7 @@ function toPoint(row: ProjectHostMetricsSampleRow): HostMetricsHistoryPoint {
     stopping_project_count: toInteger(row.stopping_project_count),
   };
   point.disk_used_percent = computeDiskUsedPercent(point);
+  point.shared_scratch_used_percent = computeSharedScratchUsedPercent(point);
   point.metadata_used_percent = computePercent(
     point.btrfs_metadata_used_bytes,
     point.btrfs_metadata_total_bytes,
@@ -255,11 +273,17 @@ function computeGrowth(
 ): HostMetricsHistoryGrowth | undefined {
   if (points.length < 2) return undefined;
   const disk = computeGrowthRate(points, "disk_device_used_bytes");
+  const sharedScratch = computeGrowthRate(points, "shared_scratch_used_bytes");
   const metadata = computeGrowthRate(points, "btrfs_metadata_used_bytes");
-  if (disk == null && metadata == null) return undefined;
+  if (disk == null && sharedScratch == null && metadata == null) {
+    return undefined;
+  }
   return {
     window_minutes,
     ...(disk != null ? { disk_used_bytes_per_hour: disk } : {}),
+    ...(sharedScratch != null
+      ? { shared_scratch_used_bytes_per_hour: sharedScratch }
+      : {}),
     ...(metadata != null ? { metadata_used_bytes_per_hour: metadata } : {}),
   };
 }
@@ -522,6 +546,23 @@ function computeDerived(
     critical_available_bytes: DISK_CRITICAL_AVAILABLE_BYTES,
   });
   const metadata = computeMetadataRisk(current, growth);
+  const sharedScratchHoursToExhaustion = computeHoursToExhaustion(
+    current.shared_scratch_available_bytes,
+    growth?.shared_scratch_used_bytes_per_hour,
+  );
+  const sharedScratch =
+    current.shared_scratch_total_bytes != null
+      ? riskState({
+          label: "Shared scratch",
+          used_percent: current.shared_scratch_used_percent,
+          available_bytes: current.shared_scratch_available_bytes,
+          hours_to_exhaustion: sharedScratchHoursToExhaustion,
+          warning_percent: DISK_WARNING_PERCENT,
+          critical_percent: DISK_CRITICAL_PERCENT,
+          warning_available_bytes: DISK_WARNING_AVAILABLE_BYTES,
+          critical_available_bytes: DISK_CRITICAL_AVAILABLE_BYTES,
+        })
+      : undefined;
   const alerts: HostMetricsDerived["alerts"] = [];
   if (disk.level !== "healthy") {
     alerts.push({
@@ -537,18 +578,30 @@ function computeDerived(
       message: metadata.reason ?? "metadata pressure is elevated",
     });
   }
+  if (sharedScratch && sharedScratch.level !== "healthy") {
+    alerts.push({
+      kind: "shared_scratch",
+      level: sharedScratch.level,
+      message: sharedScratch.reason ?? "shared scratch pressure is elevated",
+    });
+  }
   return {
     window_minutes,
     disk,
+    ...(sharedScratch ? { shared_scratch: sharedScratch } : {}),
     metadata,
     alerts,
     admission_allowed:
       disk.level !== "critical" && metadata.level !== "critical",
     auto_grow_recommended:
       disk.level === "critical" ||
+      sharedScratch?.level === "critical" ||
       (disk.level === "warning" &&
         disk.hours_to_exhaustion != null &&
-        disk.hours_to_exhaustion <= 12),
+        disk.hours_to_exhaustion <= 12) ||
+      (sharedScratch?.level === "warning" &&
+        sharedScratch.hours_to_exhaustion != null &&
+        sharedScratch.hours_to_exhaustion <= 12),
   };
 }
 
@@ -572,6 +625,9 @@ export async function ensureProjectHostMetricsSamplesSchema(): Promise<void> {
           disk_device_total_bytes BIGINT,
           disk_device_used_bytes BIGINT,
           disk_unallocated_bytes BIGINT,
+          shared_scratch_total_bytes BIGINT,
+          shared_scratch_used_bytes BIGINT,
+          shared_scratch_available_bytes BIGINT,
           btrfs_data_total_bytes BIGINT,
           btrfs_data_used_bytes BIGINT,
           btrfs_metadata_total_bytes BIGINT,
@@ -592,6 +648,15 @@ export async function ensureProjectHostMetricsSamplesSchema(): Promise<void> {
       `);
       await pool().query(
         "CREATE INDEX IF NOT EXISTS project_host_metrics_samples_host_time_idx ON project_host_metrics_samples(host_id, collected_at DESC)",
+      );
+      await pool().query(
+        "ALTER TABLE project_host_metrics_samples ADD COLUMN IF NOT EXISTS shared_scratch_total_bytes BIGINT",
+      );
+      await pool().query(
+        "ALTER TABLE project_host_metrics_samples ADD COLUMN IF NOT EXISTS shared_scratch_used_bytes BIGINT",
+      );
+      await pool().query(
+        "ALTER TABLE project_host_metrics_samples ADD COLUMN IF NOT EXISTS shared_scratch_available_bytes BIGINT",
       );
     })().catch((err) => {
       schemaReady = undefined;
@@ -632,6 +697,9 @@ export async function recordProjectHostMetricsSample({
         disk_device_total_bytes,
         disk_device_used_bytes,
         disk_unallocated_bytes,
+        shared_scratch_total_bytes,
+        shared_scratch_used_bytes,
+        shared_scratch_available_bytes,
         btrfs_data_total_bytes,
         btrfs_data_used_bytes,
         btrfs_metadata_total_bytes,
@@ -649,12 +717,12 @@ export async function recordProjectHostMetricsSample({
         stopping_project_count
       )
       SELECT
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33
       WHERE NOT EXISTS (
         SELECT 1
         FROM project_host_metrics_samples
         WHERE host_id = $1
-          AND collected_at >= $2::timestamptz - ($31::bigint * INTERVAL '1 millisecond')
+          AND collected_at >= $2::timestamptz - ($34::bigint * INTERVAL '1 millisecond')
       )
     `,
     [
@@ -673,6 +741,9 @@ export async function recordProjectHostMetricsSample({
       metrics.disk_device_total_bytes ?? null,
       metrics.disk_device_used_bytes ?? null,
       metrics.disk_unallocated_bytes ?? null,
+      metrics.shared_scratch_total_bytes ?? null,
+      metrics.shared_scratch_used_bytes ?? null,
+      metrics.shared_scratch_available_bytes ?? null,
       metrics.btrfs_data_total_bytes ?? null,
       metrics.btrfs_data_used_bytes ?? null,
       metrics.btrfs_metadata_total_bytes ?? null,

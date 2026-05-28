@@ -355,6 +355,15 @@ const buildBasePayload = (
     bucket: vals.bucket,
   };
   const mergedMetadata = { ...baseMetadata, ...(machine.metadata ?? {}) };
+  if (vals.shared_scratch_auto_grow_enabled) {
+    mergedMetadata.shared_scratch_auto_grow = {
+      enabled: true,
+      max_disk_gb: vals.shared_scratch_auto_grow_max_disk_gb,
+      growth_step_gb: vals.shared_scratch_auto_grow_growth_step_gb,
+      min_grow_interval_minutes:
+        vals.shared_scratch_auto_grow_min_grow_interval_minutes,
+    };
+  }
   const disk_gb =
     typeof vals.disk_gb === "number"
       ? vals.disk_gb

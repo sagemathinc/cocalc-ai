@@ -29,7 +29,9 @@ import {
   SortableItem,
   SortableList,
 } from "@cocalc/frontend/components/sortable-list";
+import { labels } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { confirmRemoveMyselfFromProject } from "@cocalc/frontend/projects/remove-myself";
 
 import { tab_to_path } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -155,6 +157,7 @@ export function VerticalFixedTabs({
   } = useProjectContext();
   const accountStoreReady = useAccountStoreReady();
   const { showActBarLabels } = useAppContext();
+  const account_id = useTypedRedux("account", "account_id");
   const active_flyout = useTypedRedux({ project_id }, "flyout");
   const parent = useRef<HTMLDivElement>(null);
   const gap = useRef<HTMLDivElement>(null);
@@ -168,6 +171,7 @@ export function VerticalFixedTabs({
     liteMode: lite,
   });
   const viewer = projectAccess?.role === "viewer";
+  const projectLabel = intl.formatMessage(labels.project);
   const { visible: pinnedTabs, overflow: overflowTabs } = useMemo(() => {
     const filteredOrder = filterTabsForProjectAccess({
       names: tabOrder,
@@ -338,6 +342,20 @@ export function VerticalFixedTabs({
       onTabClick: openOverflowTab,
       railToggleLabel: "Hide activity bar",
       railToggleIcon: "vertical-right-outlined",
+      removeSelf:
+        viewer && project_id != null
+          ? {
+              onClick: () => {
+                setMoreOpen(false);
+                confirmRemoveMyselfFromProject({
+                  project_id,
+                  account_id,
+                  projectLabel,
+                  projectLabelLower: projectLabel.toLowerCase(),
+                });
+              },
+            }
+          : undefined,
       sectionKeyPrefix: "overflow",
       showActBarLabels: showActBarLabels === true,
     });
@@ -461,6 +479,7 @@ export function HiddenActivityBarLauncher() {
   const { actions, project_id, projectAccess } = useProjectContext();
   const accountStoreReady = useAccountStoreReady();
   const { showActBarLabels } = useAppContext();
+  const account_id = useTypedRedux("account", "account_id");
   const [menuOpen, setMenuOpen] = useState(false);
   const [showCustomize, setShowCustomize] = useState(false);
   const { order: tabOrder, hidden: hiddenTabs } = useActivityBarPreferences({
@@ -469,6 +488,7 @@ export function HiddenActivityBarLauncher() {
   if (!accountStoreReady) return null;
 
   const viewer = projectAccess?.role === "viewer";
+  const projectLabel = intl.formatMessage(labels.project);
   const items = createRailMenuItems({
     intl,
     names: filterTabsForProjectAccess({ names: tabOrder, viewer }),
@@ -490,6 +510,20 @@ export function HiddenActivityBarLauncher() {
     },
     railToggleLabel: "Show activity bar",
     railToggleIcon: "vertical-left-outlined",
+    removeSelf:
+      viewer && project_id != null
+        ? {
+            onClick: () => {
+              setMenuOpen(false);
+              confirmRemoveMyselfFromProject({
+                project_id,
+                account_id,
+                projectLabel,
+                projectLabelLower: projectLabel.toLowerCase(),
+              });
+            },
+          }
+        : undefined,
     sectionKeyPrefix: "launcher",
     showActBarLabels: showActBarLabels === true,
   });
@@ -564,6 +598,9 @@ function createRailMenuItems(opts: {
   ) => void;
   railToggleLabel: string;
   railToggleIcon: IconName;
+  removeSelf?: {
+    onClick: () => void;
+  };
   sectionKeyPrefix: string;
   showActBarLabels: boolean;
 }): NonNullable<MenuProps["items"]> {
@@ -576,6 +613,7 @@ function createRailMenuItems(opts: {
     onTabClick,
     railToggleLabel,
     railToggleIcon,
+    removeSelf,
     sectionKeyPrefix,
     showActBarLabels,
   } = opts;
@@ -589,6 +627,28 @@ function createRailMenuItems(opts: {
   }));
   if (names.length > 0) {
     items.push({ key: `divider-${sectionKeyPrefix}`, type: "divider" });
+  }
+  if (removeSelf != null) {
+    items.push({
+      key: `${sectionKeyPrefix}-project-access`,
+      type: "group",
+      label: "Project access",
+      children: [
+        {
+          key: `${sectionKeyPrefix}:remove-self`,
+          label: renderMenuLabel(
+            <Icon name="user-times" />,
+            "Remove Myself as Collaborator",
+          ),
+          danger: true,
+          onClick: removeSelf.onClick,
+        },
+      ],
+    });
+    items.push({
+      key: `divider-${sectionKeyPrefix}-project-access`,
+      type: "divider",
+    });
   }
   items.push({
     key: `${sectionKeyPrefix}-rail-controls`,
