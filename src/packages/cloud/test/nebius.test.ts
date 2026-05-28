@@ -88,7 +88,18 @@ describe("NebiusProvider", () => {
     instancesUpdateMock.mockReset();
     disksListMock.mockResolvedValue({ items: [], nextPageToken: "" });
     disksGetMock.mockResolvedValue({
-      metadata: { id: "disk-id", name: "disk-name" },
+      metadata: {
+        id: "disk-id",
+        parentId: "project-1",
+        name: "disk-name",
+        resourceVersion: 7,
+      },
+      spec: {
+        size: {
+          $case: "sizeGibibytes",
+          sizeGibibytes: 1000,
+        },
+      },
     });
     disksCreateMock
       .mockResolvedValueOnce(diskOp("boot-disk"))
@@ -447,16 +458,32 @@ describe("NebiusProvider", () => {
       expect.objectContaining({ id: "scratch-disk" }),
     );
     expect(disksUpdateMock.mock.calls[0][0].metadata.id).toBe("scratch-disk");
+    expect(disksUpdateMock.mock.calls[0][0].metadata.parentId).toBe(
+      "project-1",
+    );
     expect(disksUpdateMock.mock.calls[0][0].metadata.name).toBe("disk-name");
+    expect(
+      disksUpdateMock.mock.calls[0][0].metadata.resourceVersion.toNumber(),
+    ).toBe(7);
     expect(
       disksUpdateMock.mock.calls[0][0].spec.size.sizeGibibytes.toNumber(),
     ).toBe(186);
   });
 
   it("resizes shared scratch disks using the persisted scratch disk name", async () => {
-    disksGetMock.mockResolvedValueOnce({
-      metadata: { id: "scratch-disk" },
-    });
+    disksGetMock
+      .mockResolvedValueOnce({
+        metadata: { id: "scratch-disk", parentId: "project-1" },
+      })
+      .mockResolvedValueOnce({
+        metadata: { id: "scratch-disk", parentId: "project-1" },
+        spec: {
+          size: {
+            $case: "sizeGibibytes",
+            sizeGibibytes: 279,
+          },
+        },
+      });
     const provider = new NebiusProvider();
     await provider.resizeSharedScratchDisk(
       {
@@ -489,6 +516,55 @@ describe("NebiusProvider", () => {
     expect(
       disksUpdateMock.mock.calls[0][0].spec.size.sizeGibibytes.toNumber(),
     ).toBe(279);
+  });
+
+  it("rejects shared scratch resize when provider size is unchanged", async () => {
+    disksGetMock
+      .mockResolvedValueOnce({
+        metadata: {
+          id: "scratch-disk",
+          parentId: "project-1",
+          name: "scratch-name",
+        },
+      })
+      .mockResolvedValueOnce({
+        metadata: {
+          id: "scratch-disk",
+          parentId: "project-1",
+          name: "scratch-name",
+        },
+        spec: {
+          size: {
+            $case: "sizeGibibytes",
+            sizeGibibytes: 93,
+          },
+        },
+      });
+    const provider = new NebiusProvider();
+    await expect(
+      provider.resizeSharedScratchDisk(
+        {
+          provider: "nebius",
+          instance_id: "instance-1",
+          ssh_user: "ubuntu",
+          metadata: {
+            diskIds: {
+              scratch: "scratch-disk",
+            },
+            scratchDiskTypeCode: DiskSpec_DiskType.NETWORK_SSD.code,
+          },
+        },
+        186,
+        {
+          parentId: "project-1",
+          serviceAccountId: "svc-1",
+          publicKeyId: "pub-1",
+          privateKeyPem: "key",
+          sshPublicKey: "ssh-ed25519 AAAA",
+          subnetId: "subnet-1",
+        },
+      ),
+    ).rejects.toThrow(/disk resize did not take effect/);
   });
 
   it("creates and attaches shared scratch to an existing instance", async () => {

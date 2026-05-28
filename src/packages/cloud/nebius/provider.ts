@@ -118,6 +118,32 @@ function diskTypeFromCode(code?: number): DiskSpec_DiskType {
   return DiskSpec_DiskType.fromNumber(code);
 }
 
+function numericLong(value: unknown): number | undefined {
+  if (value == null) return undefined;
+  const converted =
+    typeof (value as { toNumber?: unknown }).toNumber === "function"
+      ? (value as { toNumber: () => number }).toNumber()
+      : Number(value);
+  if (!Number.isFinite(converted)) return undefined;
+  return converted;
+}
+
+function diskSizeGib(disk: any): number | undefined {
+  const size = disk?.spec?.size;
+  if (!size) return undefined;
+  const value =
+    numericLong(size.sizeGibibytes) ??
+    (size.sizeMebibytes != null
+      ? numericLong(size.sizeMebibytes)! / 1024
+      : size.sizeKibibytes != null
+        ? numericLong(size.sizeKibibytes)! / 1024 / 1024
+        : size.sizeBytes != null
+          ? numericLong(size.sizeBytes)! / 1024 / 1024 / 1024
+          : undefined);
+  if (!Number.isFinite(value)) return undefined;
+  return value;
+}
+
 async function updateDiskSize({
   client,
   diskId,
@@ -133,11 +159,16 @@ async function updateDiskSize({
 }) {
   const disk = await client.disks.get(GetDiskRequest.create({ id: diskId }));
   const name = `${disk?.metadata?.name ?? fallbackName ?? ""}`.trim();
+  const parentId = `${disk?.metadata?.parentId ?? ""}`.trim();
   const op = await client.disks.update(
     UpdateDiskRequest.create({
       metadata: ResourceMetadata.create({
         id: diskId,
+        ...(parentId ? { parentId } : {}),
         ...(name ? { name } : {}),
+        ...(disk?.metadata?.resourceVersion != null
+          ? { resourceVersion: disk.metadata.resourceVersion }
+          : {}),
       }),
       spec: DiskSpec.create({
         type: diskType,
@@ -150,6 +181,13 @@ async function updateDiskSize({
     }),
   );
   await op.wait();
+  const updated = await client.disks.get(GetDiskRequest.create({ id: diskId }));
+  const actualSizeGib = diskSizeGib(updated);
+  if (actualSizeGib != null && actualSizeGib < sizeGib) {
+    throw new Error(
+      `nebius: disk resize did not take effect for ${diskId}; requested ${sizeGib} GiB, provider reports ${actualSizeGib} GiB`,
+    );
+  }
 }
 
 function normalizeIp(value?: string | null): string | undefined {

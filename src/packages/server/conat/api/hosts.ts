@@ -6284,7 +6284,7 @@ export async function updateHostMachine({
         await client.growSharedScratch({ disk_gb: sharedScratchResizeGb });
       } catch (err) {
         resizeWarning =
-          "shared scratch disk resized in cloud, but online filesystem resize failed; run sudo /usr/local/sbin/cocalc-runtime-storage grow-shared-scratch";
+          "shared scratch disk resized in cloud, but online filesystem resize did not complete; retry reconcile or restart the host if the provider has not exposed the new block size yet";
         reconcileSharedScratchMount = true;
         console.warn("growSharedScratch failed after disk resize", err);
       }
