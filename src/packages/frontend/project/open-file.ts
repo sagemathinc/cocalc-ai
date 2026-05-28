@@ -681,6 +681,7 @@ async function file_exists(project_id: string, path: string): Promise<boolean> {
 export type OpenPhase =
   | "open_start"
   | "optimistic_ready"
+  | "read_only_reload"
   | "sync_ready"
   | "handoff_done"
   | "handoff_differs";
