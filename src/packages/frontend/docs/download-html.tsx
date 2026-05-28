@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import type { DocsAccess, DocsEntryImage } from "@cocalc/docs";
 import { listDocsEntries } from "@cocalc/docs";
-import { BASE_URL } from "@cocalc/frontend/misc";
+import { BASE_URL } from "@cocalc/frontend/misc/base-url";
 import { resource_links_string } from "@cocalc/frontend/misc/resource-links";
 
 import { DocsPrintContent } from "./browser";
