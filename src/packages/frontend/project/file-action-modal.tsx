@@ -60,7 +60,7 @@ export default function FileActionModal() {
         project_id={project_id}
         actions={actions}
         onUserFilesystemChange={notifyUserFilesystemChange}
-        readOnlySource={projectAccess.role === "viewer"}
+        readOnlySource={projectAccess?.role === "viewer"}
       />
     </Modal>
   );
