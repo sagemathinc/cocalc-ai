@@ -50,6 +50,7 @@ export class ChatMessageCache extends EventEmitter {
     this.messagesById = produce(this.messagesById, () => {});
     this.messagesByDate = produce(this.messagesByDate, () => {});
     this.syncdb.on("change", this.handleChange);
+    this.syncdb.on("reload", this.handleReload);
     if (
       this.syncdb.opts.ignoreInitialChanges ||
       this.syncdb.get_state() === "ready"
@@ -120,6 +121,7 @@ export class ChatMessageCache extends EventEmitter {
 
   dispose() {
     this.syncdb.off("change", this.handleChange);
+    this.syncdb.off("reload", this.handleReload);
     this.messagesById = new Map();
     this.messagesByDate = new Map();
     this.messageIdIndex = new Map();
@@ -560,6 +562,10 @@ export class ChatMessageCache extends EventEmitter {
     });
     this.messagesByDate = nextByDate;
     this.bumpVersion();
+  };
+
+  private handleReload = () => {
+    void this.rebuildFromDoc();
   };
 }
 

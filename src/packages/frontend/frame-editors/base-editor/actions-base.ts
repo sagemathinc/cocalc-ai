@@ -223,6 +223,7 @@ export interface CodeEditorState {
   status: string;
   rtc_status?: "loading" | "live" | "error" | "reconnecting";
   read_only: boolean;
+  read_only_preview?: boolean;
   settings: Map<string, any>; // settings specific to this file (but **not** this user or browser), e.g., spell check language.
   complete: Map<string, any>;
   derived_file_types: iSet<string>;
@@ -559,6 +560,7 @@ export class BaseEditorActions<
     this.setInitialState();
     this.setState({
       read_only: true,
+      read_only_preview: true,
       status: "Loading read-only preview...",
       rtc_status: "loading",
     });
@@ -567,6 +569,19 @@ export class BaseEditorActions<
       (this as any)._init2();
     }
 
+    void this.loadReadOnlyPreview();
+  }
+
+  public reloadReadOnlyPreview(): void {
+    if (!this.readOnlyPreview) {
+      return;
+    }
+    void this.loadReadOnlyPreview({ reload: true });
+  }
+
+  private async loadReadOnlyPreview({
+    reload = false,
+  }: { reload?: boolean } = {}): Promise<void> {
     const fs = this._get_project_actions()?.fs?.();
     if (typeof fs?.readFile !== "function") {
       this.setState({ rtc_status: "error" });
@@ -576,47 +591,70 @@ export class BaseEditorActions<
       return;
     }
 
-    void (async () => {
-      try {
-        const raw = await fs.readFile(this.path, "utf8");
-        if (this.isClosed()) return;
-        const value =
-          typeof raw === "string"
-            ? raw
-            : ((raw as any)?.toString?.("utf8") ?? `${raw ?? ""}`);
-        this._syncstring.from_str(value);
-        this._syncstring_init = true;
-        this._syncstring_metadata();
-        if (this.doctype === "syncstring") {
-          this._init_settings();
-          this._init_syncstring_value();
-          this.afterSyncReady();
-          this._syncstring.emit("change");
-        }
+    this.setState({
+      read_only: true,
+      read_only_preview: true,
+      status: reload
+        ? "Reloading read-only preview..."
+        : "Loading read-only preview...",
+      rtc_status: "loading",
+    });
+
+    try {
+      const raw = await fs.readFile(this.path, "utf8");
+      if (this.isClosed()) return;
+      const value =
+        typeof raw === "string"
+          ? raw
+          : ((raw as any)?.toString?.("utf8") ?? `${raw ?? ""}`);
+      const wasReady = this._syncstring.get_state?.() === "ready";
+      this._syncstring.from_str(value);
+      this._syncstring_init = true;
+      this._syncstring_metadata();
+      if (this.doctype === "syncstring") {
+        this._init_settings();
+        this._init_syncstring_value();
+        this.afterSyncReady();
+        this._syncstring.emit("change");
+      } else if (wasReady) {
+        (this._syncstring as any).emit?.("reload");
+      }
+      if (!wasReady) {
         (this._syncstring as any).setReady?.();
-        this.setState({
-          is_loaded: true,
-          read_only: true,
-          status: "",
-          rtc_status: "live",
-        });
-        mark_open_phase(this.project_id, this.path, "optimistic_ready", {
+      }
+      this.setState({
+        is_loaded: true,
+        read_only: true,
+        read_only_preview: true,
+        status: "",
+        rtc_status: "live",
+      });
+      mark_open_phase(
+        this.project_id,
+        this.path,
+        reload ? "read_only_reload" : "optimistic_ready",
+        {
           bytes: value.length,
           read_only: true,
-        });
+        },
+      );
+      if (!reload) {
         log_opened_time(this.project_id, this.path);
-      } catch (err) {
-        if (this.isClosed()) return;
-        (this._syncstring as any).setReady?.(err as Error);
-        this.setState({
-          is_loaded: true,
-          read_only: true,
-          rtc_status: "error",
-          status: "",
-        });
-        this.topError(`Unable to load read-only preview: ${err}`);
       }
-    })();
+    } catch (err) {
+      if (this.isClosed()) return;
+      if (!reload) {
+        (this._syncstring as any).setReady?.(err as Error);
+      }
+      this.setState({
+        is_loaded: true,
+        read_only: true,
+        read_only_preview: true,
+        rtc_status: "error",
+        status: "",
+      });
+      this.topError(`Unable to load read-only preview: ${err}`);
+    }
   }
 
   private createReadOnlyPreviewSyncdoc(): unknown | undefined {

@@ -15,6 +15,7 @@ interface Props {
   has_unsaved_changes?: boolean;
   has_uncommitted_changes?: boolean;
   read_only?: boolean;
+  read_only_reload?: boolean;
   is_connecting?: boolean;
   is_sync_error?: boolean;
   is_saving?: boolean;
@@ -155,10 +156,23 @@ function statusInfo(status: SaveStatus): SaveStatusInfo {
   }
 }
 
+function reloadStatusInfo(isReloading?: boolean): SaveStatusInfo {
+  return {
+    label: isReloading ? "Reloading" : "Reload",
+    title: isReloading
+      ? "Reloading the current read-only file preview."
+      : "Reload this read-only preview from the project file.",
+    background: COLORS.ANTD_BG_BLUE_L,
+    border: COLORS.BLUE_LLL,
+    color: COLORS.BLUE_DD,
+  };
+}
+
 export function SaveButton({
   has_unsaved_changes,
   has_uncommitted_changes,
   read_only,
+  read_only_reload,
   is_connecting,
   is_sync_error,
   is_saving,
@@ -180,8 +194,11 @@ export function SaveButton({
   });
   const debouncedStatus = useDebouncedStatus(rawStatus);
   const status = useMemo(
-    () => statusInfo(rawStatus === "sync-error" ? rawStatus : debouncedStatus),
-    [rawStatus, debouncedStatus],
+    () =>
+      read_only && read_only_reload
+        ? reloadStatusInfo(is_connecting)
+        : statusInfo(rawStatus === "sync-error" ? rawStatus : debouncedStatus),
+    [is_connecting, rawStatus, read_only, read_only_reload, debouncedStatus],
   );
 
   useEffect(() => {
@@ -197,8 +214,14 @@ export function SaveButton({
 
   const icon = useMemo(
     () =>
-      showConnecting ? "spinner" : is_saving ? "arrow-circle-o-left" : "save",
-    [showConnecting, is_saving],
+      showConnecting
+        ? "spinner"
+        : read_only && read_only_reload
+          ? "refresh"
+          : is_saving
+            ? "arrow-circle-o-left"
+            : "save",
+    [showConnecting, is_saving, read_only, read_only_reload],
   );
 
   function renderStatus() {
@@ -240,7 +263,7 @@ export function SaveButton({
   return (
     <Button
       size={size}
-      disabled={read_only}
+      disabled={read_only && !read_only_reload}
       onClick={onClick}
       style={{
         whiteSpace: "nowrap",

@@ -385,4 +385,38 @@ describe("ChatMessageCache message_id index", () => {
     expect(cache.getThreadIndex().get("thread-archived")?.messageCount).toBe(2);
     cache.dispose();
   });
+
+  it("rebuilds from the current syncdb rows on read-only reload", async () => {
+    const syncdb = new MockSyncdb([
+      {
+        event: "chat",
+        sender_id: "user-1",
+        date: "2026-01-07T00:00:00.000Z",
+        message_id: "old-message",
+        thread_id: "thread-reload",
+        history: [],
+      },
+    ]);
+    const cache = new ChatMessageCache(syncdb as any);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(cache.getByMessageId("old-message")).toBeDefined();
+
+    syncdb.replaceRows([
+      {
+        event: "chat",
+        sender_id: "user-2",
+        date: "2026-01-07T00:00:01.000Z",
+        message_id: "new-message",
+        thread_id: "thread-reload",
+        history: [],
+      },
+    ]);
+    syncdb.emit("reload");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(cache.getByMessageId("old-message")).toBeUndefined();
+    expect(cache.getByMessageId("new-message")?.sender_id).toBe("user-2");
+    expect(cache.getThreadIndex().get("thread-reload")?.messageCount).toBe(1);
+    cache.dispose();
+  });
 });
