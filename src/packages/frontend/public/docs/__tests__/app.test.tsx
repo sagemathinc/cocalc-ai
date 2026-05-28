@@ -151,6 +151,9 @@ describe("public/docs", () => {
       screen.getByRole("link", { name: /Print-friendly/ }),
     ).toHaveAttribute("href", "/docs/print");
     expect(
+      screen.queryByRole("link", { name: /Continue learning/ }),
+    ).toBeNull();
+    expect(
       screen.queryByRole("link", { name: /Manage users as an admin/ }),
     ).toBeNull();
   });
