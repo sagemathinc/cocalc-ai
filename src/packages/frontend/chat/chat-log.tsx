@@ -347,6 +347,7 @@ interface Props {
     commitHash: string;
   }) => void;
   suppressInlineCodexStatusDate?: string;
+  readOnly?: boolean;
 }
 
 export function ChatLog({
@@ -375,6 +376,7 @@ export function ChatLog({
   onNotifyOnTurnFinishChange,
   onOpenGitBrowser,
   suppressInlineCodexStatusDate,
+  readOnly = false,
 }: Props) {
   const singleThreadView = selectedThread != null;
   const messages = messagesProp ?? new Map();
@@ -572,15 +574,18 @@ export function ChatLog({
           anyOverlayOpen,
           onOpenGitBrowser,
           suppressInlineCodexStatusDate,
+          readOnly,
         }}
       />
-      <Composing
-        actions={actions}
-        projectId={project_id}
-        path={path}
-        accountId={account_id}
-        userMap={user_map}
-      />
+      {!readOnly ? (
+        <Composing
+          actions={actions}
+          projectId={project_id}
+          path={path}
+          accountId={account_id}
+          userMap={user_map}
+        />
+      ) : null}
     </div>
   );
 }
@@ -770,6 +775,7 @@ export function MessageList({
   anyOverlayOpen = false,
   onOpenGitBrowser,
   suppressInlineCodexStatusDate,
+  readOnly = false,
 }: {
   messages: ChatMessages;
   account_id: string;
@@ -811,6 +817,7 @@ export function MessageList({
     commitHash: string;
   }) => void;
   suppressInlineCodexStatusDate?: string;
+  readOnly?: boolean;
 }) {
   const virtuosoHeightsRef = useRef<{ [index: number]: number }>({});
   const listContainerRef = useRef<HTMLDivElement | null>(null);
@@ -1240,6 +1247,7 @@ export function MessageList({
                 : undefined
             }
             allowReply={
+              !readOnly &&
               !singleThreadView &&
               (() => {
                 const next = getMessageAtDate({
@@ -1256,7 +1264,7 @@ export function MessageList({
             activitySteers={activitySteers}
             expandedCodexActivity={expandedCodexActivity}
             allowAsyncCompletedCodexActivityLoad={
-              allowAsyncCompletedCodexActivityLoad
+              !readOnly && allowAsyncCompletedCodexActivityLoad
             }
             cachedCodexActivityBlocks={cachedCodexActivityBlocks}
             onCachedCodexActivityBlocksChange={
@@ -1321,8 +1329,9 @@ export function MessageList({
             onNotifyOnTurnFinishChange={
               canNotifyForRunningTurn ? onNotifyOnTurnFinishChange : undefined
             }
-            onOpenGitBrowser={onOpenGitBrowser}
+            onOpenGitBrowser={readOnly ? undefined : onOpenGitBrowser}
             suppressInlineCodexStatus={suppressInlineCodexStatusDate === date}
+            read_only={readOnly}
           />
         </DivTempHeight>
       </div>

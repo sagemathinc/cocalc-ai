@@ -7,7 +7,7 @@ TESTS: See packages/test/project/listing/
 */
 
 import useAsyncEffect from "use-async-effect";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { throttle } from "lodash";
 import useCounter from "@cocalc/frontend/app-framework/counter-hook";
 import LRU from "lru-cache";
@@ -138,12 +138,22 @@ export default function useFiles({
     path: string;
     error: ConatErrorLike | null;
   }>({ path, error: null });
-  const { val: counter, inc: refresh } = useCounter();
+  const { val: counter, inc: refreshCounter } = useCounter();
   const listingRef = useRef<any>(null);
   const throttledUpdateRef = useRef<undefined | { cancel?: () => void }>(
     undefined,
   );
   const requestId = useRef(0);
+  const refresh = useCallback(() => {
+    if (cacheId != null) {
+      clearCached({ cacheId, path });
+    }
+    setErrorState((cur) =>
+      cur.path === path && cur.error == null ? cur : { path, error: null },
+    );
+    setFilesState({ path, files: null });
+    refreshCounter();
+  }, [cacheId, path, refreshCounter]);
 
   useAsyncEffect(
     async () => {
@@ -270,7 +280,7 @@ export default function useFiles({
       listingRef.current?.close();
       delete listingRef.current;
     },
-    [fs, path, counter, watch],
+    [cacheId, fs, path, counter, throttleUpdate, watch],
   );
 
   const files = filesState.path === path ? filesState.files : null;
@@ -281,6 +291,13 @@ export default function useFiles({
 
 function key(cacheId: JSONValue, path: string) {
   return JSON.stringify({ cacheId, path });
+}
+
+function clearCached({ cacheId, path }: { cacheId: JSONValue; path: string }) {
+  const k = key(cacheId, path);
+  cache.delete(k);
+  failed.delete(k);
+  notifyCacheListeners();
 }
 
 function isListingTimeoutError(err: unknown): boolean {
@@ -350,7 +367,7 @@ async function ensureCached({
     return;
   }
   try {
-    const { files } = await fs.listing(path);
+    const { files } = await getListingSnapshot({ fs, path });
     if (files) {
       cache.set(k, files);
       notifyCacheListeners();

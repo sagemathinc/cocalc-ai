@@ -212,6 +212,7 @@ function canUseFrameEditorReadOnlyPreview(path: string, ext?: string): boolean {
   const resolvedExt = `${ext ?? misc.filename_extension(path) ?? ""}`
     .trim()
     .toLowerCase();
+  if (resolvedExt === "chat" || resolvedExt === "sage-chat") return true;
   if (PUBLIC_RENDERER_ONLY_EXTENSIONS.has(resolvedExt)) return false;
   if (
     isImage(resolvedExt) ||
