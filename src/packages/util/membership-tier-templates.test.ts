@@ -116,10 +116,16 @@ describe("applyMembershipTierTemplateFallbacks", () => {
   });
 
   it("defines hidden basic and standard individual membership templates", () => {
+    const free = applyMembershipTierTemplateFallbacks({ id: "free" });
     const basic = applyMembershipTierTemplateFallbacks({ id: "basic" });
     const standard = applyMembershipTierTemplateFallbacks({ id: "standard" });
 
+    expect(free.store_description).toMatch(/explore the platform/);
+    expect(free.store_highlights).toEqual([]);
+
     expect(basic.label).toBe("Basic");
+    expect(basic.store_description).toMatch(/occasional light use/);
+    expect(basic.store_highlights).toContain("More shared resources");
     expect(basic.store_visible).toBe(false);
     expect(basic.course_store_visible).toBe(false);
     expect(basic.price_monthly).toBe(8);
@@ -133,6 +139,10 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     ).toBe(3);
 
     expect(standard.label).toBe("Standard");
+    expect(standard.store_description).toMatch(/everyday work/);
+    expect(standard.store_highlights).toContain(
+      "Dedicated project host access, including GPU",
+    );
     expect(standard.store_visible).toBe(false);
     expect(standard.course_store_visible).toBe(false);
     expect(standard.price_monthly).toBe(25);

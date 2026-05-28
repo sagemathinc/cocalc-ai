@@ -349,6 +349,11 @@ describe("PublicApp", () => {
               memory: 8000,
               mintime: 3600,
             },
+            store_description: "A solid choice for everyday work.",
+            store_highlights: [
+              "Stronger shared resources",
+              "Dedicated project host access",
+            ],
             store_visible: true,
           },
         ],
@@ -367,6 +372,10 @@ describe("PublicApp", () => {
       }),
     ).not.toBeNull();
     expect(screen.getByText("Member")).not.toBeNull();
+    expect(
+      screen.getByText("A solid choice for everyday work."),
+    ).not.toBeNull();
+    expect(screen.getByText("Dedicated project host access")).not.toBeNull();
     expect(screen.getByText("$18.75")).not.toBeNull();
     expect(screen.getByText("/ mo")).not.toBeNull();
     expect(screen.getByText("Billed annually, saving 25%")).not.toBeNull();

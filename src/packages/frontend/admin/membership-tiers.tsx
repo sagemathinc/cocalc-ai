@@ -50,6 +50,8 @@ interface Tier {
   id: string;
   label?: string;
   store_visible?: boolean;
+  store_description?: string;
+  store_highlights?: string[];
   course_store_visible?: boolean;
   priority?: number;
   price_monthly?: number;
@@ -99,6 +101,29 @@ function normalizedOptionalNumber(value: unknown): number | undefined {
     : undefined;
 }
 
+function normalizedOptionalString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+function parseStoreHighlightsText(value: unknown): string[] {
+  if (typeof value !== "string") return [];
+  const highlights = value
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return highlights;
+}
+
+function storeHighlightsToText(value: unknown): string {
+  return Array.isArray(value)
+    ? value
+        .filter((item): item is string => typeof item === "string")
+        .join("\n")
+    : "";
+}
+
 function bytesToGigabytes(value: unknown): number | undefined {
   const bytes = normalizedOptionalNumber(value);
   return bytes == null ? undefined : bytes / BYTES_PER_GB;
@@ -143,6 +168,8 @@ function useMembershipTiers() {
             id: "*",
             label: null,
             store_visible: null,
+            store_description: null,
+            store_highlights: null,
             course_store_visible: null,
             priority: null,
             price_monthly: null,
@@ -194,6 +221,7 @@ function useMembershipTiers() {
     if (editing != null) {
       form.setFieldsValue({
         ...editing,
+        store_highlights_text: storeHighlightsToText(editing.store_highlights),
         project_defaults: editing.project_defaults ?? {},
         ai_limits: editing.ai_limits ?? {},
         features: editing.features ?? {},
@@ -391,12 +419,18 @@ function useMembershipTiers() {
           ai_limits,
           features,
           usage_limits,
+          store_description: normalizedOptionalString(values.store_description),
+          store_highlights: parseStoreHighlightsText(
+            values.store_highlights_text,
+          ),
           disabled: !values.active,
         },
         [
           "id",
           "label",
           "store_visible",
+          "store_description",
+          "store_highlights",
           "course_store_visible",
           "priority",
           "price_monthly",
@@ -493,6 +527,8 @@ function useMembershipTiers() {
       id: "",
       label: "",
       store_visible: false,
+      store_description: "",
+      store_highlights: [],
       course_store_visible: false,
       priority: 0,
       trial_days: 0,
@@ -575,6 +611,7 @@ export function MembershipTiers() {
       const template = TIER_TEMPLATES[key];
       form.setFieldsValue({
         ...template,
+        store_highlights_text: storeHighlightsToText(template.store_highlights),
         project_defaults: template.project_defaults ?? {},
         ai_limits: template.ai_limits ?? {},
         features: (template as { features?: unknown }).features ?? {},
@@ -630,6 +667,20 @@ export function MembershipTiers() {
             valuePropName="checked"
           >
             <Checkbox>Show in store</Checkbox>
+          </Form.Item>
+          <Form.Item
+            name="store_description"
+            label="Store description"
+            extra="Short public sentence shown on pricing/store cards. Leave blank to use the built-in template default."
+          >
+            <Input.TextArea rows={2} />
+          </Form.Item>
+          <Form.Item
+            name="store_highlights_text"
+            label="Store highlights"
+            extra="Optional public bullet points, one short item per line. Leave blank to show no bullets."
+          >
+            <Input.TextArea rows={4} />
           </Form.Item>
           <Form.Item
             name="course_store_visible"

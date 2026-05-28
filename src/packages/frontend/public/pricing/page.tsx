@@ -18,10 +18,7 @@ import {
   Typography,
 } from "antd";
 
-import {
-  MembershipTierBenefits,
-  type MembershipTierWithPresentation,
-} from "@cocalc/frontend/account/membership-tier-benefits";
+import type { MembershipTierWithPresentation } from "@cocalc/frontend/account/membership-tier-benefits";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   PublicGrid,
@@ -42,6 +39,8 @@ export interface PublicMembershipTier extends MembershipTierWithPresentation {
   trial_days?: number;
   priority?: number;
   store_visible?: boolean;
+  store_description?: string;
+  store_highlights?: readonly string[];
 }
 
 function appPath(path: string): string {
@@ -239,9 +238,33 @@ function PricingTierPayment({
 }
 
 function PricingTierBody({ tier }: { tier: PublicMembershipTier }) {
+  const { token } = theme.useToken();
+  const description =
+    tier.store_description?.trim() || tier.presentation?.tagline;
+  const configuredHighlights = Array.isArray(tier.store_highlights)
+    ? tier.store_highlights.filter(
+        (item): item is string =>
+          typeof item === "string" && item.trim() !== "",
+      )
+    : [];
+
   return (
     <Flex vertical gap="middle">
-      <MembershipTierBenefits compact showBilling={false} tier={tier} />
+      {description ? (
+        <Paragraph style={{ margin: 0 }}>{description}</Paragraph>
+      ) : null}
+      {configuredHighlights.length > 0 ? (
+        <ul
+          style={{
+            margin: 0,
+            paddingInlineStart: token.paddingLG,
+          }}
+        >
+          {configuredHighlights.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      ) : null}
     </Flex>
   );
 }

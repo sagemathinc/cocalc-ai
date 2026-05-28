@@ -17,6 +17,66 @@ function quotaTemplate(overrides: Record<string, number>) {
 
 const MIN_AI_LIMIT = 50;
 
+const STORE_MARKETING = {
+  free: {
+    store_description:
+      "Start using CoCalc with just enough resources to explore the platform and do basic work.",
+    store_highlights: [],
+  },
+  basic: {
+    store_description: "For occasional light use.",
+    store_highlights: [
+      "More shared resources",
+      "Access better shared hosts",
+      "Modest included AI usage",
+    ],
+  },
+  student: {
+    store_description:
+      "A term-length membership for students who need course access without a recurring subscription.",
+    store_highlights: [
+      "One-time course payment",
+      "Resources for class projects",
+      "Access throughout the academic term",
+    ],
+  },
+  standard: {
+    store_description: "A solid choice for everyday work.",
+    store_highlights: [
+      "Stronger shared resources",
+      "Dedicated project host access, including GPU",
+      "Larger included AI allowance",
+    ],
+  },
+  instructor: {
+    store_description:
+      "For instructors managing courses, larger classes, and many collaborators.",
+    store_highlights: [
+      "Higher project and storage limits",
+      "Course-scale invitation limits",
+      "More room for teaching workflows",
+    ],
+  },
+  researcher: {
+    store_description:
+      "For research workflows that need more compute headroom, storage, and custom images.",
+    store_highlights: [
+      "Higher compute and storage limits",
+      "Larger custom RootFS image allowance",
+      "Advanced OCI RootFS image import",
+    ],
+  },
+  pro: {
+    store_description:
+      "For advanced users and teams working on demanding projects.",
+    store_highlights: [
+      "Best shared resources",
+      "Run CoCalc Launchpad wherever you want to stay in full control",
+      "Largest included AI allowance",
+    ],
+  },
+} as const;
+
 function usageLimitsTemplate(
   shared_compute_priority: number,
   max_sponsored_running_projects: number,
@@ -162,6 +222,7 @@ export const TIER_TEMPLATES = {
   free: {
     id: "free",
     label: "Free",
+    ...STORE_MARKETING.free,
     store_visible: false,
     course_store_visible: false,
     price_monthly: 0,
@@ -224,6 +285,7 @@ export const TIER_TEMPLATES = {
   student: {
     id: "student",
     label: "Student",
+    ...STORE_MARKETING.student,
     store_visible: false,
     course_store_visible: true,
     price_monthly: 8,
@@ -288,6 +350,7 @@ export const TIER_TEMPLATES = {
   basic: {
     id: "basic",
     label: "Basic",
+    ...STORE_MARKETING.basic,
     store_visible: false,
     course_store_visible: false,
     price_monthly: 8,
@@ -353,6 +416,7 @@ export const TIER_TEMPLATES = {
   member: {
     id: "member",
     label: "Member",
+    ...STORE_MARKETING.standard,
     store_visible: true,
     course_store_visible: false,
     priority: TEMPLATE_PRIORITY.member,
@@ -420,6 +484,7 @@ export const TIER_TEMPLATES = {
   standard: {
     id: "standard",
     label: "Standard",
+    ...STORE_MARKETING.standard,
     store_visible: false,
     course_store_visible: false,
     priority: TEMPLATE_PRIORITY.standard,
@@ -487,6 +552,7 @@ export const TIER_TEMPLATES = {
   instructor: {
     id: "instructor",
     label: "Instructor",
+    ...STORE_MARKETING.instructor,
     store_visible: true,
     course_store_visible: false,
     priority: TEMPLATE_PRIORITY.instructor,
@@ -555,6 +621,7 @@ export const TIER_TEMPLATES = {
   researcher: {
     id: "researcher",
     label: "Researcher",
+    ...STORE_MARKETING.researcher,
     store_visible: false,
     course_store_visible: false,
     priority: TEMPLATE_PRIORITY.researcher,
@@ -623,6 +690,7 @@ export const TIER_TEMPLATES = {
   pro: {
     id: "pro",
     label: "Pro",
+    ...STORE_MARKETING.pro,
     store_visible: true,
     course_store_visible: false,
     priority: TEMPLATE_PRIORITY.pro,
@@ -699,6 +767,8 @@ type TierTemplateFields = {
   id?: string;
   label?: string;
   store_visible?: boolean;
+  store_description?: string;
+  store_highlights?: readonly string[];
   course_store_visible?: boolean;
   course_price?: number;
   course_duration_days?: number;
@@ -743,6 +813,13 @@ export function applyMembershipTierTemplateFallbacks<
     ...tier,
     label: tier.label ?? template.label,
     store_visible: tier.store_visible ?? template.store_visible,
+    store_description:
+      tier.store_description ?? templateFields.store_description,
+    store_highlights:
+      tier.store_highlights ??
+      (templateFields.store_highlights == null
+        ? undefined
+        : [...templateFields.store_highlights]),
     course_store_visible:
       tier.course_store_visible ?? template.course_store_visible,
     course_price: tier.course_price ?? template.course_price,

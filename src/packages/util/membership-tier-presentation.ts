@@ -12,6 +12,8 @@ export interface MembershipTierPresentationInput {
   price_monthly?: unknown;
   price_yearly?: unknown;
   trial_days?: unknown;
+  store_description?: string;
+  store_highlights?: readonly string[];
   course_price?: unknown;
   course_duration_days?: unknown;
   course_grace_days?: unknown;
