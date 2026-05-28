@@ -41,6 +41,23 @@ describe("DocsBrowser", () => {
     expect(onSelectedEntryChange).toHaveBeenCalledWith(undefined);
   });
 
+  it("shows a compact table of contents and opens pages from it", () => {
+    const entry = getDocsEntry("terminal/use-terminal");
+    if (entry == null) throw new Error("missing terminal docs entry");
+    const onSelectedEntryChange = jest.fn();
+
+    render(<DocsBrowser onSelectedEntryChange={onSelectedEntryChange} />);
+
+    expect(screen.getByText("Table of contents")).toBeTruthy();
+
+    const tocButton = screen.getAllByText(entry.title)[0].closest("button");
+    if (tocButton == null) throw new Error("missing table of contents button");
+    fireEvent.click(tocButton);
+
+    expect(onSelectedEntryChange).toHaveBeenCalledWith(entry);
+    expect(screen.getByRole("heading", { name: entry.title })).toBeTruthy();
+  });
+
   it("navigates linearly within the current docs category", () => {
     const allEntries = listDocsEntries();
     const entry = allEntries.find(

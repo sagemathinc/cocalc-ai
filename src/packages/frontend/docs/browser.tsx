@@ -4,6 +4,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 
 import {
   ArrowRightOutlined,
@@ -54,6 +55,20 @@ const DOCS_BROWSER_CATEGORY_CARD_STYLE = {
   height: "100%",
   maxHeight: 500,
   overflow: "auto",
+};
+const DOCS_BROWSER_TOC_LINK_STYLE: CSSProperties = {
+  background: "transparent",
+  border: 0,
+  color: COLORS.BLUE,
+  cursor: "pointer",
+  display: "block",
+  font: "inherit",
+  lineHeight: 1.35,
+  margin: 0,
+  padding: "2px 0",
+  textAlign: "left",
+  textDecoration: "none",
+  width: "100%",
 };
 export const DOCS_FONT_SIZE_MIN = 10;
 export const DOCS_FONT_SIZE_MAX = 32;
@@ -473,6 +488,84 @@ export function DocsCard({
   );
 }
 
+function DocsTocOverview({
+  groupedEntries,
+  layout = "page",
+  linkForEntry,
+  onSelectEntry,
+}: {
+  groupedEntries: { category: string; entries: DocsEntry[] }[];
+  layout?: DocsBrowserLayout;
+  linkForEntry?: (entry: DocsEntry) => string;
+  onSelectEntry?: (entry: DocsEntry) => void;
+}) {
+  if (groupedEntries.length === 0) return null;
+
+  return (
+    <Card
+      size="small"
+      style={DOCS_BROWSER_CARD_STYLE}
+      styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
+      title={
+        <Space>
+          <BookOutlined />
+          <span>Table of contents</span>
+        </Space>
+      }
+    >
+      <Row gutter={[18, 18]}>
+        {groupedEntries.map(({ category, entries }) => (
+          <Col key={category} lg={layout === "flyout" ? 24 : 8} md={12} xs={24}>
+            <Flex gap={6} vertical>
+              <Space size={6} wrap>
+                <Text strong>{category}</Text>
+                <Text type="secondary">({entries.length})</Text>
+              </Space>
+              <Flex gap={2} vertical>
+                {entries.map((entry, index) => {
+                  const content = (
+                    <>
+                      <Text
+                        type="secondary"
+                        style={{ display: "inline-block", width: "2.2em" }}
+                      >
+                        {index + 1}.
+                      </Text>
+                      <span>{entry.title}</span>
+                    </>
+                  );
+                  const href = linkForEntry?.(entry);
+                  if (href != null) {
+                    return (
+                      <a
+                        href={href}
+                        key={entry.id}
+                        style={DOCS_BROWSER_TOC_LINK_STYLE}
+                      >
+                        {content}
+                      </a>
+                    );
+                  }
+                  return (
+                    <button
+                      key={entry.id}
+                      onClick={() => onSelectEntry?.(entry)}
+                      style={DOCS_BROWSER_TOC_LINK_STYLE}
+                      type="button"
+                    >
+                      {content}
+                    </button>
+                  );
+                })}
+              </Flex>
+            </Flex>
+          </Col>
+        ))}
+      </Row>
+    </Card>
+  );
+}
+
 export function DocsIndexContent({
   docsAccess,
   layout = "page",
@@ -587,6 +680,12 @@ export function DocsIndexContent({
               {groupedEntries.length === 1 ? "y" : "ies"}
             </Text>
           </Space>
+          <DocsTocOverview
+            groupedEntries={groupedEntries}
+            layout={layout}
+            linkForEntry={linkForEntry}
+            onSelectEntry={onSelectEntry}
+          />
           <Row gutter={[16, 16]}>
             {groupedEntries.map(({ category, entries: categoryEntries }) => (
               <Col
