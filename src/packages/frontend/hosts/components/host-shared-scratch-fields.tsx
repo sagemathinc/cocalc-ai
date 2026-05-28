@@ -10,7 +10,9 @@ import {
   Switch,
   Typography,
 } from "antd";
+import { BookOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
+import { openAppDocs } from "@cocalc/frontend/docs/navigation";
 import type { HostProvider } from "../types";
 import type {
   HostCatalog,
@@ -21,6 +23,7 @@ import { COLORS } from "@cocalc/util/theme";
 const NEBIUS_DISK_INCREMENT_GB = 93;
 const GCP_SHARED_SCRATCH_MIN_GB = 10;
 const MONTHLY_HOURS = 730;
+const SHARED_SCRATCH_DOCS_SLUG = "hosts/shared-scratch";
 
 const DURABILITY_LABELS = {
   "single-copy": "single copy",
@@ -333,7 +336,18 @@ export const HostSharedScratchFields: React.FC<
       <Space orientation="vertical" style={{ width: "100%" }} size={8}>
         <Space style={{ justifyContent: "space-between", width: "100%" }}>
           <div>
-            <Typography.Text strong>Shared scratch disk</Typography.Text>
+            <Space size={6} wrap>
+              <Typography.Text strong>Shared scratch disk</Typography.Text>
+              <Button
+                icon={<BookOutlined />}
+                onClick={() => openAppDocs(SHARED_SCRATCH_DOCS_SLUG)}
+                size="small"
+                style={{ height: "auto", padding: 0 }}
+                type="link"
+              >
+                Docs
+              </Button>
+            </Space>
             <Typography.Text
               type="secondary"
               style={{ display: "block", fontSize: 12 }}

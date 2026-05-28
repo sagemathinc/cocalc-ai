@@ -708,6 +708,16 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
         tab: "storage",
       }),
   },
+  "hosts.scratch.open": {
+    id: "hosts.scratch.open",
+    run: ({ parameters, projectId }) =>
+      revealHostsPage({
+        actionId: "hosts.scratch.open",
+        hostId: parameters?.hostId,
+        projectId,
+        tab: "storage",
+      }),
+  },
   "hosts.logs.open": {
     id: "hosts.logs.open",
     run: ({ parameters, projectId }) =>

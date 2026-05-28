@@ -46,6 +46,7 @@ export type DocsActionId =
   | "hosts.move.open"
   | "hosts.reliability.open"
   | "hosts.runtime.open"
+  | "hosts.scratch.open"
   | "hosts.storage.open"
   | "hosts.logs.open"
   | "hosts.spot-recovery.open"
@@ -1615,6 +1616,11 @@ persistent storage, ephemeral storage, or provider-specific attached disks. Do
 not assume that files outside the project backup path, such as temporary files,
 will survive deprovision, move, or provider replacement.
 
+Shared scratch disks are a separate host-scoped storage feature. They are
+mounted at \`/scratch\` in projects on the host, shared by those projects, and
+not included in project backups or project moves. Use the **Shared scratch
+disks** docs before enabling scratch for a host with multiple users or projects.
+
 ## Growing disk
 
 For GCP and Nebius hosts, disk enlarge can be done while the host is running
@@ -1650,6 +1656,80 @@ When diagnosing storage or advising a lifecycle action:
    project backup freshness and assigned projects.
 5. Warn explicitly that \`/tmp\`, caches, host-local snapshots, and files
    outside the project backup model may not follow a project move.
+`;
+
+const PROJECT_HOST_SHARED_SCRATCH_BODY = String.raw`
+## What shared scratch is
+
+A shared scratch disk is host-scoped working storage mounted at \`/scratch\`
+inside projects on a project host. It is useful for large shared datasets,
+model checkpoints, build caches, generated artifacts, and temporary working
+files that should not live in normal project quota.
+
+The word **shared** is the important part: every project on that host sees the
+same \`/scratch\` filesystem. Do not put secrets, private student work, or
+user-specific data there unless every project and user on the host should be
+able to read and write it.
+
+## What it is not
+
+Shared scratch is not project storage. It does not count toward project quota,
+does not move with a project, and is not copied by project backup, project copy,
+or project move. If a project moves to another host, the files in \`/scratch\`
+stay with the original host.
+
+Shared scratch is also not a CoCalc backup. It uses provider network block
+storage rather than local SSD, and the provider disk type may have its own
+durability properties, but CoCalc does not back up scratch contents.
+
+## Lifecycle rules
+
+Scratch persists across normal host stop/start, reboot, ordinary host edit or
+recreate, spot-to-standard fallback, standard-to-spot changes, and instance type
+changes. It is deleted when the host is explicitly deleted or when the scratch
+disk itself is deleted.
+
+Adding scratch or deleting scratch can be requested while the host is running.
+Projects may need to be restarted before they see a newly added \`/scratch\`
+mount. Deletion can fail if running projects are still using the filesystem,
+because the host must unmount it before destroying the disk.
+
+## Growing and changing scratch
+
+For GCP and Nebius hosts, scratch disk growth is online. It does not require a
+host reboot, and it is one-way: you can grow the disk, but you cannot shrink it
+in place. To shrink or change disk type, delete the scratch disk and recreate it
+at the desired size and type, which destroys all scratch data.
+
+Nebius scratch disks are sized in 93 GB increments. If you request a smaller or
+non-aligned size, the UI rounds up to the provider-supported size.
+
+## Billing and planning
+
+Scratch is host pay-as-you-go storage. It can continue to cost money while the
+host is stopped, because the provider disk still exists. Use it deliberately
+for data that benefits from being shared on one host, and clean it up when the
+workload is finished.
+
+For course or workshop hosts, explain the sharing model to users before
+enabling scratch. A public or shared-pool host with scratch can make the same
+filesystem visible to unrelated projects if placement is broad enough.
+
+## Agent notes
+
+When helping with shared scratch:
+
+1. Ask for or select the project host id; scratch is attached to a host, not to
+   a project.
+2. Open the selected host's Storage tab with the \`hosts.scratch.open\` docs
+   action.
+3. Confirm the host-owning bay before making control-plane changes.
+4. Warn that \`/scratch\` does not follow project backup, copy, restore, or
+   host-to-host move workflows.
+5. Treat scratch deletion as destructive for every project using that host.
+6. If the user is moving a project to another host, ask whether any needed data
+   is only in \`/scratch\` and should be copied into project files or another
+   durable location first.
 `;
 
 const PROJECT_HOST_LOGS_BODY = String.raw`
@@ -3375,6 +3455,31 @@ export const DOCS_ENTRIES: DocsEntry[] = [
     summary:
       "Understand host disk capacity, storage mode, backups, snapshots, and online disk growth.",
     title: "Project host storage, backups, and snapshots",
+  },
+  {
+    actions: [
+      {
+        description: "Open a project host drawer on the Storage tab.",
+        executable: true,
+        id: "hosts.scratch.open",
+        label: "Open scratch settings",
+        parameters: projectHostActionParameters(),
+      },
+    ],
+    audiences: ["agents", "instructors", "researchers", "teams"],
+    body: PROJECT_HOST_SHARED_SCRATCH_BODY.trim(),
+    category: "Project hosts",
+    id: "hosts.shared-scratch",
+    image: docsIcon(
+      "/public/docs/project-hosts-shared-scratch-8409afa7.webp",
+      "A host-scoped scratch disk shared by several project folders",
+    ),
+    lastReviewed: "2026-05-27",
+    slug: "hosts/shared-scratch",
+    status: "ready",
+    summary:
+      "Use host-scoped /scratch storage without confusing it with project storage, backups, or moves.",
+    title: "Shared scratch disks on project hosts",
   },
   {
     actions: [
