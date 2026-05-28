@@ -202,13 +202,10 @@ const FROM_WEB_TIMEOUT_S = 45;
 const PROJECT_LOG_BATCH_LIMIT = 750;
 const PUBLIC_RENDERER_ONLY_EXTENSIONS = new Set([
   "board",
-  "chat",
   "ipynb",
   "pdf",
-  "sage-chat",
   "slides",
   "tasks",
-  "tex",
 ]);
 
 function canUseFrameEditorReadOnlyPreview(path: string, ext?: string): boolean {
@@ -761,6 +758,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // This resets the idle timeout, among other things.
   // This is throttled, so multiple calls are spaced out.
   touch = async (): Promise<void> => {
+    if (this.isViewerProjectUser()) {
+      return;
+    }
     try {
       await webapp_client.project_client.touch_project(this.project_id);
     } catch (err) {
@@ -1317,6 +1317,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     cb?: (err?: any) => void,
   ): string | undefined;
   log(event: ProjectEvent, id?: string, cb?: Function): string | undefined {
+    if (this.isViewerProjectUser()) {
+      cb?.();
+      return;
+    }
     const my_role = (this.redux.getStore("projects") as any).get_my_group(
       this.project_id,
     );
@@ -1390,6 +1394,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // Save the given file in this project (if it is open) to disk.
   save_file(opts): void {
     opts = defaults(opts, { path: required });
+    if (this.isViewerProjectUser()) {
+      return;
+    }
     if (
       (!this.redux.getStore("projects") as any).is_project_open(this.project_id)
     ) {
@@ -1406,6 +1413,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
   // Save all open files in this project
   save_all_files(): void {
+    if (this.isViewerProjectUser()) {
+      return;
+    }
     const s: any = this.redux.getStore("projects");
     if (!s.is_project_open(this.project_id)) {
       return; // nothing to do regarding save, since project isn't even open
@@ -3284,10 +3294,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   );
 
   refresh_project_log = (): void => {
+    if (this.isViewerProjectUser()) return;
     void this.load_project_log("newer");
   };
 
   delete_project_log = async (): Promise<void> => {
+    if (this.isViewerProjectUser()) return;
     this.setState({
       project_log_deleting: true,
       project_log_error: undefined,
@@ -3322,6 +3334,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   };
 
   ensure_project_log = (): void => {
+    if (this.isViewerProjectUser()) return;
     const store = this.get_store();
     if (store == null) return;
     if (store.get("project_log") != null) return;
@@ -3329,6 +3342,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   };
 
   project_log_load_all(): void {
+    if (this.isViewerProjectUser()) return;
     void this.load_project_log("older");
   }
 

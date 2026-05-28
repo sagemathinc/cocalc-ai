@@ -15,6 +15,10 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { Icon, Paragraph, Tip } from "@cocalc/frontend/components";
 import { useProjectCourseInfo } from "@cocalc/frontend/project/use-project-course";
+import {
+  getProjectUserRole,
+  isViewerProjectRole,
+} from "@cocalc/frontend/project/realtime-access";
 import { course, IntlMessage, labels } from "@cocalc/frontend/i18n";
 import { R_IDE } from "@cocalc/util/consts/ui";
 import type { StudentProjectFunctionality } from "@cocalc/util/db-schema/projects";
@@ -371,7 +375,19 @@ export function completeStudentProjectFunctionality(
 // were written with that unlikely assumption on their knowledge of project_id.
 type Hook = (project_id?: string) => StudentProjectFunctionality;
 export const useStudentProjectFunctionality: Hook = (project_id?: string) => {
-  const { course } = useProjectCourseInfo(project_id ?? "");
+  const account_id = useTypedRedux("account", "account_id");
+  const project_map = useTypedRedux("projects", "project_map");
+  const projectId = project_id ?? "";
+  const isViewer = isViewerProjectRole(
+    getProjectUserRole({
+      account_id,
+      project_id: projectId,
+      projectsStore: { getIn: project_map?.getIn?.bind(project_map) },
+    }),
+  );
+  const { course } = useProjectCourseInfo(projectId, undefined, {
+    enabled: !isViewer,
+  });
   return course?.get("student_project_functionality")?.toJS() ?? {};
 };
 

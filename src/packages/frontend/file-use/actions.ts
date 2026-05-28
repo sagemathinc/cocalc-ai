@@ -11,6 +11,10 @@ import * as misc from "@cocalc/util/misc";
 import { Actions } from "../app-framework";
 import { isChatPath } from "@cocalc/frontend/chat/paths";
 import { publishDocumentPresence } from "@cocalc/frontend/document-presence/service";
+import {
+  getProjectUserRole,
+  isViewerProjectRole,
+} from "@cocalc/frontend/project/realtime-access";
 
 const DEFAULT_CHAT_TTL_S = 5;
 const DEFAULT_FILE_TTL_S = 45;
@@ -45,6 +49,17 @@ export class FileUseActions extends Actions<any> {
     }
     const project_map = this.redux.getStore("projects")?.get("project_map");
     if (!project_map?.has?.(project_id)) {
+      return;
+    }
+    if (
+      isViewerProjectRole(
+        getProjectUserRole({
+          account_id,
+          project_id,
+          projectsStore: this.redux.getStore("projects") as any,
+        }),
+      )
+    ) {
       return;
     }
     const ts =

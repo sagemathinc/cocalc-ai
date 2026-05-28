@@ -38,6 +38,10 @@ export default function useListing({
 
   const watchPath = async () => {
     if (!listingsRef.current) return;
+    if (typeof (listingsRef.current as any).watch !== "function") {
+      refreshListing();
+      return;
+    }
     await listingsRef.current.watch(pathRef.current);
     refreshListing();
   };

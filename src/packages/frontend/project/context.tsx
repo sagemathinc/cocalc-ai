@@ -246,10 +246,8 @@ export function useProjectContextProvider({
 }): ProjectContextState {
   const actions = useActions({ project_id });
   const { project, group } = useProject(project_id);
-  useProjectCourseInfo(project_id);
   const account_id = useTypedRedux("account", "account_id");
   const status: ProjectStatus = useProjectState(project_id);
-  const hasInternet = useProjectHasInternetAccess(project_id) || lite;
   const hostId = project?.get("host_id") as string | undefined;
   const hostInfo = useHostInfo(hostId);
   const effectiveStatus =
@@ -323,7 +321,13 @@ export function useProjectContextProvider({
         : undefined;
     return projectAccessFromRole({ role: role as any, read_policy });
   }, [account_id, group, project]);
-  const workspaces = useProjectWorkspaces(account_id, project_id);
+  const isViewer = projectAccess.role === "viewer";
+  useProjectCourseInfo(project_id, undefined, { enabled: !isViewer });
+  const hasInternet =
+    useProjectHasInternetAccess(project_id, { enabled: !isViewer }) || lite;
+  const workspaces = useProjectWorkspaces(account_id, project_id, {
+    enabled: !isViewer,
+  });
   const previousWorkspaceSelectionRef = useRef<string>("all");
   const previousActivePathRef = useRef<string>("");
   const previousOpenFilesOrderRef = useRef<string[]>([]);

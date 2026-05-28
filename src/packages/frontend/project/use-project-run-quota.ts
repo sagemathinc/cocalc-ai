@@ -98,7 +98,10 @@ export function useProjectRunQuotaPrefetch(
   return version;
 }
 
-export function useProjectRunQuota(project_id: string) {
+export function useProjectRunQuota(
+  project_id: string,
+  { enabled = true }: { enabled?: boolean } = {},
+) {
   const projectStatus = useTypedRedux({ project_id }, "status");
   const projectState = `${projectStatus?.get("state") ?? ""}`.trim();
   const {
@@ -110,14 +113,15 @@ export function useProjectRunQuota(project_id: string) {
     project_id,
     projectMapField: "run_quota",
     fetch: fetchProjectRunQuota,
+    enabled,
   });
 
   useEffect(() => {
-    if (!project_id) {
+    if (!enabled || !project_id) {
       return;
     }
     refresh();
-  }, [project_id, projectState, refresh]);
+  }, [enabled, project_id, projectState, refresh]);
 
   return {
     runQuota,

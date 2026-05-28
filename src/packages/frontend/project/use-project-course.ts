@@ -60,6 +60,7 @@ export async function ensureProjectCourseInfo(
 export function useProjectCourseInfo(
   project_id: string,
   initialCourse?: unknown,
+  { enabled = true }: { enabled?: boolean } = {},
 ) {
   const {
     value: course,
@@ -71,6 +72,7 @@ export function useProjectCourseInfo(
     projectMapField: "course",
     initialValue: initialCourse,
     fetch: fetchProjectCourseInfo,
+    enabled,
   });
 
   return {

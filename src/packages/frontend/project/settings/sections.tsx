@@ -67,13 +67,16 @@ export function useProjectSettingsSections({
   showNoInternetWarning: boolean;
   showNonMemberWarning: boolean;
 } {
+  const { projectAccess } = useProjectContext();
+  const isViewer = projectAccess?.role === "viewer";
   const kucalc = useTypedRedux("customize", "kucalc");
-  const runQuota = useRunQuota(project_id, null);
-  const { course } = useProjectCourseInfo(project_id);
+  const runQuota = useRunQuota(project_id, null, { enabled: !isViewer });
+  const { course } = useProjectCourseInfo(project_id, undefined, {
+    enabled: !isViewer,
+  });
   const datastore = useTypedRedux("customize", "datastore");
   const commercial = useTypedRedux("customize", "commercial");
   const student = useStudentProjectFunctionality(project_id);
-  const { projectAccess } = useProjectContext();
 
   const showSSH = !lite && !student.disableSSH;
   const showDatastore =
@@ -105,7 +108,7 @@ export function useProjectSettingsSections({
     };
   }
 
-  if (projectAccess?.role === "viewer") {
+  if (isViewer) {
     const sections: ProjectSettingsSection[] = [
       {
         id: "people",

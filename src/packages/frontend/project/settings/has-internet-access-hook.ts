@@ -11,13 +11,20 @@ import { KUCALC_DISABLED } from "@cocalc/util/db-schema/site-defaults";
 import { useRunQuota } from "./run-quota/hooks";
 
 // this reacts to changes of settings, user contributions, and licenses
-export function useProjectHasInternetAccess(project_id: string) {
+export function useProjectHasInternetAccess(
+  project_id: string,
+  { enabled = true }: { enabled?: boolean } = {},
+) {
   const [state, set_state] = useState<boolean>(false);
   const customize_kucalc = useTypedRedux("customize", "kucalc");
   const noKubernetes = customize_kucalc === KUCALC_DISABLED;
-  const runQuota = useRunQuota(project_id, null);
+  const runQuota = useRunQuota(project_id, null, { enabled });
 
   useEffect(() => {
+    if (!enabled) {
+      set_state(false);
+      return;
+    }
     // special case: we assume in any non-kubernetes environments, projects have internet access
     if (noKubernetes) {
       set_state(true);
@@ -31,7 +38,7 @@ export function useProjectHasInternetAccess(project_id: string) {
     } else {
       set_state(false);
     }
-  }, [runQuota?.network]);
+  }, [enabled, noKubernetes, runQuota?.network]);
 
   return state;
 }
