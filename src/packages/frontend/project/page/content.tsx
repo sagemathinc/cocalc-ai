@@ -67,8 +67,6 @@ const VIEWER_ALLOWED_TABS = new Set([
   "docs",
   "files",
   "home",
-  "info",
-  "log",
   "users",
 ]);
 
