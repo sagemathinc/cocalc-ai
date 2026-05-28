@@ -3,7 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useEffect, useState } from "react";
+import {
+  type CSSProperties,
+  Fragment,
+  type ReactNode,
+  useEffect,
+  useState,
+} from "react";
 
 import {
   Alert,
@@ -24,7 +30,7 @@ import {
   PublicGrid,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
-import { currency } from "@cocalc/util/misc";
+import { currency, humanSize, plural, round2 } from "@cocalc/util/misc";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 const { Paragraph, Text, Title } = Typography;
@@ -78,6 +84,23 @@ function priceValue(value: unknown): number | undefined {
     : undefined;
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value != null && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function asNumber(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const numberValue = Number(value);
+    return Number.isFinite(numberValue) ? numberValue : undefined;
+  }
+  return undefined;
+}
+
 function isFreeTier(tier: PublicMembershipTier): boolean {
   return (
     priceValue(tier.price_monthly) === 0 && priceValue(tier.price_yearly) === 0
@@ -93,6 +116,161 @@ function hasPriceForInterval(
     ? priceValue(tier.price_monthly) != null
     : priceValue(tier.price_yearly) != null;
 }
+
+const EMPTY_COMPARISON_VALUE = <Text type="secondary">—</Text>;
+
+type ComparisonRow = {
+  label: string;
+  value: (tier: PublicMembershipTier) => ReactNode;
+};
+
+type ComparisonGroup = {
+  rows: ComparisonRow[];
+  title: string;
+};
+
+function formatNumberValue(value: unknown): ReactNode {
+  const numberValue = asNumber(value);
+  return numberValue == null ? EMPTY_COMPARISON_VALUE : `${numberValue}`;
+}
+
+function formatMbValue(value: unknown): ReactNode {
+  const numberValue = asNumber(value);
+  if (numberValue == null) return EMPTY_COMPARISON_VALUE;
+  if (numberValue >= 1000) {
+    const gb = numberValue / 1000;
+    return `${Number.isInteger(gb) ? gb : round2(gb)} GB`;
+  }
+  return `${numberValue} MB`;
+}
+
+function formatBytesValue(value: unknown): ReactNode {
+  const numberValue = asNumber(value);
+  return numberValue == null ? EMPTY_COMPARISON_VALUE : humanSize(numberValue);
+}
+
+function formatUptimeValue(value: unknown): ReactNode {
+  const seconds = asNumber(value);
+  if (seconds == null) return EMPTY_COMPARISON_VALUE;
+  if (seconds < 3600) {
+    const minutes = Math.max(1, Math.round(seconds / 60));
+    return `${minutes} ${plural(minutes, "minute")}`;
+  }
+  const hours = seconds / 3600;
+  const rounded = Number.isInteger(hours) ? hours : round2(hours);
+  return `${rounded} ${plural(rounded, "hour")}`;
+}
+
+function formatBooleanValue(value: unknown): ReactNode {
+  return value === true ? (
+    <Text aria-label="Yes">✓</Text>
+  ) : (
+    <Text aria-label="No" type="secondary">
+      —
+    </Text>
+  );
+}
+
+function formatAiLimit(
+  tier: PublicMembershipTier,
+  primaryKey: string,
+  fallbackKey: string,
+): ReactNode {
+  const aiLimits = asRecord(tier.ai_limits);
+  const units = asNumber(aiLimits[primaryKey] ?? aiLimits[fallbackKey]);
+  return units == null ? EMPTY_COMPARISON_VALUE : `${round2(units)} units`;
+}
+
+function projectDefaults(tier: PublicMembershipTier): Record<string, unknown> {
+  return asRecord(tier.project_defaults);
+}
+
+function usageLimits(tier: PublicMembershipTier): Record<string, unknown> {
+  return asRecord(tier.usage_limits);
+}
+
+function tierFeatures(tier: PublicMembershipTier): Record<string, unknown> {
+  return asRecord(tier.features);
+}
+
+const COMPARISON_GROUPS: ComparisonGroup[] = [
+  {
+    title: "Project Limits",
+    rows: [
+      {
+        label: "RAM",
+        value: (tier) => formatMbValue(projectDefaults(tier).memory),
+      },
+      {
+        label: "Disk",
+        value: (tier) => formatMbValue(projectDefaults(tier).disk_quota),
+      },
+      {
+        label: "Minimum uptime",
+        value: (tier) => formatUptimeValue(projectDefaults(tier).mintime),
+      },
+      {
+        label: "Collaborators",
+        value: (tier) =>
+          formatNumberValue(
+            usageLimits(tier).project_max_collaborators_and_pending_invites,
+          ),
+      },
+    ],
+  },
+  {
+    title: "Global Limits",
+    rows: [
+      {
+        label: "Projects owned",
+        value: (tier) => formatNumberValue(usageLimits(tier).max_projects),
+      },
+      {
+        label: "Projects running",
+        value: (tier) =>
+          formatNumberValue(usageLimits(tier).max_sponsored_running_projects),
+      },
+      {
+        label: "Total disk",
+        value: (tier) => {
+          const limits = usageLimits(tier);
+          return formatBytesValue(
+            limits.total_storage_hard_bytes ?? limits.total_storage_soft_bytes,
+          );
+        },
+      },
+      {
+        label: "Backups per project",
+        value: (tier) =>
+          formatNumberValue(usageLimits(tier).max_backups_per_project),
+      },
+      {
+        label: "Included AI per 5 hours",
+        value: (tier) => formatAiLimit(tier, "units_5h", "limit_5h"),
+      },
+      {
+        label: "Included AI per 7 days",
+        value: (tier) => formatAiLimit(tier, "units_7d", "limit_7d"),
+      },
+    ],
+  },
+  {
+    title: "Functionality",
+    rows: [
+      {
+        label: "Dedicated hosts",
+        value: (tier) => formatBooleanValue(tierFeatures(tier).create_hosts),
+      },
+      {
+        label: "Launchpad license",
+        value: (tier) =>
+          formatBooleanValue(
+            tierFeatures(tier).launchpad_license === true || tier.id === "pro",
+          ),
+      },
+    ],
+  },
+];
 
 function annualSavingsPercent(tier: PublicMembershipTier): number | undefined {
   const monthly = priceValue(tier.price_monthly);
@@ -326,6 +504,98 @@ function PricingTierTile({
   );
 }
 
+function PricingComparisonTable({ tiers }: { tiers: PublicMembershipTier[] }) {
+  const { token } = theme.useToken();
+  const tableStyle: CSSProperties = {
+    borderCollapse: "collapse",
+    minWidth: "100%",
+  };
+  const headerCellStyle: CSSProperties = {
+    borderBottom: `1px solid ${token.colorBorderSecondary}`,
+    paddingBlock: token.paddingSM,
+    paddingInline: token.padding,
+    textAlign: "center",
+    whiteSpace: "nowrap",
+  };
+  const rowHeaderStyle: CSSProperties = {
+    borderBottom: `1px solid ${token.colorBorderSecondary}`,
+    paddingBlock: token.paddingSM,
+    paddingInline: token.padding,
+    textAlign: "left",
+    whiteSpace: "nowrap",
+  };
+  const valueCellStyle: CSSProperties = {
+    borderBottom: `1px solid ${token.colorBorderSecondary}`,
+    paddingBlock: token.paddingSM,
+    paddingInline: token.padding,
+    textAlign: "center",
+    whiteSpace: "nowrap",
+  };
+  const groupCellStyle: CSSProperties = {
+    background: token.colorFillAlter,
+    borderBottom: `1px solid ${token.colorBorderSecondary}`,
+    paddingBlock: token.paddingSM,
+    paddingInline: token.padding,
+    textAlign: "left",
+  };
+
+  return (
+    <PublicSection>
+      <Title level={2} style={{ margin: 0 }}>
+        Compare Memberships
+      </Title>
+      <div style={{ overflowX: "auto" }}>
+        <table aria-label="Membership comparison" style={tableStyle}>
+          <thead>
+            <tr>
+              <th style={headerCellStyle} />
+              {tiers.map((tier) => (
+                <th key={tier.id} scope="col" style={headerCellStyle}>
+                  <Title level={4} style={{ margin: 0 }}>
+                    {tier.label ?? tier.id}
+                  </Title>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {COMPARISON_GROUPS.map((group) => (
+              <Fragment key={group.title}>
+                <tr>
+                  <th
+                    colSpan={tiers.length + 1}
+                    scope="colgroup"
+                    style={groupCellStyle}
+                  >
+                    <Title level={4} style={{ margin: 0 }}>
+                      {group.title}
+                    </Title>
+                  </th>
+                </tr>
+                {group.rows.map((row) => (
+                  <tr key={`${group.title}-${row.label}`}>
+                    <th scope="row" style={rowHeaderStyle}>
+                      <Text>{row.label}</Text>
+                    </th>
+                    {tiers.map((tier) => (
+                      <td
+                        key={`${row.label}-${tier.id}`}
+                        style={valueCellStyle}
+                      >
+                        {row.value(tier)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </PublicSection>
+  );
+}
+
 export default function PricingPage({
   isAuthenticated = false,
 }: {
@@ -371,16 +641,19 @@ export default function PricingPage({
             setBillingInterval={setBillingInterval}
           />
           {visibleTiers.length > 0 ? (
-            <PublicGrid columns={4}>
-              {visibleTiers.map((tier) => (
-                <PricingTierTile
-                  billingInterval={billingInterval}
-                  isAuthenticated={isAuthenticated}
-                  key={tier.id}
-                  tier={tier}
-                />
-              ))}
-            </PublicGrid>
+            <>
+              <PublicGrid columns={4}>
+                {visibleTiers.map((tier) => (
+                  <PricingTierTile
+                    billingInterval={billingInterval}
+                    isAuthenticated={isAuthenticated}
+                    key={tier.id}
+                    tier={tier}
+                  />
+                ))}
+              </PublicGrid>
+              <PricingComparisonTable tiers={visibleTiers} />
+            </>
           ) : (
             <PublicSection>
               <Alert
