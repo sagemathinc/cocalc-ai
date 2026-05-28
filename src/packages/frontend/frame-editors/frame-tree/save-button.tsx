@@ -89,15 +89,15 @@ function useDebouncedStatus(status: SaveStatus): SaveStatus {
   return debounced;
 }
 
-function statusInfo(status: SaveStatus): SaveStatusInfo {
+export function statusInfo(status: SaveStatus): SaveStatusInfo {
   switch (status) {
     case "read-only":
       return {
         label: "Read-only",
         title: "This file is read-only.",
-        background: COLORS.GRAY_LL,
-        border: COLORS.GRAY_L0,
-        color: COLORS.GRAY_D,
+        background: COLORS.BG_WARNING,
+        border: COLORS.BG_WARNING,
+        color: "white",
       };
     case "sync-error":
       return {

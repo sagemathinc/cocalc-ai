@@ -3,7 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { saveStatus } from "../save-button";
+import { saveStatus, statusInfo } from "../save-button";
+import { COLORS } from "@cocalc/util/theme";
 
 describe("saveStatus", () => {
   it("prioritizes file connection and backend confirmation before disk state", () => {
@@ -24,5 +25,14 @@ describe("saveStatus", () => {
         has_unsaved_changes: true,
       }),
     ).toBe("reconnecting");
+  });
+
+  it("uses a high-contrast orange read-only status chip", () => {
+    expect(statusInfo("read-only")).toMatchObject({
+      label: "Read-only",
+      background: COLORS.BG_WARNING,
+      border: COLORS.BG_WARNING,
+      color: "white",
+    });
   });
 });
