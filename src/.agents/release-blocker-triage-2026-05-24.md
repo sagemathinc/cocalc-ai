@@ -423,7 +423,7 @@ Next action:
 
 ### 17. Terminal Reconnect Flash
 
-Status: `open`
+Status: `done`
 
 Severity: medium.
 
