@@ -43,6 +43,10 @@ describe("page-routing", () => {
       page: "docs",
       slug: "admin/users",
     });
+    expect(parsePageTarget("app-docs/print")).toEqual({
+      page: "docs",
+      print: true,
+    });
     expect(getPageTopTab(parsePageTarget("app-docs/admin/users"))).toBe("docs");
   });
 
@@ -112,6 +116,9 @@ describe("page-routing", () => {
     );
     expect(getPageUrlPath({ page: "docs", slug: "admin/users" })).toBe(
       "/app-docs/admin/users",
+    );
+    expect(getPageUrlPath({ page: "docs", print: true })).toBe(
+      "/app-docs/print",
     );
     expect(
       getPageUrlPath({

@@ -75,7 +75,10 @@ describe("docs navigation", () => {
     expect(window.localStorage.getItem(APP_DOCS_SELECTED_STORAGE_KEY)).toBe(
       "admin/users",
     );
-    expect(mockSetPageState).toHaveBeenCalledWith({ docs_slug: "admin/users" });
+    expect(mockSetPageState).toHaveBeenCalledWith({
+      docs_print: false,
+      docs_slug: "admin/users",
+    });
     expect(mockSetPageActiveTab).toHaveBeenCalledWith("docs", true);
   });
 });

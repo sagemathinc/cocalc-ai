@@ -12,6 +12,7 @@ import {
   SearchOutlined,
   ToolOutlined,
   ArrowLeftOutlined,
+  PrinterOutlined,
 } from "@ant-design/icons";
 import {
   Button,
@@ -20,6 +21,7 @@ import {
   Empty,
   Flex,
   Input,
+  Progress,
   Row,
   Segmented,
   Select,
@@ -59,7 +61,6 @@ const DOCS_BROWSER_CATEGORY_CARD_STYLE = {
 const DOCS_BROWSER_TOC_LINK_STYLE: CSSProperties = {
   background: "transparent",
   border: 0,
-  color: COLORS.BLUE,
   cursor: "pointer",
   display: "block",
   font: "inherit",
@@ -70,6 +71,13 @@ const DOCS_BROWSER_TOC_LINK_STYLE: CSSProperties = {
   textDecoration: "none",
   width: "100%",
 };
+
+function docsBrowserTocLinkStyle(viewed: boolean): CSSProperties {
+  return {
+    ...DOCS_BROWSER_TOC_LINK_STYLE,
+    color: viewed ? COLORS.GRAY_M : COLORS.BLUE_DOC,
+  };
+}
 export const DOCS_FONT_SIZE_MIN = 10;
 export const DOCS_FONT_SIZE_MAX = 32;
 export const DOCS_FONT_SIZE_STEP = 1;
@@ -186,10 +194,12 @@ export function DocsFontSizeFrame({
   children,
   defaultFontSize = 14,
   layout = "page",
+  showControls = true,
 }: {
   children: React.ReactNode;
   defaultFontSize?: number;
   layout?: DocsBrowserLayout;
+  showControls?: boolean;
 }) {
   const {
     canDecreaseFontSize,
@@ -202,47 +212,49 @@ export function DocsFontSizeFrame({
 
   return (
     <div style={{ position: "relative" }}>
-      <Flex
-        justify="end"
-        style={{
-          marginBottom: layout === "flyout" ? 8 : 12,
-          position: "relative",
-          zIndex: 1,
-        }}
-      >
-        <Space.Compact
-          size="small"
+      {showControls ? (
+        <Flex
+          justify="end"
           style={{
-            background: "white",
-            borderRadius: 6,
-            boxShadow: "0 1px 4px rgba(15, 23, 42, 0.12)",
+            marginBottom: layout === "flyout" ? 8 : 12,
+            position: "relative",
+            zIndex: 1,
           }}
         >
-          <Button
-            aria-label="Decrease docs font size"
-            disabled={!canDecreaseFontSize}
-            onClick={decreaseFontSize}
-            title="Decrease docs font size"
+          <Space.Compact
+            size="small"
+            style={{
+              background: "white",
+              borderRadius: 6,
+              boxShadow: "0 1px 4px rgba(15, 23, 42, 0.12)",
+            }}
           >
-            A-
-          </Button>
-          <Button
-            aria-label="Reset docs font size"
-            onClick={resetFontSize}
-            title="Reset docs font size"
-          >
-            {fontSize}px
-          </Button>
-          <Button
-            aria-label="Increase docs font size"
-            disabled={!canIncreaseFontSize}
-            onClick={increaseFontSize}
-            title="Increase docs font size"
-          >
-            A+
-          </Button>
-        </Space.Compact>
-      </Flex>
+            <Button
+              aria-label="Decrease docs font size"
+              disabled={!canDecreaseFontSize}
+              onClick={decreaseFontSize}
+              title="Decrease docs font size"
+            >
+              A-
+            </Button>
+            <Button
+              aria-label="Reset docs font size"
+              onClick={resetFontSize}
+              title="Reset docs font size"
+            >
+              {fontSize}px
+            </Button>
+            <Button
+              aria-label="Increase docs font size"
+              disabled={!canIncreaseFontSize}
+              onClick={increaseFontSize}
+              title="Increase docs font size"
+            >
+              A+
+            </Button>
+          </Space.Compact>
+        </Flex>
+      ) : null}
       <div
         className="cocalc-docs-font-scope"
         data-testid="docs-font-scope"
@@ -492,14 +504,37 @@ function DocsTocOverview({
   groupedEntries,
   layout = "page",
   linkForEntry,
+  onPrint,
   onSelectEntry,
+  printHref,
+  privateSummaries,
 }: {
   groupedEntries: { category: string; entries: DocsEntry[] }[];
   layout?: DocsBrowserLayout;
   linkForEntry?: (entry: DocsEntry) => string;
+  onPrint?: () => void;
   onSelectEntry?: (entry: DocsEntry) => void;
+  printHref?: string;
+  privateSummaries?: Record<string, DocsPrivateEntrySummary>;
 }) {
   if (groupedEntries.length === 0) return null;
+
+  const allEntries = groupedEntries.flatMap(({ entries }) => entries);
+  const firstUnviewedEntry = allEntries.find(
+    (entry) => privateSummaries?.[entry.id]?.lastViewedAt == null,
+  );
+  const lastViewedEntry = allEntries
+    .filter((entry) => privateSummaries?.[entry.id]?.lastViewedAt != null)
+    .sort(
+      (a, b) =>
+        (privateSummaries?.[b.id]?.lastViewedAt ?? 0) -
+        (privateSummaries?.[a.id]?.lastViewedAt ?? 0),
+    )[0];
+  const continueEntry = firstUnviewedEntry ?? lastViewedEntry ?? allEntries[0];
+  const continueLabel =
+    firstUnviewedEntry != null ? "Continue reading" : "Review last viewed";
+  const continueHref =
+    continueEntry != null ? linkForEntry?.(continueEntry) : undefined;
 
   return (
     <Card
@@ -507,10 +542,38 @@ function DocsTocOverview({
       style={DOCS_BROWSER_CARD_STYLE}
       styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
       title={
-        <Space>
-          <BookOutlined />
-          <span>Table of contents</span>
-        </Space>
+        <Flex align="center" gap="small" justify="space-between" wrap>
+          <Space>
+            <BookOutlined />
+            <span>Table of contents</span>
+          </Space>
+          <Space wrap>
+            {continueEntry != null ? (
+              <Button
+                href={continueHref}
+                onClick={
+                  continueHref == null
+                    ? () => onSelectEntry?.(continueEntry)
+                    : undefined
+                }
+                size="small"
+                type="primary"
+              >
+                {continueLabel}
+              </Button>
+            ) : null}
+            {printHref != null || onPrint != null ? (
+              <Button
+                href={onPrint == null ? printHref : undefined}
+                icon={<PrinterOutlined />}
+                onClick={onPrint}
+                size="small"
+              >
+                Print-friendly
+              </Button>
+            ) : null}
+          </Space>
+        </Flex>
       }
     >
       <Row gutter={[18, 18]}>
@@ -520,9 +583,36 @@ function DocsTocOverview({
               <Space size={6} wrap>
                 <Text strong>{category}</Text>
                 <Text type="secondary">({entries.length})</Text>
+                {privateSummaries != null ? (
+                  <Text type="secondary">
+                    {
+                      entries.filter(
+                        (entry) =>
+                          privateSummaries[entry.id]?.lastViewedAt != null,
+                      ).length
+                    }{" "}
+                    / {entries.length} viewed
+                  </Text>
+                ) : null}
               </Space>
+              {privateSummaries != null ? (
+                <Progress
+                  percent={Math.round(
+                    (100 *
+                      entries.filter(
+                        (entry) =>
+                          privateSummaries[entry.id]?.lastViewedAt != null,
+                      ).length) /
+                      entries.length,
+                  )}
+                  showInfo={false}
+                  size="small"
+                />
+              ) : null}
               <Flex gap={2} vertical>
                 {entries.map((entry, index) => {
+                  const viewed =
+                    privateSummaries?.[entry.id]?.lastViewedAt != null;
                   const content = (
                     <>
                       <Text
@@ -540,7 +630,7 @@ function DocsTocOverview({
                       <a
                         href={href}
                         key={entry.id}
-                        style={DOCS_BROWSER_TOC_LINK_STYLE}
+                        style={docsBrowserTocLinkStyle(viewed)}
                       >
                         {content}
                       </a>
@@ -550,7 +640,7 @@ function DocsTocOverview({
                     <button
                       key={entry.id}
                       onClick={() => onSelectEntry?.(entry)}
-                      style={DOCS_BROWSER_TOC_LINK_STYLE}
+                      style={docsBrowserTocLinkStyle(viewed)}
                       type="button"
                     >
                       {content}
@@ -570,13 +660,17 @@ export function DocsIndexContent({
   docsAccess,
   layout = "page",
   linkForEntry,
+  onPrint,
   onSelectEntry,
+  printHref,
   privateState,
 }: {
   docsAccess?: DocsAccess;
   layout?: DocsBrowserLayout;
   linkForEntry?: (entry: DocsEntry) => string;
+  onPrint?: () => void;
   onSelectEntry?: (entry: DocsEntry) => void;
+  printHref?: string;
   privateState?: DocsPrivateIndexState;
 }) {
   const [query, setQuery] = useState("");
@@ -684,7 +778,10 @@ export function DocsIndexContent({
             groupedEntries={groupedEntries}
             layout={layout}
             linkForEntry={linkForEntry}
+            onPrint={onPrint}
             onSelectEntry={onSelectEntry}
+            printHref={printHref}
+            privateSummaries={privateState?.summaries}
           />
           <Row gutter={[16, 16]}>
             {groupedEntries.map(({ category, entries: categoryEntries }) => (
@@ -1265,27 +1362,171 @@ export function DocsDetailContent({
   );
 }
 
+export function DocsPrintContent({
+  docsAccess,
+  onBackHref,
+}: {
+  docsAccess?: DocsAccess;
+  onBackHref?: string;
+}) {
+  const entries = useMemo(() => listDocsEntries(docsAccess), [docsAccess]);
+  const groupedEntries = useMemo(
+    () => groupDocsEntriesByCategory(entries),
+    [entries],
+  );
+
+  return (
+    <div className="cocalc-docs-print-page">
+      <style>
+        {`
+          @media print {
+            .cocalc-docs-print-controls {
+              display: none !important;
+            }
+            .cocalc-docs-print-page {
+              color: black;
+              max-width: none !important;
+            }
+            .cocalc-docs-print-entry {
+              break-before: page;
+              page-break-before: always;
+            }
+            .cocalc-docs-print-entry:first-of-type {
+              break-before: auto;
+              page-break-before: auto;
+            }
+          }
+        `}
+      </style>
+      <Flex
+        className="cocalc-docs-print-controls"
+        gap="small"
+        justify="space-between"
+        style={{ marginBottom: 24 }}
+        wrap
+      >
+        <Button href={onBackHref} icon={<ArrowLeftOutlined />}>
+          Back to docs
+        </Button>
+        <Button
+          icon={<PrinterOutlined />}
+          onClick={() => window.print()}
+          type="primary"
+        >
+          Print
+        </Button>
+      </Flex>
+      <Flex gap="large" vertical>
+        <div>
+          <Text strong style={DOCS_BROWSER_MUTED_TITLE_STYLE}>
+            CoCalc docs
+          </Text>
+          <Title style={{ marginBottom: 8 }}>Complete documentation</Title>
+          <Text type="secondary">
+            {entries.length} page{entries.length === 1 ? "" : "s"} in{" "}
+            {groupedEntries.length} chapter
+            {groupedEntries.length === 1 ? "" : "s"}
+          </Text>
+        </div>
+        <Card
+          size="small"
+          style={DOCS_BROWSER_CARD_STYLE}
+          styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
+        >
+          <Title level={2}>Table of contents</Title>
+          <Row gutter={[18, 18]}>
+            {groupedEntries.map(({ category, entries: categoryEntries }) => (
+              <Col key={category} lg={8} md={12} xs={24}>
+                <Flex gap={4} vertical>
+                  <Text strong>{category}</Text>
+                  {categoryEntries.map((entry, index) => (
+                    <a href={`#${entry.id}`} key={entry.id}>
+                      {index + 1}. {entry.title}
+                    </a>
+                  ))}
+                </Flex>
+              </Col>
+            ))}
+          </Row>
+        </Card>
+        {groupedEntries.map(({ category, entries: categoryEntries }) => (
+          <section key={category}>
+            <Title level={2}>{category}</Title>
+            <Flex gap="large" vertical>
+              {categoryEntries.map((entry, index) => (
+                <article
+                  className="cocalc-docs-print-entry"
+                  id={entry.id}
+                  key={entry.id}
+                >
+                  <Card
+                    style={DOCS_BROWSER_CARD_STYLE}
+                    styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
+                  >
+                    <Flex gap="middle" vertical>
+                      <Space wrap>
+                        <Tag>{category}</Tag>
+                        <Text type="secondary">
+                          Page {index + 1} of {categoryEntries.length}
+                        </Text>
+                        <Text type="secondary">
+                          Reviewed {entry.lastReviewed}
+                        </Text>
+                      </Space>
+                      <Title level={2} style={{ margin: 0 }}>
+                        {entry.title}
+                      </Title>
+                      <Paragraph style={{ fontSize: "1.125em", margin: 0 }}>
+                        {entry.summary}
+                      </Paragraph>
+                      <DocsEntryImage entry={entry} mode="detail" />
+                    </Flex>
+                  </Card>
+                  <Card
+                    style={{ ...DOCS_BROWSER_CARD_STYLE, marginTop: 12 }}
+                    styles={{ body: DOCS_BROWSER_CARD_BODY_STYLE }}
+                  >
+                    <DocsMarkdown value={entry.body} />
+                  </Card>
+                </article>
+              ))}
+            </Flex>
+          </section>
+        ))}
+      </Flex>
+    </div>
+  );
+}
+
 export function DocsBrowser({
   actionAvailability,
+  browserHref,
   defaultActionParameters,
   docsAccess,
   initialEntry,
   layout = "page",
+  onPrint,
   onRunAction,
   onSelectedEntryChange,
+  printHref,
+  printMode = false,
   privateDetailState,
   privateIndexState,
 }: {
   actionAvailability?: DocsBrowserAction[];
+  browserHref?: string;
   defaultActionParameters?: DocsBrowserActionParameters;
   docsAccess?: DocsAccess;
   initialEntry?: DocsEntry;
   layout?: DocsBrowserLayout;
+  onPrint?: () => void;
   onRunAction?: (
     action: DocsBrowserAction,
     parameters?: DocsBrowserActionParameters,
   ) => void | Promise<void>;
   onSelectedEntryChange?: (entry?: DocsEntry) => void;
+  printHref?: string;
+  printMode?: boolean;
   privateDetailState?: DocsPrivateDetailState;
   privateIndexState?: DocsPrivateIndexState;
 }) {
@@ -1310,6 +1551,12 @@ export function DocsBrowser({
     },
     [onSelectedEntryChange],
   );
+
+  if (printMode) {
+    return (
+      <DocsPrintContent docsAccess={docsAccess} onBackHref={browserHref} />
+    );
+  }
 
   if (selectedEntry != null) {
     const selectedGlobalIndex = allEntries.findIndex(
@@ -1357,7 +1604,9 @@ export function DocsBrowser({
     <DocsIndexContent
       docsAccess={docsAccess}
       layout={layout}
+      onPrint={onPrint}
       onSelectEntry={selectEntry}
+      printHref={printHref}
       privateState={privateIndexState}
     />
   );

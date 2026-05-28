@@ -27,6 +27,9 @@ describe("public/docs", () => {
       slug: "projects/project-secrets",
       view: "docs-detail",
     });
+    expect(getDocsRouteFromPath("/docs/print")).toEqual({
+      view: "docs-print",
+    });
     expect(docsPath("projects/project-secrets")).toBe(
       "/docs/projects/project-secrets",
     );
@@ -144,14 +147,37 @@ describe("public/docs", () => {
       ),
     ).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: /Project secrets/ }),
+      screen.getAllByRole("link", { name: /Project secrets/ })[0],
     ).toHaveAttribute("href", "/docs/projects/project-secrets");
-    expect(screen.getByRole("link", { name: /Use chat/ })).toHaveAttribute(
-      "href",
-      "/docs/collaboration/chat",
-    );
+    expect(
+      screen.getAllByRole("link", { name: /Use chat/ })[0],
+    ).toHaveAttribute("href", "/docs/collaboration/chat");
+    expect(
+      screen.getByRole("link", { name: /Print-friendly/ }),
+    ).toHaveAttribute("href", "/docs/print");
     expect(
       screen.queryByRole("link", { name: /Manage users as an admin/ }),
+    ).toBeNull();
+  });
+
+  it("renders public docs as a print-friendly single page", () => {
+    render(
+      <PublicDocsApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{ view: "docs-print" }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Complete documentation" }),
+    ).not.toBeNull();
+    expect(screen.getByRole("link", { name: /Back to docs/ })).toHaveAttribute(
+      "href",
+      "/docs",
+    );
+    expect(screen.getByText("Print")).not.toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Manage users as an admin" }),
     ).toBeNull();
   });
 
