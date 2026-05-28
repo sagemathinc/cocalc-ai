@@ -107,6 +107,7 @@ import {
 
 const HOST_ACCESS_DOCS_IMAGE =
   "/public/docs/project-hosts-access-ram-9245deeb.webp";
+const SHARED_SCRATCH_DOCS_SLUG = "hosts/shared-scratch";
 
 type HostDrawerViewModel = {
   open: boolean;
@@ -325,6 +326,20 @@ function HostAccessDocsAnchor() {
         </Button>
       </Space>
     </div>
+  );
+}
+
+function SharedScratchDocsButton() {
+  return (
+    <Button
+      icon={<BookOutlined />}
+      onClick={() => openAppDocs(SHARED_SCRATCH_DOCS_SLUG)}
+      size="small"
+      style={{ height: "auto", padding: 0 }}
+      type="link"
+    >
+      Docs
+    </Button>
   );
 }
 
@@ -1964,7 +1979,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
       <Card size="small" title="Daemon health">
         <HostDaemonHealthSummary host={host} />
       </Card>
-      <Card size="small" title="Shared scratch disk">
+      <Card
+        extra={<SharedScratchDocsButton />}
+        size="small"
+        title="Shared scratch disk"
+      >
         {hasSharedScratch ? (
           <Space orientation="vertical" size="small" style={{ width: "100%" }}>
             <Space wrap>

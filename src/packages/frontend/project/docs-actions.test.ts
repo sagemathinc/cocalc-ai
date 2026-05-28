@@ -186,6 +186,21 @@ describe("project docs actions", () => {
       drawer_tab: "storage",
     });
 
+    const scratch = await revealDocsAction({
+      actionId: "hosts.scratch.open",
+      parameters: { hostId: "host-1" },
+      projectId: "project-1",
+    });
+
+    expect(mockOpenHostDrawer).toHaveBeenCalledWith({
+      hostId: "host-1",
+      tab: "storage",
+    });
+    expect(scratch).toMatchObject({
+      action_id: "hosts.scratch.open",
+      drawer_tab: "storage",
+    });
+
     const logs = await revealDocsAction({
       actionId: "hosts.logs.open",
       parameters: { hostId: "host-1" },
