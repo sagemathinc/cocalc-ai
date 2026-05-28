@@ -6153,6 +6153,14 @@ export async function updateHostMachine({
   }
   if (sharedScratchAutoGrowChanged) {
     const effectiveSharedDisk = nextMachine.shared_disk_gb;
+    if (nextSharedScratchAutoGrow.enabled) {
+      const provider = machineCloud ? getServerProvider(machineCloud) : null;
+      if (!provider?.entry.capabilities.sharedScratchDisk?.autoGrowable) {
+        throw new Error(
+          "shared scratch auto-grow requires a provider with online scratch disk resize",
+        );
+      }
+    }
     if (nextSharedScratchAutoGrow.enabled && !effectiveSharedDisk) {
       throw new Error(
         "shared scratch auto-grow requires a shared scratch disk",

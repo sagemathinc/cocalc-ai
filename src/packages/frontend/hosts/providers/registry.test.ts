@@ -143,6 +143,39 @@ describe("buildCreateHostPayload", () => {
     });
   });
 
+  it("does not include shared scratch auto-grow for non-GCP create payloads", () => {
+    const payload = buildCreateHostPayload(
+      {
+        provider: "nebius",
+        name: "Scratch Host",
+        region: "us-central1",
+        machine_type: "cpu-standard-v3",
+        disk_gb: 100,
+        disk_type: "ssd",
+        shared_disk_gb: 500,
+        shared_disk_type: "ssd",
+        shared_scratch_auto_grow_enabled: true,
+        shared_scratch_auto_grow_max_disk_gb: 1000,
+        shared_scratch_auto_grow_growth_step_gb: 93,
+        shared_scratch_auto_grow_min_grow_interval_minutes: 60,
+      },
+      {
+        fieldOptions: {
+          region: [{ value: "us-central1", label: "US Central 1" }],
+          machine_type: [
+            {
+              value: "cpu-standard-v3",
+              label: "cpu-standard-v3",
+              meta: { vcpus: 4, memory_gib: 16 },
+            },
+          ],
+        },
+      },
+    );
+
+    expect(payload.machine?.metadata?.shared_scratch_auto_grow).toBeUndefined();
+  });
+
   it("includes explicit spot pricing fields", () => {
     const payload = buildCreateHostPayload(
       {

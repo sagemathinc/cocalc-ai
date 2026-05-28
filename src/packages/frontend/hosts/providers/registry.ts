@@ -355,7 +355,7 @@ const buildBasePayload = (
     bucket: vals.bucket,
   };
   const mergedMetadata = { ...baseMetadata, ...(machine.metadata ?? {}) };
-  if (vals.shared_scratch_auto_grow_enabled) {
+  if (vals.provider === "gcp" && vals.shared_scratch_auto_grow_enabled) {
     mergedMetadata.shared_scratch_auto_grow = {
       enabled: true,
       max_disk_gb: vals.shared_scratch_auto_grow_max_disk_gb,

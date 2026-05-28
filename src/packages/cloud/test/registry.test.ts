@@ -9,6 +9,7 @@ describe("cloud registry", () => {
     expect(PROVIDERS.gcp?.capabilities.sharedScratchDisk).toMatchObject({
       supported: true,
       growable: true,
+      autoGrowable: true,
     });
     expect(
       PROVIDERS.gcp?.capabilities.sharedScratchDisk?.disk_types.find(
@@ -18,6 +19,7 @@ describe("cloud registry", () => {
     expect(PROVIDERS.nebius?.capabilities.sharedScratchDisk).toMatchObject({
       supported: true,
       growable: true,
+      autoGrowable: false,
     });
     expect(
       PROVIDERS.nebius?.capabilities.sharedScratchDisk?.disk_types.find(
