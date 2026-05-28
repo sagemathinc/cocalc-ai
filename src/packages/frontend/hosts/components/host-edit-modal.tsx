@@ -124,8 +124,6 @@ type HostEditSelectionInputs = {
 };
 
 function sharedScratchTypeForHost(host?: Host): string | undefined {
-  const explicit = `${host?.machine?.shared_disk_type ?? ""}`.trim();
-  if (explicit) return explicit;
   const code = Number(
     ((host as any)?.runtime?.metadata as any)?.scratchDiskTypeCode,
   );
@@ -139,8 +137,10 @@ function sharedScratchTypeForHost(host?: Host): string | undefined {
     case 1:
       return "ssd";
     default:
-      return undefined;
+      break;
   }
+  const explicit = `${host?.machine?.shared_disk_type ?? ""}`.trim();
+  return explicit || undefined;
 }
 
 export function buildHostEditSelection(
@@ -835,7 +835,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       okText="Save"
       okButtonProps={{ disabled: disableSave }}
       destroyOnHidden
-      width="min(860px, 96vw)"
+      width="min(1040px, 96vw)"
     >
       <Form form={form} layout="vertical">
         {isDeprovisioned ? (

@@ -12,12 +12,15 @@ import {
 } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import type { HostProvider } from "../types";
-import type { HostCatalog } from "@cocalc/conat/hub/api/hosts";
-import { MIN_PROJECT_HOST_DISK_GB } from "@cocalc/util/project-host-limits";
+import type {
+  HostCatalog,
+  HostCatalogEntry,
+} from "@cocalc/conat/hub/api/hosts";
 import { COLORS } from "@cocalc/util/theme";
 
-const DEFAULT_SHARED_DISK_GB = 500;
 const NEBIUS_DISK_INCREMENT_GB = 93;
+const GCP_SHARED_SCRATCH_MIN_GB = 10;
+const MONTHLY_HOURS = 730;
 
 const DURABILITY_LABELS = {
   "single-copy": "single copy",
@@ -32,7 +35,7 @@ const normalizeSharedDiskSize = ({
   provider?: HostProvider;
   size: number;
 }) => {
-  const min = MIN_PROJECT_HOST_DISK_GB;
+  const min = minSharedDiskSize(provider);
   const next = Math.max(min, Math.floor(size));
   if (provider === "nebius") {
     return (
@@ -41,6 +44,108 @@ const normalizeSharedDiskSize = ({
   }
   return next;
 };
+
+function minSharedDiskSize(provider?: HostProvider) {
+  if (provider === "gcp") return GCP_SHARED_SCRATCH_MIN_GB;
+  if (provider === "nebius") return NEBIUS_DISK_INCREMENT_GB;
+  return 1;
+}
+
+function formatUsdMonthlyPerGb(hourly: number | undefined) {
+  if (hourly == null || !Number.isFinite(hourly) || hourly <= 0) {
+    return undefined;
+  }
+  const monthly = hourly * MONTHLY_HOURS;
+  const amount = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Math.ceil((monthly - Number.EPSILON) * 100) / 100);
+  return `${amount}/GB-mo`;
+}
+
+function catalogPayload<T>(
+  catalog: HostCatalog | undefined,
+  kind: string,
+  scope = "global",
+): T | undefined {
+  const entry = (catalog?.entries ?? []).find(
+    (item: HostCatalogEntry) => item.kind === kind && item.scope === scope,
+  );
+  return entry?.payload as T | undefined;
+}
+
+function gcpDiskPricePerGbHour(
+  catalog: HostCatalog | undefined,
+  diskType: string,
+) {
+  const prices = catalogPayload<any>(catalog, "prices");
+  const key =
+    diskType === "standard"
+      ? "pd-standard"
+      : diskType === "ssd"
+        ? "pd-ssd"
+        : diskType === "balanced"
+          ? "pd-balanced"
+          : undefined;
+  if (!key) return undefined;
+  const rates = prices?.disks?.[key];
+  const values = Object.values(rates ?? {})
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value > 0);
+  return values[0];
+}
+
+function nebiusDiskProduct(diskType: string) {
+  switch (diskType) {
+    case "balanced":
+      return "Network SSD Non-replicated disk";
+    case "ssd":
+      return "Network SSD disk";
+    case "ssd_io_m3":
+      return "Network SSD IO M3 disk";
+    default:
+      return undefined;
+  }
+}
+
+function nebiusDiskPricePerGbHour(
+  catalog: HostCatalog | undefined,
+  diskType: string,
+) {
+  const product = nebiusDiskProduct(diskType);
+  if (!product) return undefined;
+  const prices = catalogPayload<
+    Array<{ product: string; price_usd: string; unit: string }>
+  >(catalog, "prices");
+  const item = prices?.find(
+    (price) => price.product === product && /gib/i.test(price.unit),
+  );
+  const price = Number(item?.price_usd);
+  if (!Number.isFinite(price) || price <= 0) return undefined;
+  const unit = `${item?.unit ?? ""}`.trim();
+  const monthMatch = unit.match(/gib per (\d+) hours/i);
+  if (monthMatch) {
+    const hours = Number(monthMatch[1]);
+    return Number.isFinite(hours) && hours > 0 ? price / hours : undefined;
+  }
+  return /gib hour$/i.test(unit) ? price : undefined;
+}
+
+function diskPricePerGbMonthLabel(
+  provider: HostProvider | undefined,
+  catalog: HostCatalog | undefined,
+  diskType: string,
+) {
+  const hourly =
+    provider === "gcp"
+      ? gcpDiskPricePerGbHour(catalog, diskType)
+      : provider === "nebius"
+        ? nebiusDiskPricePerGbHour(catalog, diskType)
+        : undefined;
+  return formatUsdMonthlyPerGb(hourly);
+}
 
 type HostSharedScratchFieldsProps = {
   provider?: HostProvider;
@@ -93,15 +198,24 @@ export const HostSharedScratchFields: React.FC<
   const diskTypes = cap?.disk_types ?? [];
   const defaultDiskType =
     diskTypes.find((entry) => entry.default)?.value ?? diskTypes[0]?.value;
-  const diskTypeOptions = diskTypes.map((entry) => ({
-    value: entry.value,
-    label: `${entry.label} (${DURABILITY_LABELS[entry.durability]})`,
-  }));
+  const diskTypeOptions = diskTypes.map((entry) => {
+    const priceLabel = diskPricePerGbMonthLabel(provider, catalog, entry.value);
+    return {
+      value: entry.value,
+      label: `${entry.label} (${DURABILITY_LABELS[entry.durability]})${
+        priceLabel ? ` - ${priceLabel}` : ""
+      }`,
+    };
+  });
   const step = provider === "nebius" ? NEBIUS_DISK_INCREMENT_GB : 1;
   const minSize = Math.max(
-    MIN_PROJECT_HOST_DISK_GB,
+    minSharedDiskSize(provider),
     Number(currentSizeGb ?? 0) || 0,
   );
+  const defaultSharedDiskGb = normalizeSharedDiskSize({
+    provider,
+    size: minSharedDiskSize(provider),
+  });
 
   const setFields = React.useCallback(
     (patch: Record<string, any>) => {
@@ -190,13 +304,7 @@ export const HostSharedScratchFields: React.FC<
               setScratchEnabled(checked);
               if (checked) {
                 setFields({
-                  shared_disk_gb: Math.max(
-                    minSize,
-                    normalizeSharedDiskSize({
-                      provider,
-                      size: DEFAULT_SHARED_DISK_GB,
-                    }),
-                  ),
+                  shared_disk_gb: Math.max(minSize, defaultSharedDiskGb),
                   shared_disk_type: defaultDiskType,
                 });
               } else {

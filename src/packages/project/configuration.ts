@@ -20,7 +20,7 @@ import { syntax2tool, Tool as FormatTool } from "@cocalc/util/code-formatter";
 import { copy } from "@cocalc/util/misc";
 import { basename } from "path";
 import { exec as child_process_exec } from "child_process";
-import { realpath } from "fs/promises";
+import { realpath, stat } from "fs/promises";
 import { promisify } from "util";
 import which from "which";
 const exec = promisify(child_process_exec);
@@ -295,6 +295,7 @@ async function get_runtimeInfo(): Promise<{
   runtimeUid: number | null;
   runtimeGid: number | null;
   sudoAvailable: boolean;
+  sharedScratchMount: string | null;
 }> {
   const homeDirectory = await get_homeDirectory();
   const runtimeUid =
@@ -306,12 +307,16 @@ async function get_runtimeInfo(): Promise<{
   const runtimeUser =
     envUser || (homeDirectory ? basename(homeDirectory) : "") || null;
   const sudoAvailable = runtimeUid === 0 || (await have("sudo"));
+  const sharedScratchMount = await stat("/scratch")
+    .then((info) => (info.isDirectory() ? "/scratch" : null))
+    .catch(() => null);
   return {
     homeDirectory,
     runtimeUser,
     runtimeUid,
     runtimeGid,
     sudoAvailable,
+    sharedScratchMount,
   };
 }
 
@@ -424,6 +429,7 @@ const capabilities = reuseInFlight(async (): Promise<MainCapabilities> => {
       runtimeUid: runtime.runtimeUid,
       runtimeGid: runtime.runtimeGid,
       sudoAvailable: runtime.sudoAvailable,
+      sharedScratchMount: runtime.sharedScratchMount,
     };
     const sage = await sage_info_future;
     caps.sage = sage.exists;

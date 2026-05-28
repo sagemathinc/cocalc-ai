@@ -150,6 +150,7 @@ export function is_available(configuration?: ProjectConfiguration): Available {
       runtimeUid: capabilities.runtimeUid,
       runtimeGid: capabilities.runtimeGid,
       sudoAvailable: capabilities.sudoAvailable,
+      sharedScratchMount: capabilities.sharedScratchMount ?? null,
     };
   } else {
     return NO_AVAIL;

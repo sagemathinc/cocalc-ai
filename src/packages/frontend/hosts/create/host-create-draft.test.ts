@@ -515,7 +515,20 @@ describe("host-create-draft", () => {
       providerContext("gcp"),
     ).draft;
 
-    expect(draft.shared_disk_gb).toBe(75);
+    expect(draft.shared_disk_gb).toBe(50);
+    expect(draft.shared_disk_type).toBe("balanced");
+  });
+
+  it("uses 10 GB as the minimum shared scratch size for GCP", () => {
+    const draft = normalizeDraft(
+      {
+        provider: "gcp",
+        shared_disk_gb: 1,
+      },
+      providerContext("gcp"),
+    ).draft;
+
+    expect(draft.shared_disk_gb).toBe(10);
     expect(draft.shared_disk_type).toBe("balanced");
   });
 

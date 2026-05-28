@@ -97,6 +97,7 @@ const DEFAULT_NAME = "My host";
 const DEFAULT_DISK_GB = 100;
 const MIN_DISK_GB = MIN_PROJECT_HOST_DISK_GB;
 const NEBIUS_DISK_INCREMENT_GB = 93;
+const GCP_SHARED_SCRATCH_MIN_GB = 10;
 
 const MANAGED_PROVIDERS = new Set<HostProvider>([
   "gcp",
@@ -151,7 +152,8 @@ const normalizeDiskSize = (provider: HostProvider, diskGb: unknown) => {
 const normalizeSharedDiskSize = (provider: HostProvider, diskGb: unknown) => {
   const parsed = readPositiveInteger(diskGb);
   if (parsed == null) return undefined;
-  const size = Math.max(MIN_DISK_GB, parsed);
+  const min = provider === "gcp" ? GCP_SHARED_SCRATCH_MIN_GB : 1;
+  const size = Math.max(min, parsed);
   if (provider === "nebius") {
     return (
       Math.ceil(size / NEBIUS_DISK_INCREMENT_GB) * NEBIUS_DISK_INCREMENT_GB
