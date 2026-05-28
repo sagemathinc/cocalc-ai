@@ -437,6 +437,7 @@ export interface HostProviderCapabilities {
   sharedScratchDisk?: {
     supported: boolean;
     growable: boolean;
+    autoGrowable?: boolean;
     disk_types: Array<{
       value: "ssd" | "balanced" | "standard" | "ssd_io_m3";
       label: string;

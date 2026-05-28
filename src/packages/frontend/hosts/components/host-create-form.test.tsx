@@ -87,6 +87,8 @@ function TestSharedScratchWithMismatchedCatalog() {
             nebius: {
               sharedScratchDisk: {
                 supported: true,
+                growable: true,
+                autoGrowable: false,
                 disk_types: [
                   {
                     value: "ssd_io_m3",
@@ -165,5 +167,14 @@ describe("HostCreateForm", () => {
     expect(() =>
       renderToStaticMarkup(<TestSharedScratchWithMismatchedCatalog />),
     ).not.toThrow();
+  });
+
+  it("does not show /scratch auto-grow for providers without online scratch resize", () => {
+    const html = renderToStaticMarkup(
+      <TestSharedScratchWithMismatchedCatalog />,
+    );
+
+    expect(html).toContain("Shared scratch disk");
+    expect(html).not.toContain("Automatically grow /scratch");
   });
 });

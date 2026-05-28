@@ -443,8 +443,8 @@ function canAutoGrowSharedScratchNow(
   if (!provider?.entry.capabilities.sharedScratchDisk?.supported) {
     return "provider does not support shared scratch disks";
   }
-  if (!provider.entry.capabilities.sharedScratchDisk.growable) {
-    return "provider does not support shared scratch disk resize";
+  if (!provider.entry.capabilities.sharedScratchDisk.autoGrowable) {
+    return "provider does not support online shared scratch auto-grow";
   }
   if (!provider.entry.provider.resizeSharedScratchDisk) {
     return "provider does not implement shared scratch disk resize";

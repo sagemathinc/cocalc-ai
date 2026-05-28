@@ -34,6 +34,7 @@ export type ProviderCapabilities = {
   sharedScratchDisk?: {
     supported: boolean;
     growable: boolean;
+    autoGrowable?: boolean;
     disk_types: Array<{
       value: "ssd" | "balanced" | "standard" | "ssd_io_m3";
       label: string;
@@ -121,6 +122,7 @@ export const PROVIDERS: Record<ProviderId, ProviderEntry | undefined> = {
       sharedScratchDisk: {
         supported: true,
         growable: true,
+        autoGrowable: true,
         disk_types: [
           {
             value: "balanced",
@@ -265,6 +267,7 @@ export const PROVIDERS: Record<ProviderId, ProviderEntry | undefined> = {
       sharedScratchDisk: {
         supported: true,
         growable: true,
+        autoGrowable: false,
         disk_types: [
           {
             value: "ssd",

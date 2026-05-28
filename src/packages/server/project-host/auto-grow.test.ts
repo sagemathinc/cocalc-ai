@@ -98,6 +98,7 @@ describe("guarded host auto-grow", () => {
           sharedScratchDisk: {
             supported: true,
             growable: true,
+            autoGrowable: true,
           },
         },
       },
@@ -562,5 +563,103 @@ describe("guarded host auto-grow", () => {
         }),
       }),
     );
+  });
+
+  it("does not auto-grow shared scratch when online scratch resize is unsupported", async () => {
+    getServerProviderMock = jest.fn(() => ({
+      entry: {
+        provider: {
+          resizeSharedScratchDisk: jest.fn(async () => undefined),
+        },
+        capabilities: {
+          supportsDiskResize: true,
+          diskResizeRequiresStop: false,
+          sharedScratchDisk: {
+            supported: true,
+            growable: true,
+            autoGrowable: false,
+          },
+        },
+      },
+    }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: "host-4",
+              name: "Host 4",
+              region: "eu-north1",
+              status: "running",
+              metadata: {
+                runtime: { instance_id: "instance-4" },
+                machine: {
+                  cloud: "nebius",
+                  shared_disk_gb: 186,
+                  shared_disk_type: "ssd",
+                  metadata: {
+                    shared_scratch_auto_grow: {
+                      enabled: true,
+                      max_disk_gb: 500,
+                      growth_step_gb: 93,
+                      min_grow_interval_minutes: 60,
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { maybeAutoGrowSharedScratchForBackgroundPressure } =
+      await import("./auto-grow");
+    const result = await maybeAutoGrowSharedScratchForBackgroundPressure({
+      host_id: "host-4",
+      history: {
+        window_minutes: 6,
+        point_count: 3,
+        points: [
+          {
+            collected_at: "2026-03-30T02:00:00.000Z",
+            shared_scratch_total_bytes: 186 * 1024 ** 3,
+            shared_scratch_available_bytes: 10 * 1024 ** 3,
+            shared_scratch_used_percent: 95,
+          },
+          {
+            collected_at: "2026-03-30T02:01:00.000Z",
+            shared_scratch_total_bytes: 186 * 1024 ** 3,
+            shared_scratch_available_bytes: 9 * 1024 ** 3,
+            shared_scratch_used_percent: 95.5,
+          },
+        ],
+        growth: {
+          window_minutes: 6,
+          shared_scratch_used_bytes_per_hour: 2 * 1024 ** 3,
+        },
+        derived: {
+          window_minutes: 6,
+          disk: { level: "healthy" },
+          shared_scratch: {
+            level: "warning",
+            available_bytes: 9 * 1024 ** 3,
+            hours_to_exhaustion: 4.5,
+            reason: "Shared scratch could exhaust within 24h",
+          },
+          metadata: { level: "healthy" },
+          alerts: [],
+          admission_allowed: true,
+          auto_grow_recommended: true,
+        },
+      },
+    });
+
+    expect(result).toEqual({
+      grown: false,
+      reason: "provider does not support online shared scratch auto-grow",
+    });
+    expect(getProviderContextMock).not.toHaveBeenCalled();
   });
 });
