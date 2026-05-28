@@ -170,6 +170,36 @@ describe("project docs actions", () => {
       action_id: "hosts.runtime.open",
       drawer_tab: "runtime",
     });
+
+    const storage = await revealDocsAction({
+      actionId: "hosts.storage.open",
+      parameters: { hostId: "host-1" },
+      projectId: "project-1",
+    });
+
+    expect(mockOpenHostDrawer).toHaveBeenCalledWith({
+      hostId: "host-1",
+      tab: "storage",
+    });
+    expect(storage).toMatchObject({
+      action_id: "hosts.storage.open",
+      drawer_tab: "storage",
+    });
+
+    const logs = await revealDocsAction({
+      actionId: "hosts.logs.open",
+      parameters: { hostId: "host-1" },
+      projectId: "project-1",
+    });
+
+    expect(mockOpenHostDrawer).toHaveBeenCalledWith({
+      hostId: "host-1",
+      tab: "logs",
+    });
+    expect(logs).toMatchObject({
+      action_id: "hosts.logs.open",
+      drawer_tab: "logs",
+    });
   });
 
   it("keeps project-parameter actions available without an ambient project", () => {

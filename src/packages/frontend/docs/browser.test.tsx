@@ -2,20 +2,6 @@
 
 const mockListHosts = jest.fn(async () => []);
 
-if (global.MessageChannel == null) {
-  (global as any).MessageChannel = class {
-    port1 = {
-      close: jest.fn(),
-      onmessage: undefined as ((event: MessageEvent) => void) | undefined,
-    };
-    port2 = {
-      close: jest.fn(),
-      postMessage: (data: unknown) =>
-        setTimeout(() => this.port1.onmessage?.({ data } as MessageEvent), 0),
-    };
-  };
-}
-
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
@@ -53,6 +39,23 @@ describe("DocsBrowser", () => {
     fireEvent.click(screen.getByRole("button", { name: /All docs/ }));
 
     expect(onSelectedEntryChange).toHaveBeenCalledWith(undefined);
+  });
+
+  it("shows a compact table of contents and opens pages from it", () => {
+    const entry = getDocsEntry("terminal/use-terminal");
+    if (entry == null) throw new Error("missing terminal docs entry");
+    const onSelectedEntryChange = jest.fn();
+
+    render(<DocsBrowser onSelectedEntryChange={onSelectedEntryChange} />);
+
+    expect(screen.getByText("Table of contents")).toBeTruthy();
+
+    const tocButton = screen.getAllByText(entry.title)[0].closest("button");
+    if (tocButton == null) throw new Error("missing table of contents button");
+    fireEvent.click(tocButton);
+
+    expect(onSelectedEntryChange).toHaveBeenCalledWith(entry);
+    expect(screen.getByRole("heading", { name: entry.title })).toBeTruthy();
   });
 
   it("navigates linearly within the current docs category", () => {
@@ -132,6 +135,51 @@ describe("DocsBrowser", () => {
     expect(onSelectedEntryChange).toHaveBeenCalledWith(nextChapter);
     expect(
       screen.getByRole("heading", { name: nextChapter.title }),
+    ).toBeTruthy();
+  });
+
+  it("goes from the first page of a category to the previous chapter", () => {
+    const allEntries = listDocsEntries();
+    const categoryOrder = Array.from(
+      new Set(allEntries.map((entry) => entry.category)),
+    );
+    const category = categoryOrder.find((candidate, index) => {
+      const previousCategory = categoryOrder[index - 1];
+      return (
+        previousCategory != null &&
+        allEntries.some((entry) => entry.category === candidate)
+      );
+    });
+    if (category == null) throw new Error("missing previous docs chapter");
+    const entry = allEntries.find(
+      (candidate) => candidate.category === category,
+    );
+    if (entry == null) throw new Error("missing first chapter entry");
+    const entryIndex = allEntries.findIndex(
+      (candidate) => candidate.id === entry.id,
+    );
+    const previousChapter = allEntries
+      .slice(0, entryIndex)
+      .reverse()
+      .find((candidate) => candidate.category !== entry.category);
+    if (previousChapter == null)
+      throw new Error("missing previous chapter entry");
+    const onSelectedEntryChange = jest.fn();
+
+    render(
+      <DocsBrowser
+        initialEntry={entry}
+        onSelectedEntryChange={onSelectedEntryChange}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /Previous Chapter/ })[0],
+    );
+
+    expect(onSelectedEntryChange).toHaveBeenCalledWith(previousChapter);
+    expect(
+      screen.getByRole("heading", { name: previousChapter.title }),
     ).toBeTruthy();
   });
 

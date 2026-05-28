@@ -698,6 +698,26 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
         tab: "runtime",
       }),
   },
+  "hosts.storage.open": {
+    id: "hosts.storage.open",
+    run: ({ parameters, projectId }) =>
+      revealHostsPage({
+        actionId: "hosts.storage.open",
+        hostId: parameters?.hostId,
+        projectId,
+        tab: "storage",
+      }),
+  },
+  "hosts.logs.open": {
+    id: "hosts.logs.open",
+    run: ({ parameters, projectId }) =>
+      revealHostsPage({
+        actionId: "hosts.logs.open",
+        hostId: parameters?.hostId,
+        projectId,
+        tab: "logs",
+      }),
+  },
   "hosts.spot-recovery.open": {
     id: "hosts.spot-recovery.open",
     run: ({ parameters, projectId }) =>
