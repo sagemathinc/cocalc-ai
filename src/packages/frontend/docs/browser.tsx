@@ -9,6 +9,7 @@ import type { CSSProperties } from "react";
 import {
   ArrowRightOutlined,
   BookOutlined,
+  CheckCircleFilled,
   DownloadOutlined,
   SearchOutlined,
   ToolOutlined,
@@ -101,6 +102,7 @@ export type DocsPrivateIndexState = {
 
 export type DocsPrivateDetailState = {
   renderPanel: (entry: DocsEntry) => React.ReactNode;
+  renderLearnedControl?: (entry: DocsEntry) => React.ReactNode;
 };
 
 type DocsLinearNavigationState = {
@@ -389,8 +391,10 @@ export function DocsCard({
               </Tag>
             ))}
             {privateSummary?.starred ? <Tag color="gold">Starred</Tag> : null}
-            {privateSummary?.lastViewedAt ? (
-              <Tag color="green">Viewed</Tag>
+            {privateSummary?.learnedAt ? (
+              <Tag color="green" icon={<CheckCircleFilled />}>
+                Learned
+              </Tag>
             ) : null}
             {(privateSummary?.noteCount ?? 0) > 0 ? (
               <Tag>
@@ -454,8 +458,10 @@ export function DocsCard({
               </Tag>
             ))}
             {privateSummary?.starred ? <Tag color="gold">Starred</Tag> : null}
-            {privateSummary?.lastViewedAt ? (
-              <Tag color="green">Viewed</Tag>
+            {privateSummary?.learnedAt ? (
+              <Tag color="green" icon={<CheckCircleFilled />}>
+                Learned
+              </Tag>
             ) : null}
             {(privateSummary?.noteCount ?? 0) > 0 ? (
               <Tag>
@@ -523,19 +529,20 @@ function DocsTocOverview({
   if (groupedEntries.length === 0) return null;
 
   const allEntries = groupedEntries.flatMap(({ entries }) => entries);
-  const firstUnviewedEntry = allEntries.find(
-    (entry) => privateSummaries?.[entry.id]?.lastViewedAt == null,
+  const firstUnlearnedEntry = allEntries.find(
+    (entry) => privateSummaries?.[entry.id]?.learnedAt == null,
   );
-  const lastViewedEntry = allEntries
-    .filter((entry) => privateSummaries?.[entry.id]?.lastViewedAt != null)
+  const lastLearnedEntry = allEntries
+    .filter((entry) => privateSummaries?.[entry.id]?.learnedAt != null)
     .sort(
       (a, b) =>
-        (privateSummaries?.[b.id]?.lastViewedAt ?? 0) -
-        (privateSummaries?.[a.id]?.lastViewedAt ?? 0),
+        (privateSummaries?.[b.id]?.learnedAt ?? 0) -
+        (privateSummaries?.[a.id]?.learnedAt ?? 0),
     )[0];
-  const continueEntry = firstUnviewedEntry ?? lastViewedEntry ?? allEntries[0];
+  const continueEntry =
+    firstUnlearnedEntry ?? lastLearnedEntry ?? allEntries[0];
   const continueLabel =
-    firstUnviewedEntry != null ? "Continue reading" : "Review last viewed";
+    firstUnlearnedEntry != null ? "Continue learning" : "Review learned";
   const continueHref =
     continueEntry != null ? linkForEntry?.(continueEntry) : undefined;
 
@@ -600,10 +607,10 @@ function DocsTocOverview({
                     {
                       entries.filter(
                         (entry) =>
-                          privateSummaries[entry.id]?.lastViewedAt != null,
+                          privateSummaries[entry.id]?.learnedAt != null,
                       ).length
                     }{" "}
-                    / {entries.length} viewed
+                    / {entries.length} learned
                   </Text>
                 ) : null}
               </Space>
@@ -613,7 +620,7 @@ function DocsTocOverview({
                     (100 *
                       entries.filter(
                         (entry) =>
-                          privateSummaries[entry.id]?.lastViewedAt != null,
+                          privateSummaries[entry.id]?.learnedAt != null,
                       ).length) /
                       entries.length,
                   )}
@@ -625,6 +632,8 @@ function DocsTocOverview({
                 {entries.map((entry, index) => {
                   const viewed =
                     privateSummaries?.[entry.id]?.lastViewedAt != null;
+                  const learned =
+                    privateSummaries?.[entry.id]?.learnedAt != null;
                   const content = (
                     <>
                       <Text
@@ -634,6 +643,14 @@ function DocsTocOverview({
                         {index + 1}.
                       </Text>
                       <span>{entry.title}</span>
+                      {learned ? (
+                        <CheckCircleFilled
+                          style={{
+                            color: COLORS.BS_GREEN_D,
+                            marginLeft: 6,
+                          }}
+                        />
+                      ) : null}
                     </>
                   );
                   const href = linkForEntry?.(entry);
@@ -719,6 +736,10 @@ export function DocsIndexContent({
           return Boolean(summary?.starred);
         case "unstarred":
           return !summary?.starred;
+        case "learned":
+          return summary?.learnedAt != null;
+        case "unlearned":
+          return summary?.learnedAt == null;
         case "notes":
           return (summary?.noteCount ?? 0) > 0;
         default:
@@ -768,6 +789,8 @@ export function DocsIndexContent({
               { label: "All", value: "all" },
               { label: "Starred", value: "starred" },
               { label: "Unstarred", value: "unstarred" },
+              { label: "Learned", value: "learned" },
+              { label: "Unlearned", value: "unlearned" },
               { label: "With notes", value: "notes" },
             ]}
             size="small"
@@ -1313,6 +1336,8 @@ export function DocsDetailContent({
         <div style={DOCS_BROWSER_FLYOUT_MARKDOWN_STYLE}>
           <DocsMarkdown value={entry.body} />
         </div>
+        {privateState?.renderLearnedControl?.(entry)}
+        <DocsLinearNavigation layout={layout} navigation={linearNavigation} />
       </Flex>
     );
   }
@@ -1372,6 +1397,7 @@ export function DocsDetailContent({
       >
         <DocsMarkdown value={entry.body} />
       </Card>
+      {privateState?.renderLearnedControl?.(entry)}
       <DocsLinearNavigation layout={layout} navigation={linearNavigation} />
     </Flex>
   );

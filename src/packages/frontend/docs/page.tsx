@@ -20,7 +20,10 @@ import {
   type DocsBrowserAction,
   type DocsBrowserActionParameters,
 } from "@cocalc/frontend/docs/browser";
-import { DocsPrivateNotesPanel } from "@cocalc/frontend/docs/private-state/panel";
+import {
+  DocsLearnedControl,
+  DocsPrivateNotesPanel,
+} from "@cocalc/frontend/docs/private-state/panel";
 import {
   exportDocsPrivateStateBundle,
   importDocsPrivateStateBundle,
@@ -224,7 +227,7 @@ export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
 
   const privateToolbar = accountId ? (
     <Space wrap>
-      <Tooltip title="Export your private docs notes and starred pages as a JSON backup or transfer file">
+      <Tooltip title="Export your private docs notes, learned pages, and starred pages as a JSON backup or transfer file">
         <Button
           icon={<DownloadOutlined />}
           onClick={async () => {
@@ -242,7 +245,7 @@ export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
               a.click();
               URL.revokeObjectURL(url);
               await messageApi.success(
-                "Exported private notes and starred state.",
+                "Exported private notes, learned pages, and starred state.",
               );
             } catch (err) {
               await messageApi.error(`${err}`);
@@ -281,7 +284,7 @@ export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
         }}
         showUploadList={false}
       >
-        <Tooltip title="Import private docs notes and starred pages from a JSON export, merging without duplicate notes">
+        <Tooltip title="Import private docs notes, learned pages, and starred pages from a JSON export, merging without duplicate notes">
           <Button icon={<UploadOutlined />} size="small">
             Import
           </Button>
@@ -357,6 +360,14 @@ export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
                         onDeleteNote={docsPrivateState.deleteNote}
                         onSaveNote={docsPrivateState.saveNote}
                         onToggleStar={docsPrivateState.toggleStar}
+                        summary={docsPrivateState.summaries[entry.id]}
+                      />
+                    ),
+                    renderLearnedControl: (entry) => (
+                      <DocsLearnedControl
+                        entry={entry}
+                        loading={docsPrivateState.loading}
+                        onSetLearned={docsPrivateState.setLearned}
                         summary={docsPrivateState.summaries[entry.id]}
                       />
                     ),
