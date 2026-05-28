@@ -1716,6 +1716,45 @@ class BootstrapModesTest(unittest.TestCase):
 
 
 class GpuBootstrapTest(unittest.TestCase):
+    def test_nvidia_cdi_normalizer_downgrades_podman4_incompatible_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = Path(tmpdir) / "normalize.py"
+            spec = Path(tmpdir) / "nvidia.yaml"
+            script.write_text(bootstrap.NVIDIA_CDI_NORMALIZER_SCRIPT, encoding="utf-8")
+            spec.write_text(
+                """---
+cdiVersion: 0.7.0
+kind: nvidia.com/gpu
+devices:
+    - name: "0"
+      containerEdits:
+        deviceNodes:
+            - path: /dev/nvidia0
+              major: 195
+              fileMode: 438
+              permissions: rwm
+        additionalGids:
+            - 44
+            - 992
+    - name: all
+      containerEdits:
+        hooks:
+            - hookName: createContainer
+              path: /usr/bin/nvidia-cdi-hook
+        additionalGids:
+            - 44
+""",
+                encoding="utf-8",
+            )
+
+            subprocess.run(["python3", str(script), str(spec)], check=True)
+
+            normalized = spec.read_text(encoding="utf-8")
+            self.assertIn("cdiVersion: 0.5.0", normalized)
+            self.assertNotIn("additionalGids", normalized)
+            self.assertIn("path: /dev/nvidia0", normalized)
+            self.assertIn("hookName: createContainer", normalized)
+
     def test_install_gpu_support_allows_held_nvidia_toolkit_upgrade(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = replace(make_cfg(tmpdir), has_gpu=True)
@@ -1746,6 +1785,13 @@ class GpuBootstrapTest(unittest.TestCase):
                 bootstrap.Path.write_text = original_write_text
                 bootstrap.os.chmod = original_chmod
 
+            self.assertIn(
+                (
+                    ["/usr/local/sbin/cocalc-nvidia-cdi-normalize"],
+                    "normalize nvidia cdi for podman",
+                ),
+                recorded,
+            )
             self.assertIn(
                 (
                     [
