@@ -333,6 +333,8 @@ export type MembershipTierSetFields =
   | "id"
   | "label"
   | "store_visible"
+  | "store_description"
+  | "store_highlights"
   | "course_store_visible"
   | "priority"
   | "price_monthly"
