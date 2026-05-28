@@ -6,6 +6,7 @@ import { postAuthApi } from "./api";
 import SignUpFormBase from "./sign-up-base";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
+  ...jest.requireActual("@cocalc/frontend/app-framework"),
   useTypedRedux: jest.fn(() => ({ mode: "allow_all" })),
 }));
 jest.mock("@cocalc/frontend/client/api", () => jest.fn());
