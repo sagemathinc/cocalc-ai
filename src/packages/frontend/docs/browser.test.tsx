@@ -95,6 +95,16 @@ describe("DocsBrowser", () => {
     ).toBeTruthy();
   });
 
+  it("uses a callback for app print-friendly docs", () => {
+    const onPrint = jest.fn();
+
+    render(<DocsBrowser onPrint={onPrint} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Print-friendly/ }));
+
+    expect(onPrint).toHaveBeenCalled();
+  });
+
   it("renders all docs in a print-friendly single page mode", () => {
     render(<DocsBrowser browserHref="/app-docs" printMode />);
 

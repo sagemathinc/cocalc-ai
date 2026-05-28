@@ -504,6 +504,7 @@ function DocsTocOverview({
   groupedEntries,
   layout = "page",
   linkForEntry,
+  onPrint,
   onSelectEntry,
   printHref,
   privateSummaries,
@@ -511,6 +512,7 @@ function DocsTocOverview({
   groupedEntries: { category: string; entries: DocsEntry[] }[];
   layout?: DocsBrowserLayout;
   linkForEntry?: (entry: DocsEntry) => string;
+  onPrint?: () => void;
   onSelectEntry?: (entry: DocsEntry) => void;
   printHref?: string;
   privateSummaries?: Record<string, DocsPrivateEntrySummary>;
@@ -560,8 +562,13 @@ function DocsTocOverview({
                 {continueLabel}
               </Button>
             ) : null}
-            {printHref != null ? (
-              <Button href={printHref} icon={<PrinterOutlined />} size="small">
+            {printHref != null || onPrint != null ? (
+              <Button
+                href={onPrint == null ? printHref : undefined}
+                icon={<PrinterOutlined />}
+                onClick={onPrint}
+                size="small"
+              >
                 Print-friendly
               </Button>
             ) : null}
@@ -653,6 +660,7 @@ export function DocsIndexContent({
   docsAccess,
   layout = "page",
   linkForEntry,
+  onPrint,
   onSelectEntry,
   printHref,
   privateState,
@@ -660,6 +668,7 @@ export function DocsIndexContent({
   docsAccess?: DocsAccess;
   layout?: DocsBrowserLayout;
   linkForEntry?: (entry: DocsEntry) => string;
+  onPrint?: () => void;
   onSelectEntry?: (entry: DocsEntry) => void;
   printHref?: string;
   privateState?: DocsPrivateIndexState;
@@ -769,6 +778,7 @@ export function DocsIndexContent({
             groupedEntries={groupedEntries}
             layout={layout}
             linkForEntry={linkForEntry}
+            onPrint={onPrint}
             onSelectEntry={onSelectEntry}
             printHref={printHref}
             privateSummaries={privateState?.summaries}
@@ -1495,6 +1505,7 @@ export function DocsBrowser({
   docsAccess,
   initialEntry,
   layout = "page",
+  onPrint,
   onRunAction,
   onSelectedEntryChange,
   printHref,
@@ -1508,6 +1519,7 @@ export function DocsBrowser({
   docsAccess?: DocsAccess;
   initialEntry?: DocsEntry;
   layout?: DocsBrowserLayout;
+  onPrint?: () => void;
   onRunAction?: (
     action: DocsBrowserAction,
     parameters?: DocsBrowserActionParameters,
@@ -1592,6 +1604,7 @@ export function DocsBrowser({
     <DocsIndexContent
       docsAccess={docsAccess}
       layout={layout}
+      onPrint={onPrint}
       onSelectEntry={selectEntry}
       printHref={printHref}
       privateState={privateIndexState}

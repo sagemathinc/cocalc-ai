@@ -4,6 +4,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import { DownloadOutlined, UploadOutlined } from "@ant-design/icons";
 import { Button, Flex, message, Space, Typography, Upload } from "antd";
@@ -13,6 +14,7 @@ import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   DocsBrowser,
   DocsFontSizeFrame,
+  DocsPrintContent,
   DOCS_BROWSER_MUTED_TITLE_STYLE,
   DOCS_BROWSER_PAGE_STYLE,
   type DocsBrowserAction,
@@ -36,6 +38,9 @@ import {
   APP_DOCS_SELECTED_STORAGE_KEY,
   saveStoredAppDocsSlug,
 } from "@cocalc/frontend/docs/navigation";
+import { open_popup_window } from "@cocalc/frontend/misc/open-browser-tab";
+import { BASE_URL } from "@cocalc/frontend/misc";
+import { resource_links_string } from "@cocalc/frontend/misc/resource-links";
 import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { COLORS } from "@cocalc/util/theme";
 
@@ -111,6 +116,44 @@ export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
     } catch (err) {
       await messageApi.error(`${err}`);
     }
+  }
+
+  function openPrintPopup(): void {
+    const popup = open_popup_window("about:blank", {
+      height: 900,
+      noopener: false,
+      width: 1100,
+    });
+    if (popup == null) return;
+    const html = renderToStaticMarkup(
+      <DocsPrintContent
+        docsAccess={docsAccess}
+        onBackHref={getPageUrlPath({ page: "docs" })}
+      />,
+    );
+    popup.document.write(`<!doctype html>
+<html lang="en">
+  <head>
+    <title>CoCalc documentation</title>
+    <meta charset="utf-8" />
+    <meta name="google" content="notranslate" />
+    ${resource_links_string(BASE_URL)}
+    <style>
+      html, body { background: white; }
+      body { margin: 0; padding: 24px; }
+      @media print { body { padding: 0; } }
+    </style>
+  </head>
+  <body>
+    ${html}
+    <script>
+      window.onload = function() {
+        setTimeout(function() { window.print(); }, 50);
+      };
+    </script>
+  </body>
+</html>`);
+    popup.document.close();
   }
 
   const privateToolbar = accountId ? (
@@ -222,6 +265,7 @@ export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
             browserHref={getPageUrlPath({ page: "docs" })}
             docsAccess={docsAccess}
             initialEntry={initialEntry}
+            onPrint={openPrintPopup}
             onRunAction={runAction}
             onSelectedEntryChange={(entry) => {
               pageActions.setState({
@@ -231,7 +275,6 @@ export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
               set_url(getPageUrlPath({ page: "docs", slug: entry?.slug }));
               saveStoredAppDocsEntry(entry);
             }}
-            printHref={getPageUrlPath({ page: "docs", print: true })}
             printMode={print}
             privateDetailState={
               accountId
