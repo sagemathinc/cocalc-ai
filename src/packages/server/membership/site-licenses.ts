@@ -3362,6 +3362,7 @@ export async function reviewSiteLicensePoolRequest({
             request_id: request.id,
             exclusive_group: exclusiveGroup,
           },
+          client,
         });
         reservedInstitutionalClaim = {
           scope_key,
@@ -3607,6 +3608,7 @@ async function revokeOtherSiteLicenseAssignments({
         reservation_id:
           `${assignment.metadata?.claim_reservation_id ?? ""}`.trim() ||
           undefined,
+        client,
       }).catch(() => undefined);
     }
   }

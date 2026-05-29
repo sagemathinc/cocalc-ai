@@ -35,4 +35,27 @@ describe("PglitePool transaction isolation", () => {
       await pool.end();
     }
   });
+
+  it("allows transaction-scoped helper pool queries while a client transaction is open", async () => {
+    const pool = new PglitePool();
+    const table = `pglite_tx_read_${Date.now()}`;
+    try {
+      await pool.query(`CREATE TABLE ${table} (id INTEGER PRIMARY KEY)`);
+      await pool.query(`INSERT INTO ${table} (id) VALUES (1)`);
+      const client = await pool.connect();
+      await client.query("BEGIN");
+      await pool.query(
+        `CREATE INDEX IF NOT EXISTS ${table}_id_idx ON ${table} (id)`,
+      );
+      await client.query(`INSERT INTO ${table} (id) VALUES (2)`);
+
+      const { rows } = await pool.query(`SELECT id FROM ${table} ORDER BY id`);
+
+      await client.query("COMMIT");
+      client.release();
+      expect(rows).toEqual([{ id: 1 }, { id: 2 }]);
+    } finally {
+      await pool.end();
+    }
+  });
 });

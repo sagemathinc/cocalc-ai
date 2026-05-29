@@ -5,6 +5,7 @@
 
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
+import type { PoolClient } from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
 
 const logger = getLogger("server:accounts:security-state");
@@ -28,9 +29,11 @@ type AccountSecurityState = {
 
 const accountSecurityState = new Map<string, AccountSecurityState>();
 
-async function ensureTable(): Promise<void> {
+type Queryable = Pick<ReturnType<typeof getPool>, "query"> | PoolClient;
+
+async function ensureTable(client?: Queryable): Promise<void> {
   if (ensured) return;
-  const pool = getPool();
+  const pool = client ?? getPool();
   await pool.query(`
     CREATE TABLE IF NOT EXISTS account_security_state (
       account_id UUID PRIMARY KEY,
@@ -55,7 +58,9 @@ async function ensureTable(): Promise<void> {
       banned = TRUE,
       updated_at = GREATEST(account_security_state.updated_at, EXCLUDED.updated_at)
   `);
-  ensured = true;
+  if (client == null) {
+    ensured = true;
+  }
 }
 
 export async function recordAccountSecurityState({
@@ -125,10 +130,12 @@ export async function listAccountSecurityStatesSince({
   cursor_updated_ms = 0,
   cursor_account_id = "",
   limit = 5000,
+  client,
 }: {
   cursor_updated_ms?: number;
   cursor_account_id?: string;
   limit?: number;
+  client?: Queryable;
 }): Promise<
   Array<{
     account_id: string;
@@ -137,13 +144,13 @@ export async function listAccountSecurityStatesSince({
     updated_ms: number;
   }>
 > {
-  await ensureTable();
+  await ensureTable(client);
   const n = Number.isFinite(limit)
     ? Math.max(1, Math.min(50_000, Math.floor(limit)))
     : 5000;
   const cursorUpdated = new Date(Math.max(0, Number(cursor_updated_ms) || 0));
   const rows = (
-    await getPool().query<{
+    await (client ?? getPool()).query<{
       account_id: string;
       banned: boolean;
       revoked_before_ms: string | number | null;
@@ -222,10 +229,39 @@ export function clearAccountSecurityStateCache(): void {
 export async function syncAccountSecurityStateOnce({
   limit = 5000,
   maxPages = 20,
+  client,
 }: {
   limit?: number;
   maxPages?: number;
+  client?: Queryable;
 } = {}): Promise<number> {
+  if (client != null) {
+    let count = 0;
+    for (let i = 0; i < Math.max(1, maxPages); i += 1) {
+      const rows = await listAccountSecurityStatesSince({
+        cursor_updated_ms: syncCursor.updated_ms,
+        cursor_account_id: syncCursor.account_id,
+        limit,
+        client,
+      });
+      if (!rows.length) {
+        return count;
+      }
+      for (const row of rows) {
+        upsertAccountSecurityStateCache(row);
+      }
+      const last = rows[rows.length - 1];
+      syncCursor = {
+        updated_ms: last.updated_ms,
+        account_id: last.account_id,
+      };
+      count += rows.length;
+      if (rows.length < limit) {
+        return count;
+      }
+    }
+    return count;
+  }
   if (activeSyncPromise) {
     return await activeSyncPromise;
   }
@@ -260,7 +296,16 @@ export async function syncAccountSecurityStateOnce({
   return await activeSyncPromise;
 }
 
-export async function ensureAccountSecurityStateReady(): Promise<void> {
+export async function ensureAccountSecurityStateReady(
+  client?: Queryable,
+): Promise<void> {
+  if (client != null) {
+    if (syncCursor.updated_ms > 0) {
+      return;
+    }
+    await syncAccountSecurityStateOnce({ maxPages: 1000, client });
+    return;
+  }
   if (syncCursor.updated_ms > 0 || initialSyncPromise) {
     return await initialSyncPromise;
   }

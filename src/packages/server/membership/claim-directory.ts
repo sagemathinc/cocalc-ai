@@ -36,6 +36,7 @@ const DEFAULT_RESERVATION_TTL_MS = clampInt(
 );
 
 type Queryable = PoolClient | ReturnType<typeof getPool>;
+type WithClient<T> = T & { client?: PoolClient };
 
 interface RawMembershipClaimIdentityRow {
   scope_id: string;
@@ -371,7 +372,7 @@ export async function getMembershipClaimIdentity(
   }).getMembershipClaimIdentity(opts);
 }
 
-export async function reserveMembershipClaimIdentityDirect({
+async function reserveMembershipClaimIdentityWithClient({
   scope_key,
   scope_kind,
   canonical_identity,
@@ -381,28 +382,29 @@ export async function reserveMembershipClaimIdentityDirect({
   claimed_domain,
   reservation_ttl_ms,
   metadata,
-}: MembershipClaimIdentityReserveRequest): Promise<MembershipClaimIdentityReserveResult> {
-  return await withClaimDirectoryTransaction(async (client) => {
-    const normalizedScopeKey = normalizeScopeKey(scope_key);
-    const normalizedScopeKind = normalizeScopeKind(scope_kind);
-    const normalizedCanonicalIdentity =
-      normalizeEmailAddress(canonical_identity);
-    const normalizedMatchedEmail = normalizeEmailAddress(matched_email_address);
-    const normalizedClaimedDomain = normalizeClaimedDomain(claimed_domain);
-    const ttlMs = clampInt(
-      reservation_ttl_ms == null ? undefined : `${reservation_ttl_ms}`,
-      DEFAULT_RESERVATION_TTL_MS,
-      60_000,
-      30 * 24 * 60 * 60_000,
-    );
-    const scope = await getOrCreateClaimScope({
-      scope_key: normalizedScopeKey,
-      scope_kind: normalizedScopeKind,
-      metadata,
-      client,
-    });
-    const { rows } = await client.query<RawMembershipClaimIdentityRow>(
-      `
+  client,
+}: MembershipClaimIdentityReserveRequest & {
+  client: PoolClient;
+}): Promise<MembershipClaimIdentityReserveResult> {
+  const normalizedScopeKey = normalizeScopeKey(scope_key);
+  const normalizedScopeKind = normalizeScopeKind(scope_kind);
+  const normalizedCanonicalIdentity = normalizeEmailAddress(canonical_identity);
+  const normalizedMatchedEmail = normalizeEmailAddress(matched_email_address);
+  const normalizedClaimedDomain = normalizeClaimedDomain(claimed_domain);
+  const ttlMs = clampInt(
+    reservation_ttl_ms == null ? undefined : `${reservation_ttl_ms}`,
+    DEFAULT_RESERVATION_TTL_MS,
+    60_000,
+    30 * 24 * 60 * 60_000,
+  );
+  const scope = await getOrCreateClaimScope({
+    scope_key: normalizedScopeKey,
+    scope_kind: normalizedScopeKind,
+    metadata,
+    client,
+  });
+  const { rows } = await client.query<RawMembershipClaimIdentityRow>(
+    `
         SELECT
           s.scope_id,
           s.scope_key,
@@ -429,37 +431,37 @@ export async function reserveMembershipClaimIdentityDirect({
           AND i.canonical_identity = $2
         FOR UPDATE
       `,
-      [scope.scope_id, normalizedCanonicalIdentity],
-    );
-    const existing = normalizeMembershipClaimIdentityRow(rows[0]);
-    const now = new Date();
-    if (existing != null) {
-      if (
-        existing.state === CLAIM_STATE_ACTIVE &&
-        existing.account_id === account_id
-      ) {
-        throw Error("institutional membership already claimed on this account");
-      }
-      if (existing.state === CLAIM_STATE_ACTIVE) {
-        throw Error(
-          "institutional membership already claimed on another account",
-        );
-      }
-      if (
-        existing.state === CLAIM_STATE_PENDING &&
-        !isPendingReservationExpired(existing, now) &&
-        existing.account_id !== account_id
-      ) {
-        throw Error(
-          "institutional membership claim is already pending on another account",
-        );
-      }
+    [scope.scope_id, normalizedCanonicalIdentity],
+  );
+  const existing = normalizeMembershipClaimIdentityRow(rows[0]);
+  const now = new Date();
+  if (existing != null) {
+    if (
+      existing.state === CLAIM_STATE_ACTIVE &&
+      existing.account_id === account_id
+    ) {
+      throw Error("institutional membership already claimed on this account");
     }
+    if (existing.state === CLAIM_STATE_ACTIVE) {
+      throw Error(
+        "institutional membership already claimed on another account",
+      );
+    }
+    if (
+      existing.state === CLAIM_STATE_PENDING &&
+      !isPendingReservationExpired(existing, now) &&
+      existing.account_id !== account_id
+    ) {
+      throw Error(
+        "institutional membership claim is already pending on another account",
+      );
+    }
+  }
 
-    const nextReservationId = `${reservation_id ?? ""}`.trim() || uuid();
-    const { rows: upsertedRows } =
-      await client.query<RawMembershipClaimIdentityRow>(
-        `
+  const nextReservationId = `${reservation_id ?? ""}`.trim() || uuid();
+  const { rows: upsertedRows } =
+    await client.query<RawMembershipClaimIdentityRow>(
+      `
         INSERT INTO ${CLAIM_IDENTITY_TABLE}
           (
             scope_id,
@@ -518,38 +520,56 @@ export async function reserveMembershipClaimIdentityDirect({
           $4 AS state,
           reservation_id
       `,
-        [
-          scope.scope_id,
-          normalizedCanonicalIdentity,
-          account_id,
-          CLAIM_STATE_PENDING,
-          nextReservationId,
-          normalizedMatchedEmail,
-          normalizedClaimedDomain,
-          ttlMs,
-          normalizeMetadata(metadata),
-        ],
-      );
-    const upsertedRow = upsertedRows[0];
-    if (!upsertedRow?.reservation_id) {
-      throw Error("failed to reserve institutional claim identity");
-    }
-    return {
-      scope_id: scope.scope_id,
-      reservation_id: upsertedRow.reservation_id,
-    };
+      [
+        scope.scope_id,
+        normalizedCanonicalIdentity,
+        account_id,
+        CLAIM_STATE_PENDING,
+        nextReservationId,
+        normalizedMatchedEmail,
+        normalizedClaimedDomain,
+        ttlMs,
+        normalizeMetadata(metadata),
+      ],
+    );
+  const upsertedRow = upsertedRows[0];
+  if (!upsertedRow?.reservation_id) {
+    throw Error("failed to reserve institutional claim identity");
+  }
+  return {
+    scope_id: scope.scope_id,
+    reservation_id: upsertedRow.reservation_id,
+  };
+}
+
+export async function reserveMembershipClaimIdentityDirect(
+  opts: WithClient<MembershipClaimIdentityReserveRequest>,
+): Promise<MembershipClaimIdentityReserveResult> {
+  if (opts.client != null) {
+    await ensureMembershipClaimDirectorySchema(opts.client);
+    return await reserveMembershipClaimIdentityWithClient({
+      ...opts,
+      client: opts.client,
+    });
+  }
+  return await withClaimDirectoryTransaction(async (client) => {
+    return await reserveMembershipClaimIdentityWithClient({
+      ...opts,
+      client,
+    });
   });
 }
 
 export async function reserveMembershipClaimIdentity(
-  opts: MembershipClaimIdentityReserveRequest,
+  opts: WithClient<MembershipClaimIdentityReserveRequest>,
 ): Promise<MembershipClaimIdentityReserveResult> {
   if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
     return await reserveMembershipClaimIdentityDirect(opts);
   }
+  const { client: _client, ...request } = opts;
   return await createInterBayAccountDirectoryClient({
     client: getInterBayFabricClient(),
-  }).reserveMembershipClaimIdentity(opts);
+  }).reserveMembershipClaimIdentity(request);
 }
 
 export async function activateMembershipClaimIdentityDirect({
@@ -712,20 +732,21 @@ export async function activateMembershipClaimIdentity(
   }).activateMembershipClaimIdentity(opts);
 }
 
-export async function revokeMembershipClaimIdentityDirect({
+async function revokeMembershipClaimIdentityWithClient({
   scope_key,
   canonical_identity,
   account_id,
   assignment_id,
   reservation_id,
   revoked_at,
-}: MembershipClaimIdentityRevokeRequest): Promise<void> {
-  await withClaimDirectoryTransaction(async (client) => {
-    const normalizedScopeKey = normalizeScopeKey(scope_key);
-    const normalizedCanonicalIdentity =
-      normalizeEmailAddress(canonical_identity);
-    const { rows } = await client.query<RawMembershipClaimIdentityRow>(
-      `
+  client,
+}: MembershipClaimIdentityRevokeRequest & {
+  client: PoolClient;
+}): Promise<void> {
+  const normalizedScopeKey = normalizeScopeKey(scope_key);
+  const normalizedCanonicalIdentity = normalizeEmailAddress(canonical_identity);
+  const { rows } = await client.query<RawMembershipClaimIdentityRow>(
+    `
         SELECT
           s.scope_id,
           s.scope_key,
@@ -752,26 +773,26 @@ export async function revokeMembershipClaimIdentityDirect({
           AND i.canonical_identity = $2
         FOR UPDATE
       `,
-      [normalizedScopeKey, normalizedCanonicalIdentity],
-    );
-    const existing = normalizeMembershipClaimIdentityRow(rows[0]);
-    if (existing == null || existing.account_id !== account_id) {
-      return;
-    }
-    const normalizedReservationId = `${reservation_id ?? ""}`.trim() || null;
-    const matchesActiveAssignment =
-      existing.state === CLAIM_STATE_ACTIVE &&
-      existing.assignment_id != null &&
-      existing.assignment_id === assignment_id;
-    const matchesPendingReservation =
-      existing.state === CLAIM_STATE_PENDING &&
-      normalizedReservationId != null &&
-      existing.reservation_id === normalizedReservationId;
-    if (!matchesActiveAssignment && !matchesPendingReservation) {
-      return;
-    }
-    await client.query(
-      `
+    [normalizedScopeKey, normalizedCanonicalIdentity],
+  );
+  const existing = normalizeMembershipClaimIdentityRow(rows[0]);
+  if (existing == null || existing.account_id !== account_id) {
+    return;
+  }
+  const normalizedReservationId = `${reservation_id ?? ""}`.trim() || null;
+  const matchesActiveAssignment =
+    existing.state === CLAIM_STATE_ACTIVE &&
+    existing.assignment_id != null &&
+    existing.assignment_id === assignment_id;
+  const matchesPendingReservation =
+    existing.state === CLAIM_STATE_PENDING &&
+    normalizedReservationId != null &&
+    existing.reservation_id === normalizedReservationId;
+  if (!matchesActiveAssignment && !matchesPendingReservation) {
+    return;
+  }
+  await client.query(
+    `
         UPDATE ${CLAIM_IDENTITY_TABLE}
         SET state = $3,
             reservation_expires_at = NULL,
@@ -780,13 +801,28 @@ export async function revokeMembershipClaimIdentityDirect({
         WHERE scope_id = $1
           AND canonical_identity = $2
       `,
-      [
-        existing.scope_id,
-        normalizedCanonicalIdentity,
-        CLAIM_STATE_REVOKED,
-        normalizeOptionalDateLike(revoked_at),
-      ],
-    );
+    [
+      existing.scope_id,
+      normalizedCanonicalIdentity,
+      CLAIM_STATE_REVOKED,
+      normalizeOptionalDateLike(revoked_at),
+    ],
+  );
+}
+
+export async function revokeMembershipClaimIdentityDirect(
+  opts: WithClient<MembershipClaimIdentityRevokeRequest>,
+): Promise<void> {
+  if (opts.client != null) {
+    await ensureMembershipClaimDirectorySchema(opts.client);
+    await revokeMembershipClaimIdentityWithClient({
+      ...opts,
+      client: opts.client,
+    });
+    return;
+  }
+  await withClaimDirectoryTransaction(async (client) => {
+    await revokeMembershipClaimIdentityWithClient({ ...opts, client });
   });
 }
 
@@ -800,13 +836,14 @@ function normalizeOptionalDateLike(
 }
 
 export async function revokeMembershipClaimIdentity(
-  opts: MembershipClaimIdentityRevokeRequest,
+  opts: WithClient<MembershipClaimIdentityRevokeRequest>,
 ): Promise<void> {
   if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
     await revokeMembershipClaimIdentityDirect(opts);
     return;
   }
+  const { client: _client, ...request } = opts;
   await createInterBayAccountDirectoryClient({
     client: getInterBayFabricClient(),
-  }).revokeMembershipClaimIdentity(opts);
+  }).revokeMembershipClaimIdentity(request);
 }
