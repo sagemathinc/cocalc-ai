@@ -455,6 +455,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "projects.requestProjectAccess": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
   "projects.restart": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,

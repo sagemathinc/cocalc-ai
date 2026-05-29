@@ -3,6 +3,13 @@ import { Avatar } from "./avatar";
 
 const getImage = jest.fn();
 const getColor = jest.fn();
+const mockUserMap = {
+  getIn: jest.fn(),
+};
+const mockAccountProfile = {
+  get: jest.fn(),
+};
+let mockAccountState: Record<string, any> = {};
 
 jest.mock("antd", () => ({
   Tooltip: ({ children }: any) => <>{children}</>,
@@ -36,9 +43,15 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
       };
     }, deps);
   },
-  useTypedRedux: () => ({
-    getIn: () => undefined,
-  }),
+  useTypedRedux: (store: string, key: string) => {
+    if (store === "users" && key === "user_map") {
+      return mockUserMap;
+    }
+    if (store === "account") {
+      return mockAccountState[key];
+    }
+    return undefined;
+  },
 }));
 
 jest.mock("@cocalc/frontend/components", () => ({
@@ -79,6 +92,25 @@ function deferred<T>() {
 describe("Avatar", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockUserMap.getIn.mockReturnValue(undefined);
+    mockAccountProfile.get.mockImplementation((key: string) =>
+      key === "color" ? "#123456" : undefined,
+    );
+    mockAccountState = {};
+  });
+
+  it("uses the initialized account store for the current user's initial", async () => {
+    mockAccountState = {
+      account_id: "current-user",
+      first_name: "Ada",
+      last_name: "Lovelace",
+      profile: mockAccountProfile,
+    };
+
+    render(<Avatar account_id="current-user" no_tooltip />);
+
+    expect(screen.getByText("A")).toBeTruthy();
+    await waitFor(() => expect(getImage).not.toHaveBeenCalled());
   });
 
   it("clears the previous avatar image immediately when the account changes", async () => {

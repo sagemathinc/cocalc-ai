@@ -31,7 +31,7 @@ export interface AccountState {
   first_name?: string;
   last_name?: string;
   unlisted?: boolean;
-  profile: TypedMap<{ color: string }>;
+  profile: TypedMap<{ color?: string; image?: string }>;
   customize?: {
     disableCollaborators?: boolean;
     disableAI?: boolean;

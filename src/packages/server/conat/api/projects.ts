@@ -14,15 +14,21 @@ export * from "@cocalc/server/projects/collaborators";
 import {
   createCollabInvite as createCollabInviteLocal,
   copyEmailProjectInviteLink as copyEmailProjectInviteLinkLocal,
+  getProjectAccessLandingInfo as getProjectAccessLandingInfoLocal,
   hashProjectCollabInviteToken,
   inviteCollaboratorWithoutAccount as inviteCollaboratorWithoutAccountLocal,
   previewEmailProjectInvite as previewEmailProjectInviteLocal,
+  listProjectAccessRequestBlocks as listProjectAccessRequestBlocksLocal,
+  listProjectAccessRequests as listProjectAccessRequestsLocal,
   listCollabInvites as listCollabInvitesLocal,
   redeemEmailProjectInvite as redeemEmailProjectInviteLocal,
+  requestProjectAccess as requestProjectAccessLocal,
   respondEmailProjectInvite as respondEmailProjectInviteLocal,
   removeCollaborator as removeCollaboratorLocal,
   respondCollabInvite as respondCollabInviteLocal,
+  respondProjectAccessRequest as respondProjectAccessRequestLocal,
   setProjectUserRole as setProjectUserRoleLocal,
+  unblockProjectAccessRequester as unblockProjectAccessRequesterLocal,
 } from "@cocalc/server/projects/collaborators";
 import {
   leaveOrDeleteProjectsForAccount,
@@ -1912,6 +1918,156 @@ export async function respondCollabInvite({
       });
     return collabInviteFromWire(result);
   }
+}
+
+export async function getProjectAccessLandingInfo({
+  account_id,
+  project_id,
+}: Parameters<typeof getProjectAccessLandingInfoLocal>[0]) {
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
+    return await getProjectAccessLandingInfoLocal({ account_id, project_id });
+  }
+  return await getInterBayBridge()
+    .projectCollabInvite(ownership.bay_id)
+    .getProjectAccessLandingInfo({
+      account_id: account_id!,
+      project_id,
+    });
+}
+
+export async function requestProjectAccess({
+  account_id,
+  project_id,
+  requested_role,
+  read_policy,
+  message,
+  source,
+}: Parameters<typeof requestProjectAccessLocal>[0]) {
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
+    return await requestProjectAccessLocal({
+      account_id,
+      project_id,
+      requested_role,
+      read_policy,
+      message,
+      source,
+    });
+  }
+  return await getInterBayBridge()
+    .projectCollabInvite(ownership.bay_id)
+    .requestProjectAccess({
+      account_id: account_id!,
+      project_id,
+      requested_role,
+      read_policy,
+      message,
+      source,
+    });
+}
+
+export async function listProjectAccessRequests({
+  account_id,
+  project_id,
+  status,
+  limit,
+}: Parameters<typeof listProjectAccessRequestsLocal>[0]) {
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
+    return await listProjectAccessRequestsLocal({
+      account_id,
+      project_id,
+      status,
+      limit,
+    });
+  }
+  return await getInterBayBridge()
+    .projectCollabInvite(ownership.bay_id)
+    .listProjectAccessRequests({
+      account_id: account_id!,
+      project_id,
+      status,
+      limit,
+    });
+}
+
+export async function respondProjectAccessRequest({
+  account_id,
+  project_id,
+  request_id,
+  action,
+  role,
+  read_policy,
+  message,
+}: Parameters<typeof respondProjectAccessRequestLocal>[0]) {
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
+    return await respondProjectAccessRequestLocal({
+      account_id,
+      project_id,
+      request_id,
+      action,
+      role,
+      read_policy,
+      message,
+    });
+  }
+  return await getInterBayBridge()
+    .projectCollabInvite(ownership.bay_id)
+    .respondProjectAccessRequest({
+      account_id: account_id!,
+      project_id,
+      request_id,
+      action,
+      role,
+      read_policy,
+      message,
+    });
+}
+
+export async function listProjectAccessRequestBlocks({
+  account_id,
+  project_id,
+  limit,
+}: Parameters<typeof listProjectAccessRequestBlocksLocal>[0]) {
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
+    return await listProjectAccessRequestBlocksLocal({
+      account_id,
+      project_id,
+      limit,
+    });
+  }
+  return await getInterBayBridge()
+    .projectCollabInvite(ownership.bay_id)
+    .listProjectAccessRequestBlocks({
+      account_id: account_id!,
+      project_id,
+      limit,
+    });
+}
+
+export async function unblockProjectAccessRequester({
+  account_id,
+  project_id,
+  blocked_account_id,
+}: Parameters<typeof unblockProjectAccessRequesterLocal>[0]) {
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
+    return await unblockProjectAccessRequesterLocal({
+      account_id,
+      project_id,
+      blocked_account_id,
+    });
+  }
+  return await getInterBayBridge()
+    .projectCollabInvite(ownership.bay_id)
+    .unblockProjectAccessRequester({
+      account_id: account_id!,
+      project_id,
+      blocked_account_id,
+    });
 }
 
 export async function copyEmailProjectInviteLink({
