@@ -397,7 +397,6 @@ describe("PublicApp", () => {
     expect(screen.getByText("Functionality")).not.toBeNull();
     expect(screen.getByText("8 GB")).not.toBeNull();
     expect(screen.getByText("10 GB")).not.toBeNull();
-    expect(screen.getByText("1 hour")).not.toBeNull();
     expect(screen.getByText("125 GB")).not.toBeNull();
     expect(screen.getByText("Included AI per 5 hours")).not.toBeNull();
     expect(screen.getByText("Included AI per 7 days")).not.toBeNull();

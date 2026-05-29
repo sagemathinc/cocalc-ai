@@ -30,7 +30,7 @@ import {
   PublicGrid,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
-import { currency, humanSize, plural, round2 } from "@cocalc/util/misc";
+import { currency, humanSize, round2 } from "@cocalc/util/misc";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 const { Paragraph, Text, Title } = Typography;
@@ -149,18 +149,6 @@ function formatBytesValue(value: unknown): ReactNode {
   return numberValue == null ? EMPTY_COMPARISON_VALUE : humanSize(numberValue);
 }
 
-function formatUptimeValue(value: unknown): ReactNode {
-  const seconds = asNumber(value);
-  if (seconds == null) return EMPTY_COMPARISON_VALUE;
-  if (seconds < 3600) {
-    const minutes = Math.max(1, Math.round(seconds / 60));
-    return `${minutes} ${plural(minutes, "minute")}`;
-  }
-  const hours = seconds / 3600;
-  const rounded = Number.isInteger(hours) ? hours : round2(hours);
-  return `${rounded} ${plural(rounded, "hour")}`;
-}
-
 function formatBooleanValue(value: unknown): ReactNode {
   return value === true ? (
     <Text aria-label="Yes">✓</Text>
@@ -204,10 +192,6 @@ const COMPARISON_GROUPS: ComparisonGroup[] = [
       {
         label: "Disk",
         value: (tier) => formatMbValue(projectDefaults(tier).disk_quota),
-      },
-      {
-        label: "Minimum uptime",
-        value: (tier) => formatUptimeValue(projectDefaults(tier).mintime),
       },
       {
         label: "Collaborators",
