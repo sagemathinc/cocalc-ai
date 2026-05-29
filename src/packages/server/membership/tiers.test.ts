@@ -50,6 +50,7 @@ describe("membership tier free trials", () => {
       account_id,
       targetClass,
       interval: "month",
+      client: getPool() as any,
     });
 
     expect(quote.trial_available).toBe(true);
@@ -70,6 +71,7 @@ describe("membership tier free trials", () => {
       account_id,
       targetClass,
       interval: "month",
+      client: getPool() as any,
     });
 
     expect(secondQuote.trial_available).toBe(false);
@@ -82,13 +84,21 @@ describe("membership tier free trials", () => {
     const targetClass = `trial-${uuid().slice(0, 8)}` as any;
     await createTestAccount(firstAccount);
     await createTestAccount(secondAccount);
+    const firstEmail = "co.dex+first@outlook.com";
+    const secondEmail = "co.dex+second@outlook.com";
     await getPool().query(
-      "UPDATE accounts SET email_address=$1, email_address_verified=TRUE WHERE account_id=$2",
-      ["co.dex+first@outlook.com", firstAccount],
+      `UPDATE accounts
+          SET email_address=$1,
+              email_address_verified=$2::jsonb
+        WHERE account_id=$3`,
+      [firstEmail, { [firstEmail]: new Date().toISOString() }, firstAccount],
     );
     await getPool().query(
-      "UPDATE accounts SET email_address=$1, email_address_verified=TRUE WHERE account_id=$2",
-      ["co.dex+second@outlook.com", secondAccount],
+      `UPDATE accounts
+          SET email_address=$1,
+              email_address_verified=$2::jsonb
+        WHERE account_id=$3`,
+      [secondEmail, { [secondEmail]: new Date().toISOString() }, secondAccount],
     );
     await createTestMembershipTier({
       id: targetClass,
@@ -102,9 +112,10 @@ describe("membership tier free trials", () => {
       account_id: firstAccount,
       targetClass,
       interval: "month",
+      client: getPool() as any,
     });
     expect(firstQuote.trial_available).toBe(true);
-    expect(firstQuote.trial_email).toBe("co.dex+first@outlook.com");
+    expect(firstQuote.trial_email).toBe(firstEmail);
 
     await claimMembershipTrial({
       account_id: firstAccount,
@@ -119,6 +130,7 @@ describe("membership tier free trials", () => {
       account_id: secondAccount,
       targetClass,
       interval: "month",
+      client: getPool() as any,
     });
     expect(secondQuote.trial_available).toBe(false);
     expect(secondQuote.charge).toBe(50);
