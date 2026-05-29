@@ -68,7 +68,7 @@ export async function isPurchaseAllowed({
   if (!(await isValidAccount(account_id))) {
     return { allowed: false, reason: `${account_id} is not a valid account` };
   }
-  await ensureAccountSecurityStateReady();
+  await ensureAccountSecurityStateReady(client);
   if (isAccountBannedCached(account_id)) {
     return { allowed: false, reason: `${account_id} is banned` };
   }

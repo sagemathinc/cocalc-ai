@@ -178,6 +178,32 @@ function transactionControl(text: string): TransactionControl {
   return null;
 }
 
+function isReadOnlyQuery(text: string): boolean {
+  const normalized = text
+    .trim()
+    .replace(/;+\s*$/, "")
+    .toLowerCase();
+  if (!normalized) return false;
+  if (/^(select|show|values|table)\b/.test(normalized)) {
+    return true;
+  }
+  const explainMatch = normalized.match(/^explain(?:\s+\([^)]*\))?\s+(.+)$/s);
+  return explainMatch ? isReadOnlyQuery(explainMatch[1] ?? "") : false;
+}
+
+function isIdempotentSchemaQuery(text: string): boolean {
+  const normalized = text
+    .trim()
+    .replace(/;+\s*$/, "")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+  return /^create (table|index) if not exists\b/.test(normalized);
+}
+
+function canRunDuringOtherTransaction(text: string): boolean {
+  return isReadOnlyQuery(text) || isIdempotentSchemaQuery(text);
+}
+
 class PglitePoolClient extends EventEmitter {
   private readonly sessionId = makeSessionId("client");
 
@@ -394,7 +420,7 @@ export class PglitePool {
     const { text, values } = normalizeQueryArgs(args);
     assertListenUnsupported(text);
     const control = transactionControl(text);
-    await this.waitForTransactionAccess(sessionId, control);
+    await this.waitForTransactionAccess(sessionId, control, text);
     try {
       const result = await withLowlevelDebug(
         `pool:${sessionId}`,
@@ -451,10 +477,24 @@ export class PglitePool {
   private async waitForTransactionAccess(
     sessionId: string,
     control: TransactionControl,
+    text: string,
   ): Promise<void> {
     if (control === "begin") {
       await this.waitForNoOtherTransaction(sessionId);
       this.transactionOwner ??= sessionId;
+      return;
+    }
+    if (
+      this.transactionOwner != null &&
+      this.transactionOwner !== sessionId &&
+      control == null &&
+      canRunDuringOtherTransaction(text)
+    ) {
+      // PGlite exposes one physical connection. Writes/unsafe DDL from another
+      // logical session must wait for an open transaction, otherwise they run
+      // inside that transaction and can poison it. Metadata reads and
+      // idempotent schema ensures are allowed through to avoid deadlocking
+      // transaction code that awaits helper functions using getPool().
       return;
     }
     await this.waitForNoOtherTransaction(sessionId);
