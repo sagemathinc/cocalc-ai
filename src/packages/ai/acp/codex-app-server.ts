@@ -10,6 +10,7 @@ import getLogger from "@cocalc/backend/logger";
 import { argsJoin } from "@cocalc/util/args";
 import {
   codexServiceTierForAppServer,
+  DEFAULT_CODEX_MODEL_NAME,
   normalizeCodexSessionId,
   type CodexSessionConfig,
 } from "@cocalc/util/ai/codex";
@@ -1606,7 +1607,7 @@ export class CodexAppServerAgent implements AcpAgent {
         const verdict = await siteKeyGovernor.checkAllowed({
           accountId: request.account_id,
           projectId,
-          model: config?.model ?? this.opts.model,
+          model: this.effectiveModel(config),
           phase,
         });
         if (!verdict.allowed) {
@@ -1665,10 +1666,11 @@ export class CodexAppServerAgent implements AcpAgent {
         normalizeCodexSessionId(config?.sessionId) ??
         normalizeCodexSessionId(session_id);
       const resumeId = requestedSessionKey ? session.sessionId : undefined;
-      const serviceTier = codexServiceTierForAppServer(config);
+      const model = this.effectiveModel(config);
+      const serviceTier = this.resolveAppServerServiceTier(config, model);
       const threadParams = {
         cwd,
-        model: config?.model ?? this.opts.model,
+        model,
         serviceTier,
         approvalPolicy: "never",
         sandbox: toSandboxMode(spawned, config),
@@ -1723,7 +1725,7 @@ export class CodexAppServerAgent implements AcpAgent {
         cwd,
         approvalPolicy: "never",
         sandboxPolicy: toTurnSandboxPolicy(spawned, config),
-        model: config?.model ?? this.opts.model,
+        model,
         serviceTier,
         effort: toReasoningEffort(config),
         env: Object.keys(turnEnv).length > 0 ? turnEnv : undefined,
@@ -2210,7 +2212,7 @@ export class CodexAppServerAgent implements AcpAgent {
           await siteKeyGovernor.reportUsage({
             accountId: request.account_id,
             projectId: request.chat?.project_id ?? request.project_id,
-            model: config?.model ?? this.opts.model,
+            model: this.effectiveModel(config),
             usage: {
               input_tokens: latestUsage.input_tokens ?? 0,
               cached_input_tokens: latestUsage.cached_input_tokens,
@@ -2227,7 +2229,7 @@ export class CodexAppServerAgent implements AcpAgent {
           logger.warn("codex app-server: failed to report site-key usage", {
             accountId: request.account_id,
             projectId: request.chat?.project_id ?? request.project_id,
-            model: config?.model ?? this.opts.model,
+            model: this.effectiveModel(config),
             err: `${err}`,
           });
         }
@@ -2450,8 +2452,25 @@ export class CodexAppServerAgent implements AcpAgent {
       cwd,
       approval_policy: "never",
       sandbox_policy: getSessionMetaSandboxPolicy(spawned, config),
-      service_tier: codexServiceTierForAppServer(config),
+      service_tier: this.resolveAppServerServiceTier(
+        config,
+        this.effectiveModel(config),
+      ),
     }));
+  }
+
+  private effectiveModel(config: CodexSessionConfig | undefined): string {
+    return config?.model ?? this.opts.model ?? DEFAULT_CODEX_MODEL_NAME;
+  }
+
+  private resolveAppServerServiceTier(
+    config: CodexSessionConfig | undefined,
+    model: string | undefined,
+  ): string | null {
+    return codexServiceTierForAppServer({
+      model,
+      serviceTier: config?.serviceTier,
+    });
   }
 
   private async tryEnsureSessionConfig(

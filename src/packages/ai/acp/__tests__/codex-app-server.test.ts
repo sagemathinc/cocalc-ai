@@ -439,7 +439,6 @@ describe("CodexAppServerAgent", () => {
       prompt: "say hello",
       stream: async () => {},
       config: {
-        model: "gpt-5.5",
         serviceTier: "fast",
         workingDirectory: "/tmp/project",
       },
@@ -447,11 +446,13 @@ describe("CodexAppServerAgent", () => {
 
     expect(threadStartRequests).toEqual([
       expect.objectContaining({
+        model: "gpt-5.5",
         serviceTier: "fast",
       }),
     ]);
     expect(turnStartRequests).toEqual([
       expect.objectContaining({
+        model: "gpt-5.5",
         serviceTier: "fast",
       }),
     ]);
