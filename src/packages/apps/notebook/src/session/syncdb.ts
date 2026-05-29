@@ -157,12 +157,8 @@ export class SyncDBNotebookSession {
   ): Promise<NotebookCellRecord> {
     this.assertWritable();
     const result = moveNotebookCell(this.readSnapshot(), options);
-    const cell = this.requireCell(result.snapshot, options.cellId);
-    // A move is only an ordering change. Avoid writing the full cell record,
-    // especially the patchflow-backed input string, since that can create
-    // unnecessary concurrent text patches during agent-driven reorders.
-    await this.persistPatch({ type: "cell", id: cell.id, pos: cell.pos });
-    return cell;
+    await this.persistResult(result.snapshot, result.changedCellIds);
+    return this.requireCell(result.snapshot, options.cellId);
   }
 
   private readSnapshot(): NotebookSnapshot {
@@ -183,15 +179,6 @@ export class SyncDBNotebookSession {
         this.syncdb.set(cell);
       }
     }
-    this.syncdb.commit();
-    await this.syncdb.save();
-    await this.syncdb.save_to_disk?.();
-  }
-
-  private async persistPatch(
-    patch: Partial<NotebookCellRecord>,
-  ): Promise<void> {
-    this.syncdb.set(patch);
     this.syncdb.commit();
     await this.syncdb.save();
     await this.syncdb.save_to_disk?.();
