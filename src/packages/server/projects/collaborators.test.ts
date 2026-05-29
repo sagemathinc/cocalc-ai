@@ -1950,4 +1950,251 @@ describe("project collaborators local bay access", () => {
       }),
     ).rejects.toThrow("verify");
   });
+
+  it("requires sign-in before returning project access landing info", async () => {
+    const { getProjectAccessLandingInfo } = await import("./collaborators");
+    await expect(
+      getProjectAccessLandingInfo({ project_id: PROJECT_ID }),
+    ).rejects.toThrow("user must be signed in");
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("returns only safe project access landing info for signed-in non-members", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("owner_id.account_id AS owner_account_id")) {
+        return {
+          rows: [
+            {
+              title: "Private Project",
+              users: {
+                [TARGET_ACCOUNT_ID]: { group: "owner" },
+              },
+              owner_account_id: TARGET_ACCOUNT_ID,
+              owner_name: "Project Owner",
+              owner_first_name: "Project",
+              owner_last_name: "Owner",
+              owner_profile: { avatar_image_tiny: "avatar.png" },
+              invite_id: null,
+              invite_role: null,
+              invite_read_policy: null,
+              request_id: null,
+              requested_role: null,
+              blocked: false,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { getProjectAccessLandingInfo } = await import("./collaborators");
+    await expect(
+      getProjectAccessLandingInfo({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toEqual({
+      project_id: PROJECT_ID,
+      title: "Private Project",
+      owner: {
+        account_id: TARGET_ACCOUNT_ID,
+        name: "Project Owner",
+        first_name: "Project",
+        last_name: "Owner",
+        profile: { avatar_image_tiny: "avatar.png" },
+      },
+      relationship: "none",
+      pending_invite: null,
+      pending_request: null,
+      blocked: false,
+    });
+  });
+
+  it("lets a non-member request viewer access", async () => {
+    const requestId = "88888888-8888-4888-8888-888888888888";
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("AS current_group")) {
+        return {
+          rows: [{ current_group: null, blocked: false }],
+        };
+      }
+      if (sql.includes("INSERT INTO project_access_requests")) {
+        return { rows: [{ request_id: requestId }] };
+      }
+      if (sql.includes("FROM project_access_requests r")) {
+        return {
+          rows: [
+            {
+              request_id: requestId,
+              project_id: PROJECT_ID,
+              project_title: "Private Project",
+              requester_account_id: ACCOUNT_ID,
+              requester_name: "Requester",
+              requester_first_name: "Request",
+              requester_last_name: "User",
+              requester_profile: null,
+              requested_role: "viewer",
+              read_policy: null,
+              message: "Please let me view this.",
+              status: "pending",
+              source: "project-url",
+              created: new Date("2026-05-29T00:00:00Z"),
+              updated: new Date("2026-05-29T00:00:00Z"),
+              decided: null,
+              decided_by_account_id: null,
+              decision_message: null,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { requestProjectAccess } = await import("./collaborators");
+    await expect(
+      requestProjectAccess({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        requested_role: "viewer",
+        message: "Please let me view this.",
+        source: "project-url",
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        request_id: requestId,
+        requested_role: "viewer",
+        status: "pending",
+      }),
+    );
+    expect(assertAccountTrustedForProductAccessMock).toHaveBeenCalledWith(
+      ACCOUNT_ID,
+      "request project access",
+    );
+  });
+
+  it("only lets existing viewers request collaborator access", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("AS current_group")) {
+        return {
+          rows: [{ current_group: "viewer", blocked: false }],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { requestProjectAccess } = await import("./collaborators");
+    await expect(
+      requestProjectAccess({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        requested_role: "viewer",
+      }),
+    ).rejects.toThrow("viewers can only request collaborator access");
+    expect(queryMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO project_access_requests"),
+      expect.any(Array),
+    );
+  });
+
+  it("blocks project access requests from blocked accounts", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("AS current_group")) {
+        return {
+          rows: [{ current_group: null, blocked: true }],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { requestProjectAccess } = await import("./collaborators");
+    await expect(
+      requestProjectAccess({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        requested_role: "collaborator",
+      }),
+    ).rejects.toThrow(
+      "project is not accepting access requests from this account",
+    );
+  });
+
+  it("approves pending collaborator access requests using collaborator-management authority", async () => {
+    const requestId = "88888888-8888-4888-8888-888888888888";
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_access_requests")) {
+        return {
+          rows: [
+            {
+              request_id: requestId,
+              project_id: PROJECT_ID,
+              requester_account_id: TARGET_ACCOUNT_ID,
+              requested_role: "collaborator",
+              read_policy: null,
+              message: null,
+              status: "pending",
+              source: "project-url",
+              created: new Date("2026-05-29T00:00:00Z"),
+              updated: new Date("2026-05-29T00:00:00Z"),
+            },
+          ],
+        };
+      }
+      if (sql.includes("AS actor_group")) {
+        return {
+          rows: [{ actor_group: "owner", manage_users_owner_only: false }],
+        };
+      }
+      if (sql.includes("UPDATE project_access_requests")) {
+        return { rows: [] };
+      }
+      if (sql.includes("FROM project_access_requests r")) {
+        return {
+          rows: [
+            {
+              request_id: requestId,
+              project_id: PROJECT_ID,
+              project_title: "Private Project",
+              requester_account_id: TARGET_ACCOUNT_ID,
+              requester_name: "Requester",
+              requester_first_name: "Request",
+              requester_last_name: "User",
+              requester_profile: null,
+              requested_role: "collaborator",
+              read_policy: null,
+              message: null,
+              status: "approved",
+              source: "project-url",
+              created: new Date("2026-05-29T00:00:00Z"),
+              updated: new Date("2026-05-29T00:01:00Z"),
+              decided: new Date("2026-05-29T00:01:00Z"),
+              decided_by_account_id: ACCOUNT_ID,
+              decision_message: null,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { respondProjectAccessRequest } = await import("./collaborators");
+    await expect(
+      respondProjectAccessRequest({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        request_id: requestId,
+        action: "approve",
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        request_id: requestId,
+        status: "approved",
+        requested_role: "collaborator",
+      }),
+    );
+    expect(addUserToProject).toHaveBeenCalledWith({
+      account_id: TARGET_ACCOUNT_ID,
+      group: "collaborator",
+      project_id: PROJECT_ID,
+    });
+  });
 });
