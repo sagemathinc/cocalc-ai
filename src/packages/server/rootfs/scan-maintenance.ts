@@ -210,7 +210,8 @@ export async function selectHostForScheduledRootfsScan(
 async function withMaintenanceLock<T>(
   fn: () => Promise<T>,
 ): Promise<T | undefined> {
-  const pool = getPool("medium");
+  // Advisory locks require a real PoolClient; cached pools only expose query().
+  const pool = getPool();
   const client = await pool.connect();
   try {
     const { rows } = await client.query<{ locked: boolean }>(
