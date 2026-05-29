@@ -1,0 +1,71 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+import type { DocsEntry } from "../types";
+import { docsIcon } from "../helpers";
+import {
+  COURSE_ASSIGNMENT_BODY,
+  COURSE_WORKFLOW_BODY,
+  NBGRADER_BODY,
+} from "../content";
+
+export const TEACHING_ENTRIES: DocsEntry[] = [
+  {
+    audiences: ["agents", "instructors"],
+    body: COURSE_WORKFLOW_BODY.trim(),
+    category: "Teaching",
+    id: "teaching.course-workflow",
+    image: docsIcon(
+      "/public/docs/course-assignment-ede60e1a.webp",
+      "Course assignments sent to student project folders",
+    ),
+    lastReviewed: "2026-05-25",
+    slug: "teaching/course-workflow",
+    status: "ready",
+    summary:
+      "Run computational courses with student projects, assignments, collection, grading, and feedback.",
+    title: "Teach a course",
+  },
+  {
+    actions: [
+      {
+        description: "Open course assignment creation.",
+        executable: false,
+        id: "course.assignment.create",
+        label: "Create assignment",
+      },
+    ],
+    audiences: ["agents", "instructors"],
+    body: COURSE_ASSIGNMENT_BODY.trim(),
+    category: "Teaching",
+    id: "teaching.create-assignment",
+    image: docsIcon(
+      "/public/docs/course-assignment-ede60e1a.webp",
+      "Course assignments sent to student project folders",
+    ),
+    lastReviewed: "2026-05-24",
+    slug: "teaching/create-assignment",
+    status: "ready",
+    summary:
+      "Assign, collect, grade, and return computational work in student projects.",
+    title: "Create a course assignment",
+  },
+  {
+    audiences: ["agents", "instructors"],
+    body: NBGRADER_BODY.trim(),
+    category: "Teaching",
+    id: "teaching.nbgrader",
+    image: docsIcon(
+      "/public/docs/course-assignment-ede60e1a.webp",
+      "Course assignments sent to student project folders",
+    ),
+    lastReviewed: "2026-05-25",
+    slug: "teaching/nbgrader",
+    status: "ready",
+    summary:
+      "Use nbgrader for structured Jupyter notebook grading in CoCalc courses.",
+    title: "Use nbgrader",
+  },
+];

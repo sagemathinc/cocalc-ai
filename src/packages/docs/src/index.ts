@@ -4,14 +4,17 @@
  */
 
 export { DOCS_ENTRIES } from "./entries";
+export { DOCS_CHAPTERS } from "./chapters";
 export {
   docsEntryVisibility,
   docsPath,
   getDocsAction,
+  getDocsChapter,
   getDocsEntry,
   isDocsActionId,
   isDocsEntryVisible,
   listDocsActions,
+  listDocsChapters,
   listDocsEntries,
   searchDocsEntries,
 } from "./registry";
@@ -23,6 +26,7 @@ export type {
   DocsActionParameterType,
   DocsActionSummary,
   DocsAudience,
+  DocsChapter,
   DocsEntry,
   DocsEntryImage,
   DocsEntryStatus,
