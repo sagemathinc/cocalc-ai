@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { getActivityBarCollapsed } from "./activity-bar-storage";
 
 const mockSetActiveTab = jest.fn();
@@ -8,6 +8,9 @@ const mockToggleFlyout = jest.fn();
 const mockToggleActionButtons = jest.fn();
 const mockSetOtherSettings = jest.fn();
 const mockConfirmRemoveMyselfFromProject = jest.fn();
+const mockRequestAccess = jest.fn();
+const mockModalSuccess = jest.fn();
+const mockModalError = jest.fn();
 let mockAccountStoreReady = true;
 let mockLite = true;
 let mockPageState: Record<string, any> = {};
@@ -61,6 +64,8 @@ jest.mock("antd", () => {
   );
   const Modal = ({ children, open }: any) =>
     open ? <div>{children}</div> : null;
+  Modal.success = (...args: any[]) => mockModalSuccess(...args);
+  Modal.error = (...args: any[]) => mockModalError(...args);
   const Tooltip = ({ children }: any) => children;
   return { Button, Checkbox, Dropdown, Modal, Tooltip };
 });
@@ -150,6 +155,14 @@ jest.mock("@cocalc/frontend/projects/remove-myself", () => ({
     mockConfirmRemoveMyselfFromProject(opts),
 }));
 
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: {
+    project_collaborators: {
+      request_access: (...args: any[]) => mockRequestAccess(...args),
+    },
+  },
+}));
+
 jest.mock("@cocalc/frontend/lite", () => ({
   get lite() {
     return mockLite;
@@ -209,6 +222,10 @@ describe("VerticalFixedTabs overflow actions", () => {
     mockToggleActionButtons.mockReset();
     mockSetOtherSettings.mockReset();
     mockConfirmRemoveMyselfFromProject.mockReset();
+    mockRequestAccess.mockReset();
+    mockRequestAccess.mockResolvedValue({});
+    mockModalSuccess.mockReset();
+    mockModalError.mockReset();
     mockAccountStoreReady = true;
     mockLite = true;
     mockPageState = {};
@@ -276,6 +293,29 @@ describe("VerticalFixedTabs overflow actions", () => {
       projectLabelLower: "project",
     });
   });
+
+  it("lets viewers request collaborator access from the overflow rail menu", async () => {
+    mockProjectAccessRole = "viewer";
+
+    render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
+
+    fireEvent.click(
+      screen.getByTestId("menu-overflow:request-collaborator-access"),
+    );
+
+    await waitFor(() =>
+      expect(mockRequestAccess).toHaveBeenCalledWith({
+        project_id: "project-1",
+        requested_role: "collaborator",
+        source: "rail-menu",
+      }),
+    );
+    expect(mockModalSuccess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Collaborator access requested",
+      }),
+    );
+  });
 });
 
 describe("ProjectTabs settings affordance", () => {
@@ -302,6 +342,10 @@ describe("HiddenActivityBarLauncher", () => {
     mockToggleActionButtons.mockReset();
     mockSetOtherSettings.mockReset();
     mockConfirmRemoveMyselfFromProject.mockReset();
+    mockRequestAccess.mockReset();
+    mockRequestAccess.mockResolvedValue({});
+    mockModalSuccess.mockReset();
+    mockModalError.mockReset();
     mockAccountStoreReady = true;
     mockPageState = {};
     mockProjectAccessRole = "collaborator";
@@ -366,6 +410,29 @@ describe("HiddenActivityBarLauncher", () => {
       projectLabel: "Project",
       projectLabelLower: "project",
     });
+  });
+
+  it("lets viewers request collaborator access from the hidden rail launcher menu", async () => {
+    mockProjectAccessRole = "viewer";
+
+    render(<HiddenActivityBarLauncher />);
+
+    fireEvent.click(
+      screen.getByTestId("menu-launcher:request-collaborator-access"),
+    );
+
+    await waitFor(() =>
+      expect(mockRequestAccess).toHaveBeenCalledWith({
+        project_id: "project-1",
+        requested_role: "collaborator",
+        source: "rail-menu",
+      }),
+    );
+    expect(mockModalSuccess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Collaborator access requested",
+      }),
+    );
   });
 });
 
