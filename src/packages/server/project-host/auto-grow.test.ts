@@ -565,6 +565,116 @@ describe("guarded host auto-grow", () => {
     );
   });
 
+  it("clamps legacy shared scratch auto-grow metadata to backend caps", async () => {
+    const resizeSharedScratchDiskMock = jest.fn(async () => undefined);
+    const growSharedScratchMock = jest.fn(async () => ({ ok: true }));
+    getProviderContextMock = jest.fn(async () => ({
+      entry: {
+        provider: {
+          resizeSharedScratchDisk: resizeSharedScratchDiskMock,
+        },
+      },
+      creds: {},
+    }));
+    createHostControlClientMock = jest.fn(() => ({
+      growSharedScratch: growSharedScratchMock,
+    }));
+
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: "host-legacy-scratch",
+              name: "Host legacy scratch",
+              region: "us-west1",
+              status: "running",
+              metadata: {
+                runtime: { instance_id: "instance-legacy-scratch" },
+                machine: {
+                  cloud: "gcp",
+                  shared_disk_gb: 10000,
+                  shared_disk_type: "balanced",
+                  metadata: {
+                    shared_scratch_auto_grow: {
+                      enabled: true,
+                      max_disk_gb: 20000,
+                      growth_step_gb: 20000,
+                      min_grow_interval_minutes: 60,
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (sql.includes("UPDATE project_hosts")) {
+        expect(params[0]).toBe("host-legacy-scratch");
+        expect(params[1].machine.shared_disk_gb).toBe(10044);
+        expect(
+          params[1].machine.metadata.shared_scratch_auto_grow
+            .last_grow_to_disk_gb,
+        ).toBe(10044);
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { maybeAutoGrowSharedScratchForBackgroundPressure } =
+      await import("./auto-grow");
+    const result = await maybeAutoGrowSharedScratchForBackgroundPressure({
+      host_id: "host-legacy-scratch",
+      history: {
+        window_minutes: 6,
+        point_count: 3,
+        points: [
+          {
+            collected_at: "2026-03-30T02:00:00.000Z",
+            shared_scratch_total_bytes: 10000 * 1024 ** 3,
+            shared_scratch_available_bytes: 20 * 1024 ** 3,
+            shared_scratch_used_percent: 99,
+          },
+          {
+            collected_at: "2026-03-30T02:01:00.000Z",
+            shared_scratch_total_bytes: 10000 * 1024 ** 3,
+            shared_scratch_available_bytes: 19 * 1024 ** 3,
+            shared_scratch_used_percent: 99.1,
+          },
+        ],
+        growth: {
+          window_minutes: 6,
+          shared_scratch_used_bytes_per_hour: 2 * 1024 ** 3,
+        },
+        derived: {
+          window_minutes: 6,
+          disk: { level: "healthy" },
+          shared_scratch: {
+            level: "warning",
+            available_bytes: 19 * 1024 ** 3,
+            hours_to_exhaustion: 9.5,
+            reason: "Shared scratch could exhaust within 24h",
+          },
+          metadata: { level: "healthy" },
+          alerts: [],
+          admission_allowed: true,
+          auto_grow_recommended: true,
+        },
+      },
+    });
+
+    expect(result).toEqual({
+      grown: true,
+      next_disk_gb: 10044,
+    });
+    expect(resizeSharedScratchDiskMock).toHaveBeenCalledWith(
+      expect.objectContaining({ instance_id: "instance-legacy-scratch" }),
+      10044,
+      {},
+    );
+    expect(growSharedScratchMock).toHaveBeenCalledWith({ disk_gb: 10044 });
+  });
+
   it("does not auto-grow shared scratch when online scratch resize is unsupported", async () => {
     getServerProviderMock = jest.fn(() => ({
       entry: {

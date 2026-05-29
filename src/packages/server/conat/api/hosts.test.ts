@@ -97,6 +97,9 @@ let hasActiveSecondFactorMock: jest.Mock;
 let hasPaymentMethodMock: jest.Mock;
 let getBalanceMock: jest.Mock;
 let resolveAccountHomeBayMock: jest.Mock;
+let estimateDedicatedHostRateUsdPerHourMock: jest.Mock;
+let reconcileDedicatedHostPurchaseSessionForAccountMock: jest.Mock;
+let getDedicatedHostWindowUsageForHostLocalMock: jest.Mock;
 const originalFetch = global.fetch;
 
 jest.mock("node:child_process", () => {
@@ -458,6 +461,24 @@ jest.mock("@cocalc/server/membership/project-usage", () => ({
   setProjectUsageAccountId: jest.fn(),
 }));
 
+jest.mock("@cocalc/server/project-host/spend", () => ({
+  __esModule: true,
+  estimateDedicatedHostRateUsdPerHour: (...args: any[]) =>
+    estimateDedicatedHostRateUsdPerHourMock(...args),
+  getDedicatedHostWindowUsageLocal: jest.fn(async () => ({
+    prepaid_5h_usd: "0",
+    prepaid_7d_usd: "0",
+    credit_5h_usd: "0",
+    credit_7d_usd: "0",
+  })),
+  getDedicatedHostWindowUsageForHostLocal: (...args: any[]) =>
+    getDedicatedHostWindowUsageForHostLocalMock(...args),
+  getDedicatedHostPostpaidUnbilledExposureLocal: jest.fn(async () => "0"),
+  isDedicatedHostLaneCurrentlyAllowed: jest.fn(() => true),
+  reconcileDedicatedHostPurchaseSessionForAccount: (...args: any[]) =>
+    reconcileDedicatedHostPurchaseSessionForAccountMock(...args),
+}));
+
 const HOST_ID = "host-123";
 const ACCOUNT_ID = "acct-123";
 
@@ -549,6 +570,16 @@ beforeEach(() => {
   resolveAccountHomeBayMock = jest.fn(async () => ({
     home_bay_id: "bay-0",
     epoch: 1,
+  }));
+  estimateDedicatedHostRateUsdPerHourMock = jest.fn(async () => "1.25");
+  reconcileDedicatedHostPurchaseSessionForAccountMock = jest.fn(
+    async () => undefined,
+  );
+  getDedicatedHostWindowUsageForHostLocalMock = jest.fn(async () => ({
+    host_id: HOST_ID,
+    owner_account_id: ACCOUNT_ID,
+    spend_5h_usd: "0",
+    spend_7d_usd: "0",
   }));
   fetchMock = jest.fn();
   global.fetch = fetchMock as any;
@@ -1699,6 +1730,116 @@ describe("hosts browser fresh auth gating", () => {
     );
   });
 
+  it("rejects shared scratch disks above the backend cap on update", async () => {
+    getProviderContextMock = jest.fn(async () => {
+      throw new Error("provider context should not be needed");
+    });
+    const initialMetadata = {
+      owner: ACCOUNT_ID,
+      machine: {
+        cloud: "nebius",
+        disk_gb: 200,
+        machine_type: "cpu-d3",
+        metadata: { cpu: 4, ram_gb: 16 },
+      },
+      pricing_model: "on_demand",
+    };
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "off",
+              metadata: initialMetadata,
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { updateHostMachine } = await import("./hosts");
+    await expect(
+      updateHostMachine({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+        shared_disk_gb: 20000,
+      }),
+    ).rejects.toThrow("shared_disk_gb must be at most 10,044 GB");
+    expect(getProviderContextMock).not.toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE project_hosts"),
+      expect.anything(),
+    );
+  });
+
+  it("rejects shared scratch auto-grow above the backend caps", async () => {
+    getProviderContextMock = jest.fn(async () => {
+      throw new Error("provider context should not be needed");
+    });
+    const initialMetadata = {
+      owner: ACCOUNT_ID,
+      machine: {
+        cloud: "gcp",
+        disk_gb: 200,
+        shared_disk_gb: 100,
+        shared_disk_type: "balanced",
+        machine_type: "e2-standard-4",
+        metadata: { cpu: 4, ram_gb: 16 },
+      },
+      pricing_model: "on_demand",
+    };
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "off",
+              metadata: initialMetadata,
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { updateHostMachine } = await import("./hosts");
+    await expect(
+      updateHostMachine({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+        shared_scratch_auto_grow_enabled: true,
+        shared_scratch_auto_grow_max_disk_gb: 20000,
+      }),
+    ).rejects.toThrow(
+      "shared scratch auto-grow max disk must be at most 10,044 GB",
+    );
+    await expect(
+      updateHostMachine({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+        shared_scratch_auto_grow_enabled: true,
+        shared_scratch_auto_grow_growth_step_gb: 3000,
+      }),
+    ).rejects.toThrow(
+      "shared scratch auto-grow growth step must be at most 2,000 GB",
+    );
+    expect(getProviderContextMock).not.toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE project_hosts"),
+      expect.anything(),
+    );
+  });
+
   it("grows an existing shared scratch disk in the provider and host filesystem", async () => {
     const resizeSharedScratchDisk = jest.fn(async () => undefined);
     const growSharedScratch = jest.fn(async () => ({ ok: true }));
@@ -1769,6 +1910,82 @@ describe("hosts browser fresh auth gating", () => {
         action: "update_config",
         status: "success",
       }),
+    );
+  });
+
+  it("blocks live shared scratch growth when the new rate has no billing runway", async () => {
+    getServerSettingsMock = jest.fn(async () => ({
+      project_hosts_funding_mode: "account-prepaid",
+    }));
+    estimateDedicatedHostRateUsdPerHourMock = jest.fn(async () => "100");
+    const resizeSharedScratchDisk = jest.fn(async () => undefined);
+    const growSharedScratch = jest.fn(async () => ({ ok: true }));
+    routedHostControlClientMock = jest.fn(async () => ({
+      growSharedScratch,
+    }));
+    getProviderContextMock = jest.fn(async () => ({
+      entry: {
+        provider: {
+          resizeSharedScratchDisk,
+        },
+      },
+      creds: { token: "provider-creds" },
+    }));
+    const initialMetadata = {
+      owner: ACCOUNT_ID,
+      runtime: { instance_id: "nebius-instance" },
+      machine: {
+        cloud: "nebius",
+        disk_gb: 200,
+        shared_disk_gb: 100,
+        shared_disk_type: "ssd",
+        machine_type: "cpu-d3",
+        metadata: { cpu: 4, ram_gb: 16 },
+      },
+      pricing_model: "on_demand",
+      billing: {
+        funding_mode: "account-prepaid",
+        funding_lane: "prepaid",
+        hourly_cost_usd: "1.25",
+        started_at: "2026-05-29T00:00:00.000Z",
+      },
+    };
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "running",
+              metadata: initialMetadata,
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT stripe_usage_subscription FROM accounts")) {
+        return { rows: [{ stripe_usage_subscription: null }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { updateHostMachine } = await import("./hosts");
+    await expect(
+      updateHostMachine({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+        shared_disk_gb: 150,
+      }),
+    ).rejects.toMatchObject({
+      code: "dedicated_host_billing_runway_too_low",
+    });
+    expect(resizeSharedScratchDisk).not.toHaveBeenCalled();
+    expect(growSharedScratch).not.toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE project_hosts"),
+      expect.anything(),
     );
   });
 

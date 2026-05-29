@@ -4,8 +4,10 @@ import { lite } from "@cocalc/frontend/lite";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import ProgressEstimate from "@cocalc/frontend/components/progress-estimate";
 import type { ChatActions } from "./actions";
+import { field } from "./access";
 import { getUserName } from "./chat-log";
 import { deriveThreadLabel } from "./threads";
+import type { ChatMessageTyped } from "./types";
 
 interface Props {
   actions: ChatActions;
@@ -41,6 +43,74 @@ function getCursorThreadKey(cursor: any): string | null {
   return `${immutableValue}`;
 }
 
+function normalizedString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function getThreadId(message?: ChatMessageTyped): string | undefined {
+  return normalizedString(field<string>(message, "thread_id"));
+}
+
+function getThreadConfigName(row: any): string | undefined {
+  const raw =
+    typeof row?.get === "function" ? row.get("name") : (row?.name ?? undefined);
+  return normalizedString(raw);
+}
+
+function getThreadConfigId(row: any): string | undefined {
+  const raw =
+    typeof row?.get === "function"
+      ? row.get("thread_id")
+      : (row?.thread_id ?? undefined);
+  return normalizedString(raw);
+}
+
+function getMetadataName(
+  actions: ChatActions,
+  threadKey: string,
+  threadId?: string,
+): string | undefined {
+  try {
+    return normalizedString(
+      actions.getThreadMetadata(threadKey, { threadId })?.name,
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+function buildThreadLabels(actions: ChatActions): Map<string, string> {
+  const threadLabels = new Map<string, string>();
+
+  for (const entry of actions?.getThreadIndex?.()?.values?.() ?? []) {
+    const key = normalizedString(`${entry.key}`);
+    if (!key) continue;
+    const rootMessage = entry.rootMessage as ChatMessageTyped | undefined;
+    const threadId = getThreadId(rootMessage) ?? key;
+    const label =
+      getMetadataName(actions, key, threadId) ??
+      deriveThreadLabel(rootMessage, key);
+
+    threadLabels.set(key, label);
+    if (threadId !== key) {
+      threadLabels.set(threadId, label);
+    }
+  }
+
+  // Thread names live in chat-thread-config rows. Prefer these over labels
+  // derived from root content so typing indicators track renamed threads.
+  for (const row of actions?.listThreadConfigRows?.() ?? []) {
+    const threadId = getThreadConfigId(row);
+    const name = getThreadConfigName(row);
+    if (!threadId || !name) continue;
+    threadLabels.set(threadId, name);
+  }
+
+  return threadLabels;
+}
+
 export default function Composing({ actions, accountId, userMap }: Props) {
   const [cursorTick, setCursorTick] = useState(0);
 
@@ -63,13 +133,7 @@ export default function Composing({ actions, accountId, userMap }: Props) {
     if (!accountId || userMap == null) return [] as React.JSX.Element[];
     const syncdb = actions?.syncdb;
     if (!syncdb || !syncdb.isReady()) return [] as React.JSX.Element[];
-    const threadLabels = new Map<string, string>();
-    for (const entry of actions?.getThreadIndex?.()?.values?.() ?? []) {
-      if (!entry.rootMessage) continue;
-      const key = `${entry.key}`;
-      if (!key) continue;
-      threadLabels.set(key, deriveThreadLabel(entry.rootMessage, key));
-    }
+    const threadLabels = buildThreadLabels(actions);
     let cursors: any;
     try {
       cursors = syncdb.get_cursors({

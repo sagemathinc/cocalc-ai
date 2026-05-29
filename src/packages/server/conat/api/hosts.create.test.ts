@@ -428,6 +428,29 @@ describe("hosts.createHost", () => {
     );
   });
 
+  it("rejects billable cloud host creation when the estimated rate has no billing runway", async () => {
+    estimateDedicatedHostRateUsdPerHourMock = jest.fn(async () => "100");
+
+    const { createHost } = await import("./hosts");
+    await expect(
+      createHost({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        name: "expensive-gcp",
+        region: "us-west1",
+        size: "e2-standard-2",
+        pricing_model: "spot",
+        machine: { cloud: "gcp" },
+      }),
+    ).rejects.toMatchObject({
+      code: "dedicated_host_billing_runway_too_low",
+    });
+    expect(queryMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO project_hosts"),
+      expect.anything(),
+    );
+  });
+
   it("rejects managed cloud hosts below the minimum disk size", async () => {
     const { createHost } = await import("./hosts");
     await expect(
@@ -513,6 +536,31 @@ describe("hosts.createHost", () => {
         shared_disk_gb: 50,
       },
     });
+  });
+
+  it("rejects shared scratch disks above the backend cap on create", async () => {
+    const { createHost } = await import("./hosts");
+    await expect(
+      createHost({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        name: "huge-scratch-nebius",
+        region: "us-central1",
+        size: "cpu-standard-v3",
+        machine: {
+          cloud: "nebius",
+          disk_gb: 100,
+          disk_type: "ssd",
+          storage_mode: "persistent",
+          shared_disk_gb: 20000,
+        },
+      }),
+    ).rejects.toThrow("shared_disk_gb must be at most 10,044 GB");
+    expect(estimateDedicatedHostRateUsdPerHourMock).not.toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO project_hosts"),
+      expect.anything(),
+    );
   });
 
   it("rejects shared scratch for providers without support", async () => {

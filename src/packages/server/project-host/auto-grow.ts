@@ -19,6 +19,10 @@ import {
   getProviderPrefix,
 } from "@cocalc/server/cloud/provider-context";
 import { getServerProvider, gcpSafeName } from "@cocalc/server/cloud/providers";
+import {
+  MAX_SHARED_SCRATCH_AUTO_GROW_STEP_GB,
+  MAX_SHARED_SCRATCH_DISK_GB,
+} from "@cocalc/server/project-host/shared-scratch-limits";
 import { getRoutedHostControlClient } from "./client";
 
 const log = getLogger("server:project-host:auto-grow");
@@ -331,16 +335,21 @@ function resolveSharedScratchAutoGrowConfig(
     parseBooleanLike(nested.enabled) ??
     parseBooleanLike(machineMeta.shared_scratch_auto_grow_enabled);
   if (!explicitEnabled) return;
+  const configuredMaxDisk =
+    parsePositiveInt(nested.max_disk_gb) ??
+    parsePositiveInt(machineMeta.shared_scratch_auto_grow_max_disk_gb) ??
+    DEFAULT_SHARED_SCRATCH_MAX_DISK_GB;
+  const configuredGrowthStep =
+    parsePositiveInt(nested.growth_step_gb) ??
+    parsePositiveInt(machineMeta.shared_scratch_auto_grow_growth_step_gb) ??
+    DEFAULT_SHARED_SCRATCH_GROWTH_STEP_GB;
   return {
     enabled: true,
-    max_disk_gb:
-      parsePositiveInt(nested.max_disk_gb) ??
-      parsePositiveInt(machineMeta.shared_scratch_auto_grow_max_disk_gb) ??
-      DEFAULT_SHARED_SCRATCH_MAX_DISK_GB,
-    growth_step_gb:
-      parsePositiveInt(nested.growth_step_gb) ??
-      parsePositiveInt(machineMeta.shared_scratch_auto_grow_growth_step_gb) ??
-      DEFAULT_SHARED_SCRATCH_GROWTH_STEP_GB,
+    max_disk_gb: Math.min(configuredMaxDisk, MAX_SHARED_SCRATCH_DISK_GB),
+    growth_step_gb: Math.min(
+      configuredGrowthStep,
+      MAX_SHARED_SCRATCH_AUTO_GROW_STEP_GB,
+    ),
     min_grow_interval_minutes:
       parsePositiveInt(nested.min_grow_interval_minutes) ??
       parsePositiveInt(

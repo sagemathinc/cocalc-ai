@@ -171,7 +171,7 @@ import { is_valid_email_address, isValidUUID } from "@cocalc/util/misc";
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 import { computeAIUsageUnits } from "@cocalc/server/ai/usage-units";
 import { saveAIResponse } from "@cocalc/server/ai/save-response";
-import { moneyToDbString } from "@cocalc/util/money";
+import { moneyToDbString, type MoneyValue } from "@cocalc/util/money";
 import {
   isCoreLanguageModel,
   type LanguageModelCore,
@@ -190,11 +190,19 @@ import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
   assertDedicatedHostAdmissionForAccount,
+  applyDedicatedHostFundingModeOverride,
   getDedicatedHostPolicySnapshotForAccount,
   isBillableDedicatedHostCloud,
+  selectDedicatedHostFundingLane,
   type DedicatedHostFundingMode,
 } from "@cocalc/server/project-host/admission";
-import { getDedicatedHostWindowUsageForHostLocal } from "@cocalc/server/project-host/spend";
+import {
+  estimateDedicatedHostRateUsdPerHour,
+  getDedicatedHostWindowUsageForHostLocal,
+  reconcileDedicatedHostPurchaseSessionForAccount,
+  type DedicatedHostFundingLane,
+} from "@cocalc/server/project-host/spend";
+import { evaluateDedicatedHostBillingEnforcement } from "@cocalc/server/project-host/spend-enforcement";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { getImpersonationSessionBySessionHash } from "@cocalc/server/auth/impersonation";
 import { requireDangerousSessionAuth } from "./dangerous-session-auth";
@@ -222,7 +230,12 @@ import {
   runtimeDeploymentsForComponentRollout,
   runtimeDeploymentsForUpgradeResults,
 } from "./hosts-runtime-deployment-planning";
-import { normalizeSharedScratchMachineInPlace } from "./hosts-shared-scratch";
+import {
+  assertSharedScratchAutoGrowConfig,
+  MAX_SHARED_SCRATCH_AUTO_GROW_STEP_GB,
+  MAX_SHARED_SCRATCH_DISK_GB,
+  normalizeSharedScratchMachineInPlace,
+} from "./hosts-shared-scratch";
 import {
   installedProjectHostArtifactVersion,
   isProjectHostLocalRollbackError as isProjectHostLocalRollbackErrorInternal,
@@ -714,7 +727,7 @@ async function loadOwnedHost(id: string, account_id?: string): Promise<any> {
   if (!row) {
     throw new Error("host not found");
   }
-  if (row.metadata?.owner && row.metadata.owner !== owner) {
+  if (row.metadata?.owner !== owner) {
     throw new Error("not authorized");
   }
   return row;
@@ -6175,10 +6188,28 @@ export async function updateHostMachine({
         "shared scratch auto-grow max disk must be at least the configured scratch disk",
       );
     }
+    if (
+      nextSharedScratchAutoGrow.max_disk_gb != null &&
+      nextSharedScratchAutoGrow.max_disk_gb > MAX_SHARED_SCRATCH_DISK_GB
+    ) {
+      throw new Error(
+        `shared scratch auto-grow max disk must be at most ${MAX_SHARED_SCRATCH_DISK_GB.toLocaleString()} GB`,
+      );
+    }
+    if (
+      nextSharedScratchAutoGrow.growth_step_gb != null &&
+      nextSharedScratchAutoGrow.growth_step_gb >
+        MAX_SHARED_SCRATCH_AUTO_GROW_STEP_GB
+    ) {
+      throw new Error(
+        `shared scratch auto-grow growth step must be at most ${MAX_SHARED_SCRATCH_AUTO_GROW_STEP_GB.toLocaleString()} GB`,
+      );
+    }
     nextMachine.metadata = {
       ...(nextMachine.metadata ?? {}),
       shared_scratch_auto_grow: nextSharedScratchAutoGrow,
     };
+    assertSharedScratchAutoGrowConfig(nextMachine);
     changed = true;
   }
 
@@ -6223,6 +6254,96 @@ export async function updateHostMachine({
   const nextBillingFundingMode = isBillableDedicatedHostCloud(nextMachineCloud)
     ? (requestedFundingMode ?? currentFundingMode)
     : undefined;
+  let activeBillableSession:
+    | {
+        funding_mode: "account-prepaid";
+        funding_lane: "prepaid";
+        hourly_cost_usd: MoneyValue;
+      }
+    | {
+        funding_mode: "account-postpaid";
+        funding_lane: "credit";
+        hourly_cost_usd: MoneyValue;
+      }
+    | {
+        funding_mode: "site-funded";
+      }
+    | undefined;
+
+  if (
+    nextBillingFundingMode &&
+    isBillableDedicatedHostCloud(nextMachineCloud) &&
+    !deleteSharedScratch &&
+    HOST_RUNNING_STATUSES.has(String(row.status ?? ""))
+  ) {
+    const hourlyCostUsd = await estimateDedicatedHostRateUsdPerHour({
+      provider: nextMachineCloud,
+      region: nextRegion,
+      zone: nextMachine.zone,
+      machine_type: nextMachine.machine_type ?? metadata.size,
+      disk_gb: nextMachine.disk_gb,
+      disk_type: nextMachine.disk_type,
+      shared_disk_gb: nextMachine.shared_disk_gb,
+      shared_disk_type: nextMachine.shared_disk_type,
+      storage_mode: nextMachine.storage_mode,
+      gpu_type: nextMachine.gpu_type,
+      gpu_count: nextMachine.gpu_count,
+      pricing_model:
+        normalizeHostPricingModel(metadata.pricing_model) ?? "on_demand",
+    });
+    if (!hourlyCostUsd) {
+      throw Object.assign(
+        new Error(
+          `unable to determine the resize hourly rate for provider '${nextMachineCloud}'`,
+        ),
+        { code: "host_pricing_unavailable" },
+      );
+    }
+    const snapshot = applyDedicatedHostFundingModeOverride(
+      await getDedicatedHostPolicySnapshotForAccount({ account_id: owner }),
+      nextBillingFundingMode,
+    );
+    if (snapshot.funding_mode === "site-funded") {
+      activeBillableSession = { funding_mode: "site-funded" };
+    } else {
+      const fundingLane = selectDedicatedHostFundingLane(snapshot);
+      if (!fundingLane) {
+        throw new Error(
+          `dedicated-host funding is not currently available for account ${owner}`,
+        );
+      }
+      const enforcement = evaluateDedicatedHostBillingEnforcement({
+        snapshot,
+        funding_lane: fundingLane as DedicatedHostFundingLane,
+        hourly_cost_usd: hourlyCostUsd,
+        lane_allowed: true,
+      });
+      if (enforcement.action === "request_drain") {
+        throw Object.assign(
+          new Error(
+            `dedicated-host funding runway is too low for this resize: ${enforcement.reason}`,
+          ),
+          {
+            code: "dedicated_host_billing_runway_too_low",
+            details: enforcement,
+          },
+        );
+      }
+      if (snapshot.funding_mode === "account-prepaid") {
+        activeBillableSession = {
+          funding_mode: "account-prepaid",
+          funding_lane: "prepaid",
+          hourly_cost_usd: hourlyCostUsd,
+        };
+      } else {
+        activeBillableSession = {
+          funding_mode: "account-postpaid",
+          funding_lane: "credit",
+          hourly_cost_usd: hourlyCostUsd,
+        };
+      }
+    }
+  }
 
   if (isDeprovisioned) {
     const nextMetadata = { ...metadata, machine: nextMachine };
@@ -6522,7 +6643,31 @@ export async function updateHostMachine({
     nextMetadata.size = nextMachine.machine_type;
   }
   if (nextBillingFundingMode) {
-    nextMetadata.billing = { funding_mode: nextBillingFundingMode };
+    if (activeBillableSession?.funding_mode === "account-prepaid") {
+      nextMetadata.billing = {
+        funding_mode: activeBillableSession.funding_mode,
+        funding_lane: activeBillableSession.funding_lane,
+        hourly_cost_usd: activeBillableSession.hourly_cost_usd,
+        started_at:
+          metadata.billing?.started_at ?? metadata.billing?.updated_at,
+      };
+    } else if (activeBillableSession?.funding_mode === "account-postpaid") {
+      nextMetadata.billing = {
+        funding_mode: activeBillableSession.funding_mode,
+        funding_lane: activeBillableSession.funding_lane,
+        hourly_cost_usd: activeBillableSession.hourly_cost_usd,
+        started_at:
+          metadata.billing?.started_at ?? metadata.billing?.updated_at,
+      };
+    } else if (activeBillableSession?.funding_mode === "site-funded") {
+      nextMetadata.billing = {
+        funding_mode: "site-funded",
+        started_at:
+          metadata.billing?.started_at ?? metadata.billing?.updated_at,
+      };
+    } else {
+      nextMetadata.billing = { funding_mode: nextBillingFundingMode };
+    }
   } else {
     delete nextMetadata.billing;
   }
@@ -6535,6 +6680,26 @@ export async function updateHostMachine({
     [row.id],
   );
   if (!rows[0]) throw new Error("host not found");
+  if (
+    activeBillableSession &&
+    activeBillableSession.funding_mode !== "site-funded" &&
+    nextMachineCloud
+  ) {
+    await reconcileDedicatedHostPurchaseSessionForAccount({
+      account_id: owner,
+      host_id: row.id,
+      host_name: row.name ?? undefined,
+      host_bay_id: getConfiguredBayId(),
+      provider: nextMachineCloud,
+      region: nextRegion,
+      machine_type: nextMachine.machine_type ?? metadata.size,
+      pricing_model:
+        normalizeHostPricingModel(metadata.pricing_model) ?? "on_demand",
+      funding_lane: activeBillableSession.funding_lane,
+      hourly_cost_usd: activeBillableSession.hourly_cost_usd,
+      started_at: nextMetadata.billing?.started_at,
+    });
+  }
   await logCloudVmEvent({
     vm_id: row.id,
     action: "update_config",
