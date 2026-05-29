@@ -19,8 +19,21 @@ export interface Image extends SlateElement {
   height?: string | number;
 }
 
-export function imageMaxWidth(alt?: string): string | number {
-  return alt === "Generated image" ? 480 : "100%";
+export function imageMaxWidth({
+  alt,
+  width,
+}: {
+  alt?: string;
+  width?: string | number;
+}): string | number {
+  const normalizedWidth = `${width ?? ""}`.trim();
+  if (
+    alt === "Generated image" &&
+    (!normalizedWidth || normalizedWidth === "100%")
+  ) {
+    return 480;
+  }
+  return "100%";
 }
 
 export function toSlate({ type, children, token }) {
@@ -85,7 +98,7 @@ register({
         style={{
           height: node.width == null ? node.height : undefined,
           width: node.width,
-          maxWidth: imageMaxWidth(alt),
+          maxWidth: imageMaxWidth({ alt, width: node.width }),
           maxHeight: "100%",
           objectFit: "contain",
         }}

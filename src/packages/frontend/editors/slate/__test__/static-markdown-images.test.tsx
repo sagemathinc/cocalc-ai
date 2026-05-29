@@ -24,7 +24,12 @@ describe("StaticMarkdown images", () => {
   });
 
   it("uses the generated image cap in all Slate image renderers", () => {
-    expect(imageMaxWidth("Generated image")).toBe(480);
-    expect(imageMaxWidth("Ordinary image")).toBe("100%");
+    expect(imageMaxWidth({ alt: "Generated image" })).toBe(480);
+    expect(imageMaxWidth({ alt: "Generated image", width: "100%" })).toBe(480);
+    expect(imageMaxWidth({ alt: "Generated image", width: 320 })).toBe("100%");
+    expect(imageMaxWidth({ alt: "Generated image", width: "320px" })).toBe(
+      "100%",
+    );
+    expect(imageMaxWidth({ alt: "Ordinary image" })).toBe("100%");
   });
 });

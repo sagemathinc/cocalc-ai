@@ -139,7 +139,7 @@ register({
                     ? (height ?? node.height)
                     : undefined,
                 width: width ?? node.width,
-                maxWidth: imageMaxWidth(alt),
+                maxWidth: imageMaxWidth({ alt, width: width ?? node.width }),
                 maxHeight: "100%",
                 objectFit: "contain",
               }}
