@@ -9,7 +9,7 @@ import { useFocused, useProcessLinks, useSelected, useSlate } from "../hooks";
 import { useSetElement } from "../set-element";
 import { FOCUSED_COLOR } from "../../util";
 import { Resizable } from "re-resizable";
-import { Image } from "./index";
+import { Image, imageMaxWidth } from "./index";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
 
 // NOTE: We do NOT use maxWidth:100% since that ends up
@@ -139,7 +139,7 @@ register({
                     ? (height ?? node.height)
                     : undefined,
                 width: width ?? node.width,
-                maxWidth: "100%",
+                maxWidth: imageMaxWidth({ alt, width: width ?? node.width }),
                 maxHeight: "100%",
                 objectFit: "contain",
               }}
