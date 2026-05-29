@@ -21,6 +21,12 @@ import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat
 import type {
   AddCollaborator,
   MyCollaboratorRow,
+  ProjectAccessLandingInfo,
+  ProjectAccessRequestAction,
+  ProjectAccessRequestBlockRow,
+  ProjectAccessRequestRow,
+  ProjectAccessRequestSource,
+  ProjectAccessRequestStatus,
   ProjectCollabInviteAction,
   ProjectCollabInviteBlockRow,
   ProjectCollabInviteDirection,
@@ -104,7 +110,27 @@ const INVITE_STATUS_SET = new Set<string>([
   "expired",
   "canceled",
 ]);
+const ACCESS_REQUEST_STATUS_SET = new Set<string>([
+  "pending",
+  "approved",
+  "denied",
+  "blocked",
+  "canceled",
+]);
+const ACCESS_REQUEST_ACTION_SET = new Set<string>([
+  "approve",
+  "deny",
+  "block",
+  "cancel",
+]);
+const ACCESS_REQUEST_SOURCE_SET = new Set<string>([
+  "project-url",
+  "viewer-read-only",
+  "rail-menu",
+  "api",
+]);
 let projectCollabInviteEmailTokenSchemaReady: Promise<void> | undefined;
+let projectAccessRequestSchemaReady: Promise<void> | undefined;
 
 type CollaboratorReadMode = "off" | "prefer" | "only";
 type InviteEmailBlockedReason =
@@ -221,6 +247,54 @@ function normalizeInviteAction(
   );
 }
 
+function normalizeAccessRequestStatus(
+  value?: ProjectAccessRequestStatus,
+): ProjectAccessRequestStatus | undefined {
+  if (value == null) return undefined;
+  const status = `${value}`.trim().toLowerCase();
+  if (ACCESS_REQUEST_STATUS_SET.has(status)) {
+    return status as ProjectAccessRequestStatus;
+  }
+  throw new Error(
+    `invalid status '${value}' (expected pending, approved, denied, blocked, or canceled)`,
+  );
+}
+
+function normalizeAccessRequestAction(
+  value: ProjectAccessRequestAction,
+): ProjectAccessRequestAction {
+  const action = `${value}`.trim().toLowerCase();
+  if (ACCESS_REQUEST_ACTION_SET.has(action)) {
+    return action as ProjectAccessRequestAction;
+  }
+  throw new Error(
+    `invalid action '${value}' (expected approve, deny, block, or cancel)`,
+  );
+}
+
+function normalizeAccessRequestRole(
+  value: unknown,
+): Exclude<ProjectUserRole, "owner"> {
+  const role = normalizeProjectUserRole(value);
+  if (role === "viewer" || role === "collaborator") {
+    return role;
+  }
+  throw new Error("requested_role must be viewer or collaborator");
+}
+
+function normalizeAccessRequestSource(
+  value?: string,
+): ProjectAccessRequestSource | string {
+  const source = `${value ?? "api"}`.trim().toLowerCase();
+  if (!source) return "api";
+  if (source.length > 48) {
+    throw new Error("source must be at most 48 characters");
+  }
+  return ACCESS_REQUEST_SOURCE_SET.has(source)
+    ? (source as ProjectAccessRequestSource)
+    : source;
+}
+
 function ensureUuid(value: string, label: string): void {
   if (!is_valid_uuid_string(value)) {
     throw new Error(`${label} must be a valid uuid`);
@@ -263,6 +337,62 @@ async function ensureProjectCollabInviteEmailTokenSchemaUncached(): Promise<void
     `CREATE INDEX IF NOT EXISTS project_collab_invites_email_expire_idx
        ON project_collab_invites (status, created)
        WHERE invite_source IN ('email', 'course_email')`,
+  );
+}
+
+async function ensureProjectAccessRequestSchema(): Promise<void> {
+  if (projectAccessRequestSchemaReady) {
+    return await projectAccessRequestSchemaReady;
+  }
+  projectAccessRequestSchemaReady = ensureProjectAccessRequestSchemaUncached();
+  return await projectAccessRequestSchemaReady;
+}
+
+async function ensureProjectAccessRequestSchemaUncached(): Promise<void> {
+  const pool = getPool();
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS project_access_requests (
+      request_id UUID PRIMARY KEY,
+      project_id UUID NOT NULL,
+      requester_account_id UUID NOT NULL,
+      requested_role VARCHAR(24) NOT NULL,
+      read_policy JSONB,
+      message TEXT,
+      status VARCHAR(24) NOT NULL,
+      source VARCHAR(48) NOT NULL,
+      created TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated TIMESTAMP NOT NULL DEFAULT NOW(),
+      decided TIMESTAMP,
+      decided_by_account_id UUID,
+      decision_message TEXT
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS project_access_request_blocks (
+      project_id UUID NOT NULL,
+      blocker_account_id UUID NOT NULL,
+      blocked_account_id UUID NOT NULL,
+      created TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated TIMESTAMP NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (project_id, blocked_account_id)
+    )
+  `);
+  await pool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS project_access_requests_pending_unique_idx
+       ON project_access_requests (project_id, requester_account_id)
+       WHERE status='pending'`,
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS project_access_requests_project_status_idx
+       ON project_access_requests (project_id, status, updated DESC)`,
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS project_access_requests_requester_idx
+       ON project_access_requests (requester_account_id, updated DESC)`,
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS project_access_request_blocks_blocked_idx
+       ON project_access_request_blocks (blocked_account_id, updated DESC)`,
   );
 }
 
@@ -1632,6 +1762,536 @@ export async function respondCollabInvite({
   return projected;
 }
 
+function projectAccessRequestRow(row: any): ProjectAccessRequestRow {
+  return {
+    request_id: row.request_id,
+    project_id: row.project_id,
+    project_title: row.project_title ?? null,
+    requester_account_id: row.requester_account_id,
+    requester_name: row.requester_name ?? null,
+    requester_first_name: row.requester_first_name ?? null,
+    requester_last_name: row.requester_last_name ?? null,
+    requester_profile: row.requester_profile ?? null,
+    requested_role: normalizeAccessRequestRole(row.requested_role),
+    read_policy: row.read_policy ?? null,
+    message: row.message ?? null,
+    status: normalizeAccessRequestStatus(row.status)!,
+    source: row.source ?? "api",
+    created: row.created,
+    updated: row.updated,
+    decided: row.decided ?? null,
+    decided_by_account_id: row.decided_by_account_id ?? null,
+    decision_message: row.decision_message ?? null,
+  };
+}
+
+async function fetchProjectAccessRequestById({
+  project_id,
+  request_id,
+}: {
+  project_id: string;
+  request_id: string;
+}): Promise<ProjectAccessRequestRow | null> {
+  const { rows } = await getPool().query(
+    `SELECT
+       r.*,
+       p.title AS project_title,
+       NULLIF(BTRIM(CONCAT_WS(' ', a.first_name, a.last_name)), '') AS requester_name,
+       a.first_name AS requester_first_name,
+       a.last_name AS requester_last_name,
+       a.profile AS requester_profile
+     FROM project_access_requests r
+     LEFT JOIN projects p ON p.project_id=r.project_id
+     LEFT JOIN accounts a ON a.account_id=r.requester_account_id
+     WHERE r.project_id=$1 AND r.request_id=$2
+     LIMIT 1`,
+    [project_id, request_id],
+  );
+  return rows[0] ? projectAccessRequestRow(rows[0]) : null;
+}
+
+export async function getProjectAccessLandingInfo({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+}): Promise<ProjectAccessLandingInfo> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  ensureUuid(project_id, "project_id");
+  await ensureProjectCollabInviteEmailTokenSchema();
+  await ensureProjectAccessRequestSchema();
+  const admin = await isAdmin(account_id);
+  const { rows } = await getPool().query<{
+    title: string | null;
+    users: Record<string, any> | null;
+    owner_account_id: string | null;
+    owner_name: string | null;
+    owner_first_name: string | null;
+    owner_last_name: string | null;
+    owner_profile: Record<string, any> | null;
+    invite_id: string | null;
+    invite_role: string | null;
+    invite_read_policy: ProjectViewerReadPolicy | null;
+    request_id: string | null;
+    requested_role: string | null;
+    blocked: boolean | null;
+  }>(
+    `SELECT
+       p.title,
+       p.users,
+       owner_id.account_id AS owner_account_id,
+       NULLIF(BTRIM(CONCAT_WS(' ', owner.first_name, owner.last_name)), '') AS owner_name,
+       owner.first_name AS owner_first_name,
+       owner.last_name AS owner_last_name,
+       owner.profile AS owner_profile,
+       invite.invite_id,
+       COALESCE(invite.invite_role, 'collaborator') AS invite_role,
+       invite.read_policy AS invite_read_policy,
+       request.request_id,
+       request.requested_role,
+       EXISTS(
+         SELECT 1
+           FROM project_access_request_blocks block
+          WHERE block.project_id=p.project_id
+            AND block.blocked_account_id=$2::uuid
+       ) AS blocked
+     FROM projects p
+     LEFT JOIN LATERAL (
+       SELECT member.key::uuid AS account_id
+         FROM jsonb_each(COALESCE(p.users, '{}'::jsonb)) AS member(key, info)
+        WHERE member.key ~* '^[0-9a-f-]{36}$'
+          AND member.info ->> 'group' = 'owner'
+        ORDER BY member.key
+        LIMIT 1
+     ) owner_id ON true
+     LEFT JOIN accounts owner ON owner.account_id=owner_id.account_id
+     LEFT JOIN LATERAL (
+       SELECT i.invite_id, i.invite_role, i.read_policy
+         FROM project_collab_invites i
+        WHERE i.project_id=p.project_id
+          AND i.invitee_account_id=$2::uuid
+          AND i.status='pending'
+          AND COALESCE(i.invite_source, 'account')='account'
+        ORDER BY i.updated DESC
+        LIMIT 1
+     ) invite ON true
+     LEFT JOIN LATERAL (
+       SELECT r.request_id, r.requested_role
+         FROM project_access_requests r
+        WHERE r.project_id=p.project_id
+          AND r.requester_account_id=$2::uuid
+          AND r.status='pending'
+        ORDER BY r.updated DESC
+        LIMIT 1
+     ) request ON true
+     WHERE p.project_id=$1`,
+    [project_id, account_id],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error(`project '${project_id}' not found`);
+  }
+  const group = row.users?.[account_id]?.group;
+  const relationship: ProjectAccessLandingInfo["relationship"] = admin
+    ? "admin"
+    : group === "owner" || group === "collaborator" || group === "viewer"
+      ? group
+      : "none";
+  const inviteRole = row.invite_id
+    ? normalizeInviteRole(row.invite_role)
+    : undefined;
+  const requestRole = row.request_id
+    ? normalizeAccessRequestRole(row.requested_role)
+    : undefined;
+  return {
+    project_id,
+    title: row.title ?? null,
+    owner: row.owner_account_id
+      ? {
+          account_id: row.owner_account_id,
+          name: row.owner_name ?? null,
+          first_name: row.owner_first_name ?? null,
+          last_name: row.owner_last_name ?? null,
+          profile: row.owner_profile ?? null,
+        }
+      : undefined,
+    relationship,
+    pending_invite:
+      row.invite_id && inviteRole
+        ? {
+            invite_id: row.invite_id,
+            invite_role: inviteRole,
+            read_policy: row.invite_read_policy ?? null,
+          }
+        : null,
+    pending_request:
+      row.request_id && requestRole
+        ? {
+            request_id: row.request_id,
+            requested_role: requestRole,
+            status: "pending",
+          }
+        : null,
+    blocked: !!row.blocked,
+  };
+}
+
+export async function requestProjectAccess({
+  account_id,
+  project_id,
+  requested_role,
+  read_policy,
+  message,
+  source,
+}: {
+  account_id?: string;
+  project_id: string;
+  requested_role: Exclude<ProjectUserRole, "owner">;
+  read_policy?: ProjectViewerReadPolicy | null;
+  message?: string;
+  source?: ProjectAccessRequestSource | string;
+}): Promise<ProjectAccessRequestRow> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  ensureUuid(project_id, "project_id");
+  await assertAccountTrustedForProductAccess(
+    account_id,
+    "request project access",
+  );
+  await ensureProjectAccessRequestSchema();
+  const role = normalizeAccessRequestRole(requested_role);
+  const policy = normalizeInviteReadPolicy({
+    invite_role: role,
+    read_policy,
+  });
+  const normalizedSource = normalizeAccessRequestSource(source);
+  const normalizedMessage = await normalizeAccessRequestMessageForAccount({
+    account_id,
+    message,
+  });
+  const pool = getPool();
+  const { rows: projectRows } = await pool.query<{
+    current_group: string | null;
+    blocked: boolean;
+  }>(
+    `SELECT
+       p.users -> $2::text ->> 'group' AS current_group,
+       EXISTS(
+         SELECT 1
+           FROM project_access_request_blocks block
+          WHERE block.project_id=p.project_id
+            AND block.blocked_account_id=$2::uuid
+       ) AS blocked
+     FROM projects p
+     WHERE p.project_id=$1
+     LIMIT 1`,
+    [project_id, account_id],
+  );
+  const project = projectRows[0];
+  if (!project) {
+    throw new Error(`project '${project_id}' not found`);
+  }
+  if (project.blocked) {
+    throw new Error(
+      "project is not accepting access requests from this account",
+    );
+  }
+  if (
+    project.current_group === "owner" ||
+    project.current_group === "collaborator"
+  ) {
+    throw new Error("account already has full project access");
+  }
+  if (project.current_group === "viewer" && role !== "collaborator") {
+    throw new Error("viewers can only request collaborator access");
+  }
+  const requestId = uuid();
+  const { rows } = await pool.query<{ request_id: string }>(
+    `INSERT INTO project_access_requests
+       (request_id, project_id, requester_account_id, requested_role, read_policy,
+        message, status, source, created, updated)
+     VALUES
+       ($1, $2, $3, $4, $5, $6, 'pending', $7, NOW(), NOW())
+     ON CONFLICT (project_id, requester_account_id)
+       WHERE status='pending'
+     DO UPDATE SET
+       requested_role=EXCLUDED.requested_role,
+       read_policy=EXCLUDED.read_policy,
+       message=EXCLUDED.message,
+       source=EXCLUDED.source,
+       updated=NOW()
+     RETURNING request_id`,
+    [
+      requestId,
+      project_id,
+      account_id,
+      role,
+      policy ? JSON.stringify(policy) : null,
+      normalizedMessage,
+      normalizedSource,
+    ],
+  );
+  const updated = await fetchProjectAccessRequestById({
+    project_id,
+    request_id: rows[0]?.request_id ?? requestId,
+  });
+  if (!updated) {
+    throw new Error("failed to load project access request");
+  }
+  return updated;
+}
+
+export async function listProjectAccessRequests({
+  account_id,
+  project_id,
+  status,
+  limit,
+}: {
+  account_id?: string;
+  project_id: string;
+  status?: ProjectAccessRequestStatus;
+  limit?: number;
+}): Promise<ProjectAccessRequestRow[]> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  ensureUuid(project_id, "project_id");
+  await ensureProjectAccessRequestSchema();
+  await assertCanManageProjectCollaborators({
+    account_id,
+    action: "review project access requests",
+    project_id,
+  });
+  const normalizedStatus = normalizeAccessRequestStatus(status);
+  const maxRows = Math.max(1, Math.min(1000, Number(limit ?? 200) || 200));
+  const { rows } = await getPool().query(
+    `SELECT
+       r.*,
+       p.title AS project_title,
+       NULLIF(BTRIM(CONCAT_WS(' ', a.first_name, a.last_name)), '') AS requester_name,
+       a.first_name AS requester_first_name,
+       a.last_name AS requester_last_name,
+       a.profile AS requester_profile
+     FROM project_access_requests r
+     LEFT JOIN projects p ON p.project_id=r.project_id
+     LEFT JOIN accounts a ON a.account_id=r.requester_account_id
+     WHERE r.project_id=$1
+       AND ($2::text IS NULL OR r.status=$2)
+     ORDER BY r.updated DESC, r.request_id
+     LIMIT $3`,
+    [project_id, normalizedStatus ?? null, maxRows],
+  );
+  return rows.map(projectAccessRequestRow);
+}
+
+export async function respondProjectAccessRequest({
+  account_id,
+  project_id,
+  request_id,
+  action,
+  role,
+  read_policy,
+  message,
+}: {
+  account_id?: string;
+  project_id: string;
+  request_id: string;
+  action: ProjectAccessRequestAction;
+  role?: Exclude<ProjectUserRole, "owner">;
+  read_policy?: ProjectViewerReadPolicy | null;
+  message?: string;
+}): Promise<ProjectAccessRequestRow> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  ensureUuid(project_id, "project_id");
+  ensureUuid(request_id, "request_id");
+  await ensureProjectAccessRequestSchema();
+  const normalizedAction = normalizeAccessRequestAction(action);
+  const pool = getPool();
+  const { rows } = await pool.query<ProjectAccessRequestRow>(
+    `SELECT * FROM project_access_requests
+      WHERE project_id=$1 AND request_id=$2
+      LIMIT 1`,
+    [project_id, request_id],
+  );
+  const request = rows[0];
+  if (!request) {
+    throw new Error(`project access request '${request_id}' not found`);
+  }
+  if (request.status !== "pending") {
+    throw new Error(
+      `project access request is not pending (status=${request.status})`,
+    );
+  }
+  if (
+    normalizedAction !== "cancel" ||
+    request.requester_account_id !== account_id
+  ) {
+    await assertCanManageProjectCollaborators({
+      account_id,
+      action: `${normalizedAction} project access requests`,
+      project_id,
+    });
+  }
+  const decisionMessage = await normalizeAccessRequestMessageForAccount({
+    account_id,
+    message,
+  });
+  let nextStatus: ProjectAccessRequestStatus;
+  if (normalizedAction === "approve") {
+    const approvedRole = role
+      ? normalizeAccessRequestRole(role)
+      : normalizeAccessRequestRole(request.requested_role);
+    if (
+      request.requested_role === "viewer" &&
+      approvedRole === "collaborator"
+    ) {
+      throw new Error(
+        "cannot silently upgrade a viewer request to collaborator",
+      );
+    }
+    await addUserToProjectForAcceptedInvite({
+      project_id,
+      account_id: request.requester_account_id,
+      invite_role: approvedRole,
+      read_policy:
+        approvedRole === "viewer" ? (read_policy ?? request.read_policy) : null,
+    });
+    await syncProjectUsersOnHostBestEffort(
+      project_id,
+      "respond-project-access-request-approve",
+    );
+    await publishProjectAccountFeedEventsBestEffort({ project_id });
+    nextStatus = "approved";
+  } else if (normalizedAction === "block") {
+    await pool.query(
+      `INSERT INTO project_access_request_blocks
+        (project_id, blocker_account_id, blocked_account_id, created, updated)
+       VALUES
+        ($1, $2, $3, NOW(), NOW())
+       ON CONFLICT (project_id, blocked_account_id)
+       DO UPDATE SET blocker_account_id=EXCLUDED.blocker_account_id,
+                     updated=EXCLUDED.updated`,
+      [project_id, account_id, request.requester_account_id],
+    );
+    nextStatus = "blocked";
+  } else if (normalizedAction === "cancel") {
+    if (
+      request.requester_account_id !== account_id &&
+      !(await isAdmin(account_id))
+    ) {
+      throw new Error(
+        "only requester or an admin can cancel an access request",
+      );
+    }
+    nextStatus = "canceled";
+  } else {
+    nextStatus = "denied";
+  }
+  await pool.query(
+    `UPDATE project_access_requests
+        SET status=$3,
+            decided=NOW(),
+            decided_by_account_id=$4,
+            decision_message=$5,
+            updated=NOW()
+      WHERE project_id=$1 AND request_id=$2`,
+    [project_id, request_id, nextStatus, account_id, decisionMessage],
+  );
+  const updated = await fetchProjectAccessRequestById({
+    project_id,
+    request_id,
+  });
+  if (!updated) {
+    throw new Error("failed to load project access request response");
+  }
+  return updated;
+}
+
+export async function listProjectAccessRequestBlocks({
+  account_id,
+  project_id,
+  limit,
+}: {
+  account_id?: string;
+  project_id: string;
+  limit?: number;
+}): Promise<ProjectAccessRequestBlockRow[]> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  ensureUuid(project_id, "project_id");
+  await ensureProjectAccessRequestSchema();
+  await assertCanManageProjectCollaborators({
+    account_id,
+    action: "review blocked project access requesters",
+    project_id,
+  });
+  const maxRows = Math.max(1, Math.min(1000, Number(limit ?? 200) || 200));
+  const { rows } = await getPool().query<ProjectAccessRequestBlockRow>(
+    `SELECT
+       b.project_id,
+       b.blocker_account_id,
+       NULLIF(BTRIM(CONCAT_WS(' ', blocker.first_name, blocker.last_name)), '') AS blocker_name,
+       b.blocked_account_id,
+       NULLIF(BTRIM(CONCAT_WS(' ', blocked.first_name, blocked.last_name)), '') AS blocked_name,
+       blocked.first_name AS blocked_first_name,
+       blocked.last_name AS blocked_last_name,
+       blocked.profile AS blocked_profile,
+       b.created,
+       b.updated
+     FROM project_access_request_blocks b
+     LEFT JOIN accounts blocker ON blocker.account_id=b.blocker_account_id
+     LEFT JOIN accounts blocked ON blocked.account_id=b.blocked_account_id
+     WHERE b.project_id=$1
+     ORDER BY b.updated DESC
+     LIMIT $2`,
+    [project_id, maxRows],
+  );
+  return rows;
+}
+
+export async function unblockProjectAccessRequester({
+  account_id,
+  project_id,
+  blocked_account_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  blocked_account_id: string;
+}): Promise<{
+  unblocked: boolean;
+  project_id: string;
+  blocked_account_id: string;
+}> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  ensureUuid(project_id, "project_id");
+  ensureUuid(blocked_account_id, "blocked_account_id");
+  await ensureProjectAccessRequestSchema();
+  await assertCanManageProjectCollaborators({
+    account_id,
+    action: "unblock project access requesters",
+    project_id,
+  });
+  const result = await getPool().query(
+    `DELETE FROM project_access_request_blocks
+      WHERE project_id=$1 AND blocked_account_id=$2`,
+    [project_id, blocked_account_id],
+  );
+  return {
+    unblocked: (result.rowCount ?? 0) > 0,
+    project_id,
+    blocked_account_id,
+  };
+}
+
 export async function listCollabInviteBlocks({
   account_id,
   limit,
@@ -1861,6 +2521,28 @@ async function normalizeInviteMessageForAccount({
   if (maxChars >= 0 && trimmed.length > maxChars) {
     throw new Error(
       `invite message is too long (${trimmed.length}/${maxChars}); shorten it or upgrade membership`,
+    );
+  }
+  return trimmed;
+}
+
+async function normalizeAccessRequestMessageForAccount({
+  account_id,
+  message,
+}: {
+  account_id: string;
+  message?: string;
+}): Promise<string | null> {
+  const trimmed = `${message ?? ""}`.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const resolution = await resolveMembershipForAccount(account_id);
+  const limits = getEffectiveMembershipUsageLimits(resolution);
+  const maxChars = limits.invite_email_custom_message_max_chars ?? 512;
+  if (maxChars >= 0 && trimmed.length > maxChars) {
+    throw new Error(
+      `access request message is too long (${trimmed.length}/${maxChars}); shorten it`,
     );
   }
   return trimmed;

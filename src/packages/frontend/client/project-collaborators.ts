@@ -6,6 +6,12 @@
 import type { ConatClient } from "@cocalc/frontend/conat/client";
 import type {
   AddCollaborator,
+  ProjectAccessLandingInfo,
+  ProjectAccessRequestAction,
+  ProjectAccessRequestBlockRow,
+  ProjectAccessRequestRow,
+  ProjectAccessRequestSource,
+  ProjectAccessRequestStatus,
   ProjectCollabInviteAction,
   ProjectCollabInviteBlockRow,
   ProjectCollabInviteDirection,
@@ -108,6 +114,59 @@ export class ProjectCollaborators {
     action: ProjectCollabInviteAction;
   }): Promise<ProjectCollabInviteRow> {
     return await this.conat.hub.projects.respondCollabInvite(opts);
+  }
+
+  public async get_access_landing_info(opts: {
+    project_id: string;
+  }): Promise<ProjectAccessLandingInfo> {
+    return await this.conat.hub.projects.getProjectAccessLandingInfo(opts);
+  }
+
+  public async request_access(opts: {
+    project_id: string;
+    requested_role: "collaborator" | "viewer";
+    read_policy?: ProjectViewerReadPolicy | null;
+    message?: string;
+    source?: ProjectAccessRequestSource | string;
+  }): Promise<ProjectAccessRequestRow> {
+    return await this.conat.hub.projects.requestProjectAccess(opts);
+  }
+
+  public async list_access_requests(opts: {
+    project_id: string;
+    status?: ProjectAccessRequestStatus;
+    limit?: number;
+  }): Promise<ProjectAccessRequestRow[]> {
+    return await this.conat.hub.projects.listProjectAccessRequests(opts);
+  }
+
+  public async respond_access_request(opts: {
+    project_id: string;
+    request_id: string;
+    action: ProjectAccessRequestAction;
+    role?: "collaborator" | "viewer";
+    read_policy?: ProjectViewerReadPolicy | null;
+    message?: string;
+  }): Promise<ProjectAccessRequestRow> {
+    return await this.conat.hub.projects.respondProjectAccessRequest(opts);
+  }
+
+  public async list_access_request_blocks(opts: {
+    project_id: string;
+    limit?: number;
+  }): Promise<ProjectAccessRequestBlockRow[]> {
+    return await this.conat.hub.projects.listProjectAccessRequestBlocks(opts);
+  }
+
+  public async unblock_access_requester(opts: {
+    project_id: string;
+    blocked_account_id: string;
+  }): Promise<{
+    unblocked: boolean;
+    project_id: string;
+    blocked_account_id: string;
+  }> {
+    return await this.conat.hub.projects.unblockProjectAccessRequester(opts);
   }
 
   public async copy_email_invite_link(opts: {

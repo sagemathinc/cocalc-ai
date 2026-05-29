@@ -154,3 +154,105 @@ Table({
     pg_indexes: ["blocked_account_id", "updated"],
   },
 });
+
+Table({
+  name: "project_access_requests",
+  fields: {
+    request_id: {
+      type: "uuid",
+      desc: "Unique project access request id.",
+    },
+    project_id: {
+      type: "uuid",
+      desc: "Project this access request targets.",
+    },
+    requester_account_id: {
+      type: "uuid",
+      desc: "Account requesting access.",
+    },
+    requested_role: {
+      type: "string",
+      pg_type: "varchar(24)",
+      desc: "Requested project role: viewer or collaborator.",
+    },
+    read_policy: {
+      type: "map",
+      desc: "Viewer read policy to apply when requested_role is viewer.",
+    },
+    message: {
+      type: "string",
+      desc: "Optional short message from requester.",
+    },
+    status: {
+      type: "string",
+      pg_type: "varchar(24)",
+      desc: "Request status: pending, approved, denied, blocked, or canceled.",
+    },
+    source: {
+      type: "string",
+      pg_type: "varchar(48)",
+      desc: "UI/API source that created the request.",
+    },
+    created: {
+      type: "timestamp",
+      desc: "When request was created.",
+    },
+    updated: {
+      type: "timestamp",
+      desc: "When request was last updated.",
+    },
+    decided: {
+      type: "timestamp",
+      desc: "When request was decided.",
+    },
+    decided_by_account_id: {
+      type: "uuid",
+      desc: "Account that decided the request.",
+    },
+    decision_message: {
+      type: "string",
+      desc: "Optional short decision message.",
+    },
+  },
+  rules: {
+    primary_key: "request_id",
+    pg_indexes: [
+      "project_id",
+      "requester_account_id",
+      "requested_role",
+      "status",
+      "created",
+      "updated",
+    ],
+  },
+});
+
+Table({
+  name: "project_access_request_blocks",
+  fields: {
+    project_id: {
+      type: "uuid",
+      desc: "Project where access requests are blocked.",
+    },
+    blocker_account_id: {
+      type: "uuid",
+      desc: "Account that blocked the access requester.",
+    },
+    blocked_account_id: {
+      type: "uuid",
+      desc: "Account blocked from requesting access to project_id.",
+    },
+    created: {
+      type: "timestamp",
+      desc: "When block was created.",
+    },
+    updated: {
+      type: "timestamp",
+      desc: "When block was last updated.",
+    },
+  },
+  rules: {
+    primary_key: ["project_id", "blocked_account_id"],
+    pg_indexes: ["blocker_account_id", "blocked_account_id", "updated"],
+  },
+});

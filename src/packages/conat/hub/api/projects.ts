@@ -334,6 +334,91 @@ export interface ProjectCollabInviteBlockRow {
   updated: Date;
 }
 
+export type ProjectAccessRequestStatus =
+  | "pending"
+  | "approved"
+  | "denied"
+  | "blocked"
+  | "canceled";
+
+export type ProjectAccessRequestAction =
+  | "approve"
+  | "deny"
+  | "block"
+  | "cancel";
+
+export type ProjectAccessRequestSource =
+  | "project-url"
+  | "viewer-read-only"
+  | "rail-menu"
+  | "api";
+
+export interface ProjectAccessRequester {
+  account_id: string;
+  name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  profile?: Record<string, any> | null;
+}
+
+export interface ProjectAccessRequestRow {
+  request_id: string;
+  project_id: string;
+  project_title?: string | null;
+  requester_account_id: string;
+  requester_name?: string | null;
+  requester_first_name?: string | null;
+  requester_last_name?: string | null;
+  requester_profile?: Record<string, any> | null;
+  requested_role: Exclude<ProjectUserRole, "owner">;
+  read_policy?: ProjectViewerReadPolicy | null;
+  message?: string | null;
+  status: ProjectAccessRequestStatus;
+  source: ProjectAccessRequestSource | string;
+  created: Date;
+  updated: Date;
+  decided?: Date | null;
+  decided_by_account_id?: string | null;
+  decision_message?: string | null;
+}
+
+export interface ProjectAccessRequestBlockRow {
+  project_id: string;
+  blocker_account_id: string;
+  blocker_name?: string | null;
+  blocked_account_id: string;
+  blocked_name?: string | null;
+  blocked_first_name?: string | null;
+  blocked_last_name?: string | null;
+  blocked_profile?: Record<string, any> | null;
+  created: Date;
+  updated: Date;
+}
+
+export interface ProjectAccessLandingInfo {
+  project_id: string;
+  title: string | null;
+  owner?: {
+    account_id: string;
+    name?: string | null;
+    first_name?: string | null;
+    last_name?: string | null;
+    profile?: Record<string, any> | null;
+  };
+  relationship: "none" | "viewer" | "collaborator" | "owner" | "admin";
+  pending_invite?: {
+    invite_id: string;
+    invite_role: Exclude<ProjectUserRole, "owner">;
+    read_policy?: ProjectViewerReadPolicy | null;
+  } | null;
+  pending_request?: {
+    request_id: string;
+    requested_role: Exclude<ProjectUserRole, "owner">;
+    status: "pending";
+  } | null;
+  blocked?: boolean;
+}
+
 export interface ProjectCollaboratorInviteUsage {
   current: number;
   limit: number | null;
@@ -555,6 +640,12 @@ export const projects = {
   createCollabInvite: authFirstRequireAccount,
   listCollabInvites: authFirstRequireAccount,
   respondCollabInvite: authFirstRequireAccount,
+  getProjectAccessLandingInfo: authFirstRequireAccount,
+  requestProjectAccess: authFirstRequireAccount,
+  listProjectAccessRequests: authFirstRequireAccount,
+  respondProjectAccessRequest: authFirstRequireAccount,
+  listProjectAccessRequestBlocks: authFirstRequireAccount,
+  unblockProjectAccessRequester: authFirstRequireAccount,
   listCollabInviteBlocks: authFirstRequireAccount,
   unblockCollabInviteSender: authFirstRequireAccount,
   listCollaborators: authFirstRequireAccount,
@@ -869,6 +960,53 @@ export interface Projects {
     project_id?: string;
     action: ProjectCollabInviteAction;
   }) => Promise<ProjectCollabInviteRow>;
+
+  getProjectAccessLandingInfo: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectAccessLandingInfo>;
+
+  requestProjectAccess: (opts: {
+    account_id?: string;
+    project_id: string;
+    requested_role: Exclude<ProjectUserRole, "owner">;
+    read_policy?: ProjectViewerReadPolicy | null;
+    message?: string;
+    source?: ProjectAccessRequestSource | string;
+  }) => Promise<ProjectAccessRequestRow>;
+
+  listProjectAccessRequests: (opts: {
+    account_id?: string;
+    project_id: string;
+    status?: ProjectAccessRequestStatus;
+    limit?: number;
+  }) => Promise<ProjectAccessRequestRow[]>;
+
+  respondProjectAccessRequest: (opts: {
+    account_id?: string;
+    project_id: string;
+    request_id: string;
+    action: ProjectAccessRequestAction;
+    role?: Exclude<ProjectUserRole, "owner">;
+    read_policy?: ProjectViewerReadPolicy | null;
+    message?: string;
+  }) => Promise<ProjectAccessRequestRow>;
+
+  listProjectAccessRequestBlocks: (opts: {
+    account_id?: string;
+    project_id: string;
+    limit?: number;
+  }) => Promise<ProjectAccessRequestBlockRow[]>;
+
+  unblockProjectAccessRequester: (opts: {
+    account_id?: string;
+    project_id: string;
+    blocked_account_id: string;
+  }) => Promise<{
+    unblocked: boolean;
+    project_id: string;
+    blocked_account_id: string;
+  }>;
 
   listCollabInviteBlocks: (opts: {
     account_id?: string;

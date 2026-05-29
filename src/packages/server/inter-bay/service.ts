@@ -299,14 +299,20 @@ import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-loc
 import {
   copyEmailProjectInviteLink,
   createCollabInvite,
+  getProjectAccessLandingInfo,
   inviteCollaboratorWithoutAccount,
+  listProjectAccessRequestBlocks,
+  listProjectAccessRequests,
   listCollabInvites,
   previewEmailProjectInvite,
   redeemEmailProjectInvite,
   removeCollaborator,
+  requestProjectAccess,
   respondCollabInviteCanonical,
   respondEmailProjectInvite,
+  respondProjectAccessRequest,
   setProjectUserRole,
+  unblockProjectAccessRequester,
 } from "@cocalc/server/projects/collaborators";
 import { getProjectCollaboratorInviteUsage } from "@cocalc/server/membership/project-limits";
 import { leaveOrDeleteProjectsForAccount } from "@cocalc/server/projects/ownership";
@@ -1263,6 +1269,17 @@ async function startProjectCollabInviteService(): Promise<void> {
       (await listCollabInvites(opts)).map((invite) =>
         collabInviteToWire(invite),
       ),
+    getProjectAccessLandingInfo: async (opts) =>
+      await getProjectAccessLandingInfo(opts),
+    requestProjectAccess: async (opts) => await requestProjectAccess(opts),
+    listProjectAccessRequests: async (opts) =>
+      await listProjectAccessRequests(opts),
+    respondProjectAccessRequest: async (opts) =>
+      await respondProjectAccessRequest(opts),
+    listProjectAccessRequestBlocks: async (opts) =>
+      await listProjectAccessRequestBlocks(opts),
+    unblockProjectAccessRequester: async (opts) =>
+      await unblockProjectAccessRequester(opts),
     removeCollaborator: async (opts) => {
       await removeCollaborator(opts);
     },
