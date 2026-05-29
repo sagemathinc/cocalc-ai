@@ -5,6 +5,7 @@ import type {
 import type {
   CodexSessionMode,
   CodexReasoningLevel,
+  CodexServiceTier,
 } from "@cocalc/util/ai/codex";
 
 // Configuration stored on the chat thread root for Codex/ACP turns.
@@ -13,6 +14,7 @@ export interface CodexThreadConfig {
   sessionId?: string; // Codex session/thread id
   model?: string;
   reasoning?: CodexReasoningLevel["id"];
+  serviceTier?: CodexServiceTier;
   workingDirectory?: string;
   envHome?: string;
   envPath?: string;

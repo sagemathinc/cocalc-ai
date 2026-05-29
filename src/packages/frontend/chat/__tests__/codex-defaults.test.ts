@@ -32,12 +32,14 @@ describe("codex new chat defaults", () => {
       model: "not-a-model",
       reasoning: "extra_high",
       sessionMode: "workspace-write",
+      serviceTier: "fast",
     });
 
     expect(saved).toEqual({
       model: "gpt-5.5",
       reasoning: "extra_high",
       sessionMode: "workspace-write",
+      serviceTier: "fast",
     });
     expect(
       codexNewChatDefaultsEqual(saved, getDefaultCodexNewChatDefaults()),
@@ -77,6 +79,7 @@ describe("codex new chat defaults", () => {
                           model: "gpt-5.4",
                           reasoning: "high",
                           sessionMode: "read-only",
+                          serviceTier: "fast",
                         }),
                       }
                     : undefined,
@@ -96,6 +99,7 @@ describe("codex new chat defaults", () => {
         model: "gpt-5.4",
         reasoning: "high",
         sessionMode: "read-only",
+        serviceTier: "fast",
       },
     });
   });
@@ -135,10 +139,12 @@ describe("codex new chat defaults", () => {
       normalizeCodexNewChatDefaults({
         model: "gpt-5.4",
         sessionMode: "workspace-write",
+        serviceTier: "fast",
       }),
     ).toMatchObject({
       model: "gpt-5.4",
       sessionMode: "full-access",
+      serviceTier: "fast",
     });
   });
 });

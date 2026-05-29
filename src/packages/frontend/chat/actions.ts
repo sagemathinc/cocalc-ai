@@ -50,6 +50,7 @@ import {
 import {
   DEFAULT_CODEX_MODEL_NAME,
   normalizeCodexSessionId,
+  resolveCodexServiceTier,
   resolveCodexSessionMode,
   isCodexModelName,
   type CodexSessionMode,
@@ -2390,6 +2391,7 @@ export class ChatActions extends Actions<ChatState> {
     const sessionId = normalizeCodexSessionId(config.sessionId);
     const nextConfig: CodexThreadConfig = {
       ...config,
+      serviceTier: resolveCodexServiceTier(config),
       ...(sessionId ? { sessionId } : {}),
     };
     if (!sessionId) {

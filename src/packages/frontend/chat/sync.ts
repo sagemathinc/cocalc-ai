@@ -76,10 +76,32 @@ function chatMessageKey(record: any): string | undefined {
   return `message:${messageId}`;
 }
 
+function chatMessageId(record: any): string | undefined {
+  const messageId = `${(record as any)?.message_id ?? ""}`.trim();
+  return messageId || undefined;
+}
+
+function chatParentMessageId(record: any): string | undefined {
+  const messageId = `${(record as any)?.parent_message_id ?? ""}`.trim();
+  return messageId || undefined;
+}
+
 function hasExplicitChatRowAcpState(record: any): boolean {
   return (
     record != null &&
     Object.prototype.hasOwnProperty.call(record as object, "acp_state")
+  );
+}
+
+function getThreadChatRows(syncdb: any, threadId?: string): any[] {
+  const normalized = `${threadId ?? ""}`.trim();
+  if (!normalized || typeof syncdb?.get !== "function") return [];
+  const rows = syncdb.get({ event: CHAT_EVENT, thread_id: normalized });
+  if (!Array.isArray(rows)) return [];
+  return rows.filter(
+    (row) =>
+      (row as any)?.event === CHAT_EVENT &&
+      `${(row as any)?.thread_id ?? ""}`.trim() === normalized,
   );
 }
 
@@ -136,6 +158,13 @@ export function initFromSyncDB({ syncdb, store }: { syncdb: any; store: any }) {
       );
     }
   }
+  for (const row of threadStateLookup.values()) {
+    acpState = clearStaleRunningThreadAcpState({
+      acpState,
+      syncdb,
+      threadState: row,
+    });
+  }
   store.setState({ acpState });
 }
 
@@ -182,11 +211,7 @@ function reconcileThreadChatRowAcpState({
   // Chat syncdb uses ImmerDB, so `get(...)` returns plain JS rows rather than
   // Immutable.js collections. Keep this path strict so we do not paper over
   // unexpected types with ad hoc `toJS()` fallbacks.
-  const rows =
-    typeof syncdb?.get === "function"
-      ? syncdb.get({ event: CHAT_EVENT, thread_id: normalized })
-      : [];
-  if (!Array.isArray(rows)) return acpState;
+  const rows = getThreadChatRows(syncdb, normalized);
   let next = acpState;
   for (const record of rows) {
     next = applyChatRowAcpState(next, record, (id) =>
@@ -209,11 +234,7 @@ function clearThreadMessageAcpStateWithoutExplicitRows({
 }): any {
   const normalized = `${threadId ?? ""}`.trim();
   if (!normalized) return acpState;
-  const rows =
-    typeof syncdb?.get === "function"
-      ? syncdb.get({ event: CHAT_EVENT, thread_id: normalized })
-      : [];
-  if (!Array.isArray(rows)) return acpState;
+  const rows = getThreadChatRows(syncdb, normalized);
   let next = acpState;
   for (const record of rows) {
     if (hasExplicitChatRowAcpState(record)) continue;
@@ -222,6 +243,64 @@ function clearThreadMessageAcpStateWithoutExplicitRows({
     if (key === `message:${keepMessageId ?? ""}`) continue;
     next = next.delete(key);
   }
+  return next;
+}
+
+function clearStartedPromptQueuedAcpState({
+  acpState,
+  syncdb,
+  threadId,
+  activeMessageId,
+}: {
+  acpState: any;
+  syncdb: any;
+  threadId?: string;
+  activeMessageId?: string;
+}): any {
+  const normalizedActiveMessageId = `${activeMessageId ?? ""}`.trim();
+  if (!normalizedActiveMessageId) return acpState;
+  const rows = getThreadChatRows(syncdb, threadId);
+  const activeRow = rows.find(
+    (row) => chatMessageId(row) === normalizedActiveMessageId,
+  );
+  const parentMessageId = chatParentMessageId(activeRow);
+  if (!parentMessageId) return acpState;
+  const parentRow = rows.find((row) => chatMessageId(row) === parentMessageId);
+  const key = `message:${parentMessageId}`;
+  const parentExplicitState = `${(parentRow as any)?.acp_state ?? ""}`.trim();
+  const renderedState = acpState?.get?.(key);
+  if (
+    renderedState !== "queue" &&
+    parentExplicitState !== "queued" &&
+    parentExplicitState !== "queue"
+  ) {
+    return acpState;
+  }
+  return acpState.delete(key);
+}
+
+function clearStaleRunningThreadAcpState({
+  acpState,
+  syncdb,
+  threadState,
+}: {
+  acpState: any;
+  syncdb: any;
+  threadState?: any;
+}): any {
+  if ((threadState as any)?.state !== "running") return acpState;
+  let next = clearThreadMessageAcpStateWithoutExplicitRows({
+    acpState,
+    syncdb,
+    threadId: (threadState as any)?.thread_id,
+    keepMessageId: (threadState as any)?.active_message_id,
+  });
+  next = clearStartedPromptQueuedAcpState({
+    acpState: next,
+    syncdb,
+    threadId: (threadState as any)?.thread_id,
+    activeMessageId: (threadState as any)?.active_message_id,
+  });
   return next;
 }
 
@@ -282,6 +361,11 @@ export function handleSyncDBChange({
         store.setState({ acpState });
         continue;
       }
+      acpState = clearStaleRunningThreadAcpState({
+        acpState,
+        syncdb,
+        threadState: getThreadStateRecord(syncdb, threadId),
+      });
       const key = threadId;
       const now = Date.now();
       const activity = (store.get("activity") ?? iMap()).set(key, now);
@@ -308,14 +392,11 @@ export function handleSyncDBChange({
         syncdb,
         threadId: (record ?? obj)?.thread_id,
       });
-      if ((record ?? obj)?.state === "running") {
-        next = clearThreadMessageAcpStateWithoutExplicitRows({
-          acpState: next,
-          syncdb,
-          threadId: (record ?? obj)?.thread_id,
-          keepMessageId: (record ?? obj)?.active_message_id,
-        });
-      }
+      next = clearStaleRunningThreadAcpState({
+        acpState: next,
+        syncdb,
+        threadState: record ?? obj,
+      });
       store.setState({
         acpState: next,
       });

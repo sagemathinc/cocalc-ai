@@ -29,11 +29,14 @@ import {
 } from "@cocalc/frontend/project/workspaces/chat-defaults";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import {
+  codexModelSupportsFastMode,
   DEFAULT_CODEX_MODELS,
   normalizeCodexSessionId,
+  resolveCodexServiceTier,
   resolveCodexSessionMode,
   type CodexReasoningLevel,
   type CodexReasoningId,
+  type CodexServiceTier,
   type CodexSessionMode,
 } from "@cocalc/util/ai/codex";
 import { COLORS } from "@cocalc/util/theme";
@@ -329,6 +332,7 @@ export function CodexConfigButton({
       sessionId: "",
       model: baseModel,
       reasoning: baseReasoning,
+      serviceTier: "standard",
       sessionMode: defaultSessionMode,
     };
     const saved = threadConfig ?? actions?.getCodexConfig?.(threadId);
@@ -348,11 +352,16 @@ export function CodexConfigButton({
       desired: merged.reasoning,
     });
     const sessionMode = normalizeSessionMode(merged) ?? defaultSessionMode;
+    const serviceTier = resolveCodexServiceTier({
+      model,
+      serviceTier: merged.serviceTier,
+    });
     form.resetFields();
     const currentValue = {
       ...merged,
       model,
       reasoning,
+      serviceTier,
       sessionMode,
     };
     form.setFieldsValue(currentValue);
@@ -374,6 +383,8 @@ export function CodexConfigButton({
     Form.useWatch("reasoning", form) ?? value?.reasoning;
   const currentSessionMode =
     Form.useWatch("sessionMode", form) ?? value?.sessionMode;
+  const selectedServiceTierValue: CodexServiceTier =
+    Form.useWatch("serviceTier", form) ?? value?.serviceTier ?? "standard";
   const allModeOptions = useMemo(() => getModeOptions(), []);
   const availableModeValues = useMemo(
     () => new Set(getCodexNewChatModeOptions().map(({ value }) => value)),
@@ -409,6 +420,12 @@ export function CodexConfigButton({
   const reasoningLabel =
     reasoningOptions.find((option) => option.value === selectedReasoningValue)
       ?.label ?? selectedReasoningValue;
+  const fastModeSupported = codexModelSupportsFastMode(selectedModelValue);
+  const effectiveServiceTier =
+    selectedServiceTierValue === "fast" && fastModeSupported
+      ? "fast"
+      : "standard";
+  const serviceTierLabel = effectiveServiceTier === "fast" ? "Fast" : undefined;
   const paymentNeedsAttention =
     paymentSourceLoading || paymentSource?.source === "none" || !paymentSource;
   const toggleControlsCollapsed = () => {
@@ -427,6 +444,10 @@ export function CodexConfigButton({
       ...values,
       sessionId: normalizeCodexSessionId(values?.sessionId),
       sessionMode,
+      serviceTier: resolveCodexServiceTier({
+        model: values?.model,
+        serviceTier: values?.serviceTier,
+      }),
       allowWrite: sessionMode !== "read-only",
     };
     actions?.setCodexConfig?.(threadKey, finalValues);
@@ -437,9 +458,12 @@ export function CodexConfigButton({
 
   const onSave = () => saveConfig();
 
-  const summaryParts = [selectedModelValue, modeLabel, reasoningLabel].filter(
-    (part) => typeof part === "string" && part.trim().length > 0,
-  );
+  const summaryParts = [
+    selectedModelValue,
+    modeLabel,
+    reasoningLabel,
+    serviceTierLabel,
+  ].filter((part) => typeof part === "string" && part.trim().length > 0);
 
   return (
     <>
@@ -588,6 +612,7 @@ export function CodexConfigButton({
                 {modeLabel}
               </Tag>
               {reasoningLabel ? <Tag>{reasoningLabel}</Tag> : null}
+              {serviceTierLabel ? <Tag color="orange">Fast</Tag> : null}
             </Space>
           </div>
           <Form form={form} layout="vertical">
@@ -624,6 +649,9 @@ export function CodexConfigButton({
                             selected.reasoning.find((r) => r.default)?.id ??
                             selected.reasoning[0]?.id;
                           form.setFieldsValue({ reasoning: def });
+                        }
+                        if (!codexModelSupportsFastMode(val)) {
+                          form.setFieldsValue({ serviceTier: "standard" });
                         }
                       }}
                     />
@@ -668,6 +696,30 @@ export function CodexConfigButton({
                     />
                   </Form.Item>
                 </div>
+                <Form.Item
+                  label="Speed"
+                  name="serviceTier"
+                  tooltip="Fast mode uses more Codex credits. Standard is the default."
+                  style={{ marginBottom: 0 }}
+                >
+                  <Radio.Group>
+                    <Space wrap>
+                      <Radio value="standard">Standard</Radio>
+                      <Radio value="fast" disabled={!fastModeSupported}>
+                        Fast
+                      </Radio>
+                    </Space>
+                  </Radio.Group>
+                </Form.Item>
+                {effectiveServiceTier === "fast" ? (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginTop: 10 }}
+                    message="Fast mode uses more Codex credits"
+                    description="Use this only when lower latency is worth the higher cost."
+                  />
+                ) : null}
               </div>
               <div style={sectionStyle}>
                 <SectionTitle>Access</SectionTitle>

@@ -233,6 +233,16 @@ export type AcpStreamUsage = {
 
 export type AcpStreamEvent =
   | {
+      type: "config";
+      model: string;
+      reasoning?: string;
+      serviceTier?: string;
+      appServerServiceTier?: string | null;
+      sessionMode?: string;
+      sandbox?: string;
+      workingDirectory?: string;
+    }
+  | {
       type: "thinking";
       text: string;
     }

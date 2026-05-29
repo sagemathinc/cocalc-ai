@@ -528,6 +528,72 @@ describe("processAcpLLM", () => {
     );
   });
 
+  it("passes explicit Codex Fast service tier through ACP config", async () => {
+    jest.spyOn(Date, "now").mockReturnValue(3100);
+    jest.spyOn(global, "setTimeout").mockImplementation(((fn: any) => {
+      fn();
+      return 0 as any;
+    }) as any);
+    mockStreamAcp.mockResolvedValue(queuedAckStream());
+
+    const acpState = new FakeAcpState();
+    const store: any = {
+      get: (key: string) => {
+        if (key === "project_id") return "proj";
+        if (key === "path") return "x.chat";
+        if (key === "acpState") return acpState;
+        return undefined;
+      },
+      setState: jest.fn(),
+    };
+
+    const messageDate = new Date(3100);
+    const actions: any = {
+      syncdb: {},
+      store,
+      chatStreams: new Set<string>(),
+      getAllMessages: () => new Map<string, any>(),
+      getCodexConfig: jest.fn(() => ({
+        model: "gpt-5.5",
+        serviceTier: "fast",
+        sessionMode: "full-access",
+      })),
+      getThreadMetadata: jest.fn(() => undefined),
+      getMessagesInThread: jest.fn(() => []),
+      sendReply: jest.fn(),
+    };
+
+    const message: any = {
+      event: "chat",
+      sender_id: "user-1",
+      date: messageDate,
+      message_id: "user-msg-fast",
+      thread_id: "thread-fast",
+      history: [
+        {
+          author_id: "user-1",
+          content: "run codex fast",
+          date: messageDate.toISOString(),
+        },
+      ],
+    };
+
+    await processAcpLLM({
+      message,
+      model: "codex-agent",
+      input: "run codex fast",
+      actions,
+    });
+
+    const arg = mockStreamAcp.mock.calls[0][0];
+    expect(arg.config).toEqual(
+      expect.objectContaining({
+        model: "gpt-5.5",
+        serviceTier: "fast",
+      }),
+    );
+  });
+
   it("keeps queued state on the submitted message after backend acknowledgement", async () => {
     jest.spyOn(Date, "now").mockReturnValue(4000);
     jest.spyOn(global, "setTimeout").mockImplementation(((fn: any) => {

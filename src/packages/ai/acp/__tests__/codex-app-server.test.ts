@@ -157,6 +157,8 @@ describe("CodexAppServerAgent", () => {
 
   it("streams app-server events and returns the upstream thread id", async () => {
     const loginRequests: any[] = [];
+    const threadStartRequests: any[] = [];
+    const turnStartRequests: any[] = [];
     const proc = new FakeCodexAppServerProc((fake, message) => {
       switch (message.method) {
         case "initialize":
@@ -167,11 +169,13 @@ describe("CodexAppServerAgent", () => {
           fake.sendResponse(message.id, { type: "apiKey" });
           break;
         case "thread/start":
+          threadStartRequests.push(message.params);
           fake.sendResponse(message.id, {
             thread: { id: "thr-shared-1" },
           });
           break;
         case "turn/start":
+          turnStartRequests.push(message.params);
           fake.sendResponse(message.id, { turn: { id: "turn-1" } });
           setImmediate(() => {
             fake.sendNotification("turn/started", {
@@ -368,6 +372,114 @@ describe("CodexAppServerAgent", () => {
         apiKey: "secret-key",
       },
     ]);
+    expect(threadStartRequests).toEqual([
+      expect.objectContaining({
+        serviceTier: null,
+      }),
+    ]);
+    expect(turnStartRequests).toEqual([
+      expect.objectContaining({
+        serviceTier: null,
+      }),
+    ]);
+  });
+
+  it("passes explicit Codex Fast mode service tier to app-server", async () => {
+    const threadStartRequests: any[] = [];
+    const turnStartRequests: any[] = [];
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          threadStartRequests.push(message.params);
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-fast-1" },
+          });
+          break;
+        case "turn/start":
+          turnStartRequests.push(message.params);
+          fake.sendResponse(message.id, { turn: { id: "turn-fast-1" } });
+          setImmediate(() => {
+            fake.sendNotification("item/agentMessage/delta", {
+              threadId: "thr-fast-1",
+              turnId: "turn-fast-1",
+              itemId: "msg-fast-1",
+              delta: "Fast",
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-fast-1", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "say hello",
+      stream: async (payload) => {
+        if (payload) {
+          streamPayloads.push(payload);
+        }
+      },
+      config: {
+        serviceTier: "fast",
+        reasoning: "low",
+        sessionMode: "full-access",
+        workingDirectory: "/tmp/project",
+      },
+    });
+
+    expect(threadStartRequests).toEqual([
+      expect.objectContaining({
+        model: "gpt-5.5",
+        serviceTier: "fast",
+      }),
+    ]);
+    expect(turnStartRequests).toEqual([
+      expect.objectContaining({
+        model: "gpt-5.5",
+        serviceTier: "fast",
+      }),
+    ]);
+    expect(streamPayloads).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "event",
+          event: expect.objectContaining({
+            type: "config",
+            model: "gpt-5.5",
+            reasoning: "low",
+            serviceTier: "fast",
+            appServerServiceTier: "fast",
+            sessionMode: "full-access",
+            sandbox: "danger-full-access",
+            workingDirectory: "/tmp/project",
+          }),
+        }),
+      ]),
+    );
   });
 
   it("summarizes expired ChatGPT auth failures", async () => {

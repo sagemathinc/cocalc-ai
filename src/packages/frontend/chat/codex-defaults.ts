@@ -9,7 +9,9 @@ import { lite } from "@cocalc/frontend/lite";
 import {
   DEFAULT_CODEX_MODEL_NAME,
   DEFAULT_CODEX_MODELS,
+  resolveCodexServiceTier,
   type CodexReasoningId,
+  type CodexServiceTier,
   type CodexSessionMode,
 } from "@cocalc/util/ai/codex";
 
@@ -45,6 +47,7 @@ export function getCodexNewChatModeOptions(): {
 export interface CodexNewChatDefaults {
   model: string;
   reasoning?: CodexReasoningId;
+  serviceTier: CodexServiceTier;
   sessionMode: CodexSessionMode;
 }
 
@@ -63,6 +66,10 @@ export function normalizeCodexNewChatDefaults(
     model,
     sessionMode,
     reasoning: normalizeCodexReasoning(model, value?.reasoning),
+    serviceTier: resolveCodexServiceTier({
+      model,
+      serviceTier: value?.serviceTier,
+    }),
   };
 }
 
@@ -104,6 +111,7 @@ export function codexNewChatDefaultsEqual(
   return (
     a.model === b.model &&
     a.reasoning === b.reasoning &&
+    a.serviceTier === b.serviceTier &&
     a.sessionMode === b.sessionMode
   );
 }
