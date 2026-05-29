@@ -73,6 +73,13 @@ export interface DocsActionSummary extends DocsAction {
   entryTitle: string;
 }
 
+export interface DocsChapter {
+  category: string;
+  startEntryId: string;
+  summary: string;
+  workflows: string[];
+}
+
 export interface DocsEntryImage {
   alt: string;
   presentation?: "hero" | "icon";

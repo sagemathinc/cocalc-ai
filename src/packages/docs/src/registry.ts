@@ -4,11 +4,13 @@
  */
 
 import { DOCS_ENTRIES } from "./entries";
+import { DOCS_CHAPTERS } from "./chapters";
 import type {
   DocsAccess,
   DocsAction,
   DocsActionId,
   DocsActionSummary,
+  DocsChapter,
   DocsEntry,
   DocsSearchResult,
   DocsVisibility,
@@ -45,6 +47,22 @@ export function isDocsEntryVisible(
 
 export function listDocsEntries(access: DocsAccess = {}): DocsEntry[] {
   return DOCS_ENTRIES.filter((entry) => isDocsEntryVisible(entry, access));
+}
+
+export function listDocsChapters(access: DocsAccess = {}): DocsChapter[] {
+  const categories = new Set(
+    listDocsEntries(access).map((entry) => entry.category),
+  );
+  return DOCS_CHAPTERS.filter((chapter) => categories.has(chapter.category));
+}
+
+export function getDocsChapter(
+  category: string,
+  access: DocsAccess = {},
+): DocsChapter | undefined {
+  return listDocsChapters(access).find(
+    (chapter) => chapter.category === category,
+  );
 }
 
 export function getDocsEntry(

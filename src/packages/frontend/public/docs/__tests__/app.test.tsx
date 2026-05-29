@@ -142,6 +142,12 @@ describe("public/docs", () => {
       ),
     ).not.toBeNull();
     expect(
+      screen.getByText(/Create projects, choose runtime settings/),
+    ).not.toBeNull();
+    expect(
+      screen.getAllByRole("link", { name: /Start chapter/ })[0],
+    ).toHaveAttribute("href", "/docs/projects/create-project");
+    expect(
       screen.getAllByRole("link", { name: /Project secrets/ })[0],
     ).toHaveAttribute("href", "/docs/projects/project-secrets");
     expect(
