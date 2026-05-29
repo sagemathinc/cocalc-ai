@@ -41,6 +41,7 @@ import ProjectsPageTour from "./tour";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
 import { getVisibleProjects } from "./util";
 import { FilenameSearch } from "./filename-search";
+import { MobileProjectsList } from "./mobile-projects-list";
 import { RecentDocumentActivityButton } from "@cocalc/frontend/file-use/button";
 import {
   retainScheduledProjectDeletes,
@@ -67,7 +68,8 @@ export const ProjectsPage: React.FC = () => {
   );
 
   const screens = Grid.useBreakpoint();
-  const narrow = !screens.lg;
+  const mobileProjectsList = IS_MOBILE && !screens.lg;
+  const narrow = mobileProjectsList;
 
   // Tour
   const searchRef = useRef<any>(null);
@@ -300,7 +302,7 @@ export const ProjectsPage: React.FC = () => {
         <Layout.Content
           style={{
             background: "white",
-            padding: "16px 0 0 15px",
+            padding: mobileProjectsList ? "8px 8px 0 8px" : "16px 0 0 15px",
             minHeight: 0,
             overflow: "auto",
             zIndex: 1,
@@ -325,18 +327,19 @@ export const ProjectsPage: React.FC = () => {
                   <div
                     ref={titleRef}
                     style={{
-                      marginTop: "20px",
+                      marginTop: mobileProjectsList ? "8px" : "20px",
                       display: "flex",
                       width: "100%",
                       gap: "10px",
                       alignItems: "center",
+                      flexWrap: mobileProjectsList ? "wrap" : "nowrap",
                     }}
                   >
                     <Title
                       level={3}
                       style={{
                         flex: "0 1 auto",
-                        marginBottom: "15px",
+                        marginBottom: mobileProjectsList ? 0 : "15px",
                         whiteSpace: "nowrap",
                       }}
                     >
@@ -350,7 +353,13 @@ export const ProjectsPage: React.FC = () => {
                     >
                       {capitalize(intl.formatMessage(labels.create))}
                     </Button>
-                    <div ref={starredBarRef} style={{ flex: "1 1 auto" }}>
+                    <div
+                      ref={starredBarRef}
+                      style={{
+                        flex: mobileProjectsList ? "1 0 100%" : "1 1 auto",
+                        minWidth: 0,
+                      }}
+                    >
                       <StarredProjectsBar />
                     </div>
                     {!narrow && (
@@ -433,15 +442,23 @@ export const ProjectsPage: React.FC = () => {
                   </div>
 
                   <div ref={projectListRef}>
-                    <ProjectsTable
-                      visible_projects={visible_projects}
-                      height={tableHeight}
-                      narrow={narrow}
-                      filteredCollaborators={filteredCollaborators}
-                      onFilteredCollaboratorsChange={setFilteredCollaborators}
-                      selectedProjectIds={selectedProjectIds}
-                      onSelectedProjectIdsChange={setSelectedProjectIds}
-                    />
+                    {mobileProjectsList ? (
+                      <MobileProjectsList
+                        visible_projects={visible_projects}
+                        selectedProjectIds={selectedProjectIds}
+                        onSelectedProjectIdsChange={setSelectedProjectIds}
+                      />
+                    ) : (
+                      <ProjectsTable
+                        visible_projects={visible_projects}
+                        height={tableHeight}
+                        narrow={narrow}
+                        filteredCollaborators={filteredCollaborators}
+                        onFilteredCollaboratorsChange={setFilteredCollaborators}
+                        selectedProjectIds={selectedProjectIds}
+                        onSelectedProjectIdsChange={setSelectedProjectIds}
+                      />
+                    )}
                   </div>
 
                   <Footer />
