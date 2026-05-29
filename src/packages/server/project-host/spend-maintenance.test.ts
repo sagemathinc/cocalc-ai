@@ -105,6 +105,8 @@ describe("dedicated host spend maintenance", () => {
                   machine_type: "n1-standard-4",
                   disk_gb: 100,
                   disk_type: "ssd",
+                  shared_disk_gb: 500,
+                  shared_disk_type: "balanced",
                   storage_mode: "persistent",
                   zone: "us-central1-a",
                 },
@@ -190,6 +192,12 @@ describe("dedicated host spend maintenance", () => {
       await import("./spend-maintenance");
     await runDedicatedHostSpendMaintenancePass();
 
+    expect(estimateDedicatedHostRateUsdPerHourMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shared_disk_gb: 500,
+        shared_disk_type: "balanced",
+      }),
+    );
     expect(
       reconcileDedicatedHostPurchaseSessionForAccountMock,
     ).toHaveBeenCalledWith(
