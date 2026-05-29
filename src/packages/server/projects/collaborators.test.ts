@@ -19,6 +19,8 @@ let respondProjectedInboundCollabInviteMock: jest.Mock;
 let deleteProjectedInboundCollabInviteMock: jest.Mock;
 let assertAccountTrustedForProductAccessMock: jest.Mock;
 let resolveMembershipForAccountMock: jest.Mock;
+let createNotificationEventGraphMock: jest.Mock;
+let resolveNotificationTargetHomeBaysMock: jest.Mock;
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
@@ -58,6 +60,14 @@ jest.mock("@cocalc/database/postgres/account-collaborator-index", () => ({
   __esModule: true,
   listProjectedMyCollaboratorsForAccount: (...args: any[]) =>
     listProjectedMyCollaboratorsForAccountMock(...args),
+}));
+
+jest.mock("@cocalc/database/postgres/notifications-core", () => ({
+  __esModule: true,
+  createNotificationEventGraph: (...args: any[]) =>
+    createNotificationEventGraphMock(...args),
+  resolveNotificationTargetHomeBays: (...args: any[]) =>
+    resolveNotificationTargetHomeBaysMock(...args),
 }));
 
 jest.mock("@cocalc/util/async-utils", () => ({
@@ -233,6 +243,14 @@ describe("project collaborators local bay access", () => {
       source: "free",
       entitlements: {},
     }));
+    createNotificationEventGraphMock = jest.fn(async () => ({
+      event: { event_id: "99999999-9999-4999-8999-999999999999" },
+      targets: [],
+      outbox: [],
+    }));
+    resolveNotificationTargetHomeBaysMock = jest.fn(async ({ account_ids }) =>
+      Object.fromEntries(account_ids.map((id: string) => [id, "bay-0"])),
+    );
     removeCollaboratorFromProject.mockClear();
     addUserToProject.mockClear();
     whenSentProjectInvite.mockClear();
@@ -2015,7 +2033,17 @@ describe("project collaborators local bay access", () => {
     queryMock = jest.fn(async (sql: string) => {
       if (sql.includes("AS current_group")) {
         return {
-          rows: [{ current_group: null, blocked: false }],
+          rows: [
+            {
+              title: "Private Project",
+              users: {
+                [TARGET_ACCOUNT_ID]: { group: "owner" },
+              },
+              manage_users_owner_only: false,
+              current_group: null,
+              blocked: false,
+            },
+          ],
         };
       }
       if (sql.includes("INSERT INTO project_access_requests")) {
@@ -2069,6 +2097,26 @@ describe("project collaborators local bay access", () => {
     expect(assertAccountTrustedForProductAccessMock).toHaveBeenCalledWith(
       ACCOUNT_ID,
       "request project access",
+    );
+    expect(createNotificationEventGraphMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "account_notice",
+        source_project_id: PROJECT_ID,
+        actor_account_id: ACCOUNT_ID,
+        targets: [
+          expect.objectContaining({
+            target_account_id: TARGET_ACCOUNT_ID,
+            dedupe_key: expect.stringContaining(
+              `project-access-request:${PROJECT_ID}:${ACCOUNT_ID}:${TARGET_ACCOUNT_ID}`,
+            ),
+            summary_json: expect.objectContaining({
+              action_label: "Review request",
+              notice_type: "project_access_request",
+              requested_role: "viewer",
+            }),
+          }),
+        ],
+      }),
     );
   });
 
@@ -2196,5 +2244,22 @@ describe("project collaborators local bay access", () => {
       group: "collaborator",
       project_id: PROJECT_ID,
     });
+    expect(createNotificationEventGraphMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "account_notice",
+        source_project_id: PROJECT_ID,
+        actor_account_id: ACCOUNT_ID,
+        targets: [
+          expect.objectContaining({
+            target_account_id: TARGET_ACCOUNT_ID,
+            summary_json: expect.objectContaining({
+              action_label: "Open project",
+              notice_type: "project_access_request_decision",
+              status: "approved",
+            }),
+          }),
+        ],
+      }),
+    );
   });
 });

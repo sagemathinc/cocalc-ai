@@ -11,6 +11,10 @@ import {
 
 import { db } from "@cocalc/database";
 import { listProjectedMyCollaboratorsForAccount } from "@cocalc/database/postgres/account-collaborator-index";
+import {
+  createNotificationEventGraph,
+  resolveNotificationTargetHomeBays,
+} from "@cocalc/database/postgres/notifications-core";
 import getPool from "@cocalc/database/pool";
 import { callback2 } from "@cocalc/util/async-utils";
 import {
@@ -1810,6 +1814,216 @@ async function fetchProjectAccessRequestById({
   return rows[0] ? projectAccessRequestRow(rows[0]) : null;
 }
 
+function projectAccessRequestDisplayName(
+  request: Pick<
+    ProjectAccessRequestRow,
+    | "requester_account_id"
+    | "requester_name"
+    | "requester_first_name"
+    | "requester_last_name"
+  >,
+): string {
+  return (
+    request.requester_name ||
+    `${request.requester_first_name ?? ""} ${
+      request.requester_last_name ?? ""
+    }`.trim() ||
+    request.requester_account_id
+  );
+}
+
+function projectTitleForNotification(
+  project_id: string,
+  title?: string | null,
+): string {
+  return `${title ?? ""}`.trim() || `project ${project_id}`;
+}
+
+function projectAccessRequestApproverAccountIds({
+  requester_account_id,
+  users,
+  manage_users_owner_only,
+}: {
+  requester_account_id: string;
+  users?: Record<string, { group?: string }> | null;
+  manage_users_owner_only?: boolean | null;
+}): string[] {
+  const approvers: string[] = [];
+  for (const [account_id, info] of Object.entries(users ?? {})) {
+    if (account_id === requester_account_id) continue;
+    const group = info?.group;
+    if (
+      group === "owner" ||
+      (group === "collaborator" && manage_users_owner_only !== true)
+    ) {
+      approvers.push(account_id);
+    }
+  }
+  return approvers;
+}
+
+async function notifyProjectAccessRequestCreatedBestEffort({
+  actor_account_id,
+  project_id,
+  project_title,
+  request,
+  target_account_ids,
+}: {
+  actor_account_id: string;
+  project_id: string;
+  project_title?: string | null;
+  request: ProjectAccessRequestRow;
+  target_account_ids: string[];
+}): Promise<void> {
+  if (target_account_ids.length === 0) return;
+  try {
+    const source_bay_id = getConfiguredBayId();
+    const target_home_bays = await resolveNotificationTargetHomeBays({
+      account_ids: target_account_ids,
+      default_bay_id: source_bay_id,
+    });
+    const requester = projectAccessRequestDisplayName(request);
+    const title = `${requester} requested ${request.requested_role} access`;
+    const projectTitle = projectTitleForNotification(project_id, project_title);
+    const body = request.message
+      ? `${requester} requested ${request.requested_role} access to **${projectTitle}**.\n\n> ${request.message}`
+      : `${requester} requested ${request.requested_role} access to **${projectTitle}**.`;
+    await createNotificationEventGraph({
+      kind: "account_notice",
+      source_bay_id,
+      source_project_id: project_id,
+      actor_account_id,
+      origin_kind: "project",
+      payload_json: {
+        severity: "info",
+        title,
+        body_markdown: body,
+        origin_label: "Project access",
+        action_link: `/projects/${project_id}/settings`,
+        action_label: "Review request",
+        notice_type: "project_access_request",
+        request_id: request.request_id,
+        requested_role: request.requested_role,
+      },
+      targets: target_account_ids.map((target_account_id) => ({
+        target_account_id,
+        target_home_bay_id: target_home_bays[target_account_id],
+        dedupe_key: [
+          "project-access-request",
+          project_id,
+          request.requester_account_id,
+          target_account_id,
+        ].join(":"),
+        summary_json: {
+          title,
+          body_markdown: body,
+          severity: "info",
+          origin_label: "Project access",
+          action_link: `/projects/${project_id}/settings`,
+          action_label: "Review request",
+          notice_type: "project_access_request",
+          request_id: request.request_id,
+          requested_role: request.requested_role,
+        },
+      })),
+    });
+  } catch (err) {
+    logger.warn("failed to notify project access request approvers", {
+      err,
+      project_id,
+      request_id: request.request_id,
+    });
+  }
+}
+
+async function notifyProjectAccessRequestDecisionBestEffort({
+  actor_account_id,
+  project_id,
+  request,
+}: {
+  actor_account_id: string;
+  project_id: string;
+  request: ProjectAccessRequestRow;
+}): Promise<void> {
+  if (!["approved", "denied", "blocked"].includes(request.status)) return;
+  try {
+    const source_bay_id = getConfiguredBayId();
+    const target_home_bays = await resolveNotificationTargetHomeBays({
+      account_ids: [request.requester_account_id],
+      default_bay_id: source_bay_id,
+    });
+    const projectTitle = projectTitleForNotification(
+      project_id,
+      request.project_title,
+    );
+    const statusText =
+      request.status === "approved"
+        ? "approved"
+        : request.status === "blocked"
+          ? "blocked"
+          : "denied";
+    const title = `Project access request ${statusText}`;
+    const body =
+      request.status === "approved"
+        ? `Your request for ${request.requested_role} access to **${projectTitle}** was approved.`
+        : request.status === "blocked"
+          ? `Your request for access to **${projectTitle}** was denied, and this project is not accepting further access requests from your account.`
+          : `Your request for access to **${projectTitle}** was denied.`;
+    const action_link =
+      request.status === "approved" ? `/projects/${project_id}` : undefined;
+    const action_label = request.status === "approved" ? "Open project" : "";
+    await createNotificationEventGraph({
+      kind: "account_notice",
+      source_bay_id,
+      source_project_id: project_id,
+      actor_account_id,
+      origin_kind: "project",
+      payload_json: {
+        severity: request.status === "approved" ? "info" : "warning",
+        title,
+        body_markdown: body,
+        origin_label: "Project access",
+        action_link,
+        action_label,
+        notice_type: "project_access_request_decision",
+        request_id: request.request_id,
+        requested_role: request.requested_role,
+        status: request.status,
+      },
+      targets: [
+        {
+          target_account_id: request.requester_account_id,
+          target_home_bay_id: target_home_bays[request.requester_account_id],
+          dedupe_key: [
+            "project-access-request-decision",
+            project_id,
+            request.request_id,
+            request.requester_account_id,
+          ].join(":"),
+          summary_json: {
+            title,
+            body_markdown: body,
+            severity: request.status === "approved" ? "info" : "warning",
+            origin_label: "Project access",
+            action_link,
+            action_label,
+            notice_type: "project_access_request_decision",
+            request_id: request.request_id,
+            requested_role: request.requested_role,
+            status: request.status,
+          },
+        },
+      ],
+    });
+  } catch (err) {
+    logger.warn("failed to notify project access request decision", {
+      err,
+      project_id,
+      request_id: request.request_id,
+    });
+  }
+}
+
 export async function getProjectAccessLandingInfo({
   account_id,
   project_id,
@@ -1975,10 +2189,16 @@ export async function requestProjectAccess({
   });
   const pool = getPool();
   const { rows: projectRows } = await pool.query<{
+    title: string | null;
+    users: Record<string, { group?: string }> | null;
+    manage_users_owner_only: boolean | null;
     current_group: string | null;
     blocked: boolean;
   }>(
     `SELECT
+       p.title,
+       p.users,
+       p.manage_users_owner_only,
        p.users -> $2::text ->> 'group' AS current_group,
        EXISTS(
          SELECT 1
@@ -2042,6 +2262,17 @@ export async function requestProjectAccess({
   if (!updated) {
     throw new Error("failed to load project access request");
   }
+  await notifyProjectAccessRequestCreatedBestEffort({
+    actor_account_id: account_id,
+    project_id,
+    project_title: project.title,
+    request: updated,
+    target_account_ids: projectAccessRequestApproverAccountIds({
+      requester_account_id: account_id,
+      users: project.users,
+      manage_users_owner_only: project.manage_users_owner_only,
+    }),
+  });
   return updated;
 }
 
@@ -2210,6 +2441,11 @@ export async function respondProjectAccessRequest({
   if (!updated) {
     throw new Error("failed to load project access request response");
   }
+  await notifyProjectAccessRequestDecisionBestEffort({
+    actor_account_id: account_id,
+    project_id,
+    request: updated,
+  });
   return updated;
 }
 
