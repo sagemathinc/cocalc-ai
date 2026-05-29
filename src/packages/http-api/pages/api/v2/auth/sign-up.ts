@@ -47,6 +47,7 @@ import {
 import { evaluateAccountCreationPolicy } from "@cocalc/server/auth/account-creation-policy";
 import redeemRegistrationToken, {
   deleteRegistrationToken,
+  restoreRedeemedRegistrationToken,
   validateRegistrationToken,
 } from "@cocalc/server/auth/tokens/redeem";
 import getRequiresRegistrationToken from "@cocalc/server/auth/tokens/get-requires-token";
@@ -216,6 +217,7 @@ export async function signUp(req, res) {
       : ssoDomainPolicy?.signup_mode === "registration_token_required"
         ? true
         : await getRequiresRegistrationToken();
+  let tokenInfo;
   if (requiresRegistrationToken) {
     const tokenThrottle = signUpTokenCheck(email, req.ip);
     if (tokenThrottle) {
@@ -227,7 +229,7 @@ export async function signUp(req, res) {
       return;
     }
     try {
-      await validateRegistrationToken(registrationToken);
+      tokenInfo = await validateRegistrationToken(registrationToken);
     } catch (err) {
       recordSignUpTokenFail(email, req.ip);
       res.json({
@@ -254,7 +256,6 @@ export async function signUp(req, res) {
     return;
   }
 
-  let tokenInfo;
   if (requiresRegistrationToken) {
     try {
       tokenInfo = await redeemRegistrationToken(registrationToken);
@@ -426,6 +427,19 @@ export async function signUp(req, res) {
     });
   } catch (err) {
     if (!res.headersSent) {
+      if (requiresRegistrationToken && registrationToken && tokenInfo) {
+        try {
+          await restoreRedeemedRegistrationToken(registrationToken);
+        } catch (restoreErr) {
+          logger.warn(
+            "failed to restore registration token after signup error",
+            {
+              email,
+              err: serializeError(restoreErr),
+            },
+          );
+        }
+      }
       if (
         err instanceof SignupEmailDomainPolicyError ||
         (err as any)?.name === "SignupEmailDomainPolicyError"
@@ -437,7 +451,10 @@ export async function signUp(req, res) {
         });
         return;
       }
-      logger.error("error creating account", { email, err });
+      logger.error("error creating account", {
+        email,
+        err: serializeError(err),
+      });
       res.json({
         issues: {
           api: "Problem creating account. Please try again.",
@@ -445,6 +462,17 @@ export async function signUp(req, res) {
       });
     }
   }
+}
+
+function serializeError(err: unknown) {
+  if (err instanceof Error) {
+    return {
+      name: err.name,
+      message: err.message,
+      stack: err.stack,
+    };
+  }
+  return `${err}`;
 }
 
 export function checkObviousConditions({
