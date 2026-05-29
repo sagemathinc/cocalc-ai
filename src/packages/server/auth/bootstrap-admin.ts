@@ -31,11 +31,21 @@ function isBootstrapCustomize(customize: unknown): boolean {
 
 async function findBootstrapToken(): Promise<BootstrapToken | undefined> {
   const pool = getPool("long");
+  await pool.query(
+    `DELETE FROM registration_tokens
+      WHERE customize->>'bootstrap'='true'
+        AND (
+          disabled IS TRUE OR
+          (expires IS NOT NULL AND expires <= NOW()) OR
+          ("limit" IS NOT NULL AND "limit" <= coalesce(counter, 0))
+        )`,
+  );
   const { rows } = await pool.query(
     `SELECT token, expires, customize
        FROM registration_tokens
       WHERE disabled IS NOT true
         AND (expires IS NULL OR expires > NOW())
+        AND ("limit" IS NULL OR "limit" > coalesce(counter, 0))
       ORDER BY expires NULLS LAST, token
       LIMIT 100`,
   );
