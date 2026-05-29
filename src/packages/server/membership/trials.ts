@@ -4,6 +4,7 @@
  */
 
 import getPool, { PoolClient } from "@cocalc/database/pool";
+import { canonicalEmailForBanEquivalence } from "@cocalc/server/accounts/cluster-directory";
 import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
 
 export interface MembershipTrialCandidate {
@@ -25,6 +26,12 @@ function normalizeEmailAddress(email: unknown): string | undefined {
   return value;
 }
 
+export function membershipTrialEmailKey(email: unknown): string | undefined {
+  const normalized = normalizeEmailAddress(email);
+  if (!normalized) return undefined;
+  return canonicalEmailForBanEquivalence(normalized) ?? normalized;
+}
+
 async function ensureMembershipTrialClaimsTable(
   client?: PoolClient,
 ): Promise<void> {
@@ -34,11 +41,25 @@ async function ensureMembershipTrialClaimsTable(
       id SERIAL PRIMARY KEY,
       account_id UUID NOT NULL UNIQUE,
       email_address VARCHAR(254) NOT NULL UNIQUE,
+      email_key VARCHAR(254),
       membership_class VARCHAR(254) NOT NULL,
       subscription_id INTEGER,
       purchase_id INTEGER,
       claimed_at TIMESTAMP NOT NULL DEFAULT NOW()
     )
+  `);
+  await pool.query(`
+    ALTER TABLE membership_trial_claims
+      ADD COLUMN IF NOT EXISTS email_key VARCHAR(254)
+  `);
+  await pool.query(`
+    UPDATE membership_trial_claims
+       SET email_key=email_address
+     WHERE email_key IS NULL
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS membership_trial_claims_email_key_unique_idx
+      ON membership_trial_claims (email_key)
   `);
 }
 
@@ -103,12 +124,19 @@ export async function getMembershipTrialCandidate({
   }
   await ensureMembershipTrialClaimsTable(client);
   const pool = client ?? getPool("medium");
+  const emailKeys = Array.from(
+    new Set(
+      emails.map((email) => membershipTrialEmailKey(email)).filter(Boolean),
+    ),
+  );
   const { rows } = await pool.query(
     `SELECT account_id, email_address, membership_class
        FROM membership_trial_claims
-      WHERE account_id=$1 OR email_address=ANY($2::varchar[])
+      WHERE account_id=$1
+         OR email_address=ANY($2::varchar[])
+         OR email_key=ANY($3::varchar[])
       LIMIT 1`,
-    [account_id, emails],
+    [account_id, emails, emailKeys],
   );
   if (rows.length > 0) {
     return {
@@ -143,13 +171,21 @@ export async function claimMembershipTrial({
   if (!normalized) {
     throw Error("valid email address required for membership trial");
   }
+  const emailKey = membershipTrialEmailKey(normalized) ?? normalized;
   await ensureMembershipTrialClaimsTable(client);
   try {
     await client.query(
       `INSERT INTO membership_trial_claims
-         (account_id, email_address, membership_class, subscription_id, purchase_id)
-       VALUES ($1,$2,$3,$4,$5)`,
-      [account_id, normalized, membership_class, subscription_id, purchase_id],
+         (account_id, email_address, email_key, membership_class, subscription_id, purchase_id)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [
+        account_id,
+        normalized,
+        emailKey,
+        membership_class,
+        subscription_id,
+        purchase_id,
+      ],
     );
   } catch (err) {
     if ((err as { code?: string }).code === "23505") {
