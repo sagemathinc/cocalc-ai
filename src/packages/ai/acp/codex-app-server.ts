@@ -1665,13 +1665,20 @@ export class CodexAppServerAgent implements AcpAgent {
         normalizeCodexSessionId(config?.sessionId) ??
         normalizeCodexSessionId(session_id);
       const resumeId = requestedSessionKey ? session.sessionId : undefined;
+      const serviceTier = codexServiceTierForAppServer(config);
       const threadParams = {
         cwd,
         model: config?.model ?? this.opts.model,
-        serviceTier: codexServiceTierForAppServer(config),
+        serviceTier,
         approvalPolicy: "never",
         sandbox: toSandboxMode(spawned, config),
       };
+      logger.debug("codex app-server: resolved service tier", {
+        threadId: resumeId,
+        model: threadParams.model,
+        requestedServiceTier: config?.serviceTier ?? "standard",
+        appServerServiceTier: serviceTier,
+      });
       if (resumeId) {
         await this.tryEnsureSessionConfig(spawned, resumeId, cwd, config);
         try {
@@ -1717,7 +1724,7 @@ export class CodexAppServerAgent implements AcpAgent {
         approvalPolicy: "never",
         sandboxPolicy: toTurnSandboxPolicy(spawned, config),
         model: config?.model ?? this.opts.model,
-        serviceTier: codexServiceTierForAppServer(config),
+        serviceTier,
         effort: toReasoningEffort(config),
         env: Object.keys(turnEnv).length > 0 ? turnEnv : undefined,
         input: buildTurnInput({
