@@ -338,6 +338,22 @@ describe("PublicApp", () => {
       json: async () => ({
         tiers: [
           {
+            id: "free",
+            label: "Free",
+            ai_limits: { units_5h: 15, units_7d: 50 },
+            features: {},
+            price_monthly: 0,
+            price_yearly: 0,
+            priority: 10,
+            project_defaults: {
+              disk_quota: 1000,
+              memory: 2000,
+            },
+            usage_limits: {},
+            store_description: "Start exploring CoCalc.",
+            store_visible: true,
+          },
+          {
             id: "member",
             label: "Member",
             ai_limits: { units_5h: 150, units_7d: 500 },
@@ -363,6 +379,24 @@ describe("PublicApp", () => {
             ],
             store_visible: true,
           },
+          {
+            id: "pro",
+            label: "Pro",
+            ai_limits: { units_5h: 1500, units_7d: 5000 },
+            features: { create_hosts: true },
+            price_monthly: 160,
+            price_yearly: 1440,
+            priority: 30,
+            project_defaults: {
+              disk_quota: 10000,
+              memory: 16000,
+            },
+            usage_limits: {
+              credit_spend_limit_7d_usd: 1000,
+            },
+            store_description: "For demanding projects.",
+            store_visible: true,
+          },
         ],
       }),
     }) as typeof fetch;
@@ -385,7 +419,7 @@ describe("PublicApp", () => {
     expect(screen.getByText("Dedicated project host access")).not.toBeNull();
     expect(screen.getByText("$18.75")).not.toBeNull();
     expect(screen.getByText("/ mo")).not.toBeNull();
-    expect(screen.getByText("Billed annually, saving 25%")).not.toBeNull();
+    expect(screen.getAllByText("Billed annually, saving 25%").length).toBe(2);
     expect(
       screen.getByRole("table", { name: "Membership comparison" }),
     ).not.toBeNull();
@@ -397,12 +431,12 @@ describe("PublicApp", () => {
     expect(screen.getByText("Functionality")).not.toBeNull();
     expect(screen.getByText("Postpaid dedicated-host billing")).not.toBeNull();
     expect(screen.getByText("8 GB")).not.toBeNull();
-    expect(screen.getByText("10 GB")).not.toBeNull();
+    expect(screen.getAllByText("10 GB").length).toBe(2);
     expect(screen.getByText("125 GB")).not.toBeNull();
-    expect(screen.getByText("Included AI per 5 hours")).not.toBeNull();
-    expect(screen.getByText("Included AI per 7 days")).not.toBeNull();
-    expect(screen.getByText("150 units")).not.toBeNull();
-    expect(screen.getByText("500 units")).not.toBeNull();
+    expect(screen.getByText("Included AI usage")).not.toBeNull();
+    expect(screen.getByText("Minimal")).not.toBeNull();
+    expect(screen.getByText("Standard")).not.toBeNull();
+    expect(screen.getByText("Expanded")).not.toBeNull();
     expect(screen.getByRole("link", { name: /Member/ })).toHaveAttribute(
       "href",
       "/settings/store",
@@ -410,8 +444,8 @@ describe("PublicApp", () => {
     expect(screen.queryByRole("link", { name: "Open Store" })).toBeNull();
     fireEvent.click(screen.getByText("Monthly"));
     expect(screen.getByText("$25")).not.toBeNull();
-    expect(screen.getByText("/ month")).not.toBeNull();
-    expect(screen.getByText("Save 25% with annual billing")).not.toBeNull();
+    expect(screen.getAllByText("/ month").length).toBe(2);
+    expect(screen.getAllByText("Save 25% with annual billing").length).toBe(2);
     expect(
       screen.getByRole("heading", { name: "For Teams and Organizations" }),
     ).not.toBeNull();

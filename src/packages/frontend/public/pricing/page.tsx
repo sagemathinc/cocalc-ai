@@ -121,7 +121,10 @@ const EMPTY_COMPARISON_VALUE = <Text type="secondary">—</Text>;
 
 type ComparisonRow = {
   label: string;
-  value: (tier: PublicMembershipTier) => ReactNode;
+  value: (context: {
+    tier: PublicMembershipTier;
+    tiers: readonly PublicMembershipTier[];
+  }) => ReactNode;
 };
 
 type ComparisonGroup = {
@@ -159,6 +162,41 @@ function formatBooleanValue(value: unknown): ReactNode {
   );
 }
 
+function positiveComparisonValues(values: readonly unknown[]): number[] {
+  return Array.from(
+    new Set(
+      values
+        .map(asNumber)
+        .filter((value): value is number => value != null && value > 0),
+    ),
+  ).sort((a, b) => a - b);
+}
+
+function formatComparativeNumberValue({
+  standardValue,
+  value,
+  values,
+}: {
+  standardValue?: unknown;
+  value: unknown;
+  values: readonly unknown[];
+}): ReactNode {
+  const numberValue = asNumber(value);
+  if (numberValue == null || numberValue <= 0) return "None";
+
+  const positiveValues = positiveComparisonValues([...values, numberValue]);
+  const standardNumber = asNumber(standardValue);
+  const effectiveStandard =
+    standardNumber != null && standardNumber > 0
+      ? standardNumber
+      : positiveValues[Math.floor((positiveValues.length - 1) / 2)];
+
+  if (effectiveStandard == null) return "None";
+  if (numberValue === effectiveStandard) return "Standard";
+  if (numberValue > effectiveStandard) return "Expanded";
+  return numberValue === positiveValues[0] ? "Minimal" : "Light";
+}
+
 function hasPositiveUsageLimit(
   tier: PublicMembershipTier,
   firstKey: string,
@@ -171,14 +209,25 @@ function hasPositiveUsageLimit(
   });
 }
 
-function formatAiLimit(
+function getAiUsageComparisonValue(
   tier: PublicMembershipTier,
-  primaryKey: string,
-  fallbackKey: string,
-): ReactNode {
+): number | undefined {
   const aiLimits = asRecord(tier.ai_limits);
-  const units = asNumber(aiLimits[primaryKey] ?? aiLimits[fallbackKey]);
-  return units == null ? EMPTY_COMPARISON_VALUE : `${round2(units)} units`;
+  return (
+    asNumber(aiLimits.units_7d ?? aiLimits.limit_7d) ??
+    asNumber(aiLimits.units_5h ?? aiLimits.limit_5h)
+  );
+}
+
+function getStandardTierComparisonValue(
+  tiers: readonly PublicMembershipTier[],
+  value: (tier: PublicMembershipTier) => number | undefined,
+): number | undefined {
+  const standardTier = tiers.find(
+    (tier) =>
+      tier.id === "standard" || (tier.label ?? "").toLowerCase() === "standard",
+  );
+  return standardTier == null ? undefined : value(standardTier);
 }
 
 function projectDefaults(tier: PublicMembershipTier): Record<string, unknown> {
@@ -199,15 +248,15 @@ const COMPARISON_GROUPS: ComparisonGroup[] = [
     rows: [
       {
         label: "RAM",
-        value: (tier) => formatMbValue(projectDefaults(tier).memory),
+        value: ({ tier }) => formatMbValue(projectDefaults(tier).memory),
       },
       {
         label: "Disk",
-        value: (tier) => formatMbValue(projectDefaults(tier).disk_quota),
+        value: ({ tier }) => formatMbValue(projectDefaults(tier).disk_quota),
       },
       {
         label: "Collaborators",
-        value: (tier) =>
+        value: ({ tier }) =>
           formatNumberValue(
             usageLimits(tier).project_max_collaborators_and_pending_invites,
           ),
@@ -219,16 +268,16 @@ const COMPARISON_GROUPS: ComparisonGroup[] = [
     rows: [
       {
         label: "Projects owned",
-        value: (tier) => formatNumberValue(usageLimits(tier).max_projects),
+        value: ({ tier }) => formatNumberValue(usageLimits(tier).max_projects),
       },
       {
         label: "Projects running",
-        value: (tier) =>
+        value: ({ tier }) =>
           formatNumberValue(usageLimits(tier).max_sponsored_running_projects),
       },
       {
         label: "Total disk",
-        value: (tier) => {
+        value: ({ tier }) => {
           const limits = usageLimits(tier);
           return formatBytesValue(
             limits.total_storage_hard_bytes ?? limits.total_storage_soft_bytes,
@@ -236,12 +285,16 @@ const COMPARISON_GROUPS: ComparisonGroup[] = [
         },
       },
       {
-        label: "Included AI per 5 hours",
-        value: (tier) => formatAiLimit(tier, "units_5h", "limit_5h"),
-      },
-      {
-        label: "Included AI per 7 days",
-        value: (tier) => formatAiLimit(tier, "units_7d", "limit_7d"),
+        label: "Included AI usage",
+        value: ({ tier, tiers }) =>
+          formatComparativeNumberValue({
+            value: getAiUsageComparisonValue(tier),
+            values: tiers.map(getAiUsageComparisonValue),
+            standardValue: getStandardTierComparisonValue(
+              tiers,
+              getAiUsageComparisonValue,
+            ),
+          }),
       },
     ],
   },
@@ -250,11 +303,12 @@ const COMPARISON_GROUPS: ComparisonGroup[] = [
     rows: [
       {
         label: "Dedicated hosts",
-        value: (tier) => formatBooleanValue(tierFeatures(tier).create_hosts),
+        value: ({ tier }) =>
+          formatBooleanValue(tierFeatures(tier).create_hosts),
       },
       {
         label: "Postpaid dedicated-host billing",
-        value: (tier) =>
+        value: ({ tier }) =>
           formatBooleanValue(
             hasPositiveUsageLimit(
               tier,
@@ -265,7 +319,7 @@ const COMPARISON_GROUPS: ComparisonGroup[] = [
       },
       {
         label: "Launchpad license",
-        value: (tier) =>
+        value: ({ tier }) =>
           formatBooleanValue(
             tierFeatures(tier).launchpad_license === true || tier.id === "pro",
           ),
@@ -584,7 +638,7 @@ function PricingComparisonTable({ tiers }: { tiers: PublicMembershipTier[] }) {
                         key={`${row.label}-${tier.id}`}
                         style={valueCellStyle}
                       >
-                        {row.value(tier)}
+                        {row.value({ tier, tiers })}
                       </td>
                     ))}
                   </tr>
