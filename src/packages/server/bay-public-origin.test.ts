@@ -301,4 +301,43 @@ describe("bay-public-origin", () => {
       getBrowserCookieDomainForRequest(req),
     ).resolves.toBeUndefined();
   });
+
+  it("uses a local request origin for browser bootstrap before configured DNS is live", async () => {
+    getServerSettingsMock = jest.fn(async () => ({
+      dns: "demo.cocalc.ai",
+    }));
+    process.env.COCALC_BAY_ID = "bay-0";
+    process.env.COCALC_CLUSTER_SEED_BAY_ID = "bay-0";
+    process.env.COCALC_BAY_PUBLIC_URL = "https://demo.cocalc.ai";
+    const {
+      getBayPublicOriginForRequest,
+      getBrowserCookieDomainForRequest,
+      getBrowserCookieSiteHostnameForRequest,
+      getCurrentBayPublicOriginForRequest,
+      getSitePublicOriginForRequest,
+    } = await import("./bay-public-origin");
+    const req = {
+      headers: {
+        host: "127.0.0.1:7001",
+      },
+      protocol: "http",
+      secure: false,
+    } as any;
+
+    await expect(getSitePublicOriginForRequest(req)).resolves.toBe(
+      "http://127.0.0.1:7001",
+    );
+    await expect(getBayPublicOriginForRequest(req, "bay-0")).resolves.toBe(
+      "http://127.0.0.1:7001",
+    );
+    await expect(getCurrentBayPublicOriginForRequest(req)).resolves.toBe(
+      "http://127.0.0.1:7001",
+    );
+    await expect(
+      getBrowserCookieDomainForRequest(req),
+    ).resolves.toBeUndefined();
+    await expect(getBrowserCookieSiteHostnameForRequest(req)).resolves.toBe(
+      "127.0.0.1",
+    );
+  });
 });
