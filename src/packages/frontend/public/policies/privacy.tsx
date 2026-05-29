@@ -1087,7 +1087,8 @@ export const privacyPolicy: PublicPolicy = {
         <table cellPadding="5px">
           <thead>
             <tr>
-              <th align="left"> Title </th> <th> Effective Date </th>
+              <th align="left"> Title </th>
+              <th> Effective Date </th>
             </tr>
           </thead>
           <tbody>
