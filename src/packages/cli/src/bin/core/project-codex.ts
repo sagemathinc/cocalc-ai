@@ -10,6 +10,7 @@ import { acpSubject } from "@cocalc/conat/ai/acp/server";
 import type { AcpRequest, AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import type {
   CodexReasoningId,
+  CodexServiceTier,
   CodexSessionConfig,
   CodexSessionMode,
 } from "@cocalc/util/ai/codex";
@@ -110,6 +111,21 @@ function parseCodexSessionMode(value?: string): CodexSessionMode | undefined {
   );
 }
 
+function parseCodexServiceTier(opts: {
+  fast?: boolean;
+  serviceTier?: string;
+}): CodexServiceTier | undefined {
+  if (opts.fast) return "fast";
+  if (!opts.serviceTier?.trim()) return undefined;
+  const serviceTier = opts.serviceTier.trim().toLowerCase();
+  if (serviceTier === "standard" || serviceTier === "fast") {
+    return serviceTier;
+  }
+  throw new Error(
+    `invalid --service-tier '${opts.serviceTier}'; expected standard|fast`,
+  );
+}
+
 function summarizeCodexDeviceAuth(
   project: ProjectIdentity,
   status: ProjectCodexDeviceAuthStatus,
@@ -157,6 +173,8 @@ export function createProjectCodexOps<Ctx, Project extends ProjectIdentity>(
   function buildCodexSessionConfig(opts: {
     model?: string;
     reasoning?: string;
+    fast?: boolean;
+    serviceTier?: string;
     sessionMode?: string;
     workdir?: string;
   }): CodexSessionConfig | undefined {
@@ -167,6 +185,10 @@ export function createProjectCodexOps<Ctx, Project extends ProjectIdentity>(
     const reasoning = parseCodexReasoning(opts.reasoning);
     if (reasoning) {
       config.reasoning = reasoning;
+    }
+    const serviceTier = parseCodexServiceTier(opts);
+    if (serviceTier) {
+      config.serviceTier = serviceTier;
     }
     const sessionMode = parseCodexSessionMode(opts.sessionMode);
     if (sessionMode) {

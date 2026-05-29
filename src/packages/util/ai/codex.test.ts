@@ -1,4 +1,9 @@
-import { DEFAULT_CODEX_MODELS, isCodexModelName } from "./codex";
+import {
+  codexServiceTierForAppServer,
+  DEFAULT_CODEX_MODELS,
+  isCodexModelName,
+  resolveCodexServiceTier,
+} from "./codex";
 
 describe("DEFAULT_CODEX_MODELS", () => {
   it("matches the current Codex CLI model list order", () => {
@@ -23,5 +28,27 @@ describe("DEFAULT_CODEX_MODELS", () => {
         expect.objectContaining({ id: "medium", default: true }),
       ]),
     });
+  });
+
+  it("only enables fast service tier for models that support it", () => {
+    expect(
+      resolveCodexServiceTier({
+        model: "gpt-5.5",
+        serviceTier: "fast",
+      }),
+    ).toBe("fast");
+    expect(
+      codexServiceTierForAppServer({
+        model: "gpt-5.5",
+        serviceTier: "fast",
+      }),
+    ).toBe("priority");
+    expect(
+      resolveCodexServiceTier({
+        model: "gpt-5.3-codex",
+        serviceTier: "fast",
+      }),
+    ).toBe("standard");
+    expect(codexServiceTierForAppServer({ model: "gpt-5.5" })).toBe(null);
   });
 });

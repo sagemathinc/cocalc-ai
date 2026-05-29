@@ -9,6 +9,7 @@ import { Readable } from "node:stream";
 import getLogger from "@cocalc/backend/logger";
 import { argsJoin } from "@cocalc/util/args";
 import {
+  codexServiceTierForAppServer,
   normalizeCodexSessionId,
   type CodexSessionConfig,
 } from "@cocalc/util/ai/codex";
@@ -1667,6 +1668,7 @@ export class CodexAppServerAgent implements AcpAgent {
       const threadParams = {
         cwd,
         model: config?.model ?? this.opts.model,
+        serviceTier: codexServiceTierForAppServer(config),
         approvalPolicy: "never",
         sandbox: toSandboxMode(spawned, config),
       };
@@ -1715,6 +1717,7 @@ export class CodexAppServerAgent implements AcpAgent {
         approvalPolicy: "never",
         sandboxPolicy: toTurnSandboxPolicy(spawned, config),
         model: config?.model ?? this.opts.model,
+        serviceTier: codexServiceTierForAppServer(config),
         effort: toReasoningEffort(config),
         env: Object.keys(turnEnv).length > 0 ? turnEnv : undefined,
         input: buildTurnInput({
@@ -2440,6 +2443,7 @@ export class CodexAppServerAgent implements AcpAgent {
       cwd,
       approval_policy: "never",
       sandbox_policy: getSessionMetaSandboxPolicy(spawned, config),
+      service_tier: codexServiceTierForAppServer(config),
     }));
   }
 

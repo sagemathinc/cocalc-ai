@@ -9,9 +9,18 @@ export interface CodexModelInfo {
   name: string;
   description?: string;
   reasoning?: CodexReasoningLevel[];
+  serviceTiers?: CodexServiceTierInfo[];
 }
 
 export type CodexReasoningId = CodexReasoningLevel["id"];
+export type CodexServiceTier = "standard" | "fast";
+
+export interface CodexServiceTierInfo {
+  id: CodexServiceTier;
+  label: string;
+  description: string;
+  default?: boolean;
+}
 
 export type CodexSessionMode =
   | "auto"
@@ -24,6 +33,7 @@ export interface CodexSessionConfig {
   sessionId?: string;
   model?: string;
   reasoning?: CodexReasoningId;
+  serviceTier?: CodexServiceTier;
   allowWrite?: boolean;
   sessionMode?: CodexSessionMode;
   env?: Record<string, string>;
@@ -56,6 +66,7 @@ export function resolveCodexSessionMode(
 }
 
 export const DEFAULT_CODEX_MODEL_NAME = "gpt-5.5";
+export const CODEX_FAST_SERVICE_TIER_REQUEST_VALUE = "priority";
 
 const DEFAULT_REASONING_LEVELS: CodexReasoningLevel[] = [
   {
@@ -131,17 +142,25 @@ const GPT_5_2_REASONING_LEVELS: CodexReasoningLevel[] = [
   },
 ];
 
+const FAST_SERVICE_TIER: CodexServiceTierInfo = {
+  id: "fast",
+  label: "Fast",
+  description: "1.5x speed with higher Codex credit usage.",
+};
+
 export const DEFAULT_CODEX_MODELS: CodexModelInfo[] = [
   {
     name: DEFAULT_CODEX_MODEL_NAME,
     description:
       "Frontier model for complex coding, research, and real-world work.",
     reasoning: DEFAULT_REASONING_LEVELS,
+    serviceTiers: [FAST_SERVICE_TIER],
   },
   {
     name: "gpt-5.4",
     description: "Strong model for everyday coding.",
     reasoning: DEFAULT_REASONING_LEVELS,
+    serviceTiers: [FAST_SERVICE_TIER],
   },
   {
     name: "gpt-5.4-mini",
@@ -180,4 +199,35 @@ export function isCodexModelName(model?: string): boolean {
   if (CODEX_MODEL_NAME_SET.has(normalized)) return true;
   // Backward-compatible fallback for custom codex-style slugs.
   return normalized.includes("codex");
+}
+
+export function normalizeCodexServiceTier(
+  serviceTier?: string | null,
+): CodexServiceTier {
+  return serviceTier === "fast" ? "fast" : "standard";
+}
+
+export function codexModelSupportsFastMode(model?: string): boolean {
+  const normalized = `${model ?? ""}`.trim();
+  return (
+    DEFAULT_CODEX_MODELS.find(
+      (entry) => entry.name === normalized,
+    )?.serviceTiers?.some((tier) => tier.id === "fast") === true
+  );
+}
+
+export function resolveCodexServiceTier(
+  config?: Pick<CodexSessionConfig, "model" | "serviceTier"> | null,
+): CodexServiceTier {
+  const serviceTier = normalizeCodexServiceTier(config?.serviceTier);
+  if (serviceTier !== "fast") return "standard";
+  return codexModelSupportsFastMode(config?.model) ? "fast" : "standard";
+}
+
+export function codexServiceTierForAppServer(
+  config?: Pick<CodexSessionConfig, "model" | "serviceTier"> | null,
+): string | null {
+  return resolveCodexServiceTier(config) === "fast"
+    ? CODEX_FAST_SERVICE_TIER_REQUEST_VALUE
+    : null;
 }

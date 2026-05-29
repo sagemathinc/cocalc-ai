@@ -48,6 +48,11 @@ export function registerProjectCodexCommands(
       "reasoning level (low|medium|high|extra_high)",
     )
     .option(
+      "--service-tier <tier>",
+      "codex service tier (standard|fast); standard is the default",
+    )
+    .option("--fast", "use Codex Fast mode with higher credit usage")
+    .option(
       "--session-mode <mode>",
       "session mode (auto|read-only|workspace-write|full-access)",
     )
@@ -63,6 +68,8 @@ export function registerProjectCodexCommands(
           sessionId?: string;
           model?: string;
           reasoning?: string;
+          serviceTier?: string;
+          fast?: boolean;
           sessionMode?: string;
           workdir?: string;
         },
@@ -93,6 +100,8 @@ export function registerProjectCodexCommands(
           const config = buildCodexSessionConfig({
             model: opts.model,
             reasoning: opts.reasoning,
+            serviceTier: opts.serviceTier,
+            fast: opts.fast,
             sessionMode: opts.sessionMode,
             workdir: opts.workdir,
           });

@@ -95,6 +95,7 @@ import {
 import {
   DEFAULT_CODEX_MODEL_NAME,
   isCodexModelName,
+  resolveCodexServiceTier,
   resolveCodexSessionMode,
 } from "@cocalc/util/ai/codex";
 import { CodexPaymentCredentialsModal } from "./codex";
@@ -1572,6 +1573,7 @@ export function ChatPanel({
               next as CodexThreadConfig,
             );
             next.sessionMode = sessionMode;
+            next.serviceTier = resolveCodexServiceTier(next);
             next.allowWrite = sessionMode !== "read-only";
             return next;
           })()
