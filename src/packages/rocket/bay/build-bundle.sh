@@ -144,6 +144,15 @@ mkdir -p "$OUT/runtime/http-api-dist"
 cp -a "$ROOT/packages/http-api/dist"/. "$OUT/runtime/http-api-dist"/
 find "$OUT/runtime/http-api-dist" -type f -name '*.map' -delete
 
+echo "- Copy static frontend assets"
+mkdir -p "$OUT/runtime/static"
+cp -a "$ROOT/packages/static/dist"/. "$OUT/runtime/static"/
+find "$OUT/runtime/static" -type f -name '*.map' -delete
+
+echo "- Copy public assets"
+mkdir -p "$OUT/runtime/public"
+cp -a "$ROOT/packages/assets/public"/. "$OUT/runtime/public"/
+
 echo "- Bundle hub worker with @vercel/ncc"
 pnpm --filter @cocalc/project-host exec ncc build "$ROOT/packages/hub/run/hub.js" \
   -o "$OUT/runtime/hub" \
@@ -220,6 +229,8 @@ validate_file "$OUT/runtime/packages/project-host/build/bundle-linux.tar.xz"
 validate_file "$OUT/runtime/packages/project/build/bundle-linux.tar.xz"
 validate_file "$OUT/runtime/packages/server/cloud/bootstrap/bootstrap.py"
 validate_file "$OUT/runtime/http-api-dist/pages/api/v2/index.js"
+validate_file "$OUT/runtime/static/public.html"
+validate_file "$OUT/runtime/public/cocalc-content.css"
 validate_file "$OUT/scripts/bay-systemd/install-scaffold.sh"
 validate_file "$OUT/scripts/bay-systemd/bay-bootstrap-release.sh"
 validate_file "$OUT/scripts/bay-systemd/env/bay-rocket-bundle-overlay.env.example"

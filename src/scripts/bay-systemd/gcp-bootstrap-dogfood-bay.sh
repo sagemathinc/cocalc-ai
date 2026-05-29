@@ -423,6 +423,12 @@ start_port_forward() {
     return 0
   fi
 
+  if timeout 1 bash -c ">/dev/tcp/${LOCAL_FORWARD_HOST}/${LOCAL_FORWARD_PORT}" \
+    >/dev/null 2>&1; then
+    log "local port ${LOCAL_FORWARD_HOST}:${LOCAL_FORWARD_PORT} is already listening; leaving existing listener in place"
+    return 0
+  fi
+
   log "starting SSH local port forward ${LOCAL_FORWARD_HOST}:${LOCAL_FORWARD_PORT} -> ${VM_NAME}:127.0.0.1:${REMOTE_FORWARD_PORT}"
   gcloud compute ssh "$VM_NAME" \
     --project "$GCP_PROJECT" \
