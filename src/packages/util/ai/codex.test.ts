@@ -42,7 +42,7 @@ describe("DEFAULT_CODEX_MODELS", () => {
         model: "gpt-5.5",
         serviceTier: "fast",
       }),
-    ).toBe("priority");
+    ).toBe("fast");
     expect(
       resolveCodexServiceTier({
         model: "gpt-5.3-codex",

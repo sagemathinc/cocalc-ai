@@ -447,12 +447,12 @@ describe("CodexAppServerAgent", () => {
 
     expect(threadStartRequests).toEqual([
       expect.objectContaining({
-        serviceTier: "priority",
+        serviceTier: "fast",
       }),
     ]);
     expect(turnStartRequests).toEqual([
       expect.objectContaining({
-        serviceTier: "priority",
+        serviceTier: "fast",
       }),
     ]);
   });

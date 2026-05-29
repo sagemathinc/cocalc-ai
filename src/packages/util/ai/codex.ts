@@ -66,7 +66,7 @@ export function resolveCodexSessionMode(
 }
 
 export const DEFAULT_CODEX_MODEL_NAME = "gpt-5.5";
-export const CODEX_FAST_SERVICE_TIER_REQUEST_VALUE = "priority";
+export const CODEX_FAST_SERVICE_TIER_REQUEST_VALUE = "fast";
 
 const DEFAULT_REASONING_LEVELS: CodexReasoningLevel[] = [
   {
