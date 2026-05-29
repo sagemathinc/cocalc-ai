@@ -42,6 +42,12 @@ describe("applyMembershipTierTemplateFallbacks", () => {
       (tier.usage_limits as Record<string, unknown>)
         ?.project_max_collaborators_and_pending_invites,
     ).toBe(500);
+    expect(
+      (tier.usage_limits as Record<string, unknown>)?.credit_spend_limit_7d_usd,
+    ).toBeGreaterThan(0);
+    expect(tier.store_highlights).toContain(
+      "Postpaid billing for dedicated hosts",
+    );
   });
 
   it("merges explicit entitlements over built-in defaults", () => {

@@ -351,6 +351,7 @@ describe("PublicApp", () => {
               mintime: 3600,
             },
             usage_limits: {
+              credit_spend_limit_7d_usd: 1000,
               max_backups_per_project: 5,
               max_sponsored_running_projects: 3,
               project_max_collaborators_and_pending_invites: 50,
@@ -395,6 +396,7 @@ describe("PublicApp", () => {
     expect(screen.getByText("Project Limits")).not.toBeNull();
     expect(screen.getByText("Global Limits")).not.toBeNull();
     expect(screen.getByText("Functionality")).not.toBeNull();
+    expect(screen.getByText("Postpaid dedicated-host billing")).not.toBeNull();
     expect(screen.getByText("8 GB")).not.toBeNull();
     expect(screen.getByText("10 GB")).not.toBeNull();
     expect(screen.getByText("125 GB")).not.toBeNull();

@@ -159,6 +159,18 @@ function formatBooleanValue(value: unknown): ReactNode {
   );
 }
 
+function hasPositiveUsageLimit(
+  tier: PublicMembershipTier,
+  firstKey: string,
+  secondKey: string,
+): boolean {
+  const limits = usageLimits(tier);
+  return [firstKey, secondKey].some((key) => {
+    const limit = asNumber(limits[key]);
+    return limit != null && limit > 0;
+  });
+}
+
 function formatAiLimit(
   tier: PublicMembershipTier,
   primaryKey: string,
@@ -244,6 +256,17 @@ const COMPARISON_GROUPS: ComparisonGroup[] = [
       {
         label: "Dedicated hosts",
         value: (tier) => formatBooleanValue(tierFeatures(tier).create_hosts),
+      },
+      {
+        label: "Postpaid dedicated-host billing",
+        value: (tier) =>
+          formatBooleanValue(
+            hasPositiveUsageLimit(
+              tier,
+              "credit_spend_limit_5h_usd",
+              "credit_spend_limit_7d_usd",
+            ),
+          ),
       },
       {
         label: "Launchpad license",
