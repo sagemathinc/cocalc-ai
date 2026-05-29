@@ -8,6 +8,7 @@ import {
   DEFAULT_CODEX_MODEL_NAME,
   DEFAULT_CODEX_MODELS,
   normalizeCodexSessionId,
+  resolveCodexServiceTier,
   resolveCodexSessionMode,
   type CodexSessionConfig,
 } from "@cocalc/util/ai/codex";
@@ -728,6 +729,13 @@ function buildAcpConfig({
   const sessionMode = resolveCodexSessionMode(config);
   opts.sessionMode = sessionMode;
   opts.allowWrite = sessionMode !== "read-only";
+  const serviceTier = resolveCodexServiceTier({
+    model: selectedModel,
+    serviceTier: config?.serviceTier,
+  });
+  if (serviceTier === "fast") {
+    opts.serviceTier = serviceTier;
+  }
   const env: Record<string, string> = {};
   if (config?.envHome) env.HOME = config.envHome;
   if (config?.envPath) env.PATH = config.envPath;

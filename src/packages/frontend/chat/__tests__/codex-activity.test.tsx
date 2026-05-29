@@ -9,6 +9,39 @@ jest.mock("@cocalc/frontend/components/time-ago", () => ({
 }));
 
 describe("CodexActivity terminal rows", () => {
+  it("renders the per-turn Codex config", () => {
+    render(
+      React.createElement(CodexActivity, {
+        expanded: true,
+        events: [
+          {
+            type: "event",
+            seq: 1,
+            time: 1000,
+            event: {
+              type: "config",
+              model: "gpt-5.5",
+              reasoning: "low",
+              serviceTier: "fast",
+              appServerServiceTier: "fast",
+              sessionMode: "full-access",
+              sandbox: "danger-full-access",
+              workingDirectory: "/home/user/demo",
+            },
+          } as any,
+        ],
+      }),
+    );
+
+    expect(screen.getByText("Config")).not.toBeNull();
+    expect(screen.getByText("Model gpt-5.5")).not.toBeNull();
+    expect(screen.getByText("Fast")).not.toBeNull();
+    expect(screen.getByText("Reasoning low")).not.toBeNull();
+    expect(screen.getByText("Session full-access")).not.toBeNull();
+    expect(screen.getByText("Sandbox danger-full-access")).not.toBeNull();
+    expect(screen.getByText("/home/user/demo")).not.toBeNull();
+  });
+
   it('renders "No output." after the terminal block', () => {
     const { container } = render(
       React.createElement(TerminalRow, {

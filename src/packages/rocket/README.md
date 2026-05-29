@@ -20,6 +20,10 @@ Build a bay runtime bundle:
 pnpm -C src/packages --filter @cocalc/rocket run build:bay-bundle
 ```
 
+The bundle includes the bay runtime plus the project-host, project, tools, and
+bootstrap artifacts needed for the bay's `/software/...` project-host bootstrap
+endpoints.
+
 Notes:
 
 - Conat persist must run as exactly one pod with fast, durable storage.

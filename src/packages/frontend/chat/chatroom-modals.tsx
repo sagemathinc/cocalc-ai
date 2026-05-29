@@ -32,11 +32,14 @@ import type { CodexThreadConfig } from "@cocalc/chat";
 import { argsJoin } from "@cocalc/util/args";
 import { path_split } from "@cocalc/util/misc";
 import {
+  codexModelSupportsFastMode,
   DEFAULT_CODEX_MODEL_NAME,
   DEFAULT_CODEX_MODELS,
   normalizeCodexSessionId,
+  resolveCodexServiceTier,
   resolveCodexSessionMode,
   type CodexReasoningId,
+  type CodexServiceTier,
   type CodexSessionMode,
 } from "@cocalc/util/ai/codex";
 import type { ChatActions } from "./actions";
@@ -176,6 +179,10 @@ export function ChatRoomModals({
         sessionMode:
           normalizeSessionMode(savedConfig as CodexThreadConfig) ??
           defaultSessionMode,
+        serviceTier: resolveCodexServiceTier({
+          model: currentModel,
+          serviceTier: savedConfig.serviceTier,
+        }),
         reasoning: getReasoningForModel({
           modelValue: currentModel,
           desired: savedConfig.reasoning,
@@ -223,6 +230,7 @@ export function ChatRoomModals({
       model: DEFAULT_CODEX_MODEL,
       sessionMode: defaultSessionMode,
       workingDirectory: defaultWorkingDir(path, workspaceWorkingDirectory),
+      serviceTier: "standard",
       reasoning: getReasoningForModel({ modelValue: DEFAULT_CODEX_MODEL }),
     });
   };
@@ -262,6 +270,10 @@ export function ChatRoomModals({
         reasoning: getReasoningForModel({
           modelValue: model,
           desired: renameCodexConfig.reasoning,
+        }),
+        serviceTier: resolveCodexServiceTier({
+          model,
+          serviceTier: renameCodexConfig.serviceTier,
         }),
         sessionMode,
         allowWrite: sessionMode !== "read-only",
@@ -500,6 +512,13 @@ export function ChatRoomModals({
     value: r.id,
     label: r.label,
   }));
+  const renameCodexServiceTier = resolveCodexServiceTier({
+    model: renameCodexConfig.model,
+    serviceTier: renameCodexConfig.serviceTier,
+  });
+  const renameCodexFastModeSupported = codexModelSupportsFastMode(
+    renameCodexConfig.model,
+  );
   const exportCliCommand =
     exportRequest == null
       ? ""
@@ -752,6 +771,10 @@ export function ChatRoomModals({
                         modelValue: model,
                         desired: prev.reasoning,
                       }),
+                      serviceTier: resolveCodexServiceTier({
+                        model,
+                        serviceTier: prev.serviceTier,
+                      }),
                     }));
                   }}
                 />
@@ -769,6 +792,29 @@ export function ChatRoomModals({
                     setRenameCodexConfig((prev) => ({
                       ...prev,
                       reasoning: value as CodexReasoningId,
+                    }))
+                  }
+                />
+              </div>
+              <div>
+                <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                  Speed
+                </div>
+                <Select
+                  value={renameCodexServiceTier}
+                  style={{ width: "100%" }}
+                  options={[
+                    { value: "standard", label: "Standard" },
+                    {
+                      value: "fast",
+                      label: "Fast (higher credit usage)",
+                      disabled: !renameCodexFastModeSupported,
+                    },
+                  ]}
+                  onChange={(value) =>
+                    setRenameCodexConfig((prev) => ({
+                      ...prev,
+                      serviceTier: value as CodexServiceTier,
                     }))
                   }
                 />

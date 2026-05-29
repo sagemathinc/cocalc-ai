@@ -28,12 +28,15 @@ import { ColorButton } from "@cocalc/frontend/components/color-picker";
 import { humanSize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
+  codexModelSupportsFastMode,
   DEFAULT_CODEX_MODEL_NAME,
   DEFAULT_CODEX_MODELS,
   isCodexModelName,
+  resolveCodexServiceTier,
   resolveCodexSessionMode,
   type CodexReasoningLevel,
   type CodexReasoningId,
+  type CodexServiceTier,
   type CodexSessionMode,
 } from "@cocalc/util/ai/codex";
 import { deriveAcpLogRefs, type CodexThreadConfig } from "@cocalc/chat";
@@ -146,6 +149,7 @@ export function getDefaultNewThreadSetup(): NewThreadSetup {
       model: defaults.model,
       sessionMode: defaults.sessionMode,
       reasoning: defaults.reasoning,
+      serviceTier: defaults.serviceTier,
     },
     automationConfig: getDefaultAutomationConfig({ enabled: false }),
   };
@@ -1067,9 +1071,14 @@ export function ChatRoomThreadPanel({
         modelValue: codexModel,
         desired: newThreadSetup.codexConfig.reasoning,
       }),
+      serviceTier: resolveCodexServiceTier({
+        model: codexModel,
+        serviceTier: newThreadSetup.codexConfig.serviceTier,
+      }),
       sessionMode:
         normalizeSessionMode(newThreadSetup.codexConfig) ?? defaultSessionMode,
     };
+    const codexFastModeSupported = codexModelSupportsFastMode(codexModel);
     const stagedCodexMatchesDefault = codexNewChatDefaultsEqual(
       stagedCodexDefaults,
       defaultNewChatCodexDefaults,
@@ -1269,6 +1278,10 @@ export function ChatRoomThreadPanel({
                             modelValue: model,
                             desired: newThreadSetup.codexConfig.reasoning,
                           }),
+                          serviceTier: resolveCodexServiceTier({
+                            model,
+                            serviceTier: newThreadSetup.codexConfig.serviceTier,
+                          }),
                         },
                       });
                     }}
@@ -1296,6 +1309,31 @@ export function ChatRoomThreadPanel({
                         codexConfig: {
                           ...newThreadSetup.codexConfig,
                           reasoning: value as CodexReasoningId,
+                        },
+                      })
+                    }
+                  />
+                </div>
+                <div>
+                  <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                    Speed
+                  </div>
+                  <Select
+                    value={stagedCodexDefaults.serviceTier}
+                    style={{ width: "100%" }}
+                    options={[
+                      { value: "standard", label: "Standard" },
+                      {
+                        value: "fast",
+                        label: "Fast (higher credit usage)",
+                        disabled: !codexFastModeSupported,
+                      },
+                    ]}
+                    onChange={(value) =>
+                      update({
+                        codexConfig: {
+                          ...newThreadSetup.codexConfig,
+                          serviceTier: value as CodexServiceTier,
                         },
                       })
                     }
