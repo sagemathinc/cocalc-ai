@@ -20,6 +20,39 @@ export interface ApiV2RouterOptions {
   rootDir?: string;
 }
 
+function loadBundledRoutes(
+  logger: ReturnType<typeof getLogger>,
+): ApiV2RouteEntry[] | undefined {
+  const bundle = process.env.COCALC_API_V2_ROUTES_BUNDLE;
+  if (!bundle) {
+    return;
+  }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mod = require(bundle);
+    const routes = mod?.routes ?? mod?.default;
+    if (!Array.isArray(routes)) {
+      throw new Error("bundle does not export a routes array");
+    }
+    for (const route of routes) {
+      if (
+        typeof route?.path !== "string" ||
+        typeof route?.handler !== "function"
+      ) {
+        throw new Error("bundle contains an invalid route entry");
+      }
+    }
+    logger.info("using bundled api v2 routes", {
+      bundle,
+      count: routes.length,
+    });
+    return routes;
+  } catch (err) {
+    logger.warn("api v2 bundled routes load failed", { bundle, err });
+    throw err;
+  }
+}
+
 export default function createApiV2Router(
   opts: ApiV2RouterOptions = {},
 ): express.Router {
@@ -41,6 +74,7 @@ export default function createApiV2Router(
   const routes =
     opts.routes ??
     opts.manifest ??
+    loadBundledRoutes(logger) ??
     discoverApiV2Routes({
       includeDocs: opts.includeDocs,
       logger,
