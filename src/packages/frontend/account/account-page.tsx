@@ -27,7 +27,6 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { Icon, IconName, Loading, Title } from "@cocalc/frontend/components";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
-import { Footer } from "@cocalc/frontend/customize";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { labels } from "@cocalc/frontend/i18n";
@@ -549,7 +548,6 @@ export const AccountPage: React.FC = () => {
           {renderExtraContent()}
         </Flex>
         {renderActiveContent()}
-        <Footer />
       </div>
     );
   }
@@ -668,7 +666,6 @@ export const AccountPage: React.FC = () => {
             {renderExtraContent()}
           </Flex>
           {renderActiveContent()}
-          <Footer />
         </div>
       </div>
     );
