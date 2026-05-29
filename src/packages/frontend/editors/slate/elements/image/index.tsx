@@ -69,6 +69,7 @@ register({
     const { urlTransform, reloadImages } = useFileContext();
     const node = element as Image;
     const { src, alt, title } = node;
+    const isGeneratedImage = alt === "Generated image";
     return (
       <img
         {...attributes}
@@ -81,7 +82,7 @@ register({
         style={{
           height: node.width == null ? node.height : undefined,
           width: node.width,
-          maxWidth: "100%",
+          maxWidth: isGeneratedImage ? 480 : "100%",
           maxHeight: "100%",
           objectFit: "contain",
         }}
