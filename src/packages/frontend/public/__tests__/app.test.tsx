@@ -352,7 +352,6 @@ describe("PublicApp", () => {
             },
             usage_limits: {
               credit_spend_limit_7d_usd: 1000,
-              max_backups_per_project: 5,
               max_sponsored_running_projects: 3,
               project_max_collaborators_and_pending_invites: 50,
               total_storage_hard_bytes: 125_000_000_000,

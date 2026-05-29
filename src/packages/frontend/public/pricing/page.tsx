@@ -236,11 +236,6 @@ const COMPARISON_GROUPS: ComparisonGroup[] = [
         },
       },
       {
-        label: "Backups per project",
-        value: (tier) =>
-          formatNumberValue(usageLimits(tier).max_backups_per_project),
-      },
-      {
         label: "Included AI per 5 hours",
         value: (tier) => formatAiLimit(tier, "units_5h", "limit_5h"),
       },
