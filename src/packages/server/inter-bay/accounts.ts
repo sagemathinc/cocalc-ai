@@ -169,6 +169,13 @@ export async function getClusterAccountHomeBayCounts(): Promise<
   }).getHomeBayCounts({});
 }
 
+export class SignupEmailAccountPolicyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SignupEmailAccountPolicyError";
+  }
+}
+
 export async function assertNoClusterBannedEquivalentEmailAccount({
   email_address,
   allowed_account_id,
@@ -191,7 +198,7 @@ export async function assertNoClusterBannedEquivalentEmailAccount({
   if (!banned) {
     return;
   }
-  throw Error(
+  throw new SignupEmailAccountPolicyError(
     `This email address is blocked because an equivalent address is banned (${banned.email_address ?? banned.account_id}).`,
   );
 }

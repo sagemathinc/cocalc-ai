@@ -88,6 +88,9 @@ import {
 
 const logger = getLogger("auth:sign-up");
 
+const ACCOUNT_CREATION_EMAIL_POLICY_MESSAGE =
+  "We can’t create an account with this email address. Contact support if you think this is a mistake.";
+
 export async function signUp(req, res) {
   let {
     terms,
@@ -442,11 +445,16 @@ export async function signUp(req, res) {
       }
       if (
         err instanceof SignupEmailDomainPolicyError ||
-        (err as any)?.name === "SignupEmailDomainPolicyError"
+        (err as any)?.name === "SignupEmailDomainPolicyError" ||
+        (err as any)?.name === "SignupEmailAccountPolicyError"
       ) {
+        logger.warn("account creation blocked by email policy", {
+          email,
+          err: serializeError(err),
+        });
         res.json({
           issues: {
-            email: err.message,
+            email: ACCOUNT_CREATION_EMAIL_POLICY_MESSAGE,
           },
         });
         return;
