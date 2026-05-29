@@ -20,6 +20,7 @@ LOCAL_FORWARD_HOST="127.0.0.1"
 LOCAL_FORWARD_PORT="7001"
 REMOTE_FORWARD_PORT="9300"
 SITE_MASTER_KEY_PATH=""
+KEY_FILE=""
 REUSE_EXISTING_VM=0
 SKIP_BUILD=0
 SKIP_PORT_FORWARD=0
@@ -52,6 +53,8 @@ Common:
   --remote-forward-port <port>  remote hub worker port, default: 9300
   --site-master-key <path>      local site master key path; default:
                                 ~/.cocalc/dogfood/<gcp-project>/site-master-key
+  --key-file <path>             optional GCP service account JSON key file;
+                                uses an isolated temporary gcloud config
 
 GCP:
   --image-family <family>       default: ubuntu-2404-lts-amd64
@@ -158,6 +161,10 @@ parse_args() {
         SITE_MASTER_KEY_PATH="$2"
         shift 2
         ;;
+      --key-file)
+        KEY_FILE="$2"
+        shift 2
+        ;;
       --network)
         NETWORK="$2"
         shift 2
@@ -209,6 +216,9 @@ validate_args() {
   if [[ -z "$SITE_MASTER_KEY_PATH" ]]; then
     SITE_MASTER_KEY_PATH="${HOME}/.cocalc/dogfood/${GCP_PROJECT}/site-master-key"
   fi
+  if [[ -n "$KEY_FILE" && ! -f "$KEY_FILE" ]]; then
+    die "--key-file does not exist: ${KEY_FILE}"
+  fi
 }
 
 require_tools() {
@@ -220,8 +230,24 @@ require_tools() {
   require_command base64
 }
 
-gcloud_base() {
-  gcloud --project "$GCP_PROJECT"
+GCLOUD_CONFIG_DIR=""
+
+configure_gcloud_auth() {
+  if [[ -z "$KEY_FILE" ]]; then
+    return 0
+  fi
+
+  GCLOUD_CONFIG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/cocalc-gcloud.XXXXXX")"
+  export CLOUDSDK_CONFIG="$GCLOUD_CONFIG_DIR"
+  log "using isolated gcloud config at ${CLOUDSDK_CONFIG}"
+  run gcloud auth activate-service-account --key-file "$KEY_FILE" >/dev/null
+  run gcloud config set project "$GCP_PROJECT" >/dev/null
+}
+
+cleanup_gcloud_auth() {
+  if [[ -n "$GCLOUD_CONFIG_DIR" ]]; then
+    rm -rf "$GCLOUD_CONFIG_DIR"
+  fi
 }
 
 vm_exists() {
@@ -460,6 +486,8 @@ main() {
   parse_args "$@"
   validate_args
   require_tools
+  trap cleanup_gcloud_auth EXIT
+  configure_gcloud_auth
 
   log "repo root: ${REPO_ROOT}"
   log "src root: ${SRC_ROOT}"

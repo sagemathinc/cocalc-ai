@@ -85,6 +85,9 @@ It expects:
 - `gcloud` permission to create and SSH to VMs in the target project.
 - `pnpm` available locally.
 - A GCP project id, VM name, bay id, and zone.
+- Optionally, a GCP service account JSON key file via `--key-file`. When this
+  is set, the helper uses an isolated temporary `CLOUDSDK_CONFIG` instead of
+  the user's ambient gcloud login.
 
 It does:
 
@@ -116,6 +119,19 @@ src/scripts/bay-systemd/gcp-bootstrap-dogfood-bay.sh \
   --local-forward-port 7001
 ```
 
+If using a project secret for the GCP service account key:
+
+```sh
+src/scripts/bay-systemd/gcp-bootstrap-dogfood-bay.sh \
+  --gcp-project <gcp-project> \
+  --vm-name <bay-0-vm-name> \
+  --bay-id bay-0 \
+  --zone us-south1-a \
+  --key-file /run/secrets/cocalc/GCP_ROCKET_BOOTSTRAP_KEY \
+  --public-url https://demo.cocalc.ai \
+  --local-forward-port 7001
+```
+
 Bay 1 example after bay 0 is stable:
 
 ```sh
@@ -142,6 +158,28 @@ The default site master key path is:
 
 Use the same key for every bay in the same dogfood site. Store it in 1Password
 immediately after bay 0 bootstrap succeeds.
+
+### Creating The GCP Bootstrap Service Account
+
+Use this only in a trusted, powerful gcloud shell. It creates/reuses a
+project-scoped service account and prints a raw JSON key:
+
+```sh
+PROJECT_ID=<gcp-project> \
+  src/scripts/bay-systemd/gcp-rocket-bootstrap-service-account.sh
+```
+
+The default service account name is `cocalc-rocket-bootstrap`. The script grants
+these project-level roles:
+
+- `roles/compute.instanceAdmin.v1`
+- `roles/compute.networkUser`
+- `roles/iam.serviceAccountUser`
+
+Paste only the JSON between the output markers into a CoCalc project secret,
+then pass the mounted secret file to `gcp-bootstrap-dogfood-bay.sh --key-file`.
+If bootstrap fails with a permission error, add only the missing permission/role
+and record it in the friction log.
 
 ## Existing Systemd Deployment Tooling
 
