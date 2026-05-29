@@ -319,8 +319,8 @@ function PricingBillingSelector({
         <Segmented<BillingInterval>
           onChange={setBillingInterval}
           options={[
-            { label: "Monthly", value: "month" },
             { label: "Annual", value: "year" },
+            { label: "Monthly", value: "month" },
           ]}
           size="large"
           value={billingInterval}
