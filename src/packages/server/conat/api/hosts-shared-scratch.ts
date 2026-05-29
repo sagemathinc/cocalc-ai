@@ -5,11 +5,16 @@
 
 import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
 import { normalizeProviderId } from "@cocalc/cloud";
+import {
+  MAX_SHARED_SCRATCH_AUTO_GROW_STEP_GB,
+  MAX_SHARED_SCRATCH_DISK_GB,
+} from "@cocalc/server/project-host/shared-scratch-limits";
 
 export const SHARED_SCRATCH_HOST_MOUNT = "/mnt/cocalc-scratch";
 export const SHARED_SCRATCH_FILESYSTEM = "ext4";
 export const NEBIUS_DISK_INCREMENT_GB = 93;
 export const GCP_SHARED_SCRATCH_MIN_GB = 10;
+export { MAX_SHARED_SCRATCH_AUTO_GROW_STEP_GB, MAX_SHARED_SCRATCH_DISK_GB };
 
 type ScratchDiskType = NonNullable<HostMachine["shared_disk_type"]>;
 
@@ -119,6 +124,11 @@ export function normalizeSharedScratchMachineInPlace(
     cloud,
     sizeGb: requestedSize,
   });
+  if (nextSize > MAX_SHARED_SCRATCH_DISK_GB) {
+    throw new Error(
+      `shared_disk_gb must be at most ${MAX_SHARED_SCRATCH_DISK_GB.toLocaleString()} GB`,
+    );
+  }
   const currentSize = Number(opts?.current?.shared_disk_gb ?? 0);
   if (
     opts?.allowShrink !== true &&
@@ -137,5 +147,28 @@ export function normalizeSharedScratchMachineInPlace(
     shared_disk_mount: SHARED_SCRATCH_HOST_MOUNT,
     shared_disk_filesystem: SHARED_SCRATCH_FILESYSTEM,
   };
+  assertSharedScratchAutoGrowConfig(machine);
   return machine;
+}
+
+export function assertSharedScratchAutoGrowConfig(machine: HostMachine): void {
+  const config = machine.metadata?.shared_scratch_auto_grow as
+    | Record<string, unknown>
+    | undefined;
+  if (!config || typeof config !== "object") return;
+  const maxDiskGb = Number(config.max_disk_gb);
+  if (Number.isFinite(maxDiskGb) && maxDiskGb > MAX_SHARED_SCRATCH_DISK_GB) {
+    throw new Error(
+      `shared scratch auto-grow max disk must be at most ${MAX_SHARED_SCRATCH_DISK_GB.toLocaleString()} GB`,
+    );
+  }
+  const growthStepGb = Number(config.growth_step_gb);
+  if (
+    Number.isFinite(growthStepGb) &&
+    growthStepGb > MAX_SHARED_SCRATCH_AUTO_GROW_STEP_GB
+  ) {
+    throw new Error(
+      `shared scratch auto-grow growth step must be at most ${MAX_SHARED_SCRATCH_AUTO_GROW_STEP_GB.toLocaleString()} GB`,
+    );
+  }
 }

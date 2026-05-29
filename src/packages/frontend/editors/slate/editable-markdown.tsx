@@ -78,7 +78,7 @@ import { withAutoFormat } from "./format";
 import { getHandler as getKeyboardHandler } from "./keyboard";
 import Leaf from "./leaf-with-cursor";
 import { markdown_to_slate } from "./markdown-to-slate";
-import { withNormalize } from "./normalize";
+import { withBlockSpacerParagraphs, withNormalize } from "./normalize";
 import { applyOperations, preserveScrollPosition } from "./operations";
 import { withNonfatalRange, withSelectionSafety } from "./patches";
 import { stripBlankParagraphs } from "./padding";
@@ -916,7 +916,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       value_slate != null
         ? value_slate
         : markdown_to_slate(value ?? "", false, editor.syncCache);
-    return preserveBlankLines ? doc : stripBlankParagraphs(doc);
+    return withBlockSpacerParagraphs(
+      preserveBlankLines ? doc : stripBlankParagraphs(doc),
+    );
   });
   const bumpChangeRef = useRef<() => void>(() => {});
   useEffect(() => {
@@ -2075,9 +2077,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
   function setEditorToSlateValue(nextValueRaw: Descendant[]) {
     if (nextValueRaw == null) return;
-    const nextEditorValue = preserveBlankLines
-      ? nextValueRaw
-      : stripBlankParagraphs(nextValueRaw);
+    const nextEditorValue = withBlockSpacerParagraphs(
+      preserveBlankLines ? nextValueRaw : stripBlankParagraphs(nextValueRaw),
+    );
     if (isEqual(nextEditorValue, editor.children)) {
       return;
     }
@@ -2118,9 +2120,11 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       false,
       editor.syncCache,
     );
-    const nextEditorValue = preserveBlankLines
-      ? nextEditorValueRaw
-      : stripBlankParagraphs(nextEditorValueRaw);
+    const nextEditorValue = withBlockSpacerParagraphs(
+      preserveBlankLines
+        ? nextEditorValueRaw
+        : stripBlankParagraphs(nextEditorValueRaw),
+    );
     const normalizedValue = preserveBlankLines
       ? value
       : slate_to_markdown(nextEditorValue, {

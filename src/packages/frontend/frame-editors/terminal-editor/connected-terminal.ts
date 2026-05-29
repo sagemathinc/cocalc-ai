@@ -67,6 +67,19 @@ const ENABLE_WEBGL = false;
 
 const MAX_AUTO_BUFFER = 32768;
 
+function shouldUseNativeTouchSelection(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const { navigator } = window;
+  return (
+    (/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" &&
+        (navigator.maxTouchPoints ?? 0) > 1)) &&
+    (window.matchMedia?.("(hover: none) and (pointer: coarse)").matches ?? true)
+  );
+}
+
 interface Path {
   file?: string;
   directory?: string;
@@ -272,7 +285,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       terminalThemeOverride.trim().length > 0
         ? terminalThemeOverride.trim()
         : null;
-    this.rendererType = "canvas";
+    this.rendererType = shouldUseNativeTouchSelection() ? "dom" : "canvas";
     const cmd = this.command ? "-" + replace_all(this.command, "/", "-") : "";
     // This is the one and only place number is used.
     // It's very important though.
@@ -1341,6 +1354,16 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       return;
     }
     this.terminal.focus();
+  }
+
+  usesNativeTouchSelection(): boolean {
+    return (
+      !this.isClosed() &&
+      (this.terminal.element?.classList.contains(
+        "xterm-native-touch-selection",
+      ) ??
+        false)
+    );
   }
 
   getSessionId(): string {

@@ -1359,6 +1359,57 @@ test("editable markdown: backspace at start of x after multi-line quote appends 
     .not.toContain("> foox");
 });
 
+test("editable markdown: fresh trailing code block has insertion spacer", async ({
+  page,
+}) => {
+  const markdown = "hello\n\n```\nfoo\n```";
+  await page.goto(
+    `http://127.0.0.1:4172/?editable=1&md=${encodeURIComponent(markdown)}`,
+  );
+  await page.waitForFunction(() => {
+    return typeof window.__slateEditableTest?.getValue === "function";
+  });
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => {
+        const value = window.__slateEditableTest?.getValue?.() as
+          | any[]
+          | undefined;
+        const last = value?.[value.length - 1];
+        const prev = value?.[value.length - 2];
+        return {
+          prevType: prev?.type,
+          lastType: last?.type,
+          lastSpacer: last?.spacer === true,
+        };
+      });
+    })
+    .toEqual({
+      prevType: "code_block",
+      lastType: "paragraph",
+      lastSpacer: true,
+    });
+
+  await page.evaluate(() => {
+    const value = window.__slateEditableTest?.getValue?.() as any[] | undefined;
+    const lastIndex = Math.max(0, (value?.length ?? 1) - 1);
+    window.__slateEditableTest?.setSelection?.({
+      anchor: { path: [lastIndex, 0], offset: 0 },
+      focus: { path: [lastIndex, 0], offset: 0 },
+    } as any);
+  });
+  await page.keyboard.type("after");
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(
+        () => window.__slateEditableTest?.getMarkdown?.() ?? "",
+      );
+    })
+    .toContain("```\n\nafter");
+});
+
 test("editable markdown: typed quote flow then backspace before x keeps trailing quoted paragraph", async ({
   page,
 }) => {

@@ -2346,6 +2346,7 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
               package_kind: pkg.kind,
               package_id,
             },
+            client: dbClient,
           });
           reservedInstitutionalClaim = {
             ...pendingClaimDescriptor,
@@ -2476,6 +2477,7 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
             package_kind: pkg.kind,
             package_id,
           },
+          client: dbClient,
         });
         reservedInstitutionalClaim = {
           ...institutionalClaim,

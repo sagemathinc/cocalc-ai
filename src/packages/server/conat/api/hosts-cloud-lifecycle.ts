@@ -62,6 +62,7 @@ import {
   isBillableDedicatedHostCloud,
   selectDedicatedHostFundingLane,
 } from "@cocalc/server/project-host/admission";
+import { evaluateDedicatedHostBillingEnforcement } from "@cocalc/server/project-host/spend-enforcement";
 import {
   estimateDedicatedHostRateUsdPerHour,
   reconcileDedicatedHostPurchaseSessionForAccount,
@@ -220,6 +221,23 @@ async function resolveBillableHostSessionConfig({
   if (!funding_lane) {
     throw new Error(
       `dedicated-host funding is not currently available for account ${account_id}`,
+    );
+  }
+  const enforcement = evaluateDedicatedHostBillingEnforcement({
+    snapshot,
+    funding_lane,
+    hourly_cost_usd,
+    lane_allowed: true,
+  });
+  if (enforcement.action === "request_drain") {
+    throw Object.assign(
+      new Error(
+        `dedicated-host funding runway is too low for this ${action}: ${enforcement.reason}`,
+      ),
+      {
+        code: "dedicated_host_billing_runway_too_low",
+        details: enforcement,
+      },
     );
   }
   if (snapshot.funding_mode === "account-prepaid") {

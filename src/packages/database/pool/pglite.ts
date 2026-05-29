@@ -162,6 +162,48 @@ function assertListenUnsupported(text: string): void {
   }
 }
 
+type TransactionControl = "begin" | "commit" | "rollback" | null;
+
+function transactionControl(text: string): TransactionControl {
+  const normalized = text.trim().toLowerCase();
+  if (/^begin\b|^start\s+transaction\b/.test(normalized)) {
+    return "begin";
+  }
+  if (/^commit\b|^end\b/.test(normalized)) {
+    return "commit";
+  }
+  if (/^rollback\b/.test(normalized)) {
+    return "rollback";
+  }
+  return null;
+}
+
+function isReadOnlyQuery(text: string): boolean {
+  const normalized = text
+    .trim()
+    .replace(/;+\s*$/, "")
+    .toLowerCase();
+  if (!normalized) return false;
+  if (/^(select|show|values|table)\b/.test(normalized)) {
+    return true;
+  }
+  const explainMatch = normalized.match(/^explain(?:\s+\([^)]*\))?\s+(.+)$/s);
+  return explainMatch ? isReadOnlyQuery(explainMatch[1] ?? "") : false;
+}
+
+function isIdempotentSchemaQuery(text: string): boolean {
+  const normalized = text
+    .trim()
+    .replace(/;+\s*$/, "")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+  return /^create (table|index) if not exists\b/.test(normalized);
+}
+
+function canRunDuringOtherTransaction(text: string): boolean {
+  return isReadOnlyQuery(text) || isIdempotentSchemaQuery(text);
+}
+
 class PglitePoolClient extends EventEmitter {
   private readonly sessionId = makeSessionId("client");
 
@@ -198,6 +240,7 @@ class PglitePoolClient extends EventEmitter {
   release(): void {
     this.removeAllListeners();
     releaseAllLocks(this.sessionId);
+    this.pool.releaseSession(this.sessionId);
   }
 
   async connect(): Promise<void> {
@@ -363,6 +406,8 @@ async function handleAdvisoryQuery(
 export class PglitePool {
   public readonly options = { database: "pglite" };
   private queue: Promise<unknown> = Promise.resolve();
+  private transactionOwner: string | undefined = undefined;
+  private transactionWaiters: Array<() => void> = [];
 
   async query(...args: QueryArgs): Promise<PgLikeResult> {
     return await this.queryForSession("pool", ...args);
@@ -374,25 +419,40 @@ export class PglitePool {
   ): Promise<PgLikeResult> {
     const { text, values } = normalizeQueryArgs(args);
     assertListenUnsupported(text);
-    return await withLowlevelDebug(
-      `pool:${sessionId}`,
-      text,
-      values,
-      async () => {
-        const advisory = await handleAdvisoryQuery(sessionId, text, values);
-        if (advisory) {
-          return advisory;
-        }
-        return await this.enqueue(async () => {
-          const pg = await getPglite();
-          const result =
-            values == null
-              ? await pg.query(text)
-              : await pg.query(text, values);
-          return toPgResult(result as PgliteQueryResult);
-        });
-      },
-    );
+    const control = transactionControl(text);
+    await this.waitForTransactionAccess(sessionId, control, text);
+    try {
+      const result = await withLowlevelDebug(
+        `pool:${sessionId}`,
+        text,
+        values,
+        async () => {
+          const advisory = await handleAdvisoryQuery(sessionId, text, values);
+          if (advisory) {
+            return advisory;
+          }
+          return await this.enqueue(async () => {
+            const pg = await getPglite();
+            const result =
+              values == null
+                ? await pg.query(text)
+                : await pg.query(text, values);
+            return toPgResult(result as PgliteQueryResult);
+          });
+        },
+      );
+      if (control === "commit") {
+        this.releaseTransactionOwner(sessionId);
+      } else if (control === "rollback") {
+        this.releaseTransactionOwner(sessionId);
+      }
+      return result;
+    } catch (err) {
+      if (control === "begin" || control === "rollback") {
+        this.releaseTransactionOwner(sessionId);
+      }
+      throw err;
+    }
   }
 
   async connect(): Promise<PglitePoolClient> {
@@ -412,6 +472,73 @@ export class PglitePool {
     const next = this.queue.then(fn, fn);
     this.queue = next.catch(() => undefined);
     return next;
+  }
+
+  private async waitForTransactionAccess(
+    sessionId: string,
+    control: TransactionControl,
+    text: string,
+  ): Promise<void> {
+    if (control === "begin") {
+      await this.waitForNoOtherTransaction(sessionId);
+      this.transactionOwner ??= sessionId;
+      return;
+    }
+    if (
+      this.transactionOwner != null &&
+      this.transactionOwner !== sessionId &&
+      control == null &&
+      canRunDuringOtherTransaction(text)
+    ) {
+      // PGlite exposes one physical connection. Writes/unsafe DDL from another
+      // logical session must wait for an open transaction, otherwise they run
+      // inside that transaction and can poison it. Metadata reads and
+      // idempotent schema ensures are allowed through to avoid deadlocking
+      // transaction code that awaits helper functions using getPool().
+      return;
+    }
+    await this.waitForNoOtherTransaction(sessionId);
+  }
+
+  private async waitForNoOtherTransaction(sessionId: string): Promise<void> {
+    while (
+      this.transactionOwner != null &&
+      this.transactionOwner !== sessionId
+    ) {
+      await new Promise<void>((resolve) => {
+        this.transactionWaiters.push(resolve);
+      });
+    }
+  }
+
+  private releaseTransactionOwner(sessionId: string): void {
+    if (this.transactionOwner !== sessionId) {
+      return;
+    }
+    this.transactionOwner = undefined;
+    const waiters = this.transactionWaiters.splice(0);
+    for (const resolve of waiters) {
+      resolve();
+    }
+  }
+
+  releaseSession(sessionId: string): void {
+    if (this.transactionOwner !== sessionId) {
+      return;
+    }
+    L.warn("pglite client released with an open transaction; rolling back", {
+      sessionId,
+    });
+    void this.enqueue(async () => {
+      const pg = await getPglite();
+      await pg.query("ROLLBACK").catch((err) => {
+        L.warn("failed to rollback released pglite transaction", {
+          sessionId,
+          err: err instanceof Error ? err.message : `${err}`,
+        });
+      });
+      this.releaseTransactionOwner(sessionId);
+    });
   }
 }
 

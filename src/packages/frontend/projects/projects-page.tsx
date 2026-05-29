@@ -53,29 +53,6 @@ const LOADING_STYLE: CSS = {
   color: COLORS.GRAY,
 } as const;
 
-const CREATE_PANEL_OPEN_STORAGE_KEY = "cocalc:projects:createPanelOpen";
-
-function readCreatePanelOpen() {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  const raw = window.localStorage.getItem(CREATE_PANEL_OPEN_STORAGE_KEY);
-  if (raw === "false") {
-    return false;
-  }
-  return raw === "true";
-}
-
-function persistCreatePanelOpen(open: boolean) {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.localStorage.setItem(
-    CREATE_PANEL_OPEN_STORAGE_KEY,
-    open ? "true" : "false",
-  );
-}
-
 export const ProjectsPage: React.FC = () => {
   const intl = useIntl();
   const { bookmarkedProjects } = useBookmarkedProjects();
@@ -98,7 +75,6 @@ export const ProjectsPage: React.FC = () => {
   const createNewRef = useRef<any>(null);
   const projectListRef = useRef<any>(null);
   const filenameSearchRef = useRef<any>(null);
-  const autoOpenedEmptyCreateRef = useRef<boolean>(false);
 
   // Calculating table height
   const containerRef = useRef<HTMLDivElement>(null);
@@ -116,7 +92,7 @@ export const ProjectsPage: React.FC = () => {
     operationsRef,
   ] as const;
 
-  const [createPanelOpen, setCreatePanelOpen] = useState(readCreatePanelOpen);
+  const [createPanelOpen, setCreatePanelOpen] = useState(false);
 
   const [tableHeight, setTableHeight] = useState<number>(400);
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
@@ -126,10 +102,6 @@ export const ProjectsPage: React.FC = () => {
   const [filteredCollaborators, setFilteredCollaborators] = useState<
     string[] | null
   >(null);
-
-  useEffect(() => {
-    persistCreatePanelOpen(createPanelOpen);
-  }, [createPanelOpen]);
 
   // status of filters
   const hidden = !!useTypedRedux("projects", "hidden");
@@ -286,18 +258,6 @@ export const ProjectsPage: React.FC = () => {
       window.removeEventListener("resize", calculateHeight);
     };
   }, [bookmarkedProjects.length]);
-
-  useEffect(() => {
-    if (
-      project_map != null &&
-      all_projects.length === 0 &&
-      !createPanelOpen &&
-      !autoOpenedEmptyCreateRef.current
-    ) {
-      autoOpenedEmptyCreateRef.current = true;
-      setCreatePanelOpen(true);
-    }
-  }, [all_projects.length, createPanelOpen, project_map]);
 
   function handleCreateProject() {
     setCreatePanelOpen(true);

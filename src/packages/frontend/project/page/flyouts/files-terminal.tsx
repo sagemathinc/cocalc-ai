@@ -277,14 +277,13 @@ export function TerminalFlyout({
     terminalRef.current.is_visible = true;
     set_font_size();
     measure_size();
-    // Get rid of browser context menu, which makes no sense on a canvas.
-    // See https://stackoverflow.com/questions/10864249/disabling-right-click-context-menu-on-a-html-canvas
-    // NOTE: this would probably make sense in DOM mode instead of canvas mode;
-    // if we switch, disable ..
-    // Well, this context menu is still silly. Always disable it.
-    $(node).on("contextmenu", function () {
-      return false;
-    });
+    $(node).off("contextmenu");
+    if (!terminalRef.current.usesNativeTouchSelection()) {
+      // Get rid of the browser context menu, which makes no sense on a canvas.
+      $(node).on("contextmenu.cocalc-terminal", function () {
+        return false;
+      });
+    }
 
     terminalRef.current.scroll_to_bottom();
   }
@@ -398,9 +397,15 @@ export function TerminalFlyout({
         backgroundColor,
         padding: "0",
       }}
-      onClick={() => {
+      onClick={(event) => {
         // Focus on click, since otherwise, clicking right outside term defocuses,
         // which is confusing.
+        if (
+          terminalRef.current?.usesNativeTouchSelection() &&
+          (event.target as Element).closest(".xterm-rows")
+        ) {
+          return;
+        }
         terminalRef.current?.focus();
       }}
     >
