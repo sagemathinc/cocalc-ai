@@ -7,7 +7,11 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { ChatLog } from "../chat-log";
+import {
+  clearChatViewportAnchorCacheForTests,
+  saveChatViewportAnchor,
+} from "../chat-scroll-anchor";
+import { ChatLog, MessageList } from "../chat-log";
 
 const mockScrollToIndex = jest.fn();
 let activeTopTab = "project-2";
@@ -85,9 +89,47 @@ jest.mock("../composing", () => ({
 describe("ChatLog sidechat search jumps", () => {
   beforeEach(() => {
     mockScrollToIndex.mockClear();
+    clearChatViewportAnchorCacheForTests();
     latestVirtuosoProps = undefined;
     activeTopTab = "project-2";
     activeProjectTab = "editor-some-other.chat";
+  });
+
+  it("restores saved scroll state without a parent Virtuoso ref", async () => {
+    saveChatViewportAnchor("timetravel-chat", {
+      atBottom: true,
+      offsetPx: 0,
+      savedAt: Date.now(),
+    });
+
+    render(
+      <MessageList
+        messages={
+          new Map([
+            [
+              "1000",
+              {
+                date: 1000,
+                sender_id: "acct-1",
+                history: [{ content: "historical message" }],
+              },
+            ],
+          ]) as any
+        }
+        account_id="acct-1"
+        user_map={undefined}
+        mode="standalone"
+        sortedDates={["1000"]}
+        scrollCacheId="timetravel-chat"
+      />,
+    );
+
+    expect(screen.getByTestId("virtuoso")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(mockScrollToIndex).toHaveBeenCalledWith({
+        index: Number.MAX_SAFE_INTEGER,
+      }),
+    );
   });
 
   it("scrolls to a search match in sidechat even when it is not the active editor tab", async () => {

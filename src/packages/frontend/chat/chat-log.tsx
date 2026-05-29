@@ -819,6 +819,8 @@ export function MessageList({
   suppressInlineCodexStatusDate?: string;
   readOnly?: boolean;
 }) {
+  const defaultVirtuosoRef = useRef<VirtuosoHandle>(null);
+  const listVirtuosoRef = virtuosoRef ?? defaultVirtuosoRef;
   const virtuosoHeightsRef = useRef<{ [index: number]: number }>({});
   const listContainerRef = useRef<HTMLDivElement | null>(null);
   const scrollerRef = useRef<HTMLElement | null>(null);
@@ -1074,7 +1076,9 @@ export function MessageList({
         }
         setManualScroll?.(false);
         setAtBottom(true);
-        virtuosoRef.current?.scrollToIndex({ index: Number.MAX_SAFE_INTEGER });
+        listVirtuosoRef.current?.scrollToIndex({
+          index: Number.MAX_SAFE_INTEGER,
+        });
         scrollToBottomRef?.current?.(true);
         return;
       }
@@ -1089,7 +1093,7 @@ export function MessageList({
       }
       setManualScroll?.(true);
       setAtBottom(false);
-      virtuosoRef.current?.scrollToIndex({ index, align: "start" });
+      listVirtuosoRef.current?.scrollToIndex({ index, align: "start" });
 
       const token = ++anchorRestoreTokenRef.current;
       for (const delayMs of [0, 16, 75, 200, 500, 1000]) {
@@ -1109,6 +1113,7 @@ export function MessageList({
       activityJumpToken,
       cacheId,
       keepBottomAnchoredRef,
+      listVirtuosoRef,
       manualScrollRef,
       scrollToBottomRef,
       scrollToDate,
@@ -1241,10 +1246,8 @@ export function MessageList({
                 ? getUserName(user_map, account_id)
                 : "Unknown name"
             }
-            scroll_into_view={
-              virtuosoRef
-                ? () => virtuosoRef.current?.scrollIntoView({ index })
-                : undefined
+            scroll_into_view={() =>
+              listVirtuosoRef.current?.scrollIntoView({ index })
             }
             allowReply={
               !readOnly &&
@@ -1471,7 +1474,7 @@ export function MessageList({
     >
       <StatefulVirtuoso
         style={{ flex: "1 1 0", minHeight: 0 }}
-        ref={virtuosoRef}
+        ref={listVirtuosoRef}
         scrollerRef={(node) => {
           scrollerRef.current = node instanceof HTMLElement ? node : null;
         }}
