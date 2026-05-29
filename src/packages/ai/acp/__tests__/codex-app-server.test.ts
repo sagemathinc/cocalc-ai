@@ -433,13 +433,20 @@ describe("CodexAppServerAgent", () => {
     });
 
     const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
     await agent.evaluate({
       project_id: "00000000-0000-4000-8000-000000000000",
       account_id: "00000000-0000-4000-8000-000000000001",
       prompt: "say hello",
-      stream: async () => {},
+      stream: async (payload) => {
+        if (payload) {
+          streamPayloads.push(payload);
+        }
+      },
       config: {
         serviceTier: "fast",
+        reasoning: "low",
+        sessionMode: "full-access",
         workingDirectory: "/tmp/project",
       },
     });
@@ -456,6 +463,23 @@ describe("CodexAppServerAgent", () => {
         serviceTier: "fast",
       }),
     ]);
+    expect(streamPayloads).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "event",
+          event: expect.objectContaining({
+            type: "config",
+            model: "gpt-5.5",
+            reasoning: "low",
+            serviceTier: "fast",
+            appServerServiceTier: "fast",
+            sessionMode: "full-access",
+            sandbox: "danger-full-access",
+            workingDirectory: "/tmp/project",
+          }),
+        }),
+      ]),
+    );
   });
 
   it("summarizes expired ChatGPT auth failures", async () => {

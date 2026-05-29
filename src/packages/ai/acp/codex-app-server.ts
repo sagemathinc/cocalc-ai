@@ -1675,6 +1675,20 @@ export class CodexAppServerAgent implements AcpAgent {
         approvalPolicy: "never",
         sandbox: toSandboxMode(spawned, config),
       };
+      const sessionMode = resolveCodexSessionMode(config);
+      await stream({
+        type: "event",
+        event: {
+          type: "config",
+          model,
+          reasoning: config?.reasoning,
+          serviceTier: serviceTier ? "fast" : "standard",
+          appServerServiceTier: serviceTier,
+          sessionMode,
+          sandbox: threadParams.sandbox,
+          workingDirectory: cwd,
+        },
+      });
       logger.debug("codex app-server: resolved service tier", {
         threadId: resumeId,
         model: threadParams.model,

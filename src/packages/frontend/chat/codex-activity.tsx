@@ -59,6 +59,19 @@ type ActivityEntry =
       level?: "info" | "error";
     }
   | {
+      kind: "config";
+      id: string;
+      seq: number;
+      time?: number;
+      model: string;
+      reasoning?: string;
+      serviceTier?: string;
+      appServerServiceTier?: string | null;
+      sessionMode?: string;
+      sandbox?: string;
+      workingDirectory?: string;
+    }
+  | {
       kind: "diff";
       id: string;
       seq: number;
@@ -599,6 +612,8 @@ function ActivityRow({
           />
         </div>
       );
+    case "config":
+      return <ConfigRow entry={entry} fontSize={fontSize} />;
     case "terminal":
       return (
         <TerminalRow
@@ -859,6 +874,31 @@ function createEventEntry({
   rows: ActivityEntry[];
   terminals: Map<string, ActivityEntry & { kind: "terminal" }>;
 }): ActivityEntry | undefined {
+  if (event?.type === "config") {
+    return {
+      kind: "config",
+      id: `config-${seq}`,
+      seq,
+      time,
+      model: typeof event.model === "string" ? event.model : "",
+      reasoning:
+        typeof event.reasoning === "string" ? event.reasoning : undefined,
+      serviceTier:
+        typeof event.serviceTier === "string" ? event.serviceTier : undefined,
+      appServerServiceTier:
+        typeof event.appServerServiceTier === "string" ||
+        event.appServerServiceTier === null
+          ? event.appServerServiceTier
+          : undefined,
+      sessionMode:
+        typeof event.sessionMode === "string" ? event.sessionMode : undefined,
+      sandbox: typeof event.sandbox === "string" ? event.sandbox : undefined,
+      workingDirectory:
+        typeof event.workingDirectory === "string"
+          ? event.workingDirectory
+          : undefined,
+    };
+  }
   if (event?.type === "diff") {
     return {
       kind: "diff",
@@ -1352,7 +1392,9 @@ function detectBasePath(
     const cwd =
       entry.kind === "terminal" || entry.kind === "file"
         ? normalizeAbsoluteMaybe(entry.cwd)
-        : undefined;
+        : entry.kind === "config"
+          ? normalizeAbsoluteMaybe(entry.workingDirectory)
+          : undefined;
     if (cwd) return cwd;
   }
   const explicit = normalizeAbsoluteMaybe(configuredBasePath);
@@ -1362,6 +1404,102 @@ function detectBasePath(
     : undefined;
   if (chatDir) return chatDir;
   return undefined;
+}
+
+function ConfigRow({
+  entry,
+  fontSize,
+}: {
+  entry: Extract<ActivityEntry, { kind: "config" }>;
+  fontSize: number;
+}) {
+  const secondarySize = Math.max(11, fontSize - 2);
+  const tags = buildConfigTags(entry);
+  return (
+    <div data-codex-activity-config>
+      <Space size={6} align="center" wrap>
+        <TimestampTooltip timestamp={formatEntryTimestamp(entry.time)}>
+          <Tag color="blue" style={{ margin: 0 }}>
+            Config
+          </Tag>
+        </TimestampTooltip>
+        <ActivityTimestamp time={entry.time} />
+        {tags.map((tag) => (
+          <Tag
+            key={tag.key}
+            color={tag.color}
+            style={{ margin: 0, fontSize: secondarySize }}
+          >
+            {tag.label}
+          </Tag>
+        ))}
+      </Space>
+      {entry.workingDirectory ? (
+        <div style={{ marginTop: 4 }}>
+          <Text type="secondary" style={{ fontSize: secondarySize }}>
+            Working directory: <code>{entry.workingDirectory}</code>
+          </Text>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function buildConfigTags(entry: Extract<ActivityEntry, { kind: "config" }>) {
+  const tags: { key: string; label: string; color?: string }[] = [];
+  if (entry.model) {
+    tags.push({ key: "model", label: `Model ${entry.model}` });
+  }
+  tags.push({
+    key: "service-tier",
+    label:
+      entry.serviceTier === "fast"
+        ? "Fast"
+        : entry.serviceTier
+          ? `Tier ${entry.serviceTier}`
+          : "Standard",
+    color: entry.serviceTier === "fast" ? "orange" : undefined,
+  });
+  if (entry.reasoning) {
+    tags.push({ key: "reasoning", label: `Reasoning ${entry.reasoning}` });
+  }
+  if (entry.sessionMode) {
+    tags.push({ key: "session", label: `Session ${entry.sessionMode}` });
+  }
+  if (entry.sandbox) {
+    tags.push({ key: "sandbox", label: `Sandbox ${entry.sandbox}` });
+  }
+  return tags;
+}
+
+function formatConfigSummary(
+  entry: Extract<ActivityEntry, { kind: "config" }>,
+): string {
+  const parts: string[] = [];
+  if (entry.model) {
+    parts.push(`model ${entry.model}`);
+  }
+  parts.push(
+    `service tier ${
+      entry.serviceTier === "fast" ? "fast" : entry.serviceTier || "standard"
+    }`,
+  );
+  if (entry.appServerServiceTier) {
+    parts.push(`app-server tier ${entry.appServerServiceTier}`);
+  }
+  if (entry.reasoning) {
+    parts.push(`reasoning ${entry.reasoning}`);
+  }
+  if (entry.sessionMode) {
+    parts.push(`session ${entry.sessionMode}`);
+  }
+  if (entry.sandbox) {
+    parts.push(`sandbox ${entry.sandbox}`);
+  }
+  if (entry.workingDirectory) {
+    parts.push(`cwd ${formatPathMarkdown(entry.workingDirectory)}`);
+  }
+  return parts.join("; ");
 }
 
 function ImageRow({
@@ -1886,6 +2024,9 @@ function activityEntriesToMarkdown(entries: ActivityEntry[]): string {
         lines.push(`- ${entry.label}${detail}`);
         break;
       }
+      case "config":
+        lines.push(`- Config: ${formatConfigSummary(entry)}`);
+        break;
       case "terminal": {
         const input =
           formatTerminalInput(entry.command, entry.args) ?? "Command";

@@ -7,6 +7,36 @@ import {
 } from "../codex-activity";
 
 describe("codexEventsToMarkdown", () => {
+  it("exports the per-turn Codex config without secret fields", () => {
+    const markdown = codexEventsToMarkdown([
+      {
+        type: "event",
+        seq: 1,
+        event: {
+          type: "config",
+          model: "gpt-5.5",
+          reasoning: "low",
+          serviceTier: "fast",
+          appServerServiceTier: "fast",
+          sessionMode: "full-access",
+          sandbox: "danger-full-access",
+          workingDirectory: "/home/user/demo",
+          env: { OPENAI_API_KEY: "secret" },
+          sessionId: "secret-session",
+        },
+      } as any,
+    ]);
+
+    expect(markdown).toContain("- Config: model gpt-5.5");
+    expect(markdown).toContain("service tier fast");
+    expect(markdown).toContain("reasoning low");
+    expect(markdown).toContain("session full-access");
+    expect(markdown).toContain("sandbox danger-full-access");
+    expect(markdown).toContain("cwd `/home/user/demo`");
+    expect(markdown).not.toContain("OPENAI_API_KEY");
+    expect(markdown).not.toContain("secret-session");
+  });
+
   it("exports terminal input and output as separate blocks", () => {
     const markdown = codexEventsToMarkdown([
       {
