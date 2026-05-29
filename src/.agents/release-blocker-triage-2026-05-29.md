@@ -40,7 +40,7 @@ Status values:
 
 ### 1. Deploy New Dogfood Site
 
-Status: `open`
+Status: `active`
 
 Severity: high.
 
@@ -63,7 +63,8 @@ Expected outcome:
 
 Next action:
 
-- Create a dedicated deployment runbook file in `src/.agents`.
+- Use `src/.agents/dogfood-demo-site-deployment-runbook-2026-05-29.md` as the
+  source of truth for the first deployment pass.
 - Start from clean infrastructure and record every command/configuration choice.
 - Fix or file every blocking deployment issue encountered.
 
