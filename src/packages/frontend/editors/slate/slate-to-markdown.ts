@@ -55,15 +55,22 @@ export function slate_to_markdown(
   const preserveBlankLines = options?.preserveBlankLines ?? true;
   let start = 0;
   let end = slate.length - 1;
-  if (preserveBlankLines) {
-    while (start <= end && isBlankParagraph(slate[start])) {
-      start += 1;
-    }
-    while (end >= start && isBlankParagraph(slate[end])) {
-      end -= 1;
-    }
+  while (
+    start <= end &&
+    (isSpacerParagraph(slate[start]) ||
+      (preserveBlankLines && isBlankParagraph(slate[start])))
+  ) {
+    start += 1;
+  }
+  while (
+    end >= start &&
+    (isSpacerParagraph(slate[end]) ||
+      (preserveBlankLines && isBlankParagraph(slate[end])))
+  ) {
+    end -= 1;
   }
   for (let i = start; i <= end; i++) {
+    if (isSpacerParagraph(slate[i])) continue;
     markdown += serialize(slate[i], {
       no_escape: !!options?.no_escape,
       hook: options?.hook,
@@ -87,6 +94,17 @@ function isBlankParagraph(node?: Node): boolean {
     node != null &&
     node["type"] === "paragraph" &&
     node["blank"] === true &&
+    Array.isArray(node["children"]) &&
+    node["children"].length === 1 &&
+    node["children"][0]?.["text"] === ""
+  );
+}
+
+function isSpacerParagraph(node?: Node): boolean {
+  return (
+    node != null &&
+    node["type"] === "paragraph" &&
+    node["spacer"] === true &&
     Array.isArray(node["children"]) &&
     node["children"].length === 1 &&
     node["children"][0]?.["text"] === ""

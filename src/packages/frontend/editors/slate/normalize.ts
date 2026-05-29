@@ -16,7 +16,16 @@ likely break this assumption and things will go to hell.  Be careful.""
 
 */
 
-import { Editor, Element, Node, Path, Range, Text, Transforms } from "slate";
+import {
+  Descendant,
+  Editor,
+  Element,
+  Node,
+  Path,
+  Range,
+  Text,
+  Transforms,
+} from "slate";
 import { isEqual } from "lodash";
 import { uuid } from "@cocalc/util/misc";
 
@@ -146,6 +155,53 @@ export const withNormalize = (editor) => {
 
   return editor;
 };
+
+function isSpacerParagraph(node: Descendant | undefined): boolean {
+  return (
+    Element.isElement(node) &&
+    node.type === "paragraph" &&
+    (node as any).spacer === true
+  );
+}
+
+function isParagraph(node: Descendant | undefined): boolean {
+  return Element.isElement(node) && node.type === "paragraph";
+}
+
+function needsInitialSpacer(node: Descendant | undefined): boolean {
+  if (!Element.isElement(node)) return false;
+  if (SPACER_BLOCK_TYPES.has(node.type)) return true;
+  return (node as any).isVoid === true;
+}
+
+export function withBlockSpacerParagraphs(value: Descendant[]): Descendant[] {
+  const next: Descendant[] = [];
+  for (let i = 0; i < value.length; i += 1) {
+    const node = value[i];
+    if (needsInitialSpacer(node)) {
+      const prev = next[next.length - 1];
+      if (!isParagraph(prev)) {
+        next.push(spacerParagraph() as Descendant);
+      }
+      next.push(node);
+      const following = value[i + 1];
+      if (!isParagraph(following)) {
+        next.push(spacerParagraph() as Descendant);
+      }
+      continue;
+    }
+    if (isSpacerParagraph(node)) {
+      const prev = next[next.length - 1];
+      const following = value[i + 1];
+      if (needsInitialSpacer(prev) || needsInitialSpacer(following)) {
+        next.push(node);
+      }
+      continue;
+    }
+    next.push(node);
+  }
+  return next.length === value.length ? value : next;
+}
 
 // This does get called if you somehow blank the document. It
 // gets called with path=[], which makes perfect sense.  If we
