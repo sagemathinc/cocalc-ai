@@ -139,6 +139,11 @@ mkdir -p "$OUT/runtime/packages/server/cloud/bootstrap"
 cp "$ROOT/packages/server/cloud/bootstrap/bootstrap.py" \
   "$OUT/runtime/packages/server/cloud/bootstrap/"
 
+echo "- Copy http-api handlers"
+mkdir -p "$OUT/runtime/http-api-dist"
+cp -a "$ROOT/packages/http-api/dist"/. "$OUT/runtime/http-api-dist"/
+find "$OUT/runtime/http-api-dist" -type f -name '*.map' -delete
+
 echo "- Bundle hub worker with @vercel/ncc"
 pnpm --filter @cocalc/project-host exec ncc build "$ROOT/packages/hub/run/hub.js" \
   -o "$OUT/runtime/hub" \
@@ -214,6 +219,7 @@ validate_file "$OUT/runtime/migrate-schema/index.js"
 validate_file "$OUT/runtime/packages/project-host/build/bundle-linux.tar.xz"
 validate_file "$OUT/runtime/packages/project/build/bundle-linux.tar.xz"
 validate_file "$OUT/runtime/packages/server/cloud/bootstrap/bootstrap.py"
+validate_file "$OUT/runtime/http-api-dist/pages/api/v2/index.js"
 validate_file "$OUT/scripts/bay-systemd/install-scaffold.sh"
 validate_file "$OUT/scripts/bay-systemd/bay-bootstrap-release.sh"
 validate_file "$OUT/scripts/bay-systemd/env/bay-rocket-bundle-overlay.env.example"

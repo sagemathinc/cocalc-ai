@@ -13,6 +13,7 @@ WORKER_COUNT=2
 ENABLE_WORKERS=1
 START_BAY=0
 FORCE_ENV=0
+FORCE_OVERLAY=0
 OVERLAY_MODE=""
 ROUTER_PORT=9102
 PERSIST_PORT=9202
@@ -45,6 +46,7 @@ Options:
   --hub-base-port <n>      base port for hub workers (default: 9300)
   --public-url <url>       optional public bay URL
   --force-env              overwrite generated env files
+  --force-overlay          overwrite bay-overlay.env only
   --no-enable-workers      do not enable worker units
   --start                  start cocalc-bay.target after install
   --overlay <mode>         overlay mode passed to install-scaffold
@@ -319,6 +321,10 @@ main() {
         FORCE_ENV=1
         shift
         ;;
+      --force-overlay)
+        FORCE_OVERLAY=1
+        shift
+        ;;
       --no-enable-workers)
         ENABLE_WORKERS=0
         shift
@@ -507,8 +513,13 @@ EOF
   chmod 0600 "${ENV_DIR}/bay-secrets.env"
 
   if [[ "$OVERLAY_MODE" != "none" ]]; then
-    render_if_missing_or_forced "${ENV_DIR}/bay-overlay.env" "$BAY_OVERLAY_ENV_EXAMPLE" \
-      < "${TARGET_RELEASE}/scripts/bay-systemd/env/bay-${OVERLAY_MODE}-overlay.env.example"
+    if [[ "$FORCE_OVERLAY" -eq 1 && "$FORCE_ENV" -eq 0 ]]; then
+      cat "${TARGET_RELEASE}/scripts/bay-systemd/env/bay-${OVERLAY_MODE}-overlay.env.example" \
+        > "${ENV_DIR}/bay-overlay.env"
+    else
+      render_if_missing_or_forced "${ENV_DIR}/bay-overlay.env" "$BAY_OVERLAY_ENV_EXAMPLE" \
+        < "${TARGET_RELEASE}/scripts/bay-systemd/env/bay-${OVERLAY_MODE}-overlay.env.example"
+    fi
   fi
 
   run systemctl enable cocalc-bay.target
