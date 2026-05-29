@@ -70,6 +70,79 @@ These should use repo scripts or become scripts during this deployment:
 - Rolling forward and rolling back a bay release.
 - Repeating the same workflow on `bay-1`.
 
+## Preferred Automation Path
+
+Use the GCP dogfood helper first. The manual sections below remain as the
+debugging fallback and as the checklist for what the helper is expected to do.
+
+The helper script is:
+
+- `src/scripts/bay-systemd/gcp-bootstrap-dogfood-bay.sh`
+
+It expects:
+
+- `gcloud` installed and authenticated.
+- `gcloud` permission to create and SSH to VMs in the target project.
+- `pnpm` available locally.
+- A GCP project id, VM name, bay id, and zone.
+
+It does:
+
+- build the Rocket bay runtime bundle, including the project-host, project, and
+  tools artifacts needed for project-host bootstrap,
+- create the GCP VM if needed,
+- create or reuse a local site master key,
+- copy the bundle, systemd scaffold, and site master key to the VM,
+- run `bay-bootstrap-host.sh`,
+- run `bay-bootstrap-release.sh`,
+- start the bay,
+- run bay status and health checks,
+- start an SSH local port forward to the first hub worker,
+- print the local URL, bootstrap admin URL if found in logs, and the exact
+  site-master-key path to save in 1Password.
+
+Bay 0 example:
+
+```sh
+src/scripts/bay-systemd/gcp-bootstrap-dogfood-bay.sh \
+  --gcp-project <gcp-project> \
+  --vm-name <bay-0-vm-name> \
+  --bay-id bay-0 \
+  --zone us-south1-a \
+  --machine-type t2d-standard-4 \
+  --boot-disk-size 50GB \
+  --boot-disk-type pd-balanced \
+  --public-url https://demo.cocalc.ai \
+  --local-forward-port 7001
+```
+
+Bay 1 example after bay 0 is stable:
+
+```sh
+src/scripts/bay-systemd/gcp-bootstrap-dogfood-bay.sh \
+  --gcp-project <gcp-project> \
+  --vm-name <bay-1-vm-name> \
+  --bay-id bay-1 \
+  --zone europe-west4-a \
+  --machine-type t2d-standard-4 \
+  --boot-disk-size 50GB \
+  --boot-disk-type pd-balanced \
+  --public-url <bay-1-url> \
+  --local-forward-port 7002
+```
+
+Use `--reuse-existing-vm` only when intentionally iterating on an existing VM.
+The script refuses to silently overwrite an existing VM by default.
+
+The default site master key path is:
+
+```sh
+~/.cocalc/dogfood/<gcp-project>/site-master-key
+```
+
+Use the same key for every bay in the same dogfood site. Store it in 1Password
+immediately after bay 0 bootstrap succeeds.
+
 ## Existing Systemd Deployment Tooling
 
 The current scaffold lives at:
@@ -106,6 +179,8 @@ in the friction log.
 
 ## Local Build And Artifact Preparation
 
+This section is the manual equivalent of the automation helper's build step.
+
 Run from the repository root on the operator workstation.
 
 ```sh
@@ -141,6 +216,9 @@ Do not deploy from a dirty tree unless the dirty files are explicitly listed in
 the friction log.
 
 ## Bay 0 Bootstrap
+
+This section is the manual fallback for what
+`gcp-bootstrap-dogfood-bay.sh --bay-id bay-0` automates.
 
 ### 1. Manual VM Preconditions
 
@@ -304,6 +382,9 @@ Record:
 
 ## Bay 1 Bootstrap
 
+This section is the manual fallback for what
+`gcp-bootstrap-dogfood-bay.sh --bay-id bay-1` automates.
+
 Repeat the same flow after `bay-0` is stable, with these changes:
 
 - Region: `europe-west4`.
@@ -405,14 +486,14 @@ The dogfood site is good enough to mark this release-blocker item done when:
 
 Append entries here during the deployment.
 
-| Time | Phase | Command / action | Symptom | Resolution / follow-up |
-| --- | --- | --- | --- | --- |
-| 2026-05-29 | Planning | Created runbook | Need concrete dogfood deployment checklist before creating VMs | Use this file as the source of truth for the first deployment pass |
+| Time       | Phase    | Command / action | Symptom                                                        | Resolution / follow-up                                             |
+| ---------- | -------- | ---------------- | -------------------------------------------------------------- | ------------------------------------------------------------------ |
+| 2026-05-29 | Planning | Created runbook  | Need concrete dogfood deployment checklist before creating VMs | Use this file as the source of truth for the first deployment pass |
 
 ## Open Decisions
 
 - Exact public ingress shape: direct VM reverse proxy, Cloudflare tunnel, or
-  Cloudflare proxied DNS to an origin proxy.
+  Cloudflare proxied DNS to an origin proxy. (ans: it's built in to use cloudflare reverse tunnel)
 - Whether the first dogfood deployment uses Rocket bundle only or temporarily
   allows a built `src` tree.
 - Whether bay-local Postgres on the 50 GB boot disk is enough for dogfood, or
@@ -426,10 +507,10 @@ Append entries here during the deployment.
 
 ## Immediate Next Steps
 
-1. Build the Rocket bay bundle locally and confirm the artifact path.
-2. Create the `bay-0` VM manually in GCP.
-3. Copy `src/scripts/bay-systemd` and the bundle to `bay-0`.
-4. Run `bay-bootstrap-host.sh` and `bay-bootstrap-release.sh`.
-5. Record every command, edit, and failure in the friction log above.
-6. Fix deployment blockers as code changes rather than relying on manual VM
+1. Run `src/scripts/bay-systemd/gcp-bootstrap-dogfood-bay.sh` for `bay-0`.
+2. Store the generated site master key in 1Password.
+3. Visit the forwarded local URL and finish the initial bay/site configuration.
+4. Record every command, edit, and failure in the friction log above.
+5. Fix deployment blockers as code changes rather than relying on manual VM
    surgery.
+6. Run the same helper for `bay-1` only after `bay-0` is stable.
