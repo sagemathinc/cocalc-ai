@@ -937,6 +937,11 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn("privileged-rm-helper", script)
             self.assertIn("grow-shared-scratch)", script)
             self.assertIn("/mnt/cocalc-scratch", script)
+            self.assertIn("/var/lib/cocalc/star/project-host/0/cache", script)
+            self.assertIn(
+                "/var/lib/cocalc/star/project-host/0/cache/project-roots/*",
+                script,
+            )
             self.assertIn('echo 1 > "$scratch_rescan"', script)
             self.assertIn('growpart "$scratch_parent" "$scratch_part_num"', script)
             self.assertIn('partprobe "$scratch_parent"', script)
