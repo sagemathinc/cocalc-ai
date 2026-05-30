@@ -20,8 +20,8 @@ Statuses:
 
 Current score:
 
-- `unknown`: 6
-- `guarded`: 13
+- `unknown`: 5
+- `guarded`: 14
 - `finding`: 0
 - `fixed`: 4
 - `accepted-risk`: 0
@@ -34,7 +34,7 @@ Current score:
 | D-003 | CLI                   | Viewer project file commands                  | guarded | high     | CLI uses collaborator APIs for viewers or exposes write/runtime actions.                        | Viewer list/cat/get were moved toward viewer-safe file APIs with explicit write/runtime denials.                                                                                                    | Smoke `cocalc project list/cat/get` as viewer and attempt write/runtime commands.                                                                            | Keep aligned with browser viewer FS surface.                                                                                               |
 | D-004 | Access requests       | Project access request flow                   | guarded | high     | Non-member info leak, unauthorized approval, or request spam.                                   | Signed-in-only info, default viewer request, collaborator upgrade path, manager authorization, blocking, cooldown, daily cap, notifications, and project logs.                                      | Manual test non-member, viewer, collaborator, owner, blocked requester; verify multibay owning-bay routing.                                                  | Recent commits added the main flow and limits.                                                                                             |
 | D-005 | Access requests       | Requester blocking                            | guarded | medium   | Harassment via repeated access requests or notifications.                                       | Project-scoped requester blocks and unblock UI exist.                                                                                                                                               | Verify blocked requester gets no new request, notification, email, or project-log spam.                                                                      | Similar intent to invite blocking.                                                                                                         |
-| D-006 | Notifications         | Access request notification/email fanout      | unknown | medium   | Email/notification spam, wrong recipient, or metadata leak.                                     | Intended to follow existing invite notification channel and communication preferences.                                                                                                              | Inspect notification projector/email path and duplicate suppression for access requests.                                                                     | Needs comparison with invite behavior.                                                                                                     |
+| D-006 | Notifications         | Access request notification/email fanout      | guarded | medium   | Email/notification spam, wrong recipient, or metadata leak.                                     | Access requests create durable account-notice events only for authorized approvers, pending-request edits do not notify again, and owner-only management excludes ordinary collaborators.           | Manual notification-center smoke should verify inbox/email preference behavior on the notification transport side.                                           | No direct email send happens in the access-request RPC; it uses the shared notification outbox layer.                                      |
 | D-007 | Scratch disk          | Shared scratch spend admission                | fixed   | critical | Large scratch disk could create very high monthly cloud cost if omitted from spend enforcement. | Purchase, edit, resize, spend maintenance, and background shared scratch auto-grow now price with `shared_disk_gb/shared_disk_type`; auto-grow reconciles the active purchase session after resize. | Keep full server package tests in release validation.                                                                                                        | Focused auto-grow regression covers pre-resize denial and post-resize purchase reconciliation.                                             |
 | D-008 | Scratch disk          | Scratch edit/delete authorization             | fixed   | high     | Unauthorized user edits or deletes a shared host disk affecting all projects on host.           | Scratch create/edit/delete runs through host owner-only `updateHostMachine`, cloud mutations require fresh auth, and live delete now reconciles active billing to the post-delete non-scratch rate. | Manual live host delete smoke should confirm the provider disk is removed, `/scratch` unmounted, and the purchase session rate drops.                        | Intentional all-project read/write access to mounted scratch is out of scope; control-plane disk mutation is in scope.                     |
 | D-009 | Scratch disk          | Scratch auto-grow                             | fixed   | high     | Provider resize or auto-grow bypasses pricing/admission or grows on unsupported provider.       | Shared scratch auto-grow re-estimates the next rate, checks billing runway before cloud resize, reconciles the active purchase session after resize, and remains gated to online-resize providers.  | Keep Nebius high-cost manual/provider validation in the broader host smoke pass.                                                                             | Fixed in `project-host/auto-grow.ts` with focused regression coverage.                                                                     |
@@ -106,6 +106,18 @@ re-estimates the running host rate without `shared_disk_gb/shared_disk_type`,
 updates host billing metadata, and reconciles the active purchase session.
 Focused regression: `pnpm test conat/api/hosts.test.ts` in
 `src/packages/server`.
+
+### D-006: Access-request notification fanout guarded
+
+Access request creation uses `createNotificationEventGraph` rather than direct
+email sends. The notification payload goes only to accounts that can approve the
+request: owners always, and collaborators only when project settings allow
+collaborator management. Existing pending-request edits intentionally skip both
+project-log and notification fanout, which limits repeated-notification spam.
+Request decisions notify only the requester.
+
+Focused regression: `pnpm test projects/collaborators.test.ts` in
+`src/packages/server`, including owner-only fanout coverage.
 
 ## Manual Validation Log
 
