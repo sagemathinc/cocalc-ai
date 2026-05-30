@@ -23,6 +23,8 @@ export type MentionInfo = TypedMap<{
   body_markdown?: string;
   origin_label?: string;
   notice_type?: string;
+  request_id?: string;
+  requested_role?: "viewer" | "collaborator";
   action_link?: string;
   action_label?: string;
   severity?: string;

@@ -3,7 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Tag } from "antd";
+import { Alert, Button, Modal, Space, Tag } from "antd";
+import { useState } from "react";
 
 import { A } from "@cocalc/frontend/components";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
@@ -15,6 +16,7 @@ import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { User } from "@cocalc/frontend/users";
 import { MentionInfo } from "./types";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const DESCRIPTION_STYLE: CSS = {
   flex: "1 1 auto",
@@ -84,6 +86,9 @@ export function NotificationRow(props: Props) {
     title,
     body_markdown,
     origin_label,
+    notice_type,
+    request_id,
+    requested_role,
     action_link,
     action_label,
     severity,
@@ -107,6 +112,21 @@ export function NotificationRow(props: Props) {
   const count = groupCount ?? groupedIds?.length ?? 1;
   const groupIds =
     groupedIds != null && groupedIds.length > 0 ? groupedIds : [id];
+  const [accessRequestAction, setAccessRequestAction] = useState<string | null>(
+    null,
+  );
+  const [accessRequestStatus, setAccessRequestStatus] = useState<string | null>(
+    null,
+  );
+  const [accessRequestError, setAccessRequestError] = useState<string | null>(
+    null,
+  );
+  const isProjectAccessRequestNotice =
+    kind === "account_notice" &&
+    notice_type === "project_access_request" &&
+    !!project_id &&
+    !!request_id &&
+    (requested_role === "viewer" || requested_role === "collaborator");
 
   function markReadState(how: "read" | "unread") {
     if (groupIds.length > 1) {
@@ -133,7 +153,7 @@ export function NotificationRow(props: Props) {
   }
 
   function renderActionLink() {
-    if (!action_link) {
+    if (!action_link || isProjectAccessRequestNotice) {
       return null;
     }
     return (
@@ -148,6 +168,115 @@ export function NotificationRow(props: Props) {
           {action_label ?? "Open"}
         </A>
       </>
+    );
+  }
+
+  async function respondToProjectAccessRequest(
+    action: "approve" | "deny" | "block",
+    role?: "viewer" | "collaborator",
+  ) {
+    if (!project_id || !request_id) return;
+    const key = `${action}:${role ?? ""}`;
+    setAccessRequestAction(key);
+    setAccessRequestError(null);
+    try {
+      await webapp_client.project_collaborators.respond_access_request({
+        project_id,
+        request_id,
+        action,
+        role,
+      });
+      setAccessRequestStatus(
+        action === "approve"
+          ? `Approved ${role ?? requested_role} access.`
+          : action === "block"
+            ? "Denied and blocked future requests from this user."
+            : "Denied this access request.",
+      );
+      markReadState("read");
+    } catch (err) {
+      setAccessRequestError(`${err}`);
+    } finally {
+      setAccessRequestAction(null);
+    }
+  }
+
+  function renderProjectAccessRequestActions() {
+    if (!isProjectAccessRequestNotice) {
+      return null;
+    }
+    if (accessRequestStatus != null) {
+      return (
+        <Alert
+          showIcon
+          type="success"
+          title={accessRequestStatus}
+          style={{ marginTop: 8 }}
+        />
+      );
+    }
+    return (
+      <Space
+        wrap
+        size={[8, 8]}
+        style={{ marginTop: 8 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <Button
+          type="primary"
+          size="small"
+          loading={accessRequestAction === `approve:${requested_role}`}
+          onClick={() =>
+            void respondToProjectAccessRequest("approve", requested_role)
+          }
+        >
+          Approve {requested_role}
+        </Button>
+        {requested_role === "collaborator" ? (
+          <Button
+            size="small"
+            loading={accessRequestAction === "approve:viewer"}
+            onClick={() =>
+              void respondToProjectAccessRequest("approve", "viewer")
+            }
+          >
+            Approve viewer
+          </Button>
+        ) : null}
+        <Button
+          size="small"
+          loading={accessRequestAction === "deny:"}
+          onClick={() => void respondToProjectAccessRequest("deny")}
+        >
+          Deny
+        </Button>
+        <Button
+          danger
+          size="small"
+          loading={accessRequestAction === "block:"}
+          onClick={() => {
+            Modal.confirm({
+              title: "Block access requests from this user?",
+              content:
+                "This denies the current request and prevents this account from requesting access to this project again.",
+              okText: "Block",
+              okButtonProps: { danger: true },
+              onOk: () => respondToProjectAccessRequest("block"),
+            });
+          }}
+        >
+          Block
+        </Button>
+        {accessRequestError != null ? (
+          <Alert
+            showIcon
+            type="error"
+            title="Unable to review access request"
+            description={accessRequestError}
+            style={{ width: "100%" }}
+          />
+        ) : null}
+      </Space>
     );
   }
 
@@ -178,6 +307,7 @@ export function NotificationRow(props: Props) {
               value={body_markdown}
             />
           ) : null}
+          {renderProjectAccessRequestActions()}
           {renderActionLink()}
         </>
       );

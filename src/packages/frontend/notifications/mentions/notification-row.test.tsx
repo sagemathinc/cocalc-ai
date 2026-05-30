@@ -1,13 +1,14 @@
 /** @jest-environment jsdom */
 
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { fromJS } from "immutable";
 import { NotificationRow } from "./notification-row";
 
 const open_file = jest.fn();
 const mark = jest.fn();
 const markMany = jest.fn();
+const respondAccessRequest = jest.fn();
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
@@ -43,11 +44,21 @@ jest.mock("@cocalc/frontend/editors/slate/static-markdown", () => ({
   default: ({ value }: any) => <span>{value}</span>,
 }));
 
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: {
+    project_collaborators: {
+      respond_access_request: (...args: any[]) => respondAccessRequest(...args),
+    },
+  },
+}));
+
 describe("NotificationRow", () => {
   beforeEach(() => {
     open_file.mockReset();
     mark.mockReset();
     markMany.mockReset();
+    respondAccessRequest.mockReset();
+    respondAccessRequest.mockResolvedValue(undefined);
   });
 
   it("does not mark account notices read when they do not target a file", () => {
@@ -168,5 +179,46 @@ describe("NotificationRow", () => {
 
     expect(markMany).toHaveBeenCalledWith(["notice-1", "notice-2"], "read");
     expect(mark).not.toHaveBeenCalled();
+  });
+
+  it("reviews project access requests inline instead of opening the project settings page", async () => {
+    render(
+      <NotificationRow
+        id="notice-1"
+        user_map={{}}
+        mention={
+          fromJS({
+            kind: "account_notice",
+            project_id: "project-1",
+            target: "approver-1",
+            time: new Date("2026-05-07T00:00:00.000Z"),
+            title: "Bella requested collaborator access",
+            body_markdown: "Bella requested collaborator access.",
+            origin_label: "Project access",
+            notice_type: "project_access_request",
+            request_id: "request-1",
+            requested_role: "collaborator",
+            action_link: "/projects/project-1/settings",
+            action_label: "Review request",
+            users: { "approver-1": { read: false, saved: false } },
+          }) as any
+        }
+      />,
+    );
+
+    expect(screen.queryByText("Review request")).toBeNull();
+
+    fireEvent.click(screen.getByText("Approve collaborator"));
+
+    await waitFor(() =>
+      expect(respondAccessRequest).toHaveBeenCalledWith({
+        project_id: "project-1",
+        request_id: "request-1",
+        action: "approve",
+        role: "collaborator",
+      }),
+    );
+    expect(mark).toHaveBeenCalledWith(expect.anything(), "notice-1", "read");
+    expect(screen.getByText("Approved collaborator access.")).toBeTruthy();
   });
 });

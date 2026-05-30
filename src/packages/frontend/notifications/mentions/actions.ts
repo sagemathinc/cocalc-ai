@@ -62,6 +62,8 @@ function buildNotificationMention(
     body_markdown: summary.body_markdown,
     origin_label: summary.origin_label,
     notice_type: summary.notice_type,
+    request_id: summary.request_id,
+    requested_role: summary.requested_role,
     action_link: summary.action_link,
     action_label: summary.action_label,
     severity: summary.severity,
