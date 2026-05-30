@@ -14,6 +14,8 @@ export COCALC_BAY_WORKER_ID="$worker_id"
 export COCALC_BAY_WORKER_PORT
 COCALC_BAY_WORKER_PORT="$(worker_port "$worker_id")"
 export PORT="$COCALC_BAY_WORKER_PORT"
+export COCALC_BAY_WORKER_CONAT_PORT
+COCALC_BAY_WORKER_CONAT_PORT="$((COCALC_BAY_HUB_BASE_PORT + 1000 + worker_id - 1))"
 
 if [[ -n "${COCALC_BAY_WORKER_EXTRA_ENV:-}" ]]; then
   # shellcheck disable=SC2086

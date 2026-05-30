@@ -1,8 +1,8 @@
 import getLogger from "@cocalc/backend/logger";
-import getPool from "@cocalc/database/pool";
+import getPool, { getTransactionClient } from "@cocalc/database/pool";
 import {
   decryptRegistrationTokenValue,
-  hashRegistrationTokenValue,
+  encryptRegistrationTokenValue,
   isHashedRegistrationTokenValue,
 } from "@cocalc/database/postgres/account/registration-token-secret";
 import siteURL from "@cocalc/database/settings/site-url";
@@ -19,6 +19,10 @@ type BootstrapToken = {
   storedToken: string;
 };
 
+type QueryClient = {
+  query: (query: string, params?: any[]) => Promise<{ rows: any[] }>;
+};
+
 let cachedBootstrapToken: BootstrapToken | undefined;
 
 function isBootstrapCustomize(customize: unknown): boolean {
@@ -29,13 +33,24 @@ function isBootstrapCustomize(customize: unknown): boolean {
   );
 }
 
-async function findBootstrapToken(): Promise<BootstrapToken | undefined> {
-  const pool = getPool("long");
-  const { rows } = await pool.query(
+async function findBootstrapToken(
+  client: QueryClient = getPool("long"),
+): Promise<BootstrapToken | undefined> {
+  await client.query(
+    `DELETE FROM registration_tokens
+      WHERE customize->>'bootstrap'='true'
+        AND (
+          disabled IS TRUE OR
+          (expires IS NOT NULL AND expires <= NOW()) OR
+          ("limit" IS NOT NULL AND "limit" <= coalesce(counter, 0))
+        )`,
+  );
+  const { rows } = await client.query(
     `SELECT token, expires, customize
        FROM registration_tokens
       WHERE disabled IS NOT true
         AND (expires IS NULL OR expires > NOW())
+        AND ("limit" IS NULL OR "limit" > coalesce(counter, 0))
       ORDER BY expires NULLS LAST, token
       LIMIT 100`,
   );
@@ -45,7 +60,7 @@ async function findBootstrapToken(): Promise<BootstrapToken | undefined> {
         if (cachedBootstrapToken?.storedToken === row.token) {
           return cachedBootstrapToken;
         }
-        await pool.query("DELETE FROM registration_tokens WHERE token=$1", [
+        await client.query("DELETE FROM registration_tokens WHERE token=$1", [
           row.token,
         ]);
         logger.warn(
@@ -55,11 +70,7 @@ async function findBootstrapToken(): Promise<BootstrapToken | undefined> {
         continue;
       }
       const token = await decryptRegistrationTokenValue(row.token);
-      const storedToken = await hashRegistrationTokenValue(token);
-      await pool.query(
-        "UPDATE registration_tokens SET token=$1 WHERE token=$2",
-        [storedToken, row.token],
-      );
+      const storedToken = row.token;
       cachedBootstrapToken = {
         token,
         storedToken,
@@ -71,12 +82,13 @@ async function findBootstrapToken(): Promise<BootstrapToken | undefined> {
   return undefined;
 }
 
-async function createBootstrapToken(): Promise<BootstrapToken> {
-  const pool = getPool();
+async function createBootstrapToken(
+  client: QueryClient = getPool(),
+): Promise<BootstrapToken> {
   const token = secure_random_token(32);
-  const storedToken = await hashRegistrationTokenValue(token);
+  const storedToken = await encryptRegistrationTokenValue(token);
   const expires = new Date(Date.now() + BOOTSTRAP_TTL_MS);
-  await pool.query(
+  await client.query(
     `INSERT INTO registration_tokens
         (token, descr, expires, "limit", disabled, customize)
       VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -91,6 +103,26 @@ async function createBootstrapToken(): Promise<BootstrapToken> {
   );
   cachedBootstrapToken = { token, storedToken, expires };
   return cachedBootstrapToken;
+}
+
+async function getOrCreateBootstrapToken(): Promise<BootstrapToken> {
+  const client = await getTransactionClient();
+  try {
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtext('cocalc-bootstrap-admin-token'))",
+    );
+    let tokenInfo = await findBootstrapToken(client);
+    if (!tokenInfo) {
+      tokenInfo = await createBootstrapToken(client);
+    }
+    await client.query("COMMIT");
+    return tokenInfo;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 function withTrailingSlash(url: string): string {
@@ -122,10 +154,7 @@ export async function ensureBootstrapAdminToken(
     return;
   }
 
-  let tokenInfo = await findBootstrapToken();
-  if (!tokenInfo) {
-    tokenInfo = await createBootstrapToken();
-  }
+  const tokenInfo = await getOrCreateBootstrapToken();
 
   const url = await formatBootstrapLink(tokenInfo.token, opts.baseUrl);
   logger.info("bootstrap admin token ready", {

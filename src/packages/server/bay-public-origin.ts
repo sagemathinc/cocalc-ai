@@ -351,7 +351,11 @@ export async function getSitePublicOriginForRequest(
   req?: Request,
 ): Promise<string | undefined> {
   const request_origin = req ? detectRequestOrigin(req) : undefined;
-  if (request_origin && (await shouldPreferRequestOriginForBrowserConfig())) {
+  if (
+    request_origin &&
+    (isLocalBrowserOrigin(request_origin) ||
+      (await shouldPreferRequestOriginForBrowserConfig()))
+  ) {
     return request_origin;
   }
   const configured = await getConfiguredValueWithTimeout(
@@ -378,6 +382,39 @@ function looksLikeIp(hostname: string): boolean {
   return /^[0-9.]+$/.test(hostname) || hostname.includes(":");
 }
 
+function hostnameFromOrigin(origin: string | undefined): string | undefined {
+  if (!origin) return;
+  try {
+    return new URL(origin).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  } catch {
+    return normalizeHostname(origin);
+  }
+}
+
+function isLocalBrowserOrigin(origin: string | undefined): boolean {
+  const hostname = hostnameFromOrigin(origin);
+  if (!hostname) return false;
+  if (
+    hostname === "localhost" ||
+    hostname === "0.0.0.0" ||
+    hostname === "::1" ||
+    hostname.endsWith(".localhost")
+  ) {
+    return true;
+  }
+  if (hostname.startsWith("127.")) {
+    return true;
+  }
+  const parts = hostname.split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part))) {
+    return false;
+  }
+  const [a, b] = parts;
+  return (
+    a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+  );
+}
+
 // This is intentionally simple and deterministic. It is enough for the
 // supported launchpad patterns:
 //   - cocalc.com            -> cocalc.com
@@ -391,8 +428,11 @@ export async function getBrowserCookieDomain(): Promise<string | undefined> {
 export async function getBrowserCookieDomainForRequest(
   req?: Request,
 ): Promise<string | undefined> {
+  const request_origin = req ? detectRequestOrigin(req) : undefined;
+  if (request_origin && isLocalBrowserOrigin(request_origin)) {
+    return;
+  }
   if (req && (await shouldPreferRequestOriginForBrowserConfig())) {
-    const request_origin = detectRequestOrigin(req);
     const site_hostname = deriveSiteHostnameFromRequestOrigin({
       request_origin,
       current_bay_id: getConfiguredBayId(),
@@ -405,7 +445,6 @@ export async function getBrowserCookieDomainForRequest(
   );
   if (configured) return configured;
   if (!req) return;
-  const request_origin = detectRequestOrigin(req);
   const site_hostname = deriveSiteHostnameFromRequestOrigin({
     request_origin,
     current_bay_id: getConfiguredBayId(),
@@ -449,8 +488,11 @@ export function deriveSiteHostnameFromRequestOrigin(opts: {
 export async function getBrowserCookieSiteHostnameForRequest(
   req?: Request,
 ): Promise<string | undefined> {
+  const request_origin = req ? detectRequestOrigin(req) : undefined;
+  if (request_origin && isLocalBrowserOrigin(request_origin)) {
+    return hostnameFromOrigin(request_origin);
+  }
   if (req && (await shouldPreferRequestOriginForBrowserConfig())) {
-    const request_origin = detectRequestOrigin(req);
     return deriveSiteHostnameFromRequestOrigin({
       request_origin,
       current_bay_id: getConfiguredBayId(),
@@ -462,7 +504,6 @@ export async function getBrowserCookieSiteHostnameForRequest(
   );
   if (configured) return configured;
   if (!req) return;
-  const request_origin = detectRequestOrigin(req);
   return deriveSiteHostnameFromRequestOrigin({
     request_origin,
     current_bay_id: getConfiguredBayId(),
@@ -485,8 +526,13 @@ export async function getBrowserCookieNameForRequest({
 export async function getCurrentBayPublicOriginForRequest(
   req?: Request,
 ): Promise<string | undefined> {
-  if (req && (await shouldPreferRequestOriginForBrowserConfig())) {
-    return detectRequestOrigin(req);
+  const request_origin = req ? detectRequestOrigin(req) : undefined;
+  if (
+    request_origin &&
+    (isLocalBrowserOrigin(request_origin) ||
+      (await shouldPreferRequestOriginForBrowserConfig()))
+  ) {
+    return request_origin;
   }
   const configured = await getConfiguredValueWithTimeout(
     "current-bay-public-origin",
@@ -507,7 +553,8 @@ export async function getBayPublicOriginForRequest(
   if (
     request_origin &&
     requested === getConfiguredBayId() &&
-    (await shouldPreferRequestOriginForBrowserConfig())
+    (isLocalBrowserOrigin(request_origin) ||
+      (await shouldPreferRequestOriginForBrowserConfig()))
   ) {
     return request_origin;
   }

@@ -241,7 +241,6 @@ configure_gcloud_auth() {
   export CLOUDSDK_CONFIG="$GCLOUD_CONFIG_DIR"
   log "using isolated gcloud config at ${CLOUDSDK_CONFIG}"
   run gcloud auth activate-service-account --key-file "$KEY_FILE" >/dev/null
-  run gcloud config set project "$GCP_PROJECT" >/dev/null
 }
 
 cleanup_gcloud_auth() {
@@ -382,15 +381,22 @@ bootstrap_remote_bay() {
     public_url_arg=(--public-url "$PUBLIC_URL")
   fi
 
-  run remote_ssh "sudo install -o root -g root -m 0600 /tmp/site-master-key /etc/cocalc/site-master-key"
   run remote_ssh "sudo /tmp/bay-systemd/bay-bootstrap-host.sh --bay-id '${BAY_ID}' --install-nodejs"
+  run remote_ssh "sudo install -o root -g root -m 0600 /tmp/site-master-key /etc/cocalc/site-master-key"
   run remote_ssh "$(
     printf "sudo /tmp/bay-systemd/bay-bootstrap-release.sh --bundle %q --bay-id %q --worker-count %q" \
       "$remote_bundle" "$BAY_ID" "$WORKER_COUNT"
     if [[ "${#public_url_arg[@]}" -gt 0 ]]; then
       printf " --public-url %q" "$PUBLIC_URL"
     fi
-    printf " --start"
+    printf " --force-overlay --start"
+  )"
+
+  run remote_ssh "$(
+    printf "sudo systemctl restart cocalc-bay-postgres.service cocalc-bay-migrations.service cocalc-bay-conat-persist.service cocalc-bay-conat-router.service"
+    for worker_id in $(seq 1 "$WORKER_COUNT"); do
+      printf " cocalc-bay-hub@%q.service" "$worker_id"
+    done
   )"
 }
 
@@ -414,6 +420,12 @@ extract_bootstrap_url() {
 
 start_port_forward() {
   if [[ "$SKIP_PORT_FORWARD" -eq 1 ]]; then
+    return 0
+  fi
+
+  if timeout 1 bash -c ">/dev/tcp/${LOCAL_FORWARD_HOST}/${LOCAL_FORWARD_PORT}" \
+    >/dev/null 2>&1; then
+    log "local port ${LOCAL_FORWARD_HOST}:${LOCAL_FORWARD_PORT} is already listening; leaving existing listener in place"
     return 0
   fi
 

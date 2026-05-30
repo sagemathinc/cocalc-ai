@@ -230,14 +230,14 @@ export default async function init(opts: Options): Promise<{
   router.use(
     "/favicon.ico",
     staticCompression,
-    express.static(join(WEBAPP_PATH, "favicon.ico"), {
+    express.static(join(resolveWebappAssetsPath(), "favicon.ico"), {
       setHeaders: cacheLongTerm,
     }),
   );
   router.use(
     "/webapp",
     staticCompression,
-    express.static(WEBAPP_PATH, { setHeaders: cacheLongTerm }),
+    express.static(resolveWebappAssetsPath(), { setHeaders: cacheLongTerm }),
   );
 
   // This is @cocalc/cdn – cocalc serves everything it might get from a CDN on its own.
@@ -245,7 +245,7 @@ export default async function init(opts: Options): Promise<{
   router.use(
     "/cdn",
     staticCompression,
-    express.static(CDN_PATH, { setHeaders: cacheLongTerm }),
+    express.static(resolveCdnPath(), { setHeaders: cacheLongTerm }),
   );
 
   // Redirect requests to /app to /static/app.html.
@@ -447,6 +447,40 @@ function resolvePublicAssetsPath(): string | undefined {
       return candidate;
     }
   }
+}
+
+function resolveWebappAssetsPath(): string {
+  const candidates: string[] = [];
+  if (process.env.COCALC_WEBAPP_ASSETS_PATH) {
+    candidates.push(process.env.COCALC_WEBAPP_ASSETS_PATH);
+  }
+  if (process.env.COCALC_BUNDLE_DIR) {
+    candidates.push(join(process.env.COCALC_BUNDLE_DIR, "webapp"));
+  }
+  candidates.push(WEBAPP_PATH);
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, "favicon.ico"))) {
+      return candidate;
+    }
+  }
+  return WEBAPP_PATH;
+}
+
+function resolveCdnPath(): string {
+  const candidates: string[] = [];
+  if (process.env.COCALC_CDN_PATH) {
+    candidates.push(process.env.COCALC_CDN_PATH);
+  }
+  if (process.env.COCALC_BUNDLE_DIR) {
+    candidates.push(join(process.env.COCALC_BUNDLE_DIR, "cdn"));
+  }
+  candidates.push(CDN_PATH);
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, "index.js"))) {
+      return candidate;
+    }
+  }
+  return CDN_PATH;
 }
 
 async function initStatic(router) {

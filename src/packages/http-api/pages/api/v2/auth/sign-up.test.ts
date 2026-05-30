@@ -486,7 +486,43 @@ describe("/api/v2/auth/sign-up", () => {
     expect(res._getJSONData()).toEqual({
       issues: {
         email:
-          "Account creation is not available for this email address. Use a different email address or contact support.",
+          "We can’t create an account with this email address. Contact support if you think this is a mistake.",
+      },
+    });
+    expect(mockSignUserIn).not.toHaveBeenCalled();
+  });
+
+  it("returns the support message when cluster creation blocks a banned-equivalent email", async () => {
+    mockRedeemRegistrationToken.mockResolvedValue({});
+    mockCreateClusterAccount.mockRejectedValue(
+      Object.assign(
+        new Error(
+          "This email address is blocked because an equivalent address is banned (blocked@example.com).",
+        ),
+        { name: "SignupEmailAccountPolicyError" },
+      ),
+    );
+    const { req, res } = createMocks({
+      method: "POST",
+      url: "/api/v2/auth/sign-up",
+      body: {
+        terms: true,
+        email: "new@example.com",
+        password: "correct horse battery staple 12345!",
+        firstName: "New",
+        lastName: "User",
+        registrationToken: "valid-token",
+      },
+    });
+
+    const { signUp } = await import("./sign-up");
+    await signUp(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res._getJSONData()).toEqual({
+      issues: {
+        email:
+          "We can’t create an account with this email address. Contact support if you think this is a mistake.",
       },
     });
     expect(mockSignUserIn).not.toHaveBeenCalled();
