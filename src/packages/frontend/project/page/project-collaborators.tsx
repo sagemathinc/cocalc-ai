@@ -17,16 +17,29 @@ import {
   Loading,
   Paragraph,
   SettingBox,
+  TimeAgo,
   Title,
 } from "@cocalc/frontend/components";
-import { Alert, Button, List, Modal, Space, Switch, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  List,
+  Modal,
+  Space,
+  Switch,
+  Typography,
+} from "antd";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { labels } from "@cocalc/frontend/i18n";
 import { COLORS } from "@cocalc/util/theme";
 import { ICON_USERS, ROOT_STYLE } from "../servers/consts";
 import { useProject } from "./common";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import type { ProjectAccessRequestRow } from "@cocalc/conat/hub/api/projects";
+import type {
+  ProjectAccessRequestBlockRow,
+  ProjectAccessRequestRow,
+} from "@cocalc/conat/hub/api/projects";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 
 const { Text } = Typography;
@@ -254,6 +267,7 @@ function AccessRequestsPanel({
   project_id: string;
 }): React.JSX.Element | null {
   const [requests, setRequests] = useState<ProjectAccessRequestRow[]>([]);
+  const [blocks, setBlocks] = useState<ProjectAccessRequestBlockRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [acting, setActing] = useState<string | null>(null);
@@ -262,12 +276,17 @@ function AccessRequestsPanel({
     setLoading(true);
     setError(null);
     try {
-      const rows =
-        await webapp_client.project_collaborators.list_access_requests({
+      const [rows, blockRows] = await Promise.all([
+        webapp_client.project_collaborators.list_access_requests({
           project_id,
           status: "pending",
-        });
+        }),
+        webapp_client.project_collaborators.list_access_request_blocks({
+          project_id,
+        }),
+      ]);
       setRequests(rows);
+      setBlocks(blockRows);
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -301,7 +320,24 @@ function AccessRequestsPanel({
     }
   }
 
-  if (!loading && requests.length === 0 && !error) {
+  async function unblock(blocked_account_id: string) {
+    const key = `unblock:${blocked_account_id}`;
+    setActing(key);
+    setError(null);
+    try {
+      await webapp_client.project_collaborators.unblock_access_requester({
+        project_id,
+        blocked_account_id,
+      });
+      await load();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setActing(null);
+    }
+  }
+
+  if (!loading && requests.length === 0 && blocks.length === 0 && !error) {
     return null;
   }
 
@@ -402,6 +438,70 @@ function AccessRequestsPanel({
             );
           }}
         />
+        {blocks.length > 0 && (
+          <div>
+            <Text strong>Blocked requesters</Text>
+            <div
+              style={{
+                color: COLORS.GRAY_M,
+                fontSize: 12,
+                marginBottom: 8,
+                marginTop: 2,
+              }}
+            >
+              These accounts cannot send new access requests for this project.
+            </div>
+            {blocks.map((block) => {
+              const name =
+                block.blocked_name ||
+                `${block.blocked_first_name ?? ""} ${
+                  block.blocked_last_name ?? ""
+                }`.trim() ||
+                block.blocked_account_id;
+              return (
+                <Card
+                  key={block.blocked_account_id}
+                  size="small"
+                  style={{ marginBottom: 8 }}
+                  styles={{ body: { padding: 10 } }}
+                >
+                  <div
+                    style={{
+                      alignItems: "center",
+                      display: "flex",
+                      gap: 10,
+                      justifyContent: "space-between",
+                    }}
+                  >
+                    <Space>
+                      <Avatar
+                        account_id={block.blocked_account_id}
+                        first_name={block.blocked_first_name ?? undefined}
+                        last_name={block.blocked_last_name ?? undefined}
+                        size={32}
+                      />
+                      <div>
+                        <div>
+                          <strong>{name}</strong>
+                        </div>
+                        <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
+                          Blocked <TimeAgo date={block.created} />
+                        </div>
+                      </div>
+                    </Space>
+                    <Button
+                      size="small"
+                      loading={acting === `unblock:${block.blocked_account_id}`}
+                      onClick={() => void unblock(block.blocked_account_id)}
+                    >
+                      Unblock
+                    </Button>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        )}
       </Space>
     </SettingBox>
   );
