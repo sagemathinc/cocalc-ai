@@ -42,6 +42,35 @@ import ShowError from "@cocalc/frontend/components/error";
 
 const { CheckableTag } = AntdTag;
 
+type CloudflareTunnelStatus = Pick<
+  CloudflareTunnelApplyResult,
+  "enabled" | "running" | "hostname" | "error"
+>;
+type ImmutableLikeCloudflareTunnelStatus = {
+  get: (key: string) => unknown;
+};
+
+function isImmutableLikeCloudflareTunnelStatus(
+  value: unknown,
+): value is ImmutableLikeCloudflareTunnelStatus {
+  return typeof (value as { get?: unknown })?.get === "function";
+}
+
+function normalizeCloudflareTunnelStatus(
+  value: CloudflareTunnelStatus | ImmutableLikeCloudflareTunnelStatus | null,
+): CloudflareTunnelStatus | null {
+  if (value == null) return null;
+  if (isImmutableLikeCloudflareTunnelStatus(value)) {
+    return {
+      enabled: value.get("enabled") === true,
+      running: value.get("running") === true,
+      hostname: `${value.get("hostname") ?? ""}`.trim() || undefined,
+      error: value.get("error") == null ? null : `${value.get("error")}`.trim(),
+    };
+  }
+  return value;
+}
+
 const REMOVED_LEGACY_AI_SETTINGS = new Set<string>([
   "google_vertexai_enabled",
   "mistral_enabled",
@@ -737,8 +766,9 @@ export default function SiteSettings({ close }) {
   }
 
   function Warning() {
-    const effectiveCloudflareStatus =
-      cloudflareApplyResult ?? cloudflareStatus ?? null;
+    const effectiveCloudflareStatus = normalizeCloudflareTunnelStatus(
+      cloudflareApplyResult ?? cloudflareStatus ?? null,
+    );
     const cloudflareTunnelConfigured =
       effectiveCloudflareStatus?.enabled ||
       `${data?.cloudflare_mode ?? ""}`.trim().toLowerCase() === "self" ||
