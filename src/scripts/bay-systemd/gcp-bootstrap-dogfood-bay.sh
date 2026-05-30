@@ -15,6 +15,7 @@ BOOT_DISK_TYPE="pd-balanced"
 IMAGE_FAMILY="ubuntu-2404-lts-amd64"
 IMAGE_PROJECT="ubuntu-os-cloud"
 PUBLIC_URL=""
+PROJECT_HOST_SOFTWARE_BASE_URL=""
 WORKER_COUNT="2"
 LOCAL_FORWARD_HOST="127.0.0.1"
 LOCAL_FORWARD_PORT="7001"
@@ -49,6 +50,9 @@ Common:
   --boot-disk-size <size>       default: 50GB
   --boot-disk-type <type>       default: pd-balanced
   --public-url <url>            public/base URL to write into bay config
+  --project-host-software-base-url <url>
+                                software base URL for project-host bootstrap
+                                artifacts; default: <public-url>/software
   --worker-count <n>            hub worker count, default: 2
   --local-forward-port <port>   local SSH forward port, default: 7001
   --remote-forward-port <port>  remote hub worker port, default: 9300
@@ -147,6 +151,10 @@ parse_args() {
         ;;
       --public-url)
         PUBLIC_URL="$2"
+        shift 2
+        ;;
+      --project-host-software-base-url)
+        PROJECT_HOST_SOFTWARE_BASE_URL="$2"
         shift 2
         ;;
       --worker-count)
@@ -395,17 +403,20 @@ copy_inputs() {
 
 bootstrap_remote_bay() {
   local remote_bundle="$1"
-  local public_url_arg=()
+  local software_base_url_arg=()
   if [[ -n "$PUBLIC_URL" ]]; then
-    public_url_arg=(--public-url "$PUBLIC_URL")
+    software_base_url_arg=(--public-url "$PUBLIC_URL")
+  fi
+  if [[ -n "$PROJECT_HOST_SOFTWARE_BASE_URL" ]]; then
+    software_base_url_arg+=(--project-host-software-base-url "$PROJECT_HOST_SOFTWARE_BASE_URL")
   fi
 
   if [[ "$STATIC_ONLY" -eq 1 ]]; then
     run remote_ssh "$(
       printf "sudo /tmp/bay-systemd/bay-bootstrap-release.sh --static-bundle %q --bay-id %q --worker-count %q" \
         "$remote_bundle" "$BAY_ID" "$WORKER_COUNT"
-      if [[ "${#public_url_arg[@]}" -gt 0 ]]; then
-        printf " --public-url %q" "$PUBLIC_URL"
+      if [[ "${#software_base_url_arg[@]}" -gt 0 ]]; then
+        printf " %q" "${software_base_url_arg[@]}"
       fi
     )"
     run remote_ssh "$(
@@ -420,8 +431,8 @@ bootstrap_remote_bay() {
     run remote_ssh "$(
       printf "sudo /tmp/bay-systemd/bay-bootstrap-release.sh --bundle %q --bay-id %q --worker-count %q" \
         "$remote_bundle" "$BAY_ID" "$WORKER_COUNT"
-      if [[ "${#public_url_arg[@]}" -gt 0 ]]; then
-        printf " --public-url %q" "$PUBLIC_URL"
+      if [[ "${#software_base_url_arg[@]}" -gt 0 ]]; then
+        printf " %q" "${software_base_url_arg[@]}"
       fi
       printf " --force-overlay --start"
     )"

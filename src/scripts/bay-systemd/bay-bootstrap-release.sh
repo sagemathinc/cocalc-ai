@@ -20,6 +20,7 @@ ROUTER_PORT=9102
 PERSIST_PORT=9202
 HUB_BASE_PORT=9300
 PUBLIC_URL=""
+PROJECT_HOST_SOFTWARE_BASE_URL=""
 DAEMON_RELOAD=1
 SITE_MASTER_KEY_PATH="/etc/cocalc/site-master-key"
 NODE_VERSION="26.2.0"
@@ -48,6 +49,9 @@ Options:
   --persist-port <n>       persist port (default: 9202)
   --hub-base-port <n>      base port for hub workers (default: 9300)
   --public-url <url>       optional public bay URL
+  --project-host-software-base-url <url>
+                           software base URL for project-host bootstrap
+                           artifacts; default: <public-url>/software
   --force-env              overwrite generated env files
   --force-overlay          overwrite bay-overlay.env only
   --no-enable-workers      do not enable worker units
@@ -476,6 +480,10 @@ main() {
         PUBLIC_URL="$2"
         shift 2
         ;;
+      --project-host-software-base-url)
+        PROJECT_HOST_SOFTWARE_BASE_URL="$2"
+        shift 2
+        ;;
       --force-env)
         FORCE_ENV=1
         shift
@@ -678,6 +686,12 @@ COCALC_BAY_POSTGRES_CMD='${POSTGRES_BIN} -D "\$COCALC_BAY_POSTGRES_DATA_DIR" -k 
 EOF
   if [[ -n "$PUBLIC_URL" ]]; then
     set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_PUBLIC_URL" "$PUBLIC_URL"
+  fi
+  if [[ -z "$PROJECT_HOST_SOFTWARE_BASE_URL" && -n "$PUBLIC_URL" ]]; then
+    PROJECT_HOST_SOFTWARE_BASE_URL="${PUBLIC_URL%/}/software"
+  fi
+  if [[ -n "$PROJECT_HOST_SOFTWARE_BASE_URL" ]]; then
+    set_env_var "${ENV_DIR}/bay.env" "COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE" "${PROJECT_HOST_SOFTWARE_BASE_URL%/}"
   fi
 
   render_if_missing_or_forced "${ENV_DIR}/bay-workers.env" "$BAY_WORKERS_ENV_EXAMPLE" <<EOF
