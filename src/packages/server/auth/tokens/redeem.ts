@@ -228,6 +228,34 @@ export async function redeemRegistrationTokenDirect(
   }
 }
 
+export async function restoreRedeemedRegistrationTokenDirect(
+  token: string,
+): Promise<void> {
+  if (!token) {
+    return;
+  }
+  const client = await getTransactionClient();
+  try {
+    const match = await findRegistrationToken(client, token, {
+      forUpdate: true,
+    });
+    if (match != null) {
+      await client.query(
+        `UPDATE registration_tokens
+            SET "counter"=GREATEST(coalesce("counter", 0) - 1, 0)
+          WHERE token=$1`,
+        [match.storedToken],
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function disableRegistrationTokenDirect(
   token: string,
 ): Promise<void> {
@@ -326,6 +354,20 @@ export default async function redeem(
     client: getInterBayFabricClient(),
   }).redeem({ token });
   return result ?? undefined;
+}
+
+export async function restoreRedeemedRegistrationToken(
+  token: string,
+): Promise<void> {
+  if (!token) {
+    return;
+  }
+  if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
+    await restoreRedeemedRegistrationTokenDirect(token);
+    return;
+  }
+  // Inter-bay token restore is intentionally not exposed as a remote API yet.
+  // Non-seed bays should redeem tokens on the authoritative seed bay.
 }
 
 export async function validateRegistrationToken(

@@ -7,7 +7,9 @@ import { spawn } from "node:child_process";
 import {
   docsPath,
   getDocsAction,
+  getDocsChapter,
   getDocsEntry,
+  listDocsChapters,
   listDocsActions,
   listDocsEntries,
   type DocsActionId,
@@ -224,10 +226,12 @@ export function verifyDocsStatic(): DocsVerificationReport {
   const docsAccess = { includeAdmin: true, includeSignedIn: true };
   const entries = listDocsEntries(docsAccess);
   const actions = listDocsActions(docsAccess);
+  const chapters = listDocsChapters(docsAccess);
   const issues: DocsVerificationIssue[] = [];
   const entryIds = new Set<string>();
   const slugs = new Set<string>();
   const actionIds = new Set<string>();
+  const categories = new Set(entries.map((entry) => entry.category));
 
   for (const entry of entries) {
     if (!entry.id.trim()) {
@@ -393,6 +397,46 @@ export function verifyDocsStatic(): DocsVerificationReport {
           }),
         );
       }
+    }
+  }
+
+  for (const category of categories) {
+    if (getDocsChapter(category, docsAccess) == null) {
+      issues.push(
+        issue({
+          code: "chapter-missing",
+          message: `Docs category '${category}' has no chapter metadata.`,
+        }),
+      );
+    }
+  }
+
+  for (const chapter of chapters) {
+    const startEntry = getDocsEntry(chapter.startEntryId, docsAccess);
+    if (startEntry == null) {
+      issues.push(
+        issue({
+          code: "chapter-start-entry",
+          entryId: chapter.startEntryId,
+          message: `Docs chapter '${chapter.category}' start entry '${chapter.startEntryId}' does not resolve.`,
+        }),
+      );
+    } else if (startEntry.category !== chapter.category) {
+      issues.push(
+        issue({
+          code: "chapter-start-category",
+          entryId: startEntry.id,
+          message: `Docs chapter '${chapter.category}' starts with entry '${startEntry.id}' in category '${startEntry.category}'.`,
+        }),
+      );
+    }
+    if (!chapter.summary.trim() || chapter.workflows.length === 0) {
+      issues.push(
+        issue({
+          code: "chapter-metadata-empty",
+          message: `Docs chapter '${chapter.category}' needs a summary and workflows.`,
+        }),
+      );
     }
   }
 

@@ -17,10 +17,12 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { ConnectionStatus } from "@cocalc/frontend/app/store";
+import { set_buffer } from "@cocalc/frontend/copy-paste-buffer";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { DEFAULT_TERM_ENV } from "@cocalc/frontend/frame-editors/code-editor/const";
 import type { Terminal } from "@cocalc/frontend/frame-editors/terminal-editor/connected-terminal";
 import type { ConnectedTerminalInterface } from "@cocalc/frontend/frame-editors/terminal-editor/connected-terminal-interface";
+import { MobileTerminalToolbar } from "@cocalc/frontend/frame-editors/terminal-editor/mobile-terminal-toolbar";
 import { background_color } from "@cocalc/frontend/frame-editors/terminal-editor/themes";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
@@ -41,6 +43,15 @@ async function getConnectedTerminalModule() {
   return (connectedTerminalPromise ??=
     import("@cocalc/frontend/frame-editors/terminal-editor/connected-terminal"));
 }
+
+interface NativeTouchTap {
+  x: number;
+  y: number;
+  time: number;
+}
+
+const NATIVE_TOUCH_TAP_MAX_MS = 450;
+const NATIVE_TOUCH_TAP_MAX_DISTANCE = 12;
 
 interface TerminalFlyoutProps {
   project_id: string;
@@ -110,11 +121,13 @@ export function TerminalFlyout({
   const terminalRef = useRef<Terminal | undefined>(undefined);
   const terminalDOMRef = useRef<HTMLDivElement>(null);
   const terminalLoadTokenRef = useRef(0);
+  const nativeTouchTapRef = useRef<NativeTouchTap | null>(null);
   const isMountedRef = useIsMountedRef();
   const student_project_functionality =
     useStudentProjectFunctionality(project_id);
   const [status, setStatus] = useState("");
   const [terminalExists, setTerminalExists] = useState<boolean>(false);
+  const [showMobileToolbar, setShowMobileToolbar] = useState(false);
   const [error, setError] = useState("");
   const syncRef = useRef<boolean>(sync);
   const onNavigateRef = useRef(onNavigate);
@@ -165,6 +178,7 @@ export function TerminalFlyout({
     terminalRef.current.close();
     terminalRef.current = undefined;
     setTerminalExists(false);
+    setShowMobileToolbar(false);
   }
 
   function getMockTerminalActions(): ConnectedTerminalInterface {
@@ -275,16 +289,16 @@ export function TerminalFlyout({
       return;
     }
     terminalRef.current.is_visible = true;
+    setShowMobileToolbar(terminalRef.current.usesNativeTouchSelection());
     set_font_size();
     measure_size();
-    // Get rid of browser context menu, which makes no sense on a canvas.
-    // See https://stackoverflow.com/questions/10864249/disabling-right-click-context-menu-on-a-html-canvas
-    // NOTE: this would probably make sense in DOM mode instead of canvas mode;
-    // if we switch, disable ..
-    // Well, this context menu is still silly. Always disable it.
-    $(node).on("contextmenu", function () {
-      return false;
-    });
+    $(node).off("contextmenu");
+    if (!terminalRef.current.usesNativeTouchSelection()) {
+      // Get rid of the browser context menu, which makes no sense on a canvas.
+      $(node).on("contextmenu.cocalc-terminal", function () {
+        return false;
+      });
+    }
 
     terminalRef.current.scroll_to_bottom();
   }
@@ -365,6 +379,76 @@ export function TerminalFlyout({
     }
   }
 
+  function focusTerminal(): void {
+    terminalRef.current?.focus();
+  }
+
+  function sendData(data: string): void {
+    terminalRef.current?.conn_write(data);
+  }
+
+  function pasteData(text?: string): void {
+    if (text != null) {
+      set_buffer(text);
+    }
+    terminalRef.current?.paste();
+  }
+
+  function focusTerminalAfterDefault(): void {
+    focusTerminal();
+    requestAnimationFrame(focusTerminal);
+    setTimeout(focusTerminal, 0);
+  }
+
+  function hasNativeSelection(): boolean {
+    const selection = window.getSelection?.();
+    return selection != null && !selection.isCollapsed;
+  }
+
+  function isNativeTouchRowsTarget(target: EventTarget | null): boolean {
+    return (
+      terminalRef.current?.usesNativeTouchSelection() === true &&
+      target instanceof Element &&
+      target.closest(".xterm-rows") != null
+    );
+  }
+
+  function handleTouchStart(event: React.TouchEvent<HTMLDivElement>): void {
+    if (!isNativeTouchRowsTarget(event.target) || event.touches.length !== 1) {
+      nativeTouchTapRef.current = null;
+      return;
+    }
+    const touch = event.touches[0];
+    nativeTouchTapRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      time: Date.now(),
+    };
+  }
+
+  function handleTouchEnd(event: React.TouchEvent<HTMLDivElement>): void {
+    const tap = nativeTouchTapRef.current;
+    nativeTouchTapRef.current = null;
+    if (
+      tap == null ||
+      !isNativeTouchRowsTarget(event.target) ||
+      event.changedTouches.length !== 1
+    ) {
+      return;
+    }
+    const touch = event.changedTouches[0];
+    const distance = Math.hypot(touch.clientX - tap.x, touch.clientY - tap.y);
+    if (
+      Date.now() - tap.time > NATIVE_TOUCH_TAP_MAX_MS ||
+      distance > NATIVE_TOUCH_TAP_MAX_DISTANCE ||
+      hasNativeSelection()
+    ) {
+      return;
+    }
+    event.preventDefault();
+    focusTerminal();
+  }
+
   if (student_project_functionality.disableTerminals) {
     return (
       <b style={{ margin: "auto", fontSize: "14pt", padding: "15px" }}>
@@ -398,13 +482,34 @@ export function TerminalFlyout({
         backgroundColor,
         padding: "0",
       }}
-      onClick={() => {
+      onTouchCancel={() => {
+        nativeTouchTapRef.current = null;
+      }}
+      onTouchEnd={handleTouchEnd}
+      onTouchStart={handleTouchStart}
+      onClick={(event) => {
         // Focus on click, since otherwise, clicking right outside term defocuses,
         // which is confusing.
-        terminalRef.current?.focus();
+        if (
+          terminalRef.current?.usesNativeTouchSelection() &&
+          (event.target as Element).closest(".xterm-rows")
+        ) {
+          if (!hasNativeSelection()) {
+            focusTerminalAfterDefault();
+          }
+          return;
+        }
+        focusTerminal();
       }}
     >
       {renderStatusError()}
+      {showMobileToolbar && (
+        <MobileTerminalToolbar
+          onFocus={focusTerminal}
+          onPaste={pasteData}
+          onSendData={sendData}
+        />
+      )}
       <div
         style={{
           flex: "1 0 auto",

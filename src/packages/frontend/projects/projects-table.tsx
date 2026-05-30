@@ -32,9 +32,7 @@ import {
   type SortState,
 } from "./projects-table-columns";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
-import { normalizeProjectStateForDisplay } from "./host-operational";
-import { projectThemeColor, projectThemeFromProject } from "./theme";
-import { useProjectDeleteQueue } from "./project-delete-queue";
+import { useProjectTableRecords } from "./use-project-table-records";
 
 interface Props {
   visible_projects: string[];
@@ -61,14 +59,8 @@ export function ProjectsTable({
   const actions = useActions("projects");
   const projectLabel = intl.formatMessage(labels.project);
   const project_map = useTypedRedux("projects", "project_map");
-  const host_info = useTypedRedux("projects", "host_info");
   const user_map = useTypedRedux("users", "user_map");
   const { isProjectBookmarked, setProjectBookmarked } = useBookmarkedProjects();
-  const { scheduledDeleteProjectIds } = useProjectDeleteQueue();
-  const scheduledDeleteProjectIdSet = useMemo(
-    () => new Set(scheduledDeleteProjectIds),
-    [scheduledDeleteProjectIds],
-  );
   const [sortState, setSortState] = useState<SortState>({
     columnKey: "last_edited",
     order: "descend",
@@ -82,95 +74,7 @@ export function ProjectsTable({
     }
   }, []);
 
-  // Transform visible_projects into table data
-  const tableData: ProjectTableRecord[] = useMemo(() => {
-    if (!project_map) return [];
-
-    const current_account_id = actions.redux
-      .getStore("account")
-      .get_account_id();
-
-    return visible_projects.map((project_id) => {
-      const project = project_map.get(project_id);
-      if (!project) {
-        return {
-          project_id,
-          starred: false,
-          title: `Unknown ${projectLabel}`,
-          description: "",
-          last_edited: undefined,
-          hidden: false,
-          collaborators: [],
-        };
-      }
-
-      // Extract collaborators (filter out current user)
-      const users = project.get("users");
-      const collaborators: string[] = [];
-      if (users) {
-        users.forEach((_, account_id) => {
-          if (account_id !== current_account_id) {
-            collaborators.push(account_id);
-          }
-        });
-      }
-
-      const hostId = project.get("host_id") as string | undefined;
-      const hostInfo = hostId ? host_info?.get(hostId) : undefined;
-      const rawState = project.get("state");
-      const displayState = normalizeProjectStateForDisplay({
-        projectState: rawState?.get?.("state"),
-        hostId,
-        hostInfo,
-      });
-      const state =
-        displayState && rawState?.get?.("state") !== displayState
-          ? rawState.set("state", displayState)
-          : rawState;
-      const stateName = `${state?.get?.("state") ?? ""}`;
-      const currentRole = `${
-        project.getIn(["users", current_account_id, "group"]) ?? ""
-      }`;
-      const deletionScheduled =
-        scheduledDeleteProjectIdSet.has(project_id) && stateName !== "deleting";
-      return {
-        project_id,
-        starred: isProjectBookmarked(project_id),
-        theme: projectThemeFromProject(project),
-        title: project.get("title") ?? "Untitled",
-        description: project.get("description") ?? "",
-        host: (() => {
-          const hostName = hostInfo?.get?.("name");
-          return typeof hostName === "string" ? hostName : undefined;
-        })(),
-        last_edited: project.get("last_edited"),
-        currentRole:
-          currentRole === "owner" ||
-          currentRole === "collaborator" ||
-          currentRole === "viewer"
-            ? currentRole
-            : undefined,
-        color: projectThemeColor(project),
-        state,
-        deleting: stateName === "deleting",
-        deletionScheduled,
-        deleteFailed: stateName === "delete_failed",
-        deleteError: state?.get?.("hard_delete_error"),
-        deletionBlocked:
-          deletionScheduled ||
-          stateName === "deleting" ||
-          stateName === "delete_failed",
-        hidden: !!project.getIn(["users", current_account_id, "hide"]),
-        collaborators,
-      };
-    });
-  }, [
-    visible_projects,
-    project_map,
-    host_info,
-    isProjectBookmarked,
-    scheduledDeleteProjectIdSet,
-  ]);
+  const tableData = useProjectTableRecords({ visible_projects, projectLabel });
 
   const handleToggleStar = (project_id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -243,7 +147,7 @@ export function ProjectsTable({
     });
 
     return filters;
-  }, [visible_projects, project_map, user_map]);
+  }, [actions, visible_projects, project_map, user_map]);
 
   const columns = getProjectTableColumns(
     handleToggleStar,

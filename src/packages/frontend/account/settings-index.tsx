@@ -9,6 +9,7 @@ import { defineMessages, useIntl } from "react-intl";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
+import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { labels } from "@cocalc/frontend/i18n";
 import { lite } from "@cocalc/frontend/lite";
 import { COLORS } from "@cocalc/util/theme";
@@ -114,32 +115,25 @@ const MESSAGES = defineMessages({
   },
 });
 
-const CARD_PROPS = {
-  size: "small" as const,
-  hoverable: true,
-  style: { width: 300, minWidth: 250 },
-} as const;
-
-// TODO: highlighting a few cards is a good idea, but better to do this later...
-const HIGHLIGHTED_CARD_PROPS = CARD_PROPS; // = {
-//   ...CARD_PROPS,
-//   style: {
-//     ...CARD_PROPS.style,
-//     border: `2px solid ${COLORS.BLUE_LLL}`,
-//   },
-// } as const;
-
-const FLEX_PROPS = {
-  wrap: true as const,
-  gap: "15px",
-  style: { marginBottom: "40px" },
-} as const;
-
 export function SettingsOverview() {
   const intl = useIntl();
   const is_commercial = useTypedRedux("customize", "is_commercial");
   const isAdmin = !!useTypedRedux("account", "is_admin");
   const zendesk = !!useTypedRedux("customize", "zendesk");
+  const cardProps = {
+    size: "small" as const,
+    hoverable: true,
+    style: {
+      width: IS_MOBILE ? "100%" : 300,
+      minWidth: IS_MOBILE ? 0 : 250,
+    },
+  } as const;
+  const highlightedCardProps = cardProps;
+  const flexProps = {
+    wrap: true as const,
+    gap: IS_MOBILE ? "8px" : "15px",
+    style: { marginBottom: IS_MOBILE ? "24px" : "40px" },
+  } as const;
 
   function handleNavigate(path: NavigatePath) {
     const route = parseAccountSettingsRoute(path);
@@ -149,10 +143,10 @@ export function SettingsOverview() {
   }
 
   return (
-    <div style={{ padding: "20px" }}>
-      <Flex {...FLEX_PROPS}>
+    <div style={{ padding: IS_MOBILE ? "4px 0 12px 0" : "20px" }}>
+      <Flex {...flexProps}>
         <Card
-          {...HIGHLIGHTED_CARD_PROPS}
+          {...highlightedCardProps}
           onClick={() => handleNavigate("settings/profile")}
         >
           <Card.Meta
@@ -162,7 +156,7 @@ export function SettingsOverview() {
           />
         </Card>
         <Card
-          {...HIGHLIGHTED_CARD_PROPS}
+          {...highlightedCardProps}
           onClick={() => handleNavigate("settings/preferences/appearance")}
         >
           <Card.Meta
@@ -185,7 +179,7 @@ export function SettingsOverview() {
           />
         </Card>
         <Card
-          {...CARD_PROPS}
+          {...cardProps}
           onClick={() => handleNavigate("settings/preferences/editor")}
         >
           <Card.Meta
@@ -195,7 +189,7 @@ export function SettingsOverview() {
           />
         </Card>
         <Card
-          {...CARD_PROPS}
+          {...cardProps}
           onClick={() => handleNavigate("settings/preferences/keyboard")}
         >
           <Card.Meta
@@ -205,7 +199,7 @@ export function SettingsOverview() {
           />
         </Card>
         <Card
-          {...CARD_PROPS}
+          {...cardProps}
           onClick={() => handleNavigate("settings/preferences/ai")}
         >
           <Card.Meta
@@ -216,7 +210,7 @@ export function SettingsOverview() {
         </Card>
         {!lite && (
           <Card
-            {...CARD_PROPS}
+            {...cardProps}
             onClick={() => handleNavigate("settings/preferences/communication")}
           >
             <Card.Meta
@@ -228,7 +222,7 @@ export function SettingsOverview() {
         )}
         {!lite && (
           <Card
-            {...CARD_PROPS}
+            {...cardProps}
             onClick={() => handleNavigate("settings/preferences/keys")}
           >
             <Card.Meta
@@ -239,7 +233,7 @@ export function SettingsOverview() {
           </Card>
         )}
         <Card
-          {...CARD_PROPS}
+          {...cardProps}
           onClick={() => handleNavigate("settings/preferences/other")}
         >
           <Card.Meta
@@ -255,9 +249,9 @@ export function SettingsOverview() {
           <Divider plain>
             <Icon name="money-check" /> {intl.formatMessage(labels.billing)}
           </Divider>
-          <Flex {...FLEX_PROPS}>
+          <Flex {...flexProps}>
             <Card
-              {...HIGHLIGHTED_CARD_PROPS}
+              {...highlightedCardProps}
               onClick={() => handleNavigate("settings/subscriptions")}
             >
               <Card.Meta
@@ -267,7 +261,7 @@ export function SettingsOverview() {
               />
             </Card>
             <Card
-              {...HIGHLIGHTED_CARD_PROPS}
+              {...highlightedCardProps}
               onClick={() => handleNavigate("settings/licenses")}
             >
               <Card.Meta
@@ -277,7 +271,7 @@ export function SettingsOverview() {
               />
             </Card>
             <Card
-              {...HIGHLIGHTED_CARD_PROPS}
+              {...highlightedCardProps}
               onClick={() => handleNavigate("settings/store")}
             >
               <Card.Meta
@@ -287,7 +281,7 @@ export function SettingsOverview() {
               />
             </Card>
             <Card
-              {...CARD_PROPS}
+              {...cardProps}
               onClick={() => handleNavigate("settings/vouchers")}
             >
               <Card.Meta
@@ -299,7 +293,7 @@ export function SettingsOverview() {
             {is_commercial && (
               <>
                 <Card
-                  {...CARD_PROPS}
+                  {...cardProps}
                   onClick={() => handleNavigate("settings/purchases")}
                 >
                   <Card.Meta
@@ -309,7 +303,7 @@ export function SettingsOverview() {
                   />
                 </Card>
                 <Card
-                  {...CARD_PROPS}
+                  {...cardProps}
                   onClick={() => handleNavigate("settings/payments")}
                 >
                   <Card.Meta
@@ -319,7 +313,7 @@ export function SettingsOverview() {
                   />
                 </Card>
                 <Card
-                  {...CARD_PROPS}
+                  {...cardProps}
                   onClick={() => handleNavigate("settings/statements")}
                 >
                   <Card.Meta
@@ -339,9 +333,9 @@ export function SettingsOverview() {
           <Divider plain>
             <Icon name="medkit" /> {intl.formatMessage(labels.support)}
           </Divider>
-          <Flex {...FLEX_PROPS}>
+          <Flex {...flexProps}>
             <Card
-              {...CARD_PROPS}
+              {...cardProps}
               onClick={() => handleNavigate("settings/support")}
             >
               <Card.Meta

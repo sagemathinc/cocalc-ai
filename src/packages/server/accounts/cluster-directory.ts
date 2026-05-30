@@ -630,9 +630,9 @@ export async function getClusterBanEquivalentEmailAccountsDirect({
     pool.query(
       `SELECT account_id, first_name, last_name, email_address, home_bay_id,
               created, last_active, banned, email_address_verified
-         FROM accounts
+       FROM accounts
         WHERE (${equivalentWhere})
-          AND email_address_verified=TRUE
+          AND email_address_verified ? email_address
           AND (deleted IS NULL OR deleted=FALSE)
         LIMIT $3`,
       params,

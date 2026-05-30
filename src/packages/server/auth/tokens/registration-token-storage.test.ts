@@ -16,7 +16,10 @@ import {
 } from "@cocalc/database/postgres/account/registration-token-secret";
 import { resetServerSettingsCache } from "@cocalc/database/settings/server-settings";
 import { ensureBootstrapAdminToken } from "@cocalc/server/auth/bootstrap-admin";
-import { validateRegistrationTokenDirect } from "./redeem";
+import {
+  redeemRegistrationTokenDirect,
+  validateRegistrationTokenDirect,
+} from "./redeem";
 
 function queryDb() {
   return {
@@ -35,7 +38,7 @@ function queryDb() {
 
 async function rawRegistrationTokenRows() {
   const { rows } = await getPool().query(
-    `SELECT token, descr, customize
+    `SELECT token, descr, counter, "limit", customize
        FROM registration_tokens
       ORDER BY descr NULLS LAST, token`,
   );
@@ -171,7 +174,7 @@ describe("registration token storage protection", () => {
     expect(rawRows).toHaveLength(1);
   });
 
-  it("stores bootstrap-admin tokens hash-only and hides them from admin token listing", async () => {
+  it("stores pending bootstrap-admin tokens encrypted and hides them from admin token listing", async () => {
     const url = await ensureBootstrapAdminToken({
       baseUrl: "https://cocalc.example/",
     });
@@ -183,8 +186,8 @@ describe("registration token storage protection", () => {
     const rawRows = await rawRegistrationTokenRows();
     expect(rawRows).toHaveLength(1);
     expect(rawRows[0].descr).toBe("Bootstrap Admin");
-    expect(isHashedRegistrationTokenValue(rawRows[0].token)).toBe(true);
-    expect(isEncryptedRegistrationTokenValue(rawRows[0].token)).toBe(false);
+    expect(isEncryptedRegistrationTokenValue(rawRows[0].token)).toBe(true);
+    expect(isHashedRegistrationTokenValue(rawRows[0].token)).toBe(false);
     await expect(
       storedRegistrationTokenMatches(rawRows[0].token, clearToken!),
     ).resolves.toBe(true);
@@ -193,5 +196,48 @@ describe("registration token storage protection", () => {
       token: "*",
     });
     expect(visibleRows).toEqual([]);
+
+    const protectedRows = await rawRegistrationTokenRows();
+    expect(protectedRows).toHaveLength(1);
+    expect(isHashedRegistrationTokenValue(protectedRows[0].token)).toBe(true);
+    expect(isEncryptedRegistrationTokenValue(protectedRows[0].token)).toBe(
+      false,
+    );
+  });
+
+  it("replaces exhausted bootstrap-admin tokens", async () => {
+    const firstUrl = await ensureBootstrapAdminToken({
+      baseUrl: "https://cocalc.example/",
+    });
+    const firstToken = new URL(firstUrl!).searchParams.get("registrationToken");
+    expect(firstToken).toBeTruthy();
+
+    await expect(
+      redeemRegistrationTokenDirect(firstToken!),
+    ).resolves.toMatchObject({
+      customize: expect.objectContaining({ bootstrap: true }),
+    });
+
+    let rawRows = await rawRegistrationTokenRows();
+    expect(rawRows).toHaveLength(1);
+    expect(rawRows[0].counter).toBe(1);
+    expect(rawRows[0].limit).toBe(1);
+
+    const secondUrl = await ensureBootstrapAdminToken({
+      baseUrl: "https://cocalc.example/",
+    });
+    const secondToken = new URL(secondUrl!).searchParams.get(
+      "registrationToken",
+    );
+    expect(secondToken).toBeTruthy();
+    expect(secondToken).not.toBe(firstToken);
+
+    rawRows = await rawRegistrationTokenRows();
+    expect(rawRows).toHaveLength(1);
+    expect(rawRows[0].counter).toBeNull();
+    expect(rawRows[0].limit).toBe(1);
+    await expect(
+      storedRegistrationTokenMatches(rawRows[0].token, secondToken!),
+    ).resolves.toBe(true);
   });
 });

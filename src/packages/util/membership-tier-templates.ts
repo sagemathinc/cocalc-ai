@@ -72,7 +72,7 @@ const STORE_MARKETING = {
     store_highlights: [
       "Best shared resources",
       "Run CoCalc Launchpad wherever you want to stay in full control",
-      "Largest included AI allowance",
+      "Postpaid billing for dedicated hosts",
     ],
   },
 } as const;

@@ -11,6 +11,7 @@ packages:
 
 minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
+  - "@cocalc/xterm"
   - patchflow
   - "@nebius/js-sdk"
   # First patched version for GHSA-xcj9-5m2h-648r, GHSA-87f9-hvmw-gh4p,

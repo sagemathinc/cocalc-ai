@@ -32,6 +32,14 @@ These are the concrete operational facts for working on the `lite4b` dev setup.
 ## Browser / UI
 
 - The UI button labeled `Deploy hub latest` is the normal working path for rolling a host onto the bundle currently advertised by the hub's `/software` endpoint.
+- The same operational notes usually apply to the sibling `lite2b` dev site; replace `https://lite4b.cocalc.ai` with `https://lite2b.cocalc.ai` when targeting that deployment.
+- Browser-session spawning and other CLI actions that issue browser sign-in cookies require fresh auth. In this dev setup, load the hub env and use dev fresh auth against the loopback hub instead of an interactive 2FA flow:
+  - `cd /home/user/cocalc-ai/src`
+  - `eval "$(pnpm -s dev:hub:env)"`
+  - `node packages/cli/dist/bin/cocalc.js --api http://localhost:9100 auth elevate --dev`
+  - then retry loopback browser commands such as `node packages/cli/dist/bin/cocalc.js --api http://localhost:9100 browser session spawn --target-url http://localhost:9100/projects --use`
+- Caveat: follow-up fresh-auth commands still need a cookie-backed CLI session. If the active CLI context is only the `_env` bearer/hub-password context, `auth elevate --dev` can report success but not leave a reusable cookie for `browser session spawn`. In that case, use an already signed-in browser session or create/pass a dev `remember_me` cookie explicitly.
+- The dev fresh-auth bootstrap is intentionally loopback-only. For the public Cloudflare hostnames such as `https://lite2b.cocalc.ai`, use an already signed-in browser session or normal browser approval.
 - CLI equivalent I used:
   - `cd /home/user/cocalc-ai/src`
   - `eval "$(pnpm -s dev:hub:env)"`
