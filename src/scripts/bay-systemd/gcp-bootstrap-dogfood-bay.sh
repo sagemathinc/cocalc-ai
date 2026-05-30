@@ -404,6 +404,9 @@ bootstrap_remote_bay() {
     run remote_ssh "$(
       printf "sudo /tmp/bay-systemd/bay-bootstrap-release.sh --static-bundle %q --bay-id %q --worker-count %q" \
         "$remote_bundle" "$BAY_ID" "$WORKER_COUNT"
+      if [[ "${#public_url_arg[@]}" -gt 0 ]]; then
+        printf " --public-url %q" "$PUBLIC_URL"
+      fi
     )"
     run remote_ssh "$(
       printf "sudo systemctl restart"

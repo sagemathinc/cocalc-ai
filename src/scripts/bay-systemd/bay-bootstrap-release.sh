@@ -118,6 +118,34 @@ render_if_missing_or_forced() {
   fi
 }
 
+set_env_var() {
+  local target="$1"
+  local name="$2"
+  local value="$3"
+  local tmp
+  tmp="$(mktemp)"
+  if [[ -e "$target" ]]; then
+    awk -v name="$name" -v value="$value" '
+      BEGIN { written = 0 }
+      $0 ~ "^" name "=" {
+        if (!written) {
+          print name "=" value
+          written = 1
+        }
+        next
+      }
+      { print }
+      END {
+        if (!written) print name "=" value
+      }
+    ' "$target" > "$tmp"
+  else
+    printf '%s=%s\n' "$name" "$value" > "$tmp"
+  fi
+  cat "$tmp" > "$target"
+  rm -f "$tmp"
+}
+
 random_secret() {
   openssl rand -hex 32
 }
@@ -636,6 +664,9 @@ CONAT_SERVER=http://127.0.0.1:${ROUTER_PORT}
 
 COCALC_BAY_POSTGRES_CMD='${POSTGRES_BIN} -D "\$COCALC_BAY_POSTGRES_DATA_DIR" -k "\$COCALC_BAY_POSTGRES_SOCKET_DIR" -h "\$COCALC_BAY_POSTGRES_HOST" -p "\$COCALC_BAY_POSTGRES_PORT"'
 EOF
+  if [[ -n "$PUBLIC_URL" ]]; then
+    set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_PUBLIC_URL" "$PUBLIC_URL"
+  fi
 
   render_if_missing_or_forced "${ENV_DIR}/bay-workers.env" "$BAY_WORKERS_ENV_EXAMPLE" <<EOF
 COCALC_BAY_WORKER_COUNT=${WORKER_COUNT}
