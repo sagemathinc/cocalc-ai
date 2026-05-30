@@ -10,7 +10,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 
 const TABLE = "account_admin_audit_log";
 
-export type AccountAdminAuditAction = "grant-admin";
+export type AccountAdminAuditAction = "grant-admin" | "revoke-admin";
 
 function normalizeReason(reason?: string | null): string | null {
   const trimmed = `${reason ?? ""}`.trim();

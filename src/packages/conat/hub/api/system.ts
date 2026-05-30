@@ -98,6 +98,7 @@ export const system = {
   adminVerifyEmailAddress: authFirst,
   adminDisableTwoFactor: authFirst,
   adminGrantAdminRole: authFirst,
+  adminRevokeAdminRole: authFirst,
   sendTestEmail: authFirst,
   setSiteSettings: authFirst,
   syncSiteSettingsToBays: authFirst,
@@ -1882,6 +1883,18 @@ export interface System {
   }) => Promise<{
     account_id: string;
     already_admin: boolean;
+    groups: string[];
+  }>;
+
+  adminRevokeAdminRole: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    user_account_id: string;
+    reason?: string | null;
+  }) => Promise<{
+    account_id: string;
+    was_admin: boolean;
     groups: string[];
   }>;
 

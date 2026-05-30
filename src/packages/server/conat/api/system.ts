@@ -55,6 +55,7 @@ import {
 import {
   adminDisableClusterAccountTwoFactor,
   adminGrantClusterAccountAdminRole,
+  adminRevokeClusterAccountAdminRole,
   adminVerifyClusterAccountEmailAddress,
   createClusterAccount,
   deleteClusterAccount,
@@ -3721,6 +3722,45 @@ export async function adminGrantAdminRole({
     allow_actor_impersonation: false,
   });
   return await adminGrantClusterAccountAdminRole({
+    account_id: targetAccountId,
+    actor_account_id: account_id,
+    reason,
+    metadata: {
+      created_via: "admin-ui",
+      browser_id: `${browser_id ?? ""}`.trim() || undefined,
+      authenticated_with_session_hash: !!`${session_hash ?? ""}`.trim(),
+    },
+  });
+}
+
+export async function adminRevokeAdminRole({
+  account_id,
+  browser_id,
+  session_hash,
+  user_account_id,
+  reason,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  user_account_id: string;
+  reason?: string | null;
+}) {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  const targetAccountId = `${user_account_id ?? ""}`.trim().toLowerCase();
+  if (!targetAccountId) {
+    throw Error("user_account_id is required");
+  }
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+    allow_actor_impersonation: false,
+  });
+  return await adminRevokeClusterAccountAdminRole({
     account_id: targetAccountId,
     actor_account_id: account_id,
     reason,
