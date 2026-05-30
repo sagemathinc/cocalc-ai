@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Card, Flex, Form, Input, Space, Typography } from "antd";
+import { Button, Card, Flex, Input, Space, Typography } from "antd";
 import { join } from "path";
 import { useIntl } from "react-intl";
 
@@ -31,6 +31,7 @@ interface State {
   state: "view" | "edit" | "saving"; // view --> edit --> saving --> view
   old_password: string;
   new_password: string;
+  confirm_password: string;
   error: string;
 }
 
@@ -49,6 +50,7 @@ export function PasswordSetting({
   const [state, set_state] = useState<State["state"]>("view");
   const [old_password, set_old_password] = useState("");
   const [new_password, set_new_password] = useState("");
+  const [confirm_password, set_confirm_password] = useState("");
   const [error, set_error] = useState("");
 
   function reset(): void {
@@ -56,6 +58,7 @@ export function PasswordSetting({
     set_error("");
     set_old_password("");
     set_new_password("");
+    set_confirm_password("");
   }
 
   function change_password(): void {
@@ -67,6 +70,7 @@ export function PasswordSetting({
     set_state("view");
     set_old_password("");
     set_new_password("");
+    set_confirm_password("");
   }
 
   async function runSecurityAction(action: () => Promise<void>) {
@@ -107,7 +111,8 @@ export function PasswordSetting({
     return !!(
       new_password.length >= MIN_PASSWORD_LENGTH &&
       new_password &&
-      new_password !== old_password
+      new_password !== old_password &&
+      new_password === confirm_password
     );
   }
 
@@ -144,69 +149,78 @@ export function PasswordSetting({
     }
   }
 
-  function onFinish(): void {
-    if (is_submittable()) {
-      save_new_password();
-    }
-  }
-
   function render_edit(): Rendered {
     const passwordHint =
       new_password.length < MIN_PASSWORD_LENGTH
         ? `at least ${MIN_PASSWORD_LENGTH} characters`
         : new_password.length >= 6 && new_password == old_password
-          ? "different than old password"
+          ? "must be different from old"
           : undefined;
 
     return (
       <Card size="small">
-        <Form layout="vertical" onFinish={onFinish}>
-          <Form.Item
-            label={
-              <>
-                Current password{" "}
-                <Typography.Text type="secondary">
-                  (leave blank if you have not set a password)
-                </Typography.Text>
-              </>
-            }
-          >
-            <Input.Password
-              autoFocus
-              type="password"
-              value={old_password}
-              placeholder="Current password"
-              onChange={(e) => set_old_password(e.target.value)}
-            />
-          </Form.Item>
-          <Form.Item
-            label={
-              <>
-                New password{" "}
-                {passwordHint ? (
-                  <Typography.Text type="secondary">
-                    ({passwordHint})
-                  </Typography.Text>
-                ) : undefined}
-              </>
-            }
-          >
-            <Input.Password
-              type="password"
-              value={new_password}
-              placeholder="New password"
-              onChange={(e) => {
-                set_new_password(e.target.value);
-              }}
-            />
-          </Form.Item>
-        </Form>
-        <Space>
-          {render_change_button()}
-          <Button onClick={cancel_editing}>Cancel</Button>
+        <Space vertical>
+          <Flex align="baseline" gap="middle" justify="space-between">
+            <Typography.Text>Current password</Typography.Text>
+            <Typography.Text type="secondary">
+              Leave blank if you have not set a password
+            </Typography.Text>
+          </Flex>
+          <Input.Password
+            autoFocus
+            autoComplete="current-password"
+            name="current-password"
+            type="password"
+            value={old_password}
+            placeholder="Current password"
+            onChange={(e) => set_old_password(e.target.value)}
+          />
+          <Flex align="baseline" gap="middle" justify="space-between">
+            <Typography.Text>New password</Typography.Text>
+            {passwordHint ? (
+              <Typography.Text type="secondary">{passwordHint}</Typography.Text>
+            ) : undefined}
+          </Flex>
+          <Input.Password
+            autoComplete="new-password"
+            name="new-password"
+            type="password"
+            value={new_password}
+            placeholder="New password"
+            onChange={(e) => {
+              set_new_password(e.target.value);
+            }}
+          />
+          <Flex align="baseline" gap="middle" justify="space-between">
+            <Typography.Text>Confirm new password</Typography.Text>
+            {confirm_password && new_password !== confirm_password ? (
+              <Typography.Text type="danger">
+                Passwords do not match
+              </Typography.Text>
+            ) : undefined}
+          </Flex>
+          <Input.Password
+            autoComplete="new-password"
+            name="new-password"
+            type="password"
+            value={confirm_password}
+            placeholder="Confirm new password"
+            onChange={(e) => {
+              set_confirm_password(e.target.value);
+            }}
+            onPressEnter={() => {
+              if (is_submittable()) {
+                save_new_password();
+              }
+            }}
+          />
+          <Space>
+            {render_change_button()}
+            <Button onClick={cancel_editing}>Cancel</Button>
+          </Space>
+          {render_error()}
+          {render_saving()}
         </Space>
-        {render_error()}
-        {render_saving()}
       </Card>
     );
   }
