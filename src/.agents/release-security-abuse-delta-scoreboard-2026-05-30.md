@@ -216,6 +216,10 @@ in `src/packages/lite`.
 
 Record manual runs here as the audit progresses.
 
-| Date       | Scenario                 | Result  | Notes                                           |
-| ---------- | ------------------------ | ------- | ----------------------------------------------- |
-| 2026-05-30 | Delta audit plan created | pending | Manual validation not started in this document. |
+| Date       | Scenario                                           | Result | Notes                                                                                                                                                                                                   |
+| ---------- | -------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-05-30 | Delta audit plan created                           | done   | Scoreboard now has zero unknown and zero finding rows.                                                                                                                                                  |
+| 2026-05-30 | Access request, viewer endpoint, and RPC guard set | pass   | `pnpm test projects/collaborators.test.ts conat/api/dangerous-rpc-registry.test.ts conat/api/project-viewer-endpoint-audit.test.ts conat/api/project-host-token-auth.test.ts` in `src/packages/server`. |
+| 2026-05-30 | Scratch disk billing/control-plane regression set  | pass   | `pnpm test conat/api/hosts.test.ts project-host/auto-grow.test.ts` in `src/packages/server`.                                                                                                            |
+| 2026-05-30 | Viewer project list/index projection               | pass   | `pnpm test postgres/account-project-index-projector.test.ts` in `src/packages/database`.                                                                                                                |
+| 2026-05-30 | Frontend auth/project/viewer UI regression set     | pass   | `pnpm test public/auth/__tests__/app.test.tsx projects/projects-page.test.tsx project/page/activity-bar-tabs.test.tsx` in `src/packages/frontend`; known jsdom/Ant Design warnings remain.              |
