@@ -42,6 +42,35 @@ import ShowError from "@cocalc/frontend/components/error";
 
 const { CheckableTag } = AntdTag;
 
+type CloudflareTunnelStatus = Pick<
+  CloudflareTunnelApplyResult,
+  "enabled" | "running" | "hostname" | "error"
+>;
+type ImmutableLikeCloudflareTunnelStatus = {
+  get: (key: string) => unknown;
+};
+
+function isImmutableLikeCloudflareTunnelStatus(
+  value: unknown,
+): value is ImmutableLikeCloudflareTunnelStatus {
+  return typeof (value as { get?: unknown })?.get === "function";
+}
+
+function normalizeCloudflareTunnelStatus(
+  value: CloudflareTunnelStatus | ImmutableLikeCloudflareTunnelStatus | null,
+): CloudflareTunnelStatus | null {
+  if (value == null) return null;
+  if (isImmutableLikeCloudflareTunnelStatus(value)) {
+    return {
+      enabled: value.get("enabled") === true,
+      running: value.get("running") === true,
+      hostname: `${value.get("hostname") ?? ""}`.trim() || undefined,
+      error: value.get("error") == null ? null : `${value.get("error")}`.trim(),
+    };
+  }
+  return value;
+}
+
 const REMOVED_LEGACY_AI_SETTINGS = new Set<string>([
   "google_vertexai_enabled",
   "mistral_enabled",
@@ -548,7 +577,7 @@ export default function SiteSettings({ close }) {
     setCloudflareApplyError("");
     setCloudflareApplyResult(null);
     try {
-      const completed = await runFreshAuthAction(async () => {
+      await runFreshAuthAction(async () => {
         const result =
           await webapp_client.conat_client.hub.system.applyCloudflareTunnelSettings(
             {
@@ -565,9 +594,6 @@ export default function SiteSettings({ close }) {
           },
         });
       });
-      if (!completed) {
-        setCloudflareApplyError("Fresh authentication was not completed.");
-      }
     } catch (err) {
       setCloudflareApplyError(err instanceof Error ? err.message : `${err}`);
     } finally {
@@ -740,8 +766,11 @@ export default function SiteSettings({ close }) {
   }
 
   function Warning() {
+    const effectiveCloudflareStatus = normalizeCloudflareTunnelStatus(
+      cloudflareApplyResult ?? cloudflareStatus ?? null,
+    );
     const cloudflareTunnelConfigured =
-      cloudflareStatus?.enabled ||
+      effectiveCloudflareStatus?.enabled ||
       `${data?.cloudflare_mode ?? ""}`.trim().toLowerCase() === "self" ||
       to_bool(data?.project_hosts_cloudflare_tunnel_enabled);
     const cloudflareSettingsModified = getModifiedSettings().some(
@@ -752,7 +781,8 @@ export default function SiteSettings({ close }) {
     );
     const showCloudflareWarning =
       cloudflareTunnelConfigured &&
-      (!cloudflareStatus?.running || cloudflareStatus.error);
+      effectiveCloudflareStatus != null &&
+      (!effectiveCloudflareStatus.running || effectiveCloudflareStatus.error);
     return (
       <div>
         {showCloudflareWarning && (
@@ -766,8 +796,8 @@ export default function SiteSettings({ close }) {
             title={
               <div>
                 <b>Cloudflare tunnel is not healthy.</b>{" "}
-                {cloudflareStatus?.error
-                  ? `Details: ${cloudflareStatus.error}`
+                {effectiveCloudflareStatus?.error
+                  ? `Details: ${effectiveCloudflareStatus.error}`
                   : "Project hosts will not work until the tunnel is running."}
               </div>
             }
