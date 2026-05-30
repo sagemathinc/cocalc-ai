@@ -27,6 +27,7 @@ import {
 import { capitalize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { Icon } from "./icon";
+import { Tooltip } from "./tip";
 
 const Pickers = {
   circle: CirclePicker,
@@ -175,12 +176,14 @@ export default function ColorPicker({
 }
 
 function ColorModal({
+  color,
   show,
   setShow,
   onChange,
   title,
   radio,
 }: {
+  color?: string;
   show?;
   setShow;
   onChange?;
@@ -197,6 +200,7 @@ function ColorModal({
       onCancel={() => setShow(false)}
     >
       <ColorPicker
+        color={color}
         radio={radio}
         onChange={(color) => {
           onChange(color);
@@ -208,42 +212,57 @@ function ColorModal({
 }
 
 interface ButtonProps {
+  children?: ReactNode;
+  color?: string;
+  disabled?: boolean;
   onChange: (htmlColor: string) => void;
   title?: ReactNode;
   style?: CSSProperties;
+  tooltip?: ReactNode;
   type?: "default" | "link" | "text" | "primary" | "dashed";
   onClick?: () => boolean | undefined;
   radio?: boolean;
 }
 
 export function ColorButton({
+  children,
+  color,
+  disabled,
   onChange,
   title,
   style,
+  tooltip,
   type,
   onClick,
   radio,
 }: ButtonProps) {
   const [show, setShow] = useState<boolean>(false);
+  const button = (
+    <Button
+      disabled={disabled}
+      onClick={() => {
+        if (onClick?.()) return;
+        setShow(!show);
+      }}
+      style={style}
+      type={type}
+    >
+      <Icon name="colors" /> {children}
+    </Button>
+  );
+  const tooltipTarget = disabled ? <span>{button}</span> : button;
+
   return (
     <>
       <ColorModal
+        color={color}
         show={show}
         setShow={setShow}
         title={title}
         onChange={onChange}
         radio={radio}
       />
-      <Button
-        onClick={() => {
-          if (onClick?.()) return;
-          setShow(!show);
-        }}
-        style={style}
-        type={type}
-      >
-        <Icon name="colors" />
-      </Button>
+      {tooltip ? <Tooltip title={tooltip}>{tooltipTarget}</Tooltip> : button}
     </>
   );
 }

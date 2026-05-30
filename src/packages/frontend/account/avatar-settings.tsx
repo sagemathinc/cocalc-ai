@@ -3,32 +3,86 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Form, Space } from "antd";
-import { useIntl } from "react-intl";
+import { type CSSProperties, useEffect, useState } from "react";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import { ColorPicker } from "@cocalc/frontend/colorpicker";
+import { ColorButton } from "@cocalc/frontend/components/color-picker";
 import { Loading, SettingBox } from "@cocalc/frontend/components";
-import { labels } from "@cocalc/frontend/i18n";
-import { Avatar } from "./avatar/avatar";
+import { DEFAULT_COLOR } from "@cocalc/frontend/users/store";
+import { avatar_fontcolor } from "./avatar/font-color";
 import { ProfileImageSelector, setProfile } from "./profile-image";
 
 interface Props {
   email_address?: string;
-  // first_name?: string;
-  // last_name?: string;
+}
+
+const AVATAR_PREVIEW_SIZE = 96;
+
+function getAvatarLetter(firstName?: string): string {
+  return firstName?.trim()?.toUpperCase()[0] ?? "?";
+}
+
+function AvatarPreview({
+  color,
+  firstName,
+  image,
+  size = AVATAR_PREVIEW_SIZE,
+}: {
+  color: string;
+  firstName?: string;
+  image?: string;
+  size?: number;
+}) {
+  const style: CSSProperties = {
+    alignItems: "center",
+    backgroundColor: color,
+    borderRadius: "50%",
+    color: avatar_fontcolor(color),
+    cursor: "pointer",
+    display: "inline-flex",
+    fontFamily: "sans-serif",
+    fontSize: 0.7 * size,
+    height: size,
+    justifyContent: "center",
+    lineHeight: `${size}px`,
+    width: size,
+  };
+  if (image) {
+    return (
+      <img
+        src={image}
+        style={{
+          borderRadius: "50%",
+          height: size,
+          cursor: "pointer",
+          objectFit: "cover",
+          width: size,
+        }}
+      />
+    );
+  }
+  return <span style={style}>{getAvatarLetter(firstName)}</span>;
 }
 
 export function AvatarSettings({ email_address }: Props) {
-  const intl = useIntl();
-
-  // const [show_instructions, set_show_instructions] = useState<boolean>(false);
-
   const account_id: string = useTypedRedux("account", "account_id");
+  const firstName = useTypedRedux("account", "first_name");
   const profile = useTypedRedux("account", "profile");
+  const profileColor = profile?.get("color") ?? DEFAULT_COLOR;
+  const profileImage = profile?.get("image");
+  const [previewColor, setPreviewColor] = useState<string>(profileColor);
+  const [previewImage, setPreviewImage] = useState<string | undefined>(
+    profileImage,
+  );
 
-  function onColorChange(value: string) {
-    setProfile({
+  useEffect(() => {
+    setPreviewColor(profileColor);
+    setPreviewImage(profileImage);
+  }, [profileColor, profileImage]);
+
+  async function onColorChange(value: string): Promise<void> {
+    setPreviewColor(value);
+    await setProfile({
       account_id,
       profile: { color: value },
     });
@@ -38,31 +92,37 @@ export function AvatarSettings({ email_address }: Props) {
     return <Loading />;
   }
 
+  const usesDefaultAvatar = !previewImage;
+
   return (
-    <SettingBox
-      title={
-        <Space>
-          <Avatar account_id={account_id} size={48} />
-          Avatar
-        </Space>
-      }
-    >
-      <Form layout="vertical">
-        <Form.Item label={intl.formatMessage(labels.color)}>
-          <ColorPicker
-            color={profile?.get("color")}
-            justifyContent={"flex-start"}
+    <SettingBox title="Avatar">
+      <ProfileImageSelector
+        account_id={account_id}
+        avatarPreview={
+          <AvatarPreview
+            color={previewColor}
+            firstName={firstName}
+            image={previewImage}
+          />
+        }
+        colorAction={
+          <ColorButton
+            color={previewColor}
+            disabled={!usesDefaultAvatar}
             onChange={onColorChange}
-          />
-        </Form.Item>
-        <Form.Item label="Style">
-          <ProfileImageSelector
-            account_id={account_id}
-            email_address={email_address}
-            profile={profile}
-          />
-        </Form.Item>
-      </Form>
+            title="Select avatar color"
+            tooltip={
+              usesDefaultAvatar
+                ? "Pick the color for your default avatar."
+                : "Color applies only to the default avatar."
+            }
+          >
+            Color
+          </ColorButton>
+        }
+        email_address={email_address}
+        onImageChange={(src) => setPreviewImage(src || undefined)}
+      />
     </SettingBox>
   );
 }

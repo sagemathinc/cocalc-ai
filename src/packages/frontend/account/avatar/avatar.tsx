@@ -73,21 +73,22 @@ const Avatar0: React.FC<Props> = (props) => {
   // we use the user_map to display the username and face:
   const user_map = useTypedRedux("users", "user_map");
   const current_account_id = useTypedRedux("account", "account_id");
-  const account_first_name = useTypedRedux("account", "first_name");
-  const account_last_name = useTypedRedux("account", "last_name");
-  const account_profile = useTypedRedux("account", "profile");
-  const is_current_account =
-    props.account_id != null && props.account_id === current_account_id;
-  const account_profile_image = is_current_account
-    ? account_profile?.get?.("image")
-    : undefined;
-  const account_profile_color = is_current_account
-    ? account_profile?.get?.("color")
-    : undefined;
+  const current_first_name = useTypedRedux("account", "first_name");
+  const current_last_name = useTypedRedux("account", "last_name");
+  const current_profile = useTypedRedux("account", "profile");
   const [image, set_image] = useState<string | undefined>(undefined);
   const [background_color, set_background_color] =
     useState<string>(DEFAULT_COLOR);
   const previousAccountIdRef = useRef(props.account_id);
+  const isCurrentAccount =
+    props.account_id != null && props.account_id === current_account_id;
+
+  function profileImage(image?: string): string | undefined {
+    if (!image || startswith(image, "https://api.adorable.io")) {
+      return undefined;
+    }
+    return image;
+  }
 
   useAsyncEffect(
     async (isMounted) => {
@@ -102,26 +103,14 @@ const Avatar0: React.FC<Props> = (props) => {
         set_image(undefined);
         set_background_color(DEFAULT_COLOR);
       }
-      if (is_current_account && account_profile != null) {
-        if (isMounted()) {
-          if (startswith(account_profile_image, "https://api.adorable.io")) {
-            // Adorable is gone -- see https://github.com/sagemathinc/cocalc/issues/5054
-            set_image(undefined);
-          } else {
-            set_image(account_profile_image);
-          }
-          set_background_color(account_profile_color ?? DEFAULT_COLOR);
-        }
+      if (isCurrentAccount) {
+        set_image(profileImage(current_profile?.get("image")));
+        set_background_color(current_profile?.get("color") ?? DEFAULT_COLOR);
         return;
       }
       const image = await redux.getStore("users").get_image(props.account_id);
       if (isMounted()) {
-        if (startswith(image, "https://api.adorable.io")) {
-          // Adorable is gone -- see https://github.com/sagemathinc/cocalc/issues/5054
-          set_image(undefined);
-        } else {
-          set_image(image);
-        }
+        set_image(profileImage(image));
       }
       const background_color = await redux
         .getStore("users")
@@ -133,11 +122,9 @@ const Avatar0: React.FC<Props> = (props) => {
     //    https://github.com/sagemathinc/cocalc/issues/5013
     [
       props.account_id,
-      user_map.getIn([props.account_id, "profile"]),
-      is_current_account,
-      account_profile,
-      account_profile_image,
-      account_profile_color,
+      isCurrentAccount
+        ? current_profile
+        : user_map.getIn([props.account_id, "profile"]),
     ],
   );
 
@@ -180,12 +167,13 @@ const Avatar0: React.FC<Props> = (props) => {
     if (props.first_name) {
       return props.first_name.toUpperCase()[0];
     }
+    if (isCurrentAccount && current_first_name) {
+      return current_first_name.toUpperCase()[0];
+    }
     if (!props.account_id) return "?";
     const first_name = user_map.getIn([props.account_id, "first_name"]);
     if (first_name) {
       return first_name.toUpperCase()[0];
-    } else if (is_current_account && account_first_name) {
-      return account_first_name.toUpperCase()[0];
     } else {
       return "?";
     }
@@ -198,14 +186,12 @@ const Avatar0: React.FC<Props> = (props) => {
         30,
       );
     }
-    if (
-      is_current_account &&
-      (account_first_name != null || account_last_name != null)
-    ) {
-      return trunc_middle(
-        `${account_first_name ?? ""} ${account_last_name ?? ""}`.trim(),
-        30,
-      );
+    if (isCurrentAccount) {
+      const name =
+        `${current_first_name ?? ""} ${current_last_name ?? ""}`.trim();
+      if (name) {
+        return trunc_middle(name, 30);
+      }
     }
     if (!props.account_id) return "Unknown";
     return trunc_middle(
