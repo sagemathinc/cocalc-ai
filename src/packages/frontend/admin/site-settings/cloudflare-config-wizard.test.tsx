@@ -72,7 +72,7 @@ describe("CloudflareConfigWizard", () => {
 
     expect(
       screen.getByText(
-        "Cloudflare tunnel settings are applied at server startup",
+        "Cloudflare tunnel settings must be applied to the running server",
       ),
     ).toBeInTheDocument();
     expect(
@@ -81,7 +81,7 @@ describe("CloudflareConfigWizard", () => {
       }),
     ).toBeEnabled();
     expect(
-      screen.getByText(/does not reflect draft or newly saved/i),
+      screen.getByText(/save and apply the Cloudflare tunnel settings/i),
     ).toBeInTheDocument();
   });
 
@@ -106,7 +106,7 @@ describe("CloudflareConfigWizard", () => {
       }),
     ).toBeDisabled();
     expect(
-      screen.getByText(/save them and restart the server/i),
+      screen.getByText(/use Apply Cloudflare tunnel settings now/i),
     ).toBeInTheDocument();
   });
 

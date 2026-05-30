@@ -10,6 +10,7 @@ export type AdminSection =
   | "project-backup-shards"
   | "registration-tokens"
   | "rootfs"
+  | "site-setup"
   | "site-settings"
   | "software-licenses"
   | "sso"
@@ -22,6 +23,7 @@ const ADMIN_SECTIONS = new Set<AdminSection>([
   "project-backup-shards",
   "registration-tokens",
   "rootfs",
+  "site-setup",
   "site-settings",
   "software-licenses",
   "sso",
