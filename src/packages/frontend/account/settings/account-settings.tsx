@@ -48,7 +48,6 @@ import { EmailAddressSetting } from "./email-address-setting";
 import { EmailVerification } from "./email-verification";
 import { PasswordSetting } from "./password-setting";
 import { TextSetting } from "./text-setting";
-import TwoFactorAuthSetting from "./two-factor-auth";
 import { lite } from "@cocalc/frontend/lite";
 
 type ImmutablePassportStrategy = TypedMap<PassportStrategyFrontend>;
@@ -373,13 +372,6 @@ export function AccountSettings(props: Readonly<Props>) {
     return <PasswordSetting runFreshAuthAction={runFreshAuthAction} />;
   }
 
-  function render_two_factor_auth(): Rendered {
-    if (lite) {
-      return;
-    }
-    return <TwoFactorAuthSetting />;
-  }
-
   function render_header(): Rendered {
     return (
       <>
@@ -498,7 +490,6 @@ export function AccountSettings(props: Readonly<Props>) {
       <div style={{ marginBottom: "15px" }}></div>
       {render_email_verification()}
       {render_password()}
-      {render_two_factor_auth()}
       {render_created()}
       {render_delete_account()}
       {render_linked_external_accounts()}

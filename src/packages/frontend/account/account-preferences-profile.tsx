@@ -6,11 +6,10 @@
 import type { IconName } from "@cocalc/frontend/components/icon";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import { lite } from "@cocalc/frontend/lite";
 
 import { ProfileSettings } from "./profile-settings";
 import { AccountSettings } from "./settings/account-settings";
-import { MembershipStatusPanel } from "./membership-status";
+import TwoFactorAuthSetting from "./settings/two-factor-auth";
 
 // Icon constant for account preferences section
 export const ACCOUNT_PROFILE_ICON_NAME: IconName = "address-card";
@@ -50,7 +49,7 @@ export function AccountPreferencesProfile() {
         strategies={strategies}
         unlisted={unlisted}
       />
-      {!lite && <MembershipStatusPanel />}
+      <TwoFactorAuthSetting />
       <ProfileSettings email_address={email_address} />
     </>
   );
