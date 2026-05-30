@@ -8,6 +8,7 @@ import {
 import {
   acpAdmissionLimitsFromEffectiveLimits,
   admitActiveAcpAutomationForProject,
+  admitAcpJobExecution,
   admitAcpJobCreation,
   mergeAcpAdmissionLimits,
   setAcpAdmissionDenialRecorder,
@@ -417,6 +418,137 @@ describe("acp job queue ordering", () => {
       "ACP turn limit reached",
     );
     expect(countQueuedAcpJobsForAccount(firstRequest.account_id)).toBe(1);
+  });
+
+  it("denies new job creation before insert when thread or created caps are reached", () => {
+    const firstRequest = makeRequest({
+      userMessageId: "user-admit-thread-1",
+      assistantMessageId: "assistant-admit-thread-1",
+      assistantDate: "2026-03-08T00:00:11.100Z",
+    });
+    enqueueAcpJob(firstRequest);
+    const secondRequest = makeRequest({
+      userMessageId: "user-admit-thread-2",
+      assistantMessageId: "assistant-admit-thread-2",
+      assistantDate: "2026-03-08T00:00:11.200Z",
+    });
+
+    expect(
+      admitAcpJobCreation(secondRequest, {
+        queuedPerAccount: 100,
+        queuedPerThread: 1,
+        created5hPerAccount: 100,
+        created7dPerAccount: 100,
+        runningPerAccount: 100,
+        runningPerProject: 100,
+        activeAutomationsPerProject: 100,
+      }),
+    ).toMatchObject({
+      ok: false,
+      limit: "queued_per_thread",
+      current: 1,
+      maximum: 1,
+      path: firstRequest.chat.path,
+      thread_id: firstRequest.chat.thread_id,
+    });
+
+    expect(
+      admitAcpJobCreation(secondRequest, {
+        queuedPerAccount: 100,
+        queuedPerThread: 100,
+        created5hPerAccount: 1,
+        created7dPerAccount: 100,
+        runningPerAccount: 100,
+        runningPerProject: 100,
+        activeAutomationsPerProject: 100,
+      }),
+    ).toMatchObject({
+      ok: false,
+      limit: "created_5h_per_account",
+      current: 1,
+      maximum: 1,
+    });
+
+    expect(
+      admitAcpJobCreation(secondRequest, {
+        queuedPerAccount: 100,
+        queuedPerThread: 100,
+        created5hPerAccount: 100,
+        created7dPerAccount: 1,
+        runningPerAccount: 100,
+        runningPerProject: 100,
+        activeAutomationsPerProject: 100,
+      }),
+    ).toMatchObject({
+      ok: false,
+      limit: "created_7d_per_account",
+      current: 1,
+      maximum: 1,
+    });
+  });
+
+  it("denies running admission when account or project caps are reached", () => {
+    const first = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-exec-admit-1",
+        assistantMessageId: "assistant-exec-admit-1",
+        assistantDate: "2026-03-08T00:00:11.300Z",
+      }),
+    );
+    claimNextQueuedAcpJobForThread({
+      project_id: first.project_id,
+      path: first.path,
+      thread_id: first.thread_id,
+    });
+    const second = enqueueAcpJob({
+      ...makeRequest({
+        userMessageId: "user-exec-admit-2",
+        assistantMessageId: "assistant-exec-admit-2",
+        assistantDate: "2026-03-08T00:00:11.400Z",
+      }),
+      chat: {
+        ...makeRequest({
+          userMessageId: "user-exec-admit-2",
+          assistantMessageId: "assistant-exec-admit-2",
+          assistantDate: "2026-03-08T00:00:11.400Z",
+        }).chat,
+        thread_id: "thread-exec-admit-2",
+      },
+    });
+
+    expect(
+      admitAcpJobExecution(second, {
+        queuedPerAccount: 100,
+        queuedPerThread: 100,
+        created5hPerAccount: 100,
+        created7dPerAccount: 100,
+        runningPerAccount: 100,
+        runningPerProject: 1,
+        activeAutomationsPerProject: 100,
+      }),
+    ).toMatchObject({
+      ok: false,
+      limit: "running_per_project",
+      current: 1,
+      maximum: 1,
+    });
+
+    expect(
+      admitAcpJobExecution(second, {
+        queuedPerAccount: 100,
+        queuedPerThread: 100,
+        created5hPerAccount: 100,
+        created7dPerAccount: 100,
+        runningPerAccount: 1,
+        runningPerProject: 100,
+        activeAutomationsPerProject: 100,
+      }),
+    ).toMatchObject({
+      ok: false,
+      limit: "running_per_account",
+      current: 1,
+      maximum: 1,
+    });
   });
 
   it("records ACP admission denials before throwing", async () => {
