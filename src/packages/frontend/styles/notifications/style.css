@@ -52,3 +52,10 @@
 .cocalc-notifications-mobile .cocalc-notification-list .ant-collapse-extra {
   margin-inline-start: 8px;
 }
+
+.cocalc-notifications-mobile .cocalc-notification-row-entry code,
+.cocalc-notifications-mobile .cocalc-notification-row-entry pre,
+.cocalc-notifications-mobile .cocalc-notification-row-entry a {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}

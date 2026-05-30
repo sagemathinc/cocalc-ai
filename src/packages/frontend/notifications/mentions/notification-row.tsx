@@ -19,7 +19,8 @@ import { MentionInfo } from "./types";
 const DESCRIPTION_STYLE: CSS = {
   flex: "1 1 auto",
   minWidth: 0,
-  overflowWrap: "anywhere",
+  overflowWrap: "normal",
+  wordBreak: "normal",
 } as const;
 
 const AVATAR_WRAPPING_STYLE: CSS = {
