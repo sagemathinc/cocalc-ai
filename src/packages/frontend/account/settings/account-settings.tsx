@@ -368,19 +368,6 @@ export function AccountSettings(props: Readonly<Props>) {
     );
   }
 
-  function render_account_id(): Rendered {
-    if (!props.account_id || lite) {
-      return;
-    }
-    return (
-      <LabeledRow label="Account ID">
-        <Typography.Text code copyable={{ text: props.account_id }}>
-          {props.account_id}
-        </Typography.Text>
-      </LabeledRow>
-    );
-  }
-
   function render_name(): Rendered {
     return (
       <>
@@ -455,7 +442,6 @@ export function AccountSettings(props: Readonly<Props>) {
       icon={ACCOUNT_PROFILE_ICON_NAME}
     >
       <Space vertical>
-        {render_account_id()}
         {render_name()}
         {render_email_address()}
         {render_unlisted()}
