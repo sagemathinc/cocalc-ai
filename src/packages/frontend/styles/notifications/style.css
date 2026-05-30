@@ -67,3 +67,91 @@
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+
+.cocalc-notifications-mobile .smc-notificationlist .ant-list-item {
+  align-items: flex-start !important;
+  display: grid !important;
+  gap: 8px !important;
+  grid-template-columns: minmax(0, 1fr) 36px !important;
+  padding: 10px 12px !important;
+}
+
+.cocalc-notifications-mobile .smc-notificationlist .ant-list-item-meta,
+.cocalc-notifications-mobile .smc-notificationlist .ant-list-item-meta-content,
+.cocalc-notifications-mobile .smc-notificationlist .ant-list-item-meta-title {
+  max-width: none !important;
+  min-width: 0 !important;
+  width: auto !important;
+}
+
+.cocalc-notifications-mobile .smc-notificationlist .ant-list-item-action {
+  grid-column: 2 !important;
+  grid-row: 1 / span 2 !important;
+  justify-self: end !important;
+  margin: 0 !important;
+}
+
+.cocalc-notifications-mobile .smc-notificationlist .ant-list-item-action > li {
+  padding: 0 !important;
+}
+
+.cocalc-notifications-mobile
+  .smc-notificationlist
+  .ant-list-item
+  > .ant-typography {
+  grid-column: 1 !important;
+  white-space: nowrap !important;
+}
+
+.cocalc-notifications-mobile
+  .smc-notificationlist
+  .ant-list-item-meta-title
+  .ant-typography,
+.cocalc-notifications-mobile
+  .smc-notificationlist
+  .ant-list-item-meta-title
+  .ant-typography
+  * {
+  overflow-wrap: break-word !important;
+  word-break: normal !important;
+}
+
+.cocalc-notifications-mobile .cocalc-notification-news-item.ant-list-item {
+  align-items: flex-start;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  padding: 10px 12px;
+}
+
+.cocalc-notifications-mobile .cocalc-notification-news-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cocalc-notifications-mobile .cocalc-notification-news-title {
+  display: block;
+  line-height: 1.35;
+  min-width: 0;
+}
+
+.cocalc-notifications-mobile .cocalc-notification-news-title,
+.cocalc-notifications-mobile .cocalc-notification-news-title * {
+  overflow-wrap: break-word !important;
+  word-break: normal !important;
+}
+
+.cocalc-notifications-mobile .cocalc-notification-news-tags {
+  display: block;
+  margin-top: 4px;
+}
+
+.cocalc-notifications-mobile .cocalc-notification-news-time {
+  white-space: nowrap;
+}
+
+.cocalc-notifications-mobile .cocalc-notification-news-open {
+  justify-self: end;
+}

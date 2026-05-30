@@ -85,7 +85,10 @@ export function NewsPanel(props: NewsPanelProps) {
   function renderTags(tags?: string[]) {
     if (tags == null) return null;
     return (
-      <span style={{ paddingLeft: "10px" }}>
+      <span
+        className="cocalc-notification-news-tags"
+        style={{ paddingLeft: IS_MOBILE ? 0 : "10px" }}
+      >
         {tags.sort().map((tag) => (
           <Tag
             key={tag}
@@ -137,6 +140,48 @@ export function NewsPanel(props: NewsPanelProps) {
     const isUnread =
       date.getTime() > (news_read_until ?? 0) &&
       !(channel === SYSTEM_CHANNEL && system_seen_ids?.has?.(id));
+    const titleNode = (
+      <Text
+        strong
+        className="cocalc-notification-news-title"
+        style={{
+          overflowWrap: IS_MOBILE ? "break-word" : "anywhere",
+          wordBreak: IS_MOBILE ? "normal" : undefined,
+        }}
+      >
+        <Icon name={icon} /> {title} {renderTags(tags)}
+      </Text>
+    );
+
+    if (IS_MOBILE) {
+      return (
+        <List.Item
+          key={id}
+          className="cocalc-notification-news-item"
+          onClick={(e) => newsItemOnClick(e, n)}
+          style={{
+            backgroundColor: isUnread ? COLORS.ANTD_BG_BLUE_L : undefined,
+          }}
+        >
+          <div className="cocalc-notification-news-main">
+            {titleNode}
+            <Text type="secondary" className="cocalc-notification-news-time">
+              <TimeAgo date={date} />
+            </Text>
+          </div>
+          <Button
+            className="cocalc-notification-news-open"
+            key="open"
+            type="text"
+            ghost={true}
+            onClick={(e) => newsItemOnClick(e, n)}
+          >
+            <Icon name="external-link" />
+          </Button>
+        </List.Item>
+      );
+    }
+
     return (
       <List.Item
         key={id}
@@ -157,13 +202,7 @@ export function NewsPanel(props: NewsPanelProps) {
           </Button>,
         ]}
       >
-        <List.Item.Meta
-          title={
-            <Text strong style={{ overflowWrap: "anywhere" }}>
-              <Icon name={icon} /> {title} {renderTags(tags)}
-            </Text>
-          }
-        />
+        <List.Item.Meta title={titleNode} />
         <Text type="secondary" style={{ whiteSpace: "nowrap" }}>
           <TimeAgo date={date} />
         </Text>
