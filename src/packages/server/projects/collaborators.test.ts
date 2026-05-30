@@ -21,6 +21,7 @@ let assertAccountTrustedForProductAccessMock: jest.Mock;
 let resolveMembershipForAccountMock: jest.Mock;
 let createNotificationEventGraphMock: jest.Mock;
 let resolveNotificationTargetHomeBaysMock: jest.Mock;
+let appendProjectLogRowBestEffortMock: jest.Mock;
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
@@ -167,6 +168,12 @@ jest.mock("@cocalc/database/postgres/project-events-outbox", () => ({
   appendProjectOutboxEventForProject: jest.fn(async () => undefined),
 }));
 
+jest.mock("@cocalc/server/projects/project-log", () => ({
+  __esModule: true,
+  appendProjectLogRowBestEffort: (...args: any[]) =>
+    appendProjectLogRowBestEffortMock(...args),
+}));
+
 describe("project collaborators local bay access", () => {
   const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
   const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
@@ -251,6 +258,7 @@ describe("project collaborators local bay access", () => {
     resolveNotificationTargetHomeBaysMock = jest.fn(async ({ account_ids }) =>
       Object.fromEntries(account_ids.map((id: string) => [id, "bay-0"])),
     );
+    appendProjectLogRowBestEffortMock = jest.fn(async () => true);
     removeCollaboratorFromProject.mockClear();
     addUserToProject.mockClear();
     whenSentProjectInvite.mockClear();
@@ -2098,6 +2106,22 @@ describe("project collaborators local bay access", () => {
       ACCOUNT_ID,
       "request project access",
     );
+    expect(appendProjectLogRowBestEffortMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: PROJECT_ID,
+        context: "project-access-request",
+        row: expect.objectContaining({
+          id: `project-access-request:${requestId}:created`,
+          account_id: ACCOUNT_ID,
+          event: expect.objectContaining({
+            event: "project_access_request_created",
+            request_id: requestId,
+            requester_account_id: ACCOUNT_ID,
+            requested_role: "viewer",
+          }),
+        }),
+      }),
+    );
     expect(createNotificationEventGraphMock).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: "account_notice",
@@ -2117,6 +2141,125 @@ describe("project collaborators local bay access", () => {
           }),
         ],
       }),
+    );
+  });
+
+  it("updates existing pending project access requests without sending another notification", async () => {
+    const requestId = "88888888-8888-4888-8888-888888888888";
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("AS current_group")) {
+        return {
+          rows: [
+            {
+              title: "Private Project",
+              users: {
+                [TARGET_ACCOUNT_ID]: { group: "owner" },
+              },
+              manage_users_owner_only: false,
+              current_group: null,
+              blocked: false,
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("SELECT request_id") &&
+        sql.includes("FROM project_access_requests")
+      ) {
+        return { rows: [{ request_id: requestId }] };
+      }
+      if (sql.includes("INSERT INTO project_access_requests")) {
+        return { rows: [{ request_id: requestId }] };
+      }
+      if (sql.includes("FROM project_access_requests r")) {
+        return {
+          rows: [
+            {
+              request_id: requestId,
+              project_id: PROJECT_ID,
+              project_title: "Private Project",
+              requester_account_id: ACCOUNT_ID,
+              requester_name: "Requester",
+              requester_first_name: "Request",
+              requester_last_name: "User",
+              requester_profile: null,
+              requested_role: "collaborator",
+              read_policy: null,
+              message: "Updated message.",
+              status: "pending",
+              source: "project-url",
+              created: new Date("2026-05-29T00:00:00Z"),
+              updated: new Date("2026-05-29T00:05:00Z"),
+              decided: null,
+              decided_by_account_id: null,
+              decision_message: null,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { requestProjectAccess } = await import("./collaborators");
+    await expect(
+      requestProjectAccess({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        requested_role: "collaborator",
+        message: "Updated message.",
+        source: "project-url",
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        request_id: requestId,
+        requested_role: "collaborator",
+        status: "pending",
+      }),
+    );
+    expect(appendProjectLogRowBestEffortMock).not.toHaveBeenCalled();
+    expect(createNotificationEventGraphMock).not.toHaveBeenCalled();
+  });
+
+  it("enforces project access request retry cooldowns", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("AS current_group")) {
+        return {
+          rows: [
+            {
+              title: "Private Project",
+              users: {
+                [TARGET_ACCOUNT_ID]: { group: "owner" },
+              },
+              manage_users_owner_only: false,
+              current_group: null,
+              blocked: false,
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("SELECT request_id") &&
+        sql.includes("FROM project_access_requests")
+      ) {
+        return { rows: [] };
+      }
+      if (sql.includes("retry_count")) {
+        return { rows: [{ retry_count: 1, daily_count: 1 }] };
+      }
+      return { rows: [] };
+    });
+
+    const { requestProjectAccess } = await import("./collaborators");
+    await expect(
+      requestProjectAccess({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        requested_role: "viewer",
+      }),
+    ).rejects.toThrow("project access request cooldown active");
+    expect(queryMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO project_access_requests"),
+      expect.any(Array),
     );
   });
 
@@ -2244,6 +2387,23 @@ describe("project collaborators local bay access", () => {
       group: "collaborator",
       project_id: PROJECT_ID,
     });
+    expect(appendProjectLogRowBestEffortMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: PROJECT_ID,
+        context: "project-access-request",
+        row: expect.objectContaining({
+          id: `project-access-request:${requestId}:approved`,
+          account_id: ACCOUNT_ID,
+          event: expect.objectContaining({
+            event: "project_access_request_approved",
+            request_id: requestId,
+            requester_account_id: TARGET_ACCOUNT_ID,
+            requested_role: "collaborator",
+            role: "collaborator",
+          }),
+        }),
+      }),
+    );
     expect(createNotificationEventGraphMock).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: "account_notice",
