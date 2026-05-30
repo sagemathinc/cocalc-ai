@@ -24,6 +24,7 @@ KEY_FILE=""
 REUSE_EXISTING_VM=0
 SKIP_BUILD=0
 SKIP_PORT_FORWARD=0
+STATIC_ONLY=0
 NETWORK=""
 SUBNET=""
 SERVICE_ACCOUNT=""
@@ -68,6 +69,9 @@ GCP:
 Control:
   --skip-build                  reuse existing Rocket bay bundle
   --skip-port-forward           do not start the local SSH port forward
+  --static-only                 deploy only frontend/static assets by creating
+                                a new versioned release from the current VM
+                                release and restarting hub workers only
   -h, --help                    show this help
 
 Example:
@@ -193,6 +197,10 @@ parse_args() {
         SKIP_PORT_FORWARD=1
         shift
         ;;
+      --static-only)
+        STATIC_ONLY=1
+        shift
+        ;;
       -h|--help)
         usage
         exit 0
@@ -218,6 +226,9 @@ validate_args() {
   fi
   if [[ -n "$KEY_FILE" && ! -f "$KEY_FILE" ]]; then
     die "--key-file does not exist: ${KEY_FILE}"
+  fi
+  if [[ "$STATIC_ONLY" -eq 1 && "$REUSE_EXISTING_VM" -ne 1 ]]; then
+    die "--static-only requires --reuse-existing-vm"
   fi
 }
 
@@ -331,18 +342,26 @@ build_bundle() {
   if [[ "$SKIP_BUILD" -eq 1 ]]; then
     log "skipping Rocket bay bundle build"
   else
-    run pnpm -C "${SRC_ROOT}/packages" --filter @cocalc/rocket run build:bay-bundle >&2
+    if [[ "$STATIC_ONLY" -eq 1 ]]; then
+      run pnpm -C "${SRC_ROOT}/packages" --filter @cocalc/rocket run build:bay-static-bundle >&2
+    else
+      run pnpm -C "${SRC_ROOT}/packages" --filter @cocalc/rocket run build:bay-bundle >&2
+    fi
   fi
 
   local bundle
-  bundle="$(
-    find "${SRC_ROOT}/packages/rocket/build" \
-      -name 'cocalc-bay-runtime-linux-*.tar.xz' \
-      -printf '%T@ %p\n' 2>/dev/null \
-      | sort -nr \
-      | awk 'NR==1 {print $2}'
-  )"
-  [[ -n "$bundle" && -f "$bundle" ]] || die "Rocket bay bundle not found; build failed?"
+  local name_glob='cocalc-bay-runtime-linux-*.tar.xz'
+  local label='Rocket bay bundle'
+  if [[ "$STATIC_ONLY" -eq 1 ]]; then
+    name_glob='cocalc-bay-static-linux-*.tar.xz'
+    label='Rocket bay static bundle'
+  fi
+  bundle="$(find "${SRC_ROOT}/packages/rocket/build" \
+    -name "$name_glob" \
+    -printf '%T@ %p\n' 2>/dev/null \
+    | sort -nr \
+    | awk 'NR==1 {print $2}')"
+  [[ -n "$bundle" && -f "$bundle" ]] || die "${label} not found; build failed?"
   printf '%s\n' "$bundle"
 }
 
@@ -366,7 +385,7 @@ copy_inputs() {
   local bundle="$1"
   local remote_bundle="/tmp/$(basename "$bundle")"
 
-  run remote_ssh "rm -rf /tmp/bay-systemd /tmp/site-master-key /tmp/cocalc-bay-runtime-linux-*.tar.xz" >&2
+  run remote_ssh "rm -rf /tmp/bay-systemd /tmp/site-master-key /tmp/cocalc-bay-runtime-linux-*.tar.xz /tmp/cocalc-bay-static-linux-*.tar.xz" >&2
   run remote_scp --recurse "$SCRIPT_DIR" "${VM_NAME}:/tmp/bay-systemd" >&2
   run remote_scp "$bundle" "${VM_NAME}:${remote_bundle}" >&2
   run remote_scp "$SITE_MASTER_KEY_PATH" "${VM_NAME}:/tmp/site-master-key" >&2
@@ -381,23 +400,36 @@ bootstrap_remote_bay() {
     public_url_arg=(--public-url "$PUBLIC_URL")
   fi
 
-  run remote_ssh "sudo /tmp/bay-systemd/bay-bootstrap-host.sh --bay-id '${BAY_ID}' --install-nodejs"
-  run remote_ssh "sudo install -o root -g root -m 0600 /tmp/site-master-key /etc/cocalc/site-master-key"
-  run remote_ssh "$(
-    printf "sudo /tmp/bay-systemd/bay-bootstrap-release.sh --bundle %q --bay-id %q --worker-count %q" \
-      "$remote_bundle" "$BAY_ID" "$WORKER_COUNT"
-    if [[ "${#public_url_arg[@]}" -gt 0 ]]; then
-      printf " --public-url %q" "$PUBLIC_URL"
-    fi
-    printf " --force-overlay --start"
-  )"
+  if [[ "$STATIC_ONLY" -eq 1 ]]; then
+    run remote_ssh "$(
+      printf "sudo /tmp/bay-systemd/bay-bootstrap-release.sh --static-bundle %q --bay-id %q --worker-count %q" \
+        "$remote_bundle" "$BAY_ID" "$WORKER_COUNT"
+    )"
+    run remote_ssh "$(
+      printf "sudo systemctl restart"
+      for worker_id in $(seq 1 "$WORKER_COUNT"); do
+        printf " cocalc-bay-hub@%q.service" "$worker_id"
+      done
+    )"
+  else
+    run remote_ssh "sudo /tmp/bay-systemd/bay-bootstrap-host.sh --bay-id '${BAY_ID}' --install-nodejs"
+    run remote_ssh "sudo install -o root -g root -m 0600 /tmp/site-master-key /etc/cocalc/site-master-key"
+    run remote_ssh "$(
+      printf "sudo /tmp/bay-systemd/bay-bootstrap-release.sh --bundle %q --bay-id %q --worker-count %q" \
+        "$remote_bundle" "$BAY_ID" "$WORKER_COUNT"
+      if [[ "${#public_url_arg[@]}" -gt 0 ]]; then
+        printf " --public-url %q" "$PUBLIC_URL"
+      fi
+      printf " --force-overlay --start"
+    )"
 
-  run remote_ssh "$(
-    printf "sudo systemctl restart cocalc-bay-postgres.service cocalc-bay-migrations.service cocalc-bay-conat-persist.service cocalc-bay-conat-router.service"
-    for worker_id in $(seq 1 "$WORKER_COUNT"); do
-      printf " cocalc-bay-hub@%q.service" "$worker_id"
-    done
-  )"
+    run remote_ssh "$(
+      printf "sudo systemctl restart cocalc-bay-postgres.service cocalc-bay-migrations.service cocalc-bay-conat-persist.service cocalc-bay-conat-router.service"
+      for worker_id in $(seq 1 "$WORKER_COUNT"); do
+        printf " cocalc-bay-hub@%q.service" "$worker_id"
+      done
+    )"
+  fi
 }
 
 health_check() {
