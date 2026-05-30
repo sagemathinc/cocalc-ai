@@ -21,6 +21,7 @@ import type {
 } from "@cocalc/conat/hub/api/projects";
 import {
   React,
+  redux,
   useCallback,
   useEffect,
   useMemo,
@@ -72,7 +73,7 @@ export type InviteInboxState = {
   respond: (
     invite_id: string,
     action: ProjectCollabInviteAction,
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   copyInviteLink: (invite_id: string) => Promise<void>;
   unblock: (blocked_account_id: string) => Promise<void>;
 };
@@ -268,7 +269,10 @@ export function useInviteInboxState({
     });
   }, [load, project_id]);
 
-  async function respond(invite_id: string, action: ProjectCollabInviteAction) {
+  async function respond(
+    invite_id: string,
+    action: ProjectCollabInviteAction,
+  ): Promise<boolean> {
     set_busy(`${invite_id}:${action}`);
     set_error("");
     try {
@@ -279,12 +283,14 @@ export function useInviteInboxState({
       });
       await load();
       notifyCollabInvitesChanged(project_id);
+      return true;
     } catch (err) {
       const message = friendlyRespondError(err);
       if (message !== `${err}`) {
         await load();
       }
       set_error(message);
+      return false;
     } finally {
       set_busy("");
     }
@@ -342,6 +348,10 @@ function renderIncomingCards(
   incoming: ProjectCollabInviteRow[],
   busy: string,
   respond: InviteInboxState["respond"],
+  onResponded?: (
+    invite: ProjectCollabInviteRow,
+    action: ProjectCollabInviteAction,
+  ) => void,
 ): React.JSX.Element {
   if (incoming.length === 0) {
     return (
@@ -360,6 +370,12 @@ function renderIncomingCards(
           account_id: invite.inviter_account_id,
         });
         const project = `${invite.project_title ?? invite.project_id}`;
+        async function respondToInvite(action: ProjectCollabInviteAction) {
+          const ok = await respond(invite.invite_id, action);
+          if (ok) {
+            onResponded?.(invite, action);
+          }
+        }
         return (
           <Card
             key={invite.invite_id}
@@ -425,14 +441,14 @@ function renderIncomingCards(
                   size="small"
                   type="primary"
                   loading={busy === `${invite.invite_id}:accept`}
-                  onClick={() => void respond(invite.invite_id, "accept")}
+                  onClick={() => void respondToInvite("accept")}
                 >
                   Accept
                 </Button>
                 <Button
                   size="small"
                   loading={busy === `${invite.invite_id}:decline`}
-                  onClick={() => void respond(invite.invite_id, "decline")}
+                  onClick={() => void respondToInvite("decline")}
                 >
                   Decline
                 </Button>
@@ -440,7 +456,7 @@ function renderIncomingCards(
                   size="small"
                   danger
                   loading={busy === `${invite.invite_id}:block`}
-                  onClick={() => void respond(invite.invite_id, "block")}
+                  onClick={() => void respondToInvite("block")}
                 >
                   Block
                 </Button>
@@ -450,6 +466,94 @@ function renderIncomingCards(
         );
       })}
     </div>
+  );
+}
+
+type InviteResponse = {
+  invite: ProjectCollabInviteRow;
+  action: ProjectCollabInviteAction;
+};
+
+function inviteProjectTitle(invite: ProjectCollabInviteRow): string {
+  return `${invite.project_title ?? invite.project_id}`;
+}
+
+async function openInvitedProject(project_id: string) {
+  await (
+    redux.getActions("projects") as any
+  )?.ensureRealtimeFeedForCurrentAccount?.();
+  await redux.getActions("projects").open_project({
+    project_id,
+    target: "files",
+    switch_to: true,
+    restore_session: false,
+  });
+}
+
+function renderInviteResponseCards({
+  responses,
+  dismiss,
+}: {
+  responses: InviteResponse[];
+  dismiss: (invite_id: string) => void;
+}): React.JSX.Element | null {
+  if (responses.length === 0) {
+    return null;
+  }
+  return (
+    <Space orientation="vertical" style={{ width: "100%", marginBottom: 12 }}>
+      {responses.map(({ invite, action }) => {
+        const project = inviteProjectTitle(invite);
+        const invite_id = invite.invite_id;
+        if (action === "accept") {
+          return (
+            <Alert
+              key={invite_id}
+              type="success"
+              showIcon
+              title={`Joined ${project}`}
+              description={`You accepted the invitation and now have ${invite.invite_role === "viewer" ? "viewer" : "collaborator"} access.`}
+              action={
+                <Space wrap>
+                  <Button
+                    size="small"
+                    type="primary"
+                    onClick={() => void openInvitedProject(invite.project_id)}
+                  >
+                    Open project
+                  </Button>
+                  <Button size="small" onClick={() => dismiss(invite_id)}>
+                    Dismiss
+                  </Button>
+                </Space>
+              }
+            />
+          );
+        }
+        return (
+          <Alert
+            key={invite_id}
+            type={action === "block" ? "warning" : "info"}
+            showIcon
+            title={
+              action === "block"
+                ? `Blocked invitation to ${project}`
+                : `Declined invitation to ${project}`
+            }
+            description={
+              action === "block"
+                ? "You declined this invitation and blocked further invites from this sender."
+                : "You declined this invitation."
+            }
+            action={
+              <Button size="small" onClick={() => dismiss(invite_id)}>
+                Dismiss
+              </Button>
+            }
+          />
+        );
+      })}
+    </Space>
   );
 }
 
@@ -500,8 +604,25 @@ export function IncomingInvitesNotificationSection({
   state: InviteInboxState;
 }): React.JSX.Element | null {
   const { loading, error, incoming, busy, respond, load } = state;
-  if (!loading && !error && incoming.length === 0) {
+  const [responses, setResponses] = useState<InviteResponse[]>([]);
+  if (!loading && !error && incoming.length === 0 && responses.length === 0) {
     return null;
+  }
+  function recordResponse(
+    invite: ProjectCollabInviteRow,
+    action: ProjectCollabInviteAction,
+  ) {
+    setResponses((responses) => [
+      { invite, action },
+      ...responses.filter(
+        (response) => response.invite.invite_id !== invite.invite_id,
+      ),
+    ]);
+  }
+  function dismissResponse(invite_id: string) {
+    setResponses((responses) =>
+      responses.filter((response) => response.invite.invite_id !== invite_id),
+    );
   }
   return (
     <Collapse
@@ -513,7 +634,7 @@ export function IncomingInvitesNotificationSection({
         header={
           <>
             <Icon name="mail" style={{ marginRight: "10px" }} />
-            Project Invitations ({incoming.length})
+            Project Invitations ({incoming.length + responses.length})
           </>
         }
         extra={
@@ -530,8 +651,13 @@ export function IncomingInvitesNotificationSection({
         }
       >
         <Paragraph type="secondary">
-          Accept or decline pending invitations to collaborate on projects.
+          Accept or decline pending invitations to collaborate on projects. When
+          you accept an invite, you can open the project from here.
         </Paragraph>
+        {renderInviteResponseCards({
+          responses,
+          dismiss: dismissResponse,
+        })}
         {error && (
           <Alert
             style={{ marginBottom: "10px" }}
@@ -540,7 +666,11 @@ export function IncomingInvitesNotificationSection({
             title={error}
           />
         )}
-        {loading ? <Loading /> : renderIncomingCards(incoming, busy, respond)}
+        {loading ? (
+          <Loading />
+        ) : incoming.length > 0 || responses.length === 0 ? (
+          renderIncomingCards(incoming, busy, respond, recordResponse)
+        ) : null}
       </Panel>
     </Collapse>
   );
