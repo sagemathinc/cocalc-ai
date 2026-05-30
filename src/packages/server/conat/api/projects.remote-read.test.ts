@@ -11,6 +11,12 @@ let copyEmailLinkMock: jest.Mock;
 let redeemEmailMock: jest.Mock;
 let previewEmailMock: jest.Mock;
 let respondEmailMock: jest.Mock;
+let getProjectAccessLandingInfoMock: jest.Mock;
+let requestProjectAccessMock: jest.Mock;
+let listProjectAccessRequestsMock: jest.Mock;
+let respondProjectAccessRequestMock: jest.Mock;
+let listProjectAccessRequestBlocksMock: jest.Mock;
+let unblockProjectAccessRequesterMock: jest.Mock;
 let loadProjectReadDetailsDirectMock: jest.Mock;
 let assertClusterAccountTrustedForProductAccessMock: jest.Mock;
 
@@ -59,6 +65,18 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
       redeemEmail: (...args: any[]) => redeemEmailMock(...args),
       previewEmail: (...args: any[]) => previewEmailMock(...args),
       respondEmail: (...args: any[]) => respondEmailMock(...args),
+      getProjectAccessLandingInfo: (...args: any[]) =>
+        getProjectAccessLandingInfoMock(...args),
+      requestProjectAccess: (...args: any[]) =>
+        requestProjectAccessMock(...args),
+      listProjectAccessRequests: (...args: any[]) =>
+        listProjectAccessRequestsMock(...args),
+      respondProjectAccessRequest: (...args: any[]) =>
+        respondProjectAccessRequestMock(...args),
+      listProjectAccessRequestBlocks: (...args: any[]) =>
+        listProjectAccessRequestBlocksMock(...args),
+      unblockProjectAccessRequester: (...args: any[]) =>
+        unblockProjectAccessRequesterMock(...args),
     })),
   })),
 }));
@@ -173,6 +191,65 @@ describe("remote project detail reads", () => {
       created: "2026-05-18T00:00:00.000Z",
       updated: "2026-05-18T00:00:00.000Z",
       responded: "2026-05-18T01:00:00.000Z",
+    }));
+    getProjectAccessLandingInfoMock = jest.fn(async () => ({
+      project_id: PROJECT_ID,
+      title: "Remote Project",
+      relationship: "none",
+      pending_invite: null,
+      pending_request: null,
+      blocked: false,
+    }));
+    requestProjectAccessMock = jest.fn(async () => ({
+      request_id: "88888888-8888-4888-8888-888888888888",
+      project_id: PROJECT_ID,
+      requester_account_id: ACCOUNT_ID,
+      requested_role: "viewer",
+      read_policy: null,
+      message: null,
+      status: "pending",
+      source: "project-url",
+      created: "2026-05-29T00:00:00.000Z",
+      updated: "2026-05-29T00:00:00.000Z",
+      decided: null,
+      decided_by_account_id: null,
+      decision_message: null,
+    }));
+    listProjectAccessRequestsMock = jest.fn(async () => [
+      {
+        request_id: "88888888-8888-4888-8888-888888888888",
+        project_id: PROJECT_ID,
+        requester_account_id: ACCOUNT_ID,
+        requested_role: "viewer",
+        status: "pending",
+        source: "project-url",
+        created: "2026-05-29T00:00:00.000Z",
+        updated: "2026-05-29T00:00:00.000Z",
+      },
+    ]);
+    respondProjectAccessRequestMock = jest.fn(async () => ({
+      request_id: "88888888-8888-4888-8888-888888888888",
+      project_id: PROJECT_ID,
+      requester_account_id: ACCOUNT_ID,
+      requested_role: "viewer",
+      status: "approved",
+      source: "project-url",
+      created: "2026-05-29T00:00:00.000Z",
+      updated: "2026-05-29T00:01:00.000Z",
+    }));
+    listProjectAccessRequestBlocksMock = jest.fn(async () => [
+      {
+        project_id: PROJECT_ID,
+        blocker_account_id: "33333333-3333-4333-8333-333333333333",
+        blocked_account_id: ACCOUNT_ID,
+        created: "2026-05-29T00:00:00.000Z",
+        updated: "2026-05-29T00:00:00.000Z",
+      },
+    ]);
+    unblockProjectAccessRequesterMock = jest.fn(async () => ({
+      unblocked: true,
+      project_id: PROJECT_ID,
+      blocked_account_id: ACCOUNT_ID,
     }));
     loadProjectReadDetailsDirectMock = jest.fn();
     assertClusterAccountTrustedForProductAccessMock = jest.fn(
@@ -397,6 +474,99 @@ describe("remote project detail reads", () => {
       invite_id: "77777777-7777-4777-8777-777777777777",
       token: "token-1",
       trusted_product_access_checked: true,
+    });
+  });
+
+  it("routes project access request APIs to the owning bay", async () => {
+    const {
+      getProjectAccessLandingInfo,
+      requestProjectAccess,
+      listProjectAccessRequests,
+      respondProjectAccessRequest,
+      listProjectAccessRequestBlocks,
+      unblockProjectAccessRequester,
+    } = await import("./projects");
+
+    await expect(
+      getProjectAccessLandingInfo({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toEqual(expect.objectContaining({ project_id: PROJECT_ID }));
+    await expect(
+      requestProjectAccess({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        requested_role: "viewer",
+        source: "project-url",
+      }),
+    ).resolves.toEqual(expect.objectContaining({ status: "pending" }));
+    await expect(
+      listProjectAccessRequests({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        status: "pending",
+      }),
+    ).resolves.toHaveLength(1);
+    await expect(
+      respondProjectAccessRequest({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        request_id: "88888888-8888-4888-8888-888888888888",
+        action: "approve",
+        role: "viewer",
+      }),
+    ).resolves.toEqual(expect.objectContaining({ status: "approved" }));
+    await expect(
+      listProjectAccessRequestBlocks({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toHaveLength(1);
+    await expect(
+      unblockProjectAccessRequester({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        blocked_account_id: ACCOUNT_ID,
+      }),
+    ).resolves.toEqual(expect.objectContaining({ unblocked: true }));
+
+    expect(getProjectAccessLandingInfoMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(requestProjectAccessMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      requested_role: "viewer",
+      read_policy: undefined,
+      message: undefined,
+      source: "project-url",
+    });
+    expect(listProjectAccessRequestsMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      status: "pending",
+      limit: undefined,
+    });
+    expect(respondProjectAccessRequestMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      request_id: "88888888-8888-4888-8888-888888888888",
+      action: "approve",
+      role: "viewer",
+      read_policy: undefined,
+      message: undefined,
+    });
+    expect(listProjectAccessRequestBlocksMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      limit: undefined,
+    });
+    expect(unblockProjectAccessRequesterMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      blocked_account_id: ACCOUNT_ID,
     });
   });
 });

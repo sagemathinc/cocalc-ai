@@ -934,14 +934,14 @@ export const useHostsPageViewModel = () => {
           }),
           replace: false,
         });
-        if (host.status === "running" && hub.hosts.upgradeHostSoftware) {
-          const op = await hub.hosts.upgradeHostSoftware({
+        if (
+          host.status === "running" &&
+          hub.hosts.rolloutHostManagedComponents
+        ) {
+          const op = await hub.hosts.rolloutHostManagedComponents({
             id: host.id,
-            targets: [{ artifact: "project-host", version: desired_version }],
-            ...(source === "hub" && baseUrl
-              ? { base_url: `${baseUrl}/software` }
-              : {}),
-            align_runtime_stack: true,
+            components: [component],
+            reason: rollout_reason,
           });
           trackHostOp(host.id, op);
         }

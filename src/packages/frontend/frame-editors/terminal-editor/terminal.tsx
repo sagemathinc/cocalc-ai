@@ -15,11 +15,14 @@ import {
   useEffect,
   useIsMountedRef,
   useRef,
+  useState,
 } from "@cocalc/frontend/app-framework";
 import { Tooltip } from "@cocalc/frontend/components";
+import { set_buffer } from "@cocalc/frontend/copy-paste-buffer";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { effectiveTerminalColorScheme } from "@cocalc/frontend/project/workspaces/terminal-theme";
+import { MobileTerminalToolbar } from "./mobile-terminal-toolbar";
 import type { Terminal } from "./connected-terminal";
 import { background_color } from "./themes";
 import useResizeObserver from "use-resize-observer";
@@ -48,11 +51,22 @@ const COMMAND_STYLE = {
   overflow: "hidden",
 } as CSS;
 
+interface NativeTouchTap {
+  x: number;
+  y: number;
+  time: number;
+}
+
+const NATIVE_TOUCH_TAP_MAX_MS = 450;
+const NATIVE_TOUCH_TAP_MAX_DISTANCE = 12;
+
 export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
   const { workspaces } = useProjectContext();
   const terminalRef = useRef<Terminal | undefined>(undefined);
   const terminalDOMRef = useRef<any>(null);
   const terminalLoadTokenRef = useRef(0);
+  const nativeTouchTapRef = useRef<NativeTouchTap | null>(null);
+  const [showMobileToolbar, setShowMobileToolbar] = useState(false);
   const resize = useResizeObserver({ ref: terminalDOMRef });
   const isMountedRef = useIsMountedRef();
   const student_project_functionality = useStudentProjectFunctionality(
@@ -108,6 +122,7 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
     terminalRef.current.element?.remove();
     terminalRef.current.is_visible = false;
     terminalRef.current = undefined;
+    setShowMobileToolbar(false);
   }
 
   async function init_terminal(): Promise<void> {
@@ -137,6 +152,7 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
     }
     terminalRef.current = terminal;
     terminal.is_visible = true;
+    setShowMobileToolbar(terminal.usesNativeTouchSelection());
     set_font_size();
     measureSize();
     if (props.is_current) {
@@ -169,6 +185,77 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
     if (isMountedRef.current) {
       terminalRef.current?.measureSize();
     }
+  }
+
+  function focusTerminal(): void {
+    props.onFocus?.();
+    terminalRef.current?.focus();
+  }
+
+  function sendData(data: string): void {
+    terminalRef.current?.conn_write(data);
+  }
+
+  function pasteData(text?: string): void {
+    if (text != null) {
+      set_buffer(text);
+    }
+    terminalRef.current?.paste();
+  }
+
+  function focusTerminalAfterDefault(): void {
+    focusTerminal();
+    requestAnimationFrame(focusTerminal);
+    setTimeout(focusTerminal, 0);
+  }
+
+  function hasNativeSelection(): boolean {
+    const selection = window.getSelection?.();
+    return selection != null && !selection.isCollapsed;
+  }
+
+  function isNativeTouchRowsTarget(target: EventTarget | null): boolean {
+    return (
+      terminalRef.current?.usesNativeTouchSelection() === true &&
+      target instanceof Element &&
+      target.closest(".xterm-rows") != null
+    );
+  }
+
+  function handleTouchStart(event: React.TouchEvent<HTMLDivElement>): void {
+    if (!isNativeTouchRowsTarget(event.target) || event.touches.length !== 1) {
+      nativeTouchTapRef.current = null;
+      return;
+    }
+    const touch = event.touches[0];
+    nativeTouchTapRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      time: Date.now(),
+    };
+  }
+
+  function handleTouchEnd(event: React.TouchEvent<HTMLDivElement>): void {
+    const tap = nativeTouchTapRef.current;
+    nativeTouchTapRef.current = null;
+    if (
+      tap == null ||
+      !isNativeTouchRowsTarget(event.target) ||
+      event.changedTouches.length !== 1
+    ) {
+      return;
+    }
+    const touch = event.changedTouches[0];
+    const distance = Math.hypot(touch.clientX - tap.x, touch.clientY - tap.y);
+    if (
+      Date.now() - tap.time > NATIVE_TOUCH_TAP_MAX_MS ||
+      distance > NATIVE_TOUCH_TAP_MAX_DISTANCE ||
+      hasNativeSelection()
+    ) {
+      return;
+    }
+    event.preventDefault();
+    focusTerminal();
   }
 
   function render_command(): Rendered {
@@ -224,6 +311,11 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
       <div
         className={"smc-vfill"}
         style={{ backgroundColor, padding: "0 0 0 4px" }}
+        onTouchCancel={() => {
+          nativeTouchTapRef.current = null;
+        }}
+        onTouchEnd={handleTouchEnd}
+        onTouchStart={handleTouchStart}
         onClick={(event) => {
           // Focus on click, since otherwise, clicking right outside term de-focusses,
           // which is confusing.
@@ -231,12 +323,21 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
             terminalRef.current?.usesNativeTouchSelection() &&
             (event.target as Element).closest(".xterm-rows")
           ) {
+            if (!hasNativeSelection()) {
+              focusTerminalAfterDefault();
+            }
             return;
           }
-          props.onFocus?.();
-          terminalRef.current?.focus();
+          focusTerminal();
         }}
       >
+        {showMobileToolbar && (
+          <MobileTerminalToolbar
+            onFocus={focusTerminal}
+            onPaste={pasteData}
+            onSendData={sendData}
+          />
+        )}
         <div className={"smc-vfill cocalc-xtermjs"} ref={terminalDOMRef} />
       </div>
     </div>

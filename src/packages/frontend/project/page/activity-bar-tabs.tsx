@@ -356,6 +356,15 @@ export function VerticalFixedTabs({
               },
             }
           : undefined,
+      requestCollaboratorAccess:
+        viewer && project_id != null
+          ? {
+              onClick: () => {
+                setMoreOpen(false);
+                void requestViewerCollaboratorAccess(project_id);
+              },
+            }
+          : undefined,
       sectionKeyPrefix: "overflow",
       showActBarLabels: showActBarLabels === true,
     });
@@ -524,6 +533,15 @@ export function HiddenActivityBarLauncher() {
             },
           }
         : undefined,
+    requestCollaboratorAccess:
+      viewer && project_id != null
+        ? {
+            onClick: () => {
+              setMenuOpen(false);
+              void requestViewerCollaboratorAccess(project_id);
+            },
+          }
+        : undefined,
     sectionKeyPrefix: "launcher",
     showActBarLabels: showActBarLabels === true,
   });
@@ -601,6 +619,9 @@ function createRailMenuItems(opts: {
   removeSelf?: {
     onClick: () => void;
   };
+  requestCollaboratorAccess?: {
+    onClick: () => void;
+  };
   sectionKeyPrefix: string;
   showActBarLabels: boolean;
 }): NonNullable<MenuProps["items"]> {
@@ -614,6 +635,7 @@ function createRailMenuItems(opts: {
     railToggleLabel,
     railToggleIcon,
     removeSelf,
+    requestCollaboratorAccess,
     sectionKeyPrefix,
     showActBarLabels,
   } = opts;
@@ -628,22 +650,34 @@ function createRailMenuItems(opts: {
   if (names.length > 0) {
     items.push({ key: `divider-${sectionKeyPrefix}`, type: "divider" });
   }
-  if (removeSelf != null) {
+  if (removeSelf != null || requestCollaboratorAccess != null) {
+    const children: NonNullable<MenuProps["items"]> = [];
+    if (requestCollaboratorAccess != null) {
+      children.push({
+        key: `${sectionKeyPrefix}:request-collaborator-access`,
+        label: renderMenuLabel(
+          <Icon name="user-plus" />,
+          "Request Collaborator Access",
+        ),
+        onClick: requestCollaboratorAccess.onClick,
+      });
+    }
+    if (removeSelf != null) {
+      children.push({
+        key: `${sectionKeyPrefix}:remove-self`,
+        label: renderMenuLabel(
+          <Icon name="user-times" />,
+          "Remove Myself as Collaborator",
+        ),
+        danger: true,
+        onClick: removeSelf.onClick,
+      });
+    }
     items.push({
       key: `${sectionKeyPrefix}-project-access`,
       type: "group",
       label: "Project access",
-      children: [
-        {
-          key: `${sectionKeyPrefix}:remove-self`,
-          label: renderMenuLabel(
-            <Icon name="user-times" />,
-            "Remove Myself as Collaborator",
-          ),
-          danger: true,
-          onClick: removeSelf.onClick,
-        },
-      ],
+      children,
     });
     items.push({
       key: `divider-${sectionKeyPrefix}-project-access`,
@@ -678,6 +712,27 @@ function createRailMenuItems(opts: {
     ],
   });
   return items;
+}
+
+async function requestViewerCollaboratorAccess(project_id: string) {
+  try {
+    const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+    await webapp_client.project_collaborators.request_access({
+      project_id,
+      requested_role: "collaborator",
+      source: "rail-menu",
+    });
+    Modal.success({
+      title: "Collaborator access requested",
+      content:
+        "A project owner or authorized collaborator can approve your request.",
+    });
+  } catch (err) {
+    Modal.error({
+      title: "Unable to request collaborator access",
+      content: `${err}`,
+    });
+  }
 }
 
 function renderFixedTabLabel(name: FixedTab, intl): ReactNode {

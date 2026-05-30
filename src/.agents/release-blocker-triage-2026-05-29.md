@@ -70,7 +70,7 @@ Next action:
 
 ### 2. Launchpad SEA Startup Crash
 
-Status: `open`
+Status: `done`
 
 Severity: critical.
 
@@ -239,7 +239,7 @@ Next action:
 
 ### 8. Chat Typing Indicator Uses Wrong Thread Title
 
-Status: `open`
+Status: `done`
 
 Severity: medium.
 
@@ -264,7 +264,7 @@ Next action:
 
 ### 9. Chat TimeTravel Crash
 
-Status: `open`
+Status: `done`
 
 Severity: critical.
 
@@ -296,7 +296,7 @@ Next action:
 
 ### 10. Jupyter Agent Cell Move Duplicates Content
 
-Status: `open`
+Status: `done`
 
 Severity: high.
 
@@ -323,7 +323,7 @@ Next action:
 
 ### 11. Imagegen Generated Images Too Large In Chat
 
-Status: `open`
+Status: `done`
 
 Severity: low-medium.
 
@@ -347,7 +347,7 @@ Next action:
 
 ### 12. Slate Gap Cursor Missing After Trailing Code Block
 
-Status: `open`
+Status: `done`
 
 Severity: medium.
 
@@ -487,7 +487,7 @@ Next action:
 
 ### 17. Project Creation Modal Auto-Popup
 
-Status: `open`
+Status: `done`
 
 Severity: medium.
 
@@ -511,7 +511,7 @@ Next action:
 
 ### 18. User Favicon Shows Question Mark Until Profile Opens
 
-Status: `open`
+Status: `done`
 
 Severity: low-medium.
 

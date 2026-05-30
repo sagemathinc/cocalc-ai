@@ -4,7 +4,17 @@
  */
 
 import { DndContext, useDraggable } from "@dnd-kit/core";
-import { Alert, Button, Modal, Space, Tag } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Input,
+  Modal,
+  Radio,
+  Space,
+  Tag,
+  Typography,
+} from "antd";
 import {
   React,
   redux,
@@ -76,6 +86,9 @@ import {
 import { shouldRenderMoveStatus } from "./move-status";
 import { getRecoverableActiveEditorPath } from "./active-editor-recovery";
 import { HardDeleteProjectModal } from "@cocalc/frontend/projects/hard-delete-project-modal";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
+import type { ProjectAccessLandingInfo } from "@cocalc/conat/hub/api/projects";
 
 const START_BANNER = false;
 
@@ -87,6 +100,7 @@ const PAGE_STYLE: React.CSSProperties = {
 } as const;
 const HIDDEN_RAIL_TOP_LEFT_WIDTH_PX = 84;
 const HIDDEN_RAIL_HOME_BUTTON_WIDTH_PX = 44;
+const { Paragraph, Text, Title } = Typography;
 
 interface Props {
   project_id: string;
@@ -160,6 +174,13 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   const [homePageButtonWidth, setHomePageButtonWidth] =
     React.useState<number>(80);
   const [checkingHost, setCheckingHost] = useState<boolean>(false);
+  const [accessLanding, setAccessLanding] =
+    useState<ProjectAccessLandingInfo | null>(null);
+  const [accessLandingError, setAccessLandingError] = useState<string | null>(
+    null,
+  );
+  const [accessLandingLoading, setAccessLandingLoading] =
+    useState<boolean>(false);
 
   const [flyoutWidth, setFlyoutWidth] = useState<number>(
     getFlyoutWidth(project_id),
@@ -312,6 +333,32 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   useEffect(() => {
     recoverActiveEditorComponent();
   }, [recoverActiveEditorComponent]);
+
+  useEffect(() => {
+    if (!is_active || project != null || open_files_order != null) {
+      return;
+    }
+    let canceled = false;
+    setAccessLandingLoading(true);
+    setAccessLandingError(null);
+    webapp_client.project_collaborators
+      .get_access_landing_info({ project_id })
+      .then((info) => {
+        if (canceled) return;
+        setAccessLanding(info);
+      })
+      .catch((err) => {
+        if (canceled) return;
+        setAccessLandingError(`${err}`);
+      })
+      .finally(() => {
+        if (canceled) return;
+        setAccessLandingLoading(false);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [is_active, open_files_order, project, project_id]);
 
   useEffect(() => {
     const recoverIfVisible = () => {
@@ -566,16 +613,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
         {renderFlyoutHeader()}
         <div style={{ flex: 1, overflow: "hidden", display: "flex" }}>
           {isViewer ? (
-            <Tag
-              color={COLORS.BLUE_D}
-              style={{
-                alignSelf: "center",
-                margin: "2px 6px 0px 4px",
-                whiteSpace: "nowrap",
-              }}
-            >
-              Read only
-            </Tag>
+            <ViewerReadOnlyTag project_id={project_id} />
           ) : (
             projectCtx.projectAccess.capabilities.useProjectRuntime && (
               <StartButton minimal style={{ margin: "2px 4px 0px 4px" }} />
@@ -723,6 +761,30 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   }
 
   if (open_files_order == null && !hardDeleteBlocked) {
+    if (
+      accessLanding != null &&
+      (accessLanding.relationship === "none" ||
+        accessLanding.pending_invite != null ||
+        accessLanding.pending_request != null ||
+        accessLanding.blocked)
+    ) {
+      return (
+        <ProjectAccessLandingPage
+          info={accessLanding}
+          loading={accessLandingLoading}
+          error={accessLandingError}
+          onChange={setAccessLanding}
+        />
+      );
+    }
+    if (accessLandingError != null) {
+      return (
+        <ProjectAccessLandingError
+          project_id={project_id}
+          error={accessLandingError}
+        />
+      );
+    }
     return <Loading />;
   }
 
@@ -777,6 +839,358 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
     </ProjectContext.Provider>
   );
 };
+
+function ViewerReadOnlyTag({ project_id }: { project_id: string }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<"idle" | "requested">("idle");
+  const [error, setError] = useState<string | null>(null);
+
+  async function requestCollaboratorAccess() {
+    setBusy(true);
+    setError(null);
+    try {
+      await webapp_client.project_collaborators.request_access({
+        project_id,
+        requested_role: "collaborator",
+        source: "viewer-read-only",
+      });
+      setStatus("requested");
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <Tag
+        color={COLORS.BG_WARNING}
+        onClick={() => setOpen(true)}
+        style={{
+          alignSelf: "center",
+          color: "white",
+          cursor: "pointer",
+          margin: "2px 6px 0px 4px",
+          whiteSpace: "nowrap",
+        }}
+      >
+        Read only
+      </Tag>
+      <Modal
+        title="Read-only project access"
+        open={open}
+        onCancel={() => setOpen(false)}
+        footer={[
+          <Button key="close" onClick={() => setOpen(false)}>
+            Close
+          </Button>,
+          <Button
+            key="request"
+            type="primary"
+            loading={busy}
+            disabled={status === "requested"}
+            onClick={requestCollaboratorAccess}
+          >
+            {status === "requested"
+              ? "Collaborator access requested"
+              : "Request collaborator access"}
+          </Button>,
+        ]}
+      >
+        <Space direction="vertical" style={{ width: "100%" }}>
+          <Paragraph>
+            You can browse and open allowed project files, but cannot edit
+            files, start the runtime, use terminals, run agents, or change
+            project settings.
+          </Paragraph>
+          {status === "requested" && (
+            <Alert
+              showIcon
+              type="success"
+              message="Request sent"
+              description="A project owner or authorized collaborator can approve collaborator access."
+            />
+          )}
+          {error && (
+            <Alert
+              showIcon
+              type="error"
+              message="Unable to request collaborator access"
+              description={error}
+            />
+          )}
+        </Space>
+      </Modal>
+    </>
+  );
+}
+
+function ProjectAccessLandingPage({
+  info,
+  loading,
+  error,
+  onChange,
+}: {
+  info: ProjectAccessLandingInfo;
+  loading: boolean;
+  error: string | null;
+  onChange: (info: ProjectAccessLandingInfo) => void;
+}) {
+  const [requestedRole, setRequestedRole] = useState<"viewer" | "collaborator">(
+    info.relationship === "viewer" ? "collaborator" : "viewer",
+  );
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const projectTitle = info.title?.trim() || "Untitled project";
+  const owner = info.owner;
+  const canChooseViewer = info.relationship !== "viewer";
+
+  async function refreshProjectAccess() {
+    await (
+      redux.getActions("projects") as any
+    )?.ensureRealtimeFeedForCurrentAccount?.();
+    await redux.getActions("projects").open_project({
+      project_id: info.project_id,
+      target: "files",
+      switch_to: true,
+      restore_session: false,
+    });
+  }
+
+  async function acceptInvite() {
+    if (!info.pending_invite) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      await webapp_client.project_collaborators.respond_invite({
+        invite_id: info.pending_invite.invite_id,
+        project_id: info.project_id,
+        action: "accept",
+      });
+      await refreshProjectAccess();
+    } catch (err) {
+      setActionError(`${err}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function declineInvite() {
+    if (!info.pending_invite) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      await webapp_client.project_collaborators.respond_invite({
+        invite_id: info.pending_invite.invite_id,
+        project_id: info.project_id,
+        action: "decline",
+      });
+      const next =
+        await webapp_client.project_collaborators.get_access_landing_info({
+          project_id: info.project_id,
+        });
+      onChange(next);
+    } catch (err) {
+      setActionError(`${err}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function requestAccess() {
+    setBusy(true);
+    setActionError(null);
+    try {
+      const request = await webapp_client.project_collaborators.request_access({
+        project_id: info.project_id,
+        requested_role: requestedRole,
+        message,
+        source:
+          info.relationship === "viewer" ? "viewer-read-only" : "project-url",
+      });
+      onChange({
+        ...info,
+        pending_request: {
+          request_id: request.request_id,
+          requested_role: request.requested_role,
+          status: "pending",
+        },
+      });
+      setMessage("");
+    } catch (err) {
+      setActionError(`${err}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      style={{
+        minHeight: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+        background: COLORS.GRAY_LLL,
+      }}
+    >
+      <Card style={{ width: "100%", maxWidth: 680 }}>
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <div>
+            <Title level={3} style={{ marginTop: 0, marginBottom: 4 }}>
+              Project access
+            </Title>
+            <Text type="secondary">
+              You are signed in, but this project is not currently available as
+              a normal collaborator project.
+            </Text>
+          </div>
+          <div
+            style={{
+              border: `1px solid ${COLORS.GRAY_LL}`,
+              borderRadius: 10,
+              padding: 14,
+              background: "white",
+            }}
+          >
+            <Title level={4} style={{ marginTop: 0 }}>
+              {projectTitle}
+            </Title>
+            {owner != null && (
+              <Space>
+                <Avatar
+                  account_id={owner.account_id}
+                  first_name={owner.first_name ?? undefined}
+                  last_name={owner.last_name ?? undefined}
+                  size={32}
+                />
+                <span>
+                  Owner:{" "}
+                  <Text strong>
+                    {owner.name ||
+                      `${owner.first_name ?? ""} ${owner.last_name ?? ""}`.trim() ||
+                      "Unknown"}
+                  </Text>
+                </span>
+              </Space>
+            )}
+          </div>
+          {info.pending_invite != null ? (
+            <Alert
+              showIcon
+              type="success"
+              message={`You were invited as a ${info.pending_invite.invite_role}.`}
+              description={
+                <Space wrap style={{ marginTop: 8 }}>
+                  <Button type="primary" loading={busy} onClick={acceptInvite}>
+                    Accept invite
+                  </Button>
+                  <Button disabled={busy} onClick={declineInvite}>
+                    Decline
+                  </Button>
+                </Space>
+              }
+            />
+          ) : info.pending_request != null ? (
+            <Alert
+              showIcon
+              type="info"
+              message="Access request pending"
+              description={`You requested ${info.pending_request.requested_role} access. A project owner or authorized collaborator can approve it.`}
+            />
+          ) : info.blocked ? (
+            <Alert
+              showIcon
+              type="warning"
+              message="Access requests are not available"
+              description="This project is not accepting access requests from your account."
+            />
+          ) : (
+            <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+              <Paragraph style={{ marginBottom: 0 }}>
+                Request access from the project owner or an authorized
+                collaborator.
+              </Paragraph>
+              <Radio.Group
+                value={requestedRole}
+                onChange={(e) => setRequestedRole(e.target.value)}
+              >
+                {canChooseViewer && <Radio value="viewer">Viewer</Radio>}
+                <Radio value="collaborator">Collaborator</Radio>
+              </Radio.Group>
+              <Input.TextArea
+                rows={3}
+                maxLength={512}
+                showCount
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="Optional short message"
+              />
+              <Button
+                type="primary"
+                loading={busy || loading}
+                onClick={requestAccess}
+              >
+                Request access
+              </Button>
+            </Space>
+          )}
+          {(error || actionError) && (
+            <Alert
+              showIcon
+              type="error"
+              message="Unable to update project access"
+              description={actionError ?? error}
+            />
+          )}
+          <Space>
+            <Button
+              onClick={() => {
+                redux.getActions("page").close_project_tab(info.project_id);
+                redux.getActions("page").set_active_tab("projects");
+              }}
+            >
+              Back to projects
+            </Button>
+          </Space>
+        </Space>
+      </Card>
+    </div>
+  );
+}
+
+function ProjectAccessLandingError({
+  project_id,
+  error,
+}: {
+  project_id: string;
+  error: string;
+}) {
+  return (
+    <div style={{ padding: 24 }}>
+      <Alert
+        showIcon
+        type="error"
+        message="Unable to open project"
+        description={error}
+        action={
+          <Button
+            onClick={() => {
+              redux.getActions("page").close_project_tab(project_id);
+              redux.getActions("page").set_active_tab("projects");
+            }}
+          >
+            Back to projects
+          </Button>
+        }
+      />
+    </div>
+  );
+}
 
 function HardDeleteProjectStatus({
   project_id,
