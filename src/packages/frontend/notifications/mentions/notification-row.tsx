@@ -4,7 +4,7 @@
  */
 
 import { Alert, Button, Modal, Space, Tag } from "antd";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { A } from "@cocalc/frontend/components";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
@@ -17,6 +17,7 @@ import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { User } from "@cocalc/frontend/users";
 import { MentionInfo } from "./types";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { ProjectAccessRequestStatus } from "@cocalc/conat/hub/api/projects";
 
 const DESCRIPTION_STYLE: CSS = {
   flex: "1 1 auto",
@@ -121,6 +122,10 @@ export function NotificationRow(props: Props) {
   const [accessRequestError, setAccessRequestError] = useState<string | null>(
     null,
   );
+  const [accessRequestCurrentStatus, setAccessRequestCurrentStatus] =
+    useState<ProjectAccessRequestStatus | null>(null);
+  const [checkingAccessRequestStatus, setCheckingAccessRequestStatus] =
+    useState<boolean>(false);
   const isProjectAccessRequestNotice =
     kind === "account_notice" &&
     notice_type === "project_access_request" &&
@@ -171,6 +176,42 @@ export function NotificationRow(props: Props) {
     );
   }
 
+  useEffect(() => {
+    if (!isProjectAccessRequestNotice || !project_id || !request_id) {
+      setAccessRequestCurrentStatus(null);
+      setCheckingAccessRequestStatus(false);
+      return;
+    }
+    let cancelled = false;
+    setCheckingAccessRequestStatus(true);
+    setAccessRequestCurrentStatus(null);
+    (async () => {
+      try {
+        const requests =
+          await webapp_client.project_collaborators.list_access_requests({
+            project_id,
+            limit: 1000,
+          });
+        if (cancelled) return;
+        const request = requests.find(
+          (request) => request.request_id === request_id,
+        );
+        setAccessRequestCurrentStatus(request?.status ?? null);
+      } catch {
+        if (!cancelled) {
+          setAccessRequestCurrentStatus(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setCheckingAccessRequestStatus(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isProjectAccessRequestNotice, project_id, request_id]);
+
   async function respondToProjectAccessRequest(
     action: "approve" | "deny" | "block",
     role?: "viewer" | "collaborator",
@@ -186,6 +227,13 @@ export function NotificationRow(props: Props) {
         action,
         role,
       });
+      setAccessRequestCurrentStatus(
+        action === "approve"
+          ? "approved"
+          : action === "block"
+            ? "blocked"
+            : "denied",
+      );
       setAccessRequestStatus(
         action === "approve"
           ? `Approved ${role ?? requested_role} access.`
@@ -211,6 +259,38 @@ export function NotificationRow(props: Props) {
           showIcon
           type="success"
           title={accessRequestStatus}
+          style={{ marginTop: 8 }}
+        />
+      );
+    }
+    if (
+      accessRequestCurrentStatus != null &&
+      accessRequestCurrentStatus !== "pending"
+    ) {
+      const statusLabel =
+        accessRequestCurrentStatus === "approved"
+          ? "approved"
+          : accessRequestCurrentStatus === "blocked"
+            ? "blocked"
+            : accessRequestCurrentStatus === "canceled"
+              ? "canceled"
+              : "denied";
+      return (
+        <Alert
+          showIcon
+          type={accessRequestCurrentStatus === "approved" ? "success" : "info"}
+          title={`Access request already ${statusLabel}.`}
+          description="This request has already been resolved."
+          style={{ marginTop: 8 }}
+        />
+      );
+    }
+    if (checkingAccessRequestStatus) {
+      return (
+        <Alert
+          showIcon
+          type="info"
+          title="Checking access request status..."
           style={{ marginTop: 8 }}
         />
       );
