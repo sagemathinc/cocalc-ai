@@ -174,7 +174,7 @@ describe("registration token storage protection", () => {
     expect(rawRows).toHaveLength(1);
   });
 
-  it("stores bootstrap-admin tokens hash-only and hides them from admin token listing", async () => {
+  it("stores pending bootstrap-admin tokens encrypted and hides them from admin token listing", async () => {
     const url = await ensureBootstrapAdminToken({
       baseUrl: "https://cocalc.example/",
     });
@@ -186,8 +186,8 @@ describe("registration token storage protection", () => {
     const rawRows = await rawRegistrationTokenRows();
     expect(rawRows).toHaveLength(1);
     expect(rawRows[0].descr).toBe("Bootstrap Admin");
-    expect(isHashedRegistrationTokenValue(rawRows[0].token)).toBe(true);
-    expect(isEncryptedRegistrationTokenValue(rawRows[0].token)).toBe(false);
+    expect(isEncryptedRegistrationTokenValue(rawRows[0].token)).toBe(true);
+    expect(isHashedRegistrationTokenValue(rawRows[0].token)).toBe(false);
     await expect(
       storedRegistrationTokenMatches(rawRows[0].token, clearToken!),
     ).resolves.toBe(true);
@@ -196,6 +196,13 @@ describe("registration token storage protection", () => {
       token: "*",
     });
     expect(visibleRows).toEqual([]);
+
+    const protectedRows = await rawRegistrationTokenRows();
+    expect(protectedRows).toHaveLength(1);
+    expect(isHashedRegistrationTokenValue(protectedRows[0].token)).toBe(true);
+    expect(isEncryptedRegistrationTokenValue(protectedRows[0].token)).toBe(
+      false,
+    );
   });
 
   it("replaces exhausted bootstrap-admin tokens", async () => {
