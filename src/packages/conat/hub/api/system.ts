@@ -76,6 +76,7 @@ export const system = {
   drainAccountNotificationIndexProjection: authFirst,
   getAccountNotificationIndexProjectionStatus: authFirst,
   getParallelOpsStatus: authFirst,
+  getSiteSetupStatus: authFirstRequireAccount,
   getProjectHostParallelOpsLimit: authFirst,
   setParallelOpsLimit: authFirst,
   clearParallelOpsLimit: authFirst,
@@ -827,6 +828,38 @@ export interface SiteSettingsSyncResult {
   bays: SiteSettingsSyncBayResult[];
 }
 
+export type SiteSetupStepState =
+  | "done"
+  | "blocked"
+  | "warning"
+  | "optional"
+  | "manual";
+
+export interface SiteSetupStep {
+  id: string;
+  title: string;
+  state: SiteSetupStepState;
+  hard_gate: boolean;
+  summary: string;
+  details?: string[];
+  admin_section?: string;
+}
+
+export interface SiteSetupStatus {
+  checked_at: string;
+  ready: boolean;
+  hard_gates_total: number;
+  hard_gates_done: number;
+  steps: SiteSetupStep[];
+  counts: {
+    configured_providers: number;
+    cached_provider_catalogs: number;
+    healthy_project_hosts: number;
+    official_rootfs_images: number;
+    prepull_rootfs_images: number;
+  };
+}
+
 export interface BayLoadBrowserControlStatus {
   active_accounts: number;
   active_browsers: number;
@@ -1572,6 +1605,10 @@ export interface System {
   getParallelOpsStatus: (opts?: {
     account_id?: string;
   }) => Promise<ParallelOpsWorkerStatus[]>;
+
+  getSiteSetupStatus: (opts?: {
+    account_id?: string;
+  }) => Promise<SiteSetupStatus>;
 
   getProjectHostParallelOpsLimit: (opts?: {
     account_id?: string;

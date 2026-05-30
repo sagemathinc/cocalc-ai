@@ -18,6 +18,7 @@ import { BayOpsAdmin } from "./bay-ops";
 import { ManagedEgressAdminOverview } from "./managed-egress-overview";
 import { ProjectBackupShardsAdmin } from "./project-backup-shards";
 import { SsoAdmin } from "./sso";
+import { SiteSetupAdmin } from "./site-setup";
 import {
   getAdminUrlPath,
   normalizeAdminRoute,
@@ -56,6 +57,15 @@ export function AdminPage({
   }
 
   const items: CollapseProps["items"] = [
+    {
+      key: "site-setup",
+      label: (
+        <div style={headerStyle}>
+          <Icon name="check-square" style={{ marginRight: "8px" }} /> Site Setup
+        </div>
+      ),
+      children: <SiteSetupAdmin />,
+    },
     {
       key: "user-search",
       label: (
