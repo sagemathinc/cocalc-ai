@@ -394,6 +394,10 @@ Expected outcome:
 - Project URL access page handles invited, not-invited, and viewer states explicitly.
 - Invite acceptance does not require hunting through email or another page.
 - Access requests notify project owners/admins through a clear channel.
+- Open a project URL into a project that the user is NOT a collaborator or viewer of doesn't feel broken - instead of provides a clear statement that of the user's relationship to the project (none), and the option to request an invitation for collab or viewer access.   The UI _is_ allowed to show:
+  - title of the project
+  - name of the project owner
+  Showing that will require probably a specific RPC.  It should not show the description, other collab viewer names, or any email addresses. 
 
 Next action:
 

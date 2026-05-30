@@ -287,7 +287,7 @@ Requester UI:
 
 ## Open Decisions
 
-- Whether access requests should support an optional requester message. Recommendation: yes, but short, sanitized, rate-limited, and included only in signed-in approver UI/notifications.
-- Whether a denied request can be retried immediately. Recommendation: no; apply a cooldown unless the approver blocks the requester.
-- Whether approvers can change requested role at approval time. Recommendation: allow downgrade from collaborator to viewer, but do not silently upgrade viewer to collaborator without an explicit approver choice.
-- Whether request blocks should also block future collaborator invites from the requester. Recommendation: no; keep request blocking project-scoped and separate from invite sender blocking unless product explicitly wants account-to-account invite blocking semantics.
+- Whether access requests should support an optional requester message. Recommendation: yes, but short, sanitized, rate-limited, and included only in signed-in approver UI/notifications. (ANS: Yes, but short and safe.)
+- Whether a denied request can be retried immediately. Recommendation: no; apply a cooldown unless the approver blocks the requester. (ANS: I agree)
+- Whether approvers can change requested role at approval time. Recommendation: allow downgrade from collaborator to viewer, but do not silently upgrade viewer to collaborator without an explicit approver choice. (ANS: agreed)
+- Whether request blocks should also block future collaborator invites from the requester. Recommendation: no; keep request blocking project-scoped and separate from invite sender blocking unless product explicitly wants account-to-account invite blocking semantics.  (ANS: agreed)
