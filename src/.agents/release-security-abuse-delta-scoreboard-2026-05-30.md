@@ -20,8 +20,8 @@ Statuses:
 
 Current score:
 
-- `unknown`: 5
-- `guarded`: 14
+- `unknown`: 4
+- `guarded`: 15
 - `finding`: 0
 - `fixed`: 4
 - `accepted-risk`: 0
@@ -40,7 +40,7 @@ Current score:
 | D-009 | Scratch disk          | Scratch auto-grow                             | fixed   | high     | Provider resize or auto-grow bypasses pricing/admission or grows on unsupported provider.       | Shared scratch auto-grow re-estimates the next rate, checks billing runway before cloud resize, reconciles the active purchase session after resize, and remains gated to online-resize providers.  | Keep Nebius high-cost manual/provider validation in the broader host smoke pass.                                                                             | Fixed in `project-host/auto-grow.ts` with focused regression coverage.                                                                     |
 | D-010 | Codex/ACP             | Codex fast service tier                       | guarded | high     | Fast/priority tier enabled by default or silently used, causing unexpected spend.               | UI makes fast explicit; backend resolves service tier and logs requested/resolved tier; standard maps to no fast tier.                                                                              | Manual standard and fast turns via UI/CLI; confirm app-server receives only supported tier variants and activity log shows config.                           | Earlier mismatch `priority` versus `fast/flex` was found and fixed.                                                                        |
 | D-011 | Codex/ACP             | ACP queued/running status                     | unknown | medium   | Submitted message remains queued while work runs, causing duplicate retry or confusing state.   | Recent stale queued prompt cleanup exists.                                                                                                                                                          | Review status transition writes and frontend reconciliation for queued-to-running.                                                                           | User observed this intermittently.                                                                                                         |
-| D-012 | Codex/ACP             | ACP scheduling limits                         | unknown | high     | Unbounded queued/running turns or retry/recovery work.                                          | May 11 audit added ACP admission limits; recent changes may interact with service tier/status.                                                                                                      | Spot-check new ACP paths since May 11 still call admission helpers before durable enqueue or running claim.                                                  | Include automation and recovery continuations.                                                                                             |
+| D-012 | Codex/ACP             | ACP scheduling limits                         | guarded | high     | Unbounded queued/running turns or retry/recovery work.                                          | Chat turns and automations check creation admission before enqueue; detached workers check running admission before transactional claim; project-host workers use actor effective limits.           | Manual high-volume queue smoke is still useful, especially across worker restart and recovery continuation paths.                                            | Recovery continuations bypass queued/created counters only after an admitted parent job and are capped to one continuation per parent.     |
 | D-013 | Launchpad/PGLite      | Launchpad SEA startup                         | guarded | medium   | Single executable crashes at startup due to asset/database assumptions.                         | Recent Launchpad/PGLite fixes landed.                                                                                                                                                               | Run Launchpad SEA smoke and confirm no real Postgres behavior changed.                                                                                       | Item 2 in release-blocker triage.                                                                                                          |
 | D-014 | Launchpad/PGLite      | PGLite transaction behavior                   | guarded | medium   | PGLite-only transaction serialization causes deadlocks/timeouts or hides real Postgres bugs.    | PGLite-specific direct/single-hub path added after test failures.                                                                                                                                   | Verify guards are PGLite/local only and server/database tests pass.                                                                                          | Real Postgres behavior should remain unchanged.                                                                                            |
 | D-015 | Operator tooling      | Host upgrade/deploy selection                 | fixed   | high     | Selecting one component upgrades disruptive unrelated services.                                 | Per-component deploy now sets the selected component desired version and immediately rolls out only that selected component instead of invoking full-stack project-host upgrade alignment.          | Manual browser smoke should verify selecting ACP worker does not restart router or persist.                                                                  | User saw selecting only `acp-worker` upgrade router and persist too; root cause was frontend immediate action using `align_runtime_stack`. |
@@ -118,6 +118,24 @@ Request decisions notify only the requester.
 
 Focused regression: `pnpm test projects/collaborators.test.ts` in
 `src/packages/server`, including owner-only fanout coverage.
+
+### D-012: ACP scheduling limits guarded
+
+The changed ACP paths still route through admission before durable enqueue or
+running claim:
+
+- chat turns call `admitAcpJobCreation` before `enqueueAcpJob`.
+- manual/scheduled automations check active automation and job creation limits.
+- detached workers call `admitAcpJobExecution` before claim and pass running
+  caps into the transactional SQLite claim.
+- project-host ACP workers install a limits provider backed by actor account
+  effective limits, falling back to project-owner limits when no actor is known.
+
+Recovery continuations intentionally bypass queued/created counters, but only
+after a parent job exists and only one continuation can be queued per parent
+operation. Focused regression:
+`pnpm test hub/acp/__tests__/acp-jobs.test.ts hub/acp/__tests__/detached-worker.test.ts`
+in `src/packages/lite`.
 
 ## Manual Validation Log
 
