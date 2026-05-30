@@ -3,26 +3,31 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Space, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Checkbox,
+  Divider,
+  Flex,
+  Space,
+  Typography,
+} from "antd";
 import { List, Map } from "immutable";
 import { join } from "path";
 import { FormattedMessage, useIntl } from "react-intl";
-import {
-  Button,
-  ButtonToolbar,
-  Checkbox,
-  Col,
-  Panel,
-  Row,
-  Well,
-} from "@cocalc/frontend/antd-bootstrap";
 import {
   Rendered,
   TypedMap,
   redux,
   useState,
 } from "@cocalc/frontend/app-framework";
-import { Icon, LabeledRow, TimeAgo } from "@cocalc/frontend/components";
+import {
+  Icon,
+  LabeledRow,
+  SettingBox,
+  TimeAgo,
+} from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { labels } from "@cocalc/frontend/i18n";
@@ -34,7 +39,6 @@ import {
 } from "@cocalc/frontend/passports";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { keys, startswith } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
 import { PassportStrategyFrontend } from "@cocalc/util/types/passport-types";
 import {
   FreshAuthModal,
@@ -103,28 +107,31 @@ export function AccountSettings(props: Readonly<Props>) {
     const name = strategy2display(strategy_js);
     const href = join(appBasePath, "auth", add_strategy_link);
     return (
-      <Well>
-        <h4>
-          <PassportStrategyIcon strategy={strategy_js} /> {name}
-        </h4>
-        Link to your {name} account, so you can use {name} to login to your{" "}
-        <SiteName /> account.
-        <br /> <br />
-        <ButtonToolbar style={{ textAlign: "center" }}>
-          <Button
-            href={href}
-            target="_blank"
-            onClick={() => {
-              set_add_strategy_link(undefined);
-            }}
-          >
-            <Icon name="external-link" /> Link My {name} Account
-          </Button>
-          <Button onClick={() => set_add_strategy_link(undefined)}>
-            <CancelText />
-          </Button>
-        </ButtonToolbar>
-      </Well>
+      <Card size="small">
+        <Flex vertical gap="middle">
+          <Typography.Title level={4}>
+            <PassportStrategyIcon strategy={strategy_js} /> {name}
+          </Typography.Title>
+          <Typography.Paragraph>
+            Link to your {name} account, so you can use {name} to login to your{" "}
+            <SiteName /> account.
+          </Typography.Paragraph>
+          <Space wrap>
+            <Button
+              href={href}
+              target="_blank"
+              onClick={() => {
+                set_add_strategy_link(undefined);
+              }}
+            >
+              <Icon name="external-link" /> Link My {name} Account
+            </Button>
+            <Button onClick={() => set_add_strategy_link(undefined)}>
+              <CancelText />
+            </Button>
+          </Space>
+        </Flex>
+      </Card>
     );
   }
 
@@ -165,39 +172,53 @@ export function AccountSettings(props: Readonly<Props>) {
     const name = strategy2display(strategy_js);
     if ((props.passports?.size ?? 0) <= 1 && !props.email_address) {
       return (
-        <Well>
-          You must set an email address above or add another login method before
-          you can disable login to your <SiteName /> account using your {name}{" "}
-          account. Otherwise you would completely lose access to your account!
-        </Well>
+        <Alert
+          type="warning"
+          title="Add another sign-in method first"
+          description={
+            <>
+              You must set an email address above or add another login method
+              before you can disable login to your <SiteName /> account using
+              your {name} account. Otherwise you would completely lose access to
+              your account!
+            </>
+          }
+        />
       );
       // TODO: flesh out the case where the UI prevents a user from unlinking an exclusive sso strategy
       // Right now, the backend blocks
     } else if (false) {
       return (
-        <Well>You are not allowed to remove the passport strategy {name}.</Well>
+        <Alert
+          type="warning"
+          title={`You are not allowed to remove ${name}.`}
+        />
       );
     } else {
       return (
-        <Well>
-          <h4>
-            <PassportStrategyIcon strategy={strategy_js} /> {name}
-          </h4>
-          Your <SiteName /> account is linked to your {name} account, so you can
-          login using it.
-          <br /> <br />
-          If you unlink your {name} account, you will no longer be able to use
-          this account to log into <SiteName />.
-          <br /> <br />
-          <ButtonToolbar style={{ textAlign: "center" }}>
-            <Button bsStyle="danger" onClick={remove_strategy_click}>
-              <Icon name="unlink" /> Unlink my {name} account
-            </Button>
-            <Button onClick={() => set_remove_strategy_button(undefined)}>
-              <CancelText />
-            </Button>
-          </ButtonToolbar>
-        </Well>
+        <Card size="small">
+          <Flex vertical gap="middle">
+            <Typography.Title level={4}>
+              <PassportStrategyIcon strategy={strategy_js} /> {name}
+            </Typography.Title>
+            <Typography.Paragraph>
+              Your <SiteName /> account is linked to your {name} account, so you
+              can login using it.
+            </Typography.Paragraph>
+            <Typography.Paragraph>
+              If you unlink your {name} account, you will no longer be able to
+              use this account to log into <SiteName />.
+            </Typography.Paragraph>
+            <Space wrap>
+              <Button danger onClick={remove_strategy_click}>
+                <Icon name="unlink" /> Unlink my {name} account
+              </Button>
+              <Button onClick={() => set_remove_strategy_button(undefined)}>
+                <CancelText />
+              </Button>
+            </Space>
+          </Flex>
+        </Card>
       );
     }
   }
@@ -221,7 +242,7 @@ export function AccountSettings(props: Readonly<Props>) {
             }
           }}
           key={strategy.get("name")}
-          bsStyle={is_configured ? "info" : undefined}
+          type={is_configured ? "primary" : "default"}
         >
           <PassportStrategyIcon strategy={strategy_js} small={true} />{" "}
           {strategy2display(strategy_js)}
@@ -256,19 +277,16 @@ export function AccountSettings(props: Readonly<Props>) {
       .map((strategy) => render_strategy(strategy, account_passports))
       .toArray();
     return (
-      <div>
-        <hr key="hr0" />
-        <h5 style={{ color: COLORS.GRAY_M }}>
+      <Flex vertical gap="small">
+        <Divider titlePlacement="start" plain>
           {intl.formatMessage({
             id: "account.settings.sso.account_is_linked",
             defaultMessage: "Your account is linked with (click to unlink)",
           })}
-        </h5>
-        <ButtonToolbar style={{ marginBottom: "10px", display: "flex" }}>
-          {btns}
-        </ButtonToolbar>
+        </Divider>
+        <Space wrap>{btns}</Space>
         {render_remove_strategy_button()}
-      </div>
+      </Flex>
     );
   }
 
@@ -315,30 +333,20 @@ export function AccountSettings(props: Readonly<Props>) {
         <Button
           key="sso"
           onClick={() => open_new_tab(join(appBasePath, "sso"))}
-          bsStyle="info"
+          type="primary"
         >
           Other SSO
         </Button>,
       );
     }
     return (
-      <div>
-        <hr key="hr0" />
-        <h5 style={{ color: COLORS.GRAY_M }}>{heading}</h5>
-        <Space size={[10, 10]} wrap style={{ marginBottom: "10px" }}>
-          {btns}
-        </Space>
+      <Flex vertical gap="small">
+        <Divider titlePlacement="start" plain>
+          {heading}
+        </Divider>
+        <Space wrap>{btns}</Space>
         {render_add_strategy_link()}
-      </div>
-    );
-  }
-
-  function render_header(): Rendered {
-    return (
-      <>
-        <Icon name={ACCOUNT_PROFILE_ICON_NAME} />{" "}
-        {intl.formatMessage(labels.account)}
-      </>
+      </Flex>
     );
   }
 
@@ -347,17 +355,16 @@ export function AccountSettings(props: Readonly<Props>) {
       return;
     }
     return (
-      <Row style={{ marginBottom: "15px" }}>
-        <Col md={4}>
+      <LabeledRow
+        label={
           <FormattedMessage
             id="account.settings.created.label"
             defaultMessage={"Created"}
           />
-        </Col>
-        <Col md={8}>
-          <TimeAgo date={props.created} />
-        </Col>
-      </Row>
+        }
+      >
+        <TimeAgo date={props.created} />
+      </LabeledRow>
     );
   }
 
@@ -443,17 +450,21 @@ export function AccountSettings(props: Readonly<Props>) {
   }
 
   return (
-    <Panel header={render_header()}>
-      {render_account_id()}
-      {render_name()}
-      {render_email_address()}
-      {render_unlisted()}
-      <div style={{ marginBottom: "15px" }}></div>
-      {render_email_verification()}
-      {render_created()}
-      {render_linked_external_accounts()}
-      {render_available_to_link()}
+    <SettingBox
+      title={intl.formatMessage(labels.account)}
+      icon={ACCOUNT_PROFILE_ICON_NAME}
+    >
+      <Space vertical>
+        {render_account_id()}
+        {render_name()}
+        {render_email_address()}
+        {render_unlisted()}
+        {render_email_verification()}
+        {render_created()}
+        {render_linked_external_accounts()}
+        {render_available_to_link()}
+      </Space>
       <FreshAuthModal {...freshAuthModalProps} />
-    </Panel>
+    </SettingBox>
   );
 }

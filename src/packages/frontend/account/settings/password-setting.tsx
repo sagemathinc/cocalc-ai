@@ -3,11 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Form, Input } from "antd";
+import { Button, Card, Flex, Form, Input, Space, Typography } from "antd";
 import { join } from "path";
 import { useIntl } from "react-intl";
 
-import { Button, ButtonToolbar, Well } from "@cocalc/frontend/antd-bootstrap";
 import {
   Rendered,
   useIsMountedRef,
@@ -115,13 +114,13 @@ export function PasswordSetting({
   function render_change_button(): Rendered {
     if (is_submittable()) {
       return (
-        <Button onClick={save_new_password} bsStyle="success">
+        <Button onClick={save_new_password} type="primary">
           {intl.formatMessage(labels.account_password_change)}
         </Button>
       );
     } else {
       return (
-        <Button disabled bsStyle="success">
+        <Button disabled type="primary">
           {intl.formatMessage(labels.account_password_change)}
         </Button>
       );
@@ -152,14 +151,26 @@ export function PasswordSetting({
   }
 
   function render_edit(): Rendered {
+    const passwordHint =
+      new_password.length < MIN_PASSWORD_LENGTH
+        ? `at least ${MIN_PASSWORD_LENGTH} characters`
+        : new_password.length >= 6 && new_password == old_password
+          ? "different than old password"
+          : undefined;
+
     return (
-      <Well style={{ marginTop: "3ex" }}>
-        <Form onFinish={onFinish}>
-          <Form.Item>
-            Current password{" "}
-            <span color="#888">
-              (leave blank if you have not set a password)
-            </span>
+      <Card size="small">
+        <Form layout="vertical" onFinish={onFinish}>
+          <Form.Item
+            label={
+              <>
+                Current password{" "}
+                <Typography.Text type="secondary">
+                  (leave blank if you have not set a password)
+                </Typography.Text>
+              </>
+            }
+          >
             <Input.Password
               autoFocus
               type="password"
@@ -168,14 +179,18 @@ export function PasswordSetting({
               onChange={(e) => set_old_password(e.target.value)}
             />
           </Form.Item>
-          New password
-          {new_password.length < MIN_PASSWORD_LENGTH
-            ? ` (at least ${MIN_PASSWORD_LENGTH} characters)`
-            : undefined}
-          {new_password.length >= 6 && new_password == old_password
-            ? " (different than old password)"
-            : undefined}
-          <Form.Item>
+          <Form.Item
+            label={
+              <>
+                New password{" "}
+                {passwordHint ? (
+                  <Typography.Text type="secondary">
+                    ({passwordHint})
+                  </Typography.Text>
+                ) : undefined}
+              </>
+            }
+          >
             <Input.Password
               type="password"
               value={new_password}
@@ -186,13 +201,13 @@ export function PasswordSetting({
             />
           </Form.Item>
         </Form>
-        <ButtonToolbar>
+        <Space>
           {render_change_button()}
           <Button onClick={cancel_editing}>Cancel</Button>
-        </ButtonToolbar>
+        </Space>
         {render_error()}
         {render_saving()}
-      </Well>
+      </Card>
     );
   }
 
@@ -204,12 +219,14 @@ export function PasswordSetting({
 
   if (!showLabel) {
     return (
-      <>
-        <Button disabled={state !== "view"} onClick={change_password}>
-          {intl.formatMessage(labels.account_password_change)}...
-        </Button>
+      <Flex vertical gap="middle">
+        {state === "view" ? (
+          <Button onClick={change_password}>
+            {intl.formatMessage(labels.account_password_change)}...
+          </Button>
+        ) : undefined}
         {state !== "view" ? render_edit() : undefined}
-      </>
+      </Flex>
     );
   }
 

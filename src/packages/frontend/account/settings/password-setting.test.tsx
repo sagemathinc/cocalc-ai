@@ -14,6 +14,18 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   },
 }));
 
+jest.mock("@cocalc/frontend/components", () => ({
+  A: ({ children, ...props }: any) => <a {...props}>{children}</a>,
+  ErrorDisplay: ({ error }: any) => <div>{error}</div>,
+  LabeledRow: ({ children, label }: any) => (
+    <div>
+      <div>{label}</div>
+      {children}
+    </div>
+  ),
+  Saving: () => <span>Saving...</span>,
+}));
+
 describe("PasswordSetting", () => {
   beforeEach(() => {
     jest.clearAllMocks();

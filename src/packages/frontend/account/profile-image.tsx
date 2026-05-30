@@ -4,7 +4,7 @@
  */
 
 import gravatarUrl from "./gravatar-url";
-import { Button, Well } from "@cocalc/frontend/antd-bootstrap";
+import { Button, Card, Flex, Space, Typography } from "antd";
 import { Component, Rendered } from "@cocalc/frontend/app-framework";
 import { ErrorDisplay, Loading } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -87,32 +87,30 @@ export class ProfileImageSelector extends Component<
       return;
     }
     return (
-      <>
-        <Button
-          style={{ marginTop: "5px" }}
-          onClick={this.handle_gravatar_click}
-        >
-          Gravatar
-        </Button>{" "}
-        <a
-          href="#"
-          onClick={(e) => {
-            e.preventDefault();
-            this.setState({ show_gravatar_explanation: true });
-          }}
-        >
-          What is this?
-        </a>
+      <Flex vertical gap="small">
+        <Space wrap>
+          <Button onClick={this.handle_gravatar_click}>Gravatar</Button>
+          <Button
+            type="link"
+            onClick={(e) => {
+              e.preventDefault();
+              this.setState({ show_gravatar_explanation: true });
+            }}
+          >
+            What is this?
+          </Button>
+        </Space>
         {this.state.show_gravatar_explanation ? (
-          <Well style={{ marginTop: "10px", marginBottom: "10px" }}>
-            Gravatar is a service for using a common avatar across websites. Go
-            to the{" "}
-            <a href="https://en.gravatar.com" target="_blank" rel="noopener">
-              Wordpress Gravatar site
-            </a>{" "}
-            and sign in (or create an account) using {this.props.email_address}.
-            <br />
-            <br />
+          <Card size="small">
+            <Typography.Paragraph>
+              Gravatar is a service for using a common avatar across websites.
+              Go to the{" "}
+              <a href="https://en.gravatar.com" target="_blank" rel="noopener">
+                Wordpress Gravatar site
+              </a>{" "}
+              and sign in (or create an account) using{" "}
+              {this.props.email_address}.
+            </Typography.Paragraph>
             <Button
               onClick={() =>
                 this.setState({ show_gravatar_explanation: false })
@@ -120,64 +118,56 @@ export class ProfileImageSelector extends Component<
             >
               Close
             </Button>
-          </Well>
-        ) : (
-          <br />
-        )}
-      </>
+          </Card>
+        ) : undefined}
+      </Flex>
     );
   }
 
   render_options() {
     return (
-      <>
-        <Button
-          style={{ marginTop: "5px" }}
-          onClick={this.handle_default_click}
-        >
-          Default
-        </Button>{" "}
-        <a
-          href="#"
-          onClick={(e) => {
-            e.preventDefault();
-            this.setState({ show_default_explanation: true });
-          }}
-        >
-          What is this?
-        </a>
+      <Flex vertical gap="middle">
+        <Space wrap>
+          <Button onClick={this.handle_default_click}>Default</Button>
+          <Button
+            type="link"
+            onClick={(e) => {
+              e.preventDefault();
+              this.setState({ show_default_explanation: true });
+            }}
+          >
+            What is this?
+          </Button>
+        </Space>
         {this.state.show_default_explanation ? (
-          <Well style={{ marginTop: "10px", marginBottom: "10px" }}>
-            The default avatar is a circle with the first letter of your name.
-            <br />
-            <br />
+          <Card size="small">
+            <Typography.Paragraph>
+              The default avatar is a circle with the first letter of your name.
+            </Typography.Paragraph>
             <Button
               onClick={() => this.setState({ show_default_explanation: false })}
             >
               Close
             </Button>
-          </Well>
-        ) : (
-          <br />
-        )}
-        <div style={{ margin: "15px 0" }}>
-          <UploadProfileImage
-            account_id={this.props.account_id}
-            onChange={(data) => {
-              this.set_image(data);
-            }}
-          />
-        </div>
+          </Card>
+        ) : undefined}
+        <UploadProfileImage
+          account_id={this.props.account_id}
+          onChange={(data) => {
+            this.set_image(data);
+          }}
+        />
         {this.render_options_gravatar()}
-      </>
+      </Flex>
     );
   }
 
   render_loading() {
     return (
-      <div>
-        Saving... <Loading />
-      </div>
+      <Space>
+        Saving...
+        <Loading />
+      </Space>
     );
   }
 
@@ -198,11 +188,10 @@ export class ProfileImageSelector extends Component<
       return this.render_loading();
     }
     return (
-      <>
+      <Flex vertical gap="middle">
         {this.render_error()}
-        <br />
         {this.render_options()}
-      </>
+      </Flex>
     );
   }
 }

@@ -7,7 +7,7 @@ import type { IconName } from "@cocalc/frontend/components/icon";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 
-import { ProfileSettings } from "./profile-settings";
+import { AvatarSettings } from "./avatar-settings";
 import { SecuritySettings } from "./security-settings";
 import { AccountSettings } from "./settings/account-settings";
 
@@ -52,7 +52,7 @@ export function AccountPreferencesProfile() {
         first_name={first_name}
         last_name={last_name}
       />
-      <ProfileSettings email_address={email_address} />
+      <AvatarSettings email_address={email_address} />
     </>
   );
 }
