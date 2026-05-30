@@ -8,21 +8,29 @@ export function shouldFetchProjectAccessLandingInfo({
   accountIsReady,
   isLoggedIn,
   hasProject,
-  hasOpenFilesOrder,
 }: {
   isActive: boolean;
   accountIsReady: boolean;
   isLoggedIn: boolean;
   hasProject: boolean;
-  hasOpenFilesOrder: boolean;
 }): boolean {
-  return (
-    isActive &&
-    accountIsReady &&
-    isLoggedIn &&
-    !hasProject &&
-    !hasOpenFilesOrder
-  );
+  return isActive && accountIsReady && isLoggedIn && !hasProject;
+}
+
+export function hasProjectRoleForAccessLandingBypass({
+  accountId,
+  project,
+  isAdmin = false,
+}: {
+  accountId?: string | null;
+  project: any;
+  isAdmin?: boolean;
+}): boolean {
+  if (project == null) return false;
+  if (isAdmin) return true;
+  if (!accountId) return false;
+  const group = project.getIn?.(["users", accountId, "group"]);
+  return group === "owner" || group === "collaborator" || group === "viewer";
 }
 
 export function projectAccessSignInHref({
