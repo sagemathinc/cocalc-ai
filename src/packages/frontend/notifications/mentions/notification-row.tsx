@@ -23,6 +23,14 @@ const DESCRIPTION_STYLE: CSS = {
   wordBreak: "normal",
 } as const;
 
+const MARKDOWN_STYLE: CSS = {
+  color: "rgb(100, 100, 100)",
+  margin: "4px 0",
+  overflowWrap: "normal",
+  wordBreak: "normal",
+  whiteSpace: "normal",
+} as const;
+
 const AVATAR_WRAPPING_STYLE: CSS = {
   flex: "0 0 auto",
   margin: "0 .9em",
@@ -164,7 +172,7 @@ export function NotificationRow(props: Props) {
           {body_markdown ? (
             <StaticMarkdown
               style={{
-                color: "rgb(100, 100, 100)",
+                ...MARKDOWN_STYLE,
                 margin: IS_MOBILE ? "4px 0" : "4px 10px",
               }}
               value={body_markdown}
@@ -184,7 +192,10 @@ export function NotificationRow(props: Props) {
         <ProjectTitle project_id={project_id} />.
         {description ? (
           <StaticMarkdown
-            style={{ color: "rgb(100, 100, 100)", margin: "4px 10px" }}
+            style={{
+              ...MARKDOWN_STYLE,
+              margin: IS_MOBILE ? "4px 0" : "4px 10px",
+            }}
             value={description}
           />
         ) : (
@@ -219,7 +230,12 @@ export function NotificationRow(props: Props) {
           />
         )}
       </div>
-      <div style={DESCRIPTION_STYLE}>{renderBody()}</div>
+      <div
+        className="cocalc-notification-row-message"
+        style={DESCRIPTION_STYLE}
+      >
+        {renderBody()}
+      </div>
       <div
         style={
           IS_MOBILE

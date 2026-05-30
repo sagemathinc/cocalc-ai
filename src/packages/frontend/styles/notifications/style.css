@@ -53,6 +53,14 @@
   margin-inline-start: 8px;
 }
 
+.cocalc-notifications-mobile .cocalc-notification-row-message,
+.cocalc-notifications-mobile .cocalc-notification-row-message p,
+.cocalc-notifications-mobile .cocalc-notification-row-message strong,
+.cocalc-notifications-mobile .cocalc-notification-row-message span {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
 .cocalc-notifications-mobile .cocalc-notification-row-entry code,
 .cocalc-notifications-mobile .cocalc-notification-row-entry pre,
 .cocalc-notifications-mobile .cocalc-notification-row-entry a {
