@@ -20,10 +20,10 @@ Statuses:
 
 Current score:
 
-- `unknown`: 7
+- `unknown`: 6
 - `guarded`: 13
 - `finding`: 0
-- `fixed`: 3
+- `fixed`: 4
 - `accepted-risk`: 0
 - `deferred`: 0
 
@@ -36,7 +36,7 @@ Current score:
 | D-005 | Access requests       | Requester blocking                            | guarded | medium   | Harassment via repeated access requests or notifications.                                       | Project-scoped requester blocks and unblock UI exist.                                                                                                                                               | Verify blocked requester gets no new request, notification, email, or project-log spam.                                                                      | Similar intent to invite blocking.                                                                                                         |
 | D-006 | Notifications         | Access request notification/email fanout      | unknown | medium   | Email/notification spam, wrong recipient, or metadata leak.                                     | Intended to follow existing invite notification channel and communication preferences.                                                                                                              | Inspect notification projector/email path and duplicate suppression for access requests.                                                                     | Needs comparison with invite behavior.                                                                                                     |
 | D-007 | Scratch disk          | Shared scratch spend admission                | fixed   | critical | Large scratch disk could create very high monthly cloud cost if omitted from spend enforcement. | Purchase, edit, resize, spend maintenance, and background shared scratch auto-grow now price with `shared_disk_gb/shared_disk_type`; auto-grow reconciles the active purchase session after resize. | Keep full server package tests in release validation.                                                                                                        | Focused auto-grow regression covers pre-resize denial and post-resize purchase reconciliation.                                             |
-| D-008 | Scratch disk          | Scratch edit/delete authorization             | unknown | high     | Unauthorized user edits or deletes a shared host disk affecting all projects on host.           | Host/project-host control-plane authorization exists, but changed surface needs full review.                                                                                                        | Audit RPCs and frontend actions for owner/admin/fresh-auth expectations and host-bay routing.                                                                | Intentional all-project read/write access to mounted scratch is out of scope; control-plane disk mutation is in scope.                     |
+| D-008 | Scratch disk          | Scratch edit/delete authorization             | fixed   | high     | Unauthorized user edits or deletes a shared host disk affecting all projects on host.           | Scratch create/edit/delete runs through host owner-only `updateHostMachine`, cloud mutations require fresh auth, and live delete now reconciles active billing to the post-delete non-scratch rate. | Manual live host delete smoke should confirm the provider disk is removed, `/scratch` unmounted, and the purchase session rate drops.                        | Intentional all-project read/write access to mounted scratch is out of scope; control-plane disk mutation is in scope.                     |
 | D-009 | Scratch disk          | Scratch auto-grow                             | fixed   | high     | Provider resize or auto-grow bypasses pricing/admission or grows on unsupported provider.       | Shared scratch auto-grow re-estimates the next rate, checks billing runway before cloud resize, reconciles the active purchase session after resize, and remains gated to online-resize providers.  | Keep Nebius high-cost manual/provider validation in the broader host smoke pass.                                                                             | Fixed in `project-host/auto-grow.ts` with focused regression coverage.                                                                     |
 | D-010 | Codex/ACP             | Codex fast service tier                       | guarded | high     | Fast/priority tier enabled by default or silently used, causing unexpected spend.               | UI makes fast explicit; backend resolves service tier and logs requested/resolved tier; standard maps to no fast tier.                                                                              | Manual standard and fast turns via UI/CLI; confirm app-server receives only supported tier variants and activity log shows config.                           | Earlier mismatch `priority` versus `fast/flex` was found and fixed.                                                                        |
 | D-011 | Codex/ACP             | ACP queued/running status                     | unknown | medium   | Submitted message remains queued while work runs, causing duplicate retry or confusing state.   | Recent stale queued prompt cleanup exists.                                                                                                                                                          | Review status transition writes and frontend reconciliation for queued-to-running.                                                                           | User observed this intermittently.                                                                                                         |
@@ -92,6 +92,20 @@ Closeout evidence:
   selected component.
 - Manual browser smoke should still verify ACP worker selection leaves router
   and persist untouched in the live UI.
+
+### D-008: Scratch edit/delete authorization and billing closeout
+
+Control-plane scratch disk mutation is owner-only: `updateHostMachine` calls
+`loadOwnedHost`, which requires the caller to match `project_hosts.metadata.owner`.
+The RPC is also classified as fresh-auth-required, and cloud scratch delete uses
+host-control unmount plus provider disk deletion before metadata is persisted.
+
+One adjacent billing gap was fixed during the audit: live scratch delete
+previously skipped active purchase-session reconciliation. The delete path now
+re-estimates the running host rate without `shared_disk_gb/shared_disk_type`,
+updates host billing metadata, and reconciles the active purchase session.
+Focused regression: `pnpm test conat/api/hosts.test.ts` in
+`src/packages/server`.
 
 ## Manual Validation Log
 
