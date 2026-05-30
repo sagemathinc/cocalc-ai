@@ -46,7 +46,7 @@ V1 should be narrow.
 
 Supported OS:
 
-- Ubuntu 24.04 LTS only.
+- Ubuntu 24.04 LTS only. (maybe Ubuntu 26.04 LTS also, which just came out)
 - Fresh or effectively dedicated VM.
 
 Minimum VM:
@@ -184,6 +184,35 @@ Relevant facts:
 
 Star should use these mechanisms rather than inventing a separate scheduler. The
 main Star-specific work is deriving stricter local defaults and limits.
+
+### Shared Scratch
+
+Source:
+
+- `src/packages/project-host/file-server.ts`
+- `src/packages/project-host/file-server-sandbox-policy.ts`
+- `src/packages/project-host/storage-metrics.ts`
+- `src/packages/project-host/storage-info-service.ts`
+- `src/packages/server/cloud/bootstrap-host.ts`
+- `src/packages/server/conat/api/hosts-shared-scratch.ts`
+
+Relevant facts:
+
+- Project-host already supports host-level shared scratch via:
+  - `COCALC_SHARED_SCRATCH_ENABLED=1`
+  - `COCALC_SHARED_SCRATCH_HOST_MOUNT=/mnt/cocalc-scratch`
+  - project-visible mount path `/scratch`
+- When enabled, sandboxed project filesystem operations route `/scratch` to
+  the host shared scratch mount.
+- Storage metrics already report `shared_scratch_total_bytes`,
+  `shared_scratch_used_bytes`, and `shared_scratch_available_bytes`.
+- Project storage overview already surfaces "Host shared scratch" at
+  `/scratch`.
+- Existing cloud host bootstrap wires shared scratch as a provider disk when
+  `shared_disk_gb` is set.
+
+Star should enable shared `/scratch` by default, but implement it as local
+bounded storage on the Star VM rather than as a provider-managed disk.
 
 ## Architecture
 
@@ -409,12 +438,71 @@ V1 storage:
 - One local filesystem root.
 - Btrfs/podman/project-host runtime under `/var/lib/cocalc/star/project-host`
   or `/mnt/cocalc`.
+- Host-level shared `/scratch` enabled by default for all projects.
 - Rustic backups to local disk by default.
+
+### Shared `/scratch`
+
+Star should include a shared `/scratch` area that is visible to every project on
+the local project-host.
+
+Why:
+
+- It gives the VM admin a simple way to publish datasets, course files, sample
+  notebooks, and other shared material to all users.
+- Without it, sharing local data between projects requires much more complex
+  account/project/file workflows.
+- It makes Star feel like a real shared machine, not just many isolated project
+  homes.
+
+Implementation target:
+
+- Enable existing project-host shared scratch by default:
+  - `COCALC_SHARED_SCRATCH_ENABLED=1`
+  - `COCALC_SHARED_SCRATCH_HOST_MOUNT=/mnt/cocalc-scratch`
+  - `COCALC_SHARED_SCRATCH_PROJECT_MOUNT=/scratch`
+- Back `/mnt/cocalc-scratch` with a local btrfs subvolume or mounted filesystem
+  that has an explicit size/quota.
+- Prefer a btrfs subvolume with quota when using one physical VM disk, because
+  it avoids `/scratch` consuming the entire disk while still allowing admin
+  enlargement later.
+- If the VM has a separate data disk, optionally mount a dedicated partition or
+  filesystem at `/mnt/cocalc-scratch`.
+
+Default sizing:
+
+- Minimum: 10 GiB.
+- Recommended default: `min(100 GiB, max(10 GiB, 20% of available data disk))`.
+- Expose the chosen size in the Star setup/admin page.
+
+Permissions:
+
+- V1 can start with world-readable and group-writable admin-managed data,
+  depending on existing project-host sandbox behavior.
+- Product decision: should ordinary project users be able to write to shared
+  `/scratch`, or should the default be admin-writable/read-only-to-projects?
+
+Recommendation:
+
+- Default to writable shared scratch for V1 if that matches current project-host
+  semantics, because it is simplest and mirrors a shared lab machine.
+- Add an admin-controlled read-only/publish mode later if needed.
+
+Operations:
+
+- The setup health page should show shared scratch size/free space.
+- The installer should create the mount/subvolume and fail if it cannot enforce
+  a bound.
+- Upgrade must preserve `/mnt/cocalc-scratch`.
+- Backup docs must be explicit: shared `/scratch` is local VM state and may be
+  excluded from normal project backup semantics unless we explicitly include it.
 
 Installer responsibilities:
 
 - Detect whether btrfs is available or create/format a btrfs volume/file-backed
   loop device if that is the chosen project-host requirement.
+- Create and mount the shared scratch subvolume/filesystem.
+- Enforce the initial shared scratch size/quota.
 - Create required Linux users/groups without colliding with existing IDs.
 - Validate podman/overlay/btrfs support before starting services.
 - Fail early on dirty/non-dedicated machines.
@@ -547,8 +635,9 @@ Hard gates:
 1. Admin account exists.
 2. Admin has 2FA.
 3. Local project-host is healthy.
-4. Default RootFS exists or a bundled default is installed.
-5. Smoke-test project starts.
+4. Shared `/scratch` is mounted, bounded, and visible to projects.
+5. Default RootFS exists or a bundled default is installed.
+6. Smoke-test project starts and can read/write `/scratch`.
 
 Optional:
 
