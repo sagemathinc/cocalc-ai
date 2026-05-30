@@ -20,10 +20,10 @@ Statuses:
 
 Current score:
 
-- `unknown`: 3
+- `unknown`: 2
 - `guarded`: 16
 - `finding`: 0
-- `fixed`: 4
+- `fixed`: 5
 - `accepted-risk`: 0
 - `deferred`: 0
 
@@ -49,7 +49,7 @@ Current score:
 | D-018 | Project viewers       | Read-only previews and frame UI               | guarded | medium   | Viewer preview triggers compile/run/write side effects or confusing collaborator controls.      | Viewer read-only mode has simplified frame title bars, reload controls, and read-only preview fixes.                                                                                                 | Manual open md/chat/pdf/ipynb/tex/task as viewer and inspect console for collaborator/runtime errors.                                                        | Several bugs were fixed through browser testing.                                                                                           |
 | D-019 | Runtime/proxy         | Viewer runtime and app-server denial          | guarded | high     | Viewer starts project runtime, reaches app-server/proxy, or runs project-local code.            | Viewer UI hides runtime controls; project-host access should enforce denial.                                                                                                                         | Endpoint-level deny tests or manual requests as viewer.                                                                                                      | Do not rely only on frontend hiding controls.                                                                                              |
 | D-020 | Project list/index    | Viewer projection and project relation labels | guarded | medium   | Viewer project does not show, shows wrong relation, or wrong role affects access checks.        | Project list projection was updated to include viewers and relation labels.                                                                                                                          | Re-run project list tests and manual accepted-viewer flow.                                                                                                   | Earlier viewer accepted invite did not appear in list.                                                                                     |
-| D-021 | Dependencies/config   | Dependency and default drift                  | unknown | high     | New dependency, env default, or config opens public access or vulnerable code.                  | May 11 audit resolved then-known advisories.                                                                                                                                                         | Run `pnpm -C src version-check`, inspect lockfile changes since May 11, and reconcile advisories if needed.                                                  | Focus only changed manifests/lockfiles first.                                                                                              |
+| D-021 | Dependencies/config   | Dependency and default drift                  | fixed   | high     | New dependency, env default, or config opens public access or vulnerable code.                  | Dependency consistency passes; production and dev audits are clean after raising vulnerable `tmp` and `qs` pins/overrides.                                                                           | Keep `version-check` plus prod/dev audit in release validation.                                                                                              | Audit found `tmp <0.2.6` in `project` and `qs <=6.15.1` via `express`; both were updated.                                                  |
 | D-022 | Public docs/rendering | Public-safe markdown/docs renderers           | unknown | medium   | Public rendering loads authenticated app-only actions or leaks private data.                    | Recent public-safe renderer and lazy action dependency changes exist.                                                                                                                                | Review public docs renderer imports and route behavior.                                                                                                      | Lower priority than spend/access surfaces.                                                                                                 |
 | D-023 | Browser automation    | Browser/agent auth after recent CLI work      | unknown | high     | Agent or browser automation can use broader auth than intended.                                 | May 11 browser/CLI audit added caps and raw-exec policy.                                                                                                                                             | Re-check new cocalc-cli viewer and access-request commands under agent auth.                                                                                 | Especially important for shared browser automation contexts.                                                                               |
 
@@ -134,6 +134,25 @@ Focused regressions:
 
 - `pnpm test hub/acp/__tests__/chat-writer.test.ts` in `src/packages/lite`.
 - `pnpm test chat/__tests__/normalize.test.ts` in `src/packages/frontend`.
+
+### D-021: Dependency audit drift fixed
+
+The dependency/config drift pass found two current audit advisories after the
+May 11 baseline:
+
+- `tmp <0.2.6` through `@cocalc/project`.
+- `qs <=6.15.1` through `http-api > express`.
+
+The direct `tmp` dependency and workspace override were raised to `0.2.6`, and
+the `qs` override now requires `>=6.15.2`. The lockfile resolves both patched
+versions.
+
+Focused validation:
+
+- `pnpm -C src version-check`.
+- `pnpm -C src/packages audit --prod`.
+- `pnpm -C src/packages audit --dev`.
+- `pnpm tsc --build` in `src/packages/project`.
 
 ### D-012: ACP scheduling limits guarded
 
