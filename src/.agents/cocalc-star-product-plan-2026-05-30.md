@@ -211,8 +211,23 @@ Relevant facts:
 - Existing cloud host bootstrap wires shared scratch as a provider disk when
   `shared_disk_gb` is set.
 
-Star should enable shared `/scratch` by default, but implement it as local
-bounded storage on the Star VM rather than as a provider-managed disk.
+Star should enable shared `/scratch` by default, but make it admin-managed local
+storage on the Star VM rather than a provider-managed disk. The simplest and
+most flexible model is:
+
+- `/mnt/cocalc-scratch` on the VM is mounted into every project as `/scratch`.
+- Project users map to the existing project UID/GID model, so the admin can use
+  Unix ownership and permissions to decide what is visible or writable.
+- Bind propagation should allow the VM admin to mount additional resources under
+  `/mnt/cocalc-scratch`, e.g. an S3/FUSE mount at
+  `/mnt/cocalc-scratch/my-bucket`, and have projects see it at
+  `/scratch/my-bucket`.
+- The default can be empty and not writable by project users, which makes it a
+  safe publish-only surface until the admin deliberately changes permissions.
+
+This is more valuable for small research groups than a fixed-size shared temp
+area. It lets the VM admin publish local datasets, mounted object-store buckets,
+and course materials without building a separate data distribution feature.
 
 ## Architecture
 
@@ -222,7 +237,7 @@ Star is:
 - one local project-host daemon stack,
 - one local storage root,
 - one local database mode,
-- systemd-managed services,
+- systemd-managed services configured so that on reboot everything automatically starts,
 - one local host row pre-registered in the control plane.
 
 It should behave like "Launchpad with exactly one local project host", not like
@@ -305,22 +320,24 @@ Recommended internal defaults:
 | Project-host conat-persist health | `127.0.0.1`              | `9400`             |
 | Project SSH ingress               | `0.0.0.0` or `127.0.0.1` | `2222`             |
 
-Open decision:
+V1 should include HTTPS automation.
 
-- Should V1 include HTTPS automation?
+Recommendation:
 
-Pragmatic V1 answer:
-
-- Support plain HTTP and private/LAN deployment first.
-- Allow operator-provided TLS/reverse proxy later.
-- Marketplace images can rely on cloud security-group/firewall and public HTTP
-  initially if acceptable.
-
-Better V2:
-
-- Include Caddy or another small reverse proxy for automatic Let's Encrypt when
-  a DNS name is provided.
+- Use Caddy or another standard small reverse proxy for automatic Let's Encrypt
+  when the admin provides a DNS name that resolves to the VM.
+- Keep TLS out of the CoCalc Node.js processes; terminate at the proxy.
+- Support LAN/private HTTP as an explicit local-only mode, but do not make
+  public remote HTTP the default onboarding path.
 - Keep Cloudflare out of Star V1 to preserve the product promise.
+
+Reasoning:
+
+- Remote HTTP-only WebSockets are fragile in real browsers and networks.
+- Expecting users to SSH-forward ports to use a shared appliance is not a viable
+  product experience.
+- Caddy-style HTTPS is a standard solved problem and should be easier than
+  debugging many insecure-transport edge cases.
 
 ## Local Host Registration
 
@@ -368,7 +385,10 @@ registry paths so admin/host UI and project placement do not need a fork.
 Star shares one VM between:
 
 - hub/control plane,
-- database,
+- embedded database state:
+  - PGlite for the hub/control plane,
+  - SQLite or existing local project-host state for project-host,
+  - no separate long-running database server in Star V1,
 - project-host daemons,
 - containers/projects,
 - rootfs/build/cache,
@@ -461,13 +481,15 @@ Implementation target:
   - `COCALC_SHARED_SCRATCH_ENABLED=1`
   - `COCALC_SHARED_SCRATCH_HOST_MOUNT=/mnt/cocalc-scratch`
   - `COCALC_SHARED_SCRATCH_PROJECT_MOUNT=/scratch`
-- Back `/mnt/cocalc-scratch` with a local btrfs subvolume or mounted filesystem
-  that has an explicit size/quota.
+- Treat `/mnt/cocalc-scratch` as an admin-owned mount point.
 - Prefer a btrfs subvolume with quota when using one physical VM disk, because
-  it avoids `/scratch` consuming the entire disk while still allowing admin
+  it reduces the chance of `/scratch` consuming the entire disk while still
+  allowing admin
   enlargement later.
 - If the VM has a separate data disk, optionally mount a dedicated partition or
   filesystem at `/mnt/cocalc-scratch`.
+- Use mount propagation so admin-mounted resources below
+  `/mnt/cocalc-scratch` are visible inside projects.
 
 Default sizing:
 
@@ -477,16 +499,19 @@ Default sizing:
 
 Permissions:
 
-- V1 can start with world-readable and group-writable admin-managed data,
-  depending on existing project-host sandbox behavior.
-- Product decision: should ordinary project users be able to write to shared
-  `/scratch`, or should the default be admin-writable/read-only-to-projects?
+- V1 should default to admin-writable and project-readable or project-invisible
+  until the admin explicitly changes permissions.
+- This avoids accidental cross-user writes while still making the feature useful
+  immediately as a data publishing mechanism.
+- If the admin wants a writable shared workspace, they can grant access using
+  Unix permissions against the project UID/GID model.
 
 Recommendation:
 
-- Default to writable shared scratch for V1 if that matches current project-host
-  semantics, because it is simplest and mirrors a shared lab machine.
-- Add an admin-controlled read-only/publish mode later if needed.
+- Do not add a custom Star permissions UI in V1.
+- Document the exact host path, project path, UID/GID behavior, and a few common
+  `chown`/`chmod` recipes.
+- Add a UI later only if real users cannot manage the Unix-level model.
 
 Operations:
 
@@ -581,6 +606,104 @@ SEA target:
 
 Do not make normal operation depend on running the SEA binary as a long-lived
 process. Use systemd services for long-running processes.
+
+## Developer Source Deployments
+
+Star should also be a practical developer and customer-customization target.
+This is distinct from normal appliance operation: ordinary Star installs should
+run from versioned release artifacts, while developer mode provides a controlled
+way to build a local CoCalc checkout and deploy that build onto the same VM.
+
+Use cases:
+
+- Employees need a one-VM path to test and deploy Codex development work without
+  also configuring Cloudflare, GCP, Nebius, or a Rocket cluster.
+- Customers with license permission may want to customize their CoCalc
+  environment, add local features, or carry private patches.
+- Support can produce a bug-fix branch and give the customer a safe way to
+  build, deploy, smoke test, and roll back.
+
+Design rule:
+
+- Do not run the production Star services directly from a mutable source
+  checkout by default.
+- A source checkout should build a normal Star release directory, stage it under
+  `/opt/cocalc/star/releases/<build-id>`, run health checks, then flip
+  `/opt/cocalc/star/current`.
+- Rollback should be the same path as artifact-based upgrades.
+
+Recommended paths:
+
+```text
+/opt/cocalc/star/
+  current -> releases/<build-id>
+  releases/<build-id>/
+  source-builds/
+
+/var/lib/cocalc/star/
+  build-cache/
+
+/home/cocalc-dev/cocalc-ai/
+  src/
+```
+
+Recommended CLI:
+
+```sh
+cocalc-star dev init-source --path /home/cocalc-dev/cocalc-ai
+cocalc-star dev status
+cocalc-star dev build --path /home/cocalc-dev/cocalc-ai/src
+cocalc-star dev deploy --path /home/cocalc-dev/cocalc-ai/src
+cocalc-star dev rollback
+```
+
+`dev deploy` should:
+
+1. Refuse by default if the source checkout is dirty, unless
+   `--allow-dirty` is passed.
+2. Record source commit, branch, dirty state, build time, builder version, and
+   Star product version.
+3. Build the control-plane, frontend/static assets, project-host runtime, and
+   any Star-specific scripts needed by the release.
+4. Produce a release artifact or release directory with the same shape as
+   packaged Star.
+5. Run pre-deploy checks:
+   - database backup/export exists,
+   - migrations are known,
+   - service ports are available,
+   - disk space is sufficient,
+   - current release remains available for rollback.
+6. Stop/restart services through systemd, not ad-hoc process killing.
+7. Run health checks:
+   - hub health,
+   - local project-host health,
+   - login/admin page reachable,
+   - project start smoke test if requested.
+8. Leave a visible build fingerprint in `cocalc-star status` and the admin UI.
+
+Optional fast path:
+
+- `cocalc-star dev run-from-source` can exist for employees only, but should be
+  clearly marked non-production.
+- It is useful for quick iteration, but it should not be the path used by
+  customer bug-fix deployments.
+
+Support boundary:
+
+- A source-deployed Star instance should be marked as a custom build.
+- Support tooling should show the exact source commit and whether there are
+  uncommitted patches.
+- Product/licensing needs an explicit decision: customer source customization
+  may be allowed by the public source license, but supported custom deployment
+  should likely be a paid/support-eligible tier.
+
+Security boundary:
+
+- Developer deploy access is stronger than Star admin UI access.
+- It should require shell/root or a dedicated `cocalc-dev` Unix account with
+  explicit sudoers entries, not just a CoCalc admin account.
+- The web admin UI can display build status, but should not execute arbitrary
+  source builds in V1.
 
 ## Installer Flow
 
@@ -765,6 +888,15 @@ not provider feature development.
    - image only,
    - paid support,
    - or managed updates.
+8. Developer/source deployments:
+   - employee-only,
+   - available to customers but unsupported,
+   - or supported as a paid/customization tier.
+9. Custom-build support boundary:
+   - what changes void standard support,
+   - what build fingerprint must be provided,
+   - and whether support can request rollback to an official release before
+     debugging.
 
 ## Implementation Phases
 
@@ -848,7 +980,27 @@ Validation:
 - Single binary on fresh Ubuntu can install Star.
 - Compressed size target roughly 200 MiB if realistic.
 
-### Phase 6: Marketplace Images
+### Phase 6: Developer Source Deploy Lane
+
+Deliverable:
+
+- `cocalc-star dev init-source`.
+- `cocalc-star dev build`.
+- `cocalc-star dev deploy`.
+- `cocalc-star dev rollback`.
+- Build fingerprint surfaced in CLI and admin UI.
+- Release staging from local source checkout without overwriting the live
+  install in place.
+
+Validation:
+
+- Dirty checkout is refused unless explicitly allowed.
+- Clean checkout builds and deploys to a new versioned release.
+- Failed health check rolls back or leaves the previous release untouched.
+- Rollback from a custom build to the prior official release works.
+- Reboot after source deploy starts the selected release.
+
+### Phase 7: Marketplace Images
 
 Deliverable:
 
@@ -869,6 +1021,7 @@ Automated:
 - Unit tests for Star resource-budget calculation.
 - Unit tests for setup profile gating.
 - Integration test for local host row bootstrap.
+- Unit tests for source-build release metadata and dirty-check behavior.
 
 Manual:
 
@@ -882,6 +1035,9 @@ Manual:
 - Admin email configured.
 - Local/LAN-only access.
 - Public IP HTTP access.
+- Source checkout build/deploy.
+- Source deploy rollback.
+- Custom-build fingerprint visible in status/admin UI.
 
 Smoke:
 
@@ -916,3 +1072,13 @@ stack:
 4. One project start.
 
 Only after that works should we introduce `packages/star` or SEA packaging.
+
+The next proof after the basic appliance works should be a local source deploy:
+
+1. Put a CoCalc checkout on the same VM.
+2. Build a Star-compatible release from that checkout.
+3. Deploy it through the same versioned release/rollback mechanism.
+4. Confirm `cocalc-star status` reports the custom build fingerprint.
+
+That proves Star is not only an appliance, but also a safe single-VM development
+and customer-customization target.
