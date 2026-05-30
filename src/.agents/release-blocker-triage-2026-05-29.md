@@ -24,7 +24,7 @@ mostly operational readiness and configuration UX:
 - fresh-site setup has a known-good path but too many wrong turns,
 - membership tier configuration is still too confusing for safe production use,
 - project-host software upgrade controls are too CLI-dependent,
-- invite/access flows need manual validation,
+- invite/access flows are now manually validated,
 - and admin activity/search correctness still matters for support and abuse
   response.
 
@@ -38,9 +38,8 @@ mistakes discovered during dogfood.
 1. Implement the site setup checklist/wizard V1.
 2. Clean up membership tier editor/configuration enough for safe admin use.
 3. Restore project-host artifact upgrade controls in the host UI.
-4. Manually validate project invite/access-request flows and close or fix them.
-5. Fix admin user search "Active never" for known active users.
-6. Reproduce the browser resume retry storm; fix if still reproducible, or split
+4. Fix admin user search "Active never" for known active users.
+5. Reproduce the browser resume retry storm; fix if still reproducible, or split
    it into a bounded follow-up with telemetry/guards.
 
 ## Deferred Or Not Required For First Public Release
@@ -420,17 +419,21 @@ Next action:
 
 ### 13. Improve Project Invite And Access Request Flow
 
-Status: `open`
+Status: `done`
 
 Severity: high.
 
 Why it matters: project invite and access upgrade flows are common first-run collaboration paths. Broken project pages for invited users create a poor onboarding experience.
 
-Current read:
+Closeout:
 
-- Implementation is believed to be mostly done.
-- This remains open because it has not been manually validated end to end.
-- If manual testing passes, mark this item `done` without expanding scope.
+- Implemented and manually validated end to end on 2026-05-30.
+- Focused frontend/server tests cover the access landing auth gate, non-member
+  landing behavior, viewer collaborator requests, access request notification
+  actions, completed-request notification state, and invite notification
+  post-action feedback.
+- Remaining invite/access UX polish should be tracked as ordinary follow-up, not
+  as this release blocker.
 
 Known requirements:
 
@@ -445,17 +448,14 @@ Expected outcome:
 - Project URL access page handles invited, not-invited, and viewer states explicitly.
 - Invite acceptance does not require hunting through email or another page.
 - Access requests notify project owners/admins through a clear channel.
-- Open a project URL into a project that the user is NOT a collaborator or viewer of doesn't feel broken - instead of provides a clear statement that of the user's relationship to the project (none), and the option to request an invitation for collab or viewer access.   The UI _is_ allowed to show:
+- Open a project URL into a project that the user is NOT a collaborator or viewer of doesn't feel broken - instead of provides a clear statement that of the user's relationship to the project (none), and the option to request an invitation for collab or viewer access. The UI _is_ allowed to show:
   - title of the project
   - name of the project owner
-  Showing that will require probably a specific RPC.  It should not show the description, other collab viewer names, or any email addresses. 
+    Showing that will require probably a specific RPC. It should not show the description, other collab viewer names, or any email addresses.
 
 Next action:
 
-- Manually test invited-user accept flow from a project URL.
-- Manually test not-invited access request from a project URL.
-- Manually test viewer requesting collaborator access.
-- Mark done if those paths work; file focused bugs only for failures.
+- None for this blocker.
 
 ### 14. CPU Usage Accounting And Abuse Detection
 
