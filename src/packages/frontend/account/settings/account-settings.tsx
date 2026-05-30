@@ -24,7 +24,6 @@ import {
 } from "@cocalc/frontend/app-framework";
 import {
   ErrorDisplay,
-  Gap,
   Icon,
   LabeledRow,
   TimeAgo,
@@ -49,7 +48,6 @@ import {
 } from "@cocalc/frontend/auth/fresh-auth";
 import { DeleteAccount } from "../delete-account";
 import { ACCOUNT_PROFILE_ICON_NAME } from "../account-preferences-profile";
-import { SignOut } from "../sign-out";
 import { set_account_table, ugly_error } from "../util";
 import { EmailAddressSetting } from "./email-address-setting";
 import { EmailVerification } from "./email-verification";
@@ -257,35 +255,6 @@ export function AccountSettings(props: Readonly<Props>) {
         error={props.sign_out_error}
         onClose={() => actions().setState({ sign_out_error: "" })}
       />
-    );
-  }
-
-  function render_sign_out_buttons(): Rendered {
-    if (lite) {
-      return;
-    }
-    return (
-      <Row
-        style={{
-          marginTop: "15px",
-          borderTop: "1px solid #ccc",
-          paddingTop: "15px",
-        }}
-      >
-        <Col xs={12}>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "flex-end",
-              alignItems: "center",
-            }}
-          >
-            <SignOut everywhere={false} highlight={true} />
-            <Gap />
-            <SignOut everywhere={true} />
-          </div>
-        </Col>
-      </Row>
     );
   }
 
@@ -553,7 +522,6 @@ export function AccountSettings(props: Readonly<Props>) {
       {render_delete_account()}
       {render_linked_external_accounts()}
       {render_available_to_link()}
-      {render_sign_out_buttons()}
       {render_sign_out_error()}
       <FreshAuthModal {...freshAuthModalProps} />
     </Panel>
