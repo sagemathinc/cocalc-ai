@@ -614,6 +614,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "system.applyCloudflareTunnelSettings": {
+    decision: "fresh-auth-required",
+    reason: "admin applies stored Cloudflare tunnel credentials to runtime",
+  },
   "system.bootstrapCloudflareConfiguration": {
     decision: "fresh-auth-required",
     reason: "Cloudflare tunnel/R2 configuration bootstrap with cloud token",

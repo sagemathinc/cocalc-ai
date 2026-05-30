@@ -175,6 +175,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
     setRefreshProvider,
     refreshCatalog,
     catalogRefreshing,
+    catalogRefreshMessage,
   } = catalogRefresh;
   const hasExternalProviders = refreshProviders.some(
     (entry) => entry.value !== "self-host",
@@ -943,8 +944,9 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
               title="Cloud catalog not loaded yet"
               description={
                 catalogRefreshing
-                  ? "Refreshing the provider catalog and waiting for regions and machine types to appear."
-                  : "Before creating hosts for this provider, refresh its catalog to load regions and machine types. If you just refreshed and this message persists, reload the page."
+                  ? (catalogRefreshMessage ??
+                    "Refreshing the provider catalog and waiting for regions and machine types to appear.")
+                  : "Before creating hosts for this provider, refresh its catalog to load regions and machine types. This can take a few minutes the first time."
               }
             />
             {isAdmin ? (

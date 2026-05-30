@@ -6,6 +6,7 @@
     "preinstall": "npx only-allow pnpm",
     "build:bundle": "bay/build-bundle.sh",
     "build:bay-bundle": "bay/build-bundle.sh",
+    "build:bay-static-bundle": "bay/build-static-bundle.sh",
     "build:bay": "pnpm run build:bay-bundle",
     "build": "exit 0"
   },

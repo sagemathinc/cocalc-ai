@@ -700,6 +700,7 @@ export const useHostsPageViewModel = () => {
     catalogError,
     catalogLoading,
     catalogRefreshing,
+    catalogRefreshMessage,
     refreshCatalog,
   } = useHostCatalog(hub, {
     provider: catalogProvider,
@@ -1669,6 +1670,7 @@ export const useHostsPageViewModel = () => {
       setRefreshProvider,
       refreshCatalog,
       catalogRefreshing,
+      catalogRefreshMessage,
     },
   });
   const refreshHostsNow = React.useCallback(async () => {
