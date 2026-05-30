@@ -38,7 +38,7 @@ Table({
     action: {
       type: "string",
       pg_type: "VARCHAR(32)",
-      desc: "Account admin-role audit action.",
+      desc: "Account admin-role audit action, e.g. grant-admin or revoke-admin.",
     },
     actor_account_id: {
       type: "uuid",
