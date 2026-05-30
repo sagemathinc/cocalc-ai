@@ -21,9 +21,9 @@ Statuses:
 Current score:
 
 - `unknown`: 0
-- `guarded`: 17
+- `guarded`: 16
 - `finding`: 0
-- `fixed`: 6
+- `fixed`: 7
 - `accepted-risk`: 0
 - `deferred`: 0
 
@@ -45,7 +45,7 @@ Current score:
 | D-014 | Launchpad/PGLite      | PGLite transaction behavior                   | guarded | medium   | PGLite-only transaction serialization causes deadlocks/timeouts or hides real Postgres bugs.    | PGLite-specific direct/single-hub path added after test failures.                                                                                                                                                          | Verify guards are PGLite/local only and server/database tests pass.                                                                                          | Real Postgres behavior should remain unchanged.                                                                                            |
 | D-015 | Operator tooling      | Host upgrade/deploy selection                 | fixed   | high     | Selecting one component upgrades disruptive unrelated services.                                 | Per-component deploy now sets the selected component desired version and immediately rolls out only that selected component instead of invoking full-stack project-host upgrade alignment.                                 | Manual browser smoke should verify selecting ACP worker does not restart router or persist.                                                                  | User saw selecting only `acp-worker` upgrade router and persist too; root cause was frontend immediate action using `align_runtime_stack`. |
 | D-016 | Admin RPC             | Dangerous public hub RPC drift                | guarded | high     | New destructive/admin RPC ships without fresh-auth classification.                              | Dangerous RPC registry test exists and recently caught new RPCs.                                                                                                                                                           | Re-run registry test after access-request and scratch work; inspect new RPC decisions.                                                                       | Keep this as a regression gate.                                                                                                            |
-| D-017 | Public routes         | Project URL access landing                    | guarded | medium   | Signed-out user learns project title/owner/avatar before auth.                                  | Plan requires sign-in before showing any project info; implementation recently added safe flow.                                                                                                                            | Manual signed-out route test plus frontend route test.                                                                                                       | Auth-before-info is stricter than normal public docs behavior.                                                                             |
+| D-017 | Public routes         | Project URL access landing                    | fixed   | medium   | Signed-out user learns project title/owner/avatar before auth.                                  | Frontend project route now waits for account readiness, never fetches access-landing metadata unless signed in, and renders only a generic sign-in prompt for signed-out users; server RPC also rejects before any query. | Optional manual signed-out browser smoke against production-like deploy.                                                                                     | Auth-before-info is stricter than normal public docs behavior.                                                                             |
 | D-018 | Project viewers       | Read-only previews and frame UI               | guarded | medium   | Viewer preview triggers compile/run/write side effects or confusing collaborator controls.      | Viewer read-only mode has simplified frame title bars, reload controls, and read-only preview fixes.                                                                                                                       | Manual open md/chat/pdf/ipynb/tex/task as viewer and inspect console for collaborator/runtime errors.                                                        | Several bugs were fixed through browser testing.                                                                                           |
 | D-019 | Runtime/proxy         | Viewer runtime and app-server denial          | guarded | high     | Viewer starts project runtime, reaches app-server/proxy, or runs project-local code.            | Viewer UI hides runtime controls; project-host access should enforce denial.                                                                                                                                               | Endpoint-level deny tests or manual requests as viewer.                                                                                                      | Do not rely only on frontend hiding controls.                                                                                              |
 | D-020 | Project list/index    | Viewer projection and project relation labels | guarded | medium   | Viewer project does not show, shows wrong relation, or wrong role affects access checks.        | Project list projection was updated to include viewers and relation labels.                                                                                                                                                | Re-run project list tests and manual accepted-viewer flow.                                                                                                   | Earlier viewer accepted invite did not appear in list.                                                                                     |
@@ -92,6 +92,30 @@ Closeout evidence:
   selected component.
 - Manual browser smoke should still verify ACP worker selection leaves router
   and persist untouched in the live UI.
+
+### D-017: Signed-out project access route fixed
+
+The server-side safe-info RPC already rejected missing `account_id` before any
+database query, but the frontend project page still attempted to call that RPC
+for unavailable project routes before confirming the account was ready and
+signed in. That was not a metadata leak by itself, but it violated the stricter
+route invariant: signed-out users should be sent to sign in before any project
+access-landing lookup exists.
+
+Closeout evidence:
+
+- `ProjectPage` now waits for account readiness and requires `is_logged_in`
+  before initializing project context or fetching project access landing info.
+- Signed-out project routes render a generic sign-in card only. It includes the
+  current route as the auth target, but no project title, owner name, avatar, or
+  access-request status.
+- Focused frontend regression:
+  `pnpm test project/page/access-landing-auth.test.ts` in
+  `src/packages/frontend`.
+- Existing server regression:
+  `pnpm test projects/collaborators.test.ts` in `src/packages/server` includes
+  `requires sign-in before returning project access landing info`, which asserts
+  the RPC rejects and performs no database query.
 
 ### D-008: Scratch edit/delete authorization and billing closeout
 
