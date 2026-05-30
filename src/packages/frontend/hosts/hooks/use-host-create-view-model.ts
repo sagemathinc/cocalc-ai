@@ -53,6 +53,7 @@ export type HostCreateViewModel = {
     setRefreshProvider: (value: HostProvider) => void;
     refreshCatalog: (provider?: HostProvider) => Promise<boolean>;
     catalogRefreshing: boolean;
+    catalogRefreshMessage?: string;
   };
 };
 

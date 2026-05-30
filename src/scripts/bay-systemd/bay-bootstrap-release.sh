@@ -3,6 +3,7 @@ set -euo pipefail
 
 SOURCE_ROOT=""
 BUNDLE_PATH=""
+STATIC_BUNDLE_PATH=""
 BAY_ID="bay-0"
 BAY_USER="cocalc-bay"
 BAY_GROUP="cocalc-bay"
@@ -19,6 +20,7 @@ ROUTER_PORT=9102
 PERSIST_PORT=9202
 HUB_BASE_PORT=9300
 PUBLIC_URL=""
+PROJECT_HOST_SOFTWARE_BASE_URL=""
 DAEMON_RELOAD=1
 SITE_MASTER_KEY_PATH="/etc/cocalc/site-master-key"
 NODE_VERSION="26.2.0"
@@ -27,7 +29,7 @@ RETAIN_RELEASES="${COCALC_BAY_RETAIN_RELEASES:-3}"
 
 usage() {
   cat <<'EOF'
-Usage: bay-bootstrap-release.sh (--source <built-src-root> | --bundle <tarball>) [options]
+Usage: bay-bootstrap-release.sh (--source <built-src-root> | --bundle <tarball> | --static-bundle <tarball>) [options]
 
 Stage a built CoCalc src tree as a bay release, install the scaffold, and
 write bay env/secrets files.
@@ -35,6 +37,7 @@ write bay env/secrets files.
 Options:
   --source <dir>           built src root to stage (required)
   --bundle <tarball>       packaged Rocket bay runtime tarball to stage
+  --static-bundle <tarball> packaged static/frontend-only update tarball
   --bay-id <id>            bay id (default: bay-0)
   --bay-user <user>        service user / db user (default: cocalc-bay)
   --bay-group <group>      service group (default: cocalc-bay)
@@ -46,6 +49,9 @@ Options:
   --persist-port <n>       persist port (default: 9202)
   --hub-base-port <n>      base port for hub workers (default: 9300)
   --public-url <url>       optional public bay URL
+  --project-host-software-base-url <url>
+                           software base URL for project-host bootstrap
+                           artifacts; default: <public-url>/software
   --force-env              overwrite generated env files
   --force-overlay          overwrite bay-overlay.env only
   --no-enable-workers      do not enable worker units
@@ -114,6 +120,34 @@ render_if_missing_or_forced() {
   else
     cat >/dev/null
   fi
+}
+
+set_env_var() {
+  local target="$1"
+  local name="$2"
+  local value="$3"
+  local tmp
+  tmp="$(mktemp)"
+  if [[ -e "$target" ]]; then
+    awk -v name="$name" -v value="$value" '
+      BEGIN { written = 0 }
+      $0 ~ "^" name "=" {
+        if (!written) {
+          print name "=" value
+          written = 1
+        }
+        next
+      }
+      { print }
+      END {
+        if (!written) print name "=" value
+      }
+    ' "$target" > "$tmp"
+  else
+    printf '%s=%s\n' "$name" "$value" > "$tmp"
+  fi
+  cat "$tmp" > "$target"
+  rm -f "$tmp"
 }
 
 random_secret() {
@@ -209,6 +243,8 @@ derive_release_id() {
   local git_short
   if [[ -n "$SOURCE_ROOT" ]]; then
     git_short="$(git -C "$SOURCE_ROOT" rev-parse --short HEAD 2>/dev/null || echo local)"
+  elif [[ -n "$STATIC_BUNDLE_PATH" ]]; then
+    git_short="static"
   else
     git_short="bundle"
   fi
@@ -241,6 +277,44 @@ stage_bundle_release() {
   run tar -xf "$BUNDLE_PATH" -C "$TARGET_RELEASE" --strip-components=1
 }
 
+stage_static_bundle_release() {
+  if [[ ! -f "$STATIC_BUNDLE_PATH" ]]; then
+    echo "static bundle does not exist: $STATIC_BUNDLE_PATH" >&2
+    exit 1
+  fi
+  if [[ ! -L "$CURRENT_LINK" ]]; then
+    echo "static bundle deploy requires an existing current release at ${CURRENT_LINK}" >&2
+    exit 1
+  fi
+
+  local current_release
+  current_release="$(readlink -f "$CURRENT_LINK")"
+  if [[ -z "$current_release" || ! -d "$current_release" ]]; then
+    echo "current release does not resolve to a directory: ${CURRENT_LINK}" >&2
+    exit 1
+  fi
+
+  run rm -rf "$TARGET_RELEASE"
+  run mkdir -p "$TARGET_RELEASE"
+  run cp -al "${current_release}/." "$TARGET_RELEASE/"
+
+  run rm -rf \
+    "${TARGET_RELEASE}/runtime/control-plane/static" \
+    "${TARGET_RELEASE}/runtime/control-plane/public" \
+    "${TARGET_RELEASE}/runtime/control-plane/webapp" \
+    "${TARGET_RELEASE}/runtime/control-plane/bundle/gcp" \
+    "${TARGET_RELEASE}/runtime/control-plane/bundle/nebius" \
+    "${TARGET_RELEASE}/bay-static-manifest.json"
+  run tar --no-same-owner -xf "$STATIC_BUNDLE_PATH" -C "$TARGET_RELEASE" --strip-components=1
+  run chown -R "${BAY_USER}:${BAY_GROUP}" \
+    "${TARGET_RELEASE}/runtime/control-plane/static" \
+    "${TARGET_RELEASE}/runtime/control-plane/public" \
+    "${TARGET_RELEASE}/runtime/control-plane/webapp" \
+    "${TARGET_RELEASE}/runtime/control-plane/bundle/gcp" \
+    "${TARGET_RELEASE}/runtime/control-plane/bundle/nebius" \
+    "${TARGET_RELEASE}/bay-static-manifest.json"
+}
+
 validate_release() {
   if [[ ! -x "${TARGET_RELEASE}/scripts/bay-systemd/install-scaffold.sh" ]]; then
     echo "release is missing scripts/bay-systemd/install-scaffold.sh" >&2
@@ -263,6 +337,26 @@ validate_release() {
         exit 1
       fi
     done
+    if [[ ! -f "${TARGET_RELEASE}/runtime/control-plane/static/public.html" ]]; then
+      echo "release is missing static frontend assets" >&2
+      exit 1
+    fi
+    if [[ ! -f "${TARGET_RELEASE}/runtime/control-plane/public/cocalc-content.css" ]]; then
+      echo "release is missing public frontend assets" >&2
+      exit 1
+    fi
+    if [[ ! -f "${TARGET_RELEASE}/runtime/control-plane/webapp/favicon.ico" ]]; then
+      echo "release is missing webapp frontend assets" >&2
+      exit 1
+    fi
+    if [[ ! -f "${TARGET_RELEASE}/runtime/control-plane/bundle/gcp/gcp-setup.sh" ]]; then
+      echo "release is missing GCP provider setup script" >&2
+      exit 1
+    fi
+    if [[ ! -f "${TARGET_RELEASE}/runtime/control-plane/bundle/nebius/nebius-setup.sh" ]]; then
+      echo "release is missing Nebius provider setup script" >&2
+      exit 1
+    fi
   fi
 }
 
@@ -338,6 +432,10 @@ main() {
         BUNDLE_PATH="$2"
         shift 2
         ;;
+      --static-bundle)
+        STATIC_BUNDLE_PATH="$2"
+        shift 2
+        ;;
       --bay-id)
         BAY_ID="$2"
         shift 2
@@ -380,6 +478,10 @@ main() {
         ;;
       --public-url)
         PUBLIC_URL="$2"
+        shift 2
+        ;;
+      --project-host-software-base-url)
+        PROJECT_HOST_SOFTWARE_BASE_URL="$2"
         shift 2
         ;;
       --force-env)
@@ -432,18 +534,17 @@ main() {
 
   require_root
 
-  if [[ -z "$SOURCE_ROOT" && -z "$BUNDLE_PATH" ]]; then
-    echo "exactly one of --source or --bundle is required" >&2
-    usage >&2
-    exit 2
-  fi
-  if [[ -n "$SOURCE_ROOT" && -n "$BUNDLE_PATH" ]]; then
-    echo "only one of --source or --bundle may be specified" >&2
+  local input_count=0
+  [[ -n "$SOURCE_ROOT" ]] && input_count=$((input_count + 1))
+  [[ -n "$BUNDLE_PATH" ]] && input_count=$((input_count + 1))
+  [[ -n "$STATIC_BUNDLE_PATH" ]] && input_count=$((input_count + 1))
+  if [[ "$input_count" -ne 1 ]]; then
+    echo "exactly one of --source, --bundle, or --static-bundle is required" >&2
     usage >&2
     exit 2
   fi
   if [[ -z "$OVERLAY_MODE" ]]; then
-    if [[ -n "$BUNDLE_PATH" ]]; then
+    if [[ -n "$BUNDLE_PATH" || -n "$STATIC_BUNDLE_PATH" ]]; then
       OVERLAY_MODE="rocket-bundle"
     else
       OVERLAY_MODE="current-cocalc"
@@ -476,13 +577,31 @@ main() {
     exit 1
   fi
 
-  if [[ -n "$BUNDLE_PATH" ]]; then
+  if [[ -n "$STATIC_BUNDLE_PATH" ]]; then
+    stage_static_bundle_release
+  elif [[ -n "$BUNDLE_PATH" ]]; then
     stage_bundle_release
   else
     stage_source_release
   fi
   validate_release
   set_current_release
+
+  if [[ -n "$STATIC_BUNDLE_PATH" ]]; then
+    prune_old_releases
+    cat <<EOF
+Static release bootstrap complete.
+
+Static bundle:    ${STATIC_BUNDLE_PATH}
+Release id:       ${RELEASE_ID}
+Target release:   ${TARGET_RELEASE}
+Current link:     ${CURRENT_LINK}
+Bay root:         ${BAY_ROOT}
+
+Restart hub workers to serve the updated frontend/static assets.
+EOF
+    exit 0
+  fi
 
   INSTALL_CMD=("${TARGET_RELEASE}/scripts/bay-systemd/install-scaffold.sh" "--overlay" "$OVERLAY_MODE")
   if [[ "$DAEMON_RELOAD" -eq 1 ]]; then
@@ -565,6 +684,15 @@ CONAT_SERVER=http://127.0.0.1:${ROUTER_PORT}
 
 COCALC_BAY_POSTGRES_CMD='${POSTGRES_BIN} -D "\$COCALC_BAY_POSTGRES_DATA_DIR" -k "\$COCALC_BAY_POSTGRES_SOCKET_DIR" -h "\$COCALC_BAY_POSTGRES_HOST" -p "\$COCALC_BAY_POSTGRES_PORT"'
 EOF
+  if [[ -n "$PUBLIC_URL" ]]; then
+    set_env_var "${ENV_DIR}/bay.env" "COCALC_BAY_PUBLIC_URL" "$PUBLIC_URL"
+  fi
+  if [[ -z "$PROJECT_HOST_SOFTWARE_BASE_URL" && -n "$PUBLIC_URL" ]]; then
+    PROJECT_HOST_SOFTWARE_BASE_URL="${PUBLIC_URL%/}/software"
+  fi
+  if [[ -n "$PROJECT_HOST_SOFTWARE_BASE_URL" ]]; then
+    set_env_var "${ENV_DIR}/bay.env" "COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE" "${PROJECT_HOST_SOFTWARE_BASE_URL%/}"
+  fi
 
   render_if_missing_or_forced "${ENV_DIR}/bay-workers.env" "$BAY_WORKERS_ENV_EXAMPLE" <<EOF
 COCALC_BAY_WORKER_COUNT=${WORKER_COUNT}
@@ -609,6 +737,7 @@ Release bootstrap complete.
 
 Source root:      ${SOURCE_ROOT:-}
 Bundle:           ${BUNDLE_PATH:-}
+Static bundle:    ${STATIC_BUNDLE_PATH:-}
 Release id:       ${RELEASE_ID}
 Target release:   ${TARGET_RELEASE}
 Current link:     ${CURRENT_LINK}

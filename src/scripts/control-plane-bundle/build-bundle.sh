@@ -121,6 +121,44 @@ copy_js_pkg() {
   fi
 }
 
+copy_webapp_assets() {
+  local dest="$1"
+  echo "- Copy webapp assets"
+  mkdir -p "$dest"/webapp
+  local asset
+  for asset in \
+    favicon.ico \
+    favicon-16x16.png \
+    favicon-32x32.png \
+    safari-pinned-tab.svg \
+    cocalc-font-black.svg \
+    cocalc-font-dark.svg \
+    cocalc-font-white.svg \
+    cocalc-icon-white-transparent.svg \
+    cocalc-icon-white.svg \
+    cocalc-icon.svg \
+    cocalc-logo.svg \
+    open-cocalc-font-dark.svg \
+    serviceWorker.js; do
+    if [[ -f "packages/assets/${asset}" ]]; then
+      cp "packages/assets/${asset}" "$dest"/webapp/
+    fi
+  done
+}
+
+copy_provider_setup_scripts() {
+  local dest="$1"
+  echo "- Copy provider setup scripts"
+  if [[ -f "packages/server/cloud/gcp/gcp-setup.sh" ]]; then
+    mkdir -p "$dest"/bundle/gcp
+    cp "packages/server/cloud/gcp/gcp-setup.sh" "$dest"/bundle/gcp/
+  fi
+  if [[ -f "packages/server/cloud/nebius/nebius-setup.sh" ]]; then
+    mkdir -p "$dest"/bundle/nebius
+    cp "packages/server/cloud/nebius/nebius-setup.sh" "$dest"/bundle/nebius/
+  fi
+}
+
 echo "Building CoCalc control-plane bundle..."
 echo "  root:       $ROOT"
 echo "  entrypoint: $ENTRYPOINT"
@@ -198,6 +236,8 @@ echo "- Copy public assets"
 mkdir -p "$OUT"/public
 rsync -a --delete packages/assets/public/ "$OUT/public/"
 
+copy_webapp_assets "$OUT"
+
 echo "- Copy http-api handlers"
 mkdir -p "$OUT"/http-api-dist
 rsync -a --delete --exclude '*.map' \
@@ -213,5 +253,7 @@ if [[ "$COPY_BOOTSTRAP" -eq 1 ]]; then
     echo "bootstrap.py not found at $BOOTSTRAP_PY"
   fi
 fi
+
+copy_provider_setup_scripts "$OUT"
 
 echo "- Control-plane bundle created at $OUT"

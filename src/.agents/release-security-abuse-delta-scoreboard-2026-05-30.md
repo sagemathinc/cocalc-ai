@@ -21,9 +21,9 @@ Statuses:
 Current score:
 
 - `unknown`: 0
-- `guarded`: 17
+- `guarded`: 16
 - `finding`: 0
-- `fixed`: 6
+- `fixed`: 7
 - `accepted-risk`: 0
 - `deferred`: 0
 
@@ -38,14 +38,14 @@ Current score:
 | D-007 | Scratch disk          | Shared scratch spend admission                | fixed   | critical | Large scratch disk could create very high monthly cloud cost if omitted from spend enforcement. | Purchase, edit, resize, spend maintenance, and background shared scratch auto-grow now price with `shared_disk_gb/shared_disk_type`; auto-grow reconciles the active purchase session after resize.                        | Keep full server package tests in release validation.                                                                                                        | Focused auto-grow regression covers pre-resize denial and post-resize purchase reconciliation.                                             |
 | D-008 | Scratch disk          | Scratch edit/delete authorization             | fixed   | high     | Unauthorized user edits or deletes a shared host disk affecting all projects on host.           | Scratch create/edit/delete runs through host owner-only `updateHostMachine`, cloud mutations require fresh auth, and live delete now reconciles active billing to the post-delete non-scratch rate.                        | Manual live host delete smoke should confirm the provider disk is removed, `/scratch` unmounted, and the purchase session rate drops.                        | Intentional all-project read/write access to mounted scratch is out of scope; control-plane disk mutation is in scope.                     |
 | D-009 | Scratch disk          | Scratch auto-grow                             | fixed   | high     | Provider resize or auto-grow bypasses pricing/admission or grows on unsupported provider.       | Shared scratch auto-grow re-estimates the next rate, checks billing runway before cloud resize, reconciles the active purchase session after resize, and remains gated to online-resize providers.                         | Keep Nebius high-cost manual/provider validation in the broader host smoke pass.                                                                             | Fixed in `project-host/auto-grow.ts` with focused regression coverage.                                                                     |
-| D-010 | Codex/ACP             | Codex fast service tier                       | guarded | high     | Fast/priority tier enabled by default or silently used, causing unexpected spend.               | UI makes fast explicit; backend resolves service tier and logs requested/resolved tier; standard maps to no fast tier.                                                                                                     | Manual standard and fast turns via UI/CLI; confirm app-server receives only supported tier variants and activity log shows config.                           | Earlier mismatch `priority` versus `fast/flex` was found and fixed.                                                                        |
+| D-010 | Codex/ACP             | Codex fast service tier                       | guarded | high     | Fast/priority tier enabled by default or silently used, causing unexpected spend.               | UI makes fast explicit; backend resolves service tier and logs requested/resolved tier; standard maps to no fast tier.                                                                                                     | Keep standard/fast smoke and activity rendering tests in release validation.                                                                                 | CLI standard/fast smoke passed on lite1b; earlier mismatch `priority` versus `fast/flex` was found and fixed.                             |
 | D-011 | Codex/ACP             | ACP queued/running status                     | guarded | medium   | Submitted message remains queued while work runs, causing duplicate retry or confusing state.   | Backend queued-job startup clears prompt `acp_state: queued`; ChatStreamWriter writes running thread-state for the assistant turn; frontend sync drops stale prompt queue state when the reply runs.                       | Keep focused chat writer and frontend sync tests in release validation; manually watch for stale queued labels during ACP smoke.                             | User observed this intermittently; no current code gap found in focused audit.                                                             |
-| D-012 | Codex/ACP             | ACP scheduling limits                         | guarded | high     | Unbounded queued/running turns or retry/recovery work.                                          | Chat turns and automations check creation admission before enqueue; detached workers check running admission before transactional claim; project-host workers use actor effective limits.                                  | Manual high-volume queue smoke is still useful, especially across worker restart and recovery continuation paths.                                            | Recovery continuations bypass queued/created counters only after an admitted parent job and are capped to one continuation per parent.     |
-| D-013 | Launchpad/PGLite      | Launchpad SEA startup                         | fixed   | medium   | Single executable crashes at startup due to asset/database assumptions.                         | Launchpad startup now scrubs inherited project-runtime `CONAT_SERVER` before backend config can initialize, so a Launchpad process uses its own local Conat server instead of a project-host router.                       | Rebuild SEA artifact and run a clean-install smoke before release.                                                                                           | Source startup smoke reaches `Started HUB!`; existing stale SEA tarball still needs rebuild for packaging validation.                      |
+| D-012 | Codex/ACP             | ACP scheduling limits                         | guarded | high     | Unbounded queued/running turns or retry/recovery work.                                          | Chat turns and automations check creation admission before enqueue; detached workers check running admission before transactional claim; project-host workers use actor effective limits.                                  | Keep focused ACP admission/recovery tests in release validation; avoid uncontrolled live high-volume queue tests on shared lite1b.                         | Recovery continuations bypass queued/created counters only after an admitted parent job and are capped to one continuation per parent.     |
+| D-013 | Launchpad/PGLite      | Launchpad SEA startup                         | fixed   | medium   | Single executable crashes at startup due to asset/database assumptions.                         | Launchpad startup now scrubs inherited project-runtime `CONAT_SERVER` before backend config can initialize, so a Launchpad process uses its own local Conat server instead of a project-host router.                       | Keep SEA clean-install smoke in release validation.                                                                                                          | Rebuilt SEA artifact clean-install smoke reaches `Started HUB!` with no old crash signatures.                                              |
 | D-014 | Launchpad/PGLite      | PGLite transaction behavior                   | guarded | medium   | PGLite-only transaction serialization causes deadlocks/timeouts or hides real Postgres bugs.    | PGLite-specific direct/single-hub path added after test failures.                                                                                                                                                          | Verify guards are PGLite/local only and server/database tests pass.                                                                                          | Real Postgres behavior should remain unchanged.                                                                                            |
 | D-015 | Operator tooling      | Host upgrade/deploy selection                 | fixed   | high     | Selecting one component upgrades disruptive unrelated services.                                 | Per-component deploy now sets the selected component desired version and immediately rolls out only that selected component instead of invoking full-stack project-host upgrade alignment.                                 | Manual browser smoke should verify selecting ACP worker does not restart router or persist.                                                                  | User saw selecting only `acp-worker` upgrade router and persist too; root cause was frontend immediate action using `align_runtime_stack`. |
 | D-016 | Admin RPC             | Dangerous public hub RPC drift                | guarded | high     | New destructive/admin RPC ships without fresh-auth classification.                              | Dangerous RPC registry test exists and recently caught new RPCs.                                                                                                                                                           | Re-run registry test after access-request and scratch work; inspect new RPC decisions.                                                                       | Keep this as a regression gate.                                                                                                            |
-| D-017 | Public routes         | Project URL access landing                    | guarded | medium   | Signed-out user learns project title/owner/avatar before auth.                                  | Plan requires sign-in before showing any project info; implementation recently added safe flow.                                                                                                                            | Manual signed-out route test plus frontend route test.                                                                                                       | Auth-before-info is stricter than normal public docs behavior.                                                                             |
+| D-017 | Public routes         | Project URL access landing                    | fixed   | medium   | Signed-out user learns project title/owner/avatar before auth.                                  | Frontend project route now waits for account readiness, never fetches access-landing metadata unless signed in, and renders only a generic sign-in prompt for signed-out users; server RPC also rejects before any query. | Optional manual signed-out browser smoke against production-like deploy.                                                                                     | Auth-before-info is stricter than normal public docs behavior.                                                                             |
 | D-018 | Project viewers       | Read-only previews and frame UI               | guarded | medium   | Viewer preview triggers compile/run/write side effects or confusing collaborator controls.      | Viewer read-only mode has simplified frame title bars, reload controls, and read-only preview fixes.                                                                                                                       | Manual open md/chat/pdf/ipynb/tex/task as viewer and inspect console for collaborator/runtime errors.                                                        | Several bugs were fixed through browser testing.                                                                                           |
 | D-019 | Runtime/proxy         | Viewer runtime and app-server denial          | guarded | high     | Viewer starts project runtime, reaches app-server/proxy, or runs project-local code.            | Viewer UI hides runtime controls; project-host access should enforce denial.                                                                                                                                               | Endpoint-level deny tests or manual requests as viewer.                                                                                                      | Do not rely only on frontend hiding controls.                                                                                              |
 | D-020 | Project list/index    | Viewer projection and project relation labels | guarded | medium   | Viewer project does not show, shows wrong relation, or wrong role affects access checks.        | Project list projection was updated to include viewers and relation labels.                                                                                                                                                | Re-run project list tests and manual accepted-viewer flow.                                                                                                   | Earlier viewer accepted invite did not appear in list.                                                                                     |
@@ -93,6 +93,30 @@ Closeout evidence:
 - Manual browser smoke should still verify ACP worker selection leaves router
   and persist untouched in the live UI.
 
+### D-017: Signed-out project access route fixed
+
+The server-side safe-info RPC already rejected missing `account_id` before any
+database query, but the frontend project page still attempted to call that RPC
+for unavailable project routes before confirming the account was ready and
+signed in. That was not a metadata leak by itself, but it violated the stricter
+route invariant: signed-out users should be sent to sign in before any project
+access-landing lookup exists.
+
+Closeout evidence:
+
+- `ProjectPage` now waits for account readiness and requires `is_logged_in`
+  before initializing project context or fetching project access landing info.
+- Signed-out project routes render a generic sign-in card only. It includes the
+  current route as the auth target, but no project title, owner name, avatar, or
+  access-request status.
+- Focused frontend regression:
+  `pnpm test project/page/access-landing-auth.test.ts` in
+  `src/packages/frontend`.
+- Existing server regression:
+  `pnpm test projects/collaborators.test.ts` in `src/packages/server` includes
+  `requires sign-in before returning project access landing info`, which asserts
+  the RPC rejects and performs no database query.
+
 ### D-008: Scratch edit/delete authorization and billing closeout
 
 Control-plane scratch disk mutation is owner-only: `updateHostMachine` calls
@@ -118,6 +142,40 @@ Request decisions notify only the requester.
 
 Focused regression: `pnpm test projects/collaborators.test.ts` in
 `src/packages/server`, including owner-only fanout coverage.
+
+### D-010: Codex fast service tier guarded
+
+The current path keeps fast mode opt-in. The CLI accepts only `standard` or
+`fast`, `--fast` maps to `serviceTier: "fast"`, frontend ACP calls include the
+tier only when fast is selected, and activity rendering shows the requested and
+app-server-resolved tier.
+
+Live lite1b smoke was run against project
+`937f48ab-c8ce-4877-bb02-5ff43da8e787` on host
+`f3a5a179-0c10-4468-90f2-089ea4f7ad40`:
+
+- `project codex exec --service-tier standard` returned
+  `STANDARD_TIER_SMOKE_OK`.
+- `project codex exec --fast` returned `FAST_TIER_SMOKE_OK`.
+
+The host log still contains the original bad live evidence
+`requestedServiceTier: 'fast'` -> `appServerServiceTier: 'priority'`, followed
+by the fixed mapping
+`requestedServiceTier: 'fast'` -> `appServerServiceTier: 'fast'`. Standard
+turns map to `appServerServiceTier: null`.
+
+One operational mismatch remains: the requested host id
+`a3c4c6d0-2d08-4a01-9f9a-a5b544bfba31` did not resolve in the lite1b hub during
+this smoke; the previously used project resolved to `f3a5a179...`.
+
+Focused regressions:
+
+- `pnpm test chat/__tests__/acp-api.test.ts chat/__tests__/codex-defaults.test.ts chat/__tests__/codex-activity.test.tsx chat/__tests__/codex-activity-markdown.test.ts`
+  in `src/packages/frontend`.
+- `pnpm test acp-worker.test.ts hub/projects.test.ts` in
+  `src/packages/project-host`.
+- `pnpm test conat/api/hosts.test.ts` in `src/packages/server`.
+- `pnpm test membership-tier-templates.test.ts` in `src/packages/util`.
 
 ### D-011: ACP queued/running status guarded
 
@@ -208,9 +266,22 @@ running claim:
 
 Recovery continuations intentionally bypass queued/created counters, but only
 after a parent job exists and only one continuation can be queued per parent
-operation. Focused regression:
-`pnpm test hub/acp/__tests__/acp-jobs.test.ts hub/acp/__tests__/detached-worker.test.ts`
-in `src/packages/lite`.
+operation.
+
+The regression set now explicitly covers queue caps per account and per thread,
+created-window caps for 5h and 7d, running caps per account and per project,
+active automation caps, recovery continuation created-count bypass, and recovery
+continuation dedupe/timeout/retry behavior. Project-host/server coverage proves
+ACP workers fetch actor-account limits and route effective-limit lookups to the
+right authority.
+
+Focused regressions:
+
+- `pnpm test hub/acp/__tests__/acp-jobs.test.ts hub/acp/__tests__/detached-worker.test.ts hub/acp/__tests__/acp-automations.test.ts`
+  in `src/packages/lite`.
+- `pnpm test acp-worker.test.ts hub/projects.test.ts` in
+  `src/packages/project-host`.
+- `pnpm test conat/api/hosts.test.ts` in `src/packages/server`.
 
 ### D-013: Launchpad startup environment isolation fixed
 
@@ -224,9 +295,10 @@ clients then authenticated to the wrong server and crashed with
 
 Launchpad startup now deletes inherited `CONAT_SERVER` before any backend/server
 module can initialize `@cocalc/backend/data`. The current-source smoke reaches
-`Started HUB!` with a fresh PGLite data directory. The existing SEA tarball used
-for the first smoke predates this fix, so release packaging still needs a
-rebuilt SEA artifact smoke.
+`Started HUB!` with a fresh PGLite data directory. A rebuilt SEA artifact also
+unpacks from a clean asset cache and reaches `Started HUB!` with no
+`missing project-host bearer token`, `current transaction is aborted`, or
+`site_license_domain_locks` signatures.
 
 Focused validation:
 
@@ -234,6 +306,10 @@ Focused validation:
 - Current-source startup smoke:
   `COCALC_DATA_DIR=/tmp/cocalc-launchpad-src-data-smoke-fixed DATA=/tmp/cocalc-launchpad-src-data-smoke-fixed COCALC_OPEN_BROWSER=0 timeout 30s node bin/start.js --test`
   in `src/packages/launchpad`; it reached `Started HUB!`.
+- SEA package smoke:
+  `pnpm sea` in `src/packages/launchpad`, then unpack and run
+  `cocalc-launchpad --test` with fresh `COCALC_DATA_DIR` and a cleared
+  versioned asset cache; it reached `Started HUB!`.
 
 ### D-014: PGLite transaction behavior guarded
 
@@ -263,7 +339,6 @@ Record manual runs here as the audit progresses.
 | 2026-05-30 | Scratch disk billing/control-plane regression set  | pass   | `pnpm test conat/api/hosts.test.ts project-host/auto-grow.test.ts` in `src/packages/server`.                                                                                                            |
 | 2026-05-30 | Viewer project list/index projection               | pass   | `pnpm test postgres/account-project-index-projector.test.ts` in `src/packages/database`.                                                                                                                |
 | 2026-05-30 | Frontend auth/project/viewer UI regression set     | pass   | `pnpm test public/auth/__tests__/app.test.tsx projects/projects-page.test.tsx project/page/activity-bar-tabs.test.tsx` in `src/packages/frontend`; known jsdom/Ant Design warnings remain.              |
-
-|
-
-| 2026-05-30 | Launchpad/PGLite startup and transaction set       | pass   | Fixed inherited `CONAT_SERVER` crash; `pnpm test lib/onprem-config.test.ts`, PGLite transaction/account-security tests, psql account-security tests; source Launchpad smoke reached `Started HUB!`.     |
+| 2026-05-30 | Launchpad/PGLite startup and transaction set       | pass   | Fixed inherited `CONAT_SERVER` crash; `pnpm test lib/onprem-config.test.ts`, PGLite transaction/account-security tests, psql account-security tests; source and rebuilt SEA smokes reached `Started HUB!`. |
+| 2026-05-30 | Codex fast tier smoke                             | pass   | Live lite1b CLI standard/fast Codex turns returned expected exact responses; project-host/server/util/frontend focused tests passed, including ACP effective-limit routing and activity config rendering. |
+| 2026-05-30 | ACP scheduling limit regression set               | pass   | Added focused tests for queue, created-window, running, automation, and recovery-continuation limit boundaries; Lite, project-host, and server focused tests passed.                                      |

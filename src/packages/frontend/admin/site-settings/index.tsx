@@ -32,6 +32,7 @@ import { COLORS } from "@cocalc/util/theme";
 import { site_settings_conf } from "@cocalc/util/schema";
 import { RenderRow } from "./render-row";
 import { Data, IsClearing, IsReadonly, IsSet, State } from "./types";
+import type { CloudflareTunnelApplyResult } from "@cocalc/conat/hub/api/system";
 import GcpServiceAccountWizard from "./gcp-service-account-wizard";
 import NebiusCliWizard from "./nebius-cli-wizard";
 import CloudflareConfigWizard from "./cloudflare-config-wizard";
@@ -72,6 +73,11 @@ export default function SiteSettings({ close }) {
     useState<boolean>(false);
   const [settingsSyncResult, setSettingsSyncResult] = useState<any>(null);
   const [settingsSyncError, setSettingsSyncError] = useState<string>("");
+  const [cloudflareApplyLoading, setCloudflareApplyLoading] =
+    useState<boolean>(false);
+  const [cloudflareApplyResult, setCloudflareApplyResult] =
+    useState<CloudflareTunnelApplyResult | null>(null);
+  const [cloudflareApplyError, setCloudflareApplyError] = useState<string>("");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) => {
       setState("error");
@@ -537,6 +543,38 @@ export default function SiteSettings({ close }) {
     }
   }
 
+  async function applyCloudflareTunnelSettings(): Promise<void> {
+    setCloudflareApplyLoading(true);
+    setCloudflareApplyError("");
+    setCloudflareApplyResult(null);
+    try {
+      const completed = await runFreshAuthAction(async () => {
+        const result =
+          await webapp_client.conat_client.hub.system.applyCloudflareTunnelSettings(
+            {
+              browser_id: webapp_client.browser_id,
+            },
+          );
+        setCloudflareApplyResult(result);
+        redux.getActions("customize").setState({
+          launchpad_cloudflare_tunnel_status: {
+            enabled: result.enabled,
+            running: result.running,
+            hostname: result.hostname,
+            error: result.error,
+          },
+        });
+      });
+      if (!completed) {
+        setCloudflareApplyError("Fresh authentication was not completed.");
+      }
+    } catch (err) {
+      setCloudflareApplyError(err instanceof Error ? err.message : `${err}`);
+    } finally {
+      setCloudflareApplyLoading(false);
+    }
+  }
+
   function formatEmailTestRoute(result: any): string {
     const route = result?.route ?? [];
     if (!route.length) {
@@ -702,9 +740,19 @@ export default function SiteSettings({ close }) {
   }
 
   function Warning() {
+    const cloudflareTunnelConfigured =
+      cloudflareStatus?.enabled ||
+      `${data?.cloudflare_mode ?? ""}`.trim().toLowerCase() === "self" ||
+      to_bool(data?.project_hosts_cloudflare_tunnel_enabled);
+    const cloudflareSettingsModified = getModifiedSettings().some(
+      ({ name }) =>
+        name === "cloudflare_mode" ||
+        name.startsWith("cloudflare_") ||
+        name.startsWith("project_hosts_cloudflare_"),
+    );
     const showCloudflareWarning =
-      cloudflareStatus?.enabled &&
-      (!cloudflareStatus.running || cloudflareStatus.error);
+      cloudflareTunnelConfigured &&
+      (!cloudflareStatus?.running || cloudflareStatus.error);
     return (
       <div>
         {showCloudflareWarning && (
@@ -724,6 +772,44 @@ export default function SiteSettings({ close }) {
               </div>
             }
           />
+        )}
+        {cloudflareTunnelConfigured && (
+          <div
+            style={{
+              maxWidth: "800px",
+              margin: "0 auto 20px auto",
+            }}
+          >
+            <Button
+              onClick={applyCloudflareTunnelSettings}
+              loading={cloudflareApplyLoading}
+              disabled={cloudflareSettingsModified}
+            >
+              Apply Cloudflare tunnel settings now
+            </Button>
+            <span style={{ marginLeft: "12px", color: COLORS.GRAY }}>
+              {cloudflareSettingsModified
+                ? "Save Cloudflare settings before applying them to the running server."
+                : "Creates or updates the tunnel and restarts cloudflared without a hub restart."}
+            </span>
+            {cloudflareApplyResult && (
+              <Alert
+                showIcon
+                style={{ marginTop: "8px" }}
+                type={cloudflareApplyResult.running ? "success" : "warning"}
+                message={cloudflareApplyResult.message}
+              />
+            )}
+            {cloudflareApplyError && (
+              <Alert
+                showIcon
+                style={{ marginTop: "8px" }}
+                type="error"
+                message="Could not apply Cloudflare tunnel settings"
+                description={cloudflareApplyError}
+              />
+            )}
+          </div>
         )}
         <Alert
           type="warning"

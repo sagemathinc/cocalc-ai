@@ -85,6 +85,10 @@ import {
 } from "./keyboard-navigation";
 import { shouldRenderMoveStatus } from "./move-status";
 import { getRecoverableActiveEditorPath } from "./active-editor-recovery";
+import {
+  projectAccessSignInHrefForCurrentLocation,
+  shouldFetchProjectAccessLandingInfo,
+} from "./access-landing-auth";
 import { HardDeleteProjectModal } from "@cocalc/frontend/projects/hard-delete-project-modal";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
@@ -108,6 +112,18 @@ interface Props {
 }
 
 export const ProjectPage: React.FC<Props> = (props: Props) => {
+  const accountIsReady = !!useTypedRedux("account", "is_ready");
+  const isLoggedIn = !!useTypedRedux("account", "is_logged_in");
+  if (!accountIsReady) {
+    return <Loading />;
+  }
+  if (!isLoggedIn) {
+    return <ProjectAccessSignInRequired />;
+  }
+  return <SignedInProjectPage {...props} />;
+};
+
+const SignedInProjectPage: React.FC<Props> = (props) => {
   const { project_id, is_active } = props;
   const projectPageRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
@@ -335,7 +351,15 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   }, [recoverActiveEditorComponent]);
 
   useEffect(() => {
-    if (!is_active || project != null || open_files_order != null) {
+    if (
+      !shouldFetchProjectAccessLandingInfo({
+        isActive: is_active,
+        accountIsReady: true,
+        isLoggedIn: true,
+        hasProject: project != null,
+        hasOpenFilesOrder: open_files_order != null,
+      })
+    ) {
       return;
     }
     let canceled = false;
@@ -924,6 +948,40 @@ function ViewerReadOnlyTag({ project_id }: { project_id: string }) {
         </Space>
       </Modal>
     </>
+  );
+}
+
+function ProjectAccessSignInRequired() {
+  return (
+    <div
+      style={{
+        minHeight: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+        background: COLORS.GRAY_LLL,
+      }}
+    >
+      <Card style={{ maxWidth: 520, width: "100%" }}>
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Title level={3} style={{ margin: 0 }}>
+            Sign in to request project access
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            CoCalc does not show project details until you sign in. After
+            signing in, you can request viewer or collaborator access if the
+            project is available to you.
+          </Paragraph>
+          <Button
+            type="primary"
+            href={projectAccessSignInHrefForCurrentLocation()}
+          >
+            Sign in
+          </Button>
+        </Space>
+      </Card>
+    </div>
   );
 }
 

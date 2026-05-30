@@ -79,6 +79,27 @@ sudo ./bay-bootstrap-release.sh \
   --start
 ```
 
+For frontend/static-only changes, build a smaller artifact locally:
+
+```sh
+pnpm -C src/packages --filter @cocalc/rocket run build:bay-static-bundle
+```
+
+Then copy the generated tarball to the VM and stage a new versioned release
+from the current release:
+
+```sh
+sudo ./bay-bootstrap-release.sh \
+  --static-bundle /tmp/cocalc-bay-static-linux-x64.tar.xz \
+  --worker-count 8
+sudo systemctl restart cocalc-bay-hub@{1..8}.service
+```
+
+This creates a normal release directory under `/opt/cocalc/bay/releases/`,
+hardlinks unchanged files from the current release, replaces only
+`runtime/control-plane/static` and `runtime/control-plane/public`, flips
+`/opt/cocalc/bay/current`, and preserves rollback semantics.
+
 The release bootstrap currently:
 
 - stages the built tree under `/opt/cocalc/bay/releases/<release-id>`
