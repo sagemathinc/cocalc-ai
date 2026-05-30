@@ -99,7 +99,14 @@ import {
   type R2CredentialsTestResult,
 } from "@cocalc/server/project-backup/r2";
 import { applyLaunchpadCloudflareTunnelSettings } from "@cocalc/server/launchpad/onprem-sshd";
-import type { CloudflareTunnelApplyResult } from "@cocalc/conat/hub/api/system";
+import { hasActiveSecondFactor } from "@cocalc/server/auth/two-factor";
+import { getNebiusRegionConfigFromSettings } from "@cocalc/server/cloud/nebius-credentials";
+import type {
+  CloudflareTunnelApplyResult,
+  SiteSetupStatus,
+  SiteSetupStep,
+  SiteSetupStepState,
+} from "@cocalc/conat/hub/api/system";
 import {
   bootstrapCloudflareConfiguration as bootstrapCloudflareConfiguration0,
   type CloudflareBootstrapResult,
@@ -2793,6 +2800,314 @@ export async function webappError(opts: object): Promise<void> {
 
 export async function getFrontendSourceFingerprint() {
   return await getFrontendSourceFingerprint0();
+}
+
+function setupStep(opts: {
+  id: string;
+  title: string;
+  state: SiteSetupStepState;
+  hard_gate?: boolean;
+  summary: string;
+  details?: string[];
+  admin_section?: string;
+}): SiteSetupStep {
+  return {
+    hard_gate: true,
+    ...opts,
+  };
+}
+
+function boolSetting(value: unknown): boolean {
+  return to_bool(value) === true;
+}
+
+async function getProjectHostSetupCount(): Promise<number> {
+  const { rows } = await getPool("medium").query<{ count: number }>(
+    `
+      SELECT COUNT(*)::INTEGER AS count
+        FROM project_hosts
+       WHERE deleted IS NULL
+         AND status IN ('active', 'running')
+    `,
+  );
+  return Number(rows[0]?.count ?? 0);
+}
+
+async function getProviderCatalogSetupCount(
+  providers: string[],
+): Promise<number> {
+  if (!providers.length) return 0;
+  const { rows } = await getPool("medium").query<{ count: number }>(
+    `
+      SELECT COUNT(DISTINCT provider)::INTEGER AS count
+        FROM cloud_catalog_cache
+       WHERE provider = ANY($1::TEXT[])
+    `,
+    [providers],
+  );
+  return Number(rows[0]?.count ?? 0);
+}
+
+async function getRootfsSetupCounts(): Promise<{
+  official: number;
+  prepull: number;
+}> {
+  const { rows } = await getPool("medium").query<{
+    official: number;
+    prepull: number;
+  }>(
+    `
+      SELECT COUNT(*) FILTER (WHERE COALESCE(official, false))::INTEGER AS official,
+             COUNT(*) FILTER (WHERE COALESCE(prepull, false))::INTEGER AS prepull
+        FROM rootfs_images
+       WHERE COALESCE(deleted, false) = false
+         AND COALESCE(hidden, false) = false
+         AND COALESCE(blocked, false) = false
+    `,
+  );
+  return {
+    official: Number(rows[0]?.official ?? 0),
+    prepull: Number(rows[0]?.prepull ?? 0),
+  };
+}
+
+function configuredProvidersFromSettings(settings: any): {
+  providers: string[];
+  details: string[];
+} {
+  const providers: string[] = [];
+  const details: string[] = [];
+
+  if (boolSetting(settings["project_hosts_google-cloud_enabled"])) {
+    if (clean(settings.google_cloud_service_account_json)) {
+      providers.push("gcp");
+      details.push("GCP is enabled and has a service account JSON.");
+    } else {
+      details.push("GCP is enabled but service account JSON is missing.");
+    }
+  }
+
+  if (boolSetting(settings.project_hosts_nebius_enabled)) {
+    try {
+      const regionConfig = getNebiusRegionConfigFromSettings(settings);
+      const regions = regionConfig ? Object.keys(regionConfig).sort() : [];
+      if (regions.length) {
+        providers.push("nebius");
+        details.push(`Nebius is enabled for ${regions.join(", ")}.`);
+      } else {
+        details.push("Nebius is enabled but has no region configuration.");
+      }
+    } catch (err) {
+      details.push(`Nebius configuration is invalid: ${err}`);
+    }
+  }
+
+  return { providers, details };
+}
+
+function emailSetupState(settings: any): SiteSetupStep {
+  if (!boolSetting(settings.email_enabled)) {
+    return setupStep({
+      id: "email",
+      title: "Email Provider",
+      state: "optional",
+      hard_gate: false,
+      admin_section: "site-settings",
+      summary:
+        "Email is skipped. This is acceptable for small Launchpad/Rocket sites where users can coordinate out of band.",
+      details: [
+        "Email verification UI stays hidden when email is disabled.",
+        "Admins can still generate password reset links for users.",
+      ],
+    });
+  }
+
+  const backend = `${settings.email_backend ?? ""}`.trim();
+  const configured =
+    backend === "sendgrid"
+      ? !!clean(settings.sendgrid_key)
+      : backend === "smtp"
+        ? !!(
+            clean(settings.email_smtp_server) &&
+            clean(settings.email_smtp_from) &&
+            clean(settings.email_smtp_login) &&
+            clean(settings.email_smtp_password)
+          )
+        : false;
+
+  return setupStep({
+    id: "email",
+    title: "Email Provider",
+    state: configured ? "done" : "warning",
+    hard_gate: false,
+    admin_section: "site-settings",
+    summary: configured
+      ? `Email is enabled with the ${backend} backend.`
+      : "Email is enabled but the selected backend is not fully configured.",
+    details: configured
+      ? []
+      : [
+          "Either finish the email backend configuration or disable email until the site needs multi-user coordination.",
+        ],
+  });
+}
+
+export async function getSiteSetupStatus({
+  account_id,
+}: {
+  account_id?: string;
+} = {}): Promise<SiteSetupStatus> {
+  await assertAdmin(account_id);
+  const settings = await getServerSettings();
+  const siteDns = clean(settings.dns);
+  const cloudflareConfigured =
+    !!siteDns &&
+    boolSetting((settings as any).project_hosts_cloudflare_tunnel_enabled) &&
+    !!clean((settings as any).project_hosts_cloudflare_tunnel_account_id) &&
+    !!clean((settings as any).project_hosts_cloudflare_tunnel_api_token);
+  const { providers, details: providerDetails } =
+    configuredProvidersFromSettings(settings);
+  const [has2fa, cachedProviderCatalogs, healthyProjectHosts, rootfs] =
+    await Promise.all([
+      hasActiveSecondFactor(account_id!),
+      getProviderCatalogSetupCount(providers),
+      getProjectHostSetupCount(),
+      getRootfsSetupCounts(),
+    ]);
+
+  const steps: SiteSetupStep[] = [
+    setupStep({
+      id: "admin-2fa",
+      title: "Admin Account Security",
+      state: has2fa ? "done" : "blocked",
+      summary: has2fa
+        ? "Your admin account has an active second factor."
+        : "Enable 2FA before continuing; many admin operations require it.",
+      details: [
+        "The first account is the site admin. Do not open normal signups before setup is complete.",
+      ],
+    }),
+    setupStep({
+      id: "domain-cloudflare",
+      title: "Domain And Cloudflare",
+      state: cloudflareConfigured ? "done" : "blocked",
+      admin_section: "site-settings",
+      summary: cloudflareConfigured
+        ? `Cloudflare tunnel settings are configured for ${siteDns}.`
+        : "Configure a domain on Cloudflare and save the tunnel settings.",
+      details: [
+        "You need a domain before project-host providers are useful.",
+        "Cloudflare can host existing domains, and can also be used as a registrar.",
+        "Free Cloudflare domains should work for the required DNS/tunnel flow, but the setup wizard should still make tier limitations explicit.",
+      ],
+    }),
+    setupStep({
+      id: "cloud-provider",
+      title: "Cloud Provider",
+      state: providers.length ? "done" : "blocked",
+      admin_section: "site-settings",
+      summary: providers.length
+        ? `Configured provider${providers.length === 1 ? "" : "s"}: ${providers.join(", ")}.`
+        : "Configure GCP or Nebius using direct upload.",
+      details: providerDetails.length
+        ? providerDetails
+        : [
+            "Direct upload should be the normal path; manual paste should stay hidden unless explicitly enabled for support.",
+          ],
+    }),
+    setupStep({
+      id: "provider-catalog",
+      title: "Provider Catalog",
+      state:
+        cachedProviderCatalogs > 0
+          ? "done"
+          : providers.length
+            ? "blocked"
+            : "manual",
+      admin_section: "site-settings",
+      summary:
+        cachedProviderCatalogs > 0
+          ? `${cachedProviderCatalogs} configured provider catalog${cachedProviderCatalogs === 1 ? "" : "s"} cached.`
+          : "Refresh the provider catalog after credentials are configured.",
+      details: [
+        "Catalog refresh can take long enough that the UI must wait on the backend result instead of prompting repeated clicks.",
+      ],
+    }),
+    setupStep({
+      id: "email",
+      title: "Email Provider",
+      state: "optional",
+      hard_gate: false,
+      summary: "Email is optional for small sites.",
+    }),
+    setupStep({
+      id: "project-host",
+      title: "First Project Host",
+      state: healthyProjectHosts > 0 ? "done" : "blocked",
+      summary:
+        healthyProjectHosts > 0
+          ? `${healthyProjectHosts} project host${healthyProjectHosts === 1 ? "" : "s"} healthy.`
+          : "Create at least one healthy project host.",
+      details: [
+        "A project host proves provider credentials, bootstrap, DNS, and host heartbeat are working.",
+      ],
+    }),
+    setupStep({
+      id: "rootfs",
+      title: "Official RootFS",
+      state: rootfs.official > 0 && rootfs.prepull > 0 ? "done" : "blocked",
+      admin_section: "rootfs",
+      summary:
+        rootfs.official > 0 && rootfs.prepull > 0
+          ? `${rootfs.official} official image${rootfs.official === 1 ? "" : "s"} and ${rootfs.prepull} prepull image${rootfs.prepull === 1 ? "" : "s"} are visible.`
+          : "Create an official RootFS and mark it for prepull.",
+      details: [
+        "The first public recipe can start as Ubuntu with Jupyter and LaTeX packages installed.",
+      ],
+    }),
+    setupStep({
+      id: "smoke-test",
+      title: "Smoke Test",
+      state:
+        healthyProjectHosts > 0 && rootfs.official > 0 ? "manual" : "blocked",
+      summary:
+        healthyProjectHosts > 0 && rootfs.official > 0
+          ? "Create a project, start it on the official RootFS, and verify terminal/Jupyter manually."
+          : "Smoke testing is blocked until a host and official RootFS exist.",
+    }),
+  ];
+  steps[4] = emailSetupState(settings);
+  steps.push(
+    setupStep({
+      id: "mark-ready",
+      title: "Mark Site Ready",
+      state: "manual",
+      summary:
+        "Explicit completion is not persisted yet; this first implementation only derives setup readiness.",
+      details: [
+        "The follow-up write path should require fresh admin auth and store a small site setup state record.",
+      ],
+    }),
+  );
+
+  const hardGates = steps.filter((step) => step.hard_gate);
+  const hardGatesDone = hardGates.filter(
+    (step) => step.state === "done",
+  ).length;
+  return {
+    checked_at: new Date().toISOString(),
+    ready: hardGatesDone === hardGates.length,
+    hard_gates_total: hardGates.length,
+    hard_gates_done: hardGatesDone,
+    steps,
+    counts: {
+      configured_providers: providers.length,
+      cached_provider_catalogs: cachedProviderCatalogs,
+      healthy_project_hosts: healthyProjectHosts,
+      official_rootfs_images: rootfs.official,
+      prepull_rootfs_images: rootfs.prepull,
+    },
+  };
 }
 
 export async function getRootfsCatalog(opts: { account_id?: string } = {}) {

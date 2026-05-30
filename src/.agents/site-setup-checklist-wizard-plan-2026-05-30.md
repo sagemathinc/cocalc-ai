@@ -58,6 +58,18 @@ The current known-good sequence is:
 7. Create and publish an official RootFS, then prepull it on hosts.
 8. Run a smoke test: create project, start project, open terminal, verify RootFS.
 
+Before the admin starts this sequence, the setup shell should make external
+prerequisites explicit:
+
+- have or buy a domain,
+- move or delegate the domain to Cloudflare,
+- have a cloud-provider account with CLI access for at least one provider,
+- decide whether this is a small coordinated site where email can be skipped.
+
+Cloudflare domain tier behavior should be documented before public release. The
+working assumption is that the free tier is sufficient for the DNS/tunnel flow,
+but the wizard should not leave this implicit.
+
 ## V1 Design Principles
 
 ### 1. Derive State Where Possible
@@ -422,7 +434,14 @@ type SiteSetupStep = {
     | "project_host"
     | "rootfs"
     | "smoke_test";
-  status: "blocked" | "ready" | "running" | "done" | "warning" | "failed" | "skipped";
+  status:
+    | "blocked"
+    | "ready"
+    | "running"
+    | "done"
+    | "warning"
+    | "failed"
+    | "skipped";
   title: string;
   summary: string;
   blocking_reason?: string;
@@ -605,14 +624,21 @@ Manual dogfood tests:
 ## Open Questions
 
 1. Should production mode make email a hard gate while dogfood/dev mode allows
-   explicit skip?
+   explicit skip? Answer: email is not a hard gate. It is mainly needed for
+   multi-user sites where users cannot coordinate out of band. If email is not
+   configured, email verification UI should stay hidden, and admins can still
+   generate password reset links for users.
 2. Should setup completion be a derived state only, or should admins explicitly
-   click "Mark site ready" after the smoke test?
+   click "Mark site ready" after the smoke test? Answer: explicit mark site
+   ready.
 3. Should first-run setup be shown to all admins or only owner/superadmin
-   accounts?
+   accounts? Answer: only admins. The first account is an admin, and signup
+   should probably remain closed until setup is complete.
 4. Should direct-upload manual paste fallback be hidden behind an env flag or an
-   "advanced support mode" link?
+   "advanced support mode" link? Answer: hide it behind an env variable or
+   support mode. It should not clutter the normal flow.
 5. What should the default official RootFS recipe be for a public release?
+   Answer: start with the Jupyter/LaTeX recipe and refine later.
 
 ## Success Criteria
 
