@@ -81,16 +81,14 @@ describe("EmailAddressSetting", () => {
       </IntlProvider>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /change email/i }));
+    fireEvent.click(screen.getByRole("button", { name: /change/i }));
     fireEvent.change(screen.getByPlaceholderText("user@example.com"), {
       target: { value: "new@example.com" },
     });
     fireEvent.change(screen.getByPlaceholderText("Current password"), {
       target: { value: "correct horse battery staple" },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Change email address" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
 
     await waitFor(() => {
       expect(runFreshAuthAction).toHaveBeenCalledTimes(1);

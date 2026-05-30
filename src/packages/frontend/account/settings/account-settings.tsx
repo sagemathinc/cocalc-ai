@@ -22,12 +22,7 @@ import {
   redux,
   useState,
 } from "@cocalc/frontend/app-framework";
-import {
-  Icon,
-  LabeledRow,
-  SettingBox,
-  TimeAgo,
-} from "@cocalc/frontend/components";
+import { Icon, SettingBox } from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { labels } from "@cocalc/frontend/i18n";
@@ -63,7 +58,6 @@ interface Props {
   passports?: Map<string, any>;
   email_enabled?: boolean;
   verify_emails?: boolean;
-  created?: Date;
   strategies?: List<ImmutablePassportStrategy>;
 }
 
@@ -350,24 +344,6 @@ export function AccountSettings(props: Readonly<Props>) {
     );
   }
 
-  function render_created(): Rendered {
-    if (!props.created) {
-      return;
-    }
-    return (
-      <LabeledRow
-        label={
-          <FormattedMessage
-            id="account.settings.created.label"
-            defaultMessage={"Created"}
-          />
-        }
-      >
-        <TimeAgo date={props.created} />
-      </LabeledRow>
-    );
-  }
-
   function render_name(): Rendered {
     return (
       <>
@@ -416,9 +392,9 @@ export function AccountSettings(props: Readonly<Props>) {
         }
       >
         <FormattedMessage
-          id="account.settings.unlisted.label"
+          id="account.settings.unlisted.public_discovery_label"
           defaultMessage={
-            "Unlisted: you are hidden from name searches outside existing collaboration contexts"
+            "Hide my account from public collaborator lists and broad name searches"
           }
         />
       </Checkbox>
@@ -446,7 +422,6 @@ export function AccountSettings(props: Readonly<Props>) {
         {render_email_address()}
         {render_unlisted()}
         {render_email_verification()}
-        {render_created()}
         {render_linked_external_accounts()}
         {render_available_to_link()}
       </Space>

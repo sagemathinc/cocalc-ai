@@ -26,7 +26,6 @@ export function AccountPreferencesProfile() {
     "email_address_verified",
   );
   const passports = useTypedRedux("account", "passports");
-  const created = useTypedRedux("account", "created");
   const strategies = useTypedRedux("account", "strategies");
   const unlisted = useTypedRedux("account", "unlisted");
   const email_enabled = useTypedRedux("customize", "email_enabled");
@@ -43,7 +42,6 @@ export function AccountPreferencesProfile() {
         passports={passports}
         email_enabled={email_enabled}
         verify_emails={verify_emails}
-        created={created}
         strategies={strategies}
         unlisted={unlisted}
       />

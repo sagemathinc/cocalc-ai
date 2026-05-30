@@ -195,8 +195,8 @@ export const EmailAddressSetting = ({
       {
         id: "account.settings.email_address.button_label",
         defaultMessage: `{have_email, select,
-      true {Change email address}
-      other {Set email address and password}}`,
+      true {Change}
+      other {Set email and password}}`,
       },
       {
         have_email: !!email_address,
