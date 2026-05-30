@@ -548,7 +548,7 @@ export default function SiteSettings({ close }) {
     setCloudflareApplyError("");
     setCloudflareApplyResult(null);
     try {
-      const completed = await runFreshAuthAction(async () => {
+      await runFreshAuthAction(async () => {
         const result =
           await webapp_client.conat_client.hub.system.applyCloudflareTunnelSettings(
             {
@@ -565,9 +565,6 @@ export default function SiteSettings({ close }) {
           },
         });
       });
-      if (!completed) {
-        setCloudflareApplyError("Fresh authentication was not completed.");
-      }
     } catch (err) {
       setCloudflareApplyError(err instanceof Error ? err.message : `${err}`);
     } finally {
@@ -740,8 +737,10 @@ export default function SiteSettings({ close }) {
   }
 
   function Warning() {
+    const effectiveCloudflareStatus =
+      cloudflareApplyResult ?? cloudflareStatus ?? null;
     const cloudflareTunnelConfigured =
-      cloudflareStatus?.enabled ||
+      effectiveCloudflareStatus?.enabled ||
       `${data?.cloudflare_mode ?? ""}`.trim().toLowerCase() === "self" ||
       to_bool(data?.project_hosts_cloudflare_tunnel_enabled);
     const cloudflareSettingsModified = getModifiedSettings().some(
@@ -752,7 +751,8 @@ export default function SiteSettings({ close }) {
     );
     const showCloudflareWarning =
       cloudflareTunnelConfigured &&
-      (!cloudflareStatus?.running || cloudflareStatus.error);
+      effectiveCloudflareStatus != null &&
+      (!effectiveCloudflareStatus.running || effectiveCloudflareStatus.error);
     return (
       <div>
         {showCloudflareWarning && (
@@ -766,8 +766,8 @@ export default function SiteSettings({ close }) {
             title={
               <div>
                 <b>Cloudflare tunnel is not healthy.</b>{" "}
-                {cloudflareStatus?.error
-                  ? `Details: ${cloudflareStatus.error}`
+                {effectiveCloudflareStatus?.error
+                  ? `Details: ${effectiveCloudflareStatus.error}`
                   : "Project hosts will not work until the tunnel is running."}
               </div>
             }
