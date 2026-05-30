@@ -121,6 +121,31 @@ copy_js_pkg() {
   fi
 }
 
+copy_webapp_assets() {
+  local dest="$1"
+  echo "- Copy webapp assets"
+  mkdir -p "$dest"/webapp
+  local asset
+  for asset in \
+    favicon.ico \
+    favicon-16x16.png \
+    favicon-32x32.png \
+    safari-pinned-tab.svg \
+    cocalc-font-black.svg \
+    cocalc-font-dark.svg \
+    cocalc-font-white.svg \
+    cocalc-icon-white-transparent.svg \
+    cocalc-icon-white.svg \
+    cocalc-icon.svg \
+    cocalc-logo.svg \
+    open-cocalc-font-dark.svg \
+    serviceWorker.js; do
+    if [[ -f "packages/assets/${asset}" ]]; then
+      cp "packages/assets/${asset}" "$dest"/webapp/
+    fi
+  done
+}
+
 echo "Building CoCalc control-plane bundle..."
 echo "  root:       $ROOT"
 echo "  entrypoint: $ENTRYPOINT"
@@ -197,6 +222,8 @@ rsync -a --delete "${RSYNC_EXCLUDES[@]}" \
 echo "- Copy public assets"
 mkdir -p "$OUT"/public
 rsync -a --delete packages/assets/public/ "$OUT/public/"
+
+copy_webapp_assets "$OUT"
 
 echo "- Copy http-api handlers"
 mkdir -p "$OUT"/http-api-dist

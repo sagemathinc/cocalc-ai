@@ -269,11 +269,13 @@ stage_static_bundle_release() {
   run rm -rf \
     "${TARGET_RELEASE}/runtime/control-plane/static" \
     "${TARGET_RELEASE}/runtime/control-plane/public" \
+    "${TARGET_RELEASE}/runtime/control-plane/webapp" \
     "${TARGET_RELEASE}/bay-static-manifest.json"
   run tar --no-same-owner -xf "$STATIC_BUNDLE_PATH" -C "$TARGET_RELEASE" --strip-components=1
   run chown -R "${BAY_USER}:${BAY_GROUP}" \
     "${TARGET_RELEASE}/runtime/control-plane/static" \
     "${TARGET_RELEASE}/runtime/control-plane/public" \
+    "${TARGET_RELEASE}/runtime/control-plane/webapp" \
     "${TARGET_RELEASE}/bay-static-manifest.json"
 }
 
@@ -305,6 +307,10 @@ validate_release() {
     fi
     if [[ ! -f "${TARGET_RELEASE}/runtime/control-plane/public/cocalc-content.css" ]]; then
       echo "release is missing public frontend assets" >&2
+      exit 1
+    fi
+    if [[ ! -f "${TARGET_RELEASE}/runtime/control-plane/webapp/favicon.ico" ]]; then
+      echo "release is missing webapp frontend assets" >&2
       exit 1
     fi
   fi

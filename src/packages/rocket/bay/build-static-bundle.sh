@@ -63,6 +63,31 @@ validate_file() {
   fi
 }
 
+copy_webapp_assets() {
+  local dest="$1"
+  echo "- Copy webapp assets"
+  mkdir -p "$dest"/runtime/control-plane/webapp
+  local asset
+  for asset in \
+    favicon.ico \
+    favicon-16x16.png \
+    favicon-32x32.png \
+    safari-pinned-tab.svg \
+    cocalc-font-black.svg \
+    cocalc-font-dark.svg \
+    cocalc-font-white.svg \
+    cocalc-icon-white-transparent.svg \
+    cocalc-icon-white.svg \
+    cocalc-icon.svg \
+    cocalc-logo.svg \
+    open-cocalc-font-dark.svg \
+    serviceWorker.js; do
+    if [[ -f "packages/assets/${asset}" ]]; then
+      cp "packages/assets/${asset}" "$dest"/runtime/control-plane/webapp/
+    fi
+  done
+}
+
 mkdir -p "$OUT_PARENT"
 trap cleanup EXIT
 
@@ -90,6 +115,8 @@ echo "- Copy public assets"
 mkdir -p "$OUT/runtime/control-plane/public"
 rsync -a --delete packages/assets/public/ \
   "$OUT/runtime/control-plane/public/"
+
+copy_webapp_assets "$OUT"
 
 echo "- Write static manifest"
 node - "$OUT/bay-static-manifest.json" "$ROOT" <<'NODE'
@@ -121,6 +148,7 @@ const manifest = {
   paths: {
     static: "runtime/control-plane/static",
     public: "runtime/control-plane/public",
+    webapp: "runtime/control-plane/webapp",
   },
 };
 
@@ -130,6 +158,7 @@ NODE
 echo "- Validate static bundle"
 validate_file "$OUT/runtime/control-plane/static/public.html"
 validate_file "$OUT/runtime/control-plane/public/cocalc-content.css"
+validate_file "$OUT/runtime/control-plane/webapp/favicon.ico"
 validate_file "$OUT/bay-static-manifest.json"
 
 echo "- Publish output directory"
