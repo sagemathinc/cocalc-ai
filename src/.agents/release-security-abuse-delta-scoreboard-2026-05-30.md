@@ -38,7 +38,7 @@ Current score:
 | D-007 | Scratch disk          | Shared scratch spend admission                | fixed   | critical | Large scratch disk could create very high monthly cloud cost if omitted from spend enforcement. | Purchase, edit, resize, spend maintenance, and background shared scratch auto-grow now price with `shared_disk_gb/shared_disk_type`; auto-grow reconciles the active purchase session after resize.                        | Keep full server package tests in release validation.                                                                                                        | Focused auto-grow regression covers pre-resize denial and post-resize purchase reconciliation.                                             |
 | D-008 | Scratch disk          | Scratch edit/delete authorization             | fixed   | high     | Unauthorized user edits or deletes a shared host disk affecting all projects on host.           | Scratch create/edit/delete runs through host owner-only `updateHostMachine`, cloud mutations require fresh auth, and live delete now reconciles active billing to the post-delete non-scratch rate.                        | Manual live host delete smoke should confirm the provider disk is removed, `/scratch` unmounted, and the purchase session rate drops.                        | Intentional all-project read/write access to mounted scratch is out of scope; control-plane disk mutation is in scope.                     |
 | D-009 | Scratch disk          | Scratch auto-grow                             | fixed   | high     | Provider resize or auto-grow bypasses pricing/admission or grows on unsupported provider.       | Shared scratch auto-grow re-estimates the next rate, checks billing runway before cloud resize, reconciles the active purchase session after resize, and remains gated to online-resize providers.                         | Keep Nebius high-cost manual/provider validation in the broader host smoke pass.                                                                             | Fixed in `project-host/auto-grow.ts` with focused regression coverage.                                                                     |
-| D-010 | Codex/ACP             | Codex fast service tier                       | guarded | high     | Fast/priority tier enabled by default or silently used, causing unexpected spend.               | UI makes fast explicit; backend resolves service tier and logs requested/resolved tier; standard maps to no fast tier.                                                                                                     | Manual standard and fast turns via UI/CLI; confirm app-server receives only supported tier variants and activity log shows config.                           | Earlier mismatch `priority` versus `fast/flex` was found and fixed.                                                                        |
+| D-010 | Codex/ACP             | Codex fast service tier                       | guarded | high     | Fast/priority tier enabled by default or silently used, causing unexpected spend.               | UI makes fast explicit; backend resolves service tier and logs requested/resolved tier; standard maps to no fast tier.                                                                                                     | Keep standard/fast smoke and activity rendering tests in release validation.                                                                                 | CLI standard/fast smoke passed on lite1b; earlier mismatch `priority` versus `fast/flex` was found and fixed.                             |
 | D-011 | Codex/ACP             | ACP queued/running status                     | guarded | medium   | Submitted message remains queued while work runs, causing duplicate retry or confusing state.   | Backend queued-job startup clears prompt `acp_state: queued`; ChatStreamWriter writes running thread-state for the assistant turn; frontend sync drops stale prompt queue state when the reply runs.                       | Keep focused chat writer and frontend sync tests in release validation; manually watch for stale queued labels during ACP smoke.                             | User observed this intermittently; no current code gap found in focused audit.                                                             |
 | D-012 | Codex/ACP             | ACP scheduling limits                         | guarded | high     | Unbounded queued/running turns or retry/recovery work.                                          | Chat turns and automations check creation admission before enqueue; detached workers check running admission before transactional claim; project-host workers use actor effective limits.                                  | Manual high-volume queue smoke is still useful, especially across worker restart and recovery continuation paths.                                            | Recovery continuations bypass queued/created counters only after an admitted parent job and are capped to one continuation per parent.     |
 | D-013 | Launchpad/PGLite      | Launchpad SEA startup                         | fixed   | medium   | Single executable crashes at startup due to asset/database assumptions.                         | Launchpad startup now scrubs inherited project-runtime `CONAT_SERVER` before backend config can initialize, so a Launchpad process uses its own local Conat server instead of a project-host router.                       | Keep SEA clean-install smoke in release validation.                                                                                                          | Rebuilt SEA artifact clean-install smoke reaches `Started HUB!` with no old crash signatures.                                              |
@@ -118,6 +118,40 @@ Request decisions notify only the requester.
 
 Focused regression: `pnpm test projects/collaborators.test.ts` in
 `src/packages/server`, including owner-only fanout coverage.
+
+### D-010: Codex fast service tier guarded
+
+The current path keeps fast mode opt-in. The CLI accepts only `standard` or
+`fast`, `--fast` maps to `serviceTier: "fast"`, frontend ACP calls include the
+tier only when fast is selected, and activity rendering shows the requested and
+app-server-resolved tier.
+
+Live lite1b smoke was run against project
+`937f48ab-c8ce-4877-bb02-5ff43da8e787` on host
+`f3a5a179-0c10-4468-90f2-089ea4f7ad40`:
+
+- `project codex exec --service-tier standard` returned
+  `STANDARD_TIER_SMOKE_OK`.
+- `project codex exec --fast` returned `FAST_TIER_SMOKE_OK`.
+
+The host log still contains the original bad live evidence
+`requestedServiceTier: 'fast'` -> `appServerServiceTier: 'priority'`, followed
+by the fixed mapping
+`requestedServiceTier: 'fast'` -> `appServerServiceTier: 'fast'`. Standard
+turns map to `appServerServiceTier: null`.
+
+One operational mismatch remains: the requested host id
+`a3c4c6d0-2d08-4a01-9f9a-a5b544bfba31` did not resolve in the lite1b hub during
+this smoke; the previously used project resolved to `f3a5a179...`.
+
+Focused regressions:
+
+- `pnpm test chat/__tests__/acp-api.test.ts chat/__tests__/codex-defaults.test.ts chat/__tests__/codex-activity.test.tsx chat/__tests__/codex-activity-markdown.test.ts`
+  in `src/packages/frontend`.
+- `pnpm test acp-worker.test.ts hub/projects.test.ts` in
+  `src/packages/project-host`.
+- `pnpm test conat/api/hosts.test.ts` in `src/packages/server`.
+- `pnpm test membership-tier-templates.test.ts` in `src/packages/util`.
 
 ### D-011: ACP queued/running status guarded
 
@@ -269,3 +303,4 @@ Record manual runs here as the audit progresses.
 | 2026-05-30 | Viewer project list/index projection               | pass   | `pnpm test postgres/account-project-index-projector.test.ts` in `src/packages/database`.                                                                                                                |
 | 2026-05-30 | Frontend auth/project/viewer UI regression set     | pass   | `pnpm test public/auth/__tests__/app.test.tsx projects/projects-page.test.tsx project/page/activity-bar-tabs.test.tsx` in `src/packages/frontend`; known jsdom/Ant Design warnings remain.              |
 | 2026-05-30 | Launchpad/PGLite startup and transaction set       | pass   | Fixed inherited `CONAT_SERVER` crash; `pnpm test lib/onprem-config.test.ts`, PGLite transaction/account-security tests, psql account-security tests; source and rebuilt SEA smokes reached `Started HUB!`. |
+| 2026-05-30 | Codex fast tier and ACP limits smoke               | pass   | Live lite1b CLI standard/fast Codex turns returned expected exact responses; project-host/server/util/frontend focused tests passed, including ACP effective-limit routing and activity config rendering. |
