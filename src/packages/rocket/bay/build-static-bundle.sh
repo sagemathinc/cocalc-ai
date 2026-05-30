@@ -88,6 +88,21 @@ copy_webapp_assets() {
   done
 }
 
+copy_provider_setup_scripts() {
+  local dest="$1"
+  echo "- Copy provider setup scripts"
+  if [[ -f "packages/server/cloud/gcp/gcp-setup.sh" ]]; then
+    mkdir -p "$dest"/runtime/control-plane/bundle/gcp
+    cp "packages/server/cloud/gcp/gcp-setup.sh" \
+      "$dest"/runtime/control-plane/bundle/gcp/
+  fi
+  if [[ -f "packages/server/cloud/nebius/nebius-setup.sh" ]]; then
+    mkdir -p "$dest"/runtime/control-plane/bundle/nebius
+    cp "packages/server/cloud/nebius/nebius-setup.sh" \
+      "$dest"/runtime/control-plane/bundle/nebius/
+  fi
+}
+
 mkdir -p "$OUT_PARENT"
 trap cleanup EXIT
 
@@ -117,6 +132,8 @@ rsync -a --delete packages/assets/public/ \
   "$OUT/runtime/control-plane/public/"
 
 copy_webapp_assets "$OUT"
+
+copy_provider_setup_scripts "$OUT"
 
 echo "- Write static manifest"
 node - "$OUT/bay-static-manifest.json" "$ROOT" <<'NODE'
@@ -149,6 +166,8 @@ const manifest = {
     static: "runtime/control-plane/static",
     public: "runtime/control-plane/public",
     webapp: "runtime/control-plane/webapp",
+    gcpSetup: "runtime/control-plane/bundle/gcp/gcp-setup.sh",
+    nebiusSetup: "runtime/control-plane/bundle/nebius/nebius-setup.sh",
   },
 };
 
@@ -159,6 +178,8 @@ echo "- Validate static bundle"
 validate_file "$OUT/runtime/control-plane/static/public.html"
 validate_file "$OUT/runtime/control-plane/public/cocalc-content.css"
 validate_file "$OUT/runtime/control-plane/webapp/favicon.ico"
+validate_file "$OUT/runtime/control-plane/bundle/gcp/gcp-setup.sh"
+validate_file "$OUT/runtime/control-plane/bundle/nebius/nebius-setup.sh"
 validate_file "$OUT/bay-static-manifest.json"
 
 echo "- Publish output directory"

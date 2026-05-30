@@ -298,12 +298,16 @@ stage_static_bundle_release() {
     "${TARGET_RELEASE}/runtime/control-plane/static" \
     "${TARGET_RELEASE}/runtime/control-plane/public" \
     "${TARGET_RELEASE}/runtime/control-plane/webapp" \
+    "${TARGET_RELEASE}/runtime/control-plane/bundle/gcp" \
+    "${TARGET_RELEASE}/runtime/control-plane/bundle/nebius" \
     "${TARGET_RELEASE}/bay-static-manifest.json"
   run tar --no-same-owner -xf "$STATIC_BUNDLE_PATH" -C "$TARGET_RELEASE" --strip-components=1
   run chown -R "${BAY_USER}:${BAY_GROUP}" \
     "${TARGET_RELEASE}/runtime/control-plane/static" \
     "${TARGET_RELEASE}/runtime/control-plane/public" \
     "${TARGET_RELEASE}/runtime/control-plane/webapp" \
+    "${TARGET_RELEASE}/runtime/control-plane/bundle/gcp" \
+    "${TARGET_RELEASE}/runtime/control-plane/bundle/nebius" \
     "${TARGET_RELEASE}/bay-static-manifest.json"
 }
 
@@ -339,6 +343,14 @@ validate_release() {
     fi
     if [[ ! -f "${TARGET_RELEASE}/runtime/control-plane/webapp/favicon.ico" ]]; then
       echo "release is missing webapp frontend assets" >&2
+      exit 1
+    fi
+    if [[ ! -f "${TARGET_RELEASE}/runtime/control-plane/bundle/gcp/gcp-setup.sh" ]]; then
+      echo "release is missing GCP provider setup script" >&2
+      exit 1
+    fi
+    if [[ ! -f "${TARGET_RELEASE}/runtime/control-plane/bundle/nebius/nebius-setup.sh" ]]; then
+      echo "release is missing Nebius provider setup script" >&2
       exit 1
     fi
   fi

@@ -146,6 +146,19 @@ copy_webapp_assets() {
   done
 }
 
+copy_provider_setup_scripts() {
+  local dest="$1"
+  echo "- Copy provider setup scripts"
+  if [[ -f "packages/server/cloud/gcp/gcp-setup.sh" ]]; then
+    mkdir -p "$dest"/bundle/gcp
+    cp "packages/server/cloud/gcp/gcp-setup.sh" "$dest"/bundle/gcp/
+  fi
+  if [[ -f "packages/server/cloud/nebius/nebius-setup.sh" ]]; then
+    mkdir -p "$dest"/bundle/nebius
+    cp "packages/server/cloud/nebius/nebius-setup.sh" "$dest"/bundle/nebius/
+  fi
+}
+
 echo "Building CoCalc control-plane bundle..."
 echo "  root:       $ROOT"
 echo "  entrypoint: $ENTRYPOINT"
@@ -240,5 +253,7 @@ if [[ "$COPY_BOOTSTRAP" -eq 1 ]]; then
     echo "bootstrap.py not found at $BOOTSTRAP_PY"
   fi
 fi
+
+copy_provider_setup_scripts "$OUT"
 
 echo "- Control-plane bundle created at $OUT"
