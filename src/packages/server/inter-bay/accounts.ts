@@ -13,6 +13,8 @@ import {
   type AccountApiKeyDirectoryUpdateHomeBayRequest,
   type AccountApiKeyDirectoryUpsertRequest,
   type AccountLocalAdminDisableTwoFactorResult,
+  type AccountLocalAdminGrantAdminRoleRequest,
+  type AccountLocalAdminGrantAdminRoleResult,
   type AccountLocalQuarantineBillingResourcesRequest,
   type AccountLocalQuarantineBillingResourcesResult,
   type AccountLocalAdminVerifyEmailAddressResult,
@@ -28,6 +30,7 @@ import {
 } from "@cocalc/conat/inter-bay/api";
 import getPool from "@cocalc/database/pool";
 import adminVerifyEmailAddressLocal from "@cocalc/server/accounts/admin-verify-email-address";
+import { grantAdminRole as grantAdminRoleLocal } from "@cocalc/server/accounts/admin-role";
 import createAccountLocal from "@cocalc/server/accounts/create-account";
 import deleteAccountLocal from "@cocalc/server/accounts/delete";
 import { banUser, removeUserBan } from "@cocalc/server/accounts/ban";
@@ -403,6 +406,40 @@ export async function adminDisableClusterAccountTwoFactor({
     client: getInterBayFabricClient(),
     dest_bay: homeBayId,
   }).adminDisableTwoFactor({ account_id });
+}
+
+export async function adminGrantClusterAccountAdminRole({
+  account_id,
+  actor_account_id,
+  reason,
+  metadata,
+}: AccountLocalAdminGrantAdminRoleRequest): Promise<AccountLocalAdminGrantAdminRoleResult> {
+  const normalizedAccountId = `${account_id ?? ""}`.trim().toLowerCase();
+  if (!isValidUUID(normalizedAccountId)) {
+    throw new Error("account_id must be a valid uuid");
+  }
+  const account = await getClusterAccountById(normalizedAccountId);
+  if (!account) {
+    throw Error(`account ${normalizedAccountId} not found`);
+  }
+  const homeBayId = `${account.home_bay_id ?? ""}`.trim();
+  if (!homeBayId || homeBayId === currentBayId()) {
+    return await grantAdminRoleLocal({
+      account_id: normalizedAccountId,
+      actor_account_id,
+      reason,
+      metadata,
+    });
+  }
+  return await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: homeBayId,
+  }).adminGrantAdminRole({
+    account_id: normalizedAccountId,
+    actor_account_id,
+    reason,
+    metadata,
+  });
 }
 
 export async function setLocalClusterAccountBan({

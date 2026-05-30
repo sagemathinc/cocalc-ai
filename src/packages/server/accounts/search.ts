@@ -31,6 +31,7 @@ interface DBUser {
   last_active?: Date;
   created?: number;
   banned?: boolean;
+  groups?: string[];
   email_address_verified?: object;
   email_address?: string;
 }
@@ -155,13 +156,16 @@ function process(
       delete x.email_address;
     }
     delete x.banned;
+  } else {
+    x.is_admin = Array.isArray(x.groups) && x.groups.includes("admin");
   }
+  delete x.groups;
   toEpoch(x, ["last_active", "created"]);
   return x;
 }
 
 const FIELDS =
-  " account_id, first_name, last_name, email_address, last_active, created, banned, email_address_verified ";
+  " account_id, first_name, last_name, email_address, last_active, created, banned, groups, email_address_verified ";
 
 async function getUserByEmailAddress(
   email_address: string,

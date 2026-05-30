@@ -875,6 +875,19 @@ export interface AccountLocalAdminDisableTwoFactorResult {
   deleted_recovery_codes: number;
 }
 
+export interface AccountLocalAdminGrantAdminRoleRequest {
+  account_id: string;
+  actor_account_id?: string | null;
+  reason?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface AccountLocalAdminGrantAdminRoleResult {
+  account_id: string;
+  already_admin: boolean;
+  groups: string[];
+}
+
 export interface AccountLocalSetBanRequest {
   account_id: string;
   banned: boolean;
@@ -1628,6 +1641,7 @@ export type AccountLocalMethod =
   | "redeem-verify-email"
   | "admin-verify-email-address"
   | "admin-disable-two-factor"
+  | "admin-grant-admin-role"
   | "set-ban"
   | "quarantine-billing-resources"
   | "set-password-from-reset"
@@ -2500,6 +2514,9 @@ export interface InterBayAccountLocalApi {
   adminDisableTwoFactor: (
     opts: AccountLocalAdminDisableTwoFactorRequest,
   ) => Promise<AccountLocalAdminDisableTwoFactorResult>;
+  adminGrantAdminRole: (
+    opts: AccountLocalAdminGrantAdminRoleRequest,
+  ) => Promise<AccountLocalAdminGrantAdminRoleResult>;
   setBan: (
     opts: AccountLocalSetBanRequest,
   ) => Promise<AccountLocalSetBanResult>;
@@ -4223,6 +4240,15 @@ export function createInterBayAccountLocalClient({
       method: "admin-disable-two-factor",
     }),
   });
+  const adminGrantAdminRoleClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "adminGrantAdminRole">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "admin-grant-admin-role",
+    }),
+  });
   const setBanClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "setBan">
   >({
@@ -4606,6 +4632,8 @@ export function createInterBayAccountLocalClient({
       await adminVerifyEmailAddressClient.adminVerifyEmailAddress(opts),
     adminDisableTwoFactor: async (opts) =>
       await adminDisableTwoFactorClient.adminDisableTwoFactor(opts),
+    adminGrantAdminRole: async (opts) =>
+      await adminGrantAdminRoleClient.adminGrantAdminRole(opts),
     setBan: async (opts) => await setBanClient.setBan(opts),
     quarantineBillingResources: async (opts) =>
       await quarantineBillingResourcesClient.quarantineBillingResources(opts),
@@ -4874,6 +4902,18 @@ export function createInterBayAccountLocalHandler({
       impl: {
         adminDisableTwoFactor: async (opts) =>
           await impl.adminDisableTwoFactor(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "adminGrantAdminRole">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "admin-grant-admin-role",
+      }),
+      impl: {
+        adminGrantAdminRole: async (opts) =>
+          await impl.adminGrantAdminRole(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountLocalApi, "setBan">>({

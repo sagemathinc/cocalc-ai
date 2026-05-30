@@ -97,6 +97,7 @@ export const system = {
   adminResetPasswordLink: authFirst,
   adminVerifyEmailAddress: authFirst,
   adminDisableTwoFactor: authFirst,
+  adminGrantAdminRole: authFirst,
   sendTestEmail: authFirst,
   setSiteSettings: authFirst,
   syncSiteSettingsToBays: authFirst,
@@ -1870,6 +1871,18 @@ export interface System {
     account_id: string;
     disabled_factors: number;
     deleted_recovery_codes: number;
+  }>;
+
+  adminGrantAdminRole: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    user_account_id: string;
+    reason?: string | null;
+  }) => Promise<{
+    account_id: string;
+    already_admin: boolean;
+    groups: string[];
   }>;
 
   sendTestEmail: (opts: {

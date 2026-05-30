@@ -15,6 +15,7 @@ import type { User } from "@cocalc/frontend/frame-editors/generic/client";
 import { Projects } from "./projects";
 import { Impersonate } from "./impersonate";
 import { PasswordReset } from "./password-reset";
+import { AdminRole } from "./admin-role";
 import { Ban } from "./ban";
 import PayAsYouGoMinBalance from "@cocalc/frontend/frame-editors/crm-editor/users/pay-as-you-go-min-balance";
 import { PurchasesButton } from "@cocalc/frontend/purchases/purchases";
@@ -75,6 +76,7 @@ export function UserResult({
   account_id,
   home_bay_id,
   banned,
+  is_admin,
 }: User) {
   const [details, setDetails] = useState<boolean>(false);
   const [state, setState] = useState<State>({
@@ -163,6 +165,7 @@ export function UserResult({
             )}
             {home_bay_id && <Tag>Home bay: {home_bay_id}</Tag>}
             {banned && <BannedTag />}
+            {is_admin && <Tag color="gold">ADMIN</Tag>}
           </Space>
         </div>
       }
@@ -193,12 +196,22 @@ export function UserResult({
               last_name={last_name ?? ""}
             />
           )}
-          {state.password && email_address && (
+          {state.password && (
             <Card title="Profile">
               <PasswordReset
                 account_id={account_id}
-                email_address={email_address}
+                email_address={email_address ?? ""}
               />
+              <div style={{ marginTop: "20px" }}>
+                <AdminRole
+                  account_id={account_id}
+                  name={
+                    `${first_name ?? ""} ${last_name ?? ""}`.trim() ||
+                    account_id
+                  }
+                  is_admin={is_admin}
+                />
+              </div>
             </Card>
           )}
           {state.ban && (
