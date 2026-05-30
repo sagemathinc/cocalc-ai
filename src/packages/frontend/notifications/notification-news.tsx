@@ -8,6 +8,7 @@ import React, { useMemo } from "react";
 import { useIntl } from "react-intl";
 
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   Icon,
@@ -107,7 +108,7 @@ export function NewsPanel(props: NewsPanelProps) {
     const mark_all = intl.formatMessage(MSGS.mark_all, { anyUnread });
 
     return (
-      <Space orientation="horizontal">
+      <Space orientation={IS_MOBILE ? "vertical" : "horizontal"} wrap>
         <Button onClick={() => void news_actions.refresh()} loading={loading}>
           <Icon name="refresh" /> Refresh
         </Button>
@@ -142,6 +143,8 @@ export function NewsPanel(props: NewsPanelProps) {
         onClick={(e) => newsItemOnClick(e, n)}
         style={{
           backgroundColor: isUnread ? COLORS.ANTD_BG_BLUE_L : undefined,
+          alignItems: IS_MOBILE ? "flex-start" : undefined,
+          gap: IS_MOBILE ? "6px" : undefined,
         }}
         actions={[
           <Button
@@ -156,12 +159,14 @@ export function NewsPanel(props: NewsPanelProps) {
       >
         <List.Item.Meta
           title={
-            <Text strong>
+            <Text strong style={{ overflowWrap: "anywhere" }}>
               <Icon name={icon} /> {title} {renderTags(tags)}
             </Text>
           }
         />
-        <TimeAgo date={date} />
+        <Text type="secondary" style={{ whiteSpace: "nowrap" }}>
+          <TimeAgo date={date} />
+        </Text>
       </List.Item>
     );
   }
@@ -174,6 +179,7 @@ export function NewsPanel(props: NewsPanelProps) {
         header: { backgroundColor: COLORS.GRAY_LLL },
         body: { padding: "0px" },
       }}
+      style={{ width: "100%" }}
     >
       <List
         itemLayout="horizontal"

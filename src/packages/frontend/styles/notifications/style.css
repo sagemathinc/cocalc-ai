@@ -33,3 +33,22 @@
   margin: 0;
   padding: 0 !important;
 }
+
+.cocalc-notifications-mobile .smc-notificationlist {
+  min-width: 0;
+  width: 100%;
+}
+
+.cocalc-notifications-mobile .smc-notificationlist li {
+  flex-direction: column;
+  padding: 10px 4px;
+}
+
+.cocalc-notifications-mobile .cocalc-notification-list .ant-collapse-header {
+  align-items: center !important;
+  padding: 10px 8px !important;
+}
+
+.cocalc-notifications-mobile .cocalc-notification-list .ant-collapse-extra {
+  margin-inline-start: 8px;
+}

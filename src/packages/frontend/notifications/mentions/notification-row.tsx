@@ -10,6 +10,7 @@ import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { CSS, redux } from "@cocalc/frontend/app-framework";
 import { Icon, IconName, TimeAgo } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { IS_MOBILE } from "@cocalc/frontend/feature";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { User } from "@cocalc/frontend/users";
@@ -17,6 +18,8 @@ import { MentionInfo } from "./types";
 
 const DESCRIPTION_STYLE: CSS = {
   flex: "1 1 auto",
+  minWidth: 0,
+  overflowWrap: "anywhere",
 } as const;
 
 const AVATAR_WRAPPING_STYLE: CSS = {
@@ -79,7 +82,19 @@ export function NotificationRow(props: Props) {
   const fragmentId = Fragment.decode(fragment_id);
   const is_read = mention.getIn(["users", target, "read"]);
 
-  const row_style: CSS = is_read ? { color: "rgb(88, 96, 105)" } : {};
+  const row_style: CSS = {
+    ...(is_read ? { color: "rgb(88, 96, 105)" } : {}),
+    ...(IS_MOBILE
+      ? {
+          alignItems: "flex-start",
+          display: "grid",
+          gridTemplateColumns: "40px minmax(0, 1fr) 36px",
+          gap: "8px",
+          padding: "10px 4px",
+          width: "100%",
+        }
+      : undefined),
+  };
   const count = groupCount ?? groupedIds?.length ?? 1;
   const groupIds =
     groupedIds != null && groupedIds.length > 0 ? groupedIds : [id];
@@ -147,7 +162,10 @@ export function NotificationRow(props: Props) {
           ) : null}
           {body_markdown ? (
             <StaticMarkdown
-              style={{ color: "rgb(100, 100, 100)", margin: "4px 10px" }}
+              style={{
+                color: "rgb(100, 100, 100)",
+                margin: IS_MOBILE ? "4px 0" : "4px 10px",
+              }}
               value={body_markdown}
             />
           ) : null}
@@ -184,7 +202,13 @@ export function NotificationRow(props: Props) {
       onClick={onClick}
       style={row_style}
     >
-      <div style={AVATAR_WRAPPING_STYLE}>
+      <div
+        style={
+          IS_MOBILE
+            ? { ...AVATAR_WRAPPING_STYLE, margin: "0", textAlign: "center" }
+            : AVATAR_WRAPPING_STYLE
+        }
+      >
         {kind === "mention" && source ? (
           <Avatar account_id={source} />
         ) : (
@@ -195,10 +219,21 @@ export function NotificationRow(props: Props) {
         )}
       </div>
       <div style={DESCRIPTION_STYLE}>{renderBody()}</div>
-      <div style={ACTION_ICONS_WRAPPING_STYLE}>
-        <Button type="text" onClick={on_read_unread_click}>
+      <div
+        style={
+          IS_MOBILE
+            ? { ...ACTION_ICONS_WRAPPING_STYLE, margin: "0" }
+            : ACTION_ICONS_WRAPPING_STYLE
+        }
+      >
+        <Button
+          type="text"
+          onClick={on_read_unread_click}
+          aria-label={is_read ? "Mark Unread" : "Mark Read"}
+          style={IS_MOBILE ? { padding: 0 } : undefined}
+        >
           <Icon name={is_read ? "square" : "check-square"} />{" "}
-          {is_read ? "Mark Unread" : "Mark Read"}
+          {!IS_MOBILE && (is_read ? "Mark Unread" : "Mark Read")}
         </Button>
       </div>
     </li>
