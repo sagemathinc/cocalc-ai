@@ -849,7 +849,7 @@ function ViewerReadOnlyTag({ project_id }: { project_id: string }) {
         onClick={() => setOpen(true)}
         style={{
           alignSelf: "center",
-          color: "white",
+          color: "black",
           cursor: "pointer",
           margin: "2px 6px 0px 4px",
           whiteSpace: "nowrap",
