@@ -4,6 +4,7 @@
   "description": "CoCalc Rocket bay runtime packaging",
   "scripts": {
     "preinstall": "npx only-allow pnpm",
+    "build:bundle": "bay/build-bundle.sh",
     "build:bay-bundle": "bay/build-bundle.sh",
     "build:bay": "pnpm run build:bay-bundle",
     "build": "exit 0"
@@ -11,6 +12,10 @@
   "files": ["bay/**", "bin/**", "helm/**", "README.md", "package.json"],
   "author": "SageMath, Inc.",
   "license": "SEE LICENSE.md",
+  "dependencies": {
+    "@cocalc/hub": "workspace:*",
+    "@cocalc/server": "workspace:*"
+  },
   "devDependencies": {
     "@vercel/ncc": "^0.38.4"
   }
