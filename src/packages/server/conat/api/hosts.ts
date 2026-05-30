@@ -6273,7 +6273,6 @@ export async function updateHostMachine({
   if (
     nextBillingFundingMode &&
     isBillableDedicatedHostCloud(nextMachineCloud) &&
-    !deleteSharedScratch &&
     HOST_RUNNING_STATUSES.has(String(row.status ?? ""))
   ) {
     const hourlyCostUsd = await estimateDedicatedHostRateUsdPerHour({

@@ -2144,6 +2144,102 @@ describe("project collaborators local bay access", () => {
     );
   });
 
+  it("notifies only owners about access requests when collaborator management is owner-only", async () => {
+    const ownerAccountId = "44444444-4444-4444-8444-444444444444";
+    const collaboratorAccountId = "55555555-5555-4555-8555-555555555555";
+    const requestId = "88888888-8888-4888-8888-888888888888";
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("AS current_group")) {
+        return {
+          rows: [
+            {
+              title: "Private Project",
+              users: {
+                [ownerAccountId]: { group: "owner" },
+                [collaboratorAccountId]: { group: "collaborator" },
+              },
+              manage_users_owner_only: true,
+              current_group: null,
+              blocked: false,
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("SELECT request_id") &&
+        sql.includes("FROM project_access_requests")
+      ) {
+        return { rows: [] };
+      }
+      if (sql.includes("retry_count")) {
+        return { rows: [{ retry_count: 0, daily_count: 0 }] };
+      }
+      if (sql.includes("INSERT INTO project_access_requests")) {
+        return { rows: [{ request_id: requestId }] };
+      }
+      if (sql.includes("FROM project_access_requests r")) {
+        return {
+          rows: [
+            {
+              request_id: requestId,
+              project_id: PROJECT_ID,
+              project_title: "Private Project",
+              requester_account_id: ACCOUNT_ID,
+              requester_name: "Requester",
+              requester_first_name: "Request",
+              requester_last_name: "User",
+              requester_profile: null,
+              requested_role: "viewer",
+              read_policy: null,
+              message: "Please let me view this.",
+              status: "pending",
+              source: "project-url",
+              created: new Date("2026-05-29T00:00:00Z"),
+              updated: new Date("2026-05-29T00:00:00Z"),
+              decided: null,
+              decided_by_account_id: null,
+              decision_message: null,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const { requestProjectAccess } = await import("./collaborators");
+    await requestProjectAccess({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      requested_role: "viewer",
+      message: "Please let me view this.",
+      source: "project-url",
+    });
+
+    expect(resolveNotificationTargetHomeBaysMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_ids: [ownerAccountId],
+      }),
+    );
+    expect(createNotificationEventGraphMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targets: [
+          expect.objectContaining({
+            target_account_id: ownerAccountId,
+          }),
+        ],
+      }),
+    );
+    expect(
+      createNotificationEventGraphMock.mock.calls[0]?.[0]?.targets,
+    ).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          target_account_id: collaboratorAccountId,
+        }),
+      ]),
+    );
+  });
+
   it("updates existing pending project access requests without sending another notification", async () => {
     const requestId = "88888888-8888-4888-8888-888888888888";
     queryMock = jest.fn(async (sql: string) => {

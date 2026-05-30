@@ -1990,6 +1990,9 @@ describe("hosts browser fresh auth gating", () => {
   });
 
   it("deletes shared scratch after unmounting it on a running host", async () => {
+    getServerSettingsMock = jest.fn(async () => ({
+      project_hosts_funding_mode: "account-prepaid",
+    }));
     const deleteSharedScratchDisk = jest.fn(async () => undefined);
     const unmountSharedScratch = jest.fn(async () => ({ ok: true }));
     routedHostControlClientMock = jest.fn(async () => ({
@@ -2028,6 +2031,12 @@ describe("hosts browser fresh auth gating", () => {
         },
       },
       pricing_model: "on_demand",
+      billing: {
+        funding_mode: "account-prepaid",
+        funding_lane: "prepaid",
+        hourly_cost_usd: "2.50",
+        started_at: "2026-05-29T00:00:00.000Z",
+      },
     };
     let savedMetadata: any;
     queryMock = jest.fn(async (sql: string, params?: any[]) => {
@@ -2047,6 +2056,9 @@ describe("hosts browser fresh auth gating", () => {
       if (sql.includes("UPDATE project_hosts SET region=$2")) {
         savedMetadata = params?.[2];
         return { rowCount: 1, rows: [] };
+      }
+      if (sql.includes("SELECT stripe_usage_subscription FROM accounts")) {
+        return { rows: [{ stripe_usage_subscription: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -2071,10 +2083,28 @@ describe("hosts browser fresh auth gating", () => {
     );
     expect(savedMetadata.machine.shared_disk_gb).toBeUndefined();
     expect(savedMetadata.machine.shared_disk_type).toBeUndefined();
+    expect(savedMetadata.billing.hourly_cost_usd).toBe("1.25");
     expect(savedMetadata.runtime.metadata.diskIds).toEqual({
       data: "data-disk",
     });
     expect(savedMetadata.runtime.metadata.shared_disk_id).toBeUndefined();
+    expect(estimateDedicatedHostRateUsdPerHourMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "nebius",
+        shared_disk_gb: undefined,
+        shared_disk_type: undefined,
+      }),
+    );
+    expect(
+      reconcileDedicatedHostPurchaseSessionForAccountMock,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        host_id: HOST_ID,
+        hourly_cost_usd: "1.25",
+        started_at: "2026-05-29T00:00:00.000Z",
+      }),
+    );
   });
 
   it("checks fresh auth before host starts when a CLI session hash is provided", async () => {
