@@ -21,9 +21,9 @@ Statuses:
 Current score:
 
 - `unknown`: 7
-- `guarded`: 14
-- `finding`: 2
-- `fixed`: 0
+- `guarded`: 13
+- `finding`: 1
+- `fixed`: 2
 - `accepted-risk`: 0
 - `deferred`: 0
 
@@ -35,9 +35,9 @@ Current score:
 | D-004 | Access requests | Project access request flow | guarded | high | Non-member info leak, unauthorized approval, or request spam. | Signed-in-only info, default viewer request, collaborator upgrade path, manager authorization, blocking, cooldown, daily cap, notifications, and project logs. | Manual test non-member, viewer, collaborator, owner, blocked requester; verify multibay owning-bay routing. | Recent commits added the main flow and limits. |
 | D-005 | Access requests | Requester blocking | guarded | medium | Harassment via repeated access requests or notifications. | Project-scoped requester blocks and unblock UI exist. | Verify blocked requester gets no new request, notification, email, or project-log spam. | Similar intent to invite blocking. |
 | D-006 | Notifications | Access request notification/email fanout | unknown | medium | Email/notification spam, wrong recipient, or metadata leak. | Intended to follow existing invite notification channel and communication preferences. | Inspect notification projector/email path and duplicate suppression for access requests. | Needs comparison with invite behavior. |
-| D-007 | Scratch disk | Shared scratch spend admission | finding | critical | Large scratch disk could create very high monthly cloud cost if omitted from spend enforcement. | Scratch disk hardening landed after audit found spend maintenance could omit scratch cost. | Verify all purchase, edit, resize, auto-grow, spend maintenance, and enforcement paths include `shared_disk_gb/shared_disk_type`. | This is the highest-risk changed-cost surface. |
+| D-007 | Scratch disk | Shared scratch spend admission | fixed | critical | Large scratch disk could create very high monthly cloud cost if omitted from spend enforcement. | Purchase, edit, resize, spend maintenance, and background shared scratch auto-grow now price with `shared_disk_gb/shared_disk_type`; auto-grow reconciles the active purchase session after resize. | Keep full server package tests in release validation. | Focused auto-grow regression covers pre-resize denial and post-resize purchase reconciliation. |
 | D-008 | Scratch disk | Scratch edit/delete authorization | unknown | high | Unauthorized user edits or deletes a shared host disk affecting all projects on host. | Host/project-host control-plane authorization exists, but changed surface needs full review. | Audit RPCs and frontend actions for owner/admin/fresh-auth expectations and host-bay routing. | Intentional all-project read/write access to mounted scratch is out of scope; control-plane disk mutation is in scope. |
-| D-009 | Scratch disk | Scratch auto-grow | guarded | high | Provider resize or auto-grow bypasses pricing/admission or grows on unsupported provider. | Auto-grow gated to online-resize providers and recent host hardening exists. | Verify auto-grow rechecks admission immediately before cloud resize and logs denial. | Include Nebius high-cost cases. |
+| D-009 | Scratch disk | Scratch auto-grow | fixed | high | Provider resize or auto-grow bypasses pricing/admission or grows on unsupported provider. | Shared scratch auto-grow re-estimates the next rate, checks billing runway before cloud resize, reconciles the active purchase session after resize, and remains gated to online-resize providers. | Keep Nebius high-cost manual/provider validation in the broader host smoke pass. | Fixed in `project-host/auto-grow.ts` with focused regression coverage. |
 | D-010 | Codex/ACP | Codex fast service tier | guarded | high | Fast/priority tier enabled by default or silently used, causing unexpected spend. | UI makes fast explicit; backend resolves service tier and logs requested/resolved tier; standard maps to no fast tier. | Manual standard and fast turns via UI/CLI; confirm app-server receives only supported tier variants and activity log shows config. | Earlier mismatch `priority` versus `fast/flex` was found and fixed. |
 | D-011 | Codex/ACP | ACP queued/running status | unknown | medium | Submitted message remains queued while work runs, causing duplicate retry or confusing state. | Recent stale queued prompt cleanup exists. | Review status transition writes and frontend reconciliation for queued-to-running. | User observed this intermittently. |
 | D-012 | Codex/ACP | ACP scheduling limits | unknown | high | Unbounded queued/running turns or retry/recovery work. | May 11 audit added ACP admission limits; recent changes may interact with service tier/status. | Spot-check new ACP paths since May 11 still call admission helpers before durable enqueue or running claim. | Include automation and recovery continuations. |
@@ -55,7 +55,7 @@ Current score:
 
 ## Findings and Notes
 
-### D-007: Shared scratch spend enforcement must be rechecked end-to-end
+### D-007: Shared scratch spend enforcement fixed for auto-grow
 
 Initial manual audit found that spend maintenance could re-estimate active host
 cost without including `shared_disk_gb` and `shared_disk_type`. That is a
@@ -63,14 +63,17 @@ critical cost-control gap because a malicious or careless user could allocate a
 large scratch disk and later have background billing/enforcement overwrite the
 active rate with a value that excludes the disk.
 
-Required closeout:
+Closeout evidence:
 
-- Verify purchase-session estimates include scratch.
-- Verify host edit estimates include scratch.
-- Verify spend maintenance includes scratch.
-- Verify any active host rate recomputation includes scratch.
-- Verify scratch resize/auto-grow performs admission before cloud work.
-- Verify tests cover at least one high-cost scratch disk type.
+- Purchase-session estimates include scratch through
+  `estimateDedicatedHostRateUsdPerHour`.
+- Host edit estimates include scratch before interactive resize.
+- Spend maintenance includes scratch when recomputing active host rates.
+- Background shared scratch auto-grow now estimates the next scratch-inclusive
+  rate, checks billing runway before cloud resize, and reconciles the active
+  purchase session after successful resize.
+- Focused regression:
+  `pnpm test project-host/auto-grow.test.ts` in `src/packages/server`.
 
 ### D-015: Host upgrade component selection needs a dedicated fix
 

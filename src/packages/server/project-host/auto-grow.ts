@@ -23,6 +23,19 @@ import {
   MAX_SHARED_SCRATCH_AUTO_GROW_STEP_GB,
   MAX_SHARED_SCRATCH_DISK_GB,
 } from "@cocalc/server/project-host/shared-scratch-limits";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import {
+  applyDedicatedHostFundingModeOverride,
+  getDedicatedHostPolicySnapshotForAccount,
+  isBillableDedicatedHostCloud,
+  selectDedicatedHostFundingLane,
+} from "@cocalc/server/project-host/admission";
+import {
+  estimateDedicatedHostRateUsdPerHour,
+  reconcileDedicatedHostPurchaseSessionForAccount,
+} from "@cocalc/server/project-host/spend";
+import { evaluateDedicatedHostBillingEnforcement } from "@cocalc/server/project-host/spend-enforcement";
+import type { MoneyValue } from "@cocalc/util/money";
 import { getRoutedHostControlClient } from "./client";
 
 const log = getLogger("server:project-host:auto-grow");
@@ -104,6 +117,21 @@ type BackgroundAutoGrowDecision = {
   recommended: boolean;
   reason?: string;
 };
+
+type BillableAutoGrowSession =
+  | {
+      funding_mode: "account-prepaid";
+      funding_lane: "prepaid";
+      hourly_cost_usd: MoneyValue;
+    }
+  | {
+      funding_mode: "account-postpaid";
+      funding_lane: "credit";
+      hourly_cost_usd: MoneyValue;
+    }
+  | {
+      funding_mode: "site-funded";
+    };
 
 const pool = () => getPool();
 
@@ -404,6 +432,131 @@ function normalizeSharedScratchDiskSizeGb(
   return size;
 }
 
+function currentBillingFundingMode(
+  metadata: any,
+): "account-prepaid" | "account-postpaid" | "site-funded" | undefined {
+  const value = `${metadata?.billing?.funding_mode ?? ""}`.trim().toLowerCase();
+  if (
+    value === "account-prepaid" ||
+    value === "account-postpaid" ||
+    value === "site-funded"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+async function resolveBillableSharedScratchAutoGrowSession({
+  row,
+  nextDisk,
+}: {
+  row: HostRow;
+  nextDisk: number;
+}): Promise<BillableAutoGrowSession | undefined> {
+  const metadata = row.metadata ?? {};
+  const machine: HostMachine = metadata.machine ?? {};
+  const provider = normalizeProviderId(machine.cloud);
+  if (!isBillableDedicatedHostCloud(provider)) return;
+  const account_id = `${metadata.owner ?? ""}`.trim();
+  if (!account_id) {
+    throw new Error("billable shared scratch auto-grow requires a host owner");
+  }
+  const hourly_cost_usd = await estimateDedicatedHostRateUsdPerHour({
+    provider,
+    region: row.region,
+    zone: machine.zone,
+    machine_type: machine.machine_type ?? metadata.size,
+    disk_gb: machine.disk_gb,
+    disk_type: machine.disk_type,
+    shared_disk_gb: nextDisk,
+    shared_disk_type: machine.shared_disk_type,
+    storage_mode: machine.storage_mode,
+    gpu_type: machine.gpu_type,
+    gpu_count: machine.gpu_count,
+    pricing_model: metadata.pricing_model ?? "on_demand",
+  });
+  if (!hourly_cost_usd) {
+    throw Object.assign(
+      new Error(
+        `unable to determine shared scratch auto-grow hourly rate for provider '${provider}'`,
+      ),
+      { code: "host_pricing_unavailable" },
+    );
+  }
+  const snapshot = applyDedicatedHostFundingModeOverride(
+    await getDedicatedHostPolicySnapshotForAccount({ account_id }),
+    currentBillingFundingMode(metadata),
+  );
+  if (snapshot.funding_mode === "site-funded") {
+    return { funding_mode: "site-funded" };
+  }
+  const fundingLane = selectDedicatedHostFundingLane(snapshot);
+  if (!fundingLane) {
+    throw new Error(
+      `dedicated-host funding is not currently available for account ${account_id}`,
+    );
+  }
+  const enforcement = evaluateDedicatedHostBillingEnforcement({
+    snapshot,
+    funding_lane: fundingLane,
+    hourly_cost_usd,
+    lane_allowed: true,
+  });
+  if (enforcement.action === "request_drain") {
+    throw Object.assign(
+      new Error(
+        `dedicated-host funding runway is too low for shared scratch auto-grow: ${enforcement.reason}`,
+      ),
+      {
+        code: "dedicated_host_billing_runway_too_low",
+        details: enforcement,
+      },
+    );
+  }
+  if (snapshot.funding_mode === "account-prepaid") {
+    if (fundingLane !== "prepaid") {
+      throw new Error(
+        `unexpected dedicated-host funding lane '${fundingLane}' for prepaid mode`,
+      );
+    }
+    return {
+      funding_mode: "account-prepaid",
+      funding_lane: fundingLane,
+      hourly_cost_usd,
+    };
+  }
+  if (fundingLane !== "credit") {
+    throw new Error(
+      `unexpected dedicated-host funding lane '${fundingLane}' for postpaid mode`,
+    );
+  }
+  return {
+    funding_mode: "account-postpaid",
+    funding_lane: fundingLane,
+    hourly_cost_usd,
+  };
+}
+
+function billingMetadataForAutoGrowSession(
+  session: BillableAutoGrowSession | undefined,
+  previousBilling: any,
+) {
+  if (!session) return previousBilling;
+  const started_at = previousBilling?.started_at ?? previousBilling?.updated_at;
+  if (session.funding_mode === "site-funded") {
+    return {
+      funding_mode: "site-funded" as const,
+      ...(started_at ? { started_at } : {}),
+    };
+  }
+  return {
+    funding_mode: session.funding_mode,
+    funding_lane: session.funding_lane,
+    hourly_cost_usd: session.hourly_cost_usd,
+    ...(started_at ? { started_at } : {}),
+  };
+}
+
 function canAutoGrowNow(
   row: HostRow,
   config: AutoGrowConfig,
@@ -652,6 +805,10 @@ async function performSharedScratchAutoGrow(
   if (!providerId) {
     return { grown: false, reason: "host provider is unknown" };
   }
+  const billableSession = await resolveBillableSharedScratchAutoGrowSession({
+    row,
+    nextDisk,
+  });
 
   const runtime = row.metadata?.runtime ?? {};
   if (!runtime.instance_id) {
@@ -708,6 +865,10 @@ async function performSharedScratchAutoGrow(
       shared_disk_gb: nextDisk,
       metadata: nextMachineMeta,
     },
+    billing: billingMetadataForAutoGrowSession(
+      billableSession,
+      row.metadata?.billing,
+    ),
     last_action: "auto_grow_shared_scratch",
     last_action_status: resizeWarning ? `warning: ${resizeWarning}` : "success",
     last_action_error: resizeWarning ?? null,
@@ -719,6 +880,25 @@ async function performSharedScratchAutoGrow(
      WHERE id=$1 AND deleted IS NULL`,
     [row.id, nextMetadata],
   );
+  if (
+    billableSession &&
+    billableSession.funding_mode !== "site-funded" &&
+    providerId
+  ) {
+    await reconcileDedicatedHostPurchaseSessionForAccount({
+      account_id: `${row.metadata?.owner ?? ""}`.trim(),
+      host_id: row.id,
+      host_name: row.name,
+      host_bay_id: getConfiguredBayId(),
+      provider: providerId,
+      region: row.region,
+      machine_type: machine.machine_type ?? row.metadata?.size,
+      pricing_model: row.metadata?.pricing_model ?? "on_demand",
+      funding_lane: billableSession.funding_lane,
+      hourly_cost_usd: billableSession.hourly_cost_usd,
+      started_at: nextMetadata.billing?.started_at,
+    });
+  }
   await logCloudVmEvent({
     vm_id: row.id,
     action: "resize",
