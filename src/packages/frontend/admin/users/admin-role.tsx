@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Input, Popconfirm, Space } from "antd";
+import { Alert, Input, Modal, Space } from "antd";
 
 import { Button } from "@cocalc/frontend/antd-bootstrap";
 import {
@@ -24,6 +24,7 @@ export function AdminRole({ account_id, name, is_admin }: Props) {
   const [isAdmin, setIsAdmin] = useState<boolean>(!!is_admin);
   const [reason, setReason] = useState<string>("");
   const [running, setRunning] = useState<boolean>(false);
+  const [confirmOpen, setConfirmOpen] = useState<boolean>(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [message, setMessage] = useState<string | undefined>(undefined);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
@@ -55,6 +56,7 @@ export function AdminRole({ account_id, name, is_admin }: Props) {
             ? `${name} was already a site admin.`
             : `${name} is now a site admin.`,
         );
+        setConfirmOpen(false);
       });
     } catch (err) {
       setError(`${err}`);
@@ -101,21 +103,39 @@ export function AdminRole({ account_id, name, is_admin }: Props) {
             autoSize={{ minRows: 2, maxRows: 5 }}
             onChange={(e) => setReason(e.target.value)}
           />
-          <Popconfirm
-            title={`Grant site admin role to ${name}?`}
-            description="This gives broad administrative access across CoCalc."
-            okText="Grant admin"
-            okButtonProps={{ danger: true }}
+          <Button
+            bsStyle="danger"
             disabled={running || !reason.trim()}
-            onConfirm={() => {
+            onClick={() => setConfirmOpen(true)}
+          >
+            <Icon name={running ? "sync" : "user-plus"} spin={running} /> Grant
+            site admin role...
+          </Button>
+          <Modal
+            open={confirmOpen}
+            title={`Grant site admin role to ${name}?`}
+            okText="Grant admin"
+            okButtonProps={{ danger: true, loading: running }}
+            cancelButtonProps={{ disabled: running }}
+            onOk={() => {
               void grantAdminRole();
             }}
+            onCancel={() => setConfirmOpen(false)}
+            maskClosable={!running}
+            closable={!running}
           >
-            <Button bsStyle="danger" disabled={running || !reason.trim()}>
-              <Icon name={running ? "sync" : "user-plus"} spin={running} />{" "}
-              Grant site admin role...
-            </Button>
-          </Popconfirm>
+            <p>
+              This gives broad administrative access across CoCalc, including
+              sensitive account, billing, project, and infrastructure controls.
+            </p>
+            <p>
+              This action requires recent 2FA fresh auth and will be recorded in
+              the admin audit log with this reason:
+            </p>
+            <blockquote style={{ whiteSpace: "pre-wrap" }}>
+              {reason.trim()}
+            </blockquote>
+          </Modal>
         </>
       )}
       <FreshAuthModal {...freshAuthModalProps} />
