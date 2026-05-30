@@ -20,8 +20,8 @@ Statuses:
 
 Current score:
 
-- `unknown`: 2
-- `guarded`: 16
+- `unknown`: 1
+- `guarded`: 17
 - `finding`: 0
 - `fixed`: 5
 - `accepted-risk`: 0
@@ -50,7 +50,7 @@ Current score:
 | D-019 | Runtime/proxy         | Viewer runtime and app-server denial          | guarded | high     | Viewer starts project runtime, reaches app-server/proxy, or runs project-local code.            | Viewer UI hides runtime controls; project-host access should enforce denial.                                                                                                                         | Endpoint-level deny tests or manual requests as viewer.                                                                                                      | Do not rely only on frontend hiding controls.                                                                                              |
 | D-020 | Project list/index    | Viewer projection and project relation labels | guarded | medium   | Viewer project does not show, shows wrong relation, or wrong role affects access checks.        | Project list projection was updated to include viewers and relation labels.                                                                                                                          | Re-run project list tests and manual accepted-viewer flow.                                                                                                   | Earlier viewer accepted invite did not appear in list.                                                                                     |
 | D-021 | Dependencies/config   | Dependency and default drift                  | fixed   | high     | New dependency, env default, or config opens public access or vulnerable code.                  | Dependency consistency passes; production and dev audits are clean after raising vulnerable `tmp` and `qs` pins/overrides.                                                                           | Keep `version-check` plus prod/dev audit in release validation.                                                                                              | Audit found `tmp <0.2.6` in `project` and `qs <=6.15.1` via `express`; both were updated.                                                  |
-| D-022 | Public docs/rendering | Public-safe markdown/docs renderers           | unknown | medium   | Public rendering loads authenticated app-only actions or leaks private data.                    | Recent public-safe renderer and lazy action dependency changes exist.                                                                                                                                | Review public docs renderer imports and route behavior.                                                                                                      | Lower priority than spend/access surfaces.                                                                                                 |
+| D-022 | Public docs/rendering | Public-safe markdown/docs renderers           | guarded | medium   | Public rendering loads authenticated app-only actions or leaks private data.                    | Public docs pass no private state or action runner, admin/signed-in docs are excluded by default, and project/host action selectors are dynamically imported only when app action execution exists.  | Keep public docs route tests in release validation; raw HTML in repo-authored docs remains a code-review concern, not a user-content surface.                | Focused public docs and docs-browser tests pass; test run still emits existing Ant Design act warnings.                                    |
 | D-023 | Browser automation    | Browser/agent auth after recent CLI work      | unknown | high     | Agent or browser automation can use broader auth than intended.                                 | May 11 browser/CLI audit added caps and raw-exec policy.                                                                                                                                             | Re-check new cocalc-cli viewer and access-request commands under agent auth.                                                                                 | Especially important for shared browser automation contexts.                                                                               |
 
 ## Findings and Notes
@@ -153,6 +153,23 @@ Focused validation:
 - `pnpm -C src/packages audit --prod`.
 - `pnpm -C src/packages audit --dev`.
 - `pnpm tsc --build` in `src/packages/project`.
+
+### D-022: Public docs/rendering guarded
+
+Public docs are built from static `@cocalc/docs` entries. The public route does
+not pass private docs state or `onRunAction`, so private learning state is not
+rendered and project/project-host action selectors do not dynamically import
+`app-framework` or `webapp-client`. Admin and signed-in-only entries are
+excluded by default through the `DocsAccess` registry filters.
+
+One boundary remains worth remembering: docs markdown uses the lightweight
+HTML-based renderer, but the content is repository-authored, not user supplied.
+Treat raw HTML in docs content as a code-review concern.
+
+Focused validation:
+
+- `pnpm test public/docs/__tests__/app.test.tsx docs/browser.test.tsx` in
+  `src/packages/frontend`.
 
 ### D-012: ACP scheduling limits guarded
 
