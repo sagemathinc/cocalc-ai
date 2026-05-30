@@ -1,10 +1,22 @@
 const { existsSync, mkdirSync, readFileSync, writeFileSync } = require("fs");
 const { join } = require("path");
 const net = require("net");
-const { resolveOnPremHost } = require("@cocalc/server/onprem");
-const resolveLaunchpadHost = resolveOnPremHost;
 const PORT_STATE_FILE = "launchpad-port.json";
 const DEFAULT_BASE_PORT = 9001;
+
+function resolveLaunchpadHost(fallbackHost) {
+  // Lazy import: @cocalc/server/onprem pulls in backend logging, which can
+  // initialize backend/data. Launchpad must scrub inherited runtime env first.
+  return require("@cocalc/server/onprem").resolveOnPremHost(fallbackHost);
+}
+
+function scrubLaunchpadInheritedRuntimeEnv() {
+  // CoCalc project runtimes export CONAT_SERVER for their project host. A
+  // Launchpad process is self-contained and must not inherit that control-plane
+  // route, otherwise hub-system clients try to authenticate to the wrong Conat
+  // server and startup crashes with a missing project-host bearer token.
+  delete process.env.CONAT_SERVER;
+}
 
 function fail(message, detail) {
   const err = new Error(`Launchpad port configuration error: ${message}`);
@@ -160,6 +172,7 @@ function findArgValue(flag) {
 }
 
 async function applyLaunchpadDefaults() {
+  scrubLaunchpadInheritedRuntimeEnv();
   process.env.COCALC_DB ??= "pglite";
   process.env.COCALC_PRODUCT ??= "launchpad";
 
@@ -230,9 +243,10 @@ async function applyLaunchpadDefaults() {
 module.exports = {
   applyLaunchpadDefaults,
   resolveLaunchpadHost,
+  scrubLaunchpadInheritedRuntimeEnv,
   logLaunchpadConfig() {
     const summary = {
-      host: resolveOnPremHost(),
+      host: resolveLaunchpadHost(),
       data_dir: process.env.COCALC_DATA_DIR ?? process.env.DATA,
       http_port: process.env.COCALC_HTTP_PORT,
       sshd_port: process.env.COCALC_SSHD_PORT,
