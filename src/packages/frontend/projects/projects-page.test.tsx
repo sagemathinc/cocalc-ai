@@ -103,6 +103,10 @@ jest.mock("./projects-table", () => ({
   ProjectsTable: () => <div data-testid="projects-table" />,
 }));
 
+jest.mock("./mobile-projects-list", () => ({
+  MobileProjectsList: () => <div data-testid="mobile-projects-list" />,
+}));
+
 jest.mock("./projects-table-controls", () => ({
   ProjectsTableControls: () => <div data-testid="projects-table-controls" />,
 }));
