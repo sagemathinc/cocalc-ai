@@ -23,6 +23,7 @@ DAEMON_RELOAD=1
 SITE_MASTER_KEY_PATH="/etc/cocalc/site-master-key"
 NODE_VERSION="26.2.0"
 NVM_DIR="/opt/cocalc/nvm"
+RETAIN_RELEASES="${COCALC_BAY_RETAIN_RELEASES:-3}"
 
 usage() {
   cat <<'EOF'
@@ -54,6 +55,7 @@ Options:
   --no-daemon-reload       skip daemon-reload during scaffold install
   --node-version <v>       Node.js runtime version for generated bay env (default: 26.2.0)
   --nvm-dir <dir>          nvm directory for generated bay env (default: /opt/cocalc/nvm)
+  --retain-releases <n>    keep newest n extracted releases after staging (default: 3)
   -h, --help               show help
 EOF
 }
@@ -264,6 +266,67 @@ validate_release() {
   fi
 }
 
+current_release_id() {
+  if [[ -L "$CURRENT_LINK" ]]; then
+    basename "$(readlink -f "$CURRENT_LINK")"
+    return 0
+  fi
+  if [[ -r "${BAY_ROOT}/state/current-version" ]]; then
+    cat "${BAY_ROOT}/state/current-version"
+    return 0
+  fi
+  return 1
+}
+
+set_current_release() {
+  local previous=""
+  previous="$(current_release_id || true)"
+  run mkdir -p "${BAY_ROOT}/state"
+  if [[ -n "$previous" && "$previous" != "$RELEASE_ID" ]]; then
+    printf '%s\n' "$previous" > "${BAY_ROOT}/state/previous-version"
+  fi
+  run ln -sfn "$TARGET_RELEASE" "$CURRENT_LINK"
+  printf '%s\n' "$RELEASE_ID" > "${BAY_ROOT}/state/current-version"
+}
+
+prune_old_releases() {
+  if [[ ! "$RETAIN_RELEASES" =~ ^[0-9]+$ ]]; then
+    echo "retain release count must be a nonnegative integer: $RETAIN_RELEASES" >&2
+    exit 2
+  fi
+  if (( RETAIN_RELEASES == 0 )); then
+    return
+  fi
+  if [[ ! -d "$RELEASES_DIR" ]]; then
+    return
+  fi
+
+  local -A keep=()
+  local current previous release count
+  current="$(current_release_id || true)"
+  previous=""
+  if [[ -r "${BAY_ROOT}/state/previous-version" ]]; then
+    previous="$(cat "${BAY_ROOT}/state/previous-version")"
+  fi
+  [[ -n "$current" ]] && keep["$current"]=1
+  [[ -n "$previous" ]] && keep["$previous"]=1
+
+  count=0
+  while IFS= read -r release; do
+    [[ -z "$release" ]] && continue
+    keep["$release"]=1
+    count=$((count + 1))
+    if (( count >= RETAIN_RELEASES )); then
+      break
+    fi
+  done < <(find "$RELEASES_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -r)
+
+  while IFS= read -r release; do
+    [[ -n "${keep[$release]:-}" ]] && continue
+    run rm -rf "${RELEASES_DIR}/${release}"
+  done < <(find "$RELEASES_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+}
+
 main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -351,6 +414,10 @@ main() {
         NVM_DIR="$2"
         shift 2
         ;;
+      --retain-releases)
+        RETAIN_RELEASES="$2"
+        shift 2
+        ;;
       -h|--help)
         usage
         exit 0
@@ -415,7 +482,7 @@ main() {
     stage_source_release
   fi
   validate_release
-  run ln -sfn "$TARGET_RELEASE" "$CURRENT_LINK"
+  set_current_release
 
   INSTALL_CMD=("${TARGET_RELEASE}/scripts/bay-systemd/install-scaffold.sh" "--overlay" "$OVERLAY_MODE")
   if [[ "$DAEMON_RELOAD" -eq 1 ]]; then
@@ -535,6 +602,7 @@ EOF
     validate_site_master_key
     run systemctl start cocalc-bay.target
   fi
+  prune_old_releases
 
   cat <<EOF
 Release bootstrap complete.
