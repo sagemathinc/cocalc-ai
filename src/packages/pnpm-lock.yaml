@@ -1541,6 +1541,13 @@ importers:
         version: 22.19.1
 
   rocket:
+    dependencies:
+      '@cocalc/hub':
+        specifier: workspace:*
+        version: link:../hub
+      '@cocalc/server':
+        specifier: workspace:*
+        version: link:../server
     devDependencies:
       '@vercel/ncc':
         specifier: ^0.38.4
