@@ -15,32 +15,49 @@ Status values:
 - `defer`: intentionally not required for first public release.
 - `closed`: the overall triage document is complete and no longer active.
 
-## Executive Priority
+## Current Release Read, 2026-05-30
 
-1. Deploy a new dogfood site at `demo.cocalc.ai`.
-2. Fix Launchpad SEA startup crash.
-3. Fix chat TimeTravel crash.
-4. Fix moving projects between regions.
-5. Add CPU usage accounting and abuse visibility.
-6. Validate self-hosted Launchpad without Cloudflare/GCP.
-7. Investigate browser resume/retry storm and stuck loading documents.
-8. Restore project-host artifact upgrade controls.
-9. Improve project invite and access-request flows.
-10. Fix Jupyter CLI cell move duplication.
-11. Fix chat typing indicator thread title.
-12. Fix imagegen generated image sizing.
-13. Improve membership tier editor.
-14. Fix admin user search active status.
-15. Fix Slate gap cursor after trailing code block.
-16. Remove automatic project creation modal popup.
-17. Fix user favicon initialization.
-18. Improve project-host daemon upgrade UX.
+The original blocker list is no longer primarily a bug queue. Most concrete
+bugs found in the first triage pass are fixed. The remaining release risk is
+mostly operational readiness and configuration UX:
+
+- fresh-site setup has a known-good path but too many wrong turns,
+- membership tier configuration is still too confusing for safe production use,
+- project-host software upgrade controls are too CLI-dependent,
+- invite/access flows need manual validation,
+- and admin activity/search correctness still matters for support and abuse
+  response.
+
+The best next investment is the first-run site setup checklist/wizard described
+in `src/.agents/site-setup-checklist-wizard-plan-2026-05-30.md`. It captures the
+validated Launchpad/Rocket setup path and should prevent many of the deployment
+mistakes discovered during dogfood.
+
+## Active Release Queue
+
+1. Implement the site setup checklist/wizard V1.
+2. Clean up membership tier editor/configuration enough for safe admin use.
+3. Restore project-host artifact upgrade controls in the host UI.
+4. Manually validate project invite/access-request flows and close or fix them.
+5. Fix admin user search "Active never" for known active users.
+6. Reproduce the browser resume retry storm; fix if still reproducible, or split
+   it into a bounded follow-up with telemetry/guards.
+
+## Deferred Or Not Required For First Public Release
+
+These are important, but should not block the next release unless scope changes:
+
+- CPU usage accounting and abuse enforcement.
+- Self-hosted Launchpad without Cloudflare or GCP.
+- Cross-region project move polish, unless cross-region moves are explicitly
+  part of the next release promise.
+- Project-host daemon upgrade UX polish.
 
 ## Track A: Deployment And Launchpad Readiness
 
 ### 1. Deploy New Dogfood Site
 
-Status: `active`
+Status: `done`
 
 Severity: high.
 
@@ -48,25 +65,27 @@ Why it matters: a fresh dogfood deployment is the fastest way to expose real dep
 
 Known requirement:
 
-- New site at `https://demo.cocalc.ai`.
-- Two bays deployed using `systemd`, likely west coast and east coast.
-- Two project hosts.
+- Fresh dogfood site deployed from scratch.
+- Systemd-based Rocket deployment path exercised.
+- Project-host creation, provider setup, rootfs publishing, and project startup
+  tested end to end.
 - Track all setup steps and friction from start to finish.
 - Reduce deployment friction discovered during the process.
 
 Expected outcome:
 
-- A working dogfood site with two bays and two project hosts.
+- A working dogfood site with project hosts.
 - A reproducible deployment checklist.
 - Bugs and manual steps discovered during deployment are either fixed or tracked separately.
 - Operators can repeat the deployment without relying on hidden local knowledge.
 
 Next action:
 
-- Use `src/.agents/dogfood-demo-site-deployment-runbook-2026-05-29.md` as the
-  source of truth for the first deployment pass.
-- Start from clean infrastructure and record every command/configuration choice.
-- Fix or file every blocking deployment issue encountered.
+- Treat this item as complete for the original release-blocker triage.
+- Continue follow-up work under
+  `src/.agents/site-setup-checklist-wizard-plan-2026-05-30.md`.
+- Use the next fresh multibay deployment to validate the setup wizard/checklist
+  model rather than expanding this item.
 
 ### 2. Launchpad SEA Startup Crash
 
@@ -99,11 +118,18 @@ Next action:
 
 ### 3. Self-Hosted Launchpad Without Cloudflare Or GCP
 
-Status: `open`
+Status: `defer`
 
 Severity: high.
 
 Why it matters: self-hosted Launchpad may have regressed during recent security hardening, especially outside the current Cloudflare/GCP assumptions.
+
+Deferral note:
+
+- The current validated dogfood path intentionally depends on Cloudflare and
+  hosted cloud project hosts.
+- This remains important for self-hosted product quality, but should not block
+  the next release while the Cloudflare/GCP/Nebius path is the supported path.
 
 Known requirement:
 
@@ -119,19 +145,26 @@ Expected outcome:
 
 Next action:
 
-- Provision or identify a local VM target.
-- Run the current Launchpad setup end to end.
-- Record failures and split code fixes from documentation fixes.
+- Keep as a post-release/self-hosted validation track.
+- Revisit after the site setup checklist/wizard makes the primary setup path
+  reliable.
 
 ## Track B: Project Hosts, Runtime, And Cross-Region Operations
 
 ### 4. Project Move Between Regions Is Still Bad
 
-Status: `open`
+Status: `defer`
 
-Severity: critical.
+Severity: high.
 
 Why it matters: cross-region project moves are a core multibay/project-host workflow. They currently work only after confusing failures and manual recovery, which is not release quality.
+
+Deferral note:
+
+- This is not required for the next release unless cross-region project moves
+  are explicitly part of the release/demo promise.
+- Fresh multibay deployment should still exercise ordinary bay/host placement,
+  but this item should not compete with setup wizard and membership-tier work.
 
 Known symptoms:
 
@@ -148,15 +181,14 @@ Expected outcome:
 
 Next action:
 
-- Reproduce with a controlled source/destination host pair.
-- Capture the exact LRO state, browser errors, project state, and host logs.
-- Decide whether to patch state convergence or write a deeper move redesign plan.
+- Keep as a follow-up multibay UX/reliability track.
+- Reopen as active only if the next release requires cross-region project moves.
 
 ### 5. Restore Project-Host Artifact Upgrade Controls
 
 Status: `open`
 
-Severity: critical.
+Severity: high.
 
 Why it matters: admins currently cannot upgrade project-host software artifacts from the UI, which makes production operations brittle and CLI-dependent.
 
@@ -183,11 +215,17 @@ Next action:
 
 ### 6. Project-Host Daemon Upgrade UX
 
-Status: `open`
+Status: `defer`
 
 Severity: medium-high.
 
 Why it matters: project-host daemon upgrades are not necessarily smooth. Users on affected projects need realistic expectations when host software is changing.
+
+Deferral note:
+
+- Useful polish, but less important than restoring admin artifact controls and
+  making first-run setup deterministic.
+- Keep as a follow-up once upgrade controls are back in the UI.
 
 Known concern:
 
@@ -202,8 +240,8 @@ Expected outcome:
 
 Next action:
 
-- Find host upgrade state already available to frontend/project pages.
-- Add a minimal project-visible indicator when the assigned host is upgrading critical daemon components.
+- Revisit after project-host artifact upgrade controls are restored.
+- Use the restored upgrade state as the source for any project-visible banner.
 
 ## Track C: Browser, Reconnect, And Collaboration Reliability
 
@@ -211,9 +249,16 @@ Next action:
 
 Status: `open`
 
-Severity: critical.
+Severity: high.
 
 Why it matters: after laptop suspend/resume, documents and chats can become unusable until refresh. A retry storm showing millions of sent messages suggests a serious reconnect/backpressure bug.
+
+Release read:
+
+- This is the most bug-shaped remaining item.
+- It should be fixed if still reproducible. If it cannot be reproduced quickly,
+  split out bounded retry/telemetry guard work and do not let it block setup and
+  membership configuration work.
 
 Known symptoms:
 
@@ -381,6 +426,12 @@ Severity: high.
 
 Why it matters: project invite and access upgrade flows are common first-run collaboration paths. Broken project pages for invited users create a poor onboarding experience.
 
+Current read:
+
+- Implementation is believed to be mostly done.
+- This remains open because it has not been manually validated end to end.
+- If manual testing passes, mark this item `done` without expanding scope.
+
 Known requirements:
 
 - If a user visits a project they were invited to, they should be able to accept the invite directly there.
@@ -401,17 +452,25 @@ Expected outcome:
 
 Next action:
 
-- Map current project access failure states.
-- Identify existing invite acceptance APIs and collaborator request primitives, if any.
-- Implement the invited-user accept path first, then access-request follow-ups.
+- Manually test invited-user accept flow from a project URL.
+- Manually test not-invited access request from a project URL.
+- Manually test viewer requesting collaborator access.
+- Mark done if those paths work; file focused bugs only for failures.
 
 ### 14. CPU Usage Accounting And Abuse Detection
 
-Status: `open`
+Status: `defer`
 
-Severity: critical.
+Severity: high.
 
 Why it matters: free tier, free trials, and unblocked egress create real abuse risk. CPU accounting is needed both for enforcement and for detecting mining/password-cracking behavior.
+
+Deferral note:
+
+- This is important for abuse hardening, but it is a larger accounting and
+  enforcement project.
+- It should not block the next release if provider setup, membership tiers, and
+  operational admin paths are otherwise sane.
 
 Known requirements:
 
@@ -431,10 +490,8 @@ Expected outcome:
 
 Next action:
 
-- Identify where project-host CPU usage per container/user is available.
-- Design accounting aggregation windows and storage schema.
-- Decide first-release enforcement versus dashboard-only detection.
-- Implement top-user admin visibility before hard blocking if enforcement is risky.
+- Split into a dedicated abuse/accounting plan before implementation.
+- Start with admin visibility before hard enforcement when this is resumed.
 
 ### 15. Membership Tier Editor Cleanup
 
@@ -539,11 +596,21 @@ Next action:
 
 ## Closure Criteria
 
-- All critical bugs are fixed or intentionally split into dedicated blocker plans.
-- Dogfood deployment and self-hosted Launchpad smoke tests are completed.
-- Abuse visibility has at least a first working CPU accounting/admin visibility path.
-- No item remains `open`, `active`, or `blocked` without an explicit owner and follow-up plan.
+- All active release-queue items are `done` or explicitly split into dedicated
+  implementation plans.
+- Deferred items are not required for the next release and have a clear reason
+  for deferral.
+- Fresh-site setup is tracked under
+  `src/.agents/site-setup-checklist-wizard-plan-2026-05-30.md`.
+- No item remains `open`, `active`, or `blocked` without an explicit next
+  action.
 
 ## Update Log
 
 - 2026-05-29: Initial triage created from `/home/user/scratch/wstein.md`.
+- 2026-05-30: Reclassified the queue after the successful dogfood Rocket setup.
+  Most concrete bugs are done; remaining active work is setup wizard,
+  membership configuration, host software controls, invite/access validation,
+  admin activity correctness, and browser resume verification. CPU accounting,
+  self-hosted no-Cloudflare Launchpad, cross-region move polish, and daemon
+  upgrade messaging are deferred from the next release unless scope changes.

@@ -462,11 +462,11 @@ export default function CloudflareConfigWizard({
                 type="warning"
                 showIcon
                 style={{ marginTop: "10px" }}
-                title="Cloudflare tunnel settings are applied at server startup"
+                title="Cloudflare tunnel settings must be applied to the running server"
                 description={
                   hasPendingRuntimeDraft
-                    ? "You have draft Cloudflare changes in this wizard. Save them and restart the server before expecting the visitor-header check to pass."
-                    : "This check only sees the currently running server configuration. After changing Cloudflare mode, domain, account ID, API token, or tunnel naming settings, save and restart the server before expecting the check to pass."
+                    ? "You have draft Cloudflare changes in this wizard. Save them, then use Apply Cloudflare tunnel settings now before expecting the visitor-header check to pass."
+                    : "This check only sees the currently running server configuration. After changing Cloudflare mode, domain, account ID, API token, or tunnel naming settings, save and apply the Cloudflare tunnel settings before expecting the check to pass."
                 }
               />
               <div style={{ marginTop: "8px" }}>
@@ -508,7 +508,8 @@ If the link above does not work, search in Cloudflare for **Managed Transforms**
                   <div style={{ color: "#666" }}>
                     Checks <code>/customize</code> on the currently running
                     server. It does not reflect draft or newly saved Cloudflare
-                    tunnel settings until after restart.
+                    tunnel settings until they are applied to the running
+                    server.
                   </div>
                   {locationHeadersTestError ? (
                     <Alert
