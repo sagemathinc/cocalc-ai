@@ -49,6 +49,7 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
 - Prefer Conat RPC APIs (`src/packages/conat/hub/api`) over Next API routes in `src/packages/next/pages/api/v2`.
 - For direct DB access in hub/backend, use `getPool()` from `@cocalc/database/pool`.
 - Keep dependency versions aligned across packages; update matching `@types/*` packages when applicable.
+- Redux store values are deep-converted with Immutable.js at runtime. Do not assume nested values returned by `useTypedRedux` are plain objects just because the TypeScript type says so; normalize or use `.get(...)`/`.toJS()` before nested property access.
 
 ## Multibay Architecture Rule
 
