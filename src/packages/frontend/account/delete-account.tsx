@@ -7,54 +7,12 @@ import { Alert, Button, Input } from "antd";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import {
-  React,
   Rendered,
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { ErrorDisplay, Icon } from "@cocalc/frontend/components";
 import { CancelText } from "@cocalc/frontend/i18n/components";
-
-interface Props {
-  initial_click: () => void;
-  confirm_click: () => void;
-  cancel_click: () => void;
-  user_name: string;
-  show_confirmation?: boolean;
-  style?: React.CSSProperties;
-}
-
-export function DeleteAccount(props: Props) {
-  const intl = useIntl();
-
-  return (
-    <div>
-      <div
-        style={{ height: "26px", display: "flex", justifyContent: "flex-end" }}
-      >
-        <Button
-          disabled={props.show_confirmation}
-          style={props.style}
-          onClick={props.initial_click}
-        >
-          <Icon name="trash" />{" "}
-          {intl.formatMessage({
-            id: "account.delete-account.button",
-            defaultMessage: "Delete Account",
-          })}
-          ...
-        </Button>
-      </div>
-      {props.show_confirmation ? (
-        <DeleteAccountConfirmation
-          confirm_click={props.confirm_click}
-          cancel_click={props.cancel_click}
-          required_text={props.user_name}
-        />
-      ) : undefined}
-    </div>
-  );
-}
 
 interface ConfProps {
   confirm_click: () => void;
@@ -63,7 +21,7 @@ interface ConfProps {
 }
 
 // Concious choice to make them actually click the confirm delete button.
-function DeleteAccountConfirmation({
+export function DeleteAccountConfirmation({
   confirm_click,
   cancel_click,
   required_text,

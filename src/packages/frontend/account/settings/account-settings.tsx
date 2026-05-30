@@ -36,17 +36,14 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { keys, startswith } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { PassportStrategyFrontend } from "@cocalc/util/types/passport-types";
-import { AccountState } from "../types";
 import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
-import { DeleteAccount } from "../delete-account";
 import { ACCOUNT_PROFILE_ICON_NAME } from "../account-preferences-profile";
 import { set_account_table, ugly_error } from "../util";
 import { EmailAddressSetting } from "./email-address-setting";
 import { EmailVerification } from "./email-verification";
-import { PasswordSetting } from "./password-setting";
 import { TextSetting } from "./text-setting";
 import { lite } from "@cocalc/frontend/lite";
 
@@ -60,8 +57,6 @@ interface Props {
   email_address?: string;
   email_address_verified?: Map<string, any>;
   passports?: Map<string, any>;
-  delete_account_error?: string;
-  other_settings?: AccountState["other_settings"];
   email_enabled?: boolean;
   verify_emails?: boolean;
   created?: Date;
@@ -77,8 +72,6 @@ export function AccountSettings(props: Readonly<Props>) {
   const [remove_strategy_button, set_remove_strategy_button] = useState<
     string | undefined
   >(undefined);
-  const [show_delete_confirmation, set_show_delete_confirmation] =
-    useState<boolean>(false);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: ugly_error,
   });
@@ -340,38 +333,6 @@ export function AccountSettings(props: Readonly<Props>) {
     );
   }
 
-  function render_delete_account(): Rendered {
-    if (lite) {
-      return;
-    }
-    return (
-      <Row>
-        <Col xs={12}>
-          <DeleteAccount
-            style={{ marginTop: "1ex" }}
-            initial_click={() => set_show_delete_confirmation(true)}
-            confirm_click={() =>
-              runFreshAuthAction(async () => {
-                await actions().delete_account();
-              })
-            }
-            cancel_click={() => set_show_delete_confirmation(false)}
-            user_name={(props.first_name + " " + props.last_name).trim()}
-            show_confirmation={show_delete_confirmation}
-          />
-        </Col>
-      </Row>
-    );
-  }
-
-  function render_password(): Rendered {
-    if (!props.email_address || lite) {
-      // makes no sense to change password if don't have an email address
-      return;
-    }
-    return <PasswordSetting runFreshAuthAction={runFreshAuthAction} />;
-  }
-
   function render_header(): Rendered {
     return (
       <>
@@ -489,9 +450,7 @@ export function AccountSettings(props: Readonly<Props>) {
       {render_unlisted()}
       <div style={{ marginBottom: "15px" }}></div>
       {render_email_verification()}
-      {render_password()}
       {render_created()}
-      {render_delete_account()}
       {render_linked_external_accounts()}
       {render_available_to_link()}
       <FreshAuthModal {...freshAuthModalProps} />

@@ -37,9 +37,13 @@ interface State {
 
 interface Props {
   runFreshAuthAction?: FreshAuthActionRunner;
+  showLabel?: boolean;
 }
 
-export function PasswordSetting({ runFreshAuthAction }: Props) {
+export function PasswordSetting({
+  runFreshAuthAction,
+  showLabel = true,
+}: Props) {
   const intl = useIntl();
   const is_mounted = useIsMountedRef();
 
@@ -196,6 +200,17 @@ export function PasswordSetting({ runFreshAuthAction }: Props) {
     if (state === "saving") {
       return <Saving />;
     }
+  }
+
+  if (!showLabel) {
+    return (
+      <>
+        <Button disabled={state !== "view"} onClick={change_password}>
+          {intl.formatMessage(labels.account_password_change)}...
+        </Button>
+        {state !== "view" ? render_edit() : undefined}
+      </>
+    );
   }
 
   return (

@@ -65,7 +65,11 @@ function RecoveryCodesBlock({ codes }: { codes: string[] }) {
   );
 }
 
-export default function TwoFactorAuthSetting() {
+interface Props {
+  showHeader?: boolean;
+}
+
+export default function TwoFactorAuthSetting({ showHeader = true }: Props) {
   const authApiOrigin = getControlPlaneOrigin();
   const rawImpersonation = useTypedRedux("account", "impersonation") as any;
   const impersonation =
@@ -212,8 +216,8 @@ export default function TwoFactorAuthSetting() {
     await loadStatus();
   }
 
-  return (
-    <SettingBox title="Two-Factor Authentication" icon="lock">
+  const content = (
+    <>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         {error ? <Alert type="error" showIcon message={error} /> : undefined}
         {loading ? (
@@ -452,6 +456,16 @@ export default function TwoFactorAuthSetting() {
           }
         }}
       />
+    </>
+  );
+
+  if (!showHeader) {
+    return content;
+  }
+
+  return (
+    <SettingBox title="Two-Factor Authentication" icon="lock">
+      {content}
     </SettingBox>
   );
 }
