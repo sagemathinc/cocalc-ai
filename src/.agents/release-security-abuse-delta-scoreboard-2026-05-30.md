@@ -41,7 +41,7 @@ Current score:
 | D-010 | Codex/ACP             | Codex fast service tier                       | guarded | high     | Fast/priority tier enabled by default or silently used, causing unexpected spend.               | UI makes fast explicit; backend resolves service tier and logs requested/resolved tier; standard maps to no fast tier.                                                                                                     | Manual standard and fast turns via UI/CLI; confirm app-server receives only supported tier variants and activity log shows config.                           | Earlier mismatch `priority` versus `fast/flex` was found and fixed.                                                                        |
 | D-011 | Codex/ACP             | ACP queued/running status                     | guarded | medium   | Submitted message remains queued while work runs, causing duplicate retry or confusing state.   | Backend queued-job startup clears prompt `acp_state: queued`; ChatStreamWriter writes running thread-state for the assistant turn; frontend sync drops stale prompt queue state when the reply runs.                       | Keep focused chat writer and frontend sync tests in release validation; manually watch for stale queued labels during ACP smoke.                             | User observed this intermittently; no current code gap found in focused audit.                                                             |
 | D-012 | Codex/ACP             | ACP scheduling limits                         | guarded | high     | Unbounded queued/running turns or retry/recovery work.                                          | Chat turns and automations check creation admission before enqueue; detached workers check running admission before transactional claim; project-host workers use actor effective limits.                                  | Manual high-volume queue smoke is still useful, especially across worker restart and recovery continuation paths.                                            | Recovery continuations bypass queued/created counters only after an admitted parent job and are capped to one continuation per parent.     |
-| D-013 | Launchpad/PGLite      | Launchpad SEA startup                         | fixed   | medium   | Single executable crashes at startup due to asset/database assumptions.                         | Launchpad startup now scrubs inherited project-runtime `CONAT_SERVER` before backend config can initialize, so a Launchpad process uses its own local Conat server instead of a project-host router.                       | Rebuild SEA artifact and run a clean-install smoke before release.                                                                                           | Source startup smoke reaches `Started HUB!`; existing stale SEA tarball still needs rebuild for packaging validation.                      |
+| D-013 | Launchpad/PGLite      | Launchpad SEA startup                         | fixed   | medium   | Single executable crashes at startup due to asset/database assumptions.                         | Launchpad startup now scrubs inherited project-runtime `CONAT_SERVER` before backend config can initialize, so a Launchpad process uses its own local Conat server instead of a project-host router.                       | Keep SEA clean-install smoke in release validation.                                                                                                          | Rebuilt SEA artifact clean-install smoke reaches `Started HUB!` with no old crash signatures.                                              |
 | D-014 | Launchpad/PGLite      | PGLite transaction behavior                   | guarded | medium   | PGLite-only transaction serialization causes deadlocks/timeouts or hides real Postgres bugs.    | PGLite-specific direct/single-hub path added after test failures.                                                                                                                                                          | Verify guards are PGLite/local only and server/database tests pass.                                                                                          | Real Postgres behavior should remain unchanged.                                                                                            |
 | D-015 | Operator tooling      | Host upgrade/deploy selection                 | fixed   | high     | Selecting one component upgrades disruptive unrelated services.                                 | Per-component deploy now sets the selected component desired version and immediately rolls out only that selected component instead of invoking full-stack project-host upgrade alignment.                                 | Manual browser smoke should verify selecting ACP worker does not restart router or persist.                                                                  | User saw selecting only `acp-worker` upgrade router and persist too; root cause was frontend immediate action using `align_runtime_stack`. |
 | D-016 | Admin RPC             | Dangerous public hub RPC drift                | guarded | high     | New destructive/admin RPC ships without fresh-auth classification.                              | Dangerous RPC registry test exists and recently caught new RPCs.                                                                                                                                                           | Re-run registry test after access-request and scratch work; inspect new RPC decisions.                                                                       | Keep this as a regression gate.                                                                                                            |
@@ -224,9 +224,10 @@ clients then authenticated to the wrong server and crashed with
 
 Launchpad startup now deletes inherited `CONAT_SERVER` before any backend/server
 module can initialize `@cocalc/backend/data`. The current-source smoke reaches
-`Started HUB!` with a fresh PGLite data directory. The existing SEA tarball used
-for the first smoke predates this fix, so release packaging still needs a
-rebuilt SEA artifact smoke.
+`Started HUB!` with a fresh PGLite data directory. A rebuilt SEA artifact also
+unpacks from a clean asset cache and reaches `Started HUB!` with no
+`missing project-host bearer token`, `current transaction is aborted`, or
+`site_license_domain_locks` signatures.
 
 Focused validation:
 
@@ -234,6 +235,10 @@ Focused validation:
 - Current-source startup smoke:
   `COCALC_DATA_DIR=/tmp/cocalc-launchpad-src-data-smoke-fixed DATA=/tmp/cocalc-launchpad-src-data-smoke-fixed COCALC_OPEN_BROWSER=0 timeout 30s node bin/start.js --test`
   in `src/packages/launchpad`; it reached `Started HUB!`.
+- SEA package smoke:
+  `pnpm sea` in `src/packages/launchpad`, then unpack and run
+  `cocalc-launchpad --test` with fresh `COCALC_DATA_DIR` and a cleared
+  versioned asset cache; it reached `Started HUB!`.
 
 ### D-014: PGLite transaction behavior guarded
 
@@ -263,7 +268,4 @@ Record manual runs here as the audit progresses.
 | 2026-05-30 | Scratch disk billing/control-plane regression set  | pass   | `pnpm test conat/api/hosts.test.ts project-host/auto-grow.test.ts` in `src/packages/server`.                                                                                                            |
 | 2026-05-30 | Viewer project list/index projection               | pass   | `pnpm test postgres/account-project-index-projector.test.ts` in `src/packages/database`.                                                                                                                |
 | 2026-05-30 | Frontend auth/project/viewer UI regression set     | pass   | `pnpm test public/auth/__tests__/app.test.tsx projects/projects-page.test.tsx project/page/activity-bar-tabs.test.tsx` in `src/packages/frontend`; known jsdom/Ant Design warnings remain.              |
-
-|
-
-| 2026-05-30 | Launchpad/PGLite startup and transaction set       | pass   | Fixed inherited `CONAT_SERVER` crash; `pnpm test lib/onprem-config.test.ts`, PGLite transaction/account-security tests, psql account-security tests; source Launchpad smoke reached `Started HUB!`.     |
+| 2026-05-30 | Launchpad/PGLite startup and transaction set       | pass   | Fixed inherited `CONAT_SERVER` crash; `pnpm test lib/onprem-config.test.ts`, PGLite transaction/account-security tests, psql account-security tests; source and rebuilt SEA smokes reached `Started HUB!`. |
