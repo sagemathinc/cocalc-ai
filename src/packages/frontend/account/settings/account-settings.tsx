@@ -22,12 +22,7 @@ import {
   redux,
   useState,
 } from "@cocalc/frontend/app-framework";
-import {
-  ErrorDisplay,
-  Icon,
-  LabeledRow,
-  TimeAgo,
-} from "@cocalc/frontend/components";
+import { Icon, LabeledRow, TimeAgo } from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { labels } from "@cocalc/frontend/i18n";
@@ -66,7 +61,6 @@ interface Props {
   email_address?: string;
   email_address_verified?: Map<string, any>;
   passports?: Map<string, any>;
-  sign_out_error?: string;
   delete_account_error?: string;
   other_settings?: AccountState["other_settings"];
   email_enabled?: boolean;
@@ -243,19 +237,6 @@ export function AccountSettings(props: Readonly<Props>) {
       );
       return btn;
     }
-  }
-
-  function render_sign_out_error(): Rendered {
-    if (!props.sign_out_error || lite) {
-      return;
-    }
-    return (
-      <ErrorDisplay
-        style={{ margin: "5px 0" }}
-        error={props.sign_out_error}
-        onClose={() => actions().setState({ sign_out_error: "" })}
-      />
-    );
   }
 
   function get_account_passport_names(): string[] {
@@ -522,7 +503,6 @@ export function AccountSettings(props: Readonly<Props>) {
       {render_delete_account()}
       {render_linked_external_accounts()}
       {render_available_to_link()}
-      {render_sign_out_error()}
       <FreshAuthModal {...freshAuthModalProps} />
     </Panel>
   );

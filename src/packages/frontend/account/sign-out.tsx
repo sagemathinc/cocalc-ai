@@ -2,11 +2,16 @@
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
-import { Button, Checkbox, Flex, Popover, Space } from "antd";
+import { Alert, Button, Checkbox, Flex, Popover, Space } from "antd";
 import { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { Icon } from "@cocalc/frontend/components/icon";
-import { React, Rendered, redux } from "@cocalc/frontend/app-framework";
+import {
+  React,
+  Rendered,
+  redux,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { labels } from "@cocalc/frontend/i18n";
 
 interface Props {
@@ -20,22 +25,28 @@ export const SignOut: React.FC<Props> = (props: Readonly<Props>) => {
   const { everywhere, highlight, style, narrow = false } = props;
   const [open, setOpen] = useState(false);
   const [signOutEverywhere, setSignOutEverywhere] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const signOutError = useTypedRedux("account", "sign_out_error");
 
   const intl = useIntl();
   const effectiveEverywhere = !!everywhere || signOutEverywhere;
+  const accountActions = () => redux.getActions("account");
 
   function handleOpenChange(nextOpen: boolean): void {
     setOpen(nextOpen);
     if (!nextOpen) {
       setSignOutEverywhere(false);
+      accountActions()?.setState({ sign_out_error: "" });
     }
   }
 
-  function sign_out(): void {
-    const account = redux.getActions("account");
+  async function sign_out(): Promise<void> {
+    const account = accountActions();
     if (account != null) {
-      handleOpenChange(false);
-      account.sign_out(effectiveEverywhere);
+      setSigningOut(true);
+      account.setState({ sign_out_error: "" });
+      await account.sign_out(effectiveEverywhere);
+      setSigningOut(false);
     }
   }
 
@@ -79,6 +90,7 @@ export const SignOut: React.FC<Props> = (props: Readonly<Props>) => {
   function render_content(): React.JSX.Element {
     return (
       <Space direction="vertical">
+        {signOutError && <Alert type="error" message={signOutError} />}
         {!everywhere && (
           <Checkbox
             checked={signOutEverywhere}
@@ -93,6 +105,7 @@ export const SignOut: React.FC<Props> = (props: Readonly<Props>) => {
         <Flex justify="space-between" gap="small">
           <Button
             danger={effectiveEverywhere}
+            loading={signingOut}
             onClick={sign_out}
             type="primary"
           >
@@ -104,7 +117,7 @@ export const SignOut: React.FC<Props> = (props: Readonly<Props>) => {
               { everywhere: effectiveEverywhere },
             )}
           </Button>
-          <Button onClick={() => handleOpenChange(false)}>
+          <Button disabled={signingOut} onClick={() => handleOpenChange(false)}>
             {intl.formatMessage(labels.cancel)}
           </Button>
         </Flex>
