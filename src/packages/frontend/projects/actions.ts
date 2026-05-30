@@ -2251,9 +2251,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
   ): Promise<void> {
     const removed_name = redux.getStore("users").get_name(account_id);
     try {
-      await this.redux
-        .getProjectActions(project_id)
-        .async_log({ event: "remove_collaborator", removed_name });
+      try {
+        await this.redux
+          .getProjectActions(project_id)
+          .async_log({ event: "remove_collaborator", removed_name });
+      } catch {
+        // Self-removal can close the project while the local project log stream
+        // is still being acquired. Logging should not block the actual removal.
+      }
       await webapp_client.project_collaborators.remove({
         project_id,
         account_id,

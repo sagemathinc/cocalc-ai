@@ -62,6 +62,9 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
       })),
     },
     async_query: jest.fn(async () => undefined),
+    project_collaborators: {
+      remove: jest.fn(async () => undefined),
+    },
   },
 }));
 
@@ -131,7 +134,9 @@ describe("ProjectsActions archive flow", () => {
     const set_active_tab = jest.fn();
     const trackBackupOp = jest.fn();
     const trackStartOp = jest.fn();
+    const async_log = jest.fn(async () => undefined);
     const projectActions = {
+      async_log,
       log,
       setState,
       clearFilesystemClient,
@@ -152,6 +157,7 @@ describe("ProjectsActions archive flow", () => {
     const actions = new ProjectsActions("projects", redux);
     return {
       actions,
+      async_log,
       log,
       setState,
       clearFilesystemClient,
@@ -164,10 +170,38 @@ describe("ProjectsActions archive flow", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedWebappClient.project_collaborators.remove.mockResolvedValue(
+      undefined as any,
+    );
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it("still removes a collaborator when best-effort project logging races with project close", async () => {
+    const { actions, async_log } = makeActions();
+    async_log.mockRejectedValueOnce(new Error("project closed"));
+    jest.spyOn(appRedux, "getStore").mockImplementation((name: string) => {
+      if (name === "users") {
+        return { get_name: () => "Bella Boo" } as any;
+      }
+      return {} as any;
+    });
+
+    await actions.remove_collaborator(project_id, "account-1");
+
+    expect(async_log).toHaveBeenCalledWith({
+      event: "remove_collaborator",
+      removed_name: "Bella Boo",
+    });
+    expect(
+      mockedWebappClient.project_collaborators.remove,
+    ).toHaveBeenCalledWith({
+      project_id,
+      account_id: "account-1",
+    });
+    expect(alertMessageMock).not.toHaveBeenCalled();
   });
 
   it("stops, creates a final backup, waits, then archives when the latest backup is stale", async () => {
