@@ -45,6 +45,56 @@ The normal CoCalc app should remain accessible through an explicit escape hatch,
 but the admin dashboard should keep surfacing setup status until all critical
 checks pass.
 
+This is not a generic self-hosted setup flow. The first implementation is for
+the cloud-backed Launchpad/Rocket product category: a public CoCalc control
+plane using Cloudflare plus one or more external project-host providers. A
+future one-VM appliance is a different setup profile with a much shorter path.
+
+## Setup Profiles
+
+### Launchpad Cloud
+
+Use this profile when one Launchpad instance controls project hosts in external
+cloud accounts.
+
+Required before setup starts:
+
+- Cloudflare account.
+- A domain that the operator controls and can use with Cloudflare.
+- At least one cloud provider account:
+  - GCP project with CLI access, or
+  - Nebius account with CLI access.
+
+The setup output is a public CoCalc site whose users can create projects backed
+by project-host VMs in the operator's cloud account.
+
+### Rocket Cloud
+
+Use this profile when multiple bays will eventually participate in one site.
+The V1 flow can guide bay-0 first, then add bay expansion checks later.
+
+Required before setup starts:
+
+- Same Cloudflare and provider requirements as Launchpad Cloud.
+- A clear bay deployment plan: start with bay-0, then add bay-1 after bay-0 is
+  healthy.
+
+The setup output is a public CoCalc site with the same project-host behavior as
+Launchpad, plus a path to grow into multi-bay operation.
+
+### Single-VM Appliance
+
+This is a different future product/setup mode. It is not the target of this
+wizard.
+
+Required before setup starts:
+
+- One VM or local machine capable of running both hub and project-host services.
+
+The setup output is a self-contained CoCalc instance. The only hard setup gate
+should be creating the admin account, with email as optional. It should not
+require Cloudflare, GCP, Nebius, or external project-host providers.
+
 ## Validated Correct Path
 
 The current known-good sequence is:
@@ -128,6 +178,9 @@ the setup path and deep-link to existing pages/modals for detailed editing.
 
 ## Setup Shell UX
 
+This is first contact for operators, so it should be treated as a product
+surface, not a secondary admin utility.
+
 ### Entry Points
 
 - After first admin signup, route admins to `/admin/setup` if critical setup is
@@ -137,18 +190,42 @@ the setup path and deep-link to existing pages/modals for detailed editing.
 - Add a non-destructive `Exit setup for now` button that returns to the normal
   app but does not mark setup complete.
 
+### Opening Screen
+
+The setup shell should start with an explicit expectation-setting banner:
+
+- what kind of site is being configured,
+- what external accounts/domains are required,
+- what the operator will have at the end,
+- and what is intentionally not covered by this flow.
+
+Recommended copy:
+
+> Set up a cloud-backed CoCalc site. You will need a Cloudflare account with a
+> domain you control, plus either a GCP project or Nebius account with CLI
+> access. This wizard will configure the public URL, provider credentials, one
+> healthy project host, an official RootFS, and a smoke-test project.
+
+The banner should make the supported product profile explicit:
+
+- `Launchpad/Rocket cloud setup`.
+- `Single-VM appliance setup is a different mode and should not require this
+flow.`
+
 ### Layout
 
-V1 can be plain:
+V1 should be clearer than plain admin cards, while still avoiding premature
+visual polish:
 
-- left column: ordered step list with status badges,
-- right column: selected step details, action button, validation output,
-- top summary: "Site is not ready", "Site is usable with warnings", or "Site is
-  ready",
-- bottom: final smoke-test panel.
+- strong top banner with prerequisite expectations,
+- progress summary across the top,
+- "next required action" callout,
+- ordered hard-gate cards,
+- separate optional/deferred cards,
+- bottom: final smoke-test and mark-ready panel.
 
-No custom visual design is required for V1 beyond making status and blocking
-reasons obvious.
+The page may initially live inside Admin, but `/admin/site-setup` should feel
+like a focused setup shell rather than a normal collapsed admin section.
 
 ### Step Behavior
 
