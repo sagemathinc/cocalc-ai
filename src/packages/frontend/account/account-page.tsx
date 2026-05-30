@@ -14,7 +14,7 @@ import type {
   PreferencesSubTabKey,
   PreferencesSubTabType,
 } from "@cocalc/util/types/settings";
-import { Button, Flex, Menu, Space } from "antd";
+import { Button, Flex, Menu, Select, Space } from "antd";
 import { useEffect, useState } from "react";
 import { useIntl } from "react-intl";
 import { SignOut } from "@cocalc/frontend/account/sign-out";
@@ -410,6 +410,7 @@ export const AccountPage: React.FC = () => {
   }
 
   const tabs = getTabs();
+  const mobileNavigationOptions = getMobileNavigationOptions(tabs);
 
   // Process tabs to handle nested children for sub-tabs
   const children = {};
@@ -484,7 +485,7 @@ export const AccountPage: React.FC = () => {
 
   function renderExtraContent() {
     return (
-      <Space>
+      <Space wrap>
         {is_commercial ? <BalanceButton /> : undefined}
         {!lite && <MembershipBadge />}
         <I18NSelector isWide={isWide} />
@@ -492,6 +493,64 @@ export const AccountPage: React.FC = () => {
           <SignOut everywhere={false} highlight={true} narrow={!isWide} />
         )}
       </Space>
+    );
+  }
+
+  function renderActiveContent() {
+    return active_page === "preferences" && active_sub_tab
+      ? children[active_sub_tab]
+      : children[active_page];
+  }
+
+  function renderMobileLoggedInView(): React.JSX.Element {
+    if (!account_id) {
+      return (
+        <div style={{ textAlign: "center", paddingTop: "15px" }}>
+          <Loading theme={"medium"} />
+        </div>
+      );
+    }
+
+    const activeKey =
+      active_page === "preferences" && active_sub_tab
+        ? active_sub_tab
+        : active_page;
+
+    return (
+      <div
+        className="smc-vfill"
+        data-cocalc-mobile-account-settings
+        style={{
+          overflow: "auto",
+          padding: "8px 10px 0 10px",
+        }}
+      >
+        {lite && (
+          <Button
+            block
+            size="large"
+            style={{ marginBottom: "8px" }}
+            onClick={() => {
+              redux.getActions("page").set_active_tab(project_id);
+            }}
+          >
+            Close
+          </Button>
+        )}
+        <Select
+          size="large"
+          value={activeKey}
+          options={mobileNavigationOptions}
+          onChange={(key) => handle_select(key)}
+          style={{ width: "100%" }}
+        />
+        <Flex style={{ marginTop: "8px", gap: "8px" }} align="center" wrap>
+          {renderTitle()}
+          {renderExtraContent()}
+        </Flex>
+        {renderActiveContent()}
+        <Footer />
+      </div>
     );
   }
 
@@ -505,6 +564,10 @@ export const AccountPage: React.FC = () => {
     }
     function handleHideToggle() {
       setHidden(!hidden);
+    }
+
+    if (IS_MOBILE) {
+      return renderMobileLoggedInView();
     }
 
     return (
@@ -604,9 +667,7 @@ export const AccountPage: React.FC = () => {
             <div style={{ flex: 1 }} />
             {renderExtraContent()}
           </Flex>
-          {active_page === "preferences" && active_sub_tab
-            ? children[active_sub_tab]
-            : children[active_page]}
+          {renderActiveContent()}
           <Footer />
         </div>
       </div>
@@ -623,6 +684,29 @@ export const AccountPage: React.FC = () => {
     </div>
   );
 };
+
+function getMobileNavigationOptions(tabs: any[]) {
+  const options: { label: React.ReactNode; value: string }[] = [];
+  for (const tab of tabs) {
+    if (tab.type === "divider") continue;
+    if (tab.key === "preferences" && Array.isArray(tab.children)) {
+      for (const subTab of tab.children) {
+        options.push({
+          value: subTab.key,
+          label: (
+            <span>
+              <span style={{ color: COLORS.GRAY_M }}>Preferences: </span>
+              {subTab.label}
+            </span>
+          ),
+        });
+      }
+      continue;
+    }
+    options.push({ value: tab.key, label: tab.label });
+  }
+  return options;
+}
 
 declare var DEBUG;
 
