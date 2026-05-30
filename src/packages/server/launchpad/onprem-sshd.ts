@@ -36,6 +36,7 @@ import { resolvePublicViewerDns } from "@cocalc/util/public-viewer-origin";
 
 const logger = getLogger("launchpad:local:sshd");
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const CLOUDFLARED_APPLY_LOCK_KEY = "launchpad-cloudflared-apply";
 
 type SshdState = {
   sshdDir: string;
@@ -989,6 +990,30 @@ async function stopManagedLaunchpadCloudflared(): Promise<void> {
   cloudflaredState = null;
 }
 
+async function withCloudflaredApplyLock<T>(
+  fn: () => Promise<T>,
+): Promise<T | undefined> {
+  const client = await pool().connect();
+  try {
+    const { rows } = await client.query<{ locked: boolean }>(
+      "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
+      [CLOUDFLARED_APPLY_LOCK_KEY],
+    );
+    if (!rows[0]?.locked) {
+      return undefined;
+    }
+    try {
+      return await fn();
+    } finally {
+      await client.query("SELECT pg_advisory_unlock(hashtext($1))", [
+        CLOUDFLARED_APPLY_LOCK_KEY,
+      ]);
+    }
+  } finally {
+    client.release();
+  }
+}
+
 type StoredRestServerState = {
   pid: number;
   rest_port: number;
@@ -1277,6 +1302,7 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
     settings.project_hosts_cloudflare_tunnel_enabled,
   );
   if (!cloudflareSelfMode(settings)) {
+    await stopManagedLaunchpadCloudflared();
     logger.info("cloudflare tunnel not started (mode is not self)", {
       cloudflare_mode: rawMode ?? null,
       normalized_mode: normalizedMode ?? null,
@@ -1495,6 +1521,45 @@ export async function getLaunchpadCloudflaredStatus(): Promise<{
     cloudflaredLastError ??
     (enabled && !running ? "Cloudflare tunnel is not running." : null);
   return { enabled, running, hostname, error };
+}
+
+export async function applyLaunchpadCloudflareTunnelSettings(): Promise<{
+  enabled: boolean;
+  running: boolean;
+  hostname?: string;
+  error?: string | null;
+  applied: boolean;
+  message: string;
+}> {
+  const result = await withCloudflaredApplyLock(async () => {
+    const tunnel = await startCloudflared();
+    try {
+      const publicViewerDns = await ensurePublicViewerDns();
+      if (publicViewerDns) {
+        logger.info("public viewer dns ensured", publicViewerDns);
+      }
+    } catch (err) {
+      logger.warn("public viewer dns ensure failed", { err: `${err}` });
+    }
+    const status = await getLaunchpadCloudflaredStatus();
+    return {
+      ...status,
+      applied: !!tunnel && status.running,
+      message: status.running
+        ? `Cloudflare tunnel is running${status.hostname ? ` at ${status.hostname}` : ""}.`
+        : (status.error ?? "Cloudflare tunnel is not running."),
+    };
+  });
+  if (result != null) {
+    return result;
+  }
+  const status = await getLaunchpadCloudflaredStatus();
+  return {
+    ...status,
+    applied: false,
+    message:
+      "Cloudflare tunnel settings are already being applied by another hub worker.",
+  };
 }
 
 export async function maybeStartLaunchpadOnPremServices(): Promise<void> {

@@ -98,6 +98,8 @@ import {
   testR2Credentials as testR2Credentials0,
   type R2CredentialsTestResult,
 } from "@cocalc/server/project-backup/r2";
+import { applyLaunchpadCloudflareTunnelSettings } from "@cocalc/server/launchpad/onprem-sshd";
+import type { CloudflareTunnelApplyResult } from "@cocalc/conat/hub/api/system";
 import {
   bootstrapCloudflareConfiguration as bootstrapCloudflareConfiguration0,
   type CloudflareBootstrapResult,
@@ -4914,6 +4916,25 @@ export async function bootstrapCloudflareConfiguration({
     r2BucketPrefix,
     invalidateBootstrapToken,
   });
+}
+
+export async function applyCloudflareTunnelSettings({
+  account_id,
+  browser_id,
+  session_hash,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+}): Promise<CloudflareTunnelApplyResult> {
+  await assertAdmin(account_id);
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
+  return await applyLaunchpadCloudflareTunnelSettings();
 }
 
 export async function createCloudflareTeardownPlan({

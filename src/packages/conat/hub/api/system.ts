@@ -130,6 +130,7 @@ export const system = {
   setProjectRootfsImage: authFirstRequireAccount,
   getPublicSiteUrl: authFirst,
   testR2Credentials: authFirst,
+  applyCloudflareTunnelSettings: authFirst,
   bootstrapCloudflareConfiguration: authFirst,
   createCloudflareTeardownPlan: authFirst,
   getCloudflareTeardownPlan: authFirst,
@@ -209,6 +210,15 @@ export interface CloudflareBootstrapResult {
   r2: { ok: boolean; message?: string };
   values: Record<string, string>;
   notes: string[];
+}
+
+export interface CloudflareTunnelApplyResult {
+  enabled: boolean;
+  running: boolean;
+  hostname?: string;
+  error?: string | null;
+  applied: boolean;
+  message: string;
 }
 
 export type CloudflareTeardownClassification =
@@ -2112,6 +2122,12 @@ export interface System {
       r2_endpoint?: string;
     };
   }) => Promise<R2CredentialsTestResult>;
+
+  applyCloudflareTunnelSettings: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+  }) => Promise<CloudflareTunnelApplyResult>;
 
   bootstrapCloudflareConfiguration: (opts: {
     account_id?: string;
