@@ -167,7 +167,7 @@ export function MentionsPanel(props: MentionsPanelProps) {
   }
 
   return (
-    <Space orientation="vertical" size="large">
+    <Space orientation="vertical" size="large" style={{ width: "100%" }}>
       {project_panels}
     </Space>
   );

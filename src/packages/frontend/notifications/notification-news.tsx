@@ -8,6 +8,7 @@ import React, { useMemo } from "react";
 import { useIntl } from "react-intl";
 
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   Icon,
@@ -84,7 +85,10 @@ export function NewsPanel(props: NewsPanelProps) {
   function renderTags(tags?: string[]) {
     if (tags == null) return null;
     return (
-      <span style={{ paddingLeft: "10px" }}>
+      <span
+        className="cocalc-notification-news-tags"
+        style={{ paddingLeft: IS_MOBILE ? 0 : "10px" }}
+      >
         {tags.sort().map((tag) => (
           <Tag
             key={tag}
@@ -107,7 +111,7 @@ export function NewsPanel(props: NewsPanelProps) {
     const mark_all = intl.formatMessage(MSGS.mark_all, { anyUnread });
 
     return (
-      <Space orientation="horizontal">
+      <Space orientation={IS_MOBILE ? "vertical" : "horizontal"} wrap>
         <Button onClick={() => void news_actions.refresh()} loading={loading}>
           <Icon name="refresh" /> Refresh
         </Button>
@@ -136,12 +140,56 @@ export function NewsPanel(props: NewsPanelProps) {
     const isUnread =
       date.getTime() > (news_read_until ?? 0) &&
       !(channel === SYSTEM_CHANNEL && system_seen_ids?.has?.(id));
+    const titleNode = (
+      <Text
+        strong
+        className="cocalc-notification-news-title"
+        style={{
+          overflowWrap: IS_MOBILE ? "break-word" : "anywhere",
+          wordBreak: IS_MOBILE ? "normal" : undefined,
+        }}
+      >
+        <Icon name={icon} /> {title} {renderTags(tags)}
+      </Text>
+    );
+
+    if (IS_MOBILE) {
+      return (
+        <List.Item
+          key={id}
+          className="cocalc-notification-news-item"
+          onClick={(e) => newsItemOnClick(e, n)}
+          style={{
+            backgroundColor: isUnread ? COLORS.ANTD_BG_BLUE_L : undefined,
+          }}
+        >
+          <div className="cocalc-notification-news-main">
+            {titleNode}
+            <Text type="secondary" className="cocalc-notification-news-time">
+              <TimeAgo date={date} />
+            </Text>
+          </div>
+          <Button
+            className="cocalc-notification-news-open"
+            key="open"
+            type="text"
+            ghost={true}
+            onClick={(e) => newsItemOnClick(e, n)}
+          >
+            <Icon name="external-link" />
+          </Button>
+        </List.Item>
+      );
+    }
+
     return (
       <List.Item
         key={id}
         onClick={(e) => newsItemOnClick(e, n)}
         style={{
           backgroundColor: isUnread ? COLORS.ANTD_BG_BLUE_L : undefined,
+          alignItems: IS_MOBILE ? "flex-start" : undefined,
+          gap: IS_MOBILE ? "6px" : undefined,
         }}
         actions={[
           <Button
@@ -154,14 +202,10 @@ export function NewsPanel(props: NewsPanelProps) {
           </Button>,
         ]}
       >
-        <List.Item.Meta
-          title={
-            <Text strong>
-              <Icon name={icon} /> {title} {renderTags(tags)}
-            </Text>
-          }
-        />
-        <TimeAgo date={date} />
+        <List.Item.Meta title={titleNode} />
+        <Text type="secondary" style={{ whiteSpace: "nowrap" }}>
+          <TimeAgo date={date} />
+        </Text>
       </List.Item>
     );
   }
@@ -174,6 +218,7 @@ export function NewsPanel(props: NewsPanelProps) {
         header: { backgroundColor: COLORS.GRAY_LLL },
         body: { padding: "0px" },
       }}
+      style={{ width: "100%" }}
     >
       <List
         itemLayout="horizontal"

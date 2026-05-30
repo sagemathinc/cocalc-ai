@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Flex, Modal } from "antd";
+import { Button, Flex, Modal, Select } from "antd";
 import { useEffect, useState } from "react";
 import { useIntl } from "react-intl";
 
@@ -11,10 +11,12 @@ import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useInviteInboxState } from "@cocalc/frontend/collaborators";
 import { A, Loading, Paragraph, Title } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { labels } from "@cocalc/frontend/i18n";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { COLORS } from "@cocalc/util/theme";
 import { NotificationFilter } from "./mentions/types";
+import { MSGS } from "./notification-i18n";
 import { NotificationList } from "./notification-list";
 import { NotificationNav } from "./notification-nav";
 
@@ -72,6 +74,64 @@ export function NotificationPage() {
       return <Loading theme="medium" />;
     }
 
+    if (IS_MOBILE) {
+      const options = [
+        {
+          value: "unread",
+          label: `${intl.formatMessage(MSGS.unread)} (${unread_count})`,
+        },
+        {
+          value: "read",
+          label: intl.formatMessage(MSGS.read),
+        },
+        {
+          value: "allNews",
+          label: `${intl.formatMessage(MSGS.news)} (${news_unread})`,
+        },
+      ];
+      return (
+        <Flex
+          vertical
+          style={{
+            overflow: "hidden",
+            flex: 1,
+            minHeight: 0,
+            gap: "10px",
+          }}
+        >
+          <Select
+            size="large"
+            value={filter}
+            options={options}
+            onChange={(value) =>
+              redux
+                .getActions("mentions")
+                .set_filter(value as NotificationFilter)
+            }
+            style={{ width: "100%", flex: "0 0 auto" }}
+            aria-label={intl.formatMessage(labels.notifications)}
+          />
+          <NotificationList
+            account_id={account_id}
+            inviteState={inviteState}
+            loading={loading}
+            mentions={mentions}
+            news={news}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              flex: 1,
+              minHeight: 0,
+              overflowY: "auto",
+              width: "100%",
+            }}
+            user_map={user_map}
+            filter={filter}
+          />
+        </Flex>
+      );
+    }
+
     return (
       <Flex style={{ overflow: "hidden", flex: 1 }}>
         <NotificationNav
@@ -110,9 +170,9 @@ export function NotificationPage() {
 
   return (
     <div
-      className="smc-vfill"
+      className={`smc-vfill${IS_MOBILE ? " cocalc-notifications-mobile" : ""}`}
       style={{
-        padding: "0 30px 15px 30px",
+        padding: IS_MOBILE ? "0 10px 10px 10px" : "0 30px 15px 30px",
         display: "flex",
         flexDirection: "row",
         justifyContent: "center",
@@ -121,8 +181,13 @@ export function NotificationPage() {
     >
       <div className="smc-vfill" style={{ maxWidth: "1400px" }}>
         <Title
-          level={2}
-          style={{ textAlign: "center", flex: "0 0 auto", marginTop: "10px" }}
+          level={IS_MOBILE ? 3 : 2}
+          style={{
+            textAlign: "center",
+            flex: "0 0 auto",
+            marginTop: IS_MOBILE ? "6px" : "10px",
+            marginBottom: IS_MOBILE ? "8px" : undefined,
+          }}
         >
           <Icon name="comments" style={{ marginRight: "10px" }} />{" "}
           {intl.formatMessage(labels.notifications)}
