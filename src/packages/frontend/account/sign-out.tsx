@@ -16,13 +16,12 @@ import { labels } from "@cocalc/frontend/i18n";
 
 interface Props {
   everywhere?: boolean;
-  highlight?: boolean;
   style?: React.CSSProperties;
   narrow?: boolean;
 }
 
 export const SignOut: React.FC<Props> = (props: Readonly<Props>) => {
-  const { everywhere, highlight, style, narrow = false } = props;
+  const { everywhere, style, narrow = false } = props;
   const [open, setOpen] = useState(false);
   const [signOutEverywhere, setSignOutEverywhere] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
@@ -135,7 +134,7 @@ export const SignOut: React.FC<Props> = (props: Readonly<Props>) => {
       trigger="click"
     >
       {/* NOTE: weirdly darkreader breaks when we use the antd LogoutOutlined icon!? */}
-      <Button type={highlight ? "primary" : undefined} style={style}>
+      <Button danger style={style}>
         <Icon name="sign-in" />{" "}
         {!narrow || everywhere ? render_body() : undefined}
       </Button>

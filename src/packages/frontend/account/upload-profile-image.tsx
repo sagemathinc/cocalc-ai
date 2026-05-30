@@ -33,7 +33,7 @@ export default function UploadProfileImage({
   tooltip = "Upload and crop an image.",
 }: Props) {
   const [error, setError] = useState<string>("");
-  const button = <Button type="primary">{children ?? "Upload"}</Button>;
+  const button = <Button>{children ?? "Upload"}</Button>;
   const trigger = dropTarget ? children : button;
   const uploadProps = {
     name: "file",
