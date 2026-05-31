@@ -65,7 +65,9 @@ export type DocsActionId =
   | "project.codex.open"
   | "docs.browser.open"
   | "docs.actions.open"
-  | "docs.automation.open";
+  | "docs.automation.open"
+  | "projects.list.open"
+  | "project.files.open";
 
 export interface DocsAction {
   description: string;

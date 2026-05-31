@@ -459,6 +459,52 @@ function revealAppDocs({
   };
 }
 
+function revealProjectsList(projectId: string): DocsActionRevealResult {
+  const pageActions = redux.getActions("page") as
+    | {
+        set_active_tab?: (
+          key: string,
+          changeHistory?: boolean,
+        ) => Promise<void>;
+      }
+    | undefined;
+  void pageActions?.set_active_tab?.("projects", false);
+  if (typeof window !== "undefined") {
+    set_url_with_search("/projects", "");
+  }
+  return {
+    action_id: "projects.list.open",
+    opened: true,
+    path: "/projects",
+    project_id: projectId,
+    tab: "projects",
+  };
+}
+
+function revealProjectFiles(projectId: string): DocsActionRevealResult {
+  const pageActions = redux.getActions("page") as
+    | {
+        set_active_tab?: (
+          key: string,
+          changeHistory?: boolean,
+        ) => Promise<void>;
+      }
+    | undefined;
+  const projectActions = redux.getProjectActions(projectId);
+  void pageActions?.set_active_tab?.(projectId, false);
+  projectActions?.set_active_tab?.("files", { change_history: false });
+  if (typeof window !== "undefined") {
+    set_url_with_search(`/projects/${projectId}/files`, "");
+  }
+  return {
+    action_id: "project.files.open",
+    opened: true,
+    path: `/projects/${projectId}/files`,
+    project_id: projectId,
+    tab: "files",
+  };
+}
+
 function revealAdminNews({
   actionId,
   projectId,
@@ -1049,6 +1095,15 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
         projectId,
         slug: "documentation/browser-automation",
       }),
+  },
+  "projects.list.open": {
+    id: "projects.list.open",
+    run: ({ projectId }) => revealProjectsList(projectId),
+  },
+  "project.files.open": {
+    id: "project.files.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) => revealProjectFiles(projectId),
   },
 };
 

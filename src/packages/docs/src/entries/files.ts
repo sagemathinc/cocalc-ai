@@ -20,6 +20,15 @@ import {
 
 export const FILES_ENTRIES: DocsEntry[] = [
   {
+    actions: [
+      {
+        description: "Open the active project's Files tab.",
+        executable: true,
+        id: "project.files.open",
+        label: "Open project files",
+        parameters: projectActionParameters(),
+      },
+    ],
     audiences: ["agents", "instructors", "researchers", "students", "teams"],
     body: PROJECT_FILES_BODY.trim(),
     category: "Files",

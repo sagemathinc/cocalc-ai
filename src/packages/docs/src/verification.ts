@@ -384,6 +384,20 @@ return { ok: url.ok === true, url };`,
       };
     }
   }
+  if (actionId === "projects.list.open") {
+    return {
+      description: "Projects page is visible.",
+      code: `const url = api.waitForUrl({ includes: "/projects", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true, url };`,
+    };
+  }
+  if (actionId === "project.files.open") {
+    return {
+      description: "Project files route is visible.",
+      code: `const url = api.waitForUrl({ includes: "/files", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true, url };`,
+    };
+  }
   if (actionId === "settings.environment.secrets") {
     return {
       description: "Project Secrets modal is visible.",

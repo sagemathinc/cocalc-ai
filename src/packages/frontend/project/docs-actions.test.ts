@@ -125,6 +125,8 @@ describe("project docs actions", () => {
         "docs.browser.open",
         "docs.actions.open",
         "docs.automation.open",
+        "projects.list.open",
+        "project.files.open",
       ]),
     );
   });
@@ -324,6 +326,44 @@ describe("project docs actions", () => {
       opened: true,
       path: "/app-docs/documentation/browser-automation",
       tab: "docs",
+    });
+  });
+
+  it("opens projects and project files pages", async () => {
+    const projects = await revealDocsAction({
+      actionId: "projects.list.open",
+      projectId: "project-1",
+    });
+
+    expect(mockSetPageActiveTab).toHaveBeenCalledWith("projects", false);
+    expect(mockSetUrlWithSearch).toHaveBeenCalledWith("/projects", "");
+    expect(projects).toMatchObject({
+      action_id: "projects.list.open",
+      opened: true,
+      path: "/projects",
+      tab: "projects",
+    });
+
+    const files = await revealDocsAction({
+      actionId: "project.files.open",
+      parameters: { projectId: "project-2" },
+      projectId: "project-1",
+    });
+
+    expect(mockSetPageActiveTab).toHaveBeenCalledWith("project-2", false);
+    expect(mockSetProjectActiveTab).toHaveBeenCalledWith("files", {
+      change_history: false,
+    });
+    expect(mockSetUrlWithSearch).toHaveBeenCalledWith(
+      "/projects/project-2/files",
+      "",
+    );
+    expect(files).toMatchObject({
+      action_id: "project.files.open",
+      opened: true,
+      path: "/projects/project-2/files",
+      project_id: "project-2",
+      tab: "files",
     });
   });
 
