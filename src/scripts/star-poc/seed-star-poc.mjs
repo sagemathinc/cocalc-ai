@@ -18,8 +18,23 @@ const masterTokenPath =
   process.env.STAR_MASTER_CONAT_TOKEN_PATH ??
   "/var/lib/cocalc/star/project-host/0/secrets/master-conat-token";
 
-if (process.env.COCALC_DB !== "pglite") {
-  throw new Error("seed-star-poc requires COCALC_DB=pglite");
+if (
+  process.env.COCALC_DB === "postgres" &&
+  process.env.COCALC_LOCAL_POSTGRES === "1"
+) {
+  if (process.env.COCALC_LOCAL_PG_SOCKET_DIR != null) {
+    // @cocalc/backend/logger imports @cocalc/backend/data, which captures
+    // PGHOST at module import time. Set it before importing local PG helpers.
+    process.env.PGHOST ??= process.env.COCALC_LOCAL_PG_SOCKET_DIR;
+  }
+  process.env.PGUSER ??= "smc";
+  process.env.PGDATABASE ??= "smc";
+  const { ensureLocalPostgres } = await import(
+    `${databaseDist}/postgres/dev.js`
+  );
+  await ensureLocalPostgres({ enabled: true, logExports: false });
+} else if (process.env.COCALC_DB !== "pglite") {
+  throw new Error("seed-star-poc requires COCALC_DB=pglite or local postgres");
 }
 
 const { syncSchema } = await import(`${databaseDist}/postgres/schema/index.js`);
@@ -110,3 +125,5 @@ console.log(
     2,
   ),
 );
+
+process.exit(0);

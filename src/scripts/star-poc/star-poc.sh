@@ -62,6 +62,13 @@ status() {
     log "customize endpoint is not reachable at ${STAR_API}"
   fi
 
+  printf '\nDatabase:\n'
+  if [ -f /etc/cocalc/star/hub.env ]; then
+    grep -E '^(COCALC_DB|COCALC_LOCAL_POSTGRES|COCALC_LOCAL_PG_SOCKET_DIR|COCALC_LOCAL_PG_ENV_FILE)=' /etc/cocalc/star/hub.env || true
+  else
+    log "missing /etc/cocalc/star/hub.env"
+  fi
+
   printf '\nProject host files:\n'
   ls -ld "${STAR_ROOT}/project-host/0" "${STAR_ROOT}/project-host/0/secrets" 2>/dev/null || true
   if [ -d "${STAR_ROOT}/project-host/0/cache/images" ]; then

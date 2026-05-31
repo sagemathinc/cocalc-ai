@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-STAR_USER="${STAR_USER:-${SUDO_USER:-${USER}}}"
+if [ -z "${STAR_USER:-}" ]; then
+  if [ "$(id -u)" -eq 0 ] && [ -z "${SUDO_USER:-}" ]; then
+    echo "[star-poc] ERROR: set STAR_USER when running directly as root" >&2
+    exit 1
+  fi
+  STAR_USER="${SUDO_USER:-${USER}}"
+fi
 STAR_HOME="$(getent passwd "$STAR_USER" | cut -d: -f6)"
 SRC_ROOT="${SRC_ROOT:-${STAR_HOME}/cocalc-ai/src}"
 STAR_ROOT="${STAR_ROOT:-/var/lib/cocalc/star}"
@@ -33,7 +39,7 @@ run() {
 }
 
 as_star_user() {
-  sudo -H -u "$STAR_USER" bash -lc "$*"
+  sudo -H -u "$STAR_USER" bash -lc "cd '$STAR_HOME' && $*"
 }
 
 require_root() {
@@ -48,7 +54,8 @@ install_packages() {
   run apt-get install -y \
     bash ca-certificates curl git jq openssl build-essential python3 \
     podman btrfs-progs uidmap slirp4netns passt catatonit fuse-overlayfs \
-    caddy xz-utils rsync sudo
+    caddy xz-utils rsync sudo postgresql postgresql-client libpq-dev
+  systemctl disable --now postgresql >/dev/null 2>&1 || true
 }
 
 stop_existing_services() {
@@ -203,10 +210,16 @@ write_env_files() {
 
   cat >/etc/cocalc/star/hub.env <<EOF
 COCALC_PRODUCT=launchpad
-COCALC_DB=pglite
+COCALC_DB=postgres
+COCALC_LOCAL_POSTGRES=1
 DATA=${STAR_DATA}
 COCALC_DATA_DIR=${STAR_DATA}
-COCALC_PGLITE_DATA_DIR=${STAR_DATA}/pglite
+COCALC_LOCAL_PG_SOCKET_DIR=${STAR_DATA}/postgres-socket
+COCALC_LOCAL_PG_ENV_FILE=${STAR_DATA}/local-postgres.env
+COCALC_BACKUP_ROOT=${STAR_ROOT}/backup
+PGHOST=${STAR_DATA}/postgres-socket
+PGUSER=smc
+PGDATABASE=smc
 COCALC_SITE_MASTER_KEY_PATH=${site_master_key}
 COCALC_SECRET_SETTINGS_KEY_PATH=${site_master_key}
 COCALC_BASE_PORT=${STAR_BASE_PORT}
