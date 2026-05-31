@@ -44,10 +44,18 @@ export type DocsLiveUiAssertion = {
 export type DocsVerificationReport = {
   actionCount: number;
   entryCount: number;
+  frontendDocsLinks: DocsFrontendDocsLink[];
   issues: DocsVerificationIssue[];
   legacyDocLinks: DocsLegacyDocLink[];
   liveScenarios: DocsLiveVerificationScenario[];
   ok: boolean;
+};
+
+export type DocsFrontendDocsLink = {
+  file: string;
+  line: number;
+  slug?: string;
+  url: string;
 };
 
 export type DocsLegacyDocLink = {
@@ -121,9 +129,10 @@ export type DocsLiveVerificationReport = {
 };
 
 const DOCS_LINK_RE = /\/docs\/([A-Za-z0-9._/-]+)/g;
+const APP_DOCS_LINK_RE = /\/app-docs(?:\/[A-Za-z0-9._/-]+)?/g;
 const LEGACY_DOCS_RE = /https:\/\/doc\.cocalc\.com\/[^\s"'<>)]*/g;
 const DEFAULT_STALE_REVIEW_DAYS = 90;
-const LEGACY_LINK_SCAN_ROOTS = [":(top)src/packages/frontend"];
+const FRONTEND_LINK_SCAN_ROOTS = [":(top)src/packages/frontend"];
 
 const UI_ASSERTION_TIMEOUT_MS = 15_000;
 
@@ -161,6 +170,12 @@ function legacyLinkKey(link: Pick<DocsLegacyDocLink, "file" | "url">): string {
   return `${link.file}\t${link.url}`;
 }
 
+function frontendDocsLinkKey(
+  link: Pick<DocsFrontendDocsLink, "file" | "url">,
+): string {
+  return `${link.file}\t${link.url}`;
+}
+
 function runSyncCommand(
   command: string,
   args: string[],
@@ -185,7 +200,7 @@ export function scanLegacyDocLinks(): DocsLegacyDocLink[] {
     "-E",
     "https://doc\\.cocalc\\.com/[^[:space:]\"'<>)]*",
     "--",
-    ...LEGACY_LINK_SCAN_ROOTS,
+    ...FRONTEND_LINK_SCAN_ROOTS,
   ]);
   if (result.status !== 0 || !result.stdout.trim()) return [];
   const links: DocsLegacyDocLink[] = [];
@@ -207,6 +222,44 @@ export function scanLegacyDocLinks(): DocsLegacyDocLink[] {
     }
   }
   return links.sort((a, b) => legacyLinkKey(a).localeCompare(legacyLinkKey(b)));
+}
+
+function appDocsSlug(url: string): string | undefined {
+  const slug = url.replace(/^\/app-docs\/?/, "").replace(/\/$/, "");
+  if (!slug || slug === "print") return undefined;
+  return slug;
+}
+
+export function scanFrontendDocsLinks(): DocsFrontendDocsLink[] {
+  const result = runSyncCommand("git", [
+    "grep",
+    "--full-name",
+    "-n",
+    "-I",
+    "-E",
+    "/app-docs(/[A-Za-z0-9._/-]+)?",
+    "--",
+    ...FRONTEND_LINK_SCAN_ROOTS,
+  ]);
+  if (result.status !== 0 || !result.stdout.trim()) return [];
+  const links: DocsFrontendDocsLink[] = [];
+  for (const row of result.stdout.trim().split("\n")) {
+    const match = row.match(/^([^:]+):(\d+):(.*)$/);
+    if (!match) continue;
+    const [, file, lineText, text] = match;
+    for (const urlMatch of text.matchAll(APP_DOCS_LINK_RE)) {
+      const url = urlMatch[0];
+      links.push({
+        file,
+        line: Number.parseInt(lineText, 10),
+        slug: appDocsSlug(url),
+        url,
+      });
+    }
+  }
+  return links.sort((a, b) =>
+    frontendDocsLinkKey(a).localeCompare(frontendDocsLinkKey(b)),
+  );
 }
 
 function entryGap(entry: {
@@ -623,11 +676,23 @@ export function verifyDocsStatic(): DocsVerificationReport {
       );
     }
   }
+  const frontendDocsLinks = scanFrontendDocsLinks();
+  for (const link of frontendDocsLinks) {
+    if (link.slug && getDocsEntry(link.slug, docsAccess) == null) {
+      issues.push(
+        issue({
+          code: "frontend-app-docs-link",
+          message: `Frontend /app-docs link in ${link.file}:${link.line} does not resolve: ${link.url}`,
+        }),
+      );
+    }
+  }
 
   const errors = issues.filter((entry) => entry.severity === "error");
   return {
     actionCount: actions.length,
     entryCount: entries.length,
+    frontendDocsLinks,
     issues,
     legacyDocLinks,
     liveScenarios: listDocsLiveVerificationScenarios(),
@@ -941,6 +1006,7 @@ export function formatDocsVerificationReport(
     `Actions: ${report.actionCount}`,
     `Live scenarios: ${report.liveScenarios.length}`,
     `Legacy doc.cocalc.com links: ${report.legacyDocLinks.length}`,
+    `Frontend /app-docs links: ${report.frontendDocsLinks.length}`,
   ];
   for (const item of report.issues) {
     const target = [item.entryId, item.actionId].filter(Boolean).join(" ");
