@@ -138,6 +138,7 @@ EOF
 
 configure_users_and_dirs() {
   loginctl enable-linger "$STAR_USER" || true
+  systemctl start "user@$(id -u "$STAR_USER").service" >/dev/null 2>&1 || true
   mkdir -p \
     "$STAR_DATA/secrets" \
     "$STAR_PROJECT_HOST_DATA/tmp" \
@@ -147,9 +148,7 @@ configure_users_and_dirs() {
     /etc/cocalc/star
   chmod 700 "$STAR_PROJECT_HOST_DATA/tmp"
   chown -R "$STAR_USER:$STAR_USER" "$STAR_ROOT"
-  mkdir -p /mnt/cocalc/data/tmp/cocalc-podman-runtime-"$(id -u "$STAR_USER")"
   chown -R "$STAR_USER:$STAR_USER" /mnt/cocalc/data
-  chmod 700 /mnt/cocalc/data/tmp/cocalc-podman-runtime-"$(id -u "$STAR_USER")"
 }
 
 build_default_rootfs_image() {
@@ -193,6 +192,16 @@ RUN apt-get update \\
   && ln -s /opt/cocalc-jupyter/bin/jupyter /usr/local/bin/jupyter \\
   && ln -s /opt/cocalc-jupyter/bin/jupyter-lab /usr/local/bin/jupyter-lab \\
   && ln -s /opt/cocalc-jupyter/bin/jupyter-notebook /usr/local/bin/jupyter-notebook \\
+  && mkdir -p \\
+    /home/user \\
+    /scratch \\
+    /run/secrets/cocalc \\
+    /opt/cocalc/bin \\
+    /opt/cocalc/lib \\
+    /opt/cocalc/runtime-lib \\
+    /opt/cocalc/project-bundle \\
+    /opt/cocalc/project-bundles \\
+  && chmod 0755 /home/user /scratch /run/secrets /run/secrets/cocalc /opt/cocalc \\
   && rm -rf /var/lib/apt/lists/*
 EOF
   chown "$STAR_USER:$STAR_USER" "$containerfile"
@@ -250,7 +259,6 @@ COCALC_RUSTIC=${STAR_PROJECT_HOST_DATA}/rustic
 COCALC_FILE_SERVER_MOUNTPOINT=/mnt/cocalc
 COCALC_SHARED_SCRATCH_ENABLED=1
 COCALC_SHARED_SCRATCH_HOST_MOUNT=/mnt/cocalc-scratch
-COCALC_PODMAN_RUNTIME_DIR=/mnt/cocalc/data/tmp/cocalc-podman-runtime-$(id -u "$STAR_USER")
 COCALC_PROJECT_BUNDLES=${SRC_ROOT}/packages/project/build
 HOST=127.0.0.1
 PORT=9002

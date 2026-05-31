@@ -79,6 +79,8 @@ status() {
 
   printf '\nPodman images:\n'
   if command -v podman >/dev/null 2>&1; then
+    printf 'XDG_RUNTIME_DIR=%s\n' "${XDG_RUNTIME_DIR:-}"
+    ls -ld "/run/user/$(id -u)" 2>/dev/null || true
     podman images --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}' 2>/dev/null || true
   else
     log "podman is not installed"
