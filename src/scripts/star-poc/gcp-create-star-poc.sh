@@ -47,7 +47,7 @@ usage() {
   cat <<'EOF'
 Usage: gcp-create-star-poc.sh [env overrides]
 
-Creates a fresh GCP VM, uploads a CoCalc Star source tarball, runs the Star
+Creates a fresh GCP VM, uploads a CoCalc Star release artifact, runs the Star
 installer, and validates the install with doctor/smoke/reset checks. Defaults:
 
   GCP_PROJECT=projecthosts
@@ -110,11 +110,10 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 command -v gcloud >/dev/null 2>&1 || die "gcloud is required"
-command -v tar >/dev/null 2>&1 || die "tar is required"
 command -v git >/dev/null 2>&1 || die "git is required"
 
 GCLOUD_CONFIG="$(mktemp -d)"
-ARCHIVE="$(mktemp -t cocalc-star-src.XXXXXX.tar.gz)"
+ARCHIVE="$(mktemp -t cocalc-star-release.XXXXXX.tar.gz)"
 cleanup() {
   rm -rf "$GCLOUD_CONFIG" "$ARCHIVE"
 }
@@ -177,10 +176,10 @@ if ! gcloud compute ssh "${REMOTE_USER}@${VM_NAME}" \
   die "SSH did not become ready for ${REMOTE_USER}@${VM_NAME}"
 fi
 
-log "creating Star source archive"
-run "${SRC_ROOT}/scripts/star/build-star-tarball.sh" "$ARCHIVE"
+log "creating Star release artifact"
+run "${SRC_ROOT}/scripts/star/build-star-release.sh" "$ARCHIVE"
 
-run gcloud compute scp "$ARCHIVE" "${REMOTE_USER}@${VM_NAME}:/tmp/cocalc-star-src.tar.gz" \
+run gcloud compute scp "$ARCHIVE" "${REMOTE_USER}@${VM_NAME}:/tmp/cocalc-star-release.tar.gz" \
   --project "$GCP_PROJECT" \
   --zone "$ZONE" \
   --quiet
@@ -188,7 +187,7 @@ run gcloud compute scp "$ARCHIVE" "${REMOTE_USER}@${VM_NAME}:/tmp/cocalc-star-sr
 run gcloud compute ssh "${REMOTE_USER}@${VM_NAME}" \
   --project "$GCP_PROJECT" \
   --zone "$ZONE" \
-  --command "sudo bash -lc 'rm -rf /tmp/cocalc-star-installer && mkdir -p /tmp/cocalc-star-installer && tar -xzf /tmp/cocalc-star-src.tar.gz -C /tmp/cocalc-star-installer src/scripts/star/install-from-tarball.sh && STAR_ASSUME_YES=1 STAR_USER=${REMOTE_USER} STAR_INSTALL_ROOT=${STAR_INSTALL_ROOT} STAR_BUILD=${STAR_BUILD} STAR_BUILD_DEFAULT_ROOTFS=${STAR_BUILD_DEFAULT_ROOTFS} STAR_DEFAULT_ROOTFS_IMAGE=${STAR_DEFAULT_ROOTFS_IMAGE} STAR_DEFAULT_ROOTFS_BASE_IMAGE=${STAR_DEFAULT_ROOTFS_BASE_IMAGE} STAR_REMOVE_GCP_SUDOERS=${STAR_REMOVE_GCP_SUDOERS} bash /tmp/cocalc-star-installer/src/scripts/star/install-from-tarball.sh /tmp/cocalc-star-src.tar.gz'" \
+  --command "sudo bash -lc 'rm -rf /tmp/cocalc-star-release && mkdir -p /tmp/cocalc-star-release && tar -xzf /tmp/cocalc-star-release.tar.gz -C /tmp/cocalc-star-release --strip-components=1 && STAR_ASSUME_YES=1 STAR_USER=${REMOTE_USER} STAR_INSTALL_ROOT=${STAR_INSTALL_ROOT} STAR_BUILD=${STAR_BUILD} STAR_BUILD_DEFAULT_ROOTFS=${STAR_BUILD_DEFAULT_ROOTFS} STAR_DEFAULT_ROOTFS_IMAGE=${STAR_DEFAULT_ROOTFS_IMAGE} STAR_DEFAULT_ROOTFS_BASE_IMAGE=${STAR_DEFAULT_ROOTFS_BASE_IMAGE} STAR_REMOVE_GCP_SUDOERS=${STAR_REMOVE_GCP_SUDOERS} bash /tmp/cocalc-star-release/install.sh'" \
   --quiet
 
 remote_star="${STAR_INSTALL_ROOT}/source/src/scripts/star/star.sh"
