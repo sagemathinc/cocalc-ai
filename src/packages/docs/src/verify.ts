@@ -44,6 +44,10 @@ async function main(): Promise<void> {
     readOption(args, "--project-id") ?? process.env.COCALC_PROJECT_ID ?? "";
   const browserId =
     readOption(args, "--browser") ?? process.env.COCALC_BROWSER_ID ?? "";
+  const hostId =
+    readOption(args, "--host-id") ??
+    process.env.COCALC_DOCS_VERIFY_HOST_ID ??
+    "";
   const cocalcCommand =
     readOption(args, "--cocalc-bin") ??
     process.env.COCALC_DOCS_VERIFY_COCALC_BIN ??
@@ -53,6 +57,7 @@ async function main(): Promise<void> {
   if (listLive) {
     const scenarios = listDocsLiveVerificationScenarios({
       cocalcCommand,
+      hostId: hostId || "$COCALC_DOCS_VERIFY_HOST_ID",
       projectId: projectId || "$COCALC_PROJECT_ID",
       timeout,
     });
@@ -101,6 +106,7 @@ async function main(): Promise<void> {
     actionIds: readRepeatedOption(args, "--action") as DocsActionId[],
     browserId: browserId || undefined,
     cocalcCommand,
+    hostId: hostId || undefined,
     projectId,
     timeout,
   });

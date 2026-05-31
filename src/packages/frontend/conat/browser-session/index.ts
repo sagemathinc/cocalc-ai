@@ -853,11 +853,15 @@ export function createBrowserSessionAutomation({
 
     const api: BrowserExecApi = {
       projectId: project_id,
-      docsAction: (id: string) => {
+      docsAction: (
+        id: string,
+        opts?: { parameters?: Record<string, string> },
+      ) => {
         assertExecNotCanceled(isCanceled);
         return revealDocsAction({
           actionId: id,
           includeAdmin: isBrowserRawExecAdmin(),
+          parameters: opts?.parameters,
           projectId: project_id,
         });
       },
@@ -2121,9 +2125,23 @@ export function createBrowserSessionAutomation({
       if (!id) {
         throw Error("docs_action.id must be specified");
       }
+      const parameters =
+        (action as any)?.parameters &&
+        typeof (action as any).parameters === "object" &&
+        !Array.isArray((action as any).parameters)
+          ? Object.fromEntries(
+              Object.entries((action as any).parameters)
+                .map(([key, value]) => [
+                  `${key ?? ""}`.trim(),
+                  `${value ?? ""}`.trim(),
+                ])
+                .filter(([key, value]) => key && value),
+            )
+          : undefined;
       const result = await revealDocsAction({
         actionId: id,
         includeAdmin: isBrowserRawExecAdmin(),
+        parameters,
         projectId: project_id,
       });
       return {

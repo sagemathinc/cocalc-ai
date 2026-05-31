@@ -32,7 +32,10 @@ export type DocsLiveVerificationScenario = {
   command: string[];
   description: string;
   entryId: string;
+  expectedResult?: Record<string, string>;
+  missingParameters?: string[];
   mutatesProject?: boolean;
+  parameters?: Record<string, string>;
 };
 
 export type DocsLiveUiAssertion = {
@@ -119,6 +122,7 @@ export type DocsLiveVerificationOptions = {
   browserId?: string;
   cocalcArgs?: string[];
   cocalcCommand?: string;
+  hostId?: string;
   projectId: string;
   timeout?: string;
 };
@@ -287,9 +291,26 @@ function reviewAgeDays(lastReviewed: string, now: Date): number | undefined {
   return Math.floor((now.getTime() - reviewed) / 86_400_000);
 }
 
-function liveUiAssertionForAction(
-  actionId: DocsActionId,
-): DocsLiveUiAssertion | undefined {
+const HOST_ACTION_TABS: Partial<Record<DocsActionId, string>> = {
+  "hosts.access.open": "Access",
+  "hosts.change-rules.open": "Overview",
+  "hosts.lifecycle.open": "Overview",
+  "hosts.move.open": "Projects",
+  "hosts.reliability.open": "Reliability",
+  "hosts.runtime.open": "Runtime",
+  "hosts.scratch.open": "Storage",
+  "hosts.storage.open": "Storage",
+  "hosts.logs.open": "Logs",
+  "hosts.spot-recovery.open": "Overview",
+};
+
+function liveUiAssertionForAction({
+  actionId,
+  hasHostId = false,
+}: {
+  actionId: DocsActionId;
+  hasHostId?: boolean;
+}): DocsLiveUiAssertion | undefined {
   if (actionId.startsWith("account.") || actionId.startsWith("billing.")) {
     const settingsPaths: Partial<Record<DocsActionId, string>> = {
       "account.profile.open": "/settings/profile",
@@ -332,6 +353,16 @@ return { ok: url.ok === true, url };`,
     }
   }
   if (actionId.startsWith("hosts.")) {
+    const expectedTab = HOST_ACTION_TABS[actionId];
+    if (hasHostId && expectedTab) {
+      return {
+        description: `Project Hosts drawer is open on the ${expectedTab} tab.`,
+        code: `const url = api.waitForUrl({ includes: "/hosts", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+const drawer = api.waitForSelector(".ant-drawer", { state: "visible", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+const tab = api.waitForText({ selector: ".ant-drawer .ant-tabs-tab-active", includes: ${JSON.stringify(expectedTab)}, timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true && drawer.ok === true && tab.ok === true, url, drawer, tab };`,
+      };
+    }
     return {
       description: "Project Hosts route is visible.",
       code: `const url = api.waitForUrl({ includes: "/hosts", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
@@ -400,12 +431,31 @@ return { ok: url.ok === true && agents.ok === true, url, agents };`,
 export function listDocsLiveVerificationScenarios({
   cocalcArgs = [],
   cocalcCommand = "cocalc",
+  hostId = "",
   projectId = "$COCALC_PROJECT_ID",
   timeout = "60s",
 }: Partial<DocsLiveVerificationOptions> = {}): DocsLiveVerificationScenario[] {
   return listDocsActions({ includeAdmin: true, includeSignedIn: true })
     .filter((action) => action.executable === true)
     .map((action) => {
+      const parameters: Record<string, string> = {};
+      const commandParameters: Record<string, string> = {};
+      const missingParameters: string[] = [];
+      for (const parameter of action.parameters ?? []) {
+        if (parameter.type === "project") {
+          parameters[parameter.name] = projectId;
+          commandParameters[parameter.name] = projectId;
+        } else if (parameter.type === "project-host") {
+          const value = `${hostId ?? ""}`.trim();
+          if (value) {
+            parameters[parameter.name] = value;
+            commandParameters[parameter.name] = value;
+          } else if (parameter.required) {
+            missingParameters.push(parameter.name);
+            commandParameters[parameter.name] = "$COCALC_DOCS_VERIFY_HOST_ID";
+          }
+        }
+      }
       const command = [
         cocalcCommand,
         ...cocalcArgs,
@@ -418,16 +468,36 @@ export function listDocsLiveVerificationScenarios({
         "--timeout",
         timeout,
       ];
+      for (const [key, value] of Object.entries(commandParameters)) {
+        command.push("--param", `${key}=${value}`);
+      }
+      const expectedResult: Record<string, string> = {};
+      if (parameters.hostId) {
+        expectedResult.host_id = parameters.hostId;
+      }
+      const drawerTab =
+        parameters.hostId && HOST_ACTION_TABS[action.id]
+          ? HOST_ACTION_TABS[action.id]?.toLowerCase()
+          : undefined;
+      if (drawerTab && drawerTab !== "overview") {
+        expectedResult.drawer_tab = drawerTab;
+      }
       return {
-        assertion: liveUiAssertionForAction(action.id),
+        assertion: liveUiAssertionForAction({
+          actionId: action.id,
+          hasHostId: !!parameters.hostId,
+        }),
         actionId: action.id,
         command,
         description: action.description,
         entryId: action.entryId,
+        ...(Object.keys(expectedResult).length > 0 ? { expectedResult } : {}),
+        ...(missingParameters.length > 0 ? { missingParameters } : {}),
         mutatesProject:
           action.id === "project.terminal.open" ||
           action.id === "project.jupyter.create" ||
           action.id === "file.timetravel.open",
+        ...(Object.keys(parameters).length > 0 ? { parameters } : {}),
       };
     });
 }
@@ -917,6 +987,7 @@ export async function verifyDocsLive({
   browserId,
   cocalcArgs = ["--json"],
   cocalcCommand = "cocalc",
+  hostId,
   projectId,
   timeout = "60s",
 }: DocsLiveVerificationOptions): Promise<DocsLiveVerificationReport> {
@@ -924,6 +995,7 @@ export async function verifyDocsLive({
   const scenarios = listDocsLiveVerificationScenarios({
     cocalcArgs,
     cocalcCommand,
+    hostId,
     projectId,
     timeout,
   }).filter(
@@ -934,6 +1006,17 @@ export async function verifyDocsLive({
     const command = [...scenario.command];
     if (browserId) {
       command.push("--browser", browserId);
+    }
+    if (scenario.missingParameters?.length) {
+      results.push({
+        actionId: scenario.actionId,
+        command,
+        error: `missing required live docs parameter(s): ${scenario.missingParameters.join(
+          ", ",
+        )}`,
+        ok: false,
+      });
+      continue;
     }
     const [bin, ...args] = command;
     try {
@@ -947,11 +1030,15 @@ export async function verifyDocsLive({
           ? (output as { data?: any }).data
           : undefined;
       const result = data?.result ?? data;
+      const expectedResultOk = Object.entries(
+        scenario.expectedResult ?? {},
+      ).every(([key, value]) => `${result?.[key] ?? ""}` === value);
       const ok =
         code === 0 &&
         data?.ok !== false &&
         result?.opened === true &&
-        result?.action_id === scenario.actionId;
+        result?.action_id === scenario.actionId &&
+        expectedResultOk;
       const assertion =
         ok && scenario.assertion
           ? await runLiveUiAssertion({
@@ -978,7 +1065,9 @@ export async function verifyDocsLive({
                 ok && assertion?.error
                   ? assertion.error
                   : code === 0
-                    ? "docs action did not report the expected opened result"
+                    ? expectedResultOk
+                      ? "docs action did not report the expected opened result"
+                      : "docs action did not report the expected parameterized result"
                     : `command exited with code ${code ?? "unknown"}`,
             }),
       });

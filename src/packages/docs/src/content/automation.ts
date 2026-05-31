@@ -37,6 +37,7 @@ Open a documented UI destination in the current browser session:
 ~~~sh
 cocalc browser action docs-list
 cocalc browser action docs settings.environment.secrets
+cocalc browser action docs hosts.access.open --host-id "$COCALC_DOCS_VERIFY_HOST_ID"
 ~~~
 
 Work with live notebooks using the project Jupyter commands instead of editing

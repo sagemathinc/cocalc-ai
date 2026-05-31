@@ -45,6 +45,41 @@ export function registerBrowserActionCommands({
   const sleep = async (ms: number): Promise<void> => {
     await new Promise((resolve) => setTimeout(resolve, ms));
   };
+  const collectOption = (value: string, previous: string[] = []): string[] => [
+    ...previous,
+    value,
+  ];
+  const parseDocsActionParameters = ({
+    hostId,
+    params = [],
+  }: {
+    hostId?: string;
+    params?: string[];
+  }): Record<string, string> | undefined => {
+    const parameters: Record<string, string> = {};
+    const normalizedHostId = `${hostId ?? ""}`.trim();
+    if (normalizedHostId) {
+      parameters.hostId = normalizedHostId;
+    }
+    for (const param of params) {
+      const raw = `${param ?? ""}`;
+      const eq = raw.indexOf("=");
+      if (eq <= 0) {
+        throw new Error(
+          `invalid docs action parameter '${raw}'; expected key=value`,
+        );
+      }
+      const key = raw.slice(0, eq).trim();
+      const value = raw.slice(eq + 1).trim();
+      if (!key || !value) {
+        throw new Error(
+          `invalid docs action parameter '${raw}'; expected non-empty key=value`,
+        );
+      }
+      parameters[key] = value;
+    }
+    return Object.keys(parameters).length > 0 ? parameters : undefined;
+  };
   const shouldRetryReconnectWait = (err: unknown): boolean => {
     const msg = `${err instanceof Error ? err.message : err}`.toLowerCase();
     return (
@@ -219,6 +254,16 @@ export function registerBrowserActionCommands({
       "--timeout <duration>",
       "rpc timeout for the docs action request (e.g. 30s, 2m)",
     )
+    .option(
+      "--param <key=value>",
+      "docs action parameter; may be repeated",
+      collectOption,
+      [],
+    )
+    .option(
+      "--host-id <id>",
+      "shortcut for --param hostId=<id> for project-host docs actions",
+    )
     .action(
       async (
         id: string,
@@ -231,6 +276,8 @@ export function registerBrowserActionCommands({
           posture?: string;
           policyFile?: string;
           timeout?: string;
+          param?: string[];
+          hostId?: string;
         },
         command: Command,
       ) => {
@@ -268,6 +315,10 @@ export function registerBrowserActionCommands({
           if (!actionId) {
             throw new Error("docs action id must be specified");
           }
+          const parameters = parseDocsActionParameters({
+            hostId: opts.hostId,
+            params: opts.param,
+          });
           const browserClient = deps.createBrowserSessionClient({
             account_id: ctx.accountId,
             browser_id: sessionInfo.browser_id,
@@ -281,6 +332,7 @@ export function registerBrowserActionCommands({
             action: {
               name: "docs_action",
               id: actionId,
+              ...(parameters ? { parameters } : {}),
             },
           });
           return {
