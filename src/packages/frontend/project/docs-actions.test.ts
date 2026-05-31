@@ -116,7 +116,9 @@ describe("project docs actions", () => {
       expect.arrayContaining([
         "settings.environment.secrets",
         "project.terminal.open",
+        "terminal.open",
         "project.jupyter.create",
+        "jupyter.open",
         "settings.runtime.rootfs",
         "settings.people.collaborators",
         "file.timetravel.open",
@@ -532,6 +534,24 @@ describe("project docs actions", () => {
       path: "/work/terminal.term",
       project_id: "project-1",
     });
+
+    const terminalPageResult = await revealDocsAction({
+      actionId: "terminal.open",
+      projectId: "project-1",
+    });
+
+    expect(mockCreateFile).toHaveBeenLastCalledWith({
+      current_path: "/work",
+      ext: "term",
+      name: "terminal",
+      switch_over: true,
+    });
+    expect(terminalPageResult).toMatchObject({
+      action_id: "terminal.open",
+      opened: true,
+      path: "/work/terminal.term",
+      project_id: "project-1",
+    });
   });
 
   it("creates and opens a default notebook", async () => {
@@ -541,6 +561,18 @@ describe("project docs actions", () => {
     });
 
     expect(mockCreateFile).toHaveBeenCalledWith({
+      current_path: "/work",
+      ext: "ipynb",
+      name: "notebook",
+      switch_over: true,
+    });
+
+    await revealDocsAction({
+      actionId: "jupyter.open",
+      projectId: "project-1",
+    });
+
+    expect(mockCreateFile).toHaveBeenLastCalledWith({
       current_path: "/work",
       ext: "ipynb",
       name: "notebook",

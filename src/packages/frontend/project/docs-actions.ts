@@ -1039,12 +1039,32 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
         projectId,
       }),
   },
+  "terminal.open": {
+    id: "terminal.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) =>
+      createDefaultProjectFile({
+        actionId: "terminal.open",
+        ext: "term",
+        projectId,
+      }),
+  },
   "project.jupyter.create": {
     id: "project.jupyter.create",
     isAvailable: ({ projectId }) => validateProjectId(projectId),
     run: ({ projectId }) =>
       createDefaultProjectFile({
         actionId: "project.jupyter.create",
+        ext: "ipynb",
+        projectId,
+      }),
+  },
+  "jupyter.open": {
+    id: "jupyter.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) =>
+      createDefaultProjectFile({
+        actionId: "jupyter.open",
         ext: "ipynb",
         projectId,
       }),

@@ -407,7 +407,7 @@ return { ok: modal.ok === true, modal };`,
 return api.waitForSelector(".ant-modal[role=dialog]", { state: "hidden", timeout_ms: 3000 });`,
     };
   }
-  if (actionId === "project.terminal.open") {
+  if (actionId === "project.terminal.open" || actionId === "terminal.open") {
     return {
       description: "Terminal file tab and xterm UI are visible.",
       code: `const url = api.waitForUrl({ regex: "/\\/files\\/.+\\.term(?:[?#]|$)/", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
@@ -415,7 +415,7 @@ const terminal = api.waitForText({ selector: ".terminal.xterm", includes: "$", t
 return { ok: url.ok === true && terminal.ok === true, url, terminal };`,
     };
   }
-  if (actionId === "project.jupyter.create") {
+  if (actionId === "project.jupyter.create" || actionId === "jupyter.open") {
     return {
       description: "Notebook file tab and Jupyter UI are visible.",
       code: `const url = api.waitForUrl({ regex: "/\\/files\\/.+\\.ipynb(?:[?#]|$)/", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
@@ -524,7 +524,9 @@ export function listDocsLiveVerificationScenarios({
         ...(missingParameters.length > 0 ? { missingParameters } : {}),
         mutatesProject:
           action.id === "project.terminal.open" ||
+          action.id === "terminal.open" ||
           action.id === "project.jupyter.create" ||
+          action.id === "jupyter.open" ||
           action.id === "file.timetravel.open",
         ...(Object.keys(parameters).length > 0 ? { parameters } : {}),
       };
