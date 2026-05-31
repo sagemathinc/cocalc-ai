@@ -37,7 +37,6 @@ type MissingRuntimePackages = {
   sudo: boolean;
   caCertificates: boolean;
   libatomic: boolean;
-  dropbear: boolean;
 };
 
 const DISABLED_RUNTIME_PASSWORD_HASH =
@@ -376,13 +375,6 @@ async function detectMissingRuntimePackages(): Promise<MissingRuntimePackages> {
     sudo: (await findExecutable(["/usr/bin/sudo", "/bin/sudo"])) == null,
     caCertificates: !(await hasCaCertificates()),
     libatomic: !(await hasLibatomic()),
-    dropbear:
-      (await findExecutable([
-        "/usr/bin/dropbear",
-        "/usr/sbin/dropbear",
-        "/bin/dropbear",
-        "/sbin/dropbear",
-      ])) == null,
   };
 }
 
@@ -400,9 +392,6 @@ async function installMissingRuntimePackages(): Promise<void> {
   }
   if (missing.libatomic) {
     packages.push("libatomic");
-  }
-  if (missing.dropbear) {
-    packages.push("dropbear");
   }
   if (!packages.length) {
     logger.info("runtime bootstrap: required packages already present");
@@ -516,14 +505,9 @@ async function installMissingRuntimePackages(): Promise<void> {
   }
 
   const remaining = await detectMissingRuntimePackages();
-  if (
-    remaining.sudo ||
-    remaining.caCertificates ||
-    remaining.libatomic ||
-    remaining.dropbear
-  ) {
+  if (remaining.sudo || remaining.caCertificates || remaining.libatomic) {
     throw new Error(
-      `runtime bootstrap failed to provision required packages: sudo missing=${remaining.sudo}, ca-certificates missing=${remaining.caCertificates}, libatomic missing=${remaining.libatomic}, dropbear missing=${remaining.dropbear}`,
+      `runtime bootstrap failed to provision required packages: sudo missing=${remaining.sudo}, ca-certificates missing=${remaining.caCertificates}, libatomic missing=${remaining.libatomic}`,
     );
   }
   logger.info("runtime bootstrap: required packages are installed");

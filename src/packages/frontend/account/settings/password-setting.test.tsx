@@ -14,6 +14,23 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   },
 }));
 
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  useIsMountedRef: () => ({ current: true }),
+  useState: jest.requireActual("react").useState,
+}));
+
+jest.mock("@cocalc/frontend/components", () => ({
+  A: ({ children, ...props }: any) => <a {...props}>{children}</a>,
+  ErrorDisplay: ({ error }: any) => <div>{error}</div>,
+  LabeledRow: ({ children, label }: any) => (
+    <div>
+      <div>{label}</div>
+      {children}
+    </div>
+  ),
+  Saving: () => <span>Saving...</span>,
+}));
+
 describe("PasswordSetting", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -40,6 +57,9 @@ describe("PasswordSetting", () => {
       target: { value: "old-password" },
     });
     fireEvent.change(screen.getByPlaceholderText("New password"), {
+      target: { value: "correct horse battery staple" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Confirm new password"), {
       target: { value: "correct horse battery staple" },
     });
     fireEvent.click(screen.getByRole("button", { name: /^change password$/i }));

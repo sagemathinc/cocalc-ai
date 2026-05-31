@@ -11,23 +11,23 @@ STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:local
 
 usage() {
   cat <<'EOF'
-Usage: star-poc.sh <command>
+Usage: star.sh <command>
 
 Commands:
   status                 Show service, API, project-host, and podman state.
-  doctor                 Check Star POC runtime invariants.
-  smoke                  Run the Star POC smoke test.
+  doctor                 Check Star runtime invariants.
+  smoke                  Run the Star smoke test.
   restart [all|hub|host] Restart Star services. Default: all.
   logs [hub|host] [n]    Show recent service logs. Default: hub, 200 lines.
   bootstrap-link         Print the bootstrap registration link, if still present.
 
-This is intentionally small and operator-oriented. It is for the current
-CoCalc Star proof of concept VM, not a stable product CLI.
+This is intentionally small and operator-oriented. It manages a CoCalc Star
+single-VM install.
 EOF
 }
 
 log() {
-  printf '[star-poc] %s\n' "$*" >&2
+  printf '[star] %s\n' "$*" >&2
 }
 
 service_name() {
@@ -89,11 +89,21 @@ doctor() {
 
   if [ -f /etc/cocalc/project-host.env ]; then
     ok "project-host env exists"
+    # shellcheck disable=SC1091
+    set -a
+    source /etc/cocalc/project-host.env
+    set +a
     if grep -q '^COCALC_PODMAN_RUNTIME_DIR=' /etc/cocalc/project-host.env; then
       fail "project-host does not force COCALC_PODMAN_RUNTIME_DIR"
     else
       ok "project-host does not force COCALC_PODMAN_RUNTIME_DIR"
     fi
+    check "project-host tools bundle exists" test -d "${COCALC_PROJECT_TOOLS:-}"
+    check "project-host tools bundle has dropbear" test -x "${COCALC_PROJECT_TOOLS:-}/dropbear"
+    check "project-host conat router is healthy" \
+      curl -fsS "http://${COCALC_PROJECT_HOST_CONAT_ROUTER_HOST:-127.0.0.1}:${COCALC_PROJECT_HOST_CONAT_ROUTER_PORT:-}/healthz"
+    check "project-host conat persist is healthy" \
+      curl -fsS "http://${COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_HOST:-127.0.0.1}:${COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT:-}/healthz"
   else
     fail "project-host env exists"
   fi

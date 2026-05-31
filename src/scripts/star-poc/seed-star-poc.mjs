@@ -35,7 +35,7 @@ if (
   );
   await ensureLocalPostgres({ enabled: true, logExports: false });
 } else if (process.env.COCALC_DB !== "pglite") {
-  throw new Error("seed-star-poc requires COCALC_DB=pglite or local postgres");
+  throw new Error("CoCalc Star requires COCALC_DB=pglite or local postgres");
 }
 
 const { syncSchema } = await import(`${databaseDist}/postgres/schema/index.js`);
@@ -68,7 +68,7 @@ async function setSetting(name, value) {
 }
 
 const settings = [
-  setSetting("site_name", "CoCalc Star POC"),
+  setSetting("site_name", "CoCalc Star"),
   setSetting("dns", baseUrl),
   setSetting("project_hosts_local_enabled", "yes"),
   setSetting("project_hosts_self_host_alpha_enabled", "yes"),
@@ -95,8 +95,8 @@ await upsertProjectHost({
   ssh_server: "127.0.0.1:2222",
   status: "running",
   metadata: {
-    provider: "star-poc",
-    cloud_provider: "star-poc",
+    provider: "star",
+    cloud_provider: "star",
     local: true,
   },
 });

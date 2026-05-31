@@ -3,19 +3,19 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Space, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Checkbox,
+  Divider,
+  Flex,
+  Space,
+  Typography,
+} from "antd";
 import { List, Map } from "immutable";
 import { join } from "path";
 import { FormattedMessage, useIntl } from "react-intl";
-import {
-  Button,
-  ButtonToolbar,
-  Checkbox,
-  Col,
-  Panel,
-  Row,
-  Well,
-} from "@cocalc/frontend/antd-bootstrap";
 import {
   Rendered,
   TypedMap,
@@ -23,10 +23,9 @@ import {
   useState,
 } from "@cocalc/frontend/app-framework";
 import {
-  ErrorDisplay,
-  Gap,
   Icon,
   LabeledRow,
+  SettingBox,
   TimeAgo,
 } from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
@@ -40,22 +39,16 @@ import {
 } from "@cocalc/frontend/passports";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { keys, startswith } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
 import { PassportStrategyFrontend } from "@cocalc/util/types/passport-types";
-import { AccountState } from "../types";
 import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
-import { DeleteAccount } from "../delete-account";
 import { ACCOUNT_PROFILE_ICON_NAME } from "../account-preferences-profile";
-import { SignOut } from "../sign-out";
 import { set_account_table, ugly_error } from "../util";
 import { EmailAddressSetting } from "./email-address-setting";
 import { EmailVerification } from "./email-verification";
-import { PasswordSetting } from "./password-setting";
 import { TextSetting } from "./text-setting";
-import TwoFactorAuthSetting from "./two-factor-auth";
 import { lite } from "@cocalc/frontend/lite";
 
 type ImmutablePassportStrategy = TypedMap<PassportStrategyFrontend>;
@@ -68,9 +61,6 @@ interface Props {
   email_address?: string;
   email_address_verified?: Map<string, any>;
   passports?: Map<string, any>;
-  sign_out_error?: string;
-  delete_account_error?: string;
-  other_settings?: AccountState["other_settings"];
   email_enabled?: boolean;
   verify_emails?: boolean;
   created?: Date;
@@ -86,8 +76,6 @@ export function AccountSettings(props: Readonly<Props>) {
   const [remove_strategy_button, set_remove_strategy_button] = useState<
     string | undefined
   >(undefined);
-  const [show_delete_confirmation, set_show_delete_confirmation] =
-    useState<boolean>(false);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: ugly_error,
   });
@@ -119,28 +107,31 @@ export function AccountSettings(props: Readonly<Props>) {
     const name = strategy2display(strategy_js);
     const href = join(appBasePath, "auth", add_strategy_link);
     return (
-      <Well>
-        <h4>
-          <PassportStrategyIcon strategy={strategy_js} /> {name}
-        </h4>
-        Link to your {name} account, so you can use {name} to login to your{" "}
-        <SiteName /> account.
-        <br /> <br />
-        <ButtonToolbar style={{ textAlign: "center" }}>
-          <Button
-            href={href}
-            target="_blank"
-            onClick={() => {
-              set_add_strategy_link(undefined);
-            }}
-          >
-            <Icon name="external-link" /> Link My {name} Account
-          </Button>
-          <Button onClick={() => set_add_strategy_link(undefined)}>
-            <CancelText />
-          </Button>
-        </ButtonToolbar>
-      </Well>
+      <Card size="small">
+        <Flex vertical gap="middle">
+          <Typography.Title level={4}>
+            <PassportStrategyIcon strategy={strategy_js} /> {name}
+          </Typography.Title>
+          <Typography.Paragraph>
+            Link to your {name} account, so you can use {name} to login to your{" "}
+            <SiteName /> account.
+          </Typography.Paragraph>
+          <Space wrap>
+            <Button
+              href={href}
+              target="_blank"
+              onClick={() => {
+                set_add_strategy_link(undefined);
+              }}
+            >
+              <Icon name="external-link" /> Link My {name} Account
+            </Button>
+            <Button onClick={() => set_add_strategy_link(undefined)}>
+              <CancelText />
+            </Button>
+          </Space>
+        </Flex>
+      </Card>
     );
   }
 
@@ -181,39 +172,53 @@ export function AccountSettings(props: Readonly<Props>) {
     const name = strategy2display(strategy_js);
     if ((props.passports?.size ?? 0) <= 1 && !props.email_address) {
       return (
-        <Well>
-          You must set an email address above or add another login method before
-          you can disable login to your <SiteName /> account using your {name}{" "}
-          account. Otherwise you would completely lose access to your account!
-        </Well>
+        <Alert
+          type="warning"
+          title="Add another sign-in method first"
+          description={
+            <>
+              You must set an email address above or add another login method
+              before you can disable login to your <SiteName /> account using
+              your {name} account. Otherwise you would completely lose access to
+              your account!
+            </>
+          }
+        />
       );
       // TODO: flesh out the case where the UI prevents a user from unlinking an exclusive sso strategy
       // Right now, the backend blocks
     } else if (false) {
       return (
-        <Well>You are not allowed to remove the passport strategy {name}.</Well>
+        <Alert
+          type="warning"
+          title={`You are not allowed to remove ${name}.`}
+        />
       );
     } else {
       return (
-        <Well>
-          <h4>
-            <PassportStrategyIcon strategy={strategy_js} /> {name}
-          </h4>
-          Your <SiteName /> account is linked to your {name} account, so you can
-          login using it.
-          <br /> <br />
-          If you unlink your {name} account, you will no longer be able to use
-          this account to log into <SiteName />.
-          <br /> <br />
-          <ButtonToolbar style={{ textAlign: "center" }}>
-            <Button bsStyle="danger" onClick={remove_strategy_click}>
-              <Icon name="unlink" /> Unlink my {name} account
-            </Button>
-            <Button onClick={() => set_remove_strategy_button(undefined)}>
-              <CancelText />
-            </Button>
-          </ButtonToolbar>
-        </Well>
+        <Card size="small">
+          <Flex vertical gap="middle">
+            <Typography.Title level={4}>
+              <PassportStrategyIcon strategy={strategy_js} /> {name}
+            </Typography.Title>
+            <Typography.Paragraph>
+              Your <SiteName /> account is linked to your {name} account, so you
+              can login using it.
+            </Typography.Paragraph>
+            <Typography.Paragraph>
+              If you unlink your {name} account, you will no longer be able to
+              use this account to log into <SiteName />.
+            </Typography.Paragraph>
+            <Space wrap>
+              <Button danger onClick={remove_strategy_click}>
+                <Icon name="unlink" /> Unlink my {name} account
+              </Button>
+              <Button onClick={() => set_remove_strategy_button(undefined)}>
+                <CancelText />
+              </Button>
+            </Space>
+          </Flex>
+        </Card>
       );
     }
   }
@@ -237,7 +242,7 @@ export function AccountSettings(props: Readonly<Props>) {
             }
           }}
           key={strategy.get("name")}
-          bsStyle={is_configured ? "info" : undefined}
+          type={is_configured ? "primary" : "default"}
         >
           <PassportStrategyIcon strategy={strategy_js} small={true} />{" "}
           {strategy2display(strategy_js)}
@@ -245,48 +250,6 @@ export function AccountSettings(props: Readonly<Props>) {
       );
       return btn;
     }
-  }
-
-  function render_sign_out_error(): Rendered {
-    if (!props.sign_out_error || lite) {
-      return;
-    }
-    return (
-      <ErrorDisplay
-        style={{ margin: "5px 0" }}
-        error={props.sign_out_error}
-        onClose={() => actions().setState({ sign_out_error: "" })}
-      />
-    );
-  }
-
-  function render_sign_out_buttons(): Rendered {
-    if (lite) {
-      return;
-    }
-    return (
-      <Row
-        style={{
-          marginTop: "15px",
-          borderTop: "1px solid #ccc",
-          paddingTop: "15px",
-        }}
-      >
-        <Col xs={12}>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "flex-end",
-              alignItems: "center",
-            }}
-          >
-            <SignOut everywhere={false} highlight={true} />
-            <Gap />
-            <SignOut everywhere={true} />
-          </div>
-        </Col>
-      </Row>
-    );
   }
 
   function get_account_passport_names(): string[] {
@@ -314,19 +277,16 @@ export function AccountSettings(props: Readonly<Props>) {
       .map((strategy) => render_strategy(strategy, account_passports))
       .toArray();
     return (
-      <div>
-        <hr key="hr0" />
-        <h5 style={{ color: COLORS.GRAY_M }}>
+      <Flex vertical gap="small">
+        <Divider titlePlacement="start" plain>
           {intl.formatMessage({
             id: "account.settings.sso.account_is_linked",
             defaultMessage: "Your account is linked with (click to unlink)",
           })}
-        </h5>
-        <ButtonToolbar style={{ marginBottom: "10px", display: "flex" }}>
-          {btns}
-        </ButtonToolbar>
+        </Divider>
+        <Space wrap>{btns}</Space>
         {render_remove_strategy_button()}
-      </div>
+      </Flex>
     );
   }
 
@@ -373,101 +333,20 @@ export function AccountSettings(props: Readonly<Props>) {
         <Button
           key="sso"
           onClick={() => open_new_tab(join(appBasePath, "sso"))}
-          bsStyle="info"
+          type="primary"
         >
           Other SSO
         </Button>,
       );
     }
     return (
-      <div>
-        <hr key="hr0" />
-        <h5 style={{ color: COLORS.GRAY_M }}>{heading}</h5>
-        <Space size={[10, 10]} wrap style={{ marginBottom: "10px" }}>
-          {btns}
-        </Space>
+      <Flex vertical gap="small">
+        <Divider titlePlacement="start" plain>
+          {heading}
+        </Divider>
+        <Space wrap>{btns}</Space>
         {render_add_strategy_link()}
-      </div>
-    );
-  }
-
-  function render_delete_account(): Rendered {
-    if (lite) {
-      return;
-    }
-    return (
-      <Row>
-        <Col xs={12}>
-          <DeleteAccount
-            style={{ marginTop: "1ex" }}
-            initial_click={() => set_show_delete_confirmation(true)}
-            confirm_click={() =>
-              runFreshAuthAction(async () => {
-                await actions().delete_account();
-              })
-            }
-            cancel_click={() => set_show_delete_confirmation(false)}
-            user_name={(props.first_name + " " + props.last_name).trim()}
-            show_confirmation={show_delete_confirmation}
-          />
-        </Col>
-      </Row>
-    );
-  }
-
-  function render_password(): Rendered {
-    if (!props.email_address || lite) {
-      // makes no sense to change password if don't have an email address
-      return;
-    }
-    return <PasswordSetting runFreshAuthAction={runFreshAuthAction} />;
-  }
-
-  function render_two_factor_auth(): Rendered {
-    if (lite) {
-      return;
-    }
-    return <TwoFactorAuthSetting />;
-  }
-
-  function render_header(): Rendered {
-    return (
-      <>
-        <Icon name={ACCOUNT_PROFILE_ICON_NAME} />{" "}
-        {intl.formatMessage(labels.account)}
-      </>
-    );
-  }
-
-  function render_created(): Rendered {
-    if (!props.created) {
-      return;
-    }
-    return (
-      <Row style={{ marginBottom: "15px" }}>
-        <Col md={4}>
-          <FormattedMessage
-            id="account.settings.created.label"
-            defaultMessage={"Created"}
-          />
-        </Col>
-        <Col md={8}>
-          <TimeAgo date={props.created} />
-        </Col>
-      </Row>
-    );
-  }
-
-  function render_account_id(): Rendered {
-    if (!props.account_id || lite) {
-      return;
-    }
-    return (
-      <LabeledRow label="Account ID">
-        <Typography.Text code copyable={{ text: props.account_id }}>
-          {props.account_id}
-        </Typography.Text>
-      </LabeledRow>
+      </Flex>
     );
   }
 
@@ -491,6 +370,37 @@ export function AccountSettings(props: Readonly<Props>) {
           maxLength={254}
         />
       </>
+    );
+  }
+
+  function render_account_id(): Rendered {
+    if (!props.account_id || lite) {
+      return;
+    }
+    return (
+      <LabeledRow label="Account ID">
+        <Typography.Text code copyable={{ text: props.account_id }}>
+          {props.account_id}
+        </Typography.Text>
+      </LabeledRow>
+    );
+  }
+
+  function render_created(): Rendered {
+    if (!props.created) {
+      return;
+    }
+    return (
+      <LabeledRow
+        label={
+          <FormattedMessage
+            id="account.settings.created.label"
+            defaultMessage={"Created"}
+          />
+        }
+      >
+        <TimeAgo date={props.created} />
+      </LabeledRow>
     );
   }
 
@@ -519,9 +429,9 @@ export function AccountSettings(props: Readonly<Props>) {
         }
       >
         <FormattedMessage
-          id="account.settings.unlisted.label"
+          id="account.settings.unlisted.public_discovery_label"
           defaultMessage={
-            "Unlisted: you are hidden from name searches outside existing collaboration contexts"
+            "Hide my account from public collaborator lists and broad name searches"
           }
         />
       </Checkbox>
@@ -540,22 +450,21 @@ export function AccountSettings(props: Readonly<Props>) {
   }
 
   return (
-    <Panel header={render_header()}>
-      {render_account_id()}
-      {render_name()}
-      {render_email_address()}
-      {render_unlisted()}
-      <div style={{ marginBottom: "15px" }}></div>
-      {render_email_verification()}
-      {render_password()}
-      {render_two_factor_auth()}
-      {render_created()}
-      {render_delete_account()}
-      {render_linked_external_accounts()}
-      {render_available_to_link()}
-      {render_sign_out_buttons()}
-      {render_sign_out_error()}
+    <SettingBox
+      title={intl.formatMessage(labels.account)}
+      icon={ACCOUNT_PROFILE_ICON_NAME}
+    >
+      <Space vertical>
+        {render_account_id()}
+        {render_name()}
+        {render_email_address()}
+        {render_unlisted()}
+        {render_email_verification()}
+        {render_created()}
+        {render_linked_external_accounts()}
+        {render_available_to_link()}
+      </Space>
       <FreshAuthModal {...freshAuthModalProps} />
-    </Panel>
+    </SettingBox>
   );
 }

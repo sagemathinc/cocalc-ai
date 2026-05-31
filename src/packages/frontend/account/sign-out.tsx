@@ -2,55 +2,64 @@
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
-import { Button, Popconfirm } from "antd";
+import { Alert, Button, Checkbox, Flex, Popover, Space } from "antd";
+import { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { Icon } from "@cocalc/frontend/components/icon";
-import { React, Rendered, redux } from "@cocalc/frontend/app-framework";
+import {
+  React,
+  Rendered,
+  redux,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { labels } from "@cocalc/frontend/i18n";
 
 interface Props {
   everywhere?: boolean;
-  sign_in?: boolean;
-  highlight?: boolean;
   style?: React.CSSProperties;
   narrow?: boolean;
 }
 
 export const SignOut: React.FC<Props> = (props: Readonly<Props>) => {
-  const { everywhere, sign_in, highlight, style, narrow = false } = props;
+  const { everywhere, style, narrow = false } = props;
+  const [open, setOpen] = useState(false);
+  const [signOutEverywhere, setSignOutEverywhere] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const signOutError = useTypedRedux("account", "sign_out_error");
 
   const intl = useIntl();
+  const effectiveEverywhere = !!everywhere || signOutEverywhere;
+  const accountActions = () => redux.getActions("account");
 
-  function sign_out(): void {
-    const account = redux.getActions("account");
+  function handleOpenChange(nextOpen: boolean): void {
+    setOpen(nextOpen);
+    if (!nextOpen) {
+      setSignOutEverywhere(false);
+      accountActions()?.setState({ sign_out_error: "" });
+    }
+  }
+
+  async function sign_out(): Promise<void> {
+    const account = accountActions();
     if (account != null) {
-      account.sign_out(!!everywhere, !!sign_in);
+      setSigningOut(true);
+      account.setState({ sign_out_error: "" });
+      await account.sign_out(effectiveEverywhere);
+      setSigningOut(false);
     }
   }
 
   function render_body(): Rendered {
-    if (sign_in) {
-      return (
-        <span>
-          <FormattedMessage
-            id="account.sign_out.body.sign_in"
-            description={"Sign in button, if not signed in"}
-            defaultMessage={"Sign in to your account..."}
-          />
-        </span>
-      );
-    } else {
-      return (
-        <span>
-          <FormattedMessage
-            id="account.sign_out.body.sign_out"
-            description={"Sign out button, if signed in"}
-            defaultMessage={`Sign out{everywhere, select, true { everywhere} other {}}...`}
-            values={{ everywhere }}
-          />
-        </span>
-      );
-    }
+    return (
+      <span>
+        <FormattedMessage
+          id="account.sign_out.body.sign_out"
+          description={"Sign out button, if signed in"}
+          defaultMessage={`Sign out{everywhere, select, true { everywhere} other {}}...`}
+          values={{ everywhere }}
+        />
+      </span>
+    );
   }
 
   // I think not using reduxProps is fine for this, since it's only rendered once
@@ -58,40 +67,77 @@ export const SignOut: React.FC<Props> = (props: Readonly<Props>) => {
   const store = redux.getStore("account");
   const account: string = store.get("email_address") ?? "your account";
 
+  function render_title(): Rendered {
+    if (everywhere) {
+      return (
+        <FormattedMessage
+          id="account.sign-out.popover.everywhere-title"
+          defaultMessage="Sign out {account} everywhere?"
+          values={{ account }}
+        />
+      );
+    }
+    return (
+      <FormattedMessage
+        id="account.sign-out.popover.title"
+        defaultMessage="Sign out {account} on this browser?"
+        values={{ account }}
+      />
+    );
+  }
+
+  function render_content(): React.JSX.Element {
+    return (
+      <Space direction="vertical">
+        {signOutError && <Alert type="error" message={signOutError} />}
+        {!everywhere && (
+          <Checkbox
+            checked={signOutEverywhere}
+            onChange={(event) => setSignOutEverywhere(event.target.checked)}
+          >
+            <FormattedMessage
+              id="account.sign-out.popover.everywhere-checkbox"
+              defaultMessage="Also sign out on other browsers and devices"
+            />
+          </Checkbox>
+        )}
+        <Flex justify="space-between" gap="small">
+          <Button
+            danger={effectiveEverywhere}
+            loading={signingOut}
+            onClick={sign_out}
+            type="primary"
+          >
+            {intl.formatMessage(
+              {
+                id: "account.sign-out.popover.confirm",
+                defaultMessage: `Sign out{everywhere, select, true { everywhere} other {}}`,
+              },
+              { everywhere: effectiveEverywhere },
+            )}
+          </Button>
+          <Button disabled={signingOut} onClick={() => handleOpenChange(false)}>
+            {intl.formatMessage(labels.cancel)}
+          </Button>
+        </Flex>
+      </Space>
+    );
+  }
+
   return (
-    <Popconfirm
-      title={
-        <div style={{ maxWidth: "60ex" }}>
-          <FormattedMessage
-            id="account.sign-out.button.title"
-            description="Sign out/Sign out everyhwere button in account settings"
-            defaultMessage={`Are you sure you want to sign {account} out
-{everywhere, select,
- true {on all web browsers? Every web browser will have to reauthenticate before using this account again.}
- other {on this web browser?}
-}`}
-            values={{
-              account,
-              everywhere,
-            }}
-          />
-        </div>
-      }
-      onConfirm={sign_out}
-      okText={intl.formatMessage(
-        {
-          id: "account.sign-out.button.ok",
-          defaultMessage: `Yes, sign out{everywhere, select, true { everywhere} other {}}`,
-        },
-        { everywhere },
-      )}
-      cancelText={intl.formatMessage(labels.cancel)}
+    <Popover
+      content={render_content()}
+      onOpenChange={handleOpenChange}
+      open={open}
+      placement="bottomRight"
+      title={render_title()}
+      trigger="click"
     >
       {/* NOTE: weirdly darkreader breaks when we use the antd LogoutOutlined icon!? */}
-      <Button type={highlight ? "primary" : undefined} style={style}>
+      <Button style={style}>
         <Icon name="sign-in" />{" "}
         {!narrow || everywhere ? render_body() : undefined}
       </Button>
-    </Popconfirm>
+    </Popover>
   );
 };

@@ -22,7 +22,6 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { Icon, Loading, LoginLink, Title } from "@cocalc/frontend/components";
-import { Footer } from "@cocalc/frontend/customize";
 import { labels } from "@cocalc/frontend/i18n";
 import { COLORS } from "@cocalc/util/theme";
 import {
@@ -460,8 +459,6 @@ export const ProjectsPage: React.FC = () => {
                       />
                     )}
                   </div>
-
-                  <Footer />
                 </Space>
               </Col>
             </Row>

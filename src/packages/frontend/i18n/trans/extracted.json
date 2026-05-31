@@ -43,7 +43,7 @@
     "defaultMessage": "Created"
   },
   "account.settings.email_address.button_label": {
-    "defaultMessage": "{have_email, select, true {Change email address} other {Set email address and password}}"
+    "defaultMessage": "{have_email, select, true {Change} other {Set email and password}}"
   },
   "account.settings.email_address.new_email_address_label": {
     "defaultMessage": "New email address"
@@ -51,8 +51,8 @@
   "account.settings.email_address.password_label": {
     "defaultMessage": "{have_email, select, true {Current password} other {Choose a password}}"
   },
-  "account.settings.unlisted.label": {
-    "defaultMessage": "Unlisted: you can only be found by an exact email address match"
+  "account.settings.unlisted.public_discovery_label": {
+    "defaultMessage": "Hide my account from public collaborator lists and broad name searches"
   },
   "account.sign-out.button.ok": {
     "defaultMessage": "Yes, sign out{everywhere, select, true { everywhere} other {}}"
