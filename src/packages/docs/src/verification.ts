@@ -237,6 +237,23 @@ function reviewAgeDays(lastReviewed: string, now: Date): number | undefined {
 function liveUiAssertionForAction(
   actionId: DocsActionId,
 ): DocsLiveUiAssertion | undefined {
+  if (actionId.startsWith("account.") || actionId.startsWith("billing.")) {
+    const settingsPaths: Partial<Record<DocsActionId, string>> = {
+      "account.profile.open": "/settings/profile",
+      "account.ssh-keys.open": "/settings/keys",
+      "billing.payment-methods.open": "/settings/payment-methods",
+      "billing.statements.open": "/settings/statements",
+      "billing.subscriptions.open": "/settings/subscriptions",
+    };
+    const expectedPath = settingsPaths[actionId];
+    if (expectedPath) {
+      return {
+        description: `Account settings route ${expectedPath} is visible.`,
+        code: `const url = api.waitForUrl({ includes: ${JSON.stringify(expectedPath)}, timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true, url };`,
+      };
+    }
+  }
   if (actionId.startsWith("admin.")) {
     const adminPaths: Partial<Record<DocsActionId, string>> = {
       "admin.news.open": "/admin/news",

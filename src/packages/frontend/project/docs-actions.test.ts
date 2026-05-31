@@ -2,6 +2,7 @@
 
 const mockSetPageActiveTab = jest.fn();
 const mockSetPageState = jest.fn();
+const mockSetAccountState = jest.fn();
 const mockSetProjectActiveTab = jest.fn();
 const mockSetFlyoutExpanded = jest.fn();
 const mockCreateFile = jest.fn();
@@ -13,6 +14,7 @@ const mockOpenFile = jest.fn();
 const mockSetUrlWithSearch = jest.fn();
 const mockOpenHostDrawer = jest.fn();
 let mockIsAdmin = false;
+let mockAccountId: string | undefined = "account-1";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
@@ -22,11 +24,19 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
             set_active_tab: mockSetPageActiveTab,
             setState: mockSetPageState,
           }
-        : undefined,
+        : name === "account"
+          ? {
+              setState: mockSetAccountState,
+            }
+          : undefined,
     getStore: (name: string) =>
       name === "account"
         ? {
-            get: (key: string) => (key === "is_admin" ? mockIsAdmin : null),
+            get: (key: string) => {
+              if (key === "account_id") return mockAccountId;
+              if (key === "is_admin") return mockIsAdmin;
+              return null;
+            },
           }
         : undefined,
     getProjectActions: (projectId: string) => mockGetProjectActions(projectId),
@@ -67,6 +77,7 @@ describe("project docs actions", () => {
   beforeEach(() => {
     jest.useFakeTimers();
     jest.clearAllMocks();
+    mockAccountId = "account-1";
     mockIsAdmin = false;
     window.localStorage.clear();
     mockGetStore.mockReturnValue({
@@ -229,6 +240,59 @@ describe("project docs actions", () => {
     expect(logs).toMatchObject({
       action_id: "hosts.logs.open",
       drawer_tab: "logs",
+    });
+  });
+
+  it("opens account and billing settings docs actions", async () => {
+    const profile = await revealDocsAction({
+      actionId: "account.profile.open",
+      projectId: "project-1",
+    });
+
+    expect(mockSetPageActiveTab).toHaveBeenCalledWith("account", false);
+    expect(mockSetAccountState).toHaveBeenCalledWith({
+      active_page: "profile",
+    });
+    expect(mockSetUrlWithSearch).toHaveBeenCalledWith("/settings/profile", "");
+    expect(profile).toMatchObject({
+      action_id: "account.profile.open",
+      opened: true,
+      panel: "profile",
+      tab: "account",
+    });
+
+    const paymentMethods = await revealDocsAction({
+      actionId: "billing.payment-methods.open",
+      projectId: "project-1",
+    });
+
+    expect(mockSetAccountState).toHaveBeenLastCalledWith({
+      active_page: "payment-methods",
+    });
+    expect(mockSetUrlWithSearch).toHaveBeenLastCalledWith(
+      "/settings/payment-methods",
+      "",
+    );
+    expect(paymentMethods).toMatchObject({
+      action_id: "billing.payment-methods.open",
+      opened: true,
+      panel: "payment-methods",
+      tab: "account",
+    });
+  });
+
+  it("requires sign-in for account docs actions", () => {
+    mockAccountId = undefined;
+
+    const action = listDocsAppActions({
+      includeSignedIn: true,
+      projectId: "project-1",
+    }).find((action) => action.id === "account.profile.open");
+
+    expect(action).toMatchObject({
+      available: false,
+      implemented: true,
+      reason: "You must sign in.",
     });
   });
 

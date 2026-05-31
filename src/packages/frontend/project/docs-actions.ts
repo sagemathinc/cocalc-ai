@@ -15,8 +15,13 @@ import {
   type AdminRoute,
   type AdminSection,
 } from "@cocalc/frontend/admin/routing";
+import {
+  getSettingsUrlPath,
+  type AccountSettingsRoute,
+} from "@cocalc/frontend/account/settings-routing";
 import { redux } from "@cocalc/frontend/app-framework";
 import { set_url_with_search } from "@cocalc/frontend/history";
+import type { SettingsPageType } from "@cocalc/util/types/settings";
 import {
   history_path,
   separate_file_extension,
@@ -296,6 +301,55 @@ function accountIsAdmin(): boolean {
 
 function validateAdmin(): string | true {
   return accountIsAdmin() ? true : "You must be a site admin.";
+}
+
+function accountIsSignedIn(): boolean {
+  return !!redux.getStore("account")?.get("account_id");
+}
+
+function validateSignedIn(): string | true {
+  return accountIsSignedIn() ? true : "You must sign in.";
+}
+
+function selectAccountSettings(page: SettingsPageType): void {
+  const route: AccountSettingsRoute = { page };
+  const pageActions = redux.getActions("page") as
+    | {
+        set_active_tab?: (
+          key: string,
+          changeHistory?: boolean,
+        ) => Promise<void>;
+      }
+    | undefined;
+  const accountActions = redux.getActions("account") as
+    | {
+        setState?: (state: { active_page: SettingsPageType }) => void;
+      }
+    | undefined;
+  void pageActions?.set_active_tab?.("account", false);
+  accountActions?.setState?.({ active_page: page });
+  if (typeof window !== "undefined") {
+    set_url_with_search(getSettingsUrlPath(route), "");
+  }
+}
+
+function revealAccountSettings({
+  actionId,
+  page,
+  projectId,
+}: {
+  actionId: DocsActionId;
+  page: SettingsPageType;
+  projectId: string;
+}): DocsActionRevealResult {
+  selectAccountSettings(page);
+  return {
+    action_id: actionId,
+    opened: true,
+    panel: page,
+    project_id: projectId,
+    tab: "account",
+  };
 }
 
 function selectAdmin(route: AdminRoute, search = ""): void {
@@ -630,6 +684,56 @@ async function createDefaultProjectFile({
 }
 
 const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
+  "account.profile.open": {
+    id: "account.profile.open",
+    isAvailable: validateSignedIn,
+    run: ({ projectId }) =>
+      revealAccountSettings({
+        actionId: "account.profile.open",
+        page: "profile",
+        projectId,
+      }),
+  },
+  "account.ssh-keys.open": {
+    id: "account.ssh-keys.open",
+    isAvailable: validateSignedIn,
+    run: ({ projectId }) =>
+      revealAccountSettings({
+        actionId: "account.ssh-keys.open",
+        page: "keys",
+        projectId,
+      }),
+  },
+  "billing.subscriptions.open": {
+    id: "billing.subscriptions.open",
+    isAvailable: validateSignedIn,
+    run: ({ projectId }) =>
+      revealAccountSettings({
+        actionId: "billing.subscriptions.open",
+        page: "subscriptions",
+        projectId,
+      }),
+  },
+  "billing.payment-methods.open": {
+    id: "billing.payment-methods.open",
+    isAvailable: validateSignedIn,
+    run: ({ projectId }) =>
+      revealAccountSettings({
+        actionId: "billing.payment-methods.open",
+        page: "payment-methods",
+        projectId,
+      }),
+  },
+  "billing.statements.open": {
+    id: "billing.statements.open",
+    isAvailable: validateSignedIn,
+    run: ({ projectId }) =>
+      revealAccountSettings({
+        actionId: "billing.statements.open",
+        page: "statements",
+        projectId,
+      }),
+  },
   "admin.news.open": {
     id: "admin.news.open",
     isAvailable: validateAdmin,
@@ -906,12 +1010,14 @@ export function getDocsAppAction(actionId: string): DocsAppAction | undefined {
 
 export function listDocsAppActions({
   includeAdmin = accountIsAdmin(),
+  includeSignedIn = accountIsSignedIn(),
   projectId,
 }: {
   includeAdmin?: boolean;
+  includeSignedIn?: boolean;
   projectId: string;
 }): DocsActionAvailability[] {
-  return listDocsActions({ includeAdmin }).map((action) => {
+  return listDocsActions({ includeAdmin, includeSignedIn }).map((action) => {
     const appAction = getDocsAppAction(action.id);
     if (appAction && !projectId && actionNeedsProjectParameter(action)) {
       return {
@@ -934,18 +1040,20 @@ export function listDocsAppActions({
 export function revealDocsAction({
   actionId,
   includeAdmin = accountIsAdmin(),
+  includeSignedIn = accountIsSignedIn(),
   parameters,
   projectId,
 }: {
   actionId: string;
   includeAdmin?: boolean;
+  includeSignedIn?: boolean;
   parameters?: DocsActionParameters;
   projectId: string;
 }): DocsActionRevealResult | Promise<DocsActionRevealResult> {
   if (!isDocsActionId(actionId)) {
     throw Error(`unknown docs action '${actionId}'`);
   }
-  const action = getDocsAction(actionId, { includeAdmin });
+  const action = getDocsAction(actionId, { includeAdmin, includeSignedIn });
   if (!action) {
     throw Error(`docs action '${actionId}' is not available`);
   }
