@@ -1061,7 +1061,6 @@ export function MembershipStatusPanel({
               <Button
                 onClick={() =>
                   openAccountSettings({
-                    kind: "tab",
                     page: "licenses",
                   })
                 }

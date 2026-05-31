@@ -17,6 +17,7 @@ const defaultRootfsImage = process.env.STAR_DEFAULT_ROOTFS_IMAGE;
 const masterTokenPath =
   process.env.STAR_MASTER_CONAT_TOKEN_PATH ??
   "/var/lib/cocalc/star/project-host/0/secrets/master-conat-token";
+const bootstrapResultPath = process.env.STAR_BOOTSTRAP_RESULT_PATH;
 
 if (
   process.env.COCALC_DB === "postgres" &&
@@ -113,17 +114,23 @@ chmodSync(masterTokenPath, 0o600);
 const bootstrapUrl = await ensureBootstrapAdminToken({ baseUrl });
 await pool.end();
 
-console.log(
-  JSON.stringify(
-    {
-      ok: true,
-      host_id: hostId,
-      bootstrap_url: bootstrapUrl ?? null,
-      master_conat_token_path: masterTokenPath,
-    },
-    null,
-    2,
-  ),
-);
+const result = {
+  ok: true,
+  host_id: hostId,
+  bootstrap_url: bootstrapUrl ?? null,
+  master_conat_token_path: masterTokenPath,
+};
+const resultJson = JSON.stringify(result, null, 2);
+
+if (bootstrapResultPath) {
+  mkdirSync(dirname(bootstrapResultPath), { recursive: true, mode: 0o700 });
+  writeFileSync(bootstrapResultPath, `${resultJson}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  chmodSync(bootstrapResultPath, 0o600);
+}
+
+console.log(resultJson);
 
 process.exit(0);

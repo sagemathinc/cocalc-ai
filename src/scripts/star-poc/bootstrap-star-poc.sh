@@ -208,6 +208,13 @@ EOF
   as_star_user "podman image exists '$build_image' >/dev/null 2>&1 && exit 0; podman build --pull=always -t '$build_image' -f '$containerfile' '$STAR_ROOT'"
 }
 
+ensure_default_rootfs_cache() {
+  if [ -z "${STAR_DEFAULT_ROOTFS_IMAGE:-}" ]; then
+    return
+  fi
+  as_star_user "set -a && source /etc/cocalc/project-host.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' node scripts/star-poc/ensure-rootfs-cache.mjs"
+}
+
 write_env_files() {
   local site_master_key="${STAR_DATA}/secrets/site-master-key"
   if [ ! -f "$site_master_key" ]; then
@@ -272,11 +279,16 @@ EOF
 }
 
 seed_database() {
-  as_star_user "set -o pipefail && set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_BASE_URL='$STAR_BASE_URL' STAR_MASTER_CONAT_TOKEN_PATH='$STAR_PROJECT_HOST_DATA/secrets/master-conat-token' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' node scripts/star-poc/seed-star-poc.mjs | tee '$STAR_ROOT/bootstrap-result.json'"
+  as_star_user "set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_BASE_URL='$STAR_BASE_URL' STAR_MASTER_CONAT_TOKEN_PATH='$STAR_PROJECT_HOST_DATA/secrets/master-conat-token' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' STAR_BOOTSTRAP_RESULT_PATH='$STAR_ROOT/bootstrap-result.json' node scripts/star-poc/seed-star-poc.mjs"
 }
 
 install_systemd() {
-  cat >/etc/systemd/system/cocalc-star-hub.service <<EOF
+  local hub_unit project_host_unit caddy_config
+  hub_unit="$(mktemp)"
+  project_host_unit="$(mktemp)"
+  caddy_config="$(mktemp)"
+
+  cat >"$hub_unit" <<EOF
 [Unit]
 Description=CoCalc Star POC launchpad hub
 After=network-online.target
@@ -298,7 +310,7 @@ TimeoutStopSec=20
 WantedBy=multi-user.target
 EOF
 
-  cat >/etc/systemd/system/cocalc-star-project-host.service <<EOF
+  cat >"$project_host_unit" <<EOF
 [Unit]
 Description=CoCalc Star POC local project host
 After=network-online.target cocalc-star-hub.service
@@ -323,11 +335,21 @@ TimeoutStopSec=40
 WantedBy=multi-user.target
 EOF
 
-  cat >/etc/caddy/Caddyfile <<EOF
+  cat >"$caddy_config" <<EOF
 :80 {
   reverse_proxy 127.0.0.1:${STAR_BASE_PORT}
 }
 EOF
+
+  grep -q '^ExecStart=' "$hub_unit" || die "generated hub systemd unit is invalid"
+  grep -q '^ExecStart=' "$project_host_unit" || die "generated project-host systemd unit is invalid"
+  install -m 0644 -o root -g root "$hub_unit" /etc/systemd/system/cocalc-star-hub.service
+  install -m 0644 -o root -g root "$project_host_unit" /etc/systemd/system/cocalc-star-project-host.service
+  install -m 0644 -o root -g root "$caddy_config" /etc/caddy/Caddyfile
+  grep -q '^ExecStart=' /etc/systemd/system/cocalc-star-hub.service || die "installed hub systemd unit is invalid"
+  grep -q '^ExecStart=' /etc/systemd/system/cocalc-star-project-host.service || die "installed project-host systemd unit is invalid"
+  rm -f "$hub_unit" "$project_host_unit" "$caddy_config"
+
   systemctl daemon-reload
   systemctl enable caddy cocalc-star-hub cocalc-star-project-host
 }
@@ -355,7 +377,14 @@ start_services() {
   systemctl restart caddy
   systemctl restart cocalc-star-hub
   systemctl restart cocalc-star-project-host
-  sleep 5
+  log "waiting for ${STAR_BASE_URL}/customize"
+  for _ in $(seq 1 60); do
+    if curl -fsS "${STAR_BASE_URL}/customize" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+  done
+  sync
   systemctl --no-pager --full status cocalc-star-hub cocalc-star-project-host || true
   cat "$STAR_ROOT/bootstrap-result.json"
 }
@@ -370,6 +399,7 @@ install_wrappers
 configure_users_and_dirs
 build_default_rootfs_image
 write_env_files
+ensure_default_rootfs_cache
 seed_database
 install_systemd
 configure_sudoers

@@ -46,7 +46,7 @@ V1 should be narrow.
 
 Supported OS:
 
-- Ubuntu 24.04 LTS only. (maybe Ubuntu 26.04 LTS also, which just came out)
+- Ubuntu 24.04 LTS only.
 - Fresh or effectively dedicated VM.
 
 Minimum VM:
@@ -443,7 +443,7 @@ COCALC_PROJECT_HOST_EMERGENCY_MEMORY_AVAILABLE_BYTES=1073741824
 Product decision:
 
 - Should Star limits be enforced by license/membership rows, by a Star product
-  setting, or both?
+  setting, or both?  (ans: definitely membership rows should be very important for letting an admin impact what users can do.  We should hard cap the number of distinct accounts as part of the terms of usage and also configured defaults.   In short, I don't quite know for sure.  I think a single nodejs process with pglite is intrinsically pretty limited in terms of throughput.  I agree with the reco below.) 
 
 Recommendation:
 
@@ -537,6 +537,7 @@ Backup V1:
 - "Snapshot the VM/disk" is the primary operational backup story.
 - Local rustic backups can be available, but they are not sufficient if the
   whole VM/disk is lost unless copied elsewhere.
+- Admin guide will suggest: "(1)  the site master encryption key is here - back this up somewhere, and (2) make regularly copies of the rustic backups using something rsync or rclone."  It's far smaller/cheaper to backup the rustic directory than everything.  But that's entirely up to the admin.  Obviously this is an upsell point for Rocket.
 
 Backup V2:
 
@@ -571,7 +572,7 @@ Hardening:
 
 Open decision:
 
-- Should the installer configure `ufw` automatically?
+- Should the installer configure `ufw` automatically? (I agree with recommendation.)
 
 Recommendation:
 
@@ -842,6 +843,7 @@ V1:
 
 - Recommend provider VM/disk snapshots.
 - Provide local export/check commands.
+- Tell user: copy this master key and periodically copy this rustic directory somewhere, and that's your backups.  Of course restore from master key + rustic must be a part of our workflow and plan. It's important and good to test. 
 
 V2:
 
@@ -866,30 +868,30 @@ not provider feature development.
    - working name: `CoCalc Star`.
    - CLI/package: `cocalc-star`.
 2. License/account cap:
-   - free/trial cap,
-   - paid cap,
-   - enforcement location.
+   - free/trial cap - 2 accounts,
+   - paid cap - 25 accounts,
+   - enforcement location - (not sure).
 3. Public URL/TLS:
    - defer,
-   - Caddy,
+   - Caddy &lt;-- this,
    - or operator-managed.
 4. Email:
-   - optional,
+   - optional  &lt;-- this; not part of onboarding, but the functionality exists,
    - hidden email-verification UI when disabled,
    - admin password reset links still available.
 5. Default RootFS:
    - ship a small prebuilt default,
-   - build on first run,
-   - or guide admin to create one.
+   - build on first run &lt;-- this; it would make the onboarding a little slower but it would also 100% prove that the full podman/rustic/rootfs lifecycle is working here which is very valuable.  It should be pretty fast if tiny.,
+   - or guide admin to create one &lt;-- still do this.
 6. Backup:
-   - document VM snapshots as V1,
+   - document VM snapshots as V1 &lt;-- this for sure, and just document (you can rsync/rclone rustic somewhere; up to you),
    - or require external backup setup before "ready".
 7. Marketplace support level:
-   - image only,
+   - image only &lt;-- initially this  (paid and managed is more of a rocket product for good leads),
    - paid support,
    - or managed updates.
 8. Developer/source deployments:
-   - employee-only,
+   - employee-only &lt;-- initially this (below will be important later),
    - available to customers but unsupported,
    - or supported as a paid/customization tier.
 9. Custom-build support boundary:
@@ -950,7 +952,7 @@ Validation:
 
 Deliverable:
 
-- `packages/star` package or `packages/launchpad` Star build target.
+- `packages/star` package (YES, do create packages/star) or `packages/launchpad` Star build target.
 - Runtime tarball includes:
   - control-plane bundle,
   - project-host bundle,
@@ -979,6 +981,7 @@ Validation:
 
 - Single binary on fresh Ubuntu can install Star.
 - Compressed size target roughly 200 MiB if realistic.
+- TARGETS: Linux x86_64 and arm64 as two separate binaries.  arm64 matters, e.g., VM's on any macOS machine.
 
 ### Phase 6: Developer Source Deploy Lane
 
@@ -1026,7 +1029,7 @@ Automated:
 Manual:
 
 - Fresh Ubuntu 24.04 x86_64 VM.
-- Fresh Ubuntu 24.04 arm64 VM if SEA/build supports it.
+- Fresh Ubuntu 24.04 arm64 VM if SEA/build supports it.  (USER: it definitely does)
 - Reboot recovery.
 - Upgrade/rollback.
 - Low-memory pressure behavior.
@@ -1056,7 +1059,7 @@ Smoke:
 - External project-host providers.
 - Cloudflare.
 - Kubernetes.
-- High-availability database.
+- High-availability database or even a separate database server.
 - Enterprise-grade hostile multi-tenant isolation.
 - Automated cross-cloud marketplace publishing.
 - Managed service through CoCalc cloud accounts.

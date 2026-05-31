@@ -12,17 +12,17 @@ The URI schema handled by the single page app is as follows:
         https://cocalc.com/settings
      Admin only page:
         https://cocalc.com/admin
-      Account settings (default):
-         https://cocalc.com/settings/account
-      Account sub-tabs:
-         https://cocalc.com/settings/account/profile
-         https://cocalc.com/settings/account/ai
-         https://cocalc.com/settings/account/security
-         etc.
+     Account profile:
+        https://cocalc.com/settings/profile
+     Preferences:
+        https://cocalc.com/settings/appearance
+        https://cocalc.com/settings/ai
+        https://cocalc.com/settings/keys
+        etc.
      Billing:
-        https://cocalc.com/settings/billing
-     Licenses:
-        https://cocalc.com/settings/licenses
+        https://cocalc.com/settings/subscriptions
+        https://cocalc.com/settings/payment-methods
+        https://cocalc.com/settings/statements
      Support:
         https://cocalc.com/settings/support
      Projects page:
@@ -185,7 +185,6 @@ export function load_target(
         redux.getActions("account"),
         getAccountSettingsRouteFromState({
           active_page: parsed.tab,
-          active_sub_tab: parsed.sub_tab,
         }),
         { pushHistory: change_history },
       );

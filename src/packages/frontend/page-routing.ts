@@ -16,10 +16,7 @@ import {
   type AdminRoute,
 } from "@cocalc/frontend/admin/routing";
 import { getLegacyCommerceTargetPath } from "@cocalc/util/routing/legacy-commerce";
-import type {
-  PreferencesSubTabKey,
-  SettingsPageType,
-} from "@cocalc/util/types/settings";
+import type { SettingsPageType } from "@cocalc/util/types/settings";
 
 export type PageTopTab =
   | "account"
@@ -38,8 +35,7 @@ export type ParsedPageTarget =
   | { page: "project"; target: string }
   | {
       page: "account";
-      tab: SettingsPageType | "preferences";
-      sub_tab?: PreferencesSubTabKey;
+      tab: SettingsPageType;
     }
   | {
       page: "notifications";
@@ -82,13 +78,12 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
       return { page: "project", target: segments.slice(1).join("/") };
     case "settings": {
       const route = parseAccountSettingsRoute(segments.slice(1)) ?? {
-        kind: "index",
+        page: "index",
       };
       const state = getAccountSettingsState(route);
       return {
         page: "account",
         tab: state.active_page,
-        sub_tab: state.active_sub_tab,
       };
     }
     case "notifications":
@@ -135,8 +130,7 @@ export function getPageTopTab(parsed: ParsedPageTarget): PageTopTab {
 
 export function getInitialAccountPageState(parsed: ParsedPageTarget):
   | {
-      active_page: SettingsPageType | "preferences";
-      active_sub_tab?: PreferencesSubTabKey;
+      active_page: SettingsPageType;
     }
   | undefined {
   if (parsed.page !== "account") {
@@ -144,7 +138,6 @@ export function getInitialAccountPageState(parsed: ParsedPageTarget):
   }
   return {
     active_page: parsed.tab,
-    active_sub_tab: parsed.sub_tab,
   };
 }
 
@@ -158,7 +151,6 @@ export function getPageTargetPath(parsed: ParsedPageTarget): string {
       return getSettingsTargetPath(
         getAccountSettingsRouteFromState({
           active_page: parsed.tab,
-          active_sub_tab: parsed.sub_tab,
         }),
       );
     case "notifications":

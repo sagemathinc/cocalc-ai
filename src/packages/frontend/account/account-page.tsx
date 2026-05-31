@@ -10,10 +10,7 @@ for different account related information
 and configuration.
 */
 
-import type {
-  PreferencesSubTabKey,
-  PreferencesSubTabType,
-} from "@cocalc/util/types/settings";
+import type { SettingsPageType } from "@cocalc/util/types/settings";
 import { Button, Flex, Menu, Select, Space } from "antd";
 import { useEffect, useState } from "react";
 import { useIntl } from "react-intl";
@@ -39,10 +36,6 @@ import StatementsPage from "@cocalc/frontend/purchases/statements-page";
 import { StorePage, VoucherCenterPage } from "@cocalc/frontend/store";
 import SubscriptionsPage from "@cocalc/frontend/purchases/subscriptions-page";
 import { SupportTickets } from "@cocalc/frontend/support";
-import {
-  KUCALC_COCALC_COM,
-  KUCALC_ON_PREMISES,
-} from "@cocalc/util/db-schema/site-defaults";
 import { COLORS } from "@cocalc/util/theme";
 import { AccountPreferencesAI } from "./account-preferences-ai";
 import {
@@ -79,8 +72,10 @@ import { LicensesPage } from "./licenses/licenses-page";
 import { SettingsOverview } from "./settings-index";
 import {
   applyAccountSettingsRoute,
-  createPreferencesSubTabKey,
-  isAccountSettingsTab,
+  getAccountSettingsGroupKey,
+  getAccountSettingsGroupPages,
+  getAccountSettingsRouteFromState,
+  isAccountSettingsPageKey,
 } from "./settings-routing";
 import MembershipBadge from "./membership-badge";
 import { lite, project_id } from "@cocalc/frontend/lite";
@@ -94,7 +89,7 @@ type MenuKey =
   | "support"
   | "signout"
   | "profile"
-  | PreferencesSubTabKey
+  | SettingsPageType
   | string;
 
 // give up on trying to load account info and redirect to landing page.
@@ -106,20 +101,19 @@ const LOAD_ACCOUNT_INFO_TIMEOUT = 15_000;
 export const AccountPage: React.FC = () => {
   const intl = useIntl();
   const [hidden, setHidden] = useState(IS_MOBILE);
-  const [openKeys, setOpenKeys] = useState<string[]>(["preferences"]);
 
   const { width: windowWidth } = useWindowDimensions();
   const isWide = windowWidth > 800;
 
-  const active_page = useTypedRedux("account", "active_page") ?? "index";
-  const active_sub_tab =
-    useTypedRedux("account", "active_sub_tab") ??
-    (active_page === "preferences"
-      ? ("preferences-appearance" as PreferencesSubTabKey)
-      : undefined);
+  const raw_active_page = useTypedRedux("account", "active_page") ?? "index";
+  const active_page = getAccountSettingsRouteFromState({
+    active_page: raw_active_page,
+  }).page;
+  const activeGroupKey = getAccountSettingsGroupKey(active_page);
+  const activeGroupOpenKeys = activeGroupKey == null ? [] : [activeGroupKey];
+  const [manualOpenKeys, setManualOpenKeys] = useState<string[] | undefined>();
   const is_logged_in = useTypedRedux("account", "is_logged_in");
   const account_id = useTypedRedux("account", "account_id");
-  const kucalc = useTypedRedux("customize", "kucalc");
   const is_commercial = useTypedRedux("customize", "is_commercial");
   const is_admin = !!useTypedRedux("account", "is_admin");
   const zendesk = !!useTypedRedux("customize", "zendesk");
@@ -127,283 +121,241 @@ export const AccountPage: React.FC = () => {
 
   useEffect(() => {
     if (!lite) return;
-    if (active_page !== "admin") return;
-    applyAccountSettingsRoute(redux.getActions("account"), { kind: "index" });
-  }, [active_page]);
+    if (raw_active_page !== "admin") return;
+    applyAccountSettingsRoute(redux.getActions("account"), { page: "index" });
+  }, [raw_active_page]);
 
   function handle_select(key: MenuKey): void {
     const accountActions = redux.getActions("account");
-    switch (key) {
-      case "index":
-        applyAccountSettingsRoute(accountActions, { kind: "index" });
-        return;
-      case "billing":
-        redux.getActions("billing").update_customer();
-        break;
-      case "support":
-        break;
-      case "signout":
-        return;
-      case "profile":
-        applyAccountSettingsRoute(accountActions, { kind: "profile" });
-        return;
-    }
-
-    // Handle sub-tabs under preferences
-    if (typeof key === "string" && key.startsWith("preferences-")) {
-      const subTab = key.replace("preferences-", "");
-      const subTabKey = createPreferencesSubTabKey(subTab);
-      if (subTabKey) {
-        applyAccountSettingsRoute(accountActions, {
-          kind: "preferences",
-          subTab: subTab as PreferencesSubTabType,
-          subTabKey,
-        });
-      }
+    if (key === "billing") {
+      redux.getActions("billing").update_customer();
       return;
     }
-
-    if (typeof key === "string" && isAccountSettingsTab(key)) {
-      applyAccountSettingsRoute(accountActions, { kind: "tab", page: key });
+    if (key === "signout") {
+      return;
+    }
+    if (typeof key === "string" && isAccountSettingsPageKey(key)) {
+      applyAccountSettingsRoute(accountActions, { page: key });
     }
   }
 
   function getTabs(): any[] {
-    const items: any[] = [
-      {
-        key: "index",
+    const pageItems: Record<SettingsPageType, any> = {
+      ai: {
+        children: active_page === "ai" && <AccountPreferencesAI />,
+        label: (
+          <span>
+            <AIAvatar size={16} style={{ top: "-5px" }} />{" "}
+            {intl.formatMessage(labels.ai)}
+          </span>
+        ),
+      },
+      appearance: {
+        children: active_page === "appearance" && (
+          <AccountPreferencesAppearance />
+        ),
+        label: (
+          <span>
+            <Icon name={APPEARANCE_ICON_NAME} />{" "}
+            {intl.formatMessage(labels.appearance)}
+          </span>
+        ),
+      },
+      communication: {
+        children: active_page === "communication" && (
+          <AccountPreferencesCommunication />
+        ),
+        label: (
+          <span>
+            <Icon name={COMMUNICATION_ICON_NAME} />{" "}
+            {intl.formatMessage(labels.communication)}
+          </span>
+        ),
+      },
+      editor: {
+        children: active_page === "editor" && <AccountPreferencesEditor />,
+        label: (
+          <span>
+            <Icon name={EDITOR_ICON_NAME} /> {intl.formatMessage(labels.editor)}
+          </span>
+        ),
+      },
+      index: {
+        children: active_page === "index" && <SettingsOverview />,
         label: (
           <span style={{ fontWeight: "bold" }}>
             <Icon name={ACCOUNT_SETTINGS_ICON_NAME} />{" "}
             {intl.formatMessage(labels.settings)}
           </span>
         ),
-        children: active_page === "index" && <SettingsOverview />,
       },
-      // Profile as second item
-      {
-        key: "profile",
+      keyboard: {
+        children: active_page === "keyboard" && <AccountPreferencesKeyboard />,
         label: (
           <span>
-            <Icon name={ACCOUNT_PROFILE_ICON_NAME} />{" "}
-            {intl.formatMessage(labels.profile)}
+            <Icon name={KEYBOARD_ICON_NAME} />{" "}
+            {intl.formatMessage(labels.keyboard)}
           </span>
         ),
-        children: active_page === "profile" && <AccountPreferencesProfile />,
       },
-      // Preferences submenu
-      {
-        key: "preferences",
+      keys: {
+        children: active_page === "keys" && <AccountPreferencesSecurity />,
         label: (
           <span>
-            <Icon name={ACCOUNT_PREFERENCES_ICON_NAME} />{" "}
-            {intl.formatMessage(labels.preferences)}
+            <Icon name={KEYS_ICON_NAME} />{" "}
+            {intl.formatMessage(labels.ssh_and_api_keys)}
           </span>
         ),
-        children: [
-          {
-            key: "preferences-appearance",
-            label: (
-              <span>
-                <Icon name={APPEARANCE_ICON_NAME} />{" "}
-                {intl.formatMessage(labels.appearance)}
-              </span>
-            ),
-            children: active_page === "preferences" &&
-              active_sub_tab === "preferences-appearance" && (
-                <AccountPreferencesAppearance />
-              ),
-          },
-          {
-            key: "preferences-editor",
-            label: (
-              <span>
-                <Icon name={EDITOR_ICON_NAME} />{" "}
-                {intl.formatMessage(labels.editor)}
-              </span>
-            ),
-            children: active_page === "preferences" &&
-              active_sub_tab === "preferences-editor" && (
-                <AccountPreferencesEditor />
-              ),
-          },
-          {
-            key: "preferences-keyboard",
-            label: (
-              <span>
-                <Icon name={KEYBOARD_ICON_NAME} />{" "}
-                {intl.formatMessage(labels.keyboard)}
-              </span>
-            ),
-            children: active_page === "preferences" &&
-              active_sub_tab === "preferences-keyboard" && (
-                <AccountPreferencesKeyboard />
-              ),
-          },
-          {
-            key: "preferences-ai",
-            label: (
-              <span>
-                <AIAvatar size={16} style={{ top: "-5px" }} />{" "}
-                {intl.formatMessage(labels.ai)}
-              </span>
-            ),
-            children: active_page === "preferences" &&
-              active_sub_tab === "preferences-ai" && <AccountPreferencesAI />,
-          },
-          ...(lite
-            ? []
-            : [
-                {
-                  key: "preferences-communication",
-                  label: (
-                    <span>
-                      <Icon name={COMMUNICATION_ICON_NAME} />{" "}
-                      {intl.formatMessage(labels.communication)}
-                    </span>
-                  ),
-                  children: active_page === "preferences" &&
-                    active_sub_tab === "preferences-communication" && (
-                      <AccountPreferencesCommunication />
-                    ),
-                },
-              ]),
-          ...(lite
-            ? []
-            : [
-                {
-                  key: "preferences-keys",
-                  label: (
-                    <span>
-                      <Icon name={KEYS_ICON_NAME} />{" "}
-                      {intl.formatMessage(labels.ssh_and_api_keys)}
-                    </span>
-                  ),
-                  children: active_page === "preferences" &&
-                    active_sub_tab === "preferences-keys" && (
-                      <AccountPreferencesSecurity />
-                    ),
-                },
-              ]),
-          {
-            key: "preferences-other",
-            label: (
-              <span>
-                <Icon name={OTHER_ICON_NAME} />{" "}
-                {intl.formatMessage(labels.other)}
-              </span>
-            ),
-            children: active_page === "preferences" &&
-              active_sub_tab === "preferences-other" && (
-                <AccountPreferencesOther />
-              ),
-          },
-        ],
       },
-    ];
-    // adds a few conditional tabs
-    items.push({ type: "divider" });
-
-    if (is_commercial || is_admin) {
-      items.push({
-        key: "subscriptions",
-        label: (
-          <span>
-            <Icon name="calendar" /> {intl.formatMessage(labels.subscriptions)}
-          </span>
-        ),
-        children: active_page === "subscriptions" && <SubscriptionsPage />,
-      });
-      items.push({
-        key: "licenses",
+      licenses: {
+        children: active_page === "licenses" && <LicensesPage />,
         label: (
           <span>
             <Icon name="key" /> {intl.formatMessage(labels.licenses)}
           </span>
         ),
-        children: active_page === "licenses" && <LicensesPage />,
-      });
-      items.push({
-        key: "store",
+      },
+      other: {
+        children: active_page === "other" && <AccountPreferencesOther />,
         label: (
           <span>
-            <Icon name="shopping-cart" /> Store
+            <Icon name={OTHER_ICON_NAME} /> {intl.formatMessage(labels.other)}
           </span>
         ),
-        children: active_page === "store" && <StorePage />,
-      });
-      items.push({
-        key: "vouchers",
-        label: (
-          <span>
-            <Icon name="gift" /> Voucher Center
-          </span>
-        ),
-        children: active_page === "vouchers" && <VoucherCenterPage />,
-      });
-      items.push({ type: "divider" });
-    }
-
-    if (is_commercial) {
-      items.push({
-        key: "purchases",
-        label: (
-          <span>
-            <Icon name="money-check" /> {intl.formatMessage(labels.purchases)}
-          </span>
-        ),
-        children: active_page === "purchases" && <PurchasesPage />,
-      });
-      items.push({
-        key: "payments",
-        label: (
-          <span>
-            <Icon name="credit-card" /> {intl.formatMessage(labels.payments)}
-          </span>
-        ),
-        children: active_page === "payments" && <PaymentsPage />,
-      });
-      items.push({
-        key: "payment-methods",
+      },
+      "payment-methods": {
+        children: active_page === "payment-methods" && <PaymentMethodsPage />,
         label: (
           <span>
             <Icon name="credit-card" />{" "}
             {intl.formatMessage(labels.payment_methods)}
           </span>
         ),
-        children: active_page === "payment-methods" && <PaymentMethodsPage />,
-      });
-      items.push({
-        key: "statements",
+      },
+      payments: {
+        children: active_page === "payments" && <PaymentsPage />,
+        label: (
+          <span>
+            <Icon name="credit-card" /> {intl.formatMessage(labels.payments)}
+          </span>
+        ),
+      },
+      profile: {
+        children: active_page === "profile" && <AccountPreferencesProfile />,
+        label: (
+          <span>
+            <Icon name={ACCOUNT_PROFILE_ICON_NAME} />{" "}
+            {intl.formatMessage(labels.profile)}
+          </span>
+        ),
+      },
+      purchases: {
+        children: active_page === "purchases" && <PurchasesPage />,
+        label: (
+          <span>
+            <Icon name="money-check" /> {intl.formatMessage(labels.purchases)}
+          </span>
+        ),
+      },
+      statements: {
+        children: active_page === "statements" && <StatementsPage />,
         label: (
           <span>
             <Icon name="calendar-week" />{" "}
             {intl.formatMessage(labels.statements)}
           </span>
         ),
-        children: active_page === "statements" && <StatementsPage />,
-      });
-      items.push({ type: "divider" });
-    }
-
-    if (
-      kucalc === KUCALC_COCALC_COM ||
-      kucalc === KUCALC_ON_PREMISES ||
-      is_commercial
-    ) {
-    }
-
-    if (zendesk) {
-      items.push({ type: "divider" });
-      items.push({
-        key: "support",
+      },
+      store: {
+        children: active_page === "store" && <StorePage />,
+        label: (
+          <span>
+            <Icon name="shopping-cart" /> Store
+          </span>
+        ),
+      },
+      subscriptions: {
+        children: active_page === "subscriptions" && <SubscriptionsPage />,
+        label: (
+          <span>
+            <Icon name="calendar" /> {intl.formatMessage(labels.subscriptions)}
+          </span>
+        ),
+      },
+      support: {
+        children: active_page === "support" && <SupportTickets />,
         label: (
           <span>
             <Icon name="medkit" /> {intl.formatMessage(labels.support)}
           </span>
         ),
-        children: active_page === "support" && <SupportTickets />,
+      },
+      vouchers: {
+        children: active_page === "vouchers" && <VoucherCenterPage />,
+        label: (
+          <span>
+            <Icon name="gift" /> Voucher Center
+          </span>
+        ),
+      },
+    };
+
+    function getPageItem(page: SettingsPageType): any {
+      return { key: page, ...pageItems[page] };
+    }
+
+    function isVisiblePage(page: SettingsPageType): boolean {
+      if (lite && (page === "communication" || page === "keys")) return false;
+      if (
+        page === "purchases" ||
+        page === "payments" ||
+        page === "payment-methods" ||
+        page === "statements"
+      ) {
+        return is_commercial;
+      }
+      return true;
+    }
+
+    const items: any[] = [
+      getPageItem("index"),
+      getPageItem("profile"),
+      {
+        key: "preferences",
+        mobilePrefix: intl.formatMessage(labels.preferences),
+        label: (
+          <span>
+            <Icon name={ACCOUNT_PREFERENCES_ICON_NAME} />{" "}
+            {intl.formatMessage(labels.preferences)}
+          </span>
+        ),
+        children: getAccountSettingsGroupPages("preferences")
+          .filter(isVisiblePage)
+          .map(getPageItem),
+      },
+    ];
+
+    items.push({ type: "divider" });
+
+    if (is_commercial || is_admin) {
+      items.push({
+        key: "billing",
+        mobilePrefix: intl.formatMessage(labels.billing),
+        label: (
+          <span>
+            <Icon name="money-check" /> {intl.formatMessage(labels.billing)}
+          </span>
+        ),
+        children: getAccountSettingsGroupPages("billing")
+          .filter(isVisiblePage)
+          .map(getPageItem),
       });
+      items.push({ type: "divider" });
+    }
+
+    if (zendesk) {
+      items.push({ type: "divider" });
+      items.push(getPageItem("support"));
     }
 
     return items;
@@ -411,76 +363,43 @@ export const AccountPage: React.FC = () => {
 
   const tabs = getTabs();
   const mobileNavigationOptions = getMobileNavigationOptions(tabs);
+  const menuOpenKeys = manualOpenKeys ?? activeGroupOpenKeys;
 
-  // Process tabs to handle nested children for sub-tabs
+  function visibleLabel(label) {
+    return hidden ? <span>{label.props.children[0]}</span> : label;
+  }
+
+  // Process tabs to handle nested children uniformly.
   const children = {};
   const titles = {}; // Always store full labels for renderTitle()
   for (const tab of tabs) {
     if (tab.type == "divider") {
       continue;
     }
-    if (tab.key === "preferences" && Array.isArray(tab.children)) {
-      // Handle sub-tabs for preferences
+    const originalLabel = tab.label;
+    titles[tab.key] = originalLabel;
+    tab.label = visibleLabel(originalLabel);
+
+    if (Array.isArray(tab.children)) {
       const subTabs = tab.children;
       tab.children = subTabs.map((subTab) => {
-        // Extract just the icon (first child) from the span when hidden
-        const label = hidden ? (
-          <span style={{ paddingLeft: "5px" }}>
-            {subTab.label.props.children[0]}
-          </span>
-        ) : (
-          subTab.label
-        );
         return {
           key: subTab.key,
-          label,
+          label: visibleLabel(subTab.label),
         };
       });
-      // Store sub-tab children and full labels
       for (const subTab of subTabs) {
         children[subTab.key] = subTab.children;
         titles[subTab.key] = subTab.label; // Always store original full label
       }
-    } else if (tab.key === "index" || tab.key === "profile") {
-      // Handle settings and profile as top-level pages
-      // Store original full label for renderTitle()
-      const originalLabel = tab.label;
-      // Extract just the icon (first child) from the span when hidden
-      tab.label = hidden ? (
-        <span style={{ paddingLeft: "5px" }}>
-          {tab.label.props.children[0]}
-        </span>
-      ) : (
-        tab.label
-      );
-      children[tab.key] = tab.children;
-      titles[tab.key] = originalLabel; // Store original label
-      delete tab.children;
     } else {
-      // Store original full label for renderTitle()
-      const originalLabel = tab.label;
-      // Extract just the icon (first child) from the span when hidden
-      tab.label = hidden ? (
-        <span style={{ paddingLeft: "5px" }}>
-          {tab.label.props.children[0]}
-        </span>
-      ) : (
-        tab.label
-      );
       children[tab.key] = tab.children;
-      titles[tab.key] = originalLabel; // Store original label
       delete tab.children;
     }
   }
 
   function renderTitle() {
-    return (
-      <Title level={3}>
-        {active_page === "preferences" && active_sub_tab
-          ? titles[active_sub_tab]
-          : titles[active_page]}
-      </Title>
-    );
+    return <Title level={3}>{titles[active_page] ?? titles["index"]}</Title>;
   }
 
   function renderExtraContent() {
@@ -497,9 +416,7 @@ export const AccountPage: React.FC = () => {
   }
 
   function renderActiveContent() {
-    return active_page === "preferences" && active_sub_tab
-      ? children[active_sub_tab]
-      : children[active_page];
+    return children[active_page] ?? children["index"];
   }
 
   function renderMobileLoggedInView(): React.JSX.Element {
@@ -510,11 +427,6 @@ export const AccountPage: React.FC = () => {
         </div>
       );
     }
-
-    const activeKey =
-      active_page === "preferences" && active_sub_tab
-        ? active_sub_tab
-        : active_page;
 
     return (
       <div
@@ -539,7 +451,7 @@ export const AccountPage: React.FC = () => {
         )}
         <Select
           size="large"
-          value={activeKey}
+          value={active_page}
           options={mobileNavigationOptions}
           onChange={(key) => handle_select(key)}
           style={{ width: "100%" }}
@@ -580,17 +492,6 @@ export const AccountPage: React.FC = () => {
             flexDirection: "column",
           }}
         >
-          {!lite && (
-            <div
-              style={{
-                textAlign: "center",
-                margin: "15px 0",
-                fontSize: "11pt",
-              }}
-            >
-              <b>Account Configuration</b>
-            </div>
-          )}
           {lite && (
             <div
               style={{
@@ -610,20 +511,20 @@ export const AccountPage: React.FC = () => {
             </div>
           )}
           <Menu
-            defaultOpenKeys={["preferences"]}
-            openKeys={hidden ? ["preferences"] : openKeys}
-            onOpenChange={hidden ? undefined : setOpenKeys}
+            className={hidden ? "account-menu-inline-collapsed" : undefined}
+            openKeys={menuOpenKeys}
+            onOpenChange={setManualOpenKeys}
             mode="inline"
             items={tabs}
             onClick={(e) => {
               handle_select(e.key);
             }}
             selectedKeys={
-              active_sub_tab ? [active_page, active_sub_tab] : [active_page]
+              activeGroupKey ? [activeGroupKey, active_page] : [active_page]
             }
             inlineIndent={hidden ? 0 : 24}
             style={{
-              width: hidden ? 50 : 200,
+              width: hidden ? 50 : 220,
               background: "#00000005",
               flex: "1 1 auto",
               overflowY: "auto",
@@ -689,13 +590,16 @@ function getMobileNavigationOptions(tabs: any[]) {
   const options: { label: React.ReactNode; value: string }[] = [];
   for (const tab of tabs) {
     if (tab.type === "divider") continue;
-    if (tab.key === "preferences" && Array.isArray(tab.children)) {
+    if (Array.isArray(tab.children)) {
+      const prefix = tab.mobilePrefix;
       for (const subTab of tab.children) {
         options.push({
           value: subTab.key,
           label: (
             <span>
-              <span style={{ color: COLORS.GRAY_M }}>Preferences: </span>
+              {prefix != null && (
+                <span style={{ color: COLORS.GRAY_M }}>{prefix}: </span>
+              )}
               {subTab.label}
             </span>
           ),

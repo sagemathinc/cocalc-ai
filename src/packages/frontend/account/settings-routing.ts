@@ -5,61 +5,194 @@
 
 import { redux } from "@cocalc/frontend/app-framework";
 import type {
+  BillingSubTabType,
   NavigatePath,
   PreferencesSubTabKey,
   PreferencesSubTabType,
   SettingsPageType,
 } from "@cocalc/util/types/settings";
 import {
+  VALID_BILLING_SUB_TYPES,
   VALID_PREFERENCES_SUB_TYPES,
   VALID_SETTINGS_PAGES,
 } from "@cocalc/util/types/settings";
 
-export type AccountSettingsTab = Exclude<SettingsPageType, "index" | "profile">;
+export type AccountSettingsGroupKey = "preferences" | "billing";
 
-export type AccountSettingsRoute =
-  | { kind: "index" }
-  | { kind: "profile" }
-  | {
-      kind: "preferences";
-      subTab: PreferencesSubTabType;
-      subTabKey: PreferencesSubTabKey;
-    }
-  | { kind: "tab"; page: AccountSettingsTab };
-
-export type SettingsTargetPath =
-  | NavigatePath
+type AccountSettingsPagePath =
+  | "settings"
   | "settings/index"
-  | "settings/profile";
+  | `settings/${Exclude<SettingsPageType, "index">}`;
+
+type AccountSettingsRouteDefinition = {
+  group?: AccountSettingsGroupKey;
+  page: SettingsPageType;
+  path: AccountSettingsPagePath;
+};
+
+type AccountSettingsGroupDefinition = {
+  defaultPage: SettingsPageType;
+  key: AccountSettingsGroupKey;
+};
+
+export type AccountSettingsRoute = { page: SettingsPageType };
+
+export type SettingsTargetPath = AccountSettingsPagePath | NavigatePath;
 
 type AccountSettingsState = {
-  active_page: SettingsPageType | "preferences";
+  active_page: SettingsPageType;
+};
+
+type AccountSettingsLegacyState = {
+  active_page: string;
   active_sub_tab?: PreferencesSubTabKey;
 };
 
 type AccountSettingsActionsLike = {
   push_state: (url?: string) => void;
   setState: (state: AccountSettingsState) => void;
-  set_active_tab: (tab: string) => void;
 };
 
-export function createPreferencesSubTabKey(
-  subTab: string,
-): PreferencesSubTabKey | null {
-  if (VALID_PREFERENCES_SUB_TYPES.includes(subTab as PreferencesSubTabType)) {
-    return `preferences-${subTab as PreferencesSubTabType}`;
-  }
-  return null;
+export const ACCOUNT_SETTINGS_GROUP_DEFINITIONS: readonly AccountSettingsGroupDefinition[] =
+  [
+    { key: "preferences", defaultPage: "appearance" },
+    { key: "billing", defaultPage: "subscriptions" },
+  ] as const;
+
+export const ACCOUNT_SETTINGS_ROUTE_DEFINITIONS: readonly AccountSettingsRouteDefinition[] =
+  [
+    { page: "index", path: "settings" },
+    { page: "profile", path: "settings/profile" },
+    {
+      group: "preferences",
+      page: "appearance",
+      path: "settings/appearance",
+    },
+    {
+      group: "preferences",
+      page: "editor",
+      path: "settings/editor",
+    },
+    {
+      group: "preferences",
+      page: "keyboard",
+      path: "settings/keyboard",
+    },
+    { group: "preferences", page: "ai", path: "settings/ai" },
+    {
+      group: "preferences",
+      page: "communication",
+      path: "settings/communication",
+    },
+    { group: "preferences", page: "keys", path: "settings/keys" },
+    { group: "preferences", page: "other", path: "settings/other" },
+    {
+      group: "billing",
+      page: "subscriptions",
+      path: "settings/subscriptions",
+    },
+    { group: "billing", page: "licenses", path: "settings/licenses" },
+    { group: "billing", page: "store", path: "settings/store" },
+    { group: "billing", page: "vouchers", path: "settings/vouchers" },
+    { group: "billing", page: "purchases", path: "settings/purchases" },
+    { group: "billing", page: "payments", path: "settings/payments" },
+    {
+      group: "billing",
+      page: "payment-methods",
+      path: "settings/payment-methods",
+    },
+    {
+      group: "billing",
+      page: "statements",
+      path: "settings/statements",
+    },
+    { page: "support", path: "settings/support" },
+  ] as const;
+
+const DEFAULT_GROUP_PAGES: Record<string, SettingsPageType> =
+  Object.fromEntries(
+    ACCOUNT_SETTINGS_GROUP_DEFINITIONS.map(({ key, defaultPage }) => [
+      key,
+      defaultPage,
+    ]),
+  );
+
+const GROUPS_BY_PAGE = new Map<SettingsPageType, AccountSettingsGroupKey>(
+  ACCOUNT_SETTINGS_ROUTE_DEFINITIONS.flatMap(({ group, page }) =>
+    group == null ? [] : [[page, group]],
+  ),
+);
+
+const PAGES_BY_GROUP = new Map<AccountSettingsGroupKey, SettingsPageType[]>(
+  ACCOUNT_SETTINGS_GROUP_DEFINITIONS.map(({ key }) => [
+    key,
+    ACCOUNT_SETTINGS_ROUTE_DEFINITIONS.filter(({ group }) => group === key).map(
+      ({ page }) => page,
+    ),
+  ]),
+);
+
+const ROUTES_BY_PAGE = new Map<SettingsPageType, AccountSettingsPagePath>(
+  ACCOUNT_SETTINGS_ROUTE_DEFINITIONS.map(({ page, path }) => [page, path]),
+);
+
+const PAGES_BY_PATH = new Map<string, SettingsPageType>(
+  ACCOUNT_SETTINGS_ROUTE_DEFINITIONS.map(({ page, path }) => [
+    path.replace(/^settings\/?/, ""),
+    page,
+  ]),
+);
+
+export function isAccountSettingsPageKey(
+  value: string,
+): value is SettingsPageType {
+  return VALID_SETTINGS_PAGES.includes(value as SettingsPageType);
 }
 
-export function isAccountSettingsTab(
-  value: string,
-): value is AccountSettingsTab {
-  return (
-    VALID_SETTINGS_PAGES.includes(value as SettingsPageType) &&
-    value !== "index" &&
-    value !== "profile"
-  );
+export function getAccountSettingsGroupKey(
+  page: SettingsPageType,
+): AccountSettingsGroupKey | undefined {
+  return GROUPS_BY_PAGE.get(page);
+}
+
+export function getAccountSettingsGroupPages(
+  group: AccountSettingsGroupKey,
+): SettingsPageType[] {
+  return PAGES_BY_GROUP.get(group) ?? [];
+}
+
+function normalizeLegacyPreferencesPage(
+  subTab?: PreferencesSubTabKey,
+): SettingsPageType {
+  const subTabType = subTab?.replace(/^preferences-/, "");
+  if (
+    VALID_PREFERENCES_SUB_TYPES.includes(subTabType as PreferencesSubTabType)
+  ) {
+    return subTabType as PreferencesSubTabType;
+  }
+  return DEFAULT_GROUP_PAGES.preferences;
+}
+
+function normalizeLegacyGroupedPage(
+  page: string,
+): SettingsPageType | undefined {
+  const preferencesPage = page.replace(/^preferences-/, "");
+  if (
+    preferencesPage !== page &&
+    VALID_PREFERENCES_SUB_TYPES.includes(
+      preferencesPage as PreferencesSubTabType,
+    )
+  ) {
+    return preferencesPage as PreferencesSubTabType;
+  }
+  const billingPage = page.replace(/^billing-/, "");
+  if (
+    billingPage !== page &&
+    VALID_BILLING_SUB_TYPES.includes(billingPage as BillingSubTabType)
+  ) {
+    return billingPage as BillingSubTabType;
+  }
+  return undefined;
 }
 
 export function parseAccountSettingsRoute(
@@ -71,96 +204,45 @@ export function parseAccountSettingsRoute(
   if (segments[0] === "settings") {
     segments.shift();
   }
-  const [page, subTab] = segments;
-
-  switch (page) {
-    case undefined:
-    case "":
-    case "index":
-      return { kind: "index" };
-    case "profile":
-      return { kind: "profile" };
-    case "preferences": {
-      const normalizedSubTab = VALID_PREFERENCES_SUB_TYPES.includes(
-        subTab as PreferencesSubTabType,
-      )
-        ? (subTab as PreferencesSubTabType)
-        : "appearance";
-      return {
-        kind: "preferences",
-        subTab: normalizedSubTab,
-        subTabKey: createPreferencesSubTabKey(normalizedSubTab)!,
-      };
-    }
-    default:
-      if (isAccountSettingsTab(page)) {
-        return { kind: "tab", page };
-      }
-      return undefined;
+  if (segments.length === 0 || segments[0] === "index") {
+    return { page: "index" };
   }
+
+  const groupDefault = DEFAULT_GROUP_PAGES[segments[0]];
+  if (segments.length === 1 && groupDefault != null) {
+    return { page: groupDefault };
+  }
+
+  const path = segments.join("/");
+  const page = PAGES_BY_PATH.get(path);
+  if (page != null) {
+    return { page };
+  }
+  return undefined;
 }
 
 export function getAccountSettingsState(
   route: AccountSettingsRoute,
 ): AccountSettingsState {
-  switch (route.kind) {
-    case "index":
-      return { active_page: "index", active_sub_tab: undefined };
-    case "profile":
-      return { active_page: "profile", active_sub_tab: undefined };
-    case "preferences":
-      return {
-        active_page: "preferences",
-        active_sub_tab: route.subTabKey,
-      };
-    case "tab":
-      return { active_page: route.page, active_sub_tab: undefined };
-  }
+  return { active_page: route.page };
 }
 
 export function getAccountSettingsRouteFromState(
-  state: AccountSettingsState,
+  state: AccountSettingsLegacyState,
 ): AccountSettingsRoute {
-  switch (state.active_page) {
-    case "index":
-      return { kind: "index" };
-    case "profile":
-      return { kind: "profile" };
-    case "preferences": {
-      const subTab =
-        state.active_sub_tab?.replace(/^preferences-/, "") ?? "appearance";
-      const normalizedSubTab = VALID_PREFERENCES_SUB_TYPES.includes(
-        subTab as PreferencesSubTabType,
-      )
-        ? (subTab as PreferencesSubTabType)
-        : "appearance";
-      return {
-        kind: "preferences",
-        subTab: normalizedSubTab,
-        subTabKey: createPreferencesSubTabKey(normalizedSubTab)!,
-      };
-    }
-    default:
-      if (isAccountSettingsTab(state.active_page)) {
-        return { kind: "tab", page: state.active_page };
-      }
-      return { kind: "index" };
+  if (state.active_page === "preferences") {
+    return { page: normalizeLegacyPreferencesPage(state.active_sub_tab) };
   }
+  if (isAccountSettingsPageKey(state.active_page)) {
+    return { page: state.active_page };
+  }
+  return { page: normalizeLegacyGroupedPage(state.active_page) ?? "index" };
 }
 
 export function getSettingsTargetPath(
   route: AccountSettingsRoute,
 ): SettingsTargetPath {
-  switch (route.kind) {
-    case "index":
-      return "settings/index";
-    case "profile":
-      return "settings/profile";
-    case "preferences":
-      return `settings/preferences/${route.subTab}`;
-    case "tab":
-      return `settings/${route.page}`;
-  }
+  return ROUTES_BY_PAGE.get(route.page) ?? "settings";
 }
 
 export function getSettingsUrlPath(route: AccountSettingsRoute): string {
@@ -177,15 +259,6 @@ export function applyAccountSettingsRoute(
   opts?: { pushHistory?: boolean },
 ): void {
   const pushHistory = opts?.pushHistory ?? true;
-  if (route.kind === "tab") {
-    if (pushHistory) {
-      actions.set_active_tab(route.page);
-    } else {
-      actions.setState(getAccountSettingsState(route));
-    }
-    return;
-  }
-
   actions.setState(getAccountSettingsState(route));
   if (pushHistory) {
     actions.push_state(getSettingsPushStatePath(route));
