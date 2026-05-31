@@ -2,6 +2,7 @@ import {
   COCALC_BIN,
   COCALC_BIN2,
   COCALC_LIB,
+  COCALC_SRC,
   DEFAULT_PROJECT_TOOLS,
   PROJECT_BUNDLE_BIN_PATH,
   PROJECT_BUNDLES_CURRENT_BIN_PATH,
@@ -54,6 +55,21 @@ describe("getCoCalcMounts", () => {
 
     expect(mounts[explicitTools]).toBe(COCALC_BIN2);
     expect(mounts[DEFAULT_PROJECT_TOOLS]).toBeUndefined();
+  });
+
+  it("uses the legacy project bundle as the only project source mount", () => {
+    const projectBundle = "/srv/cocalc/project/build/bundle";
+    const mounts = getCoCalcMounts(
+      { COCALC_PROJECT_BUNDLE: projectBundle },
+      () => false,
+    );
+    const srcMounts = Object.entries(mounts).filter(
+      ([, target]) => target === COCALC_SRC,
+    );
+
+    expect(mounts[`${projectBundle}/src`]).toBe(COCALC_SRC);
+    expect(mounts[`${projectBundle}/bin`]).toBe(COCALC_BIN2);
+    expect(srcMounts).toEqual([[`${projectBundle}/src`, COCALC_SRC]]);
   });
 });
 

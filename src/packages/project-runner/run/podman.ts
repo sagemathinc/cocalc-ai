@@ -94,6 +94,8 @@ const STOP_RM_TIMEOUT_S = 10;
 const STOP_RM_PODMAN_TERM_S = 5;
 const STOP_INSPECT_TIMEOUT_S = 10;
 const STOP_FORCE_KILL_SETTLE_MS = 250;
+const SSH_PREREQUISITE_TIMEOUT_MS = 2 * 60 * 1000;
+const SSH_PREREQUISITE_POLL_MS = 500;
 
 const DEFAULT_PROJECT_SCRIPT = join(
   COCALC_SRC,
@@ -1757,6 +1759,7 @@ export function getImage(config?: Configuration): string {
 }
 
 export async function initSshServer(name: string) {
+  await waitForSshPrerequisites(name);
   await podman([
     "exec",
     "--user",
@@ -1766,6 +1769,33 @@ export async function initSshServer(name: string) {
     "-c",
     join(DEFAULT_PROJECT_RUNTIME_HOME, START_PROJECT_SSH),
   ]);
+}
+
+async function waitForSshPrerequisites(name: string): Promise<void> {
+  const start = Date.now();
+  let lastError: unknown;
+  while (Date.now() - start < SSH_PREREQUISITE_TIMEOUT_MS) {
+    try {
+      await podman([
+        "exec",
+        "--user",
+        "0:0",
+        name,
+        "bash",
+        "-lc",
+        "command -v dropbear >/dev/null",
+      ]);
+      return;
+    } catch (err) {
+      lastError = err;
+      await new Promise((resolve) =>
+        setTimeout(resolve, SSH_PREREQUISITE_POLL_MS),
+      );
+    }
+  }
+  throw new Error(
+    `timed out waiting for project container ssh prerequisites: ${lastError}`,
+  );
 }
 
 // Placeholder: saving is a no-op now that sync sidecars are gone.

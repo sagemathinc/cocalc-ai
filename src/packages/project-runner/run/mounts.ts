@@ -49,15 +49,13 @@ export function getCoCalcMounts(
   // the cocalc-project-runner binary, or it could just be the normal node binary.
   nodePath = join(COCALC_BIN, "node");
 
-  const mounts: Record<string, string> = {
-    // COCALC_SRC is where the project's Javascript code is located, which is what the project
-    // container runs at startup.
-    [join(dirname(root), "src")]: COCALC_SRC,
-    ...getNodeRuntimeMounts(),
-  };
+  const mounts: Record<string, string> = getNodeRuntimeMounts();
 
   const tools = env.COCALC_PROJECT_TOOLS ?? DEFAULT_PROJECT_TOOLS;
   if (tools && pathExists(tools)) {
+    // COCALC_SRC is where the project's Javascript code is located, which is what the project
+    // container runs at startup.
+    mounts[join(dirname(root), "src")] = COCALC_SRC;
     mounts[tools] = COCALC_BIN2;
     return mounts;
   }
@@ -68,6 +66,8 @@ export function getCoCalcMounts(
     mounts[join(env.COCALC_PROJECT_BUNDLE, "bin")] = COCALC_BIN2;
     return mounts;
   }
+
+  mounts[join(dirname(root), "src")] = COCALC_SRC;
 
   // IMPORTANT: take care not to put the binary next to sensitive info due
   // to mapping in process.execPath!
