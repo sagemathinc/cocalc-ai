@@ -267,6 +267,7 @@ User=${STAR_USER}
 Group=${STAR_USER}
 WorkingDirectory=${SRC_ROOT}/packages/launchpad
 EnvironmentFile=/etc/cocalc/star/hub.env
+ExecStartPre=/bin/bash -lc 'if [ "\${COCALC_DB:-}" = "pglite" ]; then rm -f "\${COCALC_PGLITE_DATA_DIR:-\${DATA}/pglite}/postmaster.pid"; fi'
 ExecStart=/bin/bash -lc 'source "\$HOME/.nvm/nvm.sh" && nvm use 26 >/dev/null && exec node bin/start.js --hostname=127.0.0.1'
 Restart=always
 RestartSec=5

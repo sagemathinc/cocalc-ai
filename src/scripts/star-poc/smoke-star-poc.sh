@@ -3,7 +3,7 @@ set -euo pipefail
 
 STAR_API="${STAR_API:-http://127.0.0.1:9100}"
 SRC_ROOT="${SRC_ROOT:-${HOME}/cocalc-ai/src}"
-STATE_DIR="${STAR_SMOKE_STATE:-/tmp/cocalc-star-smoke}"
+STATE_DIR="${STAR_SMOKE_STATE:-/var/lib/cocalc/star/smoke}"
 BOOTSTRAP_RESULT="${STAR_BOOTSTRAP_RESULT:-/var/lib/cocalc/star/bootstrap-result.json}"
 STAR_SMOKE_ROOTFS_IMAGE="${STAR_SMOKE_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
 
@@ -24,6 +24,17 @@ const value = process.argv[2].split(".").reduce((x, k) => x?.[k], data);
 if (value == null) process.exit(1);
 process.stdout.write(String(value));
 ' "$1" "$2"
+}
+
+reject_response_issues() {
+  node -e '
+const fs = require("fs");
+const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+if (data?.error || data?.issues) {
+  console.error(JSON.stringify(data, null, 2));
+  process.exit(1);
+}
+' "$1"
 }
 
 cookie_header_from_headers() {
@@ -114,6 +125,7 @@ ensure_account() {
       jq . "${STATE_DIR}/signup.json" >&2 || true
       die "sign-up failed with HTTP $status"
     fi
+    reject_response_issues "${STATE_DIR}/signup.json" || die "sign-up returned an API error"
     touch "${STATE_DIR}/signed-up"
   fi
 
@@ -129,6 +141,7 @@ ensure_account() {
     jq . "${STATE_DIR}/signin.json" >&2 || true
     die "sign-in failed with HTTP $status"
   fi
+  reject_response_issues "${STATE_DIR}/signin.json" || die "sign-in returned an API error"
   cookie_header_from_headers "${STATE_DIR}/signin.headers" >"${STATE_DIR}/cookie-header"
   chmod 600 "${STATE_DIR}/cookie-header"
 }

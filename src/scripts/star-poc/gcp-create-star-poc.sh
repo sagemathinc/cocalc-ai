@@ -146,4 +146,6 @@ run gcloud compute ssh "${REMOTE_USER}@${VM_NAME}" \
 
 log "VM ready: $VM_NAME"
 log "Port-forward: gcloud compute ssh ${REMOTE_USER}@${VM_NAME} --project ${GCP_PROJECT} --zone ${ZONE} -- -L 7001:127.0.0.1:9100"
+log "Status: gcloud compute ssh ${REMOTE_USER}@${VM_NAME} --project ${GCP_PROJECT} --zone ${ZONE} --command '/home/${REMOTE_USER}/cocalc-ai/src/scripts/star-poc/star-poc.sh status'"
+log "Smoke test: gcloud compute ssh ${REMOTE_USER}@${VM_NAME} --project ${GCP_PROJECT} --zone ${ZONE} --command '/home/${REMOTE_USER}/cocalc-ai/src/scripts/star-poc/star-poc.sh smoke'"
 log "Bootstrap result: cat /var/lib/cocalc/star/bootstrap-result.json"
