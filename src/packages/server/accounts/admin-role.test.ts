@@ -112,4 +112,101 @@ describe("grantAdminRole", () => {
       },
     });
   });
+
+  it("removes admin without replacing other groups and audits the change", async () => {
+    const query = jest
+      .fn()
+      .mockResolvedValueOnce({ rows: [{ groups: ["admin", "analytics"] }] })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+    withAccountRehomeWriteFenceMock.mockImplementation(async ({ fn }) => {
+      return await fn({ query });
+    });
+
+    const { revokeAdminRole } = await import("./admin-role");
+    const result = await revokeAdminRole({
+      account_id: ACCOUNT_ID,
+      actor_account_id: ACTOR_ACCOUNT_ID,
+      reason: "temporary admin access ended",
+    });
+
+    expect(result).toEqual({
+      account_id: ACCOUNT_ID,
+      was_admin: true,
+      groups: ["analytics"],
+    });
+    expect(query).toHaveBeenNthCalledWith(
+      2,
+      "UPDATE accounts SET groups=$1::TEXT[] WHERE account_id=$2",
+      [["analytics"], ACCOUNT_ID],
+    );
+    expect(publishAccountRowFeedEventsBestEffortMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      patch: { groups: ["analytics"] },
+    });
+    expect(recordAccountAdminAuditEventMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      action: "revoke-admin",
+      actor_account_id: ACTOR_ACCOUNT_ID,
+      reason: "temporary admin access ended",
+      metadata: {
+        was_admin: true,
+        old_groups: ["admin", "analytics"],
+        new_groups: ["analytics"],
+      },
+    });
+  });
+
+  it("blocks self-demotion when no other active admin has 2FA", async () => {
+    const query = jest
+      .fn()
+      .mockResolvedValueOnce({ rows: [{ groups: ["admin"] }] })
+      .mockResolvedValueOnce({ rows: [] });
+    withAccountRehomeWriteFenceMock.mockImplementation(async ({ fn }) => {
+      return await fn({ query });
+    });
+
+    const { revokeAdminRole } = await import("./admin-role");
+    await expect(
+      revokeAdminRole({
+        account_id: ACCOUNT_ID,
+        actor_account_id: ACCOUNT_ID,
+      }),
+    ).rejects.toThrow(
+      "cannot remove the last active site admin with verified 2FA",
+    );
+
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(publishAccountRowFeedEventsBestEffortMock).not.toHaveBeenCalled();
+    expect(recordAccountAdminAuditEventMock).not.toHaveBeenCalled();
+  });
+
+  it("allows self-demotion when another active admin has 2FA", async () => {
+    const query = jest
+      .fn()
+      .mockResolvedValueOnce({ rows: [{ groups: ["admin", "support"] }] })
+      .mockResolvedValueOnce({
+        rows: [{ account_id: ACTOR_ACCOUNT_ID }],
+      })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+    withAccountRehomeWriteFenceMock.mockImplementation(async ({ fn }) => {
+      return await fn({ query });
+    });
+
+    const { revokeAdminRole } = await import("./admin-role");
+    const result = await revokeAdminRole({
+      account_id: ACCOUNT_ID,
+      actor_account_id: ACCOUNT_ID,
+    });
+
+    expect(result).toEqual({
+      account_id: ACCOUNT_ID,
+      was_admin: true,
+      groups: ["support"],
+    });
+    expect(query).toHaveBeenCalledTimes(3);
+    expect(publishAccountRowFeedEventsBestEffortMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      patch: { groups: ["support"] },
+    });
+  });
 });

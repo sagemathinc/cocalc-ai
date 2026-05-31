@@ -15,6 +15,8 @@ import {
   type AccountLocalAdminDisableTwoFactorResult,
   type AccountLocalAdminGrantAdminRoleRequest,
   type AccountLocalAdminGrantAdminRoleResult,
+  type AccountLocalAdminRevokeAdminRoleRequest,
+  type AccountLocalAdminRevokeAdminRoleResult,
   type AccountLocalQuarantineBillingResourcesRequest,
   type AccountLocalQuarantineBillingResourcesResult,
   type AccountLocalAdminVerifyEmailAddressResult,
@@ -30,7 +32,10 @@ import {
 } from "@cocalc/conat/inter-bay/api";
 import getPool from "@cocalc/database/pool";
 import adminVerifyEmailAddressLocal from "@cocalc/server/accounts/admin-verify-email-address";
-import { grantAdminRole as grantAdminRoleLocal } from "@cocalc/server/accounts/admin-role";
+import {
+  grantAdminRole as grantAdminRoleLocal,
+  revokeAdminRole as revokeAdminRoleLocal,
+} from "@cocalc/server/accounts/admin-role";
 import createAccountLocal from "@cocalc/server/accounts/create-account";
 import deleteAccountLocal from "@cocalc/server/accounts/delete";
 import { banUser, removeUserBan } from "@cocalc/server/accounts/ban";
@@ -435,6 +440,40 @@ export async function adminGrantClusterAccountAdminRole({
     client: getInterBayFabricClient(),
     dest_bay: homeBayId,
   }).adminGrantAdminRole({
+    account_id: normalizedAccountId,
+    actor_account_id,
+    reason,
+    metadata,
+  });
+}
+
+export async function adminRevokeClusterAccountAdminRole({
+  account_id,
+  actor_account_id,
+  reason,
+  metadata,
+}: AccountLocalAdminRevokeAdminRoleRequest): Promise<AccountLocalAdminRevokeAdminRoleResult> {
+  const normalizedAccountId = `${account_id ?? ""}`.trim().toLowerCase();
+  if (!isValidUUID(normalizedAccountId)) {
+    throw new Error("account_id must be a valid uuid");
+  }
+  const account = await getClusterAccountById(normalizedAccountId);
+  if (!account) {
+    throw Error(`account ${normalizedAccountId} not found`);
+  }
+  const homeBayId = `${account.home_bay_id ?? ""}`.trim();
+  if (!homeBayId || homeBayId === currentBayId()) {
+    return await revokeAdminRoleLocal({
+      account_id: normalizedAccountId,
+      actor_account_id,
+      reason,
+      metadata,
+    });
+  }
+  return await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: homeBayId,
+  }).adminRevokeAdminRole({
     account_id: normalizedAccountId,
     actor_account_id,
     reason,

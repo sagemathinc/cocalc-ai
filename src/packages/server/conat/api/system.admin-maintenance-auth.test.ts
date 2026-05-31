@@ -120,6 +120,27 @@ describe("admin maintenance dangerous-session auth", () => {
     });
   });
 
+  it("requires centralized recent 2FA fresh auth before removing site admin role", async () => {
+    const { adminRevokeAdminRole } = await import("./system");
+
+    await expect(
+      adminRevokeAdminRole({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        user_account_id: SUBJECT_ACCOUNT_ID,
+        reason: "employee no longer needs temporary admin access",
+      }),
+    ).rejects.toThrow("fresh auth is required");
+
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      session_hash: undefined,
+      require_second_factor: true,
+      allow_actor_impersonation: false,
+    });
+  });
+
   it("requires centralized recent 2FA fresh auth before unlinking a passport login method", async () => {
     const { deletePassport } = await import("./system");
 

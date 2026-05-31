@@ -614,6 +614,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "admin grants site-admin privileges to another account",
   },
+  "system.adminRevokeAdminRole": {
+    decision: "fresh-auth-required",
+    reason: "admin removes site-admin privileges from an account",
+  },
   "system.adminSalesloftSync": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
