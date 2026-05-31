@@ -67,7 +67,6 @@ interface BannerProps {
 const NO_HOST = ["expect slower performance"];
 const MEMBER_QUOTA =
   "https://doc.cocalc.com/billing.html#what-is-member-hosting";
-// const ADD_LICENSE = "https://doc.cocalc.com/project-settings.html#project-add-license";
 
 export const TrialBanner: React.FC<BannerProps> = React.memo(
   (props: BannerProps) => {

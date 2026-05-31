@@ -18,11 +18,11 @@ import { Button, Well } from "@cocalc/frontend/antd-bootstrap";
 const hdf_file =
   "Hierarchical Data Format (HDF file) -- you can open this file using a Python or R library.";
 const excel =
-  'Microsoft Excel file -- Create an ["X11" file](https://doc.cocalc.com/x11.html) and open the "Calc" application.';
+  "Microsoft Excel file -- download it for spreadsheet editing, or convert it to CSV/XLSX locally and upload the result.";
 const microsoft_word =
-  'Microsoft Word file -- Create an ["X11" file](https://doc.cocalc.com/x11.html) and open the "Writer" application.';
+  "Microsoft Word file -- download it for document editing, or convert it to PDF/Markdown locally and upload the result.";
 const microsoft_ppt =
-  'Microsoft PowerPoint -- Create an ["X11" file](https://doc.cocalc.com/x11.html) and open the "Impress" application.';
+  "Microsoft PowerPoint -- download it for presentation editing, or export slides locally and upload the result.";
 const windows_executable =
   "Windows Executable -- you must download this program and run it on a computer";
 const python_pickle =
@@ -45,15 +45,15 @@ const INFO = {
   ppt: microsoft_ppt,
   pptx: microsoft_ppt,
   blend:
-    "This is a [Blender](https://www.blender.org/) file.  CoCalc can only [open it via X11 Desktop](https://github.com/sagemathinc/cocalc/issues/5107).",
-  kmz: "Editing [KMZ files](https://developers.google.com/kml/documentation/kmzarchives) is not supported. You could `unzip` them in a [Terminal](https://doc.cocalc.com/terminal.html).",
-  jar: "Run JAVA jar archives in a [Terminal](https://doc.cocalc.com/terminal.html) via `java -jar <filename.jar>`",
+    "This is a [Blender](https://www.blender.org/) file. Download it and open it in Blender on a desktop machine.",
+  kmz: "Editing [KMZ files](https://developers.google.com/kml/documentation/kmzarchives) is not supported. You could `unzip` them in a [Terminal](/app-docs/terminal/use-terminal).",
+  jar: "Run JAVA jar archives in a [Terminal](/app-docs/terminal/use-terminal) via `java -jar <filename.jar>`",
   raw: "You may be able to use this file via a Python library or use it in some other way.",
-  tiff: 'You may be able to use this file via a Python image manipulation library or via a tool like "Gimp" in an ["X11" file](https://doc.cocalc.com/x11.html).',
+  tiff: 'You may be able to use this file via a Python image manipulation library, or download it and edit it with a desktop tool like "Gimp".',
   fit: "You may be able to use this file from Python using the [fitparse](https://github.com/dtcooper/python-fitparse) library.",
-  odt: 'OpenDocument Text -- Create an ["X11" file](https://doc.cocalc.com/x11.html) and open the "Writer" application.',
-  ods: 'OpenDocument Spreadsheet -- Create an ["X11" file](https://doc.cocalc.com/x11.html) and open the "Calc" application.',
-  odp: 'OpenDocument Presentation -- Create an ["X11" file](https://doc.cocalc.com/x11.html) and open the "Impress" application.',
+  odt: "OpenDocument Text -- download it for document editing, or convert it to PDF/Markdown locally and upload the result.",
+  ods: "OpenDocument Spreadsheet -- download it for spreadsheet editing, or convert it to CSV/XLSX locally and upload the result.",
+  odp: "OpenDocument Presentation -- download it for presentation editing, or export slides locally and upload the result.",
   sobj: 'You can load an sobj file into **SageMath** by typing `load("filename.sobj")`.',
   "noext-octave-workspace": `\
 This is a data file that contains the state of your Octave workspace.
