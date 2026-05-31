@@ -86,7 +86,7 @@ export const DefaultAccountDropDownLinks: React.FC<LinksProps> = ({
             className={"cocalc-account-button"}
             onClick={(event) => {
               event.preventDefault();
-              openAccountSettings({ kind: "index" });
+              openAccountSettings({ page: "index" });
             }}
             href=""
           >
@@ -103,7 +103,7 @@ export const DefaultAccountDropDownLinks: React.FC<LinksProps> = ({
             className={"cocalc-account-button"}
             onClick={(event) => {
               event.preventDefault();
-              openAccountSettings({ kind: "index" });
+              openAccountSettings({ page: "subscriptions" });
             }}
             href=""
           >
@@ -120,7 +120,7 @@ export const DefaultAccountDropDownLinks: React.FC<LinksProps> = ({
             className={"cocalc-account-button"}
             onClick={(event) => {
               event.preventDefault();
-              openAccountSettings({ kind: "tab", page: "support" });
+              openAccountSettings({ page: "support" });
             }}
             href=""
           >

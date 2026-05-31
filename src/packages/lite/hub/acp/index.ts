@@ -3566,7 +3566,7 @@ function formatUserFacingAcpError(error: string): string {
     "",
     "Try one of these:",
     "- [Upgrade your membership](/settings/store)",
-    "- [Open AI settings](/settings/preferences/ai) to connect a ChatGPT Plan or your own OpenAI API key",
+    "- [Open AI settings](/settings/ai) to connect a ChatGPT Plan or your own OpenAI API key",
   ].join("\n");
 }
 

@@ -559,7 +559,7 @@ export function ClaimableMembershipPackagesPanel({
                 </span>
                 <Button
                   size="small"
-                  onClick={() => openAccountSettings({ kind: "profile" })}
+                  onClick={() => openAccountSettings({ page: "profile" })}
                 >
                   Open Profile email verification
                 </Button>
