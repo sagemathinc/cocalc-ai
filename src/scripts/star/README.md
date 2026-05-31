@@ -28,8 +28,9 @@ sudo STAR_ASSUME_YES=1 \
   /tmp/cocalc-star-src.tar.gz
 ```
 
-By default this installs source under `/opt/cocalc-star/source`, uses the sudo
-caller as the Star runtime user, and starts CoCalc on `http://127.0.0.1:9100`.
+By default this installs source under a versioned release directory and points
+`/opt/cocalc-star/source` at the active release. It uses the sudo caller as the
+Star runtime user and starts CoCalc on `http://127.0.0.1:9100`.
 
 ## Validate
 
@@ -59,6 +60,25 @@ STAR_BTRFS_SIZE=100G
 STAR_BUILD=1
 STAR_BUILD_DEFAULT_ROOTFS=1
 STAR_DEFAULT_ROOTFS_BASE_IMAGE=ubuntu:24.04
+```
+
+## Releases And Rollback
+
+Each tarball install creates:
+
+```text
+/opt/cocalc-star/releases/<release-id>/source
+/opt/cocalc-star/releases/<release-id>/release.json
+/opt/cocalc-star/source -> releases/<release-id>/source
+/opt/cocalc-star/current -> releases/<release-id>
+```
+
+Useful commands:
+
+```sh
+sudo /opt/cocalc-star/source/src/scripts/star/star.sh current-release
+sudo /opt/cocalc-star/source/src/scripts/star/star.sh releases
+sudo /opt/cocalc-star/source/src/scripts/star/star.sh rollback [release-id]
 ```
 
 Use a dedicated VM. The installer changes system packages, systemd services,

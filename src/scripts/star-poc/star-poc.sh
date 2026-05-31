@@ -8,6 +8,9 @@ STAR_USER="${STAR_USER:-user}"
 STAR_HOME="${STAR_HOME:-/home/${STAR_USER}}"
 SRC_ROOT="${SRC_ROOT:-${STAR_HOME}/cocalc-ai/src}"
 STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
+STAR_INSTALL_ROOT="${STAR_INSTALL_ROOT:-/opt/cocalc-star}"
+STAR_RELEASES_DIR="${STAR_RELEASES_DIR:-${STAR_INSTALL_ROOT}/releases}"
+STAR_SOURCE_LINK="${STAR_SOURCE_LINK:-${STAR_INSTALL_ROOT}/source}"
 
 usage() {
   cat <<'EOF'
@@ -17,6 +20,9 @@ Commands:
   status                 Show service, API, project-host, and podman state.
   doctor                 Check Star runtime invariants.
   smoke                  Run the Star smoke test.
+  current-release        Print the active release, if installed from a release.
+  releases               List installed releases.
+  rollback [release-id]  Roll back to a release. Defaults to previous release.
   restart [all|hub|host] Restart Star services. Default: all.
   logs [hub|host] [n]    Show recent service logs. Default: hub, 200 lines.
   bootstrap-link         Print the bootstrap registration link, if still present.
@@ -28,6 +34,13 @@ EOF
 
 log() {
   printf '[star] %s\n' "$*" >&2
+}
+
+replace_symlink() {
+  local target="$1"
+  local link="$2"
+  rm -f "$link"
+  ln -s "$target" "$link"
 }
 
 service_name() {
@@ -208,6 +221,86 @@ smoke() {
     "${SCRIPT_DIR}/smoke-star-poc.sh"
 }
 
+current_release() {
+  local current source release
+  current="$(readlink -f "${STAR_INSTALL_ROOT}/current" 2>/dev/null || true)"
+  source="$(readlink -f "$STAR_SOURCE_LINK" 2>/dev/null || true)"
+  if [ -n "$current" ] && [ "$current/source" = "$source" ]; then
+    basename "$current"
+    return
+  fi
+  case "$source" in
+    "${STAR_RELEASES_DIR}"/*/source)
+      release="${source%/source}"
+      basename "$release"
+      ;;
+  esac
+}
+
+list_releases() {
+  local active release metadata installed_at sha
+  active="$(current_release || true)"
+  if [ ! -d "$STAR_RELEASES_DIR" ]; then
+    return
+  fi
+  for release in "$STAR_RELEASES_DIR"/*; do
+    [ -d "$release/source" ] || continue
+    metadata="$release/release.json"
+    installed_at=""
+    sha=""
+    if [ -f "$metadata" ]; then
+      installed_at="$(jq -r '.installed_at // ""' "$metadata" 2>/dev/null || true)"
+      sha="$(jq -r '.tarball_sha256 // ""' "$metadata" 2>/dev/null || true)"
+      sha="${sha:0:12}"
+    fi
+    if [ "$(basename "$release")" = "$active" ]; then
+      printf '* %s %s %s\n' "$(basename "$release")" "$installed_at" "$sha"
+    else
+      printf '  %s %s %s\n' "$(basename "$release")" "$installed_at" "$sha"
+    fi
+  done | sort
+}
+
+previous_release() {
+  local active
+  active="$(current_release || true)"
+  list_releases | awk -v active="$active" '
+    {
+      name = $1 == "*" ? $2 : $1
+      if (name != active) last = name
+    }
+    END {
+      if (last != "") print last
+    }
+  '
+}
+
+rollback_release() {
+  local release_id="${1:-}" release_dir
+  if [ -z "$release_id" ]; then
+    release_id="$(previous_release || true)"
+  fi
+  [ -n "$release_id" ] || {
+    log "No previous release found."
+    exit 1
+  }
+  case "$release_id" in
+    "" | *[!A-Za-z0-9._-]*)
+      log "Invalid release id: $release_id"
+      exit 2
+      ;;
+  esac
+  release_dir="${STAR_RELEASES_DIR}/${release_id}"
+  [ -d "$release_dir/source/src" ] || {
+    log "Release does not exist or is incomplete: $release_id"
+    exit 1
+  }
+  replace_symlink "$release_dir/source" "$STAR_SOURCE_LINK"
+  replace_symlink "$release_dir" "${STAR_INSTALL_ROOT}/current"
+  sudo systemctl restart cocalc-star-hub cocalc-star-project-host
+  printf 'rolled back to %s\n' "$release_id"
+}
+
 restart() {
   local target="${1:-all}"
   case "$target" in
@@ -255,6 +348,16 @@ case "${1:-}" in
     ;;
   smoke)
     smoke
+    ;;
+  current-release)
+    current_release
+    ;;
+  releases)
+    list_releases
+    ;;
+  rollback)
+    shift
+    rollback_release "$@"
     ;;
   restart)
     shift
