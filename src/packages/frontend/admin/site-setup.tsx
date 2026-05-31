@@ -293,8 +293,8 @@ function ProgressSummary({ status }: { status: SiteSetupStatus }) {
               <>
                 <Tag>{status.counts.healthy_project_hosts} local hosts</Tag>
                 <Tag>
-                  {status.steps.find((step) => step.id === "star-rootfs")
-                    ?.state === "done"
+                  {status.steps.find((step) => step.id === "rootfs")?.state ===
+                  "done"
                     ? "default image ready"
                     : "default image pending"}
                 </Tag>
