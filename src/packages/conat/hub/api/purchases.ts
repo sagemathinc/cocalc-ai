@@ -637,6 +637,14 @@ export interface ManagedCpuAdminProjectSummary {
   cpu_seconds: number;
 }
 
+export type ManagedCpuHistoryBucketSize = ManagedEgressHistoryBucketSize;
+
+export interface ManagedCpuHistoryPoint {
+  start: string;
+  end: string;
+  cpu_seconds: number;
+}
+
 export interface ManagedCpuAdminOverview {
   start: string;
   end: string;
@@ -646,10 +654,33 @@ export interface ManagedCpuAdminOverview {
   recent_events: ManagedCpuEventSummary[];
 }
 
+export interface ManagedCpuAdminHistory {
+  start: string;
+  end: string;
+  bucket: ManagedCpuHistoryBucketSize;
+  total_cpu_seconds: number;
+  points: ManagedCpuHistoryPoint[];
+  top_accounts: ManagedCpuAccountSummary[];
+  top_projects: ManagedCpuAdminProjectSummary[];
+  recent_events: ManagedCpuEventSummary[];
+}
+
 export interface ManagedCpuAdminOverviewQuery {
   account_id?: string;
   start?: string | Date;
   end?: string | Date;
+  recent_event_limit?: number;
+  top_account_limit?: number;
+  top_project_limit?: number;
+}
+
+export interface ManagedCpuAdminHistoryQuery {
+  account_id?: string;
+  user_account_id?: string;
+  project_id?: string;
+  start?: string | Date;
+  end?: string | Date;
+  bucket?: ManagedCpuHistoryBucketSize;
   recent_event_limit?: number;
   top_account_limit?: number;
   top_project_limit?: number;
@@ -853,6 +884,9 @@ export interface Purchases {
   getManagedCpuAdminOverview: (
     opts?: ManagedCpuAdminOverviewQuery,
   ) => Promise<ManagedCpuAdminOverview>;
+  getManagedCpuAdminHistory: (
+    opts?: ManagedCpuAdminHistoryQuery,
+  ) => Promise<ManagedCpuAdminHistory>;
 }
 
 export const purchases = {
@@ -883,4 +917,5 @@ export const purchases = {
   getManagedEgressAdminOverview: authFirst,
   getManagedEgressAdminHistory: authFirst,
   getManagedCpuAdminOverview: authFirst,
+  getManagedCpuAdminHistory: authFirst,
 };

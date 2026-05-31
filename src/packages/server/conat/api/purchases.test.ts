@@ -6,6 +6,7 @@
 const getManagedEgressHistoryForAccountMock = jest.fn();
 const getManagedEgressAdminHistoryMock = jest.fn();
 const getManagedEgressAdminOverviewMock = jest.fn();
+const getManagedCpuAdminHistoryMock = jest.fn();
 const getManagedCpuAdminOverviewMock = jest.fn();
 const getProjectUsageAccountIdMock = jest.fn();
 const isAdminMock = jest.fn();
@@ -82,6 +83,8 @@ jest.mock("@cocalc/server/membership/managed-egress", () => ({
 }));
 
 jest.mock("@cocalc/server/membership/managed-cpu", () => ({
+  getManagedCpuAdminHistory: (...args: any[]) =>
+    getManagedCpuAdminHistoryMock(...args),
   getManagedCpuAdminOverview: (...args: any[]) =>
     getManagedCpuAdminOverviewMock(...args),
 }));
@@ -1785,6 +1788,76 @@ describe("purchases.getManagedCpuAdminOverview", () => {
       recent_event_limit: 9,
     });
     expect(result.total_cpu_seconds).toBe(3600);
+  });
+});
+
+describe("purchases.getManagedCpuAdminHistory", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("requires admin permission", async () => {
+    isAdminMock.mockResolvedValue(false);
+
+    const { getManagedCpuAdminHistory } = await import("./purchases");
+    await expect(
+      getManagedCpuAdminHistory({
+        account_id: "viewer-1",
+      }),
+    ).rejects.toThrow("must be an admin");
+  });
+
+  it("loads filtered CPU history for admins", async () => {
+    isAdminMock.mockResolvedValue(true);
+    getProjectUsageAccountIdMock.mockResolvedValue("acct-1");
+    getManagedCpuAdminHistoryMock.mockResolvedValue({
+      start: "2026-05-30T00:00:00.000Z",
+      end: "2026-05-31T00:00:00.000Z",
+      bucket: "1h",
+      total_cpu_seconds: 3600,
+      points: [],
+      top_accounts: [],
+      top_projects: [],
+      recent_events: [],
+    });
+
+    const { getManagedCpuAdminHistory } = await import("./purchases");
+    const result = await getManagedCpuAdminHistory({
+      account_id: "admin-1",
+      user_account_id: "acct-1",
+      project_id: "project-1",
+      bucket: "1h",
+      top_account_limit: 5,
+      top_project_limit: 7,
+      recent_event_limit: 9,
+    });
+
+    expect(getProjectUsageAccountIdMock).toHaveBeenCalledWith("project-1");
+    expect(getManagedCpuAdminHistoryMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      project_id: "project-1",
+      start: undefined,
+      end: undefined,
+      bucket: "1h",
+      top_account_limit: 5,
+      top_project_limit: 7,
+      recent_event_limit: 9,
+    });
+    expect(result.total_cpu_seconds).toBe(3600);
+  });
+
+  it("rejects a project that is not attributed to the filtered account", async () => {
+    isAdminMock.mockResolvedValue(true);
+    getProjectUsageAccountIdMock.mockResolvedValue("other-account");
+
+    const { getManagedCpuAdminHistory } = await import("./purchases");
+    await expect(
+      getManagedCpuAdminHistory({
+        account_id: "admin-1",
+        user_account_id: "acct-1",
+        project_id: "project-1",
+      }),
+    ).rejects.toThrow("project is not attributed to target account");
   });
 });
 

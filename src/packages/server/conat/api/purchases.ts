@@ -6,7 +6,10 @@ import {
   getManagedEgressHistoryForAccount,
   getProjectUsageAccountId,
 } from "@cocalc/server/membership/managed-egress";
-import { getManagedCpuAdminOverview as getManagedCpuAdminOverview0 } from "@cocalc/server/membership/managed-cpu";
+import {
+  getManagedCpuAdminHistory as getManagedCpuAdminHistory0,
+  getManagedCpuAdminOverview as getManagedCpuAdminOverview0,
+} from "@cocalc/server/membership/managed-cpu";
 import {
   resolveMembershipDetailsForAccount,
   resolveMembershipForAccount,
@@ -1312,6 +1315,56 @@ export async function getManagedCpuAdminOverview({
   return await getManagedCpuAdminOverview0({
     start,
     end,
+    recent_event_limit,
+    top_account_limit,
+    top_project_limit,
+  });
+}
+
+export async function getManagedCpuAdminHistory({
+  account_id,
+  user_account_id,
+  project_id,
+  start,
+  end,
+  bucket,
+  recent_event_limit,
+  top_account_limit,
+  top_project_limit,
+}: {
+  account_id?: string;
+  user_account_id?: string;
+  project_id?: string;
+  start?: string | Date;
+  end?: string | Date;
+  bucket?: "5m" | "1h" | "1d";
+  recent_event_limit?: number;
+  top_account_limit?: number;
+  top_project_limit?: number;
+}) {
+  if (!account_id) {
+    throw Error("account_id required");
+  }
+  if (!(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  const targetAccountId = `${user_account_id ?? ""}`.trim() || undefined;
+  const normalizedProjectId = `${project_id ?? ""}`.trim() || undefined;
+  if (normalizedProjectId && targetAccountId) {
+    const usageAccountId = await getProjectUsageAccountId(normalizedProjectId);
+    if (!usageAccountId) {
+      throw Error("project not found");
+    }
+    if (usageAccountId !== targetAccountId) {
+      throw Error("project is not attributed to target account");
+    }
+  }
+  return await getManagedCpuAdminHistory0({
+    account_id: targetAccountId,
+    project_id: normalizedProjectId,
+    start,
+    end,
+    bucket,
     recent_event_limit,
     top_account_limit,
     top_project_limit,

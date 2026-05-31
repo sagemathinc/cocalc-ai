@@ -480,6 +480,8 @@ Phase 2: admin visibility
 - [x] Add managed egress accounts/projects in the same review panel as an abuse
       signal.
 - [x] Add host/project drilldowns for capacity planning.
+- [x] Add admin CPU history graphs for global, account, and project-scoped
+      trends, reusing the managed egress history modal shape.
 - [x] Add copyable Markdown summaries. CSV export is deferred until offline
       reporting becomes a demonstrated need.
 

@@ -6,13 +6,19 @@
 import getPool from "@cocalc/database/pool";
 import type {
   ManagedCpuAccountSummary,
+  ManagedCpuAdminHistory,
   ManagedCpuAdminOverview,
   ManagedCpuAdminProjectSummary,
   ManagedCpuEventSummary,
+  ManagedCpuHistoryBucketSize,
+  ManagedCpuHistoryPoint,
 } from "@cocalc/conat/hub/api/purchases";
 import { getProjectUsageAccountId } from "./project-usage";
 
 const TABLE = "account_cpu_usage_events";
+const DEFAULT_HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MAX_HISTORY_WINDOW_MS = 31 * 24 * 60 * 60 * 1000;
+const MAX_HISTORY_BUCKETS = 2000;
 
 export type ManagedCpuUsage = {
   managed_cpu_5h_seconds: number;
@@ -440,6 +446,192 @@ export async function getManagedCpuAdminOverview(
   };
 }
 
+export async function getManagedCpuAdminHistory(opts: {
+  account_id?: string;
+  project_id?: string;
+  start?: string | Date;
+  end?: string | Date;
+  bucket?: ManagedCpuHistoryBucketSize;
+  recent_event_limit?: number;
+  top_account_limit?: number;
+  top_project_limit?: number;
+}): Promise<ManagedCpuAdminHistory> {
+  await ensureSchema();
+  const query = normalizeHistoryQuery(opts);
+  const where: string[] = [
+    "events.sample_ended_at >= $1",
+    "events.sample_ended_at < $2",
+  ];
+  const params: Array<Date | string> = [query.startDate, query.endDate];
+  if (query.account_id) {
+    params.push(query.account_id);
+    where.push(`events.account_id = $${params.length}`);
+  }
+  if (query.project_id) {
+    params.push(query.project_id);
+    where.push(`events.project_id = $${params.length}`);
+  }
+  const whereSql = where.join(" AND ");
+  const bucketExpr = getBucketSql(query.bucket);
+
+  const [
+    totalResult,
+    bucketRowsResult,
+    accountRowsResult,
+    projectRowsResult,
+    recentEventsResult,
+  ] = await Promise.all([
+    getPool("medium").query<{ cpu_seconds: string | number }>(
+      `
+        SELECT COALESCE(SUM(events.cpu_seconds), 0) AS cpu_seconds
+        FROM ${TABLE} AS events
+        WHERE ${whereSql}
+      `,
+      params,
+    ),
+    getPool("medium").query<{
+      bucket_start: Date | string;
+      cpu_seconds: string | number;
+    }>(
+      `
+        SELECT
+          ${bucketExpr} AS bucket_start,
+          COALESCE(SUM(events.cpu_seconds), 0) AS cpu_seconds
+        FROM ${TABLE} AS events
+        WHERE ${whereSql}
+        GROUP BY bucket_start
+        ORDER BY bucket_start ASC
+      `,
+      params,
+    ),
+    getPool("medium").query<{
+      account_id: string;
+      email_address: string | null;
+      first_name: string | null;
+      last_name: string | null;
+      cpu_seconds: string | number;
+    }>(
+      `
+        SELECT
+          events.account_id,
+          accounts.email_address,
+          accounts.first_name,
+          accounts.last_name,
+          COALESCE(SUM(events.cpu_seconds), 0) AS cpu_seconds
+        FROM ${TABLE} AS events
+        LEFT JOIN accounts ON accounts.account_id = events.account_id
+        WHERE ${whereSql}
+        GROUP BY
+          events.account_id,
+          accounts.email_address,
+          accounts.first_name,
+          accounts.last_name
+        ORDER BY cpu_seconds DESC, events.account_id ASC
+        LIMIT ${Math.max(1, Math.min(query.top_account_limit, 50))}
+      `,
+      params,
+    ),
+    getPool("medium").query<{
+      account_id: string;
+      email_address: string | null;
+      first_name: string | null;
+      last_name: string | null;
+      project_id: string | null;
+      project_title: string | null;
+      host_id: string | null;
+      cpu_seconds: string | number;
+    }>(
+      `
+        SELECT
+          events.account_id,
+          accounts.email_address,
+          accounts.first_name,
+          accounts.last_name,
+          events.project_id,
+          projects.title AS project_title,
+          events.host_id,
+          COALESCE(SUM(events.cpu_seconds), 0) AS cpu_seconds
+        FROM ${TABLE} AS events
+        LEFT JOIN accounts ON accounts.account_id = events.account_id
+        LEFT JOIN projects ON projects.project_id = events.project_id
+        WHERE ${whereSql}
+        GROUP BY
+          events.account_id,
+          accounts.email_address,
+          accounts.first_name,
+          accounts.last_name,
+          events.project_id,
+          projects.title,
+          events.host_id
+        ORDER BY cpu_seconds DESC, projects.title ASC NULLS LAST, events.project_id ASC NULLS LAST
+        LIMIT ${Math.max(1, Math.min(query.top_project_limit, 50))}
+      `,
+      params,
+    ),
+    getPool("medium").query<RawManagedCpuEventRow>(
+      `
+        SELECT
+          events.account_id,
+          events.project_id,
+          projects.title AS project_title,
+          events.host_id,
+          events.cpu_seconds,
+          events.sample_started_at,
+          events.sample_ended_at,
+          events.source,
+          events.metadata
+        FROM ${TABLE} AS events
+        LEFT JOIN projects ON projects.project_id = events.project_id
+        WHERE ${whereSql}
+        ORDER BY events.sample_ended_at DESC, events.id DESC
+        LIMIT ${Math.max(1, Math.min(query.recent_event_limit, 100))}
+      `,
+      params,
+    ),
+  ]);
+
+  const bucketData = new Map<string, ManagedCpuHistoryPoint>();
+  for (const point of buildEmptyHistoryPoints({
+    start: query.startDate,
+    end: query.endDate,
+    bucket: query.bucket,
+  })) {
+    bucketData.set(point.start, point);
+  }
+  for (const row of bucketRowsResult.rows) {
+    const bucketStart = new Date(row.bucket_start).toISOString();
+    const point = bucketData.get(bucketStart);
+    if (!point) continue;
+    point.cpu_seconds += normalizeCpuSeconds(row.cpu_seconds);
+  }
+
+  return {
+    start: query.startDate.toISOString(),
+    end: query.endDate.toISOString(),
+    bucket: query.bucket,
+    total_cpu_seconds: normalizeCpuSeconds(totalResult.rows[0]?.cpu_seconds),
+    points: [...bucketData.values()],
+    top_accounts: accountRowsResult.rows.map((row) => ({
+      account_id: row.account_id,
+      email_address: row.email_address ?? null,
+      first_name: row.first_name ?? null,
+      last_name: row.last_name ?? null,
+      cpu_seconds: normalizeCpuSeconds(row.cpu_seconds),
+    })),
+    top_projects: projectRowsResult.rows.map((row) => ({
+      account_id: row.account_id,
+      email_address: row.email_address ?? null,
+      first_name: row.first_name ?? null,
+      last_name: row.last_name ?? null,
+      project_id: row.project_id ?? null,
+      project_title: row.project_title ?? null,
+      host_id: row.host_id ?? null,
+      cpu_seconds: normalizeCpuSeconds(row.cpu_seconds),
+    })),
+    recent_events: mapManagedCpuEventRows(recentEventsResult.rows),
+  };
+}
+
 type RawManagedCpuEventRow = {
   account_id?: string;
   project_id?: string | null;
@@ -470,15 +662,33 @@ function mapManagedCpuEventRows(
   }));
 }
 
-function parseOptionalTimestamp(value: string | Date | undefined): Date {
-  const date =
-    value == null
-      ? new Date(Date.now() - 24 * 60 * 60 * 1000)
-      : new Date(value);
+function parseOptionalTimestamp(value?: string | Date): Date | undefined {
+  if (value == null || value === "") return;
+  const date = new Date(value);
   if (!Number.isFinite(date.getTime())) {
     throw Error("invalid timestamp");
   }
   return date;
+}
+
+function normalizeWindowBounds(opts: {
+  start?: string | Date;
+  end?: string | Date;
+}): {
+  startDate: Date;
+  endDate: Date;
+} {
+  const endDate = parseOptionalTimestamp(opts.end) ?? new Date();
+  const startDate =
+    parseOptionalTimestamp(opts.start) ??
+    new Date(endDate.getTime() - DEFAULT_HISTORY_WINDOW_MS);
+  if (!(endDate.getTime() > startDate.getTime())) {
+    throw Error("start must be before end");
+  }
+  if (endDate.getTime() - startDate.getTime() > MAX_HISTORY_WINDOW_MS) {
+    throw Error("history window must be at most 31 days");
+  }
+  return { startDate, endDate };
 }
 
 function normalizeOverviewQuery({
@@ -494,14 +704,7 @@ function normalizeOverviewQuery({
   top_account_limit?: number;
   top_project_limit?: number;
 }) {
-  const endDate = end == null ? new Date() : new Date(end);
-  const startDate = parseOptionalTimestamp(start);
-  if (!Number.isFinite(endDate.getTime())) {
-    throw Error("invalid timestamp");
-  }
-  if (startDate.getTime() >= endDate.getTime()) {
-    throw Error("start must be before end");
-  }
+  const { startDate, endDate } = normalizeWindowBounds({ start, end });
   return {
     startDate,
     endDate,
@@ -518,7 +721,109 @@ function normalizeOverviewQuery({
     top_project_limit:
       typeof top_project_limit === "number" &&
       Number.isFinite(top_project_limit)
-        ? Math.floor(top_project_limit)
+        ? Math.max(1, Math.min(50, Math.floor(top_project_limit)))
         : 20,
   };
+}
+
+function normalizeHistoryQuery(opts: {
+  account_id?: string;
+  project_id?: string;
+  start?: string | Date;
+  end?: string | Date;
+  bucket?: ManagedCpuHistoryBucketSize;
+  recent_event_limit?: number;
+  top_account_limit?: number;
+  top_project_limit?: number;
+}): {
+  account_id?: string;
+  project_id?: string;
+  startDate: Date;
+  endDate: Date;
+  bucket: ManagedCpuHistoryBucketSize;
+  recent_event_limit: number;
+  top_account_limit: number;
+  top_project_limit: number;
+} {
+  const { startDate, endDate } = normalizeWindowBounds(opts);
+  const bucket = opts.bucket ?? "1h";
+  const bucketMs = getBucketMs(bucket);
+  if (
+    Math.ceil((endDate.getTime() - startDate.getTime()) / bucketMs) >
+    MAX_HISTORY_BUCKETS
+  ) {
+    throw Error("history query is too granular for the requested time range");
+  }
+  return {
+    account_id: `${opts.account_id ?? ""}`.trim() || undefined,
+    project_id: `${opts.project_id ?? ""}`.trim() || undefined,
+    startDate,
+    endDate,
+    bucket,
+    recent_event_limit:
+      typeof opts.recent_event_limit === "number" &&
+      Number.isFinite(opts.recent_event_limit)
+        ? Math.max(1, Math.min(100, Math.floor(opts.recent_event_limit)))
+        : 20,
+    top_account_limit:
+      typeof opts.top_account_limit === "number" &&
+      Number.isFinite(opts.top_account_limit)
+        ? Math.max(1, Math.min(50, Math.floor(opts.top_account_limit)))
+        : 10,
+    top_project_limit:
+      typeof opts.top_project_limit === "number" &&
+      Number.isFinite(opts.top_project_limit)
+        ? Math.max(1, Math.min(50, Math.floor(opts.top_project_limit)))
+        : 10,
+  };
+}
+
+function getBucketMs(bucket: ManagedCpuHistoryBucketSize): number {
+  switch (bucket) {
+    case "5m":
+      return 5 * 60 * 1000;
+    case "1h":
+      return 60 * 60 * 1000;
+    case "1d":
+      return 24 * 60 * 60 * 1000;
+  }
+}
+
+function getBucketSql(bucket: ManagedCpuHistoryBucketSize): string {
+  switch (bucket) {
+    case "5m":
+      return "to_timestamp(floor(extract(epoch from events.sample_ended_at) / 300) * 300)";
+    case "1h":
+      return "to_timestamp(floor(extract(epoch from events.sample_ended_at) / 3600) * 3600)";
+    case "1d":
+      return "date_trunc('day', events.sample_ended_at)";
+  }
+}
+
+function buildEmptyHistoryPoints({
+  start,
+  end,
+  bucket,
+}: {
+  start: Date;
+  end: Date;
+  bucket: ManagedCpuHistoryBucketSize;
+}): ManagedCpuHistoryPoint[] {
+  const bucketMs = getBucketMs(bucket);
+  const firstBucketStartMs = Math.floor(start.getTime() / bucketMs) * bucketMs;
+  const points: ManagedCpuHistoryPoint[] = [];
+  for (
+    let currentStartMs = firstBucketStartMs;
+    currentStartMs < end.getTime();
+    currentStartMs += bucketMs
+  ) {
+    points.push({
+      start: new Date(currentStartMs).toISOString(),
+      end: new Date(
+        Math.min(currentStartMs + bucketMs, end.getTime()),
+      ).toISOString(),
+      cpu_seconds: 0,
+    });
+  }
+  return points;
 }

@@ -28,6 +28,7 @@ import type {
 } from "@cocalc/conat/hub/api/purchases";
 import ShowError from "@cocalc/frontend/components/error";
 import { CopyToClipBoard } from "@cocalc/frontend/components";
+import { ManagedCpuHistoryButton } from "@cocalc/frontend/purchases/managed-cpu-history";
 import {
   ManagedEgressHistoryButton,
   ManagedEgressRateSummary,
@@ -183,10 +184,22 @@ function PanelBox({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function AccountActions({ account_id }: { account_id: string }) {
+function AccountActions({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id?: string | null;
+}) {
   return (
     <Space wrap>
       <CopyToClipBoard value={account_id} copyTip="Copied account_id!" />
+      <ManagedCpuHistoryButton
+        buttonText="CPU history"
+        user_account_id={account_id}
+        project_id={project_id ?? undefined}
+        size="small"
+      />
       <ManagedEgressHistoryButton
         buttonText="Egress history"
         user_account_id={account_id}
@@ -242,7 +255,10 @@ function TopCpuProjects({
             <Tag>{formatCpuSeconds(project.cpu_seconds)}</Tag>
             {project.host_id ? <Tag>Host {project.host_id}</Tag> : null}
             <Text type="secondary">{getAccountLabel(project)}</Text>
-            <AccountActions account_id={project.account_id} />
+            <AccountActions
+              account_id={project.account_id}
+              project_id={project.project_id}
+            />
             {project.project_id ? (
               <Button
                 size="small"
@@ -302,7 +318,10 @@ function TopEgressProjects({
             <Text strong>{getProjectLabel(project)}</Text>
             <Tag>{humanSize(project.bytes)}</Tag>
             <Text type="secondary">{getAccountLabel(project)}</Text>
-            <AccountActions account_id={project.account_id} />
+            <AccountActions
+              account_id={project.account_id}
+              project_id={project.project_id}
+            />
             {project.project_id ? (
               <Button
                 size="small"
@@ -461,6 +480,7 @@ export function ManagedCpuAdminOverview() {
         >
           Copy summary
         </Button>
+        <ManagedCpuHistoryButton buttonText="Global CPU history" size="small" />
         <Button onClick={() => void load()}>Refresh</Button>
       </Space>
 

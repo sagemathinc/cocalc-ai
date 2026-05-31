@@ -252,4 +252,159 @@ describe("managed CPU usage accounting", () => {
       },
     ]);
   });
+
+  it("aggregates CPU admin history into bounded time buckets", async () => {
+    queryMock.mockImplementation(async (sql: string) => {
+      if (
+        sql.includes("CREATE TABLE IF NOT EXISTS account_cpu_usage_events") ||
+        sql.includes("CREATE INDEX IF NOT EXISTS account_cpu_usage_events_")
+      ) {
+        return { rows: [] };
+      }
+      if (sql.includes("GROUP BY bucket_start")) {
+        return {
+          rows: [
+            {
+              bucket_start: "2026-05-30T10:00:00.000Z",
+              cpu_seconds: "200",
+            },
+            {
+              bucket_start: "2026-05-30T11:00:00.000Z",
+              cpu_seconds: "300",
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT COALESCE(SUM(events.cpu_seconds), 0)")) {
+        return { rows: [{ cpu_seconds: "500" }] };
+      }
+      if (
+        sql.includes("accounts.email_address") &&
+        sql.includes("GROUP BY") &&
+        !sql.includes("projects.title AS project_title")
+      ) {
+        return {
+          rows: [
+            {
+              account_id: "account-1",
+              email_address: "ada@example.com",
+              first_name: "Ada",
+              last_name: "Lovelace",
+              cpu_seconds: "500",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("projects.title AS project_title") &&
+        sql.includes("GROUP BY") &&
+        sql.includes("events.host_id")
+      ) {
+        return {
+          rows: [
+            {
+              account_id: "account-1",
+              email_address: "ada@example.com",
+              first_name: "Ada",
+              last_name: "Lovelace",
+              project_id: "project-1",
+              project_title: "Number theory",
+              host_id: "11111111-1111-4111-8111-111111111111",
+              cpu_seconds: "450",
+            },
+          ],
+        };
+      }
+      if (sql.includes("ORDER BY events.sample_ended_at DESC")) {
+        return {
+          rows: [
+            {
+              account_id: "account-1",
+              project_id: "project-1",
+              project_title: "Number theory",
+              host_id: "11111111-1111-4111-8111-111111111111",
+              cpu_seconds: "60",
+              sample_started_at: "2026-05-30T11:59:00.000Z",
+              sample_ended_at: "2026-05-30T12:00:00.000Z",
+              source: "project-host-proc-tree",
+              metadata: { runtime_key: "runtime-1" },
+            },
+          ],
+        };
+      }
+      throw new Error(`unhandled query: ${sql}`);
+    });
+
+    const { getManagedCpuAdminHistory } = await import("./managed-cpu");
+    const result = await getManagedCpuAdminHistory({
+      account_id: "account-1",
+      project_id: "project-1",
+      start: "2026-05-30T10:15:00.000Z",
+      end: "2026-05-30T12:15:00.000Z",
+      bucket: "1h",
+      recent_event_limit: 5,
+      top_account_limit: 5,
+      top_project_limit: 5,
+    });
+
+    expect(result.total_cpu_seconds).toBe(500);
+    expect(result.points).toHaveLength(3);
+    expect(result.points[0]).toMatchObject({
+      start: "2026-05-30T10:00:00.000Z",
+      cpu_seconds: 200,
+    });
+    expect(result.points[1]).toMatchObject({
+      start: "2026-05-30T11:00:00.000Z",
+      cpu_seconds: 300,
+    });
+    expect(result.points[2]).toMatchObject({
+      start: "2026-05-30T12:00:00.000Z",
+      cpu_seconds: 0,
+    });
+    expect(result.top_accounts).toEqual([
+      {
+        account_id: "account-1",
+        email_address: "ada@example.com",
+        first_name: "Ada",
+        last_name: "Lovelace",
+        cpu_seconds: 500,
+      },
+    ]);
+    expect(result.top_projects).toEqual([
+      {
+        account_id: "account-1",
+        email_address: "ada@example.com",
+        first_name: "Ada",
+        last_name: "Lovelace",
+        project_id: "project-1",
+        project_title: "Number theory",
+        host_id: "11111111-1111-4111-8111-111111111111",
+        cpu_seconds: 450,
+      },
+    ]);
+    expect(result.recent_events).toEqual([
+      {
+        account_id: "account-1",
+        project_id: "project-1",
+        project_title: "Number theory",
+        host_id: "11111111-1111-4111-8111-111111111111",
+        cpu_seconds: 60,
+        sample_started_at: "2026-05-30T11:59:00.000Z",
+        sample_ended_at: "2026-05-30T12:00:00.000Z",
+        source: "project-host-proc-tree",
+        metadata: { runtime_key: "runtime-1" },
+      },
+    ]);
+  });
+
+  it("rejects overly granular CPU history requests", async () => {
+    const { getManagedCpuAdminHistory } = await import("./managed-cpu");
+    await expect(
+      getManagedCpuAdminHistory({
+        start: "2026-03-01T00:00:00.000Z",
+        end: "2026-03-16T00:00:00.000Z",
+        bucket: "5m",
+      }),
+    ).rejects.toThrow("history query is too granular");
+  });
 });

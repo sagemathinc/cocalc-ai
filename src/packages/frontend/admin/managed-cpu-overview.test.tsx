@@ -85,6 +85,16 @@ jest.mock("@cocalc/frontend/purchases/managed-egress-history", () => ({
   ManagedEgressRateSummary: () => <div>egress-rate-summary</div>,
 }));
 
+jest.mock("@cocalc/frontend/purchases/managed-cpu-history", () => ({
+  ManagedCpuHistoryButton: ({
+    buttonText,
+    user_account_id,
+    project_id,
+  }: any) => (
+    <button>{`${buttonText}:${user_account_id ?? "all"}:${project_id ?? "all"}`}</button>
+  ),
+}));
+
 jest.mock("@cocalc/frontend/purchases/managed-egress-recent-events", () => ({
   ManagedEgressRecentEventsButton: ({ events }: any) => (
     <div>{`egress-events:${events?.length ?? 0}`}</div>
@@ -202,6 +212,9 @@ describe("ManagedCpuAdminOverview", () => {
       expect(screen.getAllByText("Number theory").length).toBeGreaterThan(0);
       expect(screen.getByText("Downloader")).toBeTruthy();
       expect(screen.getAllByText(/2.00 CPU-hours/).length).toBeGreaterThan(0);
+      expect(screen.getByText("Global CPU history:all:all")).toBeTruthy();
+      expect(screen.getByText("CPU history:acct-1:all")).toBeTruthy();
+      expect(screen.getByText("CPU history:acct-1:project-1")).toBeTruthy();
       expect(screen.getByText("egress-events:1")).toBeTruthy();
       expect(screen.getByText("egress-rate-summary")).toBeTruthy();
     });
