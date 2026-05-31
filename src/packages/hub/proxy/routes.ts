@@ -10,6 +10,7 @@ export type ProxyType =
   | "files"
   | "proxy"
   | "conat"
+  | "project-host-session"
   | "apps";
 export type ProxyAccessType = "read" | "write";
 
@@ -58,6 +59,13 @@ const ROUTES: Record<ProxyType, ProxyRouteDefinition> = {
   // Conat pass-through path to project-host conat service.
   conat: {
     type: "conat",
+    requiresPortDesc: false,
+    allowsInternalUrl: false,
+    access: "write",
+  },
+  // Browser-session bootstrap for same-origin project-host Conat proxying.
+  "project-host-session": {
+    type: "project-host-session",
     requiresPortDesc: false,
     allowsInternalUrl: false,
     access: "write",

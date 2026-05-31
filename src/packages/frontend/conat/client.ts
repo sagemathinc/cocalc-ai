@@ -734,12 +734,17 @@ export class ConatClient extends EventEmitter {
     | undefined
     | { host_id: string; address: string; host_session_id?: string } {
     const hostInfo = this.getHostInfo(host_id);
-    return this.buildHostRoutingInfo(host_id, hostInfo);
+    const routedState = this.routedHubClients[host_id];
+    const routeId = routedState
+      ? (this.pickTrackedProjectForHost(host_id, routedState) ?? host_id)
+      : host_id;
+    return this.buildHostRoutingInfo(host_id, hostInfo, routeId);
   }
 
   private buildHostRoutingInfo(
     host_id: string,
     hostInfo?: ImmutableMap<string, any>,
+    route_id = host_id,
   ):
     | undefined
     | { host_id: string; address: string; host_session_id?: string } {
@@ -748,7 +753,7 @@ export class ConatClient extends EventEmitter {
     let address: string;
     if (localProxy && typeof window !== "undefined") {
       const basePath = appBasePath && appBasePath !== "/" ? appBasePath : "";
-      address = `${window.location.origin}${basePath}/${host_id}`;
+      address = `${window.location.origin}${basePath}/${route_id}`;
     } else {
       const connectUrl = hostInfo.get("connect_url");
       address = connectUrl || "";
@@ -793,7 +798,7 @@ export class ConatClient extends EventEmitter {
       // control-plane bay and host bay differ.
       void redux.getActions("projects")?.ensure_host_info(host_id, true);
     }
-    return this.buildHostRoutingInfo(host_id, hostInfo);
+    return this.buildHostRoutingInfo(host_id, hostInfo, project_id);
   }
 
   private getProjectHostId(project_id: string): string | undefined {
@@ -877,13 +882,32 @@ export class ConatClient extends EventEmitter {
       args: [{ host_id }],
       timeout: PROJECT_HOST_ROUTING_REFRESH_TIMEOUT_MS,
     })) as HostConnectionInfo | undefined;
-    const routing = direct?.connect_url
-      ? {
+    const routedState = this.routedHubClients[host_id];
+    const routeId = routedState
+      ? (this.pickTrackedProjectForHost(host_id, routedState) ?? host_id)
+      : host_id;
+    const routing = direct?.local_proxy
+      ? this.buildHostRoutingInfo(
           host_id,
-          address: direct.connect_url,
-          host_session_id: direct.host_session_id,
-        }
-      : undefined;
+          {
+            get: (key: string) => {
+              const values: Record<string, any> = {
+                connect_url: direct.connect_url,
+                host_session_id: direct.host_session_id,
+                local_proxy: direct.local_proxy,
+              };
+              return values[key];
+            },
+          } as ImmutableMap<string, any>,
+          routeId,
+        )
+      : direct?.connect_url
+        ? {
+            host_id,
+            address: direct.connect_url,
+            host_session_id: direct.host_session_id,
+          }
+        : undefined;
     reconnectDebugLog(`refreshed routed host info for ${host_id}`, {
       direct: true,
       routing,
@@ -1381,10 +1405,7 @@ export class ConatClient extends EventEmitter {
         host_id,
         project_id: authProjectId,
       });
-      const url = new URL(
-        PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH,
-        address,
-      ).toString();
+      const url = `${address.replace(/\/+$/, "")}${PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH}`;
       reconnectDebugLog(
         `bootstrapping project-host browser session for ${host_id}`,
         {

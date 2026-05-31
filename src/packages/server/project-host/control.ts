@@ -181,7 +181,10 @@ function mapHostRegistryRow(row: HostRegistryRow) {
   const effectiveSelfHostMode =
     machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
   const isLocalSelfHost =
-    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+    (machine?.cloud === "self-host" && effectiveSelfHostMode === "local") ||
+    row?.metadata?.local === true ||
+    row?.metadata?.provider === "star" ||
+    row?.metadata?.cloud_provider === "star";
   const tier = row.tier == null ? undefined : normalizeHostTier(row.tier);
   const pressure =
     typeof row?.metadata?.pressure === "object" && row.metadata.pressure != null

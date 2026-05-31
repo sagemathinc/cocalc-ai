@@ -289,17 +289,29 @@ function ProgressSummary({ status }: { status: SiteSetupStatus }) {
         </Col>
         <Col xs={24} md={14}>
           <Space wrap>
-            {isStar ? null : (
+            {isStar ? (
+              <>
+                <Tag>{status.counts.healthy_project_hosts} local hosts</Tag>
+                <Tag>
+                  {status.steps.find((step) => step.id === "rootfs")?.state ===
+                  "done"
+                    ? "default image ready"
+                    : "default image pending"}
+                </Tag>
+              </>
+            ) : (
               <>
                 <Tag>{status.counts.configured_providers} providers</Tag>
                 <Tag>
                   {status.counts.cached_provider_catalogs} cached catalogs
                 </Tag>
+                <Tag>{status.counts.healthy_project_hosts} healthy hosts</Tag>
+                <Tag>
+                  {status.counts.official_rootfs_images} official RootFS
+                </Tag>
+                <Tag>{status.counts.prepull_rootfs_images} prepull RootFS</Tag>
               </>
             )}
-            <Tag>{status.counts.healthy_project_hosts} healthy hosts</Tag>
-            <Tag>{status.counts.official_rootfs_images} official RootFS</Tag>
-            <Tag>{status.counts.prepull_rootfs_images} prepull RootFS</Tag>
           </Space>
           <div style={{ marginTop: 8 }}>
             <Text type="secondary">
