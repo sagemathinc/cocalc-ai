@@ -3,7 +3,7 @@ set -euo pipefail
 
 if [ -z "${STAR_USER:-}" ]; then
   if [ "$(id -u)" -eq 0 ] && [ -z "${SUDO_USER:-}" ]; then
-    echo "[star-poc] ERROR: set STAR_USER when running directly as root" >&2
+    echo "[star] ERROR: set STAR_USER when running directly as root" >&2
     exit 1
   fi
   STAR_USER="${SUDO_USER:-${USER}}"
@@ -25,7 +25,7 @@ STAR_DEFAULT_ROOTFS_BASE_IMAGE="${STAR_DEFAULT_ROOTFS_BASE_IMAGE:-ubuntu:24.04}"
 STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-1}"
 
 log() {
-  printf '[star-poc] %s\n' "$*" >&2
+  printf '[star] %s\n' "$*" >&2
 }
 
 die() {
@@ -88,7 +88,7 @@ ensure_btrfs() {
     run mkfs.btrfs -f "$STAR_BTRFS_IMAGE"
   fi
   if ! grep -qF "$STAR_BTRFS_IMAGE /mnt/cocalc btrfs" /etc/fstab; then
-    printf '%s /mnt/cocalc btrfs loop,noatime,compress=zstd 0 0 # cocalc-star-poc\n' "$STAR_BTRFS_IMAGE" >>/etc/fstab
+    printf '%s /mnt/cocalc btrfs loop,noatime,compress=zstd 0 0 # cocalc-star\n' "$STAR_BTRFS_IMAGE" >>/etc/fstab
   fi
   if ! mountpoint -q /mnt/cocalc; then
     run mount /mnt/cocalc
@@ -96,7 +96,7 @@ ensure_btrfs() {
   mkdir -p /mnt/cocalc/data/tmp /mnt/cocalc/shared-scratch /mnt/cocalc-scratch
   chmod 1777 /mnt/cocalc/data/tmp
   if ! grep -qF "/mnt/cocalc/shared-scratch /mnt/cocalc-scratch none bind" /etc/fstab; then
-    printf '/mnt/cocalc/shared-scratch /mnt/cocalc-scratch none bind 0 0 # cocalc-star-poc\n' >>/etc/fstab
+    printf '/mnt/cocalc/shared-scratch /mnt/cocalc-scratch none bind 0 0 # cocalc-star\n' >>/etc/fstab
   fi
   if ! mountpoint -q /mnt/cocalc-scratch; then
     run mount /mnt/cocalc-scratch
@@ -290,7 +290,7 @@ install_systemd() {
 
   cat >"$hub_unit" <<EOF
 [Unit]
-Description=CoCalc Star POC launchpad hub
+Description=CoCalc Star launchpad hub
 After=network-online.target
 Wants=network-online.target
 
@@ -312,7 +312,7 @@ EOF
 
   cat >"$project_host_unit" <<EOF
 [Unit]
-Description=CoCalc Star POC local project host
+Description=CoCalc Star local project host
 After=network-online.target cocalc-star-hub.service
 Wants=network-online.target
 Requires=cocalc-star-hub.service
@@ -361,10 +361,11 @@ ${STAR_USER} ALL=(root) NOPASSWD: /usr/local/sbin/cocalc-mount-data
 ${STAR_USER} ALL=(root) NOPASSWD: /usr/local/sbin/cocalc-project-host-rootctl *
 EOF
   chmod 0440 /etc/sudoers.d/cocalc-project-host-runtime
-  cat >/etc/sudoers.d/cocalc-star-poc-admin <<EOF
+  rm -f /etc/sudoers.d/cocalc-star-poc-admin
+  cat >/etc/sudoers.d/cocalc-star-admin <<EOF
 ${STAR_USER} ALL=(root) NOPASSWD: /bin/systemctl *, /bin/journalctl *, /usr/bin/tee *, /usr/bin/install *, /bin/mount *, /bin/umount *, /usr/bin/loginctl *
 EOF
-  chmod 0440 /etc/sudoers.d/cocalc-star-poc-admin
+  chmod 0440 /etc/sudoers.d/cocalc-star-admin
   if [ "$STAR_REMOVE_GCP_SUDOERS" = "1" ]; then
     if id -nG "$STAR_USER" | tr ' ' '\n' | grep -qx google-sudoers; then
       gpasswd -d "$STAR_USER" google-sudoers || true

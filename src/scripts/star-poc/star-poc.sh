@@ -11,23 +11,23 @@ STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:local
 
 usage() {
   cat <<'EOF'
-Usage: star-poc.sh <command>
+Usage: star.sh <command>
 
 Commands:
   status                 Show service, API, project-host, and podman state.
-  doctor                 Check Star POC runtime invariants.
-  smoke                  Run the Star POC smoke test.
+  doctor                 Check Star runtime invariants.
+  smoke                  Run the Star smoke test.
   restart [all|hub|host] Restart Star services. Default: all.
   logs [hub|host] [n]    Show recent service logs. Default: hub, 200 lines.
   bootstrap-link         Print the bootstrap registration link, if still present.
 
-This is intentionally small and operator-oriented. It is for the current
-CoCalc Star proof of concept VM, not a stable product CLI.
+This is intentionally small and operator-oriented. It manages a CoCalc Star
+single-VM install.
 EOF
 }
 
 log() {
-  printf '[star-poc] %s\n' "$*" >&2
+  printf '[star] %s\n' "$*" >&2
 }
 
 service_name() {
