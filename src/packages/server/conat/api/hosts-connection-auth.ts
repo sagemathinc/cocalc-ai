@@ -322,7 +322,10 @@ export async function resolveHostConnectionLocalHelper({
   const effectiveSelfHostMode =
     machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
   const isLocalSelfHost =
-    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+    (machine?.cloud === "self-host" && effectiveSelfHostMode === "local") ||
+    metadata?.local === true ||
+    metadata?.provider === "star" ||
+    metadata?.cloud_provider === "star";
 
   let connect_url: string | null = null;
   let ssh_server: string | null = row.ssh_server ?? null;

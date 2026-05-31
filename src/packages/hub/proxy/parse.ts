@@ -22,6 +22,17 @@ export function parseReq(
   }
   const v = url.split("/").slice(1);
   const project_id = v[0];
+  if (v[1] === ".cocalc" && v[2] === "project-host") {
+    const route = getProxyRouteDefinition("project-host-session")!;
+    return {
+      key: `${remember_me}-${api_key}-${project_id}-project-host-session--undefined`,
+      type: "project-host-session",
+      route,
+      project_id,
+      port_desc: "",
+      internal_url: undefined,
+    };
+  }
   const route = getProxyRouteDefinition(v[1]);
   if (!route) {
     throw Error(

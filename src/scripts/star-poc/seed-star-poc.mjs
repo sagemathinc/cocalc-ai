@@ -90,7 +90,7 @@ await upsertProjectHost({
   bay_id: "bay-0",
   name: hostName,
   region: "local",
-  public_url: "http://127.0.0.1:9002",
+  public_url: null,
   internal_url: "http://127.0.0.1:9002",
   ssh_server: "127.0.0.1:2222",
   status: "running",
@@ -98,6 +98,16 @@ await upsertProjectHost({
     provider: "star",
     cloud_provider: "star",
     local: true,
+    machine: {
+      cloud: "self-host",
+      metadata: {
+        self_host_mode: "local",
+      },
+    },
+    self_host: {
+      http_tunnel_port: 9002,
+      ssh_tunnel_port: 2222,
+    },
   },
 });
 

@@ -306,6 +306,7 @@ Group=${STAR_USER}
 WorkingDirectory=${SRC_ROOT}/packages/launchpad
 EnvironmentFile=/etc/cocalc/star/hub.env
 ExecStartPre=/bin/bash -lc 'if [ "\${COCALC_DB:-}" = "pglite" ]; then rm -f "\${COCALC_PGLITE_DATA_DIR:-\${DATA}/pglite}/postmaster.pid"; fi'
+ExecStartPre=/bin/bash -lc 'pkill -TERM -f "[l]aunchpad-sshd/sshd_config" 2>/dev/null || true'
 ExecStart=/bin/bash -lc 'source "\$HOME/.nvm/nvm.sh" && nvm use 26 >/dev/null && exec node bin/start.js --hostname=127.0.0.1'
 Restart=always
 RestartSec=5
@@ -319,8 +320,7 @@ EOF
 [Unit]
 Description=CoCalc Star local project host
 After=network-online.target cocalc-star-hub.service
-Wants=network-online.target
-Requires=cocalc-star-hub.service
+Wants=network-online.target cocalc-star-hub.service
 
 [Service]
 Type=simple

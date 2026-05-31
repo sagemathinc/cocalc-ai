@@ -110,4 +110,29 @@ describe("hub project-host proxy auth injection", () => {
       prependPath: false,
     });
   });
+
+  it("proxies project-host browser session bootstrap through the routed project path", async () => {
+    mockParseReq.mockReturnValue({
+      type: "project-host-session",
+      project_id,
+    });
+
+    const { createProjectHostProxyHandlers } = await import("./project-host");
+    const handlers = await createProjectHostProxyHandlers();
+    const req: any = {
+      url: `/${project_id}/.cocalc/project-host/session`,
+      headers: {
+        authorization: "Bearer browser-session-token",
+      },
+    };
+    const res: any = {};
+
+    await handlers.handleRequest(req, res);
+
+    expect(req.url).toBe("/.cocalc/project-host/session");
+    expect(mockProxyWeb).toHaveBeenCalledWith(req, res, {
+      target: "http://project-host.internal:9911",
+      prependPath: false,
+    });
+  });
 });

@@ -81,6 +81,14 @@ doctor() {
     fi
   }
 
+  as_star_user() {
+    if [ "$(id -u)" = "$star_uid" ]; then
+      env XDG_RUNTIME_DIR="/run/user/${star_uid}" "$@"
+    else
+      sudo -Hiu "$STAR_USER" env XDG_RUNTIME_DIR="/run/user/${star_uid}" "$@"
+    fi
+  }
+
   check "hub service is active" systemctl is-active --quiet cocalc-star-hub
   check "project-host service is active" systemctl is-active --quiet cocalc-star-project-host
   check "hub systemd unit is installed" grep -q '^ExecStart=' /etc/systemd/system/cocalc-star-hub.service
@@ -138,15 +146,15 @@ doctor() {
     check "cached rootfs has /home/user" test -d "${rootfs_path}/home/user"
     check "cached rootfs has /scratch" test -d "${rootfs_path}/scratch"
     check "cached rootfs has project secrets mountpoint" test -d "${rootfs_path}/run/secrets/cocalc"
-    check "rootless podman can run cached rootfs" sudo -Hiu "$STAR_USER" env XDG_RUNTIME_DIR="/run/user/${star_uid}" podman run --rm --runtime /usr/bin/crun --rootfs "$rootfs_path" /bin/true
+    check "rootless podman can run cached rootfs" as_star_user podman run --rm --runtime /usr/bin/crun --rootfs "$rootfs_path" /bin/true
   else
     local image_name="$STAR_DEFAULT_ROOTFS_IMAGE"
     case "$image_name" in
       containers-storage:*) image_name="${image_name#containers-storage:}" ;;
     esac
-    if podman image exists "$image_name" >/dev/null 2>&1; then
+    if as_star_user podman image exists "$image_name" >/dev/null 2>&1; then
       ok "default rootfs image exists before cache extraction"
-      check "rootless podman can run default rootfs image" sudo -Hiu "$STAR_USER" env XDG_RUNTIME_DIR="/run/user/${star_uid}" podman run --rm --runtime /usr/bin/crun "$image_name" /bin/true
+      check "rootless podman can run default rootfs image" as_star_user podman run --rm --runtime /usr/bin/crun "$image_name" /bin/true
     else
       fail "cached rootfs or default rootfs image exists"
     fi
