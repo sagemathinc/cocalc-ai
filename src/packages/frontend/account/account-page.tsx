@@ -101,10 +101,6 @@ const LOAD_ACCOUNT_INFO_TIMEOUT = 15_000;
 export const AccountPage: React.FC = () => {
   const intl = useIntl();
   const [hidden, setHidden] = useState(IS_MOBILE);
-  const [openKeys, setOpenKeys] = useState<string[]>([
-    "preferences",
-    "billing",
-  ]);
 
   const { width: windowWidth } = useWindowDimensions();
   const isWide = windowWidth > 800;
@@ -113,6 +109,9 @@ export const AccountPage: React.FC = () => {
   const active_page = getAccountSettingsRouteFromState({
     active_page: raw_active_page,
   }).page;
+  const activeGroupKey = getAccountSettingsGroupKey(active_page);
+  const activeGroupOpenKeys = activeGroupKey == null ? [] : [activeGroupKey];
+  const [manualOpenKeys, setManualOpenKeys] = useState<string[] | undefined>();
   const is_logged_in = useTypedRedux("account", "is_logged_in");
   const account_id = useTypedRedux("account", "account_id");
   const is_commercial = useTypedRedux("customize", "is_commercial");
@@ -364,7 +363,7 @@ export const AccountPage: React.FC = () => {
 
   const tabs = getTabs();
   const mobileNavigationOptions = getMobileNavigationOptions(tabs);
-  const activeGroupKey = getAccountSettingsGroupKey(active_page);
+  const menuOpenKeys = manualOpenKeys ?? activeGroupOpenKeys;
 
   // Process tabs to handle nested children uniformly.
   const children = {};
@@ -530,9 +529,8 @@ export const AccountPage: React.FC = () => {
             </div>
           )}
           <Menu
-            defaultOpenKeys={["preferences", "billing"]}
-            openKeys={hidden ? ["preferences", "billing"] : openKeys}
-            onOpenChange={hidden ? undefined : setOpenKeys}
+            openKeys={menuOpenKeys}
+            onOpenChange={setManualOpenKeys}
             mode="inline"
             items={tabs}
             onClick={(e) => {
