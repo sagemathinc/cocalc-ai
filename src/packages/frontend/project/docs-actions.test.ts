@@ -500,17 +500,15 @@ describe("project docs actions", () => {
     expect(events[0]).toMatchObject({
       actionId: "settings.runtime.rootfs",
       projectId: "project-1",
-      surface: "flyout",
+      surface: "project",
     });
     expect(mockSetProjectActiveTab).toHaveBeenCalledWith("settings", {
       change_history: false,
       noFocus: true,
     });
-    expect(mockSetFlyoutExpanded).toHaveBeenCalledWith("settings", true);
     expect(
       JSON.parse(window.localStorage.getItem("project-1::flyout")!),
     ).toMatchObject({
-      expanded: "settings",
       settings: ["environment"],
     });
     expect(result).toMatchObject({
@@ -522,8 +520,12 @@ describe("project docs actions", () => {
     });
   });
 
-  it("targets the project secrets docs event at the settings flyout", async () => {
+  it("targets the project secrets docs event at the project settings page", async () => {
     const events: any[] = [];
+    window.localStorage.setItem(
+      "project-1::flyout",
+      JSON.stringify({ expanded: "people" }),
+    );
     window.addEventListener(
       PROJECT_SECRETS_DOCS_ACTION_EVENT,
       (event) => {
@@ -542,7 +544,13 @@ describe("project docs actions", () => {
     expect(events[0]).toMatchObject({
       actionId: "settings.environment.secrets",
       projectId: "project-1",
-      surface: "flyout",
+      surface: "project",
+    });
+    expect(
+      JSON.parse(window.localStorage.getItem("project-1::flyout")!),
+    ).toMatchObject({
+      expanded: "people",
+      settings: ["environment"],
     });
     expect(result).toMatchObject({
       acknowledged: true,
@@ -567,7 +575,10 @@ describe("project docs actions", () => {
     const result = await pending;
 
     expect(events.length).toBeGreaterThanOrEqual(1);
-    expect(mockSetFlyoutExpanded).toHaveBeenCalled();
+    expect(mockSetProjectActiveTab).toHaveBeenCalledWith("settings", {
+      change_history: false,
+      noFocus: true,
+    });
     expect(result).toMatchObject({
       acknowledged: false,
       action_id: "settings.environment.secrets",
@@ -590,7 +601,6 @@ describe("project docs actions", () => {
     expect(
       JSON.parse(window.localStorage.getItem("project-1::flyout")!),
     ).toMatchObject({
-      expanded: "settings",
       settings: ["people"],
     });
     expect(result).toMatchObject({

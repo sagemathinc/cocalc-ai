@@ -475,7 +475,6 @@ function storeSettingsFlyoutState(
   } catch {
     current = {};
   }
-  current.expanded = "settings";
   current.settings = [panel];
   window.localStorage.setItem(key, JSON.stringify(current));
 }
@@ -493,7 +492,6 @@ function openSettingsPanel(projectId: string, panel: string): void {
     change_history: false,
     noFocus: true,
   });
-  actions?.setFlyoutExpanded?.("settings", true);
 }
 
 function revealProjectPeople(projectId: string): DocsActionRevealResult {
@@ -582,7 +580,7 @@ async function revealProjectSecrets(
     actionId: "settings.environment.secrets",
     dispatch: (requestId) => {
       openSettingsEnvironment(projectId);
-      dispatchProjectSecretsEvent(projectId, "flyout", requestId);
+      dispatchProjectSecretsEvent(projectId, "project", requestId);
     },
     projectId,
   });
@@ -607,7 +605,7 @@ async function revealRuntimeImage(
     actionId: "settings.runtime.rootfs",
     dispatch: (requestId) => {
       openSettingsEnvironment(projectId);
-      dispatchRuntimeImageEvent(projectId, "flyout", requestId);
+      dispatchRuntimeImageEvent(projectId, "project", requestId);
     },
     projectId,
   });
