@@ -89,11 +89,21 @@ doctor() {
 
   if [ -f /etc/cocalc/project-host.env ]; then
     ok "project-host env exists"
+    # shellcheck disable=SC1091
+    set -a
+    source /etc/cocalc/project-host.env
+    set +a
     if grep -q '^COCALC_PODMAN_RUNTIME_DIR=' /etc/cocalc/project-host.env; then
       fail "project-host does not force COCALC_PODMAN_RUNTIME_DIR"
     else
       ok "project-host does not force COCALC_PODMAN_RUNTIME_DIR"
     fi
+    check "project-host tools bundle exists" test -d "${COCALC_PROJECT_TOOLS:-}"
+    check "project-host tools bundle has dropbear" test -x "${COCALC_PROJECT_TOOLS:-}/dropbear"
+    check "project-host conat router is healthy" \
+      curl -fsS "http://${COCALC_PROJECT_HOST_CONAT_ROUTER_HOST:-127.0.0.1}:${COCALC_PROJECT_HOST_CONAT_ROUTER_PORT:-}/healthz"
+    check "project-host conat persist is healthy" \
+      curl -fsS "http://${COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_HOST:-127.0.0.1}:${COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT:-}/healthz"
   else
     fail "project-host env exists"
   fi
