@@ -70,6 +70,8 @@ doctor() {
 
   check "hub service is active" systemctl is-active --quiet cocalc-star-hub
   check "project-host service is active" systemctl is-active --quiet cocalc-star-project-host
+  check "hub systemd unit is installed" grep -q '^ExecStart=' /etc/systemd/system/cocalc-star-hub.service
+  check "project-host systemd unit is installed" grep -q '^ExecStart=' /etc/systemd/system/cocalc-star-project-host.service
   check "customize endpoint is reachable" curl -fsS "${STAR_API}/customize"
   [ -n "$star_uid" ] && ok "Star runtime user exists" || fail "Star runtime user exists"
 

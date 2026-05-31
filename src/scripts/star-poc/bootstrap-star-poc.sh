@@ -283,7 +283,12 @@ seed_database() {
 }
 
 install_systemd() {
-  cat >/etc/systemd/system/cocalc-star-hub.service <<EOF
+  local hub_unit project_host_unit caddy_config
+  hub_unit="$(mktemp)"
+  project_host_unit="$(mktemp)"
+  caddy_config="$(mktemp)"
+
+  cat >"$hub_unit" <<EOF
 [Unit]
 Description=CoCalc Star POC launchpad hub
 After=network-online.target
@@ -305,7 +310,7 @@ TimeoutStopSec=20
 WantedBy=multi-user.target
 EOF
 
-  cat >/etc/systemd/system/cocalc-star-project-host.service <<EOF
+  cat >"$project_host_unit" <<EOF
 [Unit]
 Description=CoCalc Star POC local project host
 After=network-online.target cocalc-star-hub.service
@@ -330,11 +335,21 @@ TimeoutStopSec=40
 WantedBy=multi-user.target
 EOF
 
-  cat >/etc/caddy/Caddyfile <<EOF
+  cat >"$caddy_config" <<EOF
 :80 {
   reverse_proxy 127.0.0.1:${STAR_BASE_PORT}
 }
 EOF
+
+  grep -q '^ExecStart=' "$hub_unit" || die "generated hub systemd unit is invalid"
+  grep -q '^ExecStart=' "$project_host_unit" || die "generated project-host systemd unit is invalid"
+  install -m 0644 -o root -g root "$hub_unit" /etc/systemd/system/cocalc-star-hub.service
+  install -m 0644 -o root -g root "$project_host_unit" /etc/systemd/system/cocalc-star-project-host.service
+  install -m 0644 -o root -g root "$caddy_config" /etc/caddy/Caddyfile
+  grep -q '^ExecStart=' /etc/systemd/system/cocalc-star-hub.service || die "installed hub systemd unit is invalid"
+  grep -q '^ExecStart=' /etc/systemd/system/cocalc-star-project-host.service || die "installed project-host systemd unit is invalid"
+  rm -f "$hub_unit" "$project_host_unit" "$caddy_config"
+
   systemctl daemon-reload
   systemctl enable caddy cocalc-star-hub cocalc-star-project-host
 }
@@ -362,7 +377,14 @@ start_services() {
   systemctl restart caddy
   systemctl restart cocalc-star-hub
   systemctl restart cocalc-star-project-host
-  sleep 5
+  log "waiting for ${STAR_BASE_URL}/customize"
+  for _ in $(seq 1 60); do
+    if curl -fsS "${STAR_BASE_URL}/customize" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+  done
+  sync
   systemctl --no-pager --full status cocalc-star-hub cocalc-star-project-host || true
   cat "$STAR_ROOT/bootstrap-result.json"
 }

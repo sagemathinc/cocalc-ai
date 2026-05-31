@@ -84,11 +84,18 @@ ensure_account() {
 
   local email_file="${STATE_DIR}/email"
   local password_file="${STATE_DIR}/password"
-  if [ ! -f "$email_file" ]; then
+  if [ -f "$email_file" ] && [ ! -s "$email_file" ]; then
+    rm -f "$email_file" "${STATE_DIR}/signed-up" "${STATE_DIR}/cookie-header"
+  fi
+  if [ -f "$password_file" ] && [ ! -s "$password_file" ]; then
+    rm -f "$password_file" "${STATE_DIR}/signed-up" "${STATE_DIR}/cookie-header"
+  fi
+
+  if [ ! -s "$email_file" ]; then
     printf 'star-smoke-%s@example.invalid\n' "$(date -u +%Y%m%d%H%M%S)" >"$email_file"
     chmod 600 "$email_file"
   fi
-  if [ ! -f "$password_file" ]; then
+  if [ ! -s "$password_file" ]; then
     openssl rand -base64 32 >"$password_file"
     chmod 600 "$password_file"
   fi
