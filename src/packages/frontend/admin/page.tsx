@@ -16,6 +16,7 @@ import { RootfsAdmin } from "./rootfs";
 import { NewsAdminPage } from "./news/page";
 import { BayOpsAdmin } from "./bay-ops";
 import { ManagedEgressAdminOverview } from "./managed-egress-overview";
+import { ManagedCpuAdminOverview } from "./managed-cpu-overview";
 import { ProjectBackupShardsAdmin } from "./project-backup-shards";
 import { SsoAdmin } from "./sso";
 import { SiteSetupAdmin, SiteSetupBanner } from "./site-setup";
@@ -110,6 +111,16 @@ export function AdminPage({
         </div>
       ),
       children: <UserSearch />,
+    },
+    {
+      key: "managed-cpu",
+      label: (
+        <div style={headerStyle}>
+          <Icon name="line-chart" style={{ marginRight: "8px" }} /> CPU & Abuse
+          Signals
+        </div>
+      ),
+      children: <ManagedCpuAdminOverview />,
     },
     {
       key: "managed-egress",

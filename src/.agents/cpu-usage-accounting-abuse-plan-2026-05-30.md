@@ -471,9 +471,11 @@ Phase 1: accounting only
 
 Phase 2: admin visibility
 
-- Add top CPU accounts/projects dashboard.
-- Add 5h/7d filters.
-- Add host/project drilldowns for capacity planning.
+- [x] Add top CPU accounts/projects dashboard.
+- [x] Add 5h/7d filters.
+- [x] Add managed egress accounts/projects in the same review panel as an abuse
+      signal.
+- [x] Add host/project drilldowns for capacity planning.
 - Add CSV or copyable summaries if cheap.
 
 Phase 3: annotations
