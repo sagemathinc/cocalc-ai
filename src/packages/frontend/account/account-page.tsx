@@ -511,17 +511,6 @@ export const AccountPage: React.FC = () => {
             flexDirection: "column",
           }}
         >
-          {!lite && (
-            <div
-              style={{
-                textAlign: "center",
-                margin: "15px 0",
-                fontSize: "11pt",
-              }}
-            >
-              <b>Account Configuration</b>
-            </div>
-          )}
           {lite && (
             <div
               style={{
