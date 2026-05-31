@@ -6,6 +6,7 @@
 const getManagedEgressHistoryForAccountMock = jest.fn();
 const getManagedEgressAdminHistoryMock = jest.fn();
 const getManagedEgressAdminOverviewMock = jest.fn();
+const getManagedCpuAdminOverviewMock = jest.fn();
 const getProjectUsageAccountIdMock = jest.fn();
 const isAdminMock = jest.fn();
 const resolveMembershipDetailsForAccountMock = jest.fn();
@@ -78,6 +79,11 @@ jest.mock("@cocalc/server/membership/managed-egress", () => ({
     getManagedEgressAdminOverviewMock(...args),
   getProjectUsageAccountId: (...args: any[]) =>
     getProjectUsageAccountIdMock(...args),
+}));
+
+jest.mock("@cocalc/server/membership/managed-cpu", () => ({
+  getManagedCpuAdminOverview: (...args: any[]) =>
+    getManagedCpuAdminOverviewMock(...args),
 }));
 
 jest.mock("@cocalc/server/membership/resolve", () => ({
@@ -1733,6 +1739,52 @@ describe("purchases.getManagedEgressAdminOverview", () => {
       recent_event_limit: 9,
     });
     expect(result.total_bytes).toBe(1234);
+  });
+});
+
+describe("purchases.getManagedCpuAdminOverview", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("requires admin permission", async () => {
+    isAdminMock.mockResolvedValue(false);
+
+    const { getManagedCpuAdminOverview } = await import("./purchases");
+    await expect(
+      getManagedCpuAdminOverview({
+        account_id: "viewer-1",
+      }),
+    ).rejects.toThrow("must be an admin");
+  });
+
+  it("loads the CPU admin overview for admins", async () => {
+    isAdminMock.mockResolvedValue(true);
+    getManagedCpuAdminOverviewMock.mockResolvedValue({
+      start: "2026-05-30T00:00:00.000Z",
+      end: "2026-05-31T00:00:00.000Z",
+      total_cpu_seconds: 3600,
+      top_accounts: [],
+      top_projects: [],
+      recent_events: [],
+    });
+
+    const { getManagedCpuAdminOverview } = await import("./purchases");
+    const result = await getManagedCpuAdminOverview({
+      account_id: "admin-1",
+      top_account_limit: 5,
+      top_project_limit: 7,
+      recent_event_limit: 9,
+    });
+
+    expect(getManagedCpuAdminOverviewMock).toHaveBeenCalledWith({
+      start: undefined,
+      end: undefined,
+      top_account_limit: 5,
+      top_project_limit: 7,
+      recent_event_limit: 9,
+    });
+    expect(result.total_cpu_seconds).toBe(3600);
   });
 });
 

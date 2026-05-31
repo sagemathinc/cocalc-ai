@@ -157,6 +157,7 @@ export const system = {
   releaseProjectAppPublicSubdomain: authFirst,
   recordManagedProjectEgress: authFirst,
   getManagedProjectEgressPolicy: authFirst,
+  recordManagedProjectCpuUsage: authFirst,
   recordServiceAdmissionDenial: authFirstRequireProject,
   recordServiceAdmissionNearLimit: authFirstRequireProject,
   getServiceAdmissionConfig: authFirst,
@@ -2354,6 +2355,16 @@ export interface System {
     project_id?: string;
     category: ManagedProjectEgressCategory;
     bytes: number;
+    metadata?: Record<string, unknown>;
+  }) => Promise<{ recorded: boolean; account_id?: string }>;
+
+  recordManagedProjectCpuUsage: (opts: {
+    account_id?: string;
+    project_id?: string;
+    cpu_seconds: number;
+    sample_started_at?: Date;
+    sample_ended_at?: Date;
+    source?: string;
     metadata?: Record<string, unknown>;
   }) => Promise<{ recorded: boolean; account_id?: string }>;
 

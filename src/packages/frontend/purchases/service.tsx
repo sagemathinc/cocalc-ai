@@ -67,7 +67,7 @@ export default function ServiceTag({
     tag = (
       <a
         onClick={() => {
-          openAccountSettings({ kind: "tab", page: "vouchers" });
+          openAccountSettings({ page: "vouchers" });
         }}
       >
         {tag}

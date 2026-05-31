@@ -166,7 +166,7 @@ export const Page: React.FC = () => {
         active_top_tab={active_top_tab}
         hide_label={!show_label}
         on_click={() => {
-          openAccountSettings({ kind: "index" }, { changeHistory: false });
+          openAccountSettings({ page: "index" }, { changeHistory: false });
         }}
         tooltip={intl.formatMessage(labels.account)}
       />

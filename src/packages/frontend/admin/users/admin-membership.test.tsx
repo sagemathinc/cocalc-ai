@@ -216,6 +216,11 @@ describe("AdminMembership", () => {
         max_projects: 4,
         remaining_project_slots: -1,
         over_max_projects: true,
+        managed_cpu_5h_seconds: 7200,
+        managed_cpu_5h_remaining_seconds: -1800,
+        managed_cpu_7d_seconds: 18000,
+        managed_cpu_7d_remaining_seconds: 10800,
+        over_managed_cpu_5h: true,
         managed_egress_recent_events: [
           {
             project_id: "project-1",
@@ -240,6 +245,11 @@ describe("AdminMembership", () => {
           /only partially sampled from this user's attributed projects/i,
         ),
       ).toBeTruthy();
+      expect(screen.getByText(/managed-CPU 5-hour window/i)).toBeTruthy();
+      expect(screen.getByText(/Managed CPU used in 5 hours/)).toBeTruthy();
+      expect(screen.getByText(/Managed CPU remaining in 5 hours/)).toBeTruthy();
+      expect(screen.getByText(/Over by 0.500 CPU-hours/)).toBeTruthy();
+      expect(screen.getByText(/5.00 CPU-hours/)).toBeTruthy();
       expect(screen.getByText("Recent managed egress")).toBeTruthy();
       expect(screen.getByText("Top recent egress projects (24h)")).toBeTruthy();
       expect(screen.getByText("Historical managed egress")).toBeTruthy();

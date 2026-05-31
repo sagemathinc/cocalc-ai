@@ -8,7 +8,6 @@
 
 import { fromJS, List } from "immutable";
 import { join } from "path";
-import { FormattedMessage, useIntl } from "react-intl";
 import {
   Actions,
   rclass,
@@ -20,18 +19,9 @@ import {
   TypedMap,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import {
-  A,
-  build_date,
-  Gap,
-  Loading,
-  r_join,
-  smc_git_rev,
-  smc_version,
-  UNIT,
-} from "@cocalc/frontend/components";
+import { A, Loading } from "@cocalc/frontend/components";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { labels, Locale } from "@cocalc/frontend/i18n";
+import { Locale } from "@cocalc/frontend/i18n";
 import { callback2, retry_until_success } from "@cocalc/util/async-utils";
 import type { AIServicesAvailable } from "@cocalc/util/db-schema/ai-models";
 import type { SignupEmailDomainPublicPolicy } from "@cocalc/util/accounts/signup-email-domain-policy";
@@ -42,7 +32,7 @@ import {
   KUCALC_ON_PREMISES,
   site_settings_conf,
 } from "@cocalc/util/db-schema/site-defaults";
-import { deep_copy, dict, YEAR } from "@cocalc/util/misc";
+import { deep_copy, dict } from "@cocalc/util/misc";
 import * as theme from "@cocalc/util/theme";
 import type { CustomAIModelPublic } from "@cocalc/util/types/ai";
 import { DefaultQuotaSetting, Upgrades } from "@cocalc/util/upgrades/quota";
@@ -465,7 +455,7 @@ export function CustomizeString({ name }: CustomizeStringProps) {
   );
 }
 
-// TODO also make this configurable? Needed in the <Footer/> and maybe elsewhere …
+// TODO also make this configurable?
 export const CompanyName = function CompanyName() {
   return <span>{theme.COMPANY_NAME}</span>;
 };
@@ -503,75 +493,7 @@ export function AccountCreationEmailInstructions() {
   );
 }
 
-export const Footer: React.FC = React.memo(() => {
-  const intl = useIntl();
-  const on = useTypedRedux("customize", "organization_name");
-  const tos = useTypedRedux("customize", "terms_of_service_url");
-
-  const organizationName = on.length > 0 ? on : theme.COMPANY_NAME;
-  const TOSurl = tos.length > 0 ? tos : PolicyTOSPageUrl;
-  const webappVersionInfo =
-    `Version ${smc_version} @ ${build_date}` + ` | ${smc_git_rev.slice(0, 8)}`;
-  const style: React.CSSProperties = {
-    textAlign: "center",
-    paddingBottom: `${UNIT}px`,
-  };
-
-  const systemStatus = intl.formatMessage({
-    id: "customize.footer.system-status",
-    defaultMessage: "System Status",
-  });
-
-  const name = (
-    <FormattedMessage
-      id="customize.footer.name"
-      defaultMessage="{name} by {organizationName}"
-      values={{
-        name: <SiteName />,
-        organizationName,
-      }}
-    />
-  );
-
-  function contents() {
-    const elements = [
-      <A key="name" href={appBasePath}>
-        {name}
-      </A>,
-      <A key="status" href={SystemStatusUrl}>
-        {systemStatus}
-      </A>,
-      <A key="tos" href={TOSurl}>
-        {intl.formatMessage(labels.terms_of_service)}
-      </A>,
-      <HelpEmailLink key="help" />,
-      <span key="year" title={webappVersionInfo}>
-        &copy; {YEAR}
-      </span>,
-    ];
-    return r_join(elements, <> &middot; </>);
-  }
-
-  return (
-    <footer style={style}>
-      <hr />
-      <Gap />
-      {contents()}
-    </footer>
-  );
-});
-
-// first step of centralizing these URLs in one place → collecting all such pages into one
-// react-class with a 'type' prop is the next step (TODO)
-// then consolidate this with the existing site-settings database (e.g. TOS above is one fixed HTML string with an anchor)
-
-export const PolicyIndexPageUrl = join(appBasePath, "policies");
 export const PolicyPricingPageUrl = join(appBasePath, "pricing");
-export const PolicyPrivacyPageUrl = join(appBasePath, "policies/privacy");
-export const PolicyCopyrightPageUrl = join(appBasePath, "policies/copyright");
-export const PolicyTOSPageUrl = join(appBasePath, "policies/terms");
-export const SystemStatusUrl = join(appBasePath, "info/status");
-export const PAYGODocsUrl = "https://doc.cocalc.com/paygo.html";
 
 // 1. Google analytics
 async function setup_google_analytics(w) {

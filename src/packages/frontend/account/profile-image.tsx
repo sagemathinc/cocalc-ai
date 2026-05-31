@@ -4,28 +4,26 @@
  */
 
 import gravatarUrl from "./gravatar-url";
-import { Button, Well } from "@cocalc/frontend/antd-bootstrap";
-import { Component, Rendered } from "@cocalc/frontend/app-framework";
-import { ErrorDisplay, Loading } from "@cocalc/frontend/components";
+import { Button, Flex, Space, Typography } from "antd";
+import type { ReactNode } from "react";
+import { redux, Rendered, useState } from "@cocalc/frontend/app-framework";
+import { ErrorDisplay, Loading, Tooltip } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import type { AccountState } from "./types";
 import UploadProfileImage from "./upload-profile-image";
 
 interface ProfileImageSelectorProps {
-  profile: AccountState["profile"];
   account_id: string;
+  avatarPreview: ReactNode;
+  colorAction: ReactNode;
   email_address: string | undefined;
-}
-
-interface ProfileImageSelectorState {
-  crop;
-  is_loading?: boolean;
-  error?: any;
-  show_default_explanation?: boolean;
-  show_gravatar_explanation?: boolean;
+  onImageChange: (src: string) => void;
 }
 
 export async function setProfile({ account_id, profile }) {
+  if (redux.getStore("account")?.get("account_id") === account_id) {
+    await redux.getTable("account").set({ profile });
+    return;
+  }
   await webapp_client.async_query({
     query: {
       accounts: { account_id, profile },
@@ -33,176 +31,84 @@ export async function setProfile({ account_id, profile }) {
   });
 }
 
-export class ProfileImageSelector extends Component<
-  ProfileImageSelectorProps,
-  ProfileImageSelectorState
-> {
-  private is_mounted: boolean = true;
+export function ProfileImageSelector({
+  account_id,
+  avatarPreview,
+  colorAction,
+  email_address,
+  onImageChange,
+}: ProfileImageSelectorProps) {
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | undefined>(undefined);
 
-  constructor(props: ProfileImageSelectorProps, context: any) {
-    super(props, context);
-    this.state = {
-      crop: {
-        unit: "%",
-        width: 100,
-        aspect: 1,
-      },
-    };
-  }
-
-  componentWillUnmount() {
-    this.is_mounted = false;
-  }
-
-  set_image = async (src: string) => {
-    this.setState({ is_loading: true });
+  async function setImage(src: string): Promise<void> {
+    onImageChange(src);
+    setIsLoading(true);
+    setError(undefined);
     try {
       await setProfile({
-        account_id: this.props.account_id,
+        account_id,
         profile: { image: src },
       });
     } catch (err) {
-      if (this.is_mounted) {
-        this.setState({ error: `${err}` });
-      }
+      setError(`${err}`);
     } finally {
-      if (this.is_mounted) {
-        this.setState({ is_loading: false });
-      }
+      setIsLoading(false);
     }
-  };
+  }
 
-  handle_gravatar_click = () => {
-    if (!this.props.email_address) {
-      // Should not be necessary, but to make typescript happy.
-      return;
-    }
-    this.set_image(gravatarUrl(this.props.email_address));
-  };
-
-  handle_default_click = () => this.set_image("");
-
-  render_options_gravatar() {
-    if (!this.props.email_address) {
+  function renderGravatarButton(): Rendered {
+    if (!email_address) {
       return;
     }
     return (
-      <>
-        <Button
-          style={{ marginTop: "5px" }}
-          onClick={this.handle_gravatar_click}
-        >
-          Gravatar
-        </Button>{" "}
-        <a
-          href="#"
-          onClick={(e) => {
-            e.preventDefault();
-            this.setState({ show_gravatar_explanation: true });
-          }}
-        >
-          What is this?
-        </a>
-        {this.state.show_gravatar_explanation ? (
-          <Well style={{ marginTop: "10px", marginBottom: "10px" }}>
-            Gravatar is a service for using a common avatar across websites. Go
-            to the{" "}
-            <a href="https://en.gravatar.com" target="_blank" rel="noopener">
-              Wordpress Gravatar site
-            </a>{" "}
-            and sign in (or create an account) using {this.props.email_address}.
-            <br />
-            <br />
-            <Button
-              onClick={() =>
-                this.setState({ show_gravatar_explanation: false })
-              }
-            >
-              Close
-            </Button>
-          </Well>
-        ) : (
-          <br />
-        )}
-      </>
+      <Tooltip title="Use the Gravatar image associated with your email address.">
+        <Button onClick={() => setImage(gravatarUrl(email_address))}>
+          Use Gravatar
+        </Button>
+      </Tooltip>
     );
   }
 
-  render_options() {
+  if (isLoading) {
     return (
-      <>
-        <Button
-          style={{ marginTop: "5px" }}
-          onClick={this.handle_default_click}
-        >
-          Default
-        </Button>{" "}
-        <a
-          href="#"
-          onClick={(e) => {
-            e.preventDefault();
-            this.setState({ show_default_explanation: true });
-          }}
-        >
-          What is this?
-        </a>
-        {this.state.show_default_explanation ? (
-          <Well style={{ marginTop: "10px", marginBottom: "10px" }}>
-            The default avatar is a circle with the first letter of your name.
-            <br />
-            <br />
-            <Button
-              onClick={() => this.setState({ show_default_explanation: false })}
-            >
-              Close
-            </Button>
-          </Well>
-        ) : (
-          <br />
-        )}
-        <div style={{ margin: "15px 0" }}>
-          <UploadProfileImage
-            account_id={this.props.account_id}
-            onChange={(data) => {
-              this.set_image(data);
-            }}
-          />
-        </div>
-        {this.render_options_gravatar()}
-      </>
+      <Flex align="center" gap="middle" wrap>
+        {avatarPreview}
+        <Space>
+          Saving...
+          <Loading />
+        </Space>
+      </Flex>
     );
   }
 
-  render_loading() {
-    return (
-      <div>
-        Saving... <Loading />
-      </div>
-    );
-  }
-
-  render_error(): Rendered {
-    if (this.state.error == null) {
-      return;
-    }
-    return (
-      <ErrorDisplay
-        error={this.state.error}
-        onClose={() => this.setState({ error: undefined })}
-      />
-    );
-  }
-
-  render() {
-    if (this.state.is_loading) {
-      return this.render_loading();
-    }
-    return (
-      <>
-        {this.render_error()}
-        <br />
-        {this.render_options()}
-      </>
-    );
-  }
+  return (
+    <Flex align="center" gap="middle" wrap>
+      <UploadProfileImage
+        dropTarget
+        onChange={(data) => setImage(data)}
+        tooltip="Drop an image here, or click to upload and crop."
+      >
+        {avatarPreview}
+      </UploadProfileImage>
+      <Space direction="vertical">
+        <Typography.Text>
+          Avatar shown to collaborators and in account menus.
+        </Typography.Text>
+        {error ? (
+          <ErrorDisplay error={error} onClose={() => setError(undefined)} />
+        ) : undefined}
+        <Space wrap>
+          <UploadProfileImage onChange={(data) => setImage(data)}>
+            Upload
+          </UploadProfileImage>
+          <Tooltip title="Use the first letter of your first name as your avatar.">
+            <Button onClick={() => setImage("")}>Use default</Button>
+          </Tooltip>
+          {colorAction}
+          {renderGravatarButton()}
+        </Space>
+      </Space>
+    </Flex>
+  );
 }

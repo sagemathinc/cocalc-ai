@@ -12,12 +12,10 @@ describe("page-routing", () => {
     expect(parsed).toEqual({
       page: "account",
       tab: "vouchers",
-      sub_tab: undefined,
     });
     expect(getPageTopTab(parsed)).toBe("account");
     expect(getInitialAccountPageState(parsed)).toEqual({
       active_page: "vouchers",
-      active_sub_tab: undefined,
     });
   });
 
@@ -65,17 +63,18 @@ describe("page-routing", () => {
     expect(parsePageTarget("settings")).toEqual({
       page: "account",
       tab: "index",
-      sub_tab: undefined,
     });
     expect(parsePageTarget("settings/profile")).toEqual({
       page: "account",
       tab: "profile",
-      sub_tab: undefined,
     });
-    expect(parsePageTarget("settings/preferences/editor")).toEqual({
+    expect(parsePageTarget("settings/editor")).toEqual({
       page: "account",
-      tab: "preferences",
-      sub_tab: "preferences-editor",
+      tab: "editor",
+    });
+    expect(parsePageTarget("settings/billing")).toEqual({
+      page: "account",
+      tab: "subscriptions",
     });
   });
 
@@ -83,22 +82,18 @@ describe("page-routing", () => {
     expect(parsePageTarget("billing/cards")).toEqual({
       page: "account",
       tab: "payment-methods",
-      sub_tab: undefined,
     });
     expect(parsePageTarget("billing/receipts")).toEqual({
       page: "account",
       tab: "statements",
-      sub_tab: undefined,
     });
     expect(parsePageTarget("store/membership")).toEqual({
       page: "account",
       tab: "store",
-      sub_tab: undefined,
     });
     expect(parsePageTarget("store/vouchers")).toEqual({
       page: "account",
       tab: "store",
-      sub_tab: undefined,
     });
   });
 
@@ -107,10 +102,9 @@ describe("page-routing", () => {
     expect(
       getPageTargetPath({
         page: "account",
-        tab: "preferences",
-        sub_tab: "preferences-keyboard",
+        tab: "keyboard",
       }),
-    ).toBe("settings/preferences/keyboard");
+    ).toBe("settings/keyboard");
     expect(getPageUrlPath({ page: "auth", view: "sign-up" })).toBe(
       "/auth/sign-up",
     );

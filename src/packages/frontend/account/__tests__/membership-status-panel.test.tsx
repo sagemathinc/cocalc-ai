@@ -272,6 +272,9 @@ describe("MembershipStatusPanel", () => {
         over_total_storage_hard: true,
         max_projects: 4,
         over_max_projects: true,
+        managed_cpu_5h_seconds: 7200,
+        managed_cpu_7d_seconds: 18000,
+        over_managed_cpu_5h: true,
       },
     });
 
@@ -283,6 +286,7 @@ describe("MembershipStatusPanel", () => {
       expect(
         screen.getByText(/only partially sampled from your projects/i),
       ).toBeTruthy();
+      expect(screen.getByText(/managed-CPU 5-hour window/i)).toBeTruthy();
     });
   });
 
@@ -297,6 +301,8 @@ describe("MembershipStatusPanel", () => {
             total_storage_hard_bytes: 3000000000,
             egress_5h_bytes: 1000000000,
             egress_7d_bytes: 3000000000,
+            cpu_5h_seconds: 14400,
+            cpu_7d_seconds: 28800,
           },
         },
       })
@@ -312,6 +318,12 @@ describe("MembershipStatusPanel", () => {
         total_storage_bytes: 500000000,
         total_storage_soft_bytes: 1000000000,
         total_storage_hard_bytes: 3000000000,
+        managed_cpu_5h_seconds: 7200,
+        managed_cpu_7d_seconds: 18000,
+        managed_cpu_5h_reset_at: "2026-04-25T15:00:00.000Z",
+        managed_cpu_5h_reset_in: "2h",
+        managed_cpu_7d_reset_at: "2026-04-30T12:00:00.000Z",
+        managed_cpu_7d_reset_in: "5d",
         managed_egress_5h_bytes: 500000000,
         managed_egress_7d_bytes: 1500000000,
         managed_egress_recent_events: [
@@ -333,6 +345,10 @@ describe("MembershipStatusPanel", () => {
       expect(screen.getAllByText(/1 GB/).length).toBeGreaterThan(0);
       expect(screen.getAllByText(/3 GB/).length).toBeGreaterThan(0);
       expect(screen.getByText("Recent managed egress")).toBeTruthy();
+      expect(screen.getByText(/Managed CPU used in 5 hours/)).toBeTruthy();
+      expect(screen.getByText(/Managed CPU 5-hour next reset/)).toBeTruthy();
+      expect(screen.getAllByText(/2.00 CPU-hours/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/5.00 CPU-hours/).length).toBeGreaterThan(0);
       expect(screen.getByText("Top recent egress projects (24h)")).toBeTruthy();
       expect(screen.getByText("Historical managed egress")).toBeTruthy();
       expect(screen.getByText("recent-egress-summary")).toBeTruthy();

@@ -6,6 +6,7 @@ import {
   getManagedEgressHistoryForAccount,
   getProjectUsageAccountId,
 } from "@cocalc/server/membership/managed-egress";
+import { getManagedCpuAdminOverview as getManagedCpuAdminOverview0 } from "@cocalc/server/membership/managed-cpu";
 import {
   resolveMembershipDetailsForAccount,
   resolveMembershipForAccount,
@@ -1281,6 +1282,36 @@ export async function getManagedEgressAdminHistory({
     start,
     end,
     bucket,
+    recent_event_limit,
+    top_account_limit,
+    top_project_limit,
+  });
+}
+
+export async function getManagedCpuAdminOverview({
+  account_id,
+  start,
+  end,
+  recent_event_limit,
+  top_account_limit,
+  top_project_limit,
+}: {
+  account_id?: string;
+  start?: string | Date;
+  end?: string | Date;
+  recent_event_limit?: number;
+  top_account_limit?: number;
+  top_project_limit?: number;
+}) {
+  if (!account_id) {
+    throw Error("account_id required");
+  }
+  if (!(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await getManagedCpuAdminOverview0({
+    start,
+    end,
     recent_event_limit,
     top_account_limit,
     top_project_limit,

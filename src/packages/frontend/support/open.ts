@@ -18,5 +18,5 @@ export default function openSupportTab(options: Options = {}) {
 
 export function openSupportTicketsPage(): void {
   redux.getActions("page")?.settings("");
-  openAccountSettings({ kind: "tab", page: "support" });
+  openAccountSettings({ page: "support" });
 }

@@ -495,6 +495,17 @@ export interface MembershipUsageStatus {
   managed_egress_categories_5h_bytes?: Record<string, number>;
   managed_egress_categories_7d_bytes?: Record<string, number>;
   managed_egress_recent_events?: ManagedEgressEventSummary[];
+  managed_cpu_5h_seconds?: number;
+  managed_cpu_7d_seconds?: number;
+  managed_cpu_5h_remaining_seconds?: number;
+  managed_cpu_7d_remaining_seconds?: number;
+  managed_cpu_5h_reset_at?: Date;
+  managed_cpu_7d_reset_at?: Date;
+  managed_cpu_5h_reset_in?: string;
+  managed_cpu_7d_reset_in?: string;
+  over_managed_cpu_5h?: boolean;
+  over_managed_cpu_7d?: boolean;
+  managed_cpu_recent_events?: ManagedCpuEventSummary[];
 }
 
 export interface ManagedEgressEventSummary {
@@ -587,6 +598,55 @@ export interface ManagedEgressAdminHistory {
 }
 
 export interface ManagedEgressAdminOverviewQuery {
+  account_id?: string;
+  start?: string | Date;
+  end?: string | Date;
+  recent_event_limit?: number;
+  top_account_limit?: number;
+  top_project_limit?: number;
+}
+
+export interface ManagedCpuEventSummary {
+  account_id?: string;
+  project_id?: string | null;
+  project_title?: string | null;
+  host_id?: string | null;
+  cpu_seconds: number;
+  sample_started_at?: string | null;
+  sample_ended_at: string;
+  source?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface ManagedCpuAccountSummary {
+  account_id: string;
+  email_address?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  cpu_seconds: number;
+}
+
+export interface ManagedCpuAdminProjectSummary {
+  account_id: string;
+  email_address?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  project_id: string | null;
+  project_title?: string | null;
+  host_id?: string | null;
+  cpu_seconds: number;
+}
+
+export interface ManagedCpuAdminOverview {
+  start: string;
+  end: string;
+  total_cpu_seconds: number;
+  top_accounts: ManagedCpuAccountSummary[];
+  top_projects: ManagedCpuAdminProjectSummary[];
+  recent_events: ManagedCpuEventSummary[];
+}
+
+export interface ManagedCpuAdminOverviewQuery {
   account_id?: string;
   start?: string | Date;
   end?: string | Date;
@@ -790,6 +850,9 @@ export interface Purchases {
   getManagedEgressAdminHistory: (
     opts?: ManagedEgressAdminHistoryQuery,
   ) => Promise<ManagedEgressAdminHistory>;
+  getManagedCpuAdminOverview: (
+    opts?: ManagedCpuAdminOverviewQuery,
+  ) => Promise<ManagedCpuAdminOverview>;
 }
 
 export const purchases = {
@@ -819,4 +882,5 @@ export const purchases = {
   getManagedEgressHistory: authFirst,
   getManagedEgressAdminOverview: authFirst,
   getManagedEgressAdminHistory: authFirst,
+  getManagedCpuAdminOverview: authFirst,
 };

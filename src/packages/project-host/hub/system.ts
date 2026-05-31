@@ -69,6 +69,18 @@ export function wireSystemApi(): void {
     return await forwardSystem("system.recordManagedProjectEgress", [opts]);
   };
 
+  hubApi.system.recordManagedProjectCpuUsage = async (opts: {
+    account_id?: string;
+    project_id?: string;
+    cpu_seconds: number;
+    sample_started_at?: Date;
+    sample_ended_at?: Date;
+    source?: string;
+    metadata?: Record<string, unknown>;
+  }) => {
+    return await forwardSystem("system.recordManagedProjectCpuUsage", [opts]);
+  };
+
   hubApi.system.resolveManagedProjectSshKeyAccount = async (opts: {
     project_id: string;
     fingerprint: string;
