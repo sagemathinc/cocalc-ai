@@ -13,6 +13,7 @@ import { useProjectEnv } from "@cocalc/frontend/project/use-project-env";
 import { useProjectRootfs } from "@cocalc/frontend/project/use-project-rootfs";
 import { useProjectSecrets } from "@cocalc/frontend/project/use-project-secrets";
 import {
+  acknowledgeDocsAction,
   RUNTIME_IMAGE_DOCS_ACTION_EVENT,
   type RuntimeImageDocsActionDetail,
 } from "@cocalc/frontend/project/docs-actions";
@@ -478,12 +479,19 @@ export function EnvironmentOverview({
       if (detail?.projectId !== project_id) return;
       if (detail?.surface != null && detail.surface !== mode) return;
       setRuntimeImageOpen(true);
+      if (detail.requestId) {
+        acknowledgeDocsAction({
+          actionId: "settings.runtime.rootfs",
+          projectId: project_id,
+          requestId: detail.requestId,
+        });
+      }
     }
     window.addEventListener(RUNTIME_IMAGE_DOCS_ACTION_EVENT, handleReveal);
     return () => {
       window.removeEventListener(RUNTIME_IMAGE_DOCS_ACTION_EVENT, handleReveal);
     };
-  }, [project_id]);
+  }, [mode, project_id]);
 
   function scrollToElement(element: HTMLElement | null): void {
     if (element == null) return;

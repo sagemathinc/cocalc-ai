@@ -42,11 +42,26 @@ jest.mock("@cocalc/frontend/hosts/open-host-drawer", () => ({
 }));
 
 import {
+  DOCS_ACTION_ACK_EVENT,
   PROJECT_SECRETS_DOCS_ACTION_EVENT,
   RUNTIME_IMAGE_DOCS_ACTION_EVENT,
   listDocsAppActions,
   revealDocsAction,
 } from "./docs-actions";
+
+function acknowledgeDocsActionEvent(
+  detail: Record<string, string | undefined>,
+): void {
+  window.dispatchEvent(
+    new CustomEvent(DOCS_ACTION_ACK_EVENT, {
+      detail: {
+        actionId: detail.actionId,
+        projectId: detail.projectId,
+        requestId: detail.requestId,
+      },
+    }),
+  );
+}
 
 describe("project docs actions", () => {
   beforeEach(() => {
@@ -403,8 +418,14 @@ describe("project docs actions", () => {
 
   it("opens the runtime image modal in project settings", async () => {
     const events: any[] = [];
-    window.addEventListener(RUNTIME_IMAGE_DOCS_ACTION_EVENT, (event) =>
-      events.push((event as CustomEvent).detail),
+    window.addEventListener(
+      RUNTIME_IMAGE_DOCS_ACTION_EVENT,
+      (event) => {
+        const detail = (event as CustomEvent).detail;
+        events.push(detail);
+        acknowledgeDocsActionEvent(detail);
+      },
+      { once: true },
     );
 
     const result = await revealDocsAction({
@@ -412,7 +433,11 @@ describe("project docs actions", () => {
       projectId: "project-1",
     });
 
-    expect(events).toEqual([{ projectId: "project-1", surface: "flyout" }]);
+    expect(events[0]).toMatchObject({
+      actionId: "settings.runtime.rootfs",
+      projectId: "project-1",
+      surface: "flyout",
+    });
     expect(mockSetProjectActiveTab).toHaveBeenCalledWith("settings", {
       change_history: false,
       noFocus: true,
@@ -425,6 +450,7 @@ describe("project docs actions", () => {
       settings: ["environment"],
     });
     expect(result).toMatchObject({
+      acknowledged: true,
       action_id: "settings.runtime.rootfs",
       opened: true,
       panel: "runtime-image",
@@ -434,16 +460,57 @@ describe("project docs actions", () => {
 
   it("targets the project secrets docs event at the settings flyout", async () => {
     const events: any[] = [];
-    window.addEventListener(PROJECT_SECRETS_DOCS_ACTION_EVENT, (event) =>
-      events.push((event as CustomEvent).detail),
+    window.addEventListener(
+      PROJECT_SECRETS_DOCS_ACTION_EVENT,
+      (event) => {
+        const detail = (event as CustomEvent).detail;
+        events.push(detail);
+        acknowledgeDocsActionEvent(detail);
+      },
+      { once: true },
     );
 
-    await revealDocsAction({
+    const result = await revealDocsAction({
       actionId: "settings.environment.secrets",
       projectId: "project-1",
     });
 
-    expect(events[0]).toEqual({ projectId: "project-1", surface: "flyout" });
+    expect(events[0]).toMatchObject({
+      actionId: "settings.environment.secrets",
+      projectId: "project-1",
+      surface: "flyout",
+    });
+    expect(result).toMatchObject({
+      acknowledged: true,
+      action_id: "settings.environment.secrets",
+      panel: "project-secrets",
+    });
+  });
+
+  it("warns when a settings docs action is not acknowledged", async () => {
+    const events: any[] = [];
+    window.addEventListener(PROJECT_SECRETS_DOCS_ACTION_EVENT, (event) => {
+      events.push((event as CustomEvent).detail);
+    });
+
+    const pending = revealDocsAction({
+      actionId: "settings.environment.secrets",
+      projectId: "project-1",
+    });
+    await jest.runOnlyPendingTimersAsync();
+    await Promise.resolve();
+    await jest.runOnlyPendingTimersAsync();
+    const result = await pending;
+
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    expect(mockSetFlyoutExpanded).toHaveBeenCalled();
+    expect(result).toMatchObject({
+      acknowledged: false,
+      action_id: "settings.environment.secrets",
+      opened: true,
+      panel: "project-secrets",
+    });
+    expect(result.warning).toMatch(/did not acknowledge/);
   });
 
   it("opens the people settings panel", async () => {

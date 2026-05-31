@@ -30,21 +30,34 @@ export const RUNTIME_IMAGE_DOCS_ACTION_EVENT =
   "cocalc:docs-action:runtime-image";
 export const PROJECT_PEOPLE_DOCS_ACTION_EVENT =
   "cocalc:docs-action:project-people";
+export const DOCS_ACTION_ACK_EVENT = "cocalc:docs-action:ack";
 
 export type SettingsDocsActionSurface = "flyout" | "project";
 
 export interface ProjectSecretsDocsActionDetail {
+  actionId?: DocsActionId;
   projectId: string;
+  requestId?: string;
   surface?: SettingsDocsActionSurface;
 }
 
 export interface RuntimeImageDocsActionDetail {
+  actionId?: DocsActionId;
   projectId: string;
+  requestId?: string;
   surface?: SettingsDocsActionSurface;
 }
 
 export interface ProjectPeopleDocsActionDetail {
+  actionId?: DocsActionId;
   projectId: string;
+  requestId?: string;
+}
+
+export interface DocsActionAckDetail {
+  actionId: DocsActionId;
+  projectId?: string;
+  requestId: string;
 }
 
 export type DocsActionRevealResult = {
@@ -55,8 +68,10 @@ export type DocsActionRevealResult = {
   path?: string;
   panel?: string;
   project_id: string;
+  acknowledged?: boolean;
   source_path?: string;
   tab?: string;
+  warning?: string;
 };
 
 export type DocsActionParameters = Record<string, string | undefined>;
@@ -131,13 +146,19 @@ type ProjectActionSubset = {
 function dispatchProjectSecretsEvent(
   projectId: string,
   surface: SettingsDocsActionSurface = "flyout",
+  requestId?: string,
 ): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(
     new CustomEvent<ProjectSecretsDocsActionDetail>(
       PROJECT_SECRETS_DOCS_ACTION_EVENT,
       {
-        detail: { projectId, surface },
+        detail: {
+          actionId: "settings.environment.secrets",
+          projectId,
+          requestId,
+          surface,
+        },
       },
     ),
   );
@@ -146,13 +167,19 @@ function dispatchProjectSecretsEvent(
 function dispatchRuntimeImageEvent(
   projectId: string,
   surface: SettingsDocsActionSurface = "flyout",
+  requestId?: string,
 ): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(
     new CustomEvent<RuntimeImageDocsActionDetail>(
       RUNTIME_IMAGE_DOCS_ACTION_EVENT,
       {
-        detail: { projectId, surface },
+        detail: {
+          actionId: "settings.runtime.rootfs",
+          projectId,
+          requestId,
+          surface,
+        },
       },
     ),
   );
@@ -164,10 +191,83 @@ function dispatchProjectPeopleEvent(projectId: string): void {
     new CustomEvent<ProjectPeopleDocsActionDetail>(
       PROJECT_PEOPLE_DOCS_ACTION_EVENT,
       {
-        detail: { projectId },
+        detail: { actionId: "settings.people.collaborators", projectId },
       },
     ),
   );
+}
+
+export function acknowledgeDocsAction(detail: DocsActionAckDetail): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent<DocsActionAckDetail>(DOCS_ACTION_ACK_EVENT, { detail }),
+  );
+}
+
+function docsActionRequestId(actionId: DocsActionId): string {
+  return `${actionId}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+}
+
+function waitForDocsActionAck({
+  actionId,
+  projectId,
+  requestId,
+  timeoutMs,
+}: {
+  actionId: DocsActionId;
+  projectId: string;
+  requestId: string;
+  timeoutMs: number;
+}): Promise<boolean> {
+  if (typeof window === "undefined") return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: number;
+    let cleanup: (acknowledged: boolean) => void = () => {};
+    const handleAck = (event: Event) => {
+      const detail = (event as CustomEvent<DocsActionAckDetail>).detail;
+      if (detail?.actionId !== actionId) return;
+      if (detail?.requestId !== requestId) return;
+      if (detail?.projectId != null && detail.projectId !== projectId) return;
+      cleanup(true);
+    };
+    cleanup = (acknowledged: boolean) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener(DOCS_ACTION_ACK_EVENT, handleAck);
+      clearTimeout(timer);
+      resolve(acknowledged);
+    };
+    timer = window.setTimeout(() => cleanup(false), timeoutMs);
+    window.addEventListener(DOCS_ACTION_ACK_EVENT, handleAck);
+  });
+}
+
+async function signalDocsActionWithAck({
+  actionId,
+  attempts = 2,
+  dispatch,
+  projectId,
+  timeoutMs = 1000,
+}: {
+  actionId: DocsActionId;
+  attempts?: number;
+  dispatch: (requestId: string) => void;
+  projectId: string;
+  timeoutMs?: number;
+}): Promise<boolean> {
+  const requestId = docsActionRequestId(actionId);
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const ack = waitForDocsActionAck({
+      actionId,
+      projectId,
+      requestId,
+      timeoutMs,
+    });
+    dispatch(requestId);
+    if (await ack) return true;
+  }
+  return false;
 }
 
 function validateProjectId(projectId: string): string | true {
@@ -421,37 +521,53 @@ function revealCodex(projectId: string): DocsActionRevealResult {
   };
 }
 
-function revealProjectSecrets(projectId: string): DocsActionRevealResult {
-  openSettingsEnvironment(projectId);
-
-  // The settings panel may mount after the action switches tabs. Dispatch a few
-  // times so the component can catch the action without needing global UI state.
-  dispatchProjectSecretsEvent(projectId);
-  setTimeout(() => dispatchProjectSecretsEvent(projectId), 100);
-  setTimeout(() => dispatchProjectSecretsEvent(projectId), 500);
+async function revealProjectSecrets(
+  projectId: string,
+): Promise<DocsActionRevealResult> {
+  const acknowledged = await signalDocsActionWithAck({
+    actionId: "settings.environment.secrets",
+    dispatch: (requestId) => {
+      openSettingsEnvironment(projectId);
+      dispatchProjectSecretsEvent(projectId, "flyout", requestId);
+    },
+    projectId,
+  });
 
   return {
     action_id: "settings.environment.secrets",
+    acknowledged,
     opened: true,
     panel: "project-secrets",
     project_id: projectId,
     tab: "settings",
+    warning: acknowledged
+      ? undefined
+      : "Opened the project settings panel, but Project Secrets did not acknowledge the docs action. Open Project Secrets from the Environment panel if the modal is not visible.",
   };
 }
 
-function revealRuntimeImage(projectId: string): DocsActionRevealResult {
-  openSettingsEnvironment(projectId);
-
-  dispatchRuntimeImageEvent(projectId);
-  setTimeout(() => dispatchRuntimeImageEvent(projectId), 100);
-  setTimeout(() => dispatchRuntimeImageEvent(projectId), 500);
+async function revealRuntimeImage(
+  projectId: string,
+): Promise<DocsActionRevealResult> {
+  const acknowledged = await signalDocsActionWithAck({
+    actionId: "settings.runtime.rootfs",
+    dispatch: (requestId) => {
+      openSettingsEnvironment(projectId);
+      dispatchRuntimeImageEvent(projectId, "flyout", requestId);
+    },
+    projectId,
+  });
 
   return {
     action_id: "settings.runtime.rootfs",
+    acknowledged,
     opened: true,
     panel: "runtime-image",
     project_id: projectId,
     tab: "settings",
+    warning: acknowledged
+      ? undefined
+      : "Opened the project settings panel, but Runtime Image did not acknowledge the docs action. Open Runtime Image from the Environment panel if the modal is not visible.",
   };
 }
 
