@@ -6,11 +6,17 @@ STAR_API="${STAR_API:-http://127.0.0.1:9100}"
 STAR_ROOT="${STAR_ROOT:-/var/lib/cocalc/star}"
 STAR_USER="${STAR_USER:-user}"
 STAR_HOME="${STAR_HOME:-/home/${STAR_USER}}"
-SRC_ROOT="${SRC_ROOT:-${STAR_HOME}/cocalc-ai/src}"
 STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
 STAR_INSTALL_ROOT="${STAR_INSTALL_ROOT:-/opt/cocalc-star}"
 STAR_RELEASES_DIR="${STAR_RELEASES_DIR:-${STAR_INSTALL_ROOT}/releases}"
 STAR_SOURCE_LINK="${STAR_SOURCE_LINK:-${STAR_INSTALL_ROOT}/source}"
+if [ -z "${SRC_ROOT:-}" ]; then
+  if [ -d "${STAR_SOURCE_LINK}/src" ]; then
+    SRC_ROOT="${STAR_SOURCE_LINK}/src"
+  else
+    SRC_ROOT="${STAR_HOME}/cocalc-ai/src"
+  fi
+fi
 
 usage() {
   cat <<'EOF'
@@ -121,8 +127,12 @@ doctor() {
     fi
     check "project-host tools bundle exists" test -d "${COCALC_PROJECT_TOOLS:-}"
     check "project-host tools bundle has dropbear" test -x "${COCALC_PROJECT_TOOLS:-}/dropbear"
+    local conat_health_host="${COCALC_PROJECT_HOST_CONAT_ROUTER_HOST:-127.0.0.1}"
+    if [ "$conat_health_host" = "0.0.0.0" ] || [ "$conat_health_host" = "::" ]; then
+      conat_health_host="127.0.0.1"
+    fi
     check "project-host conat router is healthy" \
-      curl -fsS "http://${COCALC_PROJECT_HOST_CONAT_ROUTER_HOST:-127.0.0.1}:${COCALC_PROJECT_HOST_CONAT_ROUTER_PORT:-}/healthz"
+      curl -fsS "http://${conat_health_host}:${COCALC_PROJECT_HOST_CONAT_ROUTER_PORT:-}/healthz"
     check "project-host conat persist is healthy" \
       curl -fsS "http://${COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_HOST:-127.0.0.1}:${COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT:-}/healthz"
   else

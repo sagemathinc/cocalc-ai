@@ -10,6 +10,7 @@ export const UNIT = 15;
 declare var SMC_VERSION,
   BUILD_DATE,
   COCALC_GIT_REVISION,
+  COCALC_SETUP_PROFILE,
   FRONTEND_BUILD_FINGERPRINT,
   FRONTEND_BUILD_AVAILABLE,
   FRONTEND_BUILD_LATEST_MTIME_MS,
@@ -17,6 +18,7 @@ declare var SMC_VERSION,
   FRONTEND_BUILD_LATEST_PATH,
   FRONTEND_BUILD_WATCHED_ROOTS;
 export let smc_version, build_date, smc_git_rev;
+export let cocalc_setup_profile;
 export let frontend_build_fingerprint,
   frontend_build_available,
   frontend_build_latest_mtime_ms,
@@ -27,6 +29,7 @@ try {
   smc_version = SMC_VERSION ?? "N/A";
   build_date = BUILD_DATE ?? "N/A";
   smc_git_rev = COCALC_GIT_REVISION ?? "N/A";
+  cocalc_setup_profile = COCALC_SETUP_PROFILE ?? "";
   frontend_build_fingerprint = FRONTEND_BUILD_FINGERPRINT ?? "N/A";
   frontend_build_available = FRONTEND_BUILD_AVAILABLE ?? false;
   frontend_build_latest_mtime_ms = FRONTEND_BUILD_LATEST_MTIME_MS ?? 0;
@@ -38,6 +41,7 @@ try {
   smc_version = "N/A";
   build_date = "N/A";
   smc_git_rev = "N/A";
+  cocalc_setup_profile = "";
   frontend_build_fingerprint = "N/A";
   frontend_build_available = false;
   frontend_build_latest_mtime_ms = 0;

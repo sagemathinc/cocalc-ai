@@ -77,7 +77,7 @@ build_source() {
     log "skipping build because STAR_BUILD=0"
     return
   fi
-  as_star_user "cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 && if command -v corepack >/dev/null 2>&1; then corepack enable; fi && if ! command -v pnpm >/dev/null 2>&1; then npm install -g pnpm@10.33.0; fi && ./workspaces.py install && pnpm --filter @cocalc/app-notebook build && ./workspaces.py build --dev && pnpm python-api"
+  as_star_user "cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 && export COCALC_SETUP_PROFILE=star && if command -v corepack >/dev/null 2>&1; then corepack enable; fi && if ! command -v pnpm >/dev/null 2>&1; then npm install -g pnpm@10.33.0; fi && ./workspaces.py install && pnpm --filter @cocalc/app-notebook build && ./workspaces.py build --dev && pnpm python-api"
   as_star_user "cd '$SRC_ROOT/packages/project' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 && pnpm build:bundle"
 }
 
@@ -270,6 +270,7 @@ COCALC_SHARED_SCRATCH_HOST_MOUNT=/mnt/cocalc-scratch
 COCALC_PROJECT_HOST_CPU_USAGE_MODE=observe
 COCALC_PROJECT_TOOLS=${SRC_ROOT}/packages/backend/node_modules/.bin
 COCALC_PROJECT_BUNDLES=${SRC_ROOT}/packages/project/build
+COCALC_PROJECT_HOST_CONAT_ROUTER_HOST=0.0.0.0
 COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=9112
 COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT=9212
 HOST=127.0.0.1
