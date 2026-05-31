@@ -63,6 +63,17 @@ jest.mock("@cocalc/frontend/components", () => ({
   CopyToClipBoard: ({ value }: any) => <button>{`copy:${value}`}</button>,
 }));
 
+jest.mock("@cocalc/frontend/admin/abuse-annotation-controls", () => ({
+  AbuseAnnotationControls: ({
+    account_id,
+    project_id,
+    defaultCategory,
+  }: any) => (
+    <button>{`annotate:${defaultCategory}:${account_id}:${project_id ?? "all"}`}</button>
+  ),
+  reviewSortRank: () => 2,
+}));
+
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
@@ -215,6 +226,9 @@ describe("ManagedCpuAdminOverview", () => {
       expect(screen.getByText("Global CPU history:all:all")).toBeTruthy();
       expect(screen.getByText("CPU history:acct-1:all")).toBeTruthy();
       expect(screen.getByText("CPU history:acct-1:project-1")).toBeTruthy();
+      expect(screen.getByText("annotate:cpu:acct-1:all")).toBeTruthy();
+      expect(screen.getByText("annotate:cpu:acct-1:project-1")).toBeTruthy();
+      expect(screen.getByText("annotate:egress:acct-2:all")).toBeTruthy();
       expect(screen.getByText("egress-events:1")).toBeTruthy();
       expect(screen.getByText("egress-rate-summary")).toBeTruthy();
     });

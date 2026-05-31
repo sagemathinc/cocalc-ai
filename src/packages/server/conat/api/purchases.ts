@@ -11,6 +11,16 @@ import {
   getManagedCpuAdminOverview as getManagedCpuAdminOverview0,
 } from "@cocalc/server/membership/managed-cpu";
 import {
+  createAbuseReviewAnnotation as createAbuseReviewAnnotation0,
+  listAbuseReviewAnnotations as listAbuseReviewAnnotations0,
+  revokeAbuseReviewAnnotation as revokeAbuseReviewAnnotation0,
+} from "@cocalc/server/membership/abuse-review-annotations";
+import type {
+  AbuseReviewCategory,
+  AbuseReviewDisposition,
+  AbuseReviewPriorityAdjustment,
+} from "@cocalc/conat/hub/api/purchases";
+import {
   resolveMembershipDetailsForAccount,
   resolveMembershipForAccount,
 } from "@cocalc/server/membership/resolve";
@@ -1368,5 +1378,131 @@ export async function getManagedCpuAdminHistory({
     recent_event_limit,
     top_account_limit,
     top_project_limit,
+  });
+}
+
+function requiresFreshAuthForAbuseAnnotation({
+  disposition,
+  priority_adjustment,
+}: {
+  disposition?: AbuseReviewDisposition;
+  priority_adjustment?: AbuseReviewPriorityAdjustment;
+}): boolean {
+  return disposition === "abusive" || priority_adjustment === "urgent";
+}
+
+export async function createAbuseReviewAnnotation({
+  account_id,
+  browser_id,
+  session_hash,
+  user_account_id,
+  project_id,
+  category,
+  disposition,
+  priority_adjustment,
+  reason,
+  evidence,
+  expires_at,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  user_account_id?: string;
+  project_id?: string | null;
+  category?: AbuseReviewCategory;
+  disposition?: AbuseReviewDisposition;
+  priority_adjustment?: AbuseReviewPriorityAdjustment;
+  reason?: string;
+  evidence?: Record<string, unknown> | null;
+  expires_at?: string | Date | null;
+}) {
+  if (!account_id) {
+    throw Error("account_id required");
+  }
+  if (!(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  if (
+    requiresFreshAuthForAbuseAnnotation({ disposition, priority_adjustment })
+  ) {
+    await validatePurchaseFreshAuth({
+      account_id,
+      browser_id,
+      session_hash,
+      allow_actor_impersonation: false,
+    });
+  }
+  return await createAbuseReviewAnnotation0({
+    account_id: user_account_id,
+    project_id,
+    category,
+    disposition,
+    priority_adjustment,
+    reason,
+    evidence,
+    created_by: account_id,
+    expires_at,
+  });
+}
+
+export async function listAbuseReviewAnnotations({
+  account_id,
+  user_account_id,
+  project_id,
+  category,
+  active_only,
+  limit,
+}: {
+  account_id?: string;
+  user_account_id?: string;
+  project_id?: string | null;
+  category?: AbuseReviewCategory;
+  active_only?: boolean;
+  limit?: number;
+}) {
+  if (!account_id) {
+    throw Error("account_id required");
+  }
+  if (!(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await listAbuseReviewAnnotations0({
+    account_id: user_account_id,
+    project_id,
+    category,
+    active_only,
+    limit,
+  });
+}
+
+export async function revokeAbuseReviewAnnotation({
+  account_id,
+  browser_id,
+  session_hash,
+  id,
+  revoked_reason,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  id?: string;
+  revoked_reason?: string;
+}) {
+  if (!account_id) {
+    throw Error("account_id required");
+  }
+  if (!(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  await validatePurchaseFreshAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
+  return await revokeAbuseReviewAnnotation0({
+    id,
+    revoked_by: account_id,
+    revoked_reason,
   });
 }

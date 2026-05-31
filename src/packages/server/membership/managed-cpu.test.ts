@@ -5,6 +5,7 @@
 
 const queryMock = jest.fn();
 const getProjectUsageAccountIdMock = jest.fn();
+const listActiveAbuseReviewAnnotationsMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -16,6 +17,11 @@ jest.mock("@cocalc/database/pool", () => ({
 jest.mock("./project-usage", () => ({
   getProjectUsageAccountId: (...args: any[]) =>
     getProjectUsageAccountIdMock(...args),
+}));
+
+jest.mock("./abuse-review-annotations", () => ({
+  listActiveAbuseReviewAnnotations: (...args: any[]) =>
+    listActiveAbuseReviewAnnotationsMock(...args),
 }));
 
 function mockSchemaQueries() {
@@ -35,6 +41,8 @@ describe("managed CPU usage accounting", () => {
     jest.resetModules();
     queryMock.mockReset();
     getProjectUsageAccountIdMock.mockReset();
+    listActiveAbuseReviewAnnotationsMock.mockReset();
+    listActiveAbuseReviewAnnotationsMock.mockResolvedValue([]);
     mockSchemaQueries();
   });
 
@@ -224,6 +232,7 @@ describe("managed CPU usage accounting", () => {
         first_name: "Ada",
         last_name: "Lovelace",
         cpu_seconds: 3000,
+        active_abuse_annotations: [],
       },
     ]);
     expect(overview.top_projects).toEqual([
@@ -236,6 +245,7 @@ describe("managed CPU usage accounting", () => {
         project_title: "Number theory",
         host_id: "11111111-1111-4111-8111-111111111111",
         cpu_seconds: 3000,
+        active_abuse_annotations: [],
       },
     ]);
     expect(overview.recent_events).toEqual([
@@ -368,6 +378,7 @@ describe("managed CPU usage accounting", () => {
         first_name: "Ada",
         last_name: "Lovelace",
         cpu_seconds: 500,
+        active_abuse_annotations: [],
       },
     ]);
     expect(result.top_projects).toEqual([
@@ -380,6 +391,7 @@ describe("managed CPU usage accounting", () => {
         project_title: "Number theory",
         host_id: "11111111-1111-4111-8111-111111111111",
         cpu_seconds: 450,
+        active_abuse_annotations: [],
       },
     ]);
     expect(result.recent_events).toEqual([

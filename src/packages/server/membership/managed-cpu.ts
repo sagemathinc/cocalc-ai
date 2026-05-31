@@ -5,6 +5,7 @@
 
 import getPool from "@cocalc/database/pool";
 import type {
+  AbuseReviewAnnotation,
   ManagedCpuAccountSummary,
   ManagedCpuAdminHistory,
   ManagedCpuAdminOverview,
@@ -14,6 +15,7 @@ import type {
   ManagedCpuHistoryPoint,
 } from "@cocalc/conat/hub/api/purchases";
 import { getProjectUsageAccountId } from "./project-usage";
+import { listActiveAbuseReviewAnnotations } from "./abuse-review-annotations";
 
 const TABLE = "account_cpu_usage_events";
 const DEFAULT_HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -435,13 +437,27 @@ export async function getManagedCpuAdminOverview(
       host_id: row.host_id ?? null,
       cpu_seconds: normalizeCpuSeconds(row.cpu_seconds),
     }));
+  const activeAnnotations = await listActiveAbuseReviewAnnotations({
+    account_ids: [
+      ...top_accounts.map((account) => account.account_id),
+      ...top_projects.map((project) => project.account_id),
+    ],
+    project_ids: top_projects.map((project) => project.project_id),
+    categories: ["cpu", "general"],
+  });
 
   return {
     start: query.startDate.toISOString(),
     end: query.endDate.toISOString(),
     total_cpu_seconds: normalizeCpuSeconds(totalResult.rows[0]?.cpu_seconds),
-    top_accounts,
-    top_projects,
+    top_accounts: attachActiveAnnotationsToAccounts(
+      top_accounts,
+      activeAnnotations,
+    ),
+    top_projects: attachActiveAnnotationsToProjects(
+      top_projects,
+      activeAnnotations,
+    ),
     recent_events: mapManagedCpuEventRows(recentEventsResult.rows),
   };
 }
@@ -604,21 +620,17 @@ export async function getManagedCpuAdminHistory(opts: {
     if (!point) continue;
     point.cpu_seconds += normalizeCpuSeconds(row.cpu_seconds);
   }
-
-  return {
-    start: query.startDate.toISOString(),
-    end: query.endDate.toISOString(),
-    bucket: query.bucket,
-    total_cpu_seconds: normalizeCpuSeconds(totalResult.rows[0]?.cpu_seconds),
-    points: [...bucketData.values()],
-    top_accounts: accountRowsResult.rows.map((row) => ({
+  const top_accounts: ManagedCpuAccountSummary[] = accountRowsResult.rows.map(
+    (row) => ({
       account_id: row.account_id,
       email_address: row.email_address ?? null,
       first_name: row.first_name ?? null,
       last_name: row.last_name ?? null,
       cpu_seconds: normalizeCpuSeconds(row.cpu_seconds),
-    })),
-    top_projects: projectRowsResult.rows.map((row) => ({
+    }),
+  );
+  const top_projects: ManagedCpuAdminProjectSummary[] =
+    projectRowsResult.rows.map((row) => ({
       account_id: row.account_id,
       email_address: row.email_address ?? null,
       first_name: row.first_name ?? null,
@@ -627,9 +639,75 @@ export async function getManagedCpuAdminHistory(opts: {
       project_title: row.project_title ?? null,
       host_id: row.host_id ?? null,
       cpu_seconds: normalizeCpuSeconds(row.cpu_seconds),
-    })),
+    }));
+  const activeAnnotations = await listActiveAbuseReviewAnnotations({
+    account_ids: [
+      ...top_accounts.map((account) => account.account_id),
+      ...top_projects.map((project) => project.account_id),
+    ],
+    project_ids: top_projects.map((project) => project.project_id),
+    categories: ["cpu", "general"],
+  });
+
+  return {
+    start: query.startDate.toISOString(),
+    end: query.endDate.toISOString(),
+    bucket: query.bucket,
+    total_cpu_seconds: normalizeCpuSeconds(totalResult.rows[0]?.cpu_seconds),
+    points: [...bucketData.values()],
+    top_accounts: attachActiveAnnotationsToAccounts(
+      top_accounts,
+      activeAnnotations,
+    ),
+    top_projects: attachActiveAnnotationsToProjects(
+      top_projects,
+      activeAnnotations,
+    ),
     recent_events: mapManagedCpuEventRows(recentEventsResult.rows),
   };
+}
+
+function activeAnnotationsFor({
+  annotations,
+  account_id,
+  project_id,
+}: {
+  annotations: AbuseReviewAnnotation[];
+  account_id: string;
+  project_id?: string | null;
+}): AbuseReviewAnnotation[] {
+  return annotations.filter(
+    (annotation) =>
+      annotation.account_id === account_id &&
+      (annotation.project_id == null || annotation.project_id === project_id),
+  );
+}
+
+function attachActiveAnnotationsToAccounts(
+  accounts: ManagedCpuAccountSummary[],
+  annotations: AbuseReviewAnnotation[],
+): ManagedCpuAccountSummary[] {
+  return accounts.map((account) => ({
+    ...account,
+    active_abuse_annotations: activeAnnotationsFor({
+      annotations,
+      account_id: account.account_id,
+    }),
+  }));
+}
+
+function attachActiveAnnotationsToProjects(
+  projects: ManagedCpuAdminProjectSummary[],
+  annotations: AbuseReviewAnnotation[],
+): ManagedCpuAdminProjectSummary[] {
+  return projects.map((project) => ({
+    ...project,
+    active_abuse_annotations: activeAnnotationsFor({
+      annotations,
+      account_id: project.account_id,
+      project_id: project.project_id,
+    }),
+  }));
 }
 
 type RawManagedCpuEventRow = {

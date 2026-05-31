@@ -487,10 +487,10 @@ Phase 2: admin visibility
 
 Phase 3: annotations
 
-- Add abuse review annotation table and RPCs.
-- Add admin UI actions.
-- Integrate active annotations into dashboard priority.
-- Add audit/history display.
+- [x] Add abuse review annotation table and RPCs.
+- [x] Add admin UI actions.
+- [x] Integrate active annotations into dashboard priority.
+- [x] Add audit/history display.
 
 Phase 4: start policy
 

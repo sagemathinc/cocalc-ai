@@ -539,6 +539,7 @@ export interface ManagedEgressAccountSummary {
   first_name?: string | null;
   last_name?: string | null;
   bytes: number;
+  active_abuse_annotations?: AbuseReviewAnnotation[];
 }
 
 export interface ManagedEgressAdminProjectSummary {
@@ -549,6 +550,7 @@ export interface ManagedEgressAdminProjectSummary {
   project_id: string | null;
   project_title?: string | null;
   bytes: number;
+  active_abuse_annotations?: AbuseReviewAnnotation[];
 }
 
 export interface ManagedEgressHistory {
@@ -624,6 +626,7 @@ export interface ManagedCpuAccountSummary {
   first_name?: string | null;
   last_name?: string | null;
   cpu_seconds: number;
+  active_abuse_annotations?: AbuseReviewAnnotation[];
 }
 
 export interface ManagedCpuAdminProjectSummary {
@@ -635,6 +638,46 @@ export interface ManagedCpuAdminProjectSummary {
   project_title?: string | null;
   host_id?: string | null;
   cpu_seconds: number;
+  active_abuse_annotations?: AbuseReviewAnnotation[];
+}
+
+export type AbuseReviewCategory =
+  | "cpu"
+  | "egress"
+  | "storage"
+  | "signup"
+  | "payment"
+  | "general";
+
+export type AbuseReviewDisposition =
+  | "legitimate"
+  | "suspicious"
+  | "abusive"
+  | "needs_followup"
+  | "false_positive";
+
+export type AbuseReviewPriorityAdjustment =
+  | "suppress"
+  | "lower"
+  | "normal"
+  | "raise"
+  | "urgent";
+
+export interface AbuseReviewAnnotation {
+  id: string;
+  account_id: string;
+  project_id?: string | null;
+  category: AbuseReviewCategory;
+  disposition: AbuseReviewDisposition;
+  priority_adjustment: AbuseReviewPriorityAdjustment;
+  reason: string;
+  evidence?: Record<string, unknown> | null;
+  created_by: string;
+  created_at: string;
+  expires_at?: string | null;
+  revoked_by?: string | null;
+  revoked_at?: string | null;
+  revoked_reason?: string | null;
 }
 
 export type ManagedCpuHistoryBucketSize = ManagedEgressHistoryBucketSize;
@@ -684,6 +727,37 @@ export interface ManagedCpuAdminHistoryQuery {
   recent_event_limit?: number;
   top_account_limit?: number;
   top_project_limit?: number;
+}
+
+export interface CreateAbuseReviewAnnotationQuery {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  user_account_id?: string;
+  project_id?: string | null;
+  category?: AbuseReviewCategory;
+  disposition?: AbuseReviewDisposition;
+  priority_adjustment?: AbuseReviewPriorityAdjustment;
+  reason?: string;
+  evidence?: Record<string, unknown> | null;
+  expires_at?: string | Date | null;
+}
+
+export interface ListAbuseReviewAnnotationsQuery {
+  account_id?: string;
+  user_account_id?: string;
+  project_id?: string | null;
+  category?: AbuseReviewCategory;
+  active_only?: boolean;
+  limit?: number;
+}
+
+export interface RevokeAbuseReviewAnnotationQuery {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  id?: string;
+  revoked_reason?: string;
 }
 
 export interface ManagedEgressAdminHistoryQuery {
@@ -887,6 +961,15 @@ export interface Purchases {
   getManagedCpuAdminHistory: (
     opts?: ManagedCpuAdminHistoryQuery,
   ) => Promise<ManagedCpuAdminHistory>;
+  createAbuseReviewAnnotation: (
+    opts?: CreateAbuseReviewAnnotationQuery,
+  ) => Promise<AbuseReviewAnnotation>;
+  listAbuseReviewAnnotations: (
+    opts?: ListAbuseReviewAnnotationsQuery,
+  ) => Promise<AbuseReviewAnnotation[]>;
+  revokeAbuseReviewAnnotation: (
+    opts?: RevokeAbuseReviewAnnotationQuery,
+  ) => Promise<AbuseReviewAnnotation>;
 }
 
 export const purchases = {
@@ -918,4 +1001,7 @@ export const purchases = {
   getManagedEgressAdminHistory: authFirst,
   getManagedCpuAdminOverview: authFirst,
   getManagedCpuAdminHistory: authFirst,
+  createAbuseReviewAnnotation: authFirst,
+  listAbuseReviewAnnotations: authFirst,
+  revokeAbuseReviewAnnotation: authFirst,
 };
