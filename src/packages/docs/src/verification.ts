@@ -369,6 +369,21 @@ return { ok: url.ok === true && drawer.ok === true && tab.ok === true, url, draw
 return { ok: url.ok === true, url };`,
     };
   }
+  if (actionId.startsWith("docs.")) {
+    const docsPaths: Partial<Record<DocsActionId, string>> = {
+      "docs.browser.open": "/app-docs/documentation/browser",
+      "docs.actions.open": "/app-docs/documentation/executable-actions",
+      "docs.automation.open": "/app-docs/documentation/browser-automation",
+    };
+    const expectedPath = docsPaths[actionId];
+    if (expectedPath) {
+      return {
+        description: `Docs route ${expectedPath} is visible.`,
+        code: `const url = api.waitForUrl({ includes: ${JSON.stringify(expectedPath)}, timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true, url };`,
+      };
+    }
+  }
   if (actionId === "settings.environment.secrets") {
     return {
       description: "Project Secrets modal is visible.",

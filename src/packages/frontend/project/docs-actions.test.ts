@@ -122,6 +122,9 @@ describe("project docs actions", () => {
         "file.timetravel.open",
         "project.codex.open",
         "hosts.open",
+        "docs.browser.open",
+        "docs.actions.open",
+        "docs.automation.open",
       ]),
     );
   });
@@ -278,6 +281,49 @@ describe("project docs actions", () => {
       opened: true,
       panel: "payment-methods",
       tab: "account",
+    });
+  });
+
+  it("opens global docs pages", async () => {
+    const browser = await revealDocsAction({
+      actionId: "docs.browser.open",
+      projectId: "project-1",
+    });
+
+    expect(mockSetPageState).toHaveBeenCalledWith({
+      docs_print: false,
+      docs_slug: "documentation/browser",
+    });
+    expect(mockSetPageActiveTab).toHaveBeenCalledWith("docs", true);
+    expect(mockSetUrlWithSearch).toHaveBeenCalledWith(
+      "/app-docs/documentation/browser",
+      "",
+    );
+    expect(browser).toMatchObject({
+      action_id: "docs.browser.open",
+      opened: true,
+      path: "/app-docs/documentation/browser",
+      tab: "docs",
+    });
+
+    const automation = await revealDocsAction({
+      actionId: "docs.automation.open",
+      projectId: "project-1",
+    });
+
+    expect(mockSetPageState).toHaveBeenLastCalledWith({
+      docs_print: false,
+      docs_slug: "documentation/browser-automation",
+    });
+    expect(mockSetUrlWithSearch).toHaveBeenLastCalledWith(
+      "/app-docs/documentation/browser-automation",
+      "",
+    );
+    expect(automation).toMatchObject({
+      action_id: "docs.automation.open",
+      opened: true,
+      path: "/app-docs/documentation/browser-automation",
+      tab: "docs",
     });
   });
 

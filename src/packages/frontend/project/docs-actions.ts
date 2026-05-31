@@ -20,6 +20,7 @@ import {
   type AccountSettingsRoute,
 } from "@cocalc/frontend/account/settings-routing";
 import { redux } from "@cocalc/frontend/app-framework";
+import { openAppDocs } from "@cocalc/frontend/docs/navigation";
 import { set_url_with_search } from "@cocalc/frontend/history";
 import type { SettingsPageType } from "@cocalc/util/types/settings";
 import {
@@ -433,6 +434,28 @@ function revealAdminSection({
     panel: section,
     project_id: projectId,
     tab: "admin",
+  };
+}
+
+function revealAppDocs({
+  actionId,
+  projectId,
+  slug,
+}: {
+  actionId: DocsActionId;
+  projectId: string;
+  slug: string;
+}): DocsActionRevealResult {
+  openAppDocs(slug);
+  if (typeof window !== "undefined") {
+    set_url_with_search(`/app-docs/${slug}`, "");
+  }
+  return {
+    action_id: actionId,
+    opened: true,
+    path: `/app-docs/${slug}`,
+    project_id: projectId,
+    tab: "docs",
   };
 }
 
@@ -999,6 +1022,33 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
     id: "project.codex.open",
     isAvailable: ({ projectId }) => validateProjectId(projectId),
     run: ({ projectId }) => revealCodex(projectId),
+  },
+  "docs.browser.open": {
+    id: "docs.browser.open",
+    run: ({ projectId }) =>
+      revealAppDocs({
+        actionId: "docs.browser.open",
+        projectId,
+        slug: "documentation/browser",
+      }),
+  },
+  "docs.actions.open": {
+    id: "docs.actions.open",
+    run: ({ projectId }) =>
+      revealAppDocs({
+        actionId: "docs.actions.open",
+        projectId,
+        slug: "documentation/executable-actions",
+      }),
+  },
+  "docs.automation.open": {
+    id: "docs.automation.open",
+    run: ({ projectId }) =>
+      revealAppDocs({
+        actionId: "docs.automation.open",
+        projectId,
+        slug: "documentation/browser-automation",
+      }),
   },
 };
 
