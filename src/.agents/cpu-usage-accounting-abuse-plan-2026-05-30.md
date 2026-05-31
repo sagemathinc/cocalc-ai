@@ -105,6 +105,12 @@ Open design decision:
   either align CPU with that existing limitation for v1 or first factor a
   shared multibay `recordAccountResourceUsage` routing helper. The latter is
   cleaner if CPU is used for global abuse dashboards.
+- Account rehome must either move account-owned usage history or route it to the
+  account home bay before multibay relies on it for policy. That includes
+  `account_cpu_usage_events`, future account-level CPU abuse annotation tables,
+  and the existing `account_managed_egress_events` if egress policy/admin views
+  are made account-home authoritative. This is not a Launchpad blocker because
+  Launchpad has one bay, but it belongs in the account rehome checklist.
 
 ## Data Model
 
@@ -459,6 +465,8 @@ Phase 1: accounting only
 - [x] Add debug/admin-only way to inspect recorded CPU usage.
 - [x] Add current CPU window usage to membership usage status so user-facing UI
       can render it with the existing membership usage surface.
+- [x] Render current CPU window usage in user and admin membership usage
+      summaries.
 - No start blocking.
 
 Phase 2: admin visibility

@@ -80,6 +80,31 @@ function formatRemaining(bytes?: number): string | undefined {
   return bytes < 0 ? `Over by ${humanSize(Math.abs(bytes))}` : humanSize(bytes);
 }
 
+function formatCpuSeconds(seconds?: number): string | undefined {
+  if (typeof seconds !== "number" || !Number.isFinite(seconds)) {
+    return undefined;
+  }
+  const hours = Math.max(0, seconds) / 3600;
+  let digits = 0;
+  if (hours < 1) {
+    digits = 3;
+  } else if (hours < 10) {
+    digits = 2;
+  } else if (hours < 100) {
+    digits = 1;
+  }
+  return `${hours.toFixed(digits)} CPU-hours`;
+}
+
+function formatCpuRemaining(seconds?: number): string | undefined {
+  if (typeof seconds !== "number" || !Number.isFinite(seconds)) {
+    return undefined;
+  }
+  return seconds < 0
+    ? `Over by ${formatCpuSeconds(Math.abs(seconds))}`
+    : formatCpuSeconds(seconds);
+}
+
 function getUsageAlerts(
   usageStatus?: MembershipUsageStatus | null,
 ): Array<{ key: string; type: "warning" | "error"; title: string }> {
@@ -148,6 +173,20 @@ function getUsageAlerts(
       key: "managed-egress-7d",
       type: "error",
       title: "This user is over the managed-egress 7-day window.",
+    });
+  }
+  if (usageStatus.over_managed_cpu_5h) {
+    alerts.push({
+      key: "managed-cpu-5h",
+      type: "warning",
+      title: "This user is over the managed-CPU 5-hour window.",
+    });
+  }
+  if (usageStatus.over_managed_cpu_7d) {
+    alerts.push({
+      key: "managed-cpu-7d",
+      type: "warning",
+      title: "This user is over the managed-CPU 7-day window.",
     });
   }
   return alerts;
@@ -655,6 +694,32 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                       "number" && (
                       <Descriptions.Item label="RootFS per-image cap">
                         {humanSize(usageStatus.rootfs_max_storage_bytes_limit)}
+                      </Descriptions.Item>
+                    )}
+                    {typeof usageStatus.managed_cpu_5h_seconds === "number" && (
+                      <Descriptions.Item label="Managed CPU used in 5 hours">
+                        {formatCpuSeconds(usageStatus.managed_cpu_5h_seconds)}
+                      </Descriptions.Item>
+                    )}
+                    {typeof usageStatus.managed_cpu_5h_remaining_seconds ===
+                      "number" && (
+                      <Descriptions.Item label="Managed CPU remaining in 5 hours">
+                        {formatCpuRemaining(
+                          usageStatus.managed_cpu_5h_remaining_seconds,
+                        )}
+                      </Descriptions.Item>
+                    )}
+                    {typeof usageStatus.managed_cpu_7d_seconds === "number" && (
+                      <Descriptions.Item label="Managed CPU used in 7 days">
+                        {formatCpuSeconds(usageStatus.managed_cpu_7d_seconds)}
+                      </Descriptions.Item>
+                    )}
+                    {typeof usageStatus.managed_cpu_7d_remaining_seconds ===
+                      "number" && (
+                      <Descriptions.Item label="Managed CPU remaining in 7 days">
+                        {formatCpuRemaining(
+                          usageStatus.managed_cpu_7d_remaining_seconds,
+                        )}
                       </Descriptions.Item>
                     )}
                     {typeof usageStatus.managed_egress_5h_bytes ===
