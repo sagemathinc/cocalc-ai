@@ -27,6 +27,10 @@ export const IMAGE_CACHE =
 const ROOTFS_PULL_TMPDIR =
   process.env.COCALC_ROOTFS_PULL_TMPDIR ?? join(data, "tmp");
 
+function isContainersStorageImage(image: string): boolean {
+  return image.startsWith("containers-storage:");
+}
+
 export function imagePathComponent(image: string): string {
   // overlayfs option parsing can break on ":" inside paths; use an encoded
   // path component for all on-disk image directories.
@@ -182,27 +186,31 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
         `managed RootFS image '${image}' is not cached on this host yet`,
       );
     }
-    reportProgress({ progress: 5, desc: `pulling ${image}...` });
-    // pull it -- this takes most of the time.
-    // It is also important to do this before the unshare below,
-    // since doing it inside the unshare hits namespace issues.
-    try {
-      await pullImage({
-        image,
-        reportProgress: ({ progress, desc }) => {
-          reportProgress({ progress, desc, min: 5, max: 55 });
-        },
-        timeout: 30 * 60 * 1000, // 30 minutes
-        // Large scientific images can contain uid/gid values outside
-        // the host's configured subuid/subgid ranges. Allow Podman to
-        // ignore those during pull; we reconcile ownership later during
-        // host-side RootFS preflight and bootstrap.
-        storageOptIgnoreChownErrors: true,
-        env: { TMPDIR: ROOTFS_PULL_TMPDIR },
-      });
-    } catch (err) {
-      reportProgress({ progress: 100, desc: `pulling ${image} failed` });
-      throw err;
+    if (isContainersStorageImage(image)) {
+      reportProgress({ progress: 55, desc: `using local ${image}...` });
+    } else {
+      reportProgress({ progress: 5, desc: `pulling ${image}...` });
+      // pull it -- this takes most of the time.
+      // It is also important to do this before the unshare below,
+      // since doing it inside the unshare hits namespace issues.
+      try {
+        await pullImage({
+          image,
+          reportProgress: ({ progress, desc }) => {
+            reportProgress({ progress, desc, min: 5, max: 55 });
+          },
+          timeout: 30 * 60 * 1000, // 30 minutes
+          // Large scientific images can contain uid/gid values outside
+          // the host's configured subuid/subgid ranges. Allow Podman to
+          // ignore those during pull; we reconcile ownership later during
+          // host-side RootFS preflight and bootstrap.
+          storageOptIgnoreChownErrors: true,
+          env: { TMPDIR: ROOTFS_PULL_TMPDIR },
+        });
+      } catch (err) {
+        reportProgress({ progress: 100, desc: `pulling ${image} failed` });
+        throw err;
+      }
     }
 
     try {
@@ -289,14 +297,16 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
         metadataPath: preflightPath,
         metadata: preflight,
       });
-      // remove the image to save space, in case it isn't used by
-      // anything else.  we will not need it again, since we already
-      // have a copy of it.
-      await executeCode({
-        command: "podman",
-        args: ["image", "rm", image],
-        env: podmanEnv(),
-      });
+      if (!isContainersStorageImage(image)) {
+        // remove pulled registry images to save space. Local
+        // containers-storage images are packaging artifacts and must remain
+        // available so stale cache refreshes do not try to pull them.
+        await executeCode({
+          command: "podman",
+          args: ["image", "rm", image],
+          env: podmanEnv(),
+        });
+      }
       reportProgress({ progress: 100, desc: `pulled and extracted ${image}` });
       return baseImagePath;
     } catch (err) {
@@ -310,11 +320,13 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
           inspectPath,
           preflightPath,
         ]);
-        await executeCode({
-          command: "podman",
-          args: ["image", "rm", image],
-          env: podmanEnv(),
-        });
+        if (!isContainersStorageImage(image)) {
+          await executeCode({
+            command: "podman",
+            args: ["image", "rm", image],
+            env: podmanEnv(),
+          });
+        }
       } catch {}
       reportProgress({
         progress: 100,

@@ -189,6 +189,7 @@ RUN apt-get update \\
   && python3 -m venv /opt/cocalc-jupyter \\
   && /opt/cocalc-jupyter/bin/pip install --no-cache-dir --upgrade pip wheel \\
   && /opt/cocalc-jupyter/bin/pip install --no-cache-dir ipykernel jupyterlab notebook \\
+  && /opt/cocalc-jupyter/bin/python -m ipykernel install --prefix=/usr/local --name python3 \\
   && ln -s /opt/cocalc-jupyter/bin/jupyter /usr/local/bin/jupyter \\
   && ln -s /opt/cocalc-jupyter/bin/jupyter-lab /usr/local/bin/jupyter-lab \\
   && ln -s /opt/cocalc-jupyter/bin/jupyter-notebook /usr/local/bin/jupyter-notebook \\

@@ -6,6 +6,7 @@ SRC_ROOT="${SRC_ROOT:-${HOME}/cocalc-ai/src}"
 STATE_DIR="${STAR_SMOKE_STATE:-/var/lib/cocalc/star/smoke}"
 BOOTSTRAP_RESULT="${STAR_BOOTSTRAP_RESULT:-/var/lib/cocalc/star/bootstrap-result.json}"
 STAR_SMOKE_ROOTFS_IMAGE="${STAR_SMOKE_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
+SMOKE_NOTEBOOK_PATH="${STAR_SMOKE_NOTEBOOK_PATH:-star-smoke/smoke.ipynb}"
 
 log() {
   printf '[star-smoke] %s\n' "$*" >&2
@@ -35,6 +36,15 @@ if (data?.error || data?.issues) {
   process.exit(1);
 }
 ' "$1"
+}
+
+require_json_field_equals() {
+  local file="$1"
+  local field="$2"
+  local expected="$3"
+  local actual
+  actual="$(json_field "$file" "$field")"
+  [ "$actual" = "$expected" ] || die "${field} in ${file} was '${actual}', expected '${expected}'"
 }
 
 cookie_header_from_headers() {
@@ -166,6 +176,39 @@ cocalc_cli() {
   )
 }
 
+write_smoke_notebook() {
+  local dest="${STATE_DIR}/smoke.ipynb"
+  cat >"$dest" <<'EOF'
+{
+  "cells": [
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "import os, sys\n",
+        "print('star-jupyter-ok', sys.version_info.major, os.path.isdir('/scratch'))"
+      ]
+    }
+  ],
+  "metadata": {
+    "kernelspec": {
+      "display_name": "Python 3",
+      "language": "python",
+      "name": "python3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 5
+}
+EOF
+  printf '%s\n' "$dest"
+}
+
 main() {
   source_node_env
   wait_for_api
@@ -187,11 +230,24 @@ main() {
 
   log "executing command in project"
   cocalc_cli --timeout 2m --rpc-timeout 1m project exec -w "$project_id" -- \
-    bash -lc 'pwd && whoami && command -v jupyter && command -v latexmk && echo star-ok' \
+    bash -lc 'set -e; pwd; whoami; id; command -v jupyter; command -v latexmk; test -d /scratch; sudo -n id; python3 - <<'"'"'PY'"'"'
+import os
+import sys
+print("star-python-ok", sys.version_info.major, os.path.isdir("/scratch"))
+PY
+echo star-ok' \
     >"${STATE_DIR}/project-exec.json"
-  local exit_code
-  exit_code="$(json_field "${STATE_DIR}/project-exec.json" data.exit_code)"
-  [ "$exit_code" = "0" ] || die "project exec failed with exit_code=${exit_code}"
+  require_json_field_equals "${STATE_DIR}/project-exec.json" data.exit_code 0
+
+  log "uploading and running smoke notebook"
+  local notebook_src
+  notebook_src="$(write_smoke_notebook)"
+  cocalc_cli --timeout 2m --rpc-timeout 1m project file put -w "$project_id" \
+    "$notebook_src" "$SMOKE_NOTEBOOK_PATH" \
+    >"${STATE_DIR}/project-notebook-put.json"
+  cocalc_cli --timeout 4m --rpc-timeout 2m project jupyter run -w "$project_id" \
+    --path "$SMOKE_NOTEBOOK_PATH" --all-code --limit 2000 \
+    >"${STATE_DIR}/project-jupyter-run.json"
 
   log "checking ssh-info"
   cocalc_cli --timeout 2m --rpc-timeout 1m project ssh-info -w "$project_id" >"${STATE_DIR}/project-ssh-info.json"

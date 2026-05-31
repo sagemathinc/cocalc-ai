@@ -11,7 +11,7 @@ import getLogger from "@cocalc/backend/logger";
 const logger = getLogger("project-runner:rootfs-preflight");
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 
-export const ROOTFS_PREFLIGHT_VERSION = 8;
+export const ROOTFS_PREFLIGHT_VERSION = 10;
 export const ROOTFS_NORMALIZER_VERSION = ROOTFS_PREFLIGHT_VERSION;
 
 export type RootfsPreflightMetadata = {
