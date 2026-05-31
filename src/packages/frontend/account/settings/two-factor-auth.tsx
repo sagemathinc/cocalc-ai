@@ -3,10 +3,18 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Input, QRCode, Space, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Flex,
+  Input,
+  QRCode,
+  Space,
+  Typography,
+} from "antd";
 import { useEffect, useState } from "react";
 
-import { Button } from "@cocalc/frontend/antd-bootstrap";
 import { FreshAuthModal } from "@cocalc/frontend/auth/fresh-auth";
 import { registerPasskey } from "@cocalc/frontend/auth/passkeys";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -52,20 +60,24 @@ function RecoveryCodesBlock({ codes }: { codes: string[] }) {
     <Alert
       type="warning"
       showIcon
-      message="Save these recovery codes now. Each code can be used once."
+      title="Save these recovery codes now. Each code can be used once."
       description={
-        <Space direction="vertical" size="small" style={{ width: "100%" }}>
+        <Flex vertical gap="small">
           <div>
             <CopyButton value={text} />
           </div>
           <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{text}</pre>
-        </Space>
+        </Flex>
       }
     />
   );
 }
 
-export default function TwoFactorAuthSetting() {
+interface Props {
+  showHeader?: boolean;
+}
+
+export default function TwoFactorAuthSetting({ showHeader = true }: Props) {
   const authApiOrigin = getControlPlaneOrigin();
   const rawImpersonation = useTypedRedux("account", "impersonation") as any;
   const impersonation =
@@ -212,18 +224,18 @@ export default function TwoFactorAuthSetting() {
     await loadStatus();
   }
 
-  return (
-    <SettingBox title="Two-Factor Authentication" icon="lock">
-      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-        {error ? <Alert type="error" showIcon message={error} /> : undefined}
+  const content = (
+    <>
+      <Flex vertical gap="middle">
+        {error ? <Alert type="error" showIcon title={error} /> : undefined}
         {loading ? (
-          <Alert type="info" showIcon message="Loading security status..." />
+          <Alert type="info" showIcon title="Loading security status..." />
         ) : undefined}
         {isImpersonating ? (
           <Alert
             type="warning"
             showIcon
-            message="Two-factor settings are unavailable while impersonating this account."
+            title="Two-factor settings are unavailable while impersonating this account."
             description="End impersonation and sign in directly as the user to manage their security settings."
           />
         ) : undefined}
@@ -231,7 +243,7 @@ export default function TwoFactorAuthSetting() {
           <Alert
             type="info"
             showIcon
-            message="Two-factor authentication is not enabled."
+            title="Two-factor authentication is not enabled."
             description="Use an authenticator app plus recovery codes to protect this account."
           />
         ) : undefined}
@@ -239,9 +251,9 @@ export default function TwoFactorAuthSetting() {
           <Alert
             type="success"
             showIcon
-            message="Two-factor authentication is enabled."
+            title="Two-factor authentication is enabled."
             description={
-              <Space direction="vertical" size="small">
+              <Flex vertical gap="small">
                 <Typography.Text>
                   Last used:{" "}
                   {status.last_used_at
@@ -254,29 +266,18 @@ export default function TwoFactorAuthSetting() {
                     ? new Date(status.fresh_auth_until).toLocaleString()
                     : "not currently elevated"}
                 </Typography.Text>
-              </Space>
+              </Flex>
             }
           />
         ) : undefined}
         {status?.passkeys?.length ? (
-          <Space direction="vertical" size="small" style={{ width: "100%" }}>
+          <Flex vertical gap="small">
             <Typography.Title level={5} style={{ margin: 0 }}>
               Passkeys
             </Typography.Title>
             {status.passkeys.map((passkey) => (
-              <div
-                key={passkey.id}
-                style={{
-                  border: "1px solid #ddd",
-                  borderRadius: "6px",
-                  padding: "10px",
-                }}
-              >
-                <Space
-                  direction="vertical"
-                  size="small"
-                  style={{ width: "100%" }}
-                >
+              <Card key={passkey.id} size="small">
+                <Flex vertical gap="small">
                   {renamePasskeyId === passkey.id ? (
                     <Space.Compact style={{ width: "100%" }}>
                       <Input
@@ -292,7 +293,7 @@ export default function TwoFactorAuthSetting() {
                         }
                       />
                       <Button
-                        bsStyle="primary"
+                        type="primary"
                         disabled={busy || renameLabel.trim().length === 0}
                         onClick={() =>
                           setFreshAction({
@@ -341,7 +342,7 @@ export default function TwoFactorAuthSetting() {
                         Rename
                       </Button>
                       <Button
-                        bsStyle="danger"
+                        danger
                         disabled={isImpersonating}
                         onClick={() =>
                           setFreshAction({
@@ -354,21 +355,21 @@ export default function TwoFactorAuthSetting() {
                       </Button>
                     </Space>
                   </div>
-                </Space>
-              </div>
+                </Flex>
+              </Card>
             ))}
-          </Space>
+          </Flex>
         ) : undefined}
         {isImpersonating ? null : setup ? (
-          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Flex vertical gap="middle">
             <Alert
               type="info"
               showIcon
-              message="Scan this QR code with your authenticator app."
+              title="Scan this QR code with your authenticator app."
             />
-            <div style={{ display: "flex", justifyContent: "center" }}>
+            <Flex justify="center">
               <QRCode value={setup.otpauth_url} />
-            </div>
+            </Flex>
             <Typography.Text copyable>{setup.secret}</Typography.Text>
             <Input
               value={setupCode}
@@ -379,7 +380,7 @@ export default function TwoFactorAuthSetting() {
             />
             <Space wrap>
               <Button
-                bsStyle="primary"
+                type="primary"
                 disabled={busy || setupCode.trim().length === 0}
                 onClick={confirmSetup}
               >
@@ -395,7 +396,7 @@ export default function TwoFactorAuthSetting() {
                 Cancel
               </Button>
             </Space>
-          </Space>
+          </Flex>
         ) : status?.enabled ? (
           <Space wrap>
             <Button onClick={() => setFreshAction({ type: "add-passkey" })}>
@@ -406,7 +407,7 @@ export default function TwoFactorAuthSetting() {
             </Button>
             {status.passkeys?.length ? undefined : (
               <Button
-                bsStyle="danger"
+                danger
                 onClick={() => setFreshAction({ type: "disable" })}
               >
                 Disable 2FA
@@ -416,7 +417,7 @@ export default function TwoFactorAuthSetting() {
         ) : (
           <Space wrap>
             <Button
-              bsStyle="primary"
+              type="primary"
               disabled={busy}
               onClick={() => setFreshAction({ type: "setup-totp" })}
             >
@@ -431,7 +432,7 @@ export default function TwoFactorAuthSetting() {
           </Space>
         )}
         <RecoveryCodesBlock codes={recoveryCodes} />
-      </Space>
+      </Flex>
       <FreshAuthModal
         origin={authApiOrigin}
         open={freshAction != null && !isImpersonating}
@@ -452,6 +453,16 @@ export default function TwoFactorAuthSetting() {
           }
         }}
       />
+    </>
+  );
+
+  if (!showHeader) {
+    return content;
+  }
+
+  return (
+    <SettingBox title="Two-Factor Authentication" icon="lock">
+      {content}
     </SettingBox>
   );
 }

@@ -22,12 +22,6 @@ jest.mock("@cocalc/frontend/auth/passkeys", () => ({
   registerPasskey: jest.fn(),
 }));
 
-jest.mock("@cocalc/frontend/antd-bootstrap", () => ({
-  Button: ({ children, bsStyle: _bsStyle, ...props }: any) => (
-    <button {...props}>{children}</button>
-  ),
-}));
-
 jest.mock("@cocalc/frontend/components", () => ({
   SettingBox: ({ children }: any) => <div>{children}</div>,
 }));
