@@ -157,6 +157,7 @@ doctor() {
     check "cached rootfs has /scratch" test -d "${rootfs_path}/scratch"
     check "cached rootfs has project secrets mountpoint" test -d "${rootfs_path}/run/secrets/cocalc"
     check "rootless podman can run cached rootfs" as_star_user podman run --rm --runtime /usr/bin/crun --userns=keep-id:uid=2001,gid=2001 --user 0:0 --rootfs "$rootfs_path" /bin/true
+    check "cached rootfs preserves root-owned sudo files" as_star_user podman run --rm --runtime /usr/bin/crun --userns=keep-id:uid=2001,gid=2001 --user 0:0 --rootfs "$rootfs_path" /bin/bash -lc 'test "$(stat -c %u /etc/sudo.conf)" = 0 && test "$(stat -c %u /etc/sudoers)" = 0 && test "$(stat -c %u /etc/sudoers.d)" = 0 && test "$(stat -c %u /usr/bin/sudo)" = 0 && test -u /usr/bin/sudo'
   else
     local image_name="$STAR_DEFAULT_ROOTFS_IMAGE"
     case "$image_name" in
@@ -236,6 +237,7 @@ smoke() {
     STAR_SMOKE_STATE="${STAR_SMOKE_STATE:-${STAR_ROOT}/smoke}" \
     STAR_BOOTSTRAP_RESULT="${STAR_BOOTSTRAP_RESULT:-${STAR_ROOT}/bootstrap-result.json}" \
     STAR_SMOKE_ROOTFS_IMAGE="${STAR_SMOKE_ROOTFS_IMAGE:-$STAR_DEFAULT_ROOTFS_IMAGE}" \
+    STAR_SMOKE_REUSE_PROJECT="${STAR_SMOKE_REUSE_PROJECT:-0}" \
     "${SCRIPT_DIR}/smoke-star-poc.sh"
 }
 

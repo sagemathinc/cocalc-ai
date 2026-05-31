@@ -11,17 +11,33 @@ const srcRoot = process.cwd();
 const rootfsBase = await import(
   `${resolve(srcRoot, "packages/project-runner/dist/run/rootfs-base.js")}`
 );
+const rootfsNormalize = await import(
+  `${resolve(srcRoot, "packages/project-runner/dist/run/rootfs-normalize.js")}`
+);
 
 await rootfsBase.extractBaseImage(image);
+
+const rootfsPath = rootfsBase.imageCachePath(image);
+const metadataPath = rootfsBase.preflightMetadataFilePath(image);
+const metadata = await rootfsNormalize.preflightRootfsInPlace({
+  image,
+  rootfsPath,
+  ownershipSource: "oci-extract",
+});
+await rootfsNormalize.writeRootfsPreflightMetadata({
+  metadataPath,
+  metadata,
+});
 
 console.log(
   JSON.stringify(
     {
       ok: true,
       image,
-      cache_path: rootfsBase.imageCachePath(image),
+      cache_path: rootfsPath,
       inspect_path: rootfsBase.inspectFilePath(image),
-      preflight_path: rootfsBase.preflightMetadataFilePath(image),
+      preflight_path: metadataPath,
+      repaired: true,
     },
     null,
     2,

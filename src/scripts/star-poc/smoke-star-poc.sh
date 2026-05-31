@@ -7,6 +7,7 @@ STATE_DIR="${STAR_SMOKE_STATE:-/var/lib/cocalc/star/smoke}"
 BOOTSTRAP_RESULT="${STAR_BOOTSTRAP_RESULT:-/var/lib/cocalc/star/bootstrap-result.json}"
 STAR_SMOKE_ROOTFS_IMAGE="${STAR_SMOKE_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
 SMOKE_NOTEBOOK_PATH="${STAR_SMOKE_NOTEBOOK_PATH:-star-smoke/smoke.ipynb}"
+STAR_SMOKE_REUSE_PROJECT="${STAR_SMOKE_REUSE_PROJECT:-0}"
 
 log() {
   printf '[star-smoke] %s\n' "$*" >&2
@@ -176,6 +177,10 @@ cocalc_cli() {
   )
 }
 
+shell_quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
 write_smoke_notebook() {
   local dest="${STATE_DIR}/smoke.ipynb"
   cat >"$dest" <<'EOF'
@@ -214,13 +219,31 @@ main() {
   wait_for_api
   ensure_account
 
-  log "creating project"
-  cocalc_cli project create \
-    --rootfs-image "$STAR_SMOKE_ROOTFS_IMAGE" \
-    "Star Smoke $(date -u +%Y%m%dT%H%M%SZ)" \
-    >"${STATE_DIR}/project-create.json"
+  local project_id_file="${STATE_DIR}/project-id"
+  local marker_file="${STATE_DIR}/project-marker"
+  local marker
+  if [ ! -s "$marker_file" ]; then
+    printf 'star-marker-%s-%s\n' "$(date -u +%Y%m%d%H%M%S)" "$(openssl rand -hex 8)" >"$marker_file"
+    chmod 600 "$marker_file"
+  fi
+  marker="$(tr -d '\n' <"$marker_file")"
+
   local project_id
-  project_id="$(json_field "${STATE_DIR}/project-create.json" data.project_id)"
+  if [ "$STAR_SMOKE_REUSE_PROJECT" = "1" ] && [ -s "$project_id_file" ]; then
+    project_id="$(tr -d '\n' <"$project_id_file")"
+    log "reusing project ${project_id}"
+    log "stopping reused project before validation"
+    cocalc_cli --timeout 5m --rpc-timeout 1m project stop -w "$project_id" --wait >"${STATE_DIR}/project-stop.json"
+  else
+    log "creating project"
+    cocalc_cli project create \
+      --rootfs-image "$STAR_SMOKE_ROOTFS_IMAGE" \
+      "Star Smoke $(date -u +%Y%m%dT%H%M%SZ)" \
+      >"${STATE_DIR}/project-create.json"
+    project_id="$(json_field "${STATE_DIR}/project-create.json" data.project_id)"
+    printf '%s\n' "$project_id" >"$project_id_file"
+    chmod 600 "$project_id_file"
+  fi
 
   log "starting project ${project_id}"
   cocalc_cli --timeout 10m --rpc-timeout 2m project start -w "$project_id" --wait >"${STATE_DIR}/project-start.json"
@@ -229,8 +252,24 @@ main() {
   cocalc_cli --timeout 2m --rpc-timeout 1m project file list -w "$project_id" / >"${STATE_DIR}/project-file-list.json"
 
   log "executing command in project"
+  local quoted_marker
+  quoted_marker="$(shell_quote "$marker")"
   cocalc_cli --timeout 2m --rpc-timeout 1m project exec -w "$project_id" -- \
-    bash -lc 'set -e; pwd; whoami; id; command -v jupyter; command -v latexmk; test -d /scratch; sudo -n id; python3 - <<'"'"'PY'"'"'
+    bash -lc 'set -e
+marker='"${quoted_marker}"'
+pwd
+whoami
+id
+command -v jupyter
+command -v latexmk
+test -d /scratch
+sudo -n id
+mkdir -p star-smoke
+if [ ! -f star-smoke/persistence.txt ]; then
+  printf "%s\n" "$marker" > star-smoke/persistence.txt
+fi
+test "$(cat star-smoke/persistence.txt)" = "$marker"
+python3 - <<'"'"'PY'"'"'
 import os
 import sys
 print("star-python-ok", sys.version_info.major, os.path.isdir("/scratch"))

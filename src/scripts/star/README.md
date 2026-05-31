@@ -39,6 +39,13 @@ sudo /opt/cocalc-star/source/src/scripts/star/star.sh smoke
 sudo /opt/cocalc-star/source/src/scripts/star/star.sh bootstrap-link
 ```
 
+The GCP proof-of-concept harness can validate install, smoke, release upgrade,
+rollback, and hard-reset durability in one run:
+
+```sh
+RUN_UPGRADE_ROLLBACK_TEST=1 RUN_RESET_TEST=1 src/scripts/star-poc/gcp-create-star-poc.sh
+```
+
 For browser access from your laptop, port-forward to the VM:
 
 ```sh

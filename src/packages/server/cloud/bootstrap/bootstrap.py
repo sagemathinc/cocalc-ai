@@ -2416,6 +2416,15 @@ for dir in /bin /sbin /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin /usr/lib
     chmod "$mode" "$path"
   done
 done
+for sudo_path in /usr/bin/sudo /bin/sudo; do
+  [ -e "$sudo_path" ] || continue
+  chown root:root "$sudo_path"
+  chmod 4755 "$sudo_path"
+done
+for sudo_conf_path in /etc/sudo.conf /etc/sudoers /etc/sudoers.d; do
+  [ -e "$sudo_conf_path" ] || continue
+  chown root:root "$sudo_conf_path"
+done
 EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
 )"
     normalize_runtime_package_state_rootfs() {
