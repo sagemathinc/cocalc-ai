@@ -11,7 +11,7 @@ import getLogger from "@cocalc/backend/logger";
 const logger = getLogger("project-runner:rootfs-preflight");
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 
-export const ROOTFS_PREFLIGHT_VERSION = 7;
+export const ROOTFS_PREFLIGHT_VERSION = 8;
 export const ROOTFS_NORMALIZER_VERSION = ROOTFS_PREFLIGHT_VERSION;
 
 export type RootfsPreflightMetadata = {
@@ -194,17 +194,22 @@ export async function preflightRootfsInPlace({
   });
   let stdout = "";
   try {
-    const env: Record<string, string> = {};
+    const wrapperArgs: string[] = [];
     if (skipOwnershipBridge) {
-      env.COCALC_ROOTFS_SKIP_OWNERSHIP_BRIDGE = "1";
+      wrapperArgs.push("--skip-ownership-bridge");
     }
     if (ownershipSource) {
-      env.COCALC_ROOTFS_OWNERSHIP_SOURCE = ownershipSource;
+      wrapperArgs.push("--ownership-source", ownershipSource);
     }
     const result = await executeCode({
       command: "sudo",
-      args: ["-n", STORAGE_WRAPPER, "normalize-rootfs", rootfsPath],
-      env: Object.keys(env).length ? env : undefined,
+      args: [
+        "-n",
+        STORAGE_WRAPPER,
+        "normalize-rootfs",
+        ...wrapperArgs,
+        rootfsPath,
+      ],
       err_on_exit: true,
       verbose: false,
       timeout: 45 * 60,
