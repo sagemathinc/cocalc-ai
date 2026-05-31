@@ -96,6 +96,11 @@ function actionForStep(step: SiteSetupStep):
       return { label: "Manage RootFS images", href: "/admin/rootfs" };
     case "smoke-test":
       return { label: "Create smoke-test project", href: "/projects" };
+    case "backups":
+      return {
+        label: "Review project backups",
+        href: "/admin/project-backup-shards",
+      };
     default:
       if (step.admin_section) {
         return {
@@ -190,24 +195,26 @@ function nextRequiredStep(status: SiteSetupStatus): SiteSetupStep | undefined {
 
 function SetupHero({ status }: { status?: SiteSetupStatus }) {
   const nextStep = status ? nextRequiredStep(status) : undefined;
+  const isStar = status?.profile === "star";
   return (
     <Card style={heroStyle}>
       <Row gutter={[24, 24]} align="middle">
         <Col xs={24} lg={15}>
           <Space direction="vertical" size="middle">
             <Tag color={status?.ready ? "green" : "gold"}>
-              Launchpad/Rocket cloud setup
+              {isStar ? "CoCalc Star setup" : "Launchpad/Rocket cloud setup"}
             </Tag>
             <Title level={2} style={{ color: "white", margin: 0 }}>
-              Bring this CoCalc site online without guessing the sequence.
+              {isStar
+                ? "Confirm this single-VM CoCalc appliance is ready."
+                : "Bring this CoCalc site online without guessing the sequence."}
             </Title>
             <Paragraph
               style={{ color: "white", fontSize: 16, marginBottom: 0 }}
             >
-              You need a Cloudflare account with a domain you control, plus a
-              GCP project or Nebius account with CLI access. This setup will
-              validate the public URL, provider credentials, first host,
-              official RootFS, and smoke-test path.
+              {isStar
+                ? "CoCalc Star runs the control plane and project execution on one dedicated VM. This setup checks admin security, the local project host, the default project image, and the first manual browser smoke test."
+                : "You need a Cloudflare account with a domain you control, plus a GCP project or Nebius account with CLI access. This setup will validate the public URL, provider credentials, first host, official RootFS, and smoke-test path."}
             </Paragraph>
             {nextStep ? (
               <Alert
@@ -232,17 +239,29 @@ function SetupHero({ status }: { status?: SiteSetupStatus }) {
             }}
           >
             <Space direction="vertical" style={{ width: "100%" }}>
-              <Text strong>Before you start, have:</Text>
-              <ul style={{ marginBottom: 0, paddingLeft: 20 }}>
-                <li>Cloudflare account and domain.</li>
-                <li>GCP project or Nebius account.</li>
-                <li>CLI access on your workstation.</li>
-                <li>A decision about whether email can be skipped.</li>
-              </ul>
+              <Text strong>
+                {isStar ? "Star assumes:" : "Before you start, have:"}
+              </Text>
+              {isStar ? (
+                <ul style={{ marginBottom: 0, paddingLeft: 20 }}>
+                  <li>A dedicated Ubuntu VM.</li>
+                  <li>One local project host on this VM.</li>
+                  <li>A default project image with Jupyter and LaTeX.</li>
+                  <li>A backup or VM snapshot plan.</li>
+                </ul>
+              ) : (
+                <ul style={{ marginBottom: 0, paddingLeft: 20 }}>
+                  <li>Cloudflare account and domain.</li>
+                  <li>GCP project or Nebius account.</li>
+                  <li>CLI access on your workstation.</li>
+                  <li>A decision about whether email can be skipped.</li>
+                </ul>
+              )}
               <Divider style={{ margin: "8px 0" }} />
               <Text type="secondary">
-                Single-VM appliance setup is a different future mode and should
-                not require Cloudflare or cloud providers.
+                {isStar
+                  ? "Cloudflare and cloud-provider project hosts are Launchpad/Rocket upgrades, not Star setup requirements."
+                  : "Single-VM appliance setup is a different mode and should not require Cloudflare or cloud providers."}
               </Text>
             </Space>
           </Card>
@@ -253,6 +272,7 @@ function SetupHero({ status }: { status?: SiteSetupStatus }) {
 }
 
 function ProgressSummary({ status }: { status: SiteSetupStatus }) {
+  const isStar = status.profile === "star";
   return (
     <Card size="small" style={subtlePanelStyle}>
       <Row gutter={[16, 16]} align="middle">
@@ -269,8 +289,14 @@ function ProgressSummary({ status }: { status: SiteSetupStatus }) {
         </Col>
         <Col xs={24} md={14}>
           <Space wrap>
-            <Tag>{status.counts.configured_providers} providers</Tag>
-            <Tag>{status.counts.cached_provider_catalogs} cached catalogs</Tag>
+            {isStar ? null : (
+              <>
+                <Tag>{status.counts.configured_providers} providers</Tag>
+                <Tag>
+                  {status.counts.cached_provider_catalogs} cached catalogs
+                </Tag>
+              </>
+            )}
             <Tag>{status.counts.healthy_project_hosts} healthy hosts</Tag>
             <Tag>{status.counts.official_rootfs_images} official RootFS</Tag>
             <Tag>{status.counts.prepull_rootfs_images} prepull RootFS</Tag>
@@ -313,12 +339,17 @@ export function SiteSetupBanner({ onOpenSetup }: { onOpenSetup: () => void }) {
   }
 
   const nextStep = nextRequiredStep(status);
+  const isStar = status.profile === "star";
   return (
     <Alert
       type="warning"
       showIcon
       style={{ marginBottom: 18 }}
-      message="This Launchpad/Rocket site is not fully set up."
+      message={
+        isStar
+          ? "This CoCalc Star appliance has setup checks remaining."
+          : "This Launchpad/Rocket site is not fully set up."
+      }
       description={
         <Space direction="vertical" style={{ width: "100%" }}>
           <Text>
@@ -328,7 +359,7 @@ export function SiteSetupBanner({ onOpenSetup }: { onOpenSetup: () => void }) {
           </Text>
           <Space wrap>
             <Button type="primary" onClick={onOpenSetup}>
-              Continue site setup
+              {isStar ? "Continue Star setup" : "Continue site setup"}
             </Button>
             <Button href="/admin/site-setup">Open focused setup page</Button>
           </Space>
@@ -367,6 +398,7 @@ export function SiteSetupAdmin() {
 
   const hardGateSteps = status?.steps.filter((step) => step.hard_gate) ?? [];
   const optionalSteps = status?.steps.filter((step) => !step.hard_gate) ?? [];
+  const isStar = status?.profile === "star";
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
@@ -377,9 +409,15 @@ export function SiteSetupAdmin() {
         message={
           status?.ready
             ? "All derived hard gates are satisfied."
-            : "Follow these gates in order before treating this cloud-backed Launchpad/Rocket site as ready."
+            : isStar
+              ? "Follow these checks before treating this Star appliance as ready for users."
+              : "Follow these gates in order before treating this cloud-backed Launchpad/Rocket site as ready."
         }
-        description="This setup profile assumes Cloudflare plus GCP or Nebius. A future single-VM appliance setup should have a separate, much shorter path."
+        description={
+          isStar
+            ? "This setup profile assumes one dedicated VM with a local project host. It intentionally skips Cloudflare and cloud-provider setup."
+            : "This setup profile assumes Cloudflare plus GCP or Nebius. CoCalc Star uses a separate, much shorter single-VM path."
+        }
       />
       {error ? <ErrorDisplay error={error} /> : null}
       {status ? (

@@ -402,17 +402,17 @@ Do not rely on current Launchpad and project-host defaults because they collide.
 
 Validated internal defaults:
 
-| Purpose                           | Bind                     | Port               |
-| --------------------------------- | ------------------------ | ------------------ |
-| Star public HTTP/reverse proxy    | `0.0.0.0`                | `80`               |
-| Star public HTTPS/reverse proxy   | `0.0.0.0`                | `443`              |
-| Launchpad/hub HTTP                | `127.0.0.1`              | `9100`             |
-| Launchpad SSHD/onprem helper      | `127.0.0.1`              | `9101`             |
-| Hub/local Conat                   | `127.0.0.1`              | `9102`             |
-| Project-host public ingress       | `127.0.0.1`              | `9002`             |
-| Project-host conat-router         | `127.0.0.1`              | `9112`             |
-| Project-host conat-persist health | `127.0.0.1`              | `9212`             |
-| Project SSH ingress               | `0.0.0.0` or `127.0.0.1` | `2222`             |
+| Purpose                           | Bind                     | Port   |
+| --------------------------------- | ------------------------ | ------ |
+| Star public HTTP/reverse proxy    | `0.0.0.0`                | `80`   |
+| Star public HTTPS/reverse proxy   | `0.0.0.0`                | `443`  |
+| Launchpad/hub HTTP                | `127.0.0.1`              | `9100` |
+| Launchpad SSHD/onprem helper      | `127.0.0.1`              | `9101` |
+| Hub/local Conat                   | `127.0.0.1`              | `9102` |
+| Project-host public ingress       | `127.0.0.1`              | `9002` |
+| Project-host conat-router         | `127.0.0.1`              | `9112` |
+| Project-host conat-persist health | `127.0.0.1`              | `9212` |
+| Project SSH ingress               | `0.0.0.0` or `127.0.0.1` | `2222` |
 
 Important validated issue:
 
@@ -638,7 +638,7 @@ Backup V1:
 - "Snapshot the VM/disk" is the primary operational backup story.
 - Local rustic backups can be available, but they are not sufficient if the
   whole VM/disk is lost unless copied elsewhere.
-- Admin guide will suggest: "(1)  the site master encryption key is here - back this up somewhere, and (2) make regularly copies of the rustic backups using something rsync or rclone."  It's far smaller/cheaper to backup the rustic directory than everything.  But that's entirely up to the admin.  Obviously this is an upsell point for Rocket.
+- Admin guide will suggest: "(1) the site master encryption key is here - back this up somewhere, and (2) make regularly copies of the rustic backups using something rsync or rclone." It's far smaller/cheaper to backup the rustic directory than everything. But that's entirely up to the admin. Obviously this is an upsell point for Rocket.
 
 Backup V2:
 
@@ -955,7 +955,7 @@ V1:
 
 - Recommend provider VM/disk snapshots.
 - Provide local export/check commands.
-- Tell user: copy this master key and periodically copy this rustic directory somewhere, and that's your backups.  Of course restore from master key + rustic must be a part of our workflow and plan. It's important and good to test. 
+- Tell user: copy this master key and periodically copy this rustic directory somewhere, and that's your backups. Of course restore from master key + rustic must be a part of our workflow and plan. It's important and good to test.
 
 V2:
 
@@ -988,18 +988,18 @@ not provider feature development.
    - Caddy &lt;-- this,
    - or operator-managed.
 4. Email:
-   - optional  &lt;-- this; not part of onboarding, but the functionality exists,
+   - optional &lt;-- this; not part of onboarding, but the functionality exists,
    - hidden email-verification UI when disabled,
    - admin password reset links still available.
 5. Default RootFS:
    - ship a small prebuilt default,
-   - build on first run &lt;-- this; it would make the onboarding a little slower but it would also 100% prove that the full podman/rustic/rootfs lifecycle is working here which is very valuable.  It should be pretty fast if tiny.,
+   - build on first run &lt;-- this; it would make the onboarding a little slower but it would also 100% prove that the full podman/rustic/rootfs lifecycle is working here which is very valuable. It should be pretty fast if tiny.,
    - or guide admin to create one &lt;-- still do this.
 6. Backup:
    - document VM snapshots as V1 &lt;-- this for sure, and just document (you can rsync/rclone rustic somewhere; up to you),
    - or require external backup setup before "ready".
 7. Marketplace support level:
-   - image only &lt;-- initially this  (paid and managed is more of a rocket product for good leads),
+   - image only &lt;-- initially this (paid and managed is more of a rocket product for good leads),
    - paid support,
    - or managed updates.
 8. Developer/source deployments:
@@ -1088,14 +1088,21 @@ Validation:
 
 Deliverable:
 
-- Setup wizard profile `star-single-vm`.
+- Setup wizard profile `star`.
 - No Cloudflare/provider gates.
 - Shows local host health, resource budget, rootfs, smoke test, optional email.
+- Star installer sets `COCALC_SETUP_PROFILE=star` while preserving
+  `COCALC_PRODUCT=launchpad` for existing server/runtime behavior.
+
+Status: initial implementation in progress.
 
 Validation:
 
 - Star users never see GCP/Nebius/Cloudflare as required setup.
 - Launchpad/Rocket users still see cloud setup.
+- Star setup readiness is derived from admin 2FA, local project-host health,
+  and a configured default project image; manual smoke test and backups are
+  shown as non-blocking follow-up checks.
 
 ### Phase 4: Packaged Runtime
 
@@ -1130,7 +1137,7 @@ Validation:
 
 - Single binary on fresh Ubuntu can install Star.
 - Compressed size target roughly 200 MiB if realistic.
-- TARGETS: Linux x86_64 and arm64 as two separate binaries.  arm64 matters, e.g., VM's on any macOS machine.
+- TARGETS: Linux x86_64 and arm64 as two separate binaries. arm64 matters, e.g., VM's on any macOS machine.
 
 ### Phase 6: Developer Source Deploy Lane
 
@@ -1178,7 +1185,7 @@ Automated:
 Manual:
 
 - Fresh Ubuntu 24.04 x86_64 VM.
-- Fresh Ubuntu 24.04 arm64 VM if SEA/build supports it.  (USER: it definitely does)
+- Fresh Ubuntu 24.04 arm64 VM if SEA/build supports it. (USER: it definitely does)
 - Reboot recovery.
 - Upgrade/rollback.
 - Low-memory pressure behavior.
