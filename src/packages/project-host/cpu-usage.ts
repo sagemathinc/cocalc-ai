@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import getLogger from "@cocalc/backend/logger";
 import { podman } from "@cocalc/backend/podman";
 import { hubApi } from "@cocalc/lite/hub/api";
@@ -19,6 +19,7 @@ type PodmanLike = (
 ) => Promise<{ stdout?: string; stderr?: string; exit_code?: number }>;
 
 type ReadFileLike = (path: string, encoding: BufferEncoding) => Promise<string>;
+type ReaddirLike = (path: string) => Promise<string[]>;
 
 type ProjectContainer = {
   id: string;
@@ -31,8 +32,9 @@ export type ProjectCpuSample = {
   container_id: string;
   pid: number;
   runtime_key: string;
-  cgroup_version: "v1" | "v2";
-  cgroup_path: string;
+  source: "proc-tree";
+  cgroup_version?: "v1" | "v2";
+  cgroup_path?: string;
   cpu_seconds_total: number;
   cpu_cores_limit?: number;
 };
@@ -164,42 +166,120 @@ function parseCpuSeconds({
   return usageNsec / 1_000_000_000;
 }
 
-async function getProjectCpuSample({
-  container,
+type ProcessCpuSnapshot = {
+  childrenByParent: Map<number, number[]>;
+  cpuTicksByPid: Map<number, number>;
+};
+
+function clockTicksPerSecond(): number {
+  const raw = Number(process.env.COCALC_PROC_CLK_TCK);
+  return Number.isFinite(raw) && raw > 0 ? raw : 100;
+}
+
+function parseProcStat(
+  content: string,
+): { ppid: number; cpuTicks: number } | undefined {
+  const closeParen = content.lastIndexOf(")");
+  if (closeParen < 0) return;
+  const fields = content
+    .slice(closeParen + 1)
+    .trim()
+    .split(/\s+/);
+  const ppid = Number(fields[1]);
+  const utime = Number(fields[11]);
+  const stime = Number(fields[12]);
+  if (
+    !Number.isInteger(ppid) ||
+    !Number.isFinite(utime) ||
+    !Number.isFinite(stime)
+  ) {
+    return;
+  }
+  return { ppid, cpuTicks: utime + stime };
+}
+
+async function collectProcessCpuSnapshot({
+  readdirFn,
   readFileFn,
 }: {
-  container: ProjectContainer & { pid: number };
+  readdirFn: ReaddirLike;
   readFileFn: ReadFileLike;
+}): Promise<ProcessCpuSnapshot> {
+  const childrenByParent = new Map<number, number[]>();
+  const cpuTicksByPid = new Map<number, number>();
+  const entries = await readdirFn("/proc");
+  await Promise.all(
+    entries.map(async (entry) => {
+      if (!/^\d+$/.test(entry)) return;
+      const pid = Number(entry);
+      try {
+        const stat = parseProcStat(
+          await readFileFn(`/proc/${entry}/stat`, "utf8"),
+        );
+        if (!stat) return;
+        cpuTicksByPid.set(pid, stat.cpuTicks);
+        const children = childrenByParent.get(stat.ppid) ?? [];
+        children.push(pid);
+        childrenByParent.set(stat.ppid, children);
+      } catch {
+        // Processes can exit while we are walking /proc.
+      }
+    }),
+  );
+  return { childrenByParent, cpuTicksByPid };
+}
+
+function sumProcessTreeCpuTicks(
+  rootPid: number,
+  snapshot: ProcessCpuSnapshot,
+): number | undefined {
+  if (!snapshot.cpuTicksByPid.has(rootPid)) return;
+  let total = 0;
+  const seen = new Set<number>();
+  const stack = [rootPid];
+  while (stack.length > 0) {
+    const pid = stack.pop()!;
+    if (seen.has(pid)) continue;
+    seen.add(pid);
+    total += snapshot.cpuTicksByPid.get(pid) ?? 0;
+    for (const child of snapshot.childrenByParent.get(pid) ?? []) {
+      stack.push(child);
+    }
+  }
+  return total;
+}
+
+async function getProjectCpuSample({
+  container,
+  processSnapshot,
+}: {
+  container: ProjectContainer & { pid: number };
+  processSnapshot: ProcessCpuSnapshot;
 }): Promise<ProjectCpuSample | undefined> {
-  const procCgroup = await readFileFn(`/proc/${container.pid}/cgroup`, "utf8");
-  const cgroup = parseProcCgroup(procCgroup);
-  if (!cgroup) return;
-  const cpuFilePath = cgroupFilePath(cgroup);
-  const cpuRaw = await readFileFn(cpuFilePath, "utf8");
-  const cpu_seconds_total = parseCpuSeconds({
-    version: cgroup.version,
-    content: cpuRaw,
-  });
+  const cpuTicks = sumProcessTreeCpuTicks(container.pid, processSnapshot);
+  if (cpuTicks == null) return;
+  const cpu_seconds_total = cpuTicks / clockTicksPerSecond();
   if (!Number.isFinite(cpu_seconds_total) || (cpu_seconds_total ?? 0) < 0) {
     return;
   }
-  const runtime_key = `${container.id}:${cgroup.version}:${cgroup.path}`;
+  const runtime_key = `${container.id}:proc-tree:${container.pid}`;
   return {
     project_id: container.project_id,
     container_id: container.id,
     pid: container.pid,
     runtime_key,
-    cgroup_version: cgroup.version,
-    cgroup_path: cgroup.path,
+    source: "proc-tree",
     cpu_seconds_total: cpu_seconds_total ?? 0,
   };
 }
 
 export async function collectRunningProjectCpuSamples({
   podmanCommand = podman,
+  readdirFn = readdir,
   readFileFn = readFile,
 }: {
   podmanCommand?: PodmanLike;
+  readdirFn?: ReaddirLike;
   readFileFn?: ReadFileLike;
 } = {}): Promise<ProjectCpuSample[]> {
   const containers = await listRunningProjectContainers(podmanCommand);
@@ -207,10 +287,14 @@ export async function collectRunningProjectCpuSamples({
     containers,
     podmanCommand,
   );
+  const processSnapshot = await collectProcessCpuSnapshot({
+    readdirFn,
+    readFileFn,
+  });
   const samples = await Promise.all(
     inspected.map(async (container) => {
       try {
-        return await getProjectCpuSample({ container, readFileFn });
+        return await getProjectCpuSample({ container, processSnapshot });
       } catch (err) {
         logger.debug("unable to sample project CPU counter", {
           project_id: container.project_id,
@@ -301,13 +385,14 @@ export function startManagedCpuUsageLoop({
               container_id: delta.container_id,
               pid: delta.pid,
               runtime_key: delta.runtime_key,
+              source: delta.source,
               cgroup_version: delta.cgroup_version,
               cgroup_path: delta.cgroup_path,
               interval_ms:
                 sample_started_at == null
                   ? undefined
                   : sampledAt - sample_started_at.getTime(),
-              mode: "project-host-cgroup-v1",
+              mode: "project-host-proc-tree-v1",
             },
           });
         } catch (err) {
@@ -332,6 +417,8 @@ export function startManagedCpuUsageLoop({
 export const __test__ = {
   cgroupFilePath,
   parseCpuSeconds,
+  parseProcStat,
   parseProcCgroup,
+  sumProcessTreeCpuTicks,
   summarizeManagedCpuUsageDeltas,
 };

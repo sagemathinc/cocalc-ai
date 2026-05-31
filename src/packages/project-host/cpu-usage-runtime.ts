@@ -22,7 +22,7 @@ export function getProjectHostCpuUsageMode(): ProjectHostCpuUsageMode {
   return (
     normalizeMode(process.env.COCALC_PROJECT_HOST_CPU_USAGE_MODE) ??
     normalizeMode(process.env.COCALC_PROJECT_HOST_CPU_USAGE_ENABLED) ??
-    "off"
+    "observe"
   );
 }
 

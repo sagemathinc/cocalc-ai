@@ -190,7 +190,10 @@ Add a project-host CPU sampler loop analogous to raw network egress.
 
 Sampling source options:
 
-1. Preferred: read project container cgroup CPU usage directly from the host.
+1. Preferred: read each project container process tree CPU usage directly from
+   `/proc` on the host. Do not attribute the shared project-pool cgroup counter
+   to every project; current rootless podman hosts can put all project
+   containers in one `/cocalc-project-pool` cgroup.
 2. Alternative: ask project runtime/status for the existing cgroup CPU total.
 3. Fallback: skip recording and log at debug/warn rate-limited levels.
 
@@ -459,7 +462,8 @@ Admin abuse dashboard language should be sharper:
 Phase 1: accounting only
 
 - [x] Add server table and record/query functions.
-- [x] Add project-host sampler behind an env flag or site config.
+- [x] Add project-host sampler. It defaults to observe mode on project hosts and
+      can be disabled with `COCALC_PROJECT_HOST_CPU_USAGE_MODE=off`.
 - [x] Add tests for delta handling, counter reset, missing cgroups, and server
       aggregation.
 - [x] Add debug/admin-only way to inspect recorded CPU usage.

@@ -1096,6 +1096,7 @@ export async function buildBootstrapScripts(
   envLines.push(
     `COCALC_PROJECT_HOST_MANAGED_EGRESS_MODE=${providerId === "gcp" ? "enforce" : "off"}`,
   );
+  envLines.push(`COCALC_PROJECT_HOST_CPU_USAGE_MODE=observe`);
   const appPublicWildcard = buildAppPublicWildcardHostname({
     hostHostname: tunnel?.hostname,
   });

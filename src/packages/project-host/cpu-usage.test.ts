@@ -17,9 +17,12 @@ import {
 
 describe("project-host CPU usage accounting", () => {
   const originalMode = process.env.COCALC_PROJECT_HOST_CPU_USAGE_MODE;
+  const originalEnabled = process.env.COCALC_PROJECT_HOST_CPU_USAGE_ENABLED;
+  const originalClkTck = process.env.COCALC_PROC_CLK_TCK;
 
   beforeEach(() => {
     process.env.COCALC_PROJECT_HOST_CPU_USAGE_MODE = "observe";
+    process.env.COCALC_PROC_CLK_TCK = "100";
     recordManagedProjectCpuUsageMock.mockReset();
     recordManagedProjectCpuUsageMock.mockResolvedValue({ recorded: true });
     jest.useFakeTimers();
@@ -31,7 +34,21 @@ describe("project-host CPU usage accounting", () => {
   });
 
   afterAll(() => {
-    process.env.COCALC_PROJECT_HOST_CPU_USAGE_MODE = originalMode;
+    if (originalMode == null) {
+      delete process.env.COCALC_PROJECT_HOST_CPU_USAGE_MODE;
+    } else {
+      process.env.COCALC_PROJECT_HOST_CPU_USAGE_MODE = originalMode;
+    }
+    if (originalEnabled == null) {
+      delete process.env.COCALC_PROJECT_HOST_CPU_USAGE_ENABLED;
+    } else {
+      process.env.COCALC_PROJECT_HOST_CPU_USAGE_ENABLED = originalEnabled;
+    }
+    if (originalClkTck == null) {
+      delete process.env.COCALC_PROC_CLK_TCK;
+    } else {
+      process.env.COCALC_PROC_CLK_TCK = originalClkTck;
+    }
   });
 
   it("parses cgroup v2 CPU usage seconds", () => {
@@ -78,7 +95,21 @@ describe("project-host CPU usage accounting", () => {
     ).toBe(2.5);
   });
 
-  it("collects CPU samples from running project containers", async () => {
+  function procStat({
+    pid,
+    ppid,
+    utime,
+    stime,
+  }: {
+    pid: number;
+    ppid: number;
+    utime: number;
+    stime: number;
+  }): string {
+    return `${pid} (python) S ${ppid} 0 0 0 0 0 0 0 0 0 ${utime} ${stime} 0 0 20 0 1 0 0\n`;
+  }
+
+  it("collects CPU samples from running project process trees", async () => {
     const sample = await collectRunningProjectCpuSamples({
       podmanCommand: jest
         .fn()
@@ -98,14 +129,21 @@ describe("project-host CPU usage accounting", () => {
             },
           ]),
         }),
+      readdirFn: jest
+        .fn()
+        .mockResolvedValue(["1", "1234", "1235", "9999", "self"]),
       readFileFn: jest.fn().mockImplementation(async (path: string) => {
-        if (path === "/proc/1234/cgroup") {
-          return "0::/machine.slice/libpod-ctr-1.scope\n";
+        if (path === "/proc/1/stat") {
+          return procStat({ pid: 1, ppid: 0, utime: 10, stime: 0 });
         }
-        if (
-          path === "/sys/fs/cgroup/machine.slice/libpod-ctr-1.scope/cpu.stat"
-        ) {
-          return "usage_usec 2000000\n";
+        if (path === "/proc/1234/stat") {
+          return procStat({ pid: 1234, ppid: 1, utime: 120, stime: 30 });
+        }
+        if (path === "/proc/1235/stat") {
+          return procStat({ pid: 1235, ppid: 1234, utime: 50, stime: 0 });
+        }
+        if (path === "/proc/9999/stat") {
+          return procStat({ pid: 9999, ppid: 1, utime: 10000, stime: 0 });
         }
         throw new Error(`unexpected path: ${path}`);
       }),
@@ -116,9 +154,8 @@ describe("project-host CPU usage accounting", () => {
         project_id: "11111111-1111-4111-8111-111111111111",
         container_id: "ctr-1",
         pid: 1234,
-        runtime_key: "ctr-1:v2:/machine.slice/libpod-ctr-1.scope",
-        cgroup_version: "v2",
-        cgroup_path: "/machine.slice/libpod-ctr-1.scope",
+        runtime_key: "ctr-1:proc-tree:1234",
+        source: "proc-tree",
         cpu_seconds_total: 2,
       },
     ]);
@@ -133,6 +170,7 @@ describe("project-host CPU usage accounting", () => {
           container_id: "ctr-1",
           pid: 1234,
           runtime_key: "runtime-1",
+          source: "proc-tree" as const,
           cgroup_version: "v2" as const,
           cgroup_path: "/cg",
           cpu_seconds_total: 20,
@@ -172,6 +210,7 @@ describe("project-host CPU usage accounting", () => {
           container_id: "ctr-1",
           pid: 1234,
           runtime_key: "runtime-1",
+          source: "proc-tree",
           cgroup_version: "v2",
           cgroup_path: "/cg",
           cpu_seconds_total: 10,
@@ -183,6 +222,7 @@ describe("project-host CPU usage accounting", () => {
           container_id: "ctr-1",
           pid: 1234,
           runtime_key: "runtime-1",
+          source: "proc-tree",
           cgroup_version: "v2",
           cgroup_path: "/cg",
           cpu_seconds_total: 16.5,
