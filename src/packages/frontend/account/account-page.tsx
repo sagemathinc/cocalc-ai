@@ -365,6 +365,10 @@ export const AccountPage: React.FC = () => {
   const mobileNavigationOptions = getMobileNavigationOptions(tabs);
   const menuOpenKeys = manualOpenKeys ?? activeGroupOpenKeys;
 
+  function visibleLabel(label) {
+    return hidden ? <span>{label.props.children[0]}</span> : label;
+  }
+
   // Process tabs to handle nested children uniformly.
   const children = {};
   const titles = {}; // Always store full labels for renderTitle()
@@ -372,27 +376,16 @@ export const AccountPage: React.FC = () => {
     if (tab.type == "divider") {
       continue;
     }
+    const originalLabel = tab.label;
+    titles[tab.key] = originalLabel;
+    tab.label = visibleLabel(originalLabel);
+
     if (Array.isArray(tab.children)) {
       const subTabs = tab.children;
-      tab.label = hidden ? (
-        <span style={{ paddingLeft: "5px" }}>
-          {tab.label.props.children[0]}
-        </span>
-      ) : (
-        tab.label
-      );
       tab.children = subTabs.map((subTab) => {
-        // Extract just the icon (first child) from the span when hidden
-        const label = hidden ? (
-          <span style={{ paddingLeft: "5px" }}>
-            {subTab.label.props.children[0]}
-          </span>
-        ) : (
-          subTab.label
-        );
         return {
           key: subTab.key,
-          label,
+          label: visibleLabel(subTab.label),
         };
       });
       for (const subTab of subTabs) {
@@ -400,18 +393,7 @@ export const AccountPage: React.FC = () => {
         titles[subTab.key] = subTab.label; // Always store original full label
       }
     } else {
-      // Store original full label for renderTitle()
-      const originalLabel = tab.label;
-      // Extract just the icon (first child) from the span when hidden
-      tab.label = hidden ? (
-        <span style={{ paddingLeft: "5px" }}>
-          {tab.label.props.children[0]}
-        </span>
-      ) : (
-        tab.label
-      );
       children[tab.key] = tab.children;
-      titles[tab.key] = originalLabel; // Store original label
       delete tab.children;
     }
   }
@@ -529,6 +511,7 @@ export const AccountPage: React.FC = () => {
             </div>
           )}
           <Menu
+            className={hidden ? "account-menu-inline-collapsed" : undefined}
             openKeys={menuOpenKeys}
             onOpenChange={setManualOpenKeys}
             mode="inline"
@@ -541,7 +524,7 @@ export const AccountPage: React.FC = () => {
             }
             inlineIndent={hidden ? 0 : 24}
             style={{
-              width: hidden ? 50 : 200,
+              width: hidden ? 50 : 220,
               background: "#00000005",
               flex: "1 1 auto",
               overflowY: "auto",
