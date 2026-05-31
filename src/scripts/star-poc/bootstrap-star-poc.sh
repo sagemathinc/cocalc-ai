@@ -13,6 +13,10 @@ STAR_BASE_URL="${STAR_BASE_URL:-http://127.0.0.1:${STAR_BASE_PORT}}"
 STAR_BTRFS_IMAGE="${STAR_BTRFS_IMAGE:-/var/lib/cocalc/btrfs.img}"
 STAR_BTRFS_SIZE="${STAR_BTRFS_SIZE:-100G}"
 STAR_BUILD="${STAR_BUILD:-1}"
+STAR_BUILD_DEFAULT_ROOTFS="${STAR_BUILD_DEFAULT_ROOTFS:-1}"
+STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
+STAR_DEFAULT_ROOTFS_BASE_IMAGE="${STAR_DEFAULT_ROOTFS_BASE_IMAGE:-ubuntu:24.04}"
+STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-1}"
 
 log() {
   printf '[star-poc] %s\n' "$*" >&2
@@ -141,6 +145,53 @@ configure_users_and_dirs() {
   chmod 700 /mnt/cocalc/data/tmp/cocalc-podman-runtime-"$(id -u "$STAR_USER")"
 }
 
+build_default_rootfs_image() {
+  if [ "$STAR_BUILD_DEFAULT_ROOTFS" != "1" ]; then
+    log "skipping default rootfs image build because STAR_BUILD_DEFAULT_ROOTFS=$STAR_BUILD_DEFAULT_ROOTFS"
+    return
+  fi
+
+  local build_image="$STAR_DEFAULT_ROOTFS_IMAGE"
+  case "$build_image" in
+    containers-storage:*) build_image="${build_image#containers-storage:}" ;;
+  esac
+
+  local containerfile="${STAR_ROOT}/default-rootfs.Containerfile"
+  cat >"$containerfile" <<EOF
+FROM ${STAR_DEFAULT_ROOTFS_BASE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \\
+  && apt-get install -y --no-install-recommends \\
+    bash \\
+    ca-certificates \\
+    curl \\
+    git \\
+    latexmk \\
+    less \\
+    libatomic1 \\
+    openssh-client \\
+    procps \\
+    python3 \\
+    python3-pip \\
+    python3-venv \\
+    sudo \\
+    texlive-fonts-recommended \\
+    texlive-latex-base \\
+    texlive-latex-recommended \\
+    wget \\
+  && python3 -m venv /opt/cocalc-jupyter \\
+  && /opt/cocalc-jupyter/bin/pip install --no-cache-dir --upgrade pip wheel \\
+  && /opt/cocalc-jupyter/bin/pip install --no-cache-dir ipykernel jupyterlab notebook \\
+  && ln -s /opt/cocalc-jupyter/bin/jupyter /usr/local/bin/jupyter \\
+  && ln -s /opt/cocalc-jupyter/bin/jupyter-lab /usr/local/bin/jupyter-lab \\
+  && ln -s /opt/cocalc-jupyter/bin/jupyter-notebook /usr/local/bin/jupyter-notebook \\
+  && rm -rf /var/lib/apt/lists/*
+EOF
+  chown "$STAR_USER:$STAR_USER" "$containerfile"
+  as_star_user "podman image exists '$build_image' >/dev/null 2>&1 && exit 0; podman build --pull=always -t '$build_image' -f '$containerfile' '$STAR_ROOT'"
+}
+
 write_env_files() {
   local site_master_key="${STAR_DATA}/secrets/site-master-key"
   if [ ! -f "$site_master_key" ]; then
@@ -200,7 +251,7 @@ EOF
 }
 
 seed_database() {
-  as_star_user "set -o pipefail && set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_BASE_URL='$STAR_BASE_URL' STAR_MASTER_CONAT_TOKEN_PATH='$STAR_PROJECT_HOST_DATA/secrets/master-conat-token' node scripts/star-poc/seed-star-poc.mjs | tee '$STAR_ROOT/bootstrap-result.json'"
+  as_star_user "set -o pipefail && set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_BASE_URL='$STAR_BASE_URL' STAR_MASTER_CONAT_TOKEN_PATH='$STAR_PROJECT_HOST_DATA/secrets/master-conat-token' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' node scripts/star-poc/seed-star-poc.mjs | tee '$STAR_ROOT/bootstrap-result.json'"
 }
 
 install_systemd() {
@@ -270,8 +321,11 @@ EOF
 ${STAR_USER} ALL=(root) NOPASSWD: /bin/systemctl *, /bin/journalctl *, /usr/bin/tee *, /usr/bin/install *, /bin/mount *, /bin/umount *, /usr/bin/loginctl *
 EOF
   chmod 0440 /etc/sudoers.d/cocalc-star-poc-admin
-  if id -nG "$STAR_USER" | tr ' ' '\n' | grep -qx google-sudoers; then
-    gpasswd -d "$STAR_USER" google-sudoers || true
+  if [ "$STAR_REMOVE_GCP_SUDOERS" = "1" ]; then
+    if id -nG "$STAR_USER" | tr ' ' '\n' | grep -qx google-sudoers; then
+      gpasswd -d "$STAR_USER" google-sudoers || true
+    fi
+    rm -f /etc/sudoers.d/google-sudoers /etc/sudoers.d/google_sudoers
   fi
 }
 
@@ -292,6 +346,7 @@ stop_existing_services
 ensure_btrfs
 install_wrappers
 configure_users_and_dirs
+build_default_rootfs_image
 write_env_files
 seed_database
 install_systemd

@@ -13,6 +13,7 @@ const hostId =
   process.env.STAR_PROJECT_HOST_ID ?? "11111111-1111-4111-8111-111111111111";
 const hostName = process.env.STAR_PROJECT_HOST_NAME ?? "star-local";
 const baseUrl = process.env.STAR_BASE_URL ?? "http://127.0.0.1:9100";
+const defaultRootfsImage = process.env.STAR_DEFAULT_ROOTFS_IMAGE;
 const masterTokenPath =
   process.env.STAR_MASTER_CONAT_TOKEN_PATH ??
   "/var/lib/cocalc/star/project-host/0/secrets/master-conat-token";
@@ -50,17 +51,27 @@ async function setSetting(name, value) {
   );
 }
 
-await Promise.all([
+const settings = [
   setSetting("site_name", "CoCalc Star POC"),
   setSetting("dns", baseUrl),
   setSetting("project_hosts_local_enabled", "yes"),
   setSetting("project_hosts_self_host_alpha_enabled", "yes"),
   setSetting("project_hosts_funding_mode", "site-funded"),
   setSetting("verify_emails", "false"),
-]);
+];
+
+if (defaultRootfsImage != null && defaultRootfsImage.trim() !== "") {
+  settings.push(
+    setSetting("project_rootfs_default_image", defaultRootfsImage),
+    setSetting("project_rootfs_prepull_images", defaultRootfsImage),
+  );
+}
+
+await Promise.all(settings);
 
 await upsertProjectHost({
   id: hostId,
+  bay_id: "bay-0",
   name: hostName,
   region: "local",
   public_url: "http://127.0.0.1:9002",

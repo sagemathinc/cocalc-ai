@@ -16,6 +16,10 @@ KEY_FILE="${KEY_FILE:-/run/secrets/cocalc/rocket-service-account.json}"
 REMOTE_USER="${REMOTE_USER:-user}"
 REUSE_EXISTING_VM="${REUSE_EXISTING_VM:-0}"
 STAR_BUILD="${STAR_BUILD:-1}"
+STAR_BUILD_DEFAULT_ROOTFS="${STAR_BUILD_DEFAULT_ROOTFS:-1}"
+STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
+STAR_DEFAULT_ROOTFS_BASE_IMAGE="${STAR_DEFAULT_ROOTFS_BASE_IMAGE:-ubuntu:24.04}"
+STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-1}"
 
 log() {
   printf '[gcp-star-poc] %s\n' "$*" >&2
@@ -46,8 +50,12 @@ bootstrap script. Defaults:
   KEY_FILE=/run/secrets/cocalc/rocket-service-account.json
 
 Useful overrides:
-  REUSE_EXISTING_VM=1      skip instance creation if it exists
-  STAR_BUILD=0            skip pnpm build on the remote VM
+  REUSE_EXISTING_VM=1            skip instance creation if it exists
+  STAR_BUILD=0                  skip pnpm build on the remote VM
+  STAR_BUILD_DEFAULT_ROOTFS=0   skip building the local Jupyter/LaTeX rootfs
+  STAR_DEFAULT_ROOTFS_IMAGE=... local rootfs image tag to seed as default
+  STAR_DEFAULT_ROOTFS_BASE_IMAGE=ubuntu:24.04
+  STAR_REMOVE_GCP_SUDOERS=0     keep the GCP sudo group after bootstrap
 
 After success, port-forward from your laptop or this machine with:
   gcloud compute ssh user@VM_NAME --project GCP_PROJECT --zone ZONE -- -L 7001:127.0.0.1:9100
@@ -125,12 +133,6 @@ tar -C "$REPO_ROOT" \
   --exclude='src/.pnpm-store' \
   -czf "$ARCHIVE" src
 
-run gcloud compute ssh "${REMOTE_USER}@${VM_NAME}" \
-  --project "$GCP_PROJECT" \
-  --zone "$ZONE" \
-  --command "rm -rf /home/${REMOTE_USER}/cocalc-ai && mkdir -p /home/${REMOTE_USER}/cocalc-ai" \
-  --quiet
-
 run gcloud compute scp "$ARCHIVE" "${REMOTE_USER}@${VM_NAME}:/tmp/cocalc-star-src.tar.gz" \
   --project "$GCP_PROJECT" \
   --zone "$ZONE" \
@@ -139,7 +141,7 @@ run gcloud compute scp "$ARCHIVE" "${REMOTE_USER}@${VM_NAME}:/tmp/cocalc-star-sr
 run gcloud compute ssh "${REMOTE_USER}@${VM_NAME}" \
   --project "$GCP_PROJECT" \
   --zone "$ZONE" \
-  --command "tar -xzf /tmp/cocalc-star-src.tar.gz -C /home/${REMOTE_USER}/cocalc-ai && sudo STAR_BUILD='${STAR_BUILD}' SRC_ROOT=/home/${REMOTE_USER}/cocalc-ai/src bash /home/${REMOTE_USER}/cocalc-ai/src/scripts/star-poc/bootstrap-star-poc.sh" \
+  --command "sudo bash -lc 'rm -rf /home/${REMOTE_USER}/cocalc-ai && mkdir -p /home/${REMOTE_USER}/cocalc-ai && tar -xzf /tmp/cocalc-star-src.tar.gz -C /home/${REMOTE_USER}/cocalc-ai && chown -R ${REMOTE_USER}:${REMOTE_USER} /home/${REMOTE_USER}/cocalc-ai && STAR_BUILD=${STAR_BUILD} STAR_BUILD_DEFAULT_ROOTFS=${STAR_BUILD_DEFAULT_ROOTFS} STAR_DEFAULT_ROOTFS_IMAGE=${STAR_DEFAULT_ROOTFS_IMAGE} STAR_DEFAULT_ROOTFS_BASE_IMAGE=${STAR_DEFAULT_ROOTFS_BASE_IMAGE} STAR_REMOVE_GCP_SUDOERS=${STAR_REMOVE_GCP_SUDOERS} SRC_ROOT=/home/${REMOTE_USER}/cocalc-ai/src bash /home/${REMOTE_USER}/cocalc-ai/src/scripts/star-poc/bootstrap-star-poc.sh'" \
   --quiet
 
 log "VM ready: $VM_NAME"
