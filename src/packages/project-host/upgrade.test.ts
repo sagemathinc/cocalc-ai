@@ -320,6 +320,7 @@ describe("project host upgrade installer", () => {
   it("extracts runtime artifact versions from live mountinfo, including deleted mounts", () => {
     const mountinfo = [
       "757 766 8:1 /opt/cocalc/tools/1778766667334//deleted /opt/cocalc/bin2 ro,relatime - ext4 /dev/root rw",
+      "756 766 8:1 /opt/cocalc/tools/1778766667335\\040(deleted) /opt/cocalc/bin2 ro,relatime - ext4 /dev/root rw",
       "758 766 8:1 /opt/cocalc/project-bundles/1778766568480//deleted /opt/cocalc/project-bundle ro,relatime - ext4 /dev/root rw",
       "759 766 8:1 /opt/cocalc/tools/current /not-a-runtime-version ro,relatime - ext4 /dev/root rw",
       "760 766 8:1 /opt/cocalc/tools/.download /ignored ro,relatime - ext4 /dev/root rw",
@@ -330,7 +331,7 @@ describe("project host upgrade installer", () => {
         mountinfo,
         "/opt/cocalc/tools",
       ),
-    ).toEqual(["1778766667334"]);
+    ).toEqual(["1778766667334", "1778766667335"]);
     expect(
       __test__.extractMountedArtifactVersionsFromMountinfo(
         mountinfo,
@@ -387,6 +388,61 @@ describe("project host upgrade installer", () => {
         .map((entry) => entry.name)
         .sort();
       expect(retained).toEqual(["tools-1", "tools-4", "tools-5"]);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("can protect every installed tools version while containers are running", async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-upgrade-test-"));
+    try {
+      const toolsRoot = path.join(base, "tools");
+      fs.mkdirSync(toolsRoot, { recursive: true });
+      for (const version of ["tools-1", "tools-2", "tools-3", "tools-4"]) {
+        const dir = path.join(toolsRoot, version);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, "payload.bin"), Buffer.alloc(1024));
+      }
+      fs.mkdirSync(path.join(toolsRoot, ".download"));
+      fs.symlinkSync(
+        path.join(toolsRoot, "tools-4"),
+        path.join(toolsRoot, "current"),
+      );
+      const protectedVersions =
+        await __test__.listInstalledArtifactVersions(toolsRoot);
+      expect(protectedVersions).toEqual([
+        "tools-1",
+        "tools-2",
+        "tools-3",
+        "tools-4",
+      ]);
+
+      const desiredDir = path.join(toolsRoot, "tools-5");
+      fs.mkdirSync(desiredDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(desiredDir, "payload.bin"),
+        Buffer.alloc(1024),
+      );
+      await __test__.pruneVersionDirs({
+        root: toolsRoot,
+        currentLink: path.join(toolsRoot, "current"),
+        desiredDir,
+        keep: 1,
+        protectedVersions,
+      });
+
+      const retained = fs
+        .readdirSync(toolsRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+        .map((entry) => entry.name)
+        .sort();
+      expect(retained).toEqual([
+        "tools-1",
+        "tools-2",
+        "tools-3",
+        "tools-4",
+        "tools-5",
+      ]);
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
     }
