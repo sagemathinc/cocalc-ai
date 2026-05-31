@@ -1951,7 +1951,7 @@ deny() {
 allow_path() {
   local path="${1//\\\\:/:}"
   case "$path" in
-    /mnt/cocalc|/mnt/cocalc/*|/mnt/cocalc-scratch|/mnt/cocalc-scratch/*|/dev/loop*|/var/lib/cocalc/cocalc.img|/var/lib/cocalc/btrfs.img|/opt/cocalc/project-host|/opt/cocalc/project-host/*|/opt/cocalc/project-bundles|/opt/cocalc/project-bundles/*|/opt/cocalc/tools|/opt/cocalc/tools/*)
+    /mnt/cocalc|/mnt/cocalc/*|/mnt/cocalc-scratch|/mnt/cocalc-scratch/*|/dev/loop*|/var/lib/cocalc/cocalc.img|/var/lib/cocalc/btrfs.img|/var/lib/cocalc/star/project-host/0/cache|/var/lib/cocalc/star/project-host/0/cache/*|/opt/cocalc/project-host|/opt/cocalc/project-host/*|/opt/cocalc/project-bundles|/opt/cocalc/project-bundles/*|/opt/cocalc/tools|/opt/cocalc/tools/*)
       return 0
       ;;
     *)
@@ -1963,7 +1963,7 @@ allow_path() {
 allow_overlay_mountpoint() {
   local path="${1//\\\\:/:}"
   case "$path" in
-    /mnt/cocalc/data/cache/project-roots/*)
+    /mnt/cocalc/data/cache/project-roots/*|/var/lib/cocalc/star/project-host/0/cache/project-roots/*)
       ;;
     *)
       return 1

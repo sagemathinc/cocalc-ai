@@ -31,6 +31,8 @@ describe("writeStartupScripts", () => {
     expect(script).toContain(
       `mkdir -p "$RUNTIME_SSH_DIR" "$RUNTIME_MANAGED_SSH_DIR" "$RUNTIME_SSHD_DIR"`,
     );
+    expect(script).toContain("dropbear -p ${COCALC_SSHD_PORT:=22} -e -s -a -R");
+    expect(script).not.toContain(" -D ");
   });
 
   it("probes standard distro sftp-server paths for modern scp support", async () => {

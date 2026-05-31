@@ -49,7 +49,7 @@ mkdir -p "$RUNTIME_SSH_DIR" "$RUNTIME_MANAGED_SSH_DIR" "$RUNTIME_SSHD_DIR"
 chmod 700 "$RUNTIME_SSH_DIR" "$RUNTIME_MANAGED_SSH_DIR" "$RUNTIME_SSHD_DIR"
 chmod og-rwx -R "$RUNTIME_SSH_DIR"
 
-dropbear -p \${COCALC_SSHD_PORT:=22} -e -s -a -R -D "$RUNTIME_SSHD_DIR"
+dropbear -p \${COCALC_SSHD_PORT:=22} -e -s -a -R
 
 SFTP_SERVER="$(command -v sftp-server || true)"
 if [ -z "$SFTP_SERVER" ]; then
