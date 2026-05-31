@@ -157,9 +157,7 @@ export default function SSHKeyAdder({
                 defaultMessage: "Add <A>SSH key</A>",
               },
               {
-                A: (c) => (
-                  <A href="https://doc.cocalc.com/account/ssh.html">{c}</A>
-                ),
+                A: (c) => <A href="/app-docs/account/settings">{c}</A>,
               },
             )}
           </>
