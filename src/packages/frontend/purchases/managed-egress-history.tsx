@@ -369,7 +369,8 @@ function HistoryLine({
               boxShadow: "0 6px 18px rgba(15, 23, 42, 0.16)",
               color: COLORS.GRAY_D,
               left: hoverPlacement.left,
-              maxWidth: "240px",
+              maxWidth: "360px",
+              minWidth: "280px",
               padding: "8px 10px",
               pointerEvents: "none",
               position: "absolute",
@@ -378,10 +379,22 @@ function HistoryLine({
               zIndex: 1,
             }}
           >
-            <div style={{ fontWeight: 600, marginBottom: "4px" }}>
+            <div
+              style={{
+                fontWeight: 600,
+                marginBottom: "4px",
+                whiteSpace: "nowrap",
+              }}
+            >
               {formatEgressRate(bytesPerHourForPoint(hoveredHistoryPoint))}
             </div>
-            <div style={{ fontSize: "12px", marginBottom: "4px" }}>
+            <div
+              style={{
+                fontSize: "12px",
+                marginBottom: "4px",
+                whiteSpace: "nowrap",
+              }}
+            >
               Transferred in bucket:{" "}
               {humanSize(Math.max(0, hoveredHistoryPoint.bytes ?? 0))}
             </div>

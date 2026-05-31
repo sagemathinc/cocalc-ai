@@ -289,7 +289,8 @@ function CpuHistoryLine({
               boxShadow: "0 6px 18px rgba(15, 23, 42, 0.16)",
               color: COLORS.GRAY_D,
               left: placement.left,
-              maxWidth: "240px",
+              maxWidth: "360px",
+              minWidth: "280px",
               padding: "8px 10px",
               pointerEvents: "none",
               position: "absolute",
@@ -298,10 +299,22 @@ function CpuHistoryLine({
               zIndex: 1,
             }}
           >
-            <div style={{ fontWeight: 600, marginBottom: "4px" }}>
+            <div
+              style={{
+                fontWeight: 600,
+                marginBottom: "4px",
+                whiteSpace: "nowrap",
+              }}
+            >
               {formatAverageCpus(averageCpusForPoint(hoveredHistoryPoint))}
             </div>
-            <div style={{ fontSize: "12px", marginBottom: "4px" }}>
+            <div
+              style={{
+                fontSize: "12px",
+                marginBottom: "4px",
+                whiteSpace: "nowrap",
+              }}
+            >
               Usage in bucket:{" "}
               {formatCpuSeconds(hoveredHistoryPoint.cpu_seconds)}
             </div>
