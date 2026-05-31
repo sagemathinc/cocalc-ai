@@ -14,6 +14,10 @@ Implement durable CPU usage accounting that supports:
 - capacity planning and project rebalancing based on actual CPU-hours;
 - admin investigation workflow with durable annotations so known legitimate
   compute is not repeatedly surfaced as high-priority abuse.
+- combined abuse review of CPU and excessive egress, since high egress can be a
+  red flag even when managed egress limits already cut off further traffic.
+- user-visible current usage windows so users can understand their 5-hour and
+  7-day compute/network budgets before they hit a start or egress limit.
 
 Non-goals for the first release:
 
@@ -342,10 +346,13 @@ Views:
 
 1. Top accounts by CPU-hours in 5h and 7d.
 2. Top projects by CPU-hours in 5h and 7d.
-3. Free/trial accounts over thresholds.
-4. Host-level CPU-heavy projects for capacity planning.
-5. Accounts hidden/lowered by active annotation.
-6. Recently annotated accounts.
+3. Top accounts/projects by managed egress in 5h and 7d.
+4. Combined CPU-plus-egress abuse queue, weighted toward free/trial accounts
+   and accounts without active suppress/lower annotations.
+5. Free/trial accounts over thresholds.
+6. Host-level CPU-heavy projects for capacity planning.
+7. Accounts hidden/lowered by active annotation.
+8. Recently annotated accounts.
 
 Each row should show:
 
@@ -355,6 +362,7 @@ Each row should show:
 - 7d CPU-hours;
 - top project(s);
 - host(s);
+- managed egress in the same windows;
 - current annotation/disposition if any;
 - action buttons:
   - "Mark legitimate";
@@ -394,9 +402,16 @@ Suggested workflow:
 4. Admin chooses annotation disposition and writes/reviews reason.
 
 Do not expose private file contents to Codex automatically unless that is already
-allowed by existing admin/Codex policy and clearly indicated in the UI.
+allowed by existing admin/Codex policy and clearly indicated in the UI. This usage of codex should also be done using the proper API key, so that appropriate privacy contracts are in place.
 
 ## Notifications And User Messaging
+
+Users should have a self-service view of their current usage windows:
+
+- 5-hour CPU-hours used, limit if configured, remaining, and reset estimate;
+- 7-day CPU-hours used, limit if configured, remaining, and reset estimate;
+- 5-hour and 7-day managed egress usage, using the existing egress window data;
+- recent CPU/egress events where useful for explaining why a limit was reached.
 
 When a project start is blocked due to CPU budget:
 
@@ -405,6 +420,7 @@ When a project start is blocked due to CPU budget:
 - show reset time;
 - link to upgrade;
 - avoid accusations of abuse.
+- explain that user still has read/write access to files -- they just can't use terminals, notebooks, latex, codex.
 
 Example:
 
@@ -436,11 +452,13 @@ Admin abuse dashboard language should be sharper:
 
 Phase 1: accounting only
 
-- Add server table and record/query functions.
-- Add project-host sampler behind an env flag or site config.
-- Add tests for delta handling, counter reset, missing cgroups, and server
-  aggregation.
-- Add debug/admin-only way to inspect recorded CPU usage.
+- [x] Add server table and record/query functions.
+- [x] Add project-host sampler behind an env flag or site config.
+- [x] Add tests for delta handling, counter reset, missing cgroups, and server
+      aggregation.
+- [x] Add debug/admin-only way to inspect recorded CPU usage.
+- [x] Add current CPU window usage to membership usage status so user-facing UI
+      can render it with the existing membership usage surface.
 - No start blocking.
 
 Phase 2: admin visibility
@@ -518,17 +536,17 @@ Operational validation:
 
 1. Should CPU usage attribute to the project owner, runtime sponsor, or another
    explicit usage account in all cases? Recommendation: reuse the managed egress
-   project usage account resolver for consistency.
+   project usage account resolver for consistency. (ANS: Yes, whatever is chosen by egress, do the same.)
 2. Should annotations be account-only, project-only, or both? Recommendation:
-   support account annotations with optional project scope.
+   support account annotations with optional project scope. (ANS: agreed -- account is what matters; project is metadata)
 3. Should known-legitimate annotations affect start limits? Recommendation: no
    by default; they affect abuse priority only. Use membership/entitlement
-   overrides for actual quota changes.
+   overrides for actual quota changes. (ANS: agree; they do not impact runnig; that's what "ban" or membership overrides are for.)
 4. Should paid users ever be start-blocked by CPU budget? Recommendation: keep
-   limits very high initially and use dashboard review instead.
+   limits very high initially and use dashboard review instead. (ANS: agreed; our plan is no noticeable limits on paying users. We may have some limit on the cheapest tier. the point is to keep this flexible. There may be a lot of people running cocalc-ai sites and give them the tools to decide their own policies.)
 5. Should the first implementation be a generic resource usage framework?
    Recommendation: share helpers where obvious, but implement CPU concretely.
-   Avoid over-generalizing before the second resource type is proven.
+   Avoid over-generalizing before the second resource type is proven. (ANS: yes, just cpu and also egress for the abuse monitoring. Also though we will eventually use this data for capacity planning, that's not needed for V1.)
 
 ## Suggested Initial Implementation Slice
 

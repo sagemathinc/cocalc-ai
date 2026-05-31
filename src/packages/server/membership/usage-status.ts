@@ -18,6 +18,10 @@ import {
   getManagedEgressUsageForAccount,
   getRecentManagedEgressEventsForAccount,
 } from "./managed-egress";
+import {
+  getManagedCpuUsageForAccount,
+  getRecentManagedCpuEventsForAccount,
+} from "./managed-cpu";
 import { getEffectiveMembershipUsageLimits } from "./effective-limits";
 import { getAccountBlobUsage } from "./blob-limits";
 import {
@@ -208,6 +212,11 @@ export async function getMembershipUsageStatusForAccount({
         account_id,
         limit: 20,
       });
+    const managedCpu = await getManagedCpuUsageForAccount({ account_id });
+    const managedCpuRecentEvents = await getRecentManagedCpuEventsForAccount({
+      account_id,
+      limit: 20,
+    });
     const rootfsUsage = await getRootfsUsageForAccount({ account_id });
     const rootfs_count_limit = effectiveLimits.rootfs_count;
     const rootfs_total_storage_bytes_limit =
@@ -297,6 +306,19 @@ export async function getMembershipUsageStatusForAccount({
       blob_project_total_bytes_limit: effectiveLimits.blob_project_total_bytes,
       ...managedEgress,
       managed_egress_recent_events: managedEgressRecentEvents,
+      managed_cpu_5h_seconds: managedCpu.managed_cpu_5h_seconds,
+      managed_cpu_7d_seconds: managedCpu.managed_cpu_7d_seconds,
+      managed_cpu_5h_remaining_seconds:
+        managedCpu.managed_cpu_5h_remaining_seconds,
+      managed_cpu_7d_remaining_seconds:
+        managedCpu.managed_cpu_7d_remaining_seconds,
+      managed_cpu_5h_reset_at: managedCpu.managed_cpu_5h_reset_at,
+      managed_cpu_7d_reset_at: managedCpu.managed_cpu_7d_reset_at,
+      managed_cpu_5h_reset_in: managedCpu.managed_cpu_5h_reset_in,
+      managed_cpu_7d_reset_in: managedCpu.managed_cpu_7d_reset_in,
+      over_managed_cpu_5h: managedCpu.over_managed_cpu_5h,
+      over_managed_cpu_7d: managedCpu.over_managed_cpu_7d,
+      managed_cpu_recent_events: managedCpuRecentEvents,
     };
   })();
 

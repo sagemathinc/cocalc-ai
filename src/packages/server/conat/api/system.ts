@@ -228,6 +228,7 @@ import { getAccountCollaboratorIndexProjectionMaintenanceStatus } from "@cocalc/
 import { getAccountNotificationIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-notification-index-maintenance";
 import { getManagedProjectEgressPolicy as getManagedProjectEgressPolicyRaw } from "@cocalc/server/membership/managed-egress-policy";
 import { recordManagedProjectEgress as recordManagedProjectEgressRaw } from "@cocalc/server/membership/managed-egress";
+import { recordManagedProjectCpuUsage as recordManagedProjectCpuUsageRaw } from "@cocalc/server/membership/managed-cpu";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import sshKeys from "@cocalc/server/projects/get-ssh-keys";
@@ -5153,6 +5154,47 @@ export async function recordManagedProjectEgress({
     project_id: resolvedProjectId,
     category,
     bytes,
+    metadata,
+  });
+}
+
+export async function recordManagedProjectCpuUsage({
+  account_id,
+  host_id,
+  project_id,
+  cpu_seconds,
+  sample_started_at,
+  sample_ended_at,
+  source,
+  metadata,
+}: {
+  account_id?: string;
+  host_id?: string;
+  project_id?: string;
+  cpu_seconds: number;
+  sample_started_at?: Date;
+  sample_ended_at?: Date;
+  source?: string;
+  metadata?: Record<string, unknown>;
+}) {
+  const resolvedProjectId = `${project_id ?? ""}`.trim()
+    ? await resolveProjectContext({
+        account_id,
+        host_id,
+        project_id,
+      })
+    : undefined;
+  if (!resolvedProjectId && !`${account_id ?? ""}`.trim()) {
+    throw Error("project_id or account_id is required");
+  }
+  return await recordManagedProjectCpuUsageRaw({
+    account_id,
+    project_id: resolvedProjectId,
+    host_id,
+    cpu_seconds,
+    sample_started_at,
+    sample_ended_at,
+    source,
     metadata,
   });
 }

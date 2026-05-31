@@ -703,6 +703,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: TELEMETRY_ONLY,
   },
+  "system.recordManagedProjectCpuUsage": {
+    decision: "fresh-auth-not-required",
+    reason: TELEMETRY_ONLY,
+  },
   "system.recordServiceAdmissionDenial": {
     decision: "fresh-auth-not-required",
     reason: TELEMETRY_ONLY,
