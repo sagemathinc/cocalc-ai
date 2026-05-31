@@ -12,6 +12,7 @@ import {
   Spin,
   Tag,
   Typography,
+  message,
 } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
@@ -87,6 +88,84 @@ function getProjectLabel(project: {
     `${project.project_title ?? project.project_id ?? ""}`.trim() ||
     "Account-wide activity"
   );
+}
+
+function formatAccountSummary(account: {
+  account_id: string;
+  email_address?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+}): string {
+  return `${getAccountLabel(account)} (${account.account_id})`;
+}
+
+function formatProjectSummary(project: {
+  account_id: string;
+  email_address?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  project_id?: string | null;
+  project_title?: string | null;
+  host_id?: string | null;
+}): string {
+  const projectPart = `${getProjectLabel(project)} (${project.project_id ?? "no project id"})`;
+  const hostPart = project.host_id ? `, host ${project.host_id}` : "";
+  return `${projectPart}${hostPart}, ${formatAccountSummary(project)}`;
+}
+
+function numberedLines<T>(
+  entries: T[],
+  formatter: (entry: T) => string,
+): string[] {
+  if (entries.length === 0) {
+    return ["None"];
+  }
+  return entries.map((entry, i) => `${i + 1}. ${formatter(entry)}`);
+}
+
+function buildMarkdownSummary({
+  rangeLabel,
+  cpuOverview,
+  egressOverview,
+}: {
+  rangeLabel: string;
+  cpuOverview: ManagedCpuAdminOverviewData;
+  egressOverview: ManagedEgressAdminOverview;
+}): string {
+  return [
+    `# CPU & Abuse Signals, ${rangeLabel} window`,
+    "",
+    `Total CPU: ${formatCpuSeconds(cpuOverview.total_cpu_seconds)}`,
+    `Total egress: ${humanSize(egressOverview.total_bytes)}`,
+    "",
+    "## Top CPU accounts",
+    ...numberedLines(
+      cpuOverview.top_accounts,
+      (account) =>
+        `${formatAccountSummary(account)} - ${formatCpuSeconds(account.cpu_seconds)}`,
+    ),
+    "",
+    "## Top CPU projects",
+    ...numberedLines(
+      cpuOverview.top_projects,
+      (project) =>
+        `${formatProjectSummary(project)} - ${formatCpuSeconds(project.cpu_seconds)}`,
+    ),
+    "",
+    "## Top egress accounts",
+    ...numberedLines(
+      egressOverview.top_accounts,
+      (account) =>
+        `${formatAccountSummary(account)} - ${humanSize(account.bytes)}`,
+    ),
+    "",
+    "## Top egress projects",
+    ...numberedLines(
+      egressOverview.top_projects,
+      (project) =>
+        `${formatProjectSummary(project)} - ${humanSize(project.bytes)}`,
+    ),
+  ].join("\n");
 }
 
 function PanelBox({ title, children }: { title: string; children: ReactNode }) {
@@ -322,6 +401,21 @@ export function ManagedCpuAdminOverview() {
 
   const hasNoCpu = (cpuOverview?.total_cpu_seconds ?? 0) <= 0;
   const hasNoEgress = (egressOverview?.total_bytes ?? 0) <= 0;
+  const copySummary = async () => {
+    if (!cpuOverview || !egressOverview) return;
+    try {
+      await navigator.clipboard.writeText(
+        buildMarkdownSummary({
+          rangeLabel: range.label,
+          cpuOverview,
+          egressOverview,
+        }),
+      );
+      void message.success("CPU and abuse summary copied.");
+    } catch (err) {
+      setError(`Unable to copy summary: ${err}`);
+    }
+  };
 
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
@@ -361,6 +455,12 @@ export function ManagedCpuAdminOverview() {
                 : "0 B"}
           </div>
         </div>
+        <Button
+          disabled={!cpuOverview || !egressOverview}
+          onClick={() => void copySummary()}
+        >
+          Copy summary
+        </Button>
         <Button onClick={() => void load()}>Refresh</Button>
       </Space>
 

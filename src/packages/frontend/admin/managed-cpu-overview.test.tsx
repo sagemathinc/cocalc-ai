@@ -4,6 +4,7 @@ import { ManagedCpuAdminOverview } from "./managed-cpu-overview";
 
 const getManagedCpuAdminOverview = jest.fn();
 const getManagedEgressAdminOverview = jest.fn();
+const messageSuccess = jest.fn();
 
 jest.mock("antd", () => {
   const Div = ({ children, title }: any) => (
@@ -46,6 +47,9 @@ jest.mock("antd", () => {
     Typography: {
       Paragraph: ({ children }: any) => <div>{children}</div>,
       Text: ({ children }: any) => <div>{children}</div>,
+    },
+    message: {
+      success: (...args: any[]) => messageSuccess(...args),
     },
   };
 });
@@ -90,6 +94,12 @@ jest.mock("@cocalc/frontend/purchases/managed-egress-recent-events", () => ({
 describe("ManagedCpuAdminOverview", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: jest.fn().mockResolvedValue(undefined),
+      },
+    });
     jest.useFakeTimers().setSystemTime(new Date("2026-05-31T12:00:00.000Z"));
   });
 
@@ -202,6 +212,36 @@ describe("ManagedCpuAdminOverview", () => {
     expect(cpuCall.end.toISOString()).toBe("2026-05-31T12:00:00.000Z");
     expect(egressCall.start.toISOString()).toBe("2026-05-31T07:00:00.000Z");
     expect(egressCall.end.toISOString()).toBe("2026-05-31T12:00:00.000Z");
+  });
+
+  it("copies a markdown summary of the current review window", async () => {
+    mockOverview();
+    render(<ManagedCpuAdminOverview />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Top CPU accounts (5h)")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Copy summary"));
+
+    await waitFor(() => {
+      expect(navigator.clipboard.writeText).toHaveBeenCalledTimes(1);
+      expect(messageSuccess).toHaveBeenCalledWith(
+        "CPU and abuse summary copied.",
+      );
+    });
+    const summary = (navigator.clipboard.writeText as jest.Mock).mock
+      .calls[0][0];
+    expect(summary).toContain("# CPU & Abuse Signals, 5h window");
+    expect(summary).toContain(
+      "Ada Lovelace (ada@example.com) (acct-1) - 2.00 CPU-hours",
+    );
+    expect(summary).toContain(
+      "Number theory (project-1), host host-1, Ada Lovelace (ada@example.com) (acct-1) - 1.50 CPU-hours",
+    );
+    expect(summary).toContain(
+      "Grace Hopper (grace@example.com) (acct-2) - 4.1 KB",
+    );
   });
 
   it("reloads CPU and egress overview for the selected range", async () => {

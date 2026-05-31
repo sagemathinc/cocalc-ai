@@ -476,7 +476,8 @@ Phase 2: admin visibility
 - [x] Add managed egress accounts/projects in the same review panel as an abuse
       signal.
 - [x] Add host/project drilldowns for capacity planning.
-- Add CSV or copyable summaries if cheap.
+- [x] Add copyable Markdown summaries. CSV export is deferred until offline
+      reporting becomes a demonstrated need.
 
 Phase 3: annotations
 
