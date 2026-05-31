@@ -14,6 +14,7 @@ import {
   listDocsEntries,
   type DocsActionId,
 } from "./index";
+import { LEGACY_DOC_LINK_BASELINE } from "./legacy-doc-links-baseline";
 
 export type DocsVerificationSeverity = "error" | "warning";
 
@@ -43,9 +44,46 @@ export type DocsLiveUiAssertion = {
 export type DocsVerificationReport = {
   actionCount: number;
   entryCount: number;
+  frontendDocsLinks: DocsFrontendDocsLink[];
   issues: DocsVerificationIssue[];
+  legacyDocLinks: DocsLegacyDocLink[];
   liveScenarios: DocsLiveVerificationScenario[];
   ok: boolean;
+};
+
+export type DocsFrontendDocsLink = {
+  file: string;
+  line: number;
+  slug?: string;
+  url: string;
+};
+
+export type DocsLegacyDocLink = {
+  baseline: boolean;
+  file: string;
+  line: number;
+  url: string;
+};
+
+export type DocsGapEntry = {
+  actionIds?: DocsActionId[];
+  category: string;
+  id: string;
+  lastReviewed?: string;
+  reviewAgeDays?: number;
+  slug: string;
+  title: string;
+};
+
+export type DocsGapReport = {
+  categoriesWithoutChapter: string[];
+  entryCount: number;
+  legacyDocLinks: DocsLegacyDocLink[];
+  ok: boolean;
+  pagesWithStaleReview: DocsGapEntry[];
+  pagesWithoutActions: DocsGapEntry[];
+  pagesWithoutLiveVerification: DocsGapEntry[];
+  staleReviewDays: number;
 };
 
 export type DocsLiveVerificationResult = {
@@ -91,7 +129,10 @@ export type DocsLiveVerificationReport = {
 };
 
 const DOCS_LINK_RE = /\/docs\/([A-Za-z0-9._/-]+)/g;
-const LEGACY_DOCS_RE = /https:\/\/doc\.cocalc\.com\//;
+const APP_DOCS_LINK_RE = /\/app-docs(?:\/[A-Za-z0-9._/-]+)?/g;
+const LEGACY_DOCS_RE = /https:\/\/doc\.cocalc\.com\/[^\s"'<>)]*/g;
+const DEFAULT_STALE_REVIEW_DAYS = 90;
+const FRONTEND_LINK_SCAN_ROOTS = [":(top)src/packages/frontend"];
 
 const UI_ASSERTION_TIMEOUT_MS = 15_000;
 
@@ -125,9 +166,178 @@ function executableActionIds(): Set<string> {
   );
 }
 
+function legacyLinkKey(link: Pick<DocsLegacyDocLink, "file" | "url">): string {
+  return `${link.file}\t${link.url}`;
+}
+
+function frontendDocsLinkKey(
+  link: Pick<DocsFrontendDocsLink, "file" | "url">,
+): string {
+  return `${link.file}\t${link.url}`;
+}
+
+function runSyncCommand(
+  command: string,
+  args: string[],
+): { status: number | null; stdout: string } {
+  const requireFunction = eval("require") as (name: string) => unknown;
+  const childProcess = requireFunction("node:child_process") as {
+    spawnSync: (
+      command: string,
+      args: string[],
+      options: { encoding: "utf8" },
+    ) => { status: number | null; stdout: string };
+  };
+  return childProcess.spawnSync(command, args, { encoding: "utf8" });
+}
+
+export function scanLegacyDocLinks(): DocsLegacyDocLink[] {
+  const result = runSyncCommand("git", [
+    "grep",
+    "--full-name",
+    "-n",
+    "-I",
+    "-E",
+    "https://doc\\.cocalc\\.com/[^[:space:]\"'<>)]*",
+    "--",
+    ...FRONTEND_LINK_SCAN_ROOTS,
+  ]);
+  if (result.status !== 0 || !result.stdout.trim()) return [];
+  const links: DocsLegacyDocLink[] = [];
+  for (const row of result.stdout.trim().split("\n")) {
+    const match = row.match(/^([^:]+):(\d+):(.*)$/);
+    if (!match) continue;
+    const [, file, lineText, text] = match;
+    for (const urlMatch of text.matchAll(LEGACY_DOCS_RE)) {
+      const link = {
+        baseline: false,
+        file,
+        line: Number.parseInt(lineText, 10),
+        url: urlMatch[0],
+      };
+      links.push({
+        ...link,
+        baseline: LEGACY_DOC_LINK_BASELINE.has(legacyLinkKey(link)),
+      });
+    }
+  }
+  return links.sort((a, b) => legacyLinkKey(a).localeCompare(legacyLinkKey(b)));
+}
+
+function appDocsSlug(url: string): string | undefined {
+  const slug = url.replace(/^\/app-docs\/?/, "").replace(/\/$/, "");
+  if (!slug || slug === "print") return undefined;
+  return slug;
+}
+
+export function scanFrontendDocsLinks(): DocsFrontendDocsLink[] {
+  const result = runSyncCommand("git", [
+    "grep",
+    "--full-name",
+    "-n",
+    "-I",
+    "-E",
+    "/app-docs(/[A-Za-z0-9._/-]+)?",
+    "--",
+    ...FRONTEND_LINK_SCAN_ROOTS,
+  ]);
+  if (result.status !== 0 || !result.stdout.trim()) return [];
+  const links: DocsFrontendDocsLink[] = [];
+  for (const row of result.stdout.trim().split("\n")) {
+    const match = row.match(/^([^:]+):(\d+):(.*)$/);
+    if (!match) continue;
+    const [, file, lineText, text] = match;
+    for (const urlMatch of text.matchAll(APP_DOCS_LINK_RE)) {
+      const url = urlMatch[0];
+      links.push({
+        file,
+        line: Number.parseInt(lineText, 10),
+        slug: appDocsSlug(url),
+        url,
+      });
+    }
+  }
+  return links.sort((a, b) =>
+    frontendDocsLinkKey(a).localeCompare(frontendDocsLinkKey(b)),
+  );
+}
+
+function entryGap(entry: {
+  actions?: { id: DocsActionId }[];
+  category: string;
+  id: string;
+  lastReviewed: string;
+  slug: string;
+  title: string;
+}): DocsGapEntry {
+  const actionIds = entry.actions?.map((action) => action.id);
+  return {
+    ...(actionIds?.length ? { actionIds } : {}),
+    category: entry.category,
+    id: entry.id,
+    lastReviewed: entry.lastReviewed,
+    slug: entry.slug,
+    title: entry.title,
+  };
+}
+
+function reviewAgeDays(lastReviewed: string, now: Date): number | undefined {
+  const reviewed = Date.parse(`${lastReviewed}T00:00:00Z`);
+  if (!Number.isFinite(reviewed)) return undefined;
+  return Math.floor((now.getTime() - reviewed) / 86_400_000);
+}
+
 function liveUiAssertionForAction(
   actionId: DocsActionId,
 ): DocsLiveUiAssertion | undefined {
+  if (actionId.startsWith("account.") || actionId.startsWith("billing.")) {
+    const settingsPaths: Partial<Record<DocsActionId, string>> = {
+      "account.profile.open": "/settings/profile",
+      "account.ssh-keys.open": "/settings/keys",
+      "billing.payment-methods.open": "/settings/payment-methods",
+      "billing.statements.open": "/settings/statements",
+      "billing.subscriptions.open": "/settings/subscriptions",
+    };
+    const expectedPath = settingsPaths[actionId];
+    if (expectedPath) {
+      return {
+        description: `Account settings route ${expectedPath} is visible.`,
+        code: `const url = api.waitForUrl({ includes: ${JSON.stringify(expectedPath)}, timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true, url };`,
+      };
+    }
+  }
+  if (actionId.startsWith("admin.")) {
+    const adminPaths: Partial<Record<DocsActionId, string>> = {
+      "admin.news.open": "/admin/news",
+      "admin.news.create-system": "/admin/news/new",
+      "admin.bay-ops.open": "/admin/bay-ops",
+      "admin.managed-egress.open": "/admin/managed-egress",
+      "admin.membership-tiers.open": "/admin/membership-tiers",
+      "admin.project-backup-shards.open": "/admin/project-backup-shards",
+      "admin.registration-tokens.open": "/admin/registration-tokens",
+      "admin.rootfs.open": "/admin/rootfs",
+      "admin.site-settings.open": "/admin/site-settings",
+      "admin.software-licenses.open": "/admin/software-licenses",
+      "admin.sso.open": "/admin/sso",
+      "admin.users.open": "/admin/user-search",
+    };
+    const expectedPath = adminPaths[actionId];
+    if (expectedPath) {
+      return {
+        description: `Admin route ${expectedPath} is visible.`,
+        code: `const url = api.waitForUrl({ includes: ${JSON.stringify(expectedPath)}, timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true, url };`,
+      };
+    }
+  }
+  if (actionId.startsWith("hosts.")) {
+    return {
+      description: "Project Hosts route is visible.",
+      code: `const url = api.waitForUrl({ includes: "/hosts", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true, url };`,
+    };
+  }
   if (actionId === "settings.environment.secrets") {
     return {
       description: "Project Secrets modal is visible.",
@@ -193,7 +403,7 @@ export function listDocsLiveVerificationScenarios({
   projectId = "$COCALC_PROJECT_ID",
   timeout = "60s",
 }: Partial<DocsLiveVerificationOptions> = {}): DocsLiveVerificationScenario[] {
-  return listDocsActions()
+  return listDocsActions({ includeAdmin: true, includeSignedIn: true })
     .filter((action) => action.executable === true)
     .map((action) => {
       const command = [
@@ -345,7 +555,7 @@ export function verifyDocsStatic(): DocsVerificationReport {
         }),
       );
     }
-    if (LEGACY_DOCS_RE.test(entry.body)) {
+    if (entry.body.match(LEGACY_DOCS_RE)) {
       issues.push(
         issue({
           code: "entry-legacy-doc-link",
@@ -455,13 +665,101 @@ export function verifyDocsStatic(): DocsVerificationReport {
     }
   }
 
+  const legacyDocLinks = scanLegacyDocLinks();
+  for (const link of legacyDocLinks) {
+    if (!link.baseline) {
+      issues.push(
+        issue({
+          code: "legacy-doc-link-new",
+          message: `New legacy doc.cocalc.com link in ${link.file}:${link.line}: ${link.url}`,
+        }),
+      );
+    }
+  }
+  const frontendDocsLinks = scanFrontendDocsLinks();
+  for (const link of frontendDocsLinks) {
+    if (link.slug && getDocsEntry(link.slug, docsAccess) == null) {
+      issues.push(
+        issue({
+          code: "frontend-app-docs-link",
+          message: `Frontend /app-docs link in ${link.file}:${link.line} does not resolve: ${link.url}`,
+        }),
+      );
+    }
+  }
+
   const errors = issues.filter((entry) => entry.severity === "error");
   return {
     actionCount: actions.length,
     entryCount: entries.length,
+    frontendDocsLinks,
     issues,
+    legacyDocLinks,
     liveScenarios: listDocsLiveVerificationScenarios(),
     ok: errors.length === 0,
+  };
+}
+
+export function buildDocsGapReport({
+  now = new Date(),
+  staleReviewDays = DEFAULT_STALE_REVIEW_DAYS,
+}: {
+  now?: Date;
+  staleReviewDays?: number;
+} = {}): DocsGapReport {
+  const docsAccess = { includeAdmin: true, includeSignedIn: true };
+  const entries = listDocsEntries(docsAccess);
+  const categories = [
+    ...new Set(entries.map((entry) => entry.category)),
+  ].sort();
+  const liveAssertionsByAction = new Map(
+    listDocsLiveVerificationScenarios().map((scenario) => [
+      scenario.actionId,
+      scenario.assertion,
+    ]),
+  );
+  const pagesWithoutActions: DocsGapEntry[] = [];
+  const pagesWithoutLiveVerification: DocsGapEntry[] = [];
+  const pagesWithStaleReview: DocsGapEntry[] = [];
+
+  for (const entry of entries) {
+    const actions = entry.actions ?? [];
+    if (actions.length === 0) {
+      pagesWithoutActions.push(entryGap(entry));
+      pagesWithoutLiveVerification.push(entryGap(entry));
+    } else {
+      const hasAssertedLiveAction = actions.some(
+        (action) =>
+          action.executable === true &&
+          liveAssertionsByAction.get(action.id) != null,
+      );
+      if (!hasAssertedLiveAction) {
+        pagesWithoutLiveVerification.push(entryGap(entry));
+      }
+    }
+    const ageDays = reviewAgeDays(entry.lastReviewed, now);
+    if (ageDays != null && ageDays > staleReviewDays) {
+      pagesWithStaleReview.push({
+        ...entryGap(entry),
+        reviewAgeDays: ageDays,
+      });
+    }
+  }
+
+  return {
+    categoriesWithoutChapter: categories.filter(
+      (category) => getDocsChapter(category, docsAccess) == null,
+    ),
+    entryCount: entries.length,
+    legacyDocLinks: scanLegacyDocLinks(),
+    ok:
+      pagesWithoutActions.length === 0 &&
+      pagesWithoutLiveVerification.length === 0 &&
+      pagesWithStaleReview.length === 0,
+    pagesWithStaleReview,
+    pagesWithoutActions,
+    pagesWithoutLiveVerification,
+    staleReviewDays,
   };
 }
 
@@ -707,6 +1005,8 @@ export function formatDocsVerificationReport(
     `Entries: ${report.entryCount}`,
     `Actions: ${report.actionCount}`,
     `Live scenarios: ${report.liveScenarios.length}`,
+    `Legacy doc.cocalc.com links: ${report.legacyDocLinks.length}`,
+    `Frontend /app-docs links: ${report.frontendDocsLinks.length}`,
   ];
   for (const item of report.issues) {
     const target = [item.entryId, item.actionId].filter(Boolean).join(" ");
@@ -714,5 +1014,38 @@ export function formatDocsVerificationReport(
       `${item.severity.toUpperCase()} ${item.code}${target ? ` ${target}` : ""}: ${item.message}`,
     );
   }
+  return lines.join("\n");
+}
+
+function formatGapEntries(entries: DocsGapEntry[]): string[] {
+  return entries.map((entry) => {
+    const actions = entry.actionIds?.length
+      ? ` actions=${entry.actionIds.join(",")}`
+      : "";
+    const reviewAge =
+      entry.reviewAgeDays == null ? "" : ` reviewed=${entry.reviewAgeDays}d`;
+    return `- ${entry.category}: ${entry.title} (${entry.slug})${actions}${reviewAge}`;
+  });
+}
+
+export function formatDocsGapReport(report: DocsGapReport): string {
+  const lines = [
+    `Docs gaps: ${report.ok ? "none blocking" : "open"}`,
+    `Entries: ${report.entryCount}`,
+    `Legacy doc.cocalc.com links: ${report.legacyDocLinks.length}`,
+    `Stale review threshold: ${report.staleReviewDays} days`,
+    "",
+    `Categories without chapter (${report.categoriesWithoutChapter.length})`,
+    ...report.categoriesWithoutChapter.map((category) => `- ${category}`),
+    "",
+    `Pages without actions (${report.pagesWithoutActions.length})`,
+    ...formatGapEntries(report.pagesWithoutActions),
+    "",
+    `Pages without asserted live verification (${report.pagesWithoutLiveVerification.length})`,
+    ...formatGapEntries(report.pagesWithoutLiveVerification),
+    "",
+    `Pages with stale lastReviewed (${report.pagesWithStaleReview.length})`,
+    ...formatGapEntries(report.pagesWithStaleReview),
+  ];
   return lines.join("\n");
 }

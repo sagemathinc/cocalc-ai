@@ -2,6 +2,7 @@
 
 const mockSetPageActiveTab = jest.fn();
 const mockSetPageState = jest.fn();
+const mockSetAccountState = jest.fn();
 const mockSetProjectActiveTab = jest.fn();
 const mockSetFlyoutExpanded = jest.fn();
 const mockCreateFile = jest.fn();
@@ -13,6 +14,7 @@ const mockOpenFile = jest.fn();
 const mockSetUrlWithSearch = jest.fn();
 const mockOpenHostDrawer = jest.fn();
 let mockIsAdmin = false;
+let mockAccountId: string | undefined = "account-1";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
@@ -22,11 +24,19 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
             set_active_tab: mockSetPageActiveTab,
             setState: mockSetPageState,
           }
-        : undefined,
+        : name === "account"
+          ? {
+              setState: mockSetAccountState,
+            }
+          : undefined,
     getStore: (name: string) =>
       name === "account"
         ? {
-            get: (key: string) => (key === "is_admin" ? mockIsAdmin : null),
+            get: (key: string) => {
+              if (key === "account_id") return mockAccountId;
+              if (key === "is_admin") return mockIsAdmin;
+              return null;
+            },
           }
         : undefined,
     getProjectActions: (projectId: string) => mockGetProjectActions(projectId),
@@ -42,16 +52,32 @@ jest.mock("@cocalc/frontend/hosts/open-host-drawer", () => ({
 }));
 
 import {
+  DOCS_ACTION_ACK_EVENT,
   PROJECT_SECRETS_DOCS_ACTION_EVENT,
   RUNTIME_IMAGE_DOCS_ACTION_EVENT,
   listDocsAppActions,
   revealDocsAction,
 } from "./docs-actions";
 
+function acknowledgeDocsActionEvent(
+  detail: Record<string, string | undefined>,
+): void {
+  window.dispatchEvent(
+    new CustomEvent(DOCS_ACTION_ACK_EVENT, {
+      detail: {
+        actionId: detail.actionId,
+        projectId: detail.projectId,
+        requestId: detail.requestId,
+      },
+    }),
+  );
+}
+
 describe("project docs actions", () => {
   beforeEach(() => {
     jest.useFakeTimers();
     jest.clearAllMocks();
+    mockAccountId = "account-1";
     mockIsAdmin = false;
     window.localStorage.clear();
     mockGetStore.mockReturnValue({
@@ -214,6 +240,59 @@ describe("project docs actions", () => {
     expect(logs).toMatchObject({
       action_id: "hosts.logs.open",
       drawer_tab: "logs",
+    });
+  });
+
+  it("opens account and billing settings docs actions", async () => {
+    const profile = await revealDocsAction({
+      actionId: "account.profile.open",
+      projectId: "project-1",
+    });
+
+    expect(mockSetPageActiveTab).toHaveBeenCalledWith("account", false);
+    expect(mockSetAccountState).toHaveBeenCalledWith({
+      active_page: "profile",
+    });
+    expect(mockSetUrlWithSearch).toHaveBeenCalledWith("/settings/profile", "");
+    expect(profile).toMatchObject({
+      action_id: "account.profile.open",
+      opened: true,
+      panel: "profile",
+      tab: "account",
+    });
+
+    const paymentMethods = await revealDocsAction({
+      actionId: "billing.payment-methods.open",
+      projectId: "project-1",
+    });
+
+    expect(mockSetAccountState).toHaveBeenLastCalledWith({
+      active_page: "payment-methods",
+    });
+    expect(mockSetUrlWithSearch).toHaveBeenLastCalledWith(
+      "/settings/payment-methods",
+      "",
+    );
+    expect(paymentMethods).toMatchObject({
+      action_id: "billing.payment-methods.open",
+      opened: true,
+      panel: "payment-methods",
+      tab: "account",
+    });
+  });
+
+  it("requires sign-in for account docs actions", () => {
+    mockAccountId = undefined;
+
+    const action = listDocsAppActions({
+      includeSignedIn: true,
+      projectId: "project-1",
+    }).find((action) => action.id === "account.profile.open");
+
+    expect(action).toMatchObject({
+      available: false,
+      implemented: true,
+      reason: "You must sign in.",
     });
   });
 
@@ -403,8 +482,14 @@ describe("project docs actions", () => {
 
   it("opens the runtime image modal in project settings", async () => {
     const events: any[] = [];
-    window.addEventListener(RUNTIME_IMAGE_DOCS_ACTION_EVENT, (event) =>
-      events.push((event as CustomEvent).detail),
+    window.addEventListener(
+      RUNTIME_IMAGE_DOCS_ACTION_EVENT,
+      (event) => {
+        const detail = (event as CustomEvent).detail;
+        events.push(detail);
+        acknowledgeDocsActionEvent(detail);
+      },
+      { once: true },
     );
 
     const result = await revealDocsAction({
@@ -412,19 +497,22 @@ describe("project docs actions", () => {
       projectId: "project-1",
     });
 
-    expect(events).toEqual([{ projectId: "project-1", surface: "flyout" }]);
+    expect(events[0]).toMatchObject({
+      actionId: "settings.runtime.rootfs",
+      projectId: "project-1",
+      surface: "project",
+    });
     expect(mockSetProjectActiveTab).toHaveBeenCalledWith("settings", {
       change_history: false,
       noFocus: true,
     });
-    expect(mockSetFlyoutExpanded).toHaveBeenCalledWith("settings", true);
     expect(
       JSON.parse(window.localStorage.getItem("project-1::flyout")!),
     ).toMatchObject({
-      expanded: "settings",
       settings: ["environment"],
     });
     expect(result).toMatchObject({
+      acknowledged: true,
       action_id: "settings.runtime.rootfs",
       opened: true,
       panel: "runtime-image",
@@ -432,18 +520,72 @@ describe("project docs actions", () => {
     });
   });
 
-  it("targets the project secrets docs event at the settings flyout", async () => {
+  it("targets the project secrets docs event at the project settings page", async () => {
     const events: any[] = [];
-    window.addEventListener(PROJECT_SECRETS_DOCS_ACTION_EVENT, (event) =>
-      events.push((event as CustomEvent).detail),
+    window.localStorage.setItem(
+      "project-1::flyout",
+      JSON.stringify({ expanded: "people" }),
+    );
+    window.addEventListener(
+      PROJECT_SECRETS_DOCS_ACTION_EVENT,
+      (event) => {
+        const detail = (event as CustomEvent).detail;
+        events.push(detail);
+        acknowledgeDocsActionEvent(detail);
+      },
+      { once: true },
     );
 
-    await revealDocsAction({
+    const result = await revealDocsAction({
       actionId: "settings.environment.secrets",
       projectId: "project-1",
     });
 
-    expect(events[0]).toEqual({ projectId: "project-1", surface: "flyout" });
+    expect(events[0]).toMatchObject({
+      actionId: "settings.environment.secrets",
+      projectId: "project-1",
+      surface: "project",
+    });
+    expect(
+      JSON.parse(window.localStorage.getItem("project-1::flyout")!),
+    ).toMatchObject({
+      expanded: "people",
+      settings: ["environment"],
+    });
+    expect(result).toMatchObject({
+      acknowledged: true,
+      action_id: "settings.environment.secrets",
+      panel: "project-secrets",
+    });
+  });
+
+  it("warns when a settings docs action is not acknowledged", async () => {
+    const events: any[] = [];
+    window.addEventListener(PROJECT_SECRETS_DOCS_ACTION_EVENT, (event) => {
+      events.push((event as CustomEvent).detail);
+    });
+
+    const pending = revealDocsAction({
+      actionId: "settings.environment.secrets",
+      projectId: "project-1",
+    });
+    await jest.runOnlyPendingTimersAsync();
+    await Promise.resolve();
+    await jest.runOnlyPendingTimersAsync();
+    const result = await pending;
+
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    expect(mockSetProjectActiveTab).toHaveBeenCalledWith("settings", {
+      change_history: false,
+      noFocus: true,
+    });
+    expect(result).toMatchObject({
+      acknowledged: false,
+      action_id: "settings.environment.secrets",
+      opened: true,
+      panel: "project-secrets",
+    });
+    expect(result.warning).toMatch(/did not acknowledge/);
   });
 
   it("opens the people settings panel", async () => {
@@ -459,7 +601,6 @@ describe("project docs actions", () => {
     expect(
       JSON.parse(window.localStorage.getItem("project-1::flyout")!),
     ).toMatchObject({
-      expanded: "settings",
       settings: ["people"],
     });
     expect(result).toMatchObject({

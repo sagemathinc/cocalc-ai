@@ -12,8 +12,6 @@ import { TrialBanner } from "./trial-banner";
 import { useProjectCourseInfo } from "./use-project-course";
 import { useProjectCreated } from "./use-project-created";
 
-export const DOC_TRIAL = "https://doc.cocalc.com/trial.html";
-
 export function ProjectWarningBanner() {
   const {
     isRunning: projectIsRunning,

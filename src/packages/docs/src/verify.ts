@@ -4,6 +4,8 @@
  */
 
 import {
+  buildDocsGapReport,
+  formatDocsGapReport,
   formatDocsVerificationReport,
   listDocsLiveVerificationScenarios,
   verifyDocsLive,
@@ -31,8 +33,13 @@ function readRepeatedOption(args: string[], name: string): string[] {
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const json = args.includes("--json");
+  const gaps = args.includes("--gaps");
   const listLive = args.includes("--list-live");
   const live = args.includes("--live");
+  const staleReviewDays = Number.parseInt(
+    readOption(args, "--stale-days") ?? "90",
+    10,
+  );
   const projectId =
     readOption(args, "--project-id") ?? process.env.COCALC_PROJECT_ID ?? "";
   const browserId =
@@ -58,6 +65,18 @@ async function main(): Promise<void> {
           `${scenario.actionId}${mutates}\n  ${scenario.command.join(" ")}`,
         );
       }
+    }
+    return;
+  }
+
+  if (gaps) {
+    const report = Number.isFinite(staleReviewDays)
+      ? buildDocsGapReport({ staleReviewDays })
+      : buildDocsGapReport();
+    if (json) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      console.log(formatDocsGapReport(report));
     }
     return;
   }

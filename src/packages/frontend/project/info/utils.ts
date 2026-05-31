@@ -20,8 +20,7 @@ import { COLORS } from "@cocalc/util/theme";
 import { DUState, PTStats, ProcessRow } from "./types";
 const { ANTD_RED, ANTD_ORANGE, ANTD_GREEN } = COLORS;
 
-export const SSH_KEYS_DOC =
-  "https://doc.cocalc.com/project-settings.html#ssh-keys";
+export const SSH_KEYS_DOC = "/app-docs/account/settings";
 export const DETAILS_BTN_TEXT = "Details";
 
 // this converts a path a maybe shortened basename of the file

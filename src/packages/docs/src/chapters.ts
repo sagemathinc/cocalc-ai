@@ -7,6 +7,13 @@ import type { DocsChapter } from "./types";
 
 export const DOCS_CHAPTERS: DocsChapter[] = [
   {
+    category: "Account and billing",
+    startEntryId: "account.settings",
+    summary:
+      "Manage account identity, SSH keys, subscriptions, payment methods, and statements from signed-in account settings.",
+    workflows: ["Profile", "SSH keys", "Billing"],
+  },
+  {
     category: "Admin",
     startEntryId: "admin.overview",
     summary:
