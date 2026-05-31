@@ -226,6 +226,7 @@ write_env_files() {
 
   cat >/etc/cocalc/star/hub.env <<EOF
 COCALC_PRODUCT=launchpad
+COCALC_SETUP_PROFILE=star
 COCALC_DB=postgres
 COCALC_LOCAL_POSTGRES=1
 DATA=${STAR_DATA}

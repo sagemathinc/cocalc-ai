@@ -849,6 +849,7 @@ export interface SiteSetupStep {
 }
 
 export interface SiteSetupStatus {
+  profile: "launchpad-cloud" | "star";
   checked_at: string;
   ready: boolean;
   hard_gates_total: number;

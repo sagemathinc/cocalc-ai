@@ -129,6 +129,7 @@ import {
   type CloudflareR2AuditResult,
   type CloudflareR2UsageResult,
 } from "@cocalc/server/cloud/cloudflare-r2-usage";
+import { totalmem } from "node:os";
 import {
   clearProviderSetupChallenge as clearProviderSetupChallenge0,
   createProviderSetupChallenge as createProviderSetupChallenge0,
@@ -2820,6 +2821,14 @@ function setupStep(opts: {
   };
 }
 
+function siteSetupProfile(): SiteSetupStatus["profile"] {
+  const profile = `${process.env.COCALC_SETUP_PROFILE ?? ""}`
+    .trim()
+    .toLowerCase();
+  if (profile === "star") return "star";
+  return "launchpad-cloud";
+}
+
 function boolSetting(value: unknown): boolean {
   return to_bool(value) === true;
 }
@@ -2955,6 +2964,30 @@ function emailSetupState(settings: any): SiteSetupStep {
   });
 }
 
+function buildSiteSetupStatus({
+  counts,
+  profile,
+  steps,
+}: {
+  counts: SiteSetupStatus["counts"];
+  profile: SiteSetupStatus["profile"];
+  steps: SiteSetupStep[];
+}): SiteSetupStatus {
+  const hardGates = steps.filter((step) => step.hard_gate);
+  const hardGatesDone = hardGates.filter(
+    (step) => step.state === "done",
+  ).length;
+  return {
+    profile,
+    checked_at: new Date().toISOString(),
+    ready: hardGatesDone === hardGates.length,
+    hard_gates_total: hardGates.length,
+    hard_gates_done: hardGatesDone,
+    steps,
+    counts,
+  };
+}
+
 export async function getSiteSetupStatus({
   account_id,
 }: {
@@ -2962,6 +2995,7 @@ export async function getSiteSetupStatus({
 } = {}): Promise<SiteSetupStatus> {
   await assertAdmin(account_id);
   const settings = await getServerSettings();
+  const profile = siteSetupProfile();
   const siteDns = clean(settings.dns);
   const cloudflareConfigured =
     !!siteDns &&
@@ -2977,6 +3011,111 @@ export async function getSiteSetupStatus({
       getProjectHostSetupCount(),
       getRootfsSetupCounts(),
     ]);
+  const counts = {
+    configured_providers: providers.length,
+    cached_provider_catalogs: cachedProviderCatalogs,
+    healthy_project_hosts: healthyProjectHosts,
+    official_rootfs_images: rootfs.official,
+    prepull_rootfs_images: rootfs.prepull,
+  };
+
+  if (profile === "star") {
+    const totalMemoryGiB = totalmem() / 1024 ** 3;
+    const totalMemoryLabel = `${totalMemoryGiB.toFixed(1)} GiB`;
+    const defaultRootfsImage = clean(
+      (settings as any).project_rootfs_default_image,
+    );
+    const prepullImages = clean(
+      (settings as any).project_rootfs_prepull_images,
+    );
+    const rootfsReady =
+      !!defaultRootfsImage &&
+      (!prepullImages || prepullImages.includes(defaultRootfsImage));
+    const steps: SiteSetupStep[] = [
+      setupStep({
+        id: "admin-2fa",
+        title: "Admin Account Security",
+        state: has2fa ? "done" : "blocked",
+        summary: has2fa
+          ? "Your admin account has an active second factor."
+          : "Enable 2FA before inviting users; admin operations require it.",
+        details: [
+          "The first account is the Star appliance admin.",
+          "Keep normal signups closed until the local smoke path is checked.",
+        ],
+      }),
+      setupStep({
+        id: "project-host",
+        title: "Local Project Host",
+        state: healthyProjectHosts > 0 ? "done" : "blocked",
+        summary:
+          healthyProjectHosts > 0
+            ? `${healthyProjectHosts} local project host${healthyProjectHosts === 1 ? "" : "s"} healthy.`
+            : "The local Star project host is not healthy.",
+        details: [
+          "Star should have one local project host created by the installer.",
+          "No Cloudflare, GCP, Nebius, AWS, or Azure setup is needed for this profile.",
+        ],
+      }),
+      setupStep({
+        id: "resource-budget",
+        title: "Resource Budget",
+        state: totalMemoryGiB >= 16 ? "done" : "warning",
+        hard_gate: false,
+        summary:
+          totalMemoryGiB >= 16
+            ? `This VM reports ${totalMemoryLabel} RAM, which is within the Star V1 envelope.`
+            : `This VM reports ${totalMemoryLabel} RAM, below the recommended Star V1 minimum.`,
+        details: [
+          "Star shares one VM between the hub, local Postgres, project-host daemons, rootfs cache, and user project containers.",
+          "Recommended V1 minimum is 16 GiB RAM; 32 GiB RAM is a better default for small groups.",
+        ],
+      }),
+      setupStep({
+        id: "rootfs",
+        title: "Default Project Image",
+        state: rootfsReady ? "done" : "blocked",
+        admin_section: "rootfs",
+        summary: rootfsReady
+          ? `Default project image is ${defaultRootfsImage}.`
+          : "Configure a usable default RootFS image for projects.",
+        details: [
+          rootfsReady
+            ? "The Star installer should provide a default image with Jupyter and LaTeX."
+            : "A fresh Star install should build or configure a default image before users create projects.",
+          "The image should be prepulled or locally cached so first project startup is predictable.",
+        ],
+      }),
+      emailSetupState(settings),
+      setupStep({
+        id: "smoke-test",
+        title: "Manual Smoke Test",
+        state: healthyProjectHosts > 0 && rootfsReady ? "manual" : "blocked",
+        hard_gate: false,
+        summary:
+          healthyProjectHosts > 0 && rootfsReady
+            ? "Create a project, start it, open a terminal, and open Jupyter."
+            : "Smoke testing is blocked until the local host and default image are ready.",
+        details: [
+          "The installer-level smoke test already covers project creation, file listing, exec, SSH info, Jupyter executable, and LaTeX executable.",
+          "This UI step is the human browser-level confirmation.",
+        ],
+      }),
+      setupStep({
+        id: "backups",
+        title: "Backups And VM Snapshots",
+        state: "manual",
+        hard_gate: false,
+        summary:
+          "Decide how this VM will be backed up before relying on it for real users.",
+        details: [
+          "V1 recommendation: provider VM/disk snapshots plus a documented copy of the Star recovery material.",
+          "External/off-machine rustic backup targets are a follow-up, not a first-run hard gate.",
+        ],
+      }),
+    ];
+    return buildSiteSetupStatus({ counts, profile, steps });
+  }
 
   const steps: SiteSetupStep[] = [
     setupStep({
@@ -3093,24 +3232,7 @@ export async function getSiteSetupStatus({
     }),
   );
 
-  const hardGates = steps.filter((step) => step.hard_gate);
-  const hardGatesDone = hardGates.filter(
-    (step) => step.state === "done",
-  ).length;
-  return {
-    checked_at: new Date().toISOString(),
-    ready: hardGatesDone === hardGates.length,
-    hard_gates_total: hardGates.length,
-    hard_gates_done: hardGatesDone,
-    steps,
-    counts: {
-      configured_providers: providers.length,
-      cached_provider_catalogs: cachedProviderCatalogs,
-      healthy_project_hosts: healthyProjectHosts,
-      official_rootfs_images: rootfs.official,
-      prepull_rootfs_images: rootfs.prepull,
-    },
-  };
+  return buildSiteSetupStatus({ counts, profile, steps });
 }
 
 export async function getRootfsCatalog(opts: { account_id?: string } = {}) {

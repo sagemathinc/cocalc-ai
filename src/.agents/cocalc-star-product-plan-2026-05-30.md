@@ -1,6 +1,22 @@
 # CoCalc Star Product Plan, 2026-05-30
 
-Status: `draft`
+Status: `active implementation plan`
+
+Implementation status as of 2026-05-31:
+
+- Phase 1 is substantially proven on fresh Ubuntu 24.04 x86_64 GCP VMs.
+- A tarball installer path exists and has been validated from a clean VM.
+- The validated install path is `/opt/cocalc-star/source`, with persistent data
+  under `/var/lib/cocalc/star`.
+- Local Postgres is the Star control-plane database.
+- The local project-host starts projects from a bundled default RootFS with
+  Jupyter and LaTeX installed.
+- Hard-reset recovery has been validated after fixing project-host tools and
+  Conat port collisions.
+- Versioned release layout and symlink rollback have been implemented in the
+  tarball installer/operator script.
+- Current implementation is still a source/tarball install, not a final
+  marketplace image or SEA binary.
 
 Purpose: define a concrete single-VM CoCalc product that sits between CoCalc
 Plus and CoCalc Launchpad, using the existing Launchpad control plane and
@@ -39,6 +55,35 @@ Star intentionally does not support:
 - arbitrary external project-host providers.
 
 Those are upsells to Launchpad/Rocket.
+
+## Current Validated Implementation
+
+The current working implementation is deliberately simple:
+
+- Build a Star source tarball from a CoCalc checkout.
+- Copy it to a fresh Ubuntu 24.04 VM.
+- Run `src/scripts/star/install-from-tarball.sh` from inside the tarball.
+- Install source under `/opt/cocalc-star/source`.
+- Install runtime state under `/var/lib/cocalc/star`.
+- Run Launchpad/hub under systemd on `127.0.0.1:9100`.
+- Run a local project-host under systemd on `127.0.0.1:9002`.
+- Run the project-host managed Conat router on `127.0.0.1:9112`.
+- Run the project-host Conat persist health endpoint on `127.0.0.1:9212`.
+- Use local Postgres for the hub/control-plane database.
+- Build/cache a default RootFS from `ubuntu:24.04` with Jupyter and LaTeX.
+- Mount the backend tools bundle into project containers so tools such as
+  `dropbear` come from the CoCalc tools bundle, not from the RootFS image.
+
+Validated smoke path:
+
+- Create first admin via bootstrap token.
+- Create project.
+- Start project.
+- List project files.
+- Execute a command in the project.
+- Verify `jupyter`, `latexmk`, and project SSH info.
+- Hard-reset the VM.
+- Verify doctor and smoke still pass after reboot.
 
 ## Supported Envelope
 
@@ -99,9 +144,44 @@ Relevant facts:
   `COCALC_SSHD_PORT`.
 - Default fixed fallback is HTTP `9001` and SSHD `9002`.
 
-Star should reuse the compact Launchpad bundle and SEA machinery, but not the
+Star should reuse the compact Launchpad control-plane shape, but not the
 desktop/local-user defaults. Star is a system appliance, so data/config should
-live under `/opt/cocalc/star`, `/var/lib/cocalc/star`, and `/etc/cocalc/star`.
+live under `/opt/cocalc-star`, `/var/lib/cocalc/star`, and `/etc/cocalc/star`.
+Unlike desktop/local Launchpad, Star should force local Postgres instead of
+PGlite.
+
+### Local Postgres Decision
+
+Star should use local Postgres as its control-plane database. This is no longer
+an open question for V1.
+
+Reasons:
+
+- Hard-reboot testing with PGlite raised stability and durability concerns that
+  are unacceptable for a production multi-user appliance. Losing or corrupting
+  user/project/account state after a VM reset is not an acceptable Star failure
+  mode.
+- Star runs in a controlled Linux-only server environment. We already install
+  many Ubuntu packages for Podman, btrfs, Caddy, build tooling, and project-host
+  support, so installing `postgresql` and `postgresql-client` is not a product
+  burden.
+- Postgres has mature crash recovery, WAL, backup tooling, introspection, and
+  operational behavior that match the rest of CoCalc's backend assumptions.
+- Performance and concurrency should be materially better for a small multi-user
+  site than a single-process embedded database path.
+- The normal CoCalc server/database code paths are better exercised with
+  Postgres, reducing Star-specific database behavior and making future
+  Launchpad/Rocket migration cleaner.
+- Local Postgres makes support/debugging easier because `psql`, systemd logs,
+  WAL/archive behavior, and ordinary database inspection tools all apply.
+
+Implementation policy:
+
+- Star installs a local Postgres cluster under `/var/lib/cocalc/star/launchpad`.
+- Star disables the distro default Postgres service and manages its own local
+  database through the hub service environment.
+- Star `doctor` must verify that the hub is using Postgres and that `select 1`
+  succeeds.
 
 ### Project Host Runtime
 
@@ -260,30 +340,44 @@ the path compatible with Launchpad/Rocket and future migration.
 
 ## Service Layout
 
-Suggested filesystem layout:
+Current filesystem layout:
 
 ```text
-/opt/cocalc/star/
-  current -> releases/<version>
-  releases/<version>/
-  bin/
+/opt/cocalc-star/
+  source -> releases/<release-id>/source
+  current -> releases/<release-id>
+  releases/<release-id>/
+    source/
+    release.json
 
 /etc/cocalc/star/
-  star.env
-  star-secrets.env
+  hub.env
+
+/etc/cocalc/
   project-host.env
 
 /var/lib/cocalc/star/
   launchpad/
-  pglite/
   project-host/
-  projects/
-  rootfs/
-  rustic/
-  backups/
+  backup/
+  bootstrap-result.json
+
+/mnt/cocalc/
+  data/
+  shared-scratch/
+
+/mnt/cocalc-scratch -> bind mount of /mnt/cocalc/shared-scratch
 
 /var/log/cocalc/star/
 ```
+
+Notes:
+
+- `/opt/cocalc-star/source` remains the stable operator/developer path.
+- Versioned releases live below `/opt/cocalc-star/releases`.
+- Rollback flips `/opt/cocalc-star/source` and `/opt/cocalc-star/current`, then
+  restarts the Star systemd services.
+- Runtime data is not stored in release directories.
 
 Suggested systemd units:
 
@@ -306,19 +400,26 @@ using a Star-generated `/etc/cocalc/project-host.env` or
 
 Do not rely on current Launchpad and project-host defaults because they collide.
 
-Recommended internal defaults:
+Validated internal defaults:
 
-| Purpose                           | Bind                     | Port               |
-| --------------------------------- | ------------------------ | ------------------ |
-| Star public HTTP/reverse proxy    | `0.0.0.0`                | `80`               |
-| Star public HTTPS/reverse proxy   | `0.0.0.0`                | `443`              |
-| Launchpad/hub HTTP                | `127.0.0.1`              | `9100`             |
-| Launchpad SSHD/onprem helper      | `127.0.0.1`              | `9120` or disabled |
-| Project-host public ingress       | `127.0.0.1`              | `9200`             |
-| Project-host app/upstream         | `127.0.0.1`              | `9201`             |
-| Project-host conat-router         | `127.0.0.1`              | `9300`             |
-| Project-host conat-persist health | `127.0.0.1`              | `9400`             |
-| Project SSH ingress               | `0.0.0.0` or `127.0.0.1` | `2222`             |
+| Purpose                           | Bind                     | Port   |
+| --------------------------------- | ------------------------ | ------ |
+| Star public HTTP/reverse proxy    | `0.0.0.0`                | `80`   |
+| Star public HTTPS/reverse proxy   | `0.0.0.0`                | `443`  |
+| Launchpad/hub HTTP                | `127.0.0.1`              | `9100` |
+| Launchpad SSHD/onprem helper      | `127.0.0.1`              | `9101` |
+| Hub/local Conat                   | `127.0.0.1`              | `9102` |
+| Project-host public ingress       | `127.0.0.1`              | `9002` |
+| Project-host conat-router         | `127.0.0.1`              | `9112` |
+| Project-host conat-persist health | `127.0.0.1`              | `9212` |
+| Project SSH ingress               | `0.0.0.0` or `127.0.0.1` | `2222` |
+
+Important validated issue:
+
+- Do not let project-host derive its managed Conat router as `PORT + 100` when
+  project-host `PORT=9002`. That collides with the hub's local Conat port
+  `9102` after reboot. Star must set `COCALC_PROJECT_HOST_CONAT_ROUTER_PORT`
+  explicitly.
 
 V1 should include HTTPS automation.
 
@@ -385,11 +486,8 @@ registry paths so admin/host UI and project placement do not need a fork.
 Star shares one VM between:
 
 - hub/control plane,
-- embedded database state:
-  - PGlite for the hub/control plane,
-  - SQLite or existing local project-host state for project-host,
-  - no separate long-running database server in Star V1,
-- project-host daemons,
+- local Postgres for hub/control-plane state,
+- project-host daemons and their local runtime state,
 - containers/projects,
 - rootfs/build/cache,
 - backup/rustic jobs.
@@ -443,7 +541,10 @@ COCALC_PROJECT_HOST_EMERGENCY_MEMORY_AVAILABLE_BYTES=1073741824
 Product decision:
 
 - Should Star limits be enforced by license/membership rows, by a Star product
-  setting, or both?  (ans: definitely membership rows should be very important for letting an admin impact what users can do.  We should hard cap the number of distinct accounts as part of the terms of usage and also configured defaults.   In short, I don't quite know for sure.  I think a single nodejs process with pglite is intrinsically pretty limited in terms of throughput.  I agree with the reco below.) 
+  setting, or both? Membership rows should be important because they give admins
+  a normal CoCalc mechanism for controlling what users can do. Star should also
+  have product-level caps for account count and active project count so the
+  appliance cannot be configured far outside its supported envelope.
 
 Recommendation:
 
@@ -537,7 +638,7 @@ Backup V1:
 - "Snapshot the VM/disk" is the primary operational backup story.
 - Local rustic backups can be available, but they are not sufficient if the
   whole VM/disk is lost unless copied elsewhere.
-- Admin guide will suggest: "(1)  the site master encryption key is here - back this up somewhere, and (2) make regularly copies of the rustic backups using something rsync or rclone."  It's far smaller/cheaper to backup the rustic directory than everything.  But that's entirely up to the admin.  Obviously this is an upsell point for Rocket.
+- Admin guide will suggest: "(1) the site master encryption key is here - back this up somewhere, and (2) make regularly copies of the rustic backups using something rsync or rclone." It's far smaller/cheaper to backup the rustic directory than everything. But that's entirely up to the admin. Obviously this is an upsell point for Rocket.
 
 Backup V2:
 
@@ -583,14 +684,19 @@ Recommendation:
 
 Milestone 0 should not start with SEA perfection.
 
-Recommended sequence:
+Current sequence:
 
-1. Build from source on a fresh Ubuntu VM.
-2. Write a `star-bootstrap-host.sh` script that mutates the VM and makes it work.
-3. Split out a reusable Star systemd scaffold.
-4. Build a Star runtime tarball.
-5. Wrap the tarball in a SEA installer/launcher.
-6. Publish marketplace images only after the script path is boring.
+1. Build from source on a fresh Ubuntu VM. Done.
+2. Write an installer script that mutates the VM and makes it work. Done.
+3. Build a Star source tarball and install from it. Done.
+4. Add versioned release layout and rollback while keeping
+   `/opt/cocalc-star/source` as the stable path. Done.
+5. Split out a reusable Star systemd/release scaffold.
+6. Build a smaller Star runtime tarball that does not require a full source
+   checkout build on the target VM.
+7. Wrap the tarball in a SEA installer/launcher if it still improves the
+   operator experience.
+8. Publish marketplace images only after the tarball/script path is boring.
 
 SEA target:
 
@@ -629,16 +735,19 @@ Design rule:
 - Do not run the production Star services directly from a mutable source
   checkout by default.
 - A source checkout should build a normal Star release directory, stage it under
-  `/opt/cocalc/star/releases/<build-id>`, run health checks, then flip
-  `/opt/cocalc/star/current`.
+  `/opt/cocalc-star/releases/<build-id>`, run health checks, then flip
+  `/opt/cocalc-star/current` and `/opt/cocalc-star/source`.
 - Rollback should be the same path as artifact-based upgrades.
 
 Recommended paths:
 
 ```text
-/opt/cocalc/star/
+/opt/cocalc-star/
   current -> releases/<build-id>
+  source -> releases/<build-id>/source
   releases/<build-id>/
+    source/
+    release.json
   source-builds/
 
 /var/lib/cocalc/star/
@@ -823,12 +932,15 @@ dedicated Star bootstrap API, not expose a "create local host" provider form.
 
 ### How Are Updates Handled?
 
-Use Rocket-style versioned releases and rollback semantics.
+Use versioned releases and rollback semantics while preserving
+`/opt/cocalc-star/source` as the stable operational path.
 
 Plan:
 
-- `/opt/cocalc/star/releases/<version>`
-- `/opt/cocalc/star/current`
+- `/opt/cocalc-star/releases/<release-id>/source`
+- `/opt/cocalc-star/releases/<release-id>/release.json`
+- `/opt/cocalc-star/source -> releases/<release-id>/source`
+- `/opt/cocalc-star/current -> releases/<release-id>`
 - pre-upgrade DB backup/export
 - stage new release
 - run migrations
@@ -843,7 +955,7 @@ V1:
 
 - Recommend provider VM/disk snapshots.
 - Provide local export/check commands.
-- Tell user: copy this master key and periodically copy this rustic directory somewhere, and that's your backups.  Of course restore from master key + rustic must be a part of our workflow and plan. It's important and good to test. 
+- Tell user: copy this master key and periodically copy this rustic directory somewhere, and that's your backups. Of course restore from master key + rustic must be a part of our workflow and plan. It's important and good to test.
 
 V2:
 
@@ -876,18 +988,18 @@ not provider feature development.
    - Caddy &lt;-- this,
    - or operator-managed.
 4. Email:
-   - optional  &lt;-- this; not part of onboarding, but the functionality exists,
+   - optional &lt;-- this; not part of onboarding, but the functionality exists,
    - hidden email-verification UI when disabled,
    - admin password reset links still available.
 5. Default RootFS:
    - ship a small prebuilt default,
-   - build on first run &lt;-- this; it would make the onboarding a little slower but it would also 100% prove that the full podman/rustic/rootfs lifecycle is working here which is very valuable.  It should be pretty fast if tiny.,
+   - build on first run &lt;-- this; it would make the onboarding a little slower but it would also 100% prove that the full podman/rustic/rootfs lifecycle is working here which is very valuable. It should be pretty fast if tiny.,
    - or guide admin to create one &lt;-- still do this.
 6. Backup:
    - document VM snapshots as V1 &lt;-- this for sure, and just document (you can rsync/rclone rustic somewhere; up to you),
    - or require external backup setup before "ready".
 7. Marketplace support level:
-   - image only &lt;-- initially this  (paid and managed is more of a rocket product for good leads),
+   - image only &lt;-- initially this (paid and managed is more of a rocket product for good leads),
    - paid support,
    - or managed updates.
 8. Developer/source deployments:
@@ -913,40 +1025,84 @@ Deliverable:
 - Admin registration token printed.
 - Project creation/start works.
 
+Status: substantially complete.
+
 Validation:
 
-- Fresh VM install.
-- Reboot VM and verify services recover.
-- Create admin, project, terminal, Jupyter.
+- Fresh VM install. Done.
+- Reboot/hard-reset VM and verify services recover. Done.
+- Create admin, project, file listing, project exec, project SSH info. Done.
+- Jupyter executable is present in the default RootFS. Done.
+- Browser-level Jupyter UI validation remains to do.
 
 ### Phase 2: Star Bootstrap Script
 
 Deliverable:
 
-- `src/scripts/star-systemd/` scaffold.
-- `star-bootstrap-host.sh`.
-- `star-bootstrap-release.sh`.
+- `src/scripts/star/` installer entry points.
+- `src/scripts/star-poc/` reusable bootstrap implementation.
 - Explicit port map.
 - Local host registration command/API.
+- Local Postgres initialization.
+- Default RootFS build/cache.
+- `doctor` and `smoke` commands.
 
 Validation:
 
-- Repeatable clean VM setup.
-- Idempotent rerun behavior.
-- Clear failure if machine is not suitable.
+- Repeatable clean VM setup. Done.
+- Hard-reset durability. Done after fixing project-host tools and Conat ports.
+- Idempotent rerun behavior. Partially done; needs more explicit tests.
+- Clear failure if machine is not suitable. Not done.
+
+### Phase 2.5: Versioned Release And Rollback
+
+Deliverable:
+
+- Keep `/opt/cocalc-star/source` as the stable source path.
+- Store releases under `/opt/cocalc-star/releases/<release-id>/source`.
+- Store release metadata in `/opt/cocalc-star/releases/<release-id>/release.json`.
+- Maintain `/opt/cocalc-star/current`.
+- Add `star.sh releases`, `star.sh current-release`, and
+  `star.sh rollback [release-id]`.
+- Ensure systemd services use the stable source symlink rather than a
+  one-off extracted directory.
+
+Status: implemented for the tarball installer path.
+
+Validation:
+
+- Fresh install creates a release and points `/opt/cocalc-star/source` at it.
+  Done on a clean GCP VM.
+- Release metadata is written to
+  `/opt/cocalc-star/releases/<release-id>/release.json`. Done.
+- Installing a second tarball creates a second release. Done in local release
+  harness validation.
+- Rollback flips `/opt/cocalc-star/source` and `/opt/cocalc-star/current`, then
+  restarts services. Done in local release harness validation.
+- Doctor and smoke pass after rollback. Not yet validated on a full VM because
+  the full two-release install path is still expensive.
+- Hard reset after rollback starts the selected release. Not yet validated on a
+  full VM.
 
 ### Phase 3: Star Setup Profile In UI
 
 Deliverable:
 
-- Setup wizard profile `star-single-vm`.
+- Setup wizard profile `star`.
 - No Cloudflare/provider gates.
 - Shows local host health, resource budget, rootfs, smoke test, optional email.
+- Star installer sets `COCALC_SETUP_PROFILE=star` while preserving
+  `COCALC_PRODUCT=launchpad` for existing server/runtime behavior.
+
+Status: initial implementation in progress.
 
 Validation:
 
 - Star users never see GCP/Nebius/Cloudflare as required setup.
 - Launchpad/Rocket users still see cloud setup.
+- Star setup readiness is derived from admin 2FA, local project-host health,
+  and a configured default project image; manual smoke test and backups are
+  shown as non-blocking follow-up checks.
 
 ### Phase 4: Packaged Runtime
 
@@ -958,7 +1114,7 @@ Deliverable:
   - project-host bundle,
   - bootstrap scripts,
   - systemd scaffold.
-- Versioned release install under `/opt/cocalc/star`.
+- Versioned release install under `/opt/cocalc-star`.
 
 Validation:
 
@@ -981,7 +1137,7 @@ Validation:
 
 - Single binary on fresh Ubuntu can install Star.
 - Compressed size target roughly 200 MiB if realistic.
-- TARGETS: Linux x86_64 and arm64 as two separate binaries.  arm64 matters, e.g., VM's on any macOS machine.
+- TARGETS: Linux x86_64 and arm64 as two separate binaries. arm64 matters, e.g., VM's on any macOS machine.
 
 ### Phase 6: Developer Source Deploy Lane
 
@@ -1029,7 +1185,7 @@ Automated:
 Manual:
 
 - Fresh Ubuntu 24.04 x86_64 VM.
-- Fresh Ubuntu 24.04 arm64 VM if SEA/build supports it.  (USER: it definitely does)
+- Fresh Ubuntu 24.04 arm64 VM if SEA/build supports it. (USER: it definitely does)
 - Reboot recovery.
 - Upgrade/rollback.
 - Low-memory pressure behavior.
@@ -1066,22 +1222,23 @@ Smoke:
 
 ## Recommended Next Step
 
-Create a throwaway Ubuntu 24.04 VM and manually run the smallest version of this
-stack:
+The old recommended next step, "prove the basic appliance on a throwaway Ubuntu
+VM", is complete.
 
-1. Launchpad under systemd with explicit ports.
-2. Project-host daemon under systemd with non-conflicting explicit ports.
-3. Manual/local host row registration.
-4. One project start.
+Current recommended next step:
 
-Only after that works should we introduce `packages/star` or SEA packaging.
-
-The next proof after the basic appliance works should be a local source deploy:
-
-1. Put a CoCalc checkout on the same VM.
-2. Build a Star-compatible release from that checkout.
-3. Deploy it through the same versioned release/rollback mechanism.
-4. Confirm `cocalc-star status` reports the custom build fingerprint.
+1. Make full-VM two-release validation cheap enough to run regularly:
+   - release A installs and passes doctor/smoke,
+   - release B installs and passes doctor/smoke,
+   - rollback to release A passes doctor/smoke,
+   - hard reset after rollback still boots release A.
+2. After rollback is boring, make the tarball smaller and more release-like so
+   installs no longer need a full source build on the target VM.
+3. Then build the local source deploy lane:
+   - put a CoCalc checkout on the same VM,
+   - build a Star-compatible release from that checkout,
+   - deploy it through the same versioned release/rollback mechanism,
+   - confirm `star.sh status` reports the custom build fingerprint.
 
 That proves Star is not only an appliance, but also a safe single-VM development
 and customer-customization target.
