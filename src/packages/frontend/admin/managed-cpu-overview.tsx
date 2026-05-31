@@ -513,6 +513,7 @@ export function ManagedCpuAdminOverview() {
     }
   };
 
+  const hasOverview = cpuOverview != null && egressOverview != null;
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Paragraph style={{ marginBottom: 0 }}>
@@ -558,17 +559,14 @@ export function ManagedCpuAdminOverview() {
           Copy summary
         </Button>
         <ManagedCpuHistoryButton buttonText="Global CPU history" size="small" />
-        <Button onClick={() => void load()}>Refresh</Button>
+        <Button loading={loading && hasOverview} onClick={() => void load()}>
+          Refresh
+        </Button>
       </Space>
 
-      {loading ? <Spin /> : null}
+      {loading && !hasOverview ? <Spin /> : null}
       {error ? <ShowError error={error} /> : null}
-      {!loading &&
-      !error &&
-      cpuOverview &&
-      egressOverview &&
-      hasNoCpu &&
-      hasNoEgress ? (
+      {!error && cpuOverview && egressOverview && hasNoCpu && hasNoEgress ? (
         <Alert
           message={`No managed CPU or egress recorded in the last ${range.label}.`}
           type="info"
@@ -576,7 +574,7 @@ export function ManagedCpuAdminOverview() {
         />
       ) : null}
 
-      {!loading && !error && cpuOverview && egressOverview ? (
+      {!error && cpuOverview && egressOverview ? (
         <>
           <PanelBox title={`Top CPU accounts (${range.label})`}>
             <TopCpuAccounts

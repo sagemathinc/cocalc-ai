@@ -38,8 +38,6 @@ import { COLORS } from "@cocalc/util/theme";
 
 const { Text } = Typography;
 
-const HOUR_MS = 60 * 60 * 1000;
-
 function formatCpuSeconds(seconds: number): string {
   const hours = Math.max(0, Number(seconds) || 0) / 3600;
   let digits = 0;
@@ -51,6 +49,33 @@ function formatCpuSeconds(seconds: number): string {
     digits = 1;
   }
   return `${hours.toFixed(digits)} CPU-hours`;
+}
+
+function formatAverageCpus(value: number): string {
+  const cpus = Math.max(0, Number(value) || 0);
+  let digits = 0;
+  if (cpus < 1) {
+    digits = 3;
+  } else if (cpus < 10) {
+    digits = 2;
+  } else if (cpus < 100) {
+    digits = 1;
+  }
+  return `${cpus.toFixed(digits)} average CPUs`;
+}
+
+function pointDurationSeconds(point: ManagedCpuHistoryPoint): number {
+  const start = Date.parse(point.start);
+  const end = Date.parse(point.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    return 0;
+  }
+  return (end - start) / 1000;
+}
+
+function averageCpusForPoint(point: ManagedCpuHistoryPoint): number {
+  const seconds = pointDurationSeconds(point);
+  return seconds > 0 ? Math.max(0, point.cpu_seconds ?? 0) / seconds : 0;
 }
 
 function bucketLabel(bucket: ManagedCpuHistoryBucketSize): string {
@@ -134,26 +159,37 @@ function hoverPlacement(xFraction: number): {
 }
 
 function summarizeCpuHistory(history: ManagedCpuAdminHistory): {
+  latestAverageCpus: number;
   latestCpuSeconds: number;
+  peakAverageCpus: number;
   peakCpuSeconds: number;
-  averageCpuSecondsPerHour: number;
+  averageCpus: number;
 } {
   const points = history.points ?? [];
-  const latestCpuSeconds = Math.max(0, points.at(-1)?.cpu_seconds ?? 0);
-  const peakCpuSeconds = Math.max(
-    0,
-    ...points.map((point) => point.cpu_seconds ?? 0),
-  );
+  const latestPoint = points.at(-1);
+  const latestCpuSeconds = Math.max(0, latestPoint?.cpu_seconds ?? 0);
+  const latestAverageCpus = latestPoint ? averageCpusForPoint(latestPoint) : 0;
+  let peakAverageCpus = 0;
+  let peakCpuSeconds = 0;
+  for (const point of points) {
+    const averageCpus = averageCpusForPoint(point);
+    if (averageCpus > peakAverageCpus) {
+      peakAverageCpus = averageCpus;
+      peakCpuSeconds = Math.max(0, point.cpu_seconds ?? 0);
+    }
+  }
   const start = Date.parse(history.start);
   const end = Date.parse(history.end);
-  const hours =
+  const seconds =
     Number.isFinite(start) && Number.isFinite(end) && end > start
-      ? (end - start) / HOUR_MS
+      ? (end - start) / 1000
       : 0;
   return {
+    latestAverageCpus,
     latestCpuSeconds,
+    peakAverageCpus,
     peakCpuSeconds,
-    averageCpuSecondsPerHour: hours > 0 ? history.total_cpu_seconds / hours : 0,
+    averageCpus: seconds > 0 ? history.total_cpu_seconds / seconds : 0,
   };
 }
 
@@ -167,7 +203,7 @@ function CpuHistoryLine({
   if (points.length === 0) return null;
   const width = 560;
   const height = 160;
-  const values = points.map((point) => Math.max(0, point.cpu_seconds ?? 0));
+  const values = points.map(averageCpusForPoint);
   const xs = xCoordinates(values, width);
   const ys = yCoordinates(values, height);
   const coordinates = points.map((_, i) => ({ x: xs[i], y: ys[i] }));
@@ -263,6 +299,10 @@ function CpuHistoryLine({
             }}
           >
             <div style={{ fontWeight: 600, marginBottom: "4px" }}>
+              {formatAverageCpus(averageCpusForPoint(hoveredHistoryPoint))}
+            </div>
+            <div style={{ fontSize: "12px", marginBottom: "4px" }}>
+              Usage in bucket:{" "}
               {formatCpuSeconds(hoveredHistoryPoint.cpu_seconds)}
             </div>
             <div style={{ fontSize: "12px" }}>
@@ -570,16 +610,18 @@ export function ManagedCpuHistoryModal({
               detail={`${history.points.length} ${bucketLabel(effectiveBucket)} buckets`}
             />
             <SummaryCard
-              label={`Latest ${bucketPeriodLabel(effectiveBucket)}`}
-              value={formatCpuSeconds(summary?.latestCpuSeconds ?? 0)}
+              label={`Latest avg CPU`}
+              value={formatAverageCpus(summary?.latestAverageCpus ?? 0)}
+              detail={`${formatCpuSeconds(summary?.latestCpuSeconds ?? 0)} in latest ${bucketPeriodLabel(effectiveBucket)} bucket`}
             />
             <SummaryCard
-              label={`Peak ${bucketPeriodLabel(effectiveBucket)}`}
-              value={formatCpuSeconds(summary?.peakCpuSeconds ?? 0)}
+              label={`Peak avg CPU`}
+              value={formatAverageCpus(summary?.peakAverageCpus ?? 0)}
+              detail={`${formatCpuSeconds(summary?.peakCpuSeconds ?? 0)} in peak ${bucketPeriodLabel(effectiveBucket)} bucket`}
             />
             <SummaryCard
-              label="Average rate"
-              value={`${formatCpuSeconds(summary?.averageCpuSecondsPerHour ?? 0)}/h`}
+              label="Window avg CPU"
+              value={formatAverageCpus(summary?.averageCpus ?? 0)}
             />
           </Space>
           <CpuHistoryLine history={history} />
