@@ -117,7 +117,7 @@ Next action:
 
 ### 3. Self-Hosted Launchpad Without Cloudflare Or GCP
 
-Status: `defer`
+Status: `active`
 
 Severity: high.
 
@@ -152,7 +152,7 @@ Next action:
 
 ### 4. Project Move Between Regions Is Still Bad
 
-Status: `defer`
+Status: `open`
 
 Severity: high.
 
@@ -214,7 +214,7 @@ Next action:
 
 ### 6. Project-Host Daemon Upgrade UX
 
-Status: `defer`
+Status: `open`
 
 Severity: medium-high.
 
@@ -246,7 +246,7 @@ Next action:
 
 ### 7. Browser Resume Retry Storm And Stuck Documents
 
-Status: `open`
+Status: `done`
 
 Severity: high.
 
@@ -459,7 +459,7 @@ Next action:
 
 ### 14. CPU Usage Accounting And Abuse Detection
 
-Status: `defer`
+Status: `open`
 
 Severity: high.
 
@@ -522,7 +522,7 @@ Next action:
 
 ### 16. Admin User Search Shows Active Never For Active Users
 
-Status: `open`
+Status: `done`
 
 Severity: medium-high.
 
