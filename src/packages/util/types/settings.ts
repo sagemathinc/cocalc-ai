@@ -24,10 +24,7 @@ export type PreferencesSubTabType =
 
 export type PreferencesSubTabKey = `preferences-${PreferencesSubTabType}`;
 
-// Valid settings page types (excluding preferences which are handled separately)
-export const VALID_SETTINGS_PAGES = [
-  "index",
-  "profile",
+export const VALID_BILLING_SUB_TYPES = [
   "subscriptions",
   "licenses",
   "store",
@@ -36,6 +33,17 @@ export const VALID_SETTINGS_PAGES = [
   "payments",
   "payment-methods",
   "statements",
+] as const;
+
+export type BillingSubTabType = (typeof VALID_BILLING_SUB_TYPES)[number];
+
+// Valid leaf settings pages. Menu/URL grouping is intentionally not part of
+// page identity, so callers can open "store" without knowing where it lives.
+export const VALID_SETTINGS_PAGES = [
+  "index",
+  "profile",
+  ...VALID_PREFERENCES_SUB_TYPES,
+  ...VALID_BILLING_SUB_TYPES,
   "support",
 ] as const;
 
@@ -43,5 +51,6 @@ export type SettingsPageType = (typeof VALID_SETTINGS_PAGES)[number];
 
 // Navigation path type combining all valid paths
 export type NavigatePath =
-  | `settings/${SettingsPageType}`
-  | `settings/preferences/${PreferencesSubTabType}`;
+  | "settings"
+  | "settings/index"
+  | `settings/${Exclude<SettingsPageType, "index">}`;

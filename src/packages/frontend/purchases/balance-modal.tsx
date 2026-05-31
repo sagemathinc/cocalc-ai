@@ -110,10 +110,10 @@ const LINKS = [
   { label: "Payments", value: "payments" },
   { label: "Methods", value: "payment-methods" },
   { label: "Statements", value: "statements" },
-];
+] as const;
 
-function openPage(value) {
-  openAccountSettings({ kind: "tab", page: value });
+function openPage(value: (typeof LINKS)[number]["value"]) {
+  openAccountSettings({ page: value });
 }
 
 function Links({ onClose }) {

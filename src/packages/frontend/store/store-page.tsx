@@ -33,11 +33,7 @@ export function StorePage() {
         <Card
           extra={
             <Space>
-              <Button
-                onClick={() =>
-                  openAccountSettings({ kind: "tab", page: "vouchers" })
-                }
-              >
+              <Button onClick={() => openAccountSettings({ page: "vouchers" })}>
                 Voucher Center
               </Button>
               <Button href={joinUrlPath(appBasePath, "hosts")}>
@@ -53,7 +49,7 @@ export function StorePage() {
         <Card title="Credit vouchers">
           <VoucherPurchasePanel
             onOpenVoucherCenter={() =>
-              openAccountSettings({ kind: "tab", page: "vouchers" })
+              openAccountSettings({ page: "vouchers" })
             }
           />
         </Card>

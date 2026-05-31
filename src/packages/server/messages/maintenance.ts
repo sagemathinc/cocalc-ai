@@ -192,7 +192,7 @@ export async function sendEmailSummary({
     const name = `${first_name} ${last_name}`;
 
     const { help_email: from, site_name: siteName } = await getServerSettings();
-    const settings = await siteUrl("settings/account");
+    const settings = await siteUrl("settings");
     const url = await siteUrl("notifications#page=messages-inbox");
     const signIn = await siteUrl("auth/sign-in");
 

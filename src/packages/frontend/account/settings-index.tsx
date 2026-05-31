@@ -13,7 +13,7 @@ import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { labels } from "@cocalc/frontend/i18n";
 import { lite } from "@cocalc/frontend/lite";
 import { COLORS } from "@cocalc/util/theme";
-import type { NavigatePath } from "@cocalc/util/types/settings";
+import type { SettingsPageType } from "@cocalc/util/types/settings";
 import { APPEARANCE_ICON_NAME } from "./account-preferences-appearance";
 import { COMMUNICATION_ICON_NAME } from "./account-preferences-communication";
 import { EDITOR_ICON_NAME } from "./account-preferences-editor";
@@ -21,10 +21,7 @@ import { KEYBOARD_ICON_NAME } from "./account-preferences-keyboard";
 import { OTHER_ICON_NAME } from "./account-preferences-other";
 import { ACCOUNT_PROFILE_ICON_NAME } from "./account-preferences-profile";
 import { KEYS_ICON_NAME } from "./account-preferences-security";
-import {
-  applyAccountSettingsRoute,
-  parseAccountSettingsRoute,
-} from "./settings-routing";
+import { applyAccountSettingsRoute } from "./settings-routing";
 
 const MESSAGES = defineMessages({
   title: {
@@ -135,11 +132,8 @@ export function SettingsOverview() {
     style: { marginBottom: IS_MOBILE ? "24px" : "40px" },
   } as const;
 
-  function handleNavigate(path: NavigatePath) {
-    const route = parseAccountSettingsRoute(path);
-    if (route) {
-      applyAccountSettingsRoute(redux.getActions("account"), route);
-    }
+  function handleNavigate(page: SettingsPageType) {
+    applyAccountSettingsRoute(redux.getActions("account"), { page });
   }
 
   return (
@@ -147,7 +141,7 @@ export function SettingsOverview() {
       <Flex {...flexProps}>
         <Card
           {...highlightedCardProps}
-          onClick={() => handleNavigate("settings/profile")}
+          onClick={() => handleNavigate("profile")}
         >
           <Card.Meta
             avatar={<Icon name={ACCOUNT_PROFILE_ICON_NAME} />}
@@ -157,7 +151,7 @@ export function SettingsOverview() {
         </Card>
         <Card
           {...highlightedCardProps}
-          onClick={() => handleNavigate("settings/preferences/appearance")}
+          onClick={() => handleNavigate("appearance")}
         >
           <Card.Meta
             avatar={<Icon name={APPEARANCE_ICON_NAME} />}
@@ -178,30 +172,21 @@ export function SettingsOverview() {
             })}
           />
         </Card>
-        <Card
-          {...cardProps}
-          onClick={() => handleNavigate("settings/preferences/editor")}
-        >
+        <Card {...cardProps} onClick={() => handleNavigate("editor")}>
           <Card.Meta
             avatar={<Icon name={EDITOR_ICON_NAME} />}
             title={intl.formatMessage(labels.editor)}
             description={intl.formatMessage(MESSAGES.editor)}
           />
         </Card>
-        <Card
-          {...cardProps}
-          onClick={() => handleNavigate("settings/preferences/keyboard")}
-        >
+        <Card {...cardProps} onClick={() => handleNavigate("keyboard")}>
           <Card.Meta
             avatar={<Icon name={KEYBOARD_ICON_NAME} />}
             title={intl.formatMessage(labels.keyboard)}
             description={intl.formatMessage(MESSAGES.keyboard)}
           />
         </Card>
-        <Card
-          {...cardProps}
-          onClick={() => handleNavigate("settings/preferences/ai")}
-        >
+        <Card {...cardProps} onClick={() => handleNavigate("ai")}>
           <Card.Meta
             avatar={<AIAvatar size={24} />}
             title={intl.formatMessage(labels.ai)}
@@ -209,10 +194,7 @@ export function SettingsOverview() {
           />
         </Card>
         {!lite && (
-          <Card
-            {...cardProps}
-            onClick={() => handleNavigate("settings/preferences/communication")}
-          >
+          <Card {...cardProps} onClick={() => handleNavigate("communication")}>
             <Card.Meta
               avatar={<Icon name={COMMUNICATION_ICON_NAME} />}
               title={intl.formatMessage(labels.communication)}
@@ -221,10 +203,7 @@ export function SettingsOverview() {
           </Card>
         )}
         {!lite && (
-          <Card
-            {...cardProps}
-            onClick={() => handleNavigate("settings/preferences/keys")}
-          >
+          <Card {...cardProps} onClick={() => handleNavigate("keys")}>
             <Card.Meta
               avatar={<Icon name={KEYS_ICON_NAME} />}
               title={intl.formatMessage(labels.ssh_and_api_keys)}
@@ -232,10 +211,7 @@ export function SettingsOverview() {
             />
           </Card>
         )}
-        <Card
-          {...cardProps}
-          onClick={() => handleNavigate("settings/preferences/other")}
-        >
+        <Card {...cardProps} onClick={() => handleNavigate("other")}>
           <Card.Meta
             avatar={<Icon name={OTHER_ICON_NAME} />}
             title={intl.formatMessage(labels.other)}
@@ -252,7 +228,7 @@ export function SettingsOverview() {
           <Flex {...flexProps}>
             <Card
               {...highlightedCardProps}
-              onClick={() => handleNavigate("settings/subscriptions")}
+              onClick={() => handleNavigate("subscriptions")}
             >
               <Card.Meta
                 avatar={<Icon name="calendar" />}
@@ -262,7 +238,7 @@ export function SettingsOverview() {
             </Card>
             <Card
               {...highlightedCardProps}
-              onClick={() => handleNavigate("settings/licenses")}
+              onClick={() => handleNavigate("licenses")}
             >
               <Card.Meta
                 avatar={<Icon name="key" />}
@@ -272,7 +248,7 @@ export function SettingsOverview() {
             </Card>
             <Card
               {...highlightedCardProps}
-              onClick={() => handleNavigate("settings/store")}
+              onClick={() => handleNavigate("store")}
             >
               <Card.Meta
                 avatar={<Icon name="shopping-cart" />}
@@ -280,10 +256,7 @@ export function SettingsOverview() {
                 description={intl.formatMessage(MESSAGES.store)}
               />
             </Card>
-            <Card
-              {...cardProps}
-              onClick={() => handleNavigate("settings/vouchers")}
-            >
+            <Card {...cardProps} onClick={() => handleNavigate("vouchers")}>
               <Card.Meta
                 avatar={<Icon name="gift" />}
                 title="Voucher Center"
@@ -294,7 +267,7 @@ export function SettingsOverview() {
               <>
                 <Card
                   {...cardProps}
-                  onClick={() => handleNavigate("settings/purchases")}
+                  onClick={() => handleNavigate("purchases")}
                 >
                   <Card.Meta
                     avatar={<Icon name="money-check" />}
@@ -302,10 +275,7 @@ export function SettingsOverview() {
                     description={intl.formatMessage(MESSAGES.purchases)}
                   />
                 </Card>
-                <Card
-                  {...cardProps}
-                  onClick={() => handleNavigate("settings/payments")}
-                >
+                <Card {...cardProps} onClick={() => handleNavigate("payments")}>
                   <Card.Meta
                     avatar={<Icon name="credit-card" />}
                     title={intl.formatMessage(labels.payments)}
@@ -314,7 +284,7 @@ export function SettingsOverview() {
                 </Card>
                 <Card
                   {...cardProps}
-                  onClick={() => handleNavigate("settings/statements")}
+                  onClick={() => handleNavigate("statements")}
                 >
                   <Card.Meta
                     avatar={<Icon name="calendar-week" />}
@@ -334,10 +304,7 @@ export function SettingsOverview() {
             <Icon name="medkit" /> {intl.formatMessage(labels.support)}
           </Divider>
           <Flex {...flexProps}>
-            <Card
-              {...cardProps}
-              onClick={() => handleNavigate("settings/support")}
-            >
+            <Card {...cardProps} onClick={() => handleNavigate("support")}>
               <Card.Meta
                 avatar={<Icon name="medkit" />}
                 title={intl.formatMessage(labels.support)}

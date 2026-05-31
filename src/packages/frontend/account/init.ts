@@ -33,7 +33,6 @@ export function init(redux) {
   );
   if (initialAccountPageState != null) {
     init.active_page = initialAccountPageState.active_page;
-    init.active_sub_tab = initialAccountPageState.active_sub_tab;
   }
   // ... except for show_global_info2 (null or a timestamp)
   // REGISTER and STRATEGIES are injected in app.html via the /customize endpoint -- do not delete them!
