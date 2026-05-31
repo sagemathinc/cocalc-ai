@@ -17,10 +17,10 @@ export const ACCOUNT_ENTRIES: DocsEntry[] = [
         label: "Open profile settings",
       },
       {
-        description: "Open Account Settings -> SSH Keys.",
+        description: "Open Account Settings -> Preferences -> API & SSH Keys.",
         executable: true,
         id: "account.ssh-keys.open",
-        label: "Open SSH keys",
+        label: "Open API & SSH keys",
       },
     ],
     audiences: ["agents", "instructors", "researchers", "students", "teams"],
@@ -35,7 +35,7 @@ export const ACCOUNT_ENTRIES: DocsEntry[] = [
     slug: "account/settings",
     status: "ready",
     summary:
-      "Manage profile, identity, account metadata, preferences, and SSH keys.",
+      "Manage profile, identity, account metadata, preferences, API keys, and SSH keys.",
     title: "Manage account settings",
     visibility: "signed-in",
   },

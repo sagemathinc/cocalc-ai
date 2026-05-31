@@ -6,10 +6,10 @@
 export const ACCOUNT_SETTINGS_BODY = String.raw`
 ## What account settings are for
 
-Account settings control your identity, preferences, SSH keys, support access,
-and the billing tools attached to your CoCalc account. These settings are
-account-scoped, not project-scoped: changing them follows you across projects,
-courses, hosts, and browsers.
+Account settings control your identity, preferences, API keys, SSH keys,
+support access, and the billing tools attached to your CoCalc account. These
+settings are account-scoped, not project-scoped: changing them follows you
+across projects, courses, hosts, and browsers.
 
 ## Profile and identity
 
@@ -22,11 +22,12 @@ Keep the account id available when working with support, admin tools, browser
 automation, or agent-driven workflows. It is the stable identifier, while names
 and emails can change.
 
-## SSH keys
+## API and SSH keys
 
-Use account SSH keys when the same public key should be available across
-projects. Project-specific SSH access and host-specific access are different
-surfaces, so verify which layer you need before adding or removing keys.
+Use **Preferences -> API & SSH Keys** when managing account API keys or when the
+same SSH public key should be available across projects. Project-specific SSH
+access and host-specific access are different surfaces, so verify which layer
+you need before adding or removing keys.
 
 ## Agent notes
 
@@ -41,8 +42,9 @@ export const BILLING_SETTINGS_BODY = String.raw`
 
 Billing settings collect subscriptions, licenses, purchases, payment methods,
 statements, vouchers, and store access for the signed-in account. These screens
-are account-scoped. Project upgrades may affect a project, but the purchase
-history and payment instruments belong to the account.
+are account-scoped. Purchased membership tiers and dedicated project hosts may
+change how projects run, but the purchase history and payment instruments
+belong to the account.
 
 ## Subscriptions and licenses
 
