@@ -7,19 +7,27 @@ REPO_ROOT="$(realpath "${SRC_ROOT}/..")"
 
 GCP_PROJECT="${GCP_PROJECT:-projecthosts}"
 ZONE="${ZONE:-us-south1-a}"
-VM_NAME="${VM_NAME:-cocalc-star-poc-1}"
+VM_NAME="${VM_NAME:-cocalc-star-poc-$(date -u +%Y%m%d-%H%M%S)}"
 MACHINE_TYPE="${MACHINE_TYPE:-t2d-standard-8}"
-BOOT_DISK_SIZE="${BOOT_DISK_SIZE:-160GB}"
+BOOT_DISK_SIZE="${BOOT_DISK_SIZE:-300GB}"
 IMAGE_FAMILY="${IMAGE_FAMILY:-ubuntu-2404-lts-amd64}"
 IMAGE_PROJECT="${IMAGE_PROJECT:-ubuntu-os-cloud}"
 KEY_FILE="${KEY_FILE:-/run/secrets/cocalc/rocket-service-account.json}"
 REMOTE_USER="${REMOTE_USER:-user}"
+VALIDATION_USER="${VALIDATION_USER:-root}"
 REUSE_EXISTING_VM="${REUSE_EXISTING_VM:-0}"
+DELETE_EXISTING_VM="${DELETE_EXISTING_VM:-0}"
 STAR_BUILD="${STAR_BUILD:-1}"
 STAR_BUILD_DEFAULT_ROOTFS="${STAR_BUILD_DEFAULT_ROOTFS:-1}"
 STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
 STAR_DEFAULT_ROOTFS_BASE_IMAGE="${STAR_DEFAULT_ROOTFS_BASE_IMAGE:-ubuntu:24.04}"
 STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-1}"
+RUN_DOCTOR="${RUN_DOCTOR:-1}"
+RUN_SMOKE="${RUN_SMOKE:-1}"
+RUN_RESET_TEST="${RUN_RESET_TEST:-1}"
+RESET_WAIT_SECONDS="${RESET_WAIT_SECONDS:-45}"
+DOCTOR_RETRIES="${DOCTOR_RETRIES:-30}"
+DOCTOR_RETRY_SECONDS="${DOCTOR_RETRY_SECONDS:-10}"
 
 log() {
   printf '[gcp-star-poc] %s\n' "$*" >&2
@@ -44,22 +52,55 @@ bootstrap script. Defaults:
 
   GCP_PROJECT=projecthosts
   ZONE=us-south1-a
-  VM_NAME=cocalc-star-poc-1
+  VM_NAME=cocalc-star-poc-YYYYMMDD-HHMMSS
   MACHINE_TYPE=t2d-standard-8
-  BOOT_DISK_SIZE=160GB
+  BOOT_DISK_SIZE=300GB
   KEY_FILE=/run/secrets/cocalc/rocket-service-account.json
+  VALIDATION_USER=root
 
 Useful overrides:
   REUSE_EXISTING_VM=1            skip instance creation if it exists
+  DELETE_EXISTING_VM=1           delete VM_NAME before creating it
   STAR_BUILD=0                  skip pnpm build on the remote VM
   STAR_BUILD_DEFAULT_ROOTFS=0   skip building the local Jupyter/LaTeX rootfs
   STAR_DEFAULT_ROOTFS_IMAGE=... local rootfs image tag to seed as default
   STAR_DEFAULT_ROOTFS_BASE_IMAGE=ubuntu:24.04
   STAR_REMOVE_GCP_SUDOERS=0     keep the GCP sudo group after bootstrap
+  VALIDATION_USER=user          validate through the VM user instead of root
+                                requires STAR_REMOVE_GCP_SUDOERS=0
+  RUN_DOCTOR=0                  skip star-poc doctor validation
+  RUN_SMOKE=0                   skip star-poc smoke validation
+  RUN_RESET_TEST=0              skip hard-reset durability validation
+  RESET_WAIT_SECONDS=45         seconds to wait after reset before validation
+  DOCTOR_RETRIES=30             doctor attempts while services are booting
+  DOCTOR_RETRY_SECONDS=10       seconds between doctor attempts
 
 After success, port-forward from your laptop or this machine with:
   gcloud compute ssh user@VM_NAME --project GCP_PROJECT --zone ZONE -- -L 7001:127.0.0.1:9100
 EOF
+}
+
+validation_ssh() {
+  gcloud compute ssh "${VALIDATION_USER}@${VM_NAME}" \
+    --project "$GCP_PROJECT" \
+    --zone "$ZONE" \
+    --command "$1" \
+    --quiet
+}
+
+wait_for_doctor() {
+  local label="$1"
+  local attempt
+
+  for attempt in $(seq 1 "$DOCTOR_RETRIES"); do
+    log "running doctor (${label}, attempt ${attempt}/${DOCTOR_RETRIES})"
+    if validation_ssh "$remote_star_poc doctor"; then
+      return
+    fi
+    sleep "$DOCTOR_RETRY_SECONDS"
+  done
+
+  die "doctor did not pass for ${label}"
 }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
@@ -69,6 +110,7 @@ fi
 
 command -v gcloud >/dev/null 2>&1 || die "gcloud is required"
 command -v tar >/dev/null 2>&1 || die "tar is required"
+command -v git >/dev/null 2>&1 || die "git is required"
 
 GCLOUD_CONFIG="$(mktemp -d)"
 ARCHIVE="$(mktemp -t cocalc-star-src.XXXXXX.tar.gz)"
@@ -86,8 +128,19 @@ run gcloud config set project "$GCP_PROJECT" --quiet
 run gcloud config set compute/zone "$ZONE" --quiet
 
 if gcloud compute instances describe "$VM_NAME" --project "$GCP_PROJECT" --zone "$ZONE" >/dev/null 2>&1; then
+  if [ "$DELETE_EXISTING_VM" = "1" ]; then
+    run gcloud compute instances delete "$VM_NAME" \
+      --project "$GCP_PROJECT" \
+      --zone "$ZONE" \
+      --quiet
+  elif [ "$REUSE_EXISTING_VM" != "1" ]; then
+    die "VM already exists: $VM_NAME (set REUSE_EXISTING_VM=1 to reuse or DELETE_EXISTING_VM=1 to recreate)"
+  fi
+fi
+
+if gcloud compute instances describe "$VM_NAME" --project "$GCP_PROJECT" --zone "$ZONE" >/dev/null 2>&1; then
   if [ "$REUSE_EXISTING_VM" != "1" ]; then
-    die "VM already exists: $VM_NAME (set REUSE_EXISTING_VM=1 to reuse)"
+    die "VM still exists after delete attempt: $VM_NAME"
   fi
   log "reusing existing VM $VM_NAME"
 else
@@ -115,23 +168,19 @@ for _ in $(seq 1 60); do
   sleep 5
 done
 
-log "creating source archive"
-tar -C "$REPO_ROOT" \
-  --exclude='.git' \
-  --exclude='src/packages/node_modules' \
-  --exclude='src/packages/*/node_modules' \
-  --exclude='src/packages/*/dist' \
-  --exclude='src/packages/*/build' \
-  --exclude='src/data' \
-  --exclude='src/.local' \
-  --exclude='src/.next' \
-  --exclude='src/log' \
-  --exclude='src/logs' \
-  --exclude='src/*.log' \
-  --exclude='src/tmp' \
-  --exclude='src/.turbo' \
-  --exclude='src/.pnpm-store' \
-  -czf "$ARCHIVE" src
+if ! gcloud compute ssh "${REMOTE_USER}@${VM_NAME}" \
+  --project "$GCP_PROJECT" \
+  --zone "$ZONE" \
+  --command "true" \
+  --quiet >/dev/null 2>&1; then
+  die "SSH did not become ready for ${REMOTE_USER}@${VM_NAME}"
+fi
+
+log "creating tracked source archive"
+(
+  cd "$REPO_ROOT"
+  git ls-files -z src | tar --null -czf "$ARCHIVE" --files-from -
+)
 
 run gcloud compute scp "$ARCHIVE" "${REMOTE_USER}@${VM_NAME}:/tmp/cocalc-star-src.tar.gz" \
   --project "$GCP_PROJECT" \
@@ -144,8 +193,36 @@ run gcloud compute ssh "${REMOTE_USER}@${VM_NAME}" \
   --command "sudo bash -lc 'rm -rf /home/${REMOTE_USER}/cocalc-ai && mkdir -p /home/${REMOTE_USER}/cocalc-ai && tar -xzf /tmp/cocalc-star-src.tar.gz -C /home/${REMOTE_USER}/cocalc-ai && chown -R ${REMOTE_USER}:${REMOTE_USER} /home/${REMOTE_USER}/cocalc-ai && STAR_BUILD=${STAR_BUILD} STAR_BUILD_DEFAULT_ROOTFS=${STAR_BUILD_DEFAULT_ROOTFS} STAR_DEFAULT_ROOTFS_IMAGE=${STAR_DEFAULT_ROOTFS_IMAGE} STAR_DEFAULT_ROOTFS_BASE_IMAGE=${STAR_DEFAULT_ROOTFS_BASE_IMAGE} STAR_REMOVE_GCP_SUDOERS=${STAR_REMOVE_GCP_SUDOERS} SRC_ROOT=/home/${REMOTE_USER}/cocalc-ai/src bash /home/${REMOTE_USER}/cocalc-ai/src/scripts/star-poc/bootstrap-star-poc.sh'" \
   --quiet
 
+remote_star_poc="/home/${REMOTE_USER}/cocalc-ai/src/scripts/star-poc/star-poc.sh"
+
+if [ "$RUN_DOCTOR" = "1" ]; then
+  wait_for_doctor "post-bootstrap"
+fi
+
+if [ "$RUN_SMOKE" = "1" ]; then
+  run validation_ssh "${remote_star_poc} smoke"
+fi
+
+if [ "$RUN_RESET_TEST" = "1" ]; then
+  log "syncing VM disks before hard-reset durability validation"
+  run validation_ssh "sync"
+  log "hard-resetting VM for durability validation"
+  run gcloud compute instances reset "$VM_NAME" \
+    --project "$GCP_PROJECT" \
+    --zone "$ZONE" \
+    --quiet
+  sleep "$RESET_WAIT_SECONDS"
+  if [ "$RUN_DOCTOR" = "1" ]; then
+    wait_for_doctor "post-reset"
+  fi
+  if [ "$RUN_SMOKE" = "1" ]; then
+    run validation_ssh "${remote_star_poc} smoke"
+  fi
+fi
+
 log "VM ready: $VM_NAME"
 log "Port-forward: gcloud compute ssh ${REMOTE_USER}@${VM_NAME} --project ${GCP_PROJECT} --zone ${ZONE} -- -L 7001:127.0.0.1:9100"
 log "Status: gcloud compute ssh ${REMOTE_USER}@${VM_NAME} --project ${GCP_PROJECT} --zone ${ZONE} --command '/home/${REMOTE_USER}/cocalc-ai/src/scripts/star-poc/star-poc.sh status'"
-log "Smoke test: gcloud compute ssh ${REMOTE_USER}@${VM_NAME} --project ${GCP_PROJECT} --zone ${ZONE} --command '/home/${REMOTE_USER}/cocalc-ai/src/scripts/star-poc/star-poc.sh smoke'"
+log "Doctor: gcloud compute ssh ${VALIDATION_USER}@${VM_NAME} --project ${GCP_PROJECT} --zone ${ZONE} --command '/home/${REMOTE_USER}/cocalc-ai/src/scripts/star-poc/star-poc.sh doctor'"
+log "Smoke test: gcloud compute ssh ${VALIDATION_USER}@${VM_NAME} --project ${GCP_PROJECT} --zone ${ZONE} --command '/home/${REMOTE_USER}/cocalc-ai/src/scripts/star-poc/star-poc.sh smoke'"
 log "Bootstrap result: cat /var/lib/cocalc/star/bootstrap-result.json"
