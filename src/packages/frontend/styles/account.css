@@ -1,0 +1,13 @@
+.account-menu-inline-collapsed .ant-menu-item,
+.account-menu-inline-collapsed .ant-menu-submenu-title {
+  padding-inline: 0;
+  text-align: center;
+}
+
+.account-menu-inline-collapsed .ant-menu-submenu-title {
+  padding-right: 20px;
+}
+
+.account-menu-inline-collapsed .ant-menu-submenu-arrow {
+  right: 5px;
+}

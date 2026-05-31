@@ -610,6 +610,14 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "admin removal of two-factor authentication for another user",
   },
+  "system.adminGrantAdminRole": {
+    decision: "fresh-auth-required",
+    reason: "admin grants site-admin privileges to another account",
+  },
+  "system.adminRevokeAdminRole": {
+    decision: "fresh-auth-required",
+    reason: "admin removes site-admin privileges from an account",
+  },
   "system.adminSalesloftSync": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
@@ -692,6 +700,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: "account ownership migration maintenance",
   },
   "system.recordManagedProjectEgress": {
+    decision: "fresh-auth-not-required",
+    reason: TELEMETRY_ONLY,
+  },
+  "system.recordManagedProjectCpuUsage": {
     decision: "fresh-auth-not-required",
     reason: TELEMETRY_ONLY,
   },

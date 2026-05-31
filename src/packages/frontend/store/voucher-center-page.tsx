@@ -354,9 +354,7 @@ export function VoucherCenterPage() {
           <Button onClick={load}>
             <Icon name="sync-alt" /> Refresh
           </Button>
-          <Button
-            onClick={() => openAccountSettings({ kind: "tab", page: "store" })}
-          >
+          <Button onClick={() => openAccountSettings({ page: "store" })}>
             Open Store
           </Button>
           <Button href={joinUrlPath(appBasePath, "redeem")} target="_blank">
@@ -547,12 +545,8 @@ export function VoucherCenterPage() {
       <Card style={{ marginTop: "16px" }}>
         <Paragraph style={{ marginBottom: 0 }}>
           Need to buy more voucher codes? Go back to the{" "}
-          <a
-            onClick={() => openAccountSettings({ kind: "tab", page: "store" })}
-          >
-            Store
-          </a>
-          . Need to redeem a code from outside the app? Use the public{" "}
+          <a onClick={() => openAccountSettings({ page: "store" })}>Store</a>.
+          Need to redeem a code from outside the app? Use the public{" "}
           <a href={joinUrlPath(appBasePath, "redeem")} target="_blank">
             redeem page
           </a>

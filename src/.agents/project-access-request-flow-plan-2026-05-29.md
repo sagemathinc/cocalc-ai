@@ -2,6 +2,8 @@
 
 Date: 2026-05-29
 
+Status: done, 2026-05-30.
+
 ## Goal
 
 Make direct project URLs useful for signed-in users who are invited, not yet a member, or currently a viewer, without leaking project information to unauthenticated users and without creating a parallel collaborator-permission model.
@@ -285,9 +287,21 @@ Requester UI:
    - multibay routing tests or inter-bay API tests for non-local project ownership;
    - manual browser pass for unauthenticated, invited, non-member, viewer, collaborator, owner, blocked requester.
 
+## Closeout
+
+Implemented and validated. The flow now covers signed-in project URL access
+landing, project invite accept/decline, non-member access requests with viewer
+default, viewer-to-collaborator requests, request approval/deny/block/unblock,
+requester decision notifications, inline notification review, completed-request
+notification state, and post-action invite feedback with an open-project path.
+
+Manual validation on 2026-05-30 covered the main end-to-end browser paths:
+non-member request, pending request display, owner review/approval, viewer mode,
+and notification-center handling.
+
 ## Open Decisions
 
 - Whether access requests should support an optional requester message. Recommendation: yes, but short, sanitized, rate-limited, and included only in signed-in approver UI/notifications. (ANS: Yes, but short and safe.)
 - Whether a denied request can be retried immediately. Recommendation: no; apply a cooldown unless the approver blocks the requester. (ANS: I agree)
 - Whether approvers can change requested role at approval time. Recommendation: allow downgrade from collaborator to viewer, but do not silently upgrade viewer to collaborator without an explicit approver choice. (ANS: agreed)
-- Whether request blocks should also block future collaborator invites from the requester. Recommendation: no; keep request blocking project-scoped and separate from invite sender blocking unless product explicitly wants account-to-account invite blocking semantics.  (ANS: agreed)
+- Whether request blocks should also block future collaborator invites from the requester. Recommendation: no; keep request blocking project-scoped and separate from invite sender blocking unless product explicitly wants account-to-account invite blocking semantics. (ANS: agreed)

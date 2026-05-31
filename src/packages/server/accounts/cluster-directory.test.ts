@@ -64,6 +64,7 @@ describe("accounts.cluster-directory", () => {
               last_active: null,
               banned: false,
               email_address_verified: true,
+              groups: ["admin"],
             },
           ],
         };
@@ -100,6 +101,34 @@ describe("accounts.cluster-directory", () => {
       last_name: "Directory",
       home_bay_id: "bay-2",
     });
+  });
+
+  it("preserves admin-only is_admin across cluster directory merge", async () => {
+    const { searchClusterAccountsDirect } = await import("./cluster-directory");
+    const [account] = await searchClusterAccountsDirect({
+      query: "qa",
+      admin: true,
+    });
+
+    expect(account).toMatchObject({
+      account_id: "11111111-1111-4111-8111-111111111111",
+      home_bay_id: "bay-2",
+      is_admin: true,
+    });
+  });
+
+  it("does not add is_admin to non-admin cluster searches", async () => {
+    const { searchClusterAccountsDirect } = await import("./cluster-directory");
+    const [account] = await searchClusterAccountsDirect({
+      query: "qa",
+      admin: false,
+    });
+
+    expect(account).toMatchObject({
+      account_id: "11111111-1111-4111-8111-111111111111",
+      home_bay_id: "bay-2",
+    });
+    expect(account.is_admin).toBeUndefined();
   });
 
   it("upserts email address reservations through the directory", async () => {

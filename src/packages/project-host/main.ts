@@ -163,6 +163,7 @@ import {
   MANAGED_RAW_NETWORK_EGRESS_CATEGORY,
   startManagedRawNetworkEgressLoop,
 } from "./raw-network-egress";
+import { startManagedCpuUsageLoop } from "./cpu-usage";
 import { managedProjectEgressResidualTracker } from "./managed-egress-residual";
 export { runPrivilegedRmHelper } from "./privileged-rm-helper";
 
@@ -1349,6 +1350,7 @@ export async function main(
   const stopRawNetworkEgressLoop = startManagedRawNetworkEgressLoop({
     runnerApi,
   });
+  const stopCpuUsageLoop = startManagedCpuUsageLoop();
 
   logger.info("Minimal HTTP API");
   addCatchAll(app);
@@ -1449,6 +1451,7 @@ export async function main(
     stopRuntimePostureMonitor?.();
     stopSnapshotBackupMaintenance?.();
     stopRawNetworkEgressLoop?.();
+    stopCpuUsageLoop?.();
     stopEventLoopStallMonitor?.();
     stopConatRevocationKickLoop?.();
     stopCodexSubscriptionCacheGc?.();

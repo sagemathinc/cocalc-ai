@@ -75,6 +75,8 @@ export type Action = "open" | "start" | "stop" | "restart";
 const projectCache: { [project_id: string]: WeakRef<BaseProject> } = {};
 const ROOTFS_SEAL_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const FILE_SERVER_READY_TIMEOUT_MS = 60_000;
+const DISABLE_ROOTFS_PORTABILITY_SEAL_ENV =
+  "COCALC_DISABLE_ROOTFS_PORTABILITY_SEAL";
 
 function isActiveProjectState(state?: string | null): boolean {
   return state === "running" || state === "starting" || state === "pending";
@@ -287,6 +289,13 @@ export class BaseProject extends EventEmitter {
   }): Promise<void> => {
     await this.ensureLocalOwnership();
     await this.startOnHost(opts);
+    if (process.env[DISABLE_ROOTFS_PORTABILITY_SEAL_ENV] === "1") {
+      logger.warn("skipping project RootFS portability seal", {
+        project_id: this.project_id,
+        env: DISABLE_ROOTFS_PORTABILITY_SEAL_ENV,
+      });
+      return;
+    }
     const current = await getCurrentProjectRootfsBinding({
       project_id: this.project_id,
     });

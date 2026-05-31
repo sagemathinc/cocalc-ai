@@ -71,6 +71,10 @@ import {
   redeemResetLocal as redeemPasswordResetLocal,
 } from "@cocalc/server/auth/password-reset";
 import adminVerifyEmailAddressLocal from "@cocalc/server/accounts/admin-verify-email-address";
+import {
+  grantAdminRole as grantAdminRoleLocal,
+  revokeAdminRole as revokeAdminRoleLocal,
+} from "@cocalc/server/accounts/admin-role";
 import setPasswordFromResetLocal from "@cocalc/server/accounts/set-password-from-reset";
 import { adminDisableTwoFactor as adminDisableTwoFactorLocal } from "@cocalc/server/auth/two-factor";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -691,6 +695,8 @@ async function startAccountLocalService(): Promise<void> {
       await adminVerifyEmailAddressLocal({ account_id }),
     adminDisableTwoFactor: async ({ account_id }) =>
       await adminDisableTwoFactorLocal({ account_id }),
+    adminGrantAdminRole: async (opts) => await grantAdminRoleLocal(opts),
+    adminRevokeAdminRole: async (opts) => await revokeAdminRoleLocal(opts),
     setBan: async (opts) => await setLocalClusterAccountBan(opts),
     quarantineBillingResources: async (opts) =>
       await quarantineLocalClusterAccountBillingResources(opts),

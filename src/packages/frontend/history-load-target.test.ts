@@ -107,7 +107,6 @@ describe("load_target", () => {
     expect(pageActions.set_active_tab).toHaveBeenCalledWith("account", false);
     expect(accountActions.setState).toHaveBeenCalledWith({
       active_page: "vouchers",
-      active_sub_tab: undefined,
     });
   });
 

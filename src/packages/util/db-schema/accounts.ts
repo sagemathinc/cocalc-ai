@@ -956,6 +956,7 @@ export interface UserSearchResult {
   last_active?: number; // ms since epoch -- when account was last active
   created?: number; // ms since epoch -- when account created
   banned?: boolean; // true if this user has been banned (only set for admin searches, obviously)
+  is_admin?: boolean; // true if this user is a site admin (only set for admin searches).
   email_address_verified?: boolean; // true if their email has been verified (a sign they are more trustworthy).
   // For security reasons, the email_address *only* occurs in search queries that
   // are by email_address (or for admins); we must not reveal email addresses

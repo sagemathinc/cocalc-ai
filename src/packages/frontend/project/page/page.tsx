@@ -86,6 +86,7 @@ import {
 import { shouldRenderMoveStatus } from "./move-status";
 import { getRecoverableActiveEditorPath } from "./active-editor-recovery";
 import {
+  hasProjectRoleForAccessLandingBypass,
   projectAccessSignInHrefForCurrentLocation,
   shouldFetchProjectAccessLandingInfo,
 } from "./access-landing-auth";
@@ -114,11 +115,30 @@ interface Props {
 export const ProjectPage: React.FC<Props> = (props: Props) => {
   const accountIsReady = !!useTypedRedux("account", "is_ready");
   const isLoggedIn = !!useTypedRedux("account", "is_logged_in");
+  const accountId = useTypedRedux("account", "account_id") as
+    | string
+    | undefined;
+  const groups = useTypedRedux("account", "groups") as string[] | undefined;
+  const project = useRedux(["projects", "project_map", props.project_id]);
   if (!accountIsReady) {
     return <Loading />;
   }
   if (!isLoggedIn) {
     return <ProjectAccessSignInRequired />;
+  }
+  if (
+    !hasProjectRoleForAccessLandingBypass({
+      accountId,
+      project,
+      isAdmin: !!groups?.includes("admin"),
+    })
+  ) {
+    return (
+      <ProjectAccessLandingGate
+        project_id={props.project_id}
+        is_active={props.is_active}
+      />
+    );
   }
   return <SignedInProjectPage {...props} />;
 };
@@ -190,13 +210,6 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
   const [homePageButtonWidth, setHomePageButtonWidth] =
     React.useState<number>(80);
   const [checkingHost, setCheckingHost] = useState<boolean>(false);
-  const [accessLanding, setAccessLanding] =
-    useState<ProjectAccessLandingInfo | null>(null);
-  const [accessLandingError, setAccessLandingError] = useState<string | null>(
-    null,
-  );
-  const [accessLandingLoading, setAccessLandingLoading] =
-    useState<boolean>(false);
 
   const [flyoutWidth, setFlyoutWidth] = useState<number>(
     getFlyoutWidth(project_id),
@@ -349,40 +362,6 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
   useEffect(() => {
     recoverActiveEditorComponent();
   }, [recoverActiveEditorComponent]);
-
-  useEffect(() => {
-    if (
-      !shouldFetchProjectAccessLandingInfo({
-        isActive: is_active,
-        accountIsReady: true,
-        isLoggedIn: true,
-        hasProject: project != null,
-        hasOpenFilesOrder: open_files_order != null,
-      })
-    ) {
-      return;
-    }
-    let canceled = false;
-    setAccessLandingLoading(true);
-    setAccessLandingError(null);
-    webapp_client.project_collaborators
-      .get_access_landing_info({ project_id })
-      .then((info) => {
-        if (canceled) return;
-        setAccessLanding(info);
-      })
-      .catch((err) => {
-        if (canceled) return;
-        setAccessLandingError(`${err}`);
-      })
-      .finally(() => {
-        if (canceled) return;
-        setAccessLandingLoading(false);
-      });
-    return () => {
-      canceled = true;
-    };
-  }, [is_active, open_files_order, project, project_id]);
 
   useEffect(() => {
     const recoverIfVisible = () => {
@@ -785,30 +764,6 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
   }
 
   if (open_files_order == null && !hardDeleteBlocked) {
-    if (
-      accessLanding != null &&
-      (accessLanding.relationship === "none" ||
-        accessLanding.pending_invite != null ||
-        accessLanding.pending_request != null ||
-        accessLanding.blocked)
-    ) {
-      return (
-        <ProjectAccessLandingPage
-          info={accessLanding}
-          loading={accessLandingLoading}
-          error={accessLandingError}
-          onChange={setAccessLanding}
-        />
-      );
-    }
-    if (accessLandingError != null) {
-      return (
-        <ProjectAccessLandingError
-          project_id={project_id}
-          error={accessLandingError}
-        />
-      );
-    }
     return <Loading />;
   }
 
@@ -894,7 +849,7 @@ function ViewerReadOnlyTag({ project_id }: { project_id: string }) {
         onClick={() => setOpen(true)}
         style={{
           alignSelf: "center",
-          color: "white",
+          color: "black",
           cursor: "pointer",
           margin: "2px 6px 0px 4px",
           whiteSpace: "nowrap",
@@ -983,6 +938,75 @@ function ProjectAccessSignInRequired() {
       </Card>
     </div>
   );
+}
+
+function ProjectAccessLandingGate({ project_id, is_active }: Props) {
+  const [accessLanding, setAccessLanding] =
+    useState<ProjectAccessLandingInfo | null>(null);
+  const [accessLandingError, setAccessLandingError] = useState<string | null>(
+    null,
+  );
+  const [accessLandingLoading, setAccessLandingLoading] =
+    useState<boolean>(false);
+
+  useEffect(() => {
+    if (
+      !shouldFetchProjectAccessLandingInfo({
+        isActive: is_active,
+        accountIsReady: true,
+        isLoggedIn: true,
+        hasProject: false,
+      })
+    ) {
+      return;
+    }
+    let canceled = false;
+    setAccessLandingLoading(true);
+    setAccessLandingError(null);
+    webapp_client.project_collaborators
+      .get_access_landing_info({ project_id })
+      .then((info) => {
+        if (canceled) return;
+        setAccessLanding(info);
+      })
+      .catch((err) => {
+        if (canceled) return;
+        setAccessLandingError(`${err}`);
+      })
+      .finally(() => {
+        if (canceled) return;
+        setAccessLandingLoading(false);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [is_active, project_id]);
+
+  if (
+    accessLanding != null &&
+    (accessLanding.relationship === "none" ||
+      accessLanding.pending_invite != null ||
+      accessLanding.pending_request != null ||
+      accessLanding.blocked)
+  ) {
+    return (
+      <ProjectAccessLandingPage
+        info={accessLanding}
+        loading={accessLandingLoading}
+        error={accessLandingError}
+        onChange={setAccessLanding}
+      />
+    );
+  }
+  if (accessLandingError != null) {
+    return (
+      <ProjectAccessLandingError
+        project_id={project_id}
+        error={accessLandingError}
+      />
+    );
+  }
+  return <Loading />;
 }
 
 function ProjectAccessLandingPage({

@@ -45,7 +45,7 @@ const handler = docsApiRoute({
           apiKey: {
             default: "",
             description: `API key to use for the request. An account-wide key may be
-            obtained by visiting https://cocalc.com/settings/account`,
+            obtained by visiting https://cocalc.com/settings/keys`,
           },
         },
       },
@@ -56,7 +56,7 @@ const handler = docsApiRoute({
           apiKey: {
             default: "",
             description: `API key to use for the request. An account-wide key may be
-            obtained by visiting http://localhost:5000/settings/account`,
+            obtained by visiting http://localhost:5000/settings/keys`,
           },
         },
       },

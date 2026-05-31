@@ -69,10 +69,6 @@ jest.mock("@cocalc/frontend/components", () => ({
   Title: ({ children }: any) => <h1>{children}</h1>,
 }));
 
-jest.mock("@cocalc/frontend/customize", () => ({
-  Footer: () => <footer />,
-}));
-
 jest.mock("@cocalc/frontend/i18n", () => ({
   labels: {
     create: { defaultMessage: "create" },

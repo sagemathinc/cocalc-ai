@@ -16,9 +16,10 @@ import { RootfsAdmin } from "./rootfs";
 import { NewsAdminPage } from "./news/page";
 import { BayOpsAdmin } from "./bay-ops";
 import { ManagedEgressAdminOverview } from "./managed-egress-overview";
+import { ManagedCpuAdminOverview } from "./managed-cpu-overview";
 import { ProjectBackupShardsAdmin } from "./project-backup-shards";
 import { SsoAdmin } from "./sso";
-import { SiteSetupAdmin } from "./site-setup";
+import { SiteSetupAdmin, SiteSetupBanner } from "./site-setup";
 import {
   getAdminUrlPath,
   normalizeAdminRoute,
@@ -56,6 +57,42 @@ export function AdminPage({
     return <NewsAdminPage route={route} />;
   }
 
+  const openSetup = () => {
+    setActiveKey((activeKey) =>
+      activeKey.includes("site-setup")
+        ? activeKey
+        : ["site-setup", ...activeKey],
+    );
+    pageActions.set_active_tab("admin", false);
+    pageActions.setState({
+      admin_route: { kind: "index", section: "site-setup" },
+    });
+    set_url_with_search(
+      getAdminUrlPath({ kind: "index", section: "site-setup" }),
+      "",
+    );
+  };
+
+  if (routeSection === "site-setup") {
+    return (
+      <div
+        className="smc-vfill"
+        style={{
+          overflowY: "auto",
+          overflowX: "hidden",
+          padding: "30px 45px",
+        }}
+      >
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Space wrap>
+            <Button href="/admin">Back to all admin settings</Button>
+          </Space>
+          <SiteSetupAdmin />
+        </Space>
+      </div>
+    );
+  }
+
   const items: CollapseProps["items"] = [
     {
       key: "site-setup",
@@ -74,6 +111,16 @@ export function AdminPage({
         </div>
       ),
       children: <UserSearch />,
+    },
+    {
+      key: "managed-cpu",
+      label: (
+        <div style={headerStyle}>
+          <Icon name="line-chart" style={{ marginRight: "8px" }} /> CPU & Abuse
+          Signals
+        </div>
+      ),
+      children: <ManagedCpuAdminOverview />,
     },
     {
       key: "managed-egress",
@@ -262,6 +309,7 @@ export function AdminPage({
       }}
     >
       <Title level={3}>Administration</Title>
+      <SiteSetupBanner onOpenSetup={openSetup} />
       <Collapse
         destroyOnHidden /* so that data is refreshed when they are shown */
         activeKey={activeKey}

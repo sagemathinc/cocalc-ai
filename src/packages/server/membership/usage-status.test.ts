@@ -8,6 +8,8 @@ const getDiskQuotaMock = jest.fn();
 const clientCloseMock = jest.fn();
 const getManagedEgressUsageForAccountMock = jest.fn();
 const getRecentManagedEgressEventsForAccountMock = jest.fn();
+const getManagedCpuUsageForAccountMock = jest.fn();
+const getRecentManagedCpuEventsForAccountMock = jest.fn();
 const listUsageProjectsForAccountMock = jest.fn();
 const getRootfsUsageForAccountMock = jest.fn();
 const getAccountBlobUsageMock = jest.fn();
@@ -38,6 +40,13 @@ jest.mock("./managed-egress", () => ({
     getRecentManagedEgressEventsForAccountMock(...args),
 }));
 
+jest.mock("./managed-cpu", () => ({
+  getManagedCpuUsageForAccount: (...args: any[]) =>
+    getManagedCpuUsageForAccountMock(...args),
+  getRecentManagedCpuEventsForAccount: (...args: any[]) =>
+    getRecentManagedCpuEventsForAccountMock(...args),
+}));
+
 jest.mock("./project-usage", () => ({
   listUsageProjectsForAccount: (...args: any[]) =>
     listUsageProjectsForAccountMock(...args),
@@ -63,6 +72,11 @@ describe("getMembershipUsageStatusForAccount", () => {
       managed_egress_categories_7d_bytes: {},
     });
     getRecentManagedEgressEventsForAccountMock.mockResolvedValue([]);
+    getManagedCpuUsageForAccountMock.mockResolvedValue({
+      managed_cpu_5h_seconds: 0,
+      managed_cpu_7d_seconds: 0,
+    });
+    getRecentManagedCpuEventsForAccountMock.mockResolvedValue([]);
     listUsageProjectsForAccountMock.mockResolvedValue([]);
     getRootfsUsageForAccountMock.mockResolvedValue({
       count: 0,

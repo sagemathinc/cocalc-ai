@@ -45,6 +45,12 @@ jest.mock("./password-reset", () => ({
   PasswordReset: () => null,
 }));
 
+jest.mock("./admin-role", () => ({
+  AdminRole: ({ is_admin }: any) => (
+    <div>{is_admin ? "admin-role-current" : "admin-role-grant"}</div>
+  ),
+}));
+
 jest.mock("./ban", () => ({
   Ban: () => null,
 }));
@@ -118,5 +124,24 @@ describe("UserResult egress entry points", () => {
     );
 
     expect(screen.getByText("BANNED")).toBeTruthy();
+  });
+
+  it("shows admin status in the collapsed user header and profile card", () => {
+    render(
+      <UserResult
+        first_name="Grace"
+        last_name="Hopper"
+        email_address="grace@example.com"
+        account_id="acct-2"
+        banned={false}
+        is_admin={true}
+      />,
+    );
+
+    expect(screen.getByText("ADMIN")).toBeTruthy();
+
+    fireEvent.click(screen.getByText(/Grace Hopper/));
+    fireEvent.click(screen.getByText("Profile"));
+    expect(screen.getByText("admin-role-current")).toBeTruthy();
   });
 });

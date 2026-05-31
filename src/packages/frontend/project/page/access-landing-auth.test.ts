@@ -1,4 +1,5 @@
 import {
+  hasProjectRoleForAccessLandingBypass,
   projectAccessSignInHref,
   shouldFetchProjectAccessLandingInfo,
 } from "./access-landing-auth";
@@ -11,7 +12,6 @@ describe("project access landing auth gate", () => {
         accountIsReady: true,
         isLoggedIn: false,
         hasProject: false,
-        hasOpenFilesOrder: false,
       }),
     ).toBe(false);
   });
@@ -23,7 +23,6 @@ describe("project access landing auth gate", () => {
         accountIsReady: false,
         isLoggedIn: true,
         hasProject: false,
-        hasOpenFilesOrder: false,
       }),
     ).toBe(false);
   });
@@ -35,7 +34,6 @@ describe("project access landing auth gate", () => {
         accountIsReady: true,
         isLoggedIn: true,
         hasProject: false,
-        hasOpenFilesOrder: false,
       }),
     ).toBe(true);
 
@@ -45,19 +43,37 @@ describe("project access landing auth gate", () => {
         accountIsReady: true,
         isLoggedIn: true,
         hasProject: true,
-        hasOpenFilesOrder: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps non-collaborators on the access landing even if project shell state exists", () => {
+    const project = {
+      getIn: (path: string[]) =>
+        path.join("/") === "users/owner-account/group" ? "owner" : undefined,
+    };
+
+    expect(
+      hasProjectRoleForAccessLandingBypass({
+        accountId: "requester-account",
+        project,
       }),
     ).toBe(false);
 
     expect(
-      shouldFetchProjectAccessLandingInfo({
-        isActive: true,
-        accountIsReady: true,
-        isLoggedIn: true,
-        hasProject: false,
-        hasOpenFilesOrder: true,
+      hasProjectRoleForAccessLandingBypass({
+        accountId: "owner-account",
+        project,
       }),
-    ).toBe(false);
+    ).toBe(true);
+
+    expect(
+      hasProjectRoleForAccessLandingBypass({
+        accountId: "requester-account",
+        project,
+        isAdmin: true,
+      }),
+    ).toBe(true);
   });
 
   it("preserves the project route in the sign-in target without leaking metadata", () => {

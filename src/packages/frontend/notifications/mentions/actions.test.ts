@@ -35,6 +35,9 @@ describe("notification inbox mention adapter", () => {
             body_markdown: "Please review this event.",
             severity: "warning",
             origin_label: "Security",
+            notice_type: "project_access_request",
+            request_id: "77777777-7777-4777-8777-777777777777",
+            requested_role: "viewer",
           },
           read_state: {
             read: true,
@@ -73,6 +76,11 @@ describe("notification inbox mention adapter", () => {
     expect(notice?.get("kind")).toBe("account_notice");
     expect(notice?.get("title")).toBe("Suspicious login");
     expect(notice?.get("origin_label")).toBe("Security");
+    expect(notice?.get("notice_type")).toBe("project_access_request");
+    expect(notice?.get("request_id")).toBe(
+      "77777777-7777-4777-8777-777777777777",
+    );
+    expect(notice?.get("requested_role")).toBe("viewer");
   });
 
   it("uses total unread counts from the projected inbox", () => {

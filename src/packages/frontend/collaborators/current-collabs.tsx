@@ -249,7 +249,9 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
           boxShadow: isFlyout ? undefined : "0 1px 2px rgba(14, 43, 89, 0.04)",
           display: "grid",
           gap: isFlyout ? 10 : 14,
-          gridTemplateColumns: "minmax(0, 1fr) auto",
+          gridTemplateColumns: isFlyout
+            ? "minmax(0, 1fr)"
+            : "minmax(0, 1fr) auto",
           marginBottom: is_last ? 0 : 8,
           padding: isFlyout ? "8px 10px" : "11px 12px",
         }}
@@ -289,10 +291,11 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
           style={{
             alignItems: "center",
             display: "flex",
-            gap: 10,
-            justifyContent: "flex-end",
-            minWidth: isFlyout ? 138 : 178,
-            whiteSpace: "nowrap",
+            flexWrap: isFlyout ? "wrap" : "nowrap",
+            gap: isFlyout ? 6 : 10,
+            justifyContent: isFlyout ? "flex-start" : "flex-end",
+            minWidth: isFlyout ? 0 : 178,
+            whiteSpace: isFlyout ? "normal" : "nowrap",
           }}
         >
           {render_role(user.group, user.read_policy)}
@@ -329,7 +332,7 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
     const isOwner = group === "owner";
     const isViewer = group === "viewer";
     return (
-      <span>
+      <span style={{ minWidth: 0 }}>
         <Tag
           color={isOwner ? "blue" : isViewer ? "gold" : undefined}
           style={{ marginInlineEnd: 0, textTransform: "lowercase" }}
@@ -342,7 +345,7 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
               color: COLORS.GRAY_M,
               fontSize: 11,
               marginTop: 3,
-              maxWidth: 220,
+              maxWidth: isFlyout ? "100%" : 220,
               overflow: "hidden",
               textOverflow: "ellipsis",
             }}

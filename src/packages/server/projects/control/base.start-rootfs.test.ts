@@ -97,9 +97,12 @@ describe("BaseProject.start RootFS sealing", () => {
   const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
   const ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
   const HOST_ID = "33333333-3333-4333-8333-333333333333";
+  const ORIGINAL_DISABLE_ROOTFS_PORTABILITY_SEAL =
+    process.env.COCALC_DISABLE_ROOTFS_PORTABILITY_SEAL;
 
   beforeEach(() => {
     jest.resetModules();
+    delete process.env.COCALC_DISABLE_ROOTFS_PORTABILITY_SEAL;
     queryMock = jest.fn(async (sql: string) => {
       if (sql.includes("SELECT COALESCE(owning_bay_id, $2) AS owning_bay_id")) {
         return { rows: [{ owning_bay_id: "bay-0" }] };
@@ -159,6 +162,15 @@ describe("BaseProject.start RootFS sealing", () => {
     }));
   });
 
+  afterAll(() => {
+    if (ORIGINAL_DISABLE_ROOTFS_PORTABILITY_SEAL == null) {
+      delete process.env.COCALC_DISABLE_ROOTFS_PORTABILITY_SEAL;
+    } else {
+      process.env.COCALC_DISABLE_ROOTFS_PORTABILITY_SEAL =
+        ORIGINAL_DISABLE_ROOTFS_PORTABILITY_SEAL;
+    }
+  });
+
   it("restarts on a sealed managed RootFS when the current binding is unsealed", async () => {
     const { BaseProject } = await import("./base");
     const project = new BaseProject(PROJECT_ID);
@@ -209,6 +221,21 @@ describe("BaseProject.start RootFS sealing", () => {
     await project.start({ account_id: ACCOUNT_ID, lro_op_id: "op-1" });
 
     expect(startProjectOnHostMock).toHaveBeenCalledTimes(1);
+    expect(issueRootfsReleaseArtifactUploadMock).not.toHaveBeenCalled();
+    expect(stopProjectOnHostMock).not.toHaveBeenCalled();
+    expect(setProjectRootfsImageWithRollbackMock).not.toHaveBeenCalled();
+  });
+
+  it("skips RootFS sealing when portability sealing is disabled", async () => {
+    process.env.COCALC_DISABLE_ROOTFS_PORTABILITY_SEAL = "1";
+    const { BaseProject } = await import("./base");
+    const project = new BaseProject(PROJECT_ID);
+    project.computeQuota = jest.fn(async () => undefined);
+
+    await project.start({ account_id: ACCOUNT_ID, lro_op_id: "op-1" });
+
+    expect(startProjectOnHostMock).toHaveBeenCalledTimes(1);
+    expect(getCurrentProjectRootfsBindingMock).not.toHaveBeenCalled();
     expect(issueRootfsReleaseArtifactUploadMock).not.toHaveBeenCalled();
     expect(stopProjectOnHostMock).not.toHaveBeenCalled();
     expect(setProjectRootfsImageWithRollbackMock).not.toHaveBeenCalled();

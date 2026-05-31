@@ -17,13 +17,11 @@ import {
 import { OTHER_SETTINGS_AI_REPLY_ENGLISH_KEY } from "@cocalc/util/i18n/const";
 import type { CodexReasoningId, CodexSessionMode } from "@cocalc/util/ai/codex";
 import { PassportStrategyFrontend } from "@cocalc/util/types/passport-types";
-import { type PreferencesSubTabKey } from "@cocalc/util/types/settings";
 
 // this is incomplete...
 
 export interface AccountState {
   active_page: string;
-  active_sub_tab?: PreferencesSubTabKey;
   user_type: string;
   account_id: string;
   groups?: List<string>;

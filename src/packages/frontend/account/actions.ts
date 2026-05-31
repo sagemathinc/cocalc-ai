@@ -15,7 +15,6 @@ import { clearStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-or
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { define, required } from "@cocalc/util/fill";
 import { Actions } from "@cocalc/util/redux/Actions";
-import type { SettingsPageType } from "@cocalc/util/types/settings";
 import { show_announce_end, show_announce_start } from "./dates";
 import { AccountStore } from "./store";
 import { AccountState } from "./types";
@@ -23,6 +22,7 @@ import { lite } from "@cocalc/frontend/lite";
 import { isFreshAuthRequiredError } from "@cocalc/frontend/auth/fresh-auth";
 import {
   getAccountSettingsRouteFromState,
+  getAccountSettingsState,
   getSettingsPushStatePath,
   getSettingsUrlPath,
   parseAccountSettingsRoute,
@@ -169,21 +169,15 @@ export class AccountActions extends Actions<AccountState> {
     if (url == null) {
       url = "";
     }
-    const route = parseAccountSettingsRoute(url) ?? { kind: "index" };
+    const route = parseAccountSettingsRoute(url) ?? { page: "index" };
     this._last_history_state = getSettingsPushStatePath(route);
     set_url(getSettingsUrlPath(route));
   }
 
   public set_active_tab(tab: string): void {
-    this.setState({ active_page: tab });
-    this.push_state(
-      getSettingsPushStatePath(
-        getAccountSettingsRouteFromState({
-          active_page: tab as SettingsPageType | "preferences",
-          active_sub_tab: undefined,
-        }),
-      ),
-    );
+    const route = getAccountSettingsRouteFromState({ active_page: tab });
+    this.setState(getAccountSettingsState(route));
+    this.push_state(getSettingsPushStatePath(route));
   }
 
   // Add an ssh key for this user, with the given fingerprint,

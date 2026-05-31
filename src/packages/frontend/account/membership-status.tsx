@@ -129,6 +129,19 @@ function formatResetAt(resetAt?: Date | string): string | undefined {
   });
 }
 
+function formatCpuSeconds(seconds: number): string {
+  const hours = Math.max(0, seconds) / 3600;
+  let digits = 0;
+  if (hours < 1) {
+    digits = 3;
+  } else if (hours < 10) {
+    digits = 2;
+  } else if (hours < 100) {
+    digits = 1;
+  }
+  return `${hours.toFixed(digits)} CPU-hours`;
+}
+
 function getProgressPercent(current: number, limit: number): number {
   if (!(limit > 0) || !Number.isFinite(limit)) return 0;
   return Math.max(0, Math.min(100, (current / limit) * 100));
@@ -346,6 +359,18 @@ function getUsageStatusItems(
     usageLimits.egress_7d_bytes > 0
       ? usageLimits.egress_7d_bytes
       : undefined;
+  const cpu5hLimit =
+    typeof usageLimits?.cpu_5h_seconds === "number" &&
+    Number.isFinite(usageLimits.cpu_5h_seconds) &&
+    usageLimits.cpu_5h_seconds > 0
+      ? usageLimits.cpu_5h_seconds
+      : undefined;
+  const cpu7dLimit =
+    typeof usageLimits?.cpu_7d_seconds === "number" &&
+    Number.isFinite(usageLimits.cpu_7d_seconds) &&
+    usageLimits.cpu_7d_seconds > 0
+      ? usageLimits.cpu_7d_seconds
+      : undefined;
   const items: UsageStatusItem[] = [
     {
       key: "owned_project_count",
@@ -514,6 +539,44 @@ function getUsageStatusItems(
     });
   }
   if (
+    typeof usageStatus.managed_cpu_5h_seconds === "number" &&
+    Number.isFinite(usageStatus.managed_cpu_5h_seconds)
+  ) {
+    items.push({
+      key: "managed_cpu_5h_seconds",
+      label: "Managed CPU used in 5 hours",
+      value: formatCpuSeconds(usageStatus.managed_cpu_5h_seconds),
+      danger: usageStatus.over_managed_cpu_5h === true,
+      progress:
+        cpu5hLimit != null
+          ? {
+              current: usageStatus.managed_cpu_5h_seconds,
+              limit: cpu5hLimit,
+              caption: `${formatCpuSeconds(usageStatus.managed_cpu_5h_seconds)} of ${formatCpuSeconds(cpu5hLimit)}`,
+            }
+          : undefined,
+    });
+  }
+  if (
+    typeof usageStatus.managed_cpu_7d_seconds === "number" &&
+    Number.isFinite(usageStatus.managed_cpu_7d_seconds)
+  ) {
+    items.push({
+      key: "managed_cpu_7d_seconds",
+      label: "Managed CPU used in 7 days",
+      value: formatCpuSeconds(usageStatus.managed_cpu_7d_seconds),
+      danger: usageStatus.over_managed_cpu_7d === true,
+      progress:
+        cpu7dLimit != null
+          ? {
+              current: usageStatus.managed_cpu_7d_seconds,
+              limit: cpu7dLimit,
+              caption: `${formatCpuSeconds(usageStatus.managed_cpu_7d_seconds)} of ${formatCpuSeconds(cpu7dLimit)}`,
+            }
+          : undefined,
+    });
+  }
+  if (
     typeof usageStatus.managed_egress_5h_bytes === "number" &&
     Number.isFinite(usageStatus.managed_egress_5h_bytes)
   ) {
@@ -617,6 +680,22 @@ function getUsageStatusAlerts(
         "Current storage usage is only partially sampled from your projects, so totals may temporarily be incomplete.",
     });
   }
+  if (usageStatus.over_managed_cpu_5h) {
+    alerts.push({
+      key: "over-managed-cpu-5h",
+      type: "warning",
+      title:
+        "Your account is over the managed-CPU 5-hour window. Starting new projects may be blocked until this window resets.",
+    });
+  }
+  if (usageStatus.over_managed_cpu_7d) {
+    alerts.push({
+      key: "over-managed-cpu-7d",
+      type: "warning",
+      title:
+        "Your account is over the managed-CPU 7-day window. Starting new projects may be blocked until this window resets.",
+    });
+  }
   if (usageStatus.over_managed_egress_5h) {
     alerts.push({
       key: "over-managed-egress-5h",
@@ -659,6 +738,44 @@ function renderManagedEgressBreakdown(
           ))}
         </Space>
       </Descriptions.Item>
+    </Descriptions>
+  );
+}
+
+function renderManagedCpuResetTimes(
+  usageStatus?: MembershipUsageStatus | null,
+): ReactElement | null {
+  if (!usageStatus) return null;
+  const items: Array<{
+    key: string;
+    label: string;
+    resetAt?: Date | string;
+    resetIn?: string;
+  }> = [
+    {
+      key: "5h",
+      label: "Managed CPU 5-hour next reset",
+      resetAt: usageStatus.managed_cpu_5h_reset_at,
+      resetIn: usageStatus.managed_cpu_5h_reset_in,
+    },
+    {
+      key: "7d",
+      label: "Managed CPU 7-day next reset",
+      resetAt: usageStatus.managed_cpu_7d_reset_at,
+      resetIn: usageStatus.managed_cpu_7d_reset_in,
+    },
+  ].filter((item) => item.resetAt || item.resetIn);
+  if (items.length === 0) return null;
+  return (
+    <Descriptions size="small" column={1} style={{ marginTop: "6px" }}>
+      {items.map((item) => (
+        <Descriptions.Item key={item.key} label={item.label}>
+          {item.resetAt ? formatResetAt(item.resetAt) : "Unknown"}
+          {item.resetIn ? (
+            <Text type="secondary">{` · in ${item.resetIn}`}</Text>
+          ) : null}
+        </Descriptions.Item>
+      ))}
     </Descriptions>
   );
 }
@@ -944,7 +1061,6 @@ export function MembershipStatusPanel({
               <Button
                 onClick={() =>
                   openAccountSettings({
-                    kind: "tab",
                     page: "licenses",
                   })
                 }
@@ -1085,6 +1201,7 @@ export function MembershipStatusPanel({
               "Managed egress by category (7 days)",
               details?.usage_status?.managed_egress_categories_7d_bytes,
             )}
+            {renderManagedCpuResetTimes(details?.usage_status)}
             {renderManagedEgressResetTimes(details?.usage_status)}
             {details?.usage_status?.managed_egress_recent_events?.length ? (
               <Descriptions

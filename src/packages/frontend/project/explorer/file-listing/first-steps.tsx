@@ -83,7 +83,7 @@ export default function FirstSteps({ project_id }: Props) {
               guide" in{" "}
               <a
                 onClick={() => {
-                  openAccountSettings({ kind: "index" });
+                  openAccountSettings({ page: "index" });
                 }}
               >
                 Account Preferences

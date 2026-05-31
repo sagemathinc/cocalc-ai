@@ -97,6 +97,8 @@ export const system = {
   adminResetPasswordLink: authFirst,
   adminVerifyEmailAddress: authFirst,
   adminDisableTwoFactor: authFirst,
+  adminGrantAdminRole: authFirst,
+  adminRevokeAdminRole: authFirst,
   sendTestEmail: authFirst,
   setSiteSettings: authFirst,
   syncSiteSettingsToBays: authFirst,
@@ -155,6 +157,7 @@ export const system = {
   releaseProjectAppPublicSubdomain: authFirst,
   recordManagedProjectEgress: authFirst,
   getManagedProjectEgressPolicy: authFirst,
+  recordManagedProjectCpuUsage: authFirst,
   recordServiceAdmissionDenial: authFirstRequireProject,
   recordServiceAdmissionNearLimit: authFirstRequireProject,
   getServiceAdmissionConfig: authFirst,
@@ -846,6 +849,7 @@ export interface SiteSetupStep {
 }
 
 export interface SiteSetupStatus {
+  profile: "launchpad-cloud" | "star";
   checked_at: string;
   ready: boolean;
   hard_gates_total: number;
@@ -1872,6 +1876,30 @@ export interface System {
     deleted_recovery_codes: number;
   }>;
 
+  adminGrantAdminRole: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    user_account_id: string;
+    reason?: string | null;
+  }) => Promise<{
+    account_id: string;
+    already_admin: boolean;
+    groups: string[];
+  }>;
+
+  adminRevokeAdminRole: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    user_account_id: string;
+    reason?: string | null;
+  }) => Promise<{
+    account_id: string;
+    was_admin: boolean;
+    groups: string[];
+  }>;
+
   sendTestEmail: (opts: {
     account_id?: string;
     lane?: "critical" | "transactional" | "notification" | "marketing";
@@ -2327,6 +2355,16 @@ export interface System {
     project_id?: string;
     category: ManagedProjectEgressCategory;
     bytes: number;
+    metadata?: Record<string, unknown>;
+  }) => Promise<{ recorded: boolean; account_id?: string }>;
+
+  recordManagedProjectCpuUsage: (opts: {
+    account_id?: string;
+    project_id?: string;
+    cpu_seconds: number;
+    sample_started_at?: Date;
+    sample_ended_at?: Date;
+    source?: string;
     metadata?: Record<string, unknown>;
   }) => Promise<{ recorded: boolean; account_id?: string }>;
 
