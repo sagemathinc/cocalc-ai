@@ -91,6 +91,13 @@ function usageLimitsTemplate(
   };
 }
 
+function cpuUsageLimits(cpu5hHours: number, cpu7dHours: number) {
+  return {
+    cpu_5h_seconds: Math.round(cpu5hHours * 3600),
+    cpu_7d_seconds: Math.round(cpu7dHours * 3600),
+  };
+}
+
 function acpUsageLimits({
   queuedPerAccount,
   queuedPerThread,
@@ -244,6 +251,7 @@ export const TIER_TEMPLATES = {
       project_host_tier: 0,
     },
     usage_limits: usageLimitsTemplate(1, 1, {
+      ...cpuUsageLimits(4, 16),
       ...acpUsageLimits({
         queuedPerAccount: 20,
         queuedPerThread: 5,
@@ -307,6 +315,7 @@ export const TIER_TEMPLATES = {
       project_host_tier: 0,
     },
     usage_limits: usageLimitsTemplate(2, 3, {
+      ...cpuUsageLimits(20, 80),
       notification_email_send_limit_5h: 50,
       notification_email_send_limit_7d: 200,
       ...acpUsageLimits({
@@ -373,6 +382,7 @@ export const TIER_TEMPLATES = {
       project_host_tier: 0,
     },
     usage_limits: usageLimitsTemplate(2, 3, {
+      ...cpuUsageLimits(20, 80),
       notification_email_send_limit_5h: 50,
       notification_email_send_limit_7d: 200,
       ...acpUsageLimits({
@@ -439,6 +449,7 @@ export const TIER_TEMPLATES = {
       project_host_tier: 1,
     },
     usage_limits: usageLimitsTemplate(3, 3, {
+      ...cpuUsageLimits(80, 400),
       notification_email_send_limit_5h: 200,
       notification_email_send_limit_7d: 1000,
       prepaid_host_usage_limit_5h_usd: 300,
@@ -507,6 +518,7 @@ export const TIER_TEMPLATES = {
       project_host_tier: 1,
     },
     usage_limits: usageLimitsTemplate(3, 3, {
+      ...cpuUsageLimits(80, 400),
       notification_email_send_limit_5h: 200,
       notification_email_send_limit_7d: 1000,
       prepaid_host_usage_limit_5h_usd: 300,
@@ -575,6 +587,7 @@ export const TIER_TEMPLATES = {
       project_host_tier: 1,
     },
     usage_limits: usageLimitsTemplate(3, 10, {
+      ...cpuUsageLimits(300, 1500),
       max_projects: 250,
       notification_email_send_limit_5h: 500,
       notification_email_send_limit_7d: 2500,
@@ -644,6 +657,7 @@ export const TIER_TEMPLATES = {
       project_host_tier: 2,
     },
     usage_limits: usageLimitsTemplate(4, 15, {
+      ...cpuUsageLimits(500, 2500),
       max_projects: 150,
       notification_email_send_limit_5h: 500,
       notification_email_send_limit_7d: 2500,
@@ -713,6 +727,7 @@ export const TIER_TEMPLATES = {
       project_host_tier: 2,
     },
     usage_limits: usageLimitsTemplate(4, 10, {
+      ...cpuUsageLimits(1000, 5000),
       notification_email_send_limit_5h: 1000,
       notification_email_send_limit_7d: 5000,
       credit_spend_limit_5h_usd: 300,

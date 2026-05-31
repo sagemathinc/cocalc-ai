@@ -48,6 +48,8 @@ const NUMERIC_USAGE_LIMIT_KEYS = new Set<keyof MembershipUsageLimits>([
   "max_backups_per_project",
   "egress_5h_bytes",
   "egress_7d_bytes",
+  "cpu_5h_seconds",
+  "cpu_7d_seconds",
   "credit_spend_limit_5h_usd",
   "credit_spend_limit_7d_usd",
   "prepaid_host_usage_limit_5h_usd",
@@ -185,6 +187,18 @@ const OVERRIDE_EFFECT_FIELDS = [
     ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
       .egress_7d_bytes,
     fromStored: (value: number) => value / 1_000_000_000,
+  },
+  {
+    section: "usage_limits",
+    key: "cpu_5h_seconds",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits.cpu_5h_seconds,
+    fromStored: (value: number) => value / 3600,
+  },
+  {
+    section: "usage_limits",
+    key: "cpu_7d_seconds",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits.cpu_7d_seconds,
+    fromStored: (value: number) => value / 3600,
   },
   {
     section: "usage_limits",

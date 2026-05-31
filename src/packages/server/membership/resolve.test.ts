@@ -145,6 +145,8 @@ describe("resolveMembershipForAccount", () => {
       max_backups_per_project: 5,
       egress_5h_bytes: undefined,
       egress_7d_bytes: undefined,
+      cpu_5h_seconds: undefined,
+      cpu_7d_seconds: undefined,
       egress_policy: undefined,
       dedicated_host_egress_policy: undefined,
       credit_spend_limit_5h_usd: undefined,

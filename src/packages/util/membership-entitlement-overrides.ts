@@ -106,6 +106,21 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
       userDescription:
         "Managed data-transfer allowance over a rolling 7-day window.",
     },
+    cpu_5h_seconds: {
+      label: "Managed CPU, 5-hour window",
+      unit: "CPU-hours",
+      adminDescription:
+        "Rolling 5-hour CPU budget. Once this account is over the budget, starting another project is blocked until the window frees up.",
+      userDescription:
+        "Managed compute allowance over a rolling 5-hour window.",
+    },
+    cpu_7d_seconds: {
+      label: "Managed CPU, 7-day window",
+      unit: "CPU-hours",
+      adminDescription:
+        "Rolling 7-day CPU budget. Once this account is over the budget, starting another project is blocked until the window frees up.",
+      userDescription: "Managed compute allowance over a rolling 7-day window.",
+    },
     credit_spend_limit_5h_usd: {
       label: "Postpay host spend, 5-hour window",
       unit: "USD",

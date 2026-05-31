@@ -202,6 +202,8 @@ export async function getMembershipUsageStatusForAccount({
     const max_projects = effectiveLimits.max_projects;
     const egress5hLimit = effectiveLimits.egress_5h_bytes;
     const egress7dLimit = effectiveLimits.egress_7d_bytes;
+    const cpu5hLimit = effectiveLimits.cpu_5h_seconds;
+    const cpu7dLimit = effectiveLimits.cpu_7d_seconds;
     const managedEgress = await getManagedEgressUsageForAccount({
       account_id,
       limit5h: egress5hLimit,
@@ -212,7 +214,11 @@ export async function getMembershipUsageStatusForAccount({
         account_id,
         limit: 20,
       });
-    const managedCpu = await getManagedCpuUsageForAccount({ account_id });
+    const managedCpu = await getManagedCpuUsageForAccount({
+      account_id,
+      limit5h: cpu5hLimit,
+      limit7d: cpu7dLimit,
+    });
     const managedCpuRecentEvents = await getRecentManagedCpuEventsForAccount({
       account_id,
       limit: 20,

@@ -1,7 +1,8 @@
 # CPU Usage Accounting And Abuse Plan
 
-Status: draft implementation plan for release-blocker item 14 in
-`release-blocker-triage-2026-05-29.md`.
+Status: implemented through Phase 4 for release-blocker item 14 in
+`release-blocker-triage-2026-05-29.md`. Phase 5 Codex-assisted triage is
+explicitly deferred until after launch and real abuse patterns are available.
 
 ## Goals
 
@@ -494,16 +495,22 @@ Phase 3: annotations
 
 Phase 4: start policy
 
-- Add membership CPU limit fields/effective limits.
-- Add CPU policy resolver.
-- Add project start preflight check.
-- Enable in warn-only/log-only mode first.
-- Then enable blocking for free/trial accounts.
+- [x] Add membership CPU limit fields/effective limits.
+- [x] Add CPU policy resolver.
+- [x] Add project start preflight check.
+- [x] Enable blocking for configured CPU budgets. Policy evaluation failures
+      fail open with a warning so control-plane outages do not cause false
+      denial.
+- [x] Configure built-in membership-tier CPU budgets. Free has a small
+      burst-friendly quota; paid tiers have much higher defaults and remain
+      adjustable through membership tier settings and account entitlement
+      overrides.
 
 Phase 5: Codex-assisted triage
 
-- Add optional "analyze" action after the manual workflow is solid.
-- Keep the admin as the final decision maker.
+- [deferred] Add optional "analyze" action only after launch, once manual
+  review has produced real examples of cocalc-ai abuse patterns.
+- [deferred] Keep the admin as the final decision maker.
 
 ## Validation
 
