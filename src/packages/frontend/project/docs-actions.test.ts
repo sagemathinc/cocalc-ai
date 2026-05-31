@@ -119,6 +119,10 @@ describe("project docs actions", () => {
         "terminal.open",
         "project.jupyter.create",
         "jupyter.open",
+        "files.markdown.open",
+        "python.open",
+        "latex.open",
+        "r.markdown.open",
         "settings.runtime.rootfs",
         "settings.people.collaborators",
         "file.timetravel.open",
@@ -578,6 +582,35 @@ describe("project docs actions", () => {
       name: "notebook",
       switch_over: true,
     });
+  });
+
+  it("creates common project file types", async () => {
+    const cases = [
+      ["files.markdown.open", "md", "notes"],
+      ["python.open", "py", "script"],
+      ["latex.open", "tex", "paper"],
+      ["r.markdown.open", "Rmd", "report"],
+    ] as const;
+
+    for (const [actionId, ext, name] of cases) {
+      const result = await revealDocsAction({
+        actionId,
+        projectId: "project-1",
+      });
+
+      expect(mockCreateFile).toHaveBeenLastCalledWith({
+        current_path: "/work",
+        ext,
+        name,
+        switch_over: true,
+      });
+      expect(result).toMatchObject({
+        action_id: actionId,
+        opened: true,
+        path: `/work/${name}.${ext}`,
+        project_id: "project-1",
+      });
+    }
   });
 
   it("avoids clobbering existing quick action filenames", async () => {

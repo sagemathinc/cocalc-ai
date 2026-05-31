@@ -69,7 +69,11 @@ export type DocsActionId =
   | "projects.list.open"
   | "project.files.open"
   | "terminal.open"
-  | "jupyter.open";
+  | "jupyter.open"
+  | "files.markdown.open"
+  | "python.open"
+  | "latex.open"
+  | "r.markdown.open";
 
 export interface DocsAction {
   description: string;

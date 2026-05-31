@@ -693,7 +693,7 @@ async function revealRuntimeImage(
 }
 
 function defaultDocsActionFilename(
-  ext: "ipynb" | "term" | "txt",
+  ext: "Rmd" | "ipynb" | "md" | "py" | "term" | "tex" | "txt",
   avoid?: Record<string, unknown> | null,
 ): string {
   const basename =
@@ -701,7 +701,15 @@ function defaultDocsActionFilename(
       ? "notebook"
       : ext === "term"
         ? "terminal"
-        : "timetravel-source";
+        : ext === "md"
+          ? "notes"
+          : ext === "py"
+            ? "script"
+            : ext === "tex"
+              ? "paper"
+              : ext === "Rmd"
+                ? "report"
+                : "timetravel-source";
   for (let i = 1; i < 1000; i += 1) {
     const suffix = i === 1 ? "" : `-${i}`;
     const filename = `${basename}${suffix}.${ext}`;
@@ -716,7 +724,7 @@ async function createDefaultProjectFile({
   projectId,
 }: {
   actionId: DocsActionId;
-  ext: "ipynb" | "term" | "txt";
+  ext: "Rmd" | "ipynb" | "md" | "py" | "term" | "tex" | "txt";
   projectId: string;
 }): Promise<DocsActionRevealResult> {
   selectProject(projectId);
@@ -1066,6 +1074,46 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
       createDefaultProjectFile({
         actionId: "jupyter.open",
         ext: "ipynb",
+        projectId,
+      }),
+  },
+  "files.markdown.open": {
+    id: "files.markdown.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) =>
+      createDefaultProjectFile({
+        actionId: "files.markdown.open",
+        ext: "md",
+        projectId,
+      }),
+  },
+  "python.open": {
+    id: "python.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) =>
+      createDefaultProjectFile({
+        actionId: "python.open",
+        ext: "py",
+        projectId,
+      }),
+  },
+  "latex.open": {
+    id: "latex.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) =>
+      createDefaultProjectFile({
+        actionId: "latex.open",
+        ext: "tex",
+        projectId,
+      }),
+  },
+  "r.markdown.open": {
+    id: "r.markdown.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) =>
+      createDefaultProjectFile({
+        actionId: "r.markdown.open",
+        ext: "Rmd",
         projectId,
       }),
   },

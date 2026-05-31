@@ -60,6 +60,15 @@ export const FILES_ENTRIES: DocsEntry[] = [
     title: "Use the file explorer",
   },
   {
+    actions: [
+      {
+        description: "Create a Markdown file in the active project.",
+        executable: true,
+        id: "files.markdown.open",
+        label: "Create Markdown",
+        parameters: projectActionParameters(),
+      },
+    ],
     audiences: ["agents", "instructors", "researchers", "students", "teams"],
     body: MARKDOWN_BODY.trim(),
     category: "Files",
@@ -108,6 +117,15 @@ export const FILES_ENTRIES: DocsEntry[] = [
     title: "Use whiteboards",
   },
   {
+    actions: [
+      {
+        description: "Create a Python file in the active project.",
+        executable: true,
+        id: "python.open",
+        label: "Create Python file",
+        parameters: projectActionParameters(),
+      },
+    ],
     audiences: ["agents", "instructors", "researchers", "students", "teams"],
     body: PYTHON_BODY.trim(),
     category: "Python",
@@ -124,6 +142,15 @@ export const FILES_ENTRIES: DocsEntry[] = [
     title: "Use Python in CoCalc",
   },
   {
+    actions: [
+      {
+        description: "Create a LaTeX file in the active project.",
+        executable: true,
+        id: "latex.open",
+        label: "Create LaTeX file",
+        parameters: projectActionParameters(),
+      },
+    ],
     audiences: ["instructors", "researchers", "students", "teams"],
     body: LATEX_BODY.trim(),
     category: "LaTeX",
@@ -140,6 +167,15 @@ export const FILES_ENTRIES: DocsEntry[] = [
     title: "Build LaTeX documents",
   },
   {
+    actions: [
+      {
+        description: "Create an R Markdown file in the active project.",
+        executable: true,
+        id: "r.markdown.open",
+        label: "Create R Markdown",
+        parameters: projectActionParameters(),
+      },
+    ],
     audiences: ["instructors", "researchers", "students"],
     body: R_MARKDOWN_BODY.trim(),
     category: "R",

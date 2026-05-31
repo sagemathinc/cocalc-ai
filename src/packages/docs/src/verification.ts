@@ -423,6 +423,20 @@ const notebook = api.waitForText({ includes: "Jupyter", timeout_ms: ${UI_ASSERTI
 return { ok: url.ok === true && notebook.ok === true, url, notebook };`,
     };
   }
+  const createdFileExtensions: Partial<Record<DocsActionId, string>> = {
+    "files.markdown.open": "md",
+    "python.open": "py",
+    "latex.open": "tex",
+    "r.markdown.open": "Rmd",
+  };
+  const createdFileExtension = createdFileExtensions[actionId];
+  if (createdFileExtension) {
+    return {
+      description: `Project .${createdFileExtension} file opens.`,
+      code: `const url = api.waitForUrl({ regex: ${JSON.stringify(`/\\.${createdFileExtension}(?:[?#]|$)/`)}, timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true, url };`,
+    };
+  }
   if (actionId === "settings.runtime.rootfs") {
     return {
       description: "Runtime Image modal is visible.",
@@ -527,6 +541,10 @@ export function listDocsLiveVerificationScenarios({
           action.id === "terminal.open" ||
           action.id === "project.jupyter.create" ||
           action.id === "jupyter.open" ||
+          action.id === "files.markdown.open" ||
+          action.id === "python.open" ||
+          action.id === "latex.open" ||
+          action.id === "r.markdown.open" ||
           action.id === "file.timetravel.open",
         ...(Object.keys(parameters).length > 0 ? { parameters } : {}),
       };
