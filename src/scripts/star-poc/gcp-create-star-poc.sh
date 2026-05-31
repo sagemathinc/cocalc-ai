@@ -3,7 +3,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_ROOT="$(realpath "${SCRIPT_DIR}/../..")"
-REPO_ROOT="$(realpath "${SRC_ROOT}/..")"
 
 GCP_PROJECT="${GCP_PROJECT:-projecthosts}"
 ZONE="${ZONE:-us-south1-a}"
@@ -15,6 +14,7 @@ IMAGE_PROJECT="${IMAGE_PROJECT:-ubuntu-os-cloud}"
 KEY_FILE="${KEY_FILE:-/run/secrets/cocalc/rocket-service-account.json}"
 REMOTE_USER="${REMOTE_USER:-user}"
 VALIDATION_USER="${VALIDATION_USER:-root}"
+STAR_INSTALL_ROOT="${STAR_INSTALL_ROOT:-/opt/cocalc-star}"
 REUSE_EXISTING_VM="${REUSE_EXISTING_VM:-0}"
 DELETE_EXISTING_VM="${DELETE_EXISTING_VM:-0}"
 STAR_BUILD="${STAR_BUILD:-1}"
@@ -47,8 +47,8 @@ usage() {
   cat <<'EOF'
 Usage: gcp-create-star-poc.sh [env overrides]
 
-Creates a fresh GCP VM, copies the current source tree, and runs the Star POC
-bootstrap script. Defaults:
+Creates a fresh GCP VM, uploads a CoCalc Star source tarball, runs the Star
+installer, and validates the install with doctor/smoke/reset checks. Defaults:
 
   GCP_PROJECT=projecthosts
   ZONE=us-south1-a
@@ -57,6 +57,7 @@ bootstrap script. Defaults:
   BOOT_DISK_SIZE=300GB
   KEY_FILE=/run/secrets/cocalc/rocket-service-account.json
   VALIDATION_USER=root
+  STAR_INSTALL_ROOT=/opt/cocalc-star
 
 Useful overrides:
   REUSE_EXISTING_VM=1            skip instance creation if it exists
@@ -65,7 +66,7 @@ Useful overrides:
   STAR_BUILD_DEFAULT_ROOTFS=0   skip building the local Jupyter/LaTeX rootfs
   STAR_DEFAULT_ROOTFS_IMAGE=... local rootfs image tag to seed as default
   STAR_DEFAULT_ROOTFS_BASE_IMAGE=ubuntu:24.04
-  STAR_REMOVE_GCP_SUDOERS=0     keep the GCP sudo group after bootstrap
+  STAR_REMOVE_GCP_SUDOERS=0     keep the GCP sudo group after install
   VALIDATION_USER=user          validate through the VM user instead of root
                                 requires STAR_REMOVE_GCP_SUDOERS=0
   RUN_DOCTOR=0                  skip star-poc doctor validation
@@ -94,7 +95,7 @@ wait_for_doctor() {
 
   for attempt in $(seq 1 "$DOCTOR_RETRIES"); do
     log "running doctor (${label}, attempt ${attempt}/${DOCTOR_RETRIES})"
-    if validation_ssh "$remote_star_poc doctor"; then
+    if validation_ssh "$remote_star doctor"; then
       return
     fi
     sleep "$DOCTOR_RETRY_SECONDS"
@@ -176,11 +177,8 @@ if ! gcloud compute ssh "${REMOTE_USER}@${VM_NAME}" \
   die "SSH did not become ready for ${REMOTE_USER}@${VM_NAME}"
 fi
 
-log "creating tracked source archive"
-(
-  cd "$REPO_ROOT"
-  git ls-files -z src | tar --null -czf "$ARCHIVE" --files-from -
-)
+log "creating Star source archive"
+run "${SRC_ROOT}/scripts/star/build-star-tarball.sh" "$ARCHIVE"
 
 run gcloud compute scp "$ARCHIVE" "${REMOTE_USER}@${VM_NAME}:/tmp/cocalc-star-src.tar.gz" \
   --project "$GCP_PROJECT" \
@@ -190,17 +188,17 @@ run gcloud compute scp "$ARCHIVE" "${REMOTE_USER}@${VM_NAME}:/tmp/cocalc-star-sr
 run gcloud compute ssh "${REMOTE_USER}@${VM_NAME}" \
   --project "$GCP_PROJECT" \
   --zone "$ZONE" \
-  --command "sudo bash -lc 'rm -rf /home/${REMOTE_USER}/cocalc-ai && mkdir -p /home/${REMOTE_USER}/cocalc-ai && tar -xzf /tmp/cocalc-star-src.tar.gz -C /home/${REMOTE_USER}/cocalc-ai && chown -R ${REMOTE_USER}:${REMOTE_USER} /home/${REMOTE_USER}/cocalc-ai && STAR_BUILD=${STAR_BUILD} STAR_BUILD_DEFAULT_ROOTFS=${STAR_BUILD_DEFAULT_ROOTFS} STAR_DEFAULT_ROOTFS_IMAGE=${STAR_DEFAULT_ROOTFS_IMAGE} STAR_DEFAULT_ROOTFS_BASE_IMAGE=${STAR_DEFAULT_ROOTFS_BASE_IMAGE} STAR_REMOVE_GCP_SUDOERS=${STAR_REMOVE_GCP_SUDOERS} SRC_ROOT=/home/${REMOTE_USER}/cocalc-ai/src bash /home/${REMOTE_USER}/cocalc-ai/src/scripts/star-poc/bootstrap-star-poc.sh'" \
+  --command "sudo bash -lc 'rm -rf /tmp/cocalc-star-installer && mkdir -p /tmp/cocalc-star-installer && tar -xzf /tmp/cocalc-star-src.tar.gz -C /tmp/cocalc-star-installer src/scripts/star/install-from-tarball.sh && STAR_ASSUME_YES=1 STAR_USER=${REMOTE_USER} STAR_INSTALL_ROOT=${STAR_INSTALL_ROOT} STAR_BUILD=${STAR_BUILD} STAR_BUILD_DEFAULT_ROOTFS=${STAR_BUILD_DEFAULT_ROOTFS} STAR_DEFAULT_ROOTFS_IMAGE=${STAR_DEFAULT_ROOTFS_IMAGE} STAR_DEFAULT_ROOTFS_BASE_IMAGE=${STAR_DEFAULT_ROOTFS_BASE_IMAGE} STAR_REMOVE_GCP_SUDOERS=${STAR_REMOVE_GCP_SUDOERS} bash /tmp/cocalc-star-installer/src/scripts/star/install-from-tarball.sh /tmp/cocalc-star-src.tar.gz'" \
   --quiet
 
-remote_star_poc="/home/${REMOTE_USER}/cocalc-ai/src/scripts/star-poc/star-poc.sh"
+remote_star="${STAR_INSTALL_ROOT}/source/src/scripts/star/star.sh"
 
 if [ "$RUN_DOCTOR" = "1" ]; then
   wait_for_doctor "post-bootstrap"
 fi
 
 if [ "$RUN_SMOKE" = "1" ]; then
-  run validation_ssh "${remote_star_poc} smoke"
+  run validation_ssh "${remote_star} smoke"
 fi
 
 if [ "$RUN_RESET_TEST" = "1" ]; then
@@ -216,13 +214,13 @@ if [ "$RUN_RESET_TEST" = "1" ]; then
     wait_for_doctor "post-reset"
   fi
   if [ "$RUN_SMOKE" = "1" ]; then
-    run validation_ssh "${remote_star_poc} smoke"
+    run validation_ssh "${remote_star} smoke"
   fi
 fi
 
 log "VM ready: $VM_NAME"
 log "Port-forward: gcloud compute ssh ${REMOTE_USER}@${VM_NAME} --project ${GCP_PROJECT} --zone ${ZONE} -- -L 7001:127.0.0.1:9100"
-log "Status: gcloud compute ssh ${REMOTE_USER}@${VM_NAME} --project ${GCP_PROJECT} --zone ${ZONE} --command '/home/${REMOTE_USER}/cocalc-ai/src/scripts/star-poc/star-poc.sh status'"
-log "Doctor: gcloud compute ssh ${VALIDATION_USER}@${VM_NAME} --project ${GCP_PROJECT} --zone ${ZONE} --command '/home/${REMOTE_USER}/cocalc-ai/src/scripts/star-poc/star-poc.sh doctor'"
-log "Smoke test: gcloud compute ssh ${VALIDATION_USER}@${VM_NAME} --project ${GCP_PROJECT} --zone ${ZONE} --command '/home/${REMOTE_USER}/cocalc-ai/src/scripts/star-poc/star-poc.sh smoke'"
+log "Status: gcloud compute ssh ${REMOTE_USER}@${VM_NAME} --project ${GCP_PROJECT} --zone ${ZONE} --command '${remote_star} status'"
+log "Doctor: gcloud compute ssh ${VALIDATION_USER}@${VM_NAME} --project ${GCP_PROJECT} --zone ${ZONE} --command '${remote_star} doctor'"
+log "Smoke test: gcloud compute ssh ${VALIDATION_USER}@${VM_NAME} --project ${GCP_PROJECT} --zone ${ZONE} --command '${remote_star} smoke'"
 log "Bootstrap result: cat /var/lib/cocalc/star/bootstrap-result.json"
