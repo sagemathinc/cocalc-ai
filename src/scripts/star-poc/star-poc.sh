@@ -4,6 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STAR_API="${STAR_API:-http://127.0.0.1:9100}"
 STAR_ROOT="${STAR_ROOT:-/var/lib/cocalc/star}"
+STAR_USER="${STAR_USER:-user}"
+STAR_HOME="${STAR_HOME:-/home/${STAR_USER}}"
+SRC_ROOT="${SRC_ROOT:-${STAR_HOME}/cocalc-ai/src}"
+STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
 
 usage() {
   cat <<'EOF'
@@ -11,6 +15,7 @@ Usage: star-poc.sh <command>
 
 Commands:
   status                 Show service, API, project-host, and podman state.
+  doctor                 Check Star POC runtime invariants.
   smoke                  Run the Star POC smoke test.
   restart [all|hub|host] Restart Star services. Default: all.
   logs [hub|host] [n]    Show recent service logs. Default: hub, 200 lines.
@@ -36,6 +41,98 @@ service_name() {
 show_service() {
   local svc="$1"
   printf '%-26s %s\n' "$svc" "$(systemctl is-active "$svc" 2>/dev/null || true)"
+}
+
+doctor() {
+  local failures=0
+  local star_uid
+
+  star_uid="$(id -u "$STAR_USER" 2>/dev/null || true)"
+
+  ok() {
+    printf 'ok     %s\n' "$*"
+  }
+
+  fail() {
+    printf 'FAIL   %s\n' "$*" >&2
+    failures=$((failures + 1))
+  }
+
+  check() {
+    local desc="$1"
+    shift
+    if "$@" >/dev/null 2>&1; then
+      ok "$desc"
+    else
+      fail "$desc"
+    fi
+  }
+
+  check "hub service is active" systemctl is-active --quiet cocalc-star-hub
+  check "project-host service is active" systemctl is-active --quiet cocalc-star-project-host
+  check "customize endpoint is reachable" curl -fsS "${STAR_API}/customize"
+  [ -n "$star_uid" ] && ok "Star runtime user exists" || fail "Star runtime user exists"
+
+  if [ -f /etc/cocalc/star/hub.env ]; then
+    ok "hub env exists"
+    # shellcheck disable=SC1091
+    set -a
+    source /etc/cocalc/star/hub.env
+    set +a
+    [ "${COCALC_DB:-}" = "postgres" ] && ok "hub uses local postgres" || fail "hub uses local postgres"
+    check "postgres answers queries" psql -tAc "select 1"
+  else
+    fail "hub env exists"
+  fi
+
+  if [ -f /etc/cocalc/project-host.env ]; then
+    ok "project-host env exists"
+    if grep -q '^COCALC_PODMAN_RUNTIME_DIR=' /etc/cocalc/project-host.env; then
+      fail "project-host does not force COCALC_PODMAN_RUNTIME_DIR"
+    else
+      ok "project-host does not force COCALC_PODMAN_RUNTIME_DIR"
+    fi
+  else
+    fail "project-host env exists"
+  fi
+
+  check "user linger is enabled" bash -lc "loginctl show-user '$STAR_USER' -p Linger | grep -qx 'Linger=yes'"
+  check "user systemd manager is active" systemctl is-active --quiet "user@${star_uid}.service"
+  check "standard podman runtime dir exists" test -d "/run/user/${star_uid}"
+  check "btrfs data mount is active" mountpoint -q /mnt/cocalc
+  check "shared scratch mount is active" mountpoint -q /mnt/cocalc-scratch
+  check "runtime storage wrapper is installed" test -x /usr/local/sbin/cocalc-runtime-storage
+  check "project-host rootctl wrapper is installed" test -x /usr/local/sbin/cocalc-project-host-rootctl
+  check "project bundle exists" test -d "${SRC_ROOT}/packages/project/build"
+
+  local rootfs_cache_dir="${STAR_ROOT}/project-host/0/cache/images"
+  local rootfs_path
+  rootfs_path="$(find "$rootfs_cache_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | head -1 || true)"
+  if [ -n "$rootfs_path" ]; then
+    ok "cached rootfs exists"
+    check "cached rootfs has /home/user" test -d "${rootfs_path}/home/user"
+    check "cached rootfs has /scratch" test -d "${rootfs_path}/scratch"
+    check "cached rootfs has project secrets mountpoint" test -d "${rootfs_path}/run/secrets/cocalc"
+    check "rootless podman can run cached rootfs" sudo -Hiu "$STAR_USER" env XDG_RUNTIME_DIR="/run/user/${star_uid}" podman run --rm --runtime /usr/bin/crun --rootfs "$rootfs_path" /bin/true
+  else
+    local image_name="$STAR_DEFAULT_ROOTFS_IMAGE"
+    case "$image_name" in
+      containers-storage:*) image_name="${image_name#containers-storage:}" ;;
+    esac
+    if podman image exists "$image_name" >/dev/null 2>&1; then
+      ok "default rootfs image exists before cache extraction"
+      check "rootless podman can run default rootfs image" sudo -Hiu "$STAR_USER" env XDG_RUNTIME_DIR="/run/user/${star_uid}" podman run --rm --runtime /usr/bin/crun "$image_name" /bin/true
+    else
+      fail "cached rootfs or default rootfs image exists"
+    fi
+  fi
+
+  if [ "$failures" -eq 0 ]; then
+    printf 'doctor: ok\n'
+  else
+    printf 'doctor: %s failure(s)\n' "$failures" >&2
+    return 1
+  fi
 }
 
 status() {
@@ -88,7 +185,15 @@ status() {
 }
 
 smoke() {
-  exec "${SCRIPT_DIR}/smoke-star-poc.sh"
+  sudo install -d -o "$STAR_USER" -g "$STAR_USER" -m 700 "${STAR_ROOT}/smoke"
+  exec sudo -Hiu "$STAR_USER" env \
+    STAR_API="$STAR_API" \
+    STAR_ROOT="$STAR_ROOT" \
+    SRC_ROOT="$SRC_ROOT" \
+    STAR_SMOKE_STATE="${STAR_SMOKE_STATE:-${STAR_ROOT}/smoke}" \
+    STAR_BOOTSTRAP_RESULT="${STAR_BOOTSTRAP_RESULT:-${STAR_ROOT}/bootstrap-result.json}" \
+    STAR_SMOKE_ROOTFS_IMAGE="${STAR_SMOKE_ROOTFS_IMAGE:-$STAR_DEFAULT_ROOTFS_IMAGE}" \
+    "${SCRIPT_DIR}/smoke-star-poc.sh"
 }
 
 restart() {
@@ -132,6 +237,9 @@ bootstrap_link() {
 case "${1:-}" in
   status)
     status
+    ;;
+  doctor)
+    doctor
     ;;
   smoke)
     smoke

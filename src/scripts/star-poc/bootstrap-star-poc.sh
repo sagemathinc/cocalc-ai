@@ -208,6 +208,13 @@ EOF
   as_star_user "podman image exists '$build_image' >/dev/null 2>&1 && exit 0; podman build --pull=always -t '$build_image' -f '$containerfile' '$STAR_ROOT'"
 }
 
+ensure_default_rootfs_cache() {
+  if [ -z "${STAR_DEFAULT_ROOTFS_IMAGE:-}" ]; then
+    return
+  fi
+  as_star_user "set -a && source /etc/cocalc/project-host.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' node scripts/star-poc/ensure-rootfs-cache.mjs"
+}
+
 write_env_files() {
   local site_master_key="${STAR_DATA}/secrets/site-master-key"
   if [ ! -f "$site_master_key" ]; then
@@ -272,7 +279,7 @@ EOF
 }
 
 seed_database() {
-  as_star_user "set -o pipefail && set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_BASE_URL='$STAR_BASE_URL' STAR_MASTER_CONAT_TOKEN_PATH='$STAR_PROJECT_HOST_DATA/secrets/master-conat-token' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' node scripts/star-poc/seed-star-poc.mjs | tee '$STAR_ROOT/bootstrap-result.json'"
+  as_star_user "set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_BASE_URL='$STAR_BASE_URL' STAR_MASTER_CONAT_TOKEN_PATH='$STAR_PROJECT_HOST_DATA/secrets/master-conat-token' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' STAR_BOOTSTRAP_RESULT_PATH='$STAR_ROOT/bootstrap-result.json' node scripts/star-poc/seed-star-poc.mjs"
 }
 
 install_systemd() {
@@ -370,6 +377,7 @@ install_wrappers
 configure_users_and_dirs
 build_default_rootfs_image
 write_env_files
+ensure_default_rootfs_cache
 seed_database
 install_systemd
 configure_sudoers
