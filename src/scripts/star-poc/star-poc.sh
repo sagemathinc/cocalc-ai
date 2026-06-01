@@ -70,6 +70,36 @@ show_service() {
   printf '%-26s %s\n' "$svc" "$(systemctl is-active "$svc" 2>/dev/null || true)"
 }
 
+wait_for_url() {
+  local desc="$1"
+  local url="$2"
+  local attempts="${3:-60}"
+  for _ in $(seq 1 "$attempts"); do
+    if curl -fsS "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  log "timed out waiting for ${desc}: ${url}"
+  return 1
+}
+
+wait_for_runtime_health() {
+  wait_for_url "hub customize endpoint" "${STAR_API}/customize"
+  if [ -f /etc/cocalc/project-host.env ]; then
+    # shellcheck disable=SC1091
+    set -a
+    source /etc/cocalc/project-host.env
+    set +a
+    local conat_health_host="${COCALC_PROJECT_HOST_CONAT_ROUTER_HOST:-127.0.0.1}"
+    if [ "$conat_health_host" = "0.0.0.0" ] || [ "$conat_health_host" = "::" ]; then
+      conat_health_host="127.0.0.1"
+    fi
+    wait_for_url "project-host conat router" "http://${conat_health_host}:${COCALC_PROJECT_HOST_CONAT_ROUTER_PORT:-}/healthz"
+    wait_for_url "project-host conat persist" "http://${COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_HOST:-127.0.0.1}:${COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT:-}/healthz"
+  fi
+}
+
 doctor() {
   local failures=0
   local star_uid
@@ -326,6 +356,7 @@ rollback_release() {
   replace_symlink "$release_dir/source" "$STAR_SOURCE_LINK"
   replace_symlink "$release_dir" "${STAR_INSTALL_ROOT}/current"
   sudo systemctl restart cocalc-star-hub cocalc-star-project-host
+  wait_for_runtime_health
   printf 'rolled back to %s\n' "$release_id"
 }
 
