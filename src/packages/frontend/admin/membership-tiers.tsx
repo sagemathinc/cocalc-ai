@@ -675,6 +675,8 @@ function useMembershipTiers() {
       ...TIER_TEMPLATES[template],
       id: trimmedId,
       label: trimmedLabel,
+      store_visible: false,
+      course_store_visible: false,
       disabled: false,
     });
     const values = tierToFormValues(tier);
