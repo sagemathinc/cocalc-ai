@@ -66,13 +66,20 @@ export type DocsActionId =
   | "docs.actions.open"
   | "docs.automation.open"
   | "projects.list.open"
+  | "projects.create.open"
   | "project.files.open"
+  | "files.explorer.open"
+  | "files.git.open"
   | "terminal.open"
   | "jupyter.open"
   | "files.markdown.open"
+  | "files.slides.open"
+  | "files.whiteboard.open"
   | "python.open"
   | "latex.open"
-  | "r.markdown.open";
+  | "r.markdown.open"
+  | "projects.tasks.open"
+  | "collaboration.chat.open";
 
 export interface DocsAction {
   description: string;

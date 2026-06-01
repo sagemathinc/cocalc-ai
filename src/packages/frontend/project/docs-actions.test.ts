@@ -350,6 +350,13 @@ describe("project docs actions", () => {
       tab: "projects",
     });
 
+    await revealDocsAction({
+      actionId: "projects.create.open",
+      projectId: "project-1",
+    });
+
+    expect(mockSetUrlWithSearch).toHaveBeenLastCalledWith("/projects", "");
+
     const files = await revealDocsAction({
       actionId: "project.files.open",
       parameters: { projectId: "project-2" },
@@ -371,6 +378,22 @@ describe("project docs actions", () => {
       project_id: "project-2",
       tab: "files",
     });
+
+    await revealDocsAction({
+      actionId: "files.explorer.open",
+      parameters: { projectId: "project-2" },
+      projectId: "project-1",
+    });
+    await revealDocsAction({
+      actionId: "files.git.open",
+      parameters: { projectId: "project-2" },
+      projectId: "project-1",
+    });
+
+    expect(mockSetUrlWithSearch).toHaveBeenLastCalledWith(
+      "/projects/project-2/files",
+      "",
+    );
   });
 
   it("requires sign-in for account docs actions", () => {
@@ -587,9 +610,13 @@ describe("project docs actions", () => {
   it("creates common project file types", async () => {
     const cases = [
       ["files.markdown.open", "md", "notes"],
+      ["files.slides.open", "slides", "slides"],
+      ["files.whiteboard.open", "board", "whiteboard"],
       ["python.open", "py", "script"],
       ["latex.open", "tex", "paper"],
       ["r.markdown.open", "Rmd", "report"],
+      ["projects.tasks.open", "tasks", "tasks"],
+      ["collaboration.chat.open", "chat", "chat"],
     ] as const;
 
     for (const [actionId, ext, name] of cases) {

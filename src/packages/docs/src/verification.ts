@@ -384,14 +384,21 @@ return { ok: url.ok === true, url };`,
       };
     }
   }
-  if (actionId === "projects.list.open") {
+  if (
+    actionId === "projects.list.open" ||
+    actionId === "projects.create.open"
+  ) {
     return {
       description: "Projects page is visible.",
       code: `const url = api.waitForUrl({ includes: "/projects", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
 return { ok: url.ok === true, url };`,
     };
   }
-  if (actionId === "project.files.open") {
+  if (
+    actionId === "project.files.open" ||
+    actionId === "files.explorer.open" ||
+    actionId === "files.git.open"
+  ) {
     return {
       description: "Project files route is visible.",
       code: `const url = api.waitForUrl({ includes: "/files", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
@@ -425,9 +432,13 @@ return { ok: url.ok === true && notebook.ok === true, url, notebook };`,
   }
   const createdFileExtensions: Partial<Record<DocsActionId, string>> = {
     "files.markdown.open": "md",
+    "files.slides.open": "slides",
+    "files.whiteboard.open": "board",
     "python.open": "py",
     "latex.open": "tex",
     "r.markdown.open": "Rmd",
+    "projects.tasks.open": "tasks",
+    "collaboration.chat.open": "chat",
   };
   const createdFileExtension = createdFileExtensions[actionId];
   if (createdFileExtension) {

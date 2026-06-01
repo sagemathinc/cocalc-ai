@@ -45,6 +45,15 @@ export const FILES_ENTRIES: DocsEntry[] = [
     title: "Work with project files",
   },
   {
+    actions: [
+      {
+        description: "Open the active project's Files tab.",
+        executable: true,
+        id: "files.explorer.open",
+        label: "Open file explorer",
+        parameters: projectActionParameters(),
+      },
+    ],
     audiences: ["agents", "instructors", "researchers", "students", "teams"],
     body: FILE_EXPLORER_BODY.trim(),
     category: "Files",
@@ -85,6 +94,15 @@ export const FILES_ENTRIES: DocsEntry[] = [
     title: "Use Markdown",
   },
   {
+    actions: [
+      {
+        description: "Create a slides file in the active project.",
+        executable: true,
+        id: "files.slides.open",
+        label: "Create slides",
+        parameters: projectActionParameters(),
+      },
+    ],
     audiences: ["instructors", "researchers", "students", "teams"],
     body: SLIDES_BODY.trim(),
     category: "Files",
@@ -101,6 +119,15 @@ export const FILES_ENTRIES: DocsEntry[] = [
     title: "Create slides",
   },
   {
+    actions: [
+      {
+        description: "Create a whiteboard file in the active project.",
+        executable: true,
+        id: "files.whiteboard.open",
+        label: "Create whiteboard",
+        parameters: projectActionParameters(),
+      },
+    ],
     audiences: ["instructors", "researchers", "students", "teams"],
     body: WHITEBOARD_BODY.trim(),
     category: "Files",
@@ -216,6 +243,15 @@ export const FILES_ENTRIES: DocsEntry[] = [
     title: "Use TimeTravel",
   },
   {
+    actions: [
+      {
+        description: "Open the active project's Files tab.",
+        executable: true,
+        id: "files.git.open",
+        label: "Open project files",
+        parameters: projectActionParameters(),
+      },
+    ],
     audiences: ["agents", "researchers", "students", "teams"],
     body: GIT_BODY.trim(),
     category: "Files",

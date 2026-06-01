@@ -64,8 +64,8 @@ slice:
   lifecycle, storage, shared `/scratch`, and logs.
 - Static verification is green as of this snapshot:
   - 61 entries
-  - 46 actions
-  - 46 live scenarios
+  - 53 actions
+  - 53 live scenarios
   - 0 legacy `doc.cocalc.com` links
 
 The remaining work is production hardening: broader docs coverage, more
@@ -77,8 +77,8 @@ settings surfaces that mount asynchronously.
 Current docs gap report:
 
 - Categories without a chapter: 0.
-- Pages without actions: 20.
-- Pages without asserted live verification: 20.
+- Pages without actions: 13.
+- Pages without asserted live verification: 13.
 - Pages with stale `lastReviewed`: 0.
 - Legacy `doc.cocalc.com` links: 0.
 
@@ -245,7 +245,7 @@ Use plain Markdown plus frontmatter. Avoid MDX initially.
 
 Example:
 
-```md
+~~~md
 ---
 id: projects.project-secrets
 slug: /docs/projects/project-secrets
@@ -282,11 +282,12 @@ should not be committed into files.
 4. Open Secrets.
 5. Add a secret or create a project SSH key.
 ```
+
 ```action
 settings.environment.secrets
 ```
-```
 
+~~~
 Supported custom fenced blocks in v1:
 
 - `steps`
