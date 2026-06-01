@@ -117,6 +117,7 @@ export interface DocsEntry {
   id: string;
   image?: DocsEntryImage;
   lastReviewed: string;
+  noActionReason?: string;
   slug: string;
   status: DocsEntryStatus;
   summary: string;

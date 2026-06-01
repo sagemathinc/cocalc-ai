@@ -18,6 +18,8 @@ export const AI_ENTRIES: DocsEntry[] = [
       "AI access connected securely to a CoCalc project",
     ),
     lastReviewed: "2026-05-24",
+    noActionReason:
+      "Credential setup depends on whether the user is configuring ChatGPT, an OpenAI API key, or project code.",
     slug: "ai/connect-credentials",
     status: "ready",
     summary: "Connect ChatGPT or OpenAI API access for Codex and project code.",

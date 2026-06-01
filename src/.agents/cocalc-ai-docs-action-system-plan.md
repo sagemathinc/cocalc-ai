@@ -77,8 +77,9 @@ settings surfaces that mount asynchronously.
 Current docs gap report:
 
 - Categories without a chapter: 0.
-- Pages without actions: 13.
-- Pages without asserted live verification: 13.
+- Pages without actions: 0.
+- Pages without asserted live verification: 0.
+- Intentionally actionless pages: 13.
 - Pages with stale `lastReviewed`: 0.
 - Legacy `doc.cocalc.com` links: 0.
 
