@@ -781,7 +781,7 @@ export function MembershipTiers() {
       title,
       subtitle,
       summary,
-      defaultCollapsed = false,
+      defaultCollapsed = true,
       children,
     }: {
       title: string;
