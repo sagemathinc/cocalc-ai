@@ -195,8 +195,7 @@ export function analyzeMembershipTierPricingRisk(
     egressMonthlyUsd +
     projectStorageMonthlyUsd +
     blobStorageMonthlyUsd +
-    rootfsStorageMonthlyUsd +
-    dedicatedHostCreditGuardrailMonthlyUsd;
+    rootfsStorageMonthlyUsd;
 
   const cpuHoursMonthlyBudget = monthlyFromWeekly(input.cpu7dHours);
   const averageCpuEntitlement = cpuHoursMonthlyBudget / HOURS_PER_MONTH;

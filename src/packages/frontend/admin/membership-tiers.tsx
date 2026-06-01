@@ -61,6 +61,8 @@ const BYTES_PER_GB = 1000 * 1000 * 1000;
 const SECONDS_PER_CPU_HOUR = 3600;
 const MEMBERSHIP_TIER_PRICING_ASSUMPTIONS_STORAGE_KEY =
   "cocalc:admin:membership-tier-pricing-assumptions";
+const MEMBERSHIP_TIER_EXPECTED_USAGE_STORAGE_KEY =
+  "cocalc:admin:membership-tier-expected-usage";
 const TEMPLATE_KEYS = [
   "free",
   "basic",
@@ -73,6 +75,15 @@ const TEMPLATE_KEYS = [
 ] as const;
 
 type TemplateKey = (typeof TEMPLATE_KEYS)[number];
+
+type ExpectedUsageEstimateKey =
+  | "aiUnits7d"
+  | "egress7dGb"
+  | "projectStorageHardCapGb"
+  | "blobStorageGb"
+  | "rootfsStorageGb";
+
+type ExpectedUsageEstimate = Partial<Record<ExpectedUsageEstimateKey, number>>;
 
 interface Tier {
   key?: string;
@@ -243,6 +254,29 @@ function storePricingAssumptions(
   window.localStorage.setItem(
     MEMBERSHIP_TIER_PRICING_ASSUMPTIONS_STORAGE_KEY,
     JSON.stringify(assumptions),
+  );
+}
+
+function loadExpectedUsageEstimates(): Record<string, ExpectedUsageEstimate> {
+  if (typeof window === "undefined") return {};
+  try {
+    const stored = window.localStorage.getItem(
+      MEMBERSHIP_TIER_EXPECTED_USAGE_STORAGE_KEY,
+    );
+    const parsed = stored ? JSON.parse(stored) : {};
+    return parsed != null && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function storeExpectedUsageEstimates(
+  estimates: Record<string, ExpectedUsageEstimate>,
+) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(
+    MEMBERSHIP_TIER_EXPECTED_USAGE_STORAGE_KEY,
+    JSON.stringify(estimates),
   );
 }
 
@@ -816,6 +850,12 @@ export function MembershipTiers() {
     React.useState<MembershipTierPricingAssumptions>(() =>
       loadPricingAssumptions(),
     );
+  const [expectedUsageEstimates, setExpectedUsageEstimates] = React.useState<
+    Record<string, ExpectedUsageEstimate>
+  >(() => loadExpectedUsageEstimates());
+
+  const editingTierId = editing?.id ?? "__new__";
+  const expectedUsageEstimate = expectedUsageEstimates[editingTierId] ?? {};
 
   function updatePricingAssumption(
     key: keyof MembershipTierPricingAssumptions,
@@ -834,6 +874,32 @@ export function MembershipTiers() {
   function resetPricingAssumptions() {
     setPricingAssumptions(DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS);
     storePricingAssumptions(DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS);
+  }
+
+  function updateExpectedUsageEstimate(
+    key: ExpectedUsageEstimateKey,
+    value: number | null,
+  ) {
+    setExpectedUsageEstimates((prev) => {
+      const estimate = { ...(prev[editingTierId] ?? {}) };
+      if (typeof value === "number" && Number.isFinite(value)) {
+        estimate[key] = Math.max(0, value);
+      } else {
+        delete estimate[key];
+      }
+      const next = { ...prev, [editingTierId]: estimate };
+      storeExpectedUsageEstimates(next);
+      return next;
+    });
+  }
+
+  function resetExpectedUsageEstimate() {
+    setExpectedUsageEstimates((prev) => {
+      const next = { ...prev };
+      delete next[editingTierId];
+      storeExpectedUsageEstimates(next);
+      return next;
+    });
   }
 
   function render_edit() {
@@ -1019,6 +1085,32 @@ export function MembershipTiers() {
           normalizedOptionalNumber(usageLimits.max_sponsored_running_projects),
       };
     };
+    const expectedPricingInput = (
+      maxInput: MembershipTierPricingInput,
+      estimate: ExpectedUsageEstimate,
+    ): MembershipTierPricingInput => {
+      const bounded = (key: ExpectedUsageEstimateKey): number | undefined => {
+        const value = normalizedOptionalNumber(estimate[key]);
+        if (value == null) return undefined;
+        const max = normalizedOptionalNumber(maxInput[key]);
+        return max == null ? value : Math.min(value, max);
+      };
+      return {
+        priceMonthlyUsd: maxInput.priceMonthlyUsd,
+        priceYearlyUsd: maxInput.priceYearlyUsd,
+        aiUnits7d: bounded("aiUnits7d"),
+        egress7dGb: bounded("egress7dGb"),
+        projectStorageHardCapGb: bounded("projectStorageHardCapGb"),
+        blobStorageGb: bounded("blobStorageGb"),
+        rootfsStorageGb: bounded("rootfsStorageGb"),
+      };
+    };
+    const maxLabel = (value: unknown, suffix = "") => {
+      const numberValue = normalizedOptionalNumber(value);
+      return numberValue == null
+        ? "No configured maximum."
+        : `Max ${formattedNumber(numberValue, 2)}${suffix ? ` ${suffix}` : ""}`;
+    };
     const riskMetric = (
       label: string,
       value: React.ReactNode,
@@ -1071,6 +1163,38 @@ export function MembershipTiers() {
         </Text>
       </div>
     );
+    const expectedUsageInput = (
+      key: ExpectedUsageEstimateKey,
+      label: string,
+      maxValue: unknown,
+      opts: { step?: number; addonAfter?: string; extra?: string } = {},
+    ) => {
+      const max = normalizedOptionalNumber(maxValue);
+      const rawValue = expectedUsageEstimate[key];
+      const value =
+        max != null && rawValue != null ? Math.min(rawValue, max) : rawValue;
+      return (
+        <Form.Item
+          label={label}
+          extra={fieldHelp(opts.extra ?? maxLabel(max, opts.addonAfter ?? ""))}
+        >
+          <InputNumber
+            min={0}
+            max={max}
+            step={opts.step ?? 0.1}
+            addonAfter={opts.addonAfter}
+            style={compactInputStyle}
+            value={value}
+            onChange={(value) =>
+              updateExpectedUsageEstimate(
+                key,
+                typeof value === "number" ? value : null,
+              )
+            }
+          />
+        </Form.Item>
+      );
+    };
     const assumptionInput = (
       key: keyof MembershipTierPricingAssumptions,
       label: string,
@@ -1827,8 +1951,16 @@ export function MembershipTiers() {
             children: (
               <Form.Item noStyle shouldUpdate>
                 {({ getFieldValue }) => {
+                  const maxPricingInput = pricingInputFromForm(getFieldValue);
                   const analysis = analyzeMembershipTierPricingRisk(
-                    pricingInputFromForm(getFieldValue),
+                    maxPricingInput,
+                    pricingAssumptions,
+                  );
+                  const expectedAnalysis = analyzeMembershipTierPricingRisk(
+                    expectedPricingInput(
+                      maxPricingInput,
+                      expectedUsageEstimate,
+                    ),
                     pricingAssumptions,
                   );
                   return (
@@ -1980,6 +2112,115 @@ export function MembershipTiers() {
                               { total: true },
                             )}
                           </div>
+                        ),
+                      })}
+                      {fieldGroup({
+                        title: "Expected Monthly Hard Cost",
+                        note: "Enter realistic expected usage for this tier. Values are advisory, saved in this browser, and bounded by the configured tier maxima where a maximum exists.",
+                        children: (
+                          <>
+                            <Row gutter={16}>
+                              <Col {...fieldCol}>
+                                {expectedUsageInput(
+                                  "aiUnits7d",
+                                  "Expected AI units / 7d",
+                                  maxPricingInput.aiUnits7d,
+                                  {
+                                    step: 1,
+                                    addonAfter: "units",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {expectedUsageInput(
+                                  "egress7dGb",
+                                  "Expected egress / 7d",
+                                  maxPricingInput.egress7dGb,
+                                  {
+                                    step: 0.1,
+                                    addonAfter: "GB",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {expectedUsageInput(
+                                  "projectStorageHardCapGb",
+                                  "Expected project file storage",
+                                  maxPricingInput.projectStorageHardCapGb,
+                                  {
+                                    step: 0.1,
+                                    addonAfter: "GB",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {expectedUsageInput(
+                                  "blobStorageGb",
+                                  "Expected R2/blob storage",
+                                  maxPricingInput.blobStorageGb,
+                                  {
+                                    step: 0.1,
+                                    addonAfter: "GB",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {expectedUsageInput(
+                                  "rootfsStorageGb",
+                                  "Expected rootfs storage",
+                                  maxPricingInput.rootfsStorageGb,
+                                  {
+                                    step: 0.1,
+                                    addonAfter: "GB",
+                                  },
+                                )}
+                              </Col>
+                            </Row>
+                            <div
+                              style={{
+                                maxWidth: "760px",
+                                border: `1px solid ${COLORS.GRAY_LL}`,
+                                borderRadius: "10px",
+                                padding: "12px 18px",
+                                background: "rgba(255,255,255,0.82)",
+                              }}
+                            >
+                              {hardCostLine(
+                                "AI expected usage",
+                                expectedAnalysis.hardCosts.aiMonthlyUsd,
+                              )}
+                              {hardCostLine(
+                                "Network egress expected usage",
+                                expectedAnalysis.hardCosts.egressMonthlyUsd,
+                              )}
+                              {hardCostLine(
+                                "Project file storage expected usage",
+                                expectedAnalysis.hardCosts
+                                  .projectStorageMonthlyUsd,
+                              )}
+                              {hardCostLine(
+                                "R2/blob storage expected usage",
+                                expectedAnalysis.hardCosts
+                                  .blobStorageMonthlyUsd,
+                              )}
+                              {hardCostLine(
+                                "Rootfs storage expected usage",
+                                expectedAnalysis.hardCosts
+                                  .rootfsStorageMonthlyUsd,
+                              )}
+                              {hardCostLine(
+                                "Total expected hard cost",
+                                expectedAnalysis.hardCosts.totalMonthlyUsd,
+                                { total: true },
+                              )}
+                            </div>
+                            <Button
+                              style={{ marginTop: "12px" }}
+                              onClick={resetExpectedUsageEstimate}
+                            >
+                              Clear expected usage estimates
+                            </Button>
+                          </>
                         ),
                       })}
                       {fieldGroup({

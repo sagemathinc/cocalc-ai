@@ -44,7 +44,7 @@ describe("membership tier pricing risk", () => {
     expect(analysis.hardCosts.prepaidHostGuardrailMonthlyUsd).toBeCloseTo(
       30000 / 7,
     );
-    expect(analysis.hardCosts.totalMonthlyUsd).toBeCloseTo(75.5);
+    expect(analysis.hardCosts.totalMonthlyUsd).toBeCloseTo(45.5);
     expect(analysis.capacity.cpuHoursMonthlyBudget).toBeCloseTo(720);
     expect(analysis.capacity.averageCpuEntitlement).toBeCloseTo(1);
     expect(analysis.capacity.modeledActiveProjects).toBeCloseTo(1);
