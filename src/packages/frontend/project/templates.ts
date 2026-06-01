@@ -38,35 +38,11 @@ Sum of \Sexpr{paste(x, collapse="+")} is \Sexpr{sum(x)}.
 \end{document}`,
   tex: String.raw`\documentclass{article}
 
-% set font encoding for PDFLaTeX, XeLaTeX, or LuaTeX
-\usepackage{ifxetex,ifluatex}
-\if\ifxetex T\else\ifluatex T\else F\fi\fi T%
-  \usepackage{fontspec}
-\else
-  \usepackage[T1]{fontenc}
-  \usepackage[utf8]{inputenc}
-  \usepackage{lmodern}
-\fi
-
-\usepackage{hyperref}
-\usepackage{amsmath}
-
 \title{Title of Document}
 \author{Name of Author}
 
-% Enable SageTeX to run SageMath code right inside this LaTeX file.
-% http://doc.sagemath.org/html/en/tutorial/sagetex.html
-% \usepackage{sagetex}
-
-% Enable PythonTeX to run Python – https://ctan.org/pkg/pythontex
-% \usepackage{pythontex}
-
 \begin{document}
 \maketitle
-
-
-
-
 
 \end{document} 
   

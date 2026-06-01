@@ -86,6 +86,8 @@ export type BrowserInstallHelloOptions = BrowserInstallHelloWorldOptions;
 
 export type BrowserDocsActionResult = {
   action_id: string;
+  drawer_tab?: string;
+  host_id?: string;
   opened: true;
   path?: string;
   panel?: string;
@@ -93,10 +95,13 @@ export type BrowserDocsActionResult = {
   tab?: string;
 };
 
+export type BrowserDocsActionParameters = Record<string, string>;
+
 export type BrowserExecApi = {
   projectId: string;
   docsAction: (
     id: string,
+    opts?: { parameters?: BrowserDocsActionParameters },
   ) => BrowserDocsActionResult | Promise<BrowserDocsActionResult>;
   listOpenFiles: () => BrowserOpenFileInfo[];
   listOpenFilesAll: () => BrowserOpenFileInfo[];

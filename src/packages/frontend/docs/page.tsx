@@ -113,13 +113,17 @@ export function DocsPage({ print, slug }: { print?: boolean; slug?: string }) {
     parameters?: DocsBrowserActionParameters,
   ): Promise<void> {
     try {
-      await revealDocsAction({
+      const result = await revealDocsAction({
         actionId: action.id,
         includeAdmin: isAdmin,
         parameters,
         projectId: "",
       });
-      await messageApi.success(action.label);
+      if (result.warning) {
+        await messageApi.warning(result.warning, 6);
+      } else {
+        await messageApi.success(action.label);
+      }
     } catch (err) {
       await messageApi.error(`${err}`);
     }

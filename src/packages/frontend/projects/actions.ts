@@ -2330,7 +2330,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     });
 
     const title = store.get_title(project_id);
-    const link2proj = `https://${window.location.hostname}${getProjectUrlPath(project_id, undefined)}/`;
+    const link2proj = `${window.location.origin}${getProjectUrlPath(project_id, undefined)}/`;
     // convert body from markdown to html, which is what the backend expects
     const email = body != null ? markdown_to_html(body) : undefined;
 
@@ -2381,7 +2381,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       const name = this.redux.getStore("account").get_fullname();
       body = `Please collaborate with me using CoCalc on '${title}'.\n\n\n--\n${name}`;
     }
-    const link2proj = `https://${window.location.hostname}${getProjectUrlPath(project_id, undefined)}/`;
+    const link2proj = `${window.location.origin}${getProjectUrlPath(project_id, undefined)}/`;
     const email = markdown_to_html(body);
 
     try {

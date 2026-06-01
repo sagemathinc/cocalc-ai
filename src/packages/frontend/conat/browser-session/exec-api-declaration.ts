@@ -179,8 +179,13 @@ export type BrowserInstallHelloWorldOptions = {
 
 export type BrowserExecApi = {
   projectId: string;
-  docsAction: (id: string) => Promise<{
+  docsAction: (
+    id: string,
+    opts?: { parameters?: Record<string, string> },
+  ) => Promise<{
     action_id: string;
+    drawer_tab?: string;
+    host_id?: string;
     opened: true;
     path?: string;
     panel?: string;

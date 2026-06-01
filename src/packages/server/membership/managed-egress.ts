@@ -5,6 +5,7 @@
 
 import getPool from "@cocalc/database/pool";
 import type {
+  AbuseReviewAnnotation,
   ManagedEgressAccountSummary,
   ManagedEgressAdminHistory,
   ManagedEgressAdminOverview,
@@ -15,6 +16,7 @@ import type {
   ManagedEgressHistoryPoint,
   ManagedEgressProjectSummary,
 } from "@cocalc/conat/hub/api/purchases";
+import { listActiveAbuseReviewAnnotations } from "./abuse-review-annotations";
 import { getProjectUsageAccountId } from "./project-usage";
 
 export {
@@ -467,14 +469,28 @@ export async function getManagedEgressAdminOverview(opts: {
       project_title: row.project_title ?? null,
       bytes: Math.max(0, Number(row.bytes) || 0),
     }));
+  const activeAnnotations = await listActiveAbuseReviewAnnotations({
+    account_ids: [
+      ...top_accounts.map((account) => account.account_id),
+      ...top_projects.map((project) => project.account_id),
+    ],
+    project_ids: top_projects.map((project) => project.project_id),
+    categories: ["egress", "general"],
+  });
 
   return {
     start: query.startDate.toISOString(),
     end: query.endDate.toISOString(),
     total_bytes,
     categories_bytes,
-    top_accounts,
-    top_projects,
+    top_accounts: attachActiveAnnotationsToEgressAccounts(
+      top_accounts,
+      activeAnnotations,
+    ),
+    top_projects: attachActiveAnnotationsToEgressProjects(
+      top_projects,
+      activeAnnotations,
+    ),
     recent_events: mapManagedEgressEventRows(recentEventsResult.rows),
   };
 }
@@ -655,6 +671,14 @@ export async function getManagedEgressAdminHistory(opts: {
       project_title: row.project_title ?? null,
       bytes: Math.max(0, Number(row.bytes) || 0),
     }));
+  const activeAnnotations = await listActiveAbuseReviewAnnotations({
+    account_ids: [
+      ...top_accounts.map((account) => account.account_id),
+      ...top_projects.map((project) => project.account_id),
+    ],
+    project_ids: top_projects.map((project) => project.project_id),
+    categories: ["egress", "general"],
+  });
 
   return {
     start: query.startDate.toISOString(),
@@ -663,8 +687,14 @@ export async function getManagedEgressAdminHistory(opts: {
     total_bytes,
     categories_bytes,
     points: [...bucketData.values()],
-    top_accounts,
-    top_projects,
+    top_accounts: attachActiveAnnotationsToEgressAccounts(
+      top_accounts,
+      activeAnnotations,
+    ),
+    top_projects: attachActiveAnnotationsToEgressProjects(
+      top_projects,
+      activeAnnotations,
+    ),
     recent_events: mapManagedEgressEventRows(recentEventsResult.rows),
   };
 }
@@ -838,6 +868,49 @@ function mapManagedEgressEventRows(
     bytes: Math.max(0, Number(row.bytes) || 0),
     occurred_at: new Date(row.occurred_at).toISOString(),
     metadata: row.metadata ?? null,
+  }));
+}
+
+function activeAnnotationsFor({
+  annotations,
+  account_id,
+  project_id,
+}: {
+  annotations: AbuseReviewAnnotation[];
+  account_id: string;
+  project_id?: string | null;
+}): AbuseReviewAnnotation[] {
+  return annotations.filter(
+    (annotation) =>
+      annotation.account_id === account_id &&
+      (annotation.project_id == null || annotation.project_id === project_id),
+  );
+}
+
+function attachActiveAnnotationsToEgressAccounts(
+  accounts: ManagedEgressAccountSummary[],
+  annotations: AbuseReviewAnnotation[],
+): ManagedEgressAccountSummary[] {
+  return accounts.map((account) => ({
+    ...account,
+    active_abuse_annotations: activeAnnotationsFor({
+      annotations,
+      account_id: account.account_id,
+    }),
+  }));
+}
+
+function attachActiveAnnotationsToEgressProjects(
+  projects: ManagedEgressAdminProjectSummary[],
+  annotations: AbuseReviewAnnotation[],
+): ManagedEgressAdminProjectSummary[] {
+  return projects.map((project) => ({
+    ...project,
+    active_abuse_annotations: activeAnnotationsFor({
+      annotations,
+      account_id: project.account_id,
+      project_id: project.project_id,
+    }),
   }));
 }
 

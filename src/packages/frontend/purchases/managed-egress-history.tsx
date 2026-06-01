@@ -112,6 +112,28 @@ function bucketPeriodLabel(bucket: ManagedEgressHistoryBucketSize): string {
   }
 }
 
+function pointDurationHours(point: { start: string; end: string }): number {
+  const start = Date.parse(point.start);
+  const end = Date.parse(point.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    return 0;
+  }
+  return (end - start) / HOUR_MS;
+}
+
+function bytesPerHourForPoint(point: {
+  start: string;
+  end: string;
+  bytes: number;
+}): number {
+  const hours = pointDurationHours(point);
+  return hours > 0 ? Math.max(0, point.bytes ?? 0) / hours : 0;
+}
+
+function formatEgressRate(bytesPerHour: number): string {
+  return `${humanSize(Math.max(0, bytesPerHour || 0))}/h`;
+}
+
 function categoryEntries(categories: Record<string, number>): Array<{
   category: string;
   bytes: number;
@@ -183,12 +205,26 @@ export function summarizeManagedEgressHistory(
   history: ChartableManagedEgressHistory,
 ): {
   latestBytes: number;
+  latestBytesPerHour: number;
   peakBytes: number;
+  peakBytesPerHour: number;
   avgBytesPerHour: number;
 } {
   const points = history.points ?? [];
-  const latestBytes = Math.max(0, points.at(-1)?.bytes ?? 0);
-  const peakBytes = Math.max(0, ...points.map((point) => point.bytes ?? 0));
+  const latestPoint = points.at(-1);
+  const latestBytes = Math.max(0, latestPoint?.bytes ?? 0);
+  const latestBytesPerHour = latestPoint
+    ? bytesPerHourForPoint(latestPoint)
+    : 0;
+  let peakBytes = 0;
+  let peakBytesPerHour = 0;
+  for (const point of points) {
+    const bytesPerHour = bytesPerHourForPoint(point);
+    if (bytesPerHour > peakBytesPerHour) {
+      peakBytesPerHour = bytesPerHour;
+      peakBytes = Math.max(0, point.bytes ?? 0);
+    }
+  }
   const start = Date.parse(history.start);
   const end = Date.parse(history.end);
   const hours =
@@ -197,7 +233,9 @@ export function summarizeManagedEgressHistory(
       : 0;
   return {
     latestBytes,
+    latestBytesPerHour,
     peakBytes,
+    peakBytesPerHour,
     avgBytesPerHour: hours > 0 ? history.total_bytes / hours : 0,
   };
 }
@@ -243,7 +281,7 @@ function HistoryLine({
   if (points.length === 0) return null;
   const width = 560;
   const height = 160;
-  const values = points.map((point) => Math.max(0, point.bytes ?? 0));
+  const values = points.map(bytesPerHourForPoint);
   const xs = xCoordinates(values, width);
   const ys = yCoordinates(values, height);
   const coordinates = points.map((_, i) => ({ x: xs[i], y: ys[i] }));
@@ -331,7 +369,8 @@ function HistoryLine({
               boxShadow: "0 6px 18px rgba(15, 23, 42, 0.16)",
               color: COLORS.GRAY_D,
               left: hoverPlacement.left,
-              maxWidth: "240px",
+              maxWidth: "360px",
+              minWidth: "280px",
               padding: "8px 10px",
               pointerEvents: "none",
               position: "absolute",
@@ -340,7 +379,23 @@ function HistoryLine({
               zIndex: 1,
             }}
           >
-            <div style={{ fontWeight: 600, marginBottom: "4px" }}>
+            <div
+              style={{
+                fontWeight: 600,
+                marginBottom: "4px",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {formatEgressRate(bytesPerHourForPoint(hoveredHistoryPoint))}
+            </div>
+            <div
+              style={{
+                fontSize: "12px",
+                marginBottom: "4px",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Transferred in bucket:{" "}
               {humanSize(Math.max(0, hoveredHistoryPoint.bytes ?? 0))}
             </div>
             <div style={{ fontSize: "12px", marginBottom: "4px" }}>
@@ -985,16 +1040,18 @@ export function ManagedEgressHistoryModal({
               detail={`${history.points.length} ${bucketLabel(effectiveBucket)} buckets`}
             />
             <EgressSummaryCard
-              label={`Latest ${bucketPeriodLabel(effectiveBucket)}`}
-              value={humanSize(summary?.latestBytes ?? 0)}
+              label="Latest avg rate"
+              value={formatEgressRate(summary?.latestBytesPerHour ?? 0)}
+              detail={`${humanSize(summary?.latestBytes ?? 0)} in latest ${bucketPeriodLabel(effectiveBucket)} bucket`}
             />
             <EgressSummaryCard
-              label={`Peak ${bucketPeriodLabel(effectiveBucket)}`}
-              value={humanSize(summary?.peakBytes ?? 0)}
+              label="Peak avg rate"
+              value={formatEgressRate(summary?.peakBytesPerHour ?? 0)}
+              detail={`${humanSize(summary?.peakBytes ?? 0)} in peak ${bucketPeriodLabel(effectiveBucket)} bucket`}
             />
             <EgressSummaryCard
               label="Average rate"
-              value={`${humanSize(summary?.avgBytesPerHour ?? 0)}/h`}
+              value={formatEgressRate(summary?.avgBytesPerHour ?? 0)}
             />
           </Space>
           <HistoryLine history={history} />
@@ -1217,16 +1274,18 @@ export function ManagedEgressAdminHistoryModal({
               detail={`${history.points.length} ${bucketLabel(effectiveBucket)} buckets`}
             />
             <EgressSummaryCard
-              label={`Latest ${bucketPeriodLabel(effectiveBucket)}`}
-              value={humanSize(summary?.latestBytes ?? 0)}
+              label="Latest avg rate"
+              value={formatEgressRate(summary?.latestBytesPerHour ?? 0)}
+              detail={`${humanSize(summary?.latestBytes ?? 0)} in latest ${bucketPeriodLabel(effectiveBucket)} bucket`}
             />
             <EgressSummaryCard
-              label={`Peak ${bucketPeriodLabel(effectiveBucket)}`}
-              value={humanSize(summary?.peakBytes ?? 0)}
+              label="Peak avg rate"
+              value={formatEgressRate(summary?.peakBytesPerHour ?? 0)}
+              detail={`${humanSize(summary?.peakBytes ?? 0)} in peak ${bucketPeriodLabel(effectiveBucket)} bucket`}
             />
             <EgressSummaryCard
               label="Average rate"
-              value={`${humanSize(summary?.avgBytesPerHour ?? 0)}/h`}
+              value={formatEgressRate(summary?.avgBytesPerHour ?? 0)}
             />
           </Space>
           <HistoryLine history={history} />

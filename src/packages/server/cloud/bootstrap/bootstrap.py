@@ -2212,8 +2212,41 @@ case "$cmd" in
     exec /usr/bin/rsync -aAX --numeric-ids "$src"/ "$dest"/
     ;;
   normalize-rootfs)
+    skip_ownership_bridge=false
+    ownership_source="${COCALC_ROOTFS_OWNERSHIP_SOURCE:-keep-id}"
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --skip-ownership-bridge)
+          skip_ownership_bridge=true
+          shift
+          ;;
+        --ownership-source)
+          if [ "$#" -lt 2 ]; then
+            echo "usage: cocalc-runtime-storage normalize-rootfs [--skip-ownership-bridge] [--ownership-source keep-id|oci-extract] <rootfs>" >&2
+            exit 2
+          fi
+          ownership_source="$2"
+          shift 2
+          ;;
+        --ownership-source=*)
+          ownership_source="${1#--ownership-source=}"
+          shift
+          ;;
+        --)
+          shift
+          break
+          ;;
+        -*)
+          echo "usage: cocalc-runtime-storage normalize-rootfs [--skip-ownership-bridge] [--ownership-source keep-id|oci-extract] <rootfs>" >&2
+          exit 2
+          ;;
+        *)
+          break
+          ;;
+      esac
+    done
     if [ "$#" -ne 1 ]; then
-      echo "usage: cocalc-runtime-storage normalize-rootfs <rootfs>" >&2
+      echo "usage: cocalc-runtime-storage normalize-rootfs [--skip-ownership-bridge] [--ownership-source keep-id|oci-extract] <rootfs>" >&2
       exit 2
     fi
     rootfs="$1"
@@ -2233,13 +2266,11 @@ case "$cmd" in
       echo "$1" >&2
       exit "${2:-1}"
     }
-    skip_ownership_bridge=false
     case "${COCALC_ROOTFS_SKIP_OWNERSHIP_BRIDGE:-}" in
       1|true|TRUE|yes|YES|on|ON)
         skip_ownership_bridge=true
         ;;
     esac
-    ownership_source="${COCALC_ROOTFS_OWNERSHIP_SOURCE:-keep-id}"
     case "$ownership_source" in
       keep-id|oci-extract)
         ;;
@@ -2384,6 +2415,15 @@ for dir in /bin /sbin /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin /usr/lib
     chown root:root "$path"
     chmod "$mode" "$path"
   done
+done
+for sudo_path in /usr/bin/sudo /bin/sudo; do
+  [ -e "$sudo_path" ] || continue
+  chown root:root "$sudo_path"
+  chmod 4755 "$sudo_path"
+done
+for sudo_conf_path in /etc/sudo.conf /etc/sudoers /etc/sudoers.d; do
+  [ -e "$sudo_conf_path" ] || continue
+  chown root:root "$sudo_conf_path"
 done
 EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
 )"

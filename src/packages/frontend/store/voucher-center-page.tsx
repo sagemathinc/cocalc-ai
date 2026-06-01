@@ -376,7 +376,7 @@ export function VoucherCenterPage() {
           </div>
           <Divider type="vertical" style={{ height: "auto" }} />
           <div>
-            <a href="https://doc.cocalc.com/vouchers.html" target="_blank">
+            <a href="/app-docs/billing/settings" target="_blank">
               Voucher documentation
             </a>
           </div>

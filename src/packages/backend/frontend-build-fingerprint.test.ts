@@ -56,6 +56,49 @@ describe("getFrontendSourceFingerprintSync", () => {
     }
   });
 
+  it("ignores generated build and runtime data directories", () => {
+    const repoRoot = mkdtempSync(
+      join(tmpdir(), "frontend-fingerprint-runtime-"),
+    );
+    try {
+      const frontendRoot = join(repoRoot, "src", "packages", "frontend");
+      const buildRoot = join(repoRoot, "src", "packages", "project", "build");
+      const dataRoot = join(
+        repoRoot,
+        "src",
+        "packages",
+        "project-host",
+        "data",
+      );
+      mkdirSync(frontendRoot, { recursive: true });
+      mkdirSync(buildRoot, { recursive: true });
+      mkdirSync(dataRoot, { recursive: true });
+
+      const watched = join(frontendRoot, "entry.tsx");
+      const generated = join(buildRoot, "bundle.js");
+      const runtime = join(dataRoot, "sqlite.db-wal");
+      writeFileSync(watched, "export const watched = true;\n");
+      writeFileSync(generated, "generated bundle\n");
+      writeFileSync(runtime, "runtime data\n");
+
+      utimesSync(watched, 1, 10);
+      utimesSync(generated, 1, 20);
+      utimesSync(runtime, 1, 30);
+
+      const info = getFrontendSourceFingerprintSync({
+        repoRoot,
+        sourceRoots: [join(repoRoot, "src", "packages")],
+        now: new Date("2026-03-11T12:00:00.000Z"),
+      });
+
+      expect(info.available).toBe(true);
+      expect(info.latest_path).toBe("src/packages/frontend/entry.tsx");
+      expect(info.scanned_file_count).toBe(1);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("reports unavailable when no source roots exist", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "frontend-fingerprint-empty-"));
     try {

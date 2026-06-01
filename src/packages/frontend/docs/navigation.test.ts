@@ -26,6 +26,8 @@ import {
   openProjectDocs,
   projectDocsStorageKey,
 } from "./navigation";
+import { getDocsEntry } from "@cocalc/docs";
+import { scanFrontendDocsLinks } from "@cocalc/docs/verification";
 
 describe("docs navigation", () => {
   beforeEach(() => {
@@ -44,6 +46,19 @@ describe("docs navigation", () => {
     expect(normalizeDocsSlug("terminal/use-terminal")).toBe(
       "terminal/use-terminal",
     );
+  });
+
+  it("keeps authored /app-docs links pointed at existing docs pages", () => {
+    const broken = scanFrontendDocsLinks().filter(
+      (link) =>
+        link.slug &&
+        getDocsEntry(link.slug, {
+          includeAdmin: true,
+          includeSignedIn: true,
+        }) == null,
+    );
+
+    expect(broken).toEqual([]);
   });
 
   it("opens a project docs page in the docs flyout", () => {

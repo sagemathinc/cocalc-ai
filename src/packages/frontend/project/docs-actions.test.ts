@@ -2,6 +2,7 @@
 
 const mockSetPageActiveTab = jest.fn();
 const mockSetPageState = jest.fn();
+const mockSetAccountState = jest.fn();
 const mockSetProjectActiveTab = jest.fn();
 const mockSetFlyoutExpanded = jest.fn();
 const mockCreateFile = jest.fn();
@@ -13,6 +14,7 @@ const mockOpenFile = jest.fn();
 const mockSetUrlWithSearch = jest.fn();
 const mockOpenHostDrawer = jest.fn();
 let mockIsAdmin = false;
+let mockAccountId: string | undefined = "account-1";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
@@ -22,11 +24,19 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
             set_active_tab: mockSetPageActiveTab,
             setState: mockSetPageState,
           }
-        : undefined,
+        : name === "account"
+          ? {
+              setState: mockSetAccountState,
+            }
+          : undefined,
     getStore: (name: string) =>
       name === "account"
         ? {
-            get: (key: string) => (key === "is_admin" ? mockIsAdmin : null),
+            get: (key: string) => {
+              if (key === "account_id") return mockAccountId;
+              if (key === "is_admin") return mockIsAdmin;
+              return null;
+            },
           }
         : undefined,
     getProjectActions: (projectId: string) => mockGetProjectActions(projectId),
@@ -42,16 +52,32 @@ jest.mock("@cocalc/frontend/hosts/open-host-drawer", () => ({
 }));
 
 import {
+  DOCS_ACTION_ACK_EVENT,
   PROJECT_SECRETS_DOCS_ACTION_EVENT,
   RUNTIME_IMAGE_DOCS_ACTION_EVENT,
   listDocsAppActions,
   revealDocsAction,
 } from "./docs-actions";
 
+function acknowledgeDocsActionEvent(
+  detail: Record<string, string | undefined>,
+): void {
+  window.dispatchEvent(
+    new CustomEvent(DOCS_ACTION_ACK_EVENT, {
+      detail: {
+        actionId: detail.actionId,
+        projectId: detail.projectId,
+        requestId: detail.requestId,
+      },
+    }),
+  );
+}
+
 describe("project docs actions", () => {
   beforeEach(() => {
     jest.useFakeTimers();
     jest.clearAllMocks();
+    mockAccountId = "account-1";
     mockIsAdmin = false;
     window.localStorage.clear();
     mockGetStore.mockReturnValue({
@@ -90,12 +116,23 @@ describe("project docs actions", () => {
       expect.arrayContaining([
         "settings.environment.secrets",
         "project.terminal.open",
+        "terminal.open",
         "project.jupyter.create",
+        "jupyter.open",
+        "files.markdown.open",
+        "python.open",
+        "latex.open",
+        "r.markdown.open",
         "settings.runtime.rootfs",
         "settings.people.collaborators",
         "file.timetravel.open",
         "project.codex.open",
         "hosts.open",
+        "docs.browser.open",
+        "docs.actions.open",
+        "docs.automation.open",
+        "projects.list.open",
+        "project.files.open",
       ]),
     );
   });
@@ -214,6 +251,140 @@ describe("project docs actions", () => {
     expect(logs).toMatchObject({
       action_id: "hosts.logs.open",
       drawer_tab: "logs",
+    });
+  });
+
+  it("opens account and billing settings docs actions", async () => {
+    const profile = await revealDocsAction({
+      actionId: "account.profile.open",
+      projectId: "project-1",
+    });
+
+    expect(mockSetPageActiveTab).toHaveBeenCalledWith("account", false);
+    expect(mockSetAccountState).toHaveBeenCalledWith({
+      active_page: "profile",
+    });
+    expect(mockSetUrlWithSearch).toHaveBeenCalledWith("/settings/profile", "");
+    expect(profile).toMatchObject({
+      action_id: "account.profile.open",
+      opened: true,
+      panel: "profile",
+      tab: "account",
+    });
+
+    const paymentMethods = await revealDocsAction({
+      actionId: "billing.payment-methods.open",
+      projectId: "project-1",
+    });
+
+    expect(mockSetAccountState).toHaveBeenLastCalledWith({
+      active_page: "payment-methods",
+    });
+    expect(mockSetUrlWithSearch).toHaveBeenLastCalledWith(
+      "/settings/payment-methods",
+      "",
+    );
+    expect(paymentMethods).toMatchObject({
+      action_id: "billing.payment-methods.open",
+      opened: true,
+      panel: "payment-methods",
+      tab: "account",
+    });
+  });
+
+  it("opens global docs pages", async () => {
+    const browser = await revealDocsAction({
+      actionId: "docs.browser.open",
+      projectId: "project-1",
+    });
+
+    expect(mockSetPageState).toHaveBeenCalledWith({
+      docs_print: false,
+      docs_slug: "documentation/browser",
+    });
+    expect(mockSetPageActiveTab).toHaveBeenCalledWith("docs", true);
+    expect(mockSetUrlWithSearch).toHaveBeenCalledWith(
+      "/app-docs/documentation/browser",
+      "",
+    );
+    expect(browser).toMatchObject({
+      action_id: "docs.browser.open",
+      opened: true,
+      path: "/app-docs/documentation/browser",
+      tab: "docs",
+    });
+
+    const automation = await revealDocsAction({
+      actionId: "docs.automation.open",
+      projectId: "project-1",
+    });
+
+    expect(mockSetPageState).toHaveBeenLastCalledWith({
+      docs_print: false,
+      docs_slug: "documentation/browser-automation",
+    });
+    expect(mockSetUrlWithSearch).toHaveBeenLastCalledWith(
+      "/app-docs/documentation/browser-automation",
+      "",
+    );
+    expect(automation).toMatchObject({
+      action_id: "docs.automation.open",
+      opened: true,
+      path: "/app-docs/documentation/browser-automation",
+      tab: "docs",
+    });
+  });
+
+  it("opens projects and project files pages", async () => {
+    const projects = await revealDocsAction({
+      actionId: "projects.list.open",
+      projectId: "project-1",
+    });
+
+    expect(mockSetPageActiveTab).toHaveBeenCalledWith("projects", false);
+    expect(mockSetUrlWithSearch).toHaveBeenCalledWith("/projects", "");
+    expect(projects).toMatchObject({
+      action_id: "projects.list.open",
+      opened: true,
+      path: "/projects",
+      tab: "projects",
+    });
+
+    const files = await revealDocsAction({
+      actionId: "project.files.open",
+      parameters: { projectId: "project-2" },
+      projectId: "project-1",
+    });
+
+    expect(mockSetPageActiveTab).toHaveBeenCalledWith("project-2", false);
+    expect(mockSetProjectActiveTab).toHaveBeenCalledWith("files", {
+      change_history: false,
+    });
+    expect(mockSetUrlWithSearch).toHaveBeenCalledWith(
+      "/projects/project-2/files",
+      "",
+    );
+    expect(files).toMatchObject({
+      action_id: "project.files.open",
+      opened: true,
+      path: "/projects/project-2/files",
+      project_id: "project-2",
+      tab: "files",
+    });
+  });
+
+  it("requires sign-in for account docs actions", () => {
+    mockAccountId = undefined;
+
+    const action = listDocsAppActions({
+      includeSignedIn: true,
+      projectId: "project-1",
+    }).find((action) => action.id === "account.profile.open");
+
+    expect(action).toMatchObject({
+      available: false,
+      implemented: true,
+      reason: "You must sign in.",
     });
   });
 
@@ -367,6 +538,24 @@ describe("project docs actions", () => {
       path: "/work/terminal.term",
       project_id: "project-1",
     });
+
+    const terminalPageResult = await revealDocsAction({
+      actionId: "terminal.open",
+      projectId: "project-1",
+    });
+
+    expect(mockCreateFile).toHaveBeenLastCalledWith({
+      current_path: "/work",
+      ext: "term",
+      name: "terminal",
+      switch_over: true,
+    });
+    expect(terminalPageResult).toMatchObject({
+      action_id: "terminal.open",
+      opened: true,
+      path: "/work/terminal.term",
+      project_id: "project-1",
+    });
   });
 
   it("creates and opens a default notebook", async () => {
@@ -381,6 +570,47 @@ describe("project docs actions", () => {
       name: "notebook",
       switch_over: true,
     });
+
+    await revealDocsAction({
+      actionId: "jupyter.open",
+      projectId: "project-1",
+    });
+
+    expect(mockCreateFile).toHaveBeenLastCalledWith({
+      current_path: "/work",
+      ext: "ipynb",
+      name: "notebook",
+      switch_over: true,
+    });
+  });
+
+  it("creates common project file types", async () => {
+    const cases = [
+      ["files.markdown.open", "md", "notes"],
+      ["python.open", "py", "script"],
+      ["latex.open", "tex", "paper"],
+      ["r.markdown.open", "Rmd", "report"],
+    ] as const;
+
+    for (const [actionId, ext, name] of cases) {
+      const result = await revealDocsAction({
+        actionId,
+        projectId: "project-1",
+      });
+
+      expect(mockCreateFile).toHaveBeenLastCalledWith({
+        current_path: "/work",
+        ext,
+        name,
+        switch_over: true,
+      });
+      expect(result).toMatchObject({
+        action_id: actionId,
+        opened: true,
+        path: `/work/${name}.${ext}`,
+        project_id: "project-1",
+      });
+    }
   });
 
   it("avoids clobbering existing quick action filenames", async () => {
@@ -403,8 +633,14 @@ describe("project docs actions", () => {
 
   it("opens the runtime image modal in project settings", async () => {
     const events: any[] = [];
-    window.addEventListener(RUNTIME_IMAGE_DOCS_ACTION_EVENT, (event) =>
-      events.push((event as CustomEvent).detail),
+    window.addEventListener(
+      RUNTIME_IMAGE_DOCS_ACTION_EVENT,
+      (event) => {
+        const detail = (event as CustomEvent).detail;
+        events.push(detail);
+        acknowledgeDocsActionEvent(detail);
+      },
+      { once: true },
     );
 
     const result = await revealDocsAction({
@@ -412,19 +648,22 @@ describe("project docs actions", () => {
       projectId: "project-1",
     });
 
-    expect(events).toEqual([{ projectId: "project-1", surface: "flyout" }]);
+    expect(events[0]).toMatchObject({
+      actionId: "settings.runtime.rootfs",
+      projectId: "project-1",
+      surface: "project",
+    });
     expect(mockSetProjectActiveTab).toHaveBeenCalledWith("settings", {
       change_history: false,
       noFocus: true,
     });
-    expect(mockSetFlyoutExpanded).toHaveBeenCalledWith("settings", true);
     expect(
       JSON.parse(window.localStorage.getItem("project-1::flyout")!),
     ).toMatchObject({
-      expanded: "settings",
       settings: ["environment"],
     });
     expect(result).toMatchObject({
+      acknowledged: true,
       action_id: "settings.runtime.rootfs",
       opened: true,
       panel: "runtime-image",
@@ -432,18 +671,72 @@ describe("project docs actions", () => {
     });
   });
 
-  it("targets the project secrets docs event at the settings flyout", async () => {
+  it("targets the project secrets docs event at the project settings page", async () => {
     const events: any[] = [];
-    window.addEventListener(PROJECT_SECRETS_DOCS_ACTION_EVENT, (event) =>
-      events.push((event as CustomEvent).detail),
+    window.localStorage.setItem(
+      "project-1::flyout",
+      JSON.stringify({ expanded: "people" }),
+    );
+    window.addEventListener(
+      PROJECT_SECRETS_DOCS_ACTION_EVENT,
+      (event) => {
+        const detail = (event as CustomEvent).detail;
+        events.push(detail);
+        acknowledgeDocsActionEvent(detail);
+      },
+      { once: true },
     );
 
-    await revealDocsAction({
+    const result = await revealDocsAction({
       actionId: "settings.environment.secrets",
       projectId: "project-1",
     });
 
-    expect(events[0]).toEqual({ projectId: "project-1", surface: "flyout" });
+    expect(events[0]).toMatchObject({
+      actionId: "settings.environment.secrets",
+      projectId: "project-1",
+      surface: "project",
+    });
+    expect(
+      JSON.parse(window.localStorage.getItem("project-1::flyout")!),
+    ).toMatchObject({
+      expanded: "people",
+      settings: ["environment"],
+    });
+    expect(result).toMatchObject({
+      acknowledged: true,
+      action_id: "settings.environment.secrets",
+      panel: "project-secrets",
+    });
+  });
+
+  it("warns when a settings docs action is not acknowledged", async () => {
+    const events: any[] = [];
+    window.addEventListener(PROJECT_SECRETS_DOCS_ACTION_EVENT, (event) => {
+      events.push((event as CustomEvent).detail);
+    });
+
+    const pending = revealDocsAction({
+      actionId: "settings.environment.secrets",
+      projectId: "project-1",
+    });
+    await jest.runOnlyPendingTimersAsync();
+    await Promise.resolve();
+    await jest.runOnlyPendingTimersAsync();
+    const result = await pending;
+
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    expect(mockSetProjectActiveTab).toHaveBeenCalledWith("settings", {
+      change_history: false,
+      noFocus: true,
+    });
+    expect(result).toMatchObject({
+      acknowledged: false,
+      action_id: "settings.environment.secrets",
+      opened: true,
+      panel: "project-secrets",
+    });
+    expect(result.warning).toMatch(/did not acknowledge/);
   });
 
   it("opens the people settings panel", async () => {
@@ -459,7 +752,6 @@ describe("project docs actions", () => {
     expect(
       JSON.parse(window.localStorage.getItem("project-1::flyout")!),
     ).toMatchObject({
-      expanded: "settings",
       settings: ["people"],
     });
     expect(result).toMatchObject({

@@ -4,6 +4,8 @@
  */
 
 import {
+  buildDocsGapReport,
+  formatDocsGapReport,
   formatDocsVerificationReport,
   listDocsLiveVerificationScenarios,
   verifyDocsLive,
@@ -31,12 +33,21 @@ function readRepeatedOption(args: string[], name: string): string[] {
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const json = args.includes("--json");
+  const gaps = args.includes("--gaps");
   const listLive = args.includes("--list-live");
   const live = args.includes("--live");
+  const staleReviewDays = Number.parseInt(
+    readOption(args, "--stale-days") ?? "90",
+    10,
+  );
   const projectId =
     readOption(args, "--project-id") ?? process.env.COCALC_PROJECT_ID ?? "";
   const browserId =
     readOption(args, "--browser") ?? process.env.COCALC_BROWSER_ID ?? "";
+  const hostId =
+    readOption(args, "--host-id") ??
+    process.env.COCALC_DOCS_VERIFY_HOST_ID ??
+    "";
   const cocalcCommand =
     readOption(args, "--cocalc-bin") ??
     process.env.COCALC_DOCS_VERIFY_COCALC_BIN ??
@@ -46,6 +57,7 @@ async function main(): Promise<void> {
   if (listLive) {
     const scenarios = listDocsLiveVerificationScenarios({
       cocalcCommand,
+      hostId: hostId || "$COCALC_DOCS_VERIFY_HOST_ID",
       projectId: projectId || "$COCALC_PROJECT_ID",
       timeout,
     });
@@ -58,6 +70,18 @@ async function main(): Promise<void> {
           `${scenario.actionId}${mutates}\n  ${scenario.command.join(" ")}`,
         );
       }
+    }
+    return;
+  }
+
+  if (gaps) {
+    const report = Number.isFinite(staleReviewDays)
+      ? buildDocsGapReport({ staleReviewDays })
+      : buildDocsGapReport();
+    if (json) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      console.log(formatDocsGapReport(report));
     }
     return;
   }
@@ -82,6 +106,7 @@ async function main(): Promise<void> {
     actionIds: readRepeatedOption(args, "--action") as DocsActionId[],
     browserId: browserId || undefined,
     cocalcCommand,
+    hostId: hostId || undefined,
     projectId,
     timeout,
   });

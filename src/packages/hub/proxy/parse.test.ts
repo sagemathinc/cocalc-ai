@@ -30,6 +30,28 @@ describe("hub proxy route helpers", () => {
     });
   });
 
+  it("parses proxied project-host browser session bootstrap routes", () => {
+    expect(
+      parseReq(
+        "/00000000-1000-4000-8000-000000000000/.cocalc/project-host/session",
+        "remember",
+        "api",
+      ),
+    ).toEqual({
+      key: "remember-api-00000000-1000-4000-8000-000000000000-project-host-session--undefined",
+      type: "project-host-session",
+      route: {
+        type: "project-host-session",
+        requiresPortDesc: false,
+        allowsInternalUrl: false,
+        access: "write",
+      },
+      project_id: "00000000-1000-4000-8000-000000000000",
+      port_desc: "",
+      internal_url: undefined,
+    });
+  });
+
   it("strips remember-me cookies before proxying", () => {
     expect(
       stripRememberMeCookie(

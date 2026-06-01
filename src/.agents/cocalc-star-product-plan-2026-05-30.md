@@ -2,7 +2,7 @@
 
 Status: `active implementation plan`
 
-Implementation status as of 2026-05-31:
+Implementation status as of 2026-06-01:
 
 - Phase 1 is substantially proven on fresh Ubuntu 24.04 x86_64 GCP VMs.
 - A tarball installer path exists and has been validated from a clean VM.
@@ -15,6 +15,13 @@ Implementation status as of 2026-05-31:
   Conat port collisions.
 - Versioned release layout and symlink rollback have been implemented in the
   tarball installer/operator script.
+- A real Star VM was upgraded from an older release to a newer release artifact,
+  then validated with `doctor`, `smoke`, rollback to the previous release,
+  `doctor`, roll-forward to the latest release, and `doctor`.
+- The first real upgrade attempt exposed two important release-path bugs:
+  root-run upgrades must preserve the existing Star runtime user instead of
+  switching to `root`, and failed installs must restore mutable Star service
+  config as well as release symlinks. Both are fixed in the current installer.
 - Current implementation is still a source/tarball install, not a final
   marketplace image or SEA binary.
 
@@ -60,17 +67,23 @@ Those are upsells to Launchpad/Rocket.
 
 The current working implementation is deliberately simple:
 
-- Build a Star source tarball from a CoCalc checkout.
-- Copy it to a fresh Ubuntu 24.04 VM.
-- Run `src/scripts/star/install-from-tarball.sh` from inside the tarball.
-- Install source under `/opt/cocalc-star/source`.
+- Build a Star release artifact from a CoCalc checkout.
+- The artifact contains `install.sh`, `cocalc-star-src.tar.gz`,
+  `release.json`, and `SHA256SUMS`.
+- Copy the release artifact to a fresh Ubuntu 24.04 VM.
+- Extract it and run `sudo STAR_ASSUME_YES=1 ./install.sh`.
+- `install.sh` verifies checksums when possible and delegates to
+  `src/scripts/star/install-from-tarball.sh`, so VM mutation still has one
+  installer path.
+- Install source under `/opt/cocalc-star/releases/<release-id>/source`.
+- Keep `/opt/cocalc-star/source` as a stable symlink to the active release.
 - Install runtime state under `/var/lib/cocalc/star`.
 - Run Launchpad/hub under systemd on `127.0.0.1:9100`.
 - Run a local project-host under systemd on `127.0.0.1:9002`.
 - Run the project-host managed Conat router on `127.0.0.1:9112`.
 - Run the project-host Conat persist health endpoint on `127.0.0.1:9212`.
 - Use local Postgres for the hub/control-plane database.
-- Build/cache a default RootFS from `ubuntu:24.04` with Jupyter and LaTeX.
+- Build/cache a default RootFS from `ubuntu:26.04` with Jupyter and LaTeX.
 - Mount the backend tools bundle into project containers so tools such as
   `dropbear` come from the CoCalc tools bundle, not from the RootFS image.
 
@@ -691,12 +704,14 @@ Current sequence:
 3. Build a Star source tarball and install from it. Done.
 4. Add versioned release layout and rollback while keeping
    `/opt/cocalc-star/source` as the stable path. Done.
-5. Split out a reusable Star systemd/release scaffold.
-6. Build a smaller Star runtime tarball that does not require a full source
+5. Build a first-class Star release artifact with `install.sh`, source tarball,
+   manifest, and checksums. Done.
+6. Split out a reusable Star systemd/release scaffold.
+7. Build a smaller Star runtime tarball that does not require a full source
    checkout build on the target VM.
-7. Wrap the tarball in a SEA installer/launcher if it still improves the
+8. Wrap the tarball in a SEA installer/launcher if it still improves the
    operator experience.
-8. Publish marketplace images only after the tarball/script path is boring.
+9. Publish marketplace images only after the tarball/script path is boring.
 
 SEA target:
 
@@ -1079,8 +1094,11 @@ Validation:
   harness validation.
 - Rollback flips `/opt/cocalc-star/source` and `/opt/cocalc-star/current`, then
   restarts services. Done in local release harness validation.
-- Doctor and smoke pass after rollback. Not yet validated on a full VM because
-  the full two-release install path is still expensive.
+- Doctor and smoke pass after installing a later release on a full VM. Done.
+- Doctor passes after rollback to the previous release on a full VM. Done.
+- Doctor passes after rolling forward again to the latest release on a full VM.
+  Done.
+- Smoke after rollback has not yet been run on the full VM.
 - Hard reset after rollback starts the selected release. Not yet validated on a
   full VM.
 
@@ -1227,12 +1245,12 @@ VM", is complete.
 
 Current recommended next step:
 
-1. Make full-VM two-release validation cheap enough to run regularly:
+1. Automate full-VM two-release validation so it can run regularly:
    - release A installs and passes doctor/smoke,
    - release B installs and passes doctor/smoke,
    - rollback to release A passes doctor/smoke,
    - hard reset after rollback still boots release A.
-2. After rollback is boring, make the tarball smaller and more release-like so
+2. After automated rollback is boring, make the tarball smaller and more release-like so
    installs no longer need a full source build on the target VM.
 3. Then build the local source deploy lane:
    - put a CoCalc checkout on the same VM,

@@ -1381,6 +1381,7 @@ export interface ProjectCollabInviteWithoutAccountRequest {
     invite_context?: Record<string, unknown>;
     invite_scope?: string;
     invite_role?: Exclude<ProjectUserRole, "owner">;
+    invite_base_url?: string;
     read_policy?: ProjectViewerReadPolicy | null;
   };
 }
@@ -1397,6 +1398,7 @@ export interface ProjectCollabInviteCopyEmailLinkRequest {
   account_id: string;
   invite_id: string;
   project_id?: string;
+  invite_base_url?: string;
 }
 
 export interface ProjectSetManageUsersOwnerOnlyRequest {

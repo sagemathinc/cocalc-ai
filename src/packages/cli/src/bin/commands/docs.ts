@@ -49,6 +49,7 @@ type DocsVerifyOptions = {
   cocalcBin?: string;
   chromium?: string;
   headed?: boolean;
+  hostId?: string;
   keepBrowser?: boolean;
   listLive?: boolean;
   live?: boolean;
@@ -536,6 +537,10 @@ Examples:
       "project id for live checks; defaults to COCALC_PROJECT_ID",
     )
     .option(
+      "--host-id <id>",
+      "project host id for parameterized project-host live checks; defaults to COCALC_DOCS_VERIFY_HOST_ID",
+    )
+    .option(
       "--browser <id>",
       "browser id for live checks; defaults to COCALC_BROWSER_ID",
     )
@@ -579,6 +584,8 @@ Examples:
       try {
         const projectId =
           `${options.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+        const hostId =
+          `${options.hostId ?? process.env.COCALC_DOCS_VERIFY_HOST_ID ?? ""}`.trim();
         const explicitBrowserId = `${options.browser ?? ""}`.trim();
         const browserId =
           explicitBrowserId ||
@@ -597,6 +604,7 @@ Examples:
           const scenarios = listDocsLiveVerificationScenarios({
             cocalcArgs,
             cocalcCommand,
+            hostId: hostId || "$COCALC_DOCS_VERIFY_HOST_ID",
             projectId: projectId || "$COCALC_PROJECT_ID",
             timeout: options.timeout,
           });
@@ -625,6 +633,7 @@ Examples:
               browserId: spawnedBrowser?.browserId || browserId || undefined,
               cocalcArgs,
               cocalcCommand,
+              hostId: hostId || undefined,
               projectId,
               timeout: options.timeout,
             })

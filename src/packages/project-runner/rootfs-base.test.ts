@@ -147,7 +147,9 @@ describe("extractBaseImage OCI preflight", () => {
     executeCode.mockResolvedValue({ stdout: "{}", stderr: "", exit_code: 0 });
 
     const { extractBaseImage } = await import("./run/rootfs-base");
-    await expect(extractBaseImage("quay.io/centos/centos:stream9")).resolves.toBe(
+    await expect(
+      extractBaseImage("quay.io/centos/centos:stream9"),
+    ).resolves.toBe(
       "/mnt/cocalc/data/cache/images/quay.io%2Fcentos%2Fcentos%3Astream9",
     );
 
@@ -155,6 +157,54 @@ describe("extractBaseImage OCI preflight", () => {
       expect.objectContaining({
         image: "quay.io/centos/centos:stream9",
         ownershipSource: "oci-extract",
+      }),
+    );
+  });
+
+  it("extracts containers-storage images without pulling or deleting the source image", async () => {
+    exists.mockResolvedValue(false);
+    pullImage.mockResolvedValue(undefined);
+    preflightPulledOciImage.mockResolvedValue({
+      distro_family: "debian",
+      package_manager: "apt-get",
+      shell: "/bin/bash",
+      glibc: true,
+      sudo_present: true,
+      ca_certificates_present: true,
+    });
+    preflightRootfsInPlace.mockResolvedValue({
+      version: 1,
+      normalized_at: new Date().toISOString(),
+      image: "containers-storage:localhost/cocalc-star-rootfs:latest",
+      rootfs_path:
+        "/mnt/cocalc/data/cache/images/containers-storage%3Alocalhost%2Fcocalc-star-rootfs%3Alatest",
+      distro_family: "debian",
+      package_manager: "apt-get",
+      shell: "/bin/bash",
+      glibc: true,
+      sudo_present: true,
+      ca_certificates_present: true,
+    });
+    executeCode.mockResolvedValue({ stdout: "{}", stderr: "", exit_code: 0 });
+
+    const { extractBaseImage } = await import("./run/rootfs-base");
+    await expect(
+      extractBaseImage(
+        "containers-storage:localhost/cocalc-star-rootfs:latest",
+      ),
+    ).resolves.toBe(
+      "/mnt/cocalc/data/cache/images/containers-storage%3Alocalhost%2Fcocalc-star-rootfs%3Alatest",
+    );
+
+    expect(pullImage).not.toHaveBeenCalled();
+    expect(executeCode).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: "podman",
+        args: [
+          "image",
+          "rm",
+          "containers-storage:localhost/cocalc-star-rootfs:latest",
+        ],
       }),
     );
   });

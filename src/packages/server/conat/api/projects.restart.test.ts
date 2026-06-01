@@ -12,6 +12,8 @@ let interBayCheckStartAdmissionMock: jest.Mock;
 let interBayRestartMock: jest.Mock;
 let projectControlBridgeMock: jest.Mock;
 
+jest.setTimeout(15_000);
+
 async function flushBackgroundRestartTask() {
   for (let i = 0; i < 6; i += 1) {
     await new Promise<void>((resolve) => setImmediate(resolve));

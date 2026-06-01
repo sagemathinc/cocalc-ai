@@ -369,10 +369,7 @@ export function StudentAssignmentInfo({
             key="what-happens"
             style={{ margin: "5px", display: "inline-block" }}
           >
-            <a
-              target="_blank"
-              href="https://doc.cocalc.com/teaching-tips_and_tricks.html#how-exactly-are-assignments-copied-to-students"
-            >
+            <a target="_blank" href="/app-docs/teaching/create-assignment">
               {intl.formatMessage({
                 id: "course.student-assignment-info.recopy.what_happens",
                 defaultMessage: "What happens when I assign again?",

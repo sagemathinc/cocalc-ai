@@ -146,6 +146,7 @@ export default function getConfig(): Configuration {
       frontendSourceFingerprint.latest_mtime_iso ?? "N/A",
     FRONTEND_BUILD_LATEST_PATH: frontendSourceFingerprint.latest_path ?? "N/A",
     FRONTEND_BUILD_WATCHED_ROOTS: frontendSourceFingerprint.watched_roots,
+    COCALC_SETUP_PROFILE: process.env.COCALC_SETUP_PROFILE ?? "",
     DEBUG: !PRODMODE,
     CDN_VERSIONS,
     "process.env": {}, // the util polyfill assumes this is defined.

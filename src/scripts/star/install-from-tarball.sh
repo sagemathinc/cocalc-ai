@@ -28,7 +28,7 @@ Defaults:
   STAR_INSTALL_SOURCE=$STAR_INSTALL_ROOT/source
   STAR_RELEASES_DIR=$STAR_INSTALL_ROOT/releases
   STAR_RELEASE_ID=<utc timestamp>-<tarball sha256 prefix>
-  STAR_USER=<sudo caller>
+  STAR_USER=<existing Star user, sudo caller, or USER>
   STAR_ASSUME_YES=0
 
 Set STAR_ASSUME_YES=1 for non-interactive installs.
@@ -68,6 +68,16 @@ require_root() {
 resolve_star_user() {
   if [ -n "${STAR_USER:-}" ]; then
     return
+  fi
+  local existing_config="/etc/cocalc/star/config.env"
+  if [ -f "$existing_config" ]; then
+    local existing_star_user
+    existing_star_user="$(bash -c 'set -euo pipefail; source "$1"; printf "%s" "${STAR_USER:-}"' _ "$existing_config" 2>/dev/null || true)"
+    if [ -n "$existing_star_user" ] && getent passwd "$existing_star_user" >/dev/null; then
+      STAR_USER="$existing_star_user"
+      export STAR_USER
+      return
+    fi
   fi
   if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
     STAR_USER="$SUDO_USER"
@@ -143,6 +153,51 @@ if [ -e "$STAR_INSTALL_SOURCE" ] || [ -L "$STAR_INSTALL_SOURCE" ]; then
 fi
 
 tmp_release="$(mktemp -d "${STAR_RELEASES_DIR}/.install.${STAR_RELEASE_ID}.XXXXXX")"
+rollback_state_dir="$(mktemp -d "${STAR_RELEASES_DIR}/.rollback.${STAR_RELEASE_ID}.XXXXXX")"
+rollback_missing_list="${rollback_state_dir}/missing-files"
+touch "$rollback_missing_list"
+
+snapshot_path() {
+  local path="$1"
+  if [ -e "$path" ] || [ -L "$path" ]; then
+    mkdir -p "${rollback_state_dir}${path%/*}"
+    cp -a "$path" "${rollback_state_dir}${path}"
+  else
+    printf '%s\n' "$path" >>"$rollback_missing_list"
+  fi
+}
+
+restore_path() {
+  local path="$1"
+  if [ -e "${rollback_state_dir}${path}" ] || [ -L "${rollback_state_dir}${path}" ]; then
+    rm -rf "$path"
+    mkdir -p "${path%/*}"
+    cp -a "${rollback_state_dir}${path}" "$path"
+  fi
+}
+
+snapshot_mutable_state() {
+  snapshot_path /etc/cocalc/star/config.env
+  snapshot_path /etc/cocalc/star/hub.env
+  snapshot_path /etc/cocalc/project-host.env
+  snapshot_path /etc/systemd/system/cocalc-star-hub.service
+  snapshot_path /etc/systemd/system/cocalc-star-project-host.service
+  snapshot_path /etc/caddy/Caddyfile
+}
+
+restore_mutable_state() {
+  restore_path /etc/cocalc/star/config.env
+  restore_path /etc/cocalc/star/hub.env
+  restore_path /etc/cocalc/project-host.env
+  restore_path /etc/systemd/system/cocalc-star-hub.service
+  restore_path /etc/systemd/system/cocalc-star-project-host.service
+  restore_path /etc/caddy/Caddyfile
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    rm -rf "$path"
+  done <"$rollback_missing_list"
+  systemctl daemon-reload >/dev/null 2>&1 || true
+}
 
 restore_previous_release() {
   local status=$?
@@ -154,7 +209,9 @@ restore_previous_release() {
     else
       rm -f "$STAR_INSTALL_SOURCE"
     fi
+    restore_mutable_state
   fi
+  rm -rf "$rollback_state_dir"
   exit "$status"
 }
 trap restore_previous_release EXIT
@@ -178,10 +235,17 @@ INSTALLER="${STAR_INSTALL_SOURCE}/src/scripts/star/install-star.sh"
 [ -x "$INSTALLER" ] || die "missing installer in tarball: $INSTALLER"
 
 log "running installer as STAR_USER=$STAR_USER release=$STAR_RELEASE_ID"
+snapshot_mutable_state
 export SRC_ROOT="${SRC_ROOT:-${STAR_INSTALL_SOURCE}/src}"
 export STAR_ASSUME_YES=1
+export STAR_INSTALL_ROOT
+export STAR_INSTALL_SOURCE
+export STAR_RELEASES_DIR
+export STAR_RELEASE_ID
+export STAR_USER
 "$INSTALLER"
 
 replace_symlink "$release_dir" "${STAR_INSTALL_ROOT}/current"
+rm -rf "$rollback_state_dir"
 trap - EXIT
 log "installed release $STAR_RELEASE_ID"

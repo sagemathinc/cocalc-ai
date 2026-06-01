@@ -4,11 +4,20 @@
  */
 
 import type { DocsEntry } from "../types";
-import { docsIcon } from "../helpers";
+import { docsIcon, projectActionParameters } from "../helpers";
 import { USE_TERMINAL_BODY } from "../content";
 
 export const TERMINAL_ENTRIES: DocsEntry[] = [
   {
+    actions: [
+      {
+        description: "Open a terminal in the active project.",
+        executable: true,
+        id: "terminal.open",
+        label: "Open terminal",
+        parameters: projectActionParameters(),
+      },
+    ],
     audiences: ["agents", "researchers", "students", "teams"],
     body: USE_TERMINAL_BODY.trim(),
     category: "Terminal",

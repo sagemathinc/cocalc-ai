@@ -1076,6 +1076,7 @@ export interface Projects {
       invite_context?: Record<string, unknown>;
       invite_scope?: string;
       invite_role?: Exclude<ProjectUserRole, "owner">;
+      invite_base_url?: string;
       read_policy?: ProjectViewerReadPolicy | null;
     };
   }) => Promise<{
@@ -1090,6 +1091,7 @@ export interface Projects {
     account_id?: string;
     invite_id: string;
     project_id?: string;
+    invite_base_url?: string;
   }) => Promise<{
     invite_id: string;
     invite_url: string;

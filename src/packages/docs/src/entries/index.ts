@@ -4,6 +4,7 @@
  */
 
 import type { DocsEntry } from "../types";
+import { ACCOUNT_ENTRIES } from "./account";
 import { ADMIN_ENTRIES } from "./admin";
 import { AI_ENTRIES } from "./ai";
 import { AUTOMATION_ENTRIES } from "./automation";
@@ -18,6 +19,7 @@ import { TERMINAL_ENTRIES } from "./terminal";
 import { TROUBLESHOOTING_ENTRIES } from "./troubleshooting";
 
 const ENTRY_GROUPS: DocsEntry[] = [
+  ...ACCOUNT_ENTRIES,
   ...ADMIN_ENTRIES,
   ...AI_ENTRIES,
   ...AUTOMATION_ENTRIES,
@@ -35,6 +37,8 @@ const ENTRY_GROUPS: DocsEntry[] = [
 const ENTRY_BY_ID = new Map(ENTRY_GROUPS.map((entry) => [entry.id, entry]));
 
 const DOCS_ENTRY_IDS = [
+  "account.settings",
+  "billing.settings",
   "admin.overview",
   "admin.news",
   "admin.site-settings",

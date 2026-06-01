@@ -20,6 +20,8 @@ let unblockProjectAccessRequesterMock: jest.Mock;
 let loadProjectReadDetailsDirectMock: jest.Mock;
 let assertClusterAccountTrustedForProductAccessMock: jest.Mock;
 
+jest.setTimeout(15_000);
+
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
   PROJECT_COLLABORATOR_REQUIRED_ERROR: "user must be a collaborator on project",

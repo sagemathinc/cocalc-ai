@@ -11,6 +11,7 @@ import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import {
+  acknowledgeDocsAction,
   PROJECT_SECRETS_DOCS_ACTION_EVENT,
   type ProjectSecretsDocsActionDetail,
 } from "@cocalc/frontend/project/docs-actions";
@@ -163,6 +164,13 @@ export function EnvironmentConfigurationSummary({
       if (detail?.projectId !== project_id) return;
       if (detail?.surface != null && detail.surface !== mode) return;
       setShowSecretsModal(true);
+      if (detail.requestId) {
+        acknowledgeDocsAction({
+          actionId: "settings.environment.secrets",
+          projectId: project_id,
+          requestId: detail.requestId,
+        });
+      }
     };
     window.addEventListener(PROJECT_SECRETS_DOCS_ACTION_EVENT, handleReveal);
     return () => {
@@ -171,7 +179,7 @@ export function EnvironmentConfigurationSummary({
         handleReveal,
       );
     };
-  }, [project_id]);
+  }, [mode, project_id]);
 
   function saveLauncherDefaults(prefs: any | null): void {
     const next = updateAccountLauncherPrefs(

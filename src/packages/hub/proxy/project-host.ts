@@ -114,6 +114,20 @@ function getPublicAppHubAuthToken(host_id: string): string {
   return value.token;
 }
 
+function isLocalProxyHost(host: HostRow | undefined): boolean {
+  const metadata = host?.metadata ?? {};
+  const machine = metadata?.machine ?? {};
+  const selfHostMode = machine?.metadata?.self_host_mode;
+  const effectiveSelfHostMode =
+    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+  return (
+    (machine?.cloud === "self-host" && effectiveSelfHostMode === "local") ||
+    metadata?.local === true ||
+    metadata?.provider === "star" ||
+    metadata?.cloud_provider === "star"
+  );
+}
+
 export async function getProjectHostRedirectUrl({
   project_id,
   path,
@@ -126,7 +140,7 @@ export async function getProjectHostRedirectUrl({
   const host = await getHost(project_id);
   const host_id = `${host?.host_id ?? ""}`.trim();
   const base = `${host?.public_url ?? ""}`.trim();
-  if (!host_id || !base || !account_id) {
+  if (!host_id || !base || !account_id || isLocalProxyHost(host)) {
     return;
   }
   const issued = issueProjectHostAuthToken({
@@ -173,6 +187,22 @@ export async function createProjectHostProxyHandlers() {
     req.url = `/conat${rest}${u.search}`;
   }
 
+  function rewriteProjectHostSessionPath(req, routeId: string) {
+    const raw = req.url ?? "/";
+    const u = new URL(raw, "http://dummy");
+    const prefix = `/${routeId}`;
+    if (!u.pathname.startsWith(prefix)) {
+      return;
+    }
+    let rest = u.pathname.slice(prefix.length);
+    if (!rest) {
+      rest = "/";
+    } else if (!rest.startsWith("/")) {
+      rest = `/${rest}`;
+    }
+    req.url = `${rest}${u.search}`;
+  }
+
   async function targetForConatHost(host_id: string): Promise<string> {
     const host = await getHostById(host_id);
     if (!host) {
@@ -182,15 +212,10 @@ export async function createProjectHostProxyHandlers() {
     if (directTunnelPort) {
       return `http://127.0.0.1:${directTunnelPort}`;
     }
-    const machine = host.metadata?.machine ?? {};
-    const selfHostMode = machine?.metadata?.self_host_mode;
-    const effectiveSelfHostMode =
-      machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
-    const isLocalSelfHost =
-      machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
-    if (isLocalSelfHost) {
+    if (isLocalProxyHost(host)) {
       const tunnelPort = host.metadata?.self_host?.http_tunnel_port;
       if (!tunnelPort) {
+        if (host.internal_url) return host.internal_url.replace(/\/+$/, "");
         throw new Error(`local tunnel port missing for host ${host_id}`);
       }
       return `http://127.0.0.1:${tunnelPort}`;
@@ -212,15 +237,10 @@ export async function createProjectHostProxyHandlers() {
     if (directTunnelPort) {
       return `http://127.0.0.1:${directTunnelPort}`;
     }
-    const machine = host.metadata?.machine ?? {};
-    const selfHostMode = machine?.metadata?.self_host_mode;
-    const effectiveSelfHostMode =
-      machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
-    const isLocalSelfHost =
-      machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
-    if (isLocalSelfHost) {
+    if (isLocalProxyHost(host)) {
       const tunnelPort = host.metadata?.self_host?.http_tunnel_port;
       if (!tunnelPort) {
+        if (host.internal_url) return host.internal_url.replace(/\/+$/, "");
         throw new Error(`local tunnel port missing for project ${project_id}`);
       }
       return `http://127.0.0.1:${tunnelPort}`;
@@ -275,9 +295,11 @@ export async function createProjectHostProxyHandlers() {
       const parsed = parseReq(req.url ?? "/");
       if (parsed.type === "conat") {
         rewriteConatPath(req, parsed.project_id);
+      } else if (parsed.type === "project-host-session") {
+        rewriteProjectHostSessionPath(req, parsed.project_id);
       }
       const host =
-        parsed.type === "conat"
+        parsed.type === "conat" || parsed.type === "project-host-session"
           ? await getHostById(parsed.project_id).catch(() => undefined)
           : await getHost(parsed.project_id);
       if (isPublicAppSubdomainRequest(req) && req.headers.host) {
@@ -289,7 +311,7 @@ export async function createProjectHostProxyHandlers() {
         setProjectHostAuthorizationHeader({ req, host_id: host?.host_id });
       }
       const target =
-        parsed.type === "conat"
+        parsed.type === "conat" || parsed.type === "project-host-session"
           ? await targetForConatRoute(parsed.project_id)
           : (
               host?.internal_url ||
@@ -313,9 +335,11 @@ export async function createProjectHostProxyHandlers() {
       const parsed = parseReq(req.url ?? "/");
       if (parsed.type === "conat") {
         rewriteConatPath(req, parsed.project_id);
+      } else if (parsed.type === "project-host-session") {
+        rewriteProjectHostSessionPath(req, parsed.project_id);
       }
       const host =
-        parsed.type === "conat"
+        parsed.type === "conat" || parsed.type === "project-host-session"
           ? await getHostById(parsed.project_id).catch(() => undefined)
           : await getHost(parsed.project_id);
       if (isPublicAppSubdomainRequest(req) && req.headers.host) {
@@ -327,7 +351,7 @@ export async function createProjectHostProxyHandlers() {
         setProjectHostAuthorizationHeader({ req, host_id: host?.host_id });
       }
       const target =
-        parsed.type === "conat"
+        parsed.type === "conat" || parsed.type === "project-host-session"
           ? await targetForConatRoute(parsed.project_id)
           : (
               host?.internal_url ||

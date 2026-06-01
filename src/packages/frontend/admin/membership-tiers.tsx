@@ -44,6 +44,7 @@ import { COLORS } from "@cocalc/util/theme";
 
 const { Paragraph, Text } = Typography;
 const BYTES_PER_GB = 1000 * 1000 * 1000;
+const SECONDS_PER_CPU_HOUR = 3600;
 
 interface Tier {
   key?: string;
@@ -150,6 +151,18 @@ function bytesToGigabytes(value: unknown): number | undefined {
 function gigabytesToBytes(value: unknown): number | undefined {
   const gigabytes = normalizedOptionalNumber(value);
   return gigabytes == null ? undefined : Math.round(gigabytes * BYTES_PER_GB);
+}
+
+function secondsToCpuHours(value: unknown): number | undefined {
+  const seconds = normalizedOptionalNumber(value);
+  return seconds == null ? undefined : seconds / SECONDS_PER_CPU_HOUR;
+}
+
+function cpuHoursToSeconds(value: unknown): number | undefined {
+  const cpuHours = normalizedOptionalNumber(value);
+  return cpuHours == null
+    ? undefined
+    : Math.round(cpuHours * SECONDS_PER_CPU_HOUR);
 }
 
 function setOrDeleteUsageLimit(
@@ -271,6 +284,12 @@ function useMembershipTiers() {
         usage_limit_egress_7d_gb: bytesToGigabytes(
           editing.usage_limits?.egress_7d_bytes,
         ),
+        usage_limit_cpu_5h_hours: secondsToCpuHours(
+          editing.usage_limits?.cpu_5h_seconds,
+        ),
+        usage_limit_cpu_7d_hours: secondsToCpuHours(
+          editing.usage_limits?.cpu_7d_seconds,
+        ),
         usage_limit_credit_spend_limit_5h_usd: normalizedOptionalNumber(
           editing.usage_limits?.credit_spend_limit_5h_usd,
         ),
@@ -373,6 +392,16 @@ function useMembershipTiers() {
         usage_limits,
         "egress_7d_bytes",
         gigabytesToBytes(values.usage_limit_egress_7d_gb),
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "cpu_5h_seconds",
+        cpuHoursToSeconds(values.usage_limit_cpu_5h_hours),
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "cpu_7d_seconds",
+        cpuHoursToSeconds(values.usage_limit_cpu_7d_hours),
       );
       setOrDeleteUsageLimit(
         usage_limits,
@@ -808,6 +837,18 @@ export function MembershipTiers() {
             label="Egress 7d window (GB)"
           >
             <InputNumber min={0} step={0.1} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item
+            name="usage_limit_cpu_5h_hours"
+            label="CPU 5h window (CPU-hours)"
+          >
+            <InputNumber min={0} step={0.1} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item
+            name="usage_limit_cpu_7d_hours"
+            label="CPU 7d window (CPU-hours)"
+          >
+            <InputNumber min={0} step={1} style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item
             name="usage_limit_credit_spend_limit_5h_usd"

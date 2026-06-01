@@ -172,7 +172,13 @@ describe("rootfs preflight metadata", () => {
     });
     expect(executeCode).toHaveBeenCalledWith(
       expect.objectContaining({
-        env: { COCALC_ROOTFS_SKIP_OWNERSHIP_BRIDGE: "1" },
+        args: [
+          "-n",
+          "/usr/local/sbin/cocalc-runtime-storage",
+          "normalize-rootfs",
+          "--skip-ownership-bridge",
+          "/mnt/cocalc/data/cache/images/example",
+        ],
       }),
     );
   });
@@ -198,7 +204,14 @@ describe("rootfs preflight metadata", () => {
     });
     expect(executeCode).toHaveBeenCalledWith(
       expect.objectContaining({
-        env: { COCALC_ROOTFS_OWNERSHIP_SOURCE: "oci-extract" },
+        args: [
+          "-n",
+          "/usr/local/sbin/cocalc-runtime-storage",
+          "normalize-rootfs",
+          "--ownership-source",
+          "oci-extract",
+          "/mnt/cocalc/data/cache/images/example",
+        ],
       }),
     );
   });

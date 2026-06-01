@@ -2401,7 +2401,10 @@ export default function Message({
 
   function saveEditedMessage(submittedValue?: string): void {
     if (actions == null) return;
-    const mentionSubstituted = submitMentionsRef.current?.({ chat: `${date}` });
+    const mentionSubstituted = submitMentionsRef.current?.({
+      chat: `${date}`,
+      thread: field<string>(message, "thread_id"),
+    });
     const mesg = resolveEditedMessageForSave(
       mentionSubstituted,
       submittedValue,

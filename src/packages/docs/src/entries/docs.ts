@@ -13,6 +13,14 @@ import {
 
 export const DOCUMENTATION_ENTRIES: DocsEntry[] = [
   {
+    actions: [
+      {
+        description: "Open the global docs browser.",
+        executable: true,
+        id: "docs.browser.open",
+        label: "Open docs browser",
+      },
+    ],
     audiences: ["agents", "instructors", "researchers", "students", "teams"],
     body: DOCS_BROWSER_BODY.trim(),
     category: "Docs",
@@ -29,6 +37,14 @@ export const DOCUMENTATION_ENTRIES: DocsEntry[] = [
     title: "Use the docs browser",
   },
   {
+    actions: [
+      {
+        description: "Open the executable docs actions page.",
+        executable: true,
+        id: "docs.actions.open",
+        label: "Open docs actions",
+      },
+    ],
     audiences: ["agents", "teams"],
     body: DOCS_ACTIONS_BODY.trim(),
     category: "Docs",
@@ -45,6 +61,14 @@ export const DOCUMENTATION_ENTRIES: DocsEntry[] = [
     title: "Use executable docs actions",
   },
   {
+    actions: [
+      {
+        description: "Open the browser-session automation docs page.",
+        executable: true,
+        id: "docs.automation.open",
+        label: "Open browser automation docs",
+      },
+    ],
     audiences: ["agents", "teams"],
     body: BROWSER_AUTOMATION_BODY.trim(),
     category: "Docs",

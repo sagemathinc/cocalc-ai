@@ -14,6 +14,7 @@ import {
   listDocsEntries,
   type DocsActionId,
 } from "./index";
+import { LEGACY_DOC_LINK_BASELINE } from "./legacy-doc-links-baseline";
 
 export type DocsVerificationSeverity = "error" | "warning";
 
@@ -31,7 +32,10 @@ export type DocsLiveVerificationScenario = {
   command: string[];
   description: string;
   entryId: string;
+  expectedResult?: Record<string, string>;
+  missingParameters?: string[];
   mutatesProject?: boolean;
+  parameters?: Record<string, string>;
 };
 
 export type DocsLiveUiAssertion = {
@@ -43,9 +47,46 @@ export type DocsLiveUiAssertion = {
 export type DocsVerificationReport = {
   actionCount: number;
   entryCount: number;
+  frontendDocsLinks: DocsFrontendDocsLink[];
   issues: DocsVerificationIssue[];
+  legacyDocLinks: DocsLegacyDocLink[];
   liveScenarios: DocsLiveVerificationScenario[];
   ok: boolean;
+};
+
+export type DocsFrontendDocsLink = {
+  file: string;
+  line: number;
+  slug?: string;
+  url: string;
+};
+
+export type DocsLegacyDocLink = {
+  baseline: boolean;
+  file: string;
+  line: number;
+  url: string;
+};
+
+export type DocsGapEntry = {
+  actionIds?: DocsActionId[];
+  category: string;
+  id: string;
+  lastReviewed?: string;
+  reviewAgeDays?: number;
+  slug: string;
+  title: string;
+};
+
+export type DocsGapReport = {
+  categoriesWithoutChapter: string[];
+  entryCount: number;
+  legacyDocLinks: DocsLegacyDocLink[];
+  ok: boolean;
+  pagesWithStaleReview: DocsGapEntry[];
+  pagesWithoutActions: DocsGapEntry[];
+  pagesWithoutLiveVerification: DocsGapEntry[];
+  staleReviewDays: number;
 };
 
 export type DocsLiveVerificationResult = {
@@ -81,6 +122,7 @@ export type DocsLiveVerificationOptions = {
   browserId?: string;
   cocalcArgs?: string[];
   cocalcCommand?: string;
+  hostId?: string;
   projectId: string;
   timeout?: string;
 };
@@ -91,7 +133,10 @@ export type DocsLiveVerificationReport = {
 };
 
 const DOCS_LINK_RE = /\/docs\/([A-Za-z0-9._/-]+)/g;
-const LEGACY_DOCS_RE = /https:\/\/doc\.cocalc\.com\//;
+const APP_DOCS_LINK_RE = /\/app-docs(?:\/[A-Za-z0-9._/-]+)?/g;
+const LEGACY_DOCS_RE = /https:\/\/doc\.cocalc\.com\/[^\s"'<>)]*/g;
+const DEFAULT_STALE_REVIEW_DAYS = 90;
+const FRONTEND_LINK_SCAN_ROOTS = [":(top)src/packages/frontend"];
 
 const UI_ASSERTION_TIMEOUT_MS = 15_000;
 
@@ -125,9 +170,234 @@ function executableActionIds(): Set<string> {
   );
 }
 
-function liveUiAssertionForAction(
-  actionId: DocsActionId,
-): DocsLiveUiAssertion | undefined {
+function legacyLinkKey(link: Pick<DocsLegacyDocLink, "file" | "url">): string {
+  return `${link.file}\t${link.url}`;
+}
+
+function frontendDocsLinkKey(
+  link: Pick<DocsFrontendDocsLink, "file" | "url">,
+): string {
+  return `${link.file}\t${link.url}`;
+}
+
+function runSyncCommand(
+  command: string,
+  args: string[],
+): { status: number | null; stdout: string } {
+  const requireFunction = eval("require") as (name: string) => unknown;
+  const childProcess = requireFunction("node:child_process") as {
+    spawnSync: (
+      command: string,
+      args: string[],
+      options: { encoding: "utf8" },
+    ) => { status: number | null; stdout: string };
+  };
+  return childProcess.spawnSync(command, args, { encoding: "utf8" });
+}
+
+export function scanLegacyDocLinks(): DocsLegacyDocLink[] {
+  const result = runSyncCommand("git", [
+    "grep",
+    "--full-name",
+    "-n",
+    "-I",
+    "-E",
+    "https://doc\\.cocalc\\.com/[^[:space:]\"'<>)]*",
+    "--",
+    ...FRONTEND_LINK_SCAN_ROOTS,
+  ]);
+  if (result.status !== 0 || !result.stdout.trim()) return [];
+  const links: DocsLegacyDocLink[] = [];
+  for (const row of result.stdout.trim().split("\n")) {
+    const match = row.match(/^([^:]+):(\d+):(.*)$/);
+    if (!match) continue;
+    const [, file, lineText, text] = match;
+    for (const urlMatch of text.matchAll(LEGACY_DOCS_RE)) {
+      const link = {
+        baseline: false,
+        file,
+        line: Number.parseInt(lineText, 10),
+        url: urlMatch[0],
+      };
+      links.push({
+        ...link,
+        baseline: LEGACY_DOC_LINK_BASELINE.has(legacyLinkKey(link)),
+      });
+    }
+  }
+  return links.sort((a, b) => legacyLinkKey(a).localeCompare(legacyLinkKey(b)));
+}
+
+function appDocsSlug(url: string): string | undefined {
+  const slug = url.replace(/^\/app-docs\/?/, "").replace(/\/$/, "");
+  if (!slug || slug === "print") return undefined;
+  return slug;
+}
+
+export function scanFrontendDocsLinks(): DocsFrontendDocsLink[] {
+  const result = runSyncCommand("git", [
+    "grep",
+    "--full-name",
+    "-n",
+    "-I",
+    "-E",
+    "/app-docs(/[A-Za-z0-9._/-]+)?",
+    "--",
+    ...FRONTEND_LINK_SCAN_ROOTS,
+  ]);
+  if (result.status !== 0 || !result.stdout.trim()) return [];
+  const links: DocsFrontendDocsLink[] = [];
+  for (const row of result.stdout.trim().split("\n")) {
+    const match = row.match(/^([^:]+):(\d+):(.*)$/);
+    if (!match) continue;
+    const [, file, lineText, text] = match;
+    for (const urlMatch of text.matchAll(APP_DOCS_LINK_RE)) {
+      const url = urlMatch[0];
+      links.push({
+        file,
+        line: Number.parseInt(lineText, 10),
+        slug: appDocsSlug(url),
+        url,
+      });
+    }
+  }
+  return links.sort((a, b) =>
+    frontendDocsLinkKey(a).localeCompare(frontendDocsLinkKey(b)),
+  );
+}
+
+function entryGap(entry: {
+  actions?: { id: DocsActionId }[];
+  category: string;
+  id: string;
+  lastReviewed: string;
+  slug: string;
+  title: string;
+}): DocsGapEntry {
+  const actionIds = entry.actions?.map((action) => action.id);
+  return {
+    ...(actionIds?.length ? { actionIds } : {}),
+    category: entry.category,
+    id: entry.id,
+    lastReviewed: entry.lastReviewed,
+    slug: entry.slug,
+    title: entry.title,
+  };
+}
+
+function reviewAgeDays(lastReviewed: string, now: Date): number | undefined {
+  const reviewed = Date.parse(`${lastReviewed}T00:00:00Z`);
+  if (!Number.isFinite(reviewed)) return undefined;
+  return Math.floor((now.getTime() - reviewed) / 86_400_000);
+}
+
+const HOST_ACTION_TABS: Partial<Record<DocsActionId, string>> = {
+  "hosts.access.open": "Access",
+  "hosts.change-rules.open": "Overview",
+  "hosts.lifecycle.open": "Overview",
+  "hosts.move.open": "Projects",
+  "hosts.reliability.open": "Reliability",
+  "hosts.runtime.open": "Runtime",
+  "hosts.scratch.open": "Storage",
+  "hosts.storage.open": "Storage",
+  "hosts.logs.open": "Logs",
+  "hosts.spot-recovery.open": "Overview",
+};
+
+function liveUiAssertionForAction({
+  actionId,
+  hasHostId = false,
+}: {
+  actionId: DocsActionId;
+  hasHostId?: boolean;
+}): DocsLiveUiAssertion | undefined {
+  if (actionId.startsWith("account.") || actionId.startsWith("billing.")) {
+    const settingsPaths: Partial<Record<DocsActionId, string>> = {
+      "account.profile.open": "/settings/profile",
+      "account.ssh-keys.open": "/settings/keys",
+      "billing.payment-methods.open": "/settings/payment-methods",
+      "billing.statements.open": "/settings/statements",
+      "billing.subscriptions.open": "/settings/subscriptions",
+    };
+    const expectedPath = settingsPaths[actionId];
+    if (expectedPath) {
+      return {
+        description: `Account settings route ${expectedPath} is visible.`,
+        code: `const url = api.waitForUrl({ includes: ${JSON.stringify(expectedPath)}, timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true, url };`,
+      };
+    }
+  }
+  if (actionId.startsWith("admin.")) {
+    const adminPaths: Partial<Record<DocsActionId, string>> = {
+      "admin.news.open": "/admin/news",
+      "admin.news.create-system": "/admin/news/new",
+      "admin.bay-ops.open": "/admin/bay-ops",
+      "admin.managed-egress.open": "/admin/managed-egress",
+      "admin.membership-tiers.open": "/admin/membership-tiers",
+      "admin.project-backup-shards.open": "/admin/project-backup-shards",
+      "admin.registration-tokens.open": "/admin/registration-tokens",
+      "admin.rootfs.open": "/admin/rootfs",
+      "admin.site-settings.open": "/admin/site-settings",
+      "admin.software-licenses.open": "/admin/software-licenses",
+      "admin.sso.open": "/admin/sso",
+      "admin.users.open": "/admin/user-search",
+    };
+    const expectedPath = adminPaths[actionId];
+    if (expectedPath) {
+      return {
+        description: `Admin route ${expectedPath} is visible.`,
+        code: `const url = api.waitForUrl({ includes: ${JSON.stringify(expectedPath)}, timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true, url };`,
+      };
+    }
+  }
+  if (actionId.startsWith("hosts.")) {
+    const expectedTab = HOST_ACTION_TABS[actionId];
+    if (hasHostId && expectedTab) {
+      return {
+        description: `Project Hosts drawer is open on the ${expectedTab} tab.`,
+        code: `const url = api.waitForUrl({ includes: "/hosts", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+const drawer = api.waitForSelector(".ant-drawer", { state: "visible", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+const tab = api.waitForText({ selector: ".ant-drawer .ant-tabs-tab-active", includes: ${JSON.stringify(expectedTab)}, timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true && drawer.ok === true && tab.ok === true, url, drawer, tab };`,
+      };
+    }
+    return {
+      description: "Project Hosts route is visible.",
+      code: `const url = api.waitForUrl({ includes: "/hosts", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true, url };`,
+    };
+  }
+  if (actionId.startsWith("docs.")) {
+    const docsPaths: Partial<Record<DocsActionId, string>> = {
+      "docs.browser.open": "/app-docs/documentation/browser",
+      "docs.actions.open": "/app-docs/documentation/executable-actions",
+      "docs.automation.open": "/app-docs/documentation/browser-automation",
+    };
+    const expectedPath = docsPaths[actionId];
+    if (expectedPath) {
+      return {
+        description: `Docs route ${expectedPath} is visible.`,
+        code: `const url = api.waitForUrl({ includes: ${JSON.stringify(expectedPath)}, timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true, url };`,
+      };
+    }
+  }
+  if (actionId === "projects.list.open") {
+    return {
+      description: "Projects page is visible.",
+      code: `const url = api.waitForUrl({ includes: "/projects", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true, url };`,
+    };
+  }
+  if (actionId === "project.files.open") {
+    return {
+      description: "Project files route is visible.",
+      code: `const url = api.waitForUrl({ includes: "/files", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true, url };`,
+    };
+  }
   if (actionId === "settings.environment.secrets") {
     return {
       description: "Project Secrets modal is visible.",
@@ -137,7 +407,7 @@ return { ok: modal.ok === true, modal };`,
 return api.waitForSelector(".ant-modal[role=dialog]", { state: "hidden", timeout_ms: 3000 });`,
     };
   }
-  if (actionId === "project.terminal.open") {
+  if (actionId === "project.terminal.open" || actionId === "terminal.open") {
     return {
       description: "Terminal file tab and xterm UI are visible.",
       code: `const url = api.waitForUrl({ regex: "/\\/files\\/.+\\.term(?:[?#]|$)/", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
@@ -145,12 +415,26 @@ const terminal = api.waitForText({ selector: ".terminal.xterm", includes: "$", t
 return { ok: url.ok === true && terminal.ok === true, url, terminal };`,
     };
   }
-  if (actionId === "project.jupyter.create") {
+  if (actionId === "project.jupyter.create" || actionId === "jupyter.open") {
     return {
       description: "Notebook file tab and Jupyter UI are visible.",
       code: `const url = api.waitForUrl({ regex: "/\\/files\\/.+\\.ipynb(?:[?#]|$)/", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
 const notebook = api.waitForText({ includes: "Jupyter", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
 return { ok: url.ok === true && notebook.ok === true, url, notebook };`,
+    };
+  }
+  const createdFileExtensions: Partial<Record<DocsActionId, string>> = {
+    "files.markdown.open": "md",
+    "python.open": "py",
+    "latex.open": "tex",
+    "r.markdown.open": "Rmd",
+  };
+  const createdFileExtension = createdFileExtensions[actionId];
+  if (createdFileExtension) {
+    return {
+      description: `Project .${createdFileExtension} file opens.`,
+      code: `const url = api.waitForUrl({ regex: ${JSON.stringify(`/\\.${createdFileExtension}(?:[?#]|$)/`)}, timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: url.ok === true, url };`,
     };
   }
   if (actionId === "settings.runtime.rootfs") {
@@ -190,12 +474,31 @@ return { ok: url.ok === true && agents.ok === true, url, agents };`,
 export function listDocsLiveVerificationScenarios({
   cocalcArgs = [],
   cocalcCommand = "cocalc",
+  hostId = "",
   projectId = "$COCALC_PROJECT_ID",
   timeout = "60s",
 }: Partial<DocsLiveVerificationOptions> = {}): DocsLiveVerificationScenario[] {
-  return listDocsActions()
+  return listDocsActions({ includeAdmin: true, includeSignedIn: true })
     .filter((action) => action.executable === true)
     .map((action) => {
+      const parameters: Record<string, string> = {};
+      const commandParameters: Record<string, string> = {};
+      const missingParameters: string[] = [];
+      for (const parameter of action.parameters ?? []) {
+        if (parameter.type === "project") {
+          parameters[parameter.name] = projectId;
+          commandParameters[parameter.name] = projectId;
+        } else if (parameter.type === "project-host") {
+          const value = `${hostId ?? ""}`.trim();
+          if (value) {
+            parameters[parameter.name] = value;
+            commandParameters[parameter.name] = value;
+          } else if (parameter.required) {
+            missingParameters.push(parameter.name);
+            commandParameters[parameter.name] = "$COCALC_DOCS_VERIFY_HOST_ID";
+          }
+        }
+      }
       const command = [
         cocalcCommand,
         ...cocalcArgs,
@@ -208,16 +511,42 @@ export function listDocsLiveVerificationScenarios({
         "--timeout",
         timeout,
       ];
+      for (const [key, value] of Object.entries(commandParameters)) {
+        command.push("--param", `${key}=${value}`);
+      }
+      const expectedResult: Record<string, string> = {};
+      if (parameters.hostId) {
+        expectedResult.host_id = parameters.hostId;
+      }
+      const drawerTab =
+        parameters.hostId && HOST_ACTION_TABS[action.id]
+          ? HOST_ACTION_TABS[action.id]?.toLowerCase()
+          : undefined;
+      if (drawerTab && drawerTab !== "overview") {
+        expectedResult.drawer_tab = drawerTab;
+      }
       return {
-        assertion: liveUiAssertionForAction(action.id),
+        assertion: liveUiAssertionForAction({
+          actionId: action.id,
+          hasHostId: !!parameters.hostId,
+        }),
         actionId: action.id,
         command,
         description: action.description,
         entryId: action.entryId,
+        ...(Object.keys(expectedResult).length > 0 ? { expectedResult } : {}),
+        ...(missingParameters.length > 0 ? { missingParameters } : {}),
         mutatesProject:
           action.id === "project.terminal.open" ||
+          action.id === "terminal.open" ||
           action.id === "project.jupyter.create" ||
+          action.id === "jupyter.open" ||
+          action.id === "files.markdown.open" ||
+          action.id === "python.open" ||
+          action.id === "latex.open" ||
+          action.id === "r.markdown.open" ||
           action.id === "file.timetravel.open",
+        ...(Object.keys(parameters).length > 0 ? { parameters } : {}),
       };
     });
 }
@@ -345,7 +674,7 @@ export function verifyDocsStatic(): DocsVerificationReport {
         }),
       );
     }
-    if (LEGACY_DOCS_RE.test(entry.body)) {
+    if (entry.body.match(LEGACY_DOCS_RE)) {
       issues.push(
         issue({
           code: "entry-legacy-doc-link",
@@ -455,13 +784,101 @@ export function verifyDocsStatic(): DocsVerificationReport {
     }
   }
 
+  const legacyDocLinks = scanLegacyDocLinks();
+  for (const link of legacyDocLinks) {
+    if (!link.baseline) {
+      issues.push(
+        issue({
+          code: "legacy-doc-link-new",
+          message: `New legacy doc.cocalc.com link in ${link.file}:${link.line}: ${link.url}`,
+        }),
+      );
+    }
+  }
+  const frontendDocsLinks = scanFrontendDocsLinks();
+  for (const link of frontendDocsLinks) {
+    if (link.slug && getDocsEntry(link.slug, docsAccess) == null) {
+      issues.push(
+        issue({
+          code: "frontend-app-docs-link",
+          message: `Frontend /app-docs link in ${link.file}:${link.line} does not resolve: ${link.url}`,
+        }),
+      );
+    }
+  }
+
   const errors = issues.filter((entry) => entry.severity === "error");
   return {
     actionCount: actions.length,
     entryCount: entries.length,
+    frontendDocsLinks,
     issues,
+    legacyDocLinks,
     liveScenarios: listDocsLiveVerificationScenarios(),
     ok: errors.length === 0,
+  };
+}
+
+export function buildDocsGapReport({
+  now = new Date(),
+  staleReviewDays = DEFAULT_STALE_REVIEW_DAYS,
+}: {
+  now?: Date;
+  staleReviewDays?: number;
+} = {}): DocsGapReport {
+  const docsAccess = { includeAdmin: true, includeSignedIn: true };
+  const entries = listDocsEntries(docsAccess);
+  const categories = [
+    ...new Set(entries.map((entry) => entry.category)),
+  ].sort();
+  const liveAssertionsByAction = new Map(
+    listDocsLiveVerificationScenarios().map((scenario) => [
+      scenario.actionId,
+      scenario.assertion,
+    ]),
+  );
+  const pagesWithoutActions: DocsGapEntry[] = [];
+  const pagesWithoutLiveVerification: DocsGapEntry[] = [];
+  const pagesWithStaleReview: DocsGapEntry[] = [];
+
+  for (const entry of entries) {
+    const actions = entry.actions ?? [];
+    if (actions.length === 0) {
+      pagesWithoutActions.push(entryGap(entry));
+      pagesWithoutLiveVerification.push(entryGap(entry));
+    } else {
+      const hasAssertedLiveAction = actions.some(
+        (action) =>
+          action.executable === true &&
+          liveAssertionsByAction.get(action.id) != null,
+      );
+      if (!hasAssertedLiveAction) {
+        pagesWithoutLiveVerification.push(entryGap(entry));
+      }
+    }
+    const ageDays = reviewAgeDays(entry.lastReviewed, now);
+    if (ageDays != null && ageDays > staleReviewDays) {
+      pagesWithStaleReview.push({
+        ...entryGap(entry),
+        reviewAgeDays: ageDays,
+      });
+    }
+  }
+
+  return {
+    categoriesWithoutChapter: categories.filter(
+      (category) => getDocsChapter(category, docsAccess) == null,
+    ),
+    entryCount: entries.length,
+    legacyDocLinks: scanLegacyDocLinks(),
+    ok:
+      pagesWithoutActions.length === 0 &&
+      pagesWithoutLiveVerification.length === 0 &&
+      pagesWithStaleReview.length === 0,
+    pagesWithStaleReview,
+    pagesWithoutActions,
+    pagesWithoutLiveVerification,
+    staleReviewDays,
   };
 }
 
@@ -619,6 +1036,7 @@ export async function verifyDocsLive({
   browserId,
   cocalcArgs = ["--json"],
   cocalcCommand = "cocalc",
+  hostId,
   projectId,
   timeout = "60s",
 }: DocsLiveVerificationOptions): Promise<DocsLiveVerificationReport> {
@@ -626,6 +1044,7 @@ export async function verifyDocsLive({
   const scenarios = listDocsLiveVerificationScenarios({
     cocalcArgs,
     cocalcCommand,
+    hostId,
     projectId,
     timeout,
   }).filter(
@@ -636,6 +1055,17 @@ export async function verifyDocsLive({
     const command = [...scenario.command];
     if (browserId) {
       command.push("--browser", browserId);
+    }
+    if (scenario.missingParameters?.length) {
+      results.push({
+        actionId: scenario.actionId,
+        command,
+        error: `missing required live docs parameter(s): ${scenario.missingParameters.join(
+          ", ",
+        )}`,
+        ok: false,
+      });
+      continue;
     }
     const [bin, ...args] = command;
     try {
@@ -649,11 +1079,15 @@ export async function verifyDocsLive({
           ? (output as { data?: any }).data
           : undefined;
       const result = data?.result ?? data;
+      const expectedResultOk = Object.entries(
+        scenario.expectedResult ?? {},
+      ).every(([key, value]) => `${result?.[key] ?? ""}` === value);
       const ok =
         code === 0 &&
         data?.ok !== false &&
         result?.opened === true &&
-        result?.action_id === scenario.actionId;
+        result?.action_id === scenario.actionId &&
+        expectedResultOk;
       const assertion =
         ok && scenario.assertion
           ? await runLiveUiAssertion({
@@ -680,7 +1114,9 @@ export async function verifyDocsLive({
                 ok && assertion?.error
                   ? assertion.error
                   : code === 0
-                    ? "docs action did not report the expected opened result"
+                    ? expectedResultOk
+                      ? "docs action did not report the expected opened result"
+                      : "docs action did not report the expected parameterized result"
                     : `command exited with code ${code ?? "unknown"}`,
             }),
       });
@@ -707,6 +1143,8 @@ export function formatDocsVerificationReport(
     `Entries: ${report.entryCount}`,
     `Actions: ${report.actionCount}`,
     `Live scenarios: ${report.liveScenarios.length}`,
+    `Legacy doc.cocalc.com links: ${report.legacyDocLinks.length}`,
+    `Frontend /app-docs links: ${report.frontendDocsLinks.length}`,
   ];
   for (const item of report.issues) {
     const target = [item.entryId, item.actionId].filter(Boolean).join(" ");
@@ -714,5 +1152,38 @@ export function formatDocsVerificationReport(
       `${item.severity.toUpperCase()} ${item.code}${target ? ` ${target}` : ""}: ${item.message}`,
     );
   }
+  return lines.join("\n");
+}
+
+function formatGapEntries(entries: DocsGapEntry[]): string[] {
+  return entries.map((entry) => {
+    const actions = entry.actionIds?.length
+      ? ` actions=${entry.actionIds.join(",")}`
+      : "";
+    const reviewAge =
+      entry.reviewAgeDays == null ? "" : ` reviewed=${entry.reviewAgeDays}d`;
+    return `- ${entry.category}: ${entry.title} (${entry.slug})${actions}${reviewAge}`;
+  });
+}
+
+export function formatDocsGapReport(report: DocsGapReport): string {
+  const lines = [
+    `Docs gaps: ${report.ok ? "none blocking" : "open"}`,
+    `Entries: ${report.entryCount}`,
+    `Legacy doc.cocalc.com links: ${report.legacyDocLinks.length}`,
+    `Stale review threshold: ${report.staleReviewDays} days`,
+    "",
+    `Categories without chapter (${report.categoriesWithoutChapter.length})`,
+    ...report.categoriesWithoutChapter.map((category) => `- ${category}`),
+    "",
+    `Pages without actions (${report.pagesWithoutActions.length})`,
+    ...formatGapEntries(report.pagesWithoutActions),
+    "",
+    `Pages without asserted live verification (${report.pagesWithoutLiveVerification.length})`,
+    ...formatGapEntries(report.pagesWithoutLiveVerification),
+    "",
+    `Pages with stale lastReviewed (${report.pagesWithStaleReview.length})`,
+    ...formatGapEntries(report.pagesWithStaleReview),
+  ];
   return lines.join("\n");
 }

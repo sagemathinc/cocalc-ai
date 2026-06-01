@@ -487,6 +487,19 @@ function isArtifactVersionName(name: string): boolean {
   );
 }
 
+function decodeProcPath(value: string): string {
+  return `${value ?? ""}`.replace(/\\([0-7]{3})/g, (_, octal) =>
+    String.fromCharCode(Number.parseInt(octal, 8)),
+  );
+}
+
+function normalizeMountedArtifactVersion(value: string): string {
+  return decodeProcPath(value)
+    .replace(/\s+\(deleted\)$/i, "")
+    .replace(/\/+\(?deleted\)?$/i, "")
+    .trim();
+}
+
 function extractMountedArtifactVersionsFromMountinfo(
   mountinfo: string,
   root: string,
@@ -502,13 +515,69 @@ function extractMountedArtifactVersionsFromMountinfo(
     pattern.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(line)) != null) {
-      const version = match[1];
+      const version = normalizeMountedArtifactVersion(match[1]);
       if (isArtifactVersionName(version)) {
         versions.add(version);
       }
     }
   }
   return [...versions].sort();
+}
+
+async function listInstalledArtifactVersions(root: string): Promise<string[]> {
+  let entries: fs.Dirent[];
+  try {
+    entries = await fs.promises.readdir(root, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter(
+      (entry) =>
+        entry.isDirectory() &&
+        !entry.isSymbolicLink() &&
+        isArtifactVersionName(entry.name),
+    )
+    .map((entry) => entry.name)
+    .sort();
+}
+
+async function listRunningPodmanContainerIds(): Promise<string[]> {
+  try {
+    const { stdout } = await runCommandCapture("podman", ["ps", "-q"], {
+      timeoutMs: 15_000,
+    });
+    return stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  } catch (err) {
+    logger.warn("upgrade: unable to list running podman containers", {
+      err: describeError(err),
+    });
+    return [];
+  }
+}
+
+async function listLivePodmanMountedArtifactVersions(
+  root: string,
+): Promise<string[]> {
+  const containerIds = await listRunningPodmanContainerIds();
+  if (containerIds.length === 0) return [];
+  try {
+    const { stdout } = await runCommandCapture(
+      "podman",
+      ["inspect", ...containerIds],
+      { timeoutMs: 30_000 },
+    );
+    return extractMountedArtifactVersionsFromMountinfo(stdout, root);
+  } catch (err) {
+    logger.warn("upgrade: unable to inspect running podman mounts", {
+      root,
+      err: describeError(err),
+    });
+    return [];
+  }
 }
 
 async function listLiveMountedArtifactVersions(
@@ -551,6 +620,9 @@ async function listLiveMountedArtifactVersions(
         versions.add(version);
       }
     }
+  }
+  for (const version of await listLivePodmanMountedArtifactVersions(root)) {
+    versions.add(version);
   }
   return [...versions].sort();
 }
@@ -701,6 +773,23 @@ async function protectedArtifactVersions({
       );
       for (const version of liveMountedVersions) {
         versions.add(version);
+      }
+    }
+    if (artifact === "tools") {
+      const runningContainerIds = await listRunningPodmanContainerIds();
+      if (runningContainerIds.length > 0) {
+        const installedVersions = await listInstalledArtifactVersions(root);
+        logger.info(
+          "upgrade: protecting all installed tools versions while project containers are running",
+          {
+            root,
+            running_containers: runningContainerIds.length,
+            versions: installedVersions,
+          },
+        );
+        for (const version of installedVersions) {
+          versions.add(version);
+        }
       }
     }
   }
@@ -1017,7 +1106,9 @@ export const __test__ = {
   curlTimeoutArgs,
   downloadAndInstall,
   extractMountedArtifactVersionsFromMountinfo,
+  listInstalledArtifactVersions,
   listLiveMountedArtifactVersions,
+  listLivePodmanMountedArtifactVersions,
   pruneVersionDirs,
   protectedArtifactVersions,
   runCommandCapture,

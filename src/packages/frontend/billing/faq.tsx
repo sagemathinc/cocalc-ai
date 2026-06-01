@@ -13,12 +13,12 @@ export class FAQ extends Component {
         <a id="faq" />
         <ul style={{ paddingLeft: "20px" }}>
           <li>
-            <A href={"https://doc.cocalc.com/billing.html"}>
-              Billing, quotas, and upgrades FAQ
+            <A href="/app-docs/billing/settings">
+              Billing, quotas, and upgrades
             </A>
           </li>
           <li>
-            <A href="https://doc.cocalc.com/project-faq.html">
+            <A href="/app-docs/projects/project-list">
               Questions about projects
             </A>
           </li>

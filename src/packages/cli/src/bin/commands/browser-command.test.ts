@@ -20,6 +20,7 @@ function makeProgram({
   getAutomationPolicyInfo,
   getExecApiDeclaration,
   listDocsActions,
+  docsAction,
   listRuntimeEvents,
   listNetworkTrace,
   globals,
@@ -30,6 +31,7 @@ function makeProgram({
   getAutomationPolicyInfo?: () => Promise<any>;
   getExecApiDeclaration?: () => Promise<string>;
   listDocsActions?: (opts: { project_id: string }) => Promise<any>;
+  docsAction?: (opts: { project_id: string; action: any }) => Promise<any>;
   listRuntimeEvents?: (opts?: any) => Promise<any>;
   listNetworkTrace?: (opts?: any) => Promise<any>;
   globals?: Record<string, unknown>;
@@ -107,6 +109,12 @@ function makeProgram({
           listDocsActions ??
           (async () => ({
             actions: [],
+          })),
+        action:
+          docsAction ??
+          (async () => ({
+            ok: true,
+            result: { opened: true },
           })),
         listRuntimeEvents:
           listRuntimeEvents ??
@@ -475,6 +483,52 @@ test("browser action docs-list reports live docs action availability", async () 
     "settings.environment.secrets",
   );
   assert.equal((results[0] as any).actions[0]?.available, true);
+});
+
+test("browser action docs forwards docs action parameters", async () => {
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
+  let request: any;
+  const { program, results } = makeProgram({
+    openFiles: [],
+    docsAction: async (opts) => {
+      request = opts;
+      return {
+        ok: true,
+        result: {
+          action_id: opts.action.id,
+          host_id: opts.action.parameters?.hostId,
+          opened: true,
+          project_id: opts.project_id,
+        },
+      };
+    },
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "action",
+    "docs",
+    "hosts.access.open",
+    "--browser",
+    "browser-1",
+    "--project-id",
+    PROJECT_A,
+    "--host-id",
+    "host-1",
+    "--param",
+    "drawer=access",
+  ]);
+
+  assert.equal(request.project_id, PROJECT_A);
+  assert.deepEqual(request.action, {
+    name: "docs_action",
+    id: "hosts.access.open",
+    parameters: { hostId: "host-1", drawer: "access" },
+  });
+  assert.equal((results[0] as any).result.host_id, "host-1");
 });
 
 test("browser logs tail --follow respects timeout while waiting for events", async () => {

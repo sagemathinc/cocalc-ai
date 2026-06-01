@@ -19,7 +19,7 @@ import { useProjectContext } from "./context";
 
 const MEMBERSHIP_URL = join(appBasePath, "/settings");
 
-const INET_QUOTA_URL = "https://doc.cocalc.com/upgrades.html#internet-access";
+const INET_QUOTA_URL = "/app-docs/billing/settings";
 
 interface NoInternetBannerProps {
   isPaidStudentPayProject?: boolean;

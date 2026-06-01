@@ -6,6 +6,7 @@
 import type { FrontendSourceFingerprintInfo } from "@cocalc/conat/hub/api/system";
 import {
   build_date,
+  cocalc_setup_profile,
   frontend_build_available,
   frontend_build_fingerprint,
   frontend_build_latest_mtime_iso,
@@ -316,6 +317,9 @@ export async function checkFrontendBuildFingerprint(
 
 export function initDebugBuildCheck(client: DebugClient): void {
   if (!DEBUG || typeof window === "undefined" || window.cc == null) {
+    return;
+  }
+  if (cocalc_setup_profile === "star") {
     return;
   }
   activeClient = client;
