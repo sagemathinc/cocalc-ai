@@ -10,6 +10,7 @@ export interface MembershipTierPricingAssumptions {
   overheadReserve: number;
   aiUnitCostUsd: number;
   egressCostPerGb: number;
+  accountStorageCostPerGbMonth: number;
   blobStorageCostPerGbMonth: number;
   rootfsStorageCostPerGbMonth: number;
   sharedHostMonthlyCostUsd: number;
@@ -25,6 +26,7 @@ export interface MembershipTierPricingInput {
   priceYearlyUsd?: unknown;
   aiUnits7d?: unknown;
   egress7dGb?: unknown;
+  accountStorageHardCapGb?: unknown;
   blobStorageGb?: unknown;
   rootfsStorageGb?: unknown;
   creditSpendLimit7dUsd?: unknown;
@@ -46,6 +48,7 @@ export interface MembershipTierPricingRiskAnalysis {
   hardCosts: {
     aiMonthlyUsd: number;
     egressMonthlyUsd: number;
+    accountStorageMonthlyUsd: number;
     blobStorageMonthlyUsd: number;
     rootfsStorageMonthlyUsd: number;
     dedicatedHostCreditGuardrailMonthlyUsd: number;
@@ -76,7 +79,8 @@ export const DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS: MembershipTierPricingA
     targetGrossMargin: 0.7,
     overheadReserve: 0.1,
     aiUnitCostUsd: 0.01,
-    egressCostPerGb: 0.05,
+    egressCostPerGb: 0.12,
+    accountStorageCostPerGbMonth: 0.15,
     blobStorageCostPerGbMonth: 0.025,
     rootfsStorageCostPerGbMonth: 0.04,
     sharedHostMonthlyCostUsd: 120,
@@ -123,6 +127,9 @@ export function normalizeMembershipTierPricingAssumptions(
     overheadReserve: clampFraction(merged.overheadReserve),
     aiUnitCostUsd: nonnegative(merged.aiUnitCostUsd),
     egressCostPerGb: nonnegative(merged.egressCostPerGb),
+    accountStorageCostPerGbMonth: nonnegative(
+      merged.accountStorageCostPerGbMonth,
+    ),
     blobStorageCostPerGbMonth: nonnegative(merged.blobStorageCostPerGbMonth),
     rootfsStorageCostPerGbMonth: nonnegative(
       merged.rootfsStorageCostPerGbMonth,
@@ -171,6 +178,9 @@ export function analyzeMembershipTierPricingRisk(
     monthlyFromWeekly(input.aiUnits7d) * assumptions.aiUnitCostUsd;
   const egressMonthlyUsd =
     monthlyFromWeekly(input.egress7dGb) * assumptions.egressCostPerGb;
+  const accountStorageMonthlyUsd =
+    nonnegative(input.accountStorageHardCapGb) *
+    assumptions.accountStorageCostPerGbMonth;
   const blobStorageMonthlyUsd =
     nonnegative(input.blobStorageGb) * assumptions.blobStorageCostPerGbMonth;
   const rootfsStorageMonthlyUsd =
@@ -185,6 +195,7 @@ export function analyzeMembershipTierPricingRisk(
   const totalMonthlyUsd =
     aiMonthlyUsd +
     egressMonthlyUsd +
+    accountStorageMonthlyUsd +
     blobStorageMonthlyUsd +
     rootfsStorageMonthlyUsd +
     dedicatedHostCreditGuardrailMonthlyUsd;
@@ -270,6 +281,7 @@ export function analyzeMembershipTierPricingRisk(
     hardCosts: {
       aiMonthlyUsd,
       egressMonthlyUsd,
+      accountStorageMonthlyUsd,
       blobStorageMonthlyUsd,
       rootfsStorageMonthlyUsd,
       dedicatedHostCreditGuardrailMonthlyUsd,

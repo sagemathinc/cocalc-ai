@@ -957,6 +957,10 @@ export function MembershipTiers() {
         egress7dGb:
           normalizedOptionalNumber(getFieldValue("usage_limit_egress_7d_gb")) ??
           bytesToGigabytes(usageLimits.egress_7d_bytes),
+        accountStorageHardCapGb:
+          normalizedOptionalNumber(
+            getFieldValue("usage_limit_total_storage_hard_gb"),
+          ) ?? bytesToGigabytes(usageLimits.total_storage_hard_bytes),
         blobStorageGb:
           bytesToGigabytes(usageLimits.blob_account_total_bytes) ??
           normalizedOptionalNumber(usageLimits.blob_account_total_gb),
@@ -1914,6 +1918,14 @@ export function MembershipTiers() {
                             </Col>
                             <Col xs={24} md={12} xl={8}>
                               {riskMetric(
+                                "Account storage hard cap",
+                                currency(
+                                  analysis.hardCosts.accountStorageMonthlyUsd,
+                                ),
+                              )}
+                            </Col>
+                            <Col xs={24} md={12} xl={8}>
+                              {riskMetric(
                                 "Blob storage",
                                 currency(
                                   analysis.hardCosts.blobStorageMonthlyUsd,
@@ -2004,6 +2016,16 @@ export function MembershipTiers() {
                                   {
                                     step: 0.001,
                                     addonAfter: "$/GB",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "accountStorageCostPerGbMonth",
+                                  "Account storage hard-cap cost",
+                                  {
+                                    step: 0.001,
+                                    addonAfter: "$/GB-mo",
                                   },
                                 )}
                               </Col>
