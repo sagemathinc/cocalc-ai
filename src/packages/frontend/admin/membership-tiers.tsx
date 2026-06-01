@@ -1307,7 +1307,11 @@ export function MembershipTiers() {
             min={0}
             max={max}
             step={opts.step ?? 0.1}
-            addonAfter={opts.addonAfter}
+            addonAfter={
+              opts.addonAfter ? (
+                <span style={{ whiteSpace: "nowrap" }}>{opts.addonAfter}</span>
+              ) : undefined
+            }
             style={compactInputStyle}
             value={value}
             onChange={(value) =>
