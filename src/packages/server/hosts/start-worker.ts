@@ -271,45 +271,58 @@ function projectHostLastKnownGoodVersion(row: any): string | undefined {
 function completedProjectHostUpgradeVersion({
   row,
   targetVersion,
+  previousVersion,
 }: {
   row: any;
   targetVersion?: string;
+  previousVersion?: string;
 }): string | undefined {
   const target = `${targetVersion ?? ""}`.trim();
-  if (!target) return undefined;
+  const previous = `${previousVersion ?? ""}`.trim();
   const installedVersion =
     `${row?.metadata?.software?.project_host ?? row?.version ?? ""}`.trim() ||
     undefined;
   const lastKnownGoodVersion = projectHostLastKnownGoodVersion(row);
-  if (
-    installedVersion === target &&
-    lastKnownGoodVersion &&
-    lastKnownGoodVersion === target
-  ) {
-    return target;
+  if (!installedVersion || !lastKnownGoodVersion) {
+    return undefined;
   }
-  return undefined;
+  if (target) {
+    return installedVersion === target && lastKnownGoodVersion === target
+      ? target
+      : undefined;
+  }
+  if (installedVersion !== lastKnownGoodVersion) {
+    return undefined;
+  }
+  if (previous && installedVersion === previous) {
+    return undefined;
+  }
+  return installedVersion;
 }
 
 async function waitForCompletedProjectHostUpgrade({
   host_id,
   targetVersion,
+  previousVersion,
   timeoutMs = PROJECT_HOST_UPGRADE_CONVERGENCE_TIMEOUT_MS,
   pollMs = PROJECT_HOST_UPGRADE_CONVERGENCE_POLL_MS,
 }: {
   host_id: string;
   targetVersion?: string;
+  previousVersion?: string;
   timeoutMs?: number;
   pollMs?: number;
 }): Promise<string | undefined> {
   const target = `${targetVersion ?? ""}`.trim();
-  if (!target) return undefined;
+  const previous = `${previousVersion ?? ""}`.trim();
+  if (!target && !previous) return undefined;
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const row = await loadHostStatus(host_id);
     const converged = completedProjectHostUpgradeVersion({
       row,
       targetVersion: target,
+      previousVersion: previous,
     });
     if (converged) {
       return converged;
@@ -320,6 +333,7 @@ async function waitForCompletedProjectHostUpgrade({
   return completedProjectHostUpgradeVersion({
     row: finalRow,
     targetVersion: target,
+    previousVersion: previous,
   });
 }
 
@@ -1553,25 +1567,34 @@ async function handleOp(op: LroSummary): Promise<void> {
           );
           return;
         }
-        if (requestedProjectHostUpgrade && targetProjectHostVersion) {
+        if (
+          requestedProjectHostUpgrade &&
+          (targetProjectHostVersion || knownGoodProjectHostVersion)
+        ) {
           await progressStep(
             "waiting",
             "project-host upgrade reported drift; confirming host convergence before rollback",
             {
               host_id,
               target_version: targetProjectHostVersion,
+              previous_version: knownGoodProjectHostVersion,
             },
           );
           const convergedVersion = await waitForCompletedProjectHostUpgrade({
             host_id,
             targetVersion: targetProjectHostVersion,
+            previousVersion: knownGoodProjectHostVersion,
           });
-          if (convergedVersion === targetProjectHostVersion) {
+          if (
+            convergedVersion &&
+            (!targetProjectHostVersion ||
+              convergedVersion === targetProjectHostVersion)
+          ) {
             logger.info(
               "host upgrade: suppressing stale project-host rollback after observed convergence",
               {
                 host_id,
-                target_version: targetProjectHostVersion,
+                target_version: targetProjectHostVersion || convergedVersion,
                 err: `${err}`,
               },
             );
@@ -1605,7 +1628,7 @@ async function handleOp(op: LroSummary): Promise<void> {
               "upgrade complete after delayed project-host convergence",
               {
                 host_id,
-                target_version: targetProjectHostVersion,
+                target_version: targetProjectHostVersion || convergedVersion,
                 results: response?.results ?? [],
               },
             );

@@ -24,11 +24,17 @@ Implementation status as of 2026-06-01:
   release A + smoke, hard-reset boot into release A, and final restore to
   release B + doctor.
 - Built-runtime release artifacts now exist via `STAR_RELEASE_MODE=runtime`.
-  The first validated runtime artifact is about 785 MiB compressed and skips the
-  target-VM source build by setting `STAR_BUILD=0`.
-- The same GCE two-release validator has passed against runtime artifacts:
-  runtime A install + smoke, runtime B upgrade + smoke, rollback smoke,
-  hard-reset boot validation, and final restore doctor.
+- Runtime artifacts now use ncc/runtime bundles instead of copying the full
+  workspace `node_modules` tree. The first validated ncc runtime artifacts were
+  about 234 MiB compressed each and skip the target-VM source build by setting
+  `STAR_BUILD=0`.
+- The same GCE two-release validator has passed against ncc runtime artifacts:
+  runtime A install + smoke, runtime B upgrade + smoke, rollback to A + smoke,
+  hard-reset boot validation, and final restore to B + doctor.
+- The ncc runtime artifact includes bundled Launchpad/control-plane,
+  project-host, project, tools, CLI, Star seed/rootfs-cache helpers, and a
+  bundled api/v2 route manifest. This keeps the release small while preserving
+  the versioned installer and rollback contract.
 - The first real upgrade attempt exposed two important release-path bugs:
   root-run upgrades must preserve the existing Star runtime user instead of
   switching to `root`, and failed installs must restore mutable Star service
@@ -37,8 +43,9 @@ Implementation status as of 2026-06-01:
   can be available before local Postgres, the customize endpoint, and Conat
   health checks are ready. The GCE validator now retries `star.sh doctor` after
   reset and after final release restore.
-- Current implementation is still a source/tarball install, not a final
-  marketplace image or SEA binary.
+- Current implementation is a validated tarball + installer deployment, not a
+  final marketplace image or SEA binary. SEA is now optional rather than a hard
+  product requirement.
 
 Purpose: define a concrete single-VM CoCalc product that sits between CoCalc
 Plus and CoCalc Launchpad, using the existing Launchpad control plane and
@@ -87,9 +94,11 @@ The current working implementation is deliberately simple:
   `release.json`, and `SHA256SUMS`.
 - Runtime artifacts contain `install.sh`, `cocalc-star-runtime.tar.gz`,
   `release.json`, and `SHA256SUMS`.
-- Runtime artifacts include built workspace output, `node_modules`, frontend
-  assets, the project bundle, and the backend tools bundle. They reuse the same
-  versioned installer but skip the target-VM source build.
+- Runtime artifacts include only the Star installer scripts plus required
+  compressed/bundled runtime artifacts: Launchpad/control-plane, project-host,
+  project, tools, CLI, Star helper bundles, api/v2 route bundle, frontend
+  assets, and bootstrap support files. They reuse the same versioned installer
+  but skip the target-VM source build.
 - Copy the release artifact to a fresh Ubuntu 24.04 VM.
 - Extract it and run `sudo STAR_ASSUME_YES=1 ./install.sh`.
 - `install.sh` verifies checksums when possible and delegates to
@@ -1165,12 +1174,29 @@ Validation:
 - Upgrade preserves data. Basic control-plane/project-host preservation is
   validated by smoke; deeper user-data migration tests remain to do.
 
-Open packaging work:
+Status: implemented and validated for the tarball installer path.
 
-- Current runtime artifact is about 785 MiB compressed because it includes the
-  full workspace `node_modules` tree and broad runtime outputs.
-- Next size reduction should preserve the release/rollback contract while
-  pruning to production/runtime dependencies and required package outputs only.
+Completed packaging work:
+
+- The broad source/runtime artifact was replaced by an ncc-based runtime
+  artifact. It packages the control-plane bundle, project-host bundle, project
+  bundle, tools bundles, CLI bundle, Star bootstrap helper bundles, the bundled
+  api/v2 route manifest, frontend assets, and required bootstrap support files.
+- The ncc runtime artifact keeps the same `cocalc-star-runtime.tar.gz`,
+  `STAR_BUILD=0`, and `/opt/cocalc-star/releases/<release-id>` semantics, so
+  install, upgrade, rollback, and hard-reset recovery stay on the same operator
+  path.
+- Full two-release GCE validation passed against the ncc runtime artifacts:
+  release A install + smoke, release B upgrade + smoke, rollback to A + smoke,
+  hard-reset boot into A + doctor, and final restore to B + doctor.
+
+Remaining packaging work:
+
+- Decide whether to wrap the tarball installer in a `.deb`, apt repository, or
+  SEA convenience wrapper. This is packaging ergonomics, not a blocker for the
+  core Star appliance contract.
+- Add clearer published artifact naming, retention, and checksum/signature
+  policy before external distribution.
 
 ### Phase 5: SEA Installer
 
@@ -1184,10 +1210,15 @@ Deliverable:
   - `restart`
   - `upgrade`
 
+Status: optional/deferred.
+
 Validation:
 
-- Single binary on fresh Ubuntu can install Star.
-- Compressed size target roughly 200 MiB if realistic.
+- Single binary on fresh Ubuntu can install Star if SEA remains the chosen
+  convenience wrapper.
+- Current tarball artifact size is already in the same rough range as the old
+  SEA target, so SEA should only be pursued if it improves install UX or
+  marketplace packaging.
 - TARGETS: Linux x86_64 and arm64 as two separate binaries. arm64 matters, e.g., VM's on any macOS machine.
 
 ### Phase 6: Developer Source Deploy Lane
@@ -1282,19 +1313,44 @@ VM", is complete.
 
 Current recommended next step:
 
-1. Shrink the validated runtime artifact without changing the install semantics:
-   keep `cocalc-star-runtime.tar.gz`, `STAR_BUILD=0`, and the existing
-   `/opt/cocalc-star/releases/<release-id>` rollback layout.
-2. Replace the broad workspace `node_modules` payload with a pruned
-   production/runtime dependency set for the launchpad hub, project-host, CLI,
-   backend tools, static assets, and project bundle.
-3. Re-run `src/scripts/star/validate-gce-release-upgrade.sh` after every
-   packaging reduction until upgrade/rollback/reset validation remains boring.
-4. Then build the local source deploy lane:
+1. Polish the Star setup/admin profile so a Star operator sees local appliance
+   readiness, not Launchpad/Rocket cloud-provider setup:
+   - first admin and 2FA,
+   - local project-host health,
+   - default RootFS status,
+   - shared `/scratch` status,
+   - smoke-test project action,
+   - optional email/public URL/backup reminders.
+2. Build the local source deploy lane:
    - put a CoCalc checkout on the same VM,
    - build a Star-compatible release from that checkout,
    - deploy it through the same versioned release/rollback mechanism,
    - confirm `star.sh status` reports the custom build fingerprint.
+3. Decide the external packaging surface:
+   - tarball + `install.sh`,
+   - `.deb`/apt repository,
+   - SEA wrapper,
+   - marketplace image.
+4. Keep using `src/scripts/star/validate-gce-release-upgrade.sh` as the release
+   gate for any packaging or installer change.
 
 That proves Star is not only an appliance, but also a safe single-VM development
 and customer-customization target.
+
+## Rocket Lifecycle Alignment
+
+The Star release work should directly inform Rocket/multi-bay lifecycle work.
+The artifact and rollback contract should be shared as much as possible:
+
+- immutable versioned release directories,
+- `current` symlink switch,
+- manifest/checksum metadata,
+- health/doctor/smoke gates before and after switch,
+- first-class rollback,
+- separate control-plane and project-host software artifacts,
+- automated install/upgrade/rollback/reboot validation.
+
+Rocket adds orchestration complexity rather than a fundamentally different
+artifact model: rolling hub-worker upgrades, migration ordering, bay
+compatibility checks, project-host fleet rollout policy, and multi-bay routing
+must be layered on top of the same boring release mechanics.

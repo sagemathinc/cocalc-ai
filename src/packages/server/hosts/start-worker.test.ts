@@ -102,6 +102,48 @@ describe("hosts start-worker project-host upgrade convergence detection", () => 
       }),
     ).toBeUndefined();
   });
+
+  test("detects a completed latest-channel project-host upgrade without an explicit target version", () => {
+    expect(
+      __test__.completedProjectHostUpgradeVersion({
+        previousVersion: "ph-v1",
+        row: {
+          version: "ph-v2",
+          metadata: {
+            software: {
+              project_host: "ph-v2",
+            },
+            host_agent: {
+              project_host: {
+                last_known_good_version: "ph-v2",
+              },
+            },
+          },
+        },
+      }),
+    ).toBe("ph-v2");
+  });
+
+  test("does not treat the previous last-known-good version as a recovered latest-channel upgrade", () => {
+    expect(
+      __test__.completedProjectHostUpgradeVersion({
+        previousVersion: "ph-v1",
+        row: {
+          version: "ph-v1",
+          metadata: {
+            software: {
+              project_host: "ph-v1",
+            },
+            host_agent: {
+              project_host: {
+                last_known_good_version: "ph-v1",
+              },
+            },
+          },
+        },
+      }),
+    ).toBeUndefined();
+  });
 });
 
 describe("hosts start-worker wait cancellation", () => {
