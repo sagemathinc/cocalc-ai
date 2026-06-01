@@ -271,6 +271,8 @@ configure_users_and_dirs() {
     "$STAR_PROJECT_HOST_DATA/cache/images" \
     "$STAR_PROJECT_HOST_DATA/cache/project-roots" \
     "$STAR_PROJECT_HOST_DATA/secrets"
+  find "$STAR_ROOT" -maxdepth 1 -type f \
+    -exec chown "$STAR_USER:$STAR_USER" {} +
   find "$STAR_PROJECT_HOST_DATA" -maxdepth 1 -type f \
     -exec chown "$STAR_USER:$STAR_USER" {} +
   find "$STAR_PROJECT_HOST_DATA/cache/images" -maxdepth 1 -type f -name '.*.json' \
