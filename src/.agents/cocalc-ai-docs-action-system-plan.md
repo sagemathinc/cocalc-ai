@@ -1,7 +1,7 @@
 # CoCalc-ai Docs and Deep Actions Plan
 
 Status: active implementation plan, implementation is launchable beta
-Date: 2026-05-31
+Date: 2026-06-01
 
 ## Goal
 
@@ -24,7 +24,7 @@ The system should support three related surfaces:
 
 ## Current Implementation Snapshot
 
-As of 2026-05-31, the docs system is a launchable beta, not just a vertical
+As of 2026-06-01, the docs system is a launchable beta, not just a vertical
 slice:
 
 - `src/packages/docs` owns bundled docs entries, topic-split content, chapter
@@ -63,14 +63,29 @@ slice:
   lifecycle, spot recovery, change rules, reliability, software/daemon
   lifecycle, storage, shared `/scratch`, and logs.
 - Static verification is green as of this snapshot:
-  - 59 entries
-  - 31 actions
-  - 18 live scenarios
+  - 61 entries
+  - 46 actions
+  - 46 live scenarios
+  - 0 legacy `doc.cocalc.com` links
 
 The remaining work is production hardening: broader docs coverage, more
-executable actions, more live UI assertions, a release gate for legacy docs
-links, Codex skill integration, and continued coverage of settings surfaces
-that mount asynchronously.
+executable actions where the destination is unambiguous, full live
+verification runs against real project and host parameters, Codex skill
+integration, broader private-state UI checks, and continued coverage of
+settings surfaces that mount asynchronously.
+
+Current docs gap report:
+
+- Categories without a chapter: 0.
+- Pages without actions: 20.
+- Pages without asserted live verification: 20.
+- Pages with stale `lastReviewed`: 0.
+- Legacy `doc.cocalc.com` links: 0.
+
+The old `course.assignment.create` action was removed intentionally. Opening
+"create assignment" requires selecting one course from possibly many `.course`
+files, and some projects have none. That is better documented as a workflow
+until there is a real course-scoped action target.
 
 ## Verification Workflow
 
@@ -87,7 +102,9 @@ UI destinations in a real browser session:
 
 ```sh
 cd src && eval "$(pnpm -s dev:hub:env)"
-cocalc docs verify --live --spawn-browser --project-id "$COCALC_PROJECT_ID"
+cocalc docs verify --live --spawn-browser \
+  --project-id "$COCALC_PROJECT_ID" \
+  --host-id "$COCALC_DOCS_VERIFY_HOST_ID"
 ```
 
 The spawned-browser mode launches a dedicated Chromium session, discovers its
@@ -228,7 +245,7 @@ Use plain Markdown plus frontmatter. Avoid MDX initially.
 
 Example:
 
-````md
+```md
 ---
 id: projects.project-secrets
 slug: /docs/projects/project-secrets
@@ -265,11 +282,10 @@ should not be committed into files.
 4. Open Secrets.
 5. Add a secret or create a project SSH key.
 ```
-
 ```action
 settings.environment.secrets
 ```
-````
+```
 
 Supported custom fenced blocks in v1:
 
@@ -347,7 +363,9 @@ The first renderer is implemented and should stay simple:
 - Done: index grouped by category.
 - Done: main Markdown body.
 - Done: action buttons when an action id is available.
-- Pending: related docs.
+- Done: chapter landing cards, table of contents, progress, linear reading,
+  and printable/downloadable single-page docs.
+- Pending: richer related-doc suggestions.
 - Pending: source/reference foldout visible to admins/developers or always
   visible in a compact way.
 
@@ -375,13 +393,14 @@ Suggested phases:
    - replace with `/docs` pages only where accurate; otherwise remove or mark
      as pending.
 
-Add a test or script:
+The current static verifier treats legacy docs links as a release gate:
 
 ```sh
-rg "https://doc\\.cocalc\\.com" src/packages
+pnpm -C src/packages/docs verify
 ```
 
-This should become a release gate. Exceptions must be explicit and temporary.
+It fails if `https://doc.cocalc.com/` appears in scanned CoCalc-ai source.
+Exceptions must be explicit and temporary.
 
 ## Deep Actions
 
@@ -655,11 +674,13 @@ Scenario types:
 
 Initial verification gates:
 
-1. All docs frontmatter parses.
-2. All `actions` exist in the deep action registry.
-3. All `source_refs` exist.
-4. All internal links resolve.
-5. No `https://doc.cocalc.com/` links remain in public CoCalc-ai surfaces.
+1. Done: all docs metadata parses.
+2. Done: all `actions` exist in the docs action registry.
+3. Done: all internal docs links resolve.
+4. Done: all `/app-docs/...` links point at real docs pages.
+5. Done: no `https://doc.cocalc.com/` links remain in scanned CoCalc-ai
+   source.
+6. Done: every executable action has a live verification scenario.
 
 Current harness:
 
@@ -694,10 +715,12 @@ cocalc --json browser action docs settings.environment.secrets \
 
 Next verification improvements:
 
-- Add post-action DOM/state assertions for each executable docs action.
+- Keep expanding post-action DOM/state assertions as actions become more
+  specific.
 - Add a no-side-effects mode that skips actions that create files, such as
   `project.terminal.open` and `project.jupyter.create`.
-- Add CI release gates for static docs verification and legacy docs link scans.
+- Add CI release gates for static docs verification, gap reporting, and legacy
+  docs link scans.
 - Record scenario metadata back into docs entries once docs content moves from
   inline TypeScript to Markdown/content files.
 
@@ -747,7 +770,8 @@ operational.
   - create notebook,
   - runtime image,
   - Codex chat.
-- In progress: move inline content to Markdown/content files.
+- Done: split docs entries and content by topic so the docs package is
+  maintainable.
 - In progress: add generated manifest/search JSON if static artifacts become
   useful.
 - Done: add the first verification harness for schema/action/link checks.
@@ -759,7 +783,8 @@ operational.
 - Done: Add a category-grouped docs index/table of contents.
 - Done: Add nav/footer links to `/docs`.
 - Done: Keep public docs free of signed-in private notes/stars UI.
-- In progress: replace remaining `doc.cocalc.com` links.
+- Done: replace remaining scanned `doc.cocalc.com` links and add a static
+  verification gate.
 
 ### Phase 3: CLI Docs Search
 
@@ -779,6 +804,10 @@ operational.
 - Done: Implement `settings.runtime.rootfs`.
 - Done: Implement project-host actions with optional host selector parameters.
 - Done: Implement project selector parameters for project-scoped actions.
+- Done: Implement account, billing, admin, docs navigation, files, terminal,
+  Jupyter, and common file-creation actions.
+- Done: Remove `course.assignment.create` because the target is ambiguous
+  without choosing a specific `.course` file.
 - Done: Add docs action block renderer.
 - Done: Add unit tests for action registry validity.
 - Done: Add acknowledgement/retry for actions that signal components after
@@ -791,7 +820,10 @@ operational.
 - Done: Add `cocalc browser action docs <id>`.
 - Done: Add QuickJS convenience wrapper `api.docsAction(...)`.
 - Done: Verify executable docs actions can run in a live browser session.
-- Pending: Add stronger DOM/state assertions after browser action execution.
+- Done: Add DOM/state assertions for the current executable action set,
+  including parameterized project and project-host actions.
+- Pending: Run full live verification regularly against real project and host
+  parameters.
 
 ### Phase 6: Codex Skill
 
@@ -821,9 +853,10 @@ operational.
 
 ### Phase 8: Replace Remaining Legacy Links
 
-- Systematically replace or remove all remaining `doc.cocalc.com` links.
-- Add a release gate that fails on new legacy docs links except an explicit
-  allowlist.
+- Done: systematically replace or remove remaining scanned `doc.cocalc.com`
+  links.
+- Done: add a static release gate that fails on new legacy docs links.
+- Pending: keep the gate wired into CI/release workflows.
 
 ### Phase 9: Admin Docs And Project-Host Guides
 
@@ -890,6 +923,9 @@ reviewed and cache-busted intentionally.
 - Resolved: there is both public `/docs` and signed-in `/app-docs`, plus
   project flyout docs.
 - Resolved for v1: docs search is local/static, shared by frontend and CLI.
+- Resolved for v1: safe navigation/open-panel actions may run directly;
+  mutating, course-scoped, or otherwise ambiguous actions should stay as
+  documented workflows until they have an explicit target.
 - How much docs content should ship in the CLI bundle? I recommend title,
   summary, headings, actions, and compact body text for all current docs.
 - Should Codex be allowed to execute deep actions automatically? I recommend
@@ -910,6 +946,8 @@ The original first concrete milestone is complete enough to use:
 8. Done: browser-session verification harness with live execution and selected
    UI assertions.
 
-The current milestone is to harden the launch surface: migrate legacy links,
-expand action acknowledgement and live assertions, and continue filling
-launch-critical account, billing, admin, project-host, and troubleshooting docs.
+The current milestone is to harden the launch surface: keep the legacy-link
+gate in CI/release workflows, run live verification against real project and
+host parameters, integrate the Codex docs skill, and continue filling
+launch-critical account, billing, admin, project-host, teaching, and
+troubleshooting docs.

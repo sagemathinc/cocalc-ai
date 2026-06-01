@@ -61,7 +61,6 @@ export type DocsActionId =
   | "settings.runtime.rootfs"
   | "settings.people.collaborators"
   | "file.timetravel.open"
-  | "course.assignment.create"
   | "project.codex.open"
   | "docs.browser.open"
   | "docs.actions.open"

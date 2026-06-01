@@ -29,14 +29,6 @@ export const TEACHING_ENTRIES: DocsEntry[] = [
     title: "Teach a course",
   },
   {
-    actions: [
-      {
-        description: "Open course assignment creation.",
-        executable: false,
-        id: "course.assignment.create",
-        label: "Create assignment",
-      },
-    ],
     audiences: ["agents", "instructors"],
     body: COURSE_ASSIGNMENT_BODY.trim(),
     category: "Teaching",
