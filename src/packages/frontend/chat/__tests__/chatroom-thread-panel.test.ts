@@ -140,6 +140,58 @@ describe("resolveSelectedThreadRunningCodexMessage", () => {
     );
   });
 
+  it("ignores stale generating rows when ACP state is terminal", () => {
+    const stale = {
+      acp_account_id: "acp-1",
+      generating: true,
+      message_id: "msg-stale",
+      date: new Date("2026-04-12T10:00:00Z"),
+    } as any;
+    expect(
+      resolveSelectedThreadRunningCodexMessage(
+        [stale],
+        immutable.Map<string, string>().set("message:msg-stale", "error"),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("ignores stale generating rows behind a newer terminal ACP turn", () => {
+    const stale = {
+      acp_account_id: "acp-1",
+      generating: true,
+      message_id: "msg-stale",
+      date: new Date("2026-04-12T10:00:00Z"),
+    } as any;
+    const newer = {
+      acp_account_id: "acp-1",
+      generating: false,
+      message_id: "msg-newer",
+      date: new Date("2026-04-12T10:01:00Z"),
+    } as any;
+    expect(
+      resolveSelectedThreadRunningCodexMessage([stale, newer]),
+    ).toBeUndefined();
+  });
+
+  it("ignores stale generating rows behind a newer interrupted ACP turn", () => {
+    const stale = {
+      acp_account_id: "acp-1",
+      generating: true,
+      message_id: "msg-stale",
+      date: new Date("2026-04-12T10:00:00Z"),
+    } as any;
+    const newer = {
+      acp_account_id: "acp-1",
+      acp_interrupted: true,
+      generating: false,
+      message_id: "msg-newer",
+      date: new Date("2026-04-12T10:01:00Z"),
+    } as any;
+    expect(
+      resolveSelectedThreadRunningCodexMessage([stale, newer]),
+    ).toBeUndefined();
+  });
+
   it("ignores interrupted or non-generating codex rows", () => {
     const interrupted = {
       acp_account_id: "acp-1",

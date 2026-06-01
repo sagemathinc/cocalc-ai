@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_ROOT="$(realpath "${SCRIPT_DIR}/../..")"
 REPO_ROOT="$(realpath "${SRC_ROOT}/..")"
 BUILD_TARBALL="${SCRIPT_DIR}/build-star-tarball.sh"
+BUILD_RUNTIME_TARBALL="${SCRIPT_DIR}/build-star-runtime-tarball.sh"
+STAR_RELEASE_MODE="${STAR_RELEASE_MODE:-source}"
 
 git_revision="$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD 2>/dev/null || true)"
 if [ -z "$git_revision" ]; then
@@ -32,7 +34,7 @@ Build a CoCalc Star release artifact.
 The artifact extracts to a directory with:
   install.sh
   install-release.sh
-  cocalc-star-src.tar.gz
+  cocalc-star-src.tar.gz or cocalc-star-runtime.tar.gz
   release.json
   SHA256SUMS
 
@@ -40,6 +42,9 @@ Install on a fresh Ubuntu 24.04 VM with:
   tar -xzf cocalc-star-<release>.tar.gz
   cd cocalc-star-<release>
   sudo STAR_ASSUME_YES=1 ./install.sh
+
+Set STAR_RELEASE_MODE=runtime to include built runtime artifacts and skip the
+target-VM source build.
 EOF
 }
 
@@ -56,6 +61,12 @@ command -v git >/dev/null 2>&1 || die "git is required"
 command -v tar >/dev/null 2>&1 || die "tar is required"
 command -v sha256sum >/dev/null 2>&1 || die "sha256sum is required"
 [ -x "$BUILD_TARBALL" ] || die "missing source tarball builder: $BUILD_TARBALL"
+[ -x "$BUILD_RUNTIME_TARBALL" ] || die "missing runtime tarball builder: $BUILD_RUNTIME_TARBALL"
+
+case "$STAR_RELEASE_MODE" in
+  source | runtime) ;;
+  *) die "invalid STAR_RELEASE_MODE: $STAR_RELEASE_MODE" ;;
+esac
 
 artifact_name="cocalc-star-${STAR_RELEASE_ID}"
 tmp_parent="$(mktemp -d)"
@@ -67,11 +78,24 @@ trap cleanup EXIT
 staging="${tmp_parent}/${artifact_name}"
 mkdir -p "$staging"
 
-source_tarball="${staging}/cocalc-star-src.tar.gz"
-log "building source tarball"
-"$BUILD_TARBALL" "$source_tarball"
+case "$STAR_RELEASE_MODE" in
+  source)
+    payload_name="cocalc-star-src.tar.gz"
+    payload_kind="source"
+    payload_path="${staging}/${payload_name}"
+    log "building source tarball"
+    "$BUILD_TARBALL" "$payload_path"
+    ;;
+  runtime)
+    payload_name="cocalc-star-runtime.tar.gz"
+    payload_kind="runtime"
+    payload_path="${staging}/${payload_name}"
+    log "building runtime tarball"
+    "$BUILD_RUNTIME_TARBALL" "$payload_path"
+    ;;
+esac
 
-source_sha256="$(sha256sum "$source_tarball" | awk '{print $1}')"
+payload_sha256="$(sha256sum "$payload_path" | awk '{print $1}')"
 dirty="false"
 if ! git -C "$REPO_ROOT" diff --quiet -- src || ! git -C "$REPO_ROOT" diff --cached --quiet -- src; then
   dirty="true"
@@ -84,8 +108,12 @@ cat >"${staging}/release.json" <<EOF
   "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "git_revision": "${git_revision}",
   "git_dirty": ${dirty},
-  "source_tarball": "cocalc-star-src.tar.gz",
-  "source_tarball_sha256": "${source_sha256}"
+  "artifact_mode": "${STAR_RELEASE_MODE}",
+  "payload_kind": "${payload_kind}",
+  "payload": "${payload_name}",
+  "payload_sha256": "${payload_sha256}",
+  "source_tarball": "${payload_name}",
+  "source_tarball_sha256": "${payload_sha256}"
 }
 EOF
 
@@ -94,19 +122,24 @@ cat >"${staging}/install.sh" <<'EOF'
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TARBALL="${SCRIPT_DIR}/cocalc-star-src.tar.gz"
 CHECKSUMS="${SCRIPT_DIR}/SHA256SUMS"
 INSTALLER_TMP="$(mktemp -d)"
+MODE="source"
 
 cleanup() {
   rm -rf "$INSTALLER_TMP"
 }
 trap cleanup EXIT
 
-[ -f "$TARBALL" ] || {
-  echo "[star-release-install] missing source tarball: $TARBALL" >&2
+if [ -f "${SCRIPT_DIR}/cocalc-star-runtime.tar.gz" ]; then
+  TARBALL="${SCRIPT_DIR}/cocalc-star-runtime.tar.gz"
+  MODE="runtime"
+elif [ -f "${SCRIPT_DIR}/cocalc-star-src.tar.gz" ]; then
+  TARBALL="${SCRIPT_DIR}/cocalc-star-src.tar.gz"
+else
+  echo "[star-release-install] missing source or runtime tarball in $SCRIPT_DIR" >&2
   exit 1
-}
+fi
 
 if command -v sha256sum >/dev/null 2>&1 && [ -f "$CHECKSUMS" ]; then
   (cd "$SCRIPT_DIR" && sha256sum -c SHA256SUMS --ignore-missing)
@@ -114,6 +147,9 @@ fi
 
 tar -xzf "$TARBALL" -C "$INSTALLER_TMP" src/scripts/star/install-from-tarball.sh
 export STAR_RELEASE_ID="${STAR_RELEASE_ID:-__STAR_RELEASE_ID__}"
+if [ "$MODE" = "runtime" ]; then
+  export STAR_BUILD="${STAR_BUILD:-0}"
+fi
 bash "$INSTALLER_TMP/src/scripts/star/install-from-tarball.sh" "$TARBALL"
 EOF
 sed -i "s/__STAR_RELEASE_ID__/${STAR_RELEASE_ID}/g" "${staging}/install.sh"
@@ -123,7 +159,7 @@ chmod 0755 "${staging}/install-release.sh"
 
 (
   cd "$staging"
-  sha256sum install.sh install-release.sh release.json cocalc-star-src.tar.gz >SHA256SUMS
+  sha256sum install.sh install-release.sh release.json "$payload_name" >SHA256SUMS
 )
 
 mkdir -p "$(dirname "$OUTPUT")"

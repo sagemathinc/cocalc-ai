@@ -105,6 +105,18 @@ const ARCHIVED_SEARCH_LIMIT = 20;
 const ARCHIVED_HISTORY_LIMIT = 50;
 const ARCHIVED_INLINE_PREVIEW_LIMIT = 6;
 const CHAT_ARCHIVE_DEBUG_STORAGE_KEY = "cocalc.debug.chatArchive";
+const ACP_ACTIVE_STATES = new Set(["queue", "sending", "sent", "running"]);
+
+function isActiveAcpState(state: unknown): boolean {
+  if (typeof state !== "string") return false;
+  return ACP_ACTIVE_STATES.has(state.trim().toLowerCase());
+}
+
+function isTerminalAcpState(state: unknown): boolean {
+  if (typeof state !== "string") return false;
+  const normalized = state.trim().toLowerCase();
+  return normalized.length > 0 && !ACP_ACTIVE_STATES.has(normalized);
+}
 
 function isLocalStorageFlagEnabled(key: string): boolean {
   try {
@@ -221,14 +233,46 @@ export function applyNewThreadSetupPatch(
 
 export function resolveSelectedThreadRunningCodexMessage(
   threadMessages: ChatMessages | any[] | undefined,
+  acpState?: immutable.Map<string, string>,
 ) {
   const entries = Array.isArray(threadMessages) ? threadMessages : [];
+  let sawNewerTerminalAcpTurn = false;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const message = entries[i];
     if (message == null) continue;
     if (!field<string>(message, "acp_account_id")) continue;
-    if (field<boolean>(message, "acp_interrupted") === true) continue;
-    if (field<boolean>(message, "generating") !== true) continue;
+    const messageId = field<string>(message, "message_id");
+    const messageDate = dateValue(message);
+    const messageState =
+      (messageId ? acpState?.get?.(`message:${messageId}`) : undefined) ??
+      (messageDate != null
+        ? acpState?.get?.(`${messageDate.valueOf()}`)
+        : undefined);
+    const rowState = `${field<string>(message, "acp_state") ?? ""}`
+      .trim()
+      .toLowerCase();
+    if (
+      isTerminalAcpState(messageState) ||
+      (rowState && isTerminalAcpState(rowState))
+    ) {
+      sawNewerTerminalAcpTurn = true;
+      continue;
+    }
+    if (field<boolean>(message, "acp_interrupted") === true) {
+      sawNewerTerminalAcpTurn = true;
+      continue;
+    }
+    if (field<boolean>(message, "generating") !== true) {
+      sawNewerTerminalAcpTurn = true;
+      continue;
+    }
+    if (sawNewerTerminalAcpTurn) continue;
+    if (
+      isActiveAcpState(messageState) ||
+      (rowState && isActiveAcpState(rowState))
+    ) {
+      return message;
+    }
     return message;
   }
   return undefined;
@@ -418,8 +462,12 @@ export function ChatRoomThreadPanel({
     [actions, selectedThreadLookup, messages],
   );
   const selectedRunningCodexMessage = useMemo(
-    () => resolveSelectedThreadRunningCodexMessage(selectedThreadMessages),
-    [selectedThreadMessages],
+    () =>
+      resolveSelectedThreadRunningCodexMessage(
+        selectedThreadMessages,
+        acpState,
+      ),
+    [acpState, selectedThreadMessages],
   );
   const selectedRunningCodexDate = useMemo(
     () => dateValue(selectedRunningCodexMessage)?.valueOf(),

@@ -52,6 +52,9 @@ function init(): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_turns_owner_state_idx ON ${TABLE}(owner_instance_id, state)`,
   );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS acp_turns_state_ended_idx ON ${TABLE}(state, ended_at)`,
+  );
   const columns = db.prepare(`PRAGMA table_info(${TABLE})`).all() as Array<{
     name: string;
   }>;
@@ -254,6 +257,29 @@ export function listRunningAcpTurnLeases({
   }
   query += " ORDER BY heartbeat_at ASC";
   return db.prepare(query).all(...params) as AcpTurnLeaseRow[];
+}
+
+export function listRecentTerminalAcpTurnLeases({
+  sinceMs,
+  limit,
+}: {
+  sinceMs: number;
+  limit: number;
+}): AcpTurnLeaseRow[] {
+  ensureInit();
+  const db = getAcpDatabase();
+  const cutoff = Date.now() - Math.max(0, sinceMs);
+  return db
+    .prepare(
+      selectLeaseByWhere(
+        `WHERE state IN ('completed', 'error', 'aborted')
+           AND ended_at IS NOT NULL
+           AND ended_at >= ?
+         ORDER BY ended_at DESC
+         LIMIT ?`,
+      ),
+    )
+    .all(cutoff, Math.max(1, Math.floor(limit))) as AcpTurnLeaseRow[];
 }
 
 export function getAcpTurnLease(
