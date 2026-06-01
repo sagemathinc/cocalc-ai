@@ -258,7 +258,11 @@ configure_users_and_dirs() {
   chmod 700 "$STAR_PROJECT_HOST_DATA/tmp"
   # Do not recursively chown STAR_ROOT. It contains cached RootFS trees whose
   # numeric ownership is part of the container runtime contract.
-  chown -R "$STAR_USER:$STAR_USER" "$STAR_DATA" "$STAR_ROOT/backup"
+  chown -R "$STAR_USER:$STAR_USER" \
+    "$STAR_DATA" \
+    "$STAR_ROOT/backup" \
+    "$STAR_PROJECT_HOST_DATA/secrets" \
+    "$STAR_PROJECT_HOST_DATA/tmp"
   chown "$STAR_USER:$STAR_USER" \
     "$STAR_ROOT" \
     "$STAR_PROJECT_HOST_DATA" \
