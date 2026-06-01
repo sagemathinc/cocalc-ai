@@ -1,7 +1,8 @@
 # Membership Tier Editor Cleanup Plan
 
 Status: phases 1-4 implemented for release-blocker item 15 in
-`release-blocker-triage-2026-05-29.md`; phases 5-6 remain undone cleanup work.
+`release-blocker-triage-2026-05-29.md`; phase 5 is in progress; phase 6
+remains undone cleanup work.
 
 ## Objective
 
@@ -438,7 +439,19 @@ The output should guide tier tuning, e.g.:
 
 ### Phase 5: Low-Level Runtime Semantics Cleanup
 
-Status: not started.
+Status: started.
+
+Completed first slice:
+
+- membership project defaults now normalize only cocalc-ai resource fields
+  (`memory`, `memory_request`, `disk_quota`);
+- membership-computed project run quotas force `network` and `member_host` on
+  at the runtime boundary;
+- cocalc-ai project banner/settings UI no longer shows no-network or
+  non-member-host warnings;
+- stale frontend quota conversion treats missing legacy `network` and
+  `member_host` values as enabled, while preserving explicit false/0 values for
+  compatibility.
 
 After the editor is usable:
 

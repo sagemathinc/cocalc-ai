@@ -25,7 +25,6 @@ import { ProjectLocationBox } from "./hide-delete-box";
 import { ManagedEgress } from "./managed-egress";
 import { ProjectControl } from "./project-control";
 import { RecoveryPanel } from "./recovery-panel";
-import { useRunQuota } from "./run-quota/hooks";
 import type { ProjectSettingsNavItem } from "./section-nav";
 import { SSHPanel } from "./ssh";
 import type { Project } from "./types";
@@ -70,29 +69,18 @@ export function useProjectSettingsSections({
   const { projectAccess } = useProjectContext();
   const isViewer = projectAccess?.role === "viewer";
   const kucalc = useTypedRedux("customize", "kucalc");
-  const runQuota = useRunQuota(project_id, null, { enabled: !isViewer });
   const { course } = useProjectCourseInfo(project_id, undefined, {
     enabled: !isViewer,
   });
   const datastore = useTypedRedux("customize", "datastore");
-  const commercial = useTypedRedux("customize", "commercial");
   const student = useStudentProjectFunctionality(project_id);
 
   const showSSH = !lite && !student.disableSSH;
   const showDatastore =
     kucalc === KUCALC_COCALC_COM ||
     (kucalc === KUCALC_ON_PREMISES && datastore);
-  const isPaidStudentPayProject = !!course?.get("pay") && !!course.get("paid");
-  const showNonMemberWarning =
-    !isPaidStudentPayProject &&
-    commercial &&
-    runQuota != null &&
-    !runQuota.member_host;
-  const showNoInternetWarning =
-    !isPaidStudentPayProject &&
-    commercial &&
-    runQuota != null &&
-    !runQuota.network;
+  const showNonMemberWarning = false;
+  const showNoInternetWarning = false;
   const showCourseSection = course != null;
   const flyout = mode === "flyout";
   const sectionGap = flyout ? 10 : 16;
@@ -216,7 +204,6 @@ export function useProjectSettingsSections({
         title: "Network",
         description:
           "Outbound traffic, internet access, and metered egress signals.",
-        warning: showNoInternetWarning || showNonMemberWarning,
         className: "cc-project-flyout-settings-panel",
         children: (
           <ManagedEgress project_id={project_id} embedded={embeddedInSection} />

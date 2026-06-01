@@ -7,8 +7,6 @@ import React from "react";
 
 import type { Customer, ProjectMap } from "@cocalc/frontend/todo-types";
 import { is_different } from "@cocalc/util/misc";
-import { NoNetworkProjectWarning } from "../warnings/no-network";
-import { NonMemberProjectWarning } from "../warnings/non-member";
 import { ProjectSettingsPageShell } from "./page-shell";
 import SavingProjectSettingsError from "./saving-project-settings-error";
 import { ProjectSettingsSectionCard } from "./section-card";
@@ -49,8 +47,6 @@ export const Body: React.FC<ReactProps> = React.memo((props: ReactProps) => {
       showNoInternetWarning={showNoInternetWarning}
       showNonMemberWarning={showNonMemberWarning}
     >
-      {showNonMemberWarning ? <NonMemberProjectWarning /> : undefined}
-      {showNoInternetWarning ? <NoNetworkProjectWarning /> : undefined}
       <SavingProjectSettingsError project_id={project_id} />
 
       {sections.map((section) => (
