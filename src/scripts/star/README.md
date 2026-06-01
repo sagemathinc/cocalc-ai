@@ -12,12 +12,26 @@ From a CoCalc source checkout:
 src/scripts/star/build-star-release.sh /tmp/cocalc-star-20260531T000000Z.tar.gz
 ```
 
+The default release is a small source artifact. It is useful for proving the
+installer path, but the target VM must run the full pnpm/build sequence.
+
+For normal Star upgrade testing, build a runtime artifact instead:
+
+```sh
+STAR_RELEASE_MODE=runtime \
+  src/scripts/star/build-star-release.sh /tmp/cocalc-star-runtime-20260531T000000Z.tar.gz
+```
+
+Runtime artifacts include the built workspace, `node_modules`, the project
+bundle, backend tools, and frontend assets. They are larger than source
+artifacts, but installs and upgrades skip the target-VM source build.
+
 Copy the release artifact to a fresh Ubuntu 24.04 VM.
 
 ## Install On A Fresh VM
 
-The release artifact contains an installer wrapper and the source tarball. The
-normal operator install path is:
+The release artifact contains an installer wrapper and either a source or
+runtime tarball. The normal operator install path is:
 
 ```sh
 tar -xzf cocalc-star-<release>.tar.gz
@@ -105,15 +119,16 @@ Each release artifact contains:
 cocalc-star-<release>/
   install.sh
   install-release.sh
-  cocalc-star-src.tar.gz
+  cocalc-star-src.tar.gz or cocalc-star-runtime.tar.gz
   release.json
   SHA256SUMS
 ```
 
 `install.sh` verifies the checksums when `sha256sum` is available, extracts the
-versioned installer from `cocalc-star-src.tar.gz`, and then delegates to
-`src/scripts/star/install-from-tarball.sh`. This keeps the mutation logic in one
-installer path while giving users a simple release artifact.
+versioned installer from the payload tarball, and then delegates to
+`src/scripts/star/install-from-tarball.sh`. Runtime payloads set `STAR_BUILD=0`
+before delegation, so the same mutation logic is reused without rebuilding
+CoCalc on the target VM.
 
 `install-release.sh` is the curl/bootstrap wrapper. It accepts either a local
 artifact path or an HTTP(S) URL, extracts the release, and invokes the same

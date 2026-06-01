@@ -23,6 +23,12 @@ Implementation status as of 2026-06-01:
   validated release A install + smoke, release B upgrade + smoke, rollback to
   release A + smoke, hard-reset boot into release A, and final restore to
   release B + doctor.
+- Built-runtime release artifacts now exist via `STAR_RELEASE_MODE=runtime`.
+  The first validated runtime artifact is about 785 MiB compressed and skips the
+  target-VM source build by setting `STAR_BUILD=0`.
+- The same GCE two-release validator has passed against runtime artifacts:
+  runtime A install + smoke, runtime B upgrade + smoke, rollback smoke,
+  hard-reset boot validation, and final restore doctor.
 - The first real upgrade attempt exposed two important release-path bugs:
   root-run upgrades must preserve the existing Star runtime user instead of
   switching to `root`, and failed installs must restore mutable Star service
@@ -77,8 +83,13 @@ Those are upsells to Launchpad/Rocket.
 The current working implementation is deliberately simple:
 
 - Build a Star release artifact from a CoCalc checkout.
-- The artifact contains `install.sh`, `cocalc-star-src.tar.gz`,
+- Source artifacts contain `install.sh`, `cocalc-star-src.tar.gz`,
   `release.json`, and `SHA256SUMS`.
+- Runtime artifacts contain `install.sh`, `cocalc-star-runtime.tar.gz`,
+  `release.json`, and `SHA256SUMS`.
+- Runtime artifacts include built workspace output, `node_modules`, frontend
+  assets, the project bundle, and the backend tools bundle. They reuse the same
+  versioned installer but skip the target-VM source build.
 - Copy the release artifact to a fresh Ubuntu 24.04 VM.
 - Extract it and run `sudo STAR_ASSUME_YES=1 ./install.sh`.
 - `install.sh` verifies checksums when possible and delegates to
@@ -1147,8 +1158,19 @@ Deliverable:
 
 Validation:
 
-- Tarball install works without source checkout.
-- Upgrade preserves data.
+- Runtime tarball installs without a target-VM source build. Done.
+- Runtime A to runtime B upgrade passes doctor and smoke. Done.
+- Runtime rollback passes doctor and smoke. Done.
+- Runtime hard-reset recovery passes after doctor readiness retry. Done.
+- Upgrade preserves data. Basic control-plane/project-host preservation is
+  validated by smoke; deeper user-data migration tests remain to do.
+
+Open packaging work:
+
+- Current runtime artifact is about 785 MiB compressed because it includes the
+  full workspace `node_modules` tree and broad runtime outputs.
+- Next size reduction should preserve the release/rollback contract while
+  pruning to production/runtime dependencies and required package outputs only.
 
 ### Phase 5: SEA Installer
 
@@ -1260,15 +1282,14 @@ VM", is complete.
 
 Current recommended next step:
 
-1. Make the artifact smaller and more release-like so installs no longer need a
-   full source build on the target VM. The current source artifact is good for
-   proof-of-concept correctness, but it is too slow for normal upgrades.
-2. Keep the same versioned release shape and rollback semantics:
-   `/opt/cocalc-star/releases/<release-id>`, `/opt/cocalc-star/source`, and
-   `/opt/cocalc-star/current`.
-3. Re-run `src/scripts/star/validate-gce-release-upgrade.sh` against the smaller
-   built-runtime artifacts until upgrade/rollback/reset validation remains
-   boring.
+1. Shrink the validated runtime artifact without changing the install semantics:
+   keep `cocalc-star-runtime.tar.gz`, `STAR_BUILD=0`, and the existing
+   `/opt/cocalc-star/releases/<release-id>` rollback layout.
+2. Replace the broad workspace `node_modules` payload with a pruned
+   production/runtime dependency set for the launchpad hub, project-host, CLI,
+   backend tools, static assets, and project bundle.
+3. Re-run `src/scripts/star/validate-gce-release-upgrade.sh` after every
+   packaging reduction until upgrade/rollback/reset validation remains boring.
 4. Then build the local source deploy lane:
    - put a CoCalc checkout on the same VM,
    - build a Star-compatible release from that checkout,
