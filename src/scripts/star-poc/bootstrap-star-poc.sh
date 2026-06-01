@@ -81,6 +81,64 @@ build_source() {
   as_star_user "cd '$SRC_ROOT/packages/project' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 && pnpm build:bundle"
 }
 
+host_arch() {
+  case "$(uname -m)" in
+    x86_64 | amd64) printf 'amd64\n' ;;
+    aarch64 | arm64) printf 'arm64\n' ;;
+    *) die "unsupported architecture for Star runtime bundle: $(uname -m)" ;;
+  esac
+}
+
+extract_tarball_if_needed() {
+  local tarball="$1"
+  local parent="$2"
+  local marker="$3"
+  [ -f "$tarball" ] || die "missing runtime artifact: $tarball"
+  if [ -e "$marker" ]; then
+    return
+  fi
+  mkdir -p "$parent"
+  rm -rf "$marker"
+  run tar -C "$parent" -Jxf "$tarball"
+}
+
+prepare_runtime_artifacts() {
+  if [ -f "$SRC_ROOT/packages/launchpad/build/bundle.tar.xz" ]; then
+    extract_tarball_if_needed \
+      "$SRC_ROOT/packages/launchpad/build/bundle.tar.xz" \
+      "$SRC_ROOT/packages/launchpad/build" \
+      "$SRC_ROOT/packages/launchpad/build/bundle/bundle/index.js"
+  fi
+  if [ -f "$SRC_ROOT/packages/project-host/build/bundle-linux.tar.xz" ]; then
+    extract_tarball_if_needed \
+      "$SRC_ROOT/packages/project-host/build/bundle-linux.tar.xz" \
+      "$SRC_ROOT/packages/project-host/build" \
+      "$SRC_ROOT/packages/project-host/build/bundle/main/index.js"
+  fi
+  if [ -f "$SRC_ROOT/packages/project/build/bundle-linux.tar.xz" ]; then
+    extract_tarball_if_needed \
+      "$SRC_ROOT/packages/project/build/bundle-linux.tar.xz" \
+      "$SRC_ROOT/packages/project/build" \
+      "$SRC_ROOT/packages/project/build/bundle/bundle/index.js"
+    ln -sfn "$SRC_ROOT/packages/project/build/bundle" \
+      "$SRC_ROOT/packages/project/build/current"
+  fi
+  local arch tools_tarball tools_release tools_current
+  arch="$(host_arch)"
+  tools_tarball="$SRC_ROOT/packages/project/build/tools-linux-${arch}.tar.xz"
+  if [ -f "$tools_tarball" ]; then
+    tools_release="$SRC_ROOT/packages/project/build/tools/${STAR_RELEASE_ID:-runtime}"
+    tools_current="$SRC_ROOT/packages/project/build/tools/current"
+    if [ ! -x "$tools_release/bin/dropbear" ]; then
+      rm -rf "$tools_release"
+      mkdir -p "$tools_release"
+      run tar -C "$tools_release" -Jxf "$tools_tarball"
+    fi
+    ln -sfn "$tools_release/bin" "$tools_current"
+  fi
+  chown -R "$STAR_USER:$STAR_USER" "$SRC_ROOT/packages" "$SRC_ROOT/scripts/star-poc/build" 2>/dev/null || true
+}
+
 ensure_btrfs() {
   mkdir -p /var/lib/cocalc /mnt/cocalc
   if [ ! -f "$STAR_BTRFS_IMAGE" ]; then
@@ -112,7 +170,13 @@ import sys
 from pathlib import Path
 
 src_root = Path(sys.argv[1])
-path = src_root / "packages/server/cloud/bootstrap/bootstrap.py"
+paths = [
+    src_root / "packages/server/cloud/bootstrap/bootstrap.py",
+    src_root / "packages/launchpad/build/bundle/bundle/bootstrap/bootstrap.py",
+]
+path = next((path for path in paths if path.exists()), None)
+if path is None:
+    raise RuntimeError("unable to find bootstrap.py in Star source or bundle")
 spec = importlib.util.spec_from_file_location("cocalc_star_bootstrap", path)
 module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
@@ -224,7 +288,13 @@ ensure_default_rootfs_cache() {
   if [ -z "${STAR_DEFAULT_ROOTFS_IMAGE:-}" ]; then
     return
   fi
-  as_star_user "set -a && source /etc/cocalc/project-host.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' node scripts/star-poc/ensure-rootfs-cache.mjs"
+  local script="scripts/star-poc/ensure-rootfs-cache.mjs"
+  if [ -f "$SRC_ROOT/scripts/star-poc/build/ensure-rootfs-cache/index.cjs" ]; then
+    script="scripts/star-poc/build/ensure-rootfs-cache/index.cjs"
+  elif [ -f "$SRC_ROOT/scripts/star-poc/ensure-rootfs-cache.cjs" ]; then
+    script="scripts/star-poc/ensure-rootfs-cache.cjs"
+  fi
+  as_star_user "set -a && source /etc/cocalc/project-host.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' node '$script'"
 }
 
 write_env_files() {
@@ -254,6 +324,7 @@ write_env_files() {
   cat >/etc/cocalc/star/hub.env <<EOF
 COCALC_PRODUCT=launchpad
 COCALC_SETUP_PROFILE=star
+COCALC_ROOT=${SRC_ROOT}
 COCALC_DB=postgres
 COCALC_LOCAL_POSTGRES=1
 DATA=${STAR_DATA}
@@ -281,6 +352,7 @@ EOF
   cat >/etc/cocalc/project-host.env <<EOF
 PROJECT_HOST_ID=${STAR_HOST_ID}
 PROJECT_HOST_NAME=star-local
+COCALC_ROOT=${SRC_ROOT}
 PROJECT_HOST_REGION=local
 PROJECT_HOST_PUBLIC_URL=http://127.0.0.1:9002
 PROJECT_HOST_INTERNAL_URL=http://127.0.0.1:9002
@@ -295,7 +367,7 @@ COCALC_FILE_SERVER_MOUNTPOINT=/mnt/cocalc
 COCALC_SHARED_SCRATCH_ENABLED=1
 COCALC_SHARED_SCRATCH_HOST_MOUNT=/mnt/cocalc-scratch
 COCALC_PROJECT_HOST_CPU_USAGE_MODE=observe
-COCALC_PROJECT_TOOLS=${SRC_ROOT}/packages/backend/node_modules/.bin
+COCALC_PROJECT_TOOLS=$([ -d "${SRC_ROOT}/packages/project/build/tools/current" ] && printf '%s' "${SRC_ROOT}/packages/project/build/tools/current" || printf '%s' "${SRC_ROOT}/packages/backend/node_modules/.bin")
 COCALC_PROJECT_BUNDLES=${SRC_ROOT}/packages/project/build
 COCALC_PROJECT_HOST_CONAT_ROUTER_HOST=0.0.0.0
 COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=9112
@@ -312,14 +384,41 @@ EOF
 }
 
 seed_database() {
-  as_star_user "set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_BASE_URL='$STAR_BASE_URL' STAR_MASTER_CONAT_TOKEN_PATH='$STAR_PROJECT_HOST_DATA/secrets/master-conat-token' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' STAR_BOOTSTRAP_RESULT_PATH='$STAR_ROOT/bootstrap-result.json' node scripts/star-poc/seed-star-poc.mjs"
+  local script="scripts/star-poc/seed-star-poc.cjs"
+  if [ -f "$SRC_ROOT/scripts/star-poc/build/seed-star-poc/index.cjs" ]; then
+    script="scripts/star-poc/build/seed-star-poc/index.cjs"
+  fi
+  as_star_user "set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_BASE_URL='$STAR_BASE_URL' STAR_MASTER_CONAT_TOKEN_PATH='$STAR_PROJECT_HOST_DATA/secrets/master-conat-token' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' STAR_BOOTSTRAP_RESULT_PATH='$STAR_ROOT/bootstrap-result.json' node '$script'"
 }
 
 install_systemd() {
-  local hub_unit project_host_unit caddy_config
+  local hub_unit project_host_unit caddy_config hub_workdir hub_exec hub_bundle_env project_host_workdir project_host_exec project_host_stop api_v2_routes_bundle
   hub_unit="$(mktemp)"
   project_host_unit="$(mktemp)"
   caddy_config="$(mktemp)"
+  if [ -f "$SRC_ROOT/packages/launchpad/build/bundle/bundle/index.js" ]; then
+    hub_workdir="$SRC_ROOT/packages/launchpad/build/bundle"
+    hub_exec='exec node bundle/index.js --hostname=127.0.0.1'
+    hub_bundle_env="Environment=COCALC_BUNDLE_DIR=${hub_workdir}"
+    api_v2_routes_bundle="${hub_workdir}/api-v2-routes-bundle/index.cjs"
+    if [ -f "$api_v2_routes_bundle" ]; then
+      hub_bundle_env="${hub_bundle_env}
+Environment=COCALC_API_V2_ROUTES_BUNDLE=${api_v2_routes_bundle}"
+    fi
+  else
+    hub_workdir="$SRC_ROOT/packages/launchpad"
+    hub_exec='exec node bin/start.js --hostname=127.0.0.1'
+    hub_bundle_env=""
+  fi
+  if [ -f "$SRC_ROOT/packages/project-host/build/bundle/main/index.js" ]; then
+    project_host_workdir="$SRC_ROOT/packages/project-host/build/bundle"
+    project_host_exec='exec node main/index.js --index 0'
+    project_host_stop='node bundle/index.js daemon stop 0'
+  else
+    project_host_workdir="$SRC_ROOT/packages/project-host"
+    project_host_exec='exec node dist/main.js --index 0'
+    project_host_stop='node bin/start.js daemon stop 0'
+  fi
 
   cat >"$hub_unit" <<EOF
 [Unit]
@@ -331,11 +430,12 @@ Wants=network-online.target
 Type=simple
 User=${STAR_USER}
 Group=${STAR_USER}
-WorkingDirectory=${SRC_ROOT}/packages/launchpad
+WorkingDirectory=${hub_workdir}
 EnvironmentFile=/etc/cocalc/star/hub.env
+${hub_bundle_env}
 ExecStartPre=/bin/bash -lc 'if [ "\${COCALC_DB:-}" = "pglite" ]; then rm -f "\${COCALC_PGLITE_DATA_DIR:-\${DATA}/pglite}/postmaster.pid"; fi'
 ExecStartPre=/bin/bash -lc 'pkill -TERM -f "[l]aunchpad-sshd/sshd_config" 2>/dev/null || true'
-ExecStart=/bin/bash -lc 'source "\$HOME/.nvm/nvm.sh" && nvm use 26 >/dev/null && exec node bin/start.js --hostname=127.0.0.1'
+ExecStart=/bin/bash -lc 'source "\$HOME/.nvm/nvm.sh" && nvm use 26 >/dev/null && ${hub_exec}'
 Restart=always
 RestartSec=5
 TimeoutStopSec=20
@@ -354,12 +454,12 @@ Wants=network-online.target cocalc-star-hub.service
 Type=simple
 User=${STAR_USER}
 Group=${STAR_USER}
-WorkingDirectory=${SRC_ROOT}/packages/project-host
+WorkingDirectory=${project_host_workdir}
 EnvironmentFile=/etc/cocalc/project-host.env
 Environment=COCALC_PROJECT_HOST_AGENT=1
 Environment=COCALC_PROJECT_HOST_AGENT_INDEX=0
-ExecStart=/bin/bash -lc 'source "\$HOME/.nvm/nvm.sh" && nvm use 26 >/dev/null && exec node dist/main.js --index 0'
-ExecStop=/bin/bash -lc 'source "\$HOME/.nvm/nvm.sh" && nvm use 26 >/dev/null && node bin/start.js daemon stop 0'
+ExecStart=/bin/bash -lc 'source "\$HOME/.nvm/nvm.sh" && nvm use 26 >/dev/null && ${project_host_exec}'
+ExecStop=/bin/bash -lc 'source "\$HOME/.nvm/nvm.sh" && nvm use 26 >/dev/null && ${project_host_stop}'
 Restart=always
 RestartSec=5
 TimeoutStopSec=40
@@ -427,6 +527,7 @@ require_root
 install_packages
 install_node
 build_source
+prepare_runtime_artifacts
 stop_existing_services
 ensure_btrfs
 install_wrappers

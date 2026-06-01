@@ -1,19 +1,12 @@
 #!/usr/bin/env node
 
-import { resolve } from "node:path";
+import * as rootfsBase from "@cocalc/project-runner/run/rootfs-base";
+import * as rootfsNormalize from "@cocalc/project-runner/run/rootfs-normalize";
 
 const image = `${process.env.STAR_DEFAULT_ROOTFS_IMAGE ?? ""}`.trim();
 if (!image) {
   throw new Error("STAR_DEFAULT_ROOTFS_IMAGE must be set");
 }
-
-const srcRoot = process.cwd();
-const rootfsBase = await import(
-  `${resolve(srcRoot, "packages/project-runner/dist/run/rootfs-base.js")}`
-);
-const rootfsNormalize = await import(
-  `${resolve(srcRoot, "packages/project-runner/dist/run/rootfs-normalize.js")}`
-);
 
 await rootfsBase.extractBaseImage(image);
 

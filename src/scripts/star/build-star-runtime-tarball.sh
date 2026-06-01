@@ -6,6 +6,7 @@ SRC_ROOT="$(realpath "${SCRIPT_DIR}/../..")"
 REPO_ROOT="$(realpath "${SRC_ROOT}/..")"
 OUTPUT="${1:-${STAR_RUNTIME_TARBALL:-/tmp/cocalc-star-runtime.tar.gz}}"
 STAR_RUNTIME_BUILD="${STAR_RUNTIME_BUILD:-1}"
+STAR_HELPER_BUILD_DIR=""
 
 log() {
   printf '[star-runtime-build] %s\n' "$*" >&2
@@ -21,8 +22,8 @@ usage() {
 Usage: build-star-runtime-tarball.sh [output.tar.gz]
 
 Build a CoCalc Star runtime tarball. The archive extracts to src/ and includes
-tracked source files plus built runtime artifacts such as node_modules, dist
-trees, the project bundle, and generated static assets.
+only Star installer scripts plus compressed ncc/runtime artifacts needed by the
+installer. It intentionally does not include the workspace node_modules tree.
 
 Set STAR_RUNTIME_BUILD=0 to skip the local build step and package the current
 workspace state.
@@ -66,46 +67,192 @@ build_runtime() {
     pnpm --filter @cocalc/app-notebook build
     ./workspaces.py build --dev
     pnpm python-api
+    pnpm --filter @cocalc/launchpad build:tarball
+    pnpm --filter @cocalc/cli build:bundle
+    pnpm --filter @cocalc/project-host build:bundle
     pnpm --dir packages/project build:bundle
+    pnpm --dir packages/project build:tools
   )
 }
 
-append_if_exists() {
-  local path="$1"
-  if [ -e "${REPO_ROOT}/${path}" ] || [ -L "${REPO_ROOT}/${path}" ]; then
-    printf '%s\0' "$path"
-  fi
-}
-
-runtime_paths() {
+build_star_helper_bundles() {
+  [ -n "$STAR_HELPER_BUILD_DIR" ] || die "STAR_HELPER_BUILD_DIR is not set"
+  log "building Star bootstrap helper ncc bundles"
   (
-    cd "$REPO_ROOT"
-    git ls-files -z src
-    git ls-files -z --others --exclude-standard src
-
-    append_if_exists src/packages/node_modules
-    find src/packages -mindepth 2 -maxdepth 3 -type d -name node_modules -print0
-    find src/packages -mindepth 2 -maxdepth 3 -type d -name dist -print0
-    find src/packages -mindepth 2 -maxdepth 3 -type d -name dist-ts -print0
-    append_if_exists src/packages/project/build
-    find src/packages -mindepth 2 -maxdepth 3 -type f -name .successful-build -print0
-    append_if_exists src/python/cocalc-api/site
+    cd "$SRC_ROOT"
+    use_node_26
+    mkdir -p \
+      packages/server/build/star-helper-entrypoints \
+      packages/project-host/build/star-helper-entrypoints \
+      "$STAR_HELPER_BUILD_DIR"
+    cp scripts/star-poc/seed-star-poc.cjs \
+      packages/server/build/star-helper-entrypoints/seed-star-poc.cjs
+    cp scripts/star-poc/ensure-rootfs-cache.cjs \
+      packages/project-host/build/star-helper-entrypoints/ensure-rootfs-cache.cjs
+    rm -rf \
+      "$STAR_HELPER_BUILD_DIR/seed-star-poc" \
+      "$STAR_HELPER_BUILD_DIR/ensure-rootfs-cache"
+    pnpm --filter @cocalc/launchpad exec ncc build \
+      "$SRC_ROOT/packages/server/build/star-helper-entrypoints/seed-star-poc.cjs" \
+      -o "$STAR_HELPER_BUILD_DIR/seed-star-poc" \
+      --external bufferutil \
+      --external utf-8-validate \
+      --license licenses.txt
+    pnpm --filter @cocalc/project-host exec ncc build \
+      "$SRC_ROOT/packages/project-host/build/star-helper-entrypoints/ensure-rootfs-cache.cjs" \
+      -o "$STAR_HELPER_BUILD_DIR/ensure-rootfs-cache" \
+      --external bufferutil \
+      --external utf-8-validate \
+      --license licenses.txt
+    local node_pty_dir ensure_out
+    node_pty_dir="$(find "$SRC_ROOT/packages/node_modules/.pnpm" -path '*/node_modules/node-pty/package.json' -print -quit)"
+    [ -n "$node_pty_dir" ] || die "unable to find node-pty package for rootfs helper bundle"
+    node_pty_dir="$(dirname "$node_pty_dir")"
+    ensure_out="$STAR_HELPER_BUILD_DIR/ensure-rootfs-cache"
+    mkdir -p "$ensure_out/prebuilds/linux-x64" "$ensure_out/prebuilds/linux-arm64"
+    cp "$node_pty_dir/prebuilds/linux-x64/pty.node" "$ensure_out/prebuilds/linux-x64/"
+    cp "$node_pty_dir/prebuilds/linux-arm64/pty.node" "$ensure_out/prebuilds/linux-arm64/"
   )
 }
 
-build_runtime
+build_api_v2_routes_bundle() {
+  [ -n "$STAR_HELPER_BUILD_DIR" ] || die "STAR_HELPER_BUILD_DIR is not set"
+  log "building bundled api/v2 route manifest"
+  (
+    cd "$SRC_ROOT"
+    use_node_26
+    local api_root entry out_dir
+    api_root="$SRC_ROOT/packages/http-api/dist/pages/api/v2"
+    entry="$SRC_ROOT/packages/http-api/build/star-api-v2-routes.cjs"
+    out_dir="$STAR_HELPER_BUILD_DIR/api-v2-routes"
+    [ -d "$api_root" ] || die "missing built api/v2 handlers: $api_root"
+    mkdir -p "$(dirname "$entry")"
+    node - "$api_root" "$entry" <<'NODE'
+const fs = require("fs");
+const path = require("path");
 
-[ -d "$SRC_ROOT/packages/node_modules" ] || die "missing src/packages/node_modules; build did not install dependencies"
-[ -d "$SRC_ROOT/packages/static/dist" ] || die "missing src/packages/static/dist; build did not produce frontend assets"
-[ -d "$SRC_ROOT/packages/project/build/bundle" ] || die "missing project bundle; build did not produce project runtime"
-[ -x "$SRC_ROOT/packages/backend/node_modules/.bin/dropbear" ] || die "missing backend tools bundle dropbear"
+const apiRoot = path.resolve(process.argv[2]);
+const entry = path.resolve(process.argv[3]);
+
+function collect(dir, out = []) {
+  for (const name of fs.readdirSync(dir)) {
+    if (name.startsWith(".")) continue;
+    const full = path.join(dir, name);
+    const stat = fs.statSync(full);
+    if (stat.isDirectory()) {
+      collect(full, out);
+    } else if (
+      name.endsWith(".js") &&
+      !name.endsWith(".test.js") &&
+      !name.endsWith(".spec.js")
+    ) {
+      out.push(full);
+    }
+  }
+  return out.sort();
+}
+
+function routePath(relative) {
+  const withoutExt = relative.slice(0, -".js".length);
+  return withoutExt === "index" ? "/" : `/${withoutExt}`;
+}
+
+const files = collect(apiRoot).filter(
+  (file) => path.relative(apiRoot, file).split(path.sep).join("/") !== "index.js",
+);
+
+const lines = [
+  '"use strict";',
+  "// Generated by scripts/star/build-star-runtime-tarball.sh.",
+  "const routes = [];",
+];
+
+files.forEach((file, index) => {
+  const relative = path.relative(apiRoot, file).split(path.sep).join("/");
+  const requirePath = `./${path.relative(path.dirname(entry), file).split(path.sep).join("/")}`;
+  lines.push(`const mod${index} = require(${JSON.stringify(requirePath)});`);
+  lines.push(
+    `routes.push({ path: ${JSON.stringify(routePath(relative))}, handler: mod${index}.default ?? mod${index} });`,
+  );
+});
+
+lines.push("module.exports = { routes };");
+lines.push("");
+fs.writeFileSync(entry, lines.join("\n"));
+console.error(`[star-runtime-build] generated ${entry} with ${files.length} routes`);
+NODE
+    rm -rf "$out_dir"
+    pnpm --filter @cocalc/launchpad exec ncc build \
+      "$entry" \
+      -o "$out_dir" \
+      --external bufferutil \
+      --external utf-8-validate \
+      --license licenses.txt
+  )
+}
+
+copy_runtime_payload() {
+  local staging="$1"
+  local runtime_src="${staging}/src"
+  mkdir -p \
+    "$runtime_src/scripts" \
+    "$runtime_src/packages/cli/build" \
+    "$runtime_src/packages/launchpad/build" \
+    "$runtime_src/packages/project-host/build" \
+    "$runtime_src/packages/project/build" \
+    "$runtime_src/packages/server/cloud/bootstrap"
+
+  cp -a "$SRC_ROOT/scripts/star" "$runtime_src/scripts/"
+  mkdir -p "$runtime_src/scripts/star-poc"
+  (
+    cd "$SRC_ROOT/scripts/star-poc"
+    tar --exclude='./build' -cf - .
+  ) | tar -C "$runtime_src/scripts/star-poc" -xf -
+  mkdir -p "$runtime_src/scripts/star-poc/build"
+  cp -a "$STAR_HELPER_BUILD_DIR/seed-star-poc" \
+    "$STAR_HELPER_BUILD_DIR/ensure-rootfs-cache" \
+    "$runtime_src/scripts/star-poc/build/"
+  cp "$SRC_ROOT/packages/launchpad/build/bundle.tar.xz" \
+    "$runtime_src/packages/launchpad/build/"
+  cp -a "$SRC_ROOT/packages/cli/build/bundle" \
+    "$runtime_src/packages/cli/build/"
+  mkdir -p "$runtime_src/packages/launchpad/build/bundle"
+  cp -a "$STAR_HELPER_BUILD_DIR/api-v2-routes" \
+    "$runtime_src/packages/launchpad/build/bundle/api-v2-routes-bundle"
+  cp "$SRC_ROOT/packages/project-host/build/bundle-linux.tar.xz" \
+    "$runtime_src/packages/project-host/build/"
+  cp "$SRC_ROOT/packages/project/build/bundle-linux.tar.xz" \
+    "$runtime_src/packages/project/build/"
+  cp "$SRC_ROOT/packages/project/build"/tools-linux-*.tar.xz \
+    "$runtime_src/packages/project/build/"
+  cp "$SRC_ROOT/packages/server/cloud/bootstrap/bootstrap.py" \
+    "$runtime_src/packages/server/cloud/bootstrap/"
+}
 
 mkdir -p "$(dirname "$OUTPUT")"
+tmp_dir="$(mktemp -d)"
+cleanup() {
+  rm -rf "$tmp_dir"
+}
+trap cleanup EXIT
+STAR_HELPER_BUILD_DIR="$tmp_dir/helper-build"
+
+build_runtime
+build_star_helper_bundles
+build_api_v2_routes_bundle
+
+[ -f "$SRC_ROOT/packages/launchpad/build/bundle.tar.xz" ] || die "missing launchpad bundle tarball"
+[ -f "$SRC_ROOT/packages/cli/build/bundle/index.js" ] || die "missing cli bundle"
+[ -f "$SRC_ROOT/packages/project-host/build/bundle-linux.tar.xz" ] || die "missing project-host bundle tarball"
+[ -f "$SRC_ROOT/packages/project/build/bundle-linux.tar.xz" ] || die "missing project bundle tarball"
+[ -f "$SRC_ROOT/packages/project/build/tools-linux-amd64.tar.xz" ] || die "missing amd64 tools bundle"
+[ -f "$SRC_ROOT/packages/project/build/tools-linux-arm64.tar.xz" ] || die "missing arm64 tools bundle"
+[ -f "$STAR_HELPER_BUILD_DIR/seed-star-poc/index.cjs" ] || die "missing bundled seed helper"
+[ -f "$STAR_HELPER_BUILD_DIR/ensure-rootfs-cache/index.cjs" ] || die "missing bundled rootfs cache helper"
+[ -f "$STAR_HELPER_BUILD_DIR/api-v2-routes/index.cjs" ] || die "missing bundled api/v2 route manifest"
+
+copy_runtime_payload "$tmp_dir"
 log "creating $OUTPUT"
-runtime_paths | tar --null -czf "$OUTPUT" \
-  --exclude='src/python/cocalc-api/.venv' \
-  --exclude='*/.cache/*' \
-  --exclude='*/.tmp/*' \
-  --files-from -
+tar -czf "$OUTPUT" -C "$tmp_dir" src
 
 log "wrote $OUTPUT"
