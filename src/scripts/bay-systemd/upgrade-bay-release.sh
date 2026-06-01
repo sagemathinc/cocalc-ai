@@ -322,7 +322,10 @@ NODE
 }
 
 upgrade_project_hosts() {
-  [[ "$SKIP_HOST_UPGRADE" -eq 0 ]] || return
+  if [[ "$SKIP_HOST_UPGRADE" -ne 0 ]]; then
+    log "Skip project host upgrade"
+    return 0
+  fi
   [[ -x "$CLI_PATH" || -f "$CLI_PATH" ]] || die "cocalc CLI not found: $CLI_PATH"
   create_temp_cookie
 
@@ -342,6 +345,10 @@ upgrade_project_hosts() {
 }
 
 verify_project_hosts() {
+  if [[ "$SKIP_HOST_UPGRADE" -ne 0 ]]; then
+    log "Skip project host software verification"
+    return 0
+  fi
   log "Verify project host software state"
   remote_psql "-Atq" <<'SQL' | tee "${REPORT_DIR}/project-host-software.txt"
 SELECT
