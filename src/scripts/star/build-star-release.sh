@@ -156,10 +156,12 @@ sed -i "s/__STAR_RELEASE_ID__/${STAR_RELEASE_ID}/g" "${staging}/install.sh"
 chmod 0755 "${staging}/install.sh"
 cp "${SCRIPT_DIR}/install-release.sh" "${staging}/install-release.sh"
 chmod 0755 "${staging}/install-release.sh"
+cp "${SCRIPT_DIR}/install-release.sh" "${staging}/install-cocalc-star.sh"
+chmod 0755 "${staging}/install-cocalc-star.sh"
 
 (
   cd "$staging"
-  sha256sum install.sh install-release.sh release.json "$payload_name" >SHA256SUMS
+  sha256sum install.sh install-release.sh install-cocalc-star.sh release.json "$payload_name" >SHA256SUMS
 )
 
 mkdir -p "$(dirname "$OUTPUT")"

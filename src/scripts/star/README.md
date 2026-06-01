@@ -47,6 +47,29 @@ curl -fsSL https://example.com/install-release.sh \
   | sudo STAR_ASSUME_YES=1 bash -s -- https://example.com/cocalc-star-<release>.tar.gz
 ```
 
+For the public GitHub release path, publish:
+
+- `install-cocalc-star.sh`
+- `cocalc-star-runtime-linux-x64.tar.gz`
+- optionally `cocalc-star-runtime-linux-arm64.tar.gz`
+
+Build those assets with:
+
+```sh
+src/scripts/star/build-github-release-assets.sh dist/star/github
+```
+
+Then the intended copy/paste installer is:
+
+```sh
+curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh \
+  | sudo STAR_ASSUME_YES=1 bash
+```
+
+The installer auto-detects `x86_64` vs `aarch64` and downloads the matching
+`cocalc-star-runtime-linux-<arch>.tar.gz` asset from the latest GitHub release.
+Set `COCALC_STAR_RELEASE_URL` to test a specific artifact URL.
+
 By default this installs source under a versioned release directory and points
 `/opt/cocalc-star/source` at the active release. It uses the sudo caller as the
 Star runtime user and starts CoCalc on `http://127.0.0.1:9100`.

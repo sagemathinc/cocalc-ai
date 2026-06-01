@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+DEFAULT_RELEASE_BASE_URL="https://github.com/sagemathinc/cocalc-ai/releases/latest/download"
+RELEASE_BASE_URL="${COCALC_STAR_RELEASE_BASE_URL:-$DEFAULT_RELEASE_BASE_URL}"
 RELEASE_URL="${COCALC_STAR_RELEASE_URL:-${1:-}}"
 STAR_ASSUME_YES="${STAR_ASSUME_YES:-0}"
 
@@ -26,8 +28,17 @@ Examples:
   curl -fsSL https://example.com/install-release.sh \
     | sudo STAR_ASSUME_YES=1 bash -s -- https://example.com/cocalc-star.tar.gz
 
+  curl -fsSL https://github.com/sagemathinc/cocalc-ai/releases/latest/download/install-cocalc-star.sh \
+    | sudo STAR_ASSUME_YES=1 bash
+
 Environment:
   COCALC_STAR_RELEASE_URL   Alternative to the positional release URL/path.
+  COCALC_STAR_RELEASE_BASE_URL
+                            Base URL used when no explicit release URL is
+                            provided. Default:
+                            https://github.com/sagemathinc/cocalc-ai/releases/latest/download
+  COCALC_STAR_RELEASE_ARCH  Override auto-detected Linux arch: x64 or arm64.
+  COCALC_STAR_RELEASE_ASSET Override default asset name.
   STAR_ASSUME_YES=1         Required for non-interactive installs.
   STAR_INSTALL_ROOT         Passed through to the release installer.
   STAR_USER                 Passed through to the release installer.
@@ -35,6 +46,29 @@ Environment:
 Run only on a dedicated Ubuntu VM. The release installer changes system
 packages, systemd services, sudoers, mounts, and local runtime data.
 EOF
+}
+
+detect_release_arch() {
+  if [ -n "${COCALC_STAR_RELEASE_ARCH:-}" ]; then
+    printf '%s\n' "$COCALC_STAR_RELEASE_ARCH"
+    return
+  fi
+  case "$(uname -m)" in
+    x86_64 | amd64) printf 'x64\n' ;;
+    aarch64 | arm64) printf 'arm64\n' ;;
+    *) die "unsupported architecture $(uname -m); set COCALC_STAR_RELEASE_URL explicitly" ;;
+  esac
+}
+
+default_release_url() {
+  local arch asset
+  arch="$(detect_release_arch)"
+  case "$arch" in
+    x64 | arm64) ;;
+    *) die "unsupported COCALC_STAR_RELEASE_ARCH=$arch; expected x64 or arm64" ;;
+  esac
+  asset="${COCALC_STAR_RELEASE_ASSET:-cocalc-star-runtime-linux-${arch}.tar.gz}"
+  printf '%s/%s\n' "${RELEASE_BASE_URL%/}" "$asset"
 }
 
 require_root() {
@@ -94,8 +128,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 [ -n "$RELEASE_URL" ] || {
-  usage
-  exit 2
+  RELEASE_URL="$(default_release_url)"
 }
 
 require_root
