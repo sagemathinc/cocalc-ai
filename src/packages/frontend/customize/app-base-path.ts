@@ -1,5 +1,15 @@
 import { APP_BASE_PATH_ROUTE_MARKERS } from "@cocalc/util/routing/app";
 import { LOCALE } from "@cocalc/util/i18n";
+import { is_valid_uuid_string as isUUID } from "@cocalc/util/misc";
+
+function inferProjectHostBasePath(pathname: string): string | undefined {
+  const parts = pathname.split("/").filter(Boolean);
+  const uuidIndex = parts.findIndex(isUUID);
+  if (uuidIndex === -1) {
+    return;
+  }
+  return uuidIndex === 0 ? "/" : `/${parts.slice(0, uuidIndex).join("/")}`;
+}
 
 function inferLangBasePath(pathname: string): string | undefined {
   const normalized =
@@ -59,6 +69,11 @@ export function inferAppBasePath(pathname?: string): string {
   const localeBasePath = inferLocaleAliasBasePath(normalizedPathname);
   if (localeBasePath != null) {
     return localeBasePath;
+  }
+
+  const projectHostBasePath = inferProjectHostBasePath(normalizedPathname);
+  if (projectHostBasePath != null) {
+    return projectHostBasePath;
   }
 
   const trimmed =

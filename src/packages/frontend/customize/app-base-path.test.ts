@@ -39,4 +39,17 @@ describe("inferAppBasePath", () => {
     expect(inferAppBasePath("/base")).toBe("/base");
     expect(inferAppBasePath("/")).toBe("/");
   });
+
+  it("infers the base path before project-host uuid routes", () => {
+    expect(
+      inferAppBasePath(
+        "/00000000-1000-4000-8000-000000000000/files/home/user/a.pdf",
+      ),
+    ).toBe("/");
+    expect(
+      inferAppBasePath(
+        "/base/00000000-1000-4000-8000-000000000000/files/home/user/a.pdf",
+      ),
+    ).toBe("/base");
+  });
 });

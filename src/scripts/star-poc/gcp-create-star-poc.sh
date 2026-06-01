@@ -20,7 +20,7 @@ DELETE_EXISTING_VM="${DELETE_EXISTING_VM:-0}"
 STAR_BUILD="${STAR_BUILD:-1}"
 STAR_BUILD_DEFAULT_ROOTFS="${STAR_BUILD_DEFAULT_ROOTFS:-1}"
 STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
-STAR_DEFAULT_ROOTFS_BASE_IMAGE="${STAR_DEFAULT_ROOTFS_BASE_IMAGE:-ubuntu:24.04}"
+STAR_DEFAULT_ROOTFS_BASE_IMAGE="${STAR_DEFAULT_ROOTFS_BASE_IMAGE:-ubuntu:26.04}"
 STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-1}"
 RUN_DOCTOR="${RUN_DOCTOR:-1}"
 RUN_SMOKE="${RUN_SMOKE:-1}"
@@ -66,7 +66,7 @@ Useful overrides:
   STAR_BUILD=0                  skip pnpm build on the remote VM
   STAR_BUILD_DEFAULT_ROOTFS=0   skip building the local Jupyter/LaTeX rootfs
   STAR_DEFAULT_ROOTFS_IMAGE=... local rootfs image tag to seed as default
-  STAR_DEFAULT_ROOTFS_BASE_IMAGE=ubuntu:24.04
+  STAR_DEFAULT_ROOTFS_BASE_IMAGE=ubuntu:26.04
   STAR_REMOVE_GCP_SUDOERS=0     keep the GCP sudo group after install
   VALIDATION_USER=user          validate through the VM user instead of root
                                 requires STAR_REMOVE_GCP_SUDOERS=0

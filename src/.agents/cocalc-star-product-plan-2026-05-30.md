@@ -76,7 +76,7 @@ The current working implementation is deliberately simple:
 - Run the project-host managed Conat router on `127.0.0.1:9112`.
 - Run the project-host Conat persist health endpoint on `127.0.0.1:9212`.
 - Use local Postgres for the hub/control-plane database.
-- Build/cache a default RootFS from `ubuntu:24.04` with Jupyter and LaTeX.
+- Build/cache a default RootFS from `ubuntu:26.04` with Jupyter and LaTeX.
 - Mount the backend tools bundle into project containers so tools such as
   `dropbear` come from the CoCalc tools bundle, not from the RootFS image.
 
