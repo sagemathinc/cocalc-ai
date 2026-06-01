@@ -18,6 +18,7 @@ import {
   InputNumber,
   Modal,
   Popconfirm,
+  Popover,
   Row,
   Select,
   Space,
@@ -48,6 +49,9 @@ import {
 import {
   analyzeMembershipTierPricingRisk,
   DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS,
+  MEMBERSHIP_TIER_PRICING_DAYS_PER_MONTH,
+  MEMBERSHIP_TIER_PRICING_DAYS_PER_WEEK,
+  MEMBERSHIP_TIER_PRICING_HOURS_PER_MONTH,
   normalizeMembershipTierPricingAssumptions,
   type MembershipTierPricingAssumptions,
   type MembershipTierPricingInput,
@@ -81,7 +85,11 @@ type ExpectedUsageEstimateKey =
   | "egress7dGb"
   | "projectStorageHardCapGb"
   | "blobStorageGb"
-  | "rootfsStorageGb";
+  | "rootfsStorageGb"
+  | "spotCpuHoursMonthly"
+  | "spotRamGbHoursMonthly"
+  | "standardCpuHoursMonthly"
+  | "standardRamGbHoursMonthly";
 
 type ExpectedUsageEstimate = Partial<Record<ExpectedUsageEstimateKey, number>>;
 
@@ -1103,7 +1111,38 @@ export function MembershipTiers() {
         projectStorageHardCapGb: bounded("projectStorageHardCapGb"),
         blobStorageGb: bounded("blobStorageGb"),
         rootfsStorageGb: bounded("rootfsStorageGb"),
+        spotCpuHoursMonthly: normalizedOptionalNumber(
+          estimate.spotCpuHoursMonthly,
+        ),
+        spotRamGbHoursMonthly: normalizedOptionalNumber(
+          estimate.spotRamGbHoursMonthly,
+        ),
+        standardCpuHoursMonthly: normalizedOptionalNumber(
+          estimate.standardCpuHoursMonthly,
+        ),
+        standardRamGbHoursMonthly: normalizedOptionalNumber(
+          estimate.standardRamGbHoursMonthly,
+        ),
       };
+    };
+    const monthlyFromWeeklyLabel = (value: unknown, suffix = "") => {
+      const numberValue = normalizedOptionalNumber(value);
+      if (numberValue == null) return "Not configured";
+      const monthlyValue =
+        numberValue *
+        (MEMBERSHIP_TIER_PRICING_DAYS_PER_MONTH /
+          MEMBERSHIP_TIER_PRICING_DAYS_PER_WEEK);
+      return `${formattedNumber(monthlyValue, monthlyValue >= 100 ? 0 : 1)}${suffix ? ` ${suffix}` : ""}`;
+    };
+    const monthlyStorageLabel = (value: unknown, suffix = "GB") => {
+      const numberValue = normalizedOptionalNumber(value);
+      if (numberValue == null) return "Not configured";
+      return `${formattedNumber(numberValue, numberValue >= 100 ? 0 : 1)} ${suffix}`;
+    };
+    const monthlyUsageLabel = (value: unknown, suffix: string, digits = 1) => {
+      const numberValue = normalizedOptionalNumber(value);
+      if (numberValue == null) return "Not estimated";
+      return `${formattedNumber(numberValue, digits)} ${suffix}`;
     };
     const maxLabel = (value: unknown, suffix = "") => {
       const numberValue = normalizedOptionalNumber(value);
@@ -1132,44 +1171,40 @@ export function MembershipTiers() {
         )}
       </div>
     );
-    const hardCostLine = (
-      label: string,
-      amount: number,
-      opts: { total?: boolean } = {},
-    ) => (
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) 160px",
-          gap: "18px",
-          alignItems: "baseline",
-          padding: opts.total ? "12px 0 0" : "8px 0",
-          borderTop: opts.total
-            ? `2px solid ${COLORS.GRAY_LL}`
-            : `1px solid ${COLORS.GRAY_LLL}`,
-          fontWeight: opts.total ? 700 : 400,
-        }}
-      >
-        <Text strong={opts.total}>{label}</Text>
-        <Text
-          strong={opts.total}
-          style={{
-            display: "block",
-            fontVariantNumeric: "tabular-nums",
-            textAlign: "right",
-          }}
-        >
-          {currency(amount)}
-        </Text>
-      </div>
-    );
+    const costTableCellStyle: React.CSSProperties = {
+      borderTop: `1px solid ${COLORS.GRAY_LLL}`,
+      padding: "10px 12px",
+      verticalAlign: "top",
+    };
+    const costTableNumberCellStyle: React.CSSProperties = {
+      ...costTableCellStyle,
+      textAlign: "right",
+      fontVariantNumeric: "tabular-nums",
+      whiteSpace: "nowrap",
+    };
+    const costTableHeaderStyle: React.CSSProperties = {
+      padding: "9px 12px",
+      color: COLORS.GRAY,
+      fontSize: "12px",
+      fontWeight: 600,
+      textAlign: "left",
+      borderBottom: `1px solid ${COLORS.GRAY_LL}`,
+      background: COLORS.GRAY_LLL,
+    };
     const expectedUsageInput = (
       key: ExpectedUsageEstimateKey,
       label: string,
       maxValue: unknown,
-      opts: { step?: number; addonAfter?: string; extra?: string } = {},
+      opts: {
+        step?: number;
+        addonAfter?: string;
+        extra?: string;
+        unbounded?: boolean;
+      } = {},
     ) => {
-      const max = normalizedOptionalNumber(maxValue);
+      const max = opts.unbounded
+        ? undefined
+        : normalizedOptionalNumber(maxValue);
       const rawValue = expectedUsageEstimate[key];
       const value =
         max != null && rawValue != null ? Math.min(rawValue, max) : rawValue;
@@ -1956,13 +1991,153 @@ export function MembershipTiers() {
                     maxPricingInput,
                     pricingAssumptions,
                   );
+                  const expectedInput = expectedPricingInput(
+                    maxPricingInput,
+                    expectedUsageEstimate,
+                  );
                   const expectedAnalysis = analyzeMembershipTierPricingRisk(
-                    expectedPricingInput(
-                      maxPricingInput,
-                      expectedUsageEstimate,
-                    ),
+                    expectedInput,
                     pricingAssumptions,
                   );
+                  const monthlyScale =
+                    MEMBERSHIP_TIER_PRICING_DAYS_PER_MONTH /
+                    MEMBERSHIP_TIER_PRICING_DAYS_PER_WEEK;
+                  const usageScalePopover = (
+                    <Popover
+                      content={
+                        <div style={{ maxWidth: "260px" }}>
+                          Weekly limits are scaled by{" "}
+                          {MEMBERSHIP_TIER_PRICING_DAYS_PER_MONTH} /{" "}
+                          {MEMBERSHIP_TIER_PRICING_DAYS_PER_WEEK} ={" "}
+                          {formattedNumber(monthlyScale, 2)} to estimate an
+                          average month.
+                        </div>
+                      }
+                    >
+                      <Button size="small" type="text" style={{ padding: 0 }}>
+                        ?
+                      </Button>
+                    </Popover>
+                  );
+                  const costRows = [
+                    {
+                      key: "ai",
+                      name: "AI allowance",
+                      hardLimit: monthlyFromWeeklyLabel(
+                        maxPricingInput.aiUnits7d,
+                        "units",
+                      ),
+                      maxCost: analysis.hardCosts.aiMonthlyUsd,
+                      expectedLimit: monthlyFromWeeklyLabel(
+                        expectedInput.aiUnits7d,
+                        "units",
+                      ),
+                      expectedCost: expectedAnalysis.hardCosts.aiMonthlyUsd,
+                      scaled: true,
+                    },
+                    {
+                      key: "egress",
+                      name: "Network egress allowance",
+                      hardLimit: monthlyFromWeeklyLabel(
+                        maxPricingInput.egress7dGb,
+                        "GB",
+                      ),
+                      maxCost: analysis.hardCosts.egressMonthlyUsd,
+                      expectedLimit: monthlyFromWeeklyLabel(
+                        expectedInput.egress7dGb,
+                        "GB",
+                      ),
+                      expectedCost: expectedAnalysis.hardCosts.egressMonthlyUsd,
+                      scaled: true,
+                    },
+                    {
+                      key: "project-storage",
+                      name: "Project file storage hard cap",
+                      hardLimit: monthlyStorageLabel(
+                        maxPricingInput.projectStorageHardCapGb,
+                      ),
+                      maxCost: analysis.hardCosts.projectStorageMonthlyUsd,
+                      expectedLimit: monthlyStorageLabel(
+                        expectedInput.projectStorageHardCapGb,
+                      ),
+                      expectedCost:
+                        expectedAnalysis.hardCosts.projectStorageMonthlyUsd,
+                    },
+                    {
+                      key: "blob-storage",
+                      name: "R2/blob storage",
+                      hardLimit: monthlyStorageLabel(
+                        maxPricingInput.blobStorageGb,
+                      ),
+                      maxCost: analysis.hardCosts.blobStorageMonthlyUsd,
+                      expectedLimit: monthlyStorageLabel(
+                        expectedInput.blobStorageGb,
+                      ),
+                      expectedCost:
+                        expectedAnalysis.hardCosts.blobStorageMonthlyUsd,
+                    },
+                    {
+                      key: "rootfs-storage",
+                      name: "Rootfs storage",
+                      hardLimit: monthlyStorageLabel(
+                        maxPricingInput.rootfsStorageGb,
+                      ),
+                      maxCost: analysis.hardCosts.rootfsStorageMonthlyUsd,
+                      expectedLimit: monthlyStorageLabel(
+                        expectedInput.rootfsStorageGb,
+                      ),
+                      expectedCost:
+                        expectedAnalysis.hardCosts.rootfsStorageMonthlyUsd,
+                    },
+                    {
+                      key: "spot-cpu",
+                      name: "Spot CPU QoS estimate",
+                      hardLimit: "No hard limit",
+                      maxCost: 0,
+                      expectedLimit: monthlyUsageLabel(
+                        expectedInput.spotCpuHoursMonthly,
+                        "CPU-h",
+                      ),
+                      expectedCost:
+                        expectedAnalysis.hardCosts.spotCpuMonthlyUsd,
+                    },
+                    {
+                      key: "spot-ram",
+                      name: "Spot RAM QoS estimate",
+                      hardLimit: "No hard limit",
+                      maxCost: 0,
+                      expectedLimit: monthlyUsageLabel(
+                        expectedInput.spotRamGbHoursMonthly,
+                        "GB-h",
+                      ),
+                      expectedCost:
+                        expectedAnalysis.hardCosts.spotRamMonthlyUsd,
+                    },
+                    {
+                      key: "standard-cpu",
+                      name: "Standard CPU QoS estimate",
+                      hardLimit: "No hard limit",
+                      maxCost: 0,
+                      expectedLimit: monthlyUsageLabel(
+                        expectedInput.standardCpuHoursMonthly,
+                        "CPU-h",
+                      ),
+                      expectedCost:
+                        expectedAnalysis.hardCosts.standardCpuMonthlyUsd,
+                    },
+                    {
+                      key: "standard-ram",
+                      name: "Standard RAM QoS estimate",
+                      hardLimit: "No hard limit",
+                      maxCost: 0,
+                      expectedLimit: monthlyUsageLabel(
+                        expectedInput.standardRamGbHoursMonthly,
+                        "GB-h",
+                      ),
+                      expectedCost:
+                        expectedAnalysis.hardCosts.standardRamMonthlyUsd,
+                    },
+                  ];
                   return (
                     <>
                       <Paragraph style={sectionIntroStyle}>
@@ -1972,151 +2147,8 @@ export function MembershipTiers() {
                         points.
                       </Paragraph>
                       {fieldGroup({
-                        title: "Risk Snapshot",
-                        note: "Hard-cost exposure assumes the 7-day limits are fully used every week. Credit-based dedicated-host spend is included; prepaid host usage is shown separately because the residual risk is payment reversal, not ordinary infrastructure spend.",
-                        children: (
-                          <>
-                            <Row gutter={[16, 16]}>
-                              <Col xs={24} md={12} xl={6}>
-                                {riskMetric(
-                                  "Modeled hard cost",
-                                  currency(analysis.hardCosts.totalMonthlyUsd),
-                                )}
-                              </Col>
-                              <Col xs={24} md={12} xl={6}>
-                                {riskMetric(
-                                  "Target hard-cost budget",
-                                  currency(analysis.targetHardCostBudgetUsd),
-                                  `price × ${formattedPercent(
-                                    Math.max(
-                                      0,
-                                      1 -
-                                        pricingAssumptions.targetGrossMargin -
-                                        pricingAssumptions.overheadReserve,
-                                    ),
-                                  )}`,
-                                )}
-                              </Col>
-                              <Col xs={24} md={12} xl={6}>
-                                {riskMetric(
-                                  "Budget remaining",
-                                  currency(
-                                    analysis.margin.hardCostBudgetRemainingUsd,
-                                  ),
-                                )}
-                              </Col>
-                              <Col xs={24} md={12} xl={6}>
-                                {riskMetric(
-                                  "Budget used",
-                                  formattedPercent(
-                                    analysis.margin.hardCostRatio,
-                                  ),
-                                )}
-                              </Col>
-                              <Col xs={24} md={12} xl={6}>
-                                {riskMetric(
-                                  "Average CPUs if fully used",
-                                  `${formattedNumber(
-                                    analysis.capacity.averageCpuEntitlement,
-                                    2,
-                                  )} CPUs`,
-                                  "monthly CPU-hours ÷ 720",
-                                )}
-                              </Col>
-                              <Col xs={24} md={12} xl={6}>
-                                {riskMetric(
-                                  "Monthly CPU allowance",
-                                  `${formattedNumber(
-                                    analysis.capacity.cpuHoursMonthlyBudget,
-                                    0,
-                                  )} h`,
-                                  "7-day CPU budget × 30/7",
-                                )}
-                              </Col>
-                              <Col xs={24} md={12} xl={6}>
-                                {riskMetric(
-                                  "Modeled active project RAM",
-                                  `${formattedNumber(
-                                    analysis.capacity.activeProjectRamGb,
-                                    1,
-                                  )} GB`,
-                                  `${formattedNumber(
-                                    analysis.capacity.modeledActiveProjects,
-                                    1,
-                                  )} active project(s) × project RAM`,
-                                )}
-                              </Col>
-                              <Col xs={24} md={12} xl={6}>
-                                {riskMetric(
-                                  "RAM capacity target",
-                                  `${formattedNumber(
-                                    analysis.capacity.sharedHostRamUserShare,
-                                    1,
-                                  )} GB RAM`,
-                                  "host RAM × RAM oversubscription",
-                                )}
-                              </Col>
-                            </Row>
-                            <Space
-                              direction="vertical"
-                              style={{ width: "100%", marginTop: "16px" }}
-                            >
-                              {analysis.messages.map((message, index) => (
-                                <Alert
-                                  key={index}
-                                  showIcon
-                                  type={riskSeverityType(message.severity)}
-                                  message={message.message}
-                                />
-                              ))}
-                            </Space>
-                          </>
-                        ),
-                      })}
-                      {fieldGroup({
-                        title: "Modeled Monthly Hard Cost",
-                        note: "These are worst-case allowance costs, not expected average usage.",
-                        children: (
-                          <div
-                            style={{
-                              maxWidth: "760px",
-                              border: `1px solid ${COLORS.GRAY_LL}`,
-                              borderRadius: "10px",
-                              padding: "12px 18px",
-                              background: "rgba(255,255,255,0.82)",
-                            }}
-                          >
-                            {hardCostLine(
-                              "AI allowance",
-                              analysis.hardCosts.aiMonthlyUsd,
-                            )}
-                            {hardCostLine(
-                              "Network egress allowance",
-                              analysis.hardCosts.egressMonthlyUsd,
-                            )}
-                            {hardCostLine(
-                              "Project file storage hard cap",
-                              analysis.hardCosts.projectStorageMonthlyUsd,
-                            )}
-                            {hardCostLine(
-                              "R2/blob storage",
-                              analysis.hardCosts.blobStorageMonthlyUsd,
-                            )}
-                            {hardCostLine(
-                              "Rootfs storage",
-                              analysis.hardCosts.rootfsStorageMonthlyUsd,
-                            )}
-                            {hardCostLine(
-                              "Total modeled hard cost",
-                              analysis.hardCosts.totalMonthlyUsd,
-                              { total: true },
-                            )}
-                          </div>
-                        ),
-                      })}
-                      {fieldGroup({
-                        title: "Expected Monthly Hard Cost",
-                        note: "Enter realistic expected usage for this tier. Values are advisory, saved in this browser, and bounded by the configured tier maxima where a maximum exists.",
+                        title: "Monthly Cost Accounting",
+                        note: "Enter realistic expected usage for this tier. Expected values are advisory, saved in this browser, and bounded by configured tier maxima where a maximum exists. CPU/RAM rows model quality-of-service capacity, not a hard user-visible limit.",
                         children: (
                           <>
                             <Row gutter={16}>
@@ -2175,44 +2207,194 @@ export function MembershipTiers() {
                                   },
                                 )}
                               </Col>
+                              <Col {...fieldCol}>
+                                {expectedUsageInput(
+                                  "spotCpuHoursMonthly",
+                                  "Expected spot CPU / month",
+                                  undefined,
+                                  {
+                                    step: 1,
+                                    addonAfter: "CPU-h",
+                                    unbounded: true,
+                                    extra:
+                                      "QoS capacity assumption. Example: 50 CPU-hours/month on spot hosts.",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {expectedUsageInput(
+                                  "spotRamGbHoursMonthly",
+                                  "Expected spot RAM / month",
+                                  undefined,
+                                  {
+                                    step: 1,
+                                    addonAfter: "GB-h",
+                                    unbounded: true,
+                                    extra:
+                                      "RAM GB-hours/month on spot hosts. Example: 100 GB-hours/month.",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {expectedUsageInput(
+                                  "standardCpuHoursMonthly",
+                                  "Expected standard CPU / month",
+                                  undefined,
+                                  {
+                                    step: 1,
+                                    addonAfter: "CPU-h",
+                                    unbounded: true,
+                                    extra:
+                                      "QoS capacity expected on standard, non-spot hosts.",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {expectedUsageInput(
+                                  "standardRamGbHoursMonthly",
+                                  "Expected standard RAM / month",
+                                  undefined,
+                                  {
+                                    step: 1,
+                                    addonAfter: "GB-h",
+                                    unbounded: true,
+                                    extra:
+                                      "RAM GB-hours/month expected on standard, non-spot hosts.",
+                                  },
+                                )}
+                              </Col>
                             </Row>
                             <div
                               style={{
-                                maxWidth: "760px",
+                                overflowX: "auto",
                                 border: `1px solid ${COLORS.GRAY_LL}`,
                                 borderRadius: "10px",
-                                padding: "12px 18px",
                                 background: "rgba(255,255,255,0.82)",
                               }}
                             >
-                              {hardCostLine(
-                                "AI expected usage",
-                                expectedAnalysis.hardCosts.aiMonthlyUsd,
-                              )}
-                              {hardCostLine(
-                                "Network egress expected usage",
-                                expectedAnalysis.hardCosts.egressMonthlyUsd,
-                              )}
-                              {hardCostLine(
-                                "Project file storage expected usage",
-                                expectedAnalysis.hardCosts
-                                  .projectStorageMonthlyUsd,
-                              )}
-                              {hardCostLine(
-                                "R2/blob storage expected usage",
-                                expectedAnalysis.hardCosts
-                                  .blobStorageMonthlyUsd,
-                              )}
-                              {hardCostLine(
-                                "Rootfs storage expected usage",
-                                expectedAnalysis.hardCosts
-                                  .rootfsStorageMonthlyUsd,
-                              )}
-                              {hardCostLine(
-                                "Total expected hard cost",
-                                expectedAnalysis.hardCosts.totalMonthlyUsd,
-                                { total: true },
-                              )}
+                              <table
+                                style={{
+                                  width: "100%",
+                                  borderCollapse: "collapse",
+                                  minWidth: "860px",
+                                }}
+                              >
+                                <thead>
+                                  <tr>
+                                    <th style={costTableHeaderStyle}>Name</th>
+                                    <th
+                                      style={{
+                                        ...costTableHeaderStyle,
+                                        textAlign: "right",
+                                      }}
+                                    >
+                                      Hard limit / month {usageScalePopover}
+                                    </th>
+                                    <th
+                                      style={{
+                                        ...costTableHeaderStyle,
+                                        textAlign: "right",
+                                      }}
+                                    >
+                                      Max cost
+                                    </th>
+                                    <th
+                                      style={{
+                                        ...costTableHeaderStyle,
+                                        textAlign: "right",
+                                      }}
+                                    >
+                                      Expected / month {usageScalePopover}
+                                    </th>
+                                    <th
+                                      style={{
+                                        ...costTableHeaderStyle,
+                                        textAlign: "right",
+                                      }}
+                                    >
+                                      Expected cost
+                                    </th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {costRows.map((row) => (
+                                    <tr key={row.key}>
+                                      <td style={costTableCellStyle}>
+                                        <Text>{row.name}</Text>
+                                        {row.scaled && (
+                                          <div
+                                            style={{
+                                              color: COLORS.GRAY,
+                                              fontSize: "12px",
+                                            }}
+                                          >
+                                            7-day allowance ×{" "}
+                                            {formattedNumber(monthlyScale, 2)}
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td style={costTableNumberCellStyle}>
+                                        {row.hardLimit}
+                                      </td>
+                                      <td style={costTableNumberCellStyle}>
+                                        {currency(row.maxCost)}
+                                      </td>
+                                      <td style={costTableNumberCellStyle}>
+                                        {row.expectedLimit}
+                                      </td>
+                                      <td style={costTableNumberCellStyle}>
+                                        {currency(row.expectedCost)}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                  <tr>
+                                    <td
+                                      style={{
+                                        ...costTableCellStyle,
+                                        borderTop: `2px solid ${COLORS.GRAY_LL}`,
+                                        fontWeight: 700,
+                                      }}
+                                    >
+                                      Total modeled cost
+                                    </td>
+                                    <td
+                                      style={{
+                                        ...costTableNumberCellStyle,
+                                        borderTop: `2px solid ${COLORS.GRAY_LL}`,
+                                      }}
+                                    />
+                                    <td
+                                      style={{
+                                        ...costTableNumberCellStyle,
+                                        borderTop: `2px solid ${COLORS.GRAY_LL}`,
+                                        fontWeight: 700,
+                                      }}
+                                    >
+                                      {currency(
+                                        analysis.hardCosts.totalMonthlyUsd,
+                                      )}
+                                    </td>
+                                    <td
+                                      style={{
+                                        ...costTableNumberCellStyle,
+                                        borderTop: `2px solid ${COLORS.GRAY_LL}`,
+                                      }}
+                                    />
+                                    <td
+                                      style={{
+                                        ...costTableNumberCellStyle,
+                                        borderTop: `2px solid ${COLORS.GRAY_LL}`,
+                                        fontWeight: 700,
+                                      }}
+                                    >
+                                      {currency(
+                                        expectedAnalysis.hardCosts
+                                          .totalMonthlyUsd,
+                                      )}
+                                    </td>
+                                  </tr>
+                                </tbody>
+                              </table>
                             </div>
                             <Button
                               style={{ marginTop: "12px" }}
@@ -2220,6 +2402,114 @@ export function MembershipTiers() {
                             >
                               Clear expected usage estimates
                             </Button>
+                          </>
+                        ),
+                      })}
+                      {fieldGroup({
+                        title: "Risk Snapshot",
+                        note: "Hard-cost exposure assumes the configured limits are fully used. CPU/RAM QoS cost only appears in the expected column above because it is a capacity planning assumption, not a hard project-start cap.",
+                        children: (
+                          <>
+                            <Row gutter={[16, 16]}>
+                              <Col xs={24} md={12} xl={6}>
+                                {riskMetric(
+                                  "Modeled hard cost",
+                                  currency(analysis.hardCosts.totalMonthlyUsd),
+                                )}
+                              </Col>
+                              <Col xs={24} md={12} xl={6}>
+                                {riskMetric(
+                                  "Target hard-cost budget",
+                                  currency(analysis.targetHardCostBudgetUsd),
+                                  `price × ${formattedPercent(
+                                    Math.max(
+                                      0,
+                                      1 -
+                                        pricingAssumptions.targetGrossMargin -
+                                        pricingAssumptions.overheadReserve,
+                                    ),
+                                  )}`,
+                                )}
+                              </Col>
+                              <Col xs={24} md={12} xl={6}>
+                                {riskMetric(
+                                  "Budget remaining",
+                                  currency(
+                                    analysis.margin.hardCostBudgetRemainingUsd,
+                                  ),
+                                )}
+                              </Col>
+                              <Col xs={24} md={12} xl={6}>
+                                {riskMetric(
+                                  "Budget used",
+                                  formattedPercent(
+                                    analysis.margin.hardCostRatio,
+                                  ),
+                                )}
+                              </Col>
+                              <Col xs={24} md={12} xl={6}>
+                                {riskMetric(
+                                  "Average CPUs if fully used",
+                                  `${formattedNumber(
+                                    analysis.capacity.averageCpuEntitlement,
+                                    2,
+                                  )} CPUs`,
+                                  `monthly CPU-hours ÷ ${formattedNumber(
+                                    MEMBERSHIP_TIER_PRICING_HOURS_PER_MONTH,
+                                    0,
+                                  )}`,
+                                )}
+                              </Col>
+                              <Col xs={24} md={12} xl={6}>
+                                {riskMetric(
+                                  "Monthly CPU allowance",
+                                  `${formattedNumber(
+                                    analysis.capacity.cpuHoursMonthlyBudget,
+                                    0,
+                                  )} h`,
+                                  `7-day CPU budget × ${formattedNumber(
+                                    monthlyScale,
+                                    2,
+                                  )}`,
+                                )}
+                              </Col>
+                              <Col xs={24} md={12} xl={6}>
+                                {riskMetric(
+                                  "Modeled active project RAM",
+                                  `${formattedNumber(
+                                    analysis.capacity.activeProjectRamGb,
+                                    1,
+                                  )} GB`,
+                                  `${formattedNumber(
+                                    analysis.capacity.modeledActiveProjects,
+                                    1,
+                                  )} active project(s) × project RAM`,
+                                )}
+                              </Col>
+                              <Col xs={24} md={12} xl={6}>
+                                {riskMetric(
+                                  "RAM capacity target",
+                                  `${formattedNumber(
+                                    analysis.capacity.sharedHostRamUserShare,
+                                    1,
+                                  )} GB RAM`,
+                                  "host RAM × RAM oversubscription",
+                                )}
+                              </Col>
+                            </Row>
+                            <Space
+                              direction="vertical"
+                              style={{ width: "100%", marginTop: "16px" }}
+                            >
+                              {analysis.messages.map((message, index) => (
+                                <Alert
+                                  key={index}
+                                  showIcon
+                                  type={riskSeverityType(message.severity)}
+                                  message={message.message}
+                                />
+                              ))}
+                            </Space>
                           </>
                         ),
                       })}
@@ -2304,6 +2594,80 @@ export function MembershipTiers() {
                                   {
                                     step: 0.001,
                                     addonAfter: "$/GB-mo",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "spotCpuCostPerMonth",
+                                  "Spot CPU cost",
+                                  {
+                                    step: 0.1,
+                                    addonAfter: "$/CPU-mo",
+                                    extra:
+                                      "Provider cost for one spot vCPU-month before utilization adjustment.",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "spotRamGbCostPerMonth",
+                                  "Spot RAM cost",
+                                  {
+                                    step: 0.1,
+                                    addonAfter: "$/GB-mo",
+                                    extra:
+                                      "Provider cost for one spot RAM GB-month before utilization adjustment.",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "standardCpuCostPerMonth",
+                                  "Standard CPU cost",
+                                  {
+                                    step: 0.1,
+                                    addonAfter: "$/CPU-mo",
+                                    extra:
+                                      "Provider cost for one standard vCPU-month before utilization adjustment.",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "standardRamGbCostPerMonth",
+                                  "Standard RAM cost",
+                                  {
+                                    step: 0.1,
+                                    addonAfter: "$/GB-mo",
+                                    extra:
+                                      "Provider cost for one standard RAM GB-month before utilization adjustment.",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "averageCpuUtilization",
+                                  "Average VM CPU utilization",
+                                  {
+                                    multiplier: 100,
+                                    step: 1,
+                                    addonAfter: "%",
+                                    extra:
+                                      "Effective unit CPU price divides provider CPU cost by this utilization.",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "averageRamUtilization",
+                                  "Average VM RAM utilization",
+                                  {
+                                    multiplier: 100,
+                                    step: 1,
+                                    addonAfter: "%",
+                                    extra:
+                                      "Effective unit RAM price divides provider RAM cost by this utilization.",
                                   },
                                 )}
                               </Col>

@@ -33,23 +33,47 @@ describe("membership tier pricing risk", () => {
     );
 
     expect(analysis.targetHardCostBudgetUsd).toBeCloseTo(8);
-    expect(analysis.hardCosts.aiMonthlyUsd).toBeCloseTo(30);
-    expect(analysis.hardCosts.egressMonthlyUsd).toBeCloseTo(12);
+    expect(analysis.hardCosts.aiMonthlyUsd).toBeCloseTo(30.5);
+    expect(analysis.hardCosts.egressMonthlyUsd).toBeCloseTo(12.2);
     expect(analysis.hardCosts.projectStorageMonthlyUsd).toBeCloseTo(1.5);
     expect(analysis.hardCosts.blobStorageMonthlyUsd).toBeCloseTo(1);
     expect(analysis.hardCosts.rootfsStorageMonthlyUsd).toBeCloseTo(1);
     expect(
       analysis.hardCosts.dedicatedHostCreditGuardrailMonthlyUsd,
-    ).toBeCloseTo(30);
+    ).toBeCloseTo(30.5);
     expect(analysis.hardCosts.prepaidHostGuardrailMonthlyUsd).toBeCloseTo(
-      30000 / 7,
+      30500 / 7,
     );
-    expect(analysis.hardCosts.totalMonthlyUsd).toBeCloseTo(45.5);
-    expect(analysis.capacity.cpuHoursMonthlyBudget).toBeCloseTo(720);
+    expect(analysis.hardCosts.totalMonthlyUsd).toBeCloseTo(46.2);
+    expect(analysis.capacity.cpuHoursMonthlyBudget).toBeCloseTo(732);
     expect(analysis.capacity.averageCpuEntitlement).toBeCloseTo(1);
     expect(analysis.capacity.modeledActiveProjects).toBeCloseTo(1);
     expect(analysis.capacity.activeProjectRamGb).toBeCloseTo(2);
     expect(analysis.messages[0]?.severity).toBe("danger");
+  });
+
+  it("models expected compute QoS from monthly CPU and RAM GB-hours", () => {
+    const analysis = analyzeMembershipTierPricingRisk({
+      spotCpuHoursMonthly: 50,
+      spotRamGbHoursMonthly: 100,
+      standardCpuHoursMonthly: 10,
+      standardRamGbHoursMonthly: 20,
+    });
+
+    expect(analysis.hardCosts.spotCpuMonthlyUsd).toBeCloseTo((50 / 732) * 12);
+    expect(analysis.hardCosts.spotRamMonthlyUsd).toBeCloseTo((100 / 732) * 2);
+    expect(analysis.hardCosts.standardCpuMonthlyUsd).toBeCloseTo(
+      (10 / 732) * 50,
+    );
+    expect(analysis.hardCosts.standardRamMonthlyUsd).toBeCloseTo(
+      (20 / 732) * 7,
+    );
+    expect(analysis.hardCosts.computeMonthlyUsd).toBeCloseTo(
+      (50 / 732) * 12 + (100 / 732) * 2 + (10 / 732) * 50 + (20 / 732) * 7,
+    );
+    expect(analysis.hardCosts.totalMonthlyUsd).toBeCloseTo(
+      analysis.hardCosts.computeMonthlyUsd,
+    );
   });
 
   it("caps modeled active projects by the sponsored running-project limit", () => {
@@ -89,12 +113,16 @@ describe("membership tier pricing risk", () => {
     const assumptions = normalizeMembershipTierPricingAssumptions({
       targetGrossMargin: 2,
       overheadReserve: -1,
+      averageCpuUtilization: 0,
+      averageRamUtilization: 2,
       sharedHostUsableRamGb: 0,
       targetCpuOversubscription: -5,
     });
 
     expect(assumptions.targetGrossMargin).toBe(1);
     expect(assumptions.overheadReserve).toBe(0);
+    expect(assumptions.averageCpuUtilization).toBe(0.5);
+    expect(assumptions.averageRamUtilization).toBe(1);
     expect(assumptions.sharedHostUsableRamGb).toBeGreaterThan(0);
     expect(assumptions.targetCpuOversubscription).toBeGreaterThan(0);
   });

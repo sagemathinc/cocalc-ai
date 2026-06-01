@@ -13,6 +13,12 @@ export interface MembershipTierPricingAssumptions {
   projectStorageCostPerGbMonth: number;
   blobStorageCostPerGbMonth: number;
   rootfsStorageCostPerGbMonth: number;
+  spotCpuCostPerMonth: number;
+  spotRamGbCostPerMonth: number;
+  standardCpuCostPerMonth: number;
+  standardRamGbCostPerMonth: number;
+  averageCpuUtilization: number;
+  averageRamUtilization: number;
   sharedHostUsableRamGb: number;
   sharedHostUsableVcpu: number;
   targetRamOversubscription: number;
@@ -31,6 +37,10 @@ export interface MembershipTierPricingInput {
   creditSpendLimit7dUsd?: unknown;
   prepaidHostUsageLimit7dUsd?: unknown;
   cpu7dHours?: unknown;
+  spotCpuHoursMonthly?: unknown;
+  spotRamGbHoursMonthly?: unknown;
+  standardCpuHoursMonthly?: unknown;
+  standardRamGbHoursMonthly?: unknown;
   projectMemoryMb?: unknown;
   maxSponsoredRunningProjects?: unknown;
 }
@@ -50,6 +60,11 @@ export interface MembershipTierPricingRiskAnalysis {
     projectStorageMonthlyUsd: number;
     blobStorageMonthlyUsd: number;
     rootfsStorageMonthlyUsd: number;
+    spotCpuMonthlyUsd: number;
+    spotRamMonthlyUsd: number;
+    standardCpuMonthlyUsd: number;
+    standardRamMonthlyUsd: number;
+    computeMonthlyUsd: number;
     dedicatedHostCreditGuardrailMonthlyUsd: number;
     prepaidHostGuardrailMonthlyUsd: number;
     totalMonthlyUsd: number;
@@ -69,9 +84,10 @@ export interface MembershipTierPricingRiskAnalysis {
   messages: MembershipTierRiskMessage[];
 }
 
-const DAYS_PER_MONTH = 30;
-const DAYS_PER_WEEK = 7;
-const HOURS_PER_MONTH = DAYS_PER_MONTH * 24;
+export const MEMBERSHIP_TIER_PRICING_DAYS_PER_MONTH = 30.5;
+export const MEMBERSHIP_TIER_PRICING_DAYS_PER_WEEK = 7;
+export const MEMBERSHIP_TIER_PRICING_HOURS_PER_MONTH =
+  MEMBERSHIP_TIER_PRICING_DAYS_PER_MONTH * 24;
 const MB_PER_GB = 1000;
 
 export const DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS: MembershipTierPricingAssumptions =
@@ -83,6 +99,12 @@ export const DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS: MembershipTierPricingA
     projectStorageCostPerGbMonth: 0.15,
     blobStorageCostPerGbMonth: 0.015,
     rootfsStorageCostPerGbMonth: 0.04,
+    spotCpuCostPerMonth: 6,
+    spotRamGbCostPerMonth: 1,
+    standardCpuCostPerMonth: 25,
+    standardRamGbCostPerMonth: 3.5,
+    averageCpuUtilization: 0.5,
+    averageRamUtilization: 0.5,
     sharedHostUsableRamGb: 48,
     sharedHostUsableVcpu: 16,
     targetRamOversubscription: 1.5,
@@ -104,7 +126,11 @@ function safePositive(value: unknown, fallback: number): number {
 }
 
 function monthlyFromWeekly(value: unknown): number {
-  return nonnegative(value) * (DAYS_PER_MONTH / DAYS_PER_WEEK);
+  return (
+    nonnegative(value) *
+    (MEMBERSHIP_TIER_PRICING_DAYS_PER_MONTH /
+      MEMBERSHIP_TIER_PRICING_DAYS_PER_WEEK)
+  );
 }
 
 function clampFraction(value: unknown): number {
@@ -132,6 +158,18 @@ export function normalizeMembershipTierPricingAssumptions(
     blobStorageCostPerGbMonth: nonnegative(merged.blobStorageCostPerGbMonth),
     rootfsStorageCostPerGbMonth: nonnegative(
       merged.rootfsStorageCostPerGbMonth,
+    ),
+    spotCpuCostPerMonth: nonnegative(merged.spotCpuCostPerMonth),
+    spotRamGbCostPerMonth: nonnegative(merged.spotRamGbCostPerMonth),
+    standardCpuCostPerMonth: nonnegative(merged.standardCpuCostPerMonth),
+    standardRamGbCostPerMonth: nonnegative(merged.standardRamGbCostPerMonth),
+    averageCpuUtilization: safePositive(
+      clampFraction(merged.averageCpuUtilization),
+      DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS.averageCpuUtilization,
+    ),
+    averageRamUtilization: safePositive(
+      clampFraction(merged.averageRamUtilization),
+      DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS.averageRamUtilization,
     ),
     sharedHostUsableRamGb: safePositive(
       merged.sharedHostUsableRamGb,
@@ -190,15 +228,38 @@ export function analyzeMembershipTierPricingRisk(
   const prepaidHostGuardrailMonthlyUsd = monthlyFromWeekly(
     input.prepaidHostUsageLimit7dUsd,
   );
+  const spotCpuMonthlyUsd =
+    (nonnegative(input.spotCpuHoursMonthly) /
+      MEMBERSHIP_TIER_PRICING_HOURS_PER_MONTH) *
+    (assumptions.spotCpuCostPerMonth / assumptions.averageCpuUtilization);
+  const spotRamMonthlyUsd =
+    (nonnegative(input.spotRamGbHoursMonthly) /
+      MEMBERSHIP_TIER_PRICING_HOURS_PER_MONTH) *
+    (assumptions.spotRamGbCostPerMonth / assumptions.averageRamUtilization);
+  const standardCpuMonthlyUsd =
+    (nonnegative(input.standardCpuHoursMonthly) /
+      MEMBERSHIP_TIER_PRICING_HOURS_PER_MONTH) *
+    (assumptions.standardCpuCostPerMonth / assumptions.averageCpuUtilization);
+  const standardRamMonthlyUsd =
+    (nonnegative(input.standardRamGbHoursMonthly) /
+      MEMBERSHIP_TIER_PRICING_HOURS_PER_MONTH) *
+    (assumptions.standardRamGbCostPerMonth / assumptions.averageRamUtilization);
+  const computeMonthlyUsd =
+    spotCpuMonthlyUsd +
+    spotRamMonthlyUsd +
+    standardCpuMonthlyUsd +
+    standardRamMonthlyUsd;
   const totalMonthlyUsd =
     aiMonthlyUsd +
     egressMonthlyUsd +
     projectStorageMonthlyUsd +
     blobStorageMonthlyUsd +
-    rootfsStorageMonthlyUsd;
+    rootfsStorageMonthlyUsd +
+    computeMonthlyUsd;
 
   const cpuHoursMonthlyBudget = monthlyFromWeekly(input.cpu7dHours);
-  const averageCpuEntitlement = cpuHoursMonthlyBudget / HOURS_PER_MONTH;
+  const averageCpuEntitlement =
+    cpuHoursMonthlyBudget / MEMBERSHIP_TIER_PRICING_HOURS_PER_MONTH;
   const sharedHostCpuUserShare =
     assumptions.sharedHostUsableVcpu * assumptions.targetCpuOversubscription;
   const sponsoredRunningProjects = nonnegative(
@@ -283,6 +344,11 @@ export function analyzeMembershipTierPricingRisk(
       projectStorageMonthlyUsd,
       blobStorageMonthlyUsd,
       rootfsStorageMonthlyUsd,
+      spotCpuMonthlyUsd,
+      spotRamMonthlyUsd,
+      standardCpuMonthlyUsd,
+      standardRamMonthlyUsd,
+      computeMonthlyUsd,
       dedicatedHostCreditGuardrailMonthlyUsd,
       prepaidHostGuardrailMonthlyUsd,
       totalMonthlyUsd,
