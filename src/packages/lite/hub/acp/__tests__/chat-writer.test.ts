@@ -87,6 +87,7 @@ jest.mock("../../sqlite/acp-turns", () => ({
   finalizeAcpTurnLease: jest.fn(),
   updateAcpTurnLeaseSessionId: jest.fn(),
   listRunningAcpTurnLeases: jest.fn(() => []),
+  listRecentTerminalAcpTurnLeases: jest.fn(() => []),
 }));
 jest.mock("@cocalc/chat/server", () => ({
   acquireChatSyncDB: jest.fn(),
@@ -217,6 +218,10 @@ beforeEach(() => {
   (turns.updateAcpTurnLeaseSessionId as any)?.mockReset?.();
   (turns.listRunningAcpTurnLeases as any)?.mockReset?.();
   (turns.listRunningAcpTurnLeases as any)?.mockImplementation?.(() => []);
+  (turns.listRecentTerminalAcpTurnLeases as any)?.mockReset?.();
+  (turns.listRecentTerminalAcpTurnLeases as any)?.mockImplementation?.(
+    () => [],
+  );
   (chatServer.acquireChatSyncDB as any)?.mockReset?.();
   (chatServer.releaseChatSyncDB as any)?.mockReset?.();
   (chatServer.releaseChatSyncDB as any)?.mockResolvedValue?.(undefined);

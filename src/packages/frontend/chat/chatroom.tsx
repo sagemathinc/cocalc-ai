@@ -132,6 +132,17 @@ const GRID_STYLE: React.CSSProperties = {
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const ACP_ACTIVE_STATES = new Set(["queue", "sending", "sent", "running"]);
 
+function isActiveAcpState(state: unknown): boolean {
+  if (typeof state !== "string") return false;
+  return ACP_ACTIVE_STATES.has(state.trim().toLowerCase());
+}
+
+function isTerminalAcpState(state: unknown): boolean {
+  if (typeof state !== "string") return false;
+  const normalized = state.trim().toLowerCase();
+  return normalized.length > 0 && !ACP_ACTIVE_STATES.has(normalized);
+}
+
 function normalizeThreadKey(value?: string | null): string | undefined {
   const key = `${value ?? ""}`.trim();
   if (!key) return undefined;
@@ -345,10 +356,7 @@ export function hasActiveAcpTurnForComposer({
     const state =
       (messageId ? acpState?.get?.(`message:${messageId}`) : undefined) ??
       acpState?.get?.(`${d.valueOf()}`);
-    if (
-      (typeof threadState === "string" && ACP_ACTIVE_STATES.has(threadState)) ||
-      (typeof state === "string" && ACP_ACTIVE_STATES.has(state))
-    ) {
+    if (isActiveAcpState(threadState) || isActiveAcpState(state)) {
       return true;
     }
   }
@@ -370,12 +378,13 @@ export function resolveImmediateAcpParentMessageId({
     normalizedThreadId != null
       ? acpState?.get?.(`thread:${normalizedThreadId}`)
       : undefined;
+  let sawNewerTerminalAcpTurn = isTerminalAcpState(threadState);
   for (let i = selectedThreadMessages.length - 1; i >= 0; i -= 1) {
     const msg = selectedThreadMessages[i];
     if (!field<string>(msg, "acp_account_id")) continue;
     const messageId = normalizeThreadKey(field<string>(msg, "message_id"));
     if (!messageId) continue;
-    if (threadState === "running") {
+    if (isActiveAcpState(threadState)) {
       return messageId;
     }
     const messageDate = dateValue(msg);
@@ -388,13 +397,23 @@ export function resolveImmediateAcpParentMessageId({
       .trim()
       .toLowerCase();
     if (
-      (typeof messageState === "string" &&
-        ACP_ACTIVE_STATES.has(messageState)) ||
-      (typeof rowState === "string" && ACP_ACTIVE_STATES.has(rowState)) ||
-      field<boolean>(msg, "generating") === true
+      isTerminalAcpState(messageState) ||
+      isTerminalAcpState(rowState) ||
+      field<boolean>(msg, "acp_interrupted") === true
     ) {
+      sawNewerTerminalAcpTurn = true;
+      continue;
+    }
+    if (isActiveAcpState(messageState) || isActiveAcpState(rowState)) {
       return messageId;
     }
+    if (field<boolean>(msg, "generating") === true) {
+      if (sawNewerTerminalAcpTurn) {
+        continue;
+      }
+      return messageId;
+    }
+    sawNewerTerminalAcpTurn = true;
   }
   return undefined;
 }
@@ -416,13 +435,15 @@ export function resolveAgentSessionRecordStatus({
     normalizedThreadId != null
       ? acpState?.get?.(`thread:${normalizedThreadId}`)
       : undefined;
-  if (typeof threadState === "string" && ACP_ACTIVE_STATES.has(threadState)) {
+  const threadStateTerminal = isTerminalAcpState(threadState);
+  if (isActiveAcpState(threadState)) {
     return "running";
   }
   if (!normalizedThreadId) {
     return "active";
   }
   const threadMessages = actions.getMessagesInThread(normalizedThreadId) ?? [];
+  let sawNewerTerminalAcpTurn = threadStateTerminal;
   for (let i = threadMessages.length - 1; i >= 0; i -= 1) {
     const msg = threadMessages[i];
     if (field<string>(msg, "acp_account_id") == null) continue;
@@ -437,15 +458,24 @@ export function resolveAgentSessionRecordStatus({
       messageId.length > 0
         ? acpState?.get?.(`message:${messageId}`)
         : undefined;
-    if (
-      typeof messageState === "string" &&
-      ACP_ACTIVE_STATES.has(messageState)
-    ) {
+    if (isActiveAcpState(messageState)) {
       return "running";
+    }
+    if (
+      isTerminalAcpState(messageState) ||
+      isTerminalAcpState(rowState) ||
+      field<boolean>(msg, "acp_interrupted") === true
+    ) {
+      sawNewerTerminalAcpTurn = true;
+      continue;
     }
     if (field<boolean>(msg, "generating") === true) {
+      if (sawNewerTerminalAcpTurn) {
+        continue;
+      }
       return "running";
     }
+    sawNewerTerminalAcpTurn = true;
   }
   return "active";
 }

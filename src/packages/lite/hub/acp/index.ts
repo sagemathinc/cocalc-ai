@@ -148,6 +148,7 @@ import {
   finalizeAcpTurnLease,
   getAcpTurnLease,
   heartbeatAcpTurnLease,
+  listRecentTerminalAcpTurnLeases,
   listRunningAcpTurnLeases,
   startAcpTurnLease,
   updateAcpTurnLeaseSessionId,
@@ -303,6 +304,8 @@ const RESTART_INTERRUPTED_NOTICE =
   "**Conversation interrupted because CoCalc had to recover the live Codex turn.**";
 const STALE_TURN_INTERRUPTED_NOTICE =
   "**Conversation interrupted because CoCalc lost the live Codex turn.**";
+const TERMINAL_STALE_TURN_INTERRUPTED_NOTICE =
+  "**Conversation interrupted because CoCalc lost the final Codex turn update.**";
 const THREAD_CONFIG_EVENT = "chat-thread-config";
 const THREAD_STATE_EVENT = "chat-thread-state";
 const THREAD_STATE_SCHEMA_VERSION = 2;
@@ -421,6 +424,14 @@ const ACP_JOB_WITHOUT_LEASE_RECOVERY_GRACE_MS = envNumber(
 const ACP_AUTO_RECOVERY_MAX_AGE_MS = envNumber(
   "COCALC_ACP_AUTO_RECOVERY_MAX_AGE_MS",
   2 * 60 * 60_000,
+);
+const ACP_TERMINAL_STALE_TURN_RECOVERY_MAX_AGE_MS = envNumber(
+  "COCALC_ACP_TERMINAL_STALE_TURN_RECOVERY_MAX_AGE_MS",
+  24 * 60 * 60_000,
+);
+const ACP_TERMINAL_STALE_TURN_RECOVERY_LIMIT = envNumber(
+  "COCALC_ACP_TERMINAL_STALE_TURN_RECOVERY_LIMIT",
+  200,
 );
 const ACP_AUTO_RECOVERY_MAX_RETRIES = envNumber(
   "COCALC_ACP_AUTO_RECOVERY_MAX_RETRIES",
@@ -4547,6 +4558,76 @@ export async function recoverCurrentWorkerStuckAcpTurns(
   return recovered;
 }
 
+export async function recoverTerminalStaleAcpTurns(
+  client: ConatClient,
+  opts: {
+    recoveryReason?: string;
+    interruptedNotice?: string;
+    sinceMs?: number;
+    limit?: number;
+  } = {},
+): Promise<number> {
+  const recoveryReason =
+    opts.recoveryReason ?? "terminal ACP turn state recovery";
+  const interruptedNotice =
+    opts.interruptedNotice ?? TERMINAL_STALE_TURN_INTERRUPTED_NOTICE;
+  let terminalTurns: AcpTurnLeaseRow[];
+  try {
+    terminalTurns = listRecentTerminalAcpTurnLeases({
+      sinceMs: opts.sinceMs ?? ACP_TERMINAL_STALE_TURN_RECOVERY_MAX_AGE_MS,
+      limit: opts.limit ?? ACP_TERMINAL_STALE_TURN_RECOVERY_LIMIT,
+    });
+  } catch (err) {
+    logger.warn("failed to list terminal acp turn leases for stale recovery", {
+      err,
+    });
+    return 0;
+  }
+
+  let recovered = 0;
+  for (const turn of terminalTurns) {
+    try {
+      if (
+        !(await turnNeedsInterruptedRepair({
+          client,
+          turn,
+        }))
+      ) {
+        continue;
+      }
+      if (
+        await repairInterruptedAcpTurn({
+          client,
+          turn,
+          interruptedNotice,
+          interruptedReasonId: "backend_error",
+          recoveryReason: turn.reason ?? recoveryReason,
+        })
+      ) {
+        recovered += 1;
+      }
+    } catch (err) {
+      logger.warn("failed recovering stale terminal acp turn", {
+        project_id: turn.project_id,
+        path: turn.path,
+        message_date: turn.message_date,
+        message_id: turn.message_id,
+        thread_id: turn.thread_id,
+        state: turn.state,
+        err,
+      });
+    }
+  }
+  if (recovered > 0) {
+    logger.warn("recovered stale terminal acp turns", {
+      instance: ACP_INSTANCE_ID,
+      recovered,
+      scanned: terminalTurns.length,
+    });
+  }
+  return recovered;
+}
+
 export function shouldStopDetachedWorkerForIdle({
   hasWork,
   idleSince,
@@ -4626,6 +4707,9 @@ export async function recoverDetachedWorkerStartupState(
     });
   }
   await recoverOrphanedRunningAcpJobsWithoutLease({
+    recoveryReason,
+  });
+  await recoverTerminalStaleAcpTurns(client, {
     recoveryReason,
   });
 }

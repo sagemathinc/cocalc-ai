@@ -145,6 +145,60 @@ describe("resolveAgentSessionRecordStatus", () => {
       }),
     ).toBe("running");
   });
+
+  it("ignores stale generating rows with terminal ACP message state", () => {
+    expect(
+      resolveAgentSessionRecordStatus({
+        thread: { isArchived: false },
+        threadId: "thread-1",
+        acpState: immutable.Map<string, string>().set("message:msg-1", "error"),
+        actions: {
+          getMessagesInThread: () => [
+            {
+              event: "chat",
+              sender_id: "assistant",
+              generating: true,
+              acp_account_id: "acct-1",
+              thread_id: "thread-1",
+              message_id: "msg-1",
+              history: [],
+            },
+          ],
+        } as any,
+      }),
+    ).toBe("active");
+  });
+
+  it("ignores stale generating rows behind a newer completed ACP row", () => {
+    expect(
+      resolveAgentSessionRecordStatus({
+        thread: { isArchived: false },
+        threadId: "thread-1",
+        actions: {
+          getMessagesInThread: () => [
+            {
+              event: "chat",
+              sender_id: "assistant",
+              generating: true,
+              acp_account_id: "acct-1",
+              thread_id: "thread-1",
+              message_id: "msg-stale",
+              history: [],
+            },
+            {
+              event: "chat",
+              sender_id: "assistant",
+              generating: false,
+              acp_account_id: "acct-1",
+              thread_id: "thread-1",
+              message_id: "msg-newer",
+              history: [],
+            },
+          ],
+        } as any,
+      }),
+    ).toBe("active");
+  });
 });
 
 describe("resolveImmediateAcpParentMessageId", () => {
@@ -226,6 +280,59 @@ describe("resolveImmediateAcpParentMessageId", () => {
         ],
       }),
     ).toBe("assistant-2");
+  });
+
+  it("does not continue from a stale generating row with terminal ACP message state", () => {
+    expect(
+      resolveImmediateAcpParentMessageId({
+        selectedThreadId: "thread-1",
+        acpState: immutable
+          .Map<string, string>()
+          .set("message:assistant-stale", "error"),
+        selectedThreadMessages: [
+          {
+            event: "chat",
+            sender_id: "assistant",
+            message_id: "assistant-stale",
+            thread_id: "thread-1",
+            date: "2026-03-11T08:01:00.000Z",
+            acp_account_id: "acct-1",
+            generating: true,
+            history: [],
+          },
+        ],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("does not continue from a stale generating row behind a newer completed ACP row", () => {
+    expect(
+      resolveImmediateAcpParentMessageId({
+        selectedThreadId: "thread-1",
+        selectedThreadMessages: [
+          {
+            event: "chat",
+            sender_id: "assistant",
+            message_id: "assistant-stale",
+            thread_id: "thread-1",
+            date: "2026-03-11T08:01:00.000Z",
+            acp_account_id: "acct-1",
+            generating: true,
+            history: [],
+          },
+          {
+            event: "chat",
+            sender_id: "assistant",
+            message_id: "assistant-newer",
+            thread_id: "thread-1",
+            date: "2026-03-11T08:02:00.000Z",
+            acp_account_id: "acct-1",
+            generating: false,
+            history: [],
+          },
+        ],
+      }),
+    ).toBeUndefined();
   });
 });
 
