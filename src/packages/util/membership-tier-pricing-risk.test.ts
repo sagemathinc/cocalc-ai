@@ -13,7 +13,7 @@ describe("membership tier pricing risk", () => {
         blobStorageGb: 100,
         rootfsStorageGb: 50,
         creditSpendLimit7dUsd: 7,
-        prepaidHostUsageLimit7dUsd: 3,
+        prepaidHostUsageLimit7dUsd: 1000,
         cpu7dHours: 168,
         projectMemoryMb: 2000,
         maxSponsoredRunningProjects: 2,
@@ -35,7 +35,13 @@ describe("membership tier pricing risk", () => {
     expect(analysis.hardCosts.egressMonthlyUsd).toBeCloseTo(12);
     expect(analysis.hardCosts.blobStorageMonthlyUsd).toBeCloseTo(1);
     expect(analysis.hardCosts.rootfsStorageMonthlyUsd).toBeCloseTo(1);
-    expect(analysis.hardCosts.dedicatedHostGuardrailMonthlyUsd).toBeCloseTo(30);
+    expect(
+      analysis.hardCosts.dedicatedHostCreditGuardrailMonthlyUsd,
+    ).toBeCloseTo(30);
+    expect(analysis.hardCosts.prepaidHostGuardrailMonthlyUsd).toBeCloseTo(
+      30000 / 7,
+    );
+    expect(analysis.hardCosts.totalMonthlyUsd).toBeCloseTo(74);
     expect(analysis.capacity.cpuHoursMonthlyBudget).toBeCloseTo(720);
     expect(analysis.capacity.averageCpuEntitlement).toBeCloseTo(1);
     expect(analysis.capacity.activeProjectRamGb).toBeCloseTo(4);

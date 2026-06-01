@@ -48,7 +48,8 @@ export interface MembershipTierPricingRiskAnalysis {
     egressMonthlyUsd: number;
     blobStorageMonthlyUsd: number;
     rootfsStorageMonthlyUsd: number;
-    dedicatedHostGuardrailMonthlyUsd: number;
+    dedicatedHostCreditGuardrailMonthlyUsd: number;
+    prepaidHostGuardrailMonthlyUsd: number;
     totalMonthlyUsd: number;
   };
   capacity: {
@@ -175,18 +176,18 @@ export function analyzeMembershipTierPricingRisk(
   const rootfsStorageMonthlyUsd =
     nonnegative(input.rootfsStorageGb) *
     assumptions.rootfsStorageCostPerGbMonth;
-  const dedicatedHostGuardrailMonthlyUsd = monthlyFromWeekly(
-    Math.max(
-      nonnegative(input.creditSpendLimit7dUsd),
-      nonnegative(input.prepaidHostUsageLimit7dUsd),
-    ),
+  const dedicatedHostCreditGuardrailMonthlyUsd = monthlyFromWeekly(
+    input.creditSpendLimit7dUsd,
+  );
+  const prepaidHostGuardrailMonthlyUsd = monthlyFromWeekly(
+    input.prepaidHostUsageLimit7dUsd,
   );
   const totalMonthlyUsd =
     aiMonthlyUsd +
     egressMonthlyUsd +
     blobStorageMonthlyUsd +
     rootfsStorageMonthlyUsd +
-    dedicatedHostGuardrailMonthlyUsd;
+    dedicatedHostCreditGuardrailMonthlyUsd;
 
   const cpuHoursMonthlyBudget = monthlyFromWeekly(input.cpu7dHours);
   const averageCpuEntitlement = cpuHoursMonthlyBudget / HOURS_PER_MONTH;
@@ -247,11 +248,18 @@ export function analyzeMembershipTierPricingRisk(
         "The simultaneous project RAM promise is above the modeled shared-host user share.",
     });
   }
-  if (dedicatedHostGuardrailMonthlyUsd > 0) {
+  if (dedicatedHostCreditGuardrailMonthlyUsd > 0) {
     messages.push({
       severity: "notice",
       message:
-        "Dedicated-host guardrails are exposure caps, not expected spend; compare them with prepaid and credit policy separately.",
+        "Credit-based dedicated-host guardrails are exposure caps, not expected spend.",
+    });
+  }
+  if (prepaidHostGuardrailMonthlyUsd > 0) {
+    messages.push({
+      severity: "notice",
+      message:
+        "Prepaid dedicated-host usage is excluded from hard-cost exposure; the main residual risk is payment reversal or chargeback.",
     });
   }
 
@@ -264,7 +272,8 @@ export function analyzeMembershipTierPricingRisk(
       egressMonthlyUsd,
       blobStorageMonthlyUsd,
       rootfsStorageMonthlyUsd,
-      dedicatedHostGuardrailMonthlyUsd,
+      dedicatedHostCreditGuardrailMonthlyUsd,
+      prepaidHostGuardrailMonthlyUsd,
       totalMonthlyUsd,
     },
     capacity: {

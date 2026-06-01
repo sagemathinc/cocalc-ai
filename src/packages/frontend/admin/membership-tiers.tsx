@@ -1810,7 +1810,7 @@ export function MembershipTiers() {
                       </Paragraph>
                       {fieldGroup({
                         title: "Risk Snapshot",
-                        note: "Hard-cost exposure assumes the 7-day limits are fully used every week. Dedicated-host spend uses the larger weekly credit/prepaid guardrail, since those are alternate funding paths.",
+                        note: "Hard-cost exposure assumes the 7-day limits are fully used every week. Credit-based dedicated-host spend is included; prepaid host usage is shown separately because the residual risk is payment reversal, not ordinary infrastructure spend.",
                         children: (
                           <>
                             <Row gutter={[16, 16]}>
@@ -1930,10 +1930,19 @@ export function MembershipTiers() {
                             </Col>
                             <Col xs={24} md={12} xl={8}>
                               {riskMetric(
-                                "Dedicated host guardrail",
+                                "Credit host guardrail",
                                 currency(
                                   analysis.hardCosts
-                                    .dedicatedHostGuardrailMonthlyUsd,
+                                    .dedicatedHostCreditGuardrailMonthlyUsd,
+                                ),
+                              )}
+                            </Col>
+                            <Col xs={24} md={12} xl={8}>
+                              {riskMetric(
+                                "Prepaid host usage",
+                                currency(
+                                  analysis.hardCosts
+                                    .prepaidHostGuardrailMonthlyUsd,
                                 ),
                               )}
                             </Col>
