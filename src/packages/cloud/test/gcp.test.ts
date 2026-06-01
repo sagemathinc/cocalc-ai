@@ -119,6 +119,10 @@ describe("GcpProvider", () => {
     const insertArgs = insertMock.mock.calls[0][0];
     const disks = insertArgs.instanceResource.disks;
     expect(disks).toHaveLength(2);
+    expect(
+      insertArgs.instanceResource.networkInterfaces[0].accessConfigs[0]
+        .networkTier,
+    ).toBe("STANDARD");
     expect(disks[0].boot).toBe(true);
     expect(disks[0].initializeParams.diskSizeGb).toBe("10");
     expect(disks[1].boot).toBe(false);
@@ -676,6 +680,15 @@ describe("GcpProvider", () => {
       expect.objectContaining({
         zone: "us-west1-a",
         instanceResource: expect.objectContaining({
+          networkInterfaces: [
+            expect.objectContaining({
+              accessConfigs: [
+                expect.objectContaining({
+                  networkTier: "STANDARD",
+                }),
+              ],
+            }),
+          ],
           scheduling: expect.objectContaining({
             provisioningModel: "SPOT",
           }),

@@ -95,7 +95,7 @@ export const DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS: MembershipTierPricingA
     targetGrossMargin: 0.7,
     overheadReserve: 0.1,
     aiUnitCostUsd: 0.01,
-    egressCostPerGb: 0.12,
+    egressCostPerGb: 0.085,
     projectStorageCostPerGbMonth: 0.15,
     blobStorageCostPerGbMonth: 0.015,
     rootfsStorageCostPerGbMonth: 0.04,
