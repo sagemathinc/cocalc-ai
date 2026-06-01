@@ -9,15 +9,18 @@ Admin UI for membership tiers.
 
 import {
   Button,
+  Card,
   Checkbox,
-  Divider,
+  Col,
   Form,
   Input,
   InputNumber,
   Popconfirm,
+  Row,
   Space,
   Switch,
   Table,
+  Tag,
   Typography,
 } from "antd";
 import dayjs from "dayjs";
@@ -52,7 +55,7 @@ interface Tier {
   label?: string;
   store_visible?: boolean;
   store_description?: string;
-  store_highlights?: string[];
+  store_highlights?: readonly string[];
   course_store_visible?: boolean;
   priority?: number;
   price_monthly?: number;
@@ -170,11 +173,128 @@ function setOrDeleteUsageLimit(
   key: string,
   value: unknown,
 ) {
+  setOrDeleteNumber(usage_limits, key, value);
+}
+
+function setOrDeleteNumber(
+  obj: Record<string, unknown>,
+  key: string,
+  value: unknown,
+) {
   if (typeof value === "number" && Number.isFinite(value)) {
-    usage_limits[key] = value;
+    obj[key] = value;
   } else {
-    delete usage_limits[key];
+    delete obj[key];
   }
+}
+
+function setOrDeleteBoolean(
+  obj: Record<string, unknown>,
+  key: string,
+  value: unknown,
+) {
+  if (typeof value === "boolean") {
+    obj[key] = value;
+  } else {
+    delete obj[key];
+  }
+}
+
+function tierToFormValues(tier: Partial<Tier>) {
+  return {
+    ...tier,
+    store_highlights_text: storeHighlightsToText(tier.store_highlights),
+    project_defaults: tier.project_defaults ?? {},
+    ai_limits: tier.ai_limits ?? {},
+    features: tier.features ?? {},
+    usage_limits: tier.usage_limits ?? {},
+    project_default_memory_mb: normalizedOptionalNumber(
+      tier.project_defaults?.memory,
+    ),
+    project_default_memory_request_mb: normalizedOptionalNumber(
+      tier.project_defaults?.memory_request,
+    ),
+    project_default_disk_quota_mb: normalizedOptionalNumber(
+      tier.project_defaults?.disk_quota,
+    ),
+    feature_create_hosts:
+      typeof tier.features?.create_hosts === "boolean"
+        ? tier.features.create_hosts
+        : false,
+    feature_project_host_tier: normalizedOptionalNumber(
+      tier.features?.project_host_tier,
+    ),
+    ai_limit_units_5h: normalizedOptionalNumber(tier.ai_limits?.units_5h),
+    ai_limit_units_7d: normalizedOptionalNumber(tier.ai_limits?.units_7d),
+    usage_limit_shared_compute_priority: normalizedOptionalNumber(
+      tier.usage_limits?.shared_compute_priority,
+    ),
+    usage_limit_total_storage_soft_gb: bytesToGigabytes(
+      tier.usage_limits?.total_storage_soft_bytes,
+    ),
+    usage_limit_total_storage_hard_gb: bytesToGigabytes(
+      tier.usage_limits?.total_storage_hard_bytes,
+    ),
+    usage_limit_max_projects: normalizedOptionalNumber(
+      tier.usage_limits?.max_projects,
+    ),
+    usage_limit_max_sponsored_running_projects: normalizedOptionalNumber(
+      tier.usage_limits?.max_sponsored_running_projects,
+    ),
+    usage_limit_max_snapshots_per_project: normalizedOptionalNumber(
+      tier.usage_limits?.max_snapshots_per_project,
+    ),
+    usage_limit_max_backups_per_project: normalizedOptionalNumber(
+      tier.usage_limits?.max_backups_per_project,
+    ),
+    usage_limit_egress_5h_gb: bytesToGigabytes(
+      tier.usage_limits?.egress_5h_bytes,
+    ),
+    usage_limit_egress_7d_gb: bytesToGigabytes(
+      tier.usage_limits?.egress_7d_bytes,
+    ),
+    usage_limit_cpu_5h_hours: secondsToCpuHours(
+      tier.usage_limits?.cpu_5h_seconds,
+    ),
+    usage_limit_cpu_7d_hours: secondsToCpuHours(
+      tier.usage_limits?.cpu_7d_seconds,
+    ),
+    usage_limit_credit_spend_limit_5h_usd: normalizedOptionalNumber(
+      tier.usage_limits?.credit_spend_limit_5h_usd,
+    ),
+    usage_limit_credit_spend_limit_7d_usd: normalizedOptionalNumber(
+      tier.usage_limits?.credit_spend_limit_7d_usd,
+    ),
+    usage_limit_prepaid_host_usage_limit_5h_usd: normalizedOptionalNumber(
+      tier.usage_limits?.prepaid_host_usage_limit_5h_usd,
+    ),
+    usage_limit_prepaid_host_usage_limit_7d_usd: normalizedOptionalNumber(
+      tier.usage_limits?.prepaid_host_usage_limit_7d_usd,
+    ),
+    usage_limit_acp_max_queued_per_account: normalizedOptionalNumber(
+      tier.usage_limits?.acp_max_queued_per_account,
+    ),
+    usage_limit_acp_max_queued_per_thread: normalizedOptionalNumber(
+      tier.usage_limits?.acp_max_queued_per_thread,
+    ),
+    usage_limit_acp_max_created_5h_per_account: normalizedOptionalNumber(
+      tier.usage_limits?.acp_max_created_5h_per_account,
+    ),
+    usage_limit_acp_max_created_7d_per_account: normalizedOptionalNumber(
+      tier.usage_limits?.acp_max_created_7d_per_account,
+    ),
+    usage_limit_acp_max_running_per_account: normalizedOptionalNumber(
+      tier.usage_limits?.acp_max_running_per_account,
+    ),
+    usage_limit_acp_max_running_per_project: normalizedOptionalNumber(
+      tier.usage_limits?.acp_max_running_per_project,
+    ),
+    usage_limit_acp_max_active_automations_per_project:
+      normalizedOptionalNumber(
+        tier.usage_limits?.acp_max_active_automations_per_project,
+      ),
+    active: !tier.disabled,
+  };
 }
 
 function useMembershipTiers() {
@@ -250,82 +370,7 @@ function useMembershipTiers() {
 
   React.useEffect(() => {
     if (editing != null) {
-      form.setFieldsValue({
-        ...editing,
-        store_highlights_text: storeHighlightsToText(editing.store_highlights),
-        project_defaults: editing.project_defaults ?? {},
-        ai_limits: editing.ai_limits ?? {},
-        features: editing.features ?? {},
-        usage_limits: editing.usage_limits ?? {},
-        usage_limit_shared_compute_priority: normalizedOptionalNumber(
-          editing.usage_limits?.shared_compute_priority,
-        ),
-        usage_limit_total_storage_soft_gb: bytesToGigabytes(
-          editing.usage_limits?.total_storage_soft_bytes,
-        ),
-        usage_limit_total_storage_hard_gb: bytesToGigabytes(
-          editing.usage_limits?.total_storage_hard_bytes,
-        ),
-        usage_limit_max_projects: normalizedOptionalNumber(
-          editing.usage_limits?.max_projects,
-        ),
-        usage_limit_max_sponsored_running_projects: normalizedOptionalNumber(
-          editing.usage_limits?.max_sponsored_running_projects,
-        ),
-        usage_limit_max_snapshots_per_project: normalizedOptionalNumber(
-          editing.usage_limits?.max_snapshots_per_project,
-        ),
-        usage_limit_max_backups_per_project: normalizedOptionalNumber(
-          editing.usage_limits?.max_backups_per_project,
-        ),
-        usage_limit_egress_5h_gb: bytesToGigabytes(
-          editing.usage_limits?.egress_5h_bytes,
-        ),
-        usage_limit_egress_7d_gb: bytesToGigabytes(
-          editing.usage_limits?.egress_7d_bytes,
-        ),
-        usage_limit_cpu_5h_hours: secondsToCpuHours(
-          editing.usage_limits?.cpu_5h_seconds,
-        ),
-        usage_limit_cpu_7d_hours: secondsToCpuHours(
-          editing.usage_limits?.cpu_7d_seconds,
-        ),
-        usage_limit_credit_spend_limit_5h_usd: normalizedOptionalNumber(
-          editing.usage_limits?.credit_spend_limit_5h_usd,
-        ),
-        usage_limit_credit_spend_limit_7d_usd: normalizedOptionalNumber(
-          editing.usage_limits?.credit_spend_limit_7d_usd,
-        ),
-        usage_limit_prepaid_host_usage_limit_5h_usd: normalizedOptionalNumber(
-          editing.usage_limits?.prepaid_host_usage_limit_5h_usd,
-        ),
-        usage_limit_prepaid_host_usage_limit_7d_usd: normalizedOptionalNumber(
-          editing.usage_limits?.prepaid_host_usage_limit_7d_usd,
-        ),
-        usage_limit_acp_max_queued_per_account: normalizedOptionalNumber(
-          editing.usage_limits?.acp_max_queued_per_account,
-        ),
-        usage_limit_acp_max_queued_per_thread: normalizedOptionalNumber(
-          editing.usage_limits?.acp_max_queued_per_thread,
-        ),
-        usage_limit_acp_max_created_5h_per_account: normalizedOptionalNumber(
-          editing.usage_limits?.acp_max_created_5h_per_account,
-        ),
-        usage_limit_acp_max_created_7d_per_account: normalizedOptionalNumber(
-          editing.usage_limits?.acp_max_created_7d_per_account,
-        ),
-        usage_limit_acp_max_running_per_account: normalizedOptionalNumber(
-          editing.usage_limits?.acp_max_running_per_account,
-        ),
-        usage_limit_acp_max_running_per_project: normalizedOptionalNumber(
-          editing.usage_limits?.acp_max_running_per_project,
-        ),
-        usage_limit_acp_max_active_automations_per_project:
-          normalizedOptionalNumber(
-            editing.usage_limits?.acp_max_active_automations_per_project,
-          ),
-        active: !editing.disabled,
-      });
+      form.setFieldsValue(tierToFormValues(editing));
     }
     if (last_saved != null) {
       set_last_saved(null);
@@ -338,16 +383,41 @@ function useMembershipTiers() {
 
     try {
       set_saving(true);
-      const project_defaults = parseJsonField(
+      const project_defaults = (parseJsonField(
         values.project_defaults,
         "project_defaults",
-      );
-      const ai_limits = parseJsonField(values.ai_limits, "ai_limits");
-      const features = parseJsonField(values.features, "features");
+      ) ?? {}) as Record<string, unknown>;
+      const ai_limits = (parseJsonField(values.ai_limits, "ai_limits") ??
+        {}) as Record<string, unknown>;
+      const features = (parseJsonField(values.features, "features") ??
+        {}) as Record<string, unknown>;
       const usage_limits = (parseJsonField(
         values.usage_limits,
         "usage_limits",
       ) ?? {}) as Record<string, unknown>;
+      setOrDeleteNumber(
+        project_defaults,
+        "memory",
+        values.project_default_memory_mb,
+      );
+      setOrDeleteNumber(
+        project_defaults,
+        "memory_request",
+        values.project_default_memory_request_mb,
+      );
+      setOrDeleteNumber(
+        project_defaults,
+        "disk_quota",
+        values.project_default_disk_quota_mb,
+      );
+      setOrDeleteBoolean(features, "create_hosts", values.feature_create_hosts);
+      setOrDeleteNumber(
+        features,
+        "project_host_tier",
+        values.feature_project_host_tier,
+      );
+      setOrDeleteNumber(ai_limits, "units_5h", values.ai_limit_units_5h);
+      setOrDeleteNumber(ai_limits, "units_7d", values.ai_limit_units_7d);
       setOrDeleteUsageLimit(
         usage_limits,
         "shared_compute_priority",
@@ -646,26 +716,11 @@ export function MembershipTiers() {
   );
 
   function render_edit() {
-    const layout = {
-      style: { margin: "20px 0" },
-      labelCol: { span: 3 },
-      wrapperCol: { span: 10 },
-    };
-    const tailLayout = { wrapperCol: { offset: 3, span: 10 } };
     const onFinish = (values) => save(values);
     const editingExisting = editing?.id != null && data[editing.id] != null;
     const applyTemplate = (key: keyof typeof TIER_TEMPLATES) => {
       const template = TIER_TEMPLATES[key];
-      form.setFieldsValue({
-        ...template,
-        store_highlights_text: storeHighlightsToText(template.store_highlights),
-        project_defaults: template.project_defaults ?? {},
-        ai_limits: template.ai_limits ?? {},
-        features: (template as { features?: unknown }).features ?? {},
-        usage_limits:
-          (template as { usage_limits?: unknown }).usage_limits ?? {},
-        active: true,
-      });
+      form.setFieldsValue(tierToFormValues({ ...template, disabled: false }));
     };
     const updateJsonError = (field: string, err?: string) => {
       setJsonErrors((prev) => {
@@ -679,269 +734,815 @@ export function MembershipTiers() {
       });
     };
     const hasJsonErrors = Object.keys(jsonErrors).length > 0;
+    const fieldCol = { xs: 24, md: 12, xl: 8 };
+    const wideFieldCol = { xs: 24, lg: 12 };
+    const cardStyle = {
+      marginBottom: "16px",
+      borderRadius: "14px",
+      boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)",
+      border: `1px solid ${COLORS.GRAY_LL}`,
+    };
+    const cardBodyStyle = {
+      background:
+        "linear-gradient(135deg, rgba(255,255,255,0.98), rgba(248,250,252,0.86))",
+      borderRadius: "0 0 14px 14px",
+    };
+    const sectionIntroStyle = {
+      color: COLORS.GRAY,
+      marginTop: "-4px",
+      marginBottom: "16px",
+    };
+    const compactInputStyle = { width: "100%" };
+    const tag = (
+      label: string,
+      value: unknown,
+      color: string = "default",
+      suffix = "",
+    ) => {
+      if (value == null || value === "") return null;
+      return (
+        <Tag color={color} key={label}>
+          {label}: {`${value}${suffix}`}
+        </Tag>
+      );
+    };
+    const cardExtra = (
+      render: (getFieldValue: (name: string) => unknown) => React.ReactNode,
+    ) => (
+      <Form.Item noStyle shouldUpdate>
+        {({ getFieldValue }) => (
+          <Space wrap size={[4, 4]}>
+            {render(getFieldValue)}
+          </Space>
+        )}
+      </Form.Item>
+    );
+    const editorCard = ({
+      title,
+      subtitle,
+      extra,
+      children,
+    }: {
+      title: string;
+      subtitle: string;
+      extra?: React.ReactNode;
+      children: React.ReactNode;
+    }) => (
+      <Card
+        title={
+          <div>
+            <div>{title}</div>
+            <div
+              style={{
+                color: COLORS.GRAY,
+                fontSize: "12px",
+                fontWeight: 400,
+                marginTop: "2px",
+                whiteSpace: "normal",
+              }}
+            >
+              {subtitle}
+            </div>
+          </div>
+        }
+        extra={extra}
+        style={cardStyle}
+        styles={{ body: cardBodyStyle }}
+      >
+        {children}
+      </Card>
+    );
 
     return (
       <>
-        <Paragraph style={{ color: COLORS.GRAY }}>
-          Templates:
-          <Space style={{ marginLeft: "10px" }}>
-            {(
-              ["free", "basic", "student", "standard", "member", "pro"] as const
-            ).map((key) => (
-              <Button key={key} size="small" onClick={() => applyTemplate(key)}>
-                {TIER_TEMPLATES[key].label}
-              </Button>
-            ))}
+        <Card
+          style={{
+            ...cardStyle,
+            background:
+              "linear-gradient(135deg, rgba(238,246,255,0.9), rgba(255,255,255,0.95))",
+          }}
+          styles={{ body: { padding: "14px 18px" } }}
+        >
+          <Space direction="vertical" style={{ width: "100%" }}>
+            <Space wrap>
+              <Text strong>Start from template</Text>
+              <Text type="secondary">
+                Templates fill all modeled values; edit the cards below before
+                saving.
+              </Text>
+            </Space>
+            <Space wrap>
+              {(
+                [
+                  "free",
+                  "basic",
+                  "student",
+                  "standard",
+                  "member",
+                  "instructor",
+                  "researcher",
+                  "pro",
+                ] as const
+              ).map((key) => (
+                <Button
+                  key={key}
+                  size="small"
+                  onClick={() => applyTemplate(key)}
+                >
+                  {TIER_TEMPLATES[key].label}
+                </Button>
+              ))}
+            </Space>
           </Space>
-        </Paragraph>
+        </Card>
         <Form
-          {...layout}
+          layout="vertical"
+          style={{ margin: "20px 0" }}
           size={"middle"}
           form={form}
           name="edit-membership-tier"
           onFinish={onFinish}
         >
-          <Divider>Basics</Divider>
-          <Form.Item name="id" label="Tier ID" rules={[{ required: true }]}>
-            <Input disabled={editingExisting} />
-          </Form.Item>
-          <Form.Item name="label" label="Label" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item
-            name="store_visible"
-            label="Visible"
-            valuePropName="checked"
-          >
-            <Checkbox>Show in store</Checkbox>
-          </Form.Item>
-          <Form.Item
-            name="store_description"
-            label="Store description"
-            extra="Short public sentence shown on pricing/store cards. Leave blank to use the built-in template default."
-          >
-            <Input.TextArea rows={2} />
-          </Form.Item>
-          <Form.Item
-            name="store_highlights_text"
-            label="Store highlights"
-            extra="Optional public bullet points, one short item per line. Leave blank to show no bullets."
-          >
-            <Input.TextArea rows={4} />
-          </Form.Item>
-          <Form.Item
-            name="course_store_visible"
-            label="Course visible"
-            valuePropName="checked"
-          >
-            <Checkbox>Available for course student memberships</Checkbox>
-          </Form.Item>
-          <Form.Item name="priority" label="Priority">
-            <InputNumber step={1} />
-          </Form.Item>
-          <Form.Item name="price_monthly" label="Monthly price">
-            <InputNumber min={0} step={1} />
-          </Form.Item>
-          <Form.Item label="Yearly price">
-            <Space>
-              <Form.Item name="price_yearly" noStyle>
-                <InputNumber min={0} step={1} />
-              </Form.Item>
-              <Form.Item
-                noStyle
-                shouldUpdate={(prev, next) =>
-                  prev.price_yearly !== next.price_yearly
-                }
-              >
-                {({ getFieldValue }) => (
-                  <Text type="secondary">
-                    {yearlyPriceMonthlyDisplay(getFieldValue("price_yearly"))}
-                  </Text>
-                )}
-              </Form.Item>
-            </Space>
-          </Form.Item>
-          <Form.Item name="trial_days" label="Trial days">
-            <InputNumber min={0} step={1} precision={0} />
-          </Form.Item>
-          <Form.Item name="course_price" label="Course price">
-            <InputNumber min={0} step={1} />
-          </Form.Item>
-          <Form.Item name="course_duration_days" label="Course duration days">
-            <InputNumber min={1} step={1} precision={0} />
-          </Form.Item>
-          <Form.Item name="course_grace_days" label="Course grace days">
-            <InputNumber min={0} step={1} precision={0} />
-          </Form.Item>
-          <Form.Item name="notes" label="Notes">
-            <Input.TextArea rows={2} />
-          </Form.Item>
-          <Form.Item name="active" label="Active" valuePropName="checked">
-            <Switch />
-          </Form.Item>
-          <Divider>Entitlements / Features</Divider>
-          <Form.Item name="features" label="Features">
-            <JsonObjectEditor
-              emptyHint="No feature flags yet."
-              onErrorChange={(err) => updateJsonError("features", err)}
-            />
-          </Form.Item>
-          <Divider>Usage Limits</Divider>
-          <Form.Item
-            name="usage_limit_shared_compute_priority"
-            label="Shared compute priority"
-          >
-            <InputNumber min={0} step={1} />
-          </Form.Item>
-          <Form.Item
-            name="usage_limit_total_storage_soft_gb"
-            label="Storage soft cap (GB)"
-          >
-            <InputNumber min={0} step={0.1} style={{ width: "100%" }} />
-          </Form.Item>
-          <Form.Item
-            name="usage_limit_total_storage_hard_gb"
-            label="Storage hard cap (GB)"
-          >
-            <InputNumber min={0} step={0.1} style={{ width: "100%" }} />
-          </Form.Item>
-          <Form.Item name="usage_limit_max_projects" label="Max projects">
-            <InputNumber min={0} step={1} />
-          </Form.Item>
-          <Form.Item
-            name="usage_limit_max_sponsored_running_projects"
-            label="Max sponsored running projects"
-          >
-            <InputNumber min={0} step={1} />
-          </Form.Item>
-          <Form.Item
-            name="usage_limit_max_snapshots_per_project"
-            label="Max snapshots / project"
-          >
-            <InputNumber min={0} step={1} />
-          </Form.Item>
-          <Form.Item
-            name="usage_limit_max_backups_per_project"
-            label="Max backups / project"
-          >
-            <InputNumber min={0} step={1} />
-          </Form.Item>
-          <Form.Item
-            name="usage_limit_egress_5h_gb"
-            label="Egress 5h window (GB)"
-          >
-            <InputNumber min={0} step={0.1} style={{ width: "100%" }} />
-          </Form.Item>
-          <Form.Item
-            name="usage_limit_egress_7d_gb"
-            label="Egress 7d window (GB)"
-          >
-            <InputNumber min={0} step={0.1} style={{ width: "100%" }} />
-          </Form.Item>
-          <Form.Item
-            name="usage_limit_cpu_5h_hours"
-            label="CPU 5h window (CPU-hours)"
-          >
-            <InputNumber min={0} step={0.1} style={{ width: "100%" }} />
-          </Form.Item>
-          <Form.Item
-            name="usage_limit_cpu_7d_hours"
-            label="CPU 7d window (CPU-hours)"
-          >
-            <InputNumber min={0} step={1} style={{ width: "100%" }} />
-          </Form.Item>
-          <Form.Item
-            name="usage_limit_credit_spend_limit_5h_usd"
-            label="Dedicated host credit 5h ($)"
-          >
-            <InputNumber min={0} step={1} style={{ width: "100%" }} />
-          </Form.Item>
-          <Form.Item
-            name="usage_limit_credit_spend_limit_7d_usd"
-            label="Dedicated host credit 7d ($)"
-          >
-            <InputNumber min={0} step={1} style={{ width: "100%" }} />
-          </Form.Item>
-          <Form.Item
-            name="usage_limit_prepaid_host_usage_limit_5h_usd"
-            label="Dedicated host prepaid 5h ($)"
-          >
-            <InputNumber min={0} step={1} style={{ width: "100%" }} />
-          </Form.Item>
-          <Form.Item
-            name="usage_limit_prepaid_host_usage_limit_7d_usd"
-            label="Dedicated host prepaid 7d ($)"
-          >
-            <InputNumber min={0} step={1} style={{ width: "100%" }} />
-          </Form.Item>
-          <Divider>Codex / ACP Turn Limits</Divider>
-          <Form.Item
-            name="usage_limit_acp_max_queued_per_account"
-            label="Queued ACP turns / account"
-          >
-            <InputNumber min={0} step={1} precision={0} />
-          </Form.Item>
-          <Form.Item
-            name="usage_limit_acp_max_queued_per_thread"
-            label="Queued ACP turns / thread"
-          >
-            <InputNumber min={0} step={1} precision={0} />
-          </Form.Item>
-          <Form.Item
-            name="usage_limit_acp_max_created_5h_per_account"
-            label="Created ACP turns / account / 5h"
-          >
-            <InputNumber min={0} step={1} precision={0} />
-          </Form.Item>
-          <Form.Item
-            name="usage_limit_acp_max_created_7d_per_account"
-            label="Created ACP turns / account / 7d"
-          >
-            <InputNumber min={0} step={1} precision={0} />
-          </Form.Item>
-          <Form.Item
-            name="usage_limit_acp_max_running_per_account"
-            label="Running ACP turns / account"
-          >
-            <InputNumber min={0} step={1} precision={0} />
-          </Form.Item>
-          <Form.Item
-            name="usage_limit_acp_max_running_per_project"
-            label="Running ACP turns / project"
-          >
-            <InputNumber min={0} step={1} precision={0} />
-          </Form.Item>
-          <Form.Item
-            name="usage_limit_acp_max_active_automations_per_project"
-            label="Active ACP automations / project"
-          >
-            <InputNumber min={0} step={1} precision={0} />
-          </Form.Item>
-          <Paragraph style={{ color: COLORS.GRAY }}>
-            These fields populate the standard shared-host usage limit keys. Use
-            the JSON editor below only for advanced or not-yet-modeled limits.
-          </Paragraph>
-          <Form.Item name="usage_limits" label="Advanced usage limits JSON">
-            <JsonObjectEditor
-              emptyHint="No shared-host usage limits configured."
-              onErrorChange={(err) => updateJsonError("usage_limits", err)}
-            />
-          </Form.Item>
-          <Divider>{workspaceDefaultsLabel}</Divider>
-          <Form.Item name="project_defaults" label="Defaults">
-            <JsonObjectEditor
-              emptyHint="No default quotas set."
-              onErrorChange={(err) => updateJsonError("project_defaults", err)}
-            />
-          </Form.Item>
-          <Divider>AI Limits</Divider>
-          <Form.Item name="ai_limits" label="Limits">
-            <JsonObjectEditor
-              emptyHint="No AI limits defined."
-              onErrorChange={(err) => updateJsonError("ai_limits", err)}
-            />
-          </Form.Item>
-          <Form.Item {...tailLayout}>
+          {editorCard({
+            title: "Product",
+            subtitle:
+              "Public identity, pricing, store visibility, and internal lifecycle state.",
+            extra: cardExtra((get) => [
+              tag(
+                "Monthly",
+                currency(Number(get("price_monthly") ?? 0)),
+                "blue",
+              ),
+              tag(
+                "Annual",
+                currency(Number(get("price_yearly") ?? 0)),
+                "green",
+              ),
+              get("store_visible") ? (
+                <Tag color="gold" key="store">
+                  Store visible
+                </Tag>
+              ) : null,
+              get("active") ? (
+                <Tag color="green" key="active">
+                  Active
+                </Tag>
+              ) : (
+                <Tag color="red" key="disabled">
+                  Disabled
+                </Tag>
+              ),
+            ]),
+            children: (
+              <>
+                <Paragraph style={sectionIntroStyle}>
+                  This card defines what users see and how the tier behaves as a
+                  purchasable product.
+                </Paragraph>
+                <Row gutter={16}>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="id"
+                      label="Tier ID"
+                      rules={[{ required: true }]}
+                    >
+                      <Input disabled={editingExisting} />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="label"
+                      label="Display name"
+                      rules={[{ required: true }]}
+                    >
+                      <Input />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item name="priority" label="Priority">
+                      <InputNumber
+                        step={1}
+                        precision={0}
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item name="price_monthly" label="Monthly price">
+                      <InputNumber
+                        min={0}
+                        step={1}
+                        prefix="$"
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item label="Yearly price">
+                      <Space direction="vertical" style={{ width: "100%" }}>
+                        <Form.Item name="price_yearly" noStyle>
+                          <InputNumber
+                            min={0}
+                            step={1}
+                            prefix="$"
+                            style={compactInputStyle}
+                          />
+                        </Form.Item>
+                        <Form.Item
+                          noStyle
+                          shouldUpdate={(prev, next) =>
+                            prev.price_yearly !== next.price_yearly
+                          }
+                        >
+                          {({ getFieldValue }) => (
+                            <Text type="secondary">
+                              {yearlyPriceMonthlyDisplay(
+                                getFieldValue("price_yearly"),
+                              )}
+                            </Text>
+                          )}
+                        </Form.Item>
+                      </Space>
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item name="trial_days" label="Trial days">
+                      <InputNumber
+                        min={0}
+                        step={1}
+                        precision={0}
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="store_visible"
+                      label="Store visibility"
+                      valuePropName="checked"
+                    >
+                      <Checkbox>Show in public pricing/store</Checkbox>
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="course_store_visible"
+                      label="Course purchase"
+                      valuePropName="checked"
+                    >
+                      <Checkbox>
+                        Available for course student memberships
+                      </Checkbox>
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="active"
+                      label="Active"
+                      valuePropName="checked"
+                    >
+                      <Switch />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item name="course_price" label="Course price">
+                      <InputNumber
+                        min={0}
+                        step={1}
+                        prefix="$"
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="course_duration_days"
+                      label="Course duration days"
+                    >
+                      <InputNumber
+                        min={1}
+                        step={1}
+                        precision={0}
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="course_grace_days"
+                      label="Course grace days"
+                    >
+                      <InputNumber
+                        min={0}
+                        step={1}
+                        precision={0}
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...wideFieldCol}>
+                    <Form.Item
+                      name="store_description"
+                      label="Store description"
+                      extra="Short public sentence shown on pricing/store cards."
+                    >
+                      <Input.TextArea rows={3} />
+                    </Form.Item>
+                  </Col>
+                  <Col {...wideFieldCol}>
+                    <Form.Item
+                      name="store_highlights_text"
+                      label="Store highlights"
+                      extra="One public bullet point per line."
+                    >
+                      <Input.TextArea rows={3} />
+                    </Form.Item>
+                  </Col>
+                  <Col xs={24}>
+                    <Form.Item name="notes" label="Admin notes">
+                      <Input.TextArea rows={2} />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              </>
+            ),
+          })}
+
+          {editorCard({
+            title: "Runtime",
+            subtitle:
+              "The shared-compute promise: memory, disk, host tier, priority, and running project slots.",
+            extra: cardExtra((get) => [
+              tag("RAM", get("project_default_memory_mb"), "blue", " MB"),
+              tag("Disk", get("project_default_disk_quota_mb"), "cyan", " MB"),
+              tag("Host tier", get("feature_project_host_tier"), "purple"),
+              tag(
+                "Priority",
+                get("usage_limit_shared_compute_priority"),
+                "gold",
+              ),
+              tag(
+                "Running",
+                get("usage_limit_max_sponsored_running_projects"),
+                "green",
+                " projects",
+              ),
+            ]),
+            children: (
+              <>
+                <Paragraph style={sectionIntroStyle}>
+                  CPU is not sold as cores. Use host tier, relative priority,
+                  sponsored running projects, and CPU-hour budgets to shape the
+                  runtime experience.
+                </Paragraph>
+                <Row gutter={16}>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="project_default_memory_mb"
+                      label="Project RAM limit (MB)"
+                    >
+                      <InputNumber
+                        min={0}
+                        step={250}
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="project_default_memory_request_mb"
+                      label="Project requested RAM (MB)"
+                      extra="Scheduling request; keep at or below the RAM limit."
+                    >
+                      <InputNumber
+                        min={0}
+                        step={250}
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="project_default_disk_quota_mb"
+                      label={`${workspaceDefaultsLabel} disk quota (MB)`}
+                    >
+                      <InputNumber
+                        min={0}
+                        step={1000}
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="feature_project_host_tier"
+                      label="Project-host tier"
+                      extra="Tier N can use shared public hosts up to tier N."
+                    >
+                      <InputNumber
+                        min={0}
+                        step={1}
+                        precision={0}
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="usage_limit_shared_compute_priority"
+                      label="Shared compute priority"
+                    >
+                      <InputNumber
+                        min={0}
+                        step={1}
+                        precision={0}
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="usage_limit_max_sponsored_running_projects"
+                      label="Sponsored running projects"
+                    >
+                      <InputNumber
+                        min={0}
+                        step={1}
+                        precision={0}
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              </>
+            ),
+          })}
+
+          {editorCard({
+            title: "Usage Budgets",
+            subtitle:
+              "Hard-cost and abuse budgets for CPU-hours, egress, AI, storage, projects, snapshots, and backups.",
+            extra: cardExtra((get) => [
+              tag("CPU 5h", get("usage_limit_cpu_5h_hours"), "orange", " h"),
+              tag("CPU 7d", get("usage_limit_cpu_7d_hours"), "orange", " h"),
+              tag("Egress 5h", get("usage_limit_egress_5h_gb"), "red", " GB"),
+              tag("AI 7d", get("ai_limit_units_7d"), "blue", " units"),
+            ]),
+            children: (
+              <>
+                <Paragraph style={sectionIntroStyle}>
+                  Egress and AI can create direct cost. CPU-hours primarily
+                  drive capacity planning, abuse signals, and project-start
+                  admission.
+                </Paragraph>
+                <Row gutter={16}>
+                  <Col {...fieldCol}>
+                    <Form.Item name="ai_limit_units_5h" label="AI units / 5h">
+                      <InputNumber min={0} step={1} style={compactInputStyle} />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item name="ai_limit_units_7d" label="AI units / 7d">
+                      <InputNumber min={0} step={1} style={compactInputStyle} />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="usage_limit_cpu_5h_hours"
+                      label="CPU 5h window (CPU-hours)"
+                    >
+                      <InputNumber
+                        min={0}
+                        step={0.1}
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="usage_limit_cpu_7d_hours"
+                      label="CPU 7d window (CPU-hours)"
+                    >
+                      <InputNumber min={0} step={1} style={compactInputStyle} />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="usage_limit_egress_5h_gb"
+                      label="Egress 5h window (GB)"
+                    >
+                      <InputNumber
+                        min={0}
+                        step={0.1}
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="usage_limit_egress_7d_gb"
+                      label="Egress 7d window (GB)"
+                    >
+                      <InputNumber
+                        min={0}
+                        step={0.1}
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="usage_limit_total_storage_soft_gb"
+                      label="Account storage soft cap (GB)"
+                    >
+                      <InputNumber
+                        min={0}
+                        step={0.1}
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="usage_limit_total_storage_hard_gb"
+                      label="Account storage hard cap (GB)"
+                    >
+                      <InputNumber
+                        min={0}
+                        step={0.1}
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="usage_limit_max_projects"
+                      label="Max projects"
+                    >
+                      <InputNumber
+                        min={0}
+                        step={1}
+                        precision={0}
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="usage_limit_max_snapshots_per_project"
+                      label="Snapshots / project"
+                    >
+                      <InputNumber
+                        min={0}
+                        step={1}
+                        precision={0}
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="usage_limit_max_backups_per_project"
+                      label="Backups / project"
+                    >
+                      <InputNumber
+                        min={0}
+                        step={1}
+                        precision={0}
+                        style={compactInputStyle}
+                      />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              </>
+            ),
+          })}
+
+          {editorCard({
+            title: "Codex / ACP",
+            subtitle:
+              "Durable agent queue, creation, running, and automation limits.",
+            extra: cardExtra((get) => [
+              tag(
+                "Created 5h",
+                get("usage_limit_acp_max_created_5h_per_account"),
+                "blue",
+              ),
+              tag(
+                "Created 7d",
+                get("usage_limit_acp_max_created_7d_per_account"),
+                "blue",
+              ),
+              tag(
+                "Running/account",
+                get("usage_limit_acp_max_running_per_account"),
+                "green",
+              ),
+            ]),
+            children: (
+              <Row gutter={16}>
+                <Col {...fieldCol}>
+                  <Form.Item
+                    name="usage_limit_acp_max_queued_per_account"
+                    label="Queued ACP turns / account"
+                  >
+                    <InputNumber min={0} step={1} precision={0} />
+                  </Form.Item>
+                </Col>
+                <Col {...fieldCol}>
+                  <Form.Item
+                    name="usage_limit_acp_max_queued_per_thread"
+                    label="Queued ACP turns / thread"
+                  >
+                    <InputNumber min={0} step={1} precision={0} />
+                  </Form.Item>
+                </Col>
+                <Col {...fieldCol}>
+                  <Form.Item
+                    name="usage_limit_acp_max_created_5h_per_account"
+                    label="Created ACP turns / account / 5h"
+                  >
+                    <InputNumber min={0} step={1} precision={0} />
+                  </Form.Item>
+                </Col>
+                <Col {...fieldCol}>
+                  <Form.Item
+                    name="usage_limit_acp_max_created_7d_per_account"
+                    label="Created ACP turns / account / 7d"
+                  >
+                    <InputNumber min={0} step={1} precision={0} />
+                  </Form.Item>
+                </Col>
+                <Col {...fieldCol}>
+                  <Form.Item
+                    name="usage_limit_acp_max_running_per_account"
+                    label="Running ACP turns / account"
+                  >
+                    <InputNumber min={0} step={1} precision={0} />
+                  </Form.Item>
+                </Col>
+                <Col {...fieldCol}>
+                  <Form.Item
+                    name="usage_limit_acp_max_running_per_project"
+                    label="Running ACP turns / project"
+                  >
+                    <InputNumber min={0} step={1} precision={0} />
+                  </Form.Item>
+                </Col>
+                <Col {...fieldCol}>
+                  <Form.Item
+                    name="usage_limit_acp_max_active_automations_per_project"
+                    label="Active ACP automations / project"
+                  >
+                    <InputNumber min={0} step={1} precision={0} />
+                  </Form.Item>
+                </Col>
+              </Row>
+            ),
+          })}
+
+          {editorCard({
+            title: "Dedicated Hosts",
+            subtitle:
+              "Dedicated-host entitlement and spending guardrails for prepaid and credit usage.",
+            extra: cardExtra((get) => [
+              get("feature_create_hosts") ? (
+                <Tag color="green" key="create-hosts">
+                  Host creation enabled
+                </Tag>
+              ) : (
+                <Tag key="create-hosts">Host creation disabled</Tag>
+              ),
+              tag(
+                "Credit 7d",
+                get("usage_limit_credit_spend_limit_7d_usd"),
+                "red",
+                " USD",
+              ),
+              tag(
+                "Prepaid 7d",
+                get("usage_limit_prepaid_host_usage_limit_7d_usd"),
+                "orange",
+                " USD",
+              ),
+            ]),
+            children: (
+              <>
+                <Paragraph style={sectionIntroStyle}>
+                  These fields control whether a tier can create dedicated
+                  project hosts and how much spend can happen in rolling
+                  windows.
+                </Paragraph>
+                <Row gutter={16}>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="feature_create_hosts"
+                      label="Dedicated host creation"
+                      valuePropName="checked"
+                    >
+                      <Checkbox>
+                        Can create/rent dedicated project hosts
+                      </Checkbox>
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="usage_limit_credit_spend_limit_5h_usd"
+                      label="Credit spend 5h ($)"
+                    >
+                      <InputNumber min={0} step={1} style={compactInputStyle} />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="usage_limit_credit_spend_limit_7d_usd"
+                      label="Credit spend 7d ($)"
+                    >
+                      <InputNumber min={0} step={1} style={compactInputStyle} />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="usage_limit_prepaid_host_usage_limit_5h_usd"
+                      label="Prepaid spend 5h ($)"
+                    >
+                      <InputNumber min={0} step={1} style={compactInputStyle} />
+                    </Form.Item>
+                  </Col>
+                  <Col {...fieldCol}>
+                    <Form.Item
+                      name="usage_limit_prepaid_host_usage_limit_7d_usd"
+                      label="Prepaid spend 7d ($)"
+                    >
+                      <InputNumber min={0} step={1} style={compactInputStyle} />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              </>
+            ),
+          })}
+
+          {editorCard({
+            title: "Advanced JSON",
+            subtitle:
+              "Escape hatch for fields that are not modeled yet. Prefer the cards above for ordinary tier decisions.",
+            extra: hasJsonErrors ? <Tag color="red">JSON errors</Tag> : null,
+            children: (
+              <>
+                <Paragraph style={sectionIntroStyle}>
+                  The typed controls above merge into these objects on save.
+                  Keep compatibility-only fields here only during migrations.
+                </Paragraph>
+                <Row gutter={16}>
+                  <Col {...wideFieldCol}>
+                    <Form.Item name="features" label="Features JSON">
+                      <JsonObjectEditor
+                        emptyHint="No feature flags yet."
+                        onErrorChange={(err) =>
+                          updateJsonError("features", err)
+                        }
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...wideFieldCol}>
+                    <Form.Item
+                      name="project_defaults"
+                      label="Project defaults JSON"
+                    >
+                      <JsonObjectEditor
+                        emptyHint="No default quotas set."
+                        onErrorChange={(err) =>
+                          updateJsonError("project_defaults", err)
+                        }
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...wideFieldCol}>
+                    <Form.Item name="ai_limits" label="AI limits JSON">
+                      <JsonObjectEditor
+                        emptyHint="No AI limits defined."
+                        onErrorChange={(err) =>
+                          updateJsonError("ai_limits", err)
+                        }
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col {...wideFieldCol}>
+                    <Form.Item name="usage_limits" label="Usage limits JSON">
+                      <JsonObjectEditor
+                        emptyHint="No shared-host usage limits configured."
+                        onErrorChange={(err) =>
+                          updateJsonError("usage_limits", err)
+                        }
+                      />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              </>
+            ),
+          })}
+
+          <Form.Item>
             <Space.Compact>
               <Button type="primary" htmlType="submit" disabled={hasJsonErrors}>
                 Save
