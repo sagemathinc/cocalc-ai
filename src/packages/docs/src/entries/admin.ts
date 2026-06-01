@@ -31,6 +31,8 @@ export const ADMIN_ENTRIES: DocsEntry[] = [
       "Admin tools connected to operational checks and site controls",
     ),
     lastReviewed: "2026-05-26",
+    noActionReason:
+      "Overview page; specific admin task pages expose the executable destinations.",
     slug: "admin/overview",
     status: "ready",
     summary:
@@ -129,6 +131,8 @@ export const ADMIN_ENTRIES: DocsEntry[] = [
       "An admin terminal inspecting bays, accounts, and project hosts",
     ),
     lastReviewed: "2026-05-26",
+    noActionReason:
+      "Command-line cookbook; the correct action is to run the shown cocalc-cli command in an authenticated shell.",
     slug: "admin/cocalc-cli",
     status: "ready",
     summary:

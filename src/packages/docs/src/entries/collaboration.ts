@@ -43,6 +43,8 @@ export const COLLABORATION_ENTRIES: DocsEntry[] = [
       "A collaborator mention notification linked to project context",
     ),
     lastReviewed: "2026-05-25",
+    noActionReason:
+      "Mentions are contextual; opening a useful destination requires a specific existing mention or notification.",
     slug: "collaboration/mentions",
     status: "ready",
     summary:

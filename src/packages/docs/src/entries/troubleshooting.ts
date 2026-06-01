@@ -22,6 +22,8 @@ export const TROUBLESHOOTING_ENTRIES: DocsEntry[] = [
       "A memory gauge warning about a stressed notebook kernel",
     ),
     lastReviewed: "2026-05-25",
+    noActionReason:
+      "Troubleshooting page; the correct destination depends on the observed failure mode and current project state.",
     slug: "troubleshooting/jupyter-kernel-terminated",
     status: "ready",
     summary:
@@ -38,6 +40,8 @@ export const TROUBLESHOOTING_ENTRIES: DocsEntry[] = [
       "A memory gauge warning about a stressed notebook kernel",
     ),
     lastReviewed: "2026-05-24",
+    noActionReason:
+      "Troubleshooting page; memory diagnosis may involve notebooks, terminals, logs, project settings, or host configuration.",
     slug: "troubleshooting/memory",
     status: "ready",
     summary:
@@ -54,6 +58,8 @@ export const TROUBLESHOOTING_ENTRIES: DocsEntry[] = [
       "A browser reconnecting to CoCalc services",
     ),
     lastReviewed: "2026-05-25",
+    noActionReason:
+      "Troubleshooting page; connectivity diagnosis depends on browser, network, auth, and project state.",
     slug: "troubleshooting/connectivity",
     status: "ready",
     summary:

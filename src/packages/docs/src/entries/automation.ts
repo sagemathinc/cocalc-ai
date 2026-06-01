@@ -18,6 +18,8 @@ export const AUTOMATION_ENTRIES: DocsEntry[] = [
       "A terminal automating project docs, notebooks, and browser tasks",
     ),
     lastReviewed: "2026-05-24",
+    noActionReason:
+      "CLI reference page; the useful action is the command text itself, not opening a browser UI.",
     slug: "cli/use-cocalc-cli",
     status: "ready",
     summary:
@@ -34,6 +36,8 @@ export const AUTOMATION_ENTRIES: DocsEntry[] = [
       "A guarded HTTP API gateway with keys and connected endpoints",
     ),
     lastReviewed: "2026-05-24",
+    noActionReason:
+      "API reference page; browser navigation would not verify an API credential or request.",
     slug: "api/http-api",
     status: "ready",
     summary:

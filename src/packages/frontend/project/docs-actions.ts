@@ -692,8 +692,21 @@ async function revealRuntimeImage(
   };
 }
 
+type DocsProjectFileExtension =
+  | "Rmd"
+  | "board"
+  | "chat"
+  | "ipynb"
+  | "md"
+  | "py"
+  | "slides"
+  | "tasks"
+  | "term"
+  | "tex"
+  | "txt";
+
 function defaultDocsActionFilename(
-  ext: "Rmd" | "ipynb" | "md" | "py" | "term" | "tex" | "txt",
+  ext: DocsProjectFileExtension,
   avoid?: Record<string, unknown> | null,
 ): string {
   const basename =
@@ -732,18 +745,7 @@ async function createDefaultProjectFile({
   projectId,
 }: {
   actionId: DocsActionId;
-  ext:
-    | "Rmd"
-    | "board"
-    | "chat"
-    | "ipynb"
-    | "md"
-    | "py"
-    | "slides"
-    | "tasks"
-    | "term"
-    | "tex"
-    | "txt";
+  ext: DocsProjectFileExtension;
   projectId: string;
 }): Promise<DocsActionRevealResult> {
   selectProject(projectId);
