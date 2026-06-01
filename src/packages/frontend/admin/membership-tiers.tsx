@@ -2236,6 +2236,289 @@ export function MembershipTiers() {
                         expectedAnalysis.hardCosts.standardRamMonthlyUsd,
                     },
                   ];
+                  const customerMonthlyUsd =
+                    analysis.monthlyRevenueUsd > 0
+                      ? analysis.monthlyRevenueUsd
+                      : analysis.annualizedMonthlyRevenueUsd;
+                  const expectedCostMonthlyUsd =
+                    expectedAnalysis.hardCosts.totalMonthlyUsd;
+                  const expectedProfitLossUsd =
+                    customerMonthlyUsd - expectedCostMonthlyUsd;
+                  const exposureUsd = Math.max(
+                    0,
+                    analysis.hardCosts.totalMonthlyUsd - customerMonthlyUsd,
+                  );
+                  const ratioWidth = (value: number) =>
+                    `${Math.min(100, Math.max(0, Math.round(value * 100)))}%`;
+                  const relativeToRevenue = (value: number) =>
+                    customerMonthlyUsd > 0
+                      ? Math.abs(value) / customerMonthlyUsd
+                      : 0;
+                  const economicsBar = ({
+                    label,
+                    value,
+                    color,
+                  }: {
+                    label: string;
+                    value: number;
+                    color: string;
+                  }) => (
+                    <div>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: "12px",
+                          fontSize: "12px",
+                          color: COLORS.GRAY,
+                        }}
+                      >
+                        <span>{label}</span>
+                        <span>
+                          {customerMonthlyUsd > 0
+                            ? `${formattedPercent(
+                                Math.abs(value) / customerMonthlyUsd,
+                              )} of revenue`
+                            : "no revenue"}
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          height: "8px",
+                          borderRadius: "999px",
+                          background: COLORS.GRAY_LL,
+                          overflow: "hidden",
+                        }}
+                      >
+                        <div
+                          style={{
+                            height: "100%",
+                            width: ratioWidth(relativeToRevenue(value)),
+                            background: color,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                  const costAccountingTable = (
+                    <div
+                      style={{
+                        overflowX: "auto",
+                        border: `1px solid ${COLORS.GRAY_LL}`,
+                        borderRadius: "10px",
+                        background: "rgba(255,255,255,0.82)",
+                      }}
+                    >
+                      <table
+                        style={{
+                          width: "100%",
+                          borderCollapse: "collapse",
+                          minWidth: "860px",
+                        }}
+                      >
+                        <thead>
+                          <tr>
+                            <th style={costTableHeaderStyle}>Name</th>
+                            <th
+                              style={{
+                                ...costTableHeaderStyle,
+                                textAlign: "right",
+                              }}
+                            >
+                              Hard limit / month {usageScalePopover}
+                            </th>
+                            <th
+                              style={{
+                                ...costTableHeaderStyle,
+                                textAlign: "right",
+                              }}
+                            >
+                              Max cost
+                            </th>
+                            <th
+                              style={{
+                                ...costTableHeaderStyle,
+                                textAlign: "right",
+                              }}
+                            >
+                              Expected / month {usageScalePopover}
+                            </th>
+                            <th
+                              style={{
+                                ...costTableHeaderStyle,
+                                textAlign: "right",
+                              }}
+                            >
+                              Expected cost
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {costRows.map((row) => (
+                            <tr key={row.key}>
+                              <td style={costTableCellStyle}>
+                                <Text>{row.name}</Text>
+                                {row.scaled && (
+                                  <div
+                                    style={{
+                                      color: COLORS.GRAY,
+                                      fontSize: "12px",
+                                    }}
+                                  >
+                                    7-day allowance ×{" "}
+                                    {formattedNumber(monthlyScale, 2)}
+                                  </div>
+                                )}
+                              </td>
+                              <td style={costTableNumberCellStyle}>
+                                {row.hardLimit}
+                              </td>
+                              <td style={costTableNumberCellStyle}>
+                                {currency(row.maxCost)}
+                              </td>
+                              <td style={costTableNumberCellStyle}>
+                                {row.expectedLimit}
+                              </td>
+                              <td style={costTableNumberCellStyle}>
+                                {currency(row.expectedCost)}
+                              </td>
+                            </tr>
+                          ))}
+                          <tr>
+                            <td
+                              style={{
+                                ...costTableCellStyle,
+                                borderTop: `2px solid ${COLORS.GRAY_LL}`,
+                                fontWeight: 700,
+                              }}
+                            >
+                              Total modeled cost
+                            </td>
+                            <td
+                              style={{
+                                ...costTableNumberCellStyle,
+                                borderTop: `2px solid ${COLORS.GRAY_LL}`,
+                              }}
+                            />
+                            <td
+                              style={{
+                                ...costTableNumberCellStyle,
+                                borderTop: `2px solid ${COLORS.GRAY_LL}`,
+                                fontWeight: 700,
+                              }}
+                            >
+                              {currency(analysis.hardCosts.totalMonthlyUsd)}
+                            </td>
+                            <td
+                              style={{
+                                ...costTableNumberCellStyle,
+                                borderTop: `2px solid ${COLORS.GRAY_LL}`,
+                              }}
+                            />
+                            <td
+                              style={{
+                                ...costTableNumberCellStyle,
+                                borderTop: `2px solid ${COLORS.GRAY_LL}`,
+                                fontWeight: 700,
+                              }}
+                            >
+                              {currency(
+                                expectedAnalysis.hardCosts.totalMonthlyUsd,
+                              )}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                  const unitEconomicsSummary = (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "minmax(320px, 520px) 1fr",
+                        gap: "16px",
+                        margin: "14px 0 18px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          border: `1px solid ${COLORS.GRAY_LL}`,
+                          borderRadius: "10px",
+                          overflow: "hidden",
+                          background: "rgba(255,255,255,0.82)",
+                        }}
+                      >
+                        <table
+                          style={{
+                            width: "100%",
+                            borderCollapse: "collapse",
+                          }}
+                        >
+                          <tbody>
+                            {[
+                              {
+                                label: "Customer pays / month",
+                                value: customerMonthlyUsd,
+                                color: undefined,
+                              },
+                              {
+                                label: "Expected cost / month",
+                                value: expectedCostMonthlyUsd,
+                                color: undefined,
+                              },
+                              {
+                                label: "Expected profit/loss",
+                                value: expectedProfitLossUsd,
+                                color:
+                                  expectedProfitLossUsd >= 0
+                                    ? COLORS.BS_GREEN_D
+                                    : COLORS.FG_RED,
+                              },
+                              {
+                                label:
+                                  "Exposure: maximum possible loss / month",
+                                value: exposureUsd,
+                                color:
+                                  exposureUsd > 0 ? COLORS.FG_RED : COLORS.GRAY,
+                              },
+                            ].map((row) => (
+                              <tr key={row.label}>
+                                <td style={costTableCellStyle}>{row.label}</td>
+                                <td
+                                  style={{
+                                    ...costTableNumberCellStyle,
+                                    color: row.color,
+                                    fontWeight: row.color ? 700 : 400,
+                                  }}
+                                >
+                                  {currency(row.value)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <Space direction="vertical" style={{ width: "100%" }}>
+                        {economicsBar({
+                          label:
+                            expectedProfitLossUsd >= 0
+                              ? "Expected profit"
+                              : "Expected loss",
+                          value: expectedProfitLossUsd,
+                          color:
+                            expectedProfitLossUsd >= 0
+                              ? COLORS.BS_GREEN
+                              : COLORS.FG_RED,
+                        })}
+                        {economicsBar({
+                          label: "Worst-case exposure",
+                          value: exposureUsd,
+                          color:
+                            exposureUsd > 0 ? COLORS.FG_RED : COLORS.GRAY_L,
+                        })}
+                      </Space>
+                    </div>
+                  );
                   return (
                     <>
                       <Paragraph style={sectionIntroStyle}>
@@ -2249,6 +2532,8 @@ export function MembershipTiers() {
                         note: "Enter realistic expected usage for this tier. Expected values are advisory, saved in this browser, and bounded by configured tier maxima where a maximum exists. CPU/RAM rows model quality-of-service capacity, not a hard user-visible limit.",
                         children: (
                           <>
+                            {costAccountingTable}
+                            {unitEconomicsSummary}
                             <Row gutter={16}>
                               <Col {...fieldCol}>
                                 {expectedUsageInput(
@@ -2362,138 +2647,6 @@ export function MembershipTiers() {
                                 )}
                               </Col>
                             </Row>
-                            <div
-                              style={{
-                                overflowX: "auto",
-                                border: `1px solid ${COLORS.GRAY_LL}`,
-                                borderRadius: "10px",
-                                background: "rgba(255,255,255,0.82)",
-                              }}
-                            >
-                              <table
-                                style={{
-                                  width: "100%",
-                                  borderCollapse: "collapse",
-                                  minWidth: "860px",
-                                }}
-                              >
-                                <thead>
-                                  <tr>
-                                    <th style={costTableHeaderStyle}>Name</th>
-                                    <th
-                                      style={{
-                                        ...costTableHeaderStyle,
-                                        textAlign: "right",
-                                      }}
-                                    >
-                                      Hard limit / month {usageScalePopover}
-                                    </th>
-                                    <th
-                                      style={{
-                                        ...costTableHeaderStyle,
-                                        textAlign: "right",
-                                      }}
-                                    >
-                                      Max cost
-                                    </th>
-                                    <th
-                                      style={{
-                                        ...costTableHeaderStyle,
-                                        textAlign: "right",
-                                      }}
-                                    >
-                                      Expected / month {usageScalePopover}
-                                    </th>
-                                    <th
-                                      style={{
-                                        ...costTableHeaderStyle,
-                                        textAlign: "right",
-                                      }}
-                                    >
-                                      Expected cost
-                                    </th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {costRows.map((row) => (
-                                    <tr key={row.key}>
-                                      <td style={costTableCellStyle}>
-                                        <Text>{row.name}</Text>
-                                        {row.scaled && (
-                                          <div
-                                            style={{
-                                              color: COLORS.GRAY,
-                                              fontSize: "12px",
-                                            }}
-                                          >
-                                            7-day allowance ×{" "}
-                                            {formattedNumber(monthlyScale, 2)}
-                                          </div>
-                                        )}
-                                      </td>
-                                      <td style={costTableNumberCellStyle}>
-                                        {row.hardLimit}
-                                      </td>
-                                      <td style={costTableNumberCellStyle}>
-                                        {currency(row.maxCost)}
-                                      </td>
-                                      <td style={costTableNumberCellStyle}>
-                                        {row.expectedLimit}
-                                      </td>
-                                      <td style={costTableNumberCellStyle}>
-                                        {currency(row.expectedCost)}
-                                      </td>
-                                    </tr>
-                                  ))}
-                                  <tr>
-                                    <td
-                                      style={{
-                                        ...costTableCellStyle,
-                                        borderTop: `2px solid ${COLORS.GRAY_LL}`,
-                                        fontWeight: 700,
-                                      }}
-                                    >
-                                      Total modeled cost
-                                    </td>
-                                    <td
-                                      style={{
-                                        ...costTableNumberCellStyle,
-                                        borderTop: `2px solid ${COLORS.GRAY_LL}`,
-                                      }}
-                                    />
-                                    <td
-                                      style={{
-                                        ...costTableNumberCellStyle,
-                                        borderTop: `2px solid ${COLORS.GRAY_LL}`,
-                                        fontWeight: 700,
-                                      }}
-                                    >
-                                      {currency(
-                                        analysis.hardCosts.totalMonthlyUsd,
-                                      )}
-                                    </td>
-                                    <td
-                                      style={{
-                                        ...costTableNumberCellStyle,
-                                        borderTop: `2px solid ${COLORS.GRAY_LL}`,
-                                      }}
-                                    />
-                                    <td
-                                      style={{
-                                        ...costTableNumberCellStyle,
-                                        borderTop: `2px solid ${COLORS.GRAY_LL}`,
-                                        fontWeight: 700,
-                                      }}
-                                    >
-                                      {currency(
-                                        expectedAnalysis.hardCosts
-                                          .totalMonthlyUsd,
-                                      )}
-                                    </td>
-                                  </tr>
-                                </tbody>
-                              </table>
-                            </div>
                             <Button
                               style={{ marginTop: "12px" }}
                               onClick={resetExpectedUsageEstimate}
