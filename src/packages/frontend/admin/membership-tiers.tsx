@@ -10,15 +10,17 @@ Admin UI for membership tiers.
 import {
   Alert,
   Button,
-  Card,
   Checkbox,
   Col,
   Collapse,
   Form,
   Input,
   InputNumber,
+  Modal,
   Popconfirm,
+  Popover,
   Row,
+  Select,
   Space,
   Switch,
   Table,
@@ -47,6 +49,9 @@ import {
 import {
   analyzeMembershipTierPricingRisk,
   DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS,
+  MEMBERSHIP_TIER_PRICING_DAYS_PER_MONTH,
+  MEMBERSHIP_TIER_PRICING_DAYS_PER_WEEK,
+  MEMBERSHIP_TIER_PRICING_HOURS_PER_MONTH,
   normalizeMembershipTierPricingAssumptions,
   type MembershipTierPricingAssumptions,
   type MembershipTierPricingInput,
@@ -60,6 +65,46 @@ const BYTES_PER_GB = 1000 * 1000 * 1000;
 const SECONDS_PER_CPU_HOUR = 3600;
 const MEMBERSHIP_TIER_PRICING_ASSUMPTIONS_STORAGE_KEY =
   "cocalc:admin:membership-tier-pricing-assumptions";
+const MEMBERSHIP_TIER_EXPECTED_USAGE_STORAGE_KEY =
+  "cocalc:admin:membership-tier-expected-usage";
+const MEMBERSHIP_TIER_EXPORT_TYPE = "cocalc.membership_tiers";
+const MEMBERSHIP_TIER_EXPORT_VERSION = 1;
+const TEMPLATE_KEYS = [
+  "free",
+  "basic",
+  "student",
+  "standard",
+  "member",
+  "instructor",
+  "researcher",
+  "pro",
+] as const;
+
+type TemplateKey = (typeof TEMPLATE_KEYS)[number];
+
+type ExpectedUsageEstimateKey =
+  | "aiUnits7d"
+  | "egress7dGb"
+  | "projectStorageHardCapGb"
+  | "blobStorageGb"
+  | "rootfsStorageGb"
+  | "spotCpuHoursMonthly"
+  | "spotRamGbHoursMonthly"
+  | "standardCpuHoursMonthly"
+  | "standardRamGbHoursMonthly";
+
+type ExpectedUsageEstimate = Partial<Record<ExpectedUsageEstimateKey, number>>;
+
+interface MembershipTierImportCandidate {
+  key: string;
+  sourceId: string;
+  sourceLabel?: string;
+  targetId: string;
+  targetLabel?: string;
+  match: "label" | "id" | "new";
+  payload: Tier;
+  disabledReason?: string;
+}
 
 interface Tier {
   key?: string;
@@ -233,6 +278,29 @@ function storePricingAssumptions(
   );
 }
 
+function loadExpectedUsageEstimates(): Record<string, ExpectedUsageEstimate> {
+  if (typeof window === "undefined") return {};
+  try {
+    const stored = window.localStorage.getItem(
+      MEMBERSHIP_TIER_EXPECTED_USAGE_STORAGE_KEY,
+    );
+    const parsed = stored ? JSON.parse(stored) : {};
+    return parsed != null && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function storeExpectedUsageEstimates(
+  estimates: Record<string, ExpectedUsageEstimate>,
+) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(
+    MEMBERSHIP_TIER_EXPECTED_USAGE_STORAGE_KEY,
+    JSON.stringify(estimates),
+  );
+}
+
 function setOrDeleteUsageLimit(
   usage_limits: Record<string, unknown>,
   key: string,
@@ -362,6 +430,224 @@ function tierToFormValues(tier: Partial<Tier>) {
   };
 }
 
+function buildMembershipTierPayload(values): Tier {
+  const project_defaults = (parseJsonField(
+    values.project_defaults,
+    "project_defaults",
+  ) ?? {}) as Record<string, unknown>;
+  const ai_limits = (parseJsonField(values.ai_limits, "ai_limits") ??
+    {}) as Record<string, unknown>;
+  const features = (parseJsonField(values.features, "features") ??
+    {}) as Record<string, unknown>;
+  const usage_limits = (parseJsonField(values.usage_limits, "usage_limits") ??
+    {}) as Record<string, unknown>;
+  setOrDeleteNumber(
+    project_defaults,
+    "memory",
+    values.project_default_memory_mb,
+  );
+  setOrDeleteNumber(
+    project_defaults,
+    "memory_request",
+    values.project_default_memory_request_mb,
+  );
+  setOrDeleteNumber(
+    project_defaults,
+    "disk_quota",
+    values.project_default_disk_quota_mb,
+  );
+  setOrDeleteBoolean(features, "create_hosts", values.feature_create_hosts);
+  setOrDeleteNumber(
+    features,
+    "project_host_tier",
+    values.feature_project_host_tier,
+  );
+  setOrDeleteNumber(ai_limits, "units_5h", values.ai_limit_units_5h);
+  setOrDeleteNumber(ai_limits, "units_7d", values.ai_limit_units_7d);
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "shared_compute_priority",
+    values.usage_limit_shared_compute_priority,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "total_storage_soft_bytes",
+    gigabytesToBytes(values.usage_limit_total_storage_soft_gb),
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "total_storage_hard_bytes",
+    gigabytesToBytes(values.usage_limit_total_storage_hard_gb),
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "max_projects",
+    values.usage_limit_max_projects,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "max_sponsored_running_projects",
+    values.usage_limit_max_sponsored_running_projects,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "max_snapshots_per_project",
+    values.usage_limit_max_snapshots_per_project,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "max_backups_per_project",
+    values.usage_limit_max_backups_per_project,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "egress_5h_bytes",
+    gigabytesToBytes(values.usage_limit_egress_5h_gb),
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "egress_7d_bytes",
+    gigabytesToBytes(values.usage_limit_egress_7d_gb),
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "cpu_5h_seconds",
+    cpuHoursToSeconds(values.usage_limit_cpu_5h_hours),
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "cpu_7d_seconds",
+    cpuHoursToSeconds(values.usage_limit_cpu_7d_hours),
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "credit_spend_limit_5h_usd",
+    values.usage_limit_credit_spend_limit_5h_usd,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "credit_spend_limit_7d_usd",
+    values.usage_limit_credit_spend_limit_7d_usd,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "prepaid_host_usage_limit_5h_usd",
+    values.usage_limit_prepaid_host_usage_limit_5h_usd,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "prepaid_host_usage_limit_7d_usd",
+    values.usage_limit_prepaid_host_usage_limit_7d_usd,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "acp_max_queued_per_account",
+    values.usage_limit_acp_max_queued_per_account,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "acp_max_queued_per_thread",
+    values.usage_limit_acp_max_queued_per_thread,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "acp_max_created_5h_per_account",
+    values.usage_limit_acp_max_created_5h_per_account,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "acp_max_created_7d_per_account",
+    values.usage_limit_acp_max_created_7d_per_account,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "acp_max_running_per_account",
+    values.usage_limit_acp_max_running_per_account,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "acp_max_running_per_project",
+    values.usage_limit_acp_max_running_per_project,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "acp_max_active_automations_per_project",
+    values.usage_limit_acp_max_active_automations_per_project,
+  );
+
+  return pick(
+    {
+      ...values,
+      project_defaults,
+      ai_limits,
+      features,
+      usage_limits,
+      store_description: normalizedOptionalString(values.store_description),
+      store_highlights: parseStoreHighlightsText(values.store_highlights_text),
+      disabled: !values.active,
+    },
+    [
+      "id",
+      "label",
+      "store_visible",
+      "store_description",
+      "store_highlights",
+      "course_store_visible",
+      "priority",
+      "price_monthly",
+      "price_yearly",
+      "trial_days",
+      "course_price",
+      "course_duration_days",
+      "course_grace_days",
+      "project_defaults",
+      "ai_limits",
+      "features",
+      "usage_limits",
+      "disabled",
+      "notes",
+    ],
+  ) as Tier;
+}
+
+function membershipTierExportPayload(tiers: Tier[]) {
+  return {
+    type: MEMBERSHIP_TIER_EXPORT_TYPE,
+    version: MEMBERSHIP_TIER_EXPORT_VERSION,
+    exported_at: new Date().toISOString(),
+    membership_tiers: sortBy(
+      tiers.map((tier) => buildMembershipTierPayload(tierToFormValues(tier))),
+      "id",
+    ),
+  };
+}
+
+function parseMembershipTierImportJson(value: unknown): Tier[] {
+  const record = normalizedRecord(value);
+  const rawTiers = Array.isArray(value)
+    ? value
+    : Array.isArray(record.membership_tiers)
+      ? record.membership_tiers
+      : Array.isArray(record.tiers)
+        ? record.tiers
+        : undefined;
+  if (rawTiers == null) {
+    throw Error(
+      "Expected a JSON object with membership_tiers, or a plain array of tiers.",
+    );
+  }
+  return rawTiers.map((tier, index) => {
+    if (tier == null || typeof tier !== "object" || Array.isArray(tier)) {
+      throw Error(`Tier ${index + 1} is not an object.`);
+    }
+    const payload = buildMembershipTierPayload(tierToFormValues(tier as Tier));
+    if (!payload.id?.trim()) {
+      throw Error(`Tier ${index + 1} is missing an id.`);
+    }
+    return payload;
+  });
+}
+
 function useMembershipTiers() {
   const [data, set_data] = React.useState<{ [key: string]: Tier }>({});
   const [editing, set_editing] = React.useState<Tier | null>(null);
@@ -443,193 +729,19 @@ function useMembershipTiers() {
   }, [editing]);
 
   async function save(values): Promise<void> {
-    const val_orig: Tier = { ...values };
+    const formValues = form.getFieldsValue(true);
+    const mergedValues = {
+      ...(editing != null ? tierToFormValues(editing) : {}),
+      ...formValues,
+      ...values,
+      id: values.id ?? formValues.id ?? editing?.id,
+    };
+    const val_orig: Tier = { ...mergedValues };
     if (editing != null) set_editing(null);
 
     try {
       set_saving(true);
-      const project_defaults = (parseJsonField(
-        values.project_defaults,
-        "project_defaults",
-      ) ?? {}) as Record<string, unknown>;
-      const ai_limits = (parseJsonField(values.ai_limits, "ai_limits") ??
-        {}) as Record<string, unknown>;
-      const features = (parseJsonField(values.features, "features") ??
-        {}) as Record<string, unknown>;
-      const usage_limits = (parseJsonField(
-        values.usage_limits,
-        "usage_limits",
-      ) ?? {}) as Record<string, unknown>;
-      setOrDeleteNumber(
-        project_defaults,
-        "memory",
-        values.project_default_memory_mb,
-      );
-      setOrDeleteNumber(
-        project_defaults,
-        "memory_request",
-        values.project_default_memory_request_mb,
-      );
-      setOrDeleteNumber(
-        project_defaults,
-        "disk_quota",
-        values.project_default_disk_quota_mb,
-      );
-      setOrDeleteBoolean(features, "create_hosts", values.feature_create_hosts);
-      setOrDeleteNumber(
-        features,
-        "project_host_tier",
-        values.feature_project_host_tier,
-      );
-      setOrDeleteNumber(ai_limits, "units_5h", values.ai_limit_units_5h);
-      setOrDeleteNumber(ai_limits, "units_7d", values.ai_limit_units_7d);
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "shared_compute_priority",
-        values.usage_limit_shared_compute_priority,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "total_storage_soft_bytes",
-        gigabytesToBytes(values.usage_limit_total_storage_soft_gb),
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "total_storage_hard_bytes",
-        gigabytesToBytes(values.usage_limit_total_storage_hard_gb),
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "max_projects",
-        values.usage_limit_max_projects,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "max_sponsored_running_projects",
-        values.usage_limit_max_sponsored_running_projects,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "max_snapshots_per_project",
-        values.usage_limit_max_snapshots_per_project,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "max_backups_per_project",
-        values.usage_limit_max_backups_per_project,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "egress_5h_bytes",
-        gigabytesToBytes(values.usage_limit_egress_5h_gb),
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "egress_7d_bytes",
-        gigabytesToBytes(values.usage_limit_egress_7d_gb),
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "cpu_5h_seconds",
-        cpuHoursToSeconds(values.usage_limit_cpu_5h_hours),
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "cpu_7d_seconds",
-        cpuHoursToSeconds(values.usage_limit_cpu_7d_hours),
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "credit_spend_limit_5h_usd",
-        values.usage_limit_credit_spend_limit_5h_usd,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "credit_spend_limit_7d_usd",
-        values.usage_limit_credit_spend_limit_7d_usd,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "prepaid_host_usage_limit_5h_usd",
-        values.usage_limit_prepaid_host_usage_limit_5h_usd,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "prepaid_host_usage_limit_7d_usd",
-        values.usage_limit_prepaid_host_usage_limit_7d_usd,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "acp_max_queued_per_account",
-        values.usage_limit_acp_max_queued_per_account,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "acp_max_queued_per_thread",
-        values.usage_limit_acp_max_queued_per_thread,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "acp_max_created_5h_per_account",
-        values.usage_limit_acp_max_created_5h_per_account,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "acp_max_created_7d_per_account",
-        values.usage_limit_acp_max_created_7d_per_account,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "acp_max_running_per_account",
-        values.usage_limit_acp_max_running_per_account,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "acp_max_running_per_project",
-        values.usage_limit_acp_max_running_per_project,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "acp_max_active_automations_per_project",
-        values.usage_limit_acp_max_active_automations_per_project,
-      );
-
-      const payload = pick(
-        {
-          ...values,
-          project_defaults,
-          ai_limits,
-          features,
-          usage_limits,
-          store_description: normalizedOptionalString(values.store_description),
-          store_highlights: parseStoreHighlightsText(
-            values.store_highlights_text,
-          ),
-          disabled: !values.active,
-        },
-        [
-          "id",
-          "label",
-          "store_visible",
-          "store_description",
-          "store_highlights",
-          "course_store_visible",
-          "priority",
-          "price_monthly",
-          "price_yearly",
-          "trial_days",
-          "course_price",
-          "course_duration_days",
-          "course_grace_days",
-          "project_defaults",
-          "ai_limits",
-          "features",
-          "usage_limits",
-          "disabled",
-          "notes",
-        ],
-      );
-
+      const payload = buildMembershipTierPayload(mergedValues);
       await query({
         query: {
           membership_tiers: payload,
@@ -640,6 +752,67 @@ function useMembershipTiers() {
     } catch (err) {
       set_error(err.message ?? String(err));
       set_editing(val_orig);
+    } finally {
+      set_saving(false);
+    }
+  }
+
+  async function create_tier_from_template({
+    id,
+    label,
+    template,
+  }: {
+    id: string;
+    label: string;
+    template: TemplateKey;
+  }): Promise<void> {
+    const trimmedId = id.trim();
+    const trimmedLabel = label.trim();
+    if (data[trimmedId] != null) {
+      throw Error(`membership tier "${trimmedId}" already exists`);
+    }
+    const tier = applyMembershipTierTemplateFallbacks({
+      ...TIER_TEMPLATES[template],
+      id: trimmedId,
+      label: trimmedLabel,
+      store_visible: false,
+      course_store_visible: false,
+      disabled: false,
+    });
+    const values = tierToFormValues(tier);
+    const payload = buildMembershipTierPayload(values);
+    set_saving(true);
+    try {
+      await query({
+        query: {
+          membership_tiers: payload,
+        },
+      });
+      await load();
+      set_editing(applyMembershipTierTemplateFallbacks(payload));
+    } catch (err) {
+      set_error(err.message ?? String(err));
+      throw err;
+    } finally {
+      set_saving(false);
+    }
+  }
+
+  async function import_tiers(payloads: Tier[]): Promise<void> {
+    set_saving(true);
+    try {
+      for (const payload of payloads) {
+        await query({
+          query: {
+            membership_tiers: payload,
+          },
+        });
+      }
+      await load();
+      set_error("");
+    } catch (err) {
+      set_error(err.message ?? String(err));
+      throw err;
     } finally {
       set_saving(false);
     }
@@ -704,28 +877,6 @@ function useMembershipTiers() {
     }
   }
 
-  function edit_new_tier() {
-    set_editing({
-      id: "",
-      label: "",
-      store_visible: false,
-      store_description: "",
-      store_highlights: [],
-      course_store_visible: false,
-      priority: 0,
-      trial_days: 0,
-      disabled: false,
-      notes: "",
-      project_defaults: {},
-      ai_limits: {},
-      features: {
-        create_hosts: false,
-        project_host_tier: 0,
-      },
-      usage_limits: {},
-    });
-  }
-
   return {
     data,
     form,
@@ -741,7 +892,8 @@ function useMembershipTiers() {
     sel_rows,
     set_sel_rows,
     set_editing,
-    edit_new_tier,
+    create_tier_from_template,
+    import_tiers,
     save,
     load,
   };
@@ -772,10 +924,23 @@ export function MembershipTiers() {
     sel_rows,
     set_sel_rows,
     set_editing,
-    edit_new_tier,
+    create_tier_from_template,
+    import_tiers,
     save,
     load,
   } = useMembershipTiers();
+  const [createTierForm] = Form.useForm();
+  const [createTierOpen, setCreateTierOpen] = React.useState(false);
+  const importFileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const [importModalOpen, setImportModalOpen] = React.useState(false);
+  const [importCandidates, setImportCandidates] = React.useState<
+    MembershipTierImportCandidate[]
+  >([]);
+  const [importSelectedKeys, setImportSelectedKeys] = React.useState<
+    React.Key[]
+  >([]);
+  const [importError, setImportError] = React.useState("");
+  const [importing, setImporting] = React.useState(false);
   const [jsonErrors, setJsonErrors] = React.useState<Record<string, string>>(
     {},
   );
@@ -783,6 +948,12 @@ export function MembershipTiers() {
     React.useState<MembershipTierPricingAssumptions>(() =>
       loadPricingAssumptions(),
     );
+  const [expectedUsageEstimates, setExpectedUsageEstimates] = React.useState<
+    Record<string, ExpectedUsageEstimate>
+  >(() => loadExpectedUsageEstimates());
+
+  const editingTierId = editing?.id ?? "__new__";
+  const expectedUsageEstimate = expectedUsageEstimates[editingTierId] ?? {};
 
   function updatePricingAssumption(
     key: keyof MembershipTierPricingAssumptions,
@@ -803,13 +974,35 @@ export function MembershipTiers() {
     storePricingAssumptions(DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS);
   }
 
+  function updateExpectedUsageEstimate(
+    key: ExpectedUsageEstimateKey,
+    value: number | null,
+  ) {
+    setExpectedUsageEstimates((prev) => {
+      const estimate = { ...(prev[editingTierId] ?? {}) };
+      if (typeof value === "number" && Number.isFinite(value)) {
+        estimate[key] = Math.max(0, value);
+      } else {
+        delete estimate[key];
+      }
+      const next = { ...prev, [editingTierId]: estimate };
+      storeExpectedUsageEstimates(next);
+      return next;
+    });
+  }
+
+  function resetExpectedUsageEstimate() {
+    setExpectedUsageEstimates((prev) => {
+      const next = { ...prev };
+      delete next[editingTierId];
+      storeExpectedUsageEstimates(next);
+      return next;
+    });
+  }
+
   function render_edit() {
     const onFinish = (values) => save(values);
     const editingExisting = editing?.id != null && data[editing.id] != null;
-    const applyTemplate = (key: keyof typeof TIER_TEMPLATES) => {
-      const template = TIER_TEMPLATES[key];
-      form.setFieldsValue(tierToFormValues({ ...template, disabled: false }));
-    };
     const updateJsonError = (field: string, err?: string) => {
       setJsonErrors((prev) => {
         const next = { ...prev };
@@ -957,6 +1150,10 @@ export function MembershipTiers() {
         egress7dGb:
           normalizedOptionalNumber(getFieldValue("usage_limit_egress_7d_gb")) ??
           bytesToGigabytes(usageLimits.egress_7d_bytes),
+        projectStorageHardCapGb:
+          normalizedOptionalNumber(
+            getFieldValue("usage_limit_total_storage_hard_gb"),
+          ) ?? bytesToGigabytes(usageLimits.total_storage_hard_bytes),
         blobStorageGb:
           bytesToGigabytes(usageLimits.blob_account_total_bytes) ??
           normalizedOptionalNumber(usageLimits.blob_account_total_gb),
@@ -986,7 +1183,68 @@ export function MembershipTiers() {
           normalizedOptionalNumber(usageLimits.max_sponsored_running_projects),
       };
     };
-    const riskMetric = (label: string, value: React.ReactNode) => (
+    const expectedPricingInput = (
+      maxInput: MembershipTierPricingInput,
+      estimate: ExpectedUsageEstimate,
+    ): MembershipTierPricingInput => {
+      const bounded = (key: ExpectedUsageEstimateKey): number | undefined => {
+        const value = normalizedOptionalNumber(estimate[key]);
+        if (value == null) return undefined;
+        const max = normalizedOptionalNumber(maxInput[key]);
+        return max == null ? value : Math.min(value, max);
+      };
+      return {
+        priceMonthlyUsd: maxInput.priceMonthlyUsd,
+        priceYearlyUsd: maxInput.priceYearlyUsd,
+        aiUnits7d: bounded("aiUnits7d"),
+        egress7dGb: bounded("egress7dGb"),
+        projectStorageHardCapGb: bounded("projectStorageHardCapGb"),
+        blobStorageGb: bounded("blobStorageGb"),
+        rootfsStorageGb: bounded("rootfsStorageGb"),
+        spotCpuHoursMonthly: normalizedOptionalNumber(
+          estimate.spotCpuHoursMonthly,
+        ),
+        spotRamGbHoursMonthly: normalizedOptionalNumber(
+          estimate.spotRamGbHoursMonthly,
+        ),
+        standardCpuHoursMonthly: normalizedOptionalNumber(
+          estimate.standardCpuHoursMonthly,
+        ),
+        standardRamGbHoursMonthly: normalizedOptionalNumber(
+          estimate.standardRamGbHoursMonthly,
+        ),
+      };
+    };
+    const monthlyFromWeeklyLabel = (value: unknown, suffix = "") => {
+      const numberValue = normalizedOptionalNumber(value);
+      if (numberValue == null) return "Not configured";
+      const monthlyValue =
+        numberValue *
+        (MEMBERSHIP_TIER_PRICING_DAYS_PER_MONTH /
+          MEMBERSHIP_TIER_PRICING_DAYS_PER_WEEK);
+      return `${formattedNumber(monthlyValue, monthlyValue >= 100 ? 0 : 1)}${suffix ? ` ${suffix}` : ""}`;
+    };
+    const monthlyStorageLabel = (value: unknown, suffix = "GB") => {
+      const numberValue = normalizedOptionalNumber(value);
+      if (numberValue == null) return "Not configured";
+      return `${formattedNumber(numberValue, numberValue >= 100 ? 0 : 1)} ${suffix}`;
+    };
+    const monthlyUsageLabel = (value: unknown, suffix: string, digits = 1) => {
+      const numberValue = normalizedOptionalNumber(value);
+      if (numberValue == null) return "Not estimated";
+      return `${formattedNumber(numberValue, digits)} ${suffix}`;
+    };
+    const maxLabel = (value: unknown, suffix = "") => {
+      const numberValue = normalizedOptionalNumber(value);
+      return numberValue == null
+        ? "No configured maximum."
+        : `Max ${formattedNumber(numberValue, 2)}${suffix ? ` ${suffix}` : ""}`;
+    };
+    const riskMetric = (
+      label: string,
+      value: React.ReactNode,
+      note?: string,
+    ) => (
       <div
         style={{
           border: `1px solid ${COLORS.GRAY_LL}`,
@@ -998,8 +1256,74 @@ export function MembershipTiers() {
       >
         <div style={{ color: COLORS.GRAY, fontSize: "12px" }}>{label}</div>
         <div style={{ fontSize: "18px", fontWeight: 600 }}>{value}</div>
+        {note && (
+          <div style={{ color: COLORS.GRAY, fontSize: "12px" }}>{note}</div>
+        )}
       </div>
     );
+    const costTableCellStyle: React.CSSProperties = {
+      borderTop: `1px solid ${COLORS.GRAY_LLL}`,
+      padding: "10px 12px",
+      verticalAlign: "top",
+    };
+    const costTableNumberCellStyle: React.CSSProperties = {
+      ...costTableCellStyle,
+      textAlign: "right",
+      fontVariantNumeric: "tabular-nums",
+      whiteSpace: "nowrap",
+    };
+    const costTableHeaderStyle: React.CSSProperties = {
+      padding: "9px 12px",
+      color: COLORS.GRAY,
+      fontSize: "12px",
+      fontWeight: 600,
+      textAlign: "left",
+      borderBottom: `1px solid ${COLORS.GRAY_LL}`,
+      background: COLORS.GRAY_LLL,
+    };
+    const expectedUsageInput = (
+      key: ExpectedUsageEstimateKey,
+      label: string,
+      maxValue: unknown,
+      opts: {
+        step?: number;
+        addonAfter?: string;
+        extra?: string;
+        unbounded?: boolean;
+      } = {},
+    ) => {
+      const max = opts.unbounded
+        ? undefined
+        : normalizedOptionalNumber(maxValue);
+      const rawValue = expectedUsageEstimate[key];
+      const value =
+        max != null && rawValue != null ? Math.min(rawValue, max) : rawValue;
+      return (
+        <Form.Item
+          label={label}
+          extra={fieldHelp(opts.extra ?? maxLabel(max, opts.addonAfter ?? ""))}
+        >
+          <InputNumber
+            min={0}
+            max={max}
+            step={opts.step ?? 0.1}
+            addonAfter={
+              opts.addonAfter ? (
+                <span style={{ whiteSpace: "nowrap" }}>{opts.addonAfter}</span>
+              ) : undefined
+            }
+            style={compactInputStyle}
+            value={value}
+            onChange={(value) =>
+              updateExpectedUsageEstimate(
+                key,
+                typeof value === "number" ? value : null,
+              )
+            }
+          />
+        </Form.Item>
+      );
+    };
     const assumptionInput = (
       key: keyof MembershipTierPricingAssumptions,
       label: string,
@@ -1017,7 +1341,11 @@ export function MembershipTiers() {
         <InputNumber
           min={0}
           step={opts.step ?? 0.01}
-          addonAfter={opts.addonAfter}
+          addonAfter={
+            opts.addonAfter ? (
+              <span style={{ whiteSpace: "nowrap" }}>{opts.addonAfter}</span>
+            ) : undefined
+          }
           style={compactInputStyle}
           value={pricingAssumptions[key] * (opts.multiplier ?? 1)}
           onChange={(value) =>
@@ -1032,46 +1360,6 @@ export function MembershipTiers() {
 
     return (
       <>
-        <Card
-          style={{
-            ...cardStyle,
-            background:
-              "linear-gradient(135deg, rgba(238,246,255,0.9), rgba(255,255,255,0.95))",
-          }}
-          styles={{ body: { padding: "14px 18px" } }}
-        >
-          <Space direction="vertical" style={{ width: "100%" }}>
-            <Space wrap>
-              <Text strong>Start from template</Text>
-              <Text type="secondary">
-                Templates fill all modeled values; edit the cards below before
-                saving.
-              </Text>
-            </Space>
-            <Space wrap>
-              {(
-                [
-                  "free",
-                  "basic",
-                  "student",
-                  "standard",
-                  "member",
-                  "instructor",
-                  "researcher",
-                  "pro",
-                ] as const
-              ).map((key) => (
-                <Button
-                  key={key}
-                  size="small"
-                  onClick={() => applyTemplate(key)}
-                >
-                  {TIER_TEMPLATES[key].label}
-                </Button>
-              ))}
-            </Space>
-          </Space>
-        </Card>
         <Form
           layout="vertical"
           style={{ margin: "20px 0" }}
@@ -1536,9 +1824,9 @@ export function MembershipTiers() {
                       <Col {...fieldCol}>
                         <Form.Item
                           name="usage_limit_total_storage_soft_gb"
-                          label="Account storage soft cap"
+                          label="Project file storage soft cap"
                           extra={fieldHelp(
-                            "GB soft cap across owned projects before storage-increasing actions are restricted.",
+                            "GB soft cap across projects owned by this account before storage-increasing actions are restricted.",
                           )}
                         >
                           <InputNumber
@@ -1552,9 +1840,9 @@ export function MembershipTiers() {
                       <Col {...fieldCol}>
                         <Form.Item
                           name="usage_limit_total_storage_hard_gb"
-                          label="Account storage hard cap"
+                          label="Project file storage hard cap"
                           extra={fieldHelp(
-                            "GB hard cap across owned projects; should be at or above the soft cap.",
+                            "GB hard cap across projects owned by this account; should be at or above the soft cap.",
                           )}
                         >
                           <InputNumber
@@ -1796,9 +2084,440 @@ export function MembershipTiers() {
             children: (
               <Form.Item noStyle shouldUpdate>
                 {({ getFieldValue }) => {
+                  const maxPricingInput = pricingInputFromForm(getFieldValue);
                   const analysis = analyzeMembershipTierPricingRisk(
-                    pricingInputFromForm(getFieldValue),
+                    maxPricingInput,
                     pricingAssumptions,
+                  );
+                  const expectedInput = expectedPricingInput(
+                    maxPricingInput,
+                    expectedUsageEstimate,
+                  );
+                  const expectedAnalysis = analyzeMembershipTierPricingRisk(
+                    expectedInput,
+                    pricingAssumptions,
+                  );
+                  const monthlyScale =
+                    MEMBERSHIP_TIER_PRICING_DAYS_PER_MONTH /
+                    MEMBERSHIP_TIER_PRICING_DAYS_PER_WEEK;
+                  const usageScalePopover = (
+                    <Popover
+                      content={
+                        <div style={{ maxWidth: "260px" }}>
+                          Weekly limits are scaled by{" "}
+                          {MEMBERSHIP_TIER_PRICING_DAYS_PER_MONTH} /{" "}
+                          {MEMBERSHIP_TIER_PRICING_DAYS_PER_WEEK} ={" "}
+                          {formattedNumber(monthlyScale, 2)} to estimate an
+                          average month.
+                        </div>
+                      }
+                    >
+                      <Button size="small" type="text" style={{ padding: 0 }}>
+                        ?
+                      </Button>
+                    </Popover>
+                  );
+                  const costRows = [
+                    {
+                      key: "ai",
+                      name: "AI allowance",
+                      hardLimit: monthlyFromWeeklyLabel(
+                        maxPricingInput.aiUnits7d,
+                        "units",
+                      ),
+                      maxCost: analysis.hardCosts.aiMonthlyUsd,
+                      expectedLimit: monthlyFromWeeklyLabel(
+                        expectedInput.aiUnits7d,
+                        "units",
+                      ),
+                      expectedCost: expectedAnalysis.hardCosts.aiMonthlyUsd,
+                      scaled: true,
+                    },
+                    {
+                      key: "egress",
+                      name: "Network egress allowance",
+                      hardLimit: monthlyFromWeeklyLabel(
+                        maxPricingInput.egress7dGb,
+                        "GB",
+                      ),
+                      maxCost: analysis.hardCosts.egressMonthlyUsd,
+                      expectedLimit: monthlyFromWeeklyLabel(
+                        expectedInput.egress7dGb,
+                        "GB",
+                      ),
+                      expectedCost: expectedAnalysis.hardCosts.egressMonthlyUsd,
+                      scaled: true,
+                    },
+                    {
+                      key: "project-storage",
+                      name: "Project file storage hard cap",
+                      hardLimit: monthlyStorageLabel(
+                        maxPricingInput.projectStorageHardCapGb,
+                      ),
+                      maxCost: analysis.hardCosts.projectStorageMonthlyUsd,
+                      expectedLimit: monthlyStorageLabel(
+                        expectedInput.projectStorageHardCapGb,
+                      ),
+                      expectedCost:
+                        expectedAnalysis.hardCosts.projectStorageMonthlyUsd,
+                    },
+                    {
+                      key: "blob-storage",
+                      name: "R2/blob storage",
+                      hardLimit: monthlyStorageLabel(
+                        maxPricingInput.blobStorageGb,
+                      ),
+                      maxCost: analysis.hardCosts.blobStorageMonthlyUsd,
+                      expectedLimit: monthlyStorageLabel(
+                        expectedInput.blobStorageGb,
+                      ),
+                      expectedCost:
+                        expectedAnalysis.hardCosts.blobStorageMonthlyUsd,
+                    },
+                    {
+                      key: "rootfs-storage",
+                      name: "Rootfs storage",
+                      hardLimit: monthlyStorageLabel(
+                        maxPricingInput.rootfsStorageGb,
+                      ),
+                      maxCost: analysis.hardCosts.rootfsStorageMonthlyUsd,
+                      expectedLimit: monthlyStorageLabel(
+                        expectedInput.rootfsStorageGb,
+                      ),
+                      expectedCost:
+                        expectedAnalysis.hardCosts.rootfsStorageMonthlyUsd,
+                    },
+                    {
+                      key: "spot-cpu",
+                      name: "Spot CPU QoS estimate",
+                      hardLimit: "No hard limit",
+                      maxCost: 0,
+                      expectedLimit: monthlyUsageLabel(
+                        expectedInput.spotCpuHoursMonthly,
+                        "CPU-h",
+                      ),
+                      expectedCost:
+                        expectedAnalysis.hardCosts.spotCpuMonthlyUsd,
+                    },
+                    {
+                      key: "spot-ram",
+                      name: "Spot RAM QoS estimate",
+                      hardLimit: "No hard limit",
+                      maxCost: 0,
+                      expectedLimit: monthlyUsageLabel(
+                        expectedInput.spotRamGbHoursMonthly,
+                        "GB-h",
+                      ),
+                      expectedCost:
+                        expectedAnalysis.hardCosts.spotRamMonthlyUsd,
+                    },
+                    {
+                      key: "standard-cpu",
+                      name: "Standard CPU QoS estimate",
+                      hardLimit: "No hard limit",
+                      maxCost: 0,
+                      expectedLimit: monthlyUsageLabel(
+                        expectedInput.standardCpuHoursMonthly,
+                        "CPU-h",
+                      ),
+                      expectedCost:
+                        expectedAnalysis.hardCosts.standardCpuMonthlyUsd,
+                    },
+                    {
+                      key: "standard-ram",
+                      name: "Standard RAM QoS estimate",
+                      hardLimit: "No hard limit",
+                      maxCost: 0,
+                      expectedLimit: monthlyUsageLabel(
+                        expectedInput.standardRamGbHoursMonthly,
+                        "GB-h",
+                      ),
+                      expectedCost:
+                        expectedAnalysis.hardCosts.standardRamMonthlyUsd,
+                    },
+                  ];
+                  const customerMonthlyUsd =
+                    analysis.monthlyRevenueUsd > 0
+                      ? analysis.monthlyRevenueUsd
+                      : analysis.annualizedMonthlyRevenueUsd;
+                  const expectedCostMonthlyUsd =
+                    expectedAnalysis.hardCosts.totalMonthlyUsd;
+                  const expectedProfitLossUsd =
+                    customerMonthlyUsd - expectedCostMonthlyUsd;
+                  const exposureUsd = Math.max(
+                    0,
+                    analysis.hardCosts.totalMonthlyUsd - customerMonthlyUsd,
+                  );
+                  const ratioWidth = (value: number) =>
+                    `${Math.min(100, Math.max(0, Math.round(value * 100)))}%`;
+                  const relativeToRevenue = (value: number) =>
+                    customerMonthlyUsd > 0
+                      ? Math.abs(value) / customerMonthlyUsd
+                      : 0;
+                  const economicsBar = ({
+                    label,
+                    value,
+                    color,
+                  }: {
+                    label: string;
+                    value: number;
+                    color: string;
+                  }) => (
+                    <div>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: "12px",
+                          fontSize: "12px",
+                          color: COLORS.GRAY,
+                        }}
+                      >
+                        <span>{label}</span>
+                        <span>
+                          {customerMonthlyUsd > 0
+                            ? `${formattedPercent(
+                                Math.abs(value) / customerMonthlyUsd,
+                              )} of revenue`
+                            : "no revenue"}
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          height: "8px",
+                          borderRadius: "999px",
+                          background: COLORS.GRAY_LL,
+                          overflow: "hidden",
+                        }}
+                      >
+                        <div
+                          style={{
+                            height: "100%",
+                            width: ratioWidth(relativeToRevenue(value)),
+                            background: color,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                  const costAccountingTable = (
+                    <div
+                      style={{
+                        overflowX: "auto",
+                        border: `1px solid ${COLORS.GRAY_LL}`,
+                        borderRadius: "10px",
+                        background: "rgba(255,255,255,0.82)",
+                      }}
+                    >
+                      <table
+                        style={{
+                          width: "100%",
+                          borderCollapse: "collapse",
+                          minWidth: "860px",
+                        }}
+                      >
+                        <thead>
+                          <tr>
+                            <th style={costTableHeaderStyle}>Name</th>
+                            <th
+                              style={{
+                                ...costTableHeaderStyle,
+                                textAlign: "right",
+                              }}
+                            >
+                              Hard limit / month {usageScalePopover}
+                            </th>
+                            <th
+                              style={{
+                                ...costTableHeaderStyle,
+                                textAlign: "right",
+                              }}
+                            >
+                              Max cost
+                            </th>
+                            <th
+                              style={{
+                                ...costTableHeaderStyle,
+                                textAlign: "right",
+                              }}
+                            >
+                              Expected / month {usageScalePopover}
+                            </th>
+                            <th
+                              style={{
+                                ...costTableHeaderStyle,
+                                textAlign: "right",
+                              }}
+                            >
+                              Expected cost
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {costRows.map((row) => (
+                            <tr key={row.key}>
+                              <td style={costTableCellStyle}>
+                                <Text>{row.name}</Text>
+                                {row.scaled && (
+                                  <div
+                                    style={{
+                                      color: COLORS.GRAY,
+                                      fontSize: "12px",
+                                    }}
+                                  >
+                                    7-day allowance ×{" "}
+                                    {formattedNumber(monthlyScale, 2)}
+                                  </div>
+                                )}
+                              </td>
+                              <td style={costTableNumberCellStyle}>
+                                {row.hardLimit}
+                              </td>
+                              <td style={costTableNumberCellStyle}>
+                                {currency(row.maxCost)}
+                              </td>
+                              <td style={costTableNumberCellStyle}>
+                                {row.expectedLimit}
+                              </td>
+                              <td style={costTableNumberCellStyle}>
+                                {currency(row.expectedCost)}
+                              </td>
+                            </tr>
+                          ))}
+                          <tr>
+                            <td
+                              style={{
+                                ...costTableCellStyle,
+                                borderTop: `2px solid ${COLORS.GRAY_LL}`,
+                                fontWeight: 700,
+                              }}
+                            >
+                              Total modeled cost
+                            </td>
+                            <td
+                              style={{
+                                ...costTableNumberCellStyle,
+                                borderTop: `2px solid ${COLORS.GRAY_LL}`,
+                              }}
+                            />
+                            <td
+                              style={{
+                                ...costTableNumberCellStyle,
+                                borderTop: `2px solid ${COLORS.GRAY_LL}`,
+                                fontWeight: 700,
+                              }}
+                            >
+                              {currency(analysis.hardCosts.totalMonthlyUsd)}
+                            </td>
+                            <td
+                              style={{
+                                ...costTableNumberCellStyle,
+                                borderTop: `2px solid ${COLORS.GRAY_LL}`,
+                              }}
+                            />
+                            <td
+                              style={{
+                                ...costTableNumberCellStyle,
+                                borderTop: `2px solid ${COLORS.GRAY_LL}`,
+                                fontWeight: 700,
+                              }}
+                            >
+                              {currency(
+                                expectedAnalysis.hardCosts.totalMonthlyUsd,
+                              )}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                  const unitEconomicsSummary = (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "minmax(320px, 520px) 1fr",
+                        gap: "16px",
+                        margin: "14px 0 18px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          border: `1px solid ${COLORS.GRAY_LL}`,
+                          borderRadius: "10px",
+                          overflow: "hidden",
+                          background: "rgba(255,255,255,0.82)",
+                        }}
+                      >
+                        <table
+                          style={{
+                            width: "100%",
+                            borderCollapse: "collapse",
+                          }}
+                        >
+                          <tbody>
+                            {[
+                              {
+                                label: "Customer pays / month",
+                                value: customerMonthlyUsd,
+                                color: undefined,
+                              },
+                              {
+                                label: "Expected cost / month",
+                                value: expectedCostMonthlyUsd,
+                                color: undefined,
+                              },
+                              {
+                                label: "Expected profit/loss",
+                                value: expectedProfitLossUsd,
+                                color:
+                                  expectedProfitLossUsd >= 0
+                                    ? COLORS.BS_GREEN_D
+                                    : COLORS.FG_RED,
+                              },
+                              {
+                                label:
+                                  "Exposure: maximum possible loss / month",
+                                value: exposureUsd,
+                                color:
+                                  exposureUsd > 0 ? COLORS.FG_RED : COLORS.GRAY,
+                              },
+                            ].map((row) => (
+                              <tr key={row.label}>
+                                <td style={costTableCellStyle}>{row.label}</td>
+                                <td
+                                  style={{
+                                    ...costTableNumberCellStyle,
+                                    color: row.color,
+                                    fontWeight: row.color ? 700 : 400,
+                                  }}
+                                >
+                                  {currency(row.value)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <Space direction="vertical" style={{ width: "100%" }}>
+                        {economicsBar({
+                          label:
+                            expectedProfitLossUsd >= 0
+                              ? "Expected profit"
+                              : "Expected loss",
+                          value: expectedProfitLossUsd,
+                          color:
+                            expectedProfitLossUsd >= 0
+                              ? COLORS.BS_GREEN
+                              : COLORS.FG_RED,
+                        })}
+                        {economicsBar({
+                          label: "Worst-case exposure",
+                          value: exposureUsd,
+                          color:
+                            exposureUsd > 0 ? COLORS.FG_RED : COLORS.GRAY_L,
+                        })}
+                      </Space>
+                    </div>
                   );
                   return (
                     <>
@@ -1809,8 +2528,137 @@ export function MembershipTiers() {
                         points.
                       </Paragraph>
                       {fieldGroup({
+                        title: "Monthly Cost Accounting",
+                        note: "Enter realistic expected usage for this tier. Expected values are advisory, saved in this browser, and bounded by configured tier maxima where a maximum exists. CPU/RAM rows model quality-of-service capacity, not a hard user-visible limit.",
+                        children: (
+                          <>
+                            {costAccountingTable}
+                            {unitEconomicsSummary}
+                            <Row gutter={16}>
+                              <Col {...fieldCol}>
+                                {expectedUsageInput(
+                                  "aiUnits7d",
+                                  "Expected AI units / 7d",
+                                  maxPricingInput.aiUnits7d,
+                                  {
+                                    step: 1,
+                                    addonAfter: "units",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {expectedUsageInput(
+                                  "egress7dGb",
+                                  "Expected egress / 7d",
+                                  maxPricingInput.egress7dGb,
+                                  {
+                                    step: 0.1,
+                                    addonAfter: "GB",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {expectedUsageInput(
+                                  "projectStorageHardCapGb",
+                                  "Expected project file storage",
+                                  maxPricingInput.projectStorageHardCapGb,
+                                  {
+                                    step: 0.1,
+                                    addonAfter: "GB",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {expectedUsageInput(
+                                  "blobStorageGb",
+                                  "Expected R2/blob storage",
+                                  maxPricingInput.blobStorageGb,
+                                  {
+                                    step: 0.1,
+                                    addonAfter: "GB",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {expectedUsageInput(
+                                  "rootfsStorageGb",
+                                  "Expected rootfs storage",
+                                  maxPricingInput.rootfsStorageGb,
+                                  {
+                                    step: 0.1,
+                                    addonAfter: "GB",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {expectedUsageInput(
+                                  "spotCpuHoursMonthly",
+                                  "Expected spot CPU / month",
+                                  undefined,
+                                  {
+                                    step: 1,
+                                    addonAfter: "CPU-h",
+                                    unbounded: true,
+                                    extra:
+                                      "QoS capacity assumption. Example: 50 CPU-hours/month on spot hosts.",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {expectedUsageInput(
+                                  "spotRamGbHoursMonthly",
+                                  "Expected spot RAM / month",
+                                  undefined,
+                                  {
+                                    step: 1,
+                                    addonAfter: "GB-h",
+                                    unbounded: true,
+                                    extra:
+                                      "RAM GB-hours/month on spot hosts. Example: 100 GB-hours/month.",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {expectedUsageInput(
+                                  "standardCpuHoursMonthly",
+                                  "Expected standard CPU / month",
+                                  undefined,
+                                  {
+                                    step: 1,
+                                    addonAfter: "CPU-h",
+                                    unbounded: true,
+                                    extra:
+                                      "QoS capacity expected on standard, non-spot hosts.",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {expectedUsageInput(
+                                  "standardRamGbHoursMonthly",
+                                  "Expected standard RAM / month",
+                                  undefined,
+                                  {
+                                    step: 1,
+                                    addonAfter: "GB-h",
+                                    unbounded: true,
+                                    extra:
+                                      "RAM GB-hours/month expected on standard, non-spot hosts.",
+                                  },
+                                )}
+                              </Col>
+                            </Row>
+                            <Button
+                              style={{ marginTop: "12px" }}
+                              onClick={resetExpectedUsageEstimate}
+                            >
+                              Clear expected usage estimates
+                            </Button>
+                          </>
+                        ),
+                      })}
+                      {fieldGroup({
                         title: "Risk Snapshot",
-                        note: "Hard-cost exposure assumes the 7-day limits are fully used every week. Dedicated-host spend uses the larger weekly credit/prepaid guardrail, since those are alternate funding paths.",
+                        note: "Hard-cost exposure assumes the configured limits are fully used. CPU/RAM QoS cost only appears in the expected column above because it is a capacity planning assumption, not a hard project-start cap.",
                         children: (
                           <>
                             <Row gutter={[16, 16]}>
@@ -1824,6 +2672,14 @@ export function MembershipTiers() {
                                 {riskMetric(
                                   "Target hard-cost budget",
                                   currency(analysis.targetHardCostBudgetUsd),
+                                  `price × ${formattedPercent(
+                                    Math.max(
+                                      0,
+                                      1 -
+                                        pricingAssumptions.targetGrossMargin -
+                                        pricingAssumptions.overheadReserve,
+                                    ),
+                                  )}`,
                                 )}
                               </Col>
                               <Col xs={24} md={12} xl={6}>
@@ -1844,38 +2700,51 @@ export function MembershipTiers() {
                               </Col>
                               <Col xs={24} md={12} xl={6}>
                                 {riskMetric(
-                                  "Average CPU promise",
+                                  "Average CPUs if fully used",
                                   `${formattedNumber(
                                     analysis.capacity.averageCpuEntitlement,
                                     2,
                                   )} CPUs`,
+                                  `monthly CPU-hours ÷ ${formattedNumber(
+                                    MEMBERSHIP_TIER_PRICING_HOURS_PER_MONTH,
+                                    0,
+                                  )}`,
                                 )}
                               </Col>
                               <Col xs={24} md={12} xl={6}>
                                 {riskMetric(
-                                  "CPU-hours / month",
+                                  "Monthly CPU allowance",
                                   `${formattedNumber(
                                     analysis.capacity.cpuHoursMonthlyBudget,
                                     0,
                                   )} h`,
+                                  `7-day CPU budget × ${formattedNumber(
+                                    monthlyScale,
+                                    2,
+                                  )}`,
                                 )}
                               </Col>
                               <Col xs={24} md={12} xl={6}>
                                 {riskMetric(
-                                  "Active project RAM",
+                                  "Modeled active project RAM",
                                   `${formattedNumber(
                                     analysis.capacity.activeProjectRamGb,
                                     1,
                                   )} GB`,
+                                  `${formattedNumber(
+                                    analysis.capacity.modeledActiveProjects,
+                                    1,
+                                  )} active project(s) × project RAM`,
                                 )}
                               </Col>
                               <Col xs={24} md={12} xl={6}>
                                 {riskMetric(
-                                  "Shared host user share",
+                                  "RAM capacity target",
                                   `${formattedNumber(
                                     analysis.capacity.sharedHostRamUserShare,
                                     1,
                                   )} GB RAM`,
+                                  "host RAM × RAM oversubscription",
                                 )}
                               </Col>
                             </Row>
@@ -1896,57 +2765,6 @@ export function MembershipTiers() {
                         ),
                       })}
                       {fieldGroup({
-                        title: "Modeled Monthly Hard Cost",
-                        note: "These are worst-case allowance costs, not expected average usage.",
-                        children: (
-                          <Row gutter={[16, 16]}>
-                            <Col xs={24} md={12} xl={8}>
-                              {riskMetric(
-                                "AI",
-                                currency(analysis.hardCosts.aiMonthlyUsd),
-                              )}
-                            </Col>
-                            <Col xs={24} md={12} xl={8}>
-                              {riskMetric(
-                                "Egress",
-                                currency(analysis.hardCosts.egressMonthlyUsd),
-                              )}
-                            </Col>
-                            <Col xs={24} md={12} xl={8}>
-                              {riskMetric(
-                                "Blob storage",
-                                currency(
-                                  analysis.hardCosts.blobStorageMonthlyUsd,
-                                ),
-                              )}
-                            </Col>
-                            <Col xs={24} md={12} xl={8}>
-                              {riskMetric(
-                                "Rootfs storage",
-                                currency(
-                                  analysis.hardCosts.rootfsStorageMonthlyUsd,
-                                ),
-                              )}
-                            </Col>
-                            <Col xs={24} md={12} xl={8}>
-                              {riskMetric(
-                                "Dedicated host guardrail",
-                                currency(
-                                  analysis.hardCosts
-                                    .dedicatedHostGuardrailMonthlyUsd,
-                                ),
-                              )}
-                            </Col>
-                            <Col xs={24} md={12} xl={8}>
-                              {riskMetric(
-                                "Total",
-                                currency(analysis.hardCosts.totalMonthlyUsd),
-                              )}
-                            </Col>
-                          </Row>
-                        ),
-                      })}
-                      {fieldGroup({
                         title: "Assumptions",
                         note: "Saved in this browser. Use the main Site Settings page later if these should become shared global defaults for all admins.",
                         children: (
@@ -1961,7 +2779,7 @@ export function MembershipTiers() {
                                     step: 1,
                                     addonAfter: "%",
                                     extra:
-                                      "Revenue fraction reserved as gross margin.",
+                                      "Revenue fraction that must remain after modeled direct costs and overhead.",
                                   },
                                 )}
                               </Col>
@@ -1974,7 +2792,7 @@ export function MembershipTiers() {
                                     step: 1,
                                     addonAfter: "%",
                                     extra:
-                                      "Revenue fraction reserved for support, payment fees, and operations.",
+                                      "Revenue fraction reserved for support, payment fees, and operations. Target hard-cost budget = price × (100% - margin - overhead).",
                                   },
                                 )}
                               </Col>
@@ -2000,8 +2818,20 @@ export function MembershipTiers() {
                               </Col>
                               <Col {...fieldCol}>
                                 {assumptionInput(
+                                  "projectStorageCostPerGbMonth",
+                                  "Project file storage cost",
+                                  {
+                                    step: 0.001,
+                                    addonAfter: "$/GB-mo",
+                                    extra:
+                                      "Cost basis for the project file storage hard cap across owned projects.",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
                                   "blobStorageCostPerGbMonth",
-                                  "Blob storage cost",
+                                  "R2/blob storage cost",
                                   {
                                     step: 0.001,
                                     addonAfter: "$/GB-mo",
@@ -2020,11 +2850,75 @@ export function MembershipTiers() {
                               </Col>
                               <Col {...fieldCol}>
                                 {assumptionInput(
-                                  "sharedHostMonthlyCostUsd",
-                                  "Shared host cost",
+                                  "spotCpuCostPerMonth",
+                                  "Spot CPU cost",
                                   {
+                                    step: 0.1,
+                                    addonAfter: "$/CPU-mo",
+                                    extra:
+                                      "Provider cost for one spot vCPU-month before utilization adjustment.",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "spotRamGbCostPerMonth",
+                                  "Spot RAM cost",
+                                  {
+                                    step: 0.1,
+                                    addonAfter: "$/GB-mo",
+                                    extra:
+                                      "Provider cost for one spot RAM GB-month before utilization adjustment.",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "standardCpuCostPerMonth",
+                                  "Standard CPU cost",
+                                  {
+                                    step: 0.1,
+                                    addonAfter: "$/CPU-mo",
+                                    extra:
+                                      "Provider cost for one standard vCPU-month before utilization adjustment.",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "standardRamGbCostPerMonth",
+                                  "Standard RAM cost",
+                                  {
+                                    step: 0.1,
+                                    addonAfter: "$/GB-mo",
+                                    extra:
+                                      "Provider cost for one standard RAM GB-month before utilization adjustment.",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "averageCpuUtilization",
+                                  "Average VM CPU utilization",
+                                  {
+                                    multiplier: 100,
                                     step: 1,
-                                    addonAfter: "$/mo",
+                                    addonAfter: "%",
+                                    extra:
+                                      "Effective unit CPU price divides provider CPU cost by this utilization.",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "averageRamUtilization",
+                                  "Average VM RAM utilization",
+                                  {
+                                    multiplier: 100,
+                                    step: 1,
+                                    addonAfter: "%",
+                                    extra:
+                                      "Effective unit RAM price divides provider RAM cost by this utilization.",
                                   },
                                 )}
                               </Col>
@@ -2035,6 +2929,8 @@ export function MembershipTiers() {
                                   {
                                     step: 1,
                                     addonAfter: "GB",
+                                    extra:
+                                      "Capacity reference for RAM pressure; not counted as direct hard-cost exposure.",
                                   },
                                 )}
                               </Col>
@@ -2045,6 +2941,8 @@ export function MembershipTiers() {
                                   {
                                     step: 1,
                                     addonAfter: "vCPU",
+                                    extra:
+                                      "Capacity reference for CPU pressure; not counted as direct hard-cost exposure.",
                                   },
                                 )}
                               </Col>
@@ -2055,6 +2953,8 @@ export function MembershipTiers() {
                                   {
                                     step: 0.1,
                                     addonAfter: "x",
+                                    extra:
+                                      "How many users' active project RAM can reasonably share one host.",
                                   },
                                 )}
                               </Col>
@@ -2065,6 +2965,8 @@ export function MembershipTiers() {
                                   {
                                     step: 0.5,
                                     addonAfter: "x",
+                                    extra:
+                                      "How many average-CPU promises can reasonably share one host.",
                                   },
                                 )}
                               </Col>
@@ -2076,7 +2978,7 @@ export function MembershipTiers() {
                                     step: 0.1,
                                     addonAfter: "projects",
                                     extra:
-                                      "Fallback active project count when this tier has no running-project limit.",
+                                      "Used for modeled active project RAM; capped by the tier's sponsored running-project limit when that limit is set.",
                                   },
                                 )}
                               </Col>
@@ -2171,8 +3073,11 @@ export function MembershipTiers() {
               <Button
                 htmlType="button"
                 onClick={() => {
-                  form.resetFields();
-                  edit_new_tier();
+                  if (editing != null) {
+                    form.setFieldsValue(tierToFormValues(editing));
+                  } else {
+                    form.resetFields();
+                  }
                 }}
               >
                 Reset
@@ -2194,6 +3099,318 @@ export function MembershipTiers() {
     );
   }
 
+  async function createTierFromModal(): Promise<void> {
+    try {
+      const values = await createTierForm.validateFields();
+      await create_tier_from_template({
+        id: values.id,
+        label: values.label,
+        template: values.template,
+      });
+      setCreateTierOpen(false);
+      createTierForm.resetFields();
+    } catch (err) {
+      if (err?.errorFields != null) return;
+      const message = err?.message ?? String(err);
+      set_error(message);
+      if (message.includes("already exists")) {
+        createTierForm.setFields([{ name: "id", errors: [message] }]);
+      }
+    }
+  }
+
+  function openCreateTierModal() {
+    setCreateTierOpen(true);
+    createTierForm.setFieldsValue({
+      template: "standard",
+      id: "",
+      label: "",
+    });
+  }
+
+  function exportMembershipTiers() {
+    const payload = membershipTierExportPayload(Object.values(data));
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `cocalc-membership-tiers-${dayjs().format(
+      "YYYY-MM-DD-HHmmss",
+    )}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function buildImportCandidates(
+    tiers: Tier[],
+  ): MembershipTierImportCandidate[] {
+    const byLabel = new Map<string, Tier>();
+    const duplicateLabels = new Set<string>();
+    for (const tier of Object.values(data)) {
+      const label = tier.label?.trim();
+      if (!label) continue;
+      if (byLabel.has(label)) {
+        duplicateLabels.add(label);
+      } else {
+        byLabel.set(label, tier);
+      }
+    }
+    for (const label of duplicateLabels) {
+      byLabel.delete(label);
+    }
+
+    const candidates = tiers.map((tier, index) => {
+      const sourceLabel = tier.label?.trim();
+      const labelMatch = sourceLabel ? byLabel.get(sourceLabel) : undefined;
+      const idMatch = data[tier.id];
+      const target = labelMatch ?? idMatch;
+      const match =
+        labelMatch != null ? "label" : idMatch != null ? "id" : "new";
+      const targetId = target?.id ?? tier.id;
+      const payload = buildMembershipTierPayload(
+        tierToFormValues({
+          ...tier,
+          id: targetId,
+          label: sourceLabel || tier.id,
+        }),
+      );
+      return {
+        key: `${index}:${tier.id}`,
+        sourceId: tier.id,
+        sourceLabel: tier.label,
+        targetId,
+        targetLabel: target?.label,
+        match,
+        payload,
+      } satisfies MembershipTierImportCandidate;
+    });
+
+    const targetCounts = candidates.reduce<Record<string, number>>(
+      (counts, candidate) => {
+        counts[candidate.targetId] = (counts[candidate.targetId] ?? 0) + 1;
+        return counts;
+      },
+      {},
+    );
+    return candidates.map((candidate) => ({
+      ...candidate,
+      disabledReason:
+        targetCounts[candidate.targetId] > 1
+          ? `Another imported tier also maps to "${candidate.targetId}".`
+          : undefined,
+    }));
+  }
+
+  async function handleImportFileSelected(
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file == null) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      const tiers = parseMembershipTierImportJson(parsed);
+      const candidates = buildImportCandidates(tiers);
+      setImportCandidates(candidates);
+      setImportSelectedKeys(
+        candidates
+          .filter((candidate) => candidate.disabledReason == null)
+          .map((candidate) => candidate.key),
+      );
+      setImportError("");
+      setImportModalOpen(true);
+    } catch (err) {
+      setImportError(err.message ?? String(err));
+      setImportCandidates([]);
+      setImportSelectedKeys([]);
+      setImportModalOpen(true);
+    }
+  }
+
+  async function importSelectedMembershipTiers() {
+    const selected = importCandidates.filter((candidate) =>
+      importSelectedKeys.includes(candidate.key),
+    );
+    if (selected.length === 0) {
+      setImportError("Select at least one tier to import.");
+      return;
+    }
+    setImporting(true);
+    try {
+      await import_tiers(selected.map((candidate) => candidate.payload));
+      setImportModalOpen(false);
+      setImportCandidates([]);
+      setImportSelectedKeys([]);
+      setImportError("");
+    } catch (err) {
+      setImportError(err.message ?? String(err));
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  function render_create_tier_modal() {
+    return (
+      <Modal
+        title="Create Membership Tier"
+        open={createTierOpen}
+        okText="Create tier"
+        confirmLoading={saving}
+        onOk={() => createTierFromModal()}
+        onCancel={() => {
+          setCreateTierOpen(false);
+          createTierForm.resetFields();
+        }}
+        destroyOnHidden
+      >
+        <Paragraph type="secondary">
+          Choose a starting template once, then create the tier. Template
+          presets are not shown in the editor for existing tiers.
+        </Paragraph>
+        <Form
+          layout="vertical"
+          form={createTierForm}
+          initialValues={{ template: "standard" }}
+        >
+          <Form.Item
+            name="template"
+            label="Starting template"
+            rules={[{ required: true }]}
+          >
+            <Select
+              options={TEMPLATE_KEYS.map((key) => ({
+                value: key,
+                label: TIER_TEMPLATES[key].label,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item
+            name="id"
+            label="Tier ID"
+            extra="Stable machine identifier, e.g. standard or pro."
+            rules={[
+              { required: true, message: "Enter a tier ID." },
+              {
+                pattern: /^[a-z0-9][a-z0-9_-]*$/,
+                message:
+                  "Use lowercase letters, numbers, underscores, or hyphens.",
+              },
+              {
+                validator: async (_, value) => {
+                  const id =
+                    typeof value === "string" ? value.trim() : String(value);
+                  if (!id || data[id] == null) return;
+                  throw Error(`membership tier "${id}" already exists`);
+                },
+              },
+            ]}
+          >
+            <Input autoFocus />
+          </Form.Item>
+          <Form.Item
+            name="label"
+            label="Display name"
+            rules={[{ required: true, message: "Enter a display name." }]}
+          >
+            <Input />
+          </Form.Item>
+        </Form>
+      </Modal>
+    );
+  }
+
+  function render_import_tiers_modal() {
+    return (
+      <Modal
+        title="Import Membership Tiers"
+        open={importModalOpen}
+        okText={`Import ${importSelectedKeys.length} tier(s)`}
+        okButtonProps={{
+          disabled:
+            importCandidates.length === 0 || importSelectedKeys.length === 0,
+        }}
+        confirmLoading={importing || saving}
+        onOk={() => importSelectedMembershipTiers()}
+        onCancel={() => {
+          setImportModalOpen(false);
+          setImportError("");
+        }}
+        width={900}
+      >
+        <Paragraph type="secondary">
+          Review the tiers in this JSON file before importing. Exact display
+          label matches overwrite the existing tier with that label; otherwise
+          exact tier ID matches overwrite by ID; otherwise a new tier is
+          created.
+        </Paragraph>
+        {importError && (
+          <Alert
+            style={{ marginBottom: "12px" }}
+            type="error"
+            showIcon
+            message={importError}
+          />
+        )}
+        <Table<MembershipTierImportCandidate>
+          size="small"
+          rowKey="key"
+          dataSource={importCandidates}
+          pagination={false}
+          rowSelection={{
+            selectedRowKeys: importSelectedKeys,
+            onChange: setImportSelectedKeys,
+            getCheckboxProps: (candidate) => ({
+              disabled: candidate.disabledReason != null,
+            }),
+          }}
+        >
+          <Table.Column<MembershipTierImportCandidate>
+            title="Import ID"
+            dataIndex="sourceId"
+          />
+          <Table.Column<MembershipTierImportCandidate>
+            title="Name"
+            dataIndex="sourceLabel"
+            render={(label, candidate) => label || candidate.sourceId}
+          />
+          <Table.Column<MembershipTierImportCandidate>
+            title="Import action"
+            render={(_, candidate) => {
+              if (candidate.disabledReason) {
+                return <Text type="danger">{candidate.disabledReason}</Text>;
+              }
+              if (candidate.match === "label") {
+                return (
+                  <Text>
+                    Overwrite tier <Text code>{candidate.targetId}</Text> by
+                    matching label.
+                  </Text>
+                );
+              }
+              if (candidate.match === "id") {
+                return (
+                  <Text>
+                    Overwrite tier <Text code>{candidate.targetId}</Text> by
+                    matching ID.
+                  </Text>
+                );
+              }
+              return (
+                <Text>
+                  Create new tier <Text code>{candidate.targetId}</Text>.
+                </Text>
+              );
+            }}
+          />
+        </Table>
+      </Modal>
+    );
+  }
+
   function render_buttons() {
     const any_selected = sel_rows.length > 0;
     const selected_has_usage = sel_rows.some(
@@ -2206,7 +3423,7 @@ export function MembershipTiers() {
         <Button
           type={!any_selected ? "primary" : "default"}
           disabled={any_selected}
-          onClick={() => edit_new_tier()}
+          onClick={() => openCreateTierModal()}
         >
           <Icon name="plus" /> Add
         </Button>
@@ -2222,6 +3439,19 @@ export function MembershipTiers() {
         <Button onClick={() => load()}>
           <Icon name="refresh" /> Refresh
         </Button>
+        <Button onClick={exportMembershipTiers}>
+          <Icon name="download" /> Export JSON
+        </Button>
+        <Button onClick={() => importFileInputRef.current?.click()}>
+          <Icon name="upload" /> Import JSON
+        </Button>
+        <input
+          ref={importFileInputRef}
+          type="file"
+          accept="application/json,.json"
+          style={{ display: "none" }}
+          onChange={handleImportFileSelected}
+        />
       </Space.Compact>
     );
   }
@@ -2415,6 +3645,8 @@ export function MembershipTiers() {
     <div>
       {render_error()}
       {render_control()}
+      {render_create_tier_modal()}
+      {render_import_tiers_modal()}
       {render_info()}
     </div>
   );

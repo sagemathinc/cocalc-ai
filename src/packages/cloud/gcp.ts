@@ -639,7 +639,7 @@ export class GcpProvider implements CloudProvider {
         accessConfigs: [
           {
             name: "External NAT",
-            networkTier: "PREMIUM",
+            networkTier: "STANDARD",
           },
         ],
         stackType: "IPV4_ONLY",
@@ -1020,7 +1020,7 @@ export class GcpProvider implements CloudProvider {
         accessConfigs: [
           {
             name: "External NAT",
-            networkTier: "PREMIUM",
+            networkTier: "STANDARD",
           },
         ],
         stackType: "IPV4_ONLY",

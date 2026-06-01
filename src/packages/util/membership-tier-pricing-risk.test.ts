@@ -10,10 +10,11 @@ describe("membership tier pricing risk", () => {
         priceMonthlyUsd: 20,
         aiUnits7d: 70,
         egress7dGb: 14,
+        projectStorageHardCapGb: 10,
         blobStorageGb: 100,
         rootfsStorageGb: 50,
         creditSpendLimit7dUsd: 7,
-        prepaidHostUsageLimit7dUsd: 3,
+        prepaidHostUsageLimit7dUsd: 1000,
         cpu7dHours: 168,
         projectMemoryMb: 2000,
         maxSponsoredRunningProjects: 2,
@@ -23,6 +24,7 @@ describe("membership tier pricing risk", () => {
         overheadReserve: 0.1,
         aiUnitCostUsd: 0.1,
         egressCostPerGb: 0.2,
+        projectStorageCostPerGbMonth: 0.15,
         blobStorageCostPerGbMonth: 0.01,
         rootfsStorageCostPerGbMonth: 0.02,
         sharedHostUsableVcpu: 16,
@@ -31,15 +33,62 @@ describe("membership tier pricing risk", () => {
     );
 
     expect(analysis.targetHardCostBudgetUsd).toBeCloseTo(8);
-    expect(analysis.hardCosts.aiMonthlyUsd).toBeCloseTo(30);
-    expect(analysis.hardCosts.egressMonthlyUsd).toBeCloseTo(12);
+    expect(analysis.hardCosts.aiMonthlyUsd).toBeCloseTo(30.5);
+    expect(analysis.hardCosts.egressMonthlyUsd).toBeCloseTo(12.2);
+    expect(analysis.hardCosts.projectStorageMonthlyUsd).toBeCloseTo(1.5);
     expect(analysis.hardCosts.blobStorageMonthlyUsd).toBeCloseTo(1);
     expect(analysis.hardCosts.rootfsStorageMonthlyUsd).toBeCloseTo(1);
-    expect(analysis.hardCosts.dedicatedHostGuardrailMonthlyUsd).toBeCloseTo(30);
-    expect(analysis.capacity.cpuHoursMonthlyBudget).toBeCloseTo(720);
+    expect(
+      analysis.hardCosts.dedicatedHostCreditGuardrailMonthlyUsd,
+    ).toBeCloseTo(30.5);
+    expect(analysis.hardCosts.prepaidHostGuardrailMonthlyUsd).toBeCloseTo(
+      30500 / 7,
+    );
+    expect(analysis.hardCosts.totalMonthlyUsd).toBeCloseTo(46.2);
+    expect(analysis.capacity.cpuHoursMonthlyBudget).toBeCloseTo(732);
     expect(analysis.capacity.averageCpuEntitlement).toBeCloseTo(1);
-    expect(analysis.capacity.activeProjectRamGb).toBeCloseTo(4);
+    expect(analysis.capacity.modeledActiveProjects).toBeCloseTo(1);
+    expect(analysis.capacity.activeProjectRamGb).toBeCloseTo(2);
     expect(analysis.messages[0]?.severity).toBe("danger");
+  });
+
+  it("models expected compute QoS from monthly CPU and RAM GB-hours", () => {
+    const analysis = analyzeMembershipTierPricingRisk({
+      spotCpuHoursMonthly: 50,
+      spotRamGbHoursMonthly: 100,
+      standardCpuHoursMonthly: 10,
+      standardRamGbHoursMonthly: 20,
+    });
+
+    expect(analysis.hardCosts.spotCpuMonthlyUsd).toBeCloseTo((50 / 732) * 12);
+    expect(analysis.hardCosts.spotRamMonthlyUsd).toBeCloseTo((100 / 732) * 2);
+    expect(analysis.hardCosts.standardCpuMonthlyUsd).toBeCloseTo(
+      (10 / 732) * 50,
+    );
+    expect(analysis.hardCosts.standardRamMonthlyUsd).toBeCloseTo(
+      (20 / 732) * 7,
+    );
+    expect(analysis.hardCosts.computeMonthlyUsd).toBeCloseTo(
+      (50 / 732) * 12 + (100 / 732) * 2 + (10 / 732) * 50 + (20 / 732) * 7,
+    );
+    expect(analysis.hardCosts.totalMonthlyUsd).toBeCloseTo(
+      analysis.hardCosts.computeMonthlyUsd,
+    );
+  });
+
+  it("caps modeled active projects by the sponsored running-project limit", () => {
+    const analysis = analyzeMembershipTierPricingRisk(
+      {
+        projectMemoryMb: 2000,
+        maxSponsoredRunningProjects: 2,
+      },
+      {
+        activeProjectConcurrency: 5,
+      },
+    );
+
+    expect(analysis.capacity.modeledActiveProjects).toBe(2);
+    expect(analysis.capacity.activeProjectRamGb).toBeCloseTo(4);
   });
 
   it("uses yearly price when monthly price is absent", () => {
@@ -64,12 +113,16 @@ describe("membership tier pricing risk", () => {
     const assumptions = normalizeMembershipTierPricingAssumptions({
       targetGrossMargin: 2,
       overheadReserve: -1,
+      averageCpuUtilization: 0,
+      averageRamUtilization: 2,
       sharedHostUsableRamGb: 0,
       targetCpuOversubscription: -5,
     });
 
     expect(assumptions.targetGrossMargin).toBe(1);
     expect(assumptions.overheadReserve).toBe(0);
+    expect(assumptions.averageCpuUtilization).toBe(0.5);
+    expect(assumptions.averageRamUtilization).toBe(1);
     expect(assumptions.sharedHostUsableRamGb).toBeGreaterThan(0);
     expect(assumptions.targetCpuOversubscription).toBeGreaterThan(0);
   });
