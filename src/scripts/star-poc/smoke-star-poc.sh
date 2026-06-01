@@ -169,7 +169,11 @@ cocalc_cli() {
   cookie_header="$(cat "${STATE_DIR}/cookie-header")"
   (
     cd "$SRC_ROOT"
-    node packages/cli/dist/bin/cocalc.js \
+    local cli_entry="packages/cli/dist/bin/cocalc.js"
+    if [ -f packages/cli/build/bundle/index.js ]; then
+      cli_entry="packages/cli/build/bundle/index.js"
+    fi
+    node "$cli_entry" \
       --api "$STAR_API" \
       --cookie "$cookie_header" \
       --output json \

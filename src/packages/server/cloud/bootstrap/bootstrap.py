@@ -2425,6 +2425,9 @@ for sudo_conf_path in /etc/sudo.conf /etc/sudoers /etc/sudoers.d; do
   [ -e "$sudo_conf_path" ] || continue
   chown root:root "$sudo_conf_path"
 done
+if [ -d /etc/sudoers.d ]; then
+  find /etc/sudoers.d -mindepth 1 -maxdepth 1 -exec chown root:root {} +
+fi
 EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
 )"
     normalize_runtime_package_state_rootfs() {

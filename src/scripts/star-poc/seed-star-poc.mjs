@@ -1,13 +1,10 @@
 #!/usr/bin/env node
 
 import { mkdirSync, writeFileSync, chmodSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import { dirname } from "node:path";
 
-const scriptDir = dirname(fileURLToPath(import.meta.url));
-const srcRoot = resolve(scriptDir, "../..");
-const databaseDist = resolve(srcRoot, "packages/database/dist");
-const serverDist = resolve(srcRoot, "packages/server/dist");
+const require = createRequire(import.meta.url);
 
 const hostId =
   process.env.STAR_PROJECT_HOST_ID ?? "11111111-1111-4111-8111-111111111111";
@@ -30,29 +27,27 @@ if (
   }
   process.env.PGUSER ??= "smc";
   process.env.PGDATABASE ??= "smc";
-  const { ensureLocalPostgres } = await import(
-    `${databaseDist}/postgres/dev.js`
-  );
+  const { ensureLocalPostgres } = require("@cocalc/database/postgres/dev");
   await ensureLocalPostgres({ enabled: true, logExports: false });
 } else if (process.env.COCALC_DB !== "pglite") {
   throw new Error("CoCalc Star requires COCALC_DB=pglite or local postgres");
 }
 
-const { syncSchema } = await import(`${databaseDist}/postgres/schema/index.js`);
-const poolModule = await import(`${databaseDist}/pool/index.js`);
+const { syncSchema } = require("@cocalc/database/postgres/schema");
+const poolModule = require("@cocalc/database/pool");
 const getPool = poolModule.default?.default ?? poolModule.default;
 if (typeof getPool !== "function") {
   throw new Error("database pool module did not export getPool");
 }
-const { upsertProjectHost } = await import(
-  `${databaseDist}/postgres/project-hosts.js`
-);
-const { ensureBootstrapAdminToken } = await import(
-  `${serverDist}/auth/bootstrap-admin.js`
-);
-const { createProjectHostMasterConatToken } = await import(
-  `${serverDist}/project-host/bootstrap-token.js`
-);
+const {
+  upsertProjectHost,
+} = require("@cocalc/database/postgres/project-hosts");
+const {
+  ensureBootstrapAdminToken,
+} = require("@cocalc/server/auth/bootstrap-admin");
+const {
+  createProjectHostMasterConatToken,
+} = require("@cocalc/server/project-host/bootstrap-token");
 
 await syncSchema();
 
