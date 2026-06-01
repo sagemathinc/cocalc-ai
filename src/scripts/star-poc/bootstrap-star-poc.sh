@@ -253,11 +253,12 @@ configure_users_and_dirs() {
     "$STAR_PROJECT_HOST_DATA/cache/images" \
     "$STAR_PROJECT_HOST_DATA/cache/project-roots" \
     "$STAR_PROJECT_HOST_DATA/secrets" \
+    "$STAR_ROOT/backup" \
     /etc/cocalc/star
   chmod 700 "$STAR_PROJECT_HOST_DATA/tmp"
   # Do not recursively chown STAR_ROOT. It contains cached RootFS trees whose
   # numeric ownership is part of the container runtime contract.
-  chown -R "$STAR_USER:$STAR_USER" "$STAR_DATA"
+  chown -R "$STAR_USER:$STAR_USER" "$STAR_DATA" "$STAR_ROOT/backup"
   chown "$STAR_USER:$STAR_USER" \
     "$STAR_ROOT" \
     "$STAR_PROJECT_HOST_DATA" \
