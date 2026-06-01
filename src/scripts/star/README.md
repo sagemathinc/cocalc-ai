@@ -104,7 +104,8 @@ first admin account.
 
 ```sh
 STAR_INSTALL_ROOT=/opt/cocalc-star
-STAR_USER=user
+STAR_USER=cocalc-star
+STAR_PROJECT_HOST_REGION=wnam
 STAR_BTRFS_SIZE=100G
 STAR_BUILD=1
 STAR_BUILD_DEFAULT_ROOTFS=1

@@ -11,7 +11,7 @@ if [ -f "$STAR_CONFIG" ]; then
 fi
 STAR_API="${STAR_API:-http://127.0.0.1:9100}"
 STAR_ROOT="${STAR_ROOT:-/var/lib/cocalc/star}"
-STAR_USER="${STAR_USER:-user}"
+STAR_USER="${STAR_USER:-cocalc-star}"
 STAR_HOME="${STAR_HOME:-/home/${STAR_USER}}"
 STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
 STAR_INSTALL_ROOT="${STAR_INSTALL_ROOT:-/opt/cocalc-star}"

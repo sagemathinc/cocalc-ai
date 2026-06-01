@@ -7,6 +7,7 @@ async function main() {
   const hostId =
     process.env.STAR_PROJECT_HOST_ID ?? "11111111-1111-4111-8111-111111111111";
   const hostName = process.env.STAR_PROJECT_HOST_NAME ?? "star-local";
+  const hostRegion = process.env.STAR_PROJECT_HOST_REGION ?? "wnam";
   const baseUrl = process.env.STAR_BASE_URL ?? "http://127.0.0.1:9100";
   const defaultRootfsImage = process.env.STAR_DEFAULT_ROOTFS_IMAGE;
   const masterTokenPath =
@@ -82,7 +83,7 @@ async function main() {
     id: hostId,
     bay_id: "bay-0",
     name: hostName,
-    region: "local",
+    region: hostRegion,
     public_url: null,
     internal_url: "http://127.0.0.1:9002",
     ssh_server: "127.0.0.1:2222",

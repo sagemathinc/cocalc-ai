@@ -14,6 +14,7 @@ STAR_ROOT="${STAR_ROOT:-/var/lib/cocalc/star}"
 STAR_DATA="${STAR_DATA:-${STAR_ROOT}/launchpad}"
 STAR_PROJECT_HOST_DATA="${STAR_PROJECT_HOST_DATA:-${STAR_ROOT}/project-host/0}"
 STAR_HOST_ID="${STAR_HOST_ID:-11111111-1111-4111-8111-111111111111}"
+STAR_PROJECT_HOST_REGION="${STAR_PROJECT_HOST_REGION:-wnam}"
 STAR_BASE_PORT="${STAR_BASE_PORT:-9100}"
 STAR_BASE_URL="${STAR_BASE_URL:-http://127.0.0.1:${STAR_BASE_PORT}}"
 STAR_BTRFS_IMAGE="${STAR_BTRFS_IMAGE:-/var/lib/cocalc/btrfs.img}"
@@ -315,6 +316,7 @@ write_env_files() {
     printf 'STAR_BASE_PORT=%q\n' "$STAR_BASE_PORT"
     printf 'STAR_BASE_URL=%q\n' "$STAR_BASE_URL"
     printf 'STAR_API=%q\n' "$STAR_BASE_URL"
+    printf 'STAR_PROJECT_HOST_REGION=%q\n' "$STAR_PROJECT_HOST_REGION"
     printf 'STAR_INSTALL_ROOT=%q\n' "${STAR_INSTALL_ROOT:-/opt/cocalc-star}"
     printf 'STAR_DEFAULT_ROOTFS_IMAGE=%q\n' "$STAR_DEFAULT_ROOTFS_IMAGE"
   } >/etc/cocalc/star/config.env
@@ -353,7 +355,7 @@ EOF
 PROJECT_HOST_ID=${STAR_HOST_ID}
 PROJECT_HOST_NAME=star-local
 COCALC_ROOT=${SRC_ROOT}
-PROJECT_HOST_REGION=local
+PROJECT_HOST_REGION=${STAR_PROJECT_HOST_REGION}
 PROJECT_HOST_PUBLIC_URL=http://127.0.0.1:9002
 PROJECT_HOST_INTERNAL_URL=http://127.0.0.1:9002
 PROJECT_HOST_SSH_SERVER=127.0.0.1:2222
@@ -388,7 +390,7 @@ seed_database() {
   if [ -f "$SRC_ROOT/scripts/star-poc/build/seed-star-poc/index.cjs" ]; then
     script="scripts/star-poc/build/seed-star-poc/index.cjs"
   fi
-  as_star_user "set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_BASE_URL='$STAR_BASE_URL' STAR_MASTER_CONAT_TOKEN_PATH='$STAR_PROJECT_HOST_DATA/secrets/master-conat-token' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' STAR_BOOTSTRAP_RESULT_PATH='$STAR_ROOT/bootstrap-result.json' node '$script'"
+  as_star_user "set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_PROJECT_HOST_REGION='$STAR_PROJECT_HOST_REGION' STAR_BASE_URL='$STAR_BASE_URL' STAR_MASTER_CONAT_TOKEN_PATH='$STAR_PROJECT_HOST_DATA/secrets/master-conat-token' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' STAR_BOOTSTRAP_RESULT_PATH='$STAR_ROOT/bootstrap-result.json' node '$script'"
 }
 
 install_systemd() {
