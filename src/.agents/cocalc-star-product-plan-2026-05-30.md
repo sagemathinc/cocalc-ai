@@ -18,10 +18,19 @@ Implementation status as of 2026-06-01:
 - A real Star VM was upgraded from an older release to a newer release artifact,
   then validated with `doctor`, `smoke`, rollback to the previous release,
   `doctor`, roll-forward to the latest release, and `doctor`.
+- Full two-release GCE validation is automated by
+  `src/scripts/star/validate-gce-release-upgrade.sh`. The successful run
+  validated release A install + smoke, release B upgrade + smoke, rollback to
+  release A + smoke, hard-reset boot into release A, and final restore to
+  release B + doctor.
 - The first real upgrade attempt exposed two important release-path bugs:
   root-run upgrades must preserve the existing Star runtime user instead of
   switching to `root`, and failed installs must restore mutable Star service
   config as well as release symlinks. Both are fixed in the current installer.
+- Hard-reset validation exposed a normal boot readiness race: SSH and systemd
+  can be available before local Postgres, the customize endpoint, and Conat
+  health checks are ready. The GCE validator now retries `star.sh doctor` after
+  reset and after final release restore.
 - Current implementation is still a source/tarball install, not a final
   marketplace image or SEA binary.
 
@@ -1098,9 +1107,11 @@ Validation:
 - Doctor passes after rollback to the previous release on a full VM. Done.
 - Doctor passes after rolling forward again to the latest release on a full VM.
   Done.
-- Smoke after rollback has not yet been run on the full VM.
-- Hard reset after rollback starts the selected release. Not yet validated on a
-  full VM.
+- Smoke after rollback passes on a full VM. Done.
+- Hard reset after rollback starts the selected release and `doctor` passes
+  after readiness retry. Done.
+- Automated artifact-driven GCE validation exists:
+  `src/scripts/star/validate-gce-release-upgrade.sh`. Done.
 
 ### Phase 3: Star Setup Profile In UI
 
@@ -1199,6 +1210,10 @@ Automated:
 - Unit tests for setup profile gating.
 - Integration test for local host row bootstrap.
 - Unit tests for source-build release metadata and dirty-check behavior.
+- GCE artifact validation via `src/scripts/star/validate-gce-release-upgrade.sh`:
+  release A install + smoke, release B upgrade + smoke, rollback smoke,
+  hard-reset boot validation, and final restore doctor. Done on an Ubuntu 24.04
+  GCE VM.
 
 Manual:
 
@@ -1245,14 +1260,16 @@ VM", is complete.
 
 Current recommended next step:
 
-1. Automate full-VM two-release validation so it can run regularly:
-   - release A installs and passes doctor/smoke,
-   - release B installs and passes doctor/smoke,
-   - rollback to release A passes doctor/smoke,
-   - hard reset after rollback still boots release A.
-2. After automated rollback is boring, make the tarball smaller and more release-like so
-   installs no longer need a full source build on the target VM.
-3. Then build the local source deploy lane:
+1. Make the artifact smaller and more release-like so installs no longer need a
+   full source build on the target VM. The current source artifact is good for
+   proof-of-concept correctness, but it is too slow for normal upgrades.
+2. Keep the same versioned release shape and rollback semantics:
+   `/opt/cocalc-star/releases/<release-id>`, `/opt/cocalc-star/source`, and
+   `/opt/cocalc-star/current`.
+3. Re-run `src/scripts/star/validate-gce-release-upgrade.sh` against the smaller
+   built-runtime artifacts until upgrade/rollback/reset validation remains
+   boring.
+4. Then build the local source deploy lane:
    - put a CoCalc checkout on the same VM,
    - build a Star-compatible release from that checkout,
    - deploy it through the same versioned release/rollback mechanism,
