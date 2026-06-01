@@ -178,6 +178,23 @@ wait_for_ssh() {
   die "timed out waiting for SSH after reset"
 }
 
+wait_for_doctor() {
+  local label="$1"
+  local i
+  local output
+  for i in $(seq 1 60); do
+    if output="$(ssh_run '/opt/cocalc-star/source/src/scripts/star/star.sh doctor' 2>&1)"; then
+      printf '%s\n' "$output"
+      return 0
+    fi
+    log "$label: doctor not ready yet ($i/60)"
+    printf '%s\n' "$output" >&2
+    sleep 5
+  done
+  log "$label: final doctor attempt"
+  run_star doctor
+}
+
 copy_artifact() {
   local artifact="$1"
   local release_id="$2"
@@ -217,14 +234,14 @@ if [ "$HARD_RESET" = "1" ]; then
     die "expected release $RELEASE_A_ID after reset, got $current"
   fi
   log "post-reset doctor"
-  run_star doctor
+  wait_for_doctor "post-reset"
 fi
 
 if [ "$RESTORE_B" = "1" ]; then
   log "restoring release B"
   run_star "rollback '$RELEASE_B_ID'"
   run_star current-release
-  run_star doctor
+  wait_for_doctor "restore release B"
 fi
 
 log "validation complete"
