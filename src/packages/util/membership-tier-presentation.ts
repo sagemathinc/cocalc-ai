@@ -244,6 +244,14 @@ export function buildMembershipTierPresentation(
   if (egress7d != null && egress7d > 0) {
     limits.push(`Managed egress: ${humanSize(egress7d)} per 7 days`);
   }
+  const cpu5h = asNumber(usageLimits.cpu_5h_seconds);
+  if (cpu5h != null && cpu5h > 0) {
+    limits.push(`CPU: ${round2(cpu5h / 3600)} CPU-hours per 5 hours`);
+  }
+  const cpu7d = asNumber(usageLimits.cpu_7d_seconds);
+  if (cpu7d != null && cpu7d > 0) {
+    limits.push(`CPU: ${round2(cpu7d / 3600)} CPU-hours per 7 days`);
+  }
 
   const rootfsStorage = asNumber(usageLimits.rootfs_total_storage_gb);
   const rootfsMax = asNumber(usageLimits.rootfs_max_storage_gb);

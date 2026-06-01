@@ -23,6 +23,8 @@ export interface MembershipUsageLimits {
   max_backups_per_project?: number;
   egress_5h_bytes?: number;
   egress_7d_bytes?: number;
+  cpu_5h_seconds?: number;
+  cpu_7d_seconds?: number;
   egress_policy?: MembershipEgressPolicy;
   dedicated_host_egress_policy?: DedicatedHostEgressPolicy;
   credit_spend_limit_5h_usd?: number;
@@ -108,6 +110,8 @@ export interface AccountUsageLimitOverrides {
   max_backups_per_project?: NumericLimitRule;
   egress_5h_bytes?: NumericLimitRule;
   egress_7d_bytes?: NumericLimitRule;
+  cpu_5h_seconds?: NumericLimitRule;
+  cpu_7d_seconds?: NumericLimitRule;
   egress_policy?: EnumOverride<MembershipEgressPolicy>;
   dedicated_host_egress_policy?: EnumOverride<DedicatedHostEgressPolicy>;
   credit_spend_limit_5h_usd?: NumericLimitRule;

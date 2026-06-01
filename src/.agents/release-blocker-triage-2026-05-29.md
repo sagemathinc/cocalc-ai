@@ -152,7 +152,7 @@ Next action:
 
 ### 4. Project Move Between Regions Is Still Bad
 
-Status: `open`
+Status: `done`
 
 Severity: high.
 
@@ -459,18 +459,21 @@ Next action:
 
 ### 14. CPU Usage Accounting And Abuse Detection
 
-Status: `open`
+Status: `done`
 
 Severity: high.
 
 Why it matters: free tier, free trials, and unblocked egress create real abuse risk. CPU accounting is needed both for enforcement and for detecting mining/password-cracking behavior.
 
-Deferral note:
+Implementation note:
 
-- This is important for abuse hardening, but it is a larger accounting and
-  enforcement project.
-- It should not block the next release if provider setup, membership tiers, and
-  operational admin paths are otherwise sane.
+- Implemented through Phase 4 in
+  `src/.agents/cpu-usage-accounting-abuse-plan-2026-05-30.md`.
+- CPU usage is accounted, visible to users/admins, graphed historically, usable
+  in the abuse review dashboard, annotatable by admins, and enforced at project
+  start when membership CPU budgets are configured.
+- Codex-assisted abuse triage is explicitly deferred until after launch and
+  real abuse patterns are available.
 
 Known requirements:
 
@@ -490,8 +493,8 @@ Expected outcome:
 
 Next action:
 
-- Split into a dedicated abuse/accounting plan before implementation.
-- Start with admin visibility before hard enforcement when this is resumed.
+- Manual smoke test CPU budget project-start blocking on the next rebuilt site
+  if desired.
 
 ### 15. Membership Tier Editor Cleanup
 
