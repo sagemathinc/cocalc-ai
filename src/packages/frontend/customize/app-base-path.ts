@@ -1,6 +1,12 @@
 import { APP_BASE_PATH_ROUTE_MARKERS } from "@cocalc/util/routing/app";
-import { LOCALE } from "@cocalc/util/i18n";
-import { is_valid_uuid_string as isUUID } from "@cocalc/util/misc";
+import { LOCALE } from "@cocalc/util/i18n/locale";
+
+const UUID_PATTERN =
+  /^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$/;
+
+function isUUID(uuid: string): boolean {
+  return UUID_PATTERN.test(uuid);
+}
 
 function inferProjectHostBasePath(pathname: string): string | undefined {
   const parts = pathname.split("/").filter(Boolean);
