@@ -456,7 +456,10 @@ install_systemd() {
     hub_workdir="$SRC_ROOT/packages/launchpad/build/bundle"
     hub_exec='exec node bundle/index.js --hostname=127.0.0.1'
     hub_bundle_env="Environment=COCALC_BUNDLE_DIR=${hub_workdir}"
-    api_v2_routes_bundle="${hub_workdir}/api-v2-routes-bundle/index.cjs"
+    api_v2_routes_bundle="$SRC_ROOT/scripts/star-poc/build/api-v2-routes-bundle/index.cjs"
+    if [ ! -f "$api_v2_routes_bundle" ]; then
+      api_v2_routes_bundle="${hub_workdir}/api-v2-routes-bundle/index.cjs"
+    fi
     if [ -f "$api_v2_routes_bundle" ]; then
       hub_bundle_env="${hub_bundle_env}
 Environment=COCALC_API_V2_ROUTES_BUNDLE=${api_v2_routes_bundle}"

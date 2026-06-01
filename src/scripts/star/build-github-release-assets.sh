@@ -67,6 +67,7 @@ mkdir -p "$output_dir"
 
 STAR_RELEASE_MODE=runtime \
   STAR_RELEASE_ID="$release_id" \
+  COCALC_STAR_RELEASE_ARCH="$arch" \
   "${SCRIPT_DIR}/build-star-release.sh" "$runtime_output"
 
 cp "${SCRIPT_DIR}/install-release.sh" "$installer_output"
