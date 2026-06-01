@@ -12,6 +12,7 @@ import {
   Card,
   Checkbox,
   Col,
+  Collapse,
   Form,
   Input,
   InputNumber,
@@ -20,7 +21,6 @@ import {
   Space,
   Switch,
   Table,
-  Tag,
   Typography,
 } from "antd";
 import dayjs from "dayjs";
@@ -46,6 +46,7 @@ import {
 import { COLORS } from "@cocalc/util/theme";
 
 const { Paragraph, Text } = Typography;
+const { Panel: CollapsePanel } = Collapse;
 const BYTES_PER_GB = 1000 * 1000 * 1000;
 const SECONDS_PER_CPU_HOUR = 3600;
 
@@ -742,10 +743,16 @@ export function MembershipTiers() {
       boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)",
       border: `1px solid ${COLORS.GRAY_LL}`,
     };
-    const cardBodyStyle = {
+    const cardBodyStyle: React.CSSProperties = {
       background:
         "linear-gradient(135deg, rgba(255,255,255,0.98), rgba(248,250,252,0.86))",
       borderRadius: "0 0 14px 14px",
+    };
+    const collapseStyle: React.CSSProperties = {
+      ...cardStyle,
+      overflow: "hidden",
+      background:
+        "linear-gradient(135deg, rgba(255,255,255,0.98), rgba(248,250,252,0.9))",
     };
     const sectionIntroStyle = {
       color: COLORS.GRAY,
@@ -753,64 +760,95 @@ export function MembershipTiers() {
       marginBottom: "16px",
     };
     const compactInputStyle = { width: "100%" };
-    const tag = (
-      label: string,
-      value: unknown,
-      color: string = "default",
-      suffix = "",
-    ) => {
+    const valueText = (value: unknown, suffix = "") => {
       if (value == null || value === "") return null;
-      return (
-        <Tag color={color} key={label}>
-          {label}: {`${value}${suffix}`}
-        </Tag>
-      );
+      return `${value}${suffix}`;
     };
-    const cardExtra = (
-      render: (getFieldValue: (name: string) => unknown) => React.ReactNode,
+    const summaryPieces = (...pieces: Array<string | null | undefined>) =>
+      pieces.filter(Boolean).join(" · ");
+    const cardSummary = (
+      render: (getFieldValue: (name: string) => unknown) => string,
     ) => (
       <Form.Item noStyle shouldUpdate>
         {({ getFieldValue }) => (
-          <Space wrap size={[4, 4]}>
+          <Text type="secondary" style={{ fontSize: "13px" }}>
             {render(getFieldValue)}
-          </Space>
+          </Text>
         )}
       </Form.Item>
     );
     const editorCard = ({
       title,
       subtitle,
-      extra,
+      summary,
+      defaultCollapsed = false,
       children,
     }: {
       title: string;
       subtitle: string;
-      extra?: React.ReactNode;
+      summary: React.ReactNode;
+      defaultCollapsed?: boolean;
       children: React.ReactNode;
     }) => (
-      <Card
-        title={
-          <div>
-            <div>{title}</div>
-            <div
-              style={{
-                color: COLORS.GRAY,
-                fontSize: "12px",
-                fontWeight: 400,
-                marginTop: "2px",
-                whiteSpace: "normal",
-              }}
-            >
-              {subtitle}
-            </div>
-          </div>
-        }
-        extra={extra}
-        style={cardStyle}
-        styles={{ body: cardBodyStyle }}
+      <Collapse
+        defaultActiveKey={defaultCollapsed ? [] : [title]}
+        style={collapseStyle}
       >
+        <CollapsePanel
+          key={title}
+          header={
+            <div style={{ width: "100%" }}>
+              <Space wrap style={{ width: "100%" }}>
+                <Text strong>{title}</Text>
+                {summary}
+              </Space>
+              <div
+                style={{
+                  color: COLORS.GRAY,
+                  fontSize: "12px",
+                  fontWeight: 400,
+                  marginTop: "2px",
+                  whiteSpace: "normal",
+                }}
+              >
+                {subtitle}
+              </div>
+            </div>
+          }
+        >
+          <div style={cardBodyStyle}>{children}</div>
+        </CollapsePanel>
+      </Collapse>
+    );
+    const fieldGroup = ({
+      title,
+      children,
+      note,
+    }: {
+      title: string;
+      children: React.ReactNode;
+      note?: string;
+    }) => (
+      <div
+        style={{
+          border: `1px solid ${COLORS.GRAY_LL}`,
+          borderRadius: "10px",
+          padding: "14px",
+          background: "rgba(255,255,255,0.7)",
+          marginBottom: "14px",
+        }}
+      >
+        <div style={{ marginBottom: note ? "4px" : "12px" }}>
+          <Text strong>{title}</Text>
+        </div>
+        {note && (
+          <div style={{ color: COLORS.GRAY, marginBottom: "12px" }}>{note}</div>
+        )}
         {children}
-      </Card>
+      </div>
+    );
+    const fieldHelp = (text: string) => (
+      <span style={{ color: COLORS.GRAY }}>{text}</span>
     );
 
     return (
@@ -867,32 +905,14 @@ export function MembershipTiers() {
             title: "Product",
             subtitle:
               "Public identity, pricing, store visibility, and internal lifecycle state.",
-            extra: cardExtra((get) => [
-              tag(
-                "Monthly",
-                currency(Number(get("price_monthly") ?? 0)),
-                "blue",
+            summary: cardSummary((get) =>
+              summaryPieces(
+                `monthly ${currency(Number(get("price_monthly") ?? 0))}`,
+                `yearly ${currency(Number(get("price_yearly") ?? 0))}`,
+                get("store_visible") ? "public store" : "hidden from store",
+                get("active") ? "active" : "disabled",
               ),
-              tag(
-                "Annual",
-                currency(Number(get("price_yearly") ?? 0)),
-                "green",
-              ),
-              get("store_visible") ? (
-                <Tag color="gold" key="store">
-                  Store visible
-                </Tag>
-              ) : null,
-              get("active") ? (
-                <Tag color="green" key="active">
-                  Active
-                </Tag>
-              ) : (
-                <Tag color="red" key="disabled">
-                  Disabled
-                </Tag>
-              ),
-            ]),
+            ),
             children: (
               <>
                 <Paragraph style={sectionIntroStyle}>
@@ -1072,22 +1092,18 @@ export function MembershipTiers() {
             title: "Runtime",
             subtitle:
               "The shared-compute promise: memory, disk, host tier, priority, and running project slots.",
-            extra: cardExtra((get) => [
-              tag("RAM", get("project_default_memory_mb"), "blue", " MB"),
-              tag("Disk", get("project_default_disk_quota_mb"), "cyan", " MB"),
-              tag("Host tier", get("feature_project_host_tier"), "purple"),
-              tag(
-                "Priority",
-                get("usage_limit_shared_compute_priority"),
-                "gold",
+            summary: cardSummary((get) =>
+              summaryPieces(
+                valueText(get("project_default_memory_mb"), " MB RAM"),
+                valueText(get("project_default_disk_quota_mb"), " MB disk"),
+                `host tier ${get("feature_project_host_tier") ?? "unset"}`,
+                `priority ${get("usage_limit_shared_compute_priority") ?? "unset"}`,
+                valueText(
+                  get("usage_limit_max_sponsored_running_projects"),
+                  " running projects",
+                ),
               ),
-              tag(
-                "Running",
-                get("usage_limit_max_sponsored_running_projects"),
-                "green",
-                " projects",
-              ),
-            ]),
+            ),
             children: (
               <>
                 <Paragraph style={sectionIntroStyle}>
@@ -1100,6 +1116,9 @@ export function MembershipTiers() {
                     <Form.Item
                       name="project_default_memory_mb"
                       label="Project RAM limit (MB)"
+                      extra={fieldHelp(
+                        "Maximum RAM each project gets when started or restarted.",
+                      )}
                     >
                       <InputNumber
                         min={0}
@@ -1112,7 +1131,9 @@ export function MembershipTiers() {
                     <Form.Item
                       name="project_default_memory_request_mb"
                       label="Project requested RAM (MB)"
-                      extra="Scheduling request; keep at or below the RAM limit."
+                      extra={fieldHelp(
+                        "Scheduler request; keep at or below the RAM limit.",
+                      )}
                     >
                       <InputNumber
                         min={0}
@@ -1125,6 +1146,9 @@ export function MembershipTiers() {
                     <Form.Item
                       name="project_default_disk_quota_mb"
                       label={`${workspaceDefaultsLabel} disk quota (MB)`}
+                      extra={fieldHelp(
+                        "Per-project disk quota. This is separate from account-wide storage caps.",
+                      )}
                     >
                       <InputNumber
                         min={0}
@@ -1137,7 +1161,9 @@ export function MembershipTiers() {
                     <Form.Item
                       name="feature_project_host_tier"
                       label="Project-host tier"
-                      extra="Tier N can use shared public hosts up to tier N."
+                      extra={fieldHelp(
+                        "Tier N can use shared public project hosts up to tier N.",
+                      )}
                     >
                       <InputNumber
                         min={0}
@@ -1151,6 +1177,9 @@ export function MembershipTiers() {
                     <Form.Item
                       name="usage_limit_shared_compute_priority"
                       label="Shared compute priority"
+                      extra={fieldHelp(
+                        "Relative priority for host admission, eviction, and restart decisions.",
+                      )}
                     >
                       <InputNumber
                         min={0}
@@ -1164,6 +1193,9 @@ export function MembershipTiers() {
                     <Form.Item
                       name="usage_limit_max_sponsored_running_projects"
                       label="Sponsored running projects"
+                      extra={fieldHelp(
+                        "Maximum simultaneously starting or running projects sponsored by this account.",
+                      )}
                     >
                       <InputNumber
                         min={0}
@@ -1182,12 +1214,14 @@ export function MembershipTiers() {
             title: "Usage Budgets",
             subtitle:
               "Hard-cost and abuse budgets for CPU-hours, egress, AI, storage, projects, snapshots, and backups.",
-            extra: cardExtra((get) => [
-              tag("CPU 5h", get("usage_limit_cpu_5h_hours"), "orange", " h"),
-              tag("CPU 7d", get("usage_limit_cpu_7d_hours"), "orange", " h"),
-              tag("Egress 5h", get("usage_limit_egress_5h_gb"), "red", " GB"),
-              tag("AI 7d", get("ai_limit_units_7d"), "blue", " units"),
-            ]),
+            summary: cardSummary((get) =>
+              summaryPieces(
+                `CPU ${get("usage_limit_cpu_5h_hours") ?? "unset"}/${get("usage_limit_cpu_7d_hours") ?? "unset"} h`,
+                `egress ${get("usage_limit_egress_5h_gb") ?? "unset"}/${get("usage_limit_egress_7d_gb") ?? "unset"} GB`,
+                `AI ${get("ai_limit_units_5h") ?? "unset"}/${get("ai_limit_units_7d") ?? "unset"} units`,
+                `projects ${get("usage_limit_max_projects") ?? "unset"}`,
+              ),
+            ),
             children: (
               <>
                 <Paragraph style={sectionIntroStyle}>
@@ -1195,125 +1229,222 @@ export function MembershipTiers() {
                   drive capacity planning, abuse signals, and project-start
                   admission.
                 </Paragraph>
-                <Row gutter={16}>
-                  <Col {...fieldCol}>
-                    <Form.Item name="ai_limit_units_5h" label="AI units / 5h">
-                      <InputNumber min={0} step={1} style={compactInputStyle} />
-                    </Form.Item>
-                  </Col>
-                  <Col {...fieldCol}>
-                    <Form.Item name="ai_limit_units_7d" label="AI units / 7d">
-                      <InputNumber min={0} step={1} style={compactInputStyle} />
-                    </Form.Item>
-                  </Col>
-                  <Col {...fieldCol}>
-                    <Form.Item
-                      name="usage_limit_cpu_5h_hours"
-                      label="CPU 5h window (CPU-hours)"
-                    >
-                      <InputNumber
-                        min={0}
-                        step={0.1}
-                        style={compactInputStyle}
-                      />
-                    </Form.Item>
-                  </Col>
-                  <Col {...fieldCol}>
-                    <Form.Item
-                      name="usage_limit_cpu_7d_hours"
-                      label="CPU 7d window (CPU-hours)"
-                    >
-                      <InputNumber min={0} step={1} style={compactInputStyle} />
-                    </Form.Item>
-                  </Col>
-                  <Col {...fieldCol}>
-                    <Form.Item
-                      name="usage_limit_egress_5h_gb"
-                      label="Egress 5h window (GB)"
-                    >
-                      <InputNumber
-                        min={0}
-                        step={0.1}
-                        style={compactInputStyle}
-                      />
-                    </Form.Item>
-                  </Col>
-                  <Col {...fieldCol}>
-                    <Form.Item
-                      name="usage_limit_egress_7d_gb"
-                      label="Egress 7d window (GB)"
-                    >
-                      <InputNumber
-                        min={0}
-                        step={0.1}
-                        style={compactInputStyle}
-                      />
-                    </Form.Item>
-                  </Col>
-                  <Col {...fieldCol}>
-                    <Form.Item
-                      name="usage_limit_total_storage_soft_gb"
-                      label="Account storage soft cap (GB)"
-                    >
-                      <InputNumber
-                        min={0}
-                        step={0.1}
-                        style={compactInputStyle}
-                      />
-                    </Form.Item>
-                  </Col>
-                  <Col {...fieldCol}>
-                    <Form.Item
-                      name="usage_limit_total_storage_hard_gb"
-                      label="Account storage hard cap (GB)"
-                    >
-                      <InputNumber
-                        min={0}
-                        step={0.1}
-                        style={compactInputStyle}
-                      />
-                    </Form.Item>
-                  </Col>
-                  <Col {...fieldCol}>
-                    <Form.Item
-                      name="usage_limit_max_projects"
-                      label="Max projects"
-                    >
-                      <InputNumber
-                        min={0}
-                        step={1}
-                        precision={0}
-                        style={compactInputStyle}
-                      />
-                    </Form.Item>
-                  </Col>
-                  <Col {...fieldCol}>
-                    <Form.Item
-                      name="usage_limit_max_snapshots_per_project"
-                      label="Snapshots / project"
-                    >
-                      <InputNumber
-                        min={0}
-                        step={1}
-                        precision={0}
-                        style={compactInputStyle}
-                      />
-                    </Form.Item>
-                  </Col>
-                  <Col {...fieldCol}>
-                    <Form.Item
-                      name="usage_limit_max_backups_per_project"
-                      label="Backups / project"
-                    >
-                      <InputNumber
-                        min={0}
-                        step={1}
-                        precision={0}
-                        style={compactInputStyle}
-                      />
-                    </Form.Item>
-                  </Col>
-                </Row>
+                {fieldGroup({
+                  title: "Compute",
+                  note: "Rolling CPU-hour budgets are capacity and abuse controls. They do not reserve fixed CPU cores.",
+                  children: (
+                    <Row gutter={16}>
+                      <Col {...wideFieldCol}>
+                        <Form.Item
+                          name="usage_limit_cpu_5h_hours"
+                          label="CPU budget, rolling 5 hours"
+                          extra={fieldHelp(
+                            "CPU-hours allowed in the last 5 hours before new project starts are blocked.",
+                          )}
+                        >
+                          <InputNumber
+                            min={0}
+                            step={0.1}
+                            addonAfter="CPU-hours"
+                            style={compactInputStyle}
+                          />
+                        </Form.Item>
+                      </Col>
+                      <Col {...wideFieldCol}>
+                        <Form.Item
+                          name="usage_limit_cpu_7d_hours"
+                          label="CPU budget, rolling 7 days"
+                          extra={fieldHelp(
+                            "Longer-term CPU-hours budget used for gentle product limits and abuse visibility.",
+                          )}
+                        >
+                          <InputNumber
+                            min={0}
+                            step={1}
+                            addonAfter="CPU-hours"
+                            style={compactInputStyle}
+                          />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                  ),
+                })}
+                {fieldGroup({
+                  title: "Network Egress",
+                  note: "Managed egress is a direct hard-cost and abuse signal. Values are stored as bytes and edited here as GB.",
+                  children: (
+                    <Row gutter={16}>
+                      <Col {...wideFieldCol}>
+                        <Form.Item
+                          name="usage_limit_egress_5h_gb"
+                          label="Egress budget, rolling 5 hours"
+                          extra={fieldHelp(
+                            "Short-window GB budget for burst control and attack detection.",
+                          )}
+                        >
+                          <InputNumber
+                            min={0}
+                            step={0.1}
+                            addonAfter="GB"
+                            style={compactInputStyle}
+                          />
+                        </Form.Item>
+                      </Col>
+                      <Col {...wideFieldCol}>
+                        <Form.Item
+                          name="usage_limit_egress_7d_gb"
+                          label="Egress budget, rolling 7 days"
+                          extra={fieldHelp(
+                            "Long-window GB budget for normal product allowance and cost containment.",
+                          )}
+                        >
+                          <InputNumber
+                            min={0}
+                            step={0.1}
+                            addonAfter="GB"
+                            style={compactInputStyle}
+                          />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                  ),
+                })}
+                {fieldGroup({
+                  title: "AI",
+                  note: "Included AI units are a hard-cost budget. Free tier defaults should stay at 0 unless intentionally changed.",
+                  children: (
+                    <Row gutter={16}>
+                      <Col {...wideFieldCol}>
+                        <Form.Item
+                          name="ai_limit_units_5h"
+                          label="AI units, rolling 5 hours"
+                          extra={fieldHelp(
+                            "Short-window normalized AI allowance.",
+                          )}
+                        >
+                          <InputNumber
+                            min={0}
+                            step={1}
+                            addonAfter="units"
+                            style={compactInputStyle}
+                          />
+                        </Form.Item>
+                      </Col>
+                      <Col {...wideFieldCol}>
+                        <Form.Item
+                          name="ai_limit_units_7d"
+                          label="AI units, rolling 7 days"
+                          extra={fieldHelp(
+                            "Weekly normalized AI allowance used to bound included AI spend.",
+                          )}
+                        >
+                          <InputNumber
+                            min={0}
+                            step={1}
+                            addonAfter="units"
+                            style={compactInputStyle}
+                          />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                  ),
+                })}
+                {fieldGroup({
+                  title: "Storage And Project Count",
+                  note: "These limits control owned projects and account-wide storage pressure.",
+                  children: (
+                    <Row gutter={16}>
+                      <Col {...fieldCol}>
+                        <Form.Item
+                          name="usage_limit_total_storage_soft_gb"
+                          label="Account storage soft cap"
+                          extra={fieldHelp(
+                            "GB soft cap across owned projects before storage-increasing actions are restricted.",
+                          )}
+                        >
+                          <InputNumber
+                            min={0}
+                            step={0.1}
+                            addonAfter="GB"
+                            style={compactInputStyle}
+                          />
+                        </Form.Item>
+                      </Col>
+                      <Col {...fieldCol}>
+                        <Form.Item
+                          name="usage_limit_total_storage_hard_gb"
+                          label="Account storage hard cap"
+                          extra={fieldHelp(
+                            "GB hard cap across owned projects; should be at or above the soft cap.",
+                          )}
+                        >
+                          <InputNumber
+                            min={0}
+                            step={0.1}
+                            addonAfter="GB"
+                            style={compactInputStyle}
+                          />
+                        </Form.Item>
+                      </Col>
+                      <Col {...fieldCol}>
+                        <Form.Item
+                          name="usage_limit_max_projects"
+                          label="Owned projects"
+                          extra={fieldHelp(
+                            "Maximum projects this account may own. Collaboration on other projects does not count.",
+                          )}
+                        >
+                          <InputNumber
+                            min={0}
+                            step={1}
+                            precision={0}
+                            style={compactInputStyle}
+                          />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                  ),
+                })}
+                {fieldGroup({
+                  title: "Retention",
+                  note: "Per-project snapshot and backup retention limits.",
+                  children: (
+                    <Row gutter={16}>
+                      <Col {...wideFieldCol}>
+                        <Form.Item
+                          name="usage_limit_max_snapshots_per_project"
+                          label="Snapshots per project"
+                          extra={fieldHelp(
+                            "Maximum retained snapshots for each project owned by this account.",
+                          )}
+                        >
+                          <InputNumber
+                            min={0}
+                            step={1}
+                            precision={0}
+                            style={compactInputStyle}
+                          />
+                        </Form.Item>
+                      </Col>
+                      <Col {...wideFieldCol}>
+                        <Form.Item
+                          name="usage_limit_max_backups_per_project"
+                          label="Backups per project"
+                          extra={fieldHelp(
+                            "Maximum retained backups for each project owned by this account.",
+                          )}
+                        >
+                          <InputNumber
+                            min={0}
+                            step={1}
+                            precision={0}
+                            style={compactInputStyle}
+                          />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                  ),
+                })}
               </>
             ),
           })}
@@ -1322,23 +1453,13 @@ export function MembershipTiers() {
             title: "Codex / ACP",
             subtitle:
               "Durable agent queue, creation, running, and automation limits.",
-            extra: cardExtra((get) => [
-              tag(
-                "Created 5h",
-                get("usage_limit_acp_max_created_5h_per_account"),
-                "blue",
+            summary: cardSummary((get) =>
+              summaryPieces(
+                `created ${get("usage_limit_acp_max_created_5h_per_account") ?? "unset"}/${get("usage_limit_acp_max_created_7d_per_account") ?? "unset"}`,
+                `running/account ${get("usage_limit_acp_max_running_per_account") ?? "unset"}`,
+                `running/project ${get("usage_limit_acp_max_running_per_project") ?? "unset"}`,
               ),
-              tag(
-                "Created 7d",
-                get("usage_limit_acp_max_created_7d_per_account"),
-                "blue",
-              ),
-              tag(
-                "Running/account",
-                get("usage_limit_acp_max_running_per_account"),
-                "green",
-              ),
-            ]),
+            ),
             children: (
               <Row gutter={16}>
                 <Col {...fieldCol}>
@@ -1405,27 +1526,15 @@ export function MembershipTiers() {
             title: "Dedicated Hosts",
             subtitle:
               "Dedicated-host entitlement and spending guardrails for prepaid and credit usage.",
-            extra: cardExtra((get) => [
-              get("feature_create_hosts") ? (
-                <Tag color="green" key="create-hosts">
-                  Host creation enabled
-                </Tag>
-              ) : (
-                <Tag key="create-hosts">Host creation disabled</Tag>
+            summary: cardSummary((get) =>
+              summaryPieces(
+                get("feature_create_hosts")
+                  ? "host creation enabled"
+                  : "host creation disabled",
+                `credit ${get("usage_limit_credit_spend_limit_5h_usd") ?? "unset"}/${get("usage_limit_credit_spend_limit_7d_usd") ?? "unset"} USD`,
+                `prepaid ${get("usage_limit_prepaid_host_usage_limit_5h_usd") ?? "unset"}/${get("usage_limit_prepaid_host_usage_limit_7d_usd") ?? "unset"} USD`,
               ),
-              tag(
-                "Credit 7d",
-                get("usage_limit_credit_spend_limit_7d_usd"),
-                "red",
-                " USD",
-              ),
-              tag(
-                "Prepaid 7d",
-                get("usage_limit_prepaid_host_usage_limit_7d_usd"),
-                "orange",
-                " USD",
-              ),
-            ]),
+            ),
             children: (
               <>
                 <Paragraph style={sectionIntroStyle}>
@@ -1486,7 +1595,16 @@ export function MembershipTiers() {
             title: "Advanced JSON",
             subtitle:
               "Escape hatch for fields that are not modeled yet. Prefer the cards above for ordinary tier decisions.",
-            extra: hasJsonErrors ? <Tag color="red">JSON errors</Tag> : null,
+            summary: hasJsonErrors ? (
+              <Text type="danger" style={{ fontSize: "13px" }}>
+                JSON errors
+              </Text>
+            ) : (
+              <Text type="secondary" style={{ fontSize: "13px" }}>
+                raw entitlements and compatibility fields
+              </Text>
+            ),
+            defaultCollapsed: true,
             children: (
               <>
                 <Paragraph style={sectionIntroStyle}>
