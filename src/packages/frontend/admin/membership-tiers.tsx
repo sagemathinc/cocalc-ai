@@ -2238,14 +2238,23 @@ export function MembershipTiers() {
   }
 
   async function createTierFromModal(): Promise<void> {
-    const values = await createTierForm.validateFields();
-    await create_tier_from_template({
-      id: values.id,
-      label: values.label,
-      template: values.template,
-    });
-    setCreateTierOpen(false);
-    createTierForm.resetFields();
+    try {
+      const values = await createTierForm.validateFields();
+      await create_tier_from_template({
+        id: values.id,
+        label: values.label,
+        template: values.template,
+      });
+      setCreateTierOpen(false);
+      createTierForm.resetFields();
+    } catch (err) {
+      if (err?.errorFields != null) return;
+      const message = err?.message ?? String(err);
+      set_error(message);
+      if (message.includes("already exists")) {
+        createTierForm.setFields([{ name: "id", errors: [message] }]);
+      }
+    }
   }
 
   function openCreateTierModal() {
@@ -2302,6 +2311,14 @@ export function MembershipTiers() {
                 pattern: /^[a-z0-9][a-z0-9_-]*$/,
                 message:
                   "Use lowercase letters, numbers, underscores, or hyphens.",
+              },
+              {
+                validator: async (_, value) => {
+                  const id =
+                    typeof value === "string" ? value.trim() : String(value);
+                  if (!id || data[id] == null) return;
+                  throw Error(`membership tier "${id}" already exists`);
+                },
               },
             ]}
           >
