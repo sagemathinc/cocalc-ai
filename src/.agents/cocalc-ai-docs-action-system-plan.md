@@ -692,7 +692,7 @@ Current harness:
 - Run static checks with:
 
 ```sh
-pnpm -C src/packages test
+pnpm -C src test
 pnpm -C src/packages/docs verify
 cocalc docs verify
 ```
@@ -723,10 +723,9 @@ Next verification improvements:
   specific.
 - Add a no-side-effects mode that skips actions that create files, such as
   `project.terminal.open` and `project.jupyter.create`.
-- Done: wire package-level `pnpm test` to static docs verification and gap
+- Done: wire root `src` `pnpm test` to static docs verification and gap
   reporting.
-- Add CI release gates that invoke the package-level static docs checks before
-  release.
+- Add CI release gates that invoke the root static docs checks before release.
 - Record scenario metadata back into docs entries once docs content moves from
   inline TypeScript to Markdown/content files.
 
@@ -862,8 +861,8 @@ operational.
 - Done: systematically replace or remove remaining scanned `doc.cocalc.com`
   links.
 - Done: add a static release gate that fails on new legacy docs links.
-- Done: include the legacy-link gate in package-level `pnpm test`.
-- Pending: keep the package-level gate wired into CI/release workflows.
+- Done: include the legacy-link gate in root `src` `pnpm test`.
+- Pending: keep the root test gate wired into CI/release workflows.
 
 ### Phase 9: Admin Docs And Project-Host Guides
 
@@ -953,8 +952,8 @@ The original first concrete milestone is complete enough to use:
 8. Done: browser-session verification harness with live execution and selected
    UI assertions.
 
-The current milestone is to harden the launch surface: wire the package-level
-docs gate into CI/release workflows, run live verification against real project
-and host parameters regularly, ensure the CoCalc Codex runtime discovers the
-docs skill, and continue filling launch-critical account, billing, admin,
-project-host, teaching, and troubleshooting docs.
+The current milestone is to harden the launch surface: wire the root docs gate
+into CI/release workflows, run live verification against real project and host
+parameters regularly, ensure the CoCalc Codex runtime discovers the docs skill,
+and continue filling launch-critical account, billing, admin, project-host,
+teaching, and troubleshooting docs.
