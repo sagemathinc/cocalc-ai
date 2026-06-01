@@ -67,6 +67,8 @@ const MEMBERSHIP_TIER_PRICING_ASSUMPTIONS_STORAGE_KEY =
   "cocalc:admin:membership-tier-pricing-assumptions";
 const MEMBERSHIP_TIER_EXPECTED_USAGE_STORAGE_KEY =
   "cocalc:admin:membership-tier-expected-usage";
+const MEMBERSHIP_TIER_EXPORT_TYPE = "cocalc.membership_tiers";
+const MEMBERSHIP_TIER_EXPORT_VERSION = 1;
 const TEMPLATE_KEYS = [
   "free",
   "basic",
@@ -92,6 +94,17 @@ type ExpectedUsageEstimateKey =
   | "standardRamGbHoursMonthly";
 
 type ExpectedUsageEstimate = Partial<Record<ExpectedUsageEstimateKey, number>>;
+
+interface MembershipTierImportCandidate {
+  key: string;
+  sourceId: string;
+  sourceLabel?: string;
+  targetId: string;
+  targetLabel?: string;
+  match: "label" | "id" | "new";
+  payload: Tier;
+  disabledReason?: string;
+}
 
 interface Tier {
   key?: string;
@@ -597,6 +610,44 @@ function buildMembershipTierPayload(values): Tier {
   ) as Tier;
 }
 
+function membershipTierExportPayload(tiers: Tier[]) {
+  return {
+    type: MEMBERSHIP_TIER_EXPORT_TYPE,
+    version: MEMBERSHIP_TIER_EXPORT_VERSION,
+    exported_at: new Date().toISOString(),
+    membership_tiers: sortBy(
+      tiers.map((tier) => buildMembershipTierPayload(tierToFormValues(tier))),
+      "id",
+    ),
+  };
+}
+
+function parseMembershipTierImportJson(value: unknown): Tier[] {
+  const record = normalizedRecord(value);
+  const rawTiers = Array.isArray(value)
+    ? value
+    : Array.isArray(record.membership_tiers)
+      ? record.membership_tiers
+      : Array.isArray(record.tiers)
+        ? record.tiers
+        : undefined;
+  if (rawTiers == null) {
+    throw Error(
+      "Expected a JSON object with membership_tiers, or a plain array of tiers.",
+    );
+  }
+  return rawTiers.map((tier, index) => {
+    if (tier == null || typeof tier !== "object" || Array.isArray(tier)) {
+      throw Error(`Tier ${index + 1} is not an object.`);
+    }
+    const payload = buildMembershipTierPayload(tierToFormValues(tier as Tier));
+    if (!payload.id?.trim()) {
+      throw Error(`Tier ${index + 1} is missing an id.`);
+    }
+    return payload;
+  });
+}
+
 function useMembershipTiers() {
   const [data, set_data] = React.useState<{ [key: string]: Tier }>({});
   const [editing, set_editing] = React.useState<Tier | null>(null);
@@ -747,6 +798,26 @@ function useMembershipTiers() {
     }
   }
 
+  async function import_tiers(payloads: Tier[]): Promise<void> {
+    set_saving(true);
+    try {
+      for (const payload of payloads) {
+        await query({
+          query: {
+            membership_tiers: payload,
+          },
+        });
+      }
+      await load();
+      set_error("");
+    } catch (err) {
+      set_error(err.message ?? String(err));
+      throw err;
+    } finally {
+      set_saving(false);
+    }
+  }
+
   async function delete_tier(id: string | undefined, single = false) {
     if (!id) return;
     if (single) set_deleting(true);
@@ -822,6 +893,7 @@ function useMembershipTiers() {
     set_sel_rows,
     set_editing,
     create_tier_from_template,
+    import_tiers,
     save,
     load,
   };
@@ -853,11 +925,22 @@ export function MembershipTiers() {
     set_sel_rows,
     set_editing,
     create_tier_from_template,
+    import_tiers,
     save,
     load,
   } = useMembershipTiers();
   const [createTierForm] = Form.useForm();
   const [createTierOpen, setCreateTierOpen] = React.useState(false);
+  const importFileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const [importModalOpen, setImportModalOpen] = React.useState(false);
+  const [importCandidates, setImportCandidates] = React.useState<
+    MembershipTierImportCandidate[]
+  >([]);
+  const [importSelectedKeys, setImportSelectedKeys] = React.useState<
+    React.Key[]
+  >([]);
+  const [importError, setImportError] = React.useState("");
+  const [importing, setImporting] = React.useState(false);
   const [jsonErrors, setJsonErrors] = React.useState<Record<string, string>>(
     {},
   );
@@ -2884,6 +2967,131 @@ export function MembershipTiers() {
     });
   }
 
+  function exportMembershipTiers() {
+    const payload = membershipTierExportPayload(Object.values(data));
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `cocalc-membership-tiers-${dayjs().format(
+      "YYYY-MM-DD-HHmmss",
+    )}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function buildImportCandidates(
+    tiers: Tier[],
+  ): MembershipTierImportCandidate[] {
+    const byLabel = new Map<string, Tier>();
+    const duplicateLabels = new Set<string>();
+    for (const tier of Object.values(data)) {
+      const label = tier.label?.trim();
+      if (!label) continue;
+      if (byLabel.has(label)) {
+        duplicateLabels.add(label);
+      } else {
+        byLabel.set(label, tier);
+      }
+    }
+    for (const label of duplicateLabels) {
+      byLabel.delete(label);
+    }
+
+    const candidates = tiers.map((tier, index) => {
+      const sourceLabel = tier.label?.trim();
+      const labelMatch = sourceLabel ? byLabel.get(sourceLabel) : undefined;
+      const idMatch = data[tier.id];
+      const target = labelMatch ?? idMatch;
+      const match =
+        labelMatch != null ? "label" : idMatch != null ? "id" : "new";
+      const targetId = target?.id ?? tier.id;
+      const payload = buildMembershipTierPayload(
+        tierToFormValues({
+          ...tier,
+          id: targetId,
+          label: sourceLabel || tier.id,
+        }),
+      );
+      return {
+        key: `${index}:${tier.id}`,
+        sourceId: tier.id,
+        sourceLabel: tier.label,
+        targetId,
+        targetLabel: target?.label,
+        match,
+        payload,
+      } satisfies MembershipTierImportCandidate;
+    });
+
+    const targetCounts = candidates.reduce<Record<string, number>>(
+      (counts, candidate) => {
+        counts[candidate.targetId] = (counts[candidate.targetId] ?? 0) + 1;
+        return counts;
+      },
+      {},
+    );
+    return candidates.map((candidate) => ({
+      ...candidate,
+      disabledReason:
+        targetCounts[candidate.targetId] > 1
+          ? `Another imported tier also maps to "${candidate.targetId}".`
+          : undefined,
+    }));
+  }
+
+  async function handleImportFileSelected(
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file == null) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      const tiers = parseMembershipTierImportJson(parsed);
+      const candidates = buildImportCandidates(tiers);
+      setImportCandidates(candidates);
+      setImportSelectedKeys(
+        candidates
+          .filter((candidate) => candidate.disabledReason == null)
+          .map((candidate) => candidate.key),
+      );
+      setImportError("");
+      setImportModalOpen(true);
+    } catch (err) {
+      setImportError(err.message ?? String(err));
+      setImportCandidates([]);
+      setImportSelectedKeys([]);
+      setImportModalOpen(true);
+    }
+  }
+
+  async function importSelectedMembershipTiers() {
+    const selected = importCandidates.filter((candidate) =>
+      importSelectedKeys.includes(candidate.key),
+    );
+    if (selected.length === 0) {
+      setImportError("Select at least one tier to import.");
+      return;
+    }
+    setImporting(true);
+    try {
+      await import_tiers(selected.map((candidate) => candidate.payload));
+      setImportModalOpen(false);
+      setImportCandidates([]);
+      setImportSelectedKeys([]);
+      setImportError("");
+    } catch (err) {
+      setImportError(err.message ?? String(err));
+    } finally {
+      setImporting(false);
+    }
+  }
+
   function render_create_tier_modal() {
     return (
       <Modal
@@ -2954,6 +3162,94 @@ export function MembershipTiers() {
     );
   }
 
+  function render_import_tiers_modal() {
+    return (
+      <Modal
+        title="Import Membership Tiers"
+        open={importModalOpen}
+        okText={`Import ${importSelectedKeys.length} tier(s)`}
+        okButtonProps={{
+          disabled:
+            importCandidates.length === 0 || importSelectedKeys.length === 0,
+        }}
+        confirmLoading={importing || saving}
+        onOk={() => importSelectedMembershipTiers()}
+        onCancel={() => {
+          setImportModalOpen(false);
+          setImportError("");
+        }}
+        width={900}
+      >
+        <Paragraph type="secondary">
+          Review the tiers in this JSON file before importing. Exact display
+          label matches overwrite the existing tier with that label; otherwise
+          exact tier ID matches overwrite by ID; otherwise a new tier is
+          created.
+        </Paragraph>
+        {importError && (
+          <Alert
+            style={{ marginBottom: "12px" }}
+            type="error"
+            showIcon
+            message={importError}
+          />
+        )}
+        <Table<MembershipTierImportCandidate>
+          size="small"
+          rowKey="key"
+          dataSource={importCandidates}
+          pagination={false}
+          rowSelection={{
+            selectedRowKeys: importSelectedKeys,
+            onChange: setImportSelectedKeys,
+            getCheckboxProps: (candidate) => ({
+              disabled: candidate.disabledReason != null,
+            }),
+          }}
+        >
+          <Table.Column<MembershipTierImportCandidate>
+            title="Import ID"
+            dataIndex="sourceId"
+          />
+          <Table.Column<MembershipTierImportCandidate>
+            title="Name"
+            dataIndex="sourceLabel"
+            render={(label, candidate) => label || candidate.sourceId}
+          />
+          <Table.Column<MembershipTierImportCandidate>
+            title="Import action"
+            render={(_, candidate) => {
+              if (candidate.disabledReason) {
+                return <Text type="danger">{candidate.disabledReason}</Text>;
+              }
+              if (candidate.match === "label") {
+                return (
+                  <Text>
+                    Overwrite tier <Text code>{candidate.targetId}</Text> by
+                    matching label.
+                  </Text>
+                );
+              }
+              if (candidate.match === "id") {
+                return (
+                  <Text>
+                    Overwrite tier <Text code>{candidate.targetId}</Text> by
+                    matching ID.
+                  </Text>
+                );
+              }
+              return (
+                <Text>
+                  Create new tier <Text code>{candidate.targetId}</Text>.
+                </Text>
+              );
+            }}
+          />
+        </Table>
+      </Modal>
+    );
+  }
+
   function render_buttons() {
     const any_selected = sel_rows.length > 0;
     const selected_has_usage = sel_rows.some(
@@ -2982,6 +3278,19 @@ export function MembershipTiers() {
         <Button onClick={() => load()}>
           <Icon name="refresh" /> Refresh
         </Button>
+        <Button onClick={exportMembershipTiers}>
+          <Icon name="download" /> Export JSON
+        </Button>
+        <Button onClick={() => importFileInputRef.current?.click()}>
+          <Icon name="upload" /> Import JSON
+        </Button>
+        <input
+          ref={importFileInputRef}
+          type="file"
+          accept="application/json,.json"
+          style={{ display: "none" }}
+          onChange={handleImportFileSelected}
+        />
       </Space.Compact>
     );
   }
@@ -3176,6 +3485,7 @@ export function MembershipTiers() {
       {render_error()}
       {render_control()}
       {render_create_tier_modal()}
+      {render_import_tiers_modal()}
       {render_info()}
     </div>
   );
