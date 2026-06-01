@@ -6,17 +6,16 @@
 import { Button, Card, Select, Slider } from "antd";
 import { debounce } from "lodash";
 import { ReactElement, useMemo } from "react";
-import { FormattedMessage, defineMessages, useIntl } from "react-intl";
+import {
+  FormattedMessage,
+  defineMessage,
+  defineMessages,
+  useIntl,
+} from "react-intl";
 
 import { Panel, Switch } from "@cocalc/frontend/antd-bootstrap";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
-import {
-  A,
-  HelpIcon,
-  Icon,
-  IconName,
-  LabeledRow,
-} from "@cocalc/frontend/components";
+import { A, HelpIcon, Icon, LabeledRow } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { DARK_MODE_ICON } from "@cocalc/util/consts/ui";
 import { DARK_MODE_DEFAULTS } from "@cocalc/util/db-schema/accounts";
@@ -29,10 +28,19 @@ import {
 import { EditorSettingsColorScheme } from "./editor-settings/color-schemes";
 import { I18NSelector, I18N_MESSAGE, I18N_TITLE } from "./i18n-selector";
 import { OtherSettings } from "./other-settings";
+import type { SettingsPageDefinition } from "./settings-page";
 import { TerminalSettings } from "./terminal-settings";
 
-// Icon constant for account preferences section
-export const APPEARANCE_ICON_NAME: IconName = "eye";
+export const ACCOUNT_PREFERENCES_APPEARANCE_PAGE = {
+  component: AccountPreferencesAppearance,
+  description: defineMessage({
+    id: "account.settings.overview.appearance",
+    defaultMessage: "Customize color themes, language, and visual settings.",
+  }),
+  icon: "eye",
+  key: "appearance",
+  label: labels.appearance,
+} satisfies SettingsPageDefinition;
 
 // See https://github.com/sagemathinc/cocalc/issues/5620
 // There are weird bugs with relying only on mathjax, whereas our

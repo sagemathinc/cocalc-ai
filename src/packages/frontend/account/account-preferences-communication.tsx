@@ -4,11 +4,11 @@
  */
 
 import { Alert, Radio, Space, Tag, Typography } from "antd";
-import { FormattedMessage, useIntl } from "react-intl";
+import { FormattedMessage, defineMessage, useIntl } from "react-intl";
 
 import { Panel, Switch } from "@cocalc/frontend/antd-bootstrap";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
-import { Icon, IconName } from "@cocalc/frontend/components";
+import { Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
@@ -22,10 +22,20 @@ import {
   type NotificationEmailMode,
 } from "@cocalc/util/notification-preferences";
 import { CookieConsentSettings } from "./cookie-consent-settings";
+import type { SettingsPageDefinition } from "./settings-page";
 
 const { Text, Paragraph } = Typography;
 
-export const COMMUNICATION_ICON_NAME: IconName = "mail";
+export const ACCOUNT_PREFERENCES_COMMUNICATION_PAGE = {
+  component: AccountPreferencesCommunication,
+  description: defineMessage({
+    id: "account.settings.overview.communication",
+    defaultMessage: "Notification preferences and communication settings.",
+  }),
+  icon: "mail",
+  key: "communication",
+  label: labels.communication,
+} satisfies SettingsPageDefinition;
 
 export function AccountPreferencesCommunication(): React.JSX.Element {
   const intl = useIntl();
@@ -200,8 +210,7 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
       size="small"
       header={
         <>
-          <Icon name={COMMUNICATION_ICON_NAME} />{" "}
-          {intl.formatMessage(labels.communication)}
+          <Icon name="mail" /> {intl.formatMessage(labels.communication)}
         </>
       }
     >

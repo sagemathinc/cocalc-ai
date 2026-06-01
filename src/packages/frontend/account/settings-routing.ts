@@ -17,22 +17,14 @@ import {
   VALID_SETTINGS_PAGES,
 } from "@cocalc/util/types/settings";
 
-export type AccountSettingsGroupKey = "preferences" | "billing";
-
 type AccountSettingsPagePath =
   | "settings"
   | "settings/index"
   | `settings/${Exclude<SettingsPageType, "index">}`;
 
 type AccountSettingsRouteDefinition = {
-  group?: AccountSettingsGroupKey;
   page: SettingsPageType;
   path: AccountSettingsPagePath;
-};
-
-type AccountSettingsGroupDefinition = {
-  defaultPage: SettingsPageType;
-  key: AccountSettingsGroupKey;
 };
 
 export type AccountSettingsRoute = { page: SettingsPageType };
@@ -53,84 +45,30 @@ type AccountSettingsActionsLike = {
   setState: (state: AccountSettingsState) => void;
 };
 
-export const ACCOUNT_SETTINGS_GROUP_DEFINITIONS: readonly AccountSettingsGroupDefinition[] =
-  [
-    { key: "preferences", defaultPage: "appearance" },
-    { key: "billing", defaultPage: "subscriptions" },
-  ] as const;
-
 export const ACCOUNT_SETTINGS_ROUTE_DEFINITIONS: readonly AccountSettingsRouteDefinition[] =
   [
     { page: "index", path: "settings" },
     { page: "profile", path: "settings/profile" },
+    { page: "appearance", path: "settings/appearance" },
+    { page: "editor", path: "settings/editor" },
+    { page: "keyboard", path: "settings/keyboard" },
+    { page: "ai", path: "settings/ai" },
+    { page: "communication", path: "settings/communication" },
+    { page: "keys", path: "settings/keys" },
+    { page: "other", path: "settings/other" },
+    { page: "subscriptions", path: "settings/subscriptions" },
+    { page: "licenses", path: "settings/licenses" },
+    { page: "store", path: "settings/store" },
+    { page: "vouchers", path: "settings/vouchers" },
+    { page: "purchases", path: "settings/purchases" },
+    { page: "payments", path: "settings/payments" },
     {
-      group: "preferences",
-      page: "appearance",
-      path: "settings/appearance",
-    },
-    {
-      group: "preferences",
-      page: "editor",
-      path: "settings/editor",
-    },
-    {
-      group: "preferences",
-      page: "keyboard",
-      path: "settings/keyboard",
-    },
-    { group: "preferences", page: "ai", path: "settings/ai" },
-    {
-      group: "preferences",
-      page: "communication",
-      path: "settings/communication",
-    },
-    { group: "preferences", page: "keys", path: "settings/keys" },
-    { group: "preferences", page: "other", path: "settings/other" },
-    {
-      group: "billing",
-      page: "subscriptions",
-      path: "settings/subscriptions",
-    },
-    { group: "billing", page: "licenses", path: "settings/licenses" },
-    { group: "billing", page: "store", path: "settings/store" },
-    { group: "billing", page: "vouchers", path: "settings/vouchers" },
-    { group: "billing", page: "purchases", path: "settings/purchases" },
-    { group: "billing", page: "payments", path: "settings/payments" },
-    {
-      group: "billing",
       page: "payment-methods",
       path: "settings/payment-methods",
     },
-    {
-      group: "billing",
-      page: "statements",
-      path: "settings/statements",
-    },
+    { page: "statements", path: "settings/statements" },
     { page: "support", path: "settings/support" },
   ] as const;
-
-const DEFAULT_GROUP_PAGES: Record<string, SettingsPageType> =
-  Object.fromEntries(
-    ACCOUNT_SETTINGS_GROUP_DEFINITIONS.map(({ key, defaultPage }) => [
-      key,
-      defaultPage,
-    ]),
-  );
-
-const GROUPS_BY_PAGE = new Map<SettingsPageType, AccountSettingsGroupKey>(
-  ACCOUNT_SETTINGS_ROUTE_DEFINITIONS.flatMap(({ group, page }) =>
-    group == null ? [] : [[page, group]],
-  ),
-);
-
-const PAGES_BY_GROUP = new Map<AccountSettingsGroupKey, SettingsPageType[]>(
-  ACCOUNT_SETTINGS_GROUP_DEFINITIONS.map(({ key }) => [
-    key,
-    ACCOUNT_SETTINGS_ROUTE_DEFINITIONS.filter(({ group }) => group === key).map(
-      ({ page }) => page,
-    ),
-  ]),
-);
 
 const ROUTES_BY_PAGE = new Map<SettingsPageType, AccountSettingsPagePath>(
   ACCOUNT_SETTINGS_ROUTE_DEFINITIONS.map(({ page, path }) => [page, path]),
@@ -149,18 +87,6 @@ export function isAccountSettingsPageKey(
   return VALID_SETTINGS_PAGES.includes(value as SettingsPageType);
 }
 
-export function getAccountSettingsGroupKey(
-  page: SettingsPageType,
-): AccountSettingsGroupKey | undefined {
-  return GROUPS_BY_PAGE.get(page);
-}
-
-export function getAccountSettingsGroupPages(
-  group: AccountSettingsGroupKey,
-): SettingsPageType[] {
-  return PAGES_BY_GROUP.get(group) ?? [];
-}
-
 function normalizeLegacyPreferencesPage(
   subTab?: PreferencesSubTabKey,
 ): SettingsPageType {
@@ -170,7 +96,7 @@ function normalizeLegacyPreferencesPage(
   ) {
     return subTabType as PreferencesSubTabType;
   }
-  return DEFAULT_GROUP_PAGES.preferences;
+  return "index";
 }
 
 function normalizeLegacyGroupedPage(
@@ -206,11 +132,6 @@ export function parseAccountSettingsRoute(
   }
   if (segments.length === 0 || segments[0] === "index") {
     return { page: "index" };
-  }
-
-  const groupDefault = DEFAULT_GROUP_PAGES[segments[0]];
-  if (segments.length === 1 && groupDefault != null) {
-    return { page: groupDefault };
   }
 
   const path = segments.join("/");

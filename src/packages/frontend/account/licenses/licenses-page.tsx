@@ -5,10 +5,13 @@
 
 import { Alert, Button, Card, Space, Tabs, Typography } from "antd";
 import { useEffect, useState } from "react";
+import { defineMessage } from "react-intl";
 
 import api from "@cocalc/frontend/client/api";
 import { Icon, Loading } from "@cocalc/frontend/components";
+import { labels } from "@cocalc/frontend/i18n";
 import { COLORS } from "@cocalc/util/theme";
+import type { SettingsPageDefinition } from "../settings-page";
 import {
   ClaimableMembershipPackagesPanel,
   MembershipPackageManager,
@@ -18,6 +21,17 @@ import type { MembershipTierWithPresentation } from "../membership-tier-benefits
 import { SoftwareLicensesPage } from "./software-licenses";
 
 const { Paragraph, Text, Title } = Typography;
+
+export const LICENSES_SETTINGS_PAGE = {
+  component: LicensesPage,
+  description: defineMessage({
+    id: "account.settings.overview.licenses",
+    defaultMessage: "Manage your software licenses.",
+  }),
+  icon: "key",
+  key: "licenses",
+  label: labels.licenses,
+} satisfies SettingsPageDefinition;
 
 interface MembershipTier extends MembershipTierWithPresentation {
   id: string;

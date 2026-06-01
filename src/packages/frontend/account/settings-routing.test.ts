@@ -1,7 +1,5 @@
 import {
   applyAccountSettingsRoute,
-  getAccountSettingsGroupKey,
-  getAccountSettingsGroupPages,
   getAccountSettingsRouteFromState,
   getAccountSettingsState,
   getSettingsPushStatePath,
@@ -25,13 +23,9 @@ describe("settings-routing", () => {
     });
   });
 
-  it("maps group routes to default child pages", () => {
-    expect(parseAccountSettingsRoute("settings/preferences")).toEqual({
-      page: "appearance",
-    });
-    expect(parseAccountSettingsRoute("settings/billing")).toEqual({
-      page: "subscriptions",
-    });
+  it("does not map menu groups as settings routes", () => {
+    expect(parseAccountSettingsRoute("settings/preferences")).toBeUndefined();
+    expect(parseAccountSettingsRoute("settings/billing")).toBeUndefined();
   });
 
   it("builds canonical settings paths from leaf pages", () => {
@@ -42,13 +36,6 @@ describe("settings-routing", () => {
     );
     expect(getSettingsUrlPath({ page: "profile" })).toBe("/settings/profile");
     expect(getSettingsPushStatePath({ page: "profile" })).toBe("/profile");
-  });
-
-  it("keeps menu grouping separate from page identity", () => {
-    expect(getAccountSettingsGroupKey("store")).toBe("billing");
-    expect(getAccountSettingsGroupKey("ai")).toBe("preferences");
-    expect(getAccountSettingsGroupPages("billing")).toContain("store");
-    expect(getAccountSettingsGroupPages("preferences")).toContain("ai");
   });
 
   it("derives account state without nested sub-tab state", () => {

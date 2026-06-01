@@ -14,7 +14,6 @@ import {
   Paragraph,
   SelectorInput,
 } from "@cocalc/frontend/components";
-import { KEYBOARD_ICON_NAME } from "./account-preferences-keyboard";
 import { IS_MACOS } from "@cocalc/frontend/feature";
 import { labels } from "@cocalc/frontend/i18n";
 import keyboardShortcuts from "./keyboard-shortcuts";
@@ -89,7 +88,7 @@ export const KeyboardSettings: React.FC = () => {
     <Panel
       header={
         <>
-          <Icon name={KEYBOARD_ICON_NAME} />{" "}
+          <Icon name="keyboard" />{" "}
           {intl.formatMessage(labels.keyboard_shortcuts)}
         </>
       }

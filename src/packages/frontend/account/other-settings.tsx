@@ -56,10 +56,6 @@ import { AgentDebugPanel } from "./agent-debug-panel";
 
 declare var DEBUG: boolean;
 
-// Icon constants for account preferences sections
-export const THEME_ICON_NAME: IconName = "highlighter";
-export const OTHER_ICON_NAME: IconName = "gear";
-
 // Import the account state type to get the proper other_settings type
 import type { AccountState } from "./types";
 
@@ -388,7 +384,7 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
         size="small"
         header={
           <>
-            <Icon name={THEME_ICON_NAME} /> {intl.formatMessage(labels.theme)}
+            <Icon name="highlighter" /> {intl.formatMessage(labels.theme)}
           </>
         }
       >
