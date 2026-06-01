@@ -38,6 +38,15 @@ export const JUPYTER_ENTRIES: DocsEntry[] = [
     title: "Create a Jupyter notebook",
   },
   {
+    actions: [
+      {
+        description: "Create a Jupyter notebook in the active project.",
+        executable: true,
+        id: "jupyter.open",
+        label: "Create notebook",
+        parameters: projectActionParameters(),
+      },
+    ],
     audiences: ["agents", "instructors", "researchers", "students", "teams"],
     body: USE_JUPYTER_BODY.trim(),
     category: "Jupyter",

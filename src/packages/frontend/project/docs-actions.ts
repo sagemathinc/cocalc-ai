@@ -20,6 +20,7 @@ import {
   type AccountSettingsRoute,
 } from "@cocalc/frontend/account/settings-routing";
 import { redux } from "@cocalc/frontend/app-framework";
+import { openAppDocs } from "@cocalc/frontend/docs/navigation";
 import { set_url_with_search } from "@cocalc/frontend/history";
 import type { SettingsPageType } from "@cocalc/util/types/settings";
 import {
@@ -436,6 +437,74 @@ function revealAdminSection({
   };
 }
 
+function revealAppDocs({
+  actionId,
+  projectId,
+  slug,
+}: {
+  actionId: DocsActionId;
+  projectId: string;
+  slug: string;
+}): DocsActionRevealResult {
+  openAppDocs(slug);
+  if (typeof window !== "undefined") {
+    set_url_with_search(`/app-docs/${slug}`, "");
+  }
+  return {
+    action_id: actionId,
+    opened: true,
+    path: `/app-docs/${slug}`,
+    project_id: projectId,
+    tab: "docs",
+  };
+}
+
+function revealProjectsList(projectId: string): DocsActionRevealResult {
+  const pageActions = redux.getActions("page") as
+    | {
+        set_active_tab?: (
+          key: string,
+          changeHistory?: boolean,
+        ) => Promise<void>;
+      }
+    | undefined;
+  void pageActions?.set_active_tab?.("projects", false);
+  if (typeof window !== "undefined") {
+    set_url_with_search("/projects", "");
+  }
+  return {
+    action_id: "projects.list.open",
+    opened: true,
+    path: "/projects",
+    project_id: projectId,
+    tab: "projects",
+  };
+}
+
+function revealProjectFiles(projectId: string): DocsActionRevealResult {
+  const pageActions = redux.getActions("page") as
+    | {
+        set_active_tab?: (
+          key: string,
+          changeHistory?: boolean,
+        ) => Promise<void>;
+      }
+    | undefined;
+  const projectActions = redux.getProjectActions(projectId);
+  void pageActions?.set_active_tab?.(projectId, false);
+  projectActions?.set_active_tab?.("files", { change_history: false });
+  if (typeof window !== "undefined") {
+    set_url_with_search(`/projects/${projectId}/files`, "");
+  }
+  return {
+    action_id: "project.files.open",
+    opened: true,
+    path: `/projects/${projectId}/files`,
+    project_id: projectId,
+    tab: "files",
+  };
+}
+
 function revealAdminNews({
   actionId,
   projectId,
@@ -624,7 +693,7 @@ async function revealRuntimeImage(
 }
 
 function defaultDocsActionFilename(
-  ext: "ipynb" | "term" | "txt",
+  ext: "Rmd" | "ipynb" | "md" | "py" | "term" | "tex" | "txt",
   avoid?: Record<string, unknown> | null,
 ): string {
   const basename =
@@ -632,7 +701,15 @@ function defaultDocsActionFilename(
       ? "notebook"
       : ext === "term"
         ? "terminal"
-        : "timetravel-source";
+        : ext === "md"
+          ? "notes"
+          : ext === "py"
+            ? "script"
+            : ext === "tex"
+              ? "paper"
+              : ext === "Rmd"
+                ? "report"
+                : "timetravel-source";
   for (let i = 1; i < 1000; i += 1) {
     const suffix = i === 1 ? "" : `-${i}`;
     const filename = `${basename}${suffix}.${ext}`;
@@ -647,7 +724,7 @@ async function createDefaultProjectFile({
   projectId,
 }: {
   actionId: DocsActionId;
-  ext: "ipynb" | "term" | "txt";
+  ext: "Rmd" | "ipynb" | "md" | "py" | "term" | "tex" | "txt";
   projectId: string;
 }): Promise<DocsActionRevealResult> {
   selectProject(projectId);
@@ -970,6 +1047,16 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
         projectId,
       }),
   },
+  "terminal.open": {
+    id: "terminal.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) =>
+      createDefaultProjectFile({
+        actionId: "terminal.open",
+        ext: "term",
+        projectId,
+      }),
+  },
   "project.jupyter.create": {
     id: "project.jupyter.create",
     isAvailable: ({ projectId }) => validateProjectId(projectId),
@@ -977,6 +1064,56 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
       createDefaultProjectFile({
         actionId: "project.jupyter.create",
         ext: "ipynb",
+        projectId,
+      }),
+  },
+  "jupyter.open": {
+    id: "jupyter.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) =>
+      createDefaultProjectFile({
+        actionId: "jupyter.open",
+        ext: "ipynb",
+        projectId,
+      }),
+  },
+  "files.markdown.open": {
+    id: "files.markdown.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) =>
+      createDefaultProjectFile({
+        actionId: "files.markdown.open",
+        ext: "md",
+        projectId,
+      }),
+  },
+  "python.open": {
+    id: "python.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) =>
+      createDefaultProjectFile({
+        actionId: "python.open",
+        ext: "py",
+        projectId,
+      }),
+  },
+  "latex.open": {
+    id: "latex.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) =>
+      createDefaultProjectFile({
+        actionId: "latex.open",
+        ext: "tex",
+        projectId,
+      }),
+  },
+  "r.markdown.open": {
+    id: "r.markdown.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) =>
+      createDefaultProjectFile({
+        actionId: "r.markdown.open",
+        ext: "Rmd",
         projectId,
       }),
   },
@@ -999,6 +1136,42 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
     id: "project.codex.open",
     isAvailable: ({ projectId }) => validateProjectId(projectId),
     run: ({ projectId }) => revealCodex(projectId),
+  },
+  "docs.browser.open": {
+    id: "docs.browser.open",
+    run: ({ projectId }) =>
+      revealAppDocs({
+        actionId: "docs.browser.open",
+        projectId,
+        slug: "documentation/browser",
+      }),
+  },
+  "docs.actions.open": {
+    id: "docs.actions.open",
+    run: ({ projectId }) =>
+      revealAppDocs({
+        actionId: "docs.actions.open",
+        projectId,
+        slug: "documentation/executable-actions",
+      }),
+  },
+  "docs.automation.open": {
+    id: "docs.automation.open",
+    run: ({ projectId }) =>
+      revealAppDocs({
+        actionId: "docs.automation.open",
+        projectId,
+        slug: "documentation/browser-automation",
+      }),
+  },
+  "projects.list.open": {
+    id: "projects.list.open",
+    run: ({ projectId }) => revealProjectsList(projectId),
+  },
+  "project.files.open": {
+    id: "project.files.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) => revealProjectFiles(projectId),
   },
 };
 

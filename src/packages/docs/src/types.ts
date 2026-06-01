@@ -62,7 +62,18 @@ export type DocsActionId =
   | "settings.people.collaborators"
   | "file.timetravel.open"
   | "course.assignment.create"
-  | "project.codex.open";
+  | "project.codex.open"
+  | "docs.browser.open"
+  | "docs.actions.open"
+  | "docs.automation.open"
+  | "projects.list.open"
+  | "project.files.open"
+  | "terminal.open"
+  | "jupyter.open"
+  | "files.markdown.open"
+  | "python.open"
+  | "latex.open"
+  | "r.markdown.open";
 
 export interface DocsAction {
   description: string;

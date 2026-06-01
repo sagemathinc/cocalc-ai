@@ -201,6 +201,7 @@ export type BrowserAtomicActionRequest =
   | {
       name: "docs_action";
       id: string;
+      parameters?: Record<string, string>;
     };
 
 export type BrowserActionResult = {

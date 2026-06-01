@@ -51,7 +51,8 @@ the current browser session.
 4. If the action is not implemented yet, use the written steps.
 
 Agents can list actions with \`cocalc browser action docs-list\` and execute one
-with \`cocalc browser action docs <action-id>\`.
+with \`cocalc browser action docs <action-id>\`. Parameterized actions accept
+\`--param key=value\`; project-host actions also accept \`--host-id <id>\`.
 
 ## Verify actions
 

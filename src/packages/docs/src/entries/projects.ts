@@ -84,6 +84,14 @@ export const PROJECTS_ENTRIES: DocsEntry[] = [
     title: "Open a terminal",
   },
   {
+    actions: [
+      {
+        description: "Open the top-level Projects page.",
+        executable: true,
+        id: "projects.list.open",
+        label: "Open projects",
+      },
+    ],
     audiences: ["agents", "instructors", "researchers", "students", "teams"],
     body: PROJECT_LIST_BODY.trim(),
     category: "Projects",

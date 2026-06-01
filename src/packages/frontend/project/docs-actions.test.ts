@@ -116,12 +116,23 @@ describe("project docs actions", () => {
       expect.arrayContaining([
         "settings.environment.secrets",
         "project.terminal.open",
+        "terminal.open",
         "project.jupyter.create",
+        "jupyter.open",
+        "files.markdown.open",
+        "python.open",
+        "latex.open",
+        "r.markdown.open",
         "settings.runtime.rootfs",
         "settings.people.collaborators",
         "file.timetravel.open",
         "project.codex.open",
         "hosts.open",
+        "docs.browser.open",
+        "docs.actions.open",
+        "docs.automation.open",
+        "projects.list.open",
+        "project.files.open",
       ]),
     );
   });
@@ -278,6 +289,87 @@ describe("project docs actions", () => {
       opened: true,
       panel: "payment-methods",
       tab: "account",
+    });
+  });
+
+  it("opens global docs pages", async () => {
+    const browser = await revealDocsAction({
+      actionId: "docs.browser.open",
+      projectId: "project-1",
+    });
+
+    expect(mockSetPageState).toHaveBeenCalledWith({
+      docs_print: false,
+      docs_slug: "documentation/browser",
+    });
+    expect(mockSetPageActiveTab).toHaveBeenCalledWith("docs", true);
+    expect(mockSetUrlWithSearch).toHaveBeenCalledWith(
+      "/app-docs/documentation/browser",
+      "",
+    );
+    expect(browser).toMatchObject({
+      action_id: "docs.browser.open",
+      opened: true,
+      path: "/app-docs/documentation/browser",
+      tab: "docs",
+    });
+
+    const automation = await revealDocsAction({
+      actionId: "docs.automation.open",
+      projectId: "project-1",
+    });
+
+    expect(mockSetPageState).toHaveBeenLastCalledWith({
+      docs_print: false,
+      docs_slug: "documentation/browser-automation",
+    });
+    expect(mockSetUrlWithSearch).toHaveBeenLastCalledWith(
+      "/app-docs/documentation/browser-automation",
+      "",
+    );
+    expect(automation).toMatchObject({
+      action_id: "docs.automation.open",
+      opened: true,
+      path: "/app-docs/documentation/browser-automation",
+      tab: "docs",
+    });
+  });
+
+  it("opens projects and project files pages", async () => {
+    const projects = await revealDocsAction({
+      actionId: "projects.list.open",
+      projectId: "project-1",
+    });
+
+    expect(mockSetPageActiveTab).toHaveBeenCalledWith("projects", false);
+    expect(mockSetUrlWithSearch).toHaveBeenCalledWith("/projects", "");
+    expect(projects).toMatchObject({
+      action_id: "projects.list.open",
+      opened: true,
+      path: "/projects",
+      tab: "projects",
+    });
+
+    const files = await revealDocsAction({
+      actionId: "project.files.open",
+      parameters: { projectId: "project-2" },
+      projectId: "project-1",
+    });
+
+    expect(mockSetPageActiveTab).toHaveBeenCalledWith("project-2", false);
+    expect(mockSetProjectActiveTab).toHaveBeenCalledWith("files", {
+      change_history: false,
+    });
+    expect(mockSetUrlWithSearch).toHaveBeenCalledWith(
+      "/projects/project-2/files",
+      "",
+    );
+    expect(files).toMatchObject({
+      action_id: "project.files.open",
+      opened: true,
+      path: "/projects/project-2/files",
+      project_id: "project-2",
+      tab: "files",
     });
   });
 
@@ -446,6 +538,24 @@ describe("project docs actions", () => {
       path: "/work/terminal.term",
       project_id: "project-1",
     });
+
+    const terminalPageResult = await revealDocsAction({
+      actionId: "terminal.open",
+      projectId: "project-1",
+    });
+
+    expect(mockCreateFile).toHaveBeenLastCalledWith({
+      current_path: "/work",
+      ext: "term",
+      name: "terminal",
+      switch_over: true,
+    });
+    expect(terminalPageResult).toMatchObject({
+      action_id: "terminal.open",
+      opened: true,
+      path: "/work/terminal.term",
+      project_id: "project-1",
+    });
   });
 
   it("creates and opens a default notebook", async () => {
@@ -460,6 +570,47 @@ describe("project docs actions", () => {
       name: "notebook",
       switch_over: true,
     });
+
+    await revealDocsAction({
+      actionId: "jupyter.open",
+      projectId: "project-1",
+    });
+
+    expect(mockCreateFile).toHaveBeenLastCalledWith({
+      current_path: "/work",
+      ext: "ipynb",
+      name: "notebook",
+      switch_over: true,
+    });
+  });
+
+  it("creates common project file types", async () => {
+    const cases = [
+      ["files.markdown.open", "md", "notes"],
+      ["python.open", "py", "script"],
+      ["latex.open", "tex", "paper"],
+      ["r.markdown.open", "Rmd", "report"],
+    ] as const;
+
+    for (const [actionId, ext, name] of cases) {
+      const result = await revealDocsAction({
+        actionId,
+        projectId: "project-1",
+      });
+
+      expect(mockCreateFile).toHaveBeenLastCalledWith({
+        current_path: "/work",
+        ext,
+        name,
+        switch_over: true,
+      });
+      expect(result).toMatchObject({
+        action_id: actionId,
+        opened: true,
+        path: `/work/${name}.${ext}`,
+        project_id: "project-1",
+      });
+    }
   });
 
   it("avoids clobbering existing quick action filenames", async () => {
