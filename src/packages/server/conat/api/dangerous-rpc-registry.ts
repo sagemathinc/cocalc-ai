@@ -536,6 +536,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "purchases.createAbuseReviewAnnotation": {
+    decision: "fresh-auth-required",
+    reason:
+      "admin abuse-review annotation can mark accounts/projects as abusive or urgent",
+  },
   "purchases.purchaseMembershipPackage": {
     decision: "fresh-auth-required",
     reason: "browser purchase action",
@@ -548,6 +553,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "purchases.removeSiteLicenseManager": {
     decision: "fresh-auth-required",
     reason: "site-license manager authority mutation",
+  },
+  "purchases.revokeAbuseReviewAnnotation": {
+    decision: "fresh-auth-required",
+    reason:
+      "admin abuse-review annotation revocation changes abuse triage state",
   },
   "purchases.revokeMembershipPackageSeat": {
     decision: "fresh-auth-required",
