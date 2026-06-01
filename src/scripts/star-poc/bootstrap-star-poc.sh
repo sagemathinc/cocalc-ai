@@ -533,11 +533,11 @@ prepare_runtime_artifacts
 stop_existing_services
 ensure_btrfs
 install_wrappers
+configure_sudoers
 configure_users_and_dirs
 build_default_rootfs_image
 write_env_files
 ensure_default_rootfs_cache
 seed_database
 install_systemd
-configure_sudoers
 start_services
