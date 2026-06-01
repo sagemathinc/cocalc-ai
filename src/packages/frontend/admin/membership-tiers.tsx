@@ -678,12 +678,19 @@ function useMembershipTiers() {
   }, [editing]);
 
   async function save(values): Promise<void> {
-    const val_orig: Tier = { ...values };
+    const formValues = form.getFieldsValue(true);
+    const mergedValues = {
+      ...(editing != null ? tierToFormValues(editing) : {}),
+      ...formValues,
+      ...values,
+      id: values.id ?? formValues.id ?? editing?.id,
+    };
+    const val_orig: Tier = { ...mergedValues };
     if (editing != null) set_editing(null);
 
     try {
       set_saving(true);
-      const payload = buildMembershipTierPayload(values);
+      const payload = buildMembershipTierPayload(mergedValues);
       await query({
         query: {
           membership_tiers: payload,
