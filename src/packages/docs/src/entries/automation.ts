@@ -22,7 +22,7 @@ export const AUTOMATION_ENTRIES: DocsEntry[] = [
     status: "ready",
     summary:
       "Use the CoCalc CLI for authenticated docs, browser, notebook, and project automation.",
-    title: "Use the CoCalc CLI",
+    title: "Use the CoCalc CLI for automation",
   },
   {
     audiences: ["agents", "researchers", "teams"],
