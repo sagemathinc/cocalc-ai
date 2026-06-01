@@ -10,15 +10,16 @@ Admin UI for membership tiers.
 import {
   Alert,
   Button,
-  Card,
   Checkbox,
   Col,
   Collapse,
   Form,
   Input,
   InputNumber,
+  Modal,
   Popconfirm,
   Row,
+  Select,
   Space,
   Switch,
   Table,
@@ -60,6 +61,18 @@ const BYTES_PER_GB = 1000 * 1000 * 1000;
 const SECONDS_PER_CPU_HOUR = 3600;
 const MEMBERSHIP_TIER_PRICING_ASSUMPTIONS_STORAGE_KEY =
   "cocalc:admin:membership-tier-pricing-assumptions";
+const TEMPLATE_KEYS = [
+  "free",
+  "basic",
+  "student",
+  "standard",
+  "member",
+  "instructor",
+  "researcher",
+  "pro",
+] as const;
+
+type TemplateKey = (typeof TEMPLATE_KEYS)[number];
 
 interface Tier {
   key?: string;
@@ -362,6 +375,186 @@ function tierToFormValues(tier: Partial<Tier>) {
   };
 }
 
+function buildMembershipTierPayload(values): Tier {
+  const project_defaults = (parseJsonField(
+    values.project_defaults,
+    "project_defaults",
+  ) ?? {}) as Record<string, unknown>;
+  const ai_limits = (parseJsonField(values.ai_limits, "ai_limits") ??
+    {}) as Record<string, unknown>;
+  const features = (parseJsonField(values.features, "features") ??
+    {}) as Record<string, unknown>;
+  const usage_limits = (parseJsonField(values.usage_limits, "usage_limits") ??
+    {}) as Record<string, unknown>;
+  setOrDeleteNumber(
+    project_defaults,
+    "memory",
+    values.project_default_memory_mb,
+  );
+  setOrDeleteNumber(
+    project_defaults,
+    "memory_request",
+    values.project_default_memory_request_mb,
+  );
+  setOrDeleteNumber(
+    project_defaults,
+    "disk_quota",
+    values.project_default_disk_quota_mb,
+  );
+  setOrDeleteBoolean(features, "create_hosts", values.feature_create_hosts);
+  setOrDeleteNumber(
+    features,
+    "project_host_tier",
+    values.feature_project_host_tier,
+  );
+  setOrDeleteNumber(ai_limits, "units_5h", values.ai_limit_units_5h);
+  setOrDeleteNumber(ai_limits, "units_7d", values.ai_limit_units_7d);
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "shared_compute_priority",
+    values.usage_limit_shared_compute_priority,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "total_storage_soft_bytes",
+    gigabytesToBytes(values.usage_limit_total_storage_soft_gb),
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "total_storage_hard_bytes",
+    gigabytesToBytes(values.usage_limit_total_storage_hard_gb),
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "max_projects",
+    values.usage_limit_max_projects,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "max_sponsored_running_projects",
+    values.usage_limit_max_sponsored_running_projects,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "max_snapshots_per_project",
+    values.usage_limit_max_snapshots_per_project,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "max_backups_per_project",
+    values.usage_limit_max_backups_per_project,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "egress_5h_bytes",
+    gigabytesToBytes(values.usage_limit_egress_5h_gb),
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "egress_7d_bytes",
+    gigabytesToBytes(values.usage_limit_egress_7d_gb),
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "cpu_5h_seconds",
+    cpuHoursToSeconds(values.usage_limit_cpu_5h_hours),
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "cpu_7d_seconds",
+    cpuHoursToSeconds(values.usage_limit_cpu_7d_hours),
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "credit_spend_limit_5h_usd",
+    values.usage_limit_credit_spend_limit_5h_usd,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "credit_spend_limit_7d_usd",
+    values.usage_limit_credit_spend_limit_7d_usd,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "prepaid_host_usage_limit_5h_usd",
+    values.usage_limit_prepaid_host_usage_limit_5h_usd,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "prepaid_host_usage_limit_7d_usd",
+    values.usage_limit_prepaid_host_usage_limit_7d_usd,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "acp_max_queued_per_account",
+    values.usage_limit_acp_max_queued_per_account,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "acp_max_queued_per_thread",
+    values.usage_limit_acp_max_queued_per_thread,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "acp_max_created_5h_per_account",
+    values.usage_limit_acp_max_created_5h_per_account,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "acp_max_created_7d_per_account",
+    values.usage_limit_acp_max_created_7d_per_account,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "acp_max_running_per_account",
+    values.usage_limit_acp_max_running_per_account,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "acp_max_running_per_project",
+    values.usage_limit_acp_max_running_per_project,
+  );
+  setOrDeleteUsageLimit(
+    usage_limits,
+    "acp_max_active_automations_per_project",
+    values.usage_limit_acp_max_active_automations_per_project,
+  );
+
+  return pick(
+    {
+      ...values,
+      project_defaults,
+      ai_limits,
+      features,
+      usage_limits,
+      store_description: normalizedOptionalString(values.store_description),
+      store_highlights: parseStoreHighlightsText(values.store_highlights_text),
+      disabled: !values.active,
+    },
+    [
+      "id",
+      "label",
+      "store_visible",
+      "store_description",
+      "store_highlights",
+      "course_store_visible",
+      "priority",
+      "price_monthly",
+      "price_yearly",
+      "trial_days",
+      "course_price",
+      "course_duration_days",
+      "course_grace_days",
+      "project_defaults",
+      "ai_limits",
+      "features",
+      "usage_limits",
+      "disabled",
+      "notes",
+    ],
+  ) as Tier;
+}
+
 function useMembershipTiers() {
   const [data, set_data] = React.useState<{ [key: string]: Tier }>({});
   const [editing, set_editing] = React.useState<Tier | null>(null);
@@ -448,188 +641,7 @@ function useMembershipTiers() {
 
     try {
       set_saving(true);
-      const project_defaults = (parseJsonField(
-        values.project_defaults,
-        "project_defaults",
-      ) ?? {}) as Record<string, unknown>;
-      const ai_limits = (parseJsonField(values.ai_limits, "ai_limits") ??
-        {}) as Record<string, unknown>;
-      const features = (parseJsonField(values.features, "features") ??
-        {}) as Record<string, unknown>;
-      const usage_limits = (parseJsonField(
-        values.usage_limits,
-        "usage_limits",
-      ) ?? {}) as Record<string, unknown>;
-      setOrDeleteNumber(
-        project_defaults,
-        "memory",
-        values.project_default_memory_mb,
-      );
-      setOrDeleteNumber(
-        project_defaults,
-        "memory_request",
-        values.project_default_memory_request_mb,
-      );
-      setOrDeleteNumber(
-        project_defaults,
-        "disk_quota",
-        values.project_default_disk_quota_mb,
-      );
-      setOrDeleteBoolean(features, "create_hosts", values.feature_create_hosts);
-      setOrDeleteNumber(
-        features,
-        "project_host_tier",
-        values.feature_project_host_tier,
-      );
-      setOrDeleteNumber(ai_limits, "units_5h", values.ai_limit_units_5h);
-      setOrDeleteNumber(ai_limits, "units_7d", values.ai_limit_units_7d);
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "shared_compute_priority",
-        values.usage_limit_shared_compute_priority,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "total_storage_soft_bytes",
-        gigabytesToBytes(values.usage_limit_total_storage_soft_gb),
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "total_storage_hard_bytes",
-        gigabytesToBytes(values.usage_limit_total_storage_hard_gb),
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "max_projects",
-        values.usage_limit_max_projects,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "max_sponsored_running_projects",
-        values.usage_limit_max_sponsored_running_projects,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "max_snapshots_per_project",
-        values.usage_limit_max_snapshots_per_project,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "max_backups_per_project",
-        values.usage_limit_max_backups_per_project,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "egress_5h_bytes",
-        gigabytesToBytes(values.usage_limit_egress_5h_gb),
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "egress_7d_bytes",
-        gigabytesToBytes(values.usage_limit_egress_7d_gb),
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "cpu_5h_seconds",
-        cpuHoursToSeconds(values.usage_limit_cpu_5h_hours),
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "cpu_7d_seconds",
-        cpuHoursToSeconds(values.usage_limit_cpu_7d_hours),
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "credit_spend_limit_5h_usd",
-        values.usage_limit_credit_spend_limit_5h_usd,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "credit_spend_limit_7d_usd",
-        values.usage_limit_credit_spend_limit_7d_usd,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "prepaid_host_usage_limit_5h_usd",
-        values.usage_limit_prepaid_host_usage_limit_5h_usd,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "prepaid_host_usage_limit_7d_usd",
-        values.usage_limit_prepaid_host_usage_limit_7d_usd,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "acp_max_queued_per_account",
-        values.usage_limit_acp_max_queued_per_account,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "acp_max_queued_per_thread",
-        values.usage_limit_acp_max_queued_per_thread,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "acp_max_created_5h_per_account",
-        values.usage_limit_acp_max_created_5h_per_account,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "acp_max_created_7d_per_account",
-        values.usage_limit_acp_max_created_7d_per_account,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "acp_max_running_per_account",
-        values.usage_limit_acp_max_running_per_account,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "acp_max_running_per_project",
-        values.usage_limit_acp_max_running_per_project,
-      );
-      setOrDeleteUsageLimit(
-        usage_limits,
-        "acp_max_active_automations_per_project",
-        values.usage_limit_acp_max_active_automations_per_project,
-      );
-
-      const payload = pick(
-        {
-          ...values,
-          project_defaults,
-          ai_limits,
-          features,
-          usage_limits,
-          store_description: normalizedOptionalString(values.store_description),
-          store_highlights: parseStoreHighlightsText(
-            values.store_highlights_text,
-          ),
-          disabled: !values.active,
-        },
-        [
-          "id",
-          "label",
-          "store_visible",
-          "store_description",
-          "store_highlights",
-          "course_store_visible",
-          "priority",
-          "price_monthly",
-          "price_yearly",
-          "trial_days",
-          "course_price",
-          "course_duration_days",
-          "course_grace_days",
-          "project_defaults",
-          "ai_limits",
-          "features",
-          "usage_limits",
-          "disabled",
-          "notes",
-        ],
-      );
-
+      const payload = buildMembershipTierPayload(values);
       await query({
         query: {
           membership_tiers: payload,
@@ -640,6 +652,45 @@ function useMembershipTiers() {
     } catch (err) {
       set_error(err.message ?? String(err));
       set_editing(val_orig);
+    } finally {
+      set_saving(false);
+    }
+  }
+
+  async function create_tier_from_template({
+    id,
+    label,
+    template,
+  }: {
+    id: string;
+    label: string;
+    template: TemplateKey;
+  }): Promise<void> {
+    const trimmedId = id.trim();
+    const trimmedLabel = label.trim();
+    if (data[trimmedId] != null) {
+      throw Error(`membership tier "${trimmedId}" already exists`);
+    }
+    const tier = applyMembershipTierTemplateFallbacks({
+      ...TIER_TEMPLATES[template],
+      id: trimmedId,
+      label: trimmedLabel,
+      disabled: false,
+    });
+    const values = tierToFormValues(tier);
+    const payload = buildMembershipTierPayload(values);
+    set_saving(true);
+    try {
+      await query({
+        query: {
+          membership_tiers: payload,
+        },
+      });
+      await load();
+      set_editing(applyMembershipTierTemplateFallbacks(payload));
+    } catch (err) {
+      set_error(err.message ?? String(err));
+      throw err;
     } finally {
       set_saving(false);
     }
@@ -704,28 +755,6 @@ function useMembershipTiers() {
     }
   }
 
-  function edit_new_tier() {
-    set_editing({
-      id: "",
-      label: "",
-      store_visible: false,
-      store_description: "",
-      store_highlights: [],
-      course_store_visible: false,
-      priority: 0,
-      trial_days: 0,
-      disabled: false,
-      notes: "",
-      project_defaults: {},
-      ai_limits: {},
-      features: {
-        create_hosts: false,
-        project_host_tier: 0,
-      },
-      usage_limits: {},
-    });
-  }
-
   return {
     data,
     form,
@@ -741,7 +770,7 @@ function useMembershipTiers() {
     sel_rows,
     set_sel_rows,
     set_editing,
-    edit_new_tier,
+    create_tier_from_template,
     save,
     load,
   };
@@ -772,10 +801,12 @@ export function MembershipTiers() {
     sel_rows,
     set_sel_rows,
     set_editing,
-    edit_new_tier,
+    create_tier_from_template,
     save,
     load,
   } = useMembershipTiers();
+  const [createTierForm] = Form.useForm();
+  const [createTierOpen, setCreateTierOpen] = React.useState(false);
   const [jsonErrors, setJsonErrors] = React.useState<Record<string, string>>(
     {},
   );
@@ -806,10 +837,6 @@ export function MembershipTiers() {
   function render_edit() {
     const onFinish = (values) => save(values);
     const editingExisting = editing?.id != null && data[editing.id] != null;
-    const applyTemplate = (key: keyof typeof TIER_TEMPLATES) => {
-      const template = TIER_TEMPLATES[key];
-      form.setFieldsValue(tierToFormValues({ ...template, disabled: false }));
-    };
     const updateJsonError = (field: string, err?: string) => {
       setJsonErrors((prev) => {
         const next = { ...prev };
@@ -1043,46 +1070,6 @@ export function MembershipTiers() {
 
     return (
       <>
-        <Card
-          style={{
-            ...cardStyle,
-            background:
-              "linear-gradient(135deg, rgba(238,246,255,0.9), rgba(255,255,255,0.95))",
-          }}
-          styles={{ body: { padding: "14px 18px" } }}
-        >
-          <Space direction="vertical" style={{ width: "100%" }}>
-            <Space wrap>
-              <Text strong>Start from template</Text>
-              <Text type="secondary">
-                Templates fill all modeled values; edit the cards below before
-                saving.
-              </Text>
-            </Space>
-            <Space wrap>
-              {(
-                [
-                  "free",
-                  "basic",
-                  "student",
-                  "standard",
-                  "member",
-                  "instructor",
-                  "researcher",
-                  "pro",
-                ] as const
-              ).map((key) => (
-                <Button
-                  key={key}
-                  size="small"
-                  onClick={() => applyTemplate(key)}
-                >
-                  {TIER_TEMPLATES[key].label}
-                </Button>
-              ))}
-            </Space>
-          </Space>
-        </Card>
         <Form
           layout="vertical"
           style={{ margin: "20px 0" }}
@@ -2224,8 +2211,11 @@ export function MembershipTiers() {
               <Button
                 htmlType="button"
                 onClick={() => {
-                  form.resetFields();
-                  edit_new_tier();
+                  if (editing != null) {
+                    form.setFieldsValue(tierToFormValues(editing));
+                  } else {
+                    form.resetFields();
+                  }
                 }}
               >
                 Reset
@@ -2247,6 +2237,88 @@ export function MembershipTiers() {
     );
   }
 
+  async function createTierFromModal(): Promise<void> {
+    const values = await createTierForm.validateFields();
+    await create_tier_from_template({
+      id: values.id,
+      label: values.label,
+      template: values.template,
+    });
+    setCreateTierOpen(false);
+    createTierForm.resetFields();
+  }
+
+  function openCreateTierModal() {
+    setCreateTierOpen(true);
+    createTierForm.setFieldsValue({
+      template: "standard",
+      id: "",
+      label: "",
+    });
+  }
+
+  function render_create_tier_modal() {
+    return (
+      <Modal
+        title="Create Membership Tier"
+        open={createTierOpen}
+        okText="Create tier"
+        confirmLoading={saving}
+        onOk={() => createTierFromModal()}
+        onCancel={() => {
+          setCreateTierOpen(false);
+          createTierForm.resetFields();
+        }}
+        destroyOnHidden
+      >
+        <Paragraph type="secondary">
+          Choose a starting template once, then create the tier. Template
+          presets are not shown in the editor for existing tiers.
+        </Paragraph>
+        <Form
+          layout="vertical"
+          form={createTierForm}
+          initialValues={{ template: "standard" }}
+        >
+          <Form.Item
+            name="template"
+            label="Starting template"
+            rules={[{ required: true }]}
+          >
+            <Select
+              options={TEMPLATE_KEYS.map((key) => ({
+                value: key,
+                label: TIER_TEMPLATES[key].label,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item
+            name="id"
+            label="Tier ID"
+            extra="Stable machine identifier, e.g. standard or pro."
+            rules={[
+              { required: true, message: "Enter a tier ID." },
+              {
+                pattern: /^[a-z0-9][a-z0-9_-]*$/,
+                message:
+                  "Use lowercase letters, numbers, underscores, or hyphens.",
+              },
+            ]}
+          >
+            <Input autoFocus />
+          </Form.Item>
+          <Form.Item
+            name="label"
+            label="Display name"
+            rules={[{ required: true, message: "Enter a display name." }]}
+          >
+            <Input />
+          </Form.Item>
+        </Form>
+      </Modal>
+    );
+  }
+
   function render_buttons() {
     const any_selected = sel_rows.length > 0;
     const selected_has_usage = sel_rows.some(
@@ -2259,7 +2331,7 @@ export function MembershipTiers() {
         <Button
           type={!any_selected ? "primary" : "default"}
           disabled={any_selected}
-          onClick={() => edit_new_tier()}
+          onClick={() => openCreateTierModal()}
         >
           <Icon name="plus" /> Add
         </Button>
@@ -2468,6 +2540,7 @@ export function MembershipTiers() {
     <div>
       {render_error()}
       {render_control()}
+      {render_create_tier_modal()}
       {render_info()}
     </div>
   );
