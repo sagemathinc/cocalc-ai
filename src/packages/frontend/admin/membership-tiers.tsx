@@ -8,6 +8,7 @@ Admin UI for membership tiers.
 */
 
 import {
+  Alert,
   Button,
   Card,
   Checkbox,
@@ -43,12 +44,22 @@ import {
   applyMembershipTierTemplateFallbacks,
   TIER_TEMPLATES,
 } from "@cocalc/util/membership-tier-templates";
+import {
+  analyzeMembershipTierPricingRisk,
+  DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS,
+  normalizeMembershipTierPricingAssumptions,
+  type MembershipTierPricingAssumptions,
+  type MembershipTierPricingInput,
+  type MembershipTierRiskSeverity,
+} from "@cocalc/util/membership-tier-pricing-risk";
 import { COLORS } from "@cocalc/util/theme";
 
 const { Paragraph, Text } = Typography;
 const { Panel: CollapsePanel } = Collapse;
 const BYTES_PER_GB = 1000 * 1000 * 1000;
 const SECONDS_PER_CPU_HOUR = 3600;
+const MEMBERSHIP_TIER_PRICING_ASSUMPTIONS_STORAGE_KEY =
+  "cocalc:admin:membership-tier-pricing-assumptions";
 
 interface Tier {
   key?: string;
@@ -167,6 +178,59 @@ function cpuHoursToSeconds(value: unknown): number | undefined {
   return cpuHours == null
     ? undefined
     : Math.round(cpuHours * SECONDS_PER_CPU_HOUR);
+}
+
+function normalizedRecord(value: unknown): Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function formattedNumber(value: number, digits = 1): string {
+  return Number.isFinite(value) ? value.toFixed(digits) : "∞";
+}
+
+function formattedPercent(value: number): string {
+  return Number.isFinite(value) ? `${Math.round(value * 100)}%` : "∞";
+}
+
+function riskSeverityType(severity: MembershipTierRiskSeverity) {
+  switch (severity) {
+    case "danger":
+      return "error";
+    case "warning":
+      return "warning";
+    case "notice":
+      return "info";
+    case "ok":
+      return "success";
+  }
+}
+
+function loadPricingAssumptions(): MembershipTierPricingAssumptions {
+  if (typeof window === "undefined") {
+    return DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS;
+  }
+  try {
+    const stored = window.localStorage.getItem(
+      MEMBERSHIP_TIER_PRICING_ASSUMPTIONS_STORAGE_KEY,
+    );
+    return normalizeMembershipTierPricingAssumptions(
+      stored ? JSON.parse(stored) : undefined,
+    );
+  } catch {
+    return DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS;
+  }
+}
+
+function storePricingAssumptions(
+  assumptions: MembershipTierPricingAssumptions,
+) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(
+    MEMBERSHIP_TIER_PRICING_ASSUMPTIONS_STORAGE_KEY,
+    JSON.stringify(assumptions),
+  );
 }
 
 function setOrDeleteUsageLimit(
@@ -715,6 +779,29 @@ export function MembershipTiers() {
   const [jsonErrors, setJsonErrors] = React.useState<Record<string, string>>(
     {},
   );
+  const [pricingAssumptions, setPricingAssumptions] =
+    React.useState<MembershipTierPricingAssumptions>(() =>
+      loadPricingAssumptions(),
+    );
+
+  function updatePricingAssumption(
+    key: keyof MembershipTierPricingAssumptions,
+    value: number | null,
+  ) {
+    setPricingAssumptions((prev) => {
+      const next = normalizeMembershipTierPricingAssumptions({
+        ...prev,
+        [key]: typeof value === "number" && Number.isFinite(value) ? value : 0,
+      });
+      storePricingAssumptions(next);
+      return next;
+    });
+  }
+
+  function resetPricingAssumptions() {
+    setPricingAssumptions(DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS);
+    storePricingAssumptions(DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS);
+  }
 
   function render_edit() {
     const onFinish = (values) => save(values);
@@ -849,6 +936,98 @@ export function MembershipTiers() {
     );
     const fieldHelp = (text: string) => (
       <span style={{ color: COLORS.GRAY }}>{text}</span>
+    );
+    const pricingInputFromForm = (
+      getFieldValue: (name: string) => unknown,
+    ): MembershipTierPricingInput => {
+      const usageLimits = normalizedRecord(getFieldValue("usage_limits"));
+      const projectDefaults = normalizedRecord(
+        getFieldValue("project_defaults"),
+      );
+      return {
+        priceMonthlyUsd: normalizedOptionalPrice(
+          getFieldValue("price_monthly"),
+        ),
+        priceYearlyUsd: normalizedOptionalPrice(getFieldValue("price_yearly")),
+        aiUnits7d:
+          normalizedOptionalNumber(getFieldValue("ai_limit_units_7d")) ??
+          normalizedOptionalNumber(
+            normalizedRecord(getFieldValue("ai_limits")).units_7d,
+          ),
+        egress7dGb:
+          normalizedOptionalNumber(getFieldValue("usage_limit_egress_7d_gb")) ??
+          bytesToGigabytes(usageLimits.egress_7d_bytes),
+        blobStorageGb:
+          bytesToGigabytes(usageLimits.blob_account_total_bytes) ??
+          normalizedOptionalNumber(usageLimits.blob_account_total_gb),
+        rootfsStorageGb:
+          normalizedOptionalNumber(usageLimits.rootfs_total_storage_gb) ??
+          bytesToGigabytes(usageLimits.rootfs_total_storage_bytes),
+        creditSpendLimit7dUsd:
+          normalizedOptionalNumber(
+            getFieldValue("usage_limit_credit_spend_limit_7d_usd"),
+          ) ?? normalizedOptionalNumber(usageLimits.credit_spend_limit_7d_usd),
+        prepaidHostUsageLimit7dUsd:
+          normalizedOptionalNumber(
+            getFieldValue("usage_limit_prepaid_host_usage_limit_7d_usd"),
+          ) ??
+          normalizedOptionalNumber(usageLimits.prepaid_host_usage_limit_7d_usd),
+        cpu7dHours:
+          normalizedOptionalNumber(getFieldValue("usage_limit_cpu_7d_hours")) ??
+          secondsToCpuHours(usageLimits.cpu_7d_seconds),
+        projectMemoryMb:
+          normalizedOptionalNumber(
+            getFieldValue("project_default_memory_mb"),
+          ) ?? normalizedOptionalNumber(projectDefaults.memory),
+        maxSponsoredRunningProjects:
+          normalizedOptionalNumber(
+            getFieldValue("usage_limit_max_sponsored_running_projects"),
+          ) ??
+          normalizedOptionalNumber(usageLimits.max_sponsored_running_projects),
+      };
+    };
+    const riskMetric = (label: string, value: React.ReactNode) => (
+      <div
+        style={{
+          border: `1px solid ${COLORS.GRAY_LL}`,
+          borderRadius: "10px",
+          padding: "12px",
+          background: "rgba(255,255,255,0.74)",
+          minHeight: "76px",
+        }}
+      >
+        <div style={{ color: COLORS.GRAY, fontSize: "12px" }}>{label}</div>
+        <div style={{ fontSize: "18px", fontWeight: 600 }}>{value}</div>
+      </div>
+    );
+    const assumptionInput = (
+      key: keyof MembershipTierPricingAssumptions,
+      label: string,
+      opts: {
+        step?: number;
+        addonAfter?: string;
+        multiplier?: number;
+        extra?: string;
+      } = {},
+    ) => (
+      <Form.Item
+        label={label}
+        extra={opts.extra ? fieldHelp(opts.extra) : null}
+      >
+        <InputNumber
+          min={0}
+          step={opts.step ?? 0.01}
+          addonAfter={opts.addonAfter}
+          style={compactInputStyle}
+          value={pricingAssumptions[key] * (opts.multiplier ?? 1)}
+          onChange={(value) =>
+            updatePricingAssumption(
+              key,
+              typeof value === "number" ? value / (opts.multiplier ?? 1) : null,
+            )
+          }
+        />
+      </Form.Item>
     );
 
     return (
@@ -1588,6 +1767,330 @@ export function MembershipTiers() {
                   </Col>
                 </Row>
               </>
+            ),
+          })}
+
+          {editorCard({
+            title: "Financial Risk",
+            subtitle:
+              "Advisory hard-cost and capacity model for deciding whether this tier fits its price point.",
+            summary: (
+              <Form.Item noStyle shouldUpdate>
+                {({ getFieldValue }) => {
+                  const analysis = analyzeMembershipTierPricingRisk(
+                    pricingInputFromForm(getFieldValue),
+                    pricingAssumptions,
+                  );
+                  return (
+                    <Text type="secondary" style={{ fontSize: "13px" }}>
+                      {summaryPieces(
+                        `hard cost ${currency(analysis.hardCosts.totalMonthlyUsd)} / mo`,
+                        `budget ${currency(analysis.targetHardCostBudgetUsd)} / mo`,
+                        `${formattedNumber(analysis.capacity.averageCpuEntitlement, 2)} avg CPU`,
+                      )}
+                    </Text>
+                  );
+                }}
+              </Form.Item>
+            ),
+            children: (
+              <Form.Item noStyle shouldUpdate>
+                {({ getFieldValue }) => {
+                  const analysis = analyzeMembershipTierPricingRisk(
+                    pricingInputFromForm(getFieldValue),
+                    pricingAssumptions,
+                  );
+                  return (
+                    <>
+                      <Paragraph style={sectionIntroStyle}>
+                        This card does not block saving. It turns tier limits
+                        into a rough monthly hard-cost exposure and shared-pool
+                        pressure estimate so admins can reason about price
+                        points.
+                      </Paragraph>
+                      {fieldGroup({
+                        title: "Risk Snapshot",
+                        note: "Hard-cost exposure assumes the 7-day limits are fully used every week. Dedicated-host spend uses the larger weekly credit/prepaid guardrail, since those are alternate funding paths.",
+                        children: (
+                          <>
+                            <Row gutter={[16, 16]}>
+                              <Col xs={24} md={12} xl={6}>
+                                {riskMetric(
+                                  "Modeled hard cost",
+                                  currency(analysis.hardCosts.totalMonthlyUsd),
+                                )}
+                              </Col>
+                              <Col xs={24} md={12} xl={6}>
+                                {riskMetric(
+                                  "Target hard-cost budget",
+                                  currency(analysis.targetHardCostBudgetUsd),
+                                )}
+                              </Col>
+                              <Col xs={24} md={12} xl={6}>
+                                {riskMetric(
+                                  "Budget remaining",
+                                  currency(
+                                    analysis.margin.hardCostBudgetRemainingUsd,
+                                  ),
+                                )}
+                              </Col>
+                              <Col xs={24} md={12} xl={6}>
+                                {riskMetric(
+                                  "Budget used",
+                                  formattedPercent(
+                                    analysis.margin.hardCostRatio,
+                                  ),
+                                )}
+                              </Col>
+                              <Col xs={24} md={12} xl={6}>
+                                {riskMetric(
+                                  "Average CPU promise",
+                                  `${formattedNumber(
+                                    analysis.capacity.averageCpuEntitlement,
+                                    2,
+                                  )} CPUs`,
+                                )}
+                              </Col>
+                              <Col xs={24} md={12} xl={6}>
+                                {riskMetric(
+                                  "CPU-hours / month",
+                                  `${formattedNumber(
+                                    analysis.capacity.cpuHoursMonthlyBudget,
+                                    0,
+                                  )} h`,
+                                )}
+                              </Col>
+                              <Col xs={24} md={12} xl={6}>
+                                {riskMetric(
+                                  "Active project RAM",
+                                  `${formattedNumber(
+                                    analysis.capacity.activeProjectRamGb,
+                                    1,
+                                  )} GB`,
+                                )}
+                              </Col>
+                              <Col xs={24} md={12} xl={6}>
+                                {riskMetric(
+                                  "Shared host user share",
+                                  `${formattedNumber(
+                                    analysis.capacity.sharedHostRamUserShare,
+                                    1,
+                                  )} GB RAM`,
+                                )}
+                              </Col>
+                            </Row>
+                            <Space
+                              direction="vertical"
+                              style={{ width: "100%", marginTop: "16px" }}
+                            >
+                              {analysis.messages.map((message, index) => (
+                                <Alert
+                                  key={index}
+                                  showIcon
+                                  type={riskSeverityType(message.severity)}
+                                  message={message.message}
+                                />
+                              ))}
+                            </Space>
+                          </>
+                        ),
+                      })}
+                      {fieldGroup({
+                        title: "Modeled Monthly Hard Cost",
+                        note: "These are worst-case allowance costs, not expected average usage.",
+                        children: (
+                          <Row gutter={[16, 16]}>
+                            <Col xs={24} md={12} xl={8}>
+                              {riskMetric(
+                                "AI",
+                                currency(analysis.hardCosts.aiMonthlyUsd),
+                              )}
+                            </Col>
+                            <Col xs={24} md={12} xl={8}>
+                              {riskMetric(
+                                "Egress",
+                                currency(analysis.hardCosts.egressMonthlyUsd),
+                              )}
+                            </Col>
+                            <Col xs={24} md={12} xl={8}>
+                              {riskMetric(
+                                "Blob storage",
+                                currency(
+                                  analysis.hardCosts.blobStorageMonthlyUsd,
+                                ),
+                              )}
+                            </Col>
+                            <Col xs={24} md={12} xl={8}>
+                              {riskMetric(
+                                "Rootfs storage",
+                                currency(
+                                  analysis.hardCosts.rootfsStorageMonthlyUsd,
+                                ),
+                              )}
+                            </Col>
+                            <Col xs={24} md={12} xl={8}>
+                              {riskMetric(
+                                "Dedicated host guardrail",
+                                currency(
+                                  analysis.hardCosts
+                                    .dedicatedHostGuardrailMonthlyUsd,
+                                ),
+                              )}
+                            </Col>
+                            <Col xs={24} md={12} xl={8}>
+                              {riskMetric(
+                                "Total",
+                                currency(analysis.hardCosts.totalMonthlyUsd),
+                              )}
+                            </Col>
+                          </Row>
+                        ),
+                      })}
+                      {fieldGroup({
+                        title: "Assumptions",
+                        note: "Saved in this browser. Use the main Site Settings page later if these should become shared global defaults for all admins.",
+                        children: (
+                          <>
+                            <Row gutter={16}>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "targetGrossMargin",
+                                  "Target gross margin",
+                                  {
+                                    multiplier: 100,
+                                    step: 1,
+                                    addonAfter: "%",
+                                    extra:
+                                      "Revenue fraction reserved as gross margin.",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "overheadReserve",
+                                  "Overhead reserve",
+                                  {
+                                    multiplier: 100,
+                                    step: 1,
+                                    addonAfter: "%",
+                                    extra:
+                                      "Revenue fraction reserved for support, payment fees, and operations.",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "aiUnitCostUsd",
+                                  "AI unit cost",
+                                  {
+                                    step: 0.001,
+                                    addonAfter: "$/unit",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "egressCostPerGb",
+                                  "Egress cost",
+                                  {
+                                    step: 0.001,
+                                    addonAfter: "$/GB",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "blobStorageCostPerGbMonth",
+                                  "Blob storage cost",
+                                  {
+                                    step: 0.001,
+                                    addonAfter: "$/GB-mo",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "rootfsStorageCostPerGbMonth",
+                                  "Rootfs storage cost",
+                                  {
+                                    step: 0.001,
+                                    addonAfter: "$/GB-mo",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "sharedHostMonthlyCostUsd",
+                                  "Shared host cost",
+                                  {
+                                    step: 1,
+                                    addonAfter: "$/mo",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "sharedHostUsableRamGb",
+                                  "Shared host usable RAM",
+                                  {
+                                    step: 1,
+                                    addonAfter: "GB",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "sharedHostUsableVcpu",
+                                  "Shared host usable CPU",
+                                  {
+                                    step: 1,
+                                    addonAfter: "vCPU",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "targetRamOversubscription",
+                                  "RAM oversubscription",
+                                  {
+                                    step: 0.1,
+                                    addonAfter: "x",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "targetCpuOversubscription",
+                                  "CPU oversubscription",
+                                  {
+                                    step: 0.5,
+                                    addonAfter: "x",
+                                  },
+                                )}
+                              </Col>
+                              <Col {...fieldCol}>
+                                {assumptionInput(
+                                  "activeProjectConcurrency",
+                                  "Assumed active projects",
+                                  {
+                                    step: 0.1,
+                                    addonAfter: "projects",
+                                    extra:
+                                      "Fallback active project count when this tier has no running-project limit.",
+                                  },
+                                )}
+                              </Col>
+                            </Row>
+                            <Button onClick={resetPricingAssumptions}>
+                              Reset pricing assumptions
+                            </Button>
+                          </>
+                        ),
+                      })}
+                    </>
+                  );
+                }}
+              </Form.Item>
             ),
           })}
 
