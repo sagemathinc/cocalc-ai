@@ -31,6 +31,7 @@ Build a CoCalc Star release artifact.
 
 The artifact extracts to a directory with:
   install.sh
+  install-release.sh
   cocalc-star-src.tar.gz
   release.json
   SHA256SUMS
@@ -117,10 +118,12 @@ bash "$INSTALLER_TMP/src/scripts/star/install-from-tarball.sh" "$TARBALL"
 EOF
 sed -i "s/__STAR_RELEASE_ID__/${STAR_RELEASE_ID}/g" "${staging}/install.sh"
 chmod 0755 "${staging}/install.sh"
+cp "${SCRIPT_DIR}/install-release.sh" "${staging}/install-release.sh"
+chmod 0755 "${staging}/install-release.sh"
 
 (
   cd "$staging"
-  sha256sum install.sh release.json cocalc-star-src.tar.gz >SHA256SUMS
+  sha256sum install.sh install-release.sh release.json cocalc-star-src.tar.gz >SHA256SUMS
 )
 
 mkdir -p "$(dirname "$OUTPUT")"

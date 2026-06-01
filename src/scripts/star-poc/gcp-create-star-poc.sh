@@ -125,7 +125,7 @@ install_remote_release() {
   local remote_archive="$1"
   local remote_extract_dir="$2"
   local install_command
-  install_command="rm -rf ${remote_extract_dir} && mkdir -p ${remote_extract_dir} && tar -xzf ${remote_archive} -C ${remote_extract_dir} --strip-components=1 && STAR_ASSUME_YES=1 STAR_USER=${REMOTE_USER} STAR_INSTALL_ROOT=${STAR_INSTALL_ROOT} STAR_BUILD=${STAR_BUILD} STAR_BUILD_DEFAULT_ROOTFS=${STAR_BUILD_DEFAULT_ROOTFS} STAR_DEFAULT_ROOTFS_IMAGE=${STAR_DEFAULT_ROOTFS_IMAGE} STAR_DEFAULT_ROOTFS_BASE_IMAGE=${STAR_DEFAULT_ROOTFS_BASE_IMAGE} STAR_REMOVE_GCP_SUDOERS=${STAR_REMOVE_GCP_SUDOERS} bash ${remote_extract_dir}/install.sh"
+  install_command="rm -rf ${remote_extract_dir} && mkdir -p ${remote_extract_dir} && tar -xzf ${remote_archive} -C ${remote_extract_dir} --strip-components=1 && STAR_ASSUME_YES=1 STAR_USER=${REMOTE_USER} STAR_INSTALL_ROOT=${STAR_INSTALL_ROOT} STAR_BUILD=${STAR_BUILD} STAR_BUILD_DEFAULT_ROOTFS=${STAR_BUILD_DEFAULT_ROOTFS} STAR_DEFAULT_ROOTFS_IMAGE=${STAR_DEFAULT_ROOTFS_IMAGE} STAR_DEFAULT_ROOTFS_BASE_IMAGE=${STAR_DEFAULT_ROOTFS_BASE_IMAGE} STAR_REMOVE_GCP_SUDOERS=${STAR_REMOVE_GCP_SUDOERS} bash ${remote_extract_dir}/install-release.sh ${remote_archive}"
   if [ "$VALIDATION_USER" != "root" ]; then
     install_command="sudo bash -lc '${install_command}'"
   else

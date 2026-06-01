@@ -2,6 +2,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STAR_CONFIG="${STAR_CONFIG:-/etc/cocalc/star/config.env}"
+if [ -f "$STAR_CONFIG" ]; then
+  # shellcheck disable=SC1090
+  set -a
+  source "$STAR_CONFIG"
+  set +a
+fi
 STAR_API="${STAR_API:-http://127.0.0.1:9100}"
 STAR_ROOT="${STAR_ROOT:-/var/lib/cocalc/star}"
 STAR_USER="${STAR_USER:-user}"
@@ -28,6 +35,7 @@ Commands:
   smoke                  Run the Star smoke test.
   current-release        Print the active release, if installed from a release.
   releases               List installed releases.
+  upgrade <url|tarball>  Install a new release artifact.
   rollback [release-id]  Roll back to a release. Defaults to previous release.
   restart [all|hub|host] Restart Star services. Default: all.
   logs [hub|host] [n]    Show recent service logs. Default: hub, 200 lines.
@@ -321,6 +329,24 @@ rollback_release() {
   printf 'rolled back to %s\n' "$release_id"
 }
 
+upgrade_release() {
+  local release="${1:-}"
+  [ -n "$release" ] || {
+    log "missing release URL or tarball"
+    usage
+    exit 2
+  }
+  local installer="${SRC_ROOT}/scripts/star/install-release.sh"
+  [ -x "$installer" ] || {
+    log "missing release installer: $installer"
+    exit 1
+  }
+  sudo STAR_ASSUME_YES=1 \
+    STAR_INSTALL_ROOT="$STAR_INSTALL_ROOT" \
+    STAR_USER="$STAR_USER" \
+    "$installer" "$release"
+}
+
 restart() {
   local target="${1:-all}"
   case "$target" in
@@ -378,6 +404,10 @@ case "${1:-}" in
   rollback)
     shift
     rollback_release "$@"
+    ;;
+  upgrade)
+    shift
+    upgrade_release "$@"
     ;;
   restart)
     shift

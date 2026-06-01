@@ -25,6 +25,14 @@ cd cocalc-star-<release>
 sudo STAR_ASSUME_YES=1 ./install.sh
 ```
 
+For a curl-style install, publish both the release artifact and the matching
+`install-release.sh`, then run:
+
+```sh
+curl -fsSL https://example.com/install-release.sh \
+  | sudo STAR_ASSUME_YES=1 bash -s -- https://example.com/cocalc-star-<release>.tar.gz
+```
+
 By default this installs source under a versioned release directory and points
 `/opt/cocalc-star/source` at the active release. It uses the sudo caller as the
 Star runtime user and starts CoCalc on `http://127.0.0.1:9100`.
@@ -82,6 +90,7 @@ Useful commands:
 ```sh
 sudo /opt/cocalc-star/source/src/scripts/star/star.sh current-release
 sudo /opt/cocalc-star/source/src/scripts/star/star.sh releases
+sudo /opt/cocalc-star/source/src/scripts/star/star.sh upgrade /path/to/cocalc-star-<release>.tar.gz
 sudo /opt/cocalc-star/source/src/scripts/star/star.sh rollback [release-id]
 ```
 
@@ -95,6 +104,7 @@ Each release artifact contains:
 ```text
 cocalc-star-<release>/
   install.sh
+  install-release.sh
   cocalc-star-src.tar.gz
   release.json
   SHA256SUMS
@@ -104,3 +114,7 @@ cocalc-star-<release>/
 versioned installer from `cocalc-star-src.tar.gz`, and then delegates to
 `src/scripts/star/install-from-tarball.sh`. This keeps the mutation logic in one
 installer path while giving users a simple release artifact.
+
+`install-release.sh` is the curl/bootstrap wrapper. It accepts either a local
+artifact path or an HTTP(S) URL, extracts the release, and invokes the same
+`install.sh` path used above.

@@ -236,6 +236,21 @@ write_env_files() {
     chown "$STAR_USER:$STAR_USER" "$site_master_key"
   fi
 
+  {
+    printf 'STAR_USER=%q\n' "$STAR_USER"
+    printf 'STAR_HOME=%q\n' "$STAR_HOME"
+    printf 'STAR_ROOT=%q\n' "$STAR_ROOT"
+    printf 'STAR_DATA=%q\n' "$STAR_DATA"
+    printf 'STAR_PROJECT_HOST_DATA=%q\n' "$STAR_PROJECT_HOST_DATA"
+    printf 'STAR_BASE_PORT=%q\n' "$STAR_BASE_PORT"
+    printf 'STAR_BASE_URL=%q\n' "$STAR_BASE_URL"
+    printf 'STAR_API=%q\n' "$STAR_BASE_URL"
+    printf 'STAR_INSTALL_ROOT=%q\n' "${STAR_INSTALL_ROOT:-/opt/cocalc-star}"
+    printf 'STAR_DEFAULT_ROOTFS_IMAGE=%q\n' "$STAR_DEFAULT_ROOTFS_IMAGE"
+  } >/etc/cocalc/star/config.env
+  chown root:root /etc/cocalc/star/config.env
+  chmod 644 /etc/cocalc/star/config.env
+
   cat >/etc/cocalc/star/hub.env <<EOF
 COCALC_PRODUCT=launchpad
 COCALC_SETUP_PROFILE=star
