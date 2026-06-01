@@ -6,7 +6,11 @@
 const getManagedEgressHistoryForAccountMock = jest.fn();
 const getManagedEgressAdminHistoryMock = jest.fn();
 const getManagedEgressAdminOverviewMock = jest.fn();
+const getManagedCpuAdminHistoryMock = jest.fn();
 const getManagedCpuAdminOverviewMock = jest.fn();
+const createAbuseReviewAnnotationMock = jest.fn();
+const listAbuseReviewAnnotationsMock = jest.fn();
+const revokeAbuseReviewAnnotationMock = jest.fn();
 const getProjectUsageAccountIdMock = jest.fn();
 const isAdminMock = jest.fn();
 const resolveMembershipDetailsForAccountMock = jest.fn();
@@ -82,8 +86,19 @@ jest.mock("@cocalc/server/membership/managed-egress", () => ({
 }));
 
 jest.mock("@cocalc/server/membership/managed-cpu", () => ({
+  getManagedCpuAdminHistory: (...args: any[]) =>
+    getManagedCpuAdminHistoryMock(...args),
   getManagedCpuAdminOverview: (...args: any[]) =>
     getManagedCpuAdminOverviewMock(...args),
+}));
+
+jest.mock("@cocalc/server/membership/abuse-review-annotations", () => ({
+  createAbuseReviewAnnotation: (...args: any[]) =>
+    createAbuseReviewAnnotationMock(...args),
+  listAbuseReviewAnnotations: (...args: any[]) =>
+    listAbuseReviewAnnotationsMock(...args),
+  revokeAbuseReviewAnnotation: (...args: any[]) =>
+    revokeAbuseReviewAnnotationMock(...args),
 }));
 
 jest.mock("@cocalc/server/membership/resolve", () => ({
@@ -1788,6 +1803,76 @@ describe("purchases.getManagedCpuAdminOverview", () => {
   });
 });
 
+describe("purchases.getManagedCpuAdminHistory", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("requires admin permission", async () => {
+    isAdminMock.mockResolvedValue(false);
+
+    const { getManagedCpuAdminHistory } = await import("./purchases");
+    await expect(
+      getManagedCpuAdminHistory({
+        account_id: "viewer-1",
+      }),
+    ).rejects.toThrow("must be an admin");
+  });
+
+  it("loads filtered CPU history for admins", async () => {
+    isAdminMock.mockResolvedValue(true);
+    getProjectUsageAccountIdMock.mockResolvedValue("acct-1");
+    getManagedCpuAdminHistoryMock.mockResolvedValue({
+      start: "2026-05-30T00:00:00.000Z",
+      end: "2026-05-31T00:00:00.000Z",
+      bucket: "1h",
+      total_cpu_seconds: 3600,
+      points: [],
+      top_accounts: [],
+      top_projects: [],
+      recent_events: [],
+    });
+
+    const { getManagedCpuAdminHistory } = await import("./purchases");
+    const result = await getManagedCpuAdminHistory({
+      account_id: "admin-1",
+      user_account_id: "acct-1",
+      project_id: "project-1",
+      bucket: "1h",
+      top_account_limit: 5,
+      top_project_limit: 7,
+      recent_event_limit: 9,
+    });
+
+    expect(getProjectUsageAccountIdMock).toHaveBeenCalledWith("project-1");
+    expect(getManagedCpuAdminHistoryMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      project_id: "project-1",
+      start: undefined,
+      end: undefined,
+      bucket: "1h",
+      top_account_limit: 5,
+      top_project_limit: 7,
+      recent_event_limit: 9,
+    });
+    expect(result.total_cpu_seconds).toBe(3600);
+  });
+
+  it("rejects a project that is not attributed to the filtered account", async () => {
+    isAdminMock.mockResolvedValue(true);
+    getProjectUsageAccountIdMock.mockResolvedValue("other-account");
+
+    const { getManagedCpuAdminHistory } = await import("./purchases");
+    await expect(
+      getManagedCpuAdminHistory({
+        account_id: "admin-1",
+        user_account_id: "acct-1",
+        project_id: "project-1",
+      }),
+    ).rejects.toThrow("project is not attributed to target account");
+  });
+});
+
 describe("purchases.getManagedEgressAdminHistory", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -1836,5 +1921,131 @@ describe("purchases.getManagedEgressAdminHistory", () => {
       recent_event_limit: 9,
     });
     expect(result.total_bytes).toBe(1234);
+  });
+});
+
+describe("purchases abuse review annotations", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("requires admin permission to create annotations", async () => {
+    isAdminMock.mockResolvedValue(false);
+
+    const { createAbuseReviewAnnotation } = await import("./purchases");
+    await expect(
+      createAbuseReviewAnnotation({
+        account_id: "viewer-1",
+        user_account_id: "acct-1",
+        reason: "reviewed",
+      }),
+    ).rejects.toThrow("must be an admin");
+  });
+
+  it("creates a normal annotation without fresh auth", async () => {
+    isAdminMock.mockResolvedValue(true);
+    createAbuseReviewAnnotationMock.mockResolvedValue({
+      id: "annotation-1",
+      account_id: "acct-1",
+      category: "cpu",
+      disposition: "legitimate",
+      priority_adjustment: "lower",
+      reason: "legitimate computation",
+      created_by: "admin-1",
+      created_at: "2026-05-31T00:00:00.000Z",
+    });
+
+    const { createAbuseReviewAnnotation } = await import("./purchases");
+    const result = await createAbuseReviewAnnotation({
+      account_id: "admin-1",
+      user_account_id: "acct-1",
+      project_id: "project-1",
+      category: "cpu",
+      disposition: "legitimate",
+      priority_adjustment: "lower",
+      reason: "legitimate computation",
+      evidence: { cpu_seconds: 3600 },
+    });
+
+    expect(requireFreshAuthForSessionHashMock).not.toHaveBeenCalled();
+    expect(createAbuseReviewAnnotationMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      project_id: "project-1",
+      category: "cpu",
+      disposition: "legitimate",
+      priority_adjustment: "lower",
+      reason: "legitimate computation",
+      evidence: { cpu_seconds: 3600 },
+      created_by: "admin-1",
+      expires_at: undefined,
+    });
+    expect(result.id).toBe("annotation-1");
+  });
+
+  it("requires fresh auth for abusive or urgent annotations", async () => {
+    isAdminMock.mockResolvedValue(true);
+    getBrowserAuthSessionHashMock.mockReturnValue("fresh-session-1");
+    createAbuseReviewAnnotationMock.mockResolvedValue({
+      id: "annotation-2",
+      account_id: "acct-1",
+      category: "cpu",
+      disposition: "abusive",
+      priority_adjustment: "urgent",
+      reason: "crypto mining",
+      created_by: "admin-1",
+      created_at: "2026-05-31T00:00:00.000Z",
+    });
+
+    const { createAbuseReviewAnnotation } = await import("./purchases");
+    await createAbuseReviewAnnotation({
+      account_id: "admin-1",
+      browser_id: "browser-1",
+      user_account_id: "acct-1",
+      disposition: "abusive",
+      priority_adjustment: "urgent",
+      reason: "crypto mining",
+    });
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      session_hash: "fresh-session-1",
+      allow_actor_impersonation: false,
+    });
+  });
+
+  it("lists and revokes annotations for admins", async () => {
+    isAdminMock.mockResolvedValue(true);
+    getBrowserAuthSessionHashMock.mockReturnValue("fresh-session-2");
+    listAbuseReviewAnnotationsMock.mockResolvedValue([]);
+    revokeAbuseReviewAnnotationMock.mockResolvedValue({ id: "annotation-1" });
+
+    const { listAbuseReviewAnnotations, revokeAbuseReviewAnnotation } =
+      await import("./purchases");
+    await expect(
+      listAbuseReviewAnnotations({
+        account_id: "admin-1",
+        user_account_id: "acct-1",
+        active_only: true,
+      }),
+    ).resolves.toEqual([]);
+    expect(listAbuseReviewAnnotationsMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      project_id: undefined,
+      category: undefined,
+      active_only: true,
+      limit: undefined,
+    });
+
+    await revokeAbuseReviewAnnotation({
+      account_id: "admin-1",
+      browser_id: "browser-1",
+      id: "annotation-1",
+      revoked_reason: "superseded",
+    });
+    expect(revokeAbuseReviewAnnotationMock).toHaveBeenCalledWith({
+      id: "annotation-1",
+      revoked_by: "admin-1",
+      revoked_reason: "superseded",
+    });
   });
 });

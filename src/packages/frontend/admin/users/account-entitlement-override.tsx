@@ -229,6 +229,36 @@ const NUMERIC_FIELDS: NumericOverrideField[] = [
     toStored: (value) => Math.round(value * BYTES_PER_GB),
   },
   {
+    id: "cpu_5h",
+    section: "usage_limits",
+    key: "cpu_5h_seconds",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits.cpu_5h_seconds
+        .label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .cpu_5h_seconds.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits.cpu_5h_seconds
+        .adminDescription,
+    fromStored: (value) => value / 3600,
+    toStored: (value) => Math.round(value * 3600),
+  },
+  {
+    id: "cpu_7d",
+    section: "usage_limits",
+    key: "cpu_7d_seconds",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits.cpu_7d_seconds
+        .label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .cpu_7d_seconds.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits.cpu_7d_seconds
+        .adminDescription,
+    fromStored: (value) => value / 3600,
+    toStored: (value) => Math.round(value * 3600),
+  },
+  {
     id: "credit_spend_5h",
     section: "usage_limits",
     key: "credit_spend_limit_5h_usd",

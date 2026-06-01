@@ -1,7 +1,7 @@
 # CoCalc-ai Docs and Deep Actions Plan
 
-Status: active implementation plan
-Date: 2026-05-24
+Status: active implementation plan, implementation is launchable beta
+Date: 2026-05-31
 
 ## Goal
 
@@ -24,56 +24,53 @@ The system should support three related surfaces:
 
 ## Current Implementation Snapshot
 
-As of 2026-05-24, the first vertical slice exists and is usable:
+As of 2026-05-31, the docs system is a launchable beta, not just a vertical
+slice:
 
-- `src/packages/docs` provides versioned docs entries, search, action metadata,
-  and `@cocalc/docs`.
-- Public `/docs` exists, including direct routing to `/docs` and docs detail
-  pages.
-- The project app has a Docs flyout/full-page panel.
-- Docs font size is adjustable and persisted in local storage.
-- In-app docs have a real table of contents grouped by category, plus
-  account-private filters for all pages, starred pages, unstarred pages, and
-  pages with notes.
-- In-app docs private state v1 is implemented:
-  - private stars and Markdown notes are account-global, not project-scoped;
-  - private note text participates in in-app docs search;
-  - matches from private notes are labeled without exposing note text in public
-    docs content;
-  - export/import supports JSON backup and cross-site transfer, merging without
-    duplicate notes;
-  - public landing-page docs do not render private notes or stars.
-- Account-scoped conat-persist/DKV data now moves during account home-bay
-  rehome. This was smoke-tested locally by moving account
-  `aedd0458-e4ed-426f-9ecc-67886d097608` from `bay-1` to `bay-0`; the
-  `cocalc-docs-private-state-v1.db` store moved, the old bay copy was removed,
-  and the frontend still showed the starred doc/note after refresh.
-- `cocalc docs list/search/show/actions/action` exists for local bundled docs.
-- `cocalc browser action docs-list` lists live action availability in a target
-  browser session.
-- `cocalc browser action docs <id>` executes implemented docs actions in the
-  exact browser session.
-- Implemented executable docs actions:
-  - `settings.environment.secrets`
-  - `project.terminal.open`
-  - `project.jupyter.create`
-  - `settings.runtime.rootfs`
-- A static/live verification harness now exists:
-  - `@cocalc/docs/verification`
-  - `pnpm -C src/packages/docs verify`
-  - `cocalc docs verify`
-  - `cocalc docs verify --list-live`
-  - `cocalc docs verify --live --project-id <project_id>`
-  - `cocalc docs verify --live --spawn-browser --project-id <project_id>`
-    creates a dedicated Chromium browser session, runs the live docs actions,
-    and destroys the spawned session afterward.
-  - Live scenarios include UI assertions, not just action return values. They
-    use the browser-session `wait_for_text` action to confirm that the expected
-    modal, file tab, terminal, or notebook UI is actually visible.
+- `src/packages/docs` owns bundled docs entries, topic-split content, chapter
+  metadata, search, action metadata, and static/live verification.
+- Public `/docs` exists and does not require sign-in.
+- In-app `/app-docs` exists with refresh-safe routing, persisted selected page,
+  and a global navbar tab.
+- Project-level docs exist in the project flyout. Project-context actions can
+  preselect the current project.
+- Public docs and in-app docs share the same source content but use different
+  routes so refreshes do not fall through to the public landing app.
+- Lite/cocalc-plus filtering hides or adapts pages that do not apply to the
+  single-user local desktop model.
+- The docs browser has:
+  - image-backed cards;
+  - chapter landing cards with summaries, workflows, and start/continue/review
+    actions;
+  - a table-of-contents overview;
+  - linear next/previous navigation inside chapters;
+  - next/previous chapter navigation;
+  - subtle viewed link coloring;
+  - explicit "Done - I learned this page" progress;
+  - private notes and star state;
+  - JSON import/export of private state.
+- Print-friendly docs exist for public and in-app contexts.
+- In-app docs can open a standalone print/download window and can download a
+  self-contained HTML file with embedded images.
+- `cocalc docs list/search/show/actions/action/verify` exists for local bundled
+  docs.
+- `cocalc browser action docs-list` and `cocalc browser action docs <id>` expose
+  live action availability and execution in a target browser session.
+- The docs action registry supports project parameters and project-host
+  parameters, including selecting a specific host or project before opening the
+  target UI.
+- Project-host documentation is now substantial: access/RAM, moving projects,
+  lifecycle, spot recovery, change rules, reliability, software/daemon
+  lifecycle, storage, shared `/scratch`, and logs.
+- Static verification is green as of this snapshot:
+  - 59 entries
+  - 31 actions
+  - 18 live scenarios
 
-The remaining work is production hardening: more docs content, more executable
-actions, stronger live scenario assertions, Codex skill runtime integration,
-and a release gate for legacy docs links.
+The remaining work is production hardening: broader docs coverage, more
+executable actions, more live UI assertions, a release gate for legacy docs
+links, Codex skill integration, and continued coverage of settings surfaces
+that mount asynchronously.
 
 ## Verification Workflow
 
@@ -391,38 +388,33 @@ This should become a release gate. Exceptions must be explicit and temporary.
 Deep actions are stable product-level UI actions. They are not CSS selectors and
 not arbitrary browser JavaScript.
 
-Create:
+Current implementation lives in:
 
 ```text
-src/packages/frontend/deep-actions/
-  ids.ts
-  registry.ts
-  run.ts
-  types.ts
+src/packages/frontend/project/docs-actions.ts
+src/packages/docs/src/entries/*
+src/packages/docs/src/types.ts
 ```
 
-Example type:
+The original plan described a separate `frontend/deep-actions` package. That
+may still be a reasonable future extraction, but the working implementation is
+docs-action centered and is already shared by the docs UI, browser-session
+actions, CLI verification, and tests.
+
+Current action shape:
 
 ```ts
-export type DeepActionId =
-  | "settings.environment.secrets"
-  | "settings.environment.ssh-key"
-  | "project.new-terminal"
-  | "project.new-notebook"
-  | "course.assignments.create";
-
-export type DeepActionContext = {
-  project_id?: string;
-  account_id?: string;
-  path?: string;
-};
-
-export type DeepActionSpec = {
-  id: DeepActionId;
-  label: string;
-  description: string;
-  requires: Array<"project" | "account" | "signed-in">;
-  run: (context: DeepActionContext) => Promise<void> | void;
+type DocsAppAction = {
+  id: DocsActionId;
+  isAvailable?: (context: {
+    includeAdmin?: boolean;
+    projectId: string;
+  }) => string | true;
+  run: (context: {
+    includeAdmin?: boolean;
+    parameters?: DocsActionParameters;
+    projectId: string;
+  }) => DocsActionRevealResult | Promise<DocsActionRevealResult>;
 };
 ```
 
@@ -433,13 +425,8 @@ Example registry row:
   id: "settings.environment.secrets",
   label: "Open project secrets",
   description: "Open project settings to Environment -> Secrets.",
-  requires: ["signed-in", "project"],
-  run: async ({ project_id }) => {
-    await openProjectSettings(project_id, {
-      tab: "environment",
-      panel: "secrets",
-    });
-  },
+  isAvailable: ({ projectId }) => validateProjectId(projectId),
+  run: ({ projectId }) => revealProjectSecrets(projectId),
 }
 ```
 
@@ -451,6 +438,36 @@ Design rules:
 - Destructive or credential-sensitive actions require normal UI confirmation.
 - Every registered action should have a unit test for validation and a minimal
   browser-session smoke test when feasible.
+
+### Action Acknowledgement Protocol
+
+Opening a mounted UI destination is easy. Opening a UI destination that first
+requires switching project tabs, opening a flyout, expanding a settings section,
+and then signaling a nested component is inherently asynchronous.
+
+For scalable docs actions, prefer the generic "open parent, signal child"
+pattern over making every modal globally independent:
+
+1. Open the parent component that should receive the signal.
+2. Send a typed `CustomEvent` with:
+   - action id,
+   - project id or host id,
+   - target surface,
+   - request id.
+3. The receiving component performs the local UI action and dispatches a typed
+   acknowledgement event with the same request id.
+4. The action runner waits up to 1 second for acknowledgement.
+5. If no acknowledgement arrives, it sends the signal again.
+6. If the second attempt also has no acknowledgement, the action returns
+   `opened: true` with a warning instead of claiming full success.
+
+This keeps the system scalable: most actions only need to know how to open the
+parent surface and send a semantic event. Components that already own the modal
+or focused state simply acknowledge the event when they handle it.
+
+Use independent modal entry points only when the modal is genuinely shared
+across many unrelated surfaces or when parent-surface routing becomes more
+fragile than a small centralized modal wrapper.
 
 ## Browser-Session Integration
 
@@ -749,6 +766,7 @@ operational.
 - Done: Add `cocalc docs search/show/list/actions/action`.
 - Done: Package docs with CLI via `@cocalc/docs`.
 - Done: Add `cocalc docs verify`.
+- Done: Add `cocalc docs verify --live --spawn-browser`.
 - Pending: Add `docs skill-context`.
 - Pending: Add focused CLI tests for docs commands.
 
@@ -759,16 +777,20 @@ operational.
 - Done: Implement `project.terminal.open`.
 - Done: Implement `project.jupyter.create`.
 - Done: Implement `settings.runtime.rootfs`.
+- Done: Implement project-host actions with optional host selector parameters.
+- Done: Implement project selector parameters for project-scoped actions.
 - Done: Add docs action block renderer.
 - Done: Add unit tests for action registry validity.
+- Done: Add acknowledgement/retry for actions that signal components after
+  opening flyouts or settings panels.
 
 ### Phase 5: Browser-Session Deep Actions
 
 - Done: Add `docs_action` to browser-session action engine.
 - Done: Add `cocalc browser action docs-list`.
 - Done: Add `cocalc browser action docs <id>`.
+- Done: Add QuickJS convenience wrapper `api.docsAction(...)`.
 - Done: Verify executable docs actions can run in a live browser session.
-- Pending: Add a QuickJS convenience wrapper such as `api.docsAction(...)`.
 - Pending: Add stronger DOM/state assertions after browser action execution.
 
 ### Phase 6: Codex Skill
@@ -788,6 +810,8 @@ operational.
 - Done: Add all/starred/unstarred/with-notes filters.
 - Done: Add note-aware in-app docs search and a "matched your private notes"
   indicator.
+- Done: Add viewed link coloring, explicit learned checkboxes, learned progress,
+  and chapter progress affordances.
 - Done: Add JSON export/import for backup and cross-site transfer.
 - Done: Implement account conat-persist/DKV move during account rehome.
 - Done: Smoke-test account rehome from `bay-1` to `bay-0` with docs private
@@ -837,19 +861,23 @@ Initial admin docs backlog:
   account rehome, project/host inspection, and smoke-test workflows.
 - Done: Bay Operations, RootFS image administration, backup shards,
   registration tokens, and membership/software license admin docs.
-- Pending: SSO, managed egress, detailed user sub-workflows, and admin
-  project-host operations.
+- Done: SSO and managed egress overview docs.
+- Pending: detailed user sub-workflows and deeper admin project-host operations.
 
 Project-host docs should become their own cluster because both admins and users
 interact with them:
 
-- what project hosts are and how they relate to bays/projects;
-- user host creation and access controls;
-- cloud provider setup and bootstrap lifecycle;
-- RAM, disk, billing, and minimum sizing expectations;
-- DNS/Cloudflare tunnel behavior;
-- failed bootstrap troubleshooting;
-- admin host operations, upgrades, and bay/host/project ownership model.
+- Done: what project hosts are and how they relate to bays/projects;
+- Done: access controls and RAM;
+- Done: project moves, including region/zone caveats;
+- Done: host lifecycle/start/stop/restart/deprovision/delete;
+- Done: spot recovery strategy;
+- Done: change rules for disk, spot/standard, instance type, and region/zone;
+- Done: reliability modal concepts;
+- Done: software and daemon lifecycle;
+- Done: storage, backups, snapshots, shared `/scratch`, and logs;
+- Pending: provider-specific bootstrap troubleshooting, DNS/tunnel details, and
+  deeper admin host operations.
 
 Docs media should support both small icon-like visual hooks and larger workflow
 diagrams. Prefer optimized `.webp` assets with short hashes in filenames, plus
@@ -858,13 +886,10 @@ reviewed and cache-busted intentionally.
 
 ## Open Questions
 
-- Should docs content live in `src/packages/docs/content` or `src/docs`? I
-  recommend `src/packages/docs` so CLI/frontend can share the parser and
-  generated indexes cleanly.
-- Should `/docs` be part of public routing only, or should there also be an
-  in-app docs panel? I recommend public route first, in-app panel later.
-- Should docs search be static JSON or a hub API? I recommend static JSON for
-  v1.
+- Resolved: docs content and metadata live in `src/packages/docs/src`.
+- Resolved: there is both public `/docs` and signed-in `/app-docs`, plus
+  project flyout docs.
+- Resolved for v1: docs search is local/static, shared by frontend and CLI.
 - How much docs content should ship in the CLI bundle? I recommend title,
   summary, headings, actions, and compact body text for all current docs.
 - Should Codex be allowed to execute deep actions automatically? I recommend
@@ -882,8 +907,9 @@ The original first concrete milestone is complete enough to use:
 5. Done: `cocalc docs show projects.project-secrets`.
 6. Done: `cocalc browser action docs settings.environment.secrets`.
 7. Done: Codex skill instruction for using the docs command.
-8. In progress: browser-session verification harness. Static checks and live
-   action execution exist; detailed DOM/state assertions are next.
+8. Done: browser-session verification harness with live execution and selected
+   UI assertions.
 
-If that slice feels good, scale horizontally to the remaining launch-critical
-docs.
+The current milestone is to harden the launch surface: migrate legacy links,
+expand action acknowledgement and live assertions, and continue filling
+launch-critical account, billing, admin, project-host, and troubleshooting docs.

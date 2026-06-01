@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 import type {
+  AbuseReviewAnnotation,
   ManagedCpuAccountSummary,
   ManagedCpuAdminOverview as ManagedCpuAdminOverviewData,
   ManagedCpuAdminProjectSummary,
@@ -28,6 +29,11 @@ import type {
 } from "@cocalc/conat/hub/api/purchases";
 import ShowError from "@cocalc/frontend/components/error";
 import { CopyToClipBoard } from "@cocalc/frontend/components";
+import {
+  AbuseAnnotationControls,
+  reviewSortRank,
+} from "@cocalc/frontend/admin/abuse-annotation-controls";
+import { ManagedCpuHistoryButton } from "@cocalc/frontend/purchases/managed-cpu-history";
 import {
   ManagedEgressHistoryButton,
   ManagedEgressRateSummary,
@@ -183,14 +189,42 @@ function PanelBox({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function AccountActions({ account_id }: { account_id: string }) {
+function AccountActions({
+  account_id,
+  project_id,
+  active_annotations,
+  defaultCategory,
+  evidence,
+  onAnnotationChange,
+}: {
+  account_id: string;
+  project_id?: string | null;
+  active_annotations?: AbuseReviewAnnotation[];
+  defaultCategory: "cpu" | "egress";
+  evidence?: Record<string, unknown>;
+  onAnnotationChange?: () => void;
+}) {
   return (
     <Space wrap>
       <CopyToClipBoard value={account_id} copyTip="Copied account_id!" />
+      <ManagedCpuHistoryButton
+        buttonText="CPU history"
+        user_account_id={account_id}
+        project_id={project_id ?? undefined}
+        size="small"
+      />
       <ManagedEgressHistoryButton
         buttonText="Egress history"
         user_account_id={account_id}
         size="small"
+      />
+      <AbuseAnnotationControls
+        account_id={account_id}
+        project_id={project_id}
+        active_annotations={active_annotations}
+        defaultCategory={defaultCategory}
+        evidence={evidence}
+        onChange={onAnnotationChange}
       />
     </Space>
   );
@@ -198,8 +232,10 @@ function AccountActions({ account_id }: { account_id: string }) {
 
 function TopCpuAccounts({
   accounts,
+  onAnnotationChange,
 }: {
   accounts: ManagedCpuAccountSummary[];
+  onAnnotationChange?: () => void;
 }) {
   if (accounts.length === 0) {
     return (
@@ -208,23 +244,41 @@ function TopCpuAccounts({
   }
   return (
     <Space direction="vertical" size={12} style={{ width: "100%" }}>
-      {accounts.map((account) => (
-        <div key={account.account_id}>
-          <Space wrap>
-            <Text strong>{getAccountLabel(account)}</Text>
-            <Tag>{formatCpuSeconds(account.cpu_seconds)}</Tag>
-            <AccountActions account_id={account.account_id} />
-          </Space>
-        </div>
-      ))}
+      {[...accounts]
+        .sort(
+          (a, b) =>
+            reviewSortRank(a.active_abuse_annotations) -
+              reviewSortRank(b.active_abuse_annotations) ||
+            b.cpu_seconds - a.cpu_seconds,
+        )
+        .map((account) => (
+          <div key={account.account_id}>
+            <Space wrap>
+              <Text strong>{getAccountLabel(account)}</Text>
+              <Tag>{formatCpuSeconds(account.cpu_seconds)}</Tag>
+              <AccountActions
+                account_id={account.account_id}
+                active_annotations={account.active_abuse_annotations}
+                defaultCategory="cpu"
+                evidence={{
+                  source: "top_cpu_account",
+                  cpu_seconds: account.cpu_seconds,
+                }}
+                onAnnotationChange={onAnnotationChange}
+              />
+            </Space>
+          </div>
+        ))}
     </Space>
   );
 }
 
 function TopCpuProjects({
   projects,
+  onAnnotationChange,
 }: {
   projects: ManagedCpuAdminProjectSummary[];
+  onAnnotationChange?: () => void;
 }) {
   if (projects.length === 0) {
     return (
@@ -233,36 +287,57 @@ function TopCpuProjects({
   }
   return (
     <Space direction="vertical" size={12} style={{ width: "100%" }}>
-      {projects.map((project) => (
-        <div
-          key={`${project.account_id}:${project.project_id ?? "none"}:${project.host_id ?? "none"}`}
-        >
-          <Space wrap>
-            <Text strong>{getProjectLabel(project)}</Text>
-            <Tag>{formatCpuSeconds(project.cpu_seconds)}</Tag>
-            {project.host_id ? <Tag>Host {project.host_id}</Tag> : null}
-            <Text type="secondary">{getAccountLabel(project)}</Text>
-            <AccountActions account_id={project.account_id} />
-            {project.project_id ? (
-              <Button
-                size="small"
-                href={`/projects/${project.project_id}/files/`}
-                target="_blank"
-              >
-                Open project
-              </Button>
-            ) : null}
-          </Space>
-        </div>
-      ))}
+      {[...projects]
+        .sort(
+          (a, b) =>
+            reviewSortRank(a.active_abuse_annotations) -
+              reviewSortRank(b.active_abuse_annotations) ||
+            b.cpu_seconds - a.cpu_seconds,
+        )
+        .map((project) => (
+          <div
+            key={`${project.account_id}:${project.project_id ?? "none"}:${project.host_id ?? "none"}`}
+          >
+            <Space wrap>
+              <Text strong>{getProjectLabel(project)}</Text>
+              <Tag>{formatCpuSeconds(project.cpu_seconds)}</Tag>
+              {project.host_id ? <Tag>Host {project.host_id}</Tag> : null}
+              <Text type="secondary">{getAccountLabel(project)}</Text>
+              <AccountActions
+                account_id={project.account_id}
+                project_id={project.project_id}
+                active_annotations={project.active_abuse_annotations}
+                defaultCategory="cpu"
+                evidence={{
+                  source: "top_cpu_project",
+                  cpu_seconds: project.cpu_seconds,
+                  project_id: project.project_id,
+                  host_id: project.host_id,
+                }}
+                onAnnotationChange={onAnnotationChange}
+              />
+              {project.project_id ? (
+                <Button
+                  size="small"
+                  href={`/projects/${project.project_id}/files/`}
+                  target="_blank"
+                >
+                  Open project
+                </Button>
+              ) : null}
+            </Space>
+          </div>
+        ))}
     </Space>
   );
 }
 
 function TopEgressAccounts({
   accounts,
+  onAnnotationChange,
 }: {
   accounts: ManagedEgressAccountSummary[];
+  onAnnotationChange?: () => void;
 }) {
   if (accounts.length === 0) {
     return (
@@ -276,7 +351,16 @@ function TopEgressAccounts({
           <Space wrap>
             <Text strong>{getAccountLabel(account)}</Text>
             <Tag>{humanSize(account.bytes)}</Tag>
-            <AccountActions account_id={account.account_id} />
+            <AccountActions
+              account_id={account.account_id}
+              active_annotations={account.active_abuse_annotations}
+              defaultCategory="egress"
+              evidence={{
+                source: "top_egress_account",
+                bytes: account.bytes,
+              }}
+              onAnnotationChange={onAnnotationChange}
+            />
           </Space>
         </div>
       ))}
@@ -286,8 +370,10 @@ function TopEgressAccounts({
 
 function TopEgressProjects({
   projects,
+  onAnnotationChange,
 }: {
   projects: ManagedEgressAdminProjectSummary[];
+  onAnnotationChange?: () => void;
 }) {
   if (projects.length === 0) {
     return (
@@ -302,7 +388,17 @@ function TopEgressProjects({
             <Text strong>{getProjectLabel(project)}</Text>
             <Tag>{humanSize(project.bytes)}</Tag>
             <Text type="secondary">{getAccountLabel(project)}</Text>
-            <AccountActions account_id={project.account_id} />
+            <AccountActions
+              account_id={project.account_id}
+              project_id={project.project_id}
+              defaultCategory="egress"
+              evidence={{
+                source: "top_egress_project",
+                bytes: project.bytes,
+                project_id: project.project_id,
+              }}
+              onAnnotationChange={onAnnotationChange}
+            />
             {project.project_id ? (
               <Button
                 size="small"
@@ -417,6 +513,7 @@ export function ManagedCpuAdminOverview() {
     }
   };
 
+  const hasOverview = cpuOverview != null && egressOverview != null;
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Paragraph style={{ marginBottom: 0 }}>
@@ -461,17 +558,15 @@ export function ManagedCpuAdminOverview() {
         >
           Copy summary
         </Button>
-        <Button onClick={() => void load()}>Refresh</Button>
+        <ManagedCpuHistoryButton buttonText="Global CPU history" size="small" />
+        <Button loading={loading && hasOverview} onClick={() => void load()}>
+          Refresh
+        </Button>
       </Space>
 
-      {loading ? <Spin /> : null}
+      {loading && !hasOverview ? <Spin /> : null}
       {error ? <ShowError error={error} /> : null}
-      {!loading &&
-      !error &&
-      cpuOverview &&
-      egressOverview &&
-      hasNoCpu &&
-      hasNoEgress ? (
+      {!error && cpuOverview && egressOverview && hasNoCpu && hasNoEgress ? (
         <Alert
           message={`No managed CPU or egress recorded in the last ${range.label}.`}
           type="info"
@@ -479,22 +574,34 @@ export function ManagedCpuAdminOverview() {
         />
       ) : null}
 
-      {!loading && !error && cpuOverview && egressOverview ? (
+      {!error && cpuOverview && egressOverview ? (
         <>
           <PanelBox title={`Top CPU accounts (${range.label})`}>
-            <TopCpuAccounts accounts={cpuOverview.top_accounts} />
+            <TopCpuAccounts
+              accounts={cpuOverview.top_accounts}
+              onAnnotationChange={load}
+            />
           </PanelBox>
 
           <PanelBox title={`Top CPU projects (${range.label})`}>
-            <TopCpuProjects projects={cpuOverview.top_projects} />
+            <TopCpuProjects
+              projects={cpuOverview.top_projects}
+              onAnnotationChange={load}
+            />
           </PanelBox>
 
           <PanelBox title={`Top egress accounts (${range.label})`}>
-            <TopEgressAccounts accounts={egressOverview.top_accounts} />
+            <TopEgressAccounts
+              accounts={egressOverview.top_accounts}
+              onAnnotationChange={load}
+            />
           </PanelBox>
 
           <PanelBox title={`Top egress projects (${range.label})`}>
-            <TopEgressProjects projects={egressOverview.top_projects} />
+            <TopEgressProjects
+              projects={egressOverview.top_projects}
+              onAnnotationChange={load}
+            />
           </PanelBox>
 
           <PanelBox title="Recent CPU samples">

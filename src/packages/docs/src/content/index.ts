@@ -4,6 +4,7 @@
  */
 
 export * from "./admin";
+export * from "./account";
 export * from "./ai";
 export * from "./automation";
 export * from "./collaboration";

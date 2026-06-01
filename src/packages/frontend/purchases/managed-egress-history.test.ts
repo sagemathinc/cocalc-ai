@@ -90,7 +90,9 @@ describe("managed egress history helpers", () => {
       }),
     ).toEqual({
       latestBytes: 200,
+      latestBytesPerHour: 200,
       peakBytes: 500,
+      peakBytesPerHour: 500,
       avgBytesPerHour: 200,
     });
   });

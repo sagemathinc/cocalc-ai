@@ -17,7 +17,7 @@ import { COLORS, DOC_URL } from "@cocalc/util/theme";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { join } from "path";
 
-export const DOC_TRIAL = "https://doc.cocalc.com/trial.html";
+export const DOC_TRIAL = "/app-docs/billing/settings";
 const MEMBERSHIP_URL = join(appBasePath, "/settings");
 
 // explains implications for having no internet and/or no member hosting
@@ -65,9 +65,7 @@ interface BannerProps {
 
 // string and URLs
 const NO_HOST = ["expect slower performance"];
-const MEMBER_QUOTA =
-  "https://doc.cocalc.com/billing.html#what-is-member-hosting";
-// const ADD_LICENSE = "https://doc.cocalc.com/project-settings.html#project-add-license";
+const MEMBER_QUOTA = "/app-docs/billing/settings";
 
 export const TrialBanner: React.FC<BannerProps> = React.memo(
   (props: BannerProps) => {

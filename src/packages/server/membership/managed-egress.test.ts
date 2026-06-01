@@ -4,6 +4,7 @@
  */
 
 const queryMock = jest.fn();
+const listActiveAbuseReviewAnnotationsMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -12,10 +13,17 @@ jest.mock("@cocalc/database/pool", () => ({
   }),
 }));
 
+jest.mock("./abuse-review-annotations", () => ({
+  listActiveAbuseReviewAnnotations: (...args: any[]) =>
+    listActiveAbuseReviewAnnotationsMock(...args),
+}));
+
 describe("managed egress history", () => {
   beforeEach(() => {
     jest.resetModules();
     queryMock.mockReset();
+    listActiveAbuseReviewAnnotationsMock.mockReset();
+    listActiveAbuseReviewAnnotationsMock.mockResolvedValue([]);
     queryMock.mockImplementation(async (sql: string) => {
       if (
         sql.includes(
@@ -285,6 +293,7 @@ describe("managed egress history", () => {
         first_name: "Ada",
         last_name: "Lovelace",
         bytes: 6000,
+        active_abuse_annotations: [],
       },
       {
         account_id: "acct-2",
@@ -292,6 +301,7 @@ describe("managed egress history", () => {
         first_name: "Alan",
         last_name: "Turing",
         bytes: 2192,
+        active_abuse_annotations: [],
       },
     ]);
     expect(result.top_projects).toEqual([
@@ -303,6 +313,7 @@ describe("managed egress history", () => {
         project_id: "project-1",
         project_title: "Lite One",
         bytes: 4096,
+        active_abuse_annotations: [],
       },
     ]);
     expect(result.recent_events).toEqual([
@@ -453,6 +464,7 @@ describe("managed egress history", () => {
         first_name: "Ada",
         last_name: "Lovelace",
         bytes: 450,
+        active_abuse_annotations: [],
       },
     ]);
     expect(result.top_projects).toEqual([
@@ -464,6 +476,7 @@ describe("managed egress history", () => {
         project_id: "project-1",
         project_title: "Lite One",
         bytes: 450,
+        active_abuse_annotations: [],
       },
     ]);
     expect(result.recent_events).toEqual([

@@ -24,6 +24,7 @@
   "scripts": {
     "build": "pnpm exec tsc --build --force",
     "clean": "rm -rf dist node_modules tsconfig.tsbuildinfo",
+    "gaps": "pnpm build && node dist/verify.js --gaps",
     "verify": "pnpm build && node dist/verify.js"
   },
   "files": [

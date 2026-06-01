@@ -21,6 +21,10 @@ import {
 } from "@cocalc/server/conat/project-host-assignment";
 import { getCurrentProjectRootfsBinding } from "@cocalc/server/projects/rootfs-state";
 import { assertCanRestoreProvisionedProjectStorage } from "@cocalc/server/membership/project-limits";
+import {
+  formatManagedProjectCpuPolicyBlockMessage,
+  getManagedProjectCpuPolicy,
+} from "@cocalc/server/membership/managed-cpu-policy";
 import { cancelStaleProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
 import { getLro } from "@cocalc/server/lro/lro-db";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
@@ -841,6 +845,22 @@ export async function startProjectOnHost(
         host_id: placement.host_id,
         err: `${err}`,
       });
+    }
+    let cpuPolicyBlockMessage: string | undefined;
+    try {
+      const policy = await getManagedProjectCpuPolicy({ project_id });
+      if (!policy.allowed) {
+        cpuPolicyBlockMessage =
+          formatManagedProjectCpuPolicyBlockMessage(policy);
+      }
+    } catch (err) {
+      log.warn("startProjectOnHost unable to evaluate CPU start policy", {
+        project_id,
+        err: `${err}`,
+      });
+    }
+    if (cpuPolicyBlockMessage) {
+      throw new Error(cpuPolicyBlockMessage);
     }
     const meta = await loadProject(project_id);
     const run_quota = await applyHostGpuToRunQuota(
