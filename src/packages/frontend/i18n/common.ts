@@ -146,6 +146,16 @@ export const labels = defineMessages({
     defaultMessage: "Billing",
     description: "Billing and payment related settings",
   },
+  store: {
+    id: "labels.store",
+    defaultMessage: "Store",
+    description: "In-app page for purchasing available products or credit.",
+  },
+  voucher_center: {
+    id: "labels.voucher_center",
+    defaultMessage: "Voucher Center",
+    description: "Settings page for managing and redeeming credit vouchers.",
+  },
   email_address: {
     id: "labels.email_address",
     defaultMessage: "Email Address",

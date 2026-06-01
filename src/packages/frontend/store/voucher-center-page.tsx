@@ -18,7 +18,9 @@ import {
   Typography,
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
+import { defineMessage } from "react-intl";
 
+import type { SettingsPageDefinition } from "@cocalc/frontend/account/settings-page";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -29,6 +31,7 @@ import {
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
 import CopyToClipboard from "@cocalc/frontend/components/copy-to-clipboard";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { labels } from "@cocalc/frontend/i18n";
 import { currency, plural } from "@cocalc/util/misc";
 import type { Voucher, VoucherCode } from "@cocalc/util/db-schema/vouchers";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -42,6 +45,18 @@ import {
 import VoucherCodeNotes from "./voucher-code-notes";
 
 const { Paragraph, Text, Title } = Typography;
+
+export const VOUCHER_CENTER_SETTINGS_PAGE = {
+  component: VoucherCenterPage,
+  description: defineMessage({
+    id: "account.settings.overview.vouchers",
+    defaultMessage:
+      "Browse voucher batches, redeemed codes, admin notes, and redeem links.",
+  }),
+  icon: "gift",
+  key: "vouchers",
+  label: labels.voucher_center,
+} satisfies SettingsPageDefinition;
 
 function sortByDateDesc<T extends { created?: Date | string }>(
   items: T[],

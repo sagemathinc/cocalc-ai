@@ -4,14 +4,25 @@
  */
 
 import { Space } from "antd";
+import { defineMessage } from "react-intl";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { BlobCleanupButton } from "@cocalc/frontend/blobs/cleanup-button";
+import { labels } from "@cocalc/frontend/i18n";
 import { lite } from "@cocalc/frontend/lite";
-import { OtherSettings, OTHER_ICON_NAME } from "./other-settings";
+import { OtherSettings } from "./other-settings";
+import type { SettingsPageDefinition } from "./settings-page";
 
-// Re-export the icon constant for account preferences section
-export { OTHER_ICON_NAME };
+export const ACCOUNT_PREFERENCES_OTHER_PAGE = {
+  component: AccountPreferencesOther,
+  description: defineMessage({
+    id: "account.settings.overview.other",
+    defaultMessage: "Miscellaneous settings and options.",
+  }),
+  icon: "gear",
+  key: "other",
+  label: labels.other,
+} satisfies SettingsPageDefinition;
 
 export function AccountPreferencesOther() {
   const other_settings = useTypedRedux("account", "other_settings");

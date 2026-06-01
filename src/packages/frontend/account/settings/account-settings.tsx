@@ -44,7 +44,6 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
-import { ACCOUNT_PROFILE_ICON_NAME } from "../account-preferences-profile";
 import { set_account_table, ugly_error } from "../util";
 import { EmailAddressSetting } from "./email-address-setting";
 import { EmailVerification } from "./email-verification";
@@ -450,10 +449,7 @@ export function AccountSettings(props: Readonly<Props>) {
   }
 
   return (
-    <SettingBox
-      title={intl.formatMessage(labels.account)}
-      icon={ACCOUNT_PROFILE_ICON_NAME}
-    >
+    <SettingBox title={intl.formatMessage(labels.account)} icon="address-card">
       <Space vertical>
         {render_account_id()}
         {render_name()}

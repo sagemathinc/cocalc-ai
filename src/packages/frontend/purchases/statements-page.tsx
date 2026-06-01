@@ -1,5 +1,8 @@
 import { Collapse, CollapseProps, Divider } from "antd";
 import { useState } from "react";
+import { defineMessage } from "react-intl";
+import type { SettingsPageDefinition } from "@cocalc/frontend/account/settings-page";
+import { labels } from "@cocalc/frontend/i18n";
 import Statements from "./statements";
 import Statement from "./statement";
 import { Icon } from "@cocalc/frontend/components/icon";
@@ -8,6 +11,17 @@ import ClosingDate from "./closing-date";
 type Key = string[] | string | number[] | number;
 
 const cache: { activeKey: Key } = { activeKey: [] };
+
+export const STATEMENTS_SETTINGS_PAGE = {
+  component: StatementsPage,
+  description: defineMessage({
+    id: "account.settings.overview.statements",
+    defaultMessage: "View detailed billing statements and invoices.",
+  }),
+  icon: "calendar-week",
+  key: "statements",
+  label: labels.statements,
+} satisfies SettingsPageDefinition;
 
 export default function StatementsPage() {
   const [activeKey, setActiveKey] = useState<Key>(cache.activeKey);

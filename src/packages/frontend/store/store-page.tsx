@@ -4,16 +4,31 @@
  */
 
 import { Button, Card, Space, Tag, Typography } from "antd";
+import { defineMessage } from "react-intl";
+import type { SettingsPageDefinition } from "@cocalc/frontend/account/settings-page";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { MembershipStatusPanel } from "@cocalc/frontend/account/membership-status";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { labels } from "@cocalc/frontend/i18n";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 import AdminPurchasePanel from "./admin-purchase-panel";
 import VoucherPurchasePanel from "./voucher-purchase-panel";
 
 const { Paragraph, Text, Title } = Typography;
+
+export const STORE_SETTINGS_PAGE = {
+  component: StorePage,
+  description: defineMessage({
+    id: "account.settings.overview.store",
+    defaultMessage:
+      "Buy memberships, team seats, and vouchers, then jump directly to project host billing.",
+  }),
+  icon: "shopping-cart",
+  key: "store",
+  label: labels.store,
+} satisfies SettingsPageDefinition;
 
 export function StorePage() {
   const isAdmin = !!useTypedRedux("account", "is_admin");

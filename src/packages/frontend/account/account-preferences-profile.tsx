@@ -3,18 +3,27 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { IconName } from "@cocalc/frontend/components/icon";
+import { labels } from "@cocalc/frontend/i18n";
+import { defineMessage } from "react-intl";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 
 import { AvatarSettings } from "./avatar-settings";
 import { SecuritySettings } from "./security-settings";
 import { AccountSettings } from "./settings/account-settings";
+import type { SettingsPageDefinition } from "./settings-page";
 
-// Icon constant for account preferences section
-export const ACCOUNT_PROFILE_ICON_NAME: IconName = "address-card";
-
-export const ACCOUNT_PREFERENCES_ICON_NAME: IconName = "cogs";
+export const ACCOUNT_PREFERENCES_PROFILE_PAGE = {
+  component: AccountPreferencesProfile,
+  description: defineMessage({
+    id: "account.settings.overview.profile",
+    defaultMessage:
+      "Manage your personal information, avatar, and account details.",
+  }),
+  icon: "address-card",
+  key: "profile",
+  label: labels.profile,
+} satisfies SettingsPageDefinition;
 
 export function AccountPreferencesProfile() {
   const account_id = useTypedRedux("account", "account_id");

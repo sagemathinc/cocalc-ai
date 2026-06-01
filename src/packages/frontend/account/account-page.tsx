@@ -13,7 +13,7 @@ and configuration.
 import type { SettingsPageType } from "@cocalc/util/types/settings";
 import { Button, Flex, Menu, Select, Space } from "antd";
 import { useEffect, useState } from "react";
-import { useIntl } from "react-intl";
+import { MessageDescriptor, useIntl } from "react-intl";
 import { SignOut } from "@cocalc/frontend/account/sign-out";
 import {
   React,
@@ -22,64 +22,31 @@ import {
   useTypedRedux,
   useWindowDimensions,
 } from "@cocalc/frontend/app-framework";
-import { Icon, IconName, Loading, Title } from "@cocalc/frontend/components";
-import AIAvatar from "@cocalc/frontend/components/ai-avatar";
+import { Icon, Loading, Title } from "@cocalc/frontend/components";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
-import { labels } from "@cocalc/frontend/i18n";
 import BalanceButton from "@cocalc/frontend/purchases/balance-button";
-import PaymentMethodsPage from "@cocalc/frontend/purchases/payment-methods-page";
-import PaymentsPage from "@cocalc/frontend/purchases/payments-page";
-import PurchasesPage from "@cocalc/frontend/purchases/purchases-page";
-import StatementsPage from "@cocalc/frontend/purchases/statements-page";
-import { StorePage, VoucherCenterPage } from "@cocalc/frontend/store";
-import SubscriptionsPage from "@cocalc/frontend/purchases/subscriptions-page";
-import { SupportTickets } from "@cocalc/frontend/support";
 import { COLORS } from "@cocalc/util/theme";
-import { AccountPreferencesAI } from "./account-preferences-ai";
-import {
-  AccountPreferencesAppearance,
-  APPEARANCE_ICON_NAME,
-} from "./account-preferences-appearance";
-import {
-  AccountPreferencesCommunication,
-  COMMUNICATION_ICON_NAME,
-} from "./account-preferences-communication";
-import {
-  AccountPreferencesEditor,
-  EDITOR_ICON_NAME,
-} from "./account-preferences-editor";
-import {
-  AccountPreferencesKeyboard,
-  KEYBOARD_ICON_NAME,
-} from "./account-preferences-keyboard";
-import {
-  AccountPreferencesOther,
-  OTHER_ICON_NAME,
-} from "./account-preferences-other";
-import {
-  ACCOUNT_PREFERENCES_ICON_NAME,
-  ACCOUNT_PROFILE_ICON_NAME,
-  AccountPreferencesProfile,
-} from "./account-preferences-profile";
-import {
-  AccountPreferencesSecurity,
-  KEYS_ICON_NAME,
-} from "./account-preferences-security";
 import { I18NSelector } from "./i18n-selector";
-import { LicensesPage } from "./licenses/licenses-page";
-import { SettingsOverview } from "./settings-index";
+import { SETTINGS_OVERVIEW_PAGE } from "./settings-index";
+import {
+  getSettingsNavigationGroupKey,
+  getVisibleSettingsNavigation,
+  useSettingsNavigationContext,
+} from "./settings-navigation";
+import { SETTINGS_PAGE_DEFINITIONS } from "./settings-page-registry";
+import {
+  renderSettingsPageIcon,
+  type SettingsPageDefinition,
+  type SettingsPageIcon,
+} from "./settings-page";
 import {
   applyAccountSettingsRoute,
-  getAccountSettingsGroupKey,
-  getAccountSettingsGroupPages,
   getAccountSettingsRouteFromState,
   isAccountSettingsPageKey,
 } from "./settings-routing";
 import MembershipBadge from "./membership-badge";
 import { lite, project_id } from "@cocalc/frontend/lite";
-
-export const ACCOUNT_SETTINGS_ICON_NAME: IconName = "settings";
 
 // Type for valid menu keys
 type MenuKey =
@@ -90,6 +57,17 @@ type MenuKey =
   | "profile"
   | SettingsPageType
   | string;
+
+type SettingsNavigation = {
+  contentComponents: Partial<Record<SettingsPageType, React.ComponentType>>;
+  menuItems: any[];
+  titles: Partial<Record<SettingsPageType, string>>;
+};
+
+const pageDefinitions = {
+  index: SETTINGS_OVERVIEW_PAGE,
+  ...SETTINGS_PAGE_DEFINITIONS,
+} satisfies Record<SettingsPageType, SettingsPageDefinition>;
 
 // give up on trying to load account info and redirect to landing page.
 // Do NOT make too short, since loading account info might takes ~10 seconds, e,g., due
@@ -108,14 +86,12 @@ export const AccountPage: React.FC = () => {
   const active_page = getAccountSettingsRouteFromState({
     active_page: raw_active_page,
   }).page;
-  const activeGroupKey = getAccountSettingsGroupKey(active_page);
+  const navigationContext = useSettingsNavigationContext();
+  const activeGroupKey = getSettingsNavigationGroupKey(active_page);
   const activeGroupOpenKeys = activeGroupKey == null ? [] : [activeGroupKey];
   const [manualOpenKeys, setManualOpenKeys] = useState<string[] | undefined>();
   const is_logged_in = useTypedRedux("account", "is_logged_in");
   const account_id = useTypedRedux("account", "account_id");
-  const is_commercial = useTypedRedux("customize", "is_commercial");
-  const is_admin = !!useTypedRedux("account", "is_admin");
-  const zendesk = !!useTypedRedux("customize", "zendesk");
   const get_api_key = useTypedRedux("page", "get_api_key");
 
   useEffect(() => {
@@ -138,264 +114,61 @@ export const AccountPage: React.FC = () => {
     }
   }
 
-  function getTabs(): any[] {
-    const pageItems: Record<SettingsPageType, any> = {
-      ai: {
-        children: active_page === "ai" && <AccountPreferencesAI />,
-        label: (
-          <span>
-            <AIAvatar size={16} style={{ top: "-5px" }} />{" "}
-            {intl.formatMessage(labels.ai)}
-          </span>
-        ),
-      },
-      appearance: {
-        children: active_page === "appearance" && (
-          <AccountPreferencesAppearance />
-        ),
-        label: (
-          <span>
-            <Icon name={APPEARANCE_ICON_NAME} />{" "}
-            {intl.formatMessage(labels.appearance)}
-          </span>
-        ),
-      },
-      communication: {
-        children: active_page === "communication" && (
-          <AccountPreferencesCommunication />
-        ),
-        label: (
-          <span>
-            <Icon name={COMMUNICATION_ICON_NAME} />{" "}
-            {intl.formatMessage(labels.communication)}
-          </span>
-        ),
-      },
-      editor: {
-        children: active_page === "editor" && <AccountPreferencesEditor />,
-        label: (
-          <span>
-            <Icon name={EDITOR_ICON_NAME} /> {intl.formatMessage(labels.editor)}
-          </span>
-        ),
-      },
-      index: {
-        children: active_page === "index" && <SettingsOverview />,
-        label: (
-          <span style={{ fontWeight: "bold" }}>
-            <Icon name={ACCOUNT_SETTINGS_ICON_NAME} />{" "}
-            {intl.formatMessage(labels.settings)}
-          </span>
-        ),
-      },
-      keyboard: {
-        children: active_page === "keyboard" && <AccountPreferencesKeyboard />,
-        label: (
-          <span>
-            <Icon name={KEYBOARD_ICON_NAME} />{" "}
-            {intl.formatMessage(labels.keyboard)}
-          </span>
-        ),
-      },
-      keys: {
-        children: active_page === "keys" && <AccountPreferencesSecurity />,
-        label: (
-          <span>
-            <Icon name={KEYS_ICON_NAME} />{" "}
-            {intl.formatMessage(labels.ssh_and_api_keys)}
-          </span>
-        ),
-      },
-      licenses: {
-        children: active_page === "licenses" && <LicensesPage />,
-        label: (
-          <span>
-            <Icon name="key" /> {intl.formatMessage(labels.licenses)}
-          </span>
-        ),
-      },
-      other: {
-        children: active_page === "other" && <AccountPreferencesOther />,
-        label: (
-          <span>
-            <Icon name={OTHER_ICON_NAME} /> {intl.formatMessage(labels.other)}
-          </span>
-        ),
-      },
-      "payment-methods": {
-        children: active_page === "payment-methods" && <PaymentMethodsPage />,
-        label: (
-          <span>
-            <Icon name="credit-card" />{" "}
-            {intl.formatMessage(labels.payment_methods)}
-          </span>
-        ),
-      },
-      payments: {
-        children: active_page === "payments" && <PaymentsPage />,
-        label: (
-          <span>
-            <Icon name="credit-card" /> {intl.formatMessage(labels.payments)}
-          </span>
-        ),
-      },
-      profile: {
-        children: active_page === "profile" && <AccountPreferencesProfile />,
-        label: (
-          <span>
-            <Icon name={ACCOUNT_PROFILE_ICON_NAME} />{" "}
-            {intl.formatMessage(labels.profile)}
-          </span>
-        ),
-      },
-      purchases: {
-        children: active_page === "purchases" && <PurchasesPage />,
-        label: (
-          <span>
-            <Icon name="money-check" /> {intl.formatMessage(labels.purchases)}
-          </span>
-        ),
-      },
-      statements: {
-        children: active_page === "statements" && <StatementsPage />,
-        label: (
-          <span>
-            <Icon name="calendar-week" />{" "}
-            {intl.formatMessage(labels.statements)}
-          </span>
-        ),
-      },
-      store: {
-        children: active_page === "store" && <StorePage />,
-        label: (
-          <span>
-            <Icon name="shopping-cart" /> Store
-          </span>
-        ),
-      },
-      subscriptions: {
-        children: active_page === "subscriptions" && <SubscriptionsPage />,
-        label: (
-          <span>
-            <Icon name="calendar" /> {intl.formatMessage(labels.subscriptions)}
-          </span>
-        ),
-      },
-      support: {
-        children: active_page === "support" && <SupportTickets />,
-        label: (
-          <span>
-            <Icon name="medkit" /> {intl.formatMessage(labels.support)}
-          </span>
-        ),
-      },
-      vouchers: {
-        children: active_page === "vouchers" && <VoucherCenterPage />,
-        label: (
-          <span>
-            <Icon name="gift" /> Voucher Center
-          </span>
-        ),
-      },
-    };
-
-    function getPageItem(page: SettingsPageType): any {
-      return { key: page, ...pageItems[page] };
-    }
-
-    function isVisiblePage(page: SettingsPageType): boolean {
-      if (lite && (page === "communication" || page === "keys")) return false;
-      if (
-        page === "purchases" ||
-        page === "payments" ||
-        page === "payment-methods" ||
-        page === "statements"
-      ) {
-        return is_commercial;
-      }
-      return true;
-    }
-
-    const items: any[] = [
-      getPageItem("index"),
-      getPageItem("profile"),
-      {
-        key: "preferences",
-        mobilePrefix: intl.formatMessage(labels.preferences),
-        label: (
-          <span>
-            <Icon name={ACCOUNT_PREFERENCES_ICON_NAME} />{" "}
-            {intl.formatMessage(labels.preferences)}
-          </span>
-        ),
-        children: getAccountSettingsGroupPages("preferences")
-          .filter(isVisiblePage)
-          .map(getPageItem),
-      },
-    ];
-
-    items.push({ type: "divider" });
-
-    if (is_commercial || is_admin) {
-      items.push({
-        key: "billing",
-        mobilePrefix: intl.formatMessage(labels.billing),
-        label: (
-          <span>
-            <Icon name="money-check" /> {intl.formatMessage(labels.billing)}
-          </span>
-        ),
-        children: getAccountSettingsGroupPages("billing")
-          .filter(isVisiblePage)
-          .map(getPageItem),
-      });
-      items.push({ type: "divider" });
-    }
-
-    if (zendesk) {
-      items.push({ type: "divider" });
-      items.push(getPageItem("support"));
-    }
-
-    return items;
+  function renderLabel({
+    icon,
+    label,
+  }: {
+    icon: SettingsPageIcon;
+    label: MessageDescriptor;
+  }): React.ReactNode {
+    return (
+      <span>
+        {renderSettingsPageIcon(icon, "menu")}
+        {!hidden && <> {intl.formatMessage(label)}</>}
+      </span>
+    );
   }
 
-  const tabs = getTabs();
+  function getNavigation(): SettingsNavigation {
+    const menuItems: any[] = [];
+    const contentComponents: Partial<
+      Record<SettingsPageType, React.ComponentType>
+    > = {};
+    const titles: Partial<Record<SettingsPageType, string>> = {};
+
+    function addPage(page: SettingsPageType): any | undefined {
+      const definition = pageDefinitions[page];
+      contentComponents[page] = definition.component;
+      titles[page] = intl.formatMessage(definition.label);
+      return { key: page, label: renderLabel(definition) };
+    }
+
+    for (const node of getVisibleSettingsNavigation(navigationContext)) {
+      if (node.type === "page") {
+        const item = addPage(node.page);
+        if (item != null) {
+          menuItems.push(item);
+        }
+        continue;
+      }
+      const childItems = node.pages
+        .map(({ page }) => addPage(page))
+        .filter((item): item is any => item != null);
+      if (childItems.length === 0) continue;
+      menuItems.push({
+        key: node.key,
+        mobilePrefix: intl.formatMessage(node.label),
+        label: renderLabel(node),
+        children: childItems,
+      });
+    }
+
+    return { contentComponents, menuItems, titles };
+  }
+
+  const { contentComponents, menuItems: tabs, titles } = getNavigation();
   const mobileNavigationOptions = getMobileNavigationOptions(tabs);
   const menuOpenKeys = manualOpenKeys ?? activeGroupOpenKeys;
-
-  function visibleLabel(label) {
-    return hidden ? <span>{label.props.children[0]}</span> : label;
-  }
-
-  // Process tabs to handle nested children uniformly.
-  const children = {};
-  const titles = {}; // Always store full labels for renderTitle()
-  for (const tab of tabs) {
-    if (tab.type == "divider") {
-      continue;
-    }
-    const originalLabel = tab.label;
-    titles[tab.key] = originalLabel;
-    tab.label = visibleLabel(originalLabel);
-
-    if (Array.isArray(tab.children)) {
-      const subTabs = tab.children;
-      tab.children = subTabs.map((subTab) => {
-        return {
-          key: subTab.key,
-          label: visibleLabel(subTab.label),
-        };
-      });
-      for (const subTab of subTabs) {
-        children[subTab.key] = subTab.children;
-        titles[subTab.key] = subTab.label; // Always store original full label
-      }
-    } else {
-      children[tab.key] = tab.children;
-      delete tab.children;
-    }
-  }
 
   function renderTitle() {
     return <Title level={3}>{titles[active_page] ?? titles["index"]}</Title>;
@@ -404,7 +177,7 @@ export const AccountPage: React.FC = () => {
   function renderExtraContent() {
     return (
       <Space wrap>
-        {is_commercial ? <BalanceButton /> : undefined}
+        {navigationContext.isCommercial ? <BalanceButton /> : undefined}
         {!lite && <MembershipBadge />}
         <I18NSelector isWide={isWide} />
         {!lite && <SignOut everywhere={false} narrow={!isWide} />}
@@ -413,7 +186,9 @@ export const AccountPage: React.FC = () => {
   }
 
   function renderActiveContent() {
-    return children[active_page] ?? children["index"];
+    const ActiveContent =
+      contentComponents[active_page] ?? contentComponents["index"];
+    return ActiveContent == null ? undefined : <ActiveContent />;
   }
 
   function renderMobileLoggedInView(): React.JSX.Element {
@@ -584,7 +359,6 @@ export const AccountPage: React.FC = () => {
 function getMobileNavigationOptions(tabs: any[]) {
   const options: { label: React.ReactNode; value: string }[] = [];
   for (const tab of tabs) {
-    if (tab.type === "divider") continue;
     if (Array.isArray(tab.children)) {
       const prefix = tab.mobilePrefix;
       for (const subTab of tab.children) {

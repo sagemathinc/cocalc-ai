@@ -5,12 +5,32 @@
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Alert, Typography } from "antd";
+import { defineMessage } from "react-intl";
+import AIAvatar from "@cocalc/frontend/components/ai-avatar";
+import { labels } from "@cocalc/frontend/i18n";
 import { lite } from "@cocalc/frontend/lite";
 import { OtherSettings } from "./other-settings";
 import { CodexCredentialsPanel } from "./codex-credentials-panel";
 import { CodexDefaultsPanel } from "./codex-defaults-panel";
 import LiteAISettings from "./lite-ai-settings";
 import { AIUsageStatus } from "@cocalc/frontend/misc/ai-usage-status";
+import type { SettingsPageDefinition } from "./settings-page";
+
+export const ACCOUNT_PREFERENCES_AI_PAGE = {
+  component: AccountPreferencesAI,
+  description: defineMessage({
+    id: "account.settings.overview.ai",
+    defaultMessage: "Configure AI assistant settings and integrations.",
+  }),
+  icon: ({ context }) => (
+    <AIAvatar
+      size={context === "overview" ? 24 : 16}
+      style={context === "menu" ? { top: "-5px" } : undefined}
+    />
+  ),
+  key: "ai",
+  label: labels.ai,
+} satisfies SettingsPageDefinition;
 
 export function AccountPreferencesAI() {
   const other_settings = useTypedRedux("account", "other_settings");

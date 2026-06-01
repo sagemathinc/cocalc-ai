@@ -4,13 +4,23 @@
  */
 
 import { lite } from "@cocalc/frontend/lite";
+import { labels } from "@cocalc/frontend/i18n";
+import { defineMessage } from "react-intl";
 import ApiKeys from "./settings/api-keys";
 import GlobalSSHKeys from "./ssh-keys/global-ssh-keys";
 
-import type { IconName } from "@cocalc/frontend/components/icon";
+import type { SettingsPageDefinition } from "./settings-page";
 
-// Icon constant for account preferences section
-export const KEYS_ICON_NAME: IconName = "key";
+export const ACCOUNT_PREFERENCES_SECURITY_PAGE = {
+  component: AccountPreferencesSecurity,
+  description: defineMessage({
+    id: "account.settings.overview.keys",
+    defaultMessage: "Manage API keys and setup SSH keys.",
+  }),
+  icon: "key",
+  key: "keys",
+  label: labels.ssh_and_api_keys,
+} satisfies SettingsPageDefinition;
 
 export function AccountPreferencesSecurity() {
   return (

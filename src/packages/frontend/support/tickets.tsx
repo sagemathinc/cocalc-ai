@@ -4,7 +4,10 @@
  */
 
 import { Button, Space, Typography } from "antd";
+import { defineMessage } from "react-intl";
+import type { SettingsPageDefinition } from "@cocalc/frontend/account/settings-page";
 import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { labels } from "@cocalc/frontend/i18n";
 import SupportTicketsView from "@cocalc/frontend/public/support/tickets-view";
 import openSupportTab from "./open";
 
@@ -36,3 +39,14 @@ export const SupportTickets: React.FC = () => {
     </Space>
   );
 };
+
+export const SUPPORT_TICKETS_SETTINGS_PAGE = {
+  component: SupportTickets,
+  description: defineMessage({
+    id: "account.settings.overview.support",
+    defaultMessage: "Access support tickets and help resources.",
+  }),
+  icon: "medkit",
+  key: "support",
+  label: labels.support,
+} satisfies SettingsPageDefinition;
