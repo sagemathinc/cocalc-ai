@@ -73,6 +73,7 @@ export type DocsGapEntry = {
   category: string;
   id: string;
   lastReviewed?: string;
+  noActionReason?: string;
   reviewAgeDays?: number;
   slug: string;
   title: string;
@@ -81,6 +82,7 @@ export type DocsGapEntry = {
 export type DocsGapReport = {
   categoriesWithoutChapter: string[];
   entryCount: number;
+  intentionalNoActionPages: DocsGapEntry[];
   legacyDocLinks: DocsLegacyDocLink[];
   ok: boolean;
   pagesWithStaleReview: DocsGapEntry[];
@@ -271,6 +273,7 @@ function entryGap(entry: {
   category: string;
   id: string;
   lastReviewed: string;
+  noActionReason?: string;
   slug: string;
   title: string;
 }): DocsGapEntry {
@@ -280,6 +283,7 @@ function entryGap(entry: {
     category: entry.category,
     id: entry.id,
     lastReviewed: entry.lastReviewed,
+    ...(entry.noActionReason ? { noActionReason: entry.noActionReason } : {}),
     slug: entry.slug,
     title: entry.title,
   };
@@ -384,14 +388,21 @@ return { ok: url.ok === true, url };`,
       };
     }
   }
-  if (actionId === "projects.list.open") {
+  if (
+    actionId === "projects.list.open" ||
+    actionId === "projects.create.open"
+  ) {
     return {
       description: "Projects page is visible.",
       code: `const url = api.waitForUrl({ includes: "/projects", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
 return { ok: url.ok === true, url };`,
     };
   }
-  if (actionId === "project.files.open") {
+  if (
+    actionId === "project.files.open" ||
+    actionId === "files.explorer.open" ||
+    actionId === "files.git.open"
+  ) {
     return {
       description: "Project files route is visible.",
       code: `const url = api.waitForUrl({ includes: "/files", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
@@ -425,9 +436,13 @@ return { ok: url.ok === true && notebook.ok === true, url, notebook };`,
   }
   const createdFileExtensions: Partial<Record<DocsActionId, string>> = {
     "files.markdown.open": "md",
+    "files.slides.open": "slides",
+    "files.whiteboard.open": "board",
     "python.open": "py",
     "latex.open": "tex",
     "r.markdown.open": "Rmd",
+    "projects.tasks.open": "tasks",
+    "collaboration.chat.open": "chat",
   };
   const createdFileExtension = createdFileExtensions[actionId];
   if (createdFileExtension) {
@@ -839,13 +854,18 @@ export function buildDocsGapReport({
   );
   const pagesWithoutActions: DocsGapEntry[] = [];
   const pagesWithoutLiveVerification: DocsGapEntry[] = [];
+  const intentionalNoActionPages: DocsGapEntry[] = [];
   const pagesWithStaleReview: DocsGapEntry[] = [];
 
   for (const entry of entries) {
     const actions = entry.actions ?? [];
     if (actions.length === 0) {
-      pagesWithoutActions.push(entryGap(entry));
-      pagesWithoutLiveVerification.push(entryGap(entry));
+      if (entry.noActionReason?.trim()) {
+        intentionalNoActionPages.push(entryGap(entry));
+      } else {
+        pagesWithoutActions.push(entryGap(entry));
+        pagesWithoutLiveVerification.push(entryGap(entry));
+      }
     } else {
       const hasAssertedLiveAction = actions.some(
         (action) =>
@@ -870,6 +890,7 @@ export function buildDocsGapReport({
       (category) => getDocsChapter(category, docsAccess) == null,
     ),
     entryCount: entries.length,
+    intentionalNoActionPages,
     legacyDocLinks: scanLegacyDocLinks(),
     ok:
       pagesWithoutActions.length === 0 &&
@@ -1162,7 +1183,10 @@ function formatGapEntries(entries: DocsGapEntry[]): string[] {
       : "";
     const reviewAge =
       entry.reviewAgeDays == null ? "" : ` reviewed=${entry.reviewAgeDays}d`;
-    return `- ${entry.category}: ${entry.title} (${entry.slug})${actions}${reviewAge}`;
+    const reason = entry.noActionReason
+      ? ` reason=${entry.noActionReason}`
+      : "";
+    return `- ${entry.category}: ${entry.title} (${entry.slug})${actions}${reviewAge}${reason}`;
   });
 }
 
@@ -1181,6 +1205,9 @@ export function formatDocsGapReport(report: DocsGapReport): string {
     "",
     `Pages without asserted live verification (${report.pagesWithoutLiveVerification.length})`,
     ...formatGapEntries(report.pagesWithoutLiveVerification),
+    "",
+    `Intentionally actionless pages (${report.intentionalNoActionPages.length})`,
+    ...formatGapEntries(report.intentionalNoActionPages),
     "",
     `Pages with stale lastReviewed (${report.pagesWithStaleReview.length})`,
     ...formatGapEntries(report.pagesWithStaleReview),

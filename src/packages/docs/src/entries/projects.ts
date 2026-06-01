@@ -17,6 +17,14 @@ import {
 
 export const PROJECTS_ENTRIES: DocsEntry[] = [
   {
+    actions: [
+      {
+        description: "Open the top-level Projects page.",
+        executable: true,
+        id: "projects.create.open",
+        label: "Open projects",
+      },
+    ],
     audiences: ["agents", "instructors", "researchers", "students", "teams"],
     body: CREATE_PROJECT_BODY.trim(),
     category: "Projects",
@@ -108,6 +116,15 @@ export const PROJECTS_ENTRIES: DocsEntry[] = [
     title: "Use the projects page",
   },
   {
+    actions: [
+      {
+        description: "Create a task file in the active project.",
+        executable: true,
+        id: "projects.tasks.open",
+        label: "Create task file",
+        parameters: projectActionParameters(),
+      },
+    ],
     audiences: ["agents", "instructors", "researchers", "students", "teams"],
     body: TASKS_BODY.trim(),
     category: "Projects",

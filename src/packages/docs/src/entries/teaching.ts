@@ -22,6 +22,8 @@ export const TEACHING_ENTRIES: DocsEntry[] = [
       "Course assignments sent to student project folders",
     ),
     lastReviewed: "2026-05-25",
+    noActionReason:
+      "Course workflows are course-scoped; the action would need a selected .course file.",
     slug: "teaching/course-workflow",
     status: "ready",
     summary:
@@ -29,14 +31,6 @@ export const TEACHING_ENTRIES: DocsEntry[] = [
     title: "Teach a course",
   },
   {
-    actions: [
-      {
-        description: "Open course assignment creation.",
-        executable: false,
-        id: "course.assignment.create",
-        label: "Create assignment",
-      },
-    ],
     audiences: ["agents", "instructors"],
     body: COURSE_ASSIGNMENT_BODY.trim(),
     category: "Teaching",
@@ -46,6 +40,8 @@ export const TEACHING_ENTRIES: DocsEntry[] = [
       "Course assignments sent to student project folders",
     ),
     lastReviewed: "2026-05-24",
+    noActionReason:
+      "Assignment creation is course-scoped; projects can contain many .course files or none.",
     slug: "teaching/create-assignment",
     status: "ready",
     summary:
@@ -62,6 +58,8 @@ export const TEACHING_ENTRIES: DocsEntry[] = [
       "Course assignments sent to student project folders",
     ),
     lastReviewed: "2026-05-25",
+    noActionReason:
+      "nbgrader setup is a course-and-notebook workflow, not a single safe UI destination.",
     slug: "teaching/nbgrader",
     status: "ready",
     summary:

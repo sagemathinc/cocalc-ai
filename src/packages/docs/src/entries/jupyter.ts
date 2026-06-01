@@ -72,6 +72,8 @@ export const JUPYTER_ENTRIES: DocsEntry[] = [
       "A custom Jupyter kernel connected to an isolated Python environment",
     ),
     lastReviewed: "2026-05-24",
+    noActionReason:
+      "Kernel setup is a terminal-plus-notebook workflow with project-specific package commands.",
     slug: "jupyter/custom-kernels",
     status: "ready",
     summary:

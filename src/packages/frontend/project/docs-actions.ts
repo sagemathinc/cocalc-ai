@@ -692,8 +692,21 @@ async function revealRuntimeImage(
   };
 }
 
+type DocsProjectFileExtension =
+  | "Rmd"
+  | "board"
+  | "chat"
+  | "ipynb"
+  | "md"
+  | "py"
+  | "slides"
+  | "tasks"
+  | "term"
+  | "tex"
+  | "txt";
+
 function defaultDocsActionFilename(
-  ext: "Rmd" | "ipynb" | "md" | "py" | "term" | "tex" | "txt",
+  ext: DocsProjectFileExtension,
   avoid?: Record<string, unknown> | null,
 ): string {
   const basename =
@@ -703,13 +716,21 @@ function defaultDocsActionFilename(
         ? "terminal"
         : ext === "md"
           ? "notes"
-          : ext === "py"
-            ? "script"
-            : ext === "tex"
-              ? "paper"
-              : ext === "Rmd"
-                ? "report"
-                : "timetravel-source";
+          : ext === "slides"
+            ? "slides"
+            : ext === "board"
+              ? "whiteboard"
+              : ext === "py"
+                ? "script"
+                : ext === "tex"
+                  ? "paper"
+                  : ext === "Rmd"
+                    ? "report"
+                    : ext === "tasks"
+                      ? "tasks"
+                      : ext === "chat"
+                        ? "chat"
+                        : "timetravel-source";
   for (let i = 1; i < 1000; i += 1) {
     const suffix = i === 1 ? "" : `-${i}`;
     const filename = `${basename}${suffix}.${ext}`;
@@ -724,7 +745,7 @@ async function createDefaultProjectFile({
   projectId,
 }: {
   actionId: DocsActionId;
-  ext: "Rmd" | "ipynb" | "md" | "py" | "term" | "tex" | "txt";
+  ext: DocsProjectFileExtension;
   projectId: string;
 }): Promise<DocsActionRevealResult> {
   selectProject(projectId);
@@ -1087,6 +1108,26 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
         projectId,
       }),
   },
+  "files.slides.open": {
+    id: "files.slides.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) =>
+      createDefaultProjectFile({
+        actionId: "files.slides.open",
+        ext: "slides",
+        projectId,
+      }),
+  },
+  "files.whiteboard.open": {
+    id: "files.whiteboard.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) =>
+      createDefaultProjectFile({
+        actionId: "files.whiteboard.open",
+        ext: "board",
+        projectId,
+      }),
+  },
   "python.open": {
     id: "python.open",
     isAvailable: ({ projectId }) => validateProjectId(projectId),
@@ -1114,6 +1155,26 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
       createDefaultProjectFile({
         actionId: "r.markdown.open",
         ext: "Rmd",
+        projectId,
+      }),
+  },
+  "projects.tasks.open": {
+    id: "projects.tasks.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) =>
+      createDefaultProjectFile({
+        actionId: "projects.tasks.open",
+        ext: "tasks",
+        projectId,
+      }),
+  },
+  "collaboration.chat.open": {
+    id: "collaboration.chat.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) =>
+      createDefaultProjectFile({
+        actionId: "collaboration.chat.open",
+        ext: "chat",
         projectId,
       }),
   },
@@ -1168,8 +1229,22 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
     id: "projects.list.open",
     run: ({ projectId }) => revealProjectsList(projectId),
   },
+  "projects.create.open": {
+    id: "projects.create.open",
+    run: ({ projectId }) => revealProjectsList(projectId),
+  },
   "project.files.open": {
     id: "project.files.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) => revealProjectFiles(projectId),
+  },
+  "files.explorer.open": {
+    id: "files.explorer.open",
+    isAvailable: ({ projectId }) => validateProjectId(projectId),
+    run: ({ projectId }) => revealProjectFiles(projectId),
+  },
+  "files.git.open": {
+    id: "files.git.open",
     isAvailable: ({ projectId }) => validateProjectId(projectId),
     run: ({ projectId }) => revealProjectFiles(projectId),
   },
