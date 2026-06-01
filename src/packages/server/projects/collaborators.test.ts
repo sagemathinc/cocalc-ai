@@ -50,6 +50,14 @@ jest.mock("@cocalc/database/settings/site-url", () => ({
 jest.mock("@cocalc/server/bay-public-origin", () => ({
   __esModule: true,
   getBayPublicOrigin: jest.fn(async () => "https://example.com"),
+  normalizeOrigin: jest.fn((value) => {
+    if (!value) return undefined;
+    const url = new URL(value);
+    url.pathname = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  }),
 }));
 
 jest.mock("@cocalc/database/settings/secret-settings", () => ({
@@ -1054,7 +1062,7 @@ describe("project collaborators local bay access", () => {
       opts: {
         project_id: PROJECT_ID,
         title: "Test Project",
-        link2proj: "https://example.com/project",
+        link2proj: "http://localhost:7001/projects/test",
         to: "nobody@example.com",
         email: "<p>Hello</p>",
         message: "Please join",
@@ -1065,7 +1073,9 @@ describe("project collaborators local bay access", () => {
         invite_id: "77777777-7777-4777-8777-777777777777",
         invite_source: "email",
         target_email: "nobody@example.com",
-        invite_url: expect.stringMatching(/\/invites\/[^/?#]+$/),
+        invite_url: expect.stringMatching(
+          /^http:\/\/localhost:7001\/invites\/[^/?#]+$/,
+        ),
       }),
     ]);
     expect(queryMock).toHaveBeenCalledWith(
@@ -1368,10 +1378,11 @@ describe("project collaborators local bay access", () => {
       copyEmailProjectInviteLink({
         account_id: ACCOUNT_ID,
         invite_id: inviteId,
+        invite_base_url: "http://localhost:7001/projects/test",
       }),
     ).resolves.toMatchObject({
       invite_id: inviteId,
-      invite_url: "https://example.com/invites/copied-pending-token",
+      invite_url: "http://localhost:7001/invites/copied-pending-token",
     });
 
     expect(queryMock).toHaveBeenCalledWith(

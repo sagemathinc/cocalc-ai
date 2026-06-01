@@ -1702,6 +1702,7 @@ export async function inviteCollaboratorWithoutAccount({
     invite_context?: Record<string, unknown>;
     invite_scope?: string;
     invite_role?: "collaborator" | "viewer";
+    invite_base_url?: string;
     read_policy?: ProjectViewerReadPolicy | null;
   };
 }) {
@@ -2074,10 +2075,12 @@ export async function copyEmailProjectInviteLink({
   account_id,
   invite_id,
   project_id,
+  invite_base_url,
 }: {
   account_id?: string;
   invite_id: string;
   project_id?: string;
+  invite_base_url?: string;
 }) {
   const ownership = await resolveProjectBayForEmailInvite({ invite_id });
   if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
@@ -2085,6 +2088,7 @@ export async function copyEmailProjectInviteLink({
       account_id,
       invite_id: ownership?.invite_id ?? invite_id,
       project_id: project_id ?? ownership?.project_id,
+      invite_base_url,
     });
   }
   if (!account_id) {
@@ -2096,6 +2100,7 @@ export async function copyEmailProjectInviteLink({
       account_id,
       invite_id: ownership.invite_id,
       project_id: project_id ?? ownership.project_id,
+      invite_base_url,
     });
   return {
     invite_id: result.invite_id,

@@ -864,19 +864,6 @@ export class ChatActions extends Actions<ChatState> {
     }
     const time_stamp_str = time_stamp.toISOString();
     const message_id = chatIdentity?.message_id ?? uuid();
-    const mentionsInput =
-      submitMentionsRef?.current?.({ chat: `${time_stamp.valueOf()}` }) ?? "";
-    if (extraInput != null) {
-      // Prefer mention-processed content when available; otherwise use explicit input.
-      input = mentionsInput.trim().length > 0 ? mentionsInput : extraInput;
-    } else if (mentionsInput.trim().length > 0) {
-      input = mentionsInput;
-    }
-    input = input?.trim();
-    if (!input) {
-      // do not send when there is nothing to send.
-      return "";
-    }
     const trimmedAcpPrompt = `${acp_prompt ?? ""}`.trim() || undefined;
     let thread_id: string;
     let resolvedParentMessageId: string | undefined;
@@ -899,6 +886,22 @@ export class ChatActions extends Actions<ChatState> {
         `${(threadMessages[threadMessages.length - 1] as any)?.message_id ?? ""}`.trim();
       resolvedParentMessageId =
         explicitParentMessageId || latestMessageId || undefined;
+    }
+    const mentionsInput =
+      submitMentionsRef?.current?.({
+        chat: `${time_stamp.valueOf()}`,
+        thread: thread_id,
+      }) ?? "";
+    if (extraInput != null) {
+      // Prefer mention-processed content when available; otherwise use explicit input.
+      input = mentionsInput.trim().length > 0 ? mentionsInput : extraInput;
+    } else if (mentionsInput.trim().length > 0) {
+      input = mentionsInput;
+    }
+    input = input?.trim();
+    if (!input) {
+      // do not send when there is nothing to send.
+      return "";
     }
     const trimmedName = name?.trim();
     let effectiveAcpConfigOverride = acpConfigOverride;
