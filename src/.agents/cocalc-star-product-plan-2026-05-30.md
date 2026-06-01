@@ -2,7 +2,7 @@
 
 Status: `active implementation plan`
 
-Implementation status as of 2026-05-31:
+Implementation status as of 2026-06-01:
 
 - Phase 1 is substantially proven on fresh Ubuntu 24.04 x86_64 GCP VMs.
 - A tarball installer path exists and has been validated from a clean VM.
@@ -15,6 +15,13 @@ Implementation status as of 2026-05-31:
   Conat port collisions.
 - Versioned release layout and symlink rollback have been implemented in the
   tarball installer/operator script.
+- A real Star VM was upgraded from an older release to a newer release artifact,
+  then validated with `doctor`, `smoke`, rollback to the previous release,
+  `doctor`, roll-forward to the latest release, and `doctor`.
+- The first real upgrade attempt exposed two important release-path bugs:
+  root-run upgrades must preserve the existing Star runtime user instead of
+  switching to `root`, and failed installs must restore mutable Star service
+  config as well as release symlinks. Both are fixed in the current installer.
 - Current implementation is still a source/tarball install, not a final
   marketplace image or SEA binary.
 
@@ -1087,8 +1094,11 @@ Validation:
   harness validation.
 - Rollback flips `/opt/cocalc-star/source` and `/opt/cocalc-star/current`, then
   restarts services. Done in local release harness validation.
-- Doctor and smoke pass after rollback. Not yet validated on a full VM because
-  the full two-release install path is still expensive.
+- Doctor and smoke pass after installing a later release on a full VM. Done.
+- Doctor passes after rollback to the previous release on a full VM. Done.
+- Doctor passes after rolling forward again to the latest release on a full VM.
+  Done.
+- Smoke after rollback has not yet been run on the full VM.
 - Hard reset after rollback starts the selected release. Not yet validated on a
   full VM.
 
@@ -1235,12 +1245,12 @@ VM", is complete.
 
 Current recommended next step:
 
-1. Make full-VM two-release validation cheap enough to run regularly:
+1. Automate full-VM two-release validation so it can run regularly:
    - release A installs and passes doctor/smoke,
    - release B installs and passes doctor/smoke,
    - rollback to release A passes doctor/smoke,
    - hard reset after rollback still boots release A.
-2. After rollback is boring, make the tarball smaller and more release-like so
+2. After automated rollback is boring, make the tarball smaller and more release-like so
    installs no longer need a full source build on the target VM.
 3. Then build the local source deploy lane:
    - put a CoCalc checkout on the same VM,
