@@ -130,6 +130,9 @@ SQL
   if [[ "$KEEP_REMOTE_ARTIFACTS" -eq 0 && -n "$REMOTE_WORK_DIR" && -n "$REMOTE" ]]; then
     remote_exec "sudo rm -rf $(q "$REMOTE_WORK_DIR")" >/dev/null 2>&1 || true
   fi
+  if [[ "$CLEANUP_LOCAL_BUNDLE" -eq 1 && -n "$BUNDLE_PATH" ]]; then
+    rm -f "$BUNDLE_PATH"
+  fi
   exit "$status"
 }
 trap cleanup EXIT
@@ -291,7 +294,13 @@ const value = [parts[0], parts[1], parts[2], session_id].join("$");
 const hash = hash_session_id.slice(0, 127);
 fs.writeFileSync(cookieFile, JSON.stringify({ account_id, value, hash }, null, 2));
 NODE
-  TEMP_COOKIE_HASH_B64="$(node -e "process.stdout.write(Buffer.from(require('${TEMP_COOKIE_FILE}').hash).toString('base64'))")"
+  TEMP_COOKIE_HASH_B64="$(
+    COOKIE_FILE="$TEMP_COOKIE_FILE" node <<'NODE'
+const fs = require("fs");
+const cookie = JSON.parse(fs.readFileSync(process.env.COOKIE_FILE, "utf8"));
+process.stdout.write(Buffer.from(cookie.hash).toString("base64"));
+NODE
+  )"
   remote_psql "-v ON_ERROR_STOP=1 -q" <<SQL
 INSERT INTO remember_me(hash, expire, account_id)
 VALUES (
@@ -301,7 +310,15 @@ VALUES (
 );
 SQL
   CREATED_TEMP_COOKIE=1
-  COOKIE_HEADER="remember_me=$(node -e "process.stdout.write(require('${TEMP_COOKIE_FILE}').value)")"
+  local cookie_value
+  cookie_value="$(
+    COOKIE_FILE="$TEMP_COOKIE_FILE" node <<'NODE'
+const fs = require("fs");
+const cookie = JSON.parse(fs.readFileSync(process.env.COOKIE_FILE, "utf8"));
+process.stdout.write(cookie.value);
+NODE
+  )"
+  COOKIE_HEADER="remember_me=${cookie_value}"
 }
 
 upgrade_project_hosts() {
@@ -367,10 +384,6 @@ EOF
   restart_and_health_check
   upgrade_project_hosts
   verify_project_hosts
-
-  if [[ "$CLEANUP_LOCAL_BUNDLE" -eq 1 ]]; then
-    rm -f "$BUNDLE_PATH"
-  fi
 
   log "Upgrade complete"
   echo "report_dir=${REPORT_DIR}"
