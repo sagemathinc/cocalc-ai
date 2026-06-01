@@ -79,6 +79,45 @@ sudo ./bay-bootstrap-release.sh \
   --start
 ```
 
+For an existing bay, prefer the higher-level upgrade wrapper from the repo
+checkout. It stages the release, restarts the bay, runs health checks, upgrades
+online project hosts, verifies host software state, and deletes any temporary
+CLI auth session it created:
+
+```sh
+./src/scripts/bay-systemd/upgrade-bay-release.sh \
+  --remote ubuntu@10.206.15.209 \
+  --api https://delta.cocalc.ai \
+  --build-bundle \
+  --admin-email wstein@gmail.com
+```
+
+If you already built the bundle, pass it explicitly instead:
+
+```sh
+./src/scripts/bay-systemd/upgrade-bay-release.sh \
+  --remote ubuntu@10.206.15.209 \
+  --api https://delta.cocalc.ai \
+  --bundle ./src/packages/rocket/build/cocalc-bay-runtime-linux-x64.tar.xz \
+  --admin-account-id 00000000-0000-0000-0000-000000000000
+```
+
+The wrapper is intentionally conservative:
+
+- it still uses `bay-bootstrap-release.sh` for the versioned release layout
+- it restarts the same systemd service set used in manual validation
+- it calls `cocalc host upgrade --all-online --wait` for project hosts
+- it writes a report directory under `tmp/bay-upgrade-...`
+- it accepts `--skip-host-upgrade` for control-plane-only upgrades
+- it accepts `--keep-remote-artifacts` when debugging a failed upgrade
+- it base64-encodes temporary `remember_me` hashes before inserting them into
+  Postgres, so shell `$` expansion cannot corrupt the session hash
+- it always attempts to delete the temporary `remember_me` row on exit
+
+This script is currently an operator workflow, not a stable public installer
+interface. It assumes SSH access to the bay VM and direct bay-local Postgres
+access through the systemd layout.
+
 For frontend/static-only changes, build a smaller artifact locally:
 
 ```sh
