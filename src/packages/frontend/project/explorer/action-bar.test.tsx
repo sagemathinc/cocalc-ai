@@ -1,9 +1,29 @@
 import immutable from "immutable";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { ActionBar } from "./action-bar";
 import { BACKUPS } from "@cocalc/frontend/project/listing/use-backups";
 
 const getBackups = jest.fn();
+const mockFileActionsDropdown = jest.fn(({ extraItems }: any) => (
+  <div>
+    {(extraItems ?? []).map((item: any) => (
+      <button
+        disabled={item.disabled}
+        key={item.key}
+        onClick={item.onClick}
+        type="button"
+      >
+        {item.key === "open-selected" ? "Open" : item.key}
+      </button>
+    ))}
+  </div>
+));
 
 jest.mock("antd", () => {
   const Button = ({ children, disabled, onClick }: any) => (
@@ -39,7 +59,7 @@ jest.mock("react-intl", () => ({
 }));
 
 jest.mock("@cocalc/frontend/antd-bootstrap", () => ({
-  Button: ({ children, ...props }: any) => (
+  Button: ({ bsSize: _bsSize, children, ...props }: any) => (
     <button {...props}>{children}</button>
   ),
   ButtonToolbar: ({ children }: any) => <div>{children}</div>,
@@ -68,7 +88,7 @@ jest.mock("@cocalc/frontend/course", () => ({
 }));
 
 jest.mock("@cocalc/frontend/project/explorer/file-actions-dropdown", () => ({
-  FileActionsDropdown: () => null,
+  FileActionsDropdown: (props: any) => mockFileActionsDropdown(props),
 }));
 
 jest.mock("@cocalc/frontend/project/archive-info", () => ({
@@ -100,6 +120,49 @@ function deferred<T>() {
 describe("ActionBar", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it("adds a dropdown Open action for selected non-directory files", () => {
+    const actions = {
+      open_file: jest.fn(),
+      project_id: "project-1",
+      set_all_files_unchecked: jest.fn(),
+      set_file_list_checked: jest.fn(),
+    } as any;
+
+    render(
+      <ActionBar
+        project_id="project-1"
+        checked_files={immutable.Set([
+          "/work/a.ipynb",
+          "/work/folder",
+          "/work/b.py",
+        ])}
+        listing={
+          [
+            { isDir: false, name: "a.ipynb" },
+            { isDir: true, name: "folder" },
+            { isDir: false, name: "b.py" },
+          ] as any
+        }
+        current_path="/work"
+        actions={actions}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Open"));
+
+    expect(actions.open_file).toHaveBeenCalledTimes(2);
+    expect(actions.open_file).toHaveBeenNthCalledWith(1, {
+      explicit: true,
+      foreground: false,
+      path: "/work/a.ipynb",
+    });
+    expect(actions.open_file).toHaveBeenNthCalledWith(2, {
+      explicit: true,
+      foreground: false,
+      path: "/work/b.py",
+    });
   });
 
   it("ignores stale backup metadata when the project changes", async () => {

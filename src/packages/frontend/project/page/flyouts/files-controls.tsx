@@ -246,7 +246,7 @@ export function FilesSelectedControls({
   }
 
   const openSelectedMenuItems = useMemo((): MenuItems => {
-    if (checked_files.size === 0) return [];
+    if (actions == null || checked_files.size === 0) return [];
     return [
       {
         disabled: selectedOpenablePaths.length === 0,
@@ -259,7 +259,7 @@ export function FilesSelectedControls({
         ),
         onClick: () => {
           for (const file of selectedOpenablePaths) {
-            actions?.open_file?.({
+            actions.open_file({
               explicit: true,
               foreground: false,
               path: file,

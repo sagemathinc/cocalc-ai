@@ -12,7 +12,7 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
-import { Gap, Icon } from "@cocalc/frontend/components";
+import { Gap, Icon, type MenuItems } from "@cocalc/frontend/components";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { labels } from "@cocalc/frontend/i18n";
@@ -96,6 +96,38 @@ function ActionBarEnabled({
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) => message.error(`${err}`),
   });
+  const selectedOpenablePaths = useMemo(() => {
+    const listingByPath = new Map(
+      listing.map((file) => [misc.path_to_file(current_path, file.name), file]),
+    );
+    return checked_files
+      .toArray()
+      .filter((file) => !listingByPath.get(file)?.isDir);
+  }, [checked_files, current_path, listing]);
+  const openSelectedMenuItems = useMemo((): MenuItems => {
+    if (checked_files.size === 0) return [];
+    return [
+      {
+        disabled: selectedOpenablePaths.length === 0,
+        key: "open-selected",
+        label: (
+          <span style={{ whiteSpace: "nowrap" }}>
+            <Icon name="edit-filled" style={{ marginRight: 6 }} />
+            Open
+          </span>
+        ),
+        onClick: () => {
+          for (const file of selectedOpenablePaths) {
+            actions.open_file({
+              explicit: true,
+              foreground: false,
+              path: file,
+            });
+          }
+        },
+      },
+    ];
+  }, [actions, checked_files.size, selectedOpenablePaths]);
 
   useEffect(() => {
     const requestId = backupsRequestIdRef.current + 1;
@@ -569,6 +601,7 @@ function ActionBarEnabled({
         names={action_buttons}
         current_path={current_path}
         actions={actions}
+        extraItems={openSelectedMenuItems}
         selectedPaths={checked_files.toArray()}
         label="Actions"
       />
