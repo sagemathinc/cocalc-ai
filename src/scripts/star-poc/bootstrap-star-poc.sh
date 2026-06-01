@@ -24,6 +24,7 @@ STAR_BUILD_DEFAULT_ROOTFS="${STAR_BUILD_DEFAULT_ROOTFS:-1}"
 STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
 STAR_DEFAULT_ROOTFS_BASE_IMAGE="${STAR_DEFAULT_ROOTFS_BASE_IMAGE:-ubuntu:26.04}"
 STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-1}"
+STAR_SUBID_RANGES="${STAR_SUBID_RANGES:-231072:65536 327680:4128768}"
 
 log() {
   printf '[star] %s\n' "$*" >&2
@@ -70,6 +71,48 @@ install_node() {
   fi
   as_star_user 'curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash'
   as_star_user 'source "$HOME/.nvm/nvm.sh" && nvm install 26 && nvm alias default 26 && if command -v corepack >/dev/null 2>&1; then corepack enable; else npm install -g pnpm@10.33.0; fi'
+}
+
+ensure_exact_subid_file() {
+  local path="$1"
+  local tmp expected current line
+  tmp="$(mktemp)"
+  expected=""
+  for range in $STAR_SUBID_RANGES; do
+    expected="${expected}${STAR_USER}:${range}
+"
+  done
+  current=""
+  if [ -f "$path" ]; then
+    current="$(grep -E "^${STAR_USER}:" "$path" || true)"
+    current="${current}${current:+
+}"
+  fi
+
+  if [ "$current" = "$expected" ]; then
+    rm -f "$tmp"
+    return
+  fi
+
+  if [ -f "$path" ]; then
+    while IFS= read -r line; do
+      case "$line" in
+        "${STAR_USER}:"*) ;;
+        *) printf '%s\n' "$line" >>"$tmp" ;;
+      esac
+    done <"$path"
+  fi
+
+  printf '%s' "$expected" >>"$tmp"
+  install -m 0644 -o root -g root "$tmp" "$path"
+  rm -f "$tmp"
+  log "set rootless subid allocation for $STAR_USER in $path to $STAR_SUBID_RANGES"
+}
+
+ensure_subuids() {
+  ensure_exact_subid_file /etc/subuid
+  ensure_exact_subid_file /etc/subgid
+  as_star_user 'podman system migrate >/dev/null 2>&1 || true'
 }
 
 build_source() {
@@ -527,6 +570,7 @@ start_services() {
 
 require_root
 install_packages
+ensure_subuids
 install_node
 build_source
 prepare_runtime_artifacts
