@@ -24,6 +24,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 }));
 
 jest.mock("react-intl", () => ({
+  defineMessage: (message: unknown) => message,
   FormattedMessage: ({ defaultMessage }: { defaultMessage: string }) => (
     <span>{defaultMessage}</span>
   ),

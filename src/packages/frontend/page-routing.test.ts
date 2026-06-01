@@ -74,7 +74,7 @@ describe("page-routing", () => {
     });
     expect(parsePageTarget("settings/billing")).toEqual({
       page: "account",
-      tab: "subscriptions",
+      tab: "index",
     });
   });
 
