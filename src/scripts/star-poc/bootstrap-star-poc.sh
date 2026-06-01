@@ -267,6 +267,8 @@ configure_users_and_dirs() {
     "$STAR_PROJECT_HOST_DATA/cache/images" \
     "$STAR_PROJECT_HOST_DATA/cache/project-roots" \
     "$STAR_PROJECT_HOST_DATA/secrets"
+  find "$STAR_PROJECT_HOST_DATA/cache/images" -maxdepth 1 -type f -name '.*.json' \
+    -exec chown "$STAR_USER:$STAR_USER" {} +
   chown -R "$STAR_USER:$STAR_USER" /mnt/cocalc/data
 }
 
