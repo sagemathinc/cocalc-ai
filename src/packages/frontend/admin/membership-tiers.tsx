@@ -1040,6 +1040,37 @@ export function MembershipTiers() {
         )}
       </div>
     );
+    const hardCostLine = (
+      label: string,
+      amount: number,
+      opts: { total?: boolean } = {},
+    ) => (
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) 160px",
+          gap: "18px",
+          alignItems: "baseline",
+          padding: opts.total ? "12px 0 0" : "8px 0",
+          borderTop: opts.total
+            ? `2px solid ${COLORS.GRAY_LL}`
+            : `1px solid ${COLORS.GRAY_LLL}`,
+          fontWeight: opts.total ? 700 : 400,
+        }}
+      >
+        <Text strong={opts.total}>{label}</Text>
+        <Text
+          strong={opts.total}
+          style={{
+            display: "block",
+            fontVariantNumeric: "tabular-nums",
+            textAlign: "right",
+          }}
+        >
+          {currency(amount)}
+        </Text>
+      </div>
+    );
     const assumptionInput = (
       key: keyof MembershipTierPricingAssumptions,
       label: string,
@@ -1914,68 +1945,41 @@ export function MembershipTiers() {
                         title: "Modeled Monthly Hard Cost",
                         note: "These are worst-case allowance costs, not expected average usage.",
                         children: (
-                          <Row gutter={[16, 16]}>
-                            <Col xs={24} md={12} xl={8}>
-                              {riskMetric(
-                                "AI",
-                                currency(analysis.hardCosts.aiMonthlyUsd),
-                              )}
-                            </Col>
-                            <Col xs={24} md={12} xl={8}>
-                              {riskMetric(
-                                "Egress",
-                                currency(analysis.hardCosts.egressMonthlyUsd),
-                              )}
-                            </Col>
-                            <Col xs={24} md={12} xl={8}>
-                              {riskMetric(
-                                "Project file storage hard cap",
-                                currency(
-                                  analysis.hardCosts.projectStorageMonthlyUsd,
-                                ),
-                              )}
-                            </Col>
-                            <Col xs={24} md={12} xl={8}>
-                              {riskMetric(
-                                "R2/blob storage",
-                                currency(
-                                  analysis.hardCosts.blobStorageMonthlyUsd,
-                                ),
-                              )}
-                            </Col>
-                            <Col xs={24} md={12} xl={8}>
-                              {riskMetric(
-                                "Rootfs storage",
-                                currency(
-                                  analysis.hardCosts.rootfsStorageMonthlyUsd,
-                                ),
-                              )}
-                            </Col>
-                            <Col xs={24} md={12} xl={8}>
-                              {riskMetric(
-                                "Credit host guardrail",
-                                currency(
-                                  analysis.hardCosts
-                                    .dedicatedHostCreditGuardrailMonthlyUsd,
-                                ),
-                              )}
-                            </Col>
-                            <Col xs={24} md={12} xl={8}>
-                              {riskMetric(
-                                "Prepaid host usage",
-                                currency(
-                                  analysis.hardCosts
-                                    .prepaidHostGuardrailMonthlyUsd,
-                                ),
-                              )}
-                            </Col>
-                            <Col xs={24} md={12} xl={8}>
-                              {riskMetric(
-                                "Total",
-                                currency(analysis.hardCosts.totalMonthlyUsd),
-                              )}
-                            </Col>
-                          </Row>
+                          <div
+                            style={{
+                              maxWidth: "760px",
+                              border: `1px solid ${COLORS.GRAY_LL}`,
+                              borderRadius: "10px",
+                              padding: "12px 18px",
+                              background: "rgba(255,255,255,0.82)",
+                            }}
+                          >
+                            {hardCostLine(
+                              "AI allowance",
+                              analysis.hardCosts.aiMonthlyUsd,
+                            )}
+                            {hardCostLine(
+                              "Network egress allowance",
+                              analysis.hardCosts.egressMonthlyUsd,
+                            )}
+                            {hardCostLine(
+                              "Project file storage hard cap",
+                              analysis.hardCosts.projectStorageMonthlyUsd,
+                            )}
+                            {hardCostLine(
+                              "R2/blob storage",
+                              analysis.hardCosts.blobStorageMonthlyUsd,
+                            )}
+                            {hardCostLine(
+                              "Rootfs storage",
+                              analysis.hardCosts.rootfsStorageMonthlyUsd,
+                            )}
+                            {hardCostLine(
+                              "Total modeled hard cost",
+                              analysis.hardCosts.totalMonthlyUsd,
+                              { total: true },
+                            )}
+                          </div>
                         ),
                       })}
                       {fieldGroup({
