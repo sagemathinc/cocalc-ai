@@ -16,6 +16,7 @@ interface Props {
   names: readonly FileAction[];
   current_path: string;
   actions?: ProjectActions;
+  extraItems?: MenuItems;
   selectedPaths?: string[];
   label?: string;
   size?: "small" | "middle" | "large";
@@ -29,6 +30,7 @@ export function FileActionsDropdown({
   names,
   current_path,
   actions,
+  extraItems,
   selectedPaths,
   label = "Actions",
   size,
@@ -40,53 +42,57 @@ export function FileActionsDropdown({
   const intl = useIntl();
   const items = useMemo<MenuItems>(() => {
     if (!actions) return [];
-    return names.flatMap((name) => {
-      if (isSnapshotPath(current_path) && isDisabledSnapshots(name)) {
-        return [];
-      }
-      const obj = file_actions[name];
-      if (!obj) return [];
-      if (hideFlyout && obj.hideFlyout) return [];
-      return [
-        {
-          key: name,
-          label: (
-            <span style={{ whiteSpace: "nowrap" }}>
-              <Icon name={obj.icon} style={{ marginRight: 6 }} />
-              {intl.formatMessage(obj.name)}
-            </span>
-          ),
-          onClick: () => {
-            const action = name as FileAction;
-            const paths = selectedPaths?.filter(Boolean) ?? [];
-            if (paths.length > 0) {
-              if (typeof actions.showFileActionPanelForPaths === "function") {
-                void actions.showFileActionPanelForPaths({
-                  paths,
-                  action,
-                });
-                return;
+    return [
+      ...(extraItems ?? []),
+      ...names.flatMap((name) => {
+        if (isSnapshotPath(current_path) && isDisabledSnapshots(name)) {
+          return [];
+        }
+        const obj = file_actions[name];
+        if (!obj) return [];
+        if (hideFlyout && obj.hideFlyout) return [];
+        return [
+          {
+            key: name,
+            label: (
+              <span style={{ whiteSpace: "nowrap" }}>
+                <Icon name={obj.icon} style={{ marginRight: 6 }} />
+                {intl.formatMessage(obj.name)}
+              </span>
+            ),
+            onClick: () => {
+              const action = name as FileAction;
+              const paths = selectedPaths?.filter(Boolean) ?? [];
+              if (paths.length > 0) {
+                if (typeof actions.showFileActionPanelForPaths === "function") {
+                  void actions.showFileActionPanelForPaths({
+                    paths,
+                    action,
+                  });
+                  return;
+                }
+                if (
+                  paths.length === 1 &&
+                  typeof actions.showFileActionPanel === "function"
+                ) {
+                  void actions.showFileActionPanel({ path: paths[0], action });
+                  return;
+                }
               }
-              if (
-                paths.length === 1 &&
-                typeof actions.showFileActionPanel === "function"
-              ) {
-                void actions.showFileActionPanel({ path: paths[0], action });
-                return;
+              if (activateFilesTab) {
+                actions.set_active_tab("files");
               }
-            }
-            if (activateFilesTab) {
-              actions.set_active_tab("files");
-            }
-            actions.set_file_action(action);
+              actions.set_file_action(action);
+            },
           },
-        },
-      ];
-    });
+        ];
+      }),
+    ];
   }, [
     actions,
     activateFilesTab,
     current_path,
+    extraItems,
     hideFlyout,
     intl,
     names,

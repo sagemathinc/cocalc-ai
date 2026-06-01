@@ -18,7 +18,12 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
-import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
+import {
+  Icon,
+  TimeAgo,
+  Tooltip,
+  type MenuItems,
+} from "@cocalc/frontend/components";
 import {
   ACTION_BUTTONS_DIR,
   ACTION_BUTTONS_FILE,
@@ -94,6 +99,10 @@ export function FilesSelectedControls({
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) => message.error(`${err}`),
   });
+  const selectedOpenablePaths = useMemo(
+    () => checked_files.toArray().filter((file) => !getFile(file)?.isDir),
+    [checked_files, getFile],
+  );
 
   useEffect(() => {
     const requestId = backupsRequestIdRef.current + 1;
@@ -235,6 +244,31 @@ export function FilesSelectedControls({
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
   }
+
+  const openSelectedMenuItems = useMemo((): MenuItems => {
+    if (actions == null || checked_files.size === 0) return [];
+    return [
+      {
+        disabled: selectedOpenablePaths.length === 0,
+        key: "open-selected",
+        label: (
+          <span style={{ whiteSpace: "nowrap" }}>
+            <Icon name="edit-filled" style={{ marginRight: 6 }} />
+            Open
+          </span>
+        ),
+        onClick: () => {
+          for (const file of selectedOpenablePaths) {
+            actions.open_file({
+              explicit: true,
+              foreground: false,
+              path: file,
+            });
+          }
+        },
+      },
+    ];
+  }, [actions, checked_files.size, selectedOpenablePaths]);
 
   function renderFileInfoTop() {
     if (checked_files.size !== 0) return;
@@ -477,6 +511,7 @@ export function FilesSelectedControls({
           names={names}
           current_path={effective_current_path}
           actions={actions}
+          extraItems={openSelectedMenuItems}
           selectedPaths={checked_files.toArray()}
           label="Actions"
           size="small"
