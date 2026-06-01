@@ -63,10 +63,6 @@ const { Paragraph, Text } = Typography;
 const { Panel: CollapsePanel } = Collapse;
 const BYTES_PER_GB = 1000 * 1000 * 1000;
 const SECONDS_PER_CPU_HOUR = 3600;
-const MEMBERSHIP_TIER_PRICING_ASSUMPTIONS_STORAGE_KEY =
-  "cocalc:admin:membership-tier-pricing-assumptions";
-const MEMBERSHIP_TIER_EXPECTED_USAGE_STORAGE_KEY =
-  "cocalc:admin:membership-tier-expected-usage";
 const MEMBERSHIP_TIER_EXPORT_TYPE = "cocalc.membership_tiers";
 const MEMBERSHIP_TIER_EXPORT_VERSION = 1;
 const TEMPLATE_KEYS = [
@@ -94,6 +90,28 @@ type ExpectedUsageEstimateKey =
   | "standardRamGbHoursMonthly";
 
 type ExpectedUsageEstimate = Partial<Record<ExpectedUsageEstimateKey, number>>;
+
+const EXPECTED_USAGE_ESTIMATE_KEYS: readonly ExpectedUsageEstimateKey[] = [
+  "aiUnits7d",
+  "egress7dGb",
+  "projectStorageHardCapGb",
+  "blobStorageGb",
+  "rootfsStorageGb",
+  "spotCpuHoursMonthly",
+  "spotRamGbHoursMonthly",
+  "standardCpuHoursMonthly",
+  "standardRamGbHoursMonthly",
+];
+
+interface MembershipTierPricingModel {
+  assumptions?: Partial<MembershipTierPricingAssumptions>;
+  expected_usage?: ExpectedUsageEstimate;
+}
+
+interface NormalizedMembershipTierPricingModel {
+  assumptions: MembershipTierPricingAssumptions;
+  expected_usage: ExpectedUsageEstimate;
+}
 
 interface MembershipTierImportCandidate {
   key: string;
@@ -125,6 +143,7 @@ interface Tier {
   ai_limits?: any;
   features?: any;
   usage_limits?: any;
+  pricing_model?: MembershipTierPricingModel;
   disabled?: boolean;
   notes?: string;
   history?: any[];
@@ -231,6 +250,30 @@ function normalizedRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function normalizeExpectedUsageEstimate(value: unknown): ExpectedUsageEstimate {
+  const record = normalizedRecord(value);
+  const estimate: ExpectedUsageEstimate = {};
+  for (const key of EXPECTED_USAGE_ESTIMATE_KEYS) {
+    const numberValue = normalizedOptionalNumber(record[key]);
+    if (numberValue != null) {
+      estimate[key] = Math.max(0, numberValue);
+    }
+  }
+  return estimate;
+}
+
+function normalizePricingModel(
+  value: unknown,
+): NormalizedMembershipTierPricingModel {
+  const record = normalizedRecord(value);
+  return {
+    assumptions: normalizeMembershipTierPricingAssumptions(
+      normalizedRecord(record.assumptions),
+    ),
+    expected_usage: normalizeExpectedUsageEstimate(record.expected_usage),
+  };
+}
+
 function formattedNumber(value: number, digits = 1): string {
   return Number.isFinite(value) ? value.toFixed(digits) : "∞";
 }
@@ -250,55 +293,6 @@ function riskSeverityType(severity: MembershipTierRiskSeverity) {
     case "ok":
       return "success";
   }
-}
-
-function loadPricingAssumptions(): MembershipTierPricingAssumptions {
-  if (typeof window === "undefined") {
-    return DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS;
-  }
-  try {
-    const stored = window.localStorage.getItem(
-      MEMBERSHIP_TIER_PRICING_ASSUMPTIONS_STORAGE_KEY,
-    );
-    return normalizeMembershipTierPricingAssumptions(
-      stored ? JSON.parse(stored) : undefined,
-    );
-  } catch {
-    return DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS;
-  }
-}
-
-function storePricingAssumptions(
-  assumptions: MembershipTierPricingAssumptions,
-) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(
-    MEMBERSHIP_TIER_PRICING_ASSUMPTIONS_STORAGE_KEY,
-    JSON.stringify(assumptions),
-  );
-}
-
-function loadExpectedUsageEstimates(): Record<string, ExpectedUsageEstimate> {
-  if (typeof window === "undefined") return {};
-  try {
-    const stored = window.localStorage.getItem(
-      MEMBERSHIP_TIER_EXPECTED_USAGE_STORAGE_KEY,
-    );
-    const parsed = stored ? JSON.parse(stored) : {};
-    return parsed != null && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function storeExpectedUsageEstimates(
-  estimates: Record<string, ExpectedUsageEstimate>,
-) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(
-    MEMBERSHIP_TIER_EXPECTED_USAGE_STORAGE_KEY,
-    JSON.stringify(estimates),
-  );
 }
 
 function setOrDeleteUsageLimit(
@@ -336,6 +330,7 @@ function setOrDeleteBoolean(
 function tierToFormValues(tier: Partial<Tier>) {
   return {
     ...tier,
+    pricing_model: normalizePricingModel(tier.pricing_model),
     store_highlights_text: storeHighlightsToText(tier.store_highlights),
     project_defaults: tier.project_defaults ?? {},
     ai_limits: tier.ai_limits ?? {},
@@ -582,6 +577,7 @@ function buildMembershipTierPayload(values): Tier {
       ai_limits,
       features,
       usage_limits,
+      pricing_model: normalizePricingModel(values.pricing_model),
       store_description: normalizedOptionalString(values.store_description),
       store_highlights: parseStoreHighlightsText(values.store_highlights_text),
       disabled: !values.active,
@@ -604,6 +600,7 @@ function buildMembershipTierPayload(values): Tier {
       "ai_limits",
       "features",
       "usage_limits",
+      "pricing_model",
       "disabled",
       "notes",
     ],
@@ -945,15 +942,30 @@ export function MembershipTiers() {
     {},
   );
   const [pricingAssumptions, setPricingAssumptions] =
-    React.useState<MembershipTierPricingAssumptions>(() =>
-      loadPricingAssumptions(),
+    React.useState<MembershipTierPricingAssumptions>(
+      () => DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS,
     );
-  const [expectedUsageEstimates, setExpectedUsageEstimates] = React.useState<
-    Record<string, ExpectedUsageEstimate>
-  >(() => loadExpectedUsageEstimates());
+  const [expectedUsageEstimate, setExpectedUsageEstimate] =
+    React.useState<ExpectedUsageEstimate>({});
 
-  const editingTierId = editing?.id ?? "__new__";
-  const expectedUsageEstimate = expectedUsageEstimates[editingTierId] ?? {};
+  React.useEffect(() => {
+    const pricingModel = normalizePricingModel(editing?.pricing_model);
+    setPricingAssumptions(pricingModel.assumptions);
+    setExpectedUsageEstimate(pricingModel.expected_usage);
+    form.setFieldsValue({ pricing_model: pricingModel });
+  }, [editing, form]);
+
+  function updatePricingModelFormValue(
+    assumptions: MembershipTierPricingAssumptions,
+    expected_usage: ExpectedUsageEstimate,
+  ) {
+    form.setFieldsValue({
+      pricing_model: {
+        assumptions,
+        expected_usage,
+      },
+    });
+  }
 
   function updatePricingAssumption(
     key: keyof MembershipTierPricingAssumptions,
@@ -964,40 +976,38 @@ export function MembershipTiers() {
         ...prev,
         [key]: typeof value === "number" && Number.isFinite(value) ? value : 0,
       });
-      storePricingAssumptions(next);
+      updatePricingModelFormValue(next, expectedUsageEstimate);
       return next;
     });
   }
 
   function resetPricingAssumptions() {
     setPricingAssumptions(DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS);
-    storePricingAssumptions(DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS);
+    updatePricingModelFormValue(
+      DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS,
+      expectedUsageEstimate,
+    );
   }
 
   function updateExpectedUsageEstimate(
     key: ExpectedUsageEstimateKey,
     value: number | null,
   ) {
-    setExpectedUsageEstimates((prev) => {
-      const estimate = { ...(prev[editingTierId] ?? {}) };
+    setExpectedUsageEstimate((prev) => {
+      const estimate = { ...prev };
       if (typeof value === "number" && Number.isFinite(value)) {
         estimate[key] = Math.max(0, value);
       } else {
         delete estimate[key];
       }
-      const next = { ...prev, [editingTierId]: estimate };
-      storeExpectedUsageEstimates(next);
-      return next;
+      updatePricingModelFormValue(pricingAssumptions, estimate);
+      return estimate;
     });
   }
 
   function resetExpectedUsageEstimate() {
-    setExpectedUsageEstimates((prev) => {
-      const next = { ...prev };
-      delete next[editingTierId];
-      storeExpectedUsageEstimates(next);
-      return next;
-    });
+    setExpectedUsageEstimate({});
+    updatePricingModelFormValue(pricingAssumptions, {});
   }
 
   function render_edit() {
@@ -2529,7 +2539,7 @@ export function MembershipTiers() {
                       </Paragraph>
                       {fieldGroup({
                         title: "Monthly Cost Accounting",
-                        note: "Enter realistic expected usage for this tier. Expected values are advisory, saved in this browser, and bounded by configured tier maxima where a maximum exists. CPU/RAM rows model quality-of-service capacity, not a hard user-visible limit.",
+                        note: "Enter realistic expected usage for this tier. Expected values are advisory, saved with the tier when you click Save, and bounded by configured tier maxima where a maximum exists. CPU/RAM rows model quality-of-service capacity, not a hard user-visible limit.",
                         children: (
                           <>
                             {costAccountingTable}

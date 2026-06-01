@@ -1,7 +1,7 @@
 # Membership Tier Editor Cleanup Plan
 
-Status: draft implementation plan for release-blocker item 15 in
-`release-blocker-triage-2026-05-29.md`.
+Status: phases 1-4 implemented for release-blocker item 15 in
+`release-blocker-triage-2026-05-29.md`; phases 5-6 remain undone cleanup work.
 
 ## Objective
 
@@ -232,8 +232,9 @@ The editor should use an intentional card/dashboard layout:
    - can create hosts, spend windows, funding/egress policy;
    - summary: host creation enabled/disabled plus prepaid/postpaid guardrails.
 7. `Financial Risk Card`
-   - advisory model; no direct persisted tier fields initially except optional
-     operator assumptions if we decide to store them.
+   - advisory model;
+   - operator assumptions and expected usage estimates are persisted on the
+     membership tier in `pricing_model`, not browser-local storage.
 8. `Advanced JSON Card`
    - raw `project_defaults`, `features`, `ai_limits`, `usage_limits`;
    - collapsed by default;
@@ -265,7 +266,8 @@ pretend to solve pricing exactly.
 
 ### Operator Inputs
 
-Initial inputs can be form-local and later persisted as site settings if useful:
+Initial inputs are persisted per tier in `pricing_model` so they travel with
+export/import and can differ by price point:
 
 - target gross margin percentage;
 - support/overhead reserve percentage;
@@ -324,10 +326,12 @@ service and capacity planning; egress/AI can become immediate bills.
 - [x] Inventory current code paths.
 - [x] Record product decisions about eliminated legacy fields.
 - [x] Keep `features.create_hosts` as a separate dedicated-host entitlement.
-- [ ] Decide whether pricing model assumptions are local-only initially or
-      stored in site settings.
+- [x] Decide whether pricing model assumptions are local-only initially or
+      persisted.
 
 ### Phase 1: Metadata Layer
+
+Status: implemented.
 
 Create a metadata module for tier fields, likely:
 
@@ -350,6 +354,8 @@ The editor, account entitlement override UI, public presentation, and pricing
 model should all share this metadata where practical.
 
 ### Phase 2: Legacy Field Cleanup In Templates And Presentation
+
+Status: implemented for the admin-facing cocalc-ai tier editor and templates.
 
 - Remove legacy CPU/network/runtime keys from built-in tier templates:
   - `network`;
@@ -374,6 +380,8 @@ runtime implementation yet. Low-level code can continue tolerating old keys.
 
 ### Phase 3: Card-Based Editor UI
 
+Status: implemented.
+
 Refactor `src/packages/frontend/admin/membership-tiers.tsx`:
 
 - split editor into card components;
@@ -382,6 +390,7 @@ Refactor `src/packages/frontend/admin/membership-tiers.tsx`:
 - make advanced JSON collapsible and clearly secondary;
 - add live summaries for each card;
 - keep template buttons but show them as "Start from template" actions.
+  - ensure templates are complete (all values filled in, none blank)
 
 Likely new files:
 
@@ -397,9 +406,11 @@ Likely new files:
 
 ### Phase 4: Pricing/Risk Panel V1
 
+Status: implemented.
+
 Add an advisory financial model card.
 
-Start with local editable assumptions and deterministic calculations. Do not
+Use tier-level persisted assumptions and deterministic calculations. Do not
 block save based on risk; show risk severity and explanations.
 
 Initial formulas:
@@ -427,6 +438,8 @@ The output should guide tier tuning, e.g.:
 
 ### Phase 5: Low-Level Runtime Semantics Cleanup
 
+Status: not started.
+
 After the editor is usable:
 
 - make project defaults emit only cocalc-ai-supported fields;
@@ -441,6 +454,8 @@ After the editor is usable:
   utilities for cocalc-ai relevance.
 
 ### Phase 6: Remove Deprecated Fields
+
+Status: not started.
 
 Only after Phase 5 is validated:
 
@@ -488,10 +503,11 @@ Regression checks:
 ## Open Questions
 
 1. Should pricing model assumptions be persisted globally as site settings, or
-   stay local/ephemeral in the first implementation?
+   stay local/ephemeral in the first implementation? (ans: persisted on each
+   membership tier in `pricing_model`, including expected usage estimates)
 2. Should host tier access be shown publicly in pricing, or only as admin/internal
-   product configuration?
+   product configuration? (ans: public)
 3. Do we want per-tier recommended defaults generated from price point targets
-   (`$8`, `$20`, `$100`) or only advisory warnings after admins enter values?
+   (`$8`, `$20`, `$100`) or only advisory warnings after admins enter values? (ans: only warnings)
 4. Should free-tier hard-cost features default to zero unless email/2FA/payment
-   verification is present?
+   verification is present? (ans: no, this is up to admins; that said, AI should default to 0 for the free tier, since users can just enter their own codex subscription; the main issue is egress and a low but nonzero setting will be fine, but is needed, e.g., otherwise you can't even download a file or use anything. Running a business incurs risk...)
