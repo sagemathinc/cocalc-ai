@@ -1341,7 +1341,11 @@ export function MembershipTiers() {
         <InputNumber
           min={0}
           step={opts.step ?? 0.01}
-          addonAfter={opts.addonAfter}
+          addonAfter={
+            opts.addonAfter ? (
+              <span style={{ whiteSpace: "nowrap" }}>{opts.addonAfter}</span>
+            ) : undefined
+          }
           style={compactInputStyle}
           value={pricingAssumptions[key] * (opts.multiplier ?? 1)}
           onChange={(value) =>
