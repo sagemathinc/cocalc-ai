@@ -1,5 +1,3 @@
-import { DEFAULT_QUOTAS } from "@cocalc/util/upgrade-spec";
-
 export const TEMPLATE_PRIORITY = {
   free: 0,
   basic: 10,
@@ -12,7 +10,12 @@ export const TEMPLATE_PRIORITY = {
 } as const;
 
 function quotaTemplate(overrides: Record<string, number>) {
-  return { ...DEFAULT_QUOTAS, ...overrides };
+  return {
+    disk_quota: 1000,
+    memory: 1000,
+    memory_request: 0,
+    ...overrides,
+  };
 }
 
 const MIN_AI_LIMIT = 50;
@@ -239,13 +242,12 @@ export const TIER_TEMPLATES = {
     course_grace_days: undefined,
     priority: TEMPLATE_PRIORITY.free,
     project_defaults: quotaTemplate({
-      network: 0,
-      member_host: 0,
-      mintime: 900,
       memory: 2000,
-      cores: 0.75,
     }),
-    ai_limits: aiLimitsFromYearly(0, 3),
+    ai_limits: {
+      units_5h: 0,
+      units_7d: 0,
+    },
     features: {
       create_hosts: false,
       project_host_tier: 0,
@@ -303,11 +305,7 @@ export const TIER_TEMPLATES = {
     course_grace_days: 14,
     priority: TEMPLATE_PRIORITY.student,
     project_defaults: quotaTemplate({
-      network: 1,
-      member_host: 1,
-      mintime: 1800,
       memory: 4000,
-      cores: 1,
     }),
     ai_limits: aiLimitsFromYearly(9 * 8),
     features: {
@@ -369,12 +367,8 @@ export const TIER_TEMPLATES = {
     course_grace_days: undefined,
     priority: TEMPLATE_PRIORITY.basic,
     project_defaults: quotaTemplate({
-      network: 1,
-      member_host: 1,
       disk_quota: 1000,
-      mintime: 1800,
       memory: 4000,
-      cores: 1,
     }),
     ai_limits: aiLimitsFromYearly(9 * 8),
     features: {
@@ -436,12 +430,8 @@ export const TIER_TEMPLATES = {
     course_duration_days: undefined,
     course_grace_days: undefined,
     project_defaults: quotaTemplate({
-      network: 1,
-      member_host: 1,
       disk_quota: 10000,
       memory: 8000,
-      cores: 2,
-      mintime: 3600,
     }),
     ai_limits: aiLimitsFromYearly(18 * 12),
     features: {
@@ -505,12 +495,8 @@ export const TIER_TEMPLATES = {
     course_duration_days: undefined,
     course_grace_days: undefined,
     project_defaults: quotaTemplate({
-      network: 1,
-      member_host: 1,
       disk_quota: 10000,
       memory: 8000,
-      cores: 2,
-      mintime: 3600,
     }),
     ai_limits: aiLimitsFromYearly(18 * 12),
     features: {
@@ -574,12 +560,8 @@ export const TIER_TEMPLATES = {
     course_duration_days: undefined,
     course_grace_days: undefined,
     project_defaults: quotaTemplate({
-      network: 1,
-      member_host: 1,
       disk_quota: 50000,
       memory: 8000,
-      cores: 2,
-      mintime: 8 * 3600,
     }),
     ai_limits: aiLimitsFromYearly(75 * 9),
     features: {
@@ -644,12 +626,8 @@ export const TIER_TEMPLATES = {
     course_duration_days: undefined,
     course_grace_days: undefined,
     project_defaults: quotaTemplate({
-      network: 1,
-      member_host: 1,
       disk_quota: 100000,
       memory: 16000,
-      cores: 4,
-      mintime: 12 * 3600,
     }),
     ai_limits: aiLimitsFromYearly(100 * 9),
     features: {
@@ -714,12 +692,8 @@ export const TIER_TEMPLATES = {
     course_duration_days: undefined,
     course_grace_days: undefined,
     project_defaults: quotaTemplate({
-      network: 1,
-      member_host: 1,
       disk_quota: 10000,
       memory: 16000,
-      cores: 3,
-      mintime: 8 * 3600,
     }),
     ai_limits: aiLimitsFromYearly(120 * 12),
     features: {

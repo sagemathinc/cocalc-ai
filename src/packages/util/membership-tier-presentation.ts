@@ -4,7 +4,6 @@
  */
 
 import { currency, humanSize, plural, round2 } from "./misc";
-import { upgrades } from "./upgrade-spec";
 
 export interface MembershipTierPresentationInput {
   id: string;
@@ -45,7 +44,7 @@ const DEFAULT_TAGLINES: Record<string, string> = {
   pro: "Higher limits for heavier workloads and demanding technical projects.",
 };
 
-const PROJECT_LIMIT_KEYS = ["memory", "disk_quota", "mintime"] as const;
+const PROJECT_LIMIT_KEYS = ["memory", "memory_request", "disk_quota"] as const;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value != null && typeof value === "object"
@@ -74,54 +73,32 @@ function asPositiveInteger(value: unknown): number | undefined {
   return Math.floor(numberValue);
 }
 
-function formatHours(hours: number): string {
-  if (!Number.isFinite(hours)) return "";
-  if (hours < 1) {
-    const minutes = Math.max(1, Math.round(hours * 60));
-    return `${minutes} ${plural(minutes, "minute")}`;
-  }
-  const rounded = Number.isInteger(hours) ? hours : round2(hours);
-  return `${rounded} ${plural(rounded, "hour")}`;
-}
-
 function formatQuotaValue(key: string, value: unknown): string {
-  const spec = (upgrades as any).params?.[key];
-  if (spec?.input_type === "checkbox") {
-    return value ? "included" : "not included";
-  }
   const numberValue = asNumber(value);
   if (numberValue == null) {
     return `${value}`;
   }
-  if (key === "memory" || key === "disk_quota") {
+  if (key === "memory" || key === "memory_request" || key === "disk_quota") {
     if (numberValue >= 1000) {
       const gb = numberValue / 1000;
       return `${Number.isInteger(gb) ? gb : round2(gb)} GB`;
     }
     return `${numberValue} MB`;
   }
-  const displayValue =
-    spec?.display_factor != null
-      ? numberValue * spec.display_factor
-      : numberValue;
-  if (key === "mintime") {
-    return formatHours(displayValue);
-  }
-  const rounded = Number.isInteger(displayValue)
-    ? displayValue
-    : round2(displayValue);
-  const unit = spec?.display_unit ?? spec?.unit ?? "";
-  return unit ? `${rounded} ${unit}` : `${rounded}`;
+  const rounded = Number.isInteger(numberValue)
+    ? numberValue
+    : round2(numberValue);
+  return `${rounded}`;
 }
 
 function projectLimitLabel(key: string): string {
   switch (key) {
     case "memory":
       return "Project RAM";
+    case "memory_request":
+      return "Project requested RAM";
     case "disk_quota":
       return "Per-project disk quota";
-    case "mintime":
-      return "Minimum project uptime";
     default:
       return key;
   }
@@ -146,11 +123,11 @@ export function buildMembershipTierPresentation(
     `Membership benefits configured for ${tierLabel}.`;
 
   const sharedHostTier = asNumber(features.project_host_tier);
-  if (projectDefaults.member_host || sharedHostTier != null) {
+  if (sharedHostTier != null) {
     const hostPoolBenefit =
-      sharedHostTier != null && sharedHostTier > 0
-        ? `Shared project-host pool access, tier ${sharedHostTier}.`
-        : "Shared project-host pool access.";
+      sharedHostTier > 0
+        ? `Shared public project-host pool access, tier ${sharedHostTier}.`
+        : "Shared public project-host pool access, tier 0.";
     summaryBenefits.push(hostPoolBenefit);
     benefits.push(hostPoolBenefit);
   }
@@ -217,6 +194,12 @@ export function buildMembershipTierPresentation(
 
   for (const key of PROJECT_LIMIT_KEYS) {
     if (key in projectDefaults) {
+      if (
+        key === "memory_request" &&
+        (asNumber(projectDefaults[key]) ?? 0) <= 0
+      ) {
+        continue;
+      }
       const limit = `${projectLimitLabel(key)}: ${formatQuotaValue(key, projectDefaults[key])}`;
       if (key === "memory" || key === "disk_quota") {
         summaryLimits.push(limit);

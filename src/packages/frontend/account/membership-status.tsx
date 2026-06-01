@@ -35,7 +35,6 @@ import {
   ManagedEgressRateSummary,
   ManagedEgressTopProjectsSummary,
 } from "@cocalc/frontend/purchases/managed-egress-history";
-import { upgrades } from "@cocalc/util/upgrade-spec";
 import { capitalize, humanSize, round2 } from "@cocalc/util/misc";
 import type {
   MembershipDetails,
@@ -71,13 +70,9 @@ interface MembershipTiersResponse {
 }
 
 const PROJECT_DEFAULT_KEYS = [
-  "cores",
   "memory",
   "memory_request",
   "disk_quota",
-  "network",
-  "member_host",
-  "cpu_shares",
 ] as const;
 
 function normalizeRecord(value?: unknown): Record<string, unknown> {
@@ -87,34 +82,32 @@ function normalizeRecord(value?: unknown): Record<string, unknown> {
   return {};
 }
 
-function formatDurationHours(hours: number): string {
-  if (!Number.isFinite(hours)) return "";
-  if (hours < 1) {
-    const minutes = Math.max(1, Math.round(hours * 60));
-    return `${minutes} min`;
-  }
-  const rounded = Number.isInteger(hours) ? hours : round2(hours);
-  return `${rounded} hour${rounded === 1 ? "" : "s"}`;
-}
-
-function formatQuotaValue(key: string, value: unknown): string {
-  const spec = (upgrades as any).params?.[key];
-  if (spec?.input_type === "checkbox") {
-    return value ? "Included" : "Not included";
-  }
+function formatProjectDefaultValue(key: string, value: unknown): string {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return String(value);
   }
-  const displayValue =
-    spec?.display_factor != null ? value * spec.display_factor : value;
-  if (key === "mintime") {
-    return formatDurationHours(displayValue);
+  if (key === "memory" || key === "memory_request" || key === "disk_quota") {
+    if (value >= 1000) {
+      const gb = value / 1000;
+      return `${Number.isInteger(gb) ? gb : round2(gb)} GB`;
+    }
+    return `${value} MB`;
   }
-  const rounded = Number.isInteger(displayValue)
-    ? displayValue
-    : round2(displayValue);
-  const unit = spec?.display_unit ?? spec?.unit ?? "";
-  return unit ? `${rounded} ${unit}` : `${rounded}`;
+  const rounded = Number.isInteger(value) ? value : round2(value);
+  return `${rounded}`;
+}
+
+function projectDefaultLabel(key: string): string {
+  switch (key) {
+    case "memory":
+      return "Project RAM";
+    case "memory_request":
+      return "Project requested RAM";
+    case "disk_quota":
+      return "Per-project disk quota";
+    default:
+      return capitalize(key.replace(/_/g, " "));
+  }
 }
 
 function formatResetAt(resetAt?: Date | string): string | undefined {
@@ -158,24 +151,14 @@ export function getProjectDefaultsItems(
 ): ProjectDefaultItem[] {
   return PROJECT_DEFAULT_KEYS.map((key) => {
     if (!(key in projectDefaults)) return null;
-    if (key === "member_host") return null;
     const value = projectDefaults[key];
-    if (key === "cpu_shares" && typeof value === "number" && value <= 0) {
+    if (key === "memory_request" && typeof value === "number" && value <= 0) {
       return null;
     }
-    const spec = (upgrades as any).params?.[key];
-    const label =
-      key === "cores"
-        ? "CPU priority"
-        : (spec?.display ?? capitalize(key.replace(/_/g, " ")));
-    const formattedValue = formatQuotaValue(key, value);
     return {
       key,
-      label,
-      value:
-        key === "cores"
-          ? `${spec?.display ?? "Shared CPU"} - ${formattedValue}`
-          : formattedValue,
+      label: projectDefaultLabel(key),
+      value: formatProjectDefaultValue(key, value),
     };
   }).filter((item) => item != null) as ProjectDefaultItem[];
 }

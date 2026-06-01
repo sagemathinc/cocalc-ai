@@ -20,9 +20,20 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     const features = tier.features as unknown as Record<string, unknown>;
     const aiLimits = tier.ai_limits as unknown as Record<string, unknown>;
 
-    expect(projectDefaults.member_host).toBe(1);
     expect(features.create_hosts).toBe(true);
     expect(features.project_host_tier).toBe(2);
+    expect(projectDefaults).toEqual(
+      expect.not.objectContaining({
+        cores: expect.anything(),
+        cpu_shares: expect.anything(),
+        mintime: expect.anything(),
+        network: expect.anything(),
+        member_host: expect.anything(),
+        always_running: expect.anything(),
+        ephemeral_state: expect.anything(),
+        ephemeral_disk: expect.anything(),
+      }),
+    );
     expect(tier.course_store_visible).toBe(false);
     expect(aiLimits.units_5h).toBeGreaterThan(0);
     expect(
@@ -128,6 +139,7 @@ describe("applyMembershipTierTemplateFallbacks", () => {
 
     expect(free.store_description).toMatch(/explore the platform/);
     expect(free.store_highlights).toEqual([]);
+    expect(free.ai_limits).toEqual({ units_5h: 0, units_7d: 0 });
 
     expect(basic.label).toBe("Basic");
     expect(basic.store_description).toMatch(/occasional light use/);
@@ -160,6 +172,36 @@ describe("applyMembershipTierTemplateFallbacks", () => {
       (standard.usage_limits as Record<string, unknown>)
         .prepaid_host_usage_limit_7d_usd,
     ).toBe(1000);
+  });
+
+  it("does not emit eliminated legacy project quota fields from built-in templates", () => {
+    const eliminated = [
+      "cores",
+      "cpu_shares",
+      "mintime",
+      "network",
+      "member_host",
+      "always_running",
+      "ephemeral_state",
+      "ephemeral_disk",
+    ];
+
+    for (const id of [
+      "free",
+      "student",
+      "basic",
+      "member",
+      "standard",
+      "instructor",
+      "researcher",
+      "pro",
+    ]) {
+      const tier = applyMembershipTierTemplateFallbacks({ id });
+      const projectDefaults = tier.project_defaults as Record<string, unknown>;
+      for (const key of eliminated) {
+        expect(projectDefaults).not.toHaveProperty(key);
+      }
+    }
   });
 
   it("defines an instructor tier with course-scale invite limits", () => {
