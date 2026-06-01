@@ -22,6 +22,13 @@ import type {
 } from "@cocalc/conat/hub/api/projects";
 import type { ProjectViewerReadPolicy } from "@cocalc/util/project-access";
 
+function browserOrigin(): string | undefined {
+  if (typeof window === "undefined") {
+    return;
+  }
+  return window.location?.origin;
+}
+
 export class ProjectCollaborators {
   private conat: ConatClient;
 
@@ -43,10 +50,14 @@ export class ProjectCollaborators {
     invite_context?: Record<string, unknown>;
     invite_scope?: string;
     invite_role?: "collaborator" | "viewer";
+    invite_base_url?: string;
     read_policy?: ProjectViewerReadPolicy | null;
   }): Promise<any> {
     return await this.conat.hub.projects.inviteCollaboratorWithoutAccount({
-      opts,
+      opts: {
+        ...opts,
+        invite_base_url: opts.invite_base_url ?? browserOrigin(),
+      },
     });
   }
 
@@ -172,12 +183,16 @@ export class ProjectCollaborators {
   public async copy_email_invite_link(opts: {
     invite_id: string;
     project_id?: string;
+    invite_base_url?: string;
   }): Promise<{
     invite_id: string;
     invite_url: string;
     expires?: Date | null;
   }> {
-    return await this.conat.hub.projects.copyEmailProjectInviteLink(opts);
+    return await this.conat.hub.projects.copyEmailProjectInviteLink({
+      ...opts,
+      invite_base_url: opts.invite_base_url ?? browserOrigin(),
+    });
   }
 
   public async redeem_email_invite(opts: {

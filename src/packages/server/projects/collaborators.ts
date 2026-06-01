@@ -77,7 +77,10 @@ import {
   syncProjectedInboundCollabInvite,
 } from "@cocalc/server/projects/collab-invite-inbox";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
-import { getBayPublicOrigin } from "@cocalc/server/bay-public-origin";
+import {
+  getBayPublicOrigin,
+  normalizeOrigin,
+} from "@cocalc/server/bay-public-origin";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import {
   assertCourseStudentInviteLimit,
@@ -494,9 +497,30 @@ function generateInviteToken(): string {
   return randomBytes(24).toString("base64url");
 }
 
-async function inviteUrl({ token }: { token: string }): Promise<string> {
+function normalizeInviteBaseUrl(value?: string | null): string | undefined {
+  const origin = normalizeOrigin(value);
+  if (!origin) return;
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return;
+    }
+    return origin.replace(/\/+$/, "");
+  } catch {
+    return;
+  }
+}
+
+async function inviteUrl({
+  token,
+  base_url,
+}: {
+  token: string;
+  base_url?: string | null;
+}): Promise<string> {
   const base = (
-    await getBayPublicOrigin(getConfiguredClusterSeedBayId())
+    normalizeInviteBaseUrl(base_url) ??
+    (await getBayPublicOrigin(getConfiguredClusterSeedBayId()))
   )?.replace(/\/+$/, "");
   if (!base) {
     throw new Error("unable to determine public site URL for invite link");
@@ -3069,6 +3093,7 @@ async function createEmailProjectInvite({
   message,
   scope = EMAIL_INVITE_SCOPE,
   invite_role,
+  invite_base_url,
   read_policy,
 }: {
   account_id: string;
@@ -3078,6 +3103,7 @@ async function createEmailProjectInvite({
   message?: string;
   scope?: string;
   invite_role?: Exclude<ProjectUserRole, "owner">;
+  invite_base_url?: string;
   read_policy?: ProjectViewerReadPolicy | null;
 }): Promise<{
   created: boolean;
@@ -3137,7 +3163,7 @@ async function createEmailProjectInvite({
       token_hash,
       scope,
     });
-    const url = await inviteUrl({ token });
+    const url = await inviteUrl({ token, base_url: invite_base_url });
     return {
       created: false,
       invite: {
@@ -3200,7 +3226,7 @@ async function createEmailProjectInvite({
     token_hash,
     scope,
   });
-  const url = await inviteUrl({ token });
+  const url = await inviteUrl({ token, base_url: invite_base_url });
   return {
     created: true,
     invite: {
@@ -3215,10 +3241,12 @@ async function createEmailProjectInvite({
 export async function copyEmailProjectInviteLink({
   account_id,
   invite_id,
+  invite_base_url,
 }: {
   account_id?: string;
   invite_id: string;
   project_id?: string;
+  invite_base_url?: string;
 }): Promise<{ invite_id: string; invite_url: string; expires?: Date | null }> {
   if (!account_id) {
     throw new Error("user must be signed in");
@@ -3275,7 +3303,7 @@ export async function copyEmailProjectInviteLink({
   });
   return {
     invite_id,
-    invite_url: await inviteUrl({ token }),
+    invite_url: await inviteUrl({ token, base_url: invite_base_url }),
     expires: new Date(
       new Date(row.created).valueOf() +
         EMAIL_ONLY_INVITE_TTL_DAYS * 24 * 60 * 60 * 1000,
@@ -3625,6 +3653,7 @@ export async function inviteCollaboratorWithoutAccount({
     invite_context?: Record<string, unknown>;
     invite_scope?: string;
     invite_role?: Exclude<ProjectUserRole, "owner">;
+    invite_base_url?: string;
     read_policy?: ProjectViewerReadPolicy | null;
   };
 }): Promise<{ invites: ProjectCollabInviteRow[] } & InviteEmailDeliveryStatus> {
@@ -3699,6 +3728,7 @@ export async function inviteCollaboratorWithoutAccount({
       message: opts.message,
       scope: opts.invite_scope,
       invite_role: opts.invite_role,
+      invite_base_url: opts.invite_base_url ?? opts.link2proj,
       read_policy: opts.read_policy,
     });
 

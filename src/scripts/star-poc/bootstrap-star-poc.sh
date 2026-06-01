@@ -21,7 +21,7 @@ STAR_BTRFS_SIZE="${STAR_BTRFS_SIZE:-100G}"
 STAR_BUILD="${STAR_BUILD:-1}"
 STAR_BUILD_DEFAULT_ROOTFS="${STAR_BUILD_DEFAULT_ROOTFS:-1}"
 STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
-STAR_DEFAULT_ROOTFS_BASE_IMAGE="${STAR_DEFAULT_ROOTFS_BASE_IMAGE:-ubuntu:24.04}"
+STAR_DEFAULT_ROOTFS_BASE_IMAGE="${STAR_DEFAULT_ROOTFS_BASE_IMAGE:-ubuntu:26.04}"
 STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-1}"
 
 log() {
@@ -77,7 +77,7 @@ build_source() {
     log "skipping build because STAR_BUILD=0"
     return
   fi
-  as_star_user "cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 && if command -v corepack >/dev/null 2>&1; then corepack enable; fi && if ! command -v pnpm >/dev/null 2>&1; then npm install -g pnpm@10.33.0; fi && ./workspaces.py install && pnpm --filter @cocalc/app-notebook build && ./workspaces.py build --dev && pnpm python-api"
+  as_star_user "cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 && export COCALC_SETUP_PROFILE=star && if command -v corepack >/dev/null 2>&1; then corepack enable; fi && if ! command -v pnpm >/dev/null 2>&1; then npm install -g pnpm@10.33.0; fi && ./workspaces.py install && pnpm --filter @cocalc/app-notebook build && ./workspaces.py build --dev && pnpm python-api"
   as_star_user "cd '$SRC_ROOT/packages/project' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 && pnpm build:bundle"
 }
 
@@ -147,7 +147,18 @@ configure_users_and_dirs() {
     "$STAR_PROJECT_HOST_DATA/secrets" \
     /etc/cocalc/star
   chmod 700 "$STAR_PROJECT_HOST_DATA/tmp"
-  chown -R "$STAR_USER:$STAR_USER" "$STAR_ROOT"
+  # Do not recursively chown STAR_ROOT. It contains cached RootFS trees whose
+  # numeric ownership is part of the container runtime contract.
+  chown "$STAR_USER:$STAR_USER" \
+    "$STAR_ROOT" \
+    "$STAR_DATA" \
+    "$STAR_DATA/secrets" \
+    "$STAR_PROJECT_HOST_DATA" \
+    "$STAR_PROJECT_HOST_DATA/tmp" \
+    "$STAR_PROJECT_HOST_DATA/cache" \
+    "$STAR_PROJECT_HOST_DATA/cache/images" \
+    "$STAR_PROJECT_HOST_DATA/cache/project-roots" \
+    "$STAR_PROJECT_HOST_DATA/secrets"
   chown -R "$STAR_USER:$STAR_USER" /mnt/cocalc/data
 }
 
@@ -189,6 +200,7 @@ RUN apt-get update \\
   && python3 -m venv /opt/cocalc-jupyter \\
   && /opt/cocalc-jupyter/bin/pip install --no-cache-dir --upgrade pip wheel \\
   && /opt/cocalc-jupyter/bin/pip install --no-cache-dir ipykernel jupyterlab notebook \\
+  && /opt/cocalc-jupyter/bin/python -m ipykernel install --prefix=/usr/local --name python3 \\
   && ln -s /opt/cocalc-jupyter/bin/jupyter /usr/local/bin/jupyter \\
   && ln -s /opt/cocalc-jupyter/bin/jupyter-lab /usr/local/bin/jupyter-lab \\
   && ln -s /opt/cocalc-jupyter/bin/jupyter-notebook /usr/local/bin/jupyter-notebook \\
@@ -223,6 +235,21 @@ write_env_files() {
     chmod 600 "$site_master_key"
     chown "$STAR_USER:$STAR_USER" "$site_master_key"
   fi
+
+  {
+    printf 'STAR_USER=%q\n' "$STAR_USER"
+    printf 'STAR_HOME=%q\n' "$STAR_HOME"
+    printf 'STAR_ROOT=%q\n' "$STAR_ROOT"
+    printf 'STAR_DATA=%q\n' "$STAR_DATA"
+    printf 'STAR_PROJECT_HOST_DATA=%q\n' "$STAR_PROJECT_HOST_DATA"
+    printf 'STAR_BASE_PORT=%q\n' "$STAR_BASE_PORT"
+    printf 'STAR_BASE_URL=%q\n' "$STAR_BASE_URL"
+    printf 'STAR_API=%q\n' "$STAR_BASE_URL"
+    printf 'STAR_INSTALL_ROOT=%q\n' "${STAR_INSTALL_ROOT:-/opt/cocalc-star}"
+    printf 'STAR_DEFAULT_ROOTFS_IMAGE=%q\n' "$STAR_DEFAULT_ROOTFS_IMAGE"
+  } >/etc/cocalc/star/config.env
+  chown root:root /etc/cocalc/star/config.env
+  chmod 644 /etc/cocalc/star/config.env
 
   cat >/etc/cocalc/star/hub.env <<EOF
 COCALC_PRODUCT=launchpad
@@ -270,6 +297,7 @@ COCALC_SHARED_SCRATCH_HOST_MOUNT=/mnt/cocalc-scratch
 COCALC_PROJECT_HOST_CPU_USAGE_MODE=observe
 COCALC_PROJECT_TOOLS=${SRC_ROOT}/packages/backend/node_modules/.bin
 COCALC_PROJECT_BUNDLES=${SRC_ROOT}/packages/project/build
+COCALC_PROJECT_HOST_CONAT_ROUTER_HOST=0.0.0.0
 COCALC_PROJECT_HOST_CONAT_ROUTER_PORT=9112
 COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT=9212
 HOST=127.0.0.1

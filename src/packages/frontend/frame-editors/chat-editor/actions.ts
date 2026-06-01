@@ -284,7 +284,7 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
   }
 
   async gotoFragment(fragmentId: FragmentId) {
-    const { chat } = fragmentId as any;
+    const { chat, thread } = fragmentId as any;
     if (!chat) {
       return;
     }
@@ -296,6 +296,9 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
     }
     for (const d of [1, 10, 50, 500, 1000]) {
       const actions = this.getChatActions(frameId);
+      if (thread) {
+        actions?.setSelectedThread?.(thread);
+      }
       actions?.scrollToDate(chat, { persistFragment: false });
       await delay(d);
     }

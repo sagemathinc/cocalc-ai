@@ -60,17 +60,23 @@ Those are upsells to Launchpad/Rocket.
 
 The current working implementation is deliberately simple:
 
-- Build a Star source tarball from a CoCalc checkout.
-- Copy it to a fresh Ubuntu 24.04 VM.
-- Run `src/scripts/star/install-from-tarball.sh` from inside the tarball.
-- Install source under `/opt/cocalc-star/source`.
+- Build a Star release artifact from a CoCalc checkout.
+- The artifact contains `install.sh`, `cocalc-star-src.tar.gz`,
+  `release.json`, and `SHA256SUMS`.
+- Copy the release artifact to a fresh Ubuntu 24.04 VM.
+- Extract it and run `sudo STAR_ASSUME_YES=1 ./install.sh`.
+- `install.sh` verifies checksums when possible and delegates to
+  `src/scripts/star/install-from-tarball.sh`, so VM mutation still has one
+  installer path.
+- Install source under `/opt/cocalc-star/releases/<release-id>/source`.
+- Keep `/opt/cocalc-star/source` as a stable symlink to the active release.
 - Install runtime state under `/var/lib/cocalc/star`.
 - Run Launchpad/hub under systemd on `127.0.0.1:9100`.
 - Run a local project-host under systemd on `127.0.0.1:9002`.
 - Run the project-host managed Conat router on `127.0.0.1:9112`.
 - Run the project-host Conat persist health endpoint on `127.0.0.1:9212`.
 - Use local Postgres for the hub/control-plane database.
-- Build/cache a default RootFS from `ubuntu:24.04` with Jupyter and LaTeX.
+- Build/cache a default RootFS from `ubuntu:26.04` with Jupyter and LaTeX.
 - Mount the backend tools bundle into project containers so tools such as
   `dropbear` come from the CoCalc tools bundle, not from the RootFS image.
 
@@ -691,12 +697,14 @@ Current sequence:
 3. Build a Star source tarball and install from it. Done.
 4. Add versioned release layout and rollback while keeping
    `/opt/cocalc-star/source` as the stable path. Done.
-5. Split out a reusable Star systemd/release scaffold.
-6. Build a smaller Star runtime tarball that does not require a full source
+5. Build a first-class Star release artifact with `install.sh`, source tarball,
+   manifest, and checksums. Done.
+6. Split out a reusable Star systemd/release scaffold.
+7. Build a smaller Star runtime tarball that does not require a full source
    checkout build on the target VM.
-7. Wrap the tarball in a SEA installer/launcher if it still improves the
+8. Wrap the tarball in a SEA installer/launcher if it still improves the
    operator experience.
-8. Publish marketplace images only after the tarball/script path is boring.
+9. Publish marketplace images only after the tarball/script path is boring.
 
 SEA target:
 

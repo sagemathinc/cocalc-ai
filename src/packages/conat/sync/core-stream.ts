@@ -583,6 +583,9 @@ export class CoreStream<T = any> extends EventEmitter {
     if (this.storage == null) {
       throw Error("bug -- storage must be set");
     }
+    if (this.persistClient == null) {
+      throw Error("disconnected");
+    }
     this.currentConfig = await this.persistClient.config({ config });
     return this.currentConfig;
   };
@@ -594,11 +597,17 @@ export class CoreStream<T = any> extends EventEmitter {
   setMetadata = async (
     metadata?: JSONValue,
   ): Promise<JSONValue | undefined> => {
+    if (this.persistClient == null) {
+      throw Error("disconnected");
+    }
     this.currentMetadata = await this.persistClient.setMetadata(metadata);
     return this.currentMetadata;
   };
 
   patchMetadata = async (delta: JSONValue): Promise<JSONValue | undefined> => {
+    if (this.persistClient == null) {
+      throw Error("disconnected");
+    }
     this.currentMetadata = await this.persistClient.patchMetadata(delta);
     return this.currentMetadata;
   };

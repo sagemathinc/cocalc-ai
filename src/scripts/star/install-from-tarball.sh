@@ -180,6 +180,11 @@ INSTALLER="${STAR_INSTALL_SOURCE}/src/scripts/star/install-star.sh"
 log "running installer as STAR_USER=$STAR_USER release=$STAR_RELEASE_ID"
 export SRC_ROOT="${SRC_ROOT:-${STAR_INSTALL_SOURCE}/src}"
 export STAR_ASSUME_YES=1
+export STAR_INSTALL_ROOT
+export STAR_INSTALL_SOURCE
+export STAR_RELEASES_DIR
+export STAR_RELEASE_ID
+export STAR_USER
 "$INSTALLER"
 
 replace_symlink "$release_dir" "${STAR_INSTALL_ROOT}/current"

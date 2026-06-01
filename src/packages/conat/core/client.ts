@@ -702,7 +702,12 @@ export class Client extends EventEmitter {
       const firstTime = this.info == null;
       this.info = info;
       if (firstTime) {
-        this.initInbox();
+        void this.initInbox().catch((err) => {
+          if (this.isClosed()) {
+            return;
+          }
+          logger.debug(`Conat: failed to initialize inbox -- ${err}`);
+        });
       }
       this.emit("info", info);
       if (this.scheduledSyncSubscriptionsTimer != null) {
@@ -992,7 +997,7 @@ export class Client extends EventEmitter {
     // remove all those problems by just using a single inbox subscription.
     const inboxPrefix =
       this.inboxPrefixHook?.(this.info) ??
-      this.options.inboxPrefix ??
+      this.options?.inboxPrefix ??
       INBOX_PREFIX;
     if (!inboxPrefix.startsWith(INBOX_PREFIX)) {
       throw Error(`custom inboxPrefix must start with '${INBOX_PREFIX}'`);

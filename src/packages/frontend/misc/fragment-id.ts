@@ -10,6 +10,7 @@ import { IS_EMBEDDED } from "@cocalc/frontend/client/handle-target";
 // all the values are strings since they get stored in a URL, which is a string.
 export interface FragmentId {
   chat?: string; // fragment refers to ms since epoch of chat message
+  thread?: string; // optional chat thread id to select before scrolling
   anchor?: string;
   // a specific line in a document
   line?: string;

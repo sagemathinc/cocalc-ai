@@ -1527,6 +1527,7 @@ export function ChatPanel({
     const mentionProcessedInput =
       submitMentionsRef?.current?.({
         chat: `${new Date(chatIdentity.date).valueOf()}`,
+        thread: chatIdentity.thread_id,
       }) ?? "";
     const resolvedInput =
       mentionProcessedInput.trim().length > 0

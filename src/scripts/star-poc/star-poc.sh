@@ -2,15 +2,28 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STAR_CONFIG="${STAR_CONFIG:-/etc/cocalc/star/config.env}"
+if [ -f "$STAR_CONFIG" ]; then
+  # shellcheck disable=SC1090
+  set -a
+  source "$STAR_CONFIG"
+  set +a
+fi
 STAR_API="${STAR_API:-http://127.0.0.1:9100}"
 STAR_ROOT="${STAR_ROOT:-/var/lib/cocalc/star}"
 STAR_USER="${STAR_USER:-user}"
 STAR_HOME="${STAR_HOME:-/home/${STAR_USER}}"
-SRC_ROOT="${SRC_ROOT:-${STAR_HOME}/cocalc-ai/src}"
 STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:localhost/cocalc-star-rootfs:latest}"
 STAR_INSTALL_ROOT="${STAR_INSTALL_ROOT:-/opt/cocalc-star}"
 STAR_RELEASES_DIR="${STAR_RELEASES_DIR:-${STAR_INSTALL_ROOT}/releases}"
 STAR_SOURCE_LINK="${STAR_SOURCE_LINK:-${STAR_INSTALL_ROOT}/source}"
+if [ -z "${SRC_ROOT:-}" ]; then
+  if [ -d "${STAR_SOURCE_LINK}/src" ]; then
+    SRC_ROOT="${STAR_SOURCE_LINK}/src"
+  else
+    SRC_ROOT="${STAR_HOME}/cocalc-ai/src"
+  fi
+fi
 
 usage() {
   cat <<'EOF'
@@ -22,6 +35,7 @@ Commands:
   smoke                  Run the Star smoke test.
   current-release        Print the active release, if installed from a release.
   releases               List installed releases.
+  upgrade <url|tarball>  Install a new release artifact.
   rollback [release-id]  Roll back to a release. Defaults to previous release.
   restart [all|hub|host] Restart Star services. Default: all.
   logs [hub|host] [n]    Show recent service logs. Default: hub, 200 lines.
@@ -121,8 +135,12 @@ doctor() {
     fi
     check "project-host tools bundle exists" test -d "${COCALC_PROJECT_TOOLS:-}"
     check "project-host tools bundle has dropbear" test -x "${COCALC_PROJECT_TOOLS:-}/dropbear"
+    local conat_health_host="${COCALC_PROJECT_HOST_CONAT_ROUTER_HOST:-127.0.0.1}"
+    if [ "$conat_health_host" = "0.0.0.0" ] || [ "$conat_health_host" = "::" ]; then
+      conat_health_host="127.0.0.1"
+    fi
     check "project-host conat router is healthy" \
-      curl -fsS "http://${COCALC_PROJECT_HOST_CONAT_ROUTER_HOST:-127.0.0.1}:${COCALC_PROJECT_HOST_CONAT_ROUTER_PORT:-}/healthz"
+      curl -fsS "http://${conat_health_host}:${COCALC_PROJECT_HOST_CONAT_ROUTER_PORT:-}/healthz"
     check "project-host conat persist is healthy" \
       curl -fsS "http://${COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_HOST:-127.0.0.1}:${COCALC_PROJECT_HOST_CONAT_PERSIST_HEALTH_PORT:-}/healthz"
   else
@@ -147,6 +165,7 @@ doctor() {
     check "cached rootfs has /scratch" test -d "${rootfs_path}/scratch"
     check "cached rootfs has project secrets mountpoint" test -d "${rootfs_path}/run/secrets/cocalc"
     check "rootless podman can run cached rootfs" as_star_user podman run --rm --runtime /usr/bin/crun --userns=keep-id:uid=2001,gid=2001 --user 0:0 --rootfs "$rootfs_path" /bin/true
+    check "cached rootfs preserves root-owned sudo files" as_star_user podman run --rm --runtime /usr/bin/crun --userns=keep-id:uid=2001,gid=2001 --user 0:0 --rootfs "$rootfs_path" /bin/bash -lc 'test "$(stat -c %u /etc/sudo.conf)" = 0 && test "$(stat -c %u /etc/sudoers)" = 0 && test "$(stat -c %u /etc/sudoers.d)" = 0 && test "$(stat -c %u /usr/bin/sudo)" = 0 && test -u /usr/bin/sudo'
   else
     local image_name="$STAR_DEFAULT_ROOTFS_IMAGE"
     case "$image_name" in
@@ -226,6 +245,7 @@ smoke() {
     STAR_SMOKE_STATE="${STAR_SMOKE_STATE:-${STAR_ROOT}/smoke}" \
     STAR_BOOTSTRAP_RESULT="${STAR_BOOTSTRAP_RESULT:-${STAR_ROOT}/bootstrap-result.json}" \
     STAR_SMOKE_ROOTFS_IMAGE="${STAR_SMOKE_ROOTFS_IMAGE:-$STAR_DEFAULT_ROOTFS_IMAGE}" \
+    STAR_SMOKE_REUSE_PROJECT="${STAR_SMOKE_REUSE_PROJECT:-0}" \
     "${SCRIPT_DIR}/smoke-star-poc.sh"
 }
 
@@ -309,6 +329,24 @@ rollback_release() {
   printf 'rolled back to %s\n' "$release_id"
 }
 
+upgrade_release() {
+  local release="${1:-}"
+  [ -n "$release" ] || {
+    log "missing release URL or tarball"
+    usage
+    exit 2
+  }
+  local installer="${SRC_ROOT}/scripts/star/install-release.sh"
+  [ -x "$installer" ] || {
+    log "missing release installer: $installer"
+    exit 1
+  }
+  sudo STAR_ASSUME_YES=1 \
+    STAR_INSTALL_ROOT="$STAR_INSTALL_ROOT" \
+    STAR_USER="$STAR_USER" \
+    "$installer" "$release"
+}
+
 restart() {
   local target="${1:-all}"
   case "$target" in
@@ -366,6 +404,10 @@ case "${1:-}" in
   rollback)
     shift
     rollback_release "$@"
+    ;;
+  upgrade)
+    shift
+    upgrade_release "$@"
     ;;
   restart)
     shift
