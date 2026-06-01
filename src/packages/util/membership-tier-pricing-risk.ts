@@ -10,10 +10,9 @@ export interface MembershipTierPricingAssumptions {
   overheadReserve: number;
   aiUnitCostUsd: number;
   egressCostPerGb: number;
-  accountStorageCostPerGbMonth: number;
+  projectStorageCostPerGbMonth: number;
   blobStorageCostPerGbMonth: number;
   rootfsStorageCostPerGbMonth: number;
-  sharedHostMonthlyCostUsd: number;
   sharedHostUsableRamGb: number;
   sharedHostUsableVcpu: number;
   targetRamOversubscription: number;
@@ -26,7 +25,7 @@ export interface MembershipTierPricingInput {
   priceYearlyUsd?: unknown;
   aiUnits7d?: unknown;
   egress7dGb?: unknown;
-  accountStorageHardCapGb?: unknown;
+  projectStorageHardCapGb?: unknown;
   blobStorageGb?: unknown;
   rootfsStorageGb?: unknown;
   creditSpendLimit7dUsd?: unknown;
@@ -48,7 +47,7 @@ export interface MembershipTierPricingRiskAnalysis {
   hardCosts: {
     aiMonthlyUsd: number;
     egressMonthlyUsd: number;
-    accountStorageMonthlyUsd: number;
+    projectStorageMonthlyUsd: number;
     blobStorageMonthlyUsd: number;
     rootfsStorageMonthlyUsd: number;
     dedicatedHostCreditGuardrailMonthlyUsd: number;
@@ -59,6 +58,7 @@ export interface MembershipTierPricingRiskAnalysis {
     cpuHoursMonthlyBudget: number;
     averageCpuEntitlement: number;
     sharedHostCpuUserShare: number;
+    modeledActiveProjects: number;
     activeProjectRamGb: number;
     sharedHostRamUserShare: number;
   };
@@ -80,10 +80,9 @@ export const DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS: MembershipTierPricingA
     overheadReserve: 0.1,
     aiUnitCostUsd: 0.01,
     egressCostPerGb: 0.12,
-    accountStorageCostPerGbMonth: 0.15,
-    blobStorageCostPerGbMonth: 0.025,
+    projectStorageCostPerGbMonth: 0.15,
+    blobStorageCostPerGbMonth: 0.015,
     rootfsStorageCostPerGbMonth: 0.04,
-    sharedHostMonthlyCostUsd: 120,
     sharedHostUsableRamGb: 48,
     sharedHostUsableVcpu: 16,
     targetRamOversubscription: 1.5,
@@ -127,14 +126,13 @@ export function normalizeMembershipTierPricingAssumptions(
     overheadReserve: clampFraction(merged.overheadReserve),
     aiUnitCostUsd: nonnegative(merged.aiUnitCostUsd),
     egressCostPerGb: nonnegative(merged.egressCostPerGb),
-    accountStorageCostPerGbMonth: nonnegative(
-      merged.accountStorageCostPerGbMonth,
+    projectStorageCostPerGbMonth: nonnegative(
+      merged.projectStorageCostPerGbMonth,
     ),
     blobStorageCostPerGbMonth: nonnegative(merged.blobStorageCostPerGbMonth),
     rootfsStorageCostPerGbMonth: nonnegative(
       merged.rootfsStorageCostPerGbMonth,
     ),
-    sharedHostMonthlyCostUsd: nonnegative(merged.sharedHostMonthlyCostUsd),
     sharedHostUsableRamGb: safePositive(
       merged.sharedHostUsableRamGb,
       DEFAULT_MEMBERSHIP_TIER_PRICING_ASSUMPTIONS.sharedHostUsableRamGb,
@@ -178,9 +176,9 @@ export function analyzeMembershipTierPricingRisk(
     monthlyFromWeekly(input.aiUnits7d) * assumptions.aiUnitCostUsd;
   const egressMonthlyUsd =
     monthlyFromWeekly(input.egress7dGb) * assumptions.egressCostPerGb;
-  const accountStorageMonthlyUsd =
-    nonnegative(input.accountStorageHardCapGb) *
-    assumptions.accountStorageCostPerGbMonth;
+  const projectStorageMonthlyUsd =
+    nonnegative(input.projectStorageHardCapGb) *
+    assumptions.projectStorageCostPerGbMonth;
   const blobStorageMonthlyUsd =
     nonnegative(input.blobStorageGb) * assumptions.blobStorageCostPerGbMonth;
   const rootfsStorageMonthlyUsd =
@@ -195,7 +193,7 @@ export function analyzeMembershipTierPricingRisk(
   const totalMonthlyUsd =
     aiMonthlyUsd +
     egressMonthlyUsd +
-    accountStorageMonthlyUsd +
+    projectStorageMonthlyUsd +
     blobStorageMonthlyUsd +
     rootfsStorageMonthlyUsd +
     dedicatedHostCreditGuardrailMonthlyUsd;
@@ -204,13 +202,15 @@ export function analyzeMembershipTierPricingRisk(
   const averageCpuEntitlement = cpuHoursMonthlyBudget / HOURS_PER_MONTH;
   const sharedHostCpuUserShare =
     assumptions.sharedHostUsableVcpu * assumptions.targetCpuOversubscription;
-  const runningProjects = Math.max(
-    1,
-    nonnegative(input.maxSponsoredRunningProjects) ||
-      assumptions.activeProjectConcurrency,
+  const sponsoredRunningProjects = nonnegative(
+    input.maxSponsoredRunningProjects,
   );
+  const modeledActiveProjects =
+    sponsoredRunningProjects > 0
+      ? Math.min(sponsoredRunningProjects, assumptions.activeProjectConcurrency)
+      : assumptions.activeProjectConcurrency;
   const activeProjectRamGb =
-    (nonnegative(input.projectMemoryMb) / MB_PER_GB) * runningProjects;
+    (nonnegative(input.projectMemoryMb) / MB_PER_GB) * modeledActiveProjects;
   const sharedHostRamUserShare =
     assumptions.sharedHostUsableRamGb * assumptions.targetRamOversubscription;
   const hardCostBudgetRemainingUsd = targetHardCostBudgetUsd - totalMonthlyUsd;
@@ -281,7 +281,7 @@ export function analyzeMembershipTierPricingRisk(
     hardCosts: {
       aiMonthlyUsd,
       egressMonthlyUsd,
-      accountStorageMonthlyUsd,
+      projectStorageMonthlyUsd,
       blobStorageMonthlyUsd,
       rootfsStorageMonthlyUsd,
       dedicatedHostCreditGuardrailMonthlyUsd,
@@ -292,6 +292,7 @@ export function analyzeMembershipTierPricingRisk(
       cpuHoursMonthlyBudget,
       averageCpuEntitlement,
       sharedHostCpuUserShare,
+      modeledActiveProjects,
       activeProjectRamGb,
       sharedHostRamUserShare,
     },

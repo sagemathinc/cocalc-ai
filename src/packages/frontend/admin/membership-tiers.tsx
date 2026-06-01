@@ -957,7 +957,7 @@ export function MembershipTiers() {
         egress7dGb:
           normalizedOptionalNumber(getFieldValue("usage_limit_egress_7d_gb")) ??
           bytesToGigabytes(usageLimits.egress_7d_bytes),
-        accountStorageHardCapGb:
+        projectStorageHardCapGb:
           normalizedOptionalNumber(
             getFieldValue("usage_limit_total_storage_hard_gb"),
           ) ?? bytesToGigabytes(usageLimits.total_storage_hard_bytes),
@@ -990,7 +990,11 @@ export function MembershipTiers() {
           normalizedOptionalNumber(usageLimits.max_sponsored_running_projects),
       };
     };
-    const riskMetric = (label: string, value: React.ReactNode) => (
+    const riskMetric = (
+      label: string,
+      value: React.ReactNode,
+      note?: string,
+    ) => (
       <div
         style={{
           border: `1px solid ${COLORS.GRAY_LL}`,
@@ -1002,6 +1006,9 @@ export function MembershipTiers() {
       >
         <div style={{ color: COLORS.GRAY, fontSize: "12px" }}>{label}</div>
         <div style={{ fontSize: "18px", fontWeight: 600 }}>{value}</div>
+        {note && (
+          <div style={{ color: COLORS.GRAY, fontSize: "12px" }}>{note}</div>
+        )}
       </div>
     );
     const assumptionInput = (
@@ -1540,9 +1547,9 @@ export function MembershipTiers() {
                       <Col {...fieldCol}>
                         <Form.Item
                           name="usage_limit_total_storage_soft_gb"
-                          label="Account storage soft cap"
+                          label="Project file storage soft cap"
                           extra={fieldHelp(
-                            "GB soft cap across owned projects before storage-increasing actions are restricted.",
+                            "GB soft cap across projects owned by this account before storage-increasing actions are restricted.",
                           )}
                         >
                           <InputNumber
@@ -1556,9 +1563,9 @@ export function MembershipTiers() {
                       <Col {...fieldCol}>
                         <Form.Item
                           name="usage_limit_total_storage_hard_gb"
-                          label="Account storage hard cap"
+                          label="Project file storage hard cap"
                           extra={fieldHelp(
-                            "GB hard cap across owned projects; should be at or above the soft cap.",
+                            "GB hard cap across projects owned by this account; should be at or above the soft cap.",
                           )}
                         >
                           <InputNumber
@@ -1828,6 +1835,14 @@ export function MembershipTiers() {
                                 {riskMetric(
                                   "Target hard-cost budget",
                                   currency(analysis.targetHardCostBudgetUsd),
+                                  `price × ${formattedPercent(
+                                    Math.max(
+                                      0,
+                                      1 -
+                                        pricingAssumptions.targetGrossMargin -
+                                        pricingAssumptions.overheadReserve,
+                                    ),
+                                  )}`,
                                 )}
                               </Col>
                               <Col xs={24} md={12} xl={6}>
@@ -1848,38 +1863,45 @@ export function MembershipTiers() {
                               </Col>
                               <Col xs={24} md={12} xl={6}>
                                 {riskMetric(
-                                  "Average CPU promise",
+                                  "Average CPUs if fully used",
                                   `${formattedNumber(
                                     analysis.capacity.averageCpuEntitlement,
                                     2,
                                   )} CPUs`,
+                                  "monthly CPU-hours ÷ 720",
                                 )}
                               </Col>
                               <Col xs={24} md={12} xl={6}>
                                 {riskMetric(
-                                  "CPU-hours / month",
+                                  "Monthly CPU allowance",
                                   `${formattedNumber(
                                     analysis.capacity.cpuHoursMonthlyBudget,
                                     0,
                                   )} h`,
+                                  "7-day CPU budget × 30/7",
                                 )}
                               </Col>
                               <Col xs={24} md={12} xl={6}>
                                 {riskMetric(
-                                  "Active project RAM",
+                                  "Modeled active project RAM",
                                   `${formattedNumber(
                                     analysis.capacity.activeProjectRamGb,
                                     1,
                                   )} GB`,
+                                  `${formattedNumber(
+                                    analysis.capacity.modeledActiveProjects,
+                                    1,
+                                  )} active project(s) × project RAM`,
                                 )}
                               </Col>
                               <Col xs={24} md={12} xl={6}>
                                 {riskMetric(
-                                  "Shared host user share",
+                                  "RAM capacity target",
                                   `${formattedNumber(
                                     analysis.capacity.sharedHostRamUserShare,
                                     1,
                                   )} GB RAM`,
+                                  "host RAM × RAM oversubscription",
                                 )}
                               </Col>
                             </Row>
@@ -1918,15 +1940,15 @@ export function MembershipTiers() {
                             </Col>
                             <Col xs={24} md={12} xl={8}>
                               {riskMetric(
-                                "Account storage hard cap",
+                                "Project file storage hard cap",
                                 currency(
-                                  analysis.hardCosts.accountStorageMonthlyUsd,
+                                  analysis.hardCosts.projectStorageMonthlyUsd,
                                 ),
                               )}
                             </Col>
                             <Col xs={24} md={12} xl={8}>
                               {riskMetric(
-                                "Blob storage",
+                                "R2/blob storage",
                                 currency(
                                   analysis.hardCosts.blobStorageMonthlyUsd,
                                 ),
@@ -1982,7 +2004,7 @@ export function MembershipTiers() {
                                     step: 1,
                                     addonAfter: "%",
                                     extra:
-                                      "Revenue fraction reserved as gross margin.",
+                                      "Revenue fraction that must remain after modeled direct costs and overhead.",
                                   },
                                 )}
                               </Col>
@@ -1995,7 +2017,7 @@ export function MembershipTiers() {
                                     step: 1,
                                     addonAfter: "%",
                                     extra:
-                                      "Revenue fraction reserved for support, payment fees, and operations.",
+                                      "Revenue fraction reserved for support, payment fees, and operations. Target hard-cost budget = price × (100% - margin - overhead).",
                                   },
                                 )}
                               </Col>
@@ -2021,18 +2043,20 @@ export function MembershipTiers() {
                               </Col>
                               <Col {...fieldCol}>
                                 {assumptionInput(
-                                  "accountStorageCostPerGbMonth",
-                                  "Account storage hard-cap cost",
+                                  "projectStorageCostPerGbMonth",
+                                  "Project file storage cost",
                                   {
                                     step: 0.001,
                                     addonAfter: "$/GB-mo",
+                                    extra:
+                                      "Cost basis for the project file storage hard cap across owned projects.",
                                   },
                                 )}
                               </Col>
                               <Col {...fieldCol}>
                                 {assumptionInput(
                                   "blobStorageCostPerGbMonth",
-                                  "Blob storage cost",
+                                  "R2/blob storage cost",
                                   {
                                     step: 0.001,
                                     addonAfter: "$/GB-mo",
@@ -2051,21 +2075,13 @@ export function MembershipTiers() {
                               </Col>
                               <Col {...fieldCol}>
                                 {assumptionInput(
-                                  "sharedHostMonthlyCostUsd",
-                                  "Shared host cost",
-                                  {
-                                    step: 1,
-                                    addonAfter: "$/mo",
-                                  },
-                                )}
-                              </Col>
-                              <Col {...fieldCol}>
-                                {assumptionInput(
                                   "sharedHostUsableRamGb",
                                   "Shared host usable RAM",
                                   {
                                     step: 1,
                                     addonAfter: "GB",
+                                    extra:
+                                      "Capacity reference for RAM pressure; not counted as direct hard-cost exposure.",
                                   },
                                 )}
                               </Col>
@@ -2076,6 +2092,8 @@ export function MembershipTiers() {
                                   {
                                     step: 1,
                                     addonAfter: "vCPU",
+                                    extra:
+                                      "Capacity reference for CPU pressure; not counted as direct hard-cost exposure.",
                                   },
                                 )}
                               </Col>
@@ -2086,6 +2104,8 @@ export function MembershipTiers() {
                                   {
                                     step: 0.1,
                                     addonAfter: "x",
+                                    extra:
+                                      "How many users' active project RAM can reasonably share one host.",
                                   },
                                 )}
                               </Col>
@@ -2096,6 +2116,8 @@ export function MembershipTiers() {
                                   {
                                     step: 0.5,
                                     addonAfter: "x",
+                                    extra:
+                                      "How many average-CPU promises can reasonably share one host.",
                                   },
                                 )}
                               </Col>
@@ -2107,7 +2129,7 @@ export function MembershipTiers() {
                                     step: 0.1,
                                     addonAfter: "projects",
                                     extra:
-                                      "Fallback active project count when this tier has no running-project limit.",
+                                      "Used for modeled active project RAM; capped by the tier's sponsored running-project limit when that limit is set.",
                                   },
                                 )}
                               </Col>
