@@ -10,6 +10,10 @@ import {
 import { KUCALC_DISABLED } from "@cocalc/util/db-schema/site-defaults";
 import { useRunQuota } from "./run-quota/hooks";
 
+function legacyEnabledByDefault(value: unknown): boolean {
+  return value !== false && value !== 0;
+}
+
 // this reacts to changes of settings, user contributions, and licenses
 export function useProjectHasInternetAccess(
   project_id: string,
@@ -32,12 +36,7 @@ export function useProjectHasInternetAccess(
     }
     // otherwise, we use the run quota information, which is set server-side after processing
     // the default quotas and any licenses/upgrades on top of it.
-    const network = runQuota?.network;
-    if (typeof network === "boolean") {
-      set_state(network);
-    } else {
-      set_state(false);
-    }
+    set_state(legacyEnabledByDefault(runQuota?.network));
   }, [enabled, noKubernetes, runQuota?.network]);
 
   return state;

@@ -16,6 +16,10 @@ interface Props {
   is_logged_in: boolean;
 }
 
+function legacyDisabled(value: unknown): boolean {
+  return value === false || value === 0;
+}
+
 export function FetchDirectoryErrors({
   error,
   path,
@@ -53,7 +57,7 @@ export function FetchDirectoryErrors({
         error === "no_instance" ||
         (is_commercial &&
           quotas &&
-          !quotas.member_host &&
+          legacyDisabled(quotas.member_host) &&
           !`${error}`.includes("EACCES"))
       ) {
         // the second part of the or is to blame it on the free servers, unless EACCESS = read permission error -- see https://github.com/sagemathinc/cocalc/issues/4100
@@ -61,9 +65,7 @@ export function FetchDirectoryErrors({
           <ShowError
             message={`${projectLabel} unavailable`}
             error={`This ${projectLabelLower} seems to not be responding.\n\n${
-              !(quotas != undefined ? quotas.member_host : undefined)
-                ? error
-                : undefined
+              legacyDisabled(quotas?.member_host) ? error : undefined
             }`}
           />
         );

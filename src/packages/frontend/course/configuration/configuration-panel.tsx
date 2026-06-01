@@ -42,6 +42,10 @@ interface Props {
   settings: CourseSettingsRecord;
 }
 
+function legacyEnabledByDefault(value: unknown): boolean {
+  return value !== false && value !== 0;
+}
+
 export function ConfigurationPanel({ name, project_id, settings }: Props) {
   const actions = useActions<CourseActions>({ name });
 
@@ -186,7 +190,10 @@ export function EmailInvitation({ actions, project_id, name }) {
   const [error, setError] = useState<string>("");
   const store = useStore<CourseStore>({ name });
   const { runQuota } = useProjectRunQuota(project_id);
-  const allow_urls = !!(runQuota?.network || runQuota?.member_host);
+  const allow_urls =
+    runQuota == null ||
+    legacyEnabledByDefault(runQuota.network) ||
+    legacyEnabledByDefault(runQuota.member_host);
 
   const check_email_body = debounce(
     (value) => {

@@ -453,6 +453,14 @@ Completed first slice:
   `member_host` values as enabled, while preserving explicit false/0 values for
   compatibility.
 
+Completed second slice:
+
+- project run-quota display now shows cocalc-ai runtime fields instead of the
+  legacy `PROJECT_UPGRADES.field_order` product model;
+- invite email URL validation and project internet-access checks default to
+  enabled unless a compatibility path explicitly disables network/member-host;
+- removed unused no-network, non-member-host, and trial warning components.
+
 After the editor is usable:
 
 - make project defaults emit only cocalc-ai-supported fields;
