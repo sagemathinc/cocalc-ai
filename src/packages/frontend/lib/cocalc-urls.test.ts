@@ -30,4 +30,26 @@ describe("frontend/lib/cocalc-urls", () => {
       }),
     ).toBe(`/${project_id}/files/home/user/out.pdf?param=1`);
   });
+
+  it("builds ProjectClient read_file URLs under the ordinary app base path", async () => {
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "/",
+    }));
+    const { projectReadFileURL } = await import("./cocalc-urls");
+
+    expect(projectReadFileURL({ project_id, path: "/home/user/out.pdf" })).toBe(
+      `/${project_id}/files/%2Fhome/user/out.pdf`,
+    );
+  });
+
+  it("does not duplicate the project id for ProjectClient read_file URLs", async () => {
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: `/${project_id}`,
+    }));
+    const { projectReadFileURL } = await import("./cocalc-urls");
+
+    expect(projectReadFileURL({ project_id, path: "/home/user/out.pdf" })).toBe(
+      `/${project_id}/files/%2Fhome/user/out.pdf`,
+    );
+  });
 });
