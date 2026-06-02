@@ -768,6 +768,26 @@ export interface RevokeAbuseReviewAnnotationQuery {
   revoked_reason?: string;
 }
 
+export type MembershipUsageWindowResetTarget = "5h" | "7d" | "all";
+
+export interface AdminResetMembershipUsageWindowsQuery {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  window?: MembershipUsageWindowResetTarget;
+  reason?: string;
+}
+
+export interface AccountUsageWindowEpoch {
+  scope: "membership";
+  window: "5h" | "7d";
+  epoch: number;
+}
+
+export interface AdminResetMembershipUsageWindowsResult {
+  windows: AccountUsageWindowEpoch[];
+}
+
 export interface ManagedEgressAdminHistoryQuery {
   account_id?: string;
   start?: string | Date;
@@ -980,6 +1000,9 @@ export interface Purchases {
   revokeAbuseReviewAnnotation: (
     opts?: RevokeAbuseReviewAnnotationQuery,
   ) => Promise<AbuseReviewAnnotation>;
+  adminResetMembershipUsageWindows: (
+    opts?: AdminResetMembershipUsageWindowsQuery,
+  ) => Promise<AdminResetMembershipUsageWindowsResult>;
 }
 
 export const purchases = {
@@ -1014,4 +1037,5 @@ export const purchases = {
   createAbuseReviewAnnotation: authFirst,
   listAbuseReviewAnnotations: authFirst,
   revokeAbuseReviewAnnotation: authFirst,
+  adminResetMembershipUsageWindows: authFirst,
 };

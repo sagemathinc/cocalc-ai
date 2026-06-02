@@ -15,10 +15,17 @@ import {
   listAbuseReviewAnnotations as listAbuseReviewAnnotations0,
   revokeAbuseReviewAnnotation as revokeAbuseReviewAnnotation0,
 } from "@cocalc/server/membership/abuse-review-annotations";
+import {
+  resetAccountUsageEpoch,
+  type AccountUsageWindowName,
+} from "@cocalc/server/membership/usage-windows";
 import type {
   AbuseReviewCategory,
   AbuseReviewDisposition,
+  AccountUsageWindowEpoch,
+  AdminResetMembershipUsageWindowsResult,
   AbuseReviewPriorityAdjustment,
+  MembershipUsageWindowResetTarget,
 } from "@cocalc/conat/hub/api/purchases";
 import {
   resolveMembershipDetailsForAccount,
@@ -1505,4 +1512,57 @@ export async function revokeAbuseReviewAnnotation({
     revoked_by: account_id,
     revoked_reason,
   });
+}
+
+function normalizeMembershipUsageWindowResetTarget(
+  value?: MembershipUsageWindowResetTarget,
+): AccountUsageWindowName[] {
+  const window = `${value ?? "all"}`.trim();
+  if (window === "5h" || window === "7d") {
+    return [window];
+  }
+  if (window === "all") {
+    return ["5h", "7d"];
+  }
+  throw Error("window must be '5h', '7d', or 'all'");
+}
+
+export async function adminResetMembershipUsageWindows({
+  account_id,
+  browser_id,
+  session_hash,
+  window,
+  reason,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  window?: MembershipUsageWindowResetTarget;
+  reason?: string;
+}): Promise<AdminResetMembershipUsageWindowsResult> {
+  if (!account_id) {
+    throw Error("account_id required");
+  }
+  if (!(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  await validatePurchaseFreshAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
+  const windows: AccountUsageWindowEpoch[] = [];
+  for (const targetWindow of normalizeMembershipUsageWindowResetTarget(
+    window,
+  )) {
+    windows.push(
+      await resetAccountUsageEpoch({
+        window: targetWindow,
+        reset_by: account_id,
+        reason: reason ?? "",
+      }),
+    );
+  }
+  return { windows };
 }
