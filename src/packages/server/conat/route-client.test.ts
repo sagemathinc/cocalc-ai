@@ -242,12 +242,9 @@ describe("server/conat route-client", () => {
     expect(routed1.close).toHaveBeenCalled();
   });
 
-  it("routes direct host control subjects to the host target", async () => {
+  it("does not reroute direct host control subjects through the host-local target", async () => {
     const central = createFakeClient();
-    const routed = createFakeClient();
-    connectMock
-      .mockImplementationOnce(() => central)
-      .mockImplementationOnce(() => routed);
+    connectMock.mockImplementationOnce(() => central);
     routeHostSubjectMock.mockReturnValue({
       host_id: "host-2",
       address: "https://host-2.example",
@@ -260,11 +257,11 @@ describe("server/conat route-client", () => {
       "project-host.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.api",
     );
 
-    expect(routeHostSubjectMock).toHaveBeenCalledWith(
+    expect(routeHostSubjectMock).not.toHaveBeenCalled();
+    expect(routeProjectSubjectMock).toHaveBeenCalledWith(
       "project-host.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.api",
     );
-    expect(routeProjectSubjectMock).not.toHaveBeenCalled();
-    expect(routedResult?.client).toBe(routed);
+    expect(routedResult).toBeUndefined();
   });
 
   it("materializes explicit routed host clients", async () => {
