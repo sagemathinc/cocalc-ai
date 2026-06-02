@@ -465,10 +465,15 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       detail: { project_id },
     });
     const host_id = await loadProjectHostId(project_id);
+    const publishUpload = await issueRootfsReleaseArtifactUpload({
+      host_id,
+      artifact_kind: "full",
+    });
     const artifact = await timings.measure("publish", async () => {
       return await withTimeout(
         client.publishRootfsImage({
           project_id,
+          upload: publishUpload,
           lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
         }),
         ROOTFS_PUBLISH_TIMEOUT_MS,
@@ -480,12 +485,6 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       requested_size_bytes: artifact.size_bytes,
       operation: "publish",
     });
-    const publishUpload = await issueRootfsReleaseArtifactUpload({
-      host_id,
-      artifact_kind: "full",
-      source_image: artifact.source_image,
-    });
-
     let uploadResult:
       | Awaited<ReturnType<typeof client.uploadRootfsReleaseArtifact>>
       | undefined = artifact.upload_result;
