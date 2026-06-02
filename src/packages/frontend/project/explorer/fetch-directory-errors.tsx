@@ -5,31 +5,23 @@
 
 import ShowError from "@cocalc/frontend/components/error";
 import { AccessErrors } from "./access-errors";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useIntl } from "react-intl";
 import { labels } from "@cocalc/frontend/i18n";
 
 interface Props {
   error: any;
   path: string;
-  quotas: any;
   is_logged_in: boolean;
-}
-
-function legacyDisabled(value: unknown): boolean {
-  return value === false || value === 0;
 }
 
 export function FetchDirectoryErrors({
   error,
   path,
-  quotas,
   is_logged_in,
 }: Props): React.JSX.Element {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
-  const is_commercial = useTypedRedux("customize", "is_commercial");
   switch (error) {
     case "not_public":
       return <AccessErrors is_logged_in={is_logged_in} />;
@@ -53,20 +45,11 @@ export function FetchDirectoryErrors({
         />
       );
     default:
-      if (
-        error === "no_instance" ||
-        (is_commercial &&
-          quotas &&
-          legacyDisabled(quotas.member_host) &&
-          !`${error}`.includes("EACCES"))
-      ) {
-        // the second part of the or is to blame it on the free servers, unless EACCESS = read permission error -- see https://github.com/sagemathinc/cocalc/issues/4100
+      if (error === "no_instance") {
         return (
           <ShowError
             message={`${projectLabel} unavailable`}
-            error={`This ${projectLabelLower} seems to not be responding.\n\n${
-              legacyDisabled(quotas?.member_host) ? error : undefined
-            }`}
+            error={`This ${projectLabelLower} seems to not be responding.`}
           />
         );
       } else {

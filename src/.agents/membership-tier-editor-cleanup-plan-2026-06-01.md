@@ -471,6 +471,16 @@ Completed third slice:
 - added regression coverage that the settings flyout includes the runtime quota
   usage surface and that single-node deployments still show RAM/disk quota rows.
 
+Completed fourth slice:
+
+- removed frontend invite-message URL checks that inferred anti-spam policy from
+  legacy `network`/`member_host` run-quota fields; server-side membership invite
+  limits remain authoritative;
+- removed legacy `member_host` cause inference from project folder-listing
+  errors;
+- stopped classifying project start/stop/archive logs by the retired
+  `member_host` quota while preserving the existing log shape for compatibility.
+
 After the editor is usable:
 
 - make project defaults emit only cocalc-ai-supported fields;

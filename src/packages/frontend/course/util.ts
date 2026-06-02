@@ -399,21 +399,13 @@ function projectStatusCoCalcCom({
     };
   }
 
-  if (upgrades.member_host) {
-    return {
-      icon: "check",
-      description: "Members-only hosting",
-      tip: `${projectLabel} is on a members-only server, which is much more robust and has priority support.`,
-      state,
-    };
-  }
   const description = intl.formatMessage({
-    id: "course.util.status-cocalc-com.free.description",
+    id: "course.util.status-cocalc-com.shared.description",
     defaultMessage: "Standard hosting",
   });
   const tip = intl.formatMessage(
     {
-      id: "course.util.status-cocalc-com.free.tooltip",
+      id: "course.util.status-cocalc-com.shared.tooltip",
       defaultMessage: `{projectLabel} uses standard shared hosting.`,
     },
     { projectLabel, projectLabelLower },

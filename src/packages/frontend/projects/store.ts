@@ -390,24 +390,24 @@ export class ProjectsStore extends Store<ProjectsState> {
     if (quotas == null) {
       return undefined;
     }
-    const kind = (quotas.member_host ?? true) ? "member" : "free";
-    // if any quota regarding cpu or memory is upgraded, we treat it better than purely free projects
+    // cocalc-ai product projects always run on managed project hosts. Keep the
+    // old log shape, but do not classify projects by the retired member_host
+    // quota.
+    const kind = "member";
+    // If runtime resources are above the old baseline, record the project as
+    // upgraded for legacy analytics consumers.
     const upgraded =
       (quotas.memory != null && quotas.memory > DEFAULT_QUOTAS.memory) ||
       (quotas.memory_request != null && quotas.memory_request > 200) ||
-      (quotas.cores != null && quotas.cores > DEFAULT_QUOTAS.cores);
+      (quotas.disk_quota != null &&
+        quotas.disk_quota > DEFAULT_QUOTAS.disk_quota);
     return { kind, upgraded };
   }
 
-  // cocalc-ai projects have network by default. Preserve explicit legacy
-  // false/0 values only for compatibility/security paths.
-  public allow_urls_in_emails(project_id: string): boolean {
-    const quotas = this.get_total_project_quotas(project_id);
-    if (quotas == null) {
-      return true;
-    } else {
-      return quotas.network !== 0 || quotas.member_host !== false;
-    }
+  // cocalc-ai product projects have network by default. Server-side membership
+  // invite policy remains authoritative for email URL filtering.
+  public allow_urls_in_emails(_project_id: string): boolean {
+    return true;
   }
 
   // Returns true if the project should be visible with the specified filters selected

@@ -21,8 +21,6 @@ import {
 } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { course } from "@cocalc/frontend/i18n";
-import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
-import { contains_url } from "@cocalc/util/misc";
 import { CourseActions } from "../actions";
 import { CourseSettingsRecord, CourseStore } from "../store";
 import ConfigurationCopying from "./configuration-copying";
@@ -40,10 +38,6 @@ interface Props {
   name: string;
   project_id: string;
   settings: CourseSettingsRecord;
-}
-
-function legacyEnabledByDefault(value: unknown): boolean {
-  return value !== false && value !== 0;
 }
 
 export function ConfigurationPanel({ name, project_id, settings }: Props) {
@@ -70,11 +64,7 @@ export function ConfigurationPanel({ name, project_id, settings }: Props) {
             name={name}
           />
           <br />
-          <EmailInvitation
-            actions={actions}
-            project_id={project_id}
-            name={name}
-          />
+          <EmailInvitation actions={actions} name={name} />
           <br />
           <Nbgrader name={name} />
         </Col>
@@ -185,33 +175,15 @@ export function TitleAndDescription({ actions, settings, name }) {
   );
 }
 
-export function EmailInvitation({ actions, project_id, name }) {
+export function EmailInvitation({ actions, name }) {
   const intl = useIntl();
   const [error, setError] = useState<string>("");
   const store = useStore<CourseStore>({ name });
-  const { runQuota } = useProjectRunQuota(project_id);
-  const allow_urls =
-    runQuota == null ||
-    legacyEnabledByDefault(runQuota.network) ||
-    legacyEnabledByDefault(runQuota.member_host);
 
-  const check_email_body = debounce(
-    (value) => {
-      if (!allow_urls && contains_url(value)) {
-        setError(
-          intl.formatMessage({
-            id: "course.configuration.email_invitation.url_error",
-            defaultMessage:
-              "URLs in emails are not allowed for free trial projects.  Please upgrade or delete the URL. This is an anti-spam measure.",
-          }),
-        );
-      } else {
-        setError("");
-      }
-    },
-    500,
-    { leading: true, trailing: true },
-  );
+  const check_email_body = debounce(() => setError(""), 500, {
+    leading: true,
+    trailing: true,
+  });
 
   return (
     <Card
