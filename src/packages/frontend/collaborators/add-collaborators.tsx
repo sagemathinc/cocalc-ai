@@ -27,7 +27,6 @@ import { Icon, Loading, ErrorDisplay, Gap } from "../components";
 import { webapp_client } from "../webapp-client";
 import { COLORS, SITE_NAME } from "@cocalc/util/theme";
 import {
-  contains_url,
   plural,
   cmp,
   trunc_middle,
@@ -40,7 +39,6 @@ import { Project } from "../projects/store";
 import { Avatar } from "../account/avatar/avatar";
 import { alert_message } from "../alerts";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
-import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
 import { ShowSupportLink } from "@cocalc/frontend/support/link";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -56,10 +54,6 @@ import {
 
 const INVITE_MESSAGE_MAX_LENGTH = 1000;
 type InviteRole = "collaborator" | "viewer";
-
-function legacyEnabledByDefault(value: unknown): boolean {
-  return value !== false && value !== 0;
-}
 
 interface RegisteredUser {
   sort?: string;
@@ -154,7 +148,6 @@ export const AddCollaborators: React.FC<Props> = ({
   const [email_to, set_email_to] = useState<string>("");
   // with this body.
   const [email_body, set_email_body] = useState<string>("");
-  const [email_body_error, set_email_body_error] = useState<string>("");
   const [email_body_editing, set_email_body_editing] = useState<boolean>(false);
   const [customize_email, set_customize_email] = useState<boolean>(false);
   const [invite_result, set_invite_result] = useState<string>("");
@@ -171,15 +164,6 @@ export const AddCollaborators: React.FC<Props> = ({
   const isMountedRef = useIsMountedRef();
 
   const project_actions = useActions("projects");
-  const { runQuota } = useProjectRunQuota(project_id);
-
-  const allow_urls = useMemo(
-    () =>
-      runQuota == null ||
-      legacyEnabledByDefault(runQuota.network) ||
-      legacyEnabledByDefault(runQuota.member_host),
-    [runQuota],
-  );
 
   async function load_invite_usage(): Promise<void> {
     try {
@@ -227,7 +211,6 @@ export const AddCollaborators: React.FC<Props> = ({
     set_err("");
     set_email_to("");
     set_email_body("");
-    set_email_body_error("");
     set_email_body_editing(false);
     set_customize_email(false);
     set_invite_result("");
@@ -519,15 +502,6 @@ export const AddCollaborators: React.FC<Props> = ({
       invite_role,
       invite_role === "viewer" ? invite_read_policy : undefined,
     );
-    if (!silent && !allow_urls) {
-      // Show a message that they might have to email that person
-      // and tell them to make a cocalc account, and when they do
-      // then they will get added as collaborator to this project....
-      alert_message({
-        type: "warning",
-        message: `If email delivery is unreliable, copy the pending invite link and send it to ${email_address} through a trusted channel.`,
-      });
-    }
     return result;
   }
 
@@ -572,21 +546,6 @@ export const AddCollaborators: React.FC<Props> = ({
     }
   }
 
-  function check_email_body(value: string): void {
-    if (!allow_urls && contains_url(value)) {
-      set_email_body_error("Sending URLs is not allowed. (anti-spam measure)");
-    } else {
-      set_email_body_error("");
-    }
-  }
-
-  function render_email_body_error(): React.JSX.Element | undefined {
-    if (!email_body_error) {
-      return;
-    }
-    return <ErrorDisplay error={email_body_error} />;
-  }
-
   function render_email_textarea(): React.JSX.Element {
     return (
       <>
@@ -601,7 +560,6 @@ export const AddCollaborators: React.FC<Props> = ({
           onChange={(e) => {
             const value: string = (e.target as any).value;
             set_email_body(value);
-            check_email_body(value);
           }}
         />
         <div
@@ -640,7 +598,6 @@ export const AddCollaborators: React.FC<Props> = ({
               marginTop: "8px",
             }}
           >
-            {render_email_body_error()}
             {render_email_textarea()}
           </div>
         )}
@@ -924,9 +881,6 @@ export const AddCollaborators: React.FC<Props> = ({
         label = `Invite ${number_selected} selected users`;
         disabled = false;
       }
-    }
-    if (email_body_error) {
-      disabled = true;
     }
     if (
       invite_role === "collaborator" &&
