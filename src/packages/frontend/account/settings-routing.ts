@@ -49,6 +49,8 @@ export const ACCOUNT_SETTINGS_ROUTE_DEFINITIONS: readonly AccountSettingsRouteDe
   [
     { page: "index", path: "settings" },
     { page: "profile", path: "settings/profile" },
+    { page: "membership", path: "settings/membership" },
+    { page: "usage-limits", path: "settings/usage-limits" },
     { page: "appearance", path: "settings/appearance" },
     { page: "editor", path: "settings/editor" },
     { page: "keyboard", path: "settings/keyboard" },

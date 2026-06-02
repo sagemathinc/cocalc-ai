@@ -61,12 +61,24 @@ describe("settings-navigation", () => {
         (node) => node.type === "page" && node.page === "support",
       ),
     ).toBe(false);
+    expect(
+      liteNavigation.some(
+        (node) => node.type === "page" && node.page === "membership",
+      ),
+    ).toBe(false);
+    expect(
+      liteNavigation.some(
+        (node) => node.type === "page" && node.page === "usage-limits",
+      ),
+    ).toBe(false);
   });
 
   it("derives overview sections from the visible navigation tree", () => {
     const overview = getSettingsOverviewSections(visibleContext);
 
     expect(overview.primaryPages).toContain("profile");
+    expect(overview.primaryPages).toContain("membership");
+    expect(overview.primaryPages).toContain("usage-limits");
     expect(overview.primaryPages).toContain("appearance");
     expect(overview.primaryPages).toContain("ai");
     expect(

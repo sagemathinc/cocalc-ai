@@ -15,7 +15,7 @@ import {
   Typography,
 } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import type {
   ManagedEgressAccountSummary,
   ManagedEgressAdminHistory,
@@ -42,6 +42,12 @@ const RECENT_SUMMARY_WINDOW_MS = 6 * HOUR_MS;
 const RECENT_SUMMARY_REFRESH_MS = 60 * 1000;
 const TOP_PROJECTS_SUMMARY_WINDOW_MS = 24 * HOUR_MS;
 const TOP_PROJECTS_SUMMARY_REFRESH_MS = 5 * 60 * 1000;
+
+type ManagedEgressInfoItem = {
+  key: string;
+  label: string;
+  value: ReactNode;
+};
 
 export type ManagedEgressHistoryRangeKey = "6h" | "24h" | "7d" | "30d";
 
@@ -684,10 +690,14 @@ function useManagedEgressHistorySnapshot({
 }
 
 export function ManagedEgressRateSummary({
+  compact = false,
   project_id,
+  renderCompactItems,
   user_account_id,
 }: {
+  compact?: boolean;
   project_id?: string;
+  renderCompactItems?: (items: ManagedEgressInfoItem[]) => ReactNode;
   user_account_id?: string;
 }) {
   const { error, history, loading } = useManagedEgressHistorySnapshot({
@@ -700,17 +710,70 @@ export function ManagedEgressRateSummary({
     refreshMs: RECENT_SUMMARY_REFRESH_MS,
   });
 
+  function renderCompactRows(value: ReactNode) {
+    if (!renderCompactItems) return value;
+    return renderCompactItems([
+      {
+        key: "last_5_min",
+        label: "Last 5 min",
+        value,
+      },
+      {
+        key: "last_hour",
+        label: "Last hour",
+        value,
+      },
+    ]);
+  }
+
   if (loading && history == null) {
+    if (compact) {
+      return renderCompactRows(<Text type="secondary">Loading…</Text>);
+    }
     return <Text type="secondary">Loading recent rates…</Text>;
   }
   if (error && history == null) {
+    if (compact) {
+      return renderCompactRows(<Text type="secondary">Unavailable</Text>);
+    }
     return <Text type="secondary">Recent rates unavailable.</Text>;
   }
   if (history == null) {
+    if (compact) {
+      return renderCompactRows(<Text type="secondary">Unavailable</Text>);
+    }
     return <Text type="secondary">No recent managed egress.</Text>;
   }
 
   const recent = summarizeManagedEgressRecentUsage(history);
+  if (compact && renderCompactItems) {
+    return renderCompactItems([
+      {
+        key: "last_5_min",
+        label: "Last 5 min",
+        value: humanSize(recent.last5MinutesBytes),
+      },
+      {
+        key: "last_hour",
+        label: "Last hour",
+        value: humanSize(recent.lastHourBytes),
+      },
+    ]);
+  }
+  if (compact) {
+    return (
+      <Space direction="vertical" size={0}>
+        <div>
+          <Text type="secondary">Last 5 min: </Text>
+          <Text>{humanSize(recent.last5MinutesBytes)}</Text>
+        </div>
+        <div>
+          <Text type="secondary">Last hour: </Text>
+          <Text>{humanSize(recent.lastHourBytes)}</Text>
+        </div>
+      </Space>
+    );
+  }
   return (
     <Text type="secondary">
       Recent usage: {humanSize(recent.last5MinutesBytes)} in the last 5 minutes
@@ -784,9 +847,13 @@ export function ManagedEgressSparkline({
 }
 
 export function ManagedEgressTopProjectsSummary({
+  compact = false,
+  renderCompactItems,
   user_account_id,
   limit = 5,
 }: {
+  compact?: boolean;
+  renderCompactItems?: (items: ManagedEgressInfoItem[]) => ReactNode;
   user_account_id?: string;
   limit?: number;
 }) {
@@ -799,13 +866,37 @@ export function ManagedEgressTopProjectsSummary({
     refreshMs: TOP_PROJECTS_SUMMARY_REFRESH_MS,
   });
 
+  function renderCompactTopProjects(value: ReactNode) {
+    if (!renderCompactItems) return value;
+    return renderCompactItems([
+      {
+        key: "top_projects",
+        label: "Top projects over the last 24h",
+        value,
+      },
+    ]);
+  }
+
   if (loading && history == null) {
+    if (compact) {
+      return renderCompactTopProjects(<Text type="secondary">Loading…</Text>);
+    }
     return <Text type="secondary">Loading top projects…</Text>;
   }
   if (error && history == null) {
+    if (compact) {
+      return renderCompactTopProjects(
+        <Text type="secondary">Unavailable</Text>,
+      );
+    }
     return <Text type="secondary">Top project summary unavailable.</Text>;
   }
   if (history == null || history.top_projects.length === 0) {
+    if (compact) {
+      return renderCompactTopProjects(
+        <Text type="secondary">No project-attributed egress.</Text>,
+      );
+    }
     return (
       <Text type="secondary">
         No project-attributed egress in the last 24 hours.
@@ -813,16 +904,39 @@ export function ManagedEgressTopProjectsSummary({
     );
   }
 
+  const projects = compact
+    ? history.top_projects.slice(0, limit)
+    : history.top_projects;
+  if (compact && renderCompactItems) {
+    return renderCompactTopProjects(
+      <Space direction="vertical" size={4} style={{ width: "100%" }}>
+        {projects.map((project, i) => (
+          <div key={`${project.project_id ?? "none"}-${i}`}>
+            <Text>
+              {project.project_title ??
+                project.project_id ??
+                "Account-wide session traffic"}
+            </Text>
+            <Text type="secondary">: {humanSize(project.bytes)}</Text>
+          </div>
+        ))}
+      </Space>,
+    );
+  }
+
   return (
     <Space direction="vertical" size={4} style={{ width: "100%" }}>
-      {history.top_projects.map((project, i) => (
+      {projects.map((project, i) => (
         <div key={`${project.project_id ?? "none"}-${i}`}>
           <Text>
             {project.project_title ??
               project.project_id ??
               "Account-wide session traffic"}
           </Text>
-          <Text type="secondary"> · {humanSize(project.bytes)}</Text>
+          <Text type="secondary">
+            {compact ? ": " : " · "}
+            {humanSize(project.bytes)}
+          </Text>
         </div>
       ))}
     </Space>

@@ -3,15 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Card, Space, Tag, Typography } from "antd";
+import { Card, Space, Tag, Typography } from "antd";
 import { defineMessage } from "react-intl";
 import type { SettingsPageDefinition } from "@cocalc/frontend/account/settings-page";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
-import { MembershipStatusPanel } from "@cocalc/frontend/account/membership-status";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { labels } from "@cocalc/frontend/i18n";
-import { joinUrlPath } from "@cocalc/util/url-path";
 
 import AdminPurchasePanel from "./admin-purchase-panel";
 import VoucherPurchasePanel from "./voucher-purchase-panel";
@@ -23,7 +20,7 @@ export const STORE_SETTINGS_PAGE = {
   description: defineMessage({
     id: "account.settings.overview.store",
     defaultMessage:
-      "Buy memberships, team seats, and vouchers, then jump directly to project host billing.",
+      "Purchase credit vouchers and access temporary admin purchase tools.",
   }),
   icon: "shopping-cart",
   key: "store",
@@ -39,28 +36,11 @@ export function StorePage() {
         Store
       </Title>
       <Paragraph type="secondary" style={{ marginBottom: "20px" }}>
-        Purchase memberships and vouchers inside the app. Course seats, team
-        seats, and user-owned-host commerce flows are handled from their
-        purpose-built pages.
+        Purchase credit vouchers inside the app. Membership and license changes
+        are moving to their purpose-built management pages.
       </Paragraph>
 
       <Space orientation="vertical" size="large" style={{ width: "100%" }}>
-        <Card
-          extra={
-            <Space>
-              <Button onClick={() => openAccountSettings({ page: "vouchers" })}>
-                Voucher Center
-              </Button>
-              <Button href={joinUrlPath(appBasePath, "hosts")}>
-                Project Hosts
-              </Button>
-            </Space>
-          }
-          title="Membership"
-        >
-          <MembershipStatusPanel showHeader={false} />
-        </Card>
-
         <Card title="Credit vouchers">
           <VoucherPurchasePanel
             onOpenVoucherCenter={() =>
