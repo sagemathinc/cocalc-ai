@@ -6,6 +6,7 @@ import useAutoHide from "@cocalc/frontend/components/use-auto-hide";
 import { State, elementsList } from "./actions";
 import Canvas from "./canvas";
 import KernelPanel from "./elements/code/kernel";
+import { hasCodeElements } from "./has-code-elements";
 import { useFrameContext, usePageInfo } from "./hooks";
 import NewPage from "./new-page";
 import StartSlideshowButton from "./start-slideshow";
@@ -58,6 +59,10 @@ export default function Whiteboard({ presentation }: Props) {
     if (pageId == null) return [];
     return elementsList(pagesMap.get(pageId)) ?? [];
   }, [pagesMap?.get(pageId ?? "")]);
+  const hasCodeElementsOnPage = useMemo(
+    () => hasCodeElements(elementsOnPage),
+    [elementsOnPage],
+  );
 
   usePageInfo(pagesMap);
 
@@ -140,7 +145,9 @@ export default function Whiteboard({ presentation }: Props) {
       {presentation && <StartSlideshowButton divRef={whiteboardDivRef} />}
       {isFocused && showPanels && (
         <>
-          {!readOnly && !minimizedTools && <KernelPanel />}
+          {!readOnly && !minimizedTools && hasCodeElementsOnPage && (
+            <KernelPanel />
+          )}
           <ToolPanel
             selectedTool={tool ?? "select"}
             readOnly={readOnly}

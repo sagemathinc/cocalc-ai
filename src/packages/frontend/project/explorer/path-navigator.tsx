@@ -23,6 +23,7 @@ import { isBackupsPath } from "@cocalc/util/consts/backups";
 import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import { trunc_middle } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import getStorageOverview, {
   getCachedStorageOverview,
@@ -55,6 +56,34 @@ const DROPDOWN_MENU_STYLE: React.CSSProperties = {
 };
 
 type SourceKey = "home" | "root" | "tmp" | "scratch";
+
+function snapshotPathForNav(
+  path: string,
+  homePath: string,
+): string | undefined {
+  const normalized = `${path}`.replace(/\/+$/, "");
+  if (!isSnapshotsPath(normalized)) return undefined;
+  const stripped = normalized.replace(/^\/+/, "");
+  if (!normalized.startsWith("/")) return stripped;
+
+  const normalizedHome = normalizeAbsolutePath(homePath);
+  if (normalizedHome !== "/" && normalized.startsWith(`${normalizedHome}/`)) {
+    const relative = normalized.slice(normalizedHome.length + 1);
+    if (isSnapshotsPath(relative)) {
+      return relative.replace(/^\/+/, "").replace(/\/+$/, "");
+    }
+  }
+
+  const runtimeRelative = projectRuntimeHomeRelativePath(normalized);
+  if (runtimeRelative != null && isSnapshotsPath(runtimeRelative)) {
+    return runtimeRelative.replace(/^\/+/, "").replace(/\/+$/, "");
+  }
+
+  if (stripped === ".snapshots" || stripped.startsWith(".snapshots/")) {
+    return stripped;
+  }
+  return undefined;
+}
 
 function historyMenuItems(
   paths: string[],
@@ -267,12 +296,12 @@ export const PathNavigator: React.FC<Props> = React.memo(
     };
 
     const normalizePathForNav = (path: string): string => {
+      const snapshotRelative = snapshotPathForNav(path, homePath);
+      if (snapshotRelative != null) {
+        return snapshotRelative;
+      }
       const normalized = path.replace(/^\/+/, "");
-      if (
-        path.startsWith(".") ||
-        isBackupsPath(path) ||
-        isSnapshotsPath(path)
-      ) {
+      if (path.startsWith(".") || isBackupsPath(path)) {
         return normalized;
       }
       return normalizeAbsolutePath(path, homePath);

@@ -235,6 +235,7 @@ function EditText({
       }}
       value={localValue}
       fontSize={element.data?.fontSize ?? DEFAULT_FONT_SIZE}
+      style={getStyle(element)}
       onChange={() => {
         saveValueRef.current?.();
       }}

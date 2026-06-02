@@ -7,6 +7,7 @@ import fixedElements from "./fixed-elements";
 import { Map as ImmutableMap } from "immutable";
 import type { ElementMap } from "../whiteboard-editor/types";
 import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
+import { SLIDE_TEMPLATE_ELEMENTS } from "./template";
 
 export interface State extends WhiteboardState {
   speakerNotes: ImmutableMap<string, ElementMap>;
@@ -76,47 +77,9 @@ export class Actions extends WhiteboardActions<State> {
 
   createPage(commit: boolean = true): string {
     const page = super.createPage(false);
-    // add some "template content". Obviously, this is very preliminary!
-    this.createElement(
-      undefined,
-      {
-        data: {
-          color: "#252937",
-          fontSize: 24,
-          placeholder: "# Click to edit title\n\n",
-          initStr: "\n# \n",
-        },
-        h: 123,
-        id: "be9e3736",
-        page,
-        type: "text",
-        w: 847,
-        x: -200,
-        y: -492,
-        z: 0,
-      },
-      false,
-    );
-    this.createElement(
-      undefined,
-      {
-        data: {
-          color: "#525252",
-          fontSize: 18,
-          placeholder: "## Click to edit subtitle\n\n",
-          initStr: "\n## \n",
-        },
-        h: 110,
-        id: "cdf12aea",
-        page,
-        type: "text",
-        w: 847,
-        x: -200,
-        y: -393,
-        z: 1,
-      },
-      false,
-    );
+    for (const element of SLIDE_TEMPLATE_ELEMENTS) {
+      this.createElement(undefined, { ...element, page }, false);
+    }
     if (commit) {
       this.syncstring_commit();
     }
