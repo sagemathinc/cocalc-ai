@@ -12,6 +12,7 @@ const createAbuseReviewAnnotationMock = jest.fn();
 const listAbuseReviewAnnotationsMock = jest.fn();
 const revokeAbuseReviewAnnotationMock = jest.fn();
 const resetAccountUsageEpochMock = jest.fn();
+const getAccountUsageOverviewForAccountMock = jest.fn();
 const getProjectUsageAccountIdMock = jest.fn();
 const isAdminMock = jest.fn();
 const resolveMembershipDetailsForAccountMock = jest.fn();
@@ -42,6 +43,7 @@ const purchaseMembershipPackageMock = jest.fn();
 const resolveAccountHomeBayMock = jest.fn();
 const getClusterAccountByIdDirectMock = jest.fn();
 const interBayGetMembershipDetailsMock = jest.fn();
+const interBayGetAccountUsageOverviewMock = jest.fn();
 const interBayGetMembershipPackagesMock = jest.fn();
 const interBayUpdateMembershipPackageMock = jest.fn();
 const interBayGetClaimableMembershipPackagesForAccountMock = jest.fn();
@@ -105,6 +107,11 @@ jest.mock("@cocalc/server/membership/abuse-review-annotations", () => ({
 jest.mock("@cocalc/server/membership/usage-windows", () => ({
   resetAccountUsageEpoch: (...args: any[]) =>
     resetAccountUsageEpochMock(...args),
+}));
+
+jest.mock("@cocalc/server/membership/account-usage-overview", () => ({
+  getAccountUsageOverviewForAccount: (...args: any[]) =>
+    getAccountUsageOverviewForAccountMock(...args),
 }));
 
 jest.mock("@cocalc/server/membership/resolve", () => ({
@@ -218,6 +225,8 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
     dest_bay,
     getMembershipDetails: (...args: any[]) =>
       interBayGetMembershipDetailsMock(...args),
+    getAccountUsageOverview: (...args: any[]) =>
+      interBayGetAccountUsageOverviewMock(...args),
     getMembershipPackages: (...args: any[]) =>
       interBayGetMembershipPackagesMock(...args),
     updateMembershipPackage: (...args: any[]) =>
@@ -483,6 +492,80 @@ describe("purchases.getMembershipDetails", () => {
     });
     expect(resolveMembershipDetailsForAccountMock).not.toHaveBeenCalled();
     expect(result.selected.class).toBe("member");
+  });
+});
+
+describe("purchases.getAccountUsageOverview", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("loads the signed-in account overview on the account home bay", async () => {
+    getAccountUsageOverviewForAccountMock.mockResolvedValue({
+      collected_at: "2026-06-02T12:00:00.000Z",
+      summary: {},
+      meters: [],
+      recent_events: {},
+      measurement_warnings: [],
+    });
+
+    const { getAccountUsageOverview } = await import("./purchases");
+    const result = await getAccountUsageOverview({
+      account_id: "account-1",
+    });
+
+    expect(getAccountUsageOverviewForAccountMock).toHaveBeenCalledWith({
+      account_id: "account-1",
+    });
+    expect(result.collected_at).toBe("2026-06-02T12:00:00.000Z");
+  });
+
+  it("routes another account overview to that account's home bay for admins", async () => {
+    isAdminMock.mockResolvedValue(true);
+    resolveAccountHomeBayMock.mockResolvedValue({
+      account_id: "account-2",
+      home_bay_id: "bay-2",
+      source: "cluster-directory",
+    });
+    interBayGetAccountUsageOverviewMock.mockResolvedValue({
+      collected_at: "2026-06-02T12:00:00.000Z",
+      membership_label: "member",
+      summary: {},
+      meters: [],
+      recent_events: {},
+      measurement_warnings: [],
+    });
+
+    const { getAccountUsageOverview } = await import("./purchases");
+    const result = await getAccountUsageOverview({
+      account_id: "admin-1",
+      user_account_id: "account-2",
+    });
+
+    expect(resolveAccountHomeBayMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      user_account_id: "account-2",
+    });
+    expect(interBayGetAccountUsageOverviewMock).toHaveBeenCalledWith({
+      account_id: "account-2",
+    });
+    expect(getAccountUsageOverviewForAccountMock).not.toHaveBeenCalled();
+    expect(result.membership_label).toBe("member");
+  });
+
+  it("does not allow non-admins to load another account overview", async () => {
+    isAdminMock.mockResolvedValue(false);
+
+    const { getAccountUsageOverview } = await import("./purchases");
+    await expect(
+      getAccountUsageOverview({
+        account_id: "account-1",
+        user_account_id: "account-2",
+      }),
+    ).rejects.toThrow("must be an admin");
+
+    expect(getAccountUsageOverviewForAccountMock).not.toHaveBeenCalled();
+    expect(interBayGetAccountUsageOverviewMock).not.toHaveBeenCalled();
   });
 });
 

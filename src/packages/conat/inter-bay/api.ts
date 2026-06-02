@@ -24,6 +24,7 @@ import type {
 import type {
   ClaimableMembershipPackage,
   AccountEntitlementOverride,
+  AccountUsageOverview,
   MembershipDetails,
   MembershipEffectiveLimits,
   MembershipPackageAssignment,
@@ -667,6 +668,10 @@ export interface AccountLocalGetMembershipRequest {
 export interface AccountLocalGetMembershipDetailsRequest {
   account_id: string;
   refresh_usage_status?: boolean;
+}
+
+export interface AccountLocalGetUsageOverviewRequest {
+  account_id: string;
 }
 
 export interface AccountLocalGetEntitlementOverrideRequest {
@@ -1673,6 +1678,7 @@ export type AccountLocalMethod =
   | "revoke-membership-grant"
   | "get-membership"
   | "get-membership-details"
+  | "get-account-usage-overview"
   | "get-account-entitlement-override"
   | "set-account-entitlement-override"
   | "clear-account-entitlement-override"
@@ -2581,6 +2587,9 @@ export interface InterBayAccountLocalApi {
   getMembershipDetails: (
     opts: AccountLocalGetMembershipDetailsRequest,
   ) => Promise<MembershipDetails>;
+  getAccountUsageOverview: (
+    opts: AccountLocalGetUsageOverviewRequest,
+  ) => Promise<AccountUsageOverview>;
   getAccountEntitlementOverride: (
     opts: AccountLocalGetEntitlementOverrideRequest,
   ) => Promise<AccountEntitlementOverride | undefined>;
@@ -4412,6 +4421,15 @@ export function createInterBayAccountLocalClient({
       method: "get-membership-details",
     }),
   });
+  const getAccountUsageOverviewClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getAccountUsageOverview">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-account-usage-overview",
+    }),
+  });
   const getAccountEntitlementOverrideClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "getAccountEntitlementOverride">
   >({
@@ -4699,6 +4717,8 @@ export function createInterBayAccountLocalClient({
       await getMembershipClient.getMembership(opts),
     getMembershipDetails: async (opts) =>
       await getMembershipDetailsClient.getMembershipDetails(opts),
+    getAccountUsageOverview: async (opts) =>
+      await getAccountUsageOverviewClient.getAccountUsageOverview(opts),
     getAccountEntitlementOverride: async (opts) =>
       await getAccountEntitlementOverrideClient.getAccountEntitlementOverride(
         opts,
@@ -5164,6 +5184,20 @@ export function createInterBayAccountLocalHandler({
         },
       },
     ),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getAccountUsageOverview">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-account-usage-overview",
+      }),
+      impl: {
+        getAccountUsageOverview: async (opts) =>
+          await impl.getAccountUsageOverview(opts),
+      },
+    }),
     createServiceHandler<
       Pick<InterBayAccountLocalApi, "getAccountEntitlementOverride">
     >({

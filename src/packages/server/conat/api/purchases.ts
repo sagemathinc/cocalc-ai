@@ -19,6 +19,7 @@ import {
   resetAccountUsageEpoch,
   type AccountUsageWindowName,
 } from "@cocalc/server/membership/usage-windows";
+import { getAccountUsageOverviewForAccount } from "@cocalc/server/membership/account-usage-overview";
 import type {
   AbuseReviewCategory,
   AbuseReviewDisposition,
@@ -280,6 +281,45 @@ export async function getMembershipDetails({
   return await resolveMembershipDetailsForAccount(targetId, {
     refresh_usage_status,
   });
+}
+
+export async function getAccountUsageOverview({
+  account_id,
+  user_account_id,
+}: {
+  account_id?: string;
+  user_account_id?: string;
+}) {
+  const targetId = user_account_id ?? account_id;
+  if (!targetId) {
+    throw Error("account_id required");
+  }
+  if (user_account_id && user_account_id !== account_id) {
+    if (!account_id || !(await isAdmin(account_id))) {
+      throw Error("must be an admin");
+    }
+  }
+  if (account_id) {
+    const home_bay_id =
+      targetId === account_id
+        ? await resolveTargetAccountHomeBay({
+            account_id,
+            user_account_id: account_id,
+          })
+        : await resolveTargetAccountHomeBay({
+            account_id,
+            user_account_id: targetId,
+          });
+    if (home_bay_id !== getConfiguredBayId()) {
+      return await createInterBayAccountLocalClient({
+        client: getInterBayFabricClient(),
+        dest_bay: home_bay_id,
+      }).getAccountUsageOverview({
+        account_id: targetId,
+      });
+    }
+  }
+  return await getAccountUsageOverviewForAccount({ account_id: targetId });
 }
 
 export async function getMembershipPackageQuote({

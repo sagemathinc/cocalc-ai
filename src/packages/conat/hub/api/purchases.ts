@@ -814,6 +814,80 @@ export interface AIUsageStatus {
   windows: AIUsageWindowStatus[];
 }
 
+export type AccountUsageWindow = "5h" | "7d" | "point";
+export type AccountUsageMeterSeverity = "ok" | "near" | "over" | "unknown";
+export type AccountUsageMeterCategory =
+  | "ai"
+  | "compute"
+  | "network"
+  | "storage"
+  | "projects"
+  | "collaboration"
+  | "codex"
+  | "rootfs"
+  | "blob"
+  | "spend";
+export type AccountUsageMeterUnit =
+  | "units"
+  | "bytes"
+  | "seconds"
+  | "count"
+  | "usd";
+
+export interface AccountUsageMeter {
+  id: string;
+  category: AccountUsageMeterCategory;
+  window: AccountUsageWindow;
+  label: string;
+  help: string;
+  unit: AccountUsageMeterUnit;
+  used?: number;
+  limit?: number;
+  remaining?: number;
+  ratio?: number;
+  percent?: number;
+  severity: AccountUsageMeterSeverity;
+  starts_at?: Date | string;
+  resets_at?: Date | string;
+  reset_at?: Date | string;
+  reset_in?: string;
+  action_when_over?: string;
+  upgrade_relevant: boolean;
+  source?:
+    | "membership_usage_status"
+    | "ai_usage_status"
+    | "dedicated_host_policy_snapshot";
+}
+
+export interface AccountUsageSummaryPressure {
+  percent: number;
+  severity: AccountUsageMeterSeverity;
+  limiting_meter_id?: string;
+  limiting_meter_label?: string;
+  starts_at?: Date | string;
+  resets_at?: Date | string;
+  reset_at?: Date | string;
+  reset_in?: string;
+}
+
+export interface AccountUsageOverview {
+  collected_at: string;
+  membership_label?: string;
+  membership_title?: string;
+  summary: {
+    pressure_5h?: AccountUsageSummaryPressure;
+    pressure_7d?: AccountUsageSummaryPressure;
+    storage?: AccountUsageSummaryPressure;
+    live_capacity?: AccountUsageSummaryPressure;
+  };
+  meters: AccountUsageMeter[];
+  recent_events: {
+    managed_egress?: ManagedEgressEventSummary[];
+    managed_cpu?: ManagedCpuEventSummary[];
+  };
+  measurement_warnings: string[];
+}
+
 export interface Purchases {
   getBalance: (opts?: { account_id?: string }) => Promise<MoneyValue>;
   getMinBalance: (opts?: { account_id?: string }) => Promise<MoneyValue>;
@@ -976,6 +1050,10 @@ export interface Purchases {
     site_license_id?: string;
   }) => Promise<SiteLicenseAffiliationReverificationSeat[]>;
   getAIUsage: (opts?: { account_id?: string }) => Promise<AIUsageStatus>;
+  getAccountUsageOverview: (opts?: {
+    account_id?: string;
+    user_account_id?: string;
+  }) => Promise<AccountUsageOverview>;
   getManagedEgressHistory: (
     opts?: ManagedEgressHistoryQuery,
   ) => Promise<ManagedEgressHistory>;
@@ -1029,6 +1107,7 @@ export const purchases = {
   getSiteLicenseAffiliationReverificationStatus: authFirst,
   refreshSiteLicenseAffiliationVerification: authFirst,
   getAIUsage: authFirst,
+  getAccountUsageOverview: authFirst,
   getManagedEgressHistory: authFirst,
   getManagedEgressAdminOverview: authFirst,
   getManagedEgressAdminHistory: authFirst,
