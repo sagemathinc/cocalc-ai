@@ -50,6 +50,7 @@ import {
   type UsageStatusItem,
 } from "./usage-status-items";
 import { openAccountSettings } from "./settings-routing";
+import { dispatchAccountUsageOverviewRefreshed } from "./membership-usage-events";
 
 const { Paragraph, Text } = Typography;
 
@@ -235,6 +236,7 @@ function useAccountUsageOverview(
         if (!canceled) {
           setOverview(result);
           setError("");
+          dispatchAccountUsageOverviewRefreshed(result);
         }
       } catch (err) {
         if (!canceled) {

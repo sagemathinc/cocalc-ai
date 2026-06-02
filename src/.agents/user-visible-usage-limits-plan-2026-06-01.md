@@ -455,6 +455,8 @@ Completed first frontend slice:
 - added a manual refresh button and a fresh-details browser event so the
   top-bar account storage warning updates immediately when `Usage & Limits`
   loads newer usage data;
+- added a normalized usage-overview browser event so top-bar usage warnings can
+  immediately consume the exact dashboard data after a manual refresh;
 - kept PR 47's clean card-based detail layout for project/storage, runtime, AI,
   CPU, and network transfer drill-downs.
 
@@ -469,6 +471,9 @@ Completed first frontend slice:
 
 - Extract shared warning threshold helpers.
 - Migrate AI and managed-egress top-bar warnings to the normalized overview.
+- Added a managed CPU top-bar warning from the normalized overview. It shows the
+  highest-pressure 5h/7d CPU window, links to `Usage & Limits`, and explains
+  that existing projects keep running while new project starts may be blocked.
 - Ensure polling does not close modals or reset open state.
 - Preserve existing recent-events displays.
 - Add optional, off-by-default top-nav usage indicator. Avoid making users feel

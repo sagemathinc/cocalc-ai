@@ -34,6 +34,7 @@ import BalanceButton from "@cocalc/frontend/purchases/balance-button";
 import { AIUsageWarning } from "@cocalc/frontend/purchases/ai-usage-warning";
 import { ManagedEgressWarning } from "@cocalc/frontend/purchases/managed-egress-warning";
 import { AccountStorageWarning } from "@cocalc/frontend/purchases/account-storage-warning";
+import { AccountCpuWarning } from "@cocalc/frontend/purchases/account-cpu-warning";
 import openSupportTab from "@cocalc/frontend/support/open";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
@@ -301,6 +302,7 @@ export const Page: React.FC = () => {
         {render_support()}
         {render_balance()}
         <AIUsageWarning pageStyle={pageStyle} />
+        <AccountCpuWarning pageStyle={pageStyle} />
         <AccountStorageWarning pageStyle={pageStyle} />
         <ManagedEgressWarning pageStyle={pageStyle} />
         {render_notification()}
