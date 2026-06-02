@@ -35,7 +35,6 @@ export const ACCOUNT_PREFERENCES_AI_PAGE = {
 export function AccountPreferencesAI() {
   const other_settings = useTypedRedux("account", "other_settings");
   const stripe_customer = useTypedRedux("account", "stripe_customer");
-  const kucalc = useTypedRedux("customize", "kucalc");
 
   if (lite) {
     return (
@@ -66,7 +65,6 @@ export function AccountPreferencesAI() {
         is_stripe_customer={
           !!stripe_customer?.getIn(["subscriptions", "total_count"])
         }
-        kucalc={kucalc}
         mode="ai"
       />
       <Typography.Title level={5} style={{ marginBottom: 8 }}>

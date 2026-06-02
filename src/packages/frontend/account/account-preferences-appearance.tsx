@@ -78,7 +78,6 @@ export function AccountPreferencesAppearance() {
   const editor_settings = useTypedRedux("account", "editor_settings");
   const font_size = useTypedRedux("account", "font_size");
   const stripe_customer = useTypedRedux("account", "stripe_customer");
-  const kucalc = useTypedRedux("customize", "kucalc");
 
   function on_change(name: string, value: any): void {
     redux.getActions("account").set_other_settings(name, value);
@@ -347,7 +346,6 @@ export function AccountPreferencesAppearance() {
         is_stripe_customer={
           !!stripe_customer?.getIn(["subscriptions", "total_count"])
         }
-        kucalc={kucalc}
         mode="appearance"
       />
       {renderDarkModePanel()}

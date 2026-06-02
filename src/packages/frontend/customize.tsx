@@ -27,9 +27,9 @@ import type { AIServicesAvailable } from "@cocalc/util/db-schema/ai-models";
 import type { SignupEmailDomainPublicPolicy } from "@cocalc/util/accounts/signup-email-domain-policy";
 import {
   Config,
-  KUCALC_COCALC_COM,
-  KUCALC_DISABLED,
-  KUCALC_ON_PREMISES,
+  PLATFORM_MODE_CLOUD,
+  PLATFORM_MODE_SINGLE_NODE,
+  PLATFORM_MODE_VALID_VALS,
   site_settings_conf,
 } from "@cocalc/util/db-schema/site-defaults";
 import { deep_copy, dict } from "@cocalc/util/misc";
@@ -43,16 +43,16 @@ import { init as initLite } from "./lite";
 // update every 2 minutes.
 const UPDATE_INTERVAL = 2 * 60000;
 
-// this sets UI modes for using a kubernetes based back-end
-// 'yes' (historic value) equals 'cocalc.com'
-function validate_kucalc(k?): string {
-  if (k == null) return KUCALC_DISABLED;
+// Normalize the persisted legacy kucalc setting into the product-facing
+// platform mode used by frontend code.
+function validatePlatformMode(k?): string {
+  if (k == null) return PLATFORM_MODE_SINGLE_NODE;
   const val = k.trim().toLowerCase();
-  if ([KUCALC_DISABLED, KUCALC_COCALC_COM, KUCALC_ON_PREMISES].includes(val)) {
+  if ((PLATFORM_MODE_VALID_VALS as readonly string[]).includes(val)) {
     return val;
   }
-  console.warn(`site settings customize: invalid kucalc value ${k}`);
-  return KUCALC_DISABLED;
+  console.warn(`site settings customize: invalid platform mode value ${k}`);
+  return PLATFORM_MODE_SINGLE_NODE;
 }
 
 // populate all default key/values in the "customize" store
@@ -65,6 +65,7 @@ for (const k in site_settings_conf) {
 }
 const defaults: any = dict(defaultKeyVals);
 defaults.is_commercial = defaults.commercial;
+defaults.platform_mode = defaults.kucalc;
 defaults._is_configured = false; // will be true after set via call to server
 defaults.ssh_remote_target = "";
 defaults.ssh_remote_url = "";
@@ -108,6 +109,7 @@ export interface CustomizeState {
   index_info_html: string;
   is_cocalc_com: boolean;
   is_personal: boolean;
+  platform_mode: string;
   kucalc: string;
   logo_rectangular: string;
   logo_square: string;
@@ -243,7 +245,7 @@ async function loadCustomizeState() {
     custom_openai = null,
   } = customize;
   processLite(configuration);
-  process_kucalc(configuration);
+  processPlatformMode(configuration);
   process_customize(configuration); // this sets _is_configured to true
   process_ollama(ollama);
   process_custom_openai(custom_openai);
@@ -271,10 +273,13 @@ function process_custom_openai(custom_openai?) {
   actions.setState({ custom_openai: fromJS(custom_openai) });
 }
 
-function process_kucalc(obj) {
-  // TODO make this a to_val function in site_settings_conf.kucalc
-  obj.kucalc = validate_kucalc(obj.kucalc);
-  obj.is_cocalc_com = obj.kucalc == KUCALC_COCALC_COM;
+function processPlatformMode(obj) {
+  // TODO make this a to_val function in site_settings_conf.kucalc when the
+  // persisted setting key is migrated.
+  obj.platform_mode = validatePlatformMode(obj.platform_mode ?? obj.kucalc);
+  // Compatibility alias for old code while frontend call sites migrate.
+  obj.kucalc = obj.platform_mode;
+  obj.is_cocalc_com = obj.platform_mode == PLATFORM_MODE_CLOUD;
 }
 
 function process_customize(obj) {

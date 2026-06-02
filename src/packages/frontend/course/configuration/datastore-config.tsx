@@ -18,8 +18,8 @@ import { Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { Datastore } from "@cocalc/frontend/projects/actions";
 import {
-  KUCALC_COCALC_COM,
-  KUCALC_ON_PREMISES,
+  PLATFORM_MODE_CLOUD,
+  PLATFORM_MODE_ON_PREMISES,
 } from "@cocalc/util/db-schema/site-defaults";
 import { ConfigurationActions } from "./actions";
 
@@ -37,7 +37,7 @@ export function DatastoreConfig({
   close,
 }: Props) {
   const intl = useIntl();
-  const customize_kucalc = useTypedRedux("customize", "kucalc");
+  const platformMode = useTypedRedux("customize", "platform_mode");
   const customize_datastore = useTypedRedux("customize", "datastore");
   const [need_save, set_need_save] = useState<boolean>(false);
 
@@ -64,10 +64,10 @@ export function DatastoreConfig({
     close?.();
   }
 
-  // this selector only make sense for cocalc.com or onprem with datastore enabled
+  // this selector only makes sense for managed cloud or on-premises platforms.
   const showDatastore =
-    customize_kucalc === KUCALC_COCALC_COM ||
-    (customize_kucalc === KUCALC_ON_PREMISES && customize_datastore);
+    platformMode === PLATFORM_MODE_CLOUD ||
+    (platformMode === PLATFORM_MODE_ON_PREMISES && customize_datastore);
 
   if (!showDatastore) return null;
 

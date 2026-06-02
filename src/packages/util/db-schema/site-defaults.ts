@@ -200,9 +200,9 @@ export const only_for_smtp = (conf): boolean =>
 export const only_for_sendgrid = (conf): boolean =>
   is_email_enabled(conf) && conf.email_backend === "sendgrid";
 export const only_onprem = (conf): boolean =>
-  conf.kucalc === KUCALC_ON_PREMISES;
+  conf.kucalc === PLATFORM_MODE_ON_PREMISES;
 export const only_cocalc_com = (conf): boolean =>
-  conf.kucalc === KUCALC_COCALC_COM;
+  conf.kucalc === PLATFORM_MODE_CLOUD;
 export const not_cocalc_com = (conf): boolean => !only_cocalc_com(conf);
 export const show_theming_vars = (conf): boolean =>
   to_bool(fallback(conf, "theming"));
@@ -286,10 +286,10 @@ const commercial_to_val: ToValFunc<boolean> = (
   val?,
   conf?: { [key in SiteSettingsKeys]: string },
 ) => {
-  // special case: only if we're in cocalc.com production mode, the commercial setting can be true at all
-  const kucalc =
+  // Special case: only the managed cloud platform can enable commercial mode.
+  const platformMode =
     conf != null ? fallback(conf, "kucalc") : site_settings_conf.kucalc.default;
-  if (kucalc === KUCALC_COCALC_COM) {
+  if (platformMode === PLATFORM_MODE_CLOUD) {
     return to_bool(val);
   }
   return false;
@@ -329,15 +329,22 @@ const project_hosts_funding_mode_to_val: ToValFunc<ProjectHostsFundingMode> = (
 };
 
 export const DATASTORE_TITLE = "Cloud Storage & Remote Filesystems";
-export const KUCALC_DISABLED = "no";
-export const KUCALC_COCALC_COM = "yes";
-export const KUCALC_ON_PREMISES = "onprem";
-const KUCALC_VALID_VALS = [
-  KUCALC_COCALC_COM,
-  KUCALC_ON_PREMISES,
-  KUCALC_DISABLED,
+export const PLATFORM_MODE_SINGLE_NODE = "no";
+export const PLATFORM_MODE_CLOUD = "yes";
+export const PLATFORM_MODE_ON_PREMISES = "onprem";
+export const PLATFORM_MODE_VALID_VALS = [
+  PLATFORM_MODE_CLOUD,
+  PLATFORM_MODE_ON_PREMISES,
+  PLATFORM_MODE_SINGLE_NODE,
 ] as const;
-export type KucalcValues = (typeof KUCALC_VALID_VALS)[number];
+export type PlatformMode = (typeof PLATFORM_MODE_VALID_VALS)[number];
+
+// Deprecated compatibility aliases for the persisted site setting key and old
+// callers. New code should use PLATFORM_MODE_* and PlatformMode.
+export const KUCALC_DISABLED = PLATFORM_MODE_SINGLE_NODE;
+export const KUCALC_COCALC_COM = PLATFORM_MODE_CLOUD;
+export const KUCALC_ON_PREMISES = PLATFORM_MODE_ON_PREMISES;
+export type KucalcValues = PlatformMode;
 
 const DEFAULT_QUOTAS_HELP = `
 ### Default quotas
@@ -684,10 +691,15 @@ export const site_settings_conf: SiteSettings = {
     subgroup: "Versions",
   },
   kucalc: {
-    name: "KuCalc UI",
-    desc: `Configure which UI elements to show in order to match the Kubernetes backend. '${KUCALC_COCALC_COM}' for cocalc.com production site, '${KUCALC_ON_PREMISES}' for on-premises Kubernetes, or '${KUCALC_DISABLED}' for Docker`,
-    default: KUCALC_DISABLED,
-    valid: KUCALC_VALID_VALS,
+    name: "Project Runtime Platform",
+    desc: `Compatibility setting for the project runtime platform. '${PLATFORM_MODE_CLOUD}' means managed cloud/shared project hosts, '${PLATFORM_MODE_ON_PREMISES}' means on-premises project hosts, and '${PLATFORM_MODE_SINGLE_NODE}' means single-node/self-contained deployment.`,
+    default: PLATFORM_MODE_SINGLE_NODE,
+    valid: PLATFORM_MODE_VALID_VALS,
+    valid_labels: {
+      [PLATFORM_MODE_CLOUD]: "Managed cloud/shared project hosts",
+      [PLATFORM_MODE_ON_PREMISES]: "On-premises project hosts",
+      [PLATFORM_MODE_SINGLE_NODE]: "Single-node/self-contained",
+    },
     tags: ["On-Prem"],
     group: "System / Advanced",
     subgroup: "Platform",

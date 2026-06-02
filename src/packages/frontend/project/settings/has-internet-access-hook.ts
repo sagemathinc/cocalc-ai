@@ -7,7 +7,7 @@ import {
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { KUCALC_DISABLED } from "@cocalc/util/db-schema/site-defaults";
+import { PLATFORM_MODE_SINGLE_NODE } from "@cocalc/util/db-schema/site-defaults";
 import { useRunQuota } from "./run-quota/hooks";
 
 function legacyEnabledByDefault(value: unknown): boolean {
@@ -20,8 +20,8 @@ export function useProjectHasInternetAccess(
   { enabled = true }: { enabled?: boolean } = {},
 ) {
   const [state, set_state] = useState<boolean>(false);
-  const customize_kucalc = useTypedRedux("customize", "kucalc");
-  const noKubernetes = customize_kucalc === KUCALC_DISABLED;
+  const platformMode = useTypedRedux("customize", "platform_mode");
+  const singleNodePlatform = platformMode === PLATFORM_MODE_SINGLE_NODE;
   const runQuota = useRunQuota(project_id, null, { enabled });
 
   useEffect(() => {
@@ -29,15 +29,16 @@ export function useProjectHasInternetAccess(
       set_state(false);
       return;
     }
-    // special case: we assume in any non-kubernetes environments, projects have internet access
-    if (noKubernetes) {
+    // Single-node/self-contained deployments historically do not report this
+    // through run quota; assume project internet access is available.
+    if (singleNodePlatform) {
       set_state(true);
       return;
     }
     // otherwise, we use the run quota information, which is set server-side after processing
     // the default quotas and any licenses/upgrades on top of it.
     set_state(legacyEnabledByDefault(runQuota?.network));
-  }, [enabled, noKubernetes, runQuota?.network]);
+  }, [enabled, singleNodePlatform, runQuota?.network]);
 
   return state;
 }

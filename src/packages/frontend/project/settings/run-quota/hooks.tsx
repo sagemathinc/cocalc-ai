@@ -13,7 +13,7 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
-import { KUCALC_ON_PREMISES } from "@cocalc/util/db-schema/site-defaults";
+import { PLATFORM_MODE_ON_PREMISES } from "@cocalc/util/db-schema/site-defaults";
 import { round1, seconds2hms } from "@cocalc/util/misc";
 import { PROJECT_UPGRADES } from "@cocalc/util/schema";
 import {
@@ -234,13 +234,13 @@ const ON_PREMISES_DISPLAYED_FIELDS: readonly string[] = [
 ];
 
 export function useDisplayedFields(): string[] {
-  const kucalc = useTypedRedux("customize", "kucalc");
+  const platformMode = useTypedRedux("customize", "platform_mode");
 
   return useMemo(() => {
     const fields = [...COCALC_AI_DISPLAYED_FIELDS];
-    if (kucalc === KUCALC_ON_PREMISES) {
+    if (platformMode === PLATFORM_MODE_ON_PREMISES) {
       fields.push(...ON_PREMISES_DISPLAYED_FIELDS);
     }
     return fields;
-  }, [kucalc]);
+  }, [platformMode]);
 }

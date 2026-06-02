@@ -14,8 +14,8 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import { ProjectCollaboratorsContent } from "@cocalc/frontend/project/page/project-collaborators";
 import CloneProject from "@cocalc/frontend/project/explorer/clone";
 import {
-  KUCALC_COCALC_COM,
-  KUCALC_ON_PREMISES,
+  PLATFORM_MODE_CLOUD,
+  PLATFORM_MODE_ON_PREMISES,
 } from "@cocalc/util/db-schema/site-defaults";
 
 import { useProjectCourseInfo } from "../use-project-course";
@@ -69,7 +69,7 @@ export function useProjectSettingsSections({
 } {
   const { projectAccess } = useProjectContext();
   const isViewer = projectAccess?.role === "viewer";
-  const kucalc = useTypedRedux("customize", "kucalc");
+  const platformMode = useTypedRedux("customize", "platform_mode");
   const { course } = useProjectCourseInfo(project_id, undefined, {
     enabled: !isViewer,
   });
@@ -78,8 +78,8 @@ export function useProjectSettingsSections({
 
   const showSSH = !lite && !student.disableSSH;
   const showDatastore =
-    kucalc === KUCALC_COCALC_COM ||
-    (kucalc === KUCALC_ON_PREMISES && datastore);
+    platformMode === PLATFORM_MODE_CLOUD ||
+    (platformMode === PLATFORM_MODE_ON_PREMISES && datastore);
   const showNonMemberWarning = false;
   const showNoInternetWarning = false;
   const showCourseSection = course != null;

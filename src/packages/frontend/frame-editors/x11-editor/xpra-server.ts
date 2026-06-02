@@ -206,12 +206,12 @@ export class XpraServer {
     let hostname = this.hostname;
     if (!hostname) {
       // this will fail if hostname hasn't been set yet via an async call
-      // and NOT in kucalc (where there hostname is canonical).
+      // and NOT on managed project hosts, where the hostname is canonical.
       if (appBasePath != "/") {
         // cocalc-in-cocalc dev
         hostname = `project-${appBasePath.slice(1, 37)}`;
       } else {
-        // kucalc
+        // managed project host
         hostname = `project-${this.project_id}`;
       } // else -- it won't work.
     }

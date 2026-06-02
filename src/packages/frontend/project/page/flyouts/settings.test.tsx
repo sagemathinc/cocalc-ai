@@ -93,7 +93,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     ) {
       return false;
     }
-    if (store === "customize" && key === "kucalc") {
+    if (store === "customize" && key === "platform_mode") {
       return "cocalc-com";
     }
     if (store === "customize" && key === "datastore") {
