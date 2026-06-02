@@ -7,7 +7,9 @@ import {
   Alert,
   Button,
   Empty,
+  Input,
   Segmented,
+  Select,
   Space,
   Spin,
   Tag,
@@ -26,9 +28,14 @@ import type {
   ManagedEgressAccountSummary,
   ManagedEgressAdminOverview,
   ManagedEgressAdminProjectSummary,
+  MembershipUsageWindowResetTarget,
 } from "@cocalc/conat/hub/api/purchases";
 import ShowError from "@cocalc/frontend/components/error";
 import { CopyToClipBoard } from "@cocalc/frontend/components";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import {
   AbuseAnnotationControls,
   reviewSortRank,
@@ -445,6 +452,102 @@ function RecentCpuEvents({ events }: { events: ManagedCpuEventSummary[] }) {
   );
 }
 
+function MembershipUsageWindowReset({
+  onReset,
+}: {
+  onReset: () => Promise<void>;
+}) {
+  const [windowTarget, setWindowTarget] =
+    useState<MembershipUsageWindowResetTarget>("all");
+  const [reason, setReason] = useState("");
+  const [resetting, setResetting] = useState(false);
+  const [error, setError] = useState("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
+
+  async function resetWindows() {
+    const trimmedReason = reason.trim();
+    if (!trimmedReason) {
+      setError("Enter a reset reason.");
+      return;
+    }
+    setError("");
+    try {
+      await runFreshAuthAction(async () => {
+        setResetting(true);
+        try {
+          await webapp_client.conat_client.hub.purchases.adminResetMembershipUsageWindows(
+            {
+              window: windowTarget,
+              reason: trimmedReason,
+            },
+          );
+          setReason("");
+          await onReset();
+          void message.success("Membership usage windows reset.");
+        } finally {
+          setResetting(false);
+        }
+      });
+    } catch (err) {
+      setError(`${err}`);
+    }
+  }
+
+  return (
+    <PanelBox title="Reset membership usage windows">
+      <FreshAuthModal {...freshAuthModalProps} />
+      <Space direction="vertical" size="small" style={{ width: "100%" }}>
+        <Alert
+          type="warning"
+          showIcon
+          message="Global reset for user-visible membership windows"
+          description="This bumps the shared membership usage epoch for all accounts. Historical usage logs remain intact, but affected 5-hour and/or 7-day membership meters immediately start from a fresh window."
+        />
+        {error ? <ShowError error={error} /> : null}
+        <Space wrap align="start">
+          <div>
+            <Text strong>Window</Text>
+            <div style={{ marginTop: "4px", minWidth: 180 }}>
+              <Select
+                value={windowTarget}
+                style={{ width: "100%" }}
+                onChange={(value) =>
+                  setWindowTarget(value as MembershipUsageWindowResetTarget)
+                }
+                options={[
+                  { value: "all", label: "5-hour and 7-day" },
+                  { value: "5h", label: "5-hour only" },
+                  { value: "7d", label: "7-day only" },
+                ]}
+              />
+            </div>
+          </div>
+          <div style={{ flex: 1, minWidth: 360 }}>
+            <Text strong>Reason</Text>
+            <Input.TextArea
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Explain why this global usage-window reset is needed."
+              rows={2}
+            />
+          </div>
+          <Button
+            danger
+            loading={resetting}
+            disabled={!reason.trim()}
+            onClick={() => void resetWindows()}
+            style={{ marginTop: 22 }}
+          >
+            Reset windows
+          </Button>
+        </Space>
+      </Space>
+    </PanelBox>
+  );
+}
+
 export function ManagedCpuAdminOverview() {
   const [rangeKey, setRangeKey] = useState<RangeKey>("5h");
   const [loading, setLoading] = useState(true);
@@ -563,6 +666,8 @@ export function ManagedCpuAdminOverview() {
           Refresh
         </Button>
       </Space>
+
+      <MembershipUsageWindowReset onReset={load} />
 
       {loading && !hasOverview ? <Spin /> : null}
       {error ? <ShowError error={error} /> : null}

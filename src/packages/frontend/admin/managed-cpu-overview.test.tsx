@@ -4,7 +4,12 @@ import { ManagedCpuAdminOverview } from "./managed-cpu-overview";
 
 const getManagedCpuAdminOverview = jest.fn();
 const getManagedEgressAdminOverview = jest.fn();
+const adminResetMembershipUsageWindows = jest.fn();
 const messageSuccess = jest.fn();
+const mockRunFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
+  await action();
+  return true;
+});
 
 jest.mock("antd", () => {
   const Div = ({ children, title }: any) => (
@@ -13,16 +18,28 @@ jest.mock("antd", () => {
       {children}
     </div>
   );
+  const MockInput = ({ value, onChange, placeholder }: any) => (
+    <input value={value} onChange={onChange} placeholder={placeholder} />
+  );
+  MockInput.TextArea = ({ value, onChange, placeholder }: any) => (
+    <textarea value={value} onChange={onChange} placeholder={placeholder} />
+  );
   return {
     Alert: Div,
-    Button: ({ children, onClick, href }: any) => (
-      <button type="button" onClick={onClick} data-href={href}>
+    Button: ({ children, onClick, href, disabled }: any) => (
+      <button
+        type="button"
+        onClick={onClick}
+        data-href={href}
+        disabled={disabled}
+      >
         {children}
       </button>
     ),
     Empty: Object.assign(({ description }: any) => <div>{description}</div>, {
       PRESENTED_IMAGE_SIMPLE: "simple",
     }),
+    Input: MockInput,
     Segmented: ({ options, onChange, value }: any) => (
       <div>
         {options.map((option: any) => {
@@ -41,6 +58,15 @@ jest.mock("antd", () => {
         })}
       </div>
     ),
+    Select: ({ value, onChange, options }: any) => (
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
+        {options.map((option: any) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    ),
     Space: ({ children }: any) => <div>{children}</div>,
     Spin: () => <div>loading</div>,
     Tag: ({ children }: any) => <div>{children}</div>,
@@ -53,6 +79,14 @@ jest.mock("antd", () => {
     },
   };
 });
+
+jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
+  FreshAuthModal: () => <div data-testid="fresh-auth-modal" />,
+  useFreshAuthAction: () => ({
+    runFreshAuthAction: mockRunFreshAuthAction,
+    freshAuthModalProps: {},
+  }),
+}));
 
 jest.mock("@cocalc/frontend/components/error", () => ({
   __esModule: true,
@@ -83,6 +117,8 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
             getManagedCpuAdminOverview(...args),
           getManagedEgressAdminOverview: (...args: any[]) =>
             getManagedEgressAdminOverview(...args),
+          adminResetMembershipUsageWindows: (...args: any[]) =>
+            adminResetMembershipUsageWindows(...args),
         },
       },
     },
@@ -115,6 +151,18 @@ jest.mock("@cocalc/frontend/purchases/managed-egress-recent-events", () => ({
 describe("ManagedCpuAdminOverview", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockRunFreshAuthAction.mockImplementation(
+      async (action: () => Promise<void>) => {
+        await action();
+        return true;
+      },
+    );
+    adminResetMembershipUsageWindows.mockResolvedValue({
+      windows: [
+        { scope: "membership", window: "5h", epoch: 2 },
+        { scope: "membership", window: "7d", epoch: 2 },
+      ],
+    });
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: {
@@ -289,5 +337,38 @@ describe("ManagedCpuAdminOverview", () => {
     const cpuCall = getManagedCpuAdminOverview.mock.calls[1][0];
     expect(cpuCall.start.toISOString()).toBe("2026-05-24T12:00:00.000Z");
     expect(cpuCall.end.toISOString()).toBe("2026-05-31T12:00:00.000Z");
+  });
+
+  it("resets shared membership usage windows through fresh auth", async () => {
+    mockOverview();
+    render(<ManagedCpuAdminOverview />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Top CPU accounts (5h)")).toBeTruthy();
+    });
+
+    fireEvent.change(screen.getByRole("combobox"), {
+      target: { value: "5h" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText(
+        "Explain why this global usage-window reset is needed.",
+      ),
+      { target: { value: "Bad tier configuration fixed." } },
+    );
+    fireEvent.click(screen.getByText("Reset windows"));
+
+    await waitFor(() => {
+      expect(mockRunFreshAuthAction).toHaveBeenCalledTimes(1);
+      expect(adminResetMembershipUsageWindows).toHaveBeenCalledWith({
+        window: "5h",
+        reason: "Bad tier configuration fixed.",
+      });
+      expect(messageSuccess).toHaveBeenCalledWith(
+        "Membership usage windows reset.",
+      );
+    });
+    expect(getManagedCpuAdminOverview).toHaveBeenCalledTimes(2);
+    expect(getManagedEgressAdminOverview).toHaveBeenCalledTimes(2);
   });
 });

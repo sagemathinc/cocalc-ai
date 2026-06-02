@@ -406,11 +406,12 @@ Completed first backend slice:
 - preserved historical event/log tables for admin history and audit;
 - added backend helper support for epoch bumps/global reset semantics;
 - added a fresh-auth-required admin RPC for resetting one or both shared account
-  usage windows.
+  usage windows;
+- added a fresh-auth admin UI control in `CPU & Abuse Signals` for resetting
+  the shared 5-hour window, 7-day window, or both with a required audit reason.
 
 Remaining:
 
-- add admin UI for the usage-window reset RPC;
 - add the normalized `AccountUsageOverview` DTO;
 - build the user-facing dashboard.
 
@@ -419,7 +420,7 @@ Remaining:
 - Replace dedicated-host spend window accounting with the same shared fixed
   account windows. (complete)
 - Add epoch/global reset tables, backend helpers, and fresh-auth admin RPC.
-  (complete; admin UI pending)
+  (complete)
 - Add an `AccountUsageOverview` builder that combines:
   - `getMembershipDetails({ refresh_usage_status: true })`;
   - `getAIUsageStatus`;
