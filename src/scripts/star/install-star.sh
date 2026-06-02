@@ -34,7 +34,7 @@ Important defaults:
   STAR_BUILD=1
   STAR_BUILD_DEFAULT_ROOTFS=1
   STAR_DEFAULT_ROOTFS_IMAGE=containers-storage:localhost/cocalc-star-rootfs:latest
-  STAR_DEFAULT_ROOTFS_BASE_IMAGE=ubuntu:26.04
+  STAR_DEFAULT_ROOTFS_BASE_IMAGE=docker.io/buildpack-deps:26.04
 
 Safety:
   Set STAR_ASSUME_YES=1 for non-interactive installs. Without it, this script
