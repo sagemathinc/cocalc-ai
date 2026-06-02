@@ -2,8 +2,8 @@
 
 ## Objective
 
-Give users a clear, product-level view of current usage, limits, and rolling
-window recovery times.
+Give users a clear, product-level view of current usage, limits, and fixed
+window reset times.
 
 The current implementation has useful pieces, but they are scattered:
 
@@ -21,7 +21,7 @@ should be able to answer:
 
 - What am I close to hitting?
 - Which 5-hour and 7-day windows are limiting me?
-- When will usage start falling out of the window?
+- When do my current windows reset?
 - What action is blocked, degraded, or still safe?
 - What can I delete, wait for, or upgrade to fix this?
 
@@ -57,6 +57,92 @@ seconds, and invite counts. If later we want a weighted score for ranking or
 abuse triage, that should be separate from the user-visible "closest limit"
 gauge.
 
+## Usage Window Semantics
+
+User-facing membership quotas should use fixed per-account windows, not sliding
+rolling windows.
+
+The current backend implementation for AI, managed CPU, and managed egress uses
+sliding windows:
+
+- AI sums `ai_usage_log` rows where `time >= now() - interval '5 hours'` or
+  `7 days`.
+- managed egress sums `account_managed_egress_events` rows where `occurred_at`
+  is inside the last 5 hours or 7 days.
+- managed CPU sums `account_cpu_usage_events` rows where `sample_ended_at` is
+  inside the last 5 hours or 7 days.
+- current `reset_at` values are the oldest counted event plus the window length.
+  That is not necessarily the time the account is unblocked, and it is not a
+  reset to zero.
+
+That model is appropriate for throttling and abuse smoothing, but it is not the
+right product model for cocalc-ai membership limits. Users should see the
+OpenAI-style model:
+
+- the first metered usage after no active window starts the account's 5-hour
+  window and 7-day window;
+- all relevant usage meters accrue inside those fixed windows;
+- each window has one clear `starts_at` and `resets_at`;
+- when the window expires, usage for that window resets to zero;
+- the next metered usage after expiration starts a new window.
+
+This is psychologically simpler, makes upgrade/wait decisions clearer, and
+turns "we fixed the bad configuration, but you must wait out the mess" into "we
+fixed the configuration and reset affected usage".
+
+Abuse-specific throttles may still use sliding windows if needed, but those
+should be separate from user-facing membership windows and should not be
+presented as normal membership quota resets.
+
+## Global Reset Semantics
+
+Support epoch-based global resets for user-facing membership usage windows.
+
+This is important because cocalc-ai has many tier limits. We should expect some
+early configurations to be wrong. When admins fix a bad tier configuration, the
+best user experience is to reset affected usage immediately rather than ask
+users to wait out stale accounting.
+
+Design:
+
+- maintain a global usage epoch per meter family and window class;
+- meter families should include at least:
+  - `ai`;
+  - `managed_cpu`;
+  - `managed_egress`;
+  - later `invite`;
+  - later `acp`.
+- window classes are `5h` and `7d`;
+- account window rows record the epoch that was active when the window started;
+- usage events record the epoch and, ideally, the 5h/7d window ids active when
+  the event was recorded;
+- bumping the epoch ignores previous usage for that family/window without
+  deleting historical logs;
+- admin global reset can be scoped by:
+  - family;
+  - window class;
+  - membership tier;
+  - all accounts;
+  - optionally a specific account for support.
+
+Admin operation:
+
+- add a fresh-auth-required admin RPC such as
+  `purchases.adminResetUsageWindows`;
+- require a reason string;
+- write an audit record with admin account, scope, previous epoch, new epoch,
+  and reason;
+- never physically delete usage events as part of a reset;
+- expose a small admin UI action later, but the RPC/audit path is the release
+  critical part.
+
+User-facing behavior after reset:
+
+- affected meters immediately show zero usage or a newly started empty window;
+- if there is no active usage after reset, the dashboard should say "No active
+  window yet" rather than inventing a reset time;
+- the next metered usage starts a fresh fixed window under the new epoch.
+
 ## Current Backend Anchors
 
 Existing code already provides most of the raw data:
@@ -81,9 +167,41 @@ Existing code already provides most of the raw data:
 
 Recommended backend direction:
 
-- keep the existing raw usage-status fields for compatibility;
+- replace user-facing rolling-window aggregation for AI, managed CPU, and
+  managed egress with fixed account windows;
+- keep historical usage events for audit/history/admin charts;
 - add a normalized account usage overview DTO that frontend dashboards and
   warnings can consume without each component rediscovering field names.
+
+Release-blocking backend database work:
+
+- add an account usage window table, e.g. `account_usage_windows`:
+  - `id UUID PRIMARY KEY`;
+  - `account_id UUID NOT NULL`;
+  - `family TEXT NOT NULL`;
+  - `window TEXT NOT NULL`;
+  - `epoch BIGINT NOT NULL`;
+  - `starts_at TIMESTAMPTZ NOT NULL`;
+  - `resets_at TIMESTAMPTZ NOT NULL`;
+  - `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`;
+  - lookup index on `(account_id, family, window, epoch, resets_at DESC)`.
+- add a global epoch table, e.g. `account_usage_epochs`:
+  - `family TEXT NOT NULL`;
+  - `window TEXT NOT NULL`;
+  - `epoch BIGINT NOT NULL`;
+  - `updated_at TIMESTAMPTZ NOT NULL`;
+  - `updated_by UUID`;
+  - `reason TEXT`;
+  - primary key `(family, window)`.
+- add a reset audit table, e.g. `account_usage_epoch_resets`, to preserve every
+  epoch bump.
+- update AI, managed CPU, and managed egress usage queries to aggregate against
+  the account's active fixed window for the relevant family/window.
+- ensure first metered usage creates missing active windows transactionally.
+- if usage events do not store window ids in the first implementation, aggregate
+  using `(account_id, family, window, epoch, starts_at, resets_at)` from the
+  active window row.
+- make enforcement read the fixed-window aggregate, not the sliding aggregate.
 
 ## Proposed Normalized DTO
 
@@ -116,8 +234,11 @@ interface AccountUsageMeter {
   ratio?: number;
   percent?: number;
   severity: UsageMeterSeverity;
-  reset_at?: string;
+  starts_at?: string;
+  resets_at?: string;
+  reset_at?: string; // deprecated alias during migration
   reset_in?: string;
+  epoch?: number;
   action_when_over?: string;
   upgrade_relevant: boolean;
   source?: "membership_usage_status" | "ai_usage_status";
@@ -146,8 +267,11 @@ interface AccountUsageSummaryPressure {
   severity: UsageMeterSeverity;
   limiting_meter_id?: string;
   limiting_meter_label?: string;
-  reset_at?: string;
+  starts_at?: string;
+  resets_at?: string;
+  reset_at?: string; // deprecated alias during migration
   reset_in?: string;
+  epoch?: number;
 }
 ```
 
@@ -157,9 +281,9 @@ Implementation notes:
 - `pressure_7d` is the max `ratio` among all 7d meters.
 - `storage` is the max point-in-time storage/object ratio.
 - `live_capacity` is the max point-in-time live-capacity ratio.
-- The overview should preserve reset semantics as rolling-window relief, not a
-  hard global reset. Copy should say "usage starts falling out of this window"
-  or "next usage expires", not imply all usage resets at once.
+- For fixed-window meters, copy should say "resets at" and use `resets_at`.
+- During migration, do not label old rolling-window `reset_at` values as hard
+  resets.
 
 ## Multibay Routing
 
@@ -187,7 +311,9 @@ Top section:
 - 7-day pressure gauge;
 - storage/object pressure gauge;
 - live-capacity pressure gauge;
-- primary limiting meter and next relief time.
+- primary limiting meter and next reset time.
+- if no active 5h/7d window exists yet, show "No active window yet" and explain
+  that the first metered usage starts the window.
 
 Main content:
 
@@ -204,7 +330,7 @@ Main content:
   - 5h row if applicable;
   - 7d row if applicable;
   - current/limit/remaining;
-  - reset/relief time;
+  - window start and reset time;
   - what gets blocked or slowed when over;
   - upgrade/delete/wait guidance.
 
@@ -254,15 +380,22 @@ Contextual integration points:
 
 ### Phase 1: Inventory And DTO
 
+- Replace user-facing sliding-window accounting with fixed account windows for
+  AI, managed CPU, and managed egress.
+- Add epoch/global reset tables and backend helpers.
 - Add an `AccountUsageOverview` builder that combines:
   - `getMembershipDetails({ refresh_usage_status: true })`;
   - `getAIUsageStatus`;
   - normalized effective membership limits.
 - Add focused unit tests for:
+  - fixed-window creation on first metered usage;
+  - fixed-window aggregation;
+  - fixed-window reset to zero after expiration;
+  - epoch bump/global reset behavior;
   - ratio computation;
   - 5h/7d max-pressure selection;
   - missing/unlimited limits;
-  - rolling-window reset copy fields;
+  - fixed-window reset copy fields;
   - measurement warnings.
 - Keep old APIs unchanged.
 
@@ -281,6 +414,8 @@ Contextual integration points:
 - Migrate AI and managed-egress top-bar warnings to the normalized overview.
 - Ensure polling does not close modals or reset open state.
 - Preserve existing recent-events displays.
+- Add optional, off-by-default top-nav usage indicator. Avoid making users feel
+  constantly anxious about usage.
 
 ### Phase 4: Contextual Warnings
 
@@ -293,7 +428,7 @@ Contextual integration points:
 - Each warning should say:
   - what limit is close/over;
   - what action may fail;
-  - when the window starts recovering;
+  - when the current fixed window resets;
   - the next practical action.
 
 ### Phase 5: Fill Remaining Meters
@@ -304,11 +439,14 @@ Contextual integration points:
 - Add user-facing CPU history if cheap by refactoring the admin CPU history
   path.
 - Add user-facing egress history only where privacy and cost are acceptable.
+- Delete anonymous AI usage support instead of adding it to this dashboard.
 
 ### Phase 6: Replace Legacy Membership Status Layout
 
 - Decide whether the old Store/membership details quota panel remains as a
   compact purchase-oriented summary.
+  - Decision: no. It does not belong in Store; it was there because there was no
+    better usage surface yet.
 - Remove duplicated metric-specific display logic once the dashboard and shared
   warning system are stable.
 - Keep admin membership detail panels separate; admins need user-debugging
@@ -319,9 +457,9 @@ Contextual integration points:
 - The summary meters should be visually dominant and simple.
 - The detailed table should be explicit, accounting-style, and sortable by
   severity.
-- Use "starts recovering" or "next usage expires" for rolling windows.
-- Avoid saying "resets" unless the underlying implementation is a true fixed
-  reset window.
+- Use "resets at" only for fixed membership windows.
+- For any remaining sliding abuse throttles, use explicit copy such as "starts
+  freeing up" or "oldest event expires".
 - Treat "no limit reported" differently from "0 limit".
 - Give every blocked state a concrete escape hatch:
   - wait;
@@ -332,27 +470,37 @@ Contextual integration points:
 
 ## Open Questions
 
-- Should anonymous/free AI usage with only `analytics_cookie` appear in the same
-  dashboard before sign-in, or only in AI-specific UI?
-- Should the top nav show one combined usage warning pill or keep separate AI
-  and egress pills until the overview matures?
-- Do we want exact "time until below limit" rather than "oldest usage expires"?
-  Exact time is better but requires bucket/event data and a threshold
-  computation for each meter.
 - Which ACP and invite counters currently have durable event logs that can
-  support 5h/7d user display without adding new tables?
+  support 5h/7d user display without adding new tables? (ANS: I don't know.)
+
+## Decisions
+
+- Anonymous AI usage is not part of cocalc-ai. Any `analytics_cookie` AI usage
+  paths are legacy and should be removed instead of surfaced.
+- Free tier will likely have zero bundled AI usage; use a short trial of a
+  higher tier if free users should experience AI.
+- The top nav does not need usage information by default. Add only an optional,
+  small usage indicator, off by default.
+- User-facing windows should be fixed windows with exact reset times, not
+  sliding windows.
+- Use `TimeAgo` or equivalent UI that can show both absolute and relative reset
+  times.
 
 ## Recommended Next Slice
 
-Start with Phase 1 and Phase 2 for only the meters already available today:
+Start with backend fixed-window semantics before building the user dashboard:
 
-- AI 5h/7d;
-- managed CPU 5h/7d;
-- managed egress 5h/7d;
-- account storage;
-- projects;
-- RootFS;
-- blobs.
+1. Add fixed account usage windows and epoch/global reset support.
+2. Convert AI, managed CPU, and managed egress enforcement to fixed windows.
+3. Add the normalized overview DTO for the meters already available today:
+   - AI 5h/7d;
+   - managed CPU 5h/7d;
+   - managed egress 5h/7d;
+   - account storage;
+   - projects;
+   - RootFS;
+   - blobs.
+4. Build the `Usage & Limits` page from that DTO.
 
 This gives the user-visible page with high value and low implementation risk.
 Then migrate top-bar warnings onto the normalized overview.
