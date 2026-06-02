@@ -5,13 +5,13 @@
 
 import getPool from "@cocalc/database/pool";
 
-export type AccountUsageFamily = "ai" | "managed_cpu" | "managed_egress";
+export type AccountUsageWindowScope = "membership";
 export type AccountUsageWindowName = "5h" | "7d";
 
 export interface AccountUsageWindow {
   id: string;
   account_id: string;
-  family: AccountUsageFamily;
+  scope: AccountUsageWindowScope;
   window: AccountUsageWindowName;
   epoch: number;
   starts_at: Date;
@@ -19,11 +19,12 @@ export interface AccountUsageWindow {
 }
 
 export interface AccountUsageEpoch {
-  family: AccountUsageFamily;
+  scope: AccountUsageWindowScope;
   window: AccountUsageWindowName;
   epoch: number;
 }
 
+const MEMBERSHIP_USAGE_SCOPE: AccountUsageWindowScope = "membership";
 const WINDOWS: readonly AccountUsageWindowName[] = ["5h", "7d"];
 const WINDOW_MS: Record<AccountUsageWindowName, number> = {
   "5h": 5 * 60 * 60 * 1000,
@@ -35,6 +36,9 @@ const EPOCHS_TABLE = "account_usage_epochs";
 const RESET_TABLE = "account_usage_epoch_resets";
 
 let ensuredSchema: Promise<void> | undefined;
+
+// The table column is still named "family" for schema compatibility, but the
+// user-visible account windows intentionally have a single shared scope.
 
 function normalizeDate(value: Date | string | undefined): Date {
   if (value instanceof Date) return value;
@@ -48,7 +52,7 @@ function normalizeDate(value: Date | string | undefined): Date {
 function mapWindowRow(row: {
   id: string;
   account_id: string;
-  family: AccountUsageFamily;
+  family: AccountUsageWindowScope;
   window: AccountUsageWindowName;
   epoch: number | string;
   starts_at: Date | string;
@@ -57,7 +61,7 @@ function mapWindowRow(row: {
   return {
     id: row.id,
     account_id: row.account_id,
-    family: row.family,
+    scope: row.family,
     window: row.window,
     epoch: Number(row.epoch),
     starts_at: new Date(row.starts_at),
@@ -118,10 +122,8 @@ export async function ensureAccountUsageWindowSchema(): Promise<void> {
 }
 
 export async function getAccountUsageEpoch({
-  family,
   window,
 }: {
-  family: AccountUsageFamily;
   window: AccountUsageWindowName;
 }): Promise<AccountUsageEpoch> {
   await ensureAccountUsageWindowSchema();
@@ -133,10 +135,10 @@ export async function getAccountUsageEpoch({
         ($1, $2, 1, 'initial')
       ON CONFLICT (family, window) DO NOTHING
     `,
-    [family, window],
+    [MEMBERSHIP_USAGE_SCOPE, window],
   );
   const { rows } = await getPool("short").query<{
-    family: AccountUsageFamily;
+    family: AccountUsageWindowScope;
     window: AccountUsageWindowName;
     epoch: string | number;
   }>(
@@ -145,14 +147,14 @@ export async function getAccountUsageEpoch({
       FROM ${EPOCHS_TABLE}
       WHERE family = $1 AND window = $2
     `,
-    [family, window],
+    [MEMBERSHIP_USAGE_SCOPE, window],
   );
   const row = rows[0];
   if (!row) {
-    throw new Error(`unable to initialize usage epoch for ${family}/${window}`);
+    throw new Error(`unable to initialize usage epoch for ${window}`);
   }
   return {
-    family: row.family,
+    scope: row.family,
     window: row.window,
     epoch: Number(row.epoch),
   };
@@ -160,22 +162,19 @@ export async function getAccountUsageEpoch({
 
 export async function getActiveAccountUsageWindow({
   account_id,
-  family,
   window,
   at,
   create = false,
 }: {
   account_id: string;
-  family: AccountUsageFamily;
   window: AccountUsageWindowName;
   at?: Date | string;
   create?: boolean;
 }): Promise<AccountUsageWindow | undefined> {
   const time = normalizeDate(at);
-  const { epoch } = await getAccountUsageEpoch({ family, window });
+  const { epoch } = await getAccountUsageEpoch({ window });
   const existing = await selectActiveAccountUsageWindow({
     account_id,
-    family,
     window,
     epoch,
     at: time,
@@ -187,7 +186,7 @@ export async function getActiveAccountUsageWindow({
   const { rows } = await getPool("medium").query<{
     id: string;
     account_id: string;
-    family: AccountUsageFamily;
+    family: AccountUsageWindowScope;
     window: AccountUsageWindowName;
     epoch: string | number;
     starts_at: Date | string;
@@ -200,20 +199,18 @@ export async function getActiveAccountUsageWindow({
         (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
       RETURNING id, account_id, family, window, epoch, starts_at, resets_at
     `,
-    [account_id, family, window, epoch, startsAt, resetsAt],
+    [account_id, MEMBERSHIP_USAGE_SCOPE, window, epoch, startsAt, resetsAt],
   );
   return mapWindowRow(rows[0]);
 }
 
 async function selectActiveAccountUsageWindow({
   account_id,
-  family,
   window,
   epoch,
   at,
 }: {
   account_id: string;
-  family: AccountUsageFamily;
   window: AccountUsageWindowName;
   epoch: number;
   at: Date;
@@ -221,7 +218,7 @@ async function selectActiveAccountUsageWindow({
   const { rows } = await getPool("short").query<{
     id: string;
     account_id: string;
-    family: AccountUsageFamily;
+    family: AccountUsageWindowScope;
     window: AccountUsageWindowName;
     epoch: string | number;
     starts_at: Date | string;
@@ -239,19 +236,17 @@ async function selectActiveAccountUsageWindow({
       ORDER BY starts_at DESC, created_at DESC
       LIMIT 1
     `,
-    [account_id, family, window, epoch, at],
+    [account_id, MEMBERSHIP_USAGE_SCOPE, window, epoch, at],
   );
   return rows[0] ? mapWindowRow(rows[0]) : undefined;
 }
 
 export async function getActiveAccountUsageWindows({
   account_id,
-  family,
   at,
   create = false,
 }: {
   account_id: string;
-  family: AccountUsageFamily;
   at?: Date | string;
   create?: boolean;
 }): Promise<Partial<Record<AccountUsageWindowName, AccountUsageWindow>>> {
@@ -260,7 +255,6 @@ export async function getActiveAccountUsageWindows({
   for (const window of WINDOWS) {
     result[window] = await getActiveAccountUsageWindow({
       account_id,
-      family,
       window,
       at,
       create,
@@ -271,34 +265,29 @@ export async function getActiveAccountUsageWindows({
 
 export async function ensureAccountUsageWindowsForEvent({
   account_id,
-  family,
   occurred_at,
 }: {
   account_id: string;
-  family: AccountUsageFamily;
   occurred_at?: Date | string;
 }): Promise<Record<AccountUsageWindowName, AccountUsageWindow>> {
   const windows = await getActiveAccountUsageWindows({
     account_id,
-    family,
     at: occurred_at,
     create: true,
   });
   const window5h = windows["5h"];
   const window7d = windows["7d"];
   if (!window5h || !window7d) {
-    throw new Error(`unable to create usage windows for ${family}`);
+    throw new Error("unable to create usage windows");
   }
   return { "5h": window5h, "7d": window7d };
 }
 
 export async function resetAccountUsageEpoch({
-  family,
   window,
   reset_by,
   reason,
 }: {
-  family: AccountUsageFamily;
   window: AccountUsageWindowName;
   reset_by?: string;
   reason: string;
@@ -307,7 +296,7 @@ export async function resetAccountUsageEpoch({
   if (!trimmedReason) {
     throw new Error("reset reason must be specified");
   }
-  const current = await getAccountUsageEpoch({ family, window });
+  const current = await getAccountUsageEpoch({ window });
   const newEpoch = current.epoch + 1;
   await getPool("medium").query(
     `
@@ -318,7 +307,7 @@ export async function resetAccountUsageEpoch({
           reason = $5
       WHERE family = $1 AND window = $2
     `,
-    [family, window, newEpoch, reset_by ?? null, trimmedReason],
+    [MEMBERSHIP_USAGE_SCOPE, window, newEpoch, reset_by ?? null, trimmedReason],
   );
   await getPool("medium").query(
     `
@@ -327,7 +316,14 @@ export async function resetAccountUsageEpoch({
       VALUES
         (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
     `,
-    [family, window, current.epoch, newEpoch, reset_by ?? null, trimmedReason],
+    [
+      MEMBERSHIP_USAGE_SCOPE,
+      window,
+      current.epoch,
+      newEpoch,
+      reset_by ?? null,
+      trimmedReason,
+    ],
   );
-  return { family, window, epoch: newEpoch };
+  return { scope: MEMBERSHIP_USAGE_SCOPE, window, epoch: newEpoch };
 }

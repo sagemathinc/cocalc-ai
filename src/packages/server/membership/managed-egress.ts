@@ -121,7 +121,6 @@ export async function recordManagedProjectEgress(opts: {
   }
   await ensureAccountUsageWindowsForEvent({
     account_id,
-    family: "managed_egress",
     occurred_at: opts.occurred_at,
   });
   await getPool("medium").query(
@@ -151,7 +150,6 @@ export async function getManagedEgressUsageForAccount(opts: {
   await ensureSchema();
   const windows = await getActiveAccountUsageWindows({
     account_id: opts.account_id,
-    family: "managed_egress",
   });
   const window5h = windows["5h"];
   const window7d = windows["7d"];

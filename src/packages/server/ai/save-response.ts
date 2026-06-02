@@ -33,7 +33,6 @@ export async function saveAIResponse({
     if (account_id) {
       await ensureAccountUsageWindowsForEvent({
         account_id,
-        family: "ai",
       });
     }
     await pool.query(

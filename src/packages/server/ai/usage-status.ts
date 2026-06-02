@@ -80,7 +80,6 @@ async function getUsageWindow({
   const activeWindow = account_id
     ? await getActiveAccountUsageWindow({
         account_id,
-        family: "ai",
         window,
       })
     : undefined;

@@ -106,7 +106,6 @@ describe("managed CPU usage accounting", () => {
     ).resolves.toEqual({ recorded: true, account_id: "account-1" });
     expect(ensureAccountUsageWindowsForEventMock).toHaveBeenCalledWith({
       account_id: "account-1",
-      family: "managed_cpu",
       occurred_at: new Date("2026-05-30T10:01:00.000Z"),
     });
   });

@@ -81,10 +81,19 @@ OpenAI-style model:
 
 - the first metered usage after no active window starts the account's 5-hour
   window and 7-day window;
-- all relevant usage meters accrue inside those fixed windows;
+- all relevant 5h/7d usage meters accrue inside those same fixed account
+  windows;
 - each window has one clear `starts_at` and `resets_at`;
 - when the window expires, usage for that window resets to zero;
 - the next metered usage after expiration starts a new window.
+
+There must be exactly one user-visible 5-hour window and one user-visible 7-day
+window per account. AI, managed CPU, managed egress, project-host prepaid spend,
+project-host postpaid/credit spend, owner-configured host spend caps, invites,
+ACP, and any future membership meters should all use the account's same
+`starts_at`/`resets_at` for a given window class. Humans cannot reason about a
+different reset time per meter, and a single max-pressure gauge only works if
+all 5h meters share one 5h clock and all 7d meters share one 7d clock.
 
 This is psychologically simpler, makes upgrade/wait decisions clearer, and
 turns "we fixed the bad configuration, but you must wait out the mess" into "we
@@ -105,21 +114,18 @@ users to wait out stale accounting.
 
 Design:
 
-- maintain a global usage epoch per meter family and window class;
-- meter families should include at least:
-  - `ai`;
-  - `managed_cpu`;
-  - `managed_egress`;
-  - later `invite`;
-  - later `acp`.
+- maintain one global user-visible membership usage epoch per window class;
 - window classes are `5h` and `7d`;
-- account window rows record the epoch that was active when the window started;
-- usage events record the epoch and, ideally, the 5h/7d window ids active when
-  the event was recorded;
-- bumping the epoch ignores previous usage for that family/window without
-  deleting historical logs;
+- account window rows record the membership epoch that was active when the
+  window started;
+- usage events should ideally record the 5h/7d window ids active when the event
+  was recorded; until then, aggregate by the active account window's
+  `starts_at`/`resets_at`;
+- bumping the membership epoch ignores previous usage for that account/window
+  class without deleting historical logs;
+- if we later need hidden abuse/accounting epochs per meter family, those must
+  not create separate user-visible reset clocks;
 - admin global reset can be scoped by:
-  - family;
   - window class;
   - membership tier;
   - all accounts;
@@ -179,6 +185,8 @@ Release-blocking backend database work:
   - `id UUID PRIMARY KEY`;
   - `account_id UUID NOT NULL`;
   - `family TEXT NOT NULL`;
+  - first implementation stores the shared user-visible scope value
+    `membership` here; the column name can be renamed later;
   - `window TEXT NOT NULL`;
   - `epoch BIGINT NOT NULL`;
   - `starts_at TIMESTAMPTZ NOT NULL`;
@@ -187,6 +195,8 @@ Release-blocking backend database work:
   - lookup index on `(account_id, family, window, epoch, resets_at DESC)`.
 - add a global epoch table, e.g. `account_usage_epochs`:
   - `family TEXT NOT NULL`;
+  - first implementation stores the shared user-visible scope value
+    `membership` here;
   - `window TEXT NOT NULL`;
   - `epoch BIGINT NOT NULL`;
   - `updated_at TIMESTAMPTZ NOT NULL`;
@@ -195,12 +205,12 @@ Release-blocking backend database work:
   - primary key `(family, window)`.
 - add a reset audit table, e.g. `account_usage_epoch_resets`, to preserve every
   epoch bump.
-- update AI, managed CPU, and managed egress usage queries to aggregate against
-  the account's active fixed window for the relevant family/window.
+- update AI, managed CPU, managed egress, and dedicated-host spend usage queries
+  to aggregate against the account's active fixed membership window.
 - ensure first metered usage creates missing active windows transactionally.
 - if usage events do not store window ids in the first implementation, aggregate
-  using `(account_id, family, window, epoch, starts_at, resets_at)` from the
-  active window row.
+  using `(account_id, membership scope, window, epoch, starts_at, resets_at)`
+  from the active window row.
 - make enforcement read the fixed-window aggregate, not the sliding aggregate.
 
 ## Proposed Normalized DTO
@@ -386,23 +396,27 @@ Completed first backend slice:
 
 - added lazy-created fixed account usage window tables and epoch/reset audit
   tables in `src/packages/server/membership/usage-windows.ts`;
-- added fixed 5h/7d window creation on first account-attributed AI, managed
-  CPU, and managed egress usage;
+- added shared fixed 5h/7d window creation on first account-attributed AI,
+  managed CPU, or managed egress usage;
 - changed account AI, managed CPU, and managed egress usage reads to aggregate
-  against the active fixed window instead of a sliding `now() - interval ...`
-  window;
+  against the account's active shared fixed window instead of a sliding
+  `now() - interval ...` window;
 - preserved historical event/log tables for admin history and audit;
 - added backend helper support for epoch bumps/global reset semantics, but not
   yet the fresh-auth admin RPC/UI.
 
 Remaining:
 
+- convert dedicated-host prepaid/postpaid spend windows and owner spend caps to
+  the same shared account usage windows;
 - add the fresh-auth admin reset RPC and audit-facing tests;
 - add the normalized `AccountUsageOverview` DTO;
 - build the user-facing dashboard.
 
-- Replace user-facing sliding-window accounting with fixed account windows for
-  AI, managed CPU, and managed egress. (first slice complete)
+- Replace user-facing sliding-window accounting with shared fixed account
+  windows for AI, managed CPU, and managed egress. (first slice complete)
+- Replace dedicated-host spend window accounting with the same shared fixed
+  account windows. (pending)
 - Add epoch/global reset tables and backend helpers. (helper complete; admin RPC
   pending)
 - Add an `AccountUsageOverview` builder that combines:
@@ -514,15 +528,18 @@ Start with backend fixed-window semantics before building the user dashboard:
 
 1. Add fixed account usage windows and epoch/global reset support.
 2. Convert AI, managed CPU, and managed egress enforcement to fixed windows.
-3. Add the normalized overview DTO for the meters already available today:
+3. Convert project-host prepaid/postpaid spend caps and owner-configured host
+   spend caps to those same fixed windows.
+4. Add the normalized overview DTO for the meters already available today:
    - AI 5h/7d;
    - managed CPU 5h/7d;
    - managed egress 5h/7d;
+   - dedicated-host prepaid/postpaid spend 5h/7d;
    - account storage;
    - projects;
    - RootFS;
    - blobs.
-4. Build the `Usage & Limits` page from that DTO.
+5. Build the `Usage & Limits` page from that DTO.
 
 This gives the user-visible page with high value and low implementation risk.
 Then migrate top-bar warnings onto the normalized overview.

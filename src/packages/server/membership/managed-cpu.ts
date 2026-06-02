@@ -105,7 +105,6 @@ export async function recordManagedProjectCpuUsage(opts: {
   }
   await ensureAccountUsageWindowsForEvent({
     account_id,
-    family: "managed_cpu",
     occurred_at: opts.sample_ended_at,
   });
   await getPool("medium").query(
@@ -157,7 +156,6 @@ export async function getManagedCpuUsageForAccount(opts: {
   await ensureSchema();
   const windows = await getActiveAccountUsageWindows({
     account_id: opts.account_id,
-    family: "managed_cpu",
   });
   const window5h = windows["5h"];
   const window7d = windows["7d"];

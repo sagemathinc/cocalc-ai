@@ -14,8 +14,8 @@ jest.mock("@cocalc/database/pool", () => ({
 
 type EpochKey = string;
 
-function epochKey(family: string, window: string): EpochKey {
-  return `${family}:${window}`;
+function epochKey(window: string): EpochKey {
+  return `membership:${window}`;
 }
 
 describe("account usage fixed windows", () => {
@@ -40,12 +40,12 @@ describe("account usage fixed windows", () => {
         return { rows: [] };
       }
       if (sql.includes("INSERT INTO account_usage_epochs")) {
-        const key = epochKey(params[0], params[1]);
+        const key = epochKey(params[1]);
         if (!epochs.has(key)) epochs.set(key, 1);
         return { rows: [] };
       }
       if (sql.includes("SELECT family, window, epoch")) {
-        const key = epochKey(params[0], params[1]);
+        const key = epochKey(params[1]);
         return {
           rows: [
             {
@@ -89,7 +89,8 @@ describe("account usage fixed windows", () => {
       }
       if (sql.includes("UPDATE account_usage_epochs")) {
         const [family, window, epoch] = params;
-        epochs.set(epochKey(family, window), epoch);
+        expect(family).toBe("membership");
+        epochs.set(epochKey(window), epoch);
         return { rows: [] };
       }
       if (sql.includes("INSERT INTO account_usage_epoch_resets")) {
@@ -105,7 +106,6 @@ describe("account usage fixed windows", () => {
       await import("./usage-windows");
     const result = await ensureAccountUsageWindowsForEvent({
       account_id: "11111111-1111-4111-8111-111111111111",
-      family: "managed_cpu",
       occurred_at: new Date("2026-06-01T10:00:00.000Z"),
     });
 
@@ -129,12 +129,10 @@ describe("account usage fixed windows", () => {
       await import("./usage-windows");
     await ensureAccountUsageWindowsForEvent({
       account_id: "11111111-1111-4111-8111-111111111111",
-      family: "managed_egress",
       occurred_at: new Date("2026-06-01T10:00:00.000Z"),
     });
     const second = await ensureAccountUsageWindowsForEvent({
       account_id: "11111111-1111-4111-8111-111111111111",
-      family: "managed_egress",
       occurred_at: new Date("2026-06-01T11:00:00.000Z"),
     });
 
@@ -143,19 +141,36 @@ describe("account usage fixed windows", () => {
     expect(windows).toHaveLength(2);
   });
 
-  it("bumps epochs to globally reset a family/window", async () => {
+  it("shares the same account windows across all metered categories", async () => {
+    const { ensureAccountUsageWindowsForEvent, getActiveAccountUsageWindows } =
+      await import("./usage-windows");
+    const first = await ensureAccountUsageWindowsForEvent({
+      account_id: "11111111-1111-4111-8111-111111111111",
+      occurred_at: new Date("2026-06-01T10:00:00.000Z"),
+    });
+    const second = await getActiveAccountUsageWindows({
+      account_id: "11111111-1111-4111-8111-111111111111",
+      at: new Date("2026-06-01T12:00:00.000Z"),
+      create: true,
+    });
+
+    expect(second["5h"]?.id).toBe(first["5h"].id);
+    expect(second["7d"]?.id).toBe(first["7d"].id);
+    expect(windows).toHaveLength(2);
+  });
+
+  it("bumps epochs to globally reset a membership window", async () => {
     const { resetAccountUsageEpoch } = await import("./usage-windows");
     const result = await resetAccountUsageEpoch({
-      family: "ai",
       window: "5h",
       reset_by: "22222222-2222-4222-8222-222222222222",
       reason: "bad tier configuration",
     });
 
-    expect(result).toEqual({ family: "ai", window: "5h", epoch: 2 });
+    expect(result).toEqual({ scope: "membership", window: "5h", epoch: 2 });
     expect(resetRows).toHaveLength(1);
     expect(resetRows[0]).toEqual([
-      "ai",
+      "membership",
       "5h",
       1,
       2,
