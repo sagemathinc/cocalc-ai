@@ -452,6 +452,9 @@ Completed first frontend slice:
   normalized `AccountUsageOverview` RPC;
 - changed the account membership settings data loader to request fresh usage
   status for usage-facing pages;
+- added a manual refresh button and a fresh-details browser event so the
+  top-bar account storage warning updates immediately when `Usage & Limits`
+  loads newer usage data;
 - kept PR 47's clean card-based detail layout for project/storage, runtime, AI,
   CPU, and network transfer drill-downs.
 

@@ -8,6 +8,10 @@ import { useEffect, useMemo, useState } from "react";
 
 import MembershipPurchaseModal from "@cocalc/frontend/account/membership-purchase-modal";
 import {
+  getMembershipDetailsRefreshedEventDetail,
+  MEMBERSHIP_DETAILS_REFRESHED_EVENT,
+} from "@cocalc/frontend/account/membership-usage-events";
+import {
   React,
   useActions,
   useTypedRedux,
@@ -190,9 +194,9 @@ export const AccountStorageWarning: React.FC<{
     const load = async () => {
       try {
         const next =
-          await webapp_client.conat_client.hub.purchases.getMembershipDetails(
-            {},
-          );
+          await webapp_client.conat_client.hub.purchases.getMembershipDetails({
+            refresh_usage_status: true,
+          });
         if (mounted) {
           setDetails((next as MembershipDetails) ?? null);
         }
@@ -208,11 +212,25 @@ export const AccountStorageWarning: React.FC<{
       ACCOUNT_STORAGE_WARNING_POLL_MS,
     );
     const refresh = () => void load();
+    const updateFromFreshDetails = (event: Event) => {
+      const next = getMembershipDetailsRefreshedEventDetail(event);
+      if (mounted && next) {
+        setDetails(next);
+      }
+    };
     window.addEventListener("cocalc:membership-changed", refresh);
+    window.addEventListener(
+      MEMBERSHIP_DETAILS_REFRESHED_EVENT,
+      updateFromFreshDetails,
+    );
     return () => {
       mounted = false;
       clearInterval(interval);
       window.removeEventListener("cocalc:membership-changed", refresh);
+      window.removeEventListener(
+        MEMBERSHIP_DETAILS_REFRESHED_EVENT,
+        updateFromFreshDetails,
+      );
     };
   }, [account_id, is_logged_in]);
 
