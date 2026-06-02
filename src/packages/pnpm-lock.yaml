@@ -934,7 +934,7 @@ importers:
         version: 1.1.5(react@19.2.1)
       react-intl:
         specifier: ^7.1.11
-        version: 7.1.14(react@19.2.1)(typescript@5.9.3)
+        version: 7.1.14(react@19.2.1)(typescript@6.0.3)
       react-plotly.js:
         specifier: ^2.6.0
         version: 2.6.0(plotly.js@2.35.3(@rspack/core@1.7.10(@swc/helpers@0.5.15))(mapbox-gl@1.13.3)(webpack@5.106.2(esbuild@0.27.2)))(react@19.2.1)
@@ -965,6 +965,9 @@ importers:
       type-fest:
         specifier: ^3.3.0
         version: 3.13.1
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
       universal-cookie:
         specifier: ^4.0.4
         version: 4.0.4
@@ -10245,11 +10248,6 @@ packages:
   typedarray@0.0.6:
     resolution: {integrity: sha512-/aCDEGatGvZ2BIk+HmLf4ifCJFwvKFNb9/JeZPMulfgFracn9QFcAf5GO8B/mweUjSoblS5In0cWhqpfs/5PQA==}
 
-  typescript@5.9.3:
-    resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
-    engines: {node: '>=14.17'}
-    hasBin: true
-
   typescript@6.0.3:
     resolution: {integrity: sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==}
     engines: {node: '>=14.17'}
@@ -11658,16 +11656,6 @@ snapshots:
   '@formatjs/intl-localematcher@0.6.2':
     dependencies:
       tslib: 2.8.1
-
-  '@formatjs/intl@3.1.8(typescript@5.9.3)':
-    dependencies:
-      '@formatjs/ecma402-abstract': 2.3.6
-      '@formatjs/fast-memoize': 2.2.7
-      '@formatjs/icu-messageformat-parser': 2.11.4
-      intl-messageformat: 10.7.18
-      tslib: 2.8.1
-    optionalDependencies:
-      typescript: 5.9.3
 
   '@formatjs/intl@3.1.8(typescript@6.0.3)':
     dependencies:
@@ -20027,20 +20015,6 @@ snapshots:
     dependencies:
       react: 19.2.1
 
-  react-intl@7.1.14(react@19.2.1)(typescript@5.9.3):
-    dependencies:
-      '@formatjs/ecma402-abstract': 2.3.6
-      '@formatjs/icu-messageformat-parser': 2.11.4
-      '@formatjs/intl': 3.1.8(typescript@5.9.3)
-      '@types/hoist-non-react-statics': 3.3.7(@types/react@19.2.7)
-      '@types/react': 19.2.7
-      hoist-non-react-statics: 3.3.2
-      intl-messageformat: 10.7.18
-      react: 19.2.1
-      tslib: 2.8.1
-    optionalDependencies:
-      typescript: 5.9.3
-
   react-intl@7.1.14(react@19.2.1)(typescript@6.0.3):
     dependencies:
       '@formatjs/ecma402-abstract': 2.3.6
@@ -21194,9 +21168,6 @@ snapshots:
       dup: 1.0.0
 
   typedarray@0.0.6: {}
-
-  typescript@5.9.3:
-    optional: true
 
   typescript@6.0.3: {}
 
