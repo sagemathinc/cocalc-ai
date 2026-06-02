@@ -685,12 +685,47 @@ EOF
 ${STAR_USER} ALL=(root) NOPASSWD: /bin/systemctl *, /bin/journalctl *, /usr/bin/tee *, /usr/bin/install *, /bin/mount *, /bin/umount *, /usr/bin/loginctl *
 EOF
   chmod 0440 /etc/sudoers.d/cocalc-star-admin
+  remove_broad_sudoers_for_star_user
   if [ "$STAR_REMOVE_GCP_SUDOERS" = "1" ]; then
     if id -nG "$STAR_USER" | tr ' ' '\n' | grep -qx google-sudoers; then
       gpasswd -d "$STAR_USER" google-sudoers || true
     fi
     rm -f /etc/sudoers.d/google-sudoers /etc/sudoers.d/google_sudoers
   fi
+}
+
+remove_broad_sudoers_for_star_user() {
+  local path tmp
+  shopt -s nullglob
+  for path in /etc/sudoers.d/*; do
+    [ -f "$path" ] || continue
+    case "$(basename "$path")" in
+      cocalc-*) continue ;;
+    esac
+    if ! awk -v user="$STAR_USER" '
+      $1 == user && $0 ~ /NOPASSWD:[[:space:]]*ALL([[:space:]]|$|,)/ {
+        found = 1
+      }
+      END { exit found ? 0 : 1 }
+    ' "$path"; then
+      continue
+    fi
+    log "removing broad sudoers grant for ${STAR_USER} from ${path}"
+    tmp="$(mktemp)"
+    awk -v user="$STAR_USER" '
+      $1 == user && $0 ~ /NOPASSWD:[[:space:]]*ALL([[:space:]]|$|,)/ {
+        next
+      }
+      { print }
+    ' "$path" >"$tmp"
+    if [ -s "$tmp" ]; then
+      install -m 0440 -o root -g root "$tmp" "$path"
+    else
+      rm -f "$path"
+    fi
+    rm -f "$tmp"
+  done
+  shopt -u nullglob
 }
 
 start_services() {
