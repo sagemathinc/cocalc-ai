@@ -25,6 +25,7 @@ STAR_DEFAULT_ROOTFS_IMAGE="${STAR_DEFAULT_ROOTFS_IMAGE:-containers-storage:local
 STAR_DEFAULT_ROOTFS_BASE_IMAGE="${STAR_DEFAULT_ROOTFS_BASE_IMAGE:-ubuntu:26.04}"
 STAR_REMOVE_GCP_SUDOERS="${STAR_REMOVE_GCP_SUDOERS:-1}"
 STAR_SUBID_RANGES="${STAR_SUBID_RANGES:-231072:65536 327680:4128768}"
+STAR_HAS_GPU="${STAR_HAS_GPU:-0}"
 
 log() {
   printf '[star] %s\n' "$*" >&2
@@ -58,6 +59,131 @@ install_packages() {
     podman btrfs-progs uidmap slirp4netns passt catatonit fuse-overlayfs \
     caddy xz-utils rsync sudo postgresql postgresql-client libpq-dev
   systemctl disable --now postgresql >/dev/null 2>&1 || true
+}
+
+host_has_nvidia_gpu() {
+  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+    return 0
+  fi
+  if ls /dev/nvidia0 >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+install_nvidia_cdi_normalizer() {
+  cat >/usr/local/sbin/cocalc-nvidia-cdi-normalize <<'PY'
+#!/usr/bin/env python3
+import sys
+from pathlib import Path
+
+COMPAT_VERSION = "0.5.0"
+CDI_PATHS = (Path("/etc/cdi/nvidia.yaml"), Path("/var/run/cdi/nvidia.yaml"))
+
+
+def strip_yaml_field(lines, field):
+    out = []
+    i = 0
+    needle = f"{field}:"
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        if stripped == needle:
+            indent = len(line) - len(line.lstrip(" "))
+            i += 1
+            while i < len(lines):
+                next_line = lines[i]
+                next_stripped = next_line.strip()
+                if not next_stripped:
+                    i += 1
+                    continue
+                next_indent = len(next_line) - len(next_line.lstrip(" "))
+                if next_indent > indent:
+                    i += 1
+                    continue
+                break
+            continue
+        out.append(line)
+        i += 1
+    return out
+
+
+def normalize(path):
+    if not path.exists():
+        return False
+    original = path.read_text(encoding="utf-8")
+    lines = original.splitlines(keepends=True)
+    lines = strip_yaml_field(lines, "additionalGids")
+    changed_version = False
+    for i, line in enumerate(lines):
+        if line.startswith("cdiVersion:"):
+            replacement = f"cdiVersion: {COMPAT_VERSION}\n"
+            if line != replacement:
+                lines[i] = replacement
+                changed_version = True
+            break
+    updated = "".join(lines)
+    if updated == original and not changed_version:
+        return False
+    path.write_text(updated, encoding="utf-8")
+    path.chmod(0o644)
+    return True
+
+
+changed = False
+paths = [Path(arg) for arg in sys.argv[1:]] or list(CDI_PATHS)
+for path in paths:
+    changed = normalize(path) or changed
+raise SystemExit(0)
+PY
+  chmod 0755 /usr/local/sbin/cocalc-nvidia-cdi-normalize
+}
+
+install_gpu_support() {
+  STAR_HAS_GPU=0
+  if ! host_has_nvidia_gpu; then
+    return
+  fi
+  STAR_HAS_GPU=1
+  log "NVIDIA GPU detected; configuring Podman CDI support"
+  run apt-get install -y ca-certificates gnupg
+  rm -f /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+  run bash -lc "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --batch --yes --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg"
+  run bash -lc "curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#' | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list"
+  run apt-get update
+  run apt-get install -y --allow-change-held-packages nvidia-container-toolkit
+  ldconfig || true
+  install_nvidia_cdi_normalizer
+  mkdir -p /etc/cdi
+  run nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+  /usr/local/sbin/cocalc-nvidia-cdi-normalize || true
+  [ -f /etc/cdi/nvidia.yaml ] || die "nvidia CDI generation did not create /etc/cdi/nvidia.yaml"
+  usermod -aG video,render "$STAR_USER" || true
+  cat >/usr/local/sbin/cocalc-nvidia-cdi <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$(id -u)" -ne 0 ]; then
+  exit 0
+fi
+if [ ! -x /usr/bin/nvidia-ctk ]; then
+  exit 0
+fi
+if [ -f /etc/cdi/nvidia.yaml ]; then
+  /usr/local/sbin/cocalc-nvidia-cdi-normalize || true
+  exit 0
+fi
+ldconfig || true
+if command -v nvidia-smi >/dev/null 2>&1 || ldconfig -p 2>/dev/null | grep -q libnvidia-ml.so.1; then
+  /usr/bin/nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml || exit 0
+  /usr/local/sbin/cocalc-nvidia-cdi-normalize || true
+fi
+exit 0
+EOF
+  chmod 0755 /usr/local/sbin/cocalc-nvidia-cdi
+  cat >/etc/cron.d/cocalc-nvidia-cdi <<'EOF'
+*/5 * * * * root /usr/local/sbin/cocalc-nvidia-cdi >/dev/null 2>&1
+EOF
+  chmod 0644 /etc/cron.d/cocalc-nvidia-cdi
 }
 
 stop_existing_services() {
@@ -444,7 +570,7 @@ seed_database() {
   if [ -f "$SRC_ROOT/scripts/star-poc/build/seed-star-poc/index.cjs" ]; then
     script="scripts/star-poc/build/seed-star-poc/index.cjs"
   fi
-  as_star_user "set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_PROJECT_HOST_REGION='$STAR_PROJECT_HOST_REGION' STAR_BASE_URL='$STAR_BASE_URL' STAR_MASTER_CONAT_TOKEN_PATH='$STAR_PROJECT_HOST_DATA/secrets/master-conat-token' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' STAR_BOOTSTRAP_RESULT_PATH='$STAR_ROOT/bootstrap-result.json' node '$script'"
+  as_star_user "set -a && source /etc/cocalc/star/hub.env && set +a && cd '$SRC_ROOT' && source \"\$HOME/.nvm/nvm.sh\" && nvm use 26 >/dev/null && STAR_PROJECT_HOST_ID='$STAR_HOST_ID' STAR_PROJECT_HOST_REGION='$STAR_PROJECT_HOST_REGION' STAR_BASE_URL='$STAR_BASE_URL' STAR_MASTER_CONAT_TOKEN_PATH='$STAR_PROJECT_HOST_DATA/secrets/master-conat-token' STAR_DEFAULT_ROOTFS_IMAGE='$STAR_DEFAULT_ROOTFS_IMAGE' STAR_BOOTSTRAP_RESULT_PATH='$STAR_ROOT/bootstrap-result.json' STAR_HAS_GPU='${STAR_HAS_GPU:-0}' node '$script'"
 }
 
 install_systemd() {
@@ -584,6 +710,7 @@ start_services() {
 
 require_root
 install_packages
+install_gpu_support
 ensure_subuids
 install_node
 build_source
