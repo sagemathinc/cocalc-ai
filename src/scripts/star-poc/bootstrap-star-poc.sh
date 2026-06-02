@@ -293,18 +293,24 @@ prepare_runtime_artifacts() {
     ln -sfn "$SRC_ROOT/packages/project/build/bundle" \
       "$SRC_ROOT/packages/project/build/current"
   fi
-  local arch tools_tarball tools_release tools_current
+  local arch tools_tarball tools_release tools_current fallback_tools
   arch="$(host_arch)"
   tools_tarball="$SRC_ROOT/packages/project/build/tools-linux-${arch}.tar.xz"
+  tools_current="$SRC_ROOT/packages/project/build/tools/current"
   if [ -f "$tools_tarball" ]; then
     tools_release="$SRC_ROOT/packages/project/build/tools/${STAR_RELEASE_ID:-runtime}"
-    tools_current="$SRC_ROOT/packages/project/build/tools/current"
     if [ ! -x "$tools_release/bin/dropbear" ]; then
       rm -rf "$tools_release"
       mkdir -p "$tools_release"
       run tar -C "$tools_release" -Jxf "$tools_tarball"
     fi
     ln -sfn "$tools_release/bin" "$tools_current"
+  else
+    fallback_tools="$SRC_ROOT/packages/backend/node_modules/.bin"
+    if [ -x "$fallback_tools/rustic" ]; then
+      mkdir -p "$(dirname "$tools_current")"
+      ln -sfn "$fallback_tools" "$tools_current"
+    fi
   fi
   chown -R "$STAR_USER:$STAR_USER" "$SRC_ROOT/packages" "$SRC_ROOT/scripts/star-poc/build" 2>/dev/null || true
 }
