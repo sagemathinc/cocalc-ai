@@ -3,6 +3,7 @@ import getPool from "@cocalc/database/pool";
 import { pii_retention_to_future } from "@cocalc/database/postgres/account/pii";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { AIUsageLogEntry } from "@cocalc/util/db-schema/ai-log";
+import { ensureAccountUsageWindowsForEvent } from "@cocalc/server/membership/usage-windows";
 
 const log = getLogger("ai:save-response");
 
@@ -29,6 +30,11 @@ export async function saveAIResponse({
   const expire: AIUsageLogEntry["expire"] = await getExpiration(account_id);
   const pool = getPool();
   try {
+    if (account_id) {
+      await ensureAccountUsageWindowsForEvent({
+        account_id,
+      });
+    }
     await pool.query(
       "INSERT INTO ai_usage_log(time,input,system,output,history,account_id,analytics_cookie,project_id,path,total_tokens,prompt_tokens,total_time_s,expire,model,tag,usage_units) VALUES(NOW(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)",
       [

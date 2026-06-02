@@ -27,6 +27,10 @@ import {
 } from "@cocalc/util/money";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
+  ensureAccountUsageWindowsForEvent,
+  getActiveAccountUsageWindows,
+} from "@cocalc/server/membership/usage-windows";
+import {
   applyDedicatedHostSurchargeToHourlyRate,
   estimateGcpCatalogRateUsdPerHour,
   estimateNebiusCatalogRateUsdPerHour,
@@ -65,8 +69,6 @@ export interface DedicatedHostRateEstimateInput {
   pricing_model?: "on_demand" | "spot" | null;
 }
 
-const WINDOW_5H_HOURS = 5;
-const WINDOW_7D_HOURS = 24 * 7;
 const HOST_PURCHASE_TAG_PREFIX = "dedicated-host:";
 
 function purchaseTag(host_id: string): string {
@@ -156,95 +158,108 @@ export function isDedicatedHostLaneCurrentlyAllowed({
 export async function getDedicatedHostWindowUsageLocal(
   account_id: string,
 ): Promise<DedicatedHostWindowUsageSnapshot> {
+  const windows = await getDedicatedHostUsageWindows({
+    account_id,
+  });
+  const window5h = windows["5h"];
+  const window7d = windows["7d"];
   const { rows } = await getPool("medium").query(
     `
-      WITH usage_5h AS (
-        SELECT
-          COALESCE(
-            SUM(
-              CASE
-                WHEN description->>'funding_lane' = 'prepaid'
-                THEN cost_per_hour * GREATEST(
-                  0::numeric,
-                  EXTRACT(
-                    EPOCH FROM LEAST(COALESCE(period_end, NOW()), NOW())
-                    - GREATEST(period_start, NOW() - ($2::int * INTERVAL '1 hour'))
-                  )::numeric / 3600
-                )
-                ELSE 0::numeric
-              END
-            ),
-            0::numeric
-          ) AS prepaid_5h_usd,
-          COALESCE(
-            SUM(
-              CASE
-                WHEN description->>'funding_lane' = 'credit'
-                THEN cost_per_hour * GREATEST(
-                  0::numeric,
-                  EXTRACT(
-                    EPOCH FROM LEAST(COALESCE(period_end, NOW()), NOW())
-                    - GREATEST(period_start, NOW() - ($2::int * INTERVAL '1 hour'))
-                  )::numeric / 3600
-                )
-                ELSE 0::numeric
-              END
-            ),
-            0::numeric
-          ) AS credit_5h_usd
-        FROM purchases
-        WHERE account_id = $1
-          AND service = $3
-          AND cost_per_hour IS NOT NULL
-          AND period_start IS NOT NULL
-          AND COALESCE(period_end, NOW()) > NOW() - ($2::int * INTERVAL '1 hour')
-      ),
-      usage_7d AS (
-        SELECT
-          COALESCE(
-            SUM(
-              CASE
-                WHEN description->>'funding_lane' = 'prepaid'
-                THEN cost_per_hour * GREATEST(
-                  0::numeric,
-                  EXTRACT(
-                    EPOCH FROM LEAST(COALESCE(period_end, NOW()), NOW())
-                    - GREATEST(period_start, NOW() - ($4::int * INTERVAL '1 hour'))
-                  )::numeric / 3600
-                )
-                ELSE 0::numeric
-              END
-            ),
-            0::numeric
-          ) AS prepaid_7d_usd,
-          COALESCE(
-            SUM(
-              CASE
-                WHEN description->>'funding_lane' = 'credit'
-                THEN cost_per_hour * GREATEST(
-                  0::numeric,
-                  EXTRACT(
-                    EPOCH FROM LEAST(COALESCE(period_end, NOW()), NOW())
-                    - GREATEST(period_start, NOW() - ($4::int * INTERVAL '1 hour'))
-                  )::numeric / 3600
-                )
-                ELSE 0::numeric
-              END
-            ),
-            0::numeric
-          ) AS credit_7d_usd
-        FROM purchases
-        WHERE account_id = $1
-          AND service = $3
-          AND cost_per_hour IS NOT NULL
-          AND period_start IS NOT NULL
-          AND COALESCE(period_end, NOW()) > NOW() - ($4::int * INTERVAL '1 hour')
-      )
-      SELECT *
-      FROM usage_5h
-      CROSS JOIN usage_7d
+      SELECT
+        COALESCE(
+          SUM(
+            CASE
+              WHEN $2::timestamptz IS NOT NULL
+               AND description->>'funding_lane' = 'prepaid'
+               AND period_start < $3::timestamptz
+               AND COALESCE(period_end, NOW()) > $2::timestamptz
+              THEN cost_per_hour * GREATEST(
+                0::numeric,
+                EXTRACT(
+                  EPOCH FROM LEAST(COALESCE(period_end, NOW()), $3::timestamptz)
+                  - GREATEST(period_start, $2::timestamptz)
+                )::numeric / 3600
+              )
+              ELSE 0::numeric
+            END
+          ),
+          0::numeric
+        ) AS prepaid_5h_usd,
+        COALESCE(
+          SUM(
+            CASE
+              WHEN $4::timestamptz IS NOT NULL
+               AND description->>'funding_lane' = 'prepaid'
+               AND period_start < $5::timestamptz
+               AND COALESCE(period_end, NOW()) > $4::timestamptz
+              THEN cost_per_hour * GREATEST(
+                0::numeric,
+                EXTRACT(
+                  EPOCH FROM LEAST(COALESCE(period_end, NOW()), $5::timestamptz)
+                  - GREATEST(period_start, $4::timestamptz)
+                )::numeric / 3600
+              )
+              ELSE 0::numeric
+            END
+          ),
+          0::numeric
+        ) AS prepaid_7d_usd,
+        COALESCE(
+          SUM(
+            CASE
+              WHEN $2::timestamptz IS NOT NULL
+               AND description->>'funding_lane' = 'credit'
+               AND period_start < $3::timestamptz
+               AND COALESCE(period_end, NOW()) > $2::timestamptz
+              THEN cost_per_hour * GREATEST(
+                0::numeric,
+                EXTRACT(
+                  EPOCH FROM LEAST(COALESCE(period_end, NOW()), $3::timestamptz)
+                  - GREATEST(period_start, $2::timestamptz)
+                )::numeric / 3600
+              )
+              ELSE 0::numeric
+            END
+          ),
+          0::numeric
+        ) AS credit_5h_usd,
+        COALESCE(
+          SUM(
+            CASE
+              WHEN $4::timestamptz IS NOT NULL
+               AND description->>'funding_lane' = 'credit'
+               AND period_start < $5::timestamptz
+               AND COALESCE(period_end, NOW()) > $4::timestamptz
+              THEN cost_per_hour * GREATEST(
+                0::numeric,
+                EXTRACT(
+                  EPOCH FROM LEAST(COALESCE(period_end, NOW()), $5::timestamptz)
+                  - GREATEST(period_start, $4::timestamptz)
+                )::numeric / 3600
+              )
+              ELSE 0::numeric
+            END
+          ),
+          0::numeric
+        ) AS credit_7d_usd
+      FROM purchases
+      WHERE account_id = $1
+        AND service = $6
+        AND cost_per_hour IS NOT NULL
+        AND period_start IS NOT NULL
+        AND (
+          ($2::timestamptz IS NOT NULL AND period_start < $3::timestamptz AND COALESCE(period_end, NOW()) > $2::timestamptz)
+          OR ($4::timestamptz IS NOT NULL AND period_start < $5::timestamptz AND COALESCE(period_end, NOW()) > $4::timestamptz)
+        )
     `,
-    [account_id, WINDOW_5H_HOURS, "dedicated-host", WINDOW_7D_HOURS],
+    [
+      account_id,
+      window5h?.starts_at ?? null,
+      window5h?.resets_at ?? null,
+      window7d?.starts_at ?? null,
+      window7d?.resets_at ?? null,
+      "dedicated-host",
+    ],
   );
   return moneyMap(rows[0]);
 }
@@ -256,63 +271,120 @@ export async function getDedicatedHostWindowUsageForHostLocal({
   account_id: string;
   host_id: string;
 }): Promise<DedicatedHostOwnerWindowUsageSnapshot> {
+  const windows = await getDedicatedHostUsageWindows({
+    account_id,
+    host_id,
+  });
+  const window5h = windows["5h"];
+  const window7d = windows["7d"];
   const { rows } = await getPool("medium").query(
     `
-      WITH usage_5h AS (
-        SELECT COALESCE(
+      SELECT
+        COALESCE(
           SUM(
-            cost_per_hour * GREATEST(
-              0::numeric,
-              EXTRACT(
-                EPOCH FROM LEAST(COALESCE(period_end, NOW()), NOW())
-                - GREATEST(period_start, NOW() - ($3::int * INTERVAL '1 hour'))
-              )::numeric / 3600
-            )
+            CASE
+              WHEN $3::timestamptz IS NOT NULL
+               AND period_start < $4::timestamptz
+               AND COALESCE(period_end, NOW()) > $3::timestamptz
+              THEN cost_per_hour * GREATEST(
+                0::numeric,
+                EXTRACT(
+                  EPOCH FROM LEAST(COALESCE(period_end, NOW()), $4::timestamptz)
+                  - GREATEST(period_start, $3::timestamptz)
+                )::numeric / 3600
+              )
+              ELSE 0::numeric
+            END
           ),
           0::numeric
-        ) AS spend_5h_usd
-        FROM purchases
-        WHERE account_id = $1
-          AND service = $2
-          AND tag = $5
-          AND cost_per_hour IS NOT NULL
-          AND period_start IS NOT NULL
-          AND COALESCE(period_end, NOW()) > NOW() - ($3::int * INTERVAL '1 hour')
-      ),
-      usage_7d AS (
-        SELECT COALESCE(
+        ) AS spend_5h_usd,
+        COALESCE(
           SUM(
-            cost_per_hour * GREATEST(
-              0::numeric,
-              EXTRACT(
-                EPOCH FROM LEAST(COALESCE(period_end, NOW()), NOW())
-                - GREATEST(period_start, NOW() - ($4::int * INTERVAL '1 hour'))
-              )::numeric / 3600
-            )
+            CASE
+              WHEN $5::timestamptz IS NOT NULL
+               AND period_start < $6::timestamptz
+               AND COALESCE(period_end, NOW()) > $5::timestamptz
+              THEN cost_per_hour * GREATEST(
+                0::numeric,
+                EXTRACT(
+                  EPOCH FROM LEAST(COALESCE(period_end, NOW()), $6::timestamptz)
+                  - GREATEST(period_start, $5::timestamptz)
+                )::numeric / 3600
+              )
+              ELSE 0::numeric
+            END
           ),
           0::numeric
         ) AS spend_7d_usd
-        FROM purchases
-        WHERE account_id = $1
-          AND service = $2
-          AND tag = $5
-          AND cost_per_hour IS NOT NULL
-          AND period_start IS NOT NULL
-          AND COALESCE(period_end, NOW()) > NOW() - ($4::int * INTERVAL '1 hour')
-      )
-      SELECT *
-      FROM usage_5h
-      CROSS JOIN usage_7d
+      FROM purchases
+      WHERE account_id = $1
+        AND service = $2
+        AND tag = $7
+        AND cost_per_hour IS NOT NULL
+        AND period_start IS NOT NULL
+        AND (
+          ($3::timestamptz IS NOT NULL AND period_start < $4::timestamptz AND COALESCE(period_end, NOW()) > $3::timestamptz)
+          OR ($5::timestamptz IS NOT NULL AND period_start < $6::timestamptz AND COALESCE(period_end, NOW()) > $5::timestamptz)
+        )
     `,
     [
       account_id,
       "dedicated-host",
-      WINDOW_5H_HOURS,
-      WINDOW_7D_HOURS,
+      window5h?.starts_at ?? null,
+      window5h?.resets_at ?? null,
+      window7d?.starts_at ?? null,
+      window7d?.resets_at ?? null,
       purchaseTag(host_id),
     ],
   );
   return hostMoneyMap(rows[0]);
+}
+
+async function getDedicatedHostUsageWindows({
+  account_id,
+  host_id,
+}: {
+  account_id: string;
+  host_id?: string;
+}) {
+  const existing = await getActiveAccountUsageWindows({ account_id });
+  if (existing["5h"] && existing["7d"]) return existing;
+  const hasActiveSpend = await hasOpenDedicatedHostSpend({
+    account_id,
+    host_id,
+  });
+  if (!hasActiveSpend) return existing;
+  return await ensureAccountUsageWindowsForEvent({
+    account_id,
+    occurred_at: new Date(),
+  });
+}
+
+async function hasOpenDedicatedHostSpend({
+  account_id,
+  host_id,
+}: {
+  account_id: string;
+  host_id?: string;
+}): Promise<boolean> {
+  const { rows } = await getPool("short").query(
+    `
+      SELECT 1
+      FROM purchases
+      WHERE account_id = $1
+        AND service = $2
+        AND period_start IS NOT NULL
+        AND period_end IS NULL
+        AND ($3::text IS NULL OR tag = $3)
+      LIMIT 1
+    `,
+    [
+      account_id,
+      "dedicated-host",
+      host_id == null ? null : purchaseTag(host_id),
+    ],
+  );
+  return rows.length > 0;
 }
 
 type OpenHostPurchaseRow = {
@@ -578,6 +650,20 @@ export async function reconcileDedicatedHostPurchaseSessionLocal({
 }: AccountLocalReconcileDedicatedHostPurchaseSessionRequest & {
   client?: PoolClient;
 }): Promise<void> {
+  const periodStart =
+    started_at == null
+      ? new Date()
+      : new Date(started_at as string | number | Date);
+  await ensureAccountUsageWindowsForEvent({
+    account_id,
+    occurred_at: periodStart,
+  });
+  if (periodStart.getTime() < Date.now()) {
+    await ensureAccountUsageWindowsForEvent({
+      account_id,
+      occurred_at: new Date(),
+    });
+  }
   const open = await listOpenDedicatedHostPurchasesLocal({
     account_id,
     host_id,
@@ -628,10 +714,7 @@ export async function reconcileDedicatedHostPurchaseSessionLocal({
     description,
     client: client ?? null,
     cost_per_hour: normalizedRate,
-    period_start:
-      started_at == null
-        ? new Date()
-        : new Date(started_at as string | number | Date),
+    period_start: periodStart,
     tag: purchaseTag(host_id),
     notes: DEDICATED_HOST_USAGE,
   });

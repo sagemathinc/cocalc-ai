@@ -11,6 +11,7 @@ const getManagedCpuAdminOverviewMock = jest.fn();
 const createAbuseReviewAnnotationMock = jest.fn();
 const listAbuseReviewAnnotationsMock = jest.fn();
 const revokeAbuseReviewAnnotationMock = jest.fn();
+const resetAccountUsageEpochMock = jest.fn();
 const getProjectUsageAccountIdMock = jest.fn();
 const isAdminMock = jest.fn();
 const resolveMembershipDetailsForAccountMock = jest.fn();
@@ -99,6 +100,11 @@ jest.mock("@cocalc/server/membership/abuse-review-annotations", () => ({
     listAbuseReviewAnnotationsMock(...args),
   revokeAbuseReviewAnnotation: (...args: any[]) =>
     revokeAbuseReviewAnnotationMock(...args),
+}));
+
+jest.mock("@cocalc/server/membership/usage-windows", () => ({
+  resetAccountUsageEpoch: (...args: any[]) =>
+    resetAccountUsageEpochMock(...args),
 }));
 
 jest.mock("@cocalc/server/membership/resolve", () => ({
@@ -2046,6 +2052,104 @@ describe("purchases abuse review annotations", () => {
       id: "annotation-1",
       revoked_by: "admin-1",
       revoked_reason: "superseded",
+    });
+  });
+});
+
+describe("purchases.adminResetMembershipUsageWindows", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("requires admin permission", async () => {
+    isAdminMock.mockResolvedValue(false);
+
+    const { adminResetMembershipUsageWindows } = await import("./purchases");
+    await expect(
+      adminResetMembershipUsageWindows({
+        account_id: "viewer-1",
+        reason: "bad tier configuration",
+      }),
+    ).rejects.toThrow("must be an admin");
+  });
+
+  it("requires fresh auth before resetting usage windows", async () => {
+    isAdminMock.mockResolvedValue(true);
+
+    const { adminResetMembershipUsageWindows } = await import("./purchases");
+    await expect(
+      adminResetMembershipUsageWindows({
+        account_id: "admin-1",
+        reason: "bad tier configuration",
+      }),
+    ).rejects.toMatchObject({ code: "fresh_auth_required" });
+    expect(resetAccountUsageEpochMock).not.toHaveBeenCalled();
+  });
+
+  it("resets both shared membership windows by default", async () => {
+    isAdminMock.mockResolvedValue(true);
+    getBrowserAuthSessionHashMock.mockReturnValue("fresh-session-1");
+    resetAccountUsageEpochMock
+      .mockResolvedValueOnce({ scope: "membership", window: "5h", epoch: 2 })
+      .mockResolvedValueOnce({ scope: "membership", window: "7d", epoch: 3 });
+
+    const { adminResetMembershipUsageWindows } = await import("./purchases");
+    const result = await adminResetMembershipUsageWindows({
+      account_id: "admin-1",
+      browser_id: "browser-1",
+      reason: "bad tier configuration",
+    });
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      session_hash: "fresh-session-1",
+      allow_actor_impersonation: false,
+    });
+    expect(resetAccountUsageEpochMock).toHaveBeenCalledTimes(2);
+    expect(resetAccountUsageEpochMock).toHaveBeenNthCalledWith(1, {
+      window: "5h",
+      reset_by: "admin-1",
+      reason: "bad tier configuration",
+    });
+    expect(resetAccountUsageEpochMock).toHaveBeenNthCalledWith(2, {
+      window: "7d",
+      reset_by: "admin-1",
+      reason: "bad tier configuration",
+    });
+    expect(result).toEqual({
+      windows: [
+        { scope: "membership", window: "5h", epoch: 2 },
+        { scope: "membership", window: "7d", epoch: 3 },
+      ],
+    });
+  });
+
+  it("can reset a single selected shared membership window", async () => {
+    isAdminMock.mockResolvedValue(true);
+    resetAccountUsageEpochMock.mockResolvedValue({
+      scope: "membership",
+      window: "5h",
+      epoch: 4,
+    });
+
+    const { adminResetMembershipUsageWindows } = await import("./purchases");
+    await adminResetMembershipUsageWindows({
+      account_id: "admin-1",
+      session_hash: "fresh-session-2",
+      window: "5h",
+      reason: "support reset",
+    });
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      session_hash: "fresh-session-2",
+      allow_actor_impersonation: false,
+    });
+    expect(resetAccountUsageEpochMock).toHaveBeenCalledTimes(1);
+    expect(resetAccountUsageEpochMock).toHaveBeenCalledWith({
+      window: "5h",
+      reset_by: "admin-1",
+      reason: "support reset",
     });
   });
 });

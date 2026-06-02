@@ -125,33 +125,33 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
       label: "Postpay host spend, 5-hour window",
       unit: "USD",
       adminDescription:
-        "Rolling 5-hour postpaid dedicated-host spend limit for this account.",
+        "Fixed account 5-hour postpaid dedicated-host spend limit.",
       userDescription:
-        "Postpaid dedicated-host spend limit over a rolling 5-hour window.",
+        "Postpaid dedicated-host spend limit over your current 5-hour window.",
     },
     credit_spend_limit_7d_usd: {
       label: "Postpay host spend, 7-day window",
       unit: "USD",
       adminDescription:
-        "Rolling 7-day postpaid dedicated-host spend limit for this account.",
+        "Fixed account 7-day postpaid dedicated-host spend limit.",
       userDescription:
-        "Postpaid dedicated-host spend limit over a rolling 7-day window.",
+        "Postpaid dedicated-host spend limit over your current 7-day window.",
     },
     prepaid_host_usage_limit_5h_usd: {
       label: "Prepay host spend, 5-hour window",
       unit: "USD",
       adminDescription:
-        "Rolling 5-hour dedicated-host spend limit when spending from this account's prepaid balance.",
+        "Fixed account 5-hour dedicated-host spend limit when spending from this account's prepaid balance.",
       userDescription:
-        "Prepaid dedicated-host spend limit over a rolling 5-hour window.",
+        "Prepaid dedicated-host spend limit over your current 5-hour window.",
     },
     prepaid_host_usage_limit_7d_usd: {
       label: "Prepay host spend, 7-day window",
       unit: "USD",
       adminDescription:
-        "Rolling 7-day dedicated-host spend limit when spending from this account's prepaid balance.",
+        "Fixed account 7-day dedicated-host spend limit when spending from this account's prepaid balance.",
       userDescription:
-        "Prepaid dedicated-host spend limit over a rolling 7-day window.",
+        "Prepaid dedicated-host spend limit over your current 7-day window.",
     },
     notification_email_send_limit_5h: {
       label: "Notification email sends, 5-hour window",

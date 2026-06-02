@@ -16,6 +16,10 @@ import type {
 } from "@cocalc/conat/hub/api/purchases";
 import { getProjectUsageAccountId } from "./project-usage";
 import { listActiveAbuseReviewAnnotations } from "./abuse-review-annotations";
+import {
+  ensureAccountUsageWindowsForEvent,
+  getActiveAccountUsageWindows,
+} from "./usage-windows";
 
 const TABLE = "account_cpu_usage_events";
 const DEFAULT_HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -27,6 +31,8 @@ export type ManagedCpuUsage = {
   managed_cpu_7d_seconds: number;
   managed_cpu_5h_remaining_seconds?: number;
   managed_cpu_7d_remaining_seconds?: number;
+  managed_cpu_5h_starts_at?: Date;
+  managed_cpu_7d_starts_at?: Date;
   managed_cpu_5h_reset_at?: Date;
   managed_cpu_7d_reset_at?: Date;
   managed_cpu_5h_reset_in?: string;
@@ -97,6 +103,10 @@ export async function recordManagedProjectCpuUsage(opts: {
   if (!account_id) {
     return { recorded: false };
   }
+  await ensureAccountUsageWindowsForEvent({
+    account_id,
+    occurred_at: opts.sample_ended_at,
+  });
   await getPool("medium").query(
     `
       INSERT INTO ${TABLE}
@@ -144,6 +154,11 @@ export async function getManagedCpuUsageForAccount(opts: {
   limit7d?: number;
 }): Promise<ManagedCpuUsage> {
   await ensureSchema();
+  const windows = await getActiveAccountUsageWindows({
+    account_id: opts.account_id,
+  });
+  const window5h = windows["5h"];
+  const window7d = windows["7d"];
   const { rows } = await getPool("medium").query<{
     seconds_5h: string | number;
     seconds_7d: string | number;
@@ -153,31 +168,44 @@ export async function getManagedCpuUsageForAccount(opts: {
         COALESCE(
           SUM(
             CASE
-              WHEN sample_ended_at >= now() - interval '5 hours' THEN cpu_seconds
+              WHEN $2::timestamptz IS NOT NULL
+               AND sample_ended_at >= $2::timestamptz
+               AND sample_ended_at < $3::timestamptz THEN cpu_seconds
               ELSE 0
             END
           ),
           0
         ) AS seconds_5h,
-        COALESCE(SUM(cpu_seconds), 0) AS seconds_7d
+        COALESCE(
+          SUM(
+            CASE
+              WHEN $4::timestamptz IS NOT NULL
+               AND sample_ended_at >= $4::timestamptz
+               AND sample_ended_at < $5::timestamptz THEN cpu_seconds
+              ELSE 0
+            END
+          ),
+          0
+        ) AS seconds_7d
       FROM ${TABLE}
       WHERE account_id = $1
-        AND sample_ended_at >= now() - interval '7 days'
+        AND (
+          ($2::timestamptz IS NOT NULL AND sample_ended_at >= $2::timestamptz AND sample_ended_at < $3::timestamptz)
+          OR ($4::timestamptz IS NOT NULL AND sample_ended_at >= $4::timestamptz AND sample_ended_at < $5::timestamptz)
+        )
     `,
-    [opts.account_id],
+    [
+      opts.account_id,
+      window5h?.starts_at ?? null,
+      window5h?.resets_at ?? null,
+      window7d?.starts_at ?? null,
+      window7d?.resets_at ?? null,
+    ],
   );
   const managed_cpu_5h_seconds = normalizeCpuSeconds(rows[0]?.seconds_5h);
   const managed_cpu_7d_seconds = normalizeCpuSeconds(rows[0]?.seconds_7d);
-  const [managed_cpu_5h_reset_at, managed_cpu_7d_reset_at] = await Promise.all([
-    getManagedCpuWindowResetAt({
-      account_id: opts.account_id,
-      period: "5 hours",
-    }),
-    getManagedCpuWindowResetAt({
-      account_id: opts.account_id,
-      period: "7 days",
-    }),
-  ]);
+  const managed_cpu_5h_reset_at = window5h?.resets_at;
+  const managed_cpu_7d_reset_at = window7d?.resets_at;
 
   return {
     managed_cpu_5h_seconds,
@@ -190,6 +218,8 @@ export async function getManagedCpuUsageForAccount(opts: {
       typeof opts.limit7d === "number" && Number.isFinite(opts.limit7d)
         ? opts.limit7d - managed_cpu_7d_seconds
         : undefined,
+    managed_cpu_5h_starts_at: window5h?.starts_at,
+    managed_cpu_7d_starts_at: window7d?.starts_at,
     managed_cpu_5h_reset_at,
     managed_cpu_7d_reset_at,
     managed_cpu_5h_reset_in:
@@ -213,35 +243,6 @@ export async function getManagedCpuUsageForAccount(opts: {
         ? managed_cpu_7d_seconds > opts.limit7d
         : undefined,
   };
-}
-
-async function getManagedCpuWindowResetAt({
-  account_id,
-  period,
-}: {
-  account_id: string;
-  period: "5 hours" | "7 days";
-}): Promise<Date | undefined> {
-  const { rows } = await getPool("short").query<{
-    sample_ended_at?: string | Date;
-  }>(
-    `
-      SELECT sample_ended_at
-      FROM ${TABLE}
-      WHERE account_id = $1
-        AND sample_ended_at >= now() - interval '${period}'
-      ORDER BY sample_ended_at ASC
-      LIMIT 1
-    `,
-    [account_id],
-  );
-  const oldest = rows[0]?.sample_ended_at;
-  if (!oldest) return;
-  const oldestMs = new Date(oldest).getTime();
-  if (!Number.isFinite(oldestMs)) return;
-  const windowMs =
-    period === "5 hours" ? 5 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
-  return new Date(oldestMs + windowMs);
 }
 
 function formatDuration(ms: number): string {

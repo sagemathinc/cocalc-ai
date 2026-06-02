@@ -490,6 +490,8 @@ export interface MembershipUsageStatus {
   managed_egress_7d_bytes?: number;
   managed_egress_5h_remaining_bytes?: number;
   managed_egress_7d_remaining_bytes?: number;
+  managed_egress_5h_starts_at?: Date;
+  managed_egress_7d_starts_at?: Date;
   managed_egress_5h_reset_at?: Date;
   managed_egress_7d_reset_at?: Date;
   managed_egress_5h_reset_in?: string;
@@ -503,6 +505,8 @@ export interface MembershipUsageStatus {
   managed_cpu_7d_seconds?: number;
   managed_cpu_5h_remaining_seconds?: number;
   managed_cpu_7d_remaining_seconds?: number;
+  managed_cpu_5h_starts_at?: Date;
+  managed_cpu_7d_starts_at?: Date;
   managed_cpu_5h_reset_at?: Date;
   managed_cpu_7d_reset_at?: Date;
   managed_cpu_5h_reset_in?: string;
@@ -764,6 +768,26 @@ export interface RevokeAbuseReviewAnnotationQuery {
   revoked_reason?: string;
 }
 
+export type MembershipUsageWindowResetTarget = "5h" | "7d" | "all";
+
+export interface AdminResetMembershipUsageWindowsQuery {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  window?: MembershipUsageWindowResetTarget;
+  reason?: string;
+}
+
+export interface AccountUsageWindowEpoch {
+  scope: "membership";
+  window: "5h" | "7d";
+  epoch: number;
+}
+
+export interface AdminResetMembershipUsageWindowsResult {
+  windows: AccountUsageWindowEpoch[];
+}
+
 export interface ManagedEgressAdminHistoryQuery {
   account_id?: string;
   start?: string | Date;
@@ -779,6 +803,8 @@ export interface AIUsageWindowStatus {
   used: number;
   limit?: number;
   remaining?: number;
+  starts_at?: Date;
+  resets_at?: Date;
   reset_at?: Date;
   reset_in?: string;
 }
@@ -974,6 +1000,9 @@ export interface Purchases {
   revokeAbuseReviewAnnotation: (
     opts?: RevokeAbuseReviewAnnotationQuery,
   ) => Promise<AbuseReviewAnnotation>;
+  adminResetMembershipUsageWindows: (
+    opts?: AdminResetMembershipUsageWindowsQuery,
+  ) => Promise<AdminResetMembershipUsageWindowsResult>;
 }
 
 export const purchases = {
@@ -1008,4 +1037,5 @@ export const purchases = {
   createAbuseReviewAnnotation: authFirst,
   listAbuseReviewAnnotations: authFirst,
   revokeAbuseReviewAnnotation: authFirst,
+  adminResetMembershipUsageWindows: authFirst,
 };

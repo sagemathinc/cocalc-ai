@@ -1,5 +1,9 @@
 import getPool, { CacheTime } from "@cocalc/database/pool";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import {
+  getActiveAccountUsageWindow,
+  type AccountUsageWindow,
+} from "@cocalc/server/membership/usage-windows";
 import { AI_USAGE_UNITS_PER_DOLLAR } from "./usage-units";
 import isValidAccount from "../accounts/is-valid-account";
 
@@ -8,6 +12,8 @@ export interface AIUsageWindowStatus {
   used: number;
   limit?: number;
   remaining?: number;
+  starts_at?: Date;
+  resets_at?: Date;
   reset_at?: Date;
   reset_in?: string;
 }
@@ -71,17 +77,34 @@ async function getUsageWindow({
   limit?: number;
   cache?: CacheTime;
 }): Promise<AIUsageWindowStatus> {
-  const used = await recentUsageUnits({
-    period,
-    account_id,
-    analytics_cookie,
-    cache,
-  });
-  const reset_at = await getWindowResetAt({
-    period,
-    account_id,
-    analytics_cookie,
-  });
+  const activeWindow = account_id
+    ? await getActiveAccountUsageWindow({
+        account_id,
+        window,
+      })
+    : undefined;
+  const used =
+    account_id != null
+      ? activeWindow
+        ? await recentUsageUnitsInFixedWindow({
+            account_id,
+            usageWindow: activeWindow,
+            cache,
+          })
+        : 0
+      : await recentUsageUnits({
+          period,
+          analytics_cookie,
+          cache,
+        });
+  const reset_at =
+    activeWindow?.resets_at ??
+    (account_id
+      ? undefined
+      : await getWindowResetAt({
+          period,
+          analytics_cookie,
+        }));
   const remaining =
     limit != null && Number.isFinite(limit)
       ? Math.max(0, limit - used)
@@ -94,9 +117,32 @@ async function getUsageWindow({
     used,
     limit,
     remaining,
+    starts_at: activeWindow?.starts_at,
+    resets_at: activeWindow?.resets_at,
     reset_at,
     reset_in: reset_in && reset_in.length > 0 ? reset_in : undefined,
   };
+}
+
+async function recentUsageUnitsInFixedWindow({
+  account_id,
+  usageWindow,
+  cache,
+}: {
+  account_id: string;
+  usageWindow: AccountUsageWindow;
+  cache?: CacheTime;
+}): Promise<number> {
+  const pool = getPool(cache);
+  const { rows } = await pool.query(
+    `SELECT SUM(COALESCE(usage_units, 0)) AS usage
+     FROM ai_usage_log
+     WHERE account_id=$1
+       AND time >= $2
+       AND time < $3`,
+    [account_id, usageWindow.starts_at, usageWindow.resets_at],
+  );
+  return parseInt(rows[0]?.["usage"] ?? 0);
 }
 
 async function recentUsageUnits({
