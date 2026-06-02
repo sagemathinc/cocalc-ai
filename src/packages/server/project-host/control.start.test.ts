@@ -480,6 +480,7 @@ describe("startProjectOnHost placement", () => {
       users: { owner: { group: "owner" } },
       image: "sagemathinc/sagemath-x86_64:10.7",
       start: false,
+      ensure_volume: false,
       authorized_keys: "ssh-ed25519 AAAATEST user@test",
       run_quota: {},
     });
@@ -597,6 +598,7 @@ describe("startProjectOnHost placement", () => {
         users: { owner: { group: "owner" } },
         image: "cocalc.local/rootfs/release",
         start: false,
+        ensure_volume: false,
         authorized_keys: "ssh-ed25519 AAAATEST user@test",
         run_quota: {},
       },

@@ -890,6 +890,8 @@ export interface CreateProjectOptions {
   region?: string;
   // start running the moment the project is created -- uses more resources, but possibly better user experience
   start?: boolean;
+  // Internal project-host control option: when false, only register metadata.
+  ensure_volume?: boolean;
 
   // admins can specify the project_id - nobody else can -- useful for debugging.
   project_id?: string;

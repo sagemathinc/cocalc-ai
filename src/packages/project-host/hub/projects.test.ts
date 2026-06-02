@@ -22,6 +22,7 @@ const callHub = jest.fn();
 const getLocalHostId = jest.fn(() => "host-1");
 const getMasterConatClient = jest.fn();
 const fileServerCreateBackup = jest.fn();
+const ensureVolume = jest.fn();
 const getVolume = jest.fn(async () => ({ path: "/mnt/cocalc/project-test" }));
 const resolveProjectContainerPath = jest.fn(async (_project_id, p) => p);
 const getChatStoreStats = jest.fn();
@@ -91,7 +92,7 @@ jest.mock("../file-server", () => ({
   writeManagedAuthorizedKeys: (...args: any[]) =>
     writeManagedAuthorizedKeys(...args),
   getVolume: (...args: any[]) => getVolume(...args),
-  ensureVolume: jest.fn(),
+  ensureVolume: (...args: any[]) => ensureVolume(...args),
   getMountPoint: jest.fn(() => "/mnt/cocalc"),
   resolveProjectContainerPath: (...args: any[]) =>
     resolveProjectContainerPath(...args),
@@ -359,6 +360,25 @@ describe("project host start ACP rehydrate ordering", () => {
     expect(runnerApi.start).not.toHaveBeenCalled();
   });
 
+  it("can register project metadata without materializing storage", async () => {
+    const runnerApi = {
+      start: jest.fn(),
+      stop: jest.fn(),
+    } as any;
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.createProject({
+      project_id,
+      start: false,
+      ensure_volume: false,
+    });
+
+    expect(ensureVolume).not.toHaveBeenCalled();
+    expect(runnerApi.start).not.toHaveBeenCalled();
+  });
+
   it("rehydrates ACP automations only after runner start on createProject when start is true", async () => {
     const order: string[] = [];
     const runnerApi = {
@@ -463,7 +483,7 @@ describe("project host start ACP rehydrate ordering", () => {
         start: true,
       }),
     ).rejects.toThrow(
-      "invalid rootfs OCI image 'ubuntu26.04'; use a valid image reference such as 'ubuntu:26.04'",
+      "invalid rootfs OCI image 'ubuntu26.04'; use a valid image reference such as 'buildpack-deps:26.04'",
     );
 
     expect(runnerApi.start).not.toHaveBeenCalled();
@@ -510,7 +530,7 @@ describe("project host start ACP rehydrate ordering", () => {
     wireProjectsApi(runnerApi);
 
     await expect(hubApi.projects.start({ project_id })).rejects.toThrow(
-      "invalid rootfs OCI image 'ubuntu26.04'; use a valid image reference such as 'ubuntu:26.04'",
+      "invalid rootfs OCI image 'ubuntu26.04'; use a valid image reference such as 'buildpack-deps:26.04'",
     );
 
     expect(runnerApi.start).not.toHaveBeenCalled();

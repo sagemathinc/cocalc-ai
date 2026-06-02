@@ -702,6 +702,7 @@ async function ensurePlacement(
     title: meta.title,
     users: meta.users,
     image: meta.image,
+    ensure_volume: false,
     // Register the project on the chosen host first, then persist placement
     // before doing any long-running runtime start. Large OCI image pulls can
     // take minutes, and they must happen on the explicit startProject RPC with

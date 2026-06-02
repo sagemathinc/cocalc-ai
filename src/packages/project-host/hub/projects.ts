@@ -1218,7 +1218,9 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       authorized_keys: (opts as any).authorized_keys,
     });
 
-    await ensureVolume(project_id);
+    if (opts.ensure_volume !== false || opts.start) {
+      await ensureVolume(project_id);
+    }
 
     if (opts.start) {
       const activity_id = `create-start:${project_id}`;
