@@ -793,10 +793,10 @@ function coalesceFileReads(entries: ActivityEntry[]): ActivityEntry[] {
   return merged;
 }
 
-// Codex "exec" can emit separate reasoning/agent items that are chunks of one
-// message, especially under load. Do not blindly turn each chunk boundary into
-// a paragraph. Keep explicit blank lines and obvious markdown section starts,
-// but otherwise join adjacent chunks as inline text.
+// Codex "exec" emits separate reasoning/agent items that are often meant to be read
+// as one block, but adjacent fragments sometimes lose blank lines (e.g., bold headers
+// run into the previous paragraph). Coalescing adjacent text entries with \n\n keeps
+// the original content while restoring readable paragraph breaks.
 function coalesceTextEntries(entries: ActivityEntry[]): ActivityEntry[] {
   const merged: ActivityEntry[] = [];
   for (const entry of entries) {
@@ -817,7 +817,11 @@ function coalesceTextEntries(entries: ActivityEntry[]): ActivityEntry[] {
             : undefined;
         merged[merged.length - 1] = {
           ...last,
-          text: progressive ?? mergeAdjacentActivityText(lastText, nextText),
+          text:
+            progressive ??
+            (lastText && nextText
+              ? `${lastText}\n\n${nextText}`
+              : lastText || nextText),
           delta: last.delta === true || entry.delta === true,
         };
         continue;
@@ -826,110 +830,6 @@ function coalesceTextEntries(entries: ActivityEntry[]): ActivityEntry[] {
     merged.push(entry);
   }
   return merged;
-}
-
-function mergeAdjacentActivityText(
-  previousText: string,
-  nextText: string,
-): string {
-  if (!previousText || !nextText) return previousText || nextText;
-  const separator = activityTextJoinSeparator(previousText, nextText);
-  if (!separator) return previousText + nextText;
-  const left = previousText.replace(/\s+$/, "");
-  const right = nextText.replace(/^\s+/, "");
-  return `${left}${separator}${right}`;
-}
-
-function activityTextJoinSeparator(
-  previousText: string,
-  nextText: string,
-): "" | " " | "\n\n" {
-  const boundary = `${previousText.slice(-4)}${nextText.slice(0, 4)}`;
-  if (/\n\s*\n/.test(boundary)) return "\n\n";
-  if (hasOpenMarkdownCodeFence(previousText)) return "";
-
-  const left = previousText.replace(/\s+$/, "");
-  const right = nextText.replace(/^\s+/, "");
-  if (!left || !right) return "";
-  if (needsActivityParagraphBoundary(left, right)) return "\n\n";
-  if (needsActivitySpaceBoundary(left, right)) return " ";
-  return "";
-}
-
-function hasOpenMarkdownCodeFence(text: string): boolean {
-  let backticks = 0;
-  for (let i = 0; i < text.length; i += 1) {
-    if (text[i] !== "`") continue;
-    if (i > 0 && text[i - 1] === "\\") continue;
-    backticks += 1;
-  }
-  return backticks % 2 === 1;
-}
-
-function needsActivityParagraphBoundary(left: string, right: string): boolean {
-  if (!/[.!?]$/.test(left)) return false;
-  if (isLikelyMarkdownSectionStart(right)) return true;
-  if (isLikelyCompleteSentenceParagraph(right)) return true;
-  if (left.length < 60 || right.length < 30) return false;
-  if (!/^(?:[#>*-]|\d+\.|[A-Z`])/.test(right)) return false;
-  return true;
-}
-
-function isLikelyCompleteSentenceParagraph(text: string): boolean {
-  if (!/^(?:[A-Z`"]|[#>*-]|\d+\.)/.test(text)) return false;
-  return /[.!?][)"'`*]*$/.test(text);
-}
-
-function isLikelyMarkdownSectionStart(text: string): boolean {
-  if (/^(?:[#>*-]|\d+\.)/.test(text)) return true;
-  if (/^\*{1,2}\s*[A-Z`#\d]/.test(text)) return true;
-  if (/^_{1,2}\s*[A-Z`#\d]/.test(text)) return true;
-  if (/^`\s*[A-Z#\d]/.test(text)) return true;
-  return false;
-}
-
-function needsActivitySpaceBoundary(left: string, right: string): boolean {
-  const leftLast = left[left.length - 1];
-  const rightFirst = right[0];
-  if (leftLast === "]" && rightFirst === "(") return false;
-  if (/\d\.$/.test(left) && /^\d/.test(right)) return false;
-  if (shouldPreservePathLikeDotJoin(left, right)) return false;
-  if (
-    endsWithMarkdownEmphasisOpener(left) &&
-    /[A-Za-z0-9`"'([{]/.test(rightFirst)
-  ) {
-    return false;
-  }
-  if (
-    /[A-Za-z0-9)\]}`"'*.,!?;:]/.test(leftLast) &&
-    /[A-Za-z0-9`"'([{]/.test(rightFirst)
-  ) {
-    return true;
-  }
-  return false;
-}
-
-function endsWithMarkdownEmphasisOpener(text: string): boolean {
-  const match = text.match(/(\*{1,2}|_{1,2})$/);
-  if (!match) return false;
-  const marker = match[1];
-  const before = text.slice(0, -marker.length).slice(-1);
-  return before === "" || /[\s([{'"`]/.test(before);
-}
-
-function shouldPreservePathLikeDotJoin(left: string, right: string): boolean {
-  if (!left.endsWith(".") || !/^[A-Za-z0-9_~/-]/.test(right)) {
-    return false;
-  }
-  const beforeDot = left.slice(-2, -1);
-  if (beforeDot === "" || /[\s([{/\\'"`]/.test(beforeDot)) {
-    return true;
-  }
-  const leftToken = left.match(/([^\s]+)\.$/)?.[1] ?? "";
-  if (!leftToken || leftToken.includes(".")) return false;
-  if (/[\/[`(_-]/.test(leftToken)) return true;
-  if (/[A-Z]/.test(leftToken)) return true;
-  return false;
 }
 
 function coalesceStatusEntries(entries: ActivityEntry[]): ActivityEntry[] {

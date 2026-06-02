@@ -11,6 +11,7 @@ import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import {
   CHAT_THREAD_META_ROW_DATE,
   getLiveResponseBlocks,
+  getLiveResponseMarkdown,
   threadConfigSenderId,
 } from "@cocalc/chat";
 import {
@@ -1126,11 +1127,6 @@ describe("ChatStreamWriter", () => {
         }),
       }),
       expect.objectContaining({
-        type: "status",
-        state: "running",
-        seq: 2,
-      }),
-      expect.objectContaining({
         type: "event",
         seq: 4,
         event: expect.objectContaining({
@@ -1168,6 +1164,146 @@ describe("ChatStreamWriter", () => {
         state: undefined,
       },
     ]);
+    (writer as any).dispose?.(true);
+  });
+
+  it("publishes cumulative preview snapshots for raw agent deltas", async () => {
+    const previewPayloads: Array<AcpStreamMessage | AcpStreamMessage[]> = [];
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+      livePreviewStreamFactory: () =>
+        ({
+          publish: async (payload: AcpStreamMessage | AcpStreamMessage[]) => {
+            previewPayloads.push(payload);
+            return { seq: previewPayloads.length, time: Date.now() };
+          },
+          close: () => {},
+        }) as any,
+    });
+
+    await writer.handle({
+      type: "status",
+      state: "running",
+      threadId: "thread-0",
+      seq: 0,
+      time: 1000,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "event",
+      event: {
+        type: "message",
+        text: "I'm going to inspect ",
+        delta: true,
+      } as any,
+      seq: 1,
+      time: 1100,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "event",
+      event: {
+        type: "thinking",
+        text: "Checking implementation details.",
+      } as any,
+      seq: 2,
+      time: 1200,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "event",
+      event: {
+        type: "message",
+        text: "the preview stream path ",
+        delta: true,
+      } as any,
+      seq: 3,
+      time: 1300,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "event",
+      event: {
+        type: "file",
+        path: "src/example.ts",
+        operation: "read",
+      } as any,
+      seq: 4,
+      time: 1400,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "event",
+      event: {
+        type: "message",
+        text: "and fix it.",
+        delta: true,
+      } as any,
+      seq: 5,
+      time: 1500,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "summary",
+      finalResponse: "I'm going to inspect the preview stream path and fix it.",
+      seq: 6,
+      time: 1600,
+    } as AcpStreamMessage);
+    await flush(writer);
+    await writer.waitForLivePreviewFlush();
+
+    const previewEvents = flattenLivePayloads(previewPayloads);
+    expect(
+      previewEvents.filter(
+        (event) => event.type === "event" && event.event.type === "message",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        type: "event",
+        seq: 1,
+        event: expect.objectContaining({
+          type: "message",
+          text: "I'm going to inspect ",
+          delta: false,
+        }),
+      }),
+      expect.objectContaining({
+        type: "event",
+        seq: 3,
+        event: expect.objectContaining({
+          type: "message",
+          text: "I'm going to inspect the preview stream path ",
+          delta: false,
+        }),
+      }),
+      expect.objectContaining({
+        type: "event",
+        seq: 5,
+        event: expect.objectContaining({
+          type: "message",
+          text: "I'm going to inspect the preview stream path and fix it.",
+          delta: false,
+        }),
+      }),
+    ]);
+    expect(
+      previewEvents.some(
+        (event) => event.type === "event" && event.event.type === "thinking",
+      ),
+    ).toBe(false);
+    expect(
+      previewEvents.some(
+        (event) => event.type === "event" && event.event.type === "file",
+      ),
+    ).toBe(false);
+    expect(
+      previewEvents.some((event) => event.type === "status" && event.seq === 2),
+    ).toBe(false);
+    expect(getLiveResponseMarkdown(previewEvents)).toBe(
+      "I'm going to inspect the preview stream path and fix it.",
+    );
     (writer as any).dispose?.(true);
   });
 

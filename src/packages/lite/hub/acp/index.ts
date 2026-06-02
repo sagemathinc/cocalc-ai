@@ -102,6 +102,7 @@ import {
   getLiveResponseMarkdown,
   getLatestMessageText,
   getLatestSummaryText,
+  mergeProgressiveMessageText,
 } from "@cocalc/chat";
 import {
   resolveInlineCodeLinks,
@@ -1612,7 +1613,7 @@ export class ChatStreamWriter {
     AStream<AcpStreamMessage | AcpStreamMessage[]>
   >;
   private livePreviewBatcher!: AdaptiveAsyncBatcher<AcpStreamMessage>;
-  private livePreviewNeedsBoundary = false;
+  private livePreviewText = "";
   private client: ConatClient;
   private timeTravel?: AgentTimeTravelRecorder;
   private integritySnapshot: ChatIntegritySnapshot = {
@@ -3380,36 +3381,57 @@ export class ChatStreamWriter {
   private publishLivePreview(event: AcpStreamMessage): void {
     if (this.closed) return;
     if (event.type === "summary" || event.type === "error") {
-      this.livePreviewNeedsBoundary = false;
       this.livePreviewBatcher.add(event, { flush: true });
       return;
     }
     if (event.type === "status") {
-      this.livePreviewNeedsBoundary = false;
       this.livePreviewBatcher.add(event, { flush: true });
       return;
     }
     // The preview stream is the small, authoritative source for inline chat
-    // rendering. Keep it to actual agent output plus lightweight ordering
-    // boundaries; non-message payloads belong in the full activity log.
+    // rendering. Keep the full log as raw ACP events, but publish preview
+    // messages as cumulative agent-text snapshots so the frontend never has to
+    // infer paragraph boundaries from raw transport chunk boundaries.
     if (event.type === "event" && event.event.type === "message") {
-      this.livePreviewNeedsBoundary = true;
-      this.livePreviewBatcher.add(event);
+      const preview = this.buildLivePreviewMessage(event);
+      if (preview) {
+        this.livePreviewBatcher.add(preview);
+      }
       return;
     }
-    if (event.type === "event" && this.livePreviewNeedsBoundary) {
-      this.livePreviewNeedsBoundary = false;
-      this.livePreviewBatcher.add(
-        {
-          type: "status",
-          state: "running",
-          threadId: this.threadId ?? undefined,
-          seq: event.seq,
-          time: event.time,
-        },
-        { flush: true },
-      );
+  }
+
+  private buildLivePreviewMessage(
+    event: AcpStreamMessage,
+  ): AcpStreamMessage | undefined {
+    if (event.type !== "event" || event.event.type !== "message") {
+      return undefined;
     }
+    const text = event.event.text;
+    if (typeof text !== "string" || text.length === 0) return undefined;
+    if (event.event.delta === true) {
+      this.livePreviewText += text;
+    } else {
+      const progressive = mergeProgressiveMessageText(
+        this.livePreviewText,
+        text,
+        {
+          previousHasDelta: false,
+          nextIsDelta: false,
+        },
+      );
+      this.livePreviewText =
+        progressive ??
+        (this.livePreviewText ? `${this.livePreviewText}\n\n${text}` : text);
+    }
+    return {
+      ...event,
+      event: {
+        ...event.event,
+        text: this.livePreviewText,
+        delta: false,
+      },
+    };
   }
 
   private async waitForLiveLogFlush(): Promise<void> {
