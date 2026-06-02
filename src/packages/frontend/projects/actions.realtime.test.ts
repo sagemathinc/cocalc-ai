@@ -190,6 +190,79 @@ describe("ProjectsActions realtime feed", () => {
     expect(projectMap.getIn(["project-1", "last_edited"])).toBeInstanceOf(Date);
   });
 
+  it("reconciles one projected project row without bootstrapping the full account list", async () => {
+    projectMap = ImmutableMap<string, any>([
+      [
+        "project-1",
+        ImmutableMap({
+          project_id: "project-1",
+          title: "Targeted Project",
+          state: ImmutableMap({
+            state: "starting",
+            time: new Date("2026-04-05T03:01:00.000Z"),
+          }),
+        }),
+      ],
+    ]);
+    mockedWebappClient.async_query.mockResolvedValueOnce({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id: "project-1",
+            title: "Targeted Project",
+            description: "targeted reconcile",
+            theme: null,
+            host_id: "host-1",
+            owning_bay_id: "bay-0",
+            users_summary: {
+              "acct-1": { group: "owner" },
+            },
+            state_summary: { state: "running" },
+            last_activity_at: "2026-04-05T03:00:00.000Z",
+            last_edited: "2026-04-05T03:00:00.000Z",
+            last_backup: null,
+            updated_at: "2026-04-05T03:00:00.000Z",
+            is_hidden: false,
+          },
+        ],
+      },
+    });
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((state) => {
+        projectMap = state.projects.project_map;
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    await (actions as any).loadProjectedProjectForCurrentAccount("project-1");
+
+    expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
+      query: {
+        account_project_index: [
+          expect.objectContaining({
+            account_id: "acct-1",
+            project_id: "project-1",
+          }),
+        ],
+      },
+      options: [{ limit: 1 }],
+    });
+    expect(projectMap.getIn(["project-1", "title"])).toBe("Targeted Project");
+    expect(projectMap.getIn(["project-1", "state", "state"])).toBe("running");
+  });
+
   it("replaces project users from realtime upserts instead of preserving removed members", async () => {
     projectMap = ImmutableMap<string, any>([
       [

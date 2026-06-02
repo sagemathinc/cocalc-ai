@@ -27,6 +27,7 @@ jest.mock("@cocalc/frontend/alerts", () => ({
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     account_id: "acct-1",
+    is_signed_in: jest.fn(() => true),
     server_time: jest.fn(() => new Date("2026-04-25T16:00:00.000Z")),
     project_client: {
       touch_project: jest.fn(async () => undefined),
@@ -146,7 +147,12 @@ describe("ProjectsActions archive flow", () => {
       trackStartOp,
     };
     const redux = {
-      getStore: jest.fn(() => ({})),
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return {};
+      }),
       _set_state: jest.fn(),
       removeActions: jest.fn(),
       getProjectActions: jest.fn(() => projectActions),
@@ -165,6 +171,7 @@ describe("ProjectsActions archive flow", () => {
       set_active_tab,
       trackBackupOp,
       trackStartOp,
+      redux,
     };
   }
 
@@ -449,5 +456,51 @@ describe("ProjectsActions archive flow", () => {
       expect.objectContaining({ op_id: "start-op-1" }),
     );
     expect(setState).toHaveBeenCalledWith({ control_error: "" });
+  });
+
+  it("optimistically marks a started project as starting and schedules targeted reconciliation", async () => {
+    jest.useFakeTimers();
+    try {
+      configureProject({
+        state: "opened",
+        lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+        hostId: "host-1",
+      });
+      const { actions, redux } = makeActions();
+      jest
+        .spyOn(actions, "ensure_host_info" as any)
+        .mockResolvedValue(undefined as any);
+      jest
+        .spyOn(actions as any, "project_log")
+        .mockImplementation(async () => {});
+      const reconcile = jest
+        .spyOn(actions as any, "loadProjectedProjectForCurrentAccount")
+        .mockResolvedValue(undefined);
+
+      const started = await actions.start_project(project_id);
+
+      expect(started).toBe(true);
+      expect(
+        redux._set_state.mock.calls.some(
+          ([state]) =>
+            state.projects?.project_map?.getIn?.([
+              project_id,
+              "state",
+              "state",
+            ]) === "starting",
+        ),
+      ).toBe(true);
+      expect(reconcile).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(1_000);
+      await Promise.resolve();
+      expect(reconcile).toHaveBeenCalledWith(project_id);
+
+      jest.advanceTimersByTime(4_000);
+      await Promise.resolve();
+      expect(reconcile).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
