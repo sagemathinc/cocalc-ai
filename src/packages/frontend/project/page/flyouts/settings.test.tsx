@@ -179,6 +179,9 @@ jest.mock("@cocalc/frontend/project/settings/project-capabilites", () => ({
 jest.mock("@cocalc/frontend/project/settings/project-control", () => ({
   ProjectControl: () => <div>ProjectControl</div>,
 }));
+jest.mock("@cocalc/frontend/project/settings/upgrade-usage", () => ({
+  UpgradeUsage: () => <div>UpgradeUsage</div>,
+}));
 jest.mock("@cocalc/frontend/project/settings/restart-project", () => ({
   RestartProject: () => <button type="button">Restart</button>,
 }));
@@ -269,6 +272,19 @@ describe("SettingsFlyout", () => {
 
     expect(screen.getByText("Network")).toBeTruthy();
     expect(screen.getByText("ManagedEgress")).toBeTruthy();
+  });
+
+  it("includes runtime quota usage in flyout settings", () => {
+    render(
+      <SettingsFlyout
+        project_id="project-1"
+        wrap={(content) => <>{content}</>}
+      />,
+    );
+
+    expect(screen.getByText("Runtime")).toBeTruthy();
+    expect(screen.getByText("ProjectControl")).toBeTruthy();
+    expect(screen.getByText("UpgradeUsage")).toBeTruthy();
   });
 
   it("includes collaborator management in flyout settings", () => {

@@ -28,6 +28,7 @@ import { RecoveryPanel } from "./recovery-panel";
 import type { ProjectSettingsNavItem } from "./section-nav";
 import { SSHPanel } from "./ssh";
 import type { Project } from "./types";
+import { UpgradeUsage } from "./upgrade-usage";
 
 const CourseRuntimeSponsorSummary = lazy(async () => {
   const module = await import("./runtime-sponsor-controls");
@@ -155,12 +156,19 @@ export function useProjectSettingsSections({
       description:
         "Control the active project process and review host diagnostics.",
       children: (
-        <ProjectControl
-          project={project}
-          mode={componentMode}
-          showRootFilesystemImage={false}
-          embedded={embeddedInSection}
-        />
+        <Space direction="vertical" size={sectionGap} style={{ width: "100%" }}>
+          <ProjectControl
+            project={project}
+            mode={componentMode}
+            showRootFilesystemImage={false}
+            embedded={embeddedInSection}
+          />
+          <UpgradeUsage
+            project_id={project_id}
+            project={project}
+            mode={flyout ? "flyout" : "project"}
+          />
+        </Space>
       ),
     },
   ];
