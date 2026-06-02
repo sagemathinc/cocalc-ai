@@ -73,4 +73,18 @@ describe("PathNavigator", () => {
       screen.getByRole("button", { name: "/scratch" }),
     ).toBeInTheDocument();
   });
+
+  it("renders absolute snapshot paths relative to Home", () => {
+    render(
+      <PathNavigator
+        project_id="project-1"
+        currentPath="/home/user/.snapshots"
+      />,
+    );
+
+    expect(screen.getByText("Home")).toBeInTheDocument();
+    expect(screen.getByText(".snapshots")).toBeInTheDocument();
+    expect(screen.queryByText("home")).not.toBeInTheDocument();
+    expect(screen.queryByText("user")).not.toBeInTheDocument();
+  });
 });
