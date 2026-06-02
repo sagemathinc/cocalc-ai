@@ -211,7 +211,10 @@ function renderResetTimes({
   });
 }
 
-function useAccountUsageOverview(account_id?: string): UsageOverviewState {
+function useAccountUsageOverview(
+  account_id?: string,
+  refreshToken = 0,
+): UsageOverviewState {
   const [overview, setOverview] = useState<AccountUsageOverview | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -248,7 +251,7 @@ function useAccountUsageOverview(account_id?: string): UsageOverviewState {
     return () => {
       canceled = true;
     };
-  }, [account_id]);
+  }, [account_id, refreshToken]);
 
   return { error, loading, overview };
 }
@@ -704,19 +707,25 @@ function renderAlertsGrid({
 }
 
 function UsageLimitsSettingsContent(): ReactElement | null {
-  const { account_id, details, error, loading, membership } =
+  const { account_id, details, error, loading, membership, refresh } =
     useMembershipSettingsData();
+  const [overviewRefreshToken, setOverviewRefreshToken] = useState(0);
   const {
     error: overviewError,
     loading: overviewLoading,
     overview,
-  } = useAccountUsageOverview(account_id);
+  } = useAccountUsageOverview(account_id, overviewRefreshToken);
   const { token } = theme.useToken();
 
   if (!account_id) return null;
   if (loading) return <Loading />;
   if (error) return <Alert type="error" title={error} />;
   if (!membership) return null;
+
+  const refreshUsage = () => {
+    refresh();
+    setOverviewRefreshToken((value) => value + 1);
+  };
 
   const entitlements = normalizeRecord(membership.entitlements);
   const projectDefaults = normalizeRecord(entitlements.project_defaults);
@@ -844,6 +853,17 @@ function UsageLimitsSettingsContent(): ReactElement | null {
 
   return (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+      <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
+        <Text type="secondary">
+          Last checked{" "}
+          {overview?.collected_at
+            ? formatResetAt(overview.collected_at)
+            : "now"}
+        </Text>
+        <Button onClick={refreshUsage} loading={loading || overviewLoading}>
+          Refresh usage
+        </Button>
+      </Space>
       {overviewError ? (
         <Alert
           type="warning"

@@ -14,6 +14,7 @@ import type {
 } from "@cocalc/conat/hub/api/purchases";
 
 import type { MembershipTierWithPresentation } from "./membership-tier-benefits";
+import { dispatchMembershipDetailsRefreshed } from "./membership-usage-events";
 
 export interface MembershipTier extends MembershipTierWithPresentation {
   id: string;
@@ -93,9 +94,13 @@ export function useMembershipSettingsData(): {
             }),
           ]);
         if (!isMounted()) return;
+        const nextDetails = (detailsResult as MembershipDetails) ?? null;
         setMembership(membershipResult as MembershipResolution);
         setTiers((tiersResult as MembershipTiersResponse)?.tiers ?? []);
-        setDetails((detailsResult as MembershipDetails) ?? null);
+        setDetails(nextDetails);
+        if (nextDetails) {
+          dispatchMembershipDetailsRefreshed(nextDetails);
+        }
       } catch (err) {
         if (!isMounted()) return;
         setError(`${err}`);
@@ -144,9 +149,6 @@ export function useMembershipSettingsData(): {
 
   function refresh() {
     setRefreshToken((value) => value + 1);
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new Event("cocalc:membership-changed"));
-    }
   }
 
   return {
