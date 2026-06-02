@@ -466,8 +466,12 @@ Completed third slice:
 - restored the existing "Usage and Quotas" panel to the revamped project
   settings Runtime section, so the RAM/disk run-quota display is reachable in
   both the full settings page and the flyout;
+- cocalc-ai baseline RAM/disk quota rows now render even when the legacy
+  `kucalc` customize flag is disabled; only on-premises extras remain gated on
+  `kucalc=onprem`;
 - added regression coverage that the settings flyout includes the runtime quota
-  usage surface.
+  usage surface and that disabled legacy `kucalc` still shows RAM/disk quota
+  rows.
 
 After the editor is usable:
 
