@@ -3,28 +3,67 @@
 const { mkdirSync, writeFileSync, chmodSync } = require("node:fs");
 const { dirname, join } = require("node:path");
 
-const WORKSPACE_EXPORTS = {
-  "@cocalc/database/postgres/dev":
-    "packages/database/dist/postgres/dev.js",
-  "@cocalc/database/postgres/schema":
-    "packages/database/dist/postgres/schema/index.js",
-  "@cocalc/database/pool": "packages/database/dist/pool/index.js",
-  "@cocalc/database/postgres/project-hosts":
-    "packages/database/dist/postgres/project-hosts.js",
-  "@cocalc/server/auth/bootstrap-admin":
-    "packages/server/dist/auth/bootstrap-admin.js",
-  "@cocalc/server/project-host/bootstrap-token":
-    "packages/server/dist/project-host/bootstrap-token.js",
-};
+function requireFallback(err, fallbackPath) {
+  if (err?.code !== "MODULE_NOT_FOUND") {
+    throw err;
+  }
+  return require(join(process.cwd(), fallbackPath));
+}
 
-function requireWorkspace(spec) {
+function requireDatabaseDev() {
   try {
-    return require(spec);
+    return require("@cocalc/database/postgres/dev");
   } catch (err) {
-    if (err?.code !== "MODULE_NOT_FOUND" || WORKSPACE_EXPORTS[spec] == null) {
-      throw err;
-    }
-    return require(join(process.cwd(), WORKSPACE_EXPORTS[spec]));
+    return requireFallback(err, "packages/database/dist/postgres/dev.js");
+  }
+}
+
+function requireDatabaseSchema() {
+  try {
+    return require("@cocalc/database/postgres/schema");
+  } catch (err) {
+    return requireFallback(
+      err,
+      "packages/database/dist/postgres/schema/index.js",
+    );
+  }
+}
+
+function requireDatabasePool() {
+  try {
+    return require("@cocalc/database/pool");
+  } catch (err) {
+    return requireFallback(err, "packages/database/dist/pool/index.js");
+  }
+}
+
+function requireProjectHosts() {
+  try {
+    return require("@cocalc/database/postgres/project-hosts");
+  } catch (err) {
+    return requireFallback(
+      err,
+      "packages/database/dist/postgres/project-hosts.js",
+    );
+  }
+}
+
+function requireBootstrapAdmin() {
+  try {
+    return require("@cocalc/server/auth/bootstrap-admin");
+  } catch (err) {
+    return requireFallback(err, "packages/server/dist/auth/bootstrap-admin.js");
+  }
+}
+
+function requireBootstrapToken() {
+  try {
+    return require("@cocalc/server/project-host/bootstrap-token");
+  } catch (err) {
+    return requireFallback(
+      err,
+      "packages/server/dist/project-host/bootstrap-token.js",
+    );
   }
 }
 
@@ -52,29 +91,21 @@ async function main() {
     }
     process.env.PGUSER ??= "smc";
     process.env.PGDATABASE ??= "smc";
-    const { ensureLocalPostgres } = requireWorkspace(
-      "@cocalc/database/postgres/dev",
-    );
+    const { ensureLocalPostgres } = requireDatabaseDev();
     await ensureLocalPostgres({ enabled: true, logExports: false });
   } else if (process.env.COCALC_DB !== "pglite") {
     throw new Error("CoCalc Star requires COCALC_DB=pglite or local postgres");
   }
 
-  const { syncSchema } = requireWorkspace("@cocalc/database/postgres/schema");
-  const poolModule = requireWorkspace("@cocalc/database/pool");
+  const { syncSchema } = requireDatabaseSchema();
+  const poolModule = requireDatabasePool();
   const getPool = poolModule.default?.default ?? poolModule.default;
   if (typeof getPool !== "function") {
     throw new Error("database pool module did not export getPool");
   }
-  const {
-    upsertProjectHost,
-  } = requireWorkspace("@cocalc/database/postgres/project-hosts");
-  const {
-    ensureBootstrapAdminToken,
-  } = requireWorkspace("@cocalc/server/auth/bootstrap-admin");
-  const {
-    createProjectHostMasterConatToken,
-  } = requireWorkspace("@cocalc/server/project-host/bootstrap-token");
+  const { upsertProjectHost } = requireProjectHosts();
+  const { ensureBootstrapAdminToken } = requireBootstrapAdmin();
+  const { createProjectHostMasterConatToken } = requireBootstrapToken();
 
   await syncSchema();
 
