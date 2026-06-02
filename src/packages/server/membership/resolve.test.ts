@@ -4,6 +4,7 @@
  */
 
 import { before, after } from "@cocalc/server/test";
+import getPool from "@cocalc/database/pool";
 import { uuid } from "@cocalc/util/misc";
 import {
   resolveMembershipDetailsForAccount,
@@ -23,6 +24,13 @@ beforeAll(async () => {
 }, 15000);
 afterAll(after);
 
+async function makeTestAccountAdmin(account_id: string) {
+  await getPool("medium").query(
+    "UPDATE accounts SET groups=ARRAY['admin']::text[] WHERE account_id=$1",
+    [account_id],
+  );
+}
+
 describe("resolveMembershipForAccount", () => {
   const lowTier = `test-low-${uuid()}`;
   const highTier = `test-high-${uuid()}`;
@@ -30,6 +38,14 @@ describe("resolveMembershipForAccount", () => {
   beforeAll(async () => {
     await createTestMembershipTier({ id: lowTier, priority: 10 });
     await createTestMembershipTier({ id: highTier, priority: 20 });
+    await createTestMembershipTier({
+      id: "admin",
+      priority: 15,
+      usage_limits: {
+        max_projects: 99,
+        max_sponsored_running_projects: 99,
+      },
+    });
   });
 
   it("returns free when no membership subscription exists", async () => {
@@ -58,6 +74,19 @@ describe("resolveMembershipForAccount", () => {
     const result = await resolveMembershipForAccount(account_id);
     expect(result.class).toBe(highTier);
     expect(result.source).toBe("admin");
+  });
+
+  it("returns admin tier for users in the admin group", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    await makeTestAccountAdmin(account_id);
+
+    const result = await resolveMembershipForAccount(account_id);
+
+    expect(result.class).toBe("admin");
+    expect(result.source).toBe("admin");
+    expect(result.effective_limits?.max_projects).toBe(99);
+    expect(result.effective_limits?.max_sponsored_running_projects).toBe(99);
   });
 
   it("returns a granted membership when no subscription or admin assignment exists", async () => {
@@ -93,6 +122,18 @@ describe("resolveMembershipForAccount", () => {
       membership_class: lowTier,
     });
     const result = await resolveMembershipForAccount(account_id);
+    expect(result.class).toBe(highTier);
+    expect(result.source).toBe("subscription");
+  });
+
+  it("prefers a subscription over the admin group tier when the subscription has higher priority", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    await makeTestAccountAdmin(account_id);
+    await createTestMembershipSubscription(account_id, { class: highTier });
+
+    const result = await resolveMembershipForAccount(account_id);
+
     expect(result.class).toBe(highTier);
     expect(result.source).toBe("subscription");
   });
