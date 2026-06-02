@@ -20,7 +20,11 @@ import {
 } from "@cocalc/frontend/components";
 import { IntlMessage, isIntlMessage } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
-import { PROJECT_PEOPLE_DOCS_ACTION_EVENT } from "@cocalc/frontend/project/docs-actions";
+import {
+  PROJECT_PEOPLE_DOCS_ACTION_EVENT,
+  PROJECT_SECRETS_DOCS_ACTION_EVENT,
+  RUNTIME_IMAGE_DOCS_ACTION_EVENT,
+} from "@cocalc/frontend/project/docs-actions";
 import { RestartProject } from "@cocalc/frontend/project/settings/restart-project";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
 import { StopProject } from "@cocalc/frontend/project/settings/stop-project";
@@ -70,16 +74,40 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
   }, []);
 
   useEffect(() => {
-    const handleReveal = (event: Event) => {
+    const handlePeopleReveal = (event: Event) => {
       const detail = (event as CustomEvent<{ projectId?: string }>).detail;
       if (detail?.projectId !== project_id) return;
       setExpandedPanelsHandler(["people"]);
     };
-    window.addEventListener(PROJECT_PEOPLE_DOCS_ACTION_EVENT, handleReveal);
+    const handleEnvironmentReveal = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId?: string }>).detail;
+      if (detail?.projectId !== project_id) return;
+      setExpandedPanelsHandler(["environment"]);
+    };
+    window.addEventListener(
+      PROJECT_SECRETS_DOCS_ACTION_EVENT,
+      handleEnvironmentReveal,
+    );
+    window.addEventListener(
+      RUNTIME_IMAGE_DOCS_ACTION_EVENT,
+      handleEnvironmentReveal,
+    );
+    window.addEventListener(
+      PROJECT_PEOPLE_DOCS_ACTION_EVENT,
+      handlePeopleReveal,
+    );
     return () => {
       window.removeEventListener(
         PROJECT_PEOPLE_DOCS_ACTION_EVENT,
-        handleReveal,
+        handlePeopleReveal,
+      );
+      window.removeEventListener(
+        PROJECT_SECRETS_DOCS_ACTION_EVENT,
+        handleEnvironmentReveal,
+      );
+      window.removeEventListener(
+        RUNTIME_IMAGE_DOCS_ACTION_EVENT,
+        handleEnvironmentReveal,
       );
     };
   }, [project_id]);

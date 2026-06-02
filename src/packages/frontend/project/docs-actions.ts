@@ -459,7 +459,13 @@ function revealAppDocs({
   };
 }
 
-function revealProjectsList(projectId: string): DocsActionRevealResult {
+function revealProjectsList({
+  actionId,
+  projectId,
+}: {
+  actionId: DocsActionId;
+  projectId: string;
+}): DocsActionRevealResult {
   const pageActions = redux.getActions("page") as
     | {
         set_active_tab?: (
@@ -473,7 +479,7 @@ function revealProjectsList(projectId: string): DocsActionRevealResult {
     set_url_with_search("/projects", "");
   }
   return {
-    action_id: "projects.list.open",
+    action_id: actionId,
     opened: true,
     path: "/projects",
     project_id: projectId,
@@ -481,7 +487,13 @@ function revealProjectsList(projectId: string): DocsActionRevealResult {
   };
 }
 
-function revealProjectFiles(projectId: string): DocsActionRevealResult {
+function revealProjectFiles({
+  actionId,
+  projectId,
+}: {
+  actionId: DocsActionId;
+  projectId: string;
+}): DocsActionRevealResult {
   const pageActions = redux.getActions("page") as
     | {
         set_active_tab?: (
@@ -497,7 +509,7 @@ function revealProjectFiles(projectId: string): DocsActionRevealResult {
     set_url_with_search(`/projects/${projectId}/files`, "");
   }
   return {
-    action_id: "project.files.open",
+    action_id: actionId,
     opened: true,
     path: `/projects/${projectId}/files`,
     project_id: projectId,
@@ -561,6 +573,7 @@ function openSettingsPanel(projectId: string, panel: string): void {
     change_history: false,
     noFocus: true,
   });
+  actions?.setFlyoutExpanded?.("settings", true);
 }
 
 function revealProjectPeople(projectId: string): DocsActionRevealResult {
@@ -649,7 +662,7 @@ async function revealProjectSecrets(
     actionId: "settings.environment.secrets",
     dispatch: (requestId) => {
       openSettingsEnvironment(projectId);
-      dispatchProjectSecretsEvent(projectId, "project", requestId);
+      dispatchProjectSecretsEvent(projectId, "flyout", requestId);
     },
     projectId,
   });
@@ -674,7 +687,7 @@ async function revealRuntimeImage(
     actionId: "settings.runtime.rootfs",
     dispatch: (requestId) => {
       openSettingsEnvironment(projectId);
-      dispatchRuntimeImageEvent(projectId, "project", requestId);
+      dispatchRuntimeImageEvent(projectId, "flyout", requestId);
     },
     projectId,
   });
@@ -1227,26 +1240,31 @@ const DOCS_APP_ACTIONS: Record<string, DocsAppAction> = {
   },
   "projects.list.open": {
     id: "projects.list.open",
-    run: ({ projectId }) => revealProjectsList(projectId),
+    run: ({ projectId }) =>
+      revealProjectsList({ actionId: "projects.list.open", projectId }),
   },
   "projects.create.open": {
     id: "projects.create.open",
-    run: ({ projectId }) => revealProjectsList(projectId),
+    run: ({ projectId }) =>
+      revealProjectsList({ actionId: "projects.create.open", projectId }),
   },
   "project.files.open": {
     id: "project.files.open",
     isAvailable: ({ projectId }) => validateProjectId(projectId),
-    run: ({ projectId }) => revealProjectFiles(projectId),
+    run: ({ projectId }) =>
+      revealProjectFiles({ actionId: "project.files.open", projectId }),
   },
   "files.explorer.open": {
     id: "files.explorer.open",
     isAvailable: ({ projectId }) => validateProjectId(projectId),
-    run: ({ projectId }) => revealProjectFiles(projectId),
+    run: ({ projectId }) =>
+      revealProjectFiles({ actionId: "files.explorer.open", projectId }),
   },
   "files.git.open": {
     id: "files.git.open",
     isAvailable: ({ projectId }) => validateProjectId(projectId),
-    run: ({ projectId }) => revealProjectFiles(projectId),
+    run: ({ projectId }) =>
+      revealProjectFiles({ actionId: "files.git.open", projectId }),
   },
 };
 

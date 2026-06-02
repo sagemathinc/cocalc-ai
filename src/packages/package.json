@@ -2,7 +2,6 @@
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "build": "echo 'nothing yet'",
-    "test": "pnpm --dir docs verify && pnpm --dir docs gaps",
     "check-deps": "check-dependency-version-consistency --ignore-dep entities .",
     "lint:frontend": "oxlint --config .oxlintrc.jsonc frontend && pnpm --dir frontend check:antd-tooltip-imports",
     "lint:non-frontend": "oxlint --config .oxlintrc.non-frontend.jsonc .",

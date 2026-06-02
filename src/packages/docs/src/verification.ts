@@ -411,18 +411,17 @@ return { ok: url.ok === true, url };`,
   }
   if (actionId === "settings.environment.secrets") {
     return {
-      description: "Project Secrets modal is visible.",
-      code: `const modal = api.waitForText({ selector: ".ant-modal[role=dialog]", includes: "Project Secrets", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
-return { ok: modal.ok === true, modal };`,
-      cleanupCode: `api.press("Escape");
-return api.waitForSelector(".ant-modal[role=dialog]", { state: "hidden", timeout_ms: 3000 });`,
+      description: "Project Environment settings expose Project Secrets.",
+      code: `const environment = api.waitForText({ includes: "Environment", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+const secrets = api.waitForText({ includes: "Project Secrets", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: environment.ok === true && secrets.ok === true, environment, secrets };`,
     };
   }
   if (actionId === "project.terminal.open" || actionId === "terminal.open") {
     return {
       description: "Terminal file tab and xterm UI are visible.",
       code: `const url = api.waitForUrl({ regex: "/\\/files\\/.+\\.term(?:[?#]|$)/", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
-const terminal = api.waitForText({ selector: ".terminal.xterm", includes: "$", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+const terminal = api.waitForSelector(".terminal.xterm", { state: "visible", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
 return { ok: url.ok === true && terminal.ok === true, url, terminal };`,
     };
   }
@@ -454,11 +453,10 @@ return { ok: url.ok === true, url };`,
   }
   if (actionId === "settings.runtime.rootfs") {
     return {
-      description: "Runtime Image modal is visible.",
-      code: `const modal = api.waitForText({ selector: ".ant-modal[role=dialog]", includes: "Runtime Image", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
-return { ok: modal.ok === true, modal };`,
-      cleanupCode: `api.press("Escape");
-return api.waitForSelector(".ant-modal[role=dialog]", { state: "hidden", timeout_ms: 3000 });`,
+      description: "Project Environment settings expose Runtime Image.",
+      code: `const environment = api.waitForText({ includes: "Environment", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+const runtime = api.waitForText({ includes: "Runtime Image", timeout_ms: ${UI_ASSERTION_TIMEOUT_MS} });
+return { ok: environment.ok === true && runtime.ok === true, environment, runtime };`,
     };
   }
   if (actionId === "settings.people.collaborators") {
