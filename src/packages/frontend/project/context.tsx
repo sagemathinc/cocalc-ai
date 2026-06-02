@@ -25,8 +25,8 @@ import { UserGroup } from "@cocalc/frontend/projects/store";
 import { ProjectStatus } from "@cocalc/frontend/todo-types";
 import type { AIServicesAvailable } from "@cocalc/util/db-schema/ai-models";
 import {
-  KUCALC_COCALC_COM,
-  KUCALC_DISABLED,
+  PLATFORM_MODE_CLOUD,
+  PLATFORM_MODE_SINGLE_NODE,
 } from "@cocalc/util/db-schema/site-defaults";
 import { useProject } from "./page/common";
 import { FlyoutActiveStarred } from "./page/flyouts/state";
@@ -281,9 +281,9 @@ export function useProjectContextProvider({
     }
   }, [manageStarredFiles.starred, actions]);
 
-  const kucalc = useTypedRedux("customize", "kucalc");
-  const onCoCalcCom = kucalc === KUCALC_COCALC_COM;
-  const onCoCalcDocker = kucalc === KUCALC_DISABLED;
+  const platformMode = useTypedRedux("customize", "platform_mode");
+  const onCoCalcCom = platformMode === PLATFORM_MODE_CLOUD;
+  const onCoCalcDocker = platformMode === PLATFORM_MODE_SINGLE_NODE;
 
   const haveOpenAI = useTypedRedux("customize", "openai_enabled");
   const haveGoogle = useTypedRedux("customize", "google_vertexai_enabled");

@@ -45,6 +45,7 @@ Table({
           ai_limits: null,
           features: null,
           usage_limits: null,
+          pricing_model: null,
           disabled: null,
           notes: null,
         } as { [key in MembershipTierSetFields]: null },
@@ -71,6 +72,7 @@ Table({
           ai_limits: null,
           features: null,
           usage_limits: null,
+          pricing_model: null,
           disabled: null,
           notes: null,
           history: null,
@@ -156,6 +158,10 @@ Table({
     usage_limits: {
       type: "map",
       desc: "Shared-host usage-limit policy for this tier.",
+    },
+    pricing_model: {
+      type: "map",
+      desc: "Admin pricing and risk assumptions for this tier.",
     },
     disabled: {
       type: "boolean",

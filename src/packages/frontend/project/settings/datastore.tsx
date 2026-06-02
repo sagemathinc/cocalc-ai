@@ -4,7 +4,7 @@
  */
 
 /*
-Datastore (only for kucalc and cocalc-onprem)
+Datastore (only for managed cloud and on-premises project-host deployments)
 
 cSpell: words sshfs keyid, ignore creds ALPHANUM
 */

@@ -43,6 +43,12 @@ type DocsSearchOptions = {
   limit?: string;
 };
 
+type DocsSkillContextOptions = {
+  includeAdmin?: boolean;
+  limit?: string;
+  query?: string;
+};
+
 type DocsVerifyOptions = {
   action?: string[];
   browser?: string;
@@ -98,6 +104,65 @@ function compactSearchResult(entry: DocsSearchResult): Record<string, unknown> {
     ...compactDocsEntry(entry),
     score: entry.score,
   };
+}
+
+function docsBodyExcerpt(body: string, maxLength = 1200): string {
+  const text = body.trim().replace(/\n{3,}/g, "\n\n");
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength).replace(/\s+$/, "")}\n...`;
+}
+
+function docsUrl(entry: DocsEntry): string {
+  return `/docs/${entry.slug}`;
+}
+
+function skillContextEntry(entry: DocsEntry): Record<string, unknown> {
+  return {
+    id: entry.id,
+    slug: entry.slug,
+    url: docsUrl(entry),
+    title: entry.title,
+    category: entry.category,
+    visibility: entry.visibility ?? "public",
+    audiences: entry.audiences,
+    summary: entry.summary,
+    actions: entry.actions ?? [],
+    no_action_reason: entry.noActionReason,
+    body_excerpt: docsBodyExcerpt(entry.body),
+  };
+}
+
+function formatDocsSkillContext({
+  entries,
+  query,
+}: {
+  entries: DocsEntry[];
+  query?: string;
+}): string {
+  const lines = [
+    "# CoCalc Docs Context",
+    "",
+    query ? `Query: ${query}` : "Query: none; showing top documentation pages.",
+    "",
+  ];
+  for (const entry of entries) {
+    lines.push(`## ${entry.title}`, "");
+    lines.push(`- id: \`${entry.id}\``);
+    lines.push(`- path: \`${docsUrl(entry)}\``);
+    lines.push(`- category: ${entry.category}`);
+    lines.push(`- summary: ${entry.summary}`);
+    if (entry.actions?.length) {
+      lines.push(
+        `- actions: ${entry.actions
+          .map((action) => `\`${action.id}\``)
+          .join(", ")}`,
+      );
+    } else if (entry.noActionReason) {
+      lines.push(`- no action: ${entry.noActionReason}`);
+    }
+    lines.push("", docsBodyExcerpt(entry.body), "");
+  }
+  return lines.join("\n").trimEnd();
 }
 
 function parseLimit(value?: string): number {
@@ -390,6 +455,7 @@ Examples:
   cocalc docs list
   cocalc docs search "project secrets" --json
   cocalc docs show projects/project-secrets --json
+  cocalc docs skill-context --query "project secrets"
   cocalc docs actions --json
 `,
     );
@@ -428,6 +494,36 @@ Examples:
           docsAccessFromOptions(options),
         ).map(compactSearchResult);
         deps.emitSuccess({ globals }, commandName, rows);
+      } catch (error) {
+        deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
+        process.exitCode = 1;
+      }
+    });
+
+  docs
+    .command("skill-context")
+    .description("print compact Markdown context for agents")
+    .option("--query <query>", "search query for selecting docs pages")
+    .option("--include-admin", "include admin-only documentation pages")
+    .option("--limit <n>", "maximum number of pages", "8")
+    .action((options: DocsSkillContextOptions, command: Command) => {
+      const globals = deps.globalsFrom(command);
+      const commandName = "docs skill-context";
+      try {
+        const limit = parseLimit(options.limit);
+        const access = docsAccessFromOptions(options);
+        const query = options.query?.trim();
+        const entries = query
+          ? searchDocsEntries(query, limit, access)
+          : listDocsEntries(access).slice(0, limit);
+        if (globals.json || globals.output === "json") {
+          deps.emitSuccess({ globals }, commandName, {
+            query: query || undefined,
+            entries: entries.map(skillContextEntry),
+          });
+        } else {
+          console.log(formatDocsSkillContext({ entries, query }));
+        }
       } catch (error) {
         deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
         process.exitCode = 1;

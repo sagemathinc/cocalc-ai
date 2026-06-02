@@ -5,7 +5,7 @@
 
 import { Table } from "./types";
 import type {
-  KucalcValues,
+  PlatformMode,
   ProjectHostsFundingMode,
 } from "@cocalc/util/db-schema/site-defaults";
 import type { SignupEmailDomainPublicPolicy } from "@cocalc/util/accounts/signup-email-domain-policy";
@@ -94,7 +94,8 @@ export interface Customize {
   helpEmail?: string;
   contactEmail?: string;
   isCommercial?: boolean;
-  kucalc?: KucalcValues;
+  kucalc?: PlatformMode;
+  platform_mode?: PlatformMode;
   logoSquareURL?: string;
   logoRectangularURL?: string;
   splashImage?: string;

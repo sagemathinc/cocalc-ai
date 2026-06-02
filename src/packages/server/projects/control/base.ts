@@ -95,6 +95,14 @@ function runQuotaForRestartComparison(
   return rest;
 }
 
+function withCocalcAiRuntimeSemantics(run_quota: Quota): Quota {
+  return {
+    ...run_quota,
+    network: true,
+    member_host: true,
+  };
+}
+
 function getProjectControlConatClient() {
   // This one-bay control path is intentionally choosing the current backend
   // hub client. Shared runner helpers must not silently make that routing
@@ -516,6 +524,7 @@ export class BaseProject extends EventEmitter {
           nextRunQuota.disk_quota = storageQuota.disk_quota;
         }
       }
+      nextRunQuota = withCocalcAiRuntimeSemantics(nextRunQuota);
     }
 
     if (nextRunQuota == null) {

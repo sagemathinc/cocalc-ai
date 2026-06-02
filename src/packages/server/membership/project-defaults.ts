@@ -1,16 +1,7 @@
 import type { MembershipEntitlements } from "@cocalc/conat/hub/api/purchases";
 import { resolveMembershipForAccount } from "./resolve";
 
-const SETTINGS_FIELDS = [
-  "cores",
-  "cpu_shares",
-  "memory",
-  "memory_request",
-  "disk_quota",
-  "member_host",
-  "privileged",
-  "network",
-] as const;
+const SETTINGS_FIELDS = ["memory", "memory_request", "disk_quota"] as const;
 
 type SettingsField = (typeof SETTINGS_FIELDS)[number];
 export type MembershipProjectDefaults = Partial<Record<SettingsField, number>>;

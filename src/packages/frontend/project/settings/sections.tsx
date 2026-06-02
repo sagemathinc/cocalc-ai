@@ -14,8 +14,8 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import { ProjectCollaboratorsContent } from "@cocalc/frontend/project/page/project-collaborators";
 import CloneProject from "@cocalc/frontend/project/explorer/clone";
 import {
-  KUCALC_COCALC_COM,
-  KUCALC_ON_PREMISES,
+  PLATFORM_MODE_CLOUD,
+  PLATFORM_MODE_ON_PREMISES,
 } from "@cocalc/util/db-schema/site-defaults";
 
 import { useProjectCourseInfo } from "../use-project-course";
@@ -25,10 +25,10 @@ import { ProjectLocationBox } from "./hide-delete-box";
 import { ManagedEgress } from "./managed-egress";
 import { ProjectControl } from "./project-control";
 import { RecoveryPanel } from "./recovery-panel";
-import { useRunQuota } from "./run-quota/hooks";
 import type { ProjectSettingsNavItem } from "./section-nav";
 import { SSHPanel } from "./ssh";
 import type { Project } from "./types";
+import { UpgradeUsage } from "./upgrade-usage";
 
 const CourseRuntimeSponsorSummary = lazy(async () => {
   const module = await import("./runtime-sponsor-controls");
@@ -69,30 +69,19 @@ export function useProjectSettingsSections({
 } {
   const { projectAccess } = useProjectContext();
   const isViewer = projectAccess?.role === "viewer";
-  const kucalc = useTypedRedux("customize", "kucalc");
-  const runQuota = useRunQuota(project_id, null, { enabled: !isViewer });
+  const platformMode = useTypedRedux("customize", "platform_mode");
   const { course } = useProjectCourseInfo(project_id, undefined, {
     enabled: !isViewer,
   });
   const datastore = useTypedRedux("customize", "datastore");
-  const commercial = useTypedRedux("customize", "commercial");
   const student = useStudentProjectFunctionality(project_id);
 
   const showSSH = !lite && !student.disableSSH;
   const showDatastore =
-    kucalc === KUCALC_COCALC_COM ||
-    (kucalc === KUCALC_ON_PREMISES && datastore);
-  const isPaidStudentPayProject = !!course?.get("pay") && !!course.get("paid");
-  const showNonMemberWarning =
-    !isPaidStudentPayProject &&
-    commercial &&
-    runQuota != null &&
-    !runQuota.member_host;
-  const showNoInternetWarning =
-    !isPaidStudentPayProject &&
-    commercial &&
-    runQuota != null &&
-    !runQuota.network;
+    platformMode === PLATFORM_MODE_CLOUD ||
+    (platformMode === PLATFORM_MODE_ON_PREMISES && datastore);
+  const showNonMemberWarning = false;
+  const showNoInternetWarning = false;
   const showCourseSection = course != null;
   const flyout = mode === "flyout";
   const sectionGap = flyout ? 10 : 16;
@@ -167,12 +156,19 @@ export function useProjectSettingsSections({
       description:
         "Control the active project process and review host diagnostics.",
       children: (
-        <ProjectControl
-          project={project}
-          mode={componentMode}
-          showRootFilesystemImage={false}
-          embedded={embeddedInSection}
-        />
+        <Space direction="vertical" size={sectionGap} style={{ width: "100%" }}>
+          <ProjectControl
+            project={project}
+            mode={componentMode}
+            showRootFilesystemImage={false}
+            embedded={embeddedInSection}
+          />
+          <UpgradeUsage
+            project_id={project_id}
+            project={project}
+            mode={flyout ? "flyout" : "project"}
+          />
+        </Space>
       ),
     },
   ];
@@ -216,7 +212,6 @@ export function useProjectSettingsSections({
         title: "Network",
         description:
           "Outbound traffic, internet access, and metered egress signals.",
-        warning: showNoInternetWarning || showNonMemberWarning,
         className: "cc-project-flyout-settings-panel",
         children: (
           <ManagedEgress project_id={project_id} embedded={embeddedInSection} />

@@ -9,7 +9,7 @@ import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { IntlMessage, isIntlMessage } from "@cocalc/frontend/i18n";
 import { ProjectStatus } from "@cocalc/frontend/todo-types";
 import { ComputeState } from "@cocalc/util/compute-states";
-import { KUCALC_COCALC_COM } from "@cocalc/util/db-schema/site-defaults";
+import { PLATFORM_MODE_CLOUD } from "@cocalc/util/db-schema/site-defaults";
 import { COMPUTE_STATES } from "@cocalc/util/schema";
 import { Gap } from "./gap";
 import { Icon, isIconName } from "./icon";
@@ -23,8 +23,8 @@ export const ProjectState: React.FC<Props> = (props: Props) => {
   const { state, show_desc } = props;
 
   const intl = useIntl();
-  const kucalc = useTypedRedux("customize", "kucalc");
-  const showCoCalcCom = kucalc === KUCALC_COCALC_COM;
+  const platformMode = useTypedRedux("customize", "platform_mode");
+  const showCoCalcCom = platformMode === PLATFORM_MODE_CLOUD;
 
   function renderSpinner() {
     return (

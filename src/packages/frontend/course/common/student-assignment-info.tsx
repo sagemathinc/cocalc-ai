@@ -471,7 +471,7 @@ export function StudentAssignmentInfo({
       error = "";
     }
     // We search for two different error messages, since different errors happen in
-    // KuCalc versus other places cocalc runs.  It depends on what is doing the copy.
+    // Project-host versus local deployments. This depends on what is doing the copy.
     if (
       error.indexOf("No such file or directory") !== -1 ||
       error.indexOf("ENOENT") != -1

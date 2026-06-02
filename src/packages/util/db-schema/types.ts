@@ -347,6 +347,7 @@ export type MembershipTierSetFields =
   | "ai_limits"
   | "features"
   | "usage_limits"
+  | "pricing_model"
   | "disabled"
   | "notes";
 

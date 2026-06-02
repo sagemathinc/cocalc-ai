@@ -23,6 +23,7 @@ interface Query {
   ai_limits?;
   features?;
   usage_limits?;
+  pricing_model?;
   disabled?: boolean;
   notes?: string;
 }
@@ -176,6 +177,7 @@ export default async function membershipTiersQuery(
       ai_limits,
       features,
       usage_limits,
+      pricing_model,
       disabled,
       notes,
     } = query;
@@ -208,13 +210,14 @@ export default async function membershipTiersQuery(
                 "ai_limits",
                 "features",
                 "usage_limits",
+                "pricing_model",
                 "disabled",
                 "notes",
                 "history",
                 "created",
                 "updated"
               )
-              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::JSONB,$15::JSONB,$16::JSONB,$17::JSONB,$18,$19,$20::JSONB,NOW(),NOW())
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::JSONB,$15::JSONB,$16::JSONB,$17::JSONB,$18::JSONB,$19,$20,$21::JSONB,NOW(),NOW())
               ON CONFLICT (id)
               DO UPDATE SET
                 "label" = EXCLUDED.label,
@@ -233,6 +236,7 @@ export default async function membershipTiersQuery(
                 "ai_limits" = EXCLUDED.ai_limits,
                 "features" = EXCLUDED.features,
                 "usage_limits" = EXCLUDED.usage_limits,
+                "pricing_model" = EXCLUDED.pricing_model,
                 "disabled" = EXCLUDED.disabled,
                 "notes" = EXCLUDED.notes,
                 "history" = EXCLUDED.history,
@@ -255,6 +259,7 @@ export default async function membershipTiersQuery(
         toJsonParam(ai_limits),
         toJsonParam(features),
         toJsonParam(usage_limits),
+        toJsonParam(pricing_model),
         disabled ?? false,
         notes ?? null,
         toJsonParam(nextHistory ?? []),

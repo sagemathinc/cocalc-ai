@@ -350,12 +350,18 @@ describe("project docs actions", () => {
       tab: "projects",
     });
 
-    await revealDocsAction({
+    const create = await revealDocsAction({
       actionId: "projects.create.open",
       projectId: "project-1",
     });
 
     expect(mockSetUrlWithSearch).toHaveBeenLastCalledWith("/projects", "");
+    expect(create).toMatchObject({
+      action_id: "projects.create.open",
+      opened: true,
+      path: "/projects",
+      tab: "projects",
+    });
 
     const files = await revealDocsAction({
       actionId: "project.files.open",
@@ -379,12 +385,12 @@ describe("project docs actions", () => {
       tab: "files",
     });
 
-    await revealDocsAction({
+    const explorer = await revealDocsAction({
       actionId: "files.explorer.open",
       parameters: { projectId: "project-2" },
       projectId: "project-1",
     });
-    await revealDocsAction({
+    const git = await revealDocsAction({
       actionId: "files.git.open",
       parameters: { projectId: "project-2" },
       projectId: "project-1",
@@ -394,6 +400,20 @@ describe("project docs actions", () => {
       "/projects/project-2/files",
       "",
     );
+    expect(explorer).toMatchObject({
+      action_id: "files.explorer.open",
+      opened: true,
+      path: "/projects/project-2/files",
+      project_id: "project-2",
+      tab: "files",
+    });
+    expect(git).toMatchObject({
+      action_id: "files.git.open",
+      opened: true,
+      path: "/projects/project-2/files",
+      project_id: "project-2",
+      tab: "files",
+    });
   });
 
   it("requires sign-in for account docs actions", () => {
@@ -678,12 +698,13 @@ describe("project docs actions", () => {
     expect(events[0]).toMatchObject({
       actionId: "settings.runtime.rootfs",
       projectId: "project-1",
-      surface: "project",
+      surface: "flyout",
     });
     expect(mockSetProjectActiveTab).toHaveBeenCalledWith("settings", {
       change_history: false,
       noFocus: true,
     });
+    expect(mockSetFlyoutExpanded).toHaveBeenCalledWith("settings", true);
     expect(
       JSON.parse(window.localStorage.getItem("project-1::flyout")!),
     ).toMatchObject({
@@ -722,8 +743,9 @@ describe("project docs actions", () => {
     expect(events[0]).toMatchObject({
       actionId: "settings.environment.secrets",
       projectId: "project-1",
-      surface: "project",
+      surface: "flyout",
     });
+    expect(mockSetFlyoutExpanded).toHaveBeenCalledWith("settings", true);
     expect(
       JSON.parse(window.localStorage.getItem("project-1::flyout")!),
     ).toMatchObject({

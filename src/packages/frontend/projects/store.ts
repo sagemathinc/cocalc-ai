@@ -40,6 +40,10 @@ function numberOrUndefined(value: unknown): number | undefined {
     : undefined;
 }
 
+function legacyEnabledByDefault(value: unknown): boolean {
+  return value !== false && value !== 0;
+}
+
 function upgradesFromRunQuota(
   runQuota?: ProjectRunQuota | null,
 ): Upgrades | undefined {
@@ -51,8 +55,8 @@ function upgradesFromRunQuota(
     cores: numberOrUndefined(runQuota.cpu_limit),
     memory: numberOrUndefined(runQuota.memory_limit),
     memory_request: numberOrUndefined(runQuota.memory_request),
-    network: runQuota.network ? 1 : 0,
-    member_host: !!runQuota.member_host,
+    network: legacyEnabledByDefault(runQuota.network) ? 1 : 0,
+    member_host: legacyEnabledByDefault(runQuota.member_host),
   };
 }
 
@@ -373,8 +377,8 @@ export class ProjectsStore extends Store<ProjectsState> {
       cpu_shares: numberOrUndefined(legacySettings.get("cpu_shares")),
       memory: numberOrUndefined(legacySettings.get("memory")),
       memory_request: numberOrUndefined(legacySettings.get("memory_request")),
-      network: numberOrUndefined(legacySettings.get("network")),
-      member_host: !!legacySettings.get("member_host"),
+      network: legacyEnabledByDefault(legacySettings.get("network")) ? 1 : 0,
+      member_host: legacyEnabledByDefault(legacySettings.get("member_host")),
     };
   }
 
@@ -395,14 +399,14 @@ export class ProjectsStore extends Store<ProjectsState> {
     return { kind, upgraded };
   }
 
-  // we allow URLs in projects, which have member hosting or internet access
-  // this must harmonize with packages/hub/client → mesg_invite_noncloud_collaborators
+  // cocalc-ai projects have network by default. Preserve explicit legacy
+  // false/0 values only for compatibility/security paths.
   public allow_urls_in_emails(project_id: string): boolean {
     const quotas = this.get_total_project_quotas(project_id);
     if (quotas == null) {
-      return false;
+      return true;
     } else {
-      return !!(quotas.network || quotas.member_host);
+      return quotas.network !== 0 || quotas.member_host !== false;
     }
   }
 

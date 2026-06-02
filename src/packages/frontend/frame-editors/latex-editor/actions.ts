@@ -130,7 +130,7 @@ export class Actions extends BaseActions<LatexEditorState> {
   // The output_directory that will be used if we are building
   // and using an output directory.  NOTE: this is a /tmp
   // directory, which we do not explicitly clean up.  However,
-  // it gets cleaned up when the project stops (in kucalc it
+  // it gets cleaned up when the project stops (on managed project hosts it
   // is a ramdisk), or by whatever tmp cleaner should probably
   // be installed (say for docker...).  At least the size
   // should be relatively small.

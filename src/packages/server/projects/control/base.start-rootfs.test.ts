@@ -297,6 +297,8 @@ describe("BaseProject.start RootFS sealing", () => {
       run_quota: {
         memory_limit: 2000,
         disk_quota: 10000,
+        network: true,
+        member_host: true,
       },
     });
   });
@@ -351,7 +353,12 @@ describe("BaseProject.start RootFS sealing", () => {
 
     expect(updateCalls).toHaveLength(1);
     expect(updateCalls[0].set).toEqual({
-      run_quota: { memory_limit: 4000, disk_quota: 5000 },
+      run_quota: {
+        memory_limit: 4000,
+        disk_quota: 5000,
+        network: true,
+        member_host: true,
+      },
     });
     expect(startProjectOnHostMock).not.toHaveBeenCalled();
     expect(stopProjectOnHostMock).not.toHaveBeenCalled();
@@ -424,6 +431,8 @@ describe("BaseProject.start RootFS sealing", () => {
             memory_limit: 4000,
             disk_quota: 5000,
             idle_timeout: 600,
+            network: true,
+            member_host: true,
           },
         };
       }
