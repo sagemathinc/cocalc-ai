@@ -61,6 +61,18 @@ export const ACCOUNT_SETTINGS_NAVIGATION: NavigationNode[] = [
   { type: "page", page: "index", overview: "hidden" },
   { type: "page", page: "profile", overview: "primary" },
   {
+    type: "page",
+    page: "membership",
+    overview: "primary",
+    visible: ({ isLite }) => !isLite,
+  },
+  {
+    type: "page",
+    page: "usage-limits",
+    overview: "primary",
+    visible: ({ isLite }) => !isLite,
+  },
+  {
     type: "group",
     key: "preferences",
     icon: "cogs",

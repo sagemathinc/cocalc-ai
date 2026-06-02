@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Modal, Space, Tag, Typography } from "antd";
+import { Button, Empty, Modal, Space, Tag, Typography } from "antd";
 import type { ReactElement } from "react";
 import { useState } from "react";
 
@@ -75,18 +75,29 @@ export function ManagedEgressRecentEventsList({
 }
 
 export function ManagedEgressRecentEventsButton({
+  buttonText,
+  disabledWhenEmpty = false,
   events,
+  showWhenEmpty = false,
 }: {
+  buttonText?: string;
+  disabledWhenEmpty?: boolean;
   events?: ManagedEgressEventSummary[];
+  showWhenEmpty?: boolean;
 }): ReactElement | null {
   const [open, setOpen] = useState(false);
-  if (!events || events.length === 0) {
+  const eventCount = events?.length ?? 0;
+  if (eventCount === 0 && !disabledWhenEmpty && !showWhenEmpty) {
     return null;
   }
   return (
     <>
-      <Button size="small" onClick={() => setOpen(true)}>
-        View recent events ({events.length})
+      <Button
+        disabled={disabledWhenEmpty && eventCount === 0}
+        size="small"
+        onClick={() => setOpen(true)}
+      >
+        {buttonText ?? `View recent events (${eventCount})`}
       </Button>
       <Modal
         title="Recent managed egress events"
@@ -96,7 +107,11 @@ export function ManagedEgressRecentEventsButton({
         width={760}
         bodyStyle={{ maxHeight: 420, overflowY: "auto" }}
       >
-        <ManagedEgressRecentEventsList events={events} />
+        {eventCount === 0 ? (
+          <Empty description="No recent egress events." />
+        ) : (
+          <ManagedEgressRecentEventsList events={events} />
+        )}
       </Modal>
     </>
   );

@@ -42,6 +42,8 @@ export type BillingSubTabType = (typeof VALID_BILLING_SUB_TYPES)[number];
 export const VALID_SETTINGS_PAGES = [
   "index",
   "profile",
+  "membership",
+  "usage-limits",
   ...VALID_PREFERENCES_SUB_TYPES,
   ...VALID_BILLING_SUB_TYPES,
   "support",

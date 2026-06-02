@@ -14,12 +14,14 @@ import { ACCOUNT_PREFERENCES_OTHER_PAGE } from "./account-preferences-other";
 import { ACCOUNT_PREFERENCES_PROFILE_PAGE } from "./account-preferences-profile";
 import { ACCOUNT_PREFERENCES_SECURITY_PAGE } from "./account-preferences-security";
 import { LICENSES_SETTINGS_PAGE } from "./licenses/licenses-page";
+import { MEMBERSHIP_SETTINGS_PAGE } from "./membership-page";
 import { PAYMENT_METHODS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/payment-methods-page";
 import { PAYMENTS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/payments-page";
 import { PURCHASES_SETTINGS_PAGE } from "@cocalc/frontend/purchases/purchases-page";
 import { STATEMENTS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/statements-page";
 import { SUBSCRIPTIONS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/subscriptions-page";
 import { STORE_SETTINGS_PAGE } from "@cocalc/frontend/store/store-page";
+import { USAGE_LIMITS_SETTINGS_PAGE } from "./usage-limits-page";
 import { VOUCHER_CENTER_SETTINGS_PAGE } from "@cocalc/frontend/store/voucher-center-page";
 import { SUPPORT_TICKETS_SETTINGS_PAGE } from "@cocalc/frontend/support/tickets";
 import type { SettingsPageDefinition } from "./settings-page";
@@ -34,6 +36,7 @@ export const SETTINGS_PAGE_DEFINITIONS = {
   keyboard: ACCOUNT_PREFERENCES_KEYBOARD_PAGE,
   keys: ACCOUNT_PREFERENCES_SECURITY_PAGE,
   licenses: LICENSES_SETTINGS_PAGE,
+  membership: MEMBERSHIP_SETTINGS_PAGE,
   other: ACCOUNT_PREFERENCES_OTHER_PAGE,
   "payment-methods": PAYMENT_METHODS_SETTINGS_PAGE,
   payments: PAYMENTS_SETTINGS_PAGE,
@@ -43,6 +46,7 @@ export const SETTINGS_PAGE_DEFINITIONS = {
   store: STORE_SETTINGS_PAGE,
   subscriptions: SUBSCRIPTIONS_SETTINGS_PAGE,
   support: SUPPORT_TICKETS_SETTINGS_PAGE,
+  "usage-limits": USAGE_LIMITS_SETTINGS_PAGE,
   vouchers: VOUCHER_CENTER_SETTINGS_PAGE,
 } satisfies Record<RegisteredSettingsPageType, SettingsPageDefinition>;
 
