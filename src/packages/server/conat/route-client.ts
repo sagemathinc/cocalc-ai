@@ -17,6 +17,7 @@ import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import {
   materializeHostRouteTarget,
   materializeProjectHostTarget,
+  routeHostSubject,
   routeProjectSubject,
   listenForUpdates as listenForProjectHostUpdates,
 } from "./route-project";
@@ -390,13 +391,15 @@ function conatWithProjectRoutingInternal(
   const combinedRoute =
     routeSubject == null
       ? (subject: string) => {
-          const routed = routeProjectSubject(subject);
+          const routed =
+            routeHostSubject(subject) ?? routeProjectSubject(subject);
           return routeTargetToClient(subject, routed, account_id);
         }
       : (subject: string) => {
           const custom = routeSubject(subject);
           if (custom) return custom;
-          const routed = routeProjectSubject(subject);
+          const routed =
+            routeHostSubject(subject) ?? routeProjectSubject(subject);
           return routeTargetToClient(subject, routed, account_id);
         };
   client.setRouteSubject(combinedRoute);
