@@ -11,10 +11,29 @@ export function routeProjectHostHttpUrl({
   const routingBase = routingAddress.endsWith("/")
     ? routingAddress.slice(0, -1)
     : routingAddress;
+  const appendToRoutingBase = (path: string): string => {
+    let suffix = path;
+    try {
+      const routingPath = new URL(
+        routingBase,
+        windowOrigin ?? "http://localhost",
+      ).pathname.replace(/\/+$/, "");
+      if (
+        routingPath &&
+        routingPath !== "/" &&
+        (suffix === routingPath || suffix.startsWith(`${routingPath}/`))
+      ) {
+        suffix = suffix.slice(routingPath.length) || "/";
+      }
+    } catch {
+      // Fall through to the original path when routingBase is not parseable.
+    }
+    return `${routingBase}${suffix.startsWith("/") ? suffix : `/${suffix}`}`;
+  };
   const isAbsolute = /^https?:\/\//i.test(url);
   if (!isAbsolute) {
     const path = url.startsWith("/") ? url : `/${url}`;
-    return `${routingBase}${path}`;
+    return appendToRoutingBase(path);
   }
   try {
     const parsed = new URL(url, windowOrigin ?? "http://localhost");
@@ -34,7 +53,9 @@ export function routeProjectHostHttpUrl({
     if (!shouldRoute) {
       return parsedUrl;
     }
-    return `${routingBase}${parsed.pathname}${parsed.search}${parsed.hash}`;
+    return appendToRoutingBase(
+      `${parsed.pathname}${parsed.search}${parsed.hash}`,
+    );
   } catch {
     return url;
   }

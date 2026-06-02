@@ -38,6 +38,33 @@ describe("routeProjectHostHttpUrl", () => {
     ).toBe("https://dev.cocalc.ai/host-abc/lab");
   });
 
+  it("does not duplicate a local-proxy project path for relative file URLs", () => {
+    const project_id = "00000000-1000-4000-8000-000000000000";
+
+    expect(
+      routeProjectHostHttpUrl({
+        url: `/${project_id}/files/%2Fhome/user/out.pdf?param=1`,
+        routingAddress: `http://localhost:9500/${project_id}`,
+      }),
+    ).toBe(
+      `http://localhost:9500/${project_id}/files/%2Fhome/user/out.pdf?param=1`,
+    );
+  });
+
+  it("does not duplicate a local-proxy project path for browser-origin file URLs", () => {
+    const project_id = "00000000-1000-4000-8000-000000000000";
+
+    expect(
+      routeProjectHostHttpUrl({
+        url: `http://localhost:9500/${project_id}/files/home/user/out.pdf?param=1`,
+        routingAddress: `http://localhost:9500/${project_id}`,
+        windowOrigin: "http://localhost:9500",
+      }),
+    ).toBe(
+      `http://localhost:9500/${project_id}/files/home/user/out.pdf?param=1`,
+    );
+  });
+
   it("leaves unrelated external absolute URLs unchanged", () => {
     expect(
       routeProjectHostHttpUrl({
