@@ -1088,7 +1088,7 @@ export const site_settings_conf: SiteSettings = {
   project_rootfs_default_image: {
     name: "Project RootFS Default Image",
     desc: "Default OCI image used when a user does not choose an image. This image is also pulled to every host.",
-    default: "buildpack-deps:noble-scm",
+    default: "ubuntu:26.04",
     to_val: to_trimmed_str,
     tags: ["Workspace", "RootFS", "OCI"],
     group: "Compute / Projects",

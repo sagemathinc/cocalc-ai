@@ -574,10 +574,10 @@ export const DEFAULT_ROOTFS_CATALOG_URL = "/rootfs/catalog.json";
 export const BUILTIN_ROOTFS_IMAGES: RootfsImageEntry[] = [
   {
     id: "official-cocalc-base",
-    label: "CoCalc Base",
-    image: "buildpack-deps:noble-scm",
+    label: "Ubuntu 26.04",
+    image: "ubuntu:26.04",
     description:
-      "Official minimal CoCalc base image for projects. This is the default launch image.",
+      "Official Ubuntu 26.04 base image for projects. This is the default launch image.",
     priority: 1000,
     prepull: true,
     official: true,
@@ -586,7 +586,7 @@ export const BUILTIN_ROOTFS_IMAGES: RootfsImageEntry[] = [
     warning: "none",
     tags: ["official", "cpu", "base"],
     theme: {
-      title: "CoCalc Base",
+      title: "Ubuntu 26.04",
       color: "#4474c0",
       accent_color: "#14b8a6",
       icon: "cube",
